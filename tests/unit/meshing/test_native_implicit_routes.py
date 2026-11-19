@@ -86,7 +86,12 @@ from phydrax.meshing._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from phydrax.meshing._implicit_volume import _tetra_quality, _topology_matches
+from phydrax.meshing._implicit_volume import (
+    _tetra_quality,
+    _topology_matches,
+    PreparedStuffedImplicitVolume,
+    StuffedImplicitConstruction,
+)
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
@@ -1743,6 +1748,130 @@ def test_implicit_surface_topology_ignores_unreferenced_volume_vertices() -> Non
         vertex_offset=12,
     )
     assert _topology_matches(profile, np.asarray(faces, dtype=np.int64))
+
+
+def test_implicit_surface_topology_refuses_open_flipped_and_doubled_surfaces() -> None:
+    geometry, _grid = _geometry_and_grid()
+    profile = AnalyticImplicitProfile(
+        geometry,
+        SpatialCoordinateContract.si(),
+        source_id="restricted-topology-defects",
+        source_revision="restricted-topology-defects-r1",
+    )
+    center: _Point3 = (
+        Fraction(float(profile.center[0])),
+        Fraction(float(profile.center[1])),
+        Fraction(float(profile.center[2])),
+    )
+    faces_list, _triangles = _octahedral_surface(
+        center, Fraction.from_float(profile.radius)
+    )
+    faces = np.asarray(faces_list, dtype=np.int64)
+    flipped = faces.copy()
+    flipped[0] = flipped[0, ::-1]
+    second = faces + int(np.max(faces)) + 1
+
+    assert _topology_matches(profile, faces)
+    assert not _topology_matches(profile, faces[1:])
+    assert not _topology_matches(profile, flipped)
+    assert not _topology_matches(profile, np.concatenate((faces, faces)))
+    # Two disjoint spheres: two components, Euler characteristic four.
+    assert not _topology_matches(profile, np.concatenate((faces, second)))
+
+
+def _unpaired_faces(cells: np.ndarray) -> set[tuple[int, ...]]:
+    counts: dict[tuple[int, ...], int] = {}
+    for cell in cells.tolist():
+        for corners in ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)):
+            key = tuple(sorted(cell[k] for k in corners))
+            counts[key] = counts.get(key, 0) + 1
+    return {key for key, count in counts.items() if count == 1}
+
+
+def test_stuffed_construction_arrays_publish_their_own_boundary() -> None:
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 0.371, feature_id="construction-sphere").compile(),
+        contract,
+        source_id="stuffed-construction",
+        source_revision="stuffed-construction-r1",
+    )
+    scope = MeshingScope(
+        profile.source_id,
+        profile.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        profile.scope_entity_set_id(2),
+        profile.scope_entity_ids(2),
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.05,
+    )
+
+    def construct(radius_edge_bound: float) -> StuffedImplicitConstruction:
+        prepared = prepare_native_implicit(
+            profile,
+            specification,
+            NativeMeshingOptions(
+                "implicit_stuffing",
+                volume_schedule=NativeVolumeSchedule(radius_edge_bound=radius_edge_bound),
+            ),
+            contract,
+        )
+        assert isinstance(prepared, PreparedStuffedImplicitVolume)
+        return prepared.construct()
+
+    # The default schedule keeps the stuffed lattice; a radius-edge bound of
+    # 1.3 sends it through the native fixed-boundary quality pass.
+    stuffed = construct(2.0)
+    improved = construct(1.3)
+    np.testing.assert_array_equal(
+        stuffed.vertex_ids, np.arange(stuffed.points.shape[0], dtype=np.int64)
+    )
+    assert improved.points.shape[0] > stuffed.points.shape[0]
+    for construction, bound in ((stuffed, 2.0), (improved, 1.3)):
+        points, cells = construction.points, construction.tetrahedra
+        corners = points[cells]
+        edges = corners[:, 1:] - corners[:, :1]
+        determinant = np.einsum(
+            "ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2])
+        )
+        assert np.all(determinant > 0.0)
+        squares = np.sum(edges * edges, axis=2)
+        center = (
+            squares[:, 0, None] * np.cross(edges[:, 1], edges[:, 2])
+            + squares[:, 1, None] * np.cross(edges[:, 2], edges[:, 0])
+            + squares[:, 2, None] * np.cross(edges[:, 0], edges[:, 1])
+        ) / (2.0 * determinant[:, None])
+        shortest = np.min(
+            [
+                np.linalg.norm(corners[:, i] - corners[:, j], axis=1)
+                for i in range(4)
+                for j in range(i + 1, 4)
+            ],
+            axis=0,
+        )
+        assert np.max(np.linalg.norm(center, axis=1) / shortest) <= bound * (1.0 + 1e-9)
+        assert np.unique(construction.vertex_ids).size == points.shape[0]
+        assert np.unique(construction.cell_ids).size == cells.shape[0]
+        boundary = construction.boundary_faces
+        assert {tuple(sorted(face)) for face in boundary.tolist()} == _unpaired_faces(
+            cells
+        )
+        # Outward: every boundary normal points away from the sphere's center.
+        normals = np.cross(
+            points[boundary[:, 1]] - points[boundary[:, 0]],
+            points[boundary[:, 2]] - points[boundary[:, 0]],
+        )
+        assert np.all(np.einsum("ij,ij->i", normals, points[boundary[:, 0]]) > 0.0)
+    # The quality pass keeps every boundary facet, coordinates and order.
+    np.testing.assert_array_equal(
+        improved.points[improved.boundary_faces], stuffed.points[stuffed.boundary_faces]
+    )
 
 
 def test_projection_degree_refuses_an_off_source_boundary() -> None:

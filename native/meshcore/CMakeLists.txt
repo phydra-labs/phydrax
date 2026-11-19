@@ -99,6 +99,7 @@ set(PHX_MC_SOURCES
   src/angle.cpp
   src/angle_capi.cpp
   src/metric_relocation.cpp
+  src/cad_geometry.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -148,6 +149,9 @@ set(PHX_MC_HEADERS
   src/directed_interval.hpp
   src/angle.hpp
   src/metric_relocation.hpp
+  src/cad_geometry.hpp
+  src/cad_geometry_programs.inc
+  src/cad_jet.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -274,4 +278,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_elementary)
   phx_mc_add_test(test_planar_partition)
   phx_mc_add_test(test_wide_integer)
+  phx_mc_add_test(test_cad_geometry)
 endif()

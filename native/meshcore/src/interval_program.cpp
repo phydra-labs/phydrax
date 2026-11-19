@@ -1502,17 +1502,6 @@ namespace {
 // times jet components times points) stays in cache.
 constexpr int64_t kPointBlock = 256;
 
-struct PointProgram {
-  const int64_t* instructions;
-  int64_t instruction_count;
-  const int64_t* indices;
-  const double* seeds;  // workspace_size template: seed values at their entries
-  int64_t workspace_size;
-  int64_t input_dimension;
-  const int64_t* outputs;
-  int64_t output_count;
-};
-
 int32_t point_arguments_valid(const int64_t* instructions, int64_t instruction_count,
                               const int64_t* indices, int64_t index_count,
                               const double* parameters, int64_t parameter_count,
@@ -1520,19 +1509,35 @@ int32_t point_arguments_valid(const int64_t* instructions, int64_t instruction_c
                               int64_t input_dimension, const double* points, int64_t count,
                               const int64_t* outputs, int64_t output_count,
                               const double* result, int64_t result_width) {
+  if (!phx::mc::addressable(workspace_size, 1, sizeof(double)) ||
+      !phx::mc::addressable(count, input_dimension, sizeof(double)) ||
+      !phx::mc::addressable(count, result_width, sizeof(double)) ||
+      (workspace_size > 0 && seeds == nullptr) || (count > 0 && points == nullptr) ||
+      (count > 0 && result_width > 0 && result == nullptr))
+    return PHX_MC_INVALID_ARGUMENT;
+  return phx::mc::validate_point_program(instructions, instruction_count, indices,
+                                         index_count, parameters, parameter_count,
+                                         workspace_size, input_dimension, outputs,
+                                         output_count);
+}
+
+}  // namespace
+
+int32_t phx::mc::validate_point_program(const int64_t* instructions,
+                                        int64_t instruction_count, const int64_t* indices,
+                                        int64_t index_count, const double* parameters,
+                                        int64_t parameter_count, int64_t workspace_size,
+                                        int64_t input_dimension, const int64_t* outputs,
+                                        int64_t output_count) {
   if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
       !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
       !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
-      !phx::mc::addressable(workspace_size, 1, sizeof(double)) ||
-      !phx::mc::addressable(count, input_dimension, sizeof(double)) ||
-      !phx::mc::addressable(count, result_width, sizeof(double)) || input_dimension < 1 ||
+      !phx::mc::addressable(workspace_size, 1, sizeof(double)) || input_dimension < 1 ||
       input_dimension > workspace_size || output_count < 0 ||
       (instruction_count > 0 && instructions == nullptr) ||
       (index_count > 0 && indices == nullptr) ||
       (parameter_count > 0 && parameters == nullptr) ||
-      (workspace_size > 0 && seeds == nullptr) || (count > 0 && points == nullptr) ||
-      (output_count > 0 && outputs == nullptr) ||
-      (count > 0 && result_width > 0 && result == nullptr))
+      (output_count > 0 && outputs == nullptr))
     return PHX_MC_INVALID_ARGUMENT;
   for (int64_t k = 0; k < output_count; ++k)
     if (outputs[k] < 0 || outputs[k] >= workspace_size) return PHX_MC_INVALID_INPUT;
@@ -1542,56 +1547,58 @@ int32_t point_arguments_valid(const int64_t* instructions, int64_t instruction_c
   return PHX_MC_OK;
 }
 
-void evaluate_point_blocks(const PointProgram& program, const double* points, int64_t count,
-                           double* result) {
-  std::vector<double> values(static_cast<std::size_t>(program.workspace_size * kPointBlock));
+void phx::mc::evaluate_point(const ProgramView& program, const double* points,
+                             int64_t count, double* result, PointWorkspace& workspace) {
+  const int64_t capacity = std::min(kPointBlock, count);
+  const auto needed = static_cast<std::size_t>(program.workspace_size * capacity);
+  if (workspace.values.size() < needed) workspace.values.resize(needed);
+  double* values = workspace.values.data();
   for (int64_t start = 0; start < count; start += kPointBlock) {
     const int64_t block = std::min(kPointBlock, count - start);
     for (int64_t entry = 0; entry < program.workspace_size; ++entry)
-      std::fill_n(values.data() + entry * block, block, program.seeds[entry]);
+      std::fill_n(values + entry * block, block, program.seeds[entry]);
     for (int64_t d = 0; d < program.input_dimension; ++d)
       for (int64_t j = 0; j < block; ++j)
-        values[static_cast<std::size_t>(d * block + j)] =
-            points[(start + j) * program.input_dimension + d];
-    execute_float(program.instructions, program.instruction_count, program.indices,
-                  values.data(), block);
+        values[d * block + j] = points[(start + j) * program.input_dimension + d];
+    execute_float(program.instructions, program.instruction_count, program.indices, values,
+                  block);
     for (int64_t j = 0; j < block; ++j)
       for (int64_t k = 0; k < program.output_count; ++k)
         result[(start + j) * program.output_count + k] =
-            values[static_cast<std::size_t>(program.outputs[k] * block + j)];
+            values[program.outputs[k] * block + j];
   }
 }
 
-void jet_point_blocks(const PointProgram& program, const JetLayout& layout, const double* points,
-                      int64_t count, double* result) {
+void phx::mc::evaluate_jet(const ProgramView& program, const double* points, int64_t count,
+                           double* result, PointWorkspace& workspace) {
+  const JetLayout layout(program.input_dimension);
   const int64_t components = layout.components();
-  std::vector<double> values(
-      static_cast<std::size_t>(program.workspace_size * components * kPointBlock));
-  std::vector<double> scratch;
+  const int64_t capacity = std::min(kPointBlock, count);
+  const auto needed = static_cast<std::size_t>(program.workspace_size * components * capacity);
+  if (workspace.values.size() < needed) workspace.values.resize(needed);
+  double* values = workspace.values.data();
   for (int64_t start = 0; start < count; start += kPointBlock) {
     const int64_t block = std::min(kPointBlock, count - start);
     const int64_t width = components * block;
     for (int64_t entry = 0; entry < program.workspace_size; ++entry) {
-      double* base = values.data() + entry * width;
+      double* base = values + entry * width;
       std::fill_n(base, block, program.seeds[entry]);
       std::fill_n(base + block, width - block, 0.0);
     }
     for (int64_t d = 0; d < program.input_dimension; ++d) {
-      double* base = values.data() + d * width;
+      double* base = values + d * width;
       for (int64_t j = 0; j < block; ++j) base[j] = points[(start + j) * program.input_dimension + d];
       std::fill_n(base + layout.gradient(d) * block, block, 1.0);
     }
     execute_jet(program.instructions, program.instruction_count, program.indices, layout,
-                values.data(), block, scratch);
+                values, block, workspace.scratch);
     for (int64_t j = 0; j < block; ++j)
       for (int64_t k = 0; k < program.output_count; ++k)
         for (int64_t c = 0; c < components; ++c)
           result[((start + j) * program.output_count + k) * components + c] =
-              values[static_cast<std::size_t>(program.outputs[k] * width + c * block + j)];
+              values[program.outputs[k] * width + c * block + j];
   }
 }
-
-}  // namespace
 
 extern "C" {
 
@@ -1607,9 +1614,11 @@ int32_t phx_mc_program_evaluate(const int64_t* instructions, int64_t instruction
         seeds, workspace_size, input_dimension, points, count, outputs, output_count, result,
         output_count);
     if (status != PHX_MC_OK) return status;
-    const PointProgram program{instructions, instruction_count, indices,  seeds,
-                               workspace_size, input_dimension,  outputs,  output_count};
-    evaluate_point_blocks(program, points, count, result);
+    const phx::mc::ProgramView program{instructions,   instruction_count, indices,
+                                       seeds,          workspace_size,    input_dimension,
+                                       outputs,        output_count};
+    phx::mc::PointWorkspace workspace;
+    phx::mc::evaluate_point(program, points, count, result, workspace);
     return PHX_MC_OK;
   });
 }
@@ -1621,17 +1630,19 @@ int32_t phx_mc_program_jet(const int64_t* instructions, int64_t instruction_coun
                            const int64_t* outputs, int64_t output_count, double* result) {
   return phx::mc::guarded([&]() -> int32_t {
     if (input_dimension < 1 || input_dimension > 3) return PHX_MC_INVALID_ARGUMENT;
-    const JetLayout layout(input_dimension);
-    if (!phx::mc::addressable(output_count, layout.components(), sizeof(double)))
+    const int64_t components = phx::mc::jet_components(input_dimension);
+    if (!phx::mc::addressable(output_count, components, sizeof(double)))
       return PHX_MC_INVALID_ARGUMENT;
     const int32_t status = point_arguments_valid(
         instructions, instruction_count, indices, index_count, parameters, parameter_count,
         seeds, workspace_size, input_dimension, points, count, outputs, output_count, result,
-        output_count * layout.components());
+        output_count * components);
     if (status != PHX_MC_OK) return status;
-    const PointProgram program{instructions, instruction_count, indices,  seeds,
-                               workspace_size, input_dimension,  outputs,  output_count};
-    jet_point_blocks(program, layout, points, count, result);
+    const phx::mc::ProgramView program{instructions,   instruction_count, indices,
+                                       seeds,          workspace_size,    input_dimension,
+                                       outputs,        output_count};
+    phx::mc::PointWorkspace workspace;
+    phx::mc::evaluate_jet(program, points, count, result, workspace);
     return PHX_MC_OK;
   });
 }

@@ -39,20 +39,30 @@ def _row_order(rows: np.ndarray, /) -> np.ndarray:
     """Return the stable lexicographic order of rank-2 integer rows.
 
     Rows whose per-column value spans fit one mixed-radix int64 key sort in a
-    single stable pass; wider rows fall back to a column-wise lexicographic sort.
+    single pass: with the row index in the key's low bits when both fit, so a
+    plain value sort of distinct keys yields the stable order, else by a stable
+    argsort. Wider rows fall back to a column-wise lexicographic sort.
     """
 
     if rows.size == 0:
         return np.arange(rows.shape[0], dtype=np.int64)
     lows = np.min(rows, axis=0).astype(np.int64)
     spans = np.max(rows, axis=0).astype(np.int64) - lows + 1
-    if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
+    span_product = math.prod(int(span) for span in spans)
+    if span_product > np.iinfo(np.int64).max:
         return np.lexsort(rows.T[::-1])
     key = np.zeros((rows.shape[0],), dtype=np.int64)
     for column, low, span in zip(rows.T, lows, spans, strict=True):
         key *= span
         key += column.astype(np.int64) - low
-    return np.argsort(key, kind="stable")
+    index_bits = (rows.shape[0] - 1).bit_length()
+    if span_product << index_bits > np.iinfo(np.int64).max:
+        return np.argsort(key, kind="stable")
+    key <<= index_bits
+    key |= np.arange(rows.shape[0], dtype=np.int64)
+    key.sort()
+    key &= (1 << index_bits) - 1
+    return key
 
 
 def _row_run_starts(ordered: np.ndarray, /) -> np.ndarray:

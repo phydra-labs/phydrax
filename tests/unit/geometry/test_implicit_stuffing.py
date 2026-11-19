@@ -93,16 +93,18 @@ def _program(field: Callable[[Array], Array], inputs: int) -> NativeIntervalProg
         ),
     ],
 )
+@pytest.mark.parametrize("levels", [0, 2])
 def test_stuffed_solid_is_a_certified_tiling_close_to_the_zero_set(
     field: Callable[[Array], Array],
     distance: Callable[[np.ndarray], np.ndarray],
     half_extent: tuple[float, float, float],
     volume: float,
+    levels: int,
 ) -> None:
     program = _program(field, 3)
     upper = np.asarray(half_extent, dtype=np.float64)
     spacing = 0.1
-    stuffed = program.stuff_tetrahedra(-upper, upper, spacing)
+    stuffed = program.stuff_tetrahedra(-upper, upper, spacing, levels=levels)
     points, cells = stuffed.points, stuffed.cells
     boundary = _boundary(cells)
 
@@ -131,4 +133,70 @@ def test_stuffing_refuses_a_program_without_three_inputs() -> None:
     program = _program(lambda x: jnp.stack((x[0] * x[0] + x[1] * x[1] - 1.0,)), 2)
     box = np.ones((3,), dtype=np.float64)
     with pytest.raises(ValueError, match="three inputs"):
+        program.stuff_tetrahedra(-box, box, 0.1)
+
+
+def _cell_volumes(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
+    corners = [points[cells[:, k]] for k in range(4)]
+    return (
+        np.einsum(
+            "ij,ij->i",
+            np.cross(corners[1] - corners[0], corners[2] - corners[0]),
+            corners[3] - corners[0],
+        )
+        / 6.0
+    )
+
+
+def test_graded_lattice_coarsens_away_from_the_zero_set() -> None:
+    program = _program(_sphere, 3)
+    upper = np.full((3,), 0.4, dtype=np.float64)
+    spacing = 0.03
+    uniform = program.stuff_tetrahedra(-upper, upper, spacing)
+    graded = program.stuff_tetrahedra(-upper, upper, spacing, levels=3, lipschitz=1.0)
+    points, cells = graded.points, graded.cells
+    boundary = _boundary(cells)
+
+    assert graded.degenerate_count == 0
+    assert verify_volume(points, cells, boundary).certified
+    assert cells.shape[0] < 0.6 * uniform.cells.shape[0]
+    volumes = _cell_volumes(points, cells)
+    assert np.all(volumes > 0.0)
+    exact = 4.0 / 3.0 * np.pi * RADIUS**3
+    assert abs(np.sum(volumes) - exact) < 0.005 * exact
+    # The band is the uniform lattice: surface triangles stay within the
+    # warped-lattice edge bound, while interior cells reach coarser levels.
+    on_surface = np.unique(boundary.reshape((-1,)))
+    assert np.max(_sphere_distance(points[on_surface])) < 1e-12
+    surface_edges = np.linalg.norm(
+        points[boundary] - points[boundary[:, [1, 2, 0]]], axis=2
+    )
+    assert np.max(surface_edges) < 1.5 * spacing
+    bcc_volume = spacing**3 / 12.0
+    assert np.max(volumes) > 7.9 * bcc_volume
+    assert _minimum_dihedral_degrees(points, cells) > 10.0
+
+
+def test_stuffing_an_unresolved_oscillatory_field_terminates_with_a_tiling() -> None:
+    # A sign change on a large fraction of lattice edges at a coarse spacing.
+    def field(x: Array) -> Array:
+        wave = jnp.sin(40.0 * x[0]) * jnp.sin(40.0 * x[1]) * jnp.sin(40.0 * x[2])
+        radius = jnp.sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2])
+        return jnp.stack((jnp.maximum(wave, radius - 0.6),))
+
+    program = _program(field, 3)
+    upper = np.full((3,), 0.7, dtype=np.float64)
+    stuffed = program.stuff_tetrahedra(-upper, upper, 0.1)
+    points, cells = stuffed.points, stuffed.cells
+
+    assert stuffed.degenerate_count == 0
+    assert cells.shape[0] > 0
+    assert np.all(_cell_volumes(points, cells) > 0.0)
+    assert verify_volume(points, cells, _boundary(cells)).certified
+
+
+def test_stuffing_refuses_a_solid_that_reaches_the_lattice_padding() -> None:
+    program = _program(_sphere, 3)
+    box = np.full((3,), 0.3, dtype=np.float64)
+    with pytest.raises(ValueError, match="padding"):
         program.stuff_tetrahedra(-box, box, 0.1)

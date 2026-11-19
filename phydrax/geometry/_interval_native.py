@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, TYPE_CHECKING
 
+import jax
 import numpy as np
 from jax.core import ShapedArray
 from jax.extend import core as jax_core
@@ -377,12 +378,22 @@ class NativeIntervalProgram:
         )
 
     def stuff_tetrahedra(
-        self, lower: NDArray[np.float64], upper: NDArray[np.float64], spacing: float, /
+        self,
+        lower: NDArray[np.float64],
+        upper: NDArray[np.float64],
+        spacing: float,
+        /,
+        *,
+        levels: int = 0,
+        lipschitz: float = 1.0,
     ) -> StuffedVolume:
         """Tetrahedra of ``{f <= 0}`` in a box by isosurface stuffing.
 
         ``f`` is the program's single output over three inputs; ``spacing`` is
-        the lattice spacing. A floating-point construction: the result is a
+        the lattice spacing within one spacing of the zero set. Away from it
+        the lattice coarsens by halving up to ``levels`` times, which is valid
+        when ``|f(x) - f(y)| <= lipschitz |x - y|`` (``lipschitz`` 1 for a
+        signed distance). A floating-point construction: the result is a
         proposal certified afterwards.
         """
         if self.input_dimension != 3 or math.prod(self.output.shape) != 1:
@@ -397,6 +408,8 @@ class NativeIntervalProgram:
             lower,
             upper,
             spacing,
+            levels,
+            lipschitz,
         )
 
     def evaluate_branches(
@@ -652,6 +665,50 @@ class _Builder:
             (_GATHER, output.offset, _size(value.shape), a, a_index, -1, -1, 0)
         )
         return output
+
+    def _scatter_add(
+        self,
+        values: tuple[_Tensor, ...],
+        params: Mapping[str, Any],
+        output_shape: _Shape,
+        /,
+    ) -> _Tensor:
+        """Indexed accumulation at constant, unique indices: one add per target."""
+        operand, indices, updates = values
+        if (
+            indices.exact is None
+            or not params["unique_indices"]
+            or params["update_consts"]
+            or operand.shape != output_shape
+        ):
+            raise IntervalExtensionError(
+                "native interval scatter-add requires constant unique indices."
+            )
+        # Scatter the ordinal of every update element to find its target.
+        ordinals = np.arange(1, _size(updates.shape) + 1, dtype=np.float64)
+        routed = np.asarray(
+            jax.lax.scatter_add(
+                np.zeros(operand.shape, dtype=np.float64),
+                np.asarray(indices.exact, dtype=np.int32),
+                ordinals.reshape(updates.shape),
+                params["dimension_numbers"],
+                indices_are_sorted=params["indices_are_sorted"],
+                unique_indices=True,
+                mode=params["mode"],
+            ),
+            dtype=np.int64,
+        ).reshape((-1,))
+        locations = self._locations(operand).reshape((-1,)).copy()
+        update_locations = self._locations(updates).reshape((-1,))
+        for position in np.flatnonzero(routed):
+            total = self._emit_binary(
+                _ADD,
+                _Tensor((), int(locations[position])),
+                _Tensor((), int(update_locations[routed[position] - 1])),
+                (),
+            )
+            locations[position] = total.offset
+        return _Tensor(output_shape, int(locations[0]), locations)
 
     def _transpose(self, value: _Tensor, axes: tuple[int, ...], /) -> _Tensor:
         if len(axes) != len(value.shape) or tuple(sorted(axes)) != tuple(
@@ -1107,6 +1164,18 @@ class _Builder:
         if name in ("exp", "log"):
             opcode = _EXP if name == "exp" else _LOG
             return (self._emit_unary(opcode, values[0], output_shape),)
+        if name in ("cosh", "sinh"):
+            # (exp(x) +- exp(-x)) / 2 from the exp kernel: each row is outward in
+            # interval execution and the halving is exact.
+            growth = self._emit_unary(_EXP, values[0], output_shape)
+            negated = self._emit_unary(_NEGATE, values[0], output_shape)
+            decay = self._emit_unary(_EXP, negated, output_shape)
+            combined = self._emit_binary(
+                _ADD if name == "cosh" else _SUBTRACT, growth, decay, output_shape
+            )
+            halves = np.full(output_shape, 0.5, dtype=np.float64)
+            half = self._seed(halves, halves, exact=halves)
+            return (self._emit_binary(_MULTIPLY, combined, half, output_shape),)
         raise IntervalExtensionError(
             f"no native interval arithmetic lowering for JAX primitive {name!r}."
         )
@@ -1363,11 +1432,16 @@ class _Builder:
             "pow",
             "max",
             "exp",
+            "cosh",
+            "sinh",
             "log",
             "min",
         ):
             (output_shape,) = output_shapes
             return self._lower_arithmetic(name, values, params, output_shape, same_input)
+        if name == "scatter-add":
+            (output_shape,) = output_shapes
+            return (self._scatter_add(values, params, output_shape),)
         if name == "pad":
             (output_shape,) = output_shapes
             value, padding = values

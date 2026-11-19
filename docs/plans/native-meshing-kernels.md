@@ -103,24 +103,26 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: the S3 rows of the benchmark beaten; quick CAD profile passes with the new volume stage.
 
 ## Later slices (planned when S3 is accepted; same rules)
-- S1 implicit field to tetrahedra by isosurface stuffing on a body-centered cubic lattice
+- S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice
   (`implicit_stuffing.cpp`; Labelle and Shewchuk 2007, with quadrilateral splits through the smallest
-  identity instead of the parity rule): lattice spacing from the chord rule, cut points by batched
-  regula falsi, warping, conforming stencils. The analytic profile route certifies the result with the
-  existing tubular-projection degree proof and certified facet deviation; a rejected lattice is
-  repaired by a finer one. Targets: torus 0.02 / 0.01 in 10 / 20 ms, inside tolerance. Status
-  (Nov 19, NOT accepted): the stuffing kernel alone takes 1.05 / 2.59 ms at a chord-rule spacing, but
-  the route's construction (`PreparedStuffedImplicitVolume.construct`: stuffing at the route's
-  spacing, lattice acceptance, fixed-boundary quality pass, `CellMesh`) on the ledger solids (sphere
-  r 0.371; torus major 0.742, minor 0.371) takes sphere 0.026 / 0.033 s (CGAL opt=0 0.0014 / 0.0025,
-  quality 7 degrees), torus 0.207 / 0.540 s (Gmsh 0.090 / 0.224) with 1,512 / 2,520 and 15,824 / 43,952
-  cells (2.7-3x Gmsh's). All four certify through acceptance (fidelity sphere 0.0123 / 0.0069, torus
-  0.0109 / 0.0063); acceptance with certification takes 7.6 / 27.5 s (sphere) and 60 / 180 s (torus).
-  To finish: a graded lattice (coarse interior), a first lattice that passes acceptance, no quality
-  pass when the stuffed cells already meet the schedule, faster `CellMesh` topology, and native
-  certifiers (global embedding, validity, distance evidence once per acceptance). There is no
-  `prove=False` path on this branch yet; the 10 / 20 ms targets are construction targets. General
-  implicit fields (the adaptive route) follow with the graded lattice.
+  identity instead of the parity rule; red-green BCC grading after Molino et al. 2003): the band within
+  one spacing of the zero set is the uniform lattice, coarser cells away from it by Lipschitz clearance
+  bounds, red closure and green transitions (25 degrees or better); cut points by active-set regula
+  falsi, warping, conforming stencils. The analytic profile route takes the first spacing from the
+  certified facet bound d^2 / (6 (R - d)) with 1.5 spacings per stuffed triangle diameter (measured
+  maximum 1.41), stuffs the boundary's bounding box, accepts the lattice (exact volume certificate,
+  topology, certified facet deviation; a rejected lattice is repaired by a finer one) and runs the
+  native fixed-boundary quality pass (improvement, refinement only for what improvement leaves
+  unresolved) only when the stuffed cells miss the schedule with margin. `construct()` returns the
+  arrays; `execute()` publishes the `CellMesh` and certifies. Status (Nov 19): construction on the
+  ledger solids takes sphere 4.2 / 9.7 ms (CGAL opt=0 1.4 / 2.5 ms; NOT met) and torus 42 / 103 ms
+  (Gmsh 90 / 224 ms; met) with 2,400 / 5,736 and 22,856 / 50,576 cells, minimum dihedral 30.0 / 20.9 /
+  20.5 / 19.9 degrees; all four certify (fidelity sphere 0.0088 / 0.0047, torus 0.0086 / 0.0058),
+  acceptance with certification 9.6 / 35 s (sphere) and 74 / 197 s (torus). The sphere gap is cell
+  count: the stuffing kernel and the exact volume certificate alone exceed CGAL's time at the
+  certified spacing, and grading cannot coarsen a solid only four to five spacings thick. Remaining:
+  native certifiers (global embedding, validity, distance evidence once per acceptance) and fewer
+  boundary triangles per area at the same certified bound.
 - S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
   one native call `phx_mc_cad_mesh` on a flat geometry bundle; curves split once by integrating the
   size field and shared by every use; faces meshed in their native parameter chart by metric Delaunay
