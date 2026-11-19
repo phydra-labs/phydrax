@@ -1036,7 +1036,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_implicit_stuffing": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _P, _P),
+        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
     ),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
@@ -3334,13 +3334,17 @@ def implicit_stuffing(
     lower: object,
     upper: object,
     spacing: float,
+    levels: int,
+    lipschitz: float,
     /,
 ) -> StuffedVolume:
     """Isosurface stuffing of an interval program's zero set inside a box.
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
     interval program with three inputs; ``seeds`` its workspace template and
-    ``output_entry`` the workspace entry of f. The result is a proposal: it is
+    ``output_entry`` the workspace entry of f. The lattice has ``spacing``
+    near the zero set and coarsens up to ``levels`` times away from it, for f
+    with Lipschitz constant ``lipschitz``. The result is a proposal: it is
     certified afterwards.
     """
     lower_array = _real_array(lower, "lower")
@@ -3363,10 +3367,21 @@ def implicit_stuffing(
         lower_array.ctypes.data,
         upper_array.ctypes.data,
         spacing,
+        levels,
+        lipschitz,
         ctypes.addressof(degenerate),
         ctypes.addressof(handle),
     )
-    _raise_for_call(status, "implicit_stuffing")
+    _raise_for_call(
+        status,
+        "implicit_stuffing",
+        contracts={
+            MeshcoreStatus.INVALID_INPUT: (
+                "f is NaN at a lattice vertex, or the solid {f <= 0} reaches the "
+                "lattice padding outside the box"
+            )
+        },
+    )
     if not handle.value:
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, "implicit_stuffing: missing mesh"
@@ -7963,6 +7978,37 @@ def relocated_tet_mesh_arrays(
     )
 
 
+def _snapshot_group_labels(
+    groups: np.ndarray, labels: np.ndarray, kind: str, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """The distinct source groups of a snapshot and the one label of each."""
+    group_values = np.asarray(groups, dtype=np.int64).reshape((-1,))
+    label_values = np.asarray(labels, dtype=np.int64).reshape((-1,))
+    order = np.argsort(group_values, kind="stable")
+    ordered_groups = group_values[order]
+    ordered_labels = label_values[order]
+    same_group = ordered_groups[1:] == ordered_groups[:-1]
+    if np.any(same_group & (ordered_labels[1:] != ordered_labels[:-1])):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            f"one {kind} group has multiple source IDs",
+        )
+    first = np.ones((ordered_groups.size,), dtype=np.bool_)
+    first[1:] = ~same_group
+    return ordered_groups[first], ordered_labels[first]
+
+
+def _snapshot_relabel(
+    values: np.ndarray, groups: np.ndarray, labels: np.ndarray, /
+) -> np.ndarray:
+    """Each value replaced by its group's label, or kept when it is no group."""
+    flat = np.asarray(values, dtype=np.int64).reshape((-1,))
+    if groups.size == 0:
+        return flat.copy()
+    position = np.minimum(np.searchsorted(groups, flat), groups.size - 1)
+    return np.where(groups[position] == flat, labels[position], flat)
+
+
 @final
 class TetMesh3D:
     """Owned native tetrahedral mesh with atomic edits and checked snapshots.
@@ -8884,17 +8930,25 @@ class TetMesh3D:
                     "unknown TetMesh ancestry edit kind",
                 )
 
-            vertex_index = {
-                int(identifier): row for row, identifier in enumerate(vertex_ids)
-            }
+            identifier_order = np.argsort(vertex_ids, kind="stable")
+            ordered_identifiers = vertex_ids[identifier_order]
 
             def remap(values: np.ndarray, width: int) -> np.ndarray:
-                mapped = np.fromiter(
-                    (vertex_index[int(identifier)] for identifier in values.reshape(-1)),
-                    dtype=np.int64,
-                    count=values.size,
-                )
-                return mapped.reshape((-1, width))
+                flat = values.reshape(-1)
+                if flat.size == 0:
+                    return np.empty((0, width), dtype=np.int64)
+                position = np.searchsorted(ordered_identifiers, flat)
+                if np.any(position >= ordered_identifiers.size) or np.any(
+                    ordered_identifiers[
+                        np.minimum(position, ordered_identifiers.size - 1)
+                    ]
+                    != flat
+                ):
+                    raise MeshcoreError(
+                        MeshcoreStatus.INTERNAL_ERROR,
+                        "TetMesh snapshot references an unknown vertex identity",
+                    )
+                return identifier_order[position].astype(np.int64).reshape((-1, width))
 
             face_id_bank = np.unique(source_face_ids)
             segment_id_bank = np.unique(source_segment_ids)
@@ -8904,59 +8958,31 @@ class TetMesh3D:
             segment_group_rows = np.searchsorted(
                 segment_id_bank, source_segment_ids
             ).astype(np.int32)
-            face_labels_by_group: dict[int, int] = {}
-            for group, label in zip(
-                source_face_groups.tolist(), source_face_ids.tolist(), strict=True
-            ):
-                if group in face_labels_by_group and face_labels_by_group[group] != label:
-                    raise MeshcoreError(
-                        MeshcoreStatus.INTERNAL_ERROR,
-                        "one face group has multiple source IDs",
-                    )
-                face_labels_by_group[group] = label
-            segment_labels_by_group: dict[int, int] = {}
-            for group, label in zip(
-                source_segment_groups.tolist(), source_segment_ids.tolist(), strict=True
-            ):
-                if (
-                    group in segment_labels_by_group
-                    and segment_labels_by_group[group] != label
-                ):
-                    raise MeshcoreError(
-                        MeshcoreStatus.INTERNAL_ERROR,
-                        "one segment group has multiple source IDs",
-                    )
-                segment_labels_by_group[group] = label
+            face_groups, face_group_labels = _snapshot_group_labels(
+                source_face_groups, source_face_ids, "face"
+            )
+            segment_groups, segment_group_labels = _snapshot_group_labels(
+                source_segment_groups, source_segment_ids, "segment"
+            )
             cell_order = np.argsort(cell_ids, kind="stable")
             facet_order = np.argsort(facet_ids, kind="stable")
             segment_order = np.argsort(segment_ids, kind="stable")
-            output_face_sources = np.asarray(
-                [
-                    face_labels_by_group.get(int(value), int(value))
-                    for value in facet_sources
-                ],
-                dtype=np.int64,
+            output_face_sources = _snapshot_relabel(
+                facet_sources, face_groups, face_group_labels
             )
-            output_segment_sources = np.asarray(
-                [
-                    segment_labels_by_group.get(int(value), int(value))
-                    for value in segment_sources
-                ],
-                dtype=np.int64,
+            output_segment_sources = _snapshot_relabel(
+                segment_sources, segment_groups, segment_group_labels
             )
-            cell_ancestry_offsets_sorted = np.empty((cell_count + 1,), dtype=np.int64)
-            cell_ancestry_offsets_sorted[0] = 0
-            cell_ancestor_ids_sorted = np.empty_like(cell_ancestor_ids)
-            ancestor_cursor = 0
-            for output_row, source_row in enumerate(cell_order.tolist()):
-                start = int(cell_ancestry_offsets[source_row])
-                end = int(cell_ancestry_offsets[source_row + 1])
-                count = end - start
-                cell_ancestor_ids_sorted[ancestor_cursor : ancestor_cursor + count] = (
-                    cell_ancestor_ids[start:end]
-                )
-                ancestor_cursor += count
-                cell_ancestry_offsets_sorted[output_row + 1] = ancestor_cursor
+            # The ancestry rows of the cells in output order.
+            ancestry_offsets = np.asarray(cell_ancestry_offsets, dtype=np.int64)
+            ancestry_counts = np.diff(ancestry_offsets)[cell_order]
+            cell_ancestry_offsets_sorted = np.zeros((cell_count + 1,), dtype=np.int64)
+            np.cumsum(ancestry_counts, out=cell_ancestry_offsets_sorted[1:])
+            gather = np.repeat(
+                ancestry_offsets[cell_order] - cell_ancestry_offsets_sorted[:-1],
+                ancestry_counts,
+            ) + np.arange(int(cell_ancestry_offsets_sorted[-1]), dtype=np.int64)
+            cell_ancestor_ids_sorted = cell_ancestor_ids[gather]
             cell_ancestry_edit_kinds_sorted = cell_ancestry_edit_kinds[cell_order]
             vertex_size_targets.setflags(write=False)
             cell_size_targets = cell_size_targets[cell_order]

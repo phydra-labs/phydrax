@@ -2353,17 +2353,25 @@ PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* point
                                         phx_mc_volume_verdict* verdict);
 
 /* Tetrahedral mesh of {f <= 0} inside the box [lower, upper] by isosurface
- * stuffing on a body-centered cubic lattice of the given spacing. f is entry
- * output_entry of an interval program with three inputs, evaluated in
- * binary64 by phx_mc_program_evaluate (seeds as there). Construction only:
- * the result is certified afterwards (phx_mc_verify_volume and the source
- * fidelity bounds). degenerate_count reports stencil tetrahedra with zero
- * orientation, which are omitted (the volume certificate then fails). */
+ * stuffing on a graded body-centered cubic lattice. f is entry output_entry
+ * of an interval program with three inputs, evaluated in binary64 by
+ * phx_mc_program_evaluate (seeds as there), and |f(x) - f(y)| <= lipschitz
+ * |x - y| (a signed distance has lipschitz 1). The lattice of the given
+ * spacing fills the band within one spacing of the zero set; away from it
+ * the lattice coarsens by halving, up to `levels` (0 to 16) times, through
+ * conforming red-green transitions (0 levels: the uniform lattice). The
+ * lattice pads the box by one coarse cell on each side; a lattice vertex
+ * outside the box with f <= 0 (the solid leaves the box) is refused with
+ * PHX_MC_INVALID_INPUT. Construction only: the result is certified
+ * afterwards (phx_mc_verify_volume and the source fidelity bounds).
+ * degenerate_count reports stencil tetrahedra with zero orientation, which
+ * are omitted (the volume certificate then fails). */
 PHX_MC_API int32_t phx_mc_implicit_stuffing(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
     int64_t workspace_size, int64_t output_entry, const double* lower, const double* upper,
-    double spacing, int64_t* degenerate_count, phx_mc_mesh** mesh);
+    double spacing, int32_t levels, double lipschitz, int64_t* degenerate_count,
+    phx_mc_mesh** mesh);
 
 /* CAD geometry bundle: every surface, 3D curve and p-curve of a CAD model is a
  * node of one geometry graph; a node's children precede it. Per node kind,
