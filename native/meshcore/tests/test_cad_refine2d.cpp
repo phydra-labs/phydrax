@@ -397,6 +397,54 @@ void fixed_pole_zone() {
   check_topology(f,result);
 }
 
+void permutation_invariance() {
+  Fixture first, second;
+  constexpr int n=12;
+  constexpr double pi=3.14159265358979323846;
+  for(int i=0;i<n;++i) {
+    const double a=2*pi*i/n, r=2+0.07*std::sin(3*a+0.11);
+    first.points.push_back(r*std::cos(a));
+    first.points.push_back(r*std::sin(a));
+    first.segments.push_back(i); first.segments.push_back((i+1)%n);
+  }
+  for(int i=n-1;i>=0;--i) {
+    second.points.push_back(first.points[2*i]);
+    second.points.push_back(first.points[2*i+1]);
+  }
+  for(int i=n-1;i>=0;--i) {
+    second.segments.push_back(n-1-first.segments[2*i]);
+    second.segments.push_back(n-1-first.segments[2*i+1]);
+  }
+  CadMetric2D m{1,0,1};
+  int32_t a_status,b_status;
+  const auto a=run(first,constant,&m,a_status);
+  const auto b=run(second,constant,&m,b_status);
+  PHX_CHECK(a_status==PHX_MC_OK && b_status==PHX_MC_OK);
+  PHX_CHECK(a.stats.insertions>0 && b.stats.insertions>0);
+  auto cells=[](const CadRefine2DResult& result) {
+    using Point=std::array<double,2>;
+    std::vector<std::array<Point,3>> triangles;
+    const auto& tr=result.triangulation;
+    for(std::size_t t=0;t<tr.triangles.size();++t) {
+      if(!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+      std::array<Point,3> cell;
+      for(int k=0;k<3;++k) {
+        const double* p=tr.point(tr.triangles[t].v[k]);
+        cell[k]={p[0],p[1]};
+      }
+      std::sort(cell.begin(),cell.end());
+      triangles.push_back(cell);
+    }
+    std::sort(triangles.begin(),triangles.end());
+    return triangles;
+  };
+  // Fault caught: input-index tie breaks or cyclic rotation changing constructed coordinates.
+  const auto a_cells=cells(a), b_cells=cells(b);
+  PHX_CHECK(a_cells.size()==b_cells.size());
+  if(a_cells.size()==b_cells.size())
+    PHX_CHECK(std::memcmp(a_cells.data(),b_cells.data(),a_cells.size()*sizeof(a_cells[0]))==0);
+}
+
 }  // namespace
 
 int main() {
@@ -408,6 +456,7 @@ int main() {
   varying_metric();
   adversarial_metrics();
   fixed_pole_zone();
+  permutation_invariance();
   const Fixture f=rectangle(6,6,6,6);
   int32_t status;
   auto r=run(f,height_field,nullptr,status);

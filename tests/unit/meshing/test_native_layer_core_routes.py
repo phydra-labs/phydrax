@@ -715,7 +715,19 @@ def _assert_remeshed_implicit_layer_witness(*, smooth: bool) -> tuple[str, ...]:
     # The discovery scaffold has sliver triangles, so the layer wall is the
     # certified zero-set remeshed carrier; its cells may share scaffold charts.
     layer_wall, root_witness = certified_implicit_layer_wall(query)
-    assert dict(layer_wall.evidence)["carrier_remeshed"] == 1.0
+    evidence = dict(layer_wall.evidence)
+    assert evidence["carrier_remeshed"] == 1.0
+    # Every face kept from the scaffold failed its proof first; the remeshed
+    # wall is embedded and its repairs are counted.
+    kept = evidence["carrier_remesh_kept_carrier_triangles"]
+    assert kept >= 0.0
+    assert (
+        evidence["carrier_remesh_transversality_refusals"]
+        + evidence["carrier_remesh_distance_refusals"]
+        >= kept
+    )
+    assert evidence["carrier_remesh_embedding_refusals"] == 0.0
+    assert evidence["carrier_remesh_repair_splits"] >= 0.0
     wall = layer_wall.wall
     layers = _layer_mesh(wall, None)
     source, construction = _mixed_construction(

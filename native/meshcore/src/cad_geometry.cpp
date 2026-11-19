@@ -985,6 +985,7 @@ bool CadGeometry::expand_intersection(const Node& node, double t, int order, Tay
     chart = std::min(static_cast<int64_t>(std::floor(carrier)), charts - 1);
     if (terminal >= 0 && carrier >= node.reals[1]) chart = terminal;
   }
+  if (workspace.span_node == &node) chart = workspace.span_chart;
   const int axis = static_cast<int>(node.integers[7 + chart]);
   const double* data = node.reals + 2 + kChartReals * chart;
   const double *start = data, *end = data + 4, *lower = data + 8, *upper = data + 12;
@@ -1257,6 +1258,58 @@ void CadGeometry::curve_breakpoints(int32_t index, double first, double last,
     default:
       break;
   }
+}
+
+bool CadGeometry::jets_in_span(int32_t index, double parameter, double span_interior,
+                               int order, double* result, EvaluationWorkspace& workspace) const {
+  if (!std::isfinite(parameter) || !std::isfinite(span_interior)) return false;
+  int32_t current=index;
+  double interior=span_interior;
+  const Node* selected=nullptr;
+  int64_t chart=-1;
+  for (;;) {
+    const Node& n=node(current);
+    if (n.kind==PHX_MC_CAD_NODE_INTERSECTION) {
+      const double carrier=n.integers[6] ? n.reals[0]-interior : interior;
+      const int64_t charts=n.integers[2];
+      if (!(carrier>0 && carrier<static_cast<double>(charts)) ||
+          carrier==std::floor(carrier) ||
+          (n.integers[5]>=0 && carrier==n.reals[1])) return false;
+      chart=n.integers[4];
+      if (chart>=0 && !(carrier>chart && carrier<chart+1)) return false;
+      if (chart<0) {
+        chart=std::min(static_cast<int64_t>(std::floor(carrier)),charts-1);
+        if (n.integers[5]>=0 && carrier>=n.reals[1]) chart=n.integers[5];
+      }
+      selected=&n;
+      break;
+    }
+    if (n.kind==PHX_MC_CAD_NODE_BSPLINE_CURVE) {
+      if (!(interior>n.reals[n.integers[0]] && interior<n.reals[n.integers[1]]))
+        return false;
+      const int64_t knot_count=n.integers[0]+n.integers[1]+1;
+      for (int64_t i=0;i<knot_count;++i) if (interior==n.reals[i]) return false;
+      break;
+    }
+    if (n.kind==PHX_MC_CAD_NODE_REPARAMETERIZED) {
+      interior=n.reals[0]+(n.integers[1] ? 1-interior : interior)*(n.reals[1]-n.reals[0]);
+      current=static_cast<int32_t>(n.integers[0]);
+    } else if (n.kind==PHX_MC_CAD_NODE_AFFINE || n.kind==PHX_MC_CAD_NODE_OFFSET_CURVE) {
+      current=static_cast<int32_t>(n.integers[0]);
+    } else if (n.kind==PHX_MC_CAD_NODE_SURFACE_MAPPED) {
+      current=static_cast<int32_t>(n.integers[1]);
+    } else {
+      break;
+    }
+  }
+  const Node* previous_node=workspace.span_node;
+  const int64_t previous_chart=workspace.span_chart;
+  workspace.span_node=selected;
+  workspace.span_chart=chart;
+  const bool ok=jets(index,&parameter,order,result,workspace);
+  workspace.span_node=previous_node;
+  workspace.span_chart=previous_chart;
+  return ok;
 }
 
 bool CadGeometry::jets(int32_t index, const double* point, int order, double* result,

@@ -181,7 +181,6 @@ bool discretize(Context& c, std::vector<double>& points) {
   }
   struct Span {
     std::vector<double> cumulative;
-    double quota = 0;
     int count = 1;
   };
   std::vector<Span> spans(borders.size());
@@ -198,31 +197,16 @@ bool discretize(Context& c, std::vector<double>& points) {
       cumulative[i-start]=cumulative[i-start-2]+area;
     }
     if (!(cumulative.back()>0) || !std::isfinite(cumulative.back())) return false;
-    total+=cumulative.back();
+    if (cumulative.back()>kMaxPoints) return false;
+    spans[span].count=std::max(1,static_cast<int>(std::ceil(cumulative.back())));
+    total+=spans[span].count;
   }
-  if (!std::isfinite(total) || total>kMaxPoints) return false;
-  int count=std::max(static_cast<int>(spans.size()),static_cast<int>(std::ceil(total)));
-  if (m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1]) count=std::max(count,3);
-  int assigned=0;
-  for (auto& span:spans) {
-    span.quota=count*span.cumulative.back()/total;
-    span.count=std::max(1,static_cast<int>(std::floor(span.quota)));
-    assigned+=span.count;
+  if (total>kMaxPoints) return false;
+  if (m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1] && total<3) {
+    spans.back().count+=3-static_cast<int>(total);
+    total=3;
   }
-  while (assigned<count) {
-    auto best=std::max_element(spans.begin(),spans.end(),[](const Span& a,const Span& b) {
-      return a.quota-a.count < b.quota-b.count;
-    });
-    ++best->count; ++assigned;
-  }
-  while (assigned>count) {
-    auto best=spans.end();
-    for (auto it=spans.begin();it!=spans.end();++it)
-      if (it->count>1 && (best==spans.end() ||
-          it->count-it->quota > best->count-best->quota)) best=it;
-    if (best==spans.end()) return false;
-    --best->count; --assigned;
-  }
+  const int count=static_cast<int>(total);
   points.clear(); points.reserve(static_cast<std::size_t>(count)+1); points.push_back(0);
   for (std::size_t span=0; span<spans.size(); ++span) {
     const std::size_t start=begins[span], end=borders[span];
@@ -232,7 +216,34 @@ bool discretize(Context& c, std::vector<double>& points) {
     if (inverse_curve_table(parameters.data(),spans[span].cumulative.data(),
                             static_cast<int64_t>(parameters.size()),n,placed.data()) != PHX_MC_OK)
       return false;
-    points.insert(points.end(),placed.begin()+1,placed.end());
+    // Verify each placed interval against the same piecewise-linear integral
+    // table used by inversion; bisection handles rounding at the unit bound.
+    const auto& cumulative=spans[span].cumulative;
+    auto integral_at = [&](double s) {
+      auto it=std::lower_bound(parameters.begin(),parameters.end(),s);
+      if (it==parameters.begin()) return cumulative.front();
+      if (it==parameters.end()) return cumulative.back();
+      const std::size_t i=static_cast<std::size_t>(it-parameters.begin());
+      const double fraction=(s-parameters[i-1])/(parameters[i]-parameters[i-1]);
+      return cumulative[i-1]+fraction*(cumulative[i]-cumulative[i-1]);
+    };
+    for (int k=1;k<=n;++k) {
+      double left=points.back(), value=integral_at(left);
+      const double right=placed[k], end_value=integral_at(right);
+      while (end_value-value>1) {
+        double mid=left+(right-left)*0.5;
+        double mid_value=integral_at(mid);
+        while (mid_value-value>1) {
+          mid=left+(mid-left)*0.5;
+          if (!(mid>left)) return false;
+          mid_value=integral_at(mid);
+        }
+        if (!(mid>left && mid<right) || points.size()>=kMaxPoints) return false;
+        points.push_back(mid);
+        left=mid; value=mid_value;
+      }
+      points.push_back(right);
+    }
   }
   return true;
 }
@@ -402,10 +413,12 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
 }
 bool sag(Context& c, double a, double b, const double* x, const double* y,
          int depth, std::vector<double>& out) {
-  constexpr double q = 0.28867513459481288225;
-  double p[3], r[3];
-  const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
-  if (!c.value(s1,p) || !c.value(s2,r)) return false;
+  double p[3]{}, r[3]{};
+  if (c.controls.sag_check) {
+    constexpr double q = 0.28867513459481288225;
+    const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
+    if (!c.value(s1,p) || !c.value(s2,r)) return false;
+  }
   double tol=c.controls.curve_tolerances[c.curve];
   for (const Use& u:c.uses) tol=std::min(tol,c.controls.face_tolerances[u.face]);
   tol*=c.controls.tolerance_fraction;
@@ -416,7 +429,9 @@ bool sag(Context& c, double a, double b, const double* x, const double* y,
     const double t=length2>0 ? std::clamp((px*dx+py*dy+pz*dz)/length2,0.0,1.0) : 0.0;
     return std::hypot(px-t*dx,py-t*dy,pz-t*dz);
   };
-  if (deviation(p)<=tol && deviation(r)<=tol) { out.push_back(b); return true; }
+  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol)) {
+    out.push_back(b); return true;
+  }
   const double mid=(a+b)*0.5;
   if (depth==kSagDepth || !(mid>a && mid<b) || out.size()>=kMaxPoints) {
     c.stats.unresolved.push_back({c.curve,a,b}); out.push_back(b); return true;
@@ -521,13 +536,9 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
       if (!discretize(c,points)) return c.failure_status;
     }
     std::vector<double> repaired;
-    if (controls.sag_check) {
-      const int32_t status=repair_curve_sag(geometry,controls,e,points,repaired,output.statistics);
-      if (status!=PHX_MC_OK && status!=PHX_MC_UNRESOLVED) return status;
-      output.parameters.insert(output.parameters.end(),repaired.begin(),repaired.end());
-    } else {
-      output.parameters.insert(output.parameters.end(),points.begin(),points.end());
-    }
+    const int32_t status=repair_curve_sag(geometry,controls,e,points,repaired,output.statistics);
+    if (status!=PHX_MC_OK && status!=PHX_MC_UNRESOLVED) return status;
+    output.parameters.insert(output.parameters.end(),repaired.begin(),repaired.end());
     output.offsets.push_back(static_cast<int64_t>(output.parameters.size()));
   }
   const int32_t status=output.statistics.unresolved.empty()?PHX_MC_OK:PHX_MC_UNRESOLVED;
