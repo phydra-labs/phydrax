@@ -108,14 +108,19 @@ tetrahedra, then implicit volumes, then the CAD solid.
   identity instead of the parity rule): lattice spacing from the chord rule, cut points by batched
   regula falsi, warping, conforming stencils. The analytic profile route certifies the result with the
   existing tubular-projection degree proof and certified facet deviation; a rejected lattice is
-  repaired by a finer one. Targets: torus 0.02 / 0.01 in 10 / 20 ms, inside tolerance. Kernel measured
-  (`24bd51f30`): 1.05 / 2.59 ms. Route cutover (`implicit_stuffing`): torus 0.02 end to end 8,188
-  cells, certified, fidelity 0.0132 / 0.0117; certification after construction 478 s -> 28 s
-  (profiled) by the per-triangle Hessian bound, interval-field distances, vectorized reverse bound and
-  native batched interval programs. Remaining certification cost: the global embedding (twice) and the
-  distance evidence (three times per acceptance); next: native embedding via `phx_mc_verify_volume`
-  and one evidence computation per acceptance. General implicit fields (the adaptive route) follow
-  with the box-tree grading of the lattice.
+  repaired by a finer one. Targets: torus 0.02 / 0.01 in 10 / 20 ms, inside tolerance. Status
+  (Nov 19, NOT accepted): the stuffing kernel alone takes 1.05 / 2.59 ms at a chord-rule spacing, but
+  the route's construction (`PreparedStuffedImplicitVolume.construct`: stuffing at the route's
+  spacing, lattice acceptance, fixed-boundary quality pass, `CellMesh`) on the ledger solids (sphere
+  r 0.371; torus major 0.742, minor 0.371) takes sphere 0.026 / 0.033 s (CGAL opt=0 0.0014 / 0.0025,
+  quality 7 degrees), torus 0.207 / 0.540 s (Gmsh 0.090 / 0.224) with 1,512 / 2,520 and 15,824 / 43,952
+  cells (2.7-3x Gmsh's). All four certify through acceptance (fidelity sphere 0.0123 / 0.0069, torus
+  0.0109 / 0.0063); acceptance with certification takes 7.6 / 27.5 s (sphere) and 60 / 180 s (torus).
+  To finish: a graded lattice (coarse interior), a first lattice that passes acceptance, no quality
+  pass when the stuffed cells already meet the schedule, faster `CellMesh` topology, and native
+  certifiers (global embedding, validity, distance evidence once per acceptance). There is no
+  `prove=False` path on this branch yet; the 10 / 20 ms targets are construction targets. General
+  implicit fields (the adaptive route) follow with the graded lattice.
 - S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
   one native call `phx_mc_cad_mesh` on a flat geometry bundle; curves split once by integrating the
   size field and shared by every use; faces meshed in their native parameter chart by metric Delaunay

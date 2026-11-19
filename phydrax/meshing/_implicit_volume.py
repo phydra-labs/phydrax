@@ -391,23 +391,22 @@ def _dihedral_degrees_lower(cosine_lower: float, /) -> float:
 
 
 def _native_fixed_boundary_quality_pass(
-    mesh: CellMesh,
+    points: np.ndarray,
+    tetrahedra: np.ndarray,
     boundary_faces: np.ndarray,
     profile: AnalyticImplicitProfile,
     schedule: NativeVolumeSchedule,
     /,
 ) -> tuple[CellMesh, np.ndarray, np.ndarray]:
-    """Improve a source-constrained tetrahedral state and rebind its unchanged boundary."""
-    if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind != "tetrahedron":
-        raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Analytic volume quality improvement requires one tetrahedral block.",
-            "implicit_quality_preparation",
-        )
-    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
-    tetrahedra = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
-    cell_ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    """Improve a source-constrained tetrahedral state and rebind its unchanged boundary.
+
+    ``points`` and ``tetrahedra`` are the primal arrays; vertex and cell
+    identities are their row numbers.
+    """
+    coordinates = np.asarray(points, dtype=np.float64)
+    tetrahedra = np.asarray(tetrahedra, dtype=np.int32)
+    cell_ids = np.arange(tetrahedra.shape[0], dtype=np.int64)
+    vertex_ids = np.arange(coordinates.shape[0], dtype=np.int64)
     facets = np.asarray(boundary_faces, dtype=np.int32).reshape((-1, 3))
     if (
         facets.shape[0] == 0
@@ -421,12 +420,6 @@ def _native_fixed_boundary_quality_pass(
         )
     if facets.shape[0] > np.iinfo(np.int32).max:
         raise OverflowError("Analytic volume facet labels exceed native int32 indices.")
-    if np.any(vertex_ids < 0) or np.any(cell_ids < 0):
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Analytic volume quality state requires nonnegative stable vertex and cell IDs.",
-            "implicit_quality_preparation",
-        )
     face_sources = np.arange(facets.shape[0], dtype=np.int32)
     face_orientations = np.ones((facets.shape[0],), dtype=np.int8)
     segments = np.empty((0, 2), dtype=np.int32)
@@ -852,12 +845,13 @@ def _stuffed_primal_mesh(
     fidelity_tolerance: float,
     spacing: float,
     /,
-) -> tuple[CellMesh, np.ndarray] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Stuff the profile interior on one lattice, or return None for a finer lattice.
 
     The floating-point construction proposes; the exact volume certificate,
     the profile topology and the certified facet deviation accept it.
-    Returns the mesh and its outward boundary triangles.
+    Returns the points, the positive tetrahedra and the outward boundary
+    triangles.
     """
     stuffed = program.stuff_tetrahedra(carrier_bounds[0], carrier_bounds[1], spacing)
     points, cells = stuffed.points, stuffed.cells
@@ -912,10 +906,7 @@ def _stuffed_primal_mesh(
             quantile = 0.5 if statistic == "p50" else 0.95
             if float(np.quantile(edge_lengths, quantile)) > allowed:
                 return None
-    mesh = CellMesh.from_tetrahedra(
-        points, cells, numeric_version=profile.source_revision
-    )
-    return mesh, boundary.astype(np.int32, copy=False)
+    return points, cells, boundary.astype(np.int32, copy=False)
 
 
 @final
@@ -957,10 +948,47 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         self.spacing = float(spacing)
         self.prepared_id = prepared_id
 
+    def construct(self, /) -> tuple[CellMesh, np.ndarray, np.ndarray]:
+        """Stuff, accept and improve the lattice: the mesh before certification.
+
+        Returns the improved mesh, its boundary face global IDs and its outward
+        boundary triangles. Acceptance of a lattice uses the exact volume
+        certificate, the profile topology and the certified facet deviation;
+        the source-fidelity, coverage and embedding certificates come after.
+        """
+        profile = self.profile
+        profile.require_bound(profile.geometry, self.coordinate_contract)
+        program = _stuffing_program(profile)
+        spacing = self.spacing
+        # A rejected lattice is repaired by a finer one; the bounded number of
+        # refinements keeps the cell count within 64 times the first attempt's.
+        for _ in range(_STUFFING_REFINEMENTS):
+            attempt = _stuffed_primal_mesh(
+                profile,
+                self.specification,
+                program,
+                self.carrier_bounds,
+                self.fidelity_tolerance,
+                spacing,
+            )
+            if attempt is not None:
+                break
+            spacing *= _STUFFING_REFINEMENT_FACTOR
+        else:
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "No stuffed lattice met the certified volume, topology, fidelity and size controls.",
+                "implicit_stuffing",
+            )
+        points, cells, boundary = attempt
+        return _native_fixed_boundary_quality_pass(
+            points, cells, boundary, profile, self.schedule
+        )
+
     def execute(self, /) -> NativeMeshConstruction:
         profile = self.profile
         specification = self.specification
-        profile.require_bound(profile.geometry, self.coordinate_contract)
+        mesh, target_face_global_ids, boundary_faces = self.construct()
         samples = profile.boundary_cover(self.seed_cover_radius)
         if (
             not samples.complete
@@ -976,38 +1004,6 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         cover_radius = self.seed_cover_radius
         sample_count = samples.points.shape[0]
         del samples
-        program = _stuffing_program(profile)
-        spacing = self.spacing
-        # A rejected lattice is repaired by a finer one; the bounded number of
-        # refinements keeps the cell count within 64 times the first attempt's.
-        for _ in range(_STUFFING_REFINEMENTS):
-            attempt = _stuffed_primal_mesh(
-                profile,
-                specification,
-                program,
-                self.carrier_bounds,
-                self.fidelity_tolerance,
-                spacing,
-            )
-            if attempt is not None:
-                break
-            spacing *= _STUFFING_REFINEMENT_FACTOR
-        else:
-            raise _failure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "No stuffed lattice met the certified volume, topology, fidelity and size controls.",
-                "implicit_stuffing",
-            )
-        # The primal mesh is only the quality pass input; dropping the attempt
-        # releases it as soon as the improved mesh exists.
-        primal_mesh, primal_boundary_faces = attempt
-        del attempt, program
-        mesh, target_face_global_ids, boundary_faces = (
-            _native_fixed_boundary_quality_pass(
-                primal_mesh, primal_boundary_faces, profile, self.schedule
-            )
-        )
-        del primal_mesh, primal_boundary_faces
         if not _topology_matches(profile, boundary_faces):
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,

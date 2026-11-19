@@ -26,6 +26,7 @@ from jax import Array
 
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
+from phydrax.discretization import CellMesh
 from phydrax.geometry._interval_enclosure import prepare_interval_function
 
 
@@ -316,48 +317,70 @@ def _volume_unmet(result: object, /) -> int:
 
 
 def _implicit_rows() -> tuple[_Row, ...]:
-    # Sphere and torus of the external comparison (minor radius 0.371, major
-    # 0.742); the row size is the tolerance in thousandths. The lattice spacing
-    # follows the chord rule h = 2 sqrt(tolerance * radius).
-    radius = 0.371
+    # The external comparison's sphere (radius 0.371) and torus (major 0.742,
+    # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
+    # profile route's construction: stuffing at the route's spacing, lattice
+    # acceptance (exact volume certificate, topology, certified facet
+    # deviation) and the fixed-boundary quality pass. Certification after
+    # construction is not timed. The row size is the tolerance in thousandths.
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry import Sphere, Torus
+    from phydrax.geometry.implicit import AnalyticImplicitProfile
+    from phydrax.meshing import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._implicit_volume import PreparedStuffedImplicitVolume
+    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_implicit import prepare_native_implicit
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
-    def sphere(x: Array) -> Array:
-        return jnp.stack((jnp.sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]) - radius,))
-
-    def torus(x: Array) -> Array:
-        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 2.0 * radius
-        return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - radius,))
-
+    contract = SpatialCoordinateContract.si()
     rows: list[_Row] = []
-    for name, field, half_extent in (
-        ("implicit-sphere", sphere, (0.4, 0.4, 0.4)),
-        ("implicit-torus", torus, (1.15, 1.15, 0.4)),
+    for name, geometry in (
+        ("implicit-sphere", Sphere((0.0, 0.0, 0.0), 0.371, feature_id="sphere")),
+        ("implicit-torus", Torus((0.0, 0.0, 0.0), 0.371, 1.113, feature_id="torus")),
     ):
-        program = prepare_interval_function(
-            field, 3, batch_capacity=1, execution="batched"
-        ).native_program
-        if program is None:
-            raise RuntimeError("The implicit rows need the native interval program.")
-        upper = np.asarray(half_extent, dtype=np.float64)
+        profile = AnalyticImplicitProfile(
+            geometry.compile(), contract, source_id=name, source_revision="benchmark"
+        )
+        scope = MeshingScope(
+            profile.source_id,
+            profile.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            2,
+            profile.scope_entity_set_id(2),
+            profile.scope_entity_ids(2),
+        )
         for thousandths in (20, 10):
-            spacing = 2.0 * math.sqrt(1e-3 * thousandths * radius)
-            rows.append(
-                _Row(
-                    name,
-                    thousandths,
-                    lambda program=program, upper=upper, spacing=spacing: (
-                        program.stuff_tetrahedra(-upper, upper, spacing)
-                    ),
-                    _stuffed_cells,
-                )
+            specification = VolumeMeshingSpec(
+                CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+                scope,
+                VolumeFillStrategy.SIMPLEX,
+                size_controls=(),
+                maximum_deviation=1e-3 * thousandths,
             )
+            prepared = prepare_native_implicit(
+                profile,
+                specification,
+                NativeMeshingOptions(
+                    "implicit_stuffing", volume_schedule=NativeVolumeSchedule()
+                ),
+                contract,
+            )
+            if not isinstance(prepared, PreparedStuffedImplicitVolume):
+                raise TypeError("An analytic profile volume prepares the stuffing route.")
+            rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
 
-def _stuffed_cells(result: object, /) -> int:
-    if not isinstance(result, _meshcore.StuffedVolume):
-        raise TypeError("Isosurface stuffing returns a StuffedVolume.")
-    return result.cells.shape[0]
+def _constructed_cells(result: object, /) -> int:
+    if not isinstance(result, tuple) or not isinstance(result[0], CellMesh):
+        raise TypeError("The stuffing construction returns (mesh, ids, faces).")
+    return result[0].blocks[0].cell_count
 
 
 def _ceiling(
