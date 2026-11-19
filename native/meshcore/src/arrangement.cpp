@@ -1509,6 +1509,14 @@ PredicateCover predicate_facet_cover(
   };
   if (index != nullptr) index->candidates(subject_lower, subject_upper, *scratch);
   const std::size_t candidate_count = index == nullptr ? rows : scratch->size();
+  // A corner equal to a subject corner lies on the subject plane.
+  const auto on_subject_plane = [&](const double* point) {
+    for (int k = 0; k < 3; ++k) {
+      const double* own = subject + 3 * k;
+      if (point[0] == own[0] && point[1] == own[1] && point[2] == own[2]) return true;
+    }
+    return orient3d(corner(0, 0), corner(0, 1), corner(0, 2), point) == 0;
+  };
   bool skipped = index != nullptr && candidate_count != rows;
   // Coplanar partners in row order; a degenerate partner refuses the face.
   std::vector<std::size_t> partners;
@@ -1524,9 +1532,7 @@ PredicateCover predicate_facet_cover(
       continue;
     }
     bool coplanar = true;
-    for (int k = 0; k < 3 && coplanar; ++k) {
-      coplanar = orient3d(corner(0, 0), corner(0, 1), corner(0, 2), corner(row, k)) == 0;
-    }
+    for (int k = 0; k < 3 && coplanar; ++k) coplanar = on_subject_plane(corner(row, k));
     if (!coplanar) continue;
     const Shape shape = project(row);
     const int orientation = orient2d(shape[0].data(), shape[1].data(), shape[2].data());
