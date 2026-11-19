@@ -572,8 +572,10 @@ class ConstrainedMesher {
     if (tri_.live[static_cast<std::size_t>(entry.slot)] == 0 || tri_.is_ghost(entry.slot)) {
       return false;
     }
-    const BadTriangle current = make_entry(entry.slot, entry.badness);
-    return std::equal(current.v, current.v + 3, entry.v);
+    const int first = tri_.index_of(entry.slot, entry.v[0]);
+    if (first < 0) return false;
+    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(entry.slot)];
+    return triangle.v[next3(first)] == entry.v[1] && triangle.v[prev3(first)] == entry.v[2];
   }
 
   bool encroaches(int32_t t, int k, const double* v) const {
