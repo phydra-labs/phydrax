@@ -243,7 +243,8 @@ def _adapt(
         hierarchy=hierarchy,
     )
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=_policy(route, **options))
+        prepare_mesh_adaptation(source, request, policy=_policy(route, **options)),
+        prove=True,
     )
 
 
@@ -825,14 +826,16 @@ _PARTS_SCRIPT = textwrap.dedent(
 
     host_policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
     host = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, MarkedMeshAdaptation(np.sort(marks)), policy=host_policy)
+        prepare_mesh_adaptation(source, MarkedMeshAdaptation(np.sort(marks)), policy=host_policy),
+        prove=True,
     )
     host = execute_mesh_adaptation(
         prepare_mesh_adaptation(
             host.target,
             MarkedMeshAdaptation(np.sort(held), hierarchy=host.hierarchy),
             policy=host_policy,
-        )
+        ),
+        prove=True,
     )
     def cells_by_id(mesh):
         records = {}

@@ -2417,7 +2417,8 @@ def test_public_coupled_relocation_cage_transfers_affine_fields() -> None:
                 relocation=True,
                 protected_scopes=(protected,),
             ),
-        )
+        ),
+        prove=True,
     )
     assert result.status is MeshAdaptationStatus.COMPLETE
     assert isinstance(result.evidence, TetraMetricEvidence)

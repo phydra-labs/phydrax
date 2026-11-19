@@ -60,7 +60,8 @@ from ..discretization._periodic_exact import (
     reduce_periodic_exponents,
 )
 from ..linalg import hermitian_exp, hermitian_log
-from ..typing import checked
+from ..typing import checked, parse
+from ._contracts import ConstructionSteering
 from ._device_status import DeviceEpoch, require_committed_status
 from ._lineage import MeshTransitionKind
 from ._local_metric import (
@@ -5331,9 +5332,12 @@ def commit_device_metric_adaptation(
     return _adaptation_result(prepared.adaptation, _outcome(committed, host), started)
 
 
-def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_device_metric_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
     """Run compiled metric epochs, growing static workspaces before retry."""
 
+    parse(steering, ConstructionSteering, "steering")
     metric = _prepared_metric(prepared)
     update = adapt_device_metric(metric.layout, metric.state, prepared=metric)
     committed = PreparedDeviceMetricAdaptation(

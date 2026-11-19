@@ -484,7 +484,8 @@ def test_surface_relocation_without_operations_does_not_claim_unit_mesh(
                 association_transfer=SurfaceAssociationTransfer(domain),
                 relocation=False,
             ),
-        )
+        ),
+        prove=True,
     )
     assert isinstance(result.evidence, SurfaceMetricOutcome)
     assert result.evidence.out_of_range_edges > 0
@@ -799,7 +800,8 @@ def test_native_surface_metric_route_reconstructs_and_transfers_implicit_sphere(
             source,
             MetricMeshAdaptation(metric),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert result.route is MeshAdaptationRoute.NATIVE_METRIC_SURFACE
     assert isinstance(result.evidence, SurfaceMetricOutcome)
@@ -895,7 +897,8 @@ def test_native_surface_metric_route_rebinds_trimmed_sheet_source_charts(
                 MeshAdaptationRoute.NATIVE_METRIC_SURFACE,
                 association_transfer=transfer,
             ),
-        )
+        ),
+        prove=True,
     )
     assert result.route is MeshAdaptationRoute.NATIVE_METRIC_SURFACE
     assert result.transition is not None

@@ -405,7 +405,8 @@ def test_brep_wall_refinement_and_complete_coarsening(brep_layer_core: LayerCase
                 (), children, hierarchy=refinement.hierarchy
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     ).target
     transfer.validate_source(restored)
     assert restored.mesh.topology_id == original.mesh.topology_id

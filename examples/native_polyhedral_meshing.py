@@ -311,7 +311,8 @@ def main() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_POLYHEDRAL
             ),
-        )
+        ),
+        prove=True,
     )
     target = adaptation.target
     if (

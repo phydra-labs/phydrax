@@ -25,6 +25,7 @@ from ..optim import (
 )
 from ..optim._programming._audit import DualRayAudit
 from . import _tetra_metric as tm
+from ._contracts import ConstructionSteering
 from ._periodic import (
     _PeriodicStencilTransport,
     _prepare_periodic_stencil_transport,
@@ -205,6 +206,7 @@ def _solve(
     policy: ConvexSolvePolicy,
     binding: _CoupledBinding,
     *,
+    steering: ConstructionSteering = "certified",
     cache: _ProgramCache | None = None,
 ) -> _CoupledSolve:
     n = 3 * len(binding.vertices)
@@ -231,6 +233,20 @@ def _solve(
     # The native owner is already compiled; keep fresh binding provenance out
     # of a second JIT cache key.
     result = solve_coupled(primary)
+    if steering == "screened":
+        primal = None
+        if (
+            int(result.status) == int(ConvexProgramStatus.OPTIMAL)
+            and bool(result.successful)
+            and not bool(result.certificate.dual_ray_valid)
+            and not bool(result.certificate.primal_ray_valid)
+        ):
+            candidate = np.asarray(result.primal, dtype=np.float64)
+            if candidate.shape == (n,) and np.all(np.isfinite(candidate)):
+                primal = candidate
+        return _CoupledSolve(
+            result, policy, primary.demand, binding, primal, None, None, None
+        )
     if int(result.status) == int(ConvexProgramStatus.OPTIMAL) and bool(result.successful):
         primal = np.asarray(result.primal, dtype=np.float64)
         if primal.shape != (n,) or not np.all(np.isfinite(primal)):
@@ -344,6 +360,7 @@ class _Search(NamedTuple):
     current_transport: _PeriodicStencilTransport | None
     native_by_target: dict[int, int]
     programs: _ProgramCache
+    steering: ConstructionSteering
 
 
 def _active_plane(
@@ -458,7 +475,9 @@ def _active_rows(
         )
 
 
-def _prepare_search(state: tm._NativeState) -> _Search:
+def _prepare_search(
+    state: tm._NativeState, steering: ConstructionSteering = "certified"
+) -> _Search:
     prepared = tm._prepare_relocation_geometry(state)
     edges = tuple(prepared.topology.edge_cells)
     measured = np.asarray(
@@ -488,6 +507,7 @@ def _prepare_search(state: tm._NativeState) -> _Search:
         if periodic
         else {},
         _ProgramCache(),
+        steering,
     )
 
 
@@ -1178,7 +1198,7 @@ def _blocking_neighbors(
     return tuple(chosen[vertex] for vertex in sorted(chosen, key=target_ids.__getitem__))
 
 
-def _search_model(
+def _search_model_attempt(
     search: _Search,
     details: tuple[_VertexDetail, ...],
     selected: tuple[tm._SourceTetRecord, ...],
@@ -1200,8 +1220,13 @@ def _search_model(
             policy,
             binding,
             cache=search.programs,
+            steering=search.steering,
         )
         if solved.primal is None:
+            if search.steering == "screened" and solved.ray_audit is None:
+                # A screened model that is not solved to an optimum proposes
+                # nothing; no certificate is built for it.
+                return _ModelAttempt(0, ())
             return _ModelAttempt(
                 0, _blocking_neighbors(search, incident, binding, base_rows, solved)
             )
@@ -1243,6 +1268,29 @@ def _search_model(
                 fresh = True
         if not fresh:
             return _ModelAttempt(0, ())
+
+
+def _search_model(
+    search: _Search,
+    details: tuple[_VertexDetail, ...],
+    selected: tuple[tm._SourceTetRecord, ...],
+    incident: list[int],
+    binding: _CoupledBinding,
+    policy: ConvexSolvePolicy,
+    counters: dict[str, int],
+) -> _ModelAttempt:
+    if search.steering == "certified":
+        return _search_model_attempt(
+            search, details, selected, incident, binding, policy, counters
+        )
+    # Under screened steering a model that cannot be prepared or solved within
+    # its resource policy proposes nothing instead of ending the adaptation.
+    try:
+        return _search_model_attempt(
+            search, details, selected, incident, binding, policy, counters
+        )
+    except TetraMetricProposalError:
+        return _ModelAttempt(0, ())
 
 
 def _search_neighbor_patch(
@@ -1424,9 +1472,15 @@ def _source_choices(
         yield tuple(selected[vertex] for vertex in vertices)
 
 
-def _coupled_relocation_phase(state: tm._NativeState, counters: dict[str, int], /) -> int:
+def _coupled_relocation_phase(
+    state: tm._NativeState,
+    counters: dict[str, int],
+    /,
+    *,
+    steering: ConstructionSteering = "certified",
+) -> int:
     """Search selected incident source cells around violating edges once per state."""
-    search = _prepare_search(state)
+    search = _prepare_search(state, steering)
     if not search.before[0] and not search.before[1]:
         return 0
     materialization = MaterializationPolicy()

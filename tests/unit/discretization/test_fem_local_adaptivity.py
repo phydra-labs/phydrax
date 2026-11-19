@@ -37,7 +37,8 @@ def _bisect(
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
 
 

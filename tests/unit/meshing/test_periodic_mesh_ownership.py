@@ -1534,7 +1534,8 @@ def test_periodic_metric_edge_classes_use_quotient_incidence_on_multi_period_cov
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D
             ),
-        )
+        ),
+        prove=True,
     )
     assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
     target = result.target.mesh
@@ -1891,7 +1892,7 @@ def test_periodic_native_bisection_uses_one_orbit_locked_edge_plan() -> None:
                         compatibility=phx.meshing.BisectionCompatibility.REJECT,
                     ),
                 )
-                result = phx.meshing.execute_mesh_adaptation(prepared)
+                result = phx.meshing.execute_mesh_adaptation(prepared, prove=True)
             except (ValueError, phx.meshing.MeshingFailure):
                 continue
             selected = lock

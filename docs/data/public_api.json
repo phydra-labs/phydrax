@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a0027a80cccb740f8db56d2d4cce6616a7c46b8de41ea637a579aacc7755a931",
+  "manifest_id": "a82ec636da141d9328feaf782ce98116d9d448f6d148a831396966afdce21169",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -26936,6 +26936,7 @@
       "phydrax.meshing.AbstractMeshingSession",
       "phydrax.meshing.AdaptationAction",
       "phydrax.meshing.AdaptationIntent",
+      "phydrax.meshing.AdaptedMeshCandidate",
       "phydrax.meshing.AssociationEntityClasses",
       "phydrax.meshing.AssociationPropagationError",
       "phydrax.meshing.AssociationPropagationPolicy",

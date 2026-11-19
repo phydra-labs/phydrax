@@ -1080,7 +1080,8 @@ def _remesh(
             MetricMeshAdaptation(metric),
             policy=policy,
             prior_transition=prior_transition,
-        )
+        ),
+        prove=True,
     )
 
 

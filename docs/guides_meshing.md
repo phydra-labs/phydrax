@@ -2259,7 +2259,8 @@ refined = phx.meshing.execute_mesh_adaptation(
         policy=phx.meshing.MeshAdaptationPolicy(
             phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
         ),
-    )
+    ),
+    prove=True,
 )
 values = refined.transfer.apply(result.mesh.coordinates[:, 0])
 coarsened = phx.meshing.execute_mesh_adaptation(
@@ -2271,15 +2272,20 @@ coarsened = phx.meshing.execute_mesh_adaptation(
         policy=phx.meshing.MeshAdaptationPolicy(
             phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
         ),
-    )
+    ),
+    prove=True,
 )
 ```
 
 `prepare_mesh_adaptation(source, request, policy=...)` binds one typed request
 to one certified `CellMeshingResult` under one explicit `MeshAdaptationRoute`;
 `execute_mesh_adaptation` runs exactly that route and never falls back to
-another. Requests are `MarkedMeshAdaptation` (cells to refine and to coarsen by
-global ID, plus the `hierarchy` returned by the previous adaptation),
+another. By default it returns an `AdaptedMeshCandidate`; call its `prove()`
+method to obtain an accepted `MeshAdaptationResult`, or pass `prove=True` to
+execute and prove in one step. Construction uses screened steering; screening is
+not acceptance and does not replace the final proof. Requests are
+`MarkedMeshAdaptation` (cells to refine and to coarsen by global ID, plus the
+`hierarchy` returned by the previous adaptation),
 `MetricMeshAdaptation`, and `RelocationMeshAdaptation` (a `MeshMetricField`
 bound to the source vertices). Routes:
 
@@ -2748,7 +2754,7 @@ epoch still relate to their source cells. The next epoch is prepared from
 `adapted.target` and `adapted.hierarchy`; with explicit capacities it reuses
 the compiled entry points. `execute_mesh_adaptation` with the
 `DEVICE_BISECTION` route runs one refine-then-coarsen epoch of a
-`MarkedMeshAdaptation` and commits it.
+`MarkedMeshAdaptation`; pass `prove=True` to obtain its accepted result.
 
 Multi-device epochs: `partition_adaptive_simplex(prepared)` splits the epoch by
 the policy's `MeshDistribution` (space-filling-curve, graph, or provider

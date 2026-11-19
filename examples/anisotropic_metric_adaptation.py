@@ -256,7 +256,8 @@ for cycle in range(CYCLES):
     adapted = phx.meshing.execute_mesh_adaptation(
         phx.meshing.prepare_mesh_adaptation(
             current, phx.meshing.MetricMeshAdaptation(metric), policy=policy
-        )
+        ),
+        prove=True,
     )
     if not adapted.target.audit.passed or adapted.metric is None:
         raise RuntimeError("Metric adaptation did not certify its target.")

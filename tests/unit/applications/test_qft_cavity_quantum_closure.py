@@ -213,7 +213,8 @@ def test_adaptive_hcurl_transaction_qualifies_nested_form_evidence() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     transaction = phx.solver.FiniteElementTopologyTransaction(
         lambda candidate, fields, materials, lineage, args: True

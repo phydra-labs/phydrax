@@ -243,7 +243,8 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
             source,
             MarkedMeshAdaptation(source_cells),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     target = refined.target
     for dimension in range(3):
@@ -288,7 +289,8 @@ def test_implicit_sphere_association_survives_bisection_split_and_collapse() -> 
             ),
             policy=policy,
             prior_transition=refined.transition,
-        )
+        ),
+        prove=True,
     )
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
     assert all(value.complete for value in coarsened.target.associations)
@@ -338,7 +340,8 @@ def test_implicit_bisection_inherits_parent_chart_bounds_by_restriction(
                     np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
                 ),
                 policy=policy,
-            )
+            ),
+            prove=True,
         )
     assert all(
         np.array_equal(
@@ -507,7 +510,8 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
                 np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     faces = next(
         value
@@ -553,7 +557,8 @@ def test_coarsened_curve_edges_merge_exact_source_intervals() -> None:
                 np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     current, hierarchy = refined.target, refined.hierarchy
     assert isinstance(hierarchy, BisectionHierarchy)
@@ -568,7 +573,8 @@ def test_coarsened_curve_edges_merge_exact_source_intervals() -> None:
                 hierarchy=hierarchy,
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
     # Merged half-edges recover the source's exact interval and orientation.
@@ -2159,7 +2165,8 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
             policy=MeshAdaptationPolicy(
                 MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
             ),
-        )
+        ),
+        prove=True,
     )
     target = result.target
     target_curve = next(

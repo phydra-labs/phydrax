@@ -498,7 +498,8 @@ def _volume_case(
                             profile
                         ),
                     ),
-                )
+                ),
+                prove=True,
             )
             if not adaptation.status.converged or adaptation.target is current:
                 raise RuntimeError(

@@ -158,7 +158,8 @@ def _bisect_all(source: Any, hierarchy: Any = None) -> Any:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
 
 
@@ -270,7 +271,8 @@ def test_fem_action_ir_smoothing_scenario_3() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     refined = adaptation.target.mesh
     transfer = adaptation.transfer

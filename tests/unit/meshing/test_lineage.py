@@ -41,7 +41,8 @@ def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     transition = adaptation.transition
     assert transition is not None
@@ -145,7 +146,8 @@ def test_committed_topology_result_preserves_nested_callback_warning_and_fields(
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     base = phx.discretization.lagrange_element("triangle", 1)
     tabulator = _TabulatorChain(
@@ -415,7 +417,8 @@ def test_conservative_cell_average_uses_overlap_and_rolls_back() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     certify = lambda candidate, fields, materials, lineage, args: (
         candidate.topology_id == lineage.target_topology_id
@@ -530,7 +533,8 @@ def test_material_field_requires_its_declared_chain_action() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     result = phx.solver.FiniteElementTopologyTransaction(
         lambda candidate, fields, materials, lineage, args: True
@@ -555,7 +559,8 @@ def test_declared_form_transfer_preserves_linear_state_and_evidence(commit: bool
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     layout = phx.solver.FiniteElementAcceptedFieldLayout(
         phx.discretization.FiniteElementFieldSpec(

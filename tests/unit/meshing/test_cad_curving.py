@@ -400,7 +400,8 @@ def test_cad_curving_scenario_1() -> None:
                     projection, policy=_POLICY
                 ),
             ),
-        )
+        ),
+        prove=True,
     )
     target = adapted.target.associations[0]
     target_mesh = adapted.target.mesh
@@ -650,7 +651,8 @@ def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> No
                     projection, policy=_POLICY
                 ),
             ),
-        )
+        ),
+        prove=True,
     )
     target = adaptation.target.geometry
 

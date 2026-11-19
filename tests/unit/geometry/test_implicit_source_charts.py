@@ -2368,7 +2368,8 @@ def test_restricted_implicit_chart_bounds_agree_with_independent_full_proof(
                 MeshAdaptationRoute.NATIVE_BISECTION,
                 compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
             ),
-        )
+        ),
+        prove=True,
     )
     assert refined.transition is not None
     assert refined.lineage is not None

@@ -597,7 +597,8 @@ def refine_boundary_h(
                 MeshAdaptationRoute.NATIVE_BISECTION,
                 compatibility=policy.compatibility,
             ),
-        )
+        ),
+        prove=True,
     )
     if adaptation.transition is None:
         raise ValueError("Boundary bisection left the marked faces unchanged.")

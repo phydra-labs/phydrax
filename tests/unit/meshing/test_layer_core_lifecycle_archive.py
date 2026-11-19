@@ -184,7 +184,7 @@ def test_mapped_inverse_preserves_multiple_source_charts_on_one_parent() -> None
         ),
         policy=policy,
     )
-    inverse = phx.meshing.execute_mesh_adaptation(inverse_prepared)
+    inverse = phx.meshing.execute_mesh_adaptation(inverse_prepared, prove=True)
     assert inverse.status is phx.meshing.MeshAdaptationStatus.COMPLETE
     assert inverse.target.mesh.topology_id == restored_initial.mesh.topology_id
     assert (

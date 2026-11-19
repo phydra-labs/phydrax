@@ -82,7 +82,7 @@ def test_native_refinement_preserves_world_frame_and_oriented_source_boundary() 
         policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
     )
 
-    target = execute_mesh_adaptation(prepared).target
+    target = execute_mesh_adaptation(prepared, prove=True).target
 
     assert target.planar_embedding == embedding
     assert target.planar_embedding is not None
@@ -177,7 +177,8 @@ def test_bisection_preserves_shared_and_independent_scoped_fidelity() -> None:
                 compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
                 association_transfer=SurfaceAssociationTransfer(domain),
             ),
-        )
+        ),
+        prove=True,
     )
     target = result.target
     assert target.certification is not None

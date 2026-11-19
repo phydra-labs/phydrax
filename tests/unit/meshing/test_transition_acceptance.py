@@ -163,7 +163,8 @@ def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> Non
             source,
             MarkedMeshAdaptation(source_ids),
             policy=route,
-        )
+        ),
+        prove=True,
     )
     refined_certification = refined.target.certification
     assert refined_certification is not None and refined_certification.passed
@@ -188,7 +189,8 @@ def test_pwl_refinement_and_coarsening_renew_original_domain_acceptance() -> Non
             ),
             policy=route,
             prior_transition=refined.transition,
-        )
+        ),
+        prove=True,
     )
     with pytest.raises(ValueError, match="prior_transition target"):
         prepare_mesh_adaptation(
@@ -289,7 +291,8 @@ def _curved_material_refinement_case() -> tuple[
             MarkedMeshAdaptation(source_ids),
             policy=route,
             material_reference=reference,
-        )
+        ),
+        prove=True,
     )
     return (
         source,
@@ -573,7 +576,8 @@ def test_curved_volume_material_chain_renews_exact_refinement_and_coarsening() -
             ),
             policy=route,
             prior_transition=refined_transition,
-        )
+        ),
+        prove=True,
     )
     coarsened_transition = coarsened.transition
     assert coarsened_transition is not None
@@ -776,7 +780,8 @@ def test_fv_commit_remesh_carries_eulerian_content_through_physical_overlap() ->
                 MeshAdaptationRoute.NATIVE_BISECTION,
                 compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
             ),
-        )
+        ),
+        prove=True,
     )
     transition = refined.transition
     assert transition is not None
@@ -1035,7 +1040,8 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
                 compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
                 association_transfer=phx.meshing.SurfaceAssociationTransfer(domain),
             ),
-        )
+        ),
+        prove=True,
     )
     certification = refined.target.certification
     assert certification is not None and certification.passed
@@ -1085,7 +1091,8 @@ def test_refinement_rebinds_exact_surface_chart_root_and_piece_ancestry() -> Non
                 compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT,
                 association_transfer=phx.meshing.SurfaceAssociationTransfer(domain),
             ),
-        )
+        ),
+        prove=True,
     )
     coarsened_report = coarsened.target.certification
     assert coarsened_report is not None and coarsened_report.passed
@@ -1293,7 +1300,8 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
             source,
             MarkedMeshAdaptation(source_cell_ids),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     refined = execute_mesh_adaptation(
         prepare_mesh_adaptation(
@@ -1302,7 +1310,8 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
                 cell_ids(refined.target), hierarchy=_bisection_hierarchy(refined)
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert parameter_values(refined.target) == {
         Fraction(0),
@@ -1318,7 +1327,8 @@ def test_bisection_coarsening_preserves_nondyadic_source_chart_tokens() -> None:
                 (), cell_ids(refined.target), hierarchy=_bisection_hierarchy(refined)
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
     assert parameter_values(coarsened.target) == {

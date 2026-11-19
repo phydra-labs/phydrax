@@ -105,7 +105,8 @@ def _metric_request(
 def _adapt(source: CellMeshingResult, request: Any, route: Any, /) -> Any:
     policy = MeshAdaptationPolicy(route, relocation=False)
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
 
 
@@ -393,7 +394,8 @@ def test_bisection_adaptation_round_trips_with_hierarchy(tmp_path: Path) -> None
             source,
             request,
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
-        )
+        ),
+        prove=True,
     )
     assert original.hierarchy is not None and original.transition is not None
     path = tmp_path / "bisection.phx"
@@ -424,7 +426,8 @@ def test_distributed_bisection_restores_its_distribution_transition(
                 distribution=distribution,
                 partition_policy=partition,
             ),
-        )
+        ),
+        prove=True,
     )
     assert original.distribution is not None
     path = tmp_path / "distributed.phx"
@@ -501,7 +504,8 @@ def test_polyhedral_plane_split_round_trips_with_conservative_remap(
                 planes=np.asarray(((0.0, 1.0, 0.0, 0.5),), dtype=np.float64),
             ),
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL),
-        )
+        ),
+        prove=True,
     )
     assert original.conservative_remap is not None
     path = tmp_path / "polyhedral.phx"
@@ -561,7 +565,8 @@ def test_polyhedral_exact_coordinate_source_refuses_changed_inputs() -> None:
                 planes=np.asarray(((0.0, 1.0, 0.0, 0.5),), dtype=np.float64),
             ),
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL),
-        )
+        ),
+        prove=True,
     ).target
     stored = target.geometry.source_map
     assert type(stored) is _PolyhedralExactCoordinateSource
@@ -589,7 +594,8 @@ def test_source_preserving_adaptation_round_trips(tmp_path: Path) -> None:
             source,
             request,
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
-        )
+        ),
+        prove=True,
     )
     assert original.status is MeshAdaptationStatus.UNCHANGED
     restored = _round_trip(tmp_path / "unchanged.phx", original, MeshAdaptationResult)
@@ -1016,7 +1022,8 @@ def test_two_epoch_material_chain_restores_every_epoch_map(tmp_path: Path) -> No
             ),
             policy=route,
             prior_transition=refined.transition,
-        )
+        ),
+        prove=True,
     )
     assert coarsened.transition is not None
     chain = coarsened.transition.volume_material_chain
@@ -1109,7 +1116,8 @@ def test_surface_metric_adaptation_round_trips_with_its_chart_witness(
                 association_transfer=ImplicitAssociationTransfer(profile),
                 relocation=True,
             ),
-        )
+        ),
+        prove=True,
     )
     assert isinstance(original.evidence, SurfaceMetricOutcome)
     assert original.surface_chart_witness is not None
@@ -1313,7 +1321,7 @@ epoch = result.hierarchy
 children = np.asarray(epoch.topology.cell_global_ids)[1:5]
 request = MarkedMeshAdaptation((), children, hierarchy=epoch)
 prepared = prepare_mesh_adaptation(result.target, request, policy=MeshAdaptationPolicy(MeshAdaptationRoute.HP, relocation=False))
-coarsened = execute_mesh_adaptation(prepared)
+coarsened = execute_mesh_adaptation(prepared, prove=True)
 assert coarsened.hierarchy.topology.active_count == 1
 write_model_artifact(sys.argv[2], coarsened, limits=MODEL_ARCHIVE_LIMITS)
 """
@@ -1515,7 +1523,9 @@ def test_hp_protected_cells_and_balance_closure_refuse_changes() -> None:
     )
     request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
     with pytest.raises(ValueError, match="protected entity"):
-        execute_mesh_adaptation(prepare_mesh_adaptation(source, request, policy=policy))
+        execute_mesh_adaptation(
+            prepare_mesh_adaptation(source, request, policy=policy), prove=True
+        )
 
     first = refine_tensor_hp_cells(topology, geometry, np.asarray((10,), dtype=np.int64))
     nonconforming, _, _ = hp_active_cell_mesh(first.topology, first.geometry)
@@ -1591,7 +1601,8 @@ def test_hp_unmodified_protected_vertex_survives_archive(tmp_path: Path) -> None
     )
     request = MarkedMeshAdaptation(np.asarray((10,), dtype=np.int64), hierarchy=epoch)
     result = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
     assert result.status is MeshAdaptationStatus.COMPLETE
     restored = _round_trip(tmp_path / "protected-hp.phx", result, MeshAdaptationResult)

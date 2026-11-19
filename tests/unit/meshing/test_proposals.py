@@ -1021,7 +1021,7 @@ def _coarsened_implicit_volume(
             association_transfer=phx.meshing.ImplicitAssociationTransfer(profile),
         ),
     )
-    return phx.meshing.execute_mesh_adaptation(prepared)
+    return phx.meshing.execute_mesh_adaptation(prepared, prove=True)
 
 
 def test_implicit_tetra_metric_coarsening_reproves_actual_target(

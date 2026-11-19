@@ -42,7 +42,8 @@ adaptation = phx.meshing.execute_mesh_adaptation(
         policy=phx.meshing.MeshAdaptationPolicy(
             phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
         ),
-    )
+    ),
+    prove=True,
 )
 # ty: ignore[unresolved-attribute]
 transfer_defect = jnp.max(jnp.abs(adaptation.transfer.apply(jnp.ones((4,))) - 1.0))

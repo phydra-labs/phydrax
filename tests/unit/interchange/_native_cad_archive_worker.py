@@ -4221,7 +4221,8 @@ def _write_implicit_chart_restriction(directory: Path, /) -> None:
                 compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
                 association_transfer=ImplicitAssociationTransfer(native_source),
             ),
-        )
+        ),
+        prove=True,
     )
     assert refined.target.certification is not None
     certificate = refined.target.certification.fidelity

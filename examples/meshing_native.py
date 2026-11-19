@@ -38,7 +38,8 @@ adaptation = phx.meshing.execute_mesh_adaptation(
         policy=phx.meshing.MeshAdaptationPolicy(
             phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
         ),
-    )
+    ),
+    prove=True,
 )
 if adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE:
     raise RuntimeError(f"Native bisection did not complete: {adaptation.status.value}")

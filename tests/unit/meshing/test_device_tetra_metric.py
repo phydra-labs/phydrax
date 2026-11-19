@@ -99,7 +99,7 @@ def _request(source: Any) -> MetricMeshAdaptation:
 def _run(source: Any, request: MetricMeshAdaptation, route: Any) -> Any:
     policy = MeshAdaptationPolicy(route, relocation=False)
     prepared = prepare_mesh_adaptation(source, request, policy=policy)
-    return execute_mesh_adaptation(prepared)
+    return execute_mesh_adaptation(prepared, prove=True)
 
 
 def _edge_lengths(result: Any) -> np.ndarray:

@@ -184,7 +184,8 @@ def _policy(device: Any = _DEVICE, /, **options: Any) -> Any:
 
 def _adapt(source: Any, request: Any, /, **options: Any) -> Any:
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=_policy(**options))
+        prepare_mesh_adaptation(source, request, policy=_policy(**options)),
+        prove=True,
     )
 
 
@@ -222,7 +223,8 @@ def test_native_metric_route_escapes_the_split_collapse_hysteresis() -> None:
             source,
             MetricMeshAdaptation(_metric(source, tensor)),
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D),
-        )
+        ),
+        prove=True,
     )
 
     assert result.status is MeshAdaptationStatus.COMPLETE

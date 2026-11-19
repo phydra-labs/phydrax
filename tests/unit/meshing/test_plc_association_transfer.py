@@ -122,7 +122,7 @@ def _refine_all(
             ),
         ),
     )
-    return phx.meshing.execute_mesh_adaptation(prepared)
+    return phx.meshing.execute_mesh_adaptation(prepared, prove=True)
 
 
 def _table(result: phx.meshing.CellMeshingResult, dimension: int) -> GeometryAssociation:

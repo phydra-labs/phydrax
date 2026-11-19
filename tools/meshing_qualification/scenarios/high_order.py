@@ -232,7 +232,8 @@ def native_high_order_curving() -> dict[str, object]:
                     projection, policy=association_policy
                 ),
             ),
-        )
+        ),
+        prove=True,
     )
     adapted = adaptation.target
     adapted_accepted = accepted_result_record(adapted)

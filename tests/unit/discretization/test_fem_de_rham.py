@@ -803,7 +803,8 @@ def _native_bisection(
     )
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
 
 

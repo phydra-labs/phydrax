@@ -221,7 +221,7 @@ if restored_fe_error > 2.0e-9 or restored_fe_residual > 2.0e-9:
     raise RuntimeError("Cold restored FE solve failed its exact physical oracle.")
 transfer = phx.meshing.BRepAssociationTransfer(phx.geometry.prepare_brep_projection(restored_model))
 prepared = prepare_mesh_adaptation(restored, MarkedMeshAdaptation(np.asarray(restored.mesh.blocks[0].global_ids[:1], dtype=np.int64)), policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer))
-adaptation = execute_mesh_adaptation(prepared)
+adaptation = execute_mesh_adaptation(prepared, prove=True)
 target = adaptation.target
 transition = adaptation.transition
 if transition.vertex_stencil is None:

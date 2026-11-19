@@ -1891,7 +1891,7 @@ def _periodic_mixed_refinement(
         layer_columns=columns if hierarchy is None else None,
     )
     prepared = phx.meshing.prepare_mesh_adaptation(accepted, request, policy=policy)
-    refinement = phx.meshing.execute_mesh_adaptation(prepared)
+    refinement = phx.meshing.execute_mesh_adaptation(prepared, prove=True)
     if (
         refinement.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
         or not isinstance(refinement.hierarchy, phx.meshing.MixedAdaptationHierarchy)
@@ -1933,7 +1933,7 @@ def _periodic_mixed_coarsening(
         phx.meshing.MarkedMeshAdaptation((), children, hierarchy=refinement.hierarchy),
         policy=policy,
     )
-    coarsening = phx.meshing.execute_mesh_adaptation(prepared)
+    coarsening = phx.meshing.execute_mesh_adaptation(prepared, prove=True)
     if (
         coarsening.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
         or not isinstance(coarsening.hierarchy, phx.meshing.MixedAdaptationHierarchy)

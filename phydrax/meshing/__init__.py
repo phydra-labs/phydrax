@@ -59,6 +59,7 @@ _DEFERRED_EXPORTS = {
     "RouteFeasibility": "._decision",
     "execute_mesh_adaptation": "._adaptation",
     "MarkedMeshAdaptation": "._adaptation",
+    "AdaptedMeshCandidate": "._adaptation",
     "MeshAdaptationPolicy": "._adaptation",
     "MeshAdaptationResult": "._adaptation",
     "MeshAdaptationRoute": "._adaptation",
@@ -419,6 +420,7 @@ if TYPE_CHECKING:
     )
     from . import providers
     from ._adaptation import (
+        AdaptedMeshCandidate,
         execute_mesh_adaptation,
         MarkedMeshAdaptation,
         MeshAdaptationPolicy,
@@ -928,6 +930,7 @@ __all__ = [
     "prepare_owner_local_finite_volume_overset",
     "AbstractMeshProposer",
     "AbstractMeshingSession",
+    "AdaptedMeshCandidate",
     "AdaptationAction",
     "AdaptationIntent",
     "DualExtraction",

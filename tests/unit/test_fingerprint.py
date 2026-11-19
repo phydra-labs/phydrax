@@ -375,7 +375,8 @@ def test_canonical_fingerprints_of_meshes_certificates_witnesses_and_archives(
                 np.asarray((0, 5, 11), dtype=np.int64), np.asarray((), dtype=np.int64)
             ),
             policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
-        )
+        ),
+        prove=True,
     )
     target = adapted.target.mesh
     composition = Composition(

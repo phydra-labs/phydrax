@@ -89,7 +89,8 @@ def _adapt(
         hierarchy=hierarchy,
     )
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
 
 
@@ -754,7 +755,8 @@ def test_bisection_remaps_declared_cell_materials_through_exact_ancestry() -> No
             source,
             MarkedMeshAdaptation(ids, inherited_cell_markers=("material",)),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     by_id = dict(zip(ids.tolist(), values.tolist(), strict=True))
     transition = refined.transition
@@ -789,7 +791,8 @@ def test_bisection_remaps_declared_cell_materials_through_exact_ancestry() -> No
                 inherited_cell_markers=("material",),
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert coarse.target.mesh.topology_id == mesh.topology_id
     (restored,) = coarse.target.attributes

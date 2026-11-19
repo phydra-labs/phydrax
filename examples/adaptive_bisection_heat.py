@@ -159,7 +159,8 @@ def adapt(source: Any, refine: Any, coarsen: Any, hierarchy: Any) -> Any:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
 
 

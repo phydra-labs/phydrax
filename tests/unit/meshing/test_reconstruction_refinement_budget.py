@@ -107,7 +107,8 @@ def test_checkpoint_failure_retains_actual_precommit_fields_and_solve() -> None:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_MIXED
             ),
-        )
+        ),
+        prove=True,
     )
     source_values = np.sum(points * points, axis=1)
     form = phx.equations.FiniteElementForm(

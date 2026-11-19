@@ -813,7 +813,7 @@ def _refine_every_cell(
             ),
         ),
     )
-    adaptation = phx.meshing.execute_mesh_adaptation(prepared)
+    adaptation = phx.meshing.execute_mesh_adaptation(prepared, prove=True)
     if (
         adaptation.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
         or adaptation.transition is None

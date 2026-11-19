@@ -66,6 +66,7 @@ from ..discretization._cell_mesh import CellBlock, CellMesh
 from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..discretization.fem import FiniteElementTopologyTransfer
 from ..linalg._exact import determinant_exact
+from ..typing import parse
 from ._adaptation import (
     _adaptation_result,
     _finalize_native,
@@ -109,7 +110,7 @@ from ._bisection import (
     BisectionEvidence,
     BisectionHierarchy,
 )
-from ._contracts import MeshingFailure, MeshingFailureCategory
+from ._contracts import ConstructionSteering, MeshingFailure, MeshingFailureCategory
 from ._device_status import (
     DeviceEpoch,
     require_applied_status,
@@ -915,9 +916,12 @@ def commit_adaptive_simplex(
     return _adaptation_result(prepared.adaptation, outcome, started)
 
 
-def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_device_bisection_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
     """One refine-then-coarsen device epoch of a marked request, then commit."""
 
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
         raise TypeError("The device bisection route requires MarkedMeshAdaptation.")

@@ -61,7 +61,8 @@ from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_mesh import CellBlock
 from ..linalg._exact import solve_exact
-from ..typing import ConvertibleToArray
+from ..typing import ConvertibleToArray, parse
+from ._contracts import ConstructionSteering
 from ._lineage import EntityLineageKind
 from ._metric import _tensor_array
 from ._periodic import periodic_entity_orbit_map, stage_periodic_topology_edit
@@ -332,6 +333,9 @@ class TetraMetricOutcome(NamedTuple):
     metric: np.ndarray
     evidence: TetraMetricEvidence
     exact_source_vertices: tuple[tuple[Fraction, Fraction, Fraction], ...]
+    # Construction steps that ran their certified form; a route that names
+    # none of its own is the entire certified route.
+    certified_steps: tuple[str, ...] = ("entire_certified_route",)
 
 
 class _ImplicitMetricSource(NamedTuple):
@@ -492,6 +496,12 @@ class _NativeState:
     ] = field(default_factory=dict)
     # The native exact source (``_source_bank``), created on first use.
     source_bank: _SourceBank | None = None
+    # How construction is steered. Under "screened", vertices carried only by
+    # implicit facets are not offered for relocation: where the accepted
+    # boundary already uses its tolerance, nearly every such move is refused by
+    # the facet admission, and proposing and probing them is most of an
+    # adaptation's time.
+    steering: ConstructionSteering = "certified"
 
 
 @dataclass(slots=True)
@@ -1626,6 +1636,7 @@ def _prepare_native_state(
     protected_edges: ArrayLike,
     fixed_vertices: ArrayLike,
     implicit_source: _ImplicitMetricSource | None = None,
+    steering: ConstructionSteering = "certified",
 ) -> _NativeState:
     """Prepare a source-bound P1 tetrahedral complex and persistent native owner."""
     if not isinstance(mesh, CellMesh):
@@ -2058,6 +2069,7 @@ def _prepare_native_state(
         source_points=points,
         source_exact_points=exact_source_points,
         implicit_groups=implicit_groups,
+        steering=steering,
         target_mesh=mesh,
         periodic_vertex_windings=periodic_vertex_windings,
         periodic_state=periodic_state,
@@ -6489,6 +6501,8 @@ def _relocation_proposals(
         if vertex in state.fixed_vertices or protected_vertices[row]:
             return None
         implicit_only = _implicit_only_vertex(state, records, vertex)
+        if implicit_only and state.steering == "screened":
+            return None
         simplices = None if implicit_only else _carrier_simplices(state, records, vertex)
         if (periodic or (simplices is None and not implicit_only)) and dimensions[
             row
@@ -7355,6 +7369,7 @@ def execute_tetra_metric_adaptation(
     predicate_mode: PredicateMode,
     topology_operations: bool,
     relocation: bool,
+    steering: ConstructionSteering = "certified",
     accepted_minimum_length: float | None = None,
 ) -> TetraMetricOutcome:
     """Execute quota-free native SPD split/collapse/flip/ring/relocation phases.
@@ -7369,6 +7384,7 @@ def execute_tetra_metric_adaptation(
         raise TypeError("predicate_mode must be PredicateMode.")
     if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
         raise TypeError("topology_operations and relocation must be bool.")
+    steering = parse(steering, ConstructionSteering, "steering")
     metric_array = np.asarray(metric_values)
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
@@ -7383,12 +7399,14 @@ def execute_tetra_metric_adaptation(
         protected_edges=protected_edges,
         fixed_vertices=fixed_vertices,
         implicit_source=_implicit_metric_source(source),
+        steering=steering,
     )
     return _execute_native_state(
         state,
         predicate_mode,
         topology_operations=topology_operations,
         relocation=relocation,
+        steering=steering,
         accepted_minimum_length=accepted_minimum_length,
     )
 
@@ -7614,6 +7632,7 @@ def _execute_native_state(
     *,
     topology_operations: bool,
     relocation: bool,
+    steering: ConstructionSteering = "certified",
     split_batch: Callable[[_NativeState, dict[str, int]], int] = _one_split_batch,
     work: _NativeWorkSeed | None = None,
     accepted_minimum_length: float | None = None,
@@ -7724,7 +7743,7 @@ def _execute_native_state(
         if relocation and applied == 0:
             from ._tetra_coupled import _coupled_relocation_phase
 
-            applied = _coupled_relocation_phase(state, counters)
+            applied = _coupled_relocation_phase(state, counters, steering=steering)
             if applied:
                 _invalidate_relocation_searches(relocation_caches)
                 collapse_cache.clear()
@@ -7733,7 +7752,27 @@ def _execute_native_state(
             break
     edit, target_metric = _assemble_native_edit(state)
     evidence = _tetra_evidence(state, counters, passes, status, work=work, lower=lower)
-    return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
+    if steering == "certified":
+        certified_steps: tuple[str, ...] = ("entire_certified_route",)
+    else:
+        # What still decides by proof under screened steering: the interval
+        # admission of implicit facets created by splits, collapses and
+        # reconnections, and the exact membership tests of facets on
+        # piecewise-linear or declared-plane source groups and of source
+        # segments.
+        records = _boundary_records(state)
+        groups = {record[1] for record in records.facets.values()}
+        named: list[str] = []
+        if groups & state.implicit_groups:
+            named.append("implicit_facet_admission")
+        if groups - state.implicit_groups:
+            named.append("source_face_membership")
+        if records.segments:
+            named.append("source_segment_membership")
+        certified_steps = tuple(named)
+    return TetraMetricOutcome(
+        edit, target_metric, evidence, state.source_exact_points, certified_steps
+    )
 
 
 def _intermediate_relations(

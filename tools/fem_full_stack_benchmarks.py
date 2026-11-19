@@ -45,7 +45,8 @@ def run() -> dict[str, float]:
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
             ),
-        )
+        ),
+        prove=True,
     )
     adapt_elapsed = perf_counter() - adapt_start
     return {

@@ -30,7 +30,8 @@ from .._fingerprint import canonical_fingerprint
 from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
+from ..typing import checked, parse
+from ._contracts import ConstructionSteering
 from ._metric import metric_edge_lengths
 from ._tetra_metric import (
     _current_edge_controls,
@@ -354,7 +355,7 @@ class _DeviceSplitBatches:
 
 
 def _execute_device_tetra_metric_route(
-    prepared: PreparedMeshAdaptation, /
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
 ) -> _RouteOutcome:
     """Run compiled edge evaluation, host predicate batches, and native tetra edits."""
     from ._adaptation import (
@@ -367,6 +368,8 @@ def _execute_device_tetra_metric_route(
         MetricMeshAdaptation,
         PreparedMeshAdaptation,
     )
+
+    parse(steering, ConstructionSteering, "steering")
 
     if not isinstance(prepared, PreparedMeshAdaptation):
         raise TypeError("prepared must be PreparedMeshAdaptation.")

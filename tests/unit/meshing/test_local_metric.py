@@ -118,7 +118,8 @@ def _metric(source: Any, tensor: Any, /) -> Any:
 def _adapt(source: Any, request: Any, /, **options: Any) -> Any:
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_2D, **options)
     return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
 
 

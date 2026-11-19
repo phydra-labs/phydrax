@@ -549,7 +549,7 @@ def test_mixed_postcertification_owner_replays_actual_phase(
         "_finish_certified_native_target",
         _record_replays(original, captured),
     )
-    actual = execute_mesh_adaptation(prepared)
+    actual = execute_mesh_adaptation(prepared, prove=True)
     assert actual.transition is not None and len(captured) == 1
     replay, first = captured[0]
     replayed = replay()
@@ -1496,7 +1496,8 @@ def test_native_mixed_route_preserves_high_order_geometry_through_coarsening(
             source,
             MarkedMeshAdaptation(np.asarray((505,), dtype=np.int64)),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     fine = refined.target
     hierarchy = refined.hierarchy
@@ -1532,7 +1533,8 @@ def test_native_mixed_route_preserves_high_order_geometry_through_coarsening(
                 hierarchy=hierarchy,
             ),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     restored_geometry = coarsened.target.geometry
     assert coarsened.cell_content_transfer is not None
@@ -1679,7 +1681,8 @@ def test_periodic_mixed_curved_two_rounds_restore_quotient_ids(
                 state,
                 MarkedMeshAdaptation(refine, coarsen, hierarchy=hierarchy),
                 policy=policy,
-            )
+            ),
+            prove=True,
         )
 
     first = run(source, None, (505,), ())
@@ -1846,7 +1849,8 @@ def test_retained_mixed_second_cycle_reproves_returned_root(
             source,
             MarkedMeshAdaptation(np.asarray((505,), dtype=np.int64)),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert isinstance(first.hierarchy, MixedAdaptationHierarchy)
     children = np.concatenate(
@@ -1857,14 +1861,16 @@ def test_retained_mixed_second_cycle_reproves_returned_root(
             first.target,
             MarkedMeshAdaptation((), children, hierarchy=first.hierarchy),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert isinstance(coarsened.hierarchy, MixedAdaptationHierarchy)
     request = MarkedMeshAdaptation(
         np.asarray((505,), dtype=np.int64), hierarchy=coarsened.hierarchy
     )
     second = execute_mesh_adaptation(
-        prepare_mesh_adaptation(coarsened.target, request, policy=policy)
+        prepare_mesh_adaptation(coarsened.target, request, policy=policy),
+        prove=True,
     )
     assert isinstance(second.hierarchy, MixedAdaptationHierarchy)
     assert second.transition is not None
@@ -1929,7 +1935,8 @@ def test_retained_mixed_second_cycle_reproves_returned_root(
             restored.target,
             MarkedMeshAdaptation((), children, hierarchy=restored.hierarchy),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert inverse.target.mesh.topology_id == source.mesh.topology_id
 
@@ -1943,7 +1950,8 @@ def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh)
     request = MarkedMeshAdaptation(np.asarray((505,), dtype=np.int64))
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_MIXED)
     result = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
     assert isinstance(result.hierarchy, MixedAdaptationHierarchy)
     assert result.transition is not None
@@ -1985,7 +1993,8 @@ def test_retained_mixed_result_reproof_and_tampering(hex_pyramid_mesh: CellMesh)
             restored.target,
             MarkedMeshAdaptation((), children, hierarchy=restored.hierarchy),
             policy=policy,
-        )
+        ),
+        prove=True,
     )
     assert coarsened.target.mesh.topology_id == source.mesh.topology_id
 
@@ -2073,7 +2082,8 @@ def test_retained_periodic_mixed_result_rejects_changed_action(
     request = MarkedMeshAdaptation(np.asarray((505,), dtype=np.int64))
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_MIXED)
     result = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
     hierarchy = result.hierarchy
     assert isinstance(hierarchy, MixedAdaptationHierarchy)

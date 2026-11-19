@@ -1310,7 +1310,8 @@ def _execute_adaptation(
                 compatibility=compatibility,
                 association_transfer=association_transfer,
             ),
-        )
+        ),
+        prove=True,
     )
 
 

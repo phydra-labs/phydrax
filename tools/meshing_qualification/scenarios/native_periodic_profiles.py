@@ -1590,7 +1590,8 @@ def _marked_bisection_lifecycle(
                     inherited_cell_markers=markers,
                 ),
                 policy=policy,
-            )
+            ),
+            prove=True,
         )
         coarse, last_refinement = solution, adaptation
         hierarchy, lineage_id = _accepted_bisection(adaptation, "refinement")
@@ -1648,7 +1649,8 @@ def _marked_bisection_lifecycle(
                     ),
                 ),
             ),
-        )
+        ),
+        prove=True,
     )
     coarse_hierarchy, coarse_lineage_id = _accepted_bisection(adaptation, "coarsening")
     before = sum(block.cell_count for block in current.mesh.blocks)

@@ -236,7 +236,8 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                         MeshAdaptationRoute.NATIVE_BISECTION,
                         compatibility=self.compatibility,
                     ),
-                )
+                ),
+                prove=True,
             )
         if adaptation is None or adaptation.transition is None:
             evidence = PhaseFieldAdaptivityEvidence(

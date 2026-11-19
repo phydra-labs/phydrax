@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Mesh adaptation uses screened construction and returns an
+  `AdaptedMeshCandidate` by default. Call `prove()` on the candidate or pass
+  `prove=True` to `execute_mesh_adaptation` for an accepted
+  `MeshAdaptationResult`.
 - Native meshing plans accept `prove=True` for immediate acceptance and expose
   `CellMeshingCandidate.prove()` to certify an already constructed mesh.
 - Exposed `phydrax.geometry.source_entity_id` and

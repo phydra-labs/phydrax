@@ -7,8 +7,8 @@
 `prepare_mesh_adaptation` binds one request to one certified source result under
 one explicit `MeshAdaptationRoute` and resolves protection and organization into
 route constraints. `execute_mesh_adaptation` runs exactly that route (there is no
-automatic provider fallback) and returns the certified target with its complete
-lineage, sparse vertex stencil and FE transfer, route evidence, and compliance.
+automatic provider fallback) and returns a pending candidate by default, or a
+certified target with lineage and compliance when ``prove=True``.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from enum import StrEnum
 from fractions import Fraction
 from functools import partial
 from math import lcm
-from typing import Any, assert_never, final, NamedTuple, TypeAlias
+from typing import Any, assert_never, final, Literal, NamedTuple, overload, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -32,6 +32,7 @@ from numpy.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import PredicateMode, resolve_host_predicate_mode
 from .._model._structure import FiniteElementHPEpochArchiveRecipe
+from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
@@ -132,7 +133,7 @@ from ..geometry.implicit._restricted_delaunay_coverage import (
     RestrictedDelaunayCoverageTransportWitness,
 )
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
-from ..typing import checked
+from ..typing import checked, parse
 from ._assembly import MeshPart
 from ._association import (
     AssociationTransfer,
@@ -155,6 +156,7 @@ from ._certification_inputs import (
     ScopedFidelityInput,
     validate_fidelity_witnesses,
 )
+from ._contracts import ConstructionSteering
 from ._device_metric import DeviceMetricEvidence
 from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._distribution import (
@@ -231,6 +233,7 @@ from ._surface_metric_controller import SurfaceMetricController
 from ._tetra_metric import (
     execute_tetra_metric_adaptation,
     TetraMetricEvidence,
+    TetraMetricOutcome,
     TetraMetricStatus,
 )
 from ._topology_edit import (
@@ -2089,6 +2092,106 @@ class _RouteOutcome(NamedTuple):
     cell_content_transfer: MixedCellContentTransfer | None = None
     conservative_remap: UnstructuredConservativeRemapPlan | None = None
     surface_chart_witness: SourceFidelityWitness | None = None
+
+
+class _PendingTetraAdaptation(NamedTuple):
+    prepared: PreparedMeshAdaptation
+    outcome: TetraMetricOutcome
+    status: MeshAdaptationStatus
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+
+    def resolve(self, /) -> _RouteOutcome:
+        result = _finalize_tetra_metric_route(self.prepared, self.outcome, self.status)
+        if result.target.mesh.mesh_id != self.mesh.mesh_id or cell_geometry_id(
+            result.target.geometry
+        ) != cell_geometry_id(self.geometry):
+            raise ValueError("Certified target does not match the pending candidate.")
+        return result
+
+
+@final
+class AdaptedMeshCandidate(StrictModule, NonTrainableState):
+    """A pending adaptation; nothing on it is an acceptance claim.
+
+    ``certified_steps`` names, sorted, the construction steps that ran their
+    certified form: ``()`` when none did, ``("entire_certified_route",)`` for a
+    route without a screened form, which then ran exactly as with
+    ``prove=True``. ``construction_seconds`` is the producing run's wall time,
+    outside ``candidate_id``.
+    """
+
+    _outcome: _RouteOutcome | _PendingTetraAdaptation = eqx.field(repr=False)
+    prepared: PreparedMeshAdaptation
+    status: MeshAdaptationStatus = eqx.field(static=True)
+    certified_steps: tuple[str, ...] = eqx.field(static=True)
+    construction_seconds: float = eqx.field(static=True)
+    candidate_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        prepared: PreparedMeshAdaptation,
+        outcome: _RouteOutcome | _PendingTetraAdaptation,
+        certified_steps: tuple[str, ...],
+        construction_seconds: float,
+        /,
+    ) -> None:
+        if not isinstance(prepared, PreparedMeshAdaptation):
+            raise TypeError("prepared must be PreparedMeshAdaptation.")
+        if not isinstance(outcome, (_RouteOutcome, _PendingTetraAdaptation)):
+            raise TypeError("outcome must be a route outcome or a pending adaptation.")
+        if not isinstance(certified_steps, tuple) or any(
+            not isinstance(step, str) for step in certified_steps
+        ):
+            raise TypeError("certified_steps must be a tuple of step names.")
+        if tuple(sorted(set(certified_steps))) != certified_steps:
+            raise ValueError("certified_steps must be sorted and distinct.")
+        self._outcome = outcome
+        self.prepared = prepared
+        self.status = outcome.status
+        self.certified_steps = certified_steps
+        self.construction_seconds = construction_seconds
+        self.candidate_id = canonical_fingerprint(
+            {
+                "kind": "adapted-mesh-candidate",
+                "prepared": prepared.prepared_id,
+                "mesh": self.mesh.mesh_id,
+                "geometry": cell_geometry_id(self.geometry),
+                "status": self.status.value,
+                "certified_steps": certified_steps,
+                "evidence": _evidence_id(self.evidence),
+            }
+        )
+
+    @property
+    def mesh(self) -> CellMesh:
+        if isinstance(self._outcome, _PendingTetraAdaptation):
+            return self._outcome.mesh
+        return self._outcome.target.mesh
+
+    @property
+    def geometry(self) -> CellGeometrySpec:
+        if isinstance(self._outcome, _PendingTetraAdaptation):
+            return self._outcome.geometry
+        return self._outcome.target.geometry
+
+    @property
+    def coordinate_contract(self) -> SpatialCoordinateContract:
+        return self.prepared.source.coordinate_contract
+
+    @property
+    def evidence(self) -> MeshAdaptationEvidence | None:
+        if isinstance(self._outcome, _PendingTetraAdaptation):
+            return self._outcome.outcome.evidence
+        return self._outcome.evidence
+
+    def prove(self, /) -> MeshAdaptationResult:
+        """Certify the mesh as produced without repeating construction."""
+        started = time.monotonic() - self.construction_seconds
+        outcome = self._outcome
+        if isinstance(outcome, _PendingTetraAdaptation):
+            outcome = outcome.resolve()
+        return _adaptation_result(self.prepared, outcome, started)
 
 
 def _unchanged(
@@ -7106,7 +7209,10 @@ def _discard_exception_tracebacks(error: BaseException, /) -> None:
             pending.extend(current.exceptions)
 
 
-def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_bisection_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
         raise TypeError("Native bisection requires MarkedMeshAdaptation.")
@@ -7342,7 +7448,10 @@ def _resume_certified_mixed_outcome(
     )
 
 
-def _execute_mixed_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_mixed_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation):
         raise TypeError("NATIVE_MIXED requires MarkedMeshAdaptation.")
@@ -7443,7 +7552,10 @@ def _metric_status(
     return MeshAdaptationStatus.NUMERICAL_STOP
 
 
-def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_metric_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     policy = prepared.policy
     constraints = prepared.constraints
@@ -7493,7 +7605,10 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     )
 
 
-def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_tetra_metric_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> tuple[_RouteOutcome | _PendingTetraAdaptation, tuple[str, ...]]:
+    steering = parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, MetricMeshAdaptation):
         raise TypeError("The 3D tetra metric route requires MetricMeshAdaptation.")
@@ -7511,6 +7626,7 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         topology_operations=True,
         relocation=policy.relocation,
         accepted_minimum_length=request.accepted_minimum_length,
+        steering=steering,
     )
     evidence = outcome.evidence
     match evidence.status:
@@ -7528,8 +7644,40 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         + evidence.ring_reconnections
         + evidence.relocations
     )
+    steps = outcome.certified_steps
     if applied == 0:
-        return _unchanged(prepared, evidence, None, status=status)
+        return _unchanged(prepared, evidence, None, status=status), tuple(
+            sorted((*steps, "acceptance"))
+        )
+    if steering == "screened" and prepared.source.mesh.periodic_topology is None:
+        mesh, _, _ = assemble_topology_edit(
+            prepared.source.mesh,
+            outcome.edit,
+            numeric_version=f"adaptation:{prepared.prepared_id}",
+            bind_periodic=True,
+        )
+        mesh, geometry, _, _ = _restricted_target_geometry(
+            prepared.source,
+            mesh,
+            outcome.edit,
+            coarsening=None,
+            exact_source_vertices=outcome.exact_source_vertices,
+        )
+        return _PendingTetraAdaptation(prepared, outcome, status, mesh, geometry), steps
+    return _finalize_tetra_metric_route(prepared, outcome, status), tuple(
+        sorted((*steps, "acceptance"))
+    )
+
+
+def _finalize_tetra_metric_route(
+    prepared: PreparedMeshAdaptation,
+    outcome: TetraMetricOutcome,
+    status: MeshAdaptationStatus,
+    /,
+) -> _RouteOutcome:
+    request = prepared.request
+    if not isinstance(request, MetricMeshAdaptation):
+        raise TypeError("The 3D tetra metric route requires MetricMeshAdaptation.")
     native = _finalize_native(
         prepared,
         outcome.edit,
@@ -7545,12 +7693,15 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         native.stencil,
         native.transfer,
         _target_metric(request.metric, native.target.mesh, outcome.metric),
-        evidence,
+        outcome.evidence,
         None,
     )
 
 
-def _execute_surface_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_surface_metric_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
         raise TypeError("NATIVE_METRIC_SURFACE requires a metric or relocation request.")
@@ -7675,7 +7826,10 @@ def _provider_association_transfer(
     raise TypeError("Provider routes require BRepAssociationTransfer.")
 
 
-def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_polyhedral_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, PolyhedralAdaptationRequest):
         raise TypeError("NATIVE_POLYHEDRAL requires PolyhedralAdaptationRequest.")
@@ -7818,7 +7972,10 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
     )
 
 
-def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_mmg_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     policy = prepared.policy
     provider = policy.provider
     # ty: ignore[unresolved-attribute]
@@ -7838,7 +7995,10 @@ def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     return _provider_outcome(prepared, result.mesh, result.metric, result)
 
 
-def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_omega_h_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     policy = prepared.policy
     # ty: ignore[unresolved-attribute]
     result = policy.provider.execute(
@@ -8035,7 +8195,10 @@ def _prepare_hp_adaptation_epoch(
     return epoch
 
 
-def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_hp_route(
+    prepared: PreparedMeshAdaptation, /, *, steering: ConstructionSteering
+) -> _RouteOutcome:
+    parse(steering, ConstructionSteering, "steering")
     request = prepared.request
     if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
         request.hierarchy, FiniteElementHPEpoch
@@ -8258,50 +8421,82 @@ def _adaptation_result(
     )
 
 
-def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptationResult:
-    """Execute exactly the prepared route and certify its target."""
+@overload
+def execute_mesh_adaptation(
+    prepared: PreparedMeshAdaptation, /, *, prove: Literal[False] = False
+) -> AdaptedMeshCandidate: ...
 
+
+@overload
+def execute_mesh_adaptation(
+    prepared: PreparedMeshAdaptation, /, *, prove: Literal[True]
+) -> MeshAdaptationResult: ...
+
+
+@overload
+def execute_mesh_adaptation(
+    prepared: PreparedMeshAdaptation, /, *, prove: bool
+) -> AdaptedMeshCandidate | MeshAdaptationResult: ...
+
+
+def execute_mesh_adaptation(
+    prepared: PreparedMeshAdaptation, /, *, prove: bool = False
+) -> AdaptedMeshCandidate | MeshAdaptationResult:
+    """Execute the prepared route, returning a candidate or certified result.
+
+    Routes without a screened form execute their entire certified route even
+    when returning a candidate; ``certified_steps`` makes this visible.
+    """
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be bool.")
     if not isinstance(prepared, PreparedMeshAdaptation):
         raise TypeError("prepared must be PreparedMeshAdaptation.")
     started = time.monotonic()
+    steering: ConstructionSteering = "certified" if prove else "screened"
+    steps = ("entire_certified_route",)
     match prepared.policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION:
-            outcome = _execute_bisection_route(prepared)
+            outcome = _execute_bisection_route(prepared, steering=steering)
         case MeshAdaptationRoute.NATIVE_MIXED:
-            outcome = _execute_mixed_route(prepared)
+            outcome = _execute_mixed_route(prepared, steering=steering)
         case MeshAdaptationRoute.NATIVE_POLYHEDRAL:
-            outcome = _execute_polyhedral_route(prepared)
+            outcome = _execute_polyhedral_route(prepared, steering=steering)
         case MeshAdaptationRoute.NATIVE_METRIC_2D:
-            outcome = _execute_metric_route(prepared)
+            outcome = _execute_metric_route(prepared, steering=steering)
         case MeshAdaptationRoute.NATIVE_METRIC_SURFACE:
-            outcome = _execute_surface_metric_route(prepared)
+            outcome = _execute_surface_metric_route(prepared, steering=steering)
         case MeshAdaptationRoute.NATIVE_METRIC_3D:
-            outcome = _execute_tetra_metric_route(prepared)
+            outcome, steps = _execute_tetra_metric_route(prepared, steering=steering)
         case MeshAdaptationRoute.DEVICE_BISECTION:
             # Lazy: the device epoch module builds on this module's result types.
             from ._device_adaptation import _execute_device_bisection_route
 
-            outcome = _execute_device_bisection_route(prepared)
+            outcome = _execute_device_bisection_route(prepared, steering=steering)
         case MeshAdaptationRoute.DEVICE_METRIC_2D:
             from ._device_metric import _execute_device_metric_route
 
-            outcome = _execute_device_metric_route(prepared)
+            outcome = _execute_device_metric_route(prepared, steering=steering)
         case MeshAdaptationRoute.DEVICE_METRIC_3D:
             from ._device_tetra_metric import _execute_device_tetra_metric_route
 
-            outcome = _execute_device_tetra_metric_route(prepared)
+            outcome = _execute_device_tetra_metric_route(prepared, steering=steering)
         case MeshAdaptationRoute.MMG:
-            outcome = _execute_mmg_route(prepared)
+            outcome = _execute_mmg_route(prepared, steering=steering)
         case MeshAdaptationRoute.OMEGA_H:
-            outcome = _execute_omega_h_route(prepared)
+            outcome = _execute_omega_h_route(prepared, steering=steering)
         case MeshAdaptationRoute.HP:
-            outcome = _execute_hp_route(prepared)
+            outcome = _execute_hp_route(prepared, steering=steering)
         case _:
             raise TypeError("route must be MeshAdaptationRoute.")
+    if not prove:
+        return AdaptedMeshCandidate(prepared, outcome, steps, time.monotonic() - started)
+    if isinstance(outcome, _PendingTetraAdaptation):
+        raise RuntimeError("Certified execution cannot return a pending route.")
     return _adaptation_result(prepared, outcome, started)
 
 
 __all__ = [
+    "AdaptedMeshCandidate",
     "MarkedMeshAdaptation",
     "MeshAdaptationPolicy",
     "MeshAdaptationResult",

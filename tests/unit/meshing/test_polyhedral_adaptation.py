@@ -415,7 +415,7 @@ def test_native_polyhedral_route_publishes_conservative_plane_split() -> None:
         policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL),
     )
 
-    adapted = execute_mesh_adaptation(prepared)
+    adapted = execute_mesh_adaptation(prepared, prove=True)
 
     remap = adapted.conservative_remap
     assert remap is not None
@@ -461,7 +461,8 @@ def test_native_power_regeneration_republishes_site_evidence_and_refuses_user_da
     )
     policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_POLYHEDRAL)
     adapted = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=policy)
+        prepare_mesh_adaptation(source, request, policy=policy),
+        prove=True,
     )
     target = adapted.target
     assert target.certification is not None and target.certification.passed

@@ -220,7 +220,8 @@ def benchmark_native_meshing(resolution: int, repeats: int) -> dict[str, object]
                 policy=phx.meshing.MeshAdaptationPolicy(
                     phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
                 ),
-            )
+            ),
+            prove=True,
         )
     )
     transition = adaptation.transition
@@ -3033,7 +3034,8 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
                 policy=phx.meshing.MeshAdaptationPolicy(
                     phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D
                 ),
-            )
+            ),
+            prove=True,
         )
     )
     vertex_count = points.shape[0]
@@ -3273,7 +3275,9 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
             )
         )
         result, execute_seconds = _timed(
-            lambda prepared=prepared: phx.meshing.execute_mesh_adaptation(prepared)
+            lambda prepared=prepared: phx.meshing.execute_mesh_adaptation(
+                prepared, prove=True
+            )
         )
         if (
             result.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
@@ -3404,7 +3408,8 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
                 policy=phx.meshing.MeshAdaptationPolicy(
                     phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
                 ),
-            )
+            ),
+            prove=True,
         )
     )
     if adaptation.lineage is None:

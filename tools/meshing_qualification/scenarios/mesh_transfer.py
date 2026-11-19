@@ -774,8 +774,10 @@ def _bisection_adapt(
     prepared, preparation = _measured(
         lambda: phx.meshing.prepare_mesh_adaptation(source, request, policy=policy)
     )
-    # ty: ignore[invalid-argument-type]
-    result, execution = _measured(lambda: phx.meshing.execute_mesh_adaptation(prepared))
+    # ty: ignore[no-matching-overload]
+    result, execution = _measured(
+        lambda: phx.meshing.execute_mesh_adaptation(prepared, prove=True)
+    )
     # ty: ignore[unresolved-attribute]
     if not result.target.audit.passed:
         raise RuntimeError(f"{route.name} produced a target that failed its audit.")

@@ -56,7 +56,7 @@ def native_transfer() -> dict[str, object]:
         MarkedMeshAdaptation(marks),
         policy=MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION),
     )
-    adaptation = execute_mesh_adaptation(prepared)
+    adaptation = execute_mesh_adaptation(prepared, prove=True)
     target = adaptation.target
     transition = adaptation.transition
     if transition is None:
