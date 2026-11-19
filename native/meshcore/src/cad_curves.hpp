@@ -28,6 +28,7 @@ struct CurveControls {
 struct CurveFailure {
   int32_t curve;
   double first, last;
+  int32_t face = -1;  // -1 for a curve-sag failure.
 };
 
 struct CurveStatistics {
@@ -37,6 +38,9 @@ struct CurveStatistics {
   int64_t simpson_subdivisions = 0;
   int64_t sag_evaluations = 0;
   int64_t sag_splits = 0;
+  int64_t metric_splits = 0;
+  int64_t metric_points_skipped = 0;
+  std::vector<int64_t> metric_splits_per_curve;
   std::vector<int64_t> sag_splits_per_curve;
   int64_t small_feature_resamples = 0;
   std::vector<CurveFailure> unresolved;
@@ -51,14 +55,15 @@ struct CurveDiscretization {
   CadCurveDiscretization view() const noexcept { return {offsets.data(), parameters.data()}; }
 };
 
-// Place segments + 1 endpoints at equal cumulative-integral intervals.
+// Each representation span receives ceil(F_span) segments, at least one;
+// inverse placement uses the monotone integral table, without point evaluation.
 // Inputs are monotone tables of length table_count; output has segments + 1
 // elements. This allocation-free inversion is also timed independently.
 int32_t inverse_curve_table(const double* parameters, const double* integrals,
                             int64_t table_count, int64_t segments, double* output);
 
-// Apply the sampled Gauss-point sag screen and bounded local repair to one
-// curve. This operation is exposed separately for phase measurements.
+// Apply the sampled Gauss-point sag and adjacent-face metric screens, with
+// bounded local repair, to one curve. Exposed separately for phase measurements.
 int32_t repair_curve_sag(const CadGeometry& geometry, const CurveControls& controls,
                          int32_t curve, const std::vector<double>& input,
                          std::vector<double>& output, CurveStatistics& statistics);

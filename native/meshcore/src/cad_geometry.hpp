@@ -51,10 +51,13 @@ struct TemplateDefinition {
   ProgramData hessian;
 };
 
+struct Node;
 // Caller-owned scratch of one evaluating thread (program workspace and jets).
 struct EvaluationWorkspace {
   PointWorkspace program;
   std::vector<double> jets;
+  const Node* span_node = nullptr;
+  int64_t span_chart = -1;
 };
 
 // Closed-form surface evaluators (decision D3) that stand in for a node's
@@ -113,6 +116,12 @@ class CadGeometry {
   // a C0 surface crease is the face stage's responsibility.
   void curve_breakpoints(int32_t index, double first, double last,
                          std::vector<double>& points, int& degree) const;
+
+  // Evaluate the exact parameter on the chart selected by span_interior,
+  // which must be strictly inside a representation span; a breakpoint returns
+  // false rather than choosing either side. Curve composites are followed.
+  bool jets_in_span(int32_t node, double parameter, double span_interior, int order,
+                    double* result, EvaluationWorkspace& workspace) const;
 
   // Derivatives of `node` at `point` (its input coordinates) through total
   // order `order` (0 to 2): for n = 0..order the derivatives
