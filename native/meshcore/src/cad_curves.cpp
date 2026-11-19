@@ -258,19 +258,32 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
   std::vector<ChartSegment> segments;
   std::vector<std::vector<double>> arc(static_cast<std::size_t>(m.use_count));
   std::vector<std::vector<double>> charts(static_cast<std::size_t>(m.use_count));
+  std::vector<std::vector<double>> metrics(static_cast<std::size_t>(m.use_count));
   for (int32_t e=0; e<m.curve_count; ++e) for (const Use& use : uses[e]) {
-    double a[2], b[2], previous[3], next[3];
+    double a[2], b[2], previous[3], next[3], jet[9];
+    auto& metric=metrics[use.row];
+    metric.reserve(3*points[e].size());
+    auto evaluate_surface = [&](const double* uv, double* position) {
+      ++stats.first_order_evaluations;
+      if (!g.jets(g.surface_node(use.face),uv,1,jet,workspace)) return false;
+      for (int k=0;k<3;++k) position[k]=jet[k];
+      const double* u=jet+3; const double* v=jet+6;
+      metric.insert(metric.end(), {u[0]*u[0]+u[1]*u[1]+u[2]*u[2],
+                                  u[0]*v[0]+u[1]*v[1]+u[2]*v[2],
+                                  v[0]*v[0]+v[1]*v[1]+v[2]*v[2]});
+      return true;
+    };
     if (!chart_point(g,workspace,use.row,points[e][0],a) ||
-        !g.jets(g.surface_node(use.face),a,0,previous,workspace)) return false;
+        !evaluate_surface(a,previous)) return false;
     auto& distance=arc[use.row];
     distance.reserve(points[e].size()); distance.push_back(0);
     auto& chart=charts[use.row];
     chart.reserve(2*points[e].size());
     chart.insert(chart.end(),{a[0],a[1]});
-    stats.value_evaluations+=2*static_cast<int64_t>(points[e].size());
+    stats.value_evaluations+=static_cast<int64_t>(points[e].size());
     for (std::size_t i=1; i<points[e].size(); ++i) {
       if (!chart_point(g,workspace,use.row,points[e][i],b) ||
-          !g.jets(g.surface_node(use.face),b,0,next,workspace)) return false;
+          !evaluate_surface(b,next)) return false;
       chart.insert(chart.end(),{b[0],b[1]});
       distance.push_back(distance.back()+std::hypot(next[0]-previous[0],next[1]-previous[1],next[2]-previous[2]));
       for (int k=0;k<3;++k) previous[k]=next[k];
@@ -323,13 +336,8 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
     const Grid& grid=grids[use.face];
     for (std::size_t i=0; i<points[e].size(); ++i) {
       const double* uv=charts[use.row].data()+2*i;
-      double jet[9];
-      ++stats.first_order_evaluations;
-      if (!g.jets(g.surface_node(use.face),uv,1,jet,workspace)) return false;
-      const double* a=jet+3; const double* b=jet+6;
-      const double E=a[0]*a[0]+a[1]*a[1]+a[2]*a[2];
-      const double F=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-      const double G=b[0]*b[0]+b[1]*b[1]+b[2]*b[2];
+      const double* metric=metrics[use.row].data()+3*i;
+      const double E=metric[0], F=metric[1], G=metric[2];
       const double det=E*G-F*F;
       if (!std::isfinite(det) || !std::isfinite(E) || !std::isfinite(G)) return false;
       const double rx=det>0 ? controls.face_sizes[use.face]*std::sqrt(G/det) :
