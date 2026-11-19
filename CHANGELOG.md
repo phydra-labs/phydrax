@@ -268,6 +268,23 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) places points
+  sliver-aware: when a cone cell that meets the radius-edge and size criteria
+  (and so is never refined) would have a dihedral angle below 15 degrees, up
+  to three points displaced by 0.3 circumradii from the circumcenter, inside
+  the refined cell's circumball and under the same spacing guard, are tried
+  and the best is inserted. Refinement then leaves about a third of the
+  slivers, and improvement has that much less to do. Cells are screened
+  against the criteria in closed form (cell_shape decides only cells within a
+  relative 1e-6 of a limit), cone cells that clearly meet them are not
+  revisited, a proposal is measured only when its turn comes (most die to
+  earlier insertions of their round), the circumcenter's cavity is built once,
+  and proposals are ordered on a 4096^3 Hilbert grid. Ledger L3 shapes at
+  their Gmsh HXT element counts (one thread, refine + improve): sphere
+  1.47 + 0.84 -> 1.29 + 0.25 s, torus 1.76 + 0.88 -> 1.58 + 0.28 s, two
+  cylinders 1.36 + 0.81 -> 1.21 + 0.25 s, with 1-2% more cells; 0 unmet,
+  minimum dihedral 15 degrees, radius-edge at most 1.9, boundary unchanged.
+  Refined meshes and vertex counts change.
 - Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) measures each
   proposed cell once per round, records unmet cells from the proposed cells
   instead of a whole-mesh pass, decides clear cavity orientation tests by the

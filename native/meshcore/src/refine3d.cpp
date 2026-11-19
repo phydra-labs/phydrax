@@ -323,6 +323,69 @@ bool cell_target(const TetMesh& mesh, const std::int32_t* corners, double& targe
   return std::isfinite(target);
 }
 
+// How the cell (o, p, q, r) (identity metric) stands against the refinement
+// criteria: circumradius R at most `bound` times its shortest edge (`bound` 0:
+// none) and at most `target` (infinite: none). R^2 = |N|^2 / (4 D^2) for the
+// edge vectors a, b, c from o, D = a . (b x c) and
+// N = |a|^2 (b x c) + |b|^2 (c x a) + |c|^2 (a x b); the circumcenter is
+// o + N / (2 D). The screen decides only cells with D^2 above
+// 1e-8 |a|^2 |b|^2 |c|^2, where every binary64 term is within a relative 1e-9
+// of its value, and only beyond a relative margin of 1e-6 from a limit; the
+// rest are uncertain and cell_shape, which stays authoritative, decides them.
+enum class CellScreen : std::uint8_t { kMeets, kViolates, kUncertain };
+CellScreen screen_cell(const double* o, const double* p, const double* q, const double* r,
+                       double bound, double target, double* center = nullptr) noexcept {
+  const double a[3]{p[0] - o[0], p[1] - o[1], p[2] - o[2]};
+  const double b[3]{q[0] - o[0], q[1] - o[1], q[2] - o[2]};
+  const double c[3]{r[0] - o[0], r[1] - o[1], r[2] - o[2]};
+  const double bc[3]{b[1] * c[2] - b[2] * c[1], b[2] * c[0] - b[0] * c[2], b[0] * c[1] - b[1] * c[0]};
+  const double ca[3]{c[1] * a[2] - c[2] * a[1], c[2] * a[0] - c[0] * a[2], c[0] * a[1] - c[1] * a[0]};
+  const double ab[3]{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+  const double aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  const double bb = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+  const double cc = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+  const double det = a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2];
+  const double det_squared = det * det;
+  if (!(det_squared > 1e-8 * (aa * bb * cc)) || !std::isfinite(det_squared)) {
+    return CellScreen::kUncertain;
+  }
+  double components[3];
+  double numerator = 0.0;
+  for (int axis = 0; axis < 3; ++axis) {
+    components[axis] = aa * bc[axis] + bb * ca[axis] + cc * ab[axis];
+    numerator += components[axis] * components[axis];
+  }
+  if (!std::isfinite(numerator)) return CellScreen::kUncertain;
+  constexpr double kMargin = (1.0 - 1e-6) * (1.0 - 1e-6);
+  // R^2 against limit^2 as |N|^2 against 4 D^2 limit^2.
+  const double scaled = 4.0 * det_squared;
+  bool meets = true;
+  bool violates = false;
+  if (std::isfinite(target)) {
+    const double limit = scaled * (target * target);
+    meets = numerator <= limit * kMargin;
+    violates = numerator * kMargin > limit;
+  }
+  if (bound > 0.0 && !violates) {
+    const double d12 = (q[0] - p[0]) * (q[0] - p[0]) + (q[1] - p[1]) * (q[1] - p[1]) +
+                       (q[2] - p[2]) * (q[2] - p[2]);
+    const double d13 = (r[0] - p[0]) * (r[0] - p[0]) + (r[1] - p[1]) * (r[1] - p[1]) +
+                       (r[2] - p[2]) * (r[2] - p[2]);
+    const double d23 = (r[0] - q[0]) * (r[0] - q[0]) + (r[1] - q[1]) * (r[1] - q[1]) +
+                       (r[2] - q[2]) * (r[2] - q[2]);
+    const double limit = scaled * (bound * bound) * std::min({aa, bb, cc, d12, d13, d23});
+    meets = meets && numerator <= limit * kMargin;
+    violates = numerator * kMargin > limit;
+  }
+  if (violates) {
+    if (center != nullptr) {
+      for (int axis = 0; axis < 3; ++axis) center[axis] = o[axis] + components[axis] / (2.0 * det);
+    }
+    return CellScreen::kViolates;
+  }
+  return meets ? CellScreen::kMeets : CellScreen::kUncertain;
+}
+
 // Why refinement left a cell: an unmet reason and, for INPUT_ANGLE, the apex
 // vertex ID and angle in degrees of the acute input feature that protected the
 // boundary split.
@@ -605,14 +668,20 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   return std::isfinite(smallest);
 }
 
-// Index of the 3D Hilbert curve through the 2^21-grid point (x, y, z), by
+// Bits per axis of the proposal order: a 4096^3 grid over the domain's box
+// orders a round's proposals as finely as their cavities need (points in one
+// grid cell keep their measurement order), at a little over half the work of
+// the full 21 bits.
+constexpr int kHilbertBits = 12;
+constexpr std::uint32_t kHilbertMax = (1U << kHilbertBits) - 1U;
+
+// Index of the 3D Hilbert curve through the grid point (x, y, z), by
 // Skilling's transpose ("Programming the Hilbert curve", AIP Conf. Proc. 707,
 // 2004): undo the excess work, Gray-encode, then interleave the bits. The
 // per-bit choices are masks, not branches (the same bits).
 std::uint64_t hilbert_key(std::uint32_t x, std::uint32_t y, std::uint32_t z) noexcept {
-  constexpr int kBits = 21;
   std::uint32_t axes[3]{x, y, z};
-  for (std::uint32_t q = 1U << (kBits - 1); q > 1; q >>= 1) {
+  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
     const std::uint32_t p = q - 1;
     for (int axis = 0; axis < 3; ++axis) {
       // Set bit: invert the low bits of axis 0; clear bit: exchange them.
@@ -624,7 +693,7 @@ std::uint64_t hilbert_key(std::uint32_t x, std::uint32_t y, std::uint32_t z) noe
   }
   for (int axis = 1; axis < 3; ++axis) axes[axis] ^= axes[axis - 1];
   std::uint32_t flip = 0;
-  for (std::uint32_t q = 1U << (kBits - 1); q > 1; q >>= 1) {
+  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
     flip ^= (q - 1) & (0U - static_cast<std::uint32_t>((axes[2] & q) != 0));
   }
   for (std::uint32_t& axis : axes) axis ^= flip;
@@ -651,8 +720,8 @@ struct HilbertFrame {
     for (int axis = 0; axis < 3; ++axis) {
       const double scaled = (point[axis] - lower[axis]) * scale;
       grid[axis] = !(scaled > 0.0) ? 0U
-                   : scaled >= 2097151.0 ? 2097151U
-                                         : static_cast<std::uint32_t>(scaled);
+                   : scaled >= static_cast<double>(kHilbertMax) ? kHilbertMax
+                                                                 : static_cast<std::uint32_t>(scaled);
     }
     return hilbert_key(grid[0], grid[1], grid[2]);
   }
@@ -954,6 +1023,80 @@ void cross3(const double* u, const double* v, double* out) {
   out[0] = u[1] * v[2] - u[2] * v[1];
   out[1] = u[2] * v[0] - u[0] * v[2];
   out[2] = u[0] * v[1] - u[1] * v[0];
+}
+
+// Screens the cone cells of a cavity's boundary faces to `point`: `meets`
+// receives, per boundary row, whether the cone cell clearly meets the
+// refinement criteria (screen_cell with `bound` and the size target of its
+// corners' sizes, `point_size` the new vertex's, 0: none); no later round
+// removes such a cell for itself, so it is persistent unless a neighbor's
+// cavity takes it. Returns the smallest squared sine of a dihedral angle over
+// the persistent cells (a dihedral near 0 or 180 degrees has a small sine):
+// for the edge (i, j) of a cell with corners P0..P3, 6 V = D and face normals
+// n_k opposite corner k, sin^2 theta_ij = D^2 |P_i - P_j|^2 / (|n_k|^2 |n_l|^2),
+// {k, l} the other two corners. `toward` receives the unit normal of the
+// worst cell's cavity face, pointing to `point`.
+double screen_cone(const TetMesh& mesh, std::span<const std::pair<std::int32_t, int>> boundary,
+                   const double* point, double bound, double point_size, double* toward,
+                   std::vector<std::uint8_t>& meets) {
+  meets.assign(boundary.size(), 0U);
+  double worst = std::numeric_limits<double>::infinity();
+  for (std::size_t row = 0; row < boundary.size(); ++row) {
+    const auto [cell, face] = boundary[row];
+    const Tetrahedron& tet = mesh.tet(cell);
+    const double* corners[4];
+    std::array<double, 4> sizes{};
+    for (int corner = 0; corner < 4; ++corner) {
+      corners[corner] = corner == face ? point : mesh.point(tet.v[corner]);
+      sizes[static_cast<std::size_t>(corner)] =
+          corner == face ? point_size : mesh.vertex_size(tet.v[corner]);
+    }
+    if (screen_cell(corners[0], corners[1], corners[2], corners[3], bound,
+                    cell_size_target(sizes)) != CellScreen::kMeets) {
+      continue;
+    }
+    meets[row] = 1U;
+    double normal_squared[4];
+    double normals[4][3];
+    for (int opposite = 0; opposite < 4; ++opposite) {
+      const double* m = corners[(opposite + 1) & 3];
+      const double* l = corners[(opposite + 2) & 3];
+      const double* o = corners[(opposite + 3) & 3];
+      const double u[3]{l[0] - m[0], l[1] - m[1], l[2] - m[2]};
+      const double v[3]{o[0] - m[0], o[1] - m[1], o[2] - m[2]};
+      cross3(u, v, normals[opposite]);
+      normal_squared[opposite] = dot3(normals[opposite], normals[opposite]);
+    }
+    const double edge[3]{corners[1][0] - corners[0][0], corners[1][1] - corners[0][1],
+                         corners[1][2] - corners[0][2]};
+    const double d = dot3(edge, normals[0]);
+    double cell_worst = std::numeric_limits<double>::infinity();
+    for (int first = 0; first < 4; ++first) {
+      for (int second = first + 1; second < 4; ++second) {
+        int others[2]{};
+        for (int corner = 0, count = 0; corner < 4; ++corner) {
+          if (corner != first && corner != second) others[count++] = corner;
+        }
+        const double e[3]{corners[first][0] - corners[second][0],
+                          corners[first][1] - corners[second][1],
+                          corners[first][2] - corners[second][2]};
+        const double denominator = normal_squared[others[0]] * normal_squared[others[1]];
+        const double sine = denominator > 0.0 ? d * d * dot3(e, e) / denominator : 0.0;
+        cell_worst = std::min(cell_worst, sine);
+      }
+    }
+    if (cell_worst < worst) {
+      worst = cell_worst;
+      const double* n = normals[face];
+      const double length = std::sqrt(normal_squared[face]);
+      const double* base = corners[(face + 1) & 3];
+      const double height = (point[0] - base[0]) * n[0] + (point[1] - base[1]) * n[1] +
+                            (point[2] - base[2]) * n[2];
+      const double scale = length > 0.0 ? (height < 0.0 ? -1.0 : 1.0) / length : 0.0;
+      for (int axis = 0; axis < 3; ++axis) toward[axis] = n[axis] * scale;
+    }
+  }
+  return worst;
 }
 
 // Cosine of the angle between u and v; NaN when either is zero.
@@ -2263,27 +2406,22 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       frame.lower[axis] = lower[axis];
       extent = std::max(extent, upper[axis] - lower[axis]);
     }
-    frame.scale = extent > 0.0 && std::isfinite(extent) ? 2097151.0 / extent : 0.0;
+    frame.scale =
+        extent > 0.0 && std::isfinite(extent) ? static_cast<double>(kHilbertMax) / extent : 0.0;
   }
-  // A violating cell of a round, measured once: the shape and target of a
-  // cell are functions of its corners, so they hold while its ID is live.
+  // A violating cell of a round, keyed by its circumcenter. Most proposals of
+  // a round die to earlier insertions of the same round before their turn, so
+  // a proposal holds only what orders it: its shape is measured (cell_shape)
+  // when its turn comes, and its target is a function of its corners, which
+  // holds while its ID is live.
   struct Proposal {
     std::uint64_t key;
     std::uint64_t cell_id;
     std::int32_t slot;
-    bool measured;
     bool has_target;
     double target;
-    geometry::TetrahedronShape shape;
   };
   std::vector<Proposal> proposals;
-  // Hilbert order of a round's proposals (sorted apart from the proposals).
-  struct ProposalOrder {
-    std::uint64_t key;
-    std::uint64_t cell_id;
-    std::size_t row;
-  };
-  std::vector<ProposalOrder> order;
   // Every proposed cell ID: a live cell that misses a criterion when the
   // rounds end was proposed (each created cell is evaluated in the round
   // after its creation), so the unmet records measure only these.
@@ -2295,20 +2433,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   const auto is_embedded = [&](std::int32_t a, std::int32_t b) {
     return embedded_segments.contains(sorted_edge(mesh.vertex_id(a), mesh.vertex_id(b)));
   };
-  // Inserts the interior point `point` reached from cell `start` when its
-  // cavity is found and its natural neighbors clear the guard of natural
-  // radius `radius` and size `size` (0: none); `outcome` is 0 when inserted,
-  // 1 when the walk was blocked (interior.blocked_*), 2 when refused.
-  const auto insert_interior = [&](std::int32_t start, const double* point, double radius,
-                                   double size, int& outcome) -> std::int32_t {
+  // Inserts the interior point `point` whose cavity `interior` holds when its
+  // natural neighbors clear the guard of natural radius `radius` and size
+  // `size` (0: none); `outcome` is 0 when inserted, 2 when refused. The
+  // created cells are the next round's candidates, except those `meets`
+  // (per cavity boundary row, from screen_cone; empty: none) marks as clearly
+  // meeting the criteria, which the round would skip.
+  const auto commit_interior = [&](const double* point, double radius, double size,
+                                   std::span<const std::uint8_t> meets,
+                                   int& outcome) -> std::int32_t {
     outcome = 2;
-    const InteriorCavity::Status found =
-        interior.build(mesh, start, point, !embedded_segments.empty(), is_embedded);
-    if (found == InteriorCavity::Status::kBlocked) {
-      outcome = 1;
-      return PHX_MC_OK;
-    }
-    if (found != InteriorCavity::Status::kFound) return PHX_MC_OK;
     const double feature_size = feature_size_at(point, interior.vertices);
     if (!clear_of(point, interior.vertices, insertion_guard(feature_size, radius, size))) {
       return PHX_MC_OK;
@@ -2327,26 +2461,126 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     for (std::size_t row = 0; row < removed_cells.size(); ++row) {
       if (!incidence.erase(interior.cells[row], removed_cells[row])) return PHX_MC_INTERNAL_ERROR;
     }
-    for (std::int32_t slot : created_slots) {
+    for (std::size_t row = 0; row < created_slots.size(); ++row) {
+      const std::int32_t slot = created_slots[row];
       detail::LocalCell vertices{};
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       if (!incidence.insert_logical(mesh, slot, vertices)) return PHX_MC_INTERNAL_ERROR;
-      enqueue_slot(slot);
+      if (meets.empty() || meets[row] == 0U) enqueue_slot(slot);
     }
     record_feature_size(static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1, feature_size);
     ++inserted_vertices;
     outcome = 0;
     return PHX_MC_OK;
   };
+  // Builds the cavity of `point` reached from cell `start` and commits it;
+  // `outcome` is 1 when the walk was blocked (interior.blocked_*).
+  const auto insert_interior = [&](std::int32_t start, const double* point, double radius,
+                                   double size, int& outcome) -> std::int32_t {
+    outcome = 2;
+    const InteriorCavity::Status found =
+        interior.build(mesh, start, point, !embedded_segments.empty(), is_embedded);
+    if (found == InteriorCavity::Status::kBlocked) {
+      outcome = 1;
+      return PHX_MC_OK;
+    }
+    if (found != InteriorCavity::Status::kFound) return PHX_MC_OK;
+    return commit_interior(point, radius, size, {}, outcome);
+  };
+  // Sliver-aware placement in the picking region of Chew and of Li and Teng:
+  // when a persistent cone cell of the circumcenter's cavity (screen_cone) has
+  // a dihedral angle below kSliverDegrees (or above its supplement), points
+  // displaced from the circumcenter by kPickFraction of the circumradius are
+  // tried, up to kPickAttempts, along the running sum of the inward unit
+  // normals of each attempt's worst cone face. The first attempt without such
+  // a cell, else the best, is inserted. A candidate strictly inside the
+  // proposal cell's circumball conflicts with it, so it is admitted only when
+  // its cavity is found, holds the proposal cell, meets no constrained face
+  // that could be split (encroachment was decided for the circumcenter) and
+  // clears the spacing guard; the circumcenter's cavity is rebuilt when it
+  // wins. Natural radius and size stay the circumcenter's. Slivers left by
+  // refinement are improvement's work; most of them start here, as cone cells
+  // that meet the radius-edge and size criteria and so are never refined.
+  // Measured on the ledger shapes at their Gmsh HXT element counts: the
+  // slivers below 15 degrees that refinement leaves drop by about two thirds,
+  // for under 2% more vertices.
+  constexpr double kSliverDegrees = 15.0;
+  constexpr double kPickFraction = 0.3;
+  constexpr int kPickAttempts = 3;
+  const double sliver_sine = std::sin(kSliverDegrees * std::numbers::pi / 180.0);
+  const double sliver_sine_squared = sliver_sine * sliver_sine;
+  std::vector<std::uint8_t> cone_meets;
+  std::vector<std::uint8_t> best_meets;
+  const auto commit_center = [&](std::int32_t start, const double* center, double radius,
+                                 double size, int& outcome) -> std::int32_t {
+    if (mesh.metric_active() || !embedded_segments.empty()) {
+      return commit_interior(center, radius, size, {}, outcome);
+    }
+    double toward[3];
+    double best = screen_cone(mesh, interior.boundary, center, radius_edge_bound, size, toward,
+                              cone_meets);
+    if (!(best < sliver_sine_squared)) {
+      return commit_interior(center, radius, size, cone_meets, outcome);
+    }
+    double best_point[3]{center[0], center[1], center[2]};
+    best_meets.swap(cone_meets);
+    bool built_best = true;
+    double offset[3]{};
+    for (int attempt = 0; attempt < kPickAttempts; ++attempt) {
+      for (int axis = 0; axis < 3; ++axis) offset[axis] += toward[axis];
+      const double length = std::sqrt(dot3(offset, offset));
+      if (!(length > 0.0)) break;
+      double candidate[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        candidate[axis] = center[axis] + kPickFraction * radius * offset[axis] / length;
+      }
+      if (!std::all_of(candidate, candidate + 3,
+                       [](double value) { return coordinate_in_domain(value); })) {
+        break;
+      }
+      built_best = false;
+      if (interior.build(mesh, start, candidate, false, is_embedded) !=
+          InteriorCavity::Status::kFound) {
+        break;
+      }
+      if (std::find(interior.cells.begin(), interior.cells.end(), start) == interior.cells.end()) {
+        break;
+      }
+      if (boundary_splittable &&
+          std::any_of(interior.boundary.begin(), interior.boundary.end(), [&](const auto& entry) {
+            return mesh.complex_.constraint(entry.first, entry.second) != kNoConstraint;
+          })) {
+        break;
+      }
+      const double feature_size = feature_size_at(candidate, interior.vertices);
+      if (!clear_of(candidate, interior.vertices, insertion_guard(feature_size, radius, size))) {
+        break;
+      }
+      const double quality = screen_cone(mesh, interior.boundary, candidate, radius_edge_bound,
+                                         size, toward, cone_meets);
+      if (quality > best) {
+        best = quality;
+        std::copy_n(candidate, 3, best_point);
+        best_meets.swap(cone_meets);
+        built_best = true;
+      }
+      if (!(quality < sliver_sine_squared)) break;
+    }
+    if (!built_best && interior.build(mesh, start, best_point, false, is_embedded) !=
+                           InteriorCavity::Status::kFound) {
+      return PHX_MC_INTERNAL_ERROR;
+    }
+    return commit_interior(best_point, radius, size, best_meets, outcome);
+  };
   const auto refine_cell = [&](const Proposal& proposal) -> std::int32_t {
     selective_fixed = false;
     const std::int32_t root_slot = proposal.slot;
     const std::uint64_t cell_id = proposal.cell_id;
-    if (!proposal.measured) {
+    geometry::TetrahedronShape shape;
+    if (!cell_shape(mesh, mesh.tet(root_slot), shape)) {
       unmet_causes[cell_id] = {PHX_MC_TET_UNMET_NONREPRESENTABLE};
       return PHX_MC_OK;
     }
-    const geometry::TetrahedronShape& shape = proposal.shape;
     const double center_size = proposal.target;
     const bool has_center_size = proposal.has_target;
     const double* center = shape.circumcenter.data();
@@ -2422,6 +2656,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // cavity's constrained boundary is split before the center is inserted;
     // a protected or refused split leaves that boundary fixed for this center.
     std::int32_t protected_by = embedded_protected;
+    // A refused split attempt may have edited the mesh: the cavity is rebuilt.
+    bool cavity_current = true;
     if (boundary_splittable) {
       std::int32_t encroached_cell = -1;
       int encroached_face = -1;
@@ -2450,6 +2686,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         bool split = false;
         protecting = -1;
         selective_fixed = false;
+        cavity_current = false;
         const std::int32_t error =
             split_encroached_face(encroached_cell, encroached_face, center, split);
         if (error != PHX_MC_OK) return error;
@@ -2461,7 +2698,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
     }
     int outcome = 2;
-    const std::int32_t error = insert_interior(root_slot, center, shape.circumradius, size, outcome);
+    const std::int32_t error =
+        cavity_current ? commit_center(root_slot, center, shape.circumradius, size, outcome)
+                       : insert_interior(root_slot, center, shape.circumradius, size, outcome);
     if (error != PHX_MC_OK) return error;
     if (outcome != 0) {
       unmet_causes[cell_id] = protected_by >= 0 ? input_angle(protected_by)
@@ -2475,15 +2714,30 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     proposals.clear();
     for (std::int32_t slot : pending) {
       if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
+      const Tetrahedron& tet = mesh.tet(slot);
       Proposal proposal{};
-      proposal.measured = cell_shape(mesh, mesh.tet(slot), proposal.shape);
-      proposal.has_target = cell_target(mesh, mesh.tet(slot).v, proposal.target);
-      if (proposal.measured &&
-          !(radius_edge_bound > 0.0 && proposal.shape.radius_edge_ratio > radius_edge_bound) &&
-          !(proposal.has_target && proposal.shape.circumradius > proposal.target)) {
-        continue;
+      proposal.has_target = cell_target(mesh, tet.v, proposal.target);
+      double center[3];
+      const CellScreen screen =
+          mesh.metric_active()
+              ? CellScreen::kUncertain
+              : screen_cell(mesh.point(tet.v[0]), mesh.point(tet.v[1]), mesh.point(tet.v[2]),
+                            mesh.point(tet.v[3]), radius_edge_bound,
+                            proposal.has_target ? proposal.target
+                                                : std::numeric_limits<double>::infinity(),
+                            center);
+      if (screen == CellScreen::kMeets) continue;
+      if (screen == CellScreen::kUncertain) {
+        geometry::TetrahedronShape shape;
+        const bool measured = cell_shape(mesh, tet, shape);
+        if (measured &&
+            !(radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) &&
+            !(proposal.has_target && shape.circumradius > proposal.target)) {
+          continue;
+        }
+        std::copy_n(shape.circumcenter.begin(), 3, center);
       }
-      proposal.key = frame.key(proposal.shape.circumcenter.data());
+      proposal.key = frame.key(center);
       proposal.cell_id = mesh.cell_id(slot);
       proposal.slot = slot;
       proposals.push_back(proposal);
@@ -2494,15 +2748,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       std::fill(pending_round.begin(), pending_round.end(), 0U);
       round = 1;
     }
-    order.resize(proposals.size());
-    for (std::size_t row = 0; row < proposals.size(); ++row) {
-      order[row] = {proposals[row].key, proposals[row].cell_id, row};
-    }
-    std::sort(order.begin(), order.end(), [](const ProposalOrder& a, const ProposalOrder& b) {
+    std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
       return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
     });
-    for (const ProposalOrder& entry : order) {
-      const Proposal& proposal = proposals[entry.row];
+    for (const Proposal& proposal : proposals) {
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {
         continue;
       }
