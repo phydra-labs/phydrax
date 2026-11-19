@@ -19,7 +19,9 @@
 // tests are broken by index-ordered symbolic perturbation with vertex ids.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -47,6 +49,10 @@ class Triangulation2D {
 
   std::vector<double> coordinates;      // 2 per vertex
   const double* weights = nullptr;      // per vertex (regular triangulations) or null
+  // Input index of each vertex, which orders the symbolic perturbation, when
+  // the coordinates are stored in another (insertion) order; null: the
+  // vertex index itself.
+  const int32_t* identities = nullptr;
   std::vector<Triangle2D> triangles;    // slots, live or free
   std::vector<int32_t> constraints;     // 3 per slot
   std::vector<uint8_t> region;          // per slot, owner-defined flag (CDT domain)
@@ -61,6 +67,9 @@ class Triangulation2D {
     return coordinates.data() + 2 * static_cast<int64_t>(vertex);
   }
   int32_t vertex_count() const { return static_cast<int32_t>(coordinates.size() / 2); }
+  int64_t identity(int32_t vertex) const {
+    return identities == nullptr ? vertex : identities[static_cast<std::size_t>(vertex)];
+  }
   bool is_ghost(int32_t t) const { return triangles[t].v[2] == kInfiniteVertex; }
 
   int index_of(int32_t t, int32_t vertex) const {
@@ -157,6 +166,7 @@ class Triangulation2D {
   void reset(const double* points, int64_t vertex_total, const double* vertex_weights) {
     coordinates.assign(points, points + 2 * vertex_total);
     weights = vertex_weights;
+    identities = nullptr;
     triangles.clear();
     constraints.clear();
     region.clear();
@@ -212,7 +222,7 @@ class Triangulation2D {
   bool conflict(int32_t t, const double* q, int32_t p) const {
     const Triangle2D& tri = triangles[t];
     if (tri.v[2] == kInfiniteVertex) {
-      const int side = orient2d(point(tri.v[0]), point(tri.v[1]), q);
+      const int side = orient2d_filtered(point(tri.v[0]), point(tri.v[1]), q);
       if (side != 0) {
         return side > 0;
       }
@@ -226,10 +236,15 @@ class Triangulation2D {
     if (weights != nullptr) {
       return power2d_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q,
                          weights[tri.v[0]], weights[tri.v[1]], weights[tri.v[2]], weights[p],
-                         tri.v[0], tri.v[1], tri.v[2], p) > 0;
+                         identity(tri.v[0]), identity(tri.v[1]), identity(tri.v[2]),
+                         identity(p)) > 0;
     }
-    return incircle_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q, tri.v[0],
-                        tri.v[1], tri.v[2], p) > 0;
+    // A sign the floating stage decides is the unperturbed sign.
+    const int sign = incircle_stage(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q);
+    if (sign != 0) return sign > 0;
+    return incircle_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q,
+                        identity(tri.v[0]), identity(tri.v[1]), identity(tri.v[2]),
+                        identity(p)) > 0;
   }
 
   // Stochastic visibility walk (edge order from splitmix64 of a step counter).
@@ -254,7 +269,7 @@ class Triangulation2D {
         if (nb == previous) {
           continue;
         }
-        if (orient2d(point(tri.v[next3(k)]), point(tri.v[prev3(k)]), q) < 0) {
+        if (orient2d_filtered(point(tri.v[next3(k)]), point(tri.v[prev3(k)]), q) < 0) {
           target = nb;
           crossed = k;
           break;
@@ -302,6 +317,13 @@ class Triangulation2D {
         }
         if (mark != outside && conflict(nb, q, p)) {
           marks_[nb] = inside;
+          // Its neighbors are read when it leaves the stack.
+          for (int32_t next : triangles[nb].n) {
+            if (static_cast<std::size_t>(next) < triangles.size()) {
+              prefetch_read(&triangles[static_cast<std::size_t>(next)]);
+              prefetch_read(&marks_[static_cast<std::size_t>(next)]);
+            }
+          }
           stack_.push_back(nb);
         } else {
           marks_[nb] = outside;
@@ -397,15 +419,12 @@ class Triangulation2D {
   std::vector<BoundaryEdge> boundary_;
 };
 
-// Deduplicates, orders and builds the (regular) Delaunay triangulation of the
-// representatives into `triangulation` (whose coordinates must already hold
-// the input points). Returns DEGENERATE_INPUT when the representatives are
+// Builds the (regular) Delaunay triangulation of the vertices `order` lists
+// (distinct points, in insertion order) into `triangulation`, whose
+// coordinates must already hold them. Returns DEGENERATE_INPUT when they are
 // collinear.
-inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* points,
-                                 int64_t point_count, const double* weights,
-                                 std::vector<int32_t>& vertex_map) {
-  const std::vector<int32_t> order =
-      deduplicated_insertion_order(points, point_count, 2, weights, vertex_map);
+inline int32_t build_ordered_delaunay_2d(Triangulation2D& triangulation,
+                                         std::span<const int32_t> order) {
   if (order.size() < 3) {
     return PHX_MC_DEGENERATE_INPUT;
   }
@@ -434,6 +453,18 @@ inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* p
     }
   }
   return PHX_MC_OK;
+}
+
+// Deduplicates, orders and builds the (regular) Delaunay triangulation of the
+// representatives into `triangulation` (whose coordinates must already hold
+// the input points). Returns DEGENERATE_INPUT when the representatives are
+// collinear.
+inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* points,
+                                 int64_t point_count, const double* weights,
+                                 std::vector<int32_t>& vertex_map) {
+  const std::vector<int32_t> order =
+      deduplicated_insertion_order(points, point_count, 2, weights, vertex_map);
+  return build_ordered_delaunay_2d(triangulation, order);
 }
 
 }  // namespace phx::mc

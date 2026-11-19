@@ -40,13 +40,6 @@ struct alignas(16) Tetrahedron {
 };
 static_assert(sizeof(Tetrahedron) == 48);
 
-// Hint that `cell` is read soon (a walk or cavity about to visit it).
-inline void prefetch_cell([[maybe_unused]] const Tetrahedron* cell) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-  __builtin_prefetch(cell);
-#endif
-}
-
 inline bool is_ghost(const Tetrahedron& tet) {
   return tet.v[0] == kGhostVertex || tet.v[1] == kGhostVertex ||
          tet.v[2] == kGhostVertex || tet.v[3] == kGhostVertex;

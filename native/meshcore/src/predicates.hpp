@@ -33,6 +33,7 @@
 //     nonzero unless all points lie on one hyperplane (collinear / coplanar).
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 #include "expansion.hpp"
@@ -63,6 +64,45 @@ int orient2d(const double* a, const double* b, const double* c);
 int orient3d(const double* a, const double* b, const double* c, const double* d);
 int incircle(const double* a, const double* b, const double* c, const double* d);
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e);
+
+// orient2d through its first, floating stage inlined. Shewchuk's bound on
+// |detleft| + |detright| holds for either sign pattern (opposite signs make
+// |det| the sum), so the test needs no branch on the signs.
+inline int orient2d_filtered(const double* a, const double* b, const double* c) noexcept {
+  const double detleft = (a[0] - c[0]) * (b[1] - c[1]);
+  const double detright = (a[1] - c[1]) * (b[0] - c[0]);
+  const double det = detleft - detright;
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound =
+      (3.0 + 16.0 * kEpsilon) * kEpsilon * (std::fabs(detleft) + std::fabs(detright));
+  if (det > errbound) return 1;
+  if (-det > errbound) return -1;
+  return orient2d(a, b, c);
+}
+
+// The floating stage of incircle (Shewchuk's stage A expression and bound):
+// the sign it decides, or 0 when the exact predicate must decide.
+inline int incircle_stage(const double* a, const double* b, const double* c,
+                          const double* d) noexcept {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double alift = adx * adx + ady * ady;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double clift = cdx * cdx + cdy * cdy;
+  const double det =
+      alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (10.0 + 96.0 * kEpsilon) * kEpsilon * permanent;
+  if (det > errbound) return 1;
+  if (-det > errbound) return -1;
+  return 0;
+}
 
 // The floating stage of orient3d (Shewchuk's stage A expression and error
 // bound): `det` the negated orientation determinant, `errbound` its bound.

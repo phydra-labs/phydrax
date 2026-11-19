@@ -602,7 +602,7 @@ class Triangulation3D {
           // Its neighbors are read when it leaves the stack.
           for (int32_t next : joined.n) {
             if (static_cast<std::size_t>(next) < complex_.tets.size()) {
-              prefetch_cell(&complex_.tets[static_cast<std::size_t>(next)]);
+              prefetch_read(&complex_.tets[static_cast<std::size_t>(next)]);
             }
           }
           cavity_.push_back(neighbor);
