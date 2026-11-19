@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <limits>
-#include <memory>
 #include <numeric>
 #include <vector>
 
@@ -92,84 +91,161 @@ bool nondegenerate(const double* a, const double* b, const double* c) {
   return false;
 }
 
+struct Box {
+  double lo[3], hi[3];
+};
+
+struct Node {
+  Box box;
+  int64_t begin, end;
+  int64_t left, right;
+};
+
+struct Item {
+  uint64_t morton;
+  int64_t triangle;
+};
+
+bool overlaps(const Box& a, const Box& b) {
+  for (int d = 0; d < 3; ++d)
+    if (a.hi[d] < b.lo[d] || b.hi[d] < a.lo[d]) return false;
+  return true;
+}
+
+uint32_t spread(uint32_t value) {
+  value = (value | (value << 16)) & 0x030000ffU;
+  value = (value | (value << 8)) & 0x0300f00fU;
+  value = (value | (value << 4)) & 0x030c30c3U;
+  return (value | (value << 2)) & 0x09249249U;
+}
+
 struct Tree {
-  std::vector<double> lo, hi, size, item_lo, item_hi;
-  std::vector<int64_t> left, right, leaf, items, order;
-  int64_t build(int64_t begin, int64_t end) {
-    const int64_t node = static_cast<int64_t>(left.size());
-    left.push_back(-1); right.push_back(-1); leaf.push_back(-1); size.push_back(0);
-    lo.resize(lo.size()+3); hi.resize(hi.size()+3);
-    for (int d = 0; d < 3; ++d) {
-      double a = item_lo[3*order[begin]+d], b = item_hi[3*order[begin]+d];
-      for (int64_t i = begin+1; i < end; ++i) {
-        a = std::min(a, item_lo[3*order[i]+d]); b = std::max(b, item_hi[3*order[i]+d]);
+  std::vector<Box> boxes;
+  std::vector<Item> items;
+  std::vector<Node> nodes;
+
+  Tree(const double* points, int64_t n, const int64_t* triangles) {
+    boxes.resize(static_cast<size_t>(n));
+    items.resize(static_cast<size_t>(n));
+    Box bounds{};
+    for (int64_t t = 0; t < n; ++t) {
+      Box& box = boxes[t];
+      for (int d = 0; d < 3; ++d) {
+        const double a = points[3*triangles[3*t]+d];
+        const double b = points[3*triangles[3*t+1]+d];
+        const double c = points[3*triangles[3*t+2]+d];
+        box.lo[d] = std::min({a, b, c});
+        box.hi[d] = std::max({a, b, c});
+        if (t == 0) {
+          bounds.lo[d] = box.lo[d];
+          bounds.hi[d] = box.hi[d];
+        } else {
+          bounds.lo[d] = std::min(bounds.lo[d], box.lo[d]);
+          bounds.hi[d] = std::max(bounds.hi[d], box.hi[d]);
+        }
       }
-      lo[3*node+d] = a; hi[3*node+d] = b; size[node] += b-a;
     }
-    if (end-begin == 1) {
-      leaf[node] = static_cast<int64_t>(items.size()); items.push_back(order[begin]);
-    } else {
-      int axis = 0;
-      for (int d = 1; d < 3; ++d)
-        if (hi[3*node+d]-lo[3*node+d] > hi[3*node+axis]-lo[3*node+axis]) axis = d;
-      const int64_t mid = begin+(end-begin)/2;
-      std::nth_element(order.begin()+begin, order.begin()+mid, order.begin()+end,
-                       [&](int64_t a, int64_t b) {
-        const double ca = item_lo[3*a+axis]+item_hi[3*a+axis];
-        const double cb = item_lo[3*b+axis]+item_hi[3*b+axis];
-        return ca == cb ? a < b : ca < cb;
-      });
-      const int64_t l = build(begin, mid), r = build(mid, end);
-      left[node] = l; right[node] = r;
+    for (int64_t t = 0; t < n; ++t) {
+      uint32_t code = 0;
+      for (int d = 0; d < 3; ++d) {
+        const double width = bounds.hi[d] - bounds.lo[d];
+        const double center = (boxes[t].lo[d] + boxes[t].hi[d]) * 0.5;
+        const double unit = width > 0 ? (center - bounds.lo[d]) / width : 0;
+        const uint32_t coordinate = static_cast<uint32_t>(std::clamp(unit * 1023.0, 0.0, 1023.0));
+        code |= spread(coordinate) << d;
+      }
+      items[t] = {code, t};
     }
-    return node;
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+      return a.morton == b.morton ? a.triangle < b.triangle : a.morton < b.morton;
+    });
+    nodes.reserve(static_cast<size_t>(n / 2 + 1));
+    build(0, n);
   }
-  phx_mc_bvh_tree_view view() const {
-    return {static_cast<int64_t>(left.size()), static_cast<int64_t>(items.size()), 1,
-            static_cast<int64_t>(order.size()), lo.data(), hi.data(), size.data(),
-            left.data(), right.data(), leaf.data(), items.data(), item_lo.data(), item_hi.data()};
+
+  int64_t build(int64_t begin, int64_t end) {
+    const int64_t index = static_cast<int64_t>(nodes.size());
+    nodes.push_back({});
+    Node result{};
+    result.begin = begin;
+    result.end = end;
+    result.left = result.right = -1;
+    if (end - begin <= 8) {
+      result.box = boxes[items[begin].triangle];
+      for (int64_t i = begin + 1; i < end; ++i) {
+        const Box& box = boxes[items[i].triangle];
+        for (int d = 0; d < 3; ++d) {
+          result.box.lo[d] = std::min(result.box.lo[d], box.lo[d]);
+          result.box.hi[d] = std::max(result.box.hi[d], box.hi[d]);
+        }
+      }
+    } else {
+      const int64_t mid = begin + (end - begin) / 2;
+      result.left = build(begin, mid);
+      result.right = build(mid, end);
+      for (int d = 0; d < 3; ++d) {
+        result.box.lo[d] = std::min(nodes[result.left].box.lo[d], nodes[result.right].box.lo[d]);
+        result.box.hi[d] = std::max(nodes[result.left].box.hi[d], nodes[result.right].box.hi[d]);
+      }
+    }
+    nodes[index] = result;
+    return index;
   }
 };
+
+int32_t classify_pair(const double* points, const int64_t* triangles, int64_t a, int64_t b,
+                      std::vector<Finding>& out) {
+  if (a > b) std::swap(a, b);
+  const double* p[3];
+  const double* q[3];
+  const int64_t* pi = triangles + 3*a;
+  const int64_t* qi = triangles + 3*b;
+  for (int j = 0; j < 3; ++j) {
+    p[j] = points + 3*pi[j];
+    q[j] = points + 3*qi[j];
+  }
+  phx::mc::Contact contact;
+  const int32_t status = phx::mc::intersect_triangles(p, q, pi, qi, contact);
+  if (status != PHX_MC_OK) return status;
+  if (contact.kind != PHX_MC_DISJOINT && contact.kind != PHX_MC_SHARED_VERTEX &&
+      contact.kind != PHX_MC_SHARED_EDGE)
+    out.push_back({PHX_MC_SURFACE_CONTACT, a, b, contact.kind});
+  return PHX_MC_OK;
+}
 
 int32_t contacts(const double* points, int64_t n, const int64_t* triangles,
                  std::vector<Finding>& out) {
   if (n == 0) return PHX_MC_OK;
-  Tree tree;
-  tree.order.resize(static_cast<size_t>(n));
-  std::iota(tree.order.begin(), tree.order.end(), int64_t{0});
-  tree.item_lo.resize(static_cast<size_t>(3*n)); tree.item_hi.resize(static_cast<size_t>(3*n));
-  for (int64_t t = 0; t < n; ++t) for (int d = 0; d < 3; ++d) {
-    const double a = points[3*triangles[3*t]+d], b = points[3*triangles[3*t+1]+d],
-                 c = points[3*triangles[3*t+2]+d];
-    tree.item_lo[3*t+d] = std::min({a,b,c}); tree.item_hi[3*t+d] = std::max({a,b,c});
-  }
-  tree.build(0, n);
-  const auto view = tree.view();
-  phx_mc_bvh_pair_stream* raw = nullptr;
-  int32_t status = phx_mc_bvh_pair_stream_create(&view, &view, 3, 1, 0, 0, 256, 256, 1, &raw);
-  if (status != PHX_MC_OK) return status;
-  std::unique_ptr<phx_mc_bvh_pair_stream, decltype(&phx_mc_bvh_pair_stream_free)> stream(raw, phx_mc_bvh_pair_stream_free);
-  int64_t first[256], second[256], ends[256], blocks;
-  do {
-    status = phx_mc_bvh_pair_stream_next(stream.get(), 256, 256, first, second, ends, &blocks);
-    if (status != PHX_MC_OK) return status;
-    const int64_t count = blocks ? ends[blocks-1] : 0;
-    for (int64_t k = 0; k < count; ++k) {
-      const int64_t a = first[k], b = second[k];
-      if (a >= b) continue;
-      const double* p[3]; const double* q[3]; int64_t pi[3], qi[3];
-      for (int j = 0; j < 3; ++j) {
-        pi[j] = triangles[3*a+j]; qi[j] = triangles[3*b+j];
-        p[j] = points+3*pi[j]; q[j] = points+3*qi[j];
+  Tree tree(points, n, triangles);
+  std::vector<std::array<int64_t, 2>> stack{{0, 0}};
+  while (!stack.empty()) {
+    const auto [a, b] = stack.back();
+    stack.pop_back();
+    const Node& first = tree.nodes[a];
+    const Node& second = tree.nodes[b];
+    if (!overlaps(first.box, second.box)) continue;
+    if (first.left < 0 && second.left < 0) {
+      for (int64_t i = first.begin; i < first.end; ++i) {
+        for (int64_t j = a == b ? i + 1 : second.begin; j < second.end; ++j) {
+          const int64_t x = tree.items[i].triangle, y = tree.items[j].triangle;
+          if (!overlaps(tree.boxes[x], tree.boxes[y])) continue;
+          const int32_t status = classify_pair(points, triangles, x, y, out);
+          if (status != PHX_MC_OK) return status;
+        }
       }
-      phx::mc::Contact contact;
-      status = phx::mc::intersect_triangles(p, q, pi, qi, contact);
-      if (status != PHX_MC_OK) return status;
-      if (contact.kind != PHX_MC_DISJOINT && contact.kind != PHX_MC_SHARED_VERTEX &&
-          contact.kind != PHX_MC_SHARED_EDGE)
-        out.push_back({PHX_MC_SURFACE_CONTACT, a, b, contact.kind});
+    } else if (a == b) {
+      stack.push_back({first.left, first.left});
+      stack.push_back({first.left, first.right});
+      stack.push_back({first.right, first.right});
+    } else if (second.left < 0 ||
+               (first.left >= 0 && first.end - first.begin >= second.end - second.begin)) {
+      stack.push_back({first.left, b});
+      stack.push_back({first.right, b});
+    } else {
+      stack.push_back({a, second.left});
+      stack.push_back({a, second.right});
     }
-  } while (blocks != 0);
+  }
   return PHX_MC_OK;
 }
 }  // namespace
