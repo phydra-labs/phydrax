@@ -1212,6 +1212,53 @@ bool CadGeometry::substitute(int32_t index, const Taylor* inputs, const Truncati
   return true;
 }
 
+void CadGeometry::curve_breakpoints(int32_t index, double first, double last,
+                                    std::vector<double>& points, int& degree) const {
+  const Node& current = node(index);
+  const double scale = last - first;
+  auto add = [&](double parameter) {
+    if (scale == 0) return;
+    const double s = (parameter - first) / scale;
+    if (s > 0 && s < 1 && std::isfinite(s)) points.push_back(s);
+  };
+  switch (current.kind) {
+    case PHX_MC_CAD_NODE_BSPLINE_CURVE: {
+      degree = std::max(degree, static_cast<int>(current.integers[0]));
+      const int64_t knot_count = current.integers[0] + current.integers[1] + 1;
+      for (int64_t i = 0; i < knot_count; ++i) add(current.reals[i]);
+      break;
+    }
+    case PHX_MC_CAD_NODE_INTERSECTION:
+      if (current.integers[4] < 0) {
+        for (int64_t chart = 1; chart < current.integers[2]; ++chart)
+          add(current.integers[6] ? current.reals[0] - chart : static_cast<double>(chart));
+        if (current.integers[5] >= 0)
+          add(current.integers[6] ? current.reals[0] - current.reals[1]
+                                  : current.reals[1]);
+      }
+      break;
+    case PHX_MC_CAD_NODE_REPARAMETERIZED: {
+      const double delta = current.reals[1] - current.reals[0];
+      const bool reversed = current.integers[1] != 0;
+      const auto map = [&](double value) {
+        return current.reals[0] + (reversed ? 1 - value : value) * delta;
+      };
+      curve_breakpoints(static_cast<int32_t>(current.integers[0]), map(first), map(last),
+                        points, degree);
+      break;
+    }
+    case PHX_MC_CAD_NODE_AFFINE:
+    case PHX_MC_CAD_NODE_OFFSET_CURVE:
+      curve_breakpoints(static_cast<int32_t>(current.integers[0]), first, last, points, degree);
+      break;
+    case PHX_MC_CAD_NODE_SURFACE_MAPPED:
+      curve_breakpoints(static_cast<int32_t>(current.integers[1]), first, last, points, degree);
+      break;
+    default:
+      break;
+  }
+}
+
 bool CadGeometry::jets(int32_t index, const double* point, int order, double* result,
                        EvaluationWorkspace& workspace) const {
   const Node& node = this->node(index);

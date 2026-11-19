@@ -216,6 +216,7 @@ class ConstrainedMesher {
   std::deque<std::pair<int32_t, int32_t>> segment_queue_;
   std::priority_queue<BadTriangle, std::vector<BadTriangle>, BadOrder> bad_queue_;
   std::vector<int32_t> flip_stack_;
+  std::vector<int32_t> cavity_stack_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
   std::vector<int32_t> constraint_sources_;
@@ -561,18 +562,21 @@ class ConstrainedMesher {
 
   BadTriangle make_entry(int32_t t, double badness) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
-    BadTriangle entry{badness, {triangle.v[0], triangle.v[1], triangle.v[2]}, t};
-    const int first = static_cast<int>(std::min_element(entry.v, entry.v + 3) - entry.v);
-    std::rotate(entry.v, entry.v + first, entry.v + 3);
-    return entry;
+    int first = 0;
+    if (triangle.v[1] < triangle.v[first]) first = 1;
+    if (triangle.v[2] < triangle.v[first]) first = 2;
+    return BadTriangle{badness,
+                       {triangle.v[first], triangle.v[next3(first)], triangle.v[prev3(first)]}, t};
   }
 
   bool matches(const BadTriangle& entry) const {
     if (tri_.live[static_cast<std::size_t>(entry.slot)] == 0 || tri_.is_ghost(entry.slot)) {
       return false;
     }
-    const BadTriangle current = make_entry(entry.slot, entry.badness);
-    return std::equal(current.v, current.v + 3, entry.v);
+    const int first = tri_.index_of(entry.slot, entry.v[0]);
+    if (first < 0) return false;
+    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(entry.slot)];
+    return triangle.v[next3(first)] == entry.v[1] && triangle.v[prev3(first)] == entry.v[2];
   }
 
   bool encroaches(int32_t t, int k, const double* v) const {
@@ -760,9 +764,10 @@ class ConstrainedMesher {
   // triangle (p, q, m) and replaces g by two ghosts.
   void attach_to_hull(int32_t g, int32_t p, int32_t q, int32_t m, int32_t id) {
     const Triangle2D old = tri_.triangles[static_cast<std::size_t>(g)];
-    const int32_t inner = old.n[tri_.edge_index(g, p, q)];
-    const int32_t ghost_q = old.n[tri_.edge_index(g, q, kInfiniteVertex)];
-    const int32_t ghost_p = old.n[tri_.edge_index(g, kInfiniteVertex, p)];
+    // Ghosts store the hull edge as v[0] -> v[1], with infinity in v[2].
+    const int32_t inner = old.n[2];
+    const int32_t ghost_q = old.n[0];
+    const int32_t ghost_p = old.n[1];
     const uint8_t region = tri_.region[static_cast<std::size_t>(inner)];
     tri_.release(g);
     const int32_t f = tri_.allocate();
@@ -1051,7 +1056,9 @@ class ConstrainedMesher {
     epoch_ += 2;
     const std::uint64_t inside = epoch_;
     const std::uint64_t outside = epoch_ + 1;
-    std::vector<int32_t> stack{start};
+    auto& stack = cavity_stack_;
+    stack.clear();
+    stack.push_back(start);
     marks_[static_cast<std::size_t>(start)] = inside;
     while (!stack.empty()) {
       const int32_t t = stack.back();

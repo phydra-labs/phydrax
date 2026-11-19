@@ -324,6 +324,21 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native zero-set surface remeshing constructs without per-edit proofs (a
+  floating-point adapter with curvature sizing, projection on point jets and
+  quality repair) and certifies afterwards: `zero_set_certify` proves the
+  distance and transversality of every triangle where it can, keeps the
+  carrier's own triangles at the carrier's bound where the proof fails next to
+  a crease, certifies the surface embedded and closed, repairs refused
+  triangles locally and returns the certified surface; the surface envelope
+  remesh uses the same construction and band certification. The per-edit
+  certified remesher is removed. New benchmark rows `surface-remesh-sphere`
+  and `surface-remesh-torus` (MMGS) with independently measured angles and
+  two-way distance.
+- The native library builds with MSVC again: the exact integer insphere rows
+  use the `wide_integer.hpp` helpers (native 128-bit arithmetic where the
+  compiler has it, portable limbs otherwise, identical results), popcount is
+  `std::popcount` and prefetch a portable hint.
 - The PLC tetrahedral route adopts the native recovery through
   `TetMesh3D.from_recovery`; a kept conforming carrier is still constructed
   from its arrays. Identities unchanged.
@@ -354,16 +369,36 @@
   patch-zone adjacency groups only the examined faces' incidences. Certified
   icosphere (81,920 triangles) `execute`: L4 1.30 -> 0.68 s, L5 5.12 -> 2.67
   s, L6 32.8 -> 17.2 s (single thread, loaded machine).
-- Native point-set Delaunay is faster with identical cells: cone cells are
-  linked through a dense directed-edge table before any topology write (a
-  cavity whose boundary is not a closed surface is refused with the complex
-  unchanged, and refinement reports it as a topology rejection), coordinates
-  are stored in insertion order with input-index tie-breaking, cavity growth
-  prefetches and avoids branches, and canonical cell ordering runs in linear
-  time (radix sort on the first vertex, branch-free ranks within each group)
-  for every caller, with byte-identical output. 3D Delaunay runs at
-  0.87-0.90x CGAL at 1e3-1e6 points (was 1.25-1.31x); 2D at 1.11-1.23x (was
-  1.33-1.62x).
+- Native point-set and weighted Delaunay are faster with identical cells:
+  cone cells are linked through a dense directed-edge table before any
+  topology write (a cavity whose boundary is not a closed surface is refused
+  with the complex unchanged, and refinement reports it as a topology
+  rejection), coordinates are stored in insertion order with input-index
+  tie-breaking, cavity growth prefetches and avoids branches, the planar walk
+  evaluates a step's three edge orientations at once and reuses cavity slots
+  in release order (slot order, `vertex_triangle` and walk steps unchanged),
+  Hilbert keys are computed in 32-point blocks, weighted 3D conflicts are
+  decided by a static floating-point power-test filter before the exact
+  fallback, and canonical cell ordering runs in linear time (radix sort on the
+  first vertex, branch-free ranks within each group) for every caller, with
+  byte-identical output. New benchmark row `regular-3d` (CGAL Regular_3).
+  Quiet-machine acceptance against CGAL measured back to back at 1e3-1e6
+  points: 2D 0.88-0.94x, 3D 0.87-0.92x, regular 3D 0.95-0.98x.
+- Native CAD curve parameters: one shared parameter set per curve for every
+  use and both seam copies, breakpoints from the curve representation only,
+  size integration with curvature and gradation, degree-aware sampling and a
+  sampled sag screen with bisection; final curve fidelity remains subject to
+  certification.
+- Native chart-metric refinement kernel for CAD faces: metric Bowyer-Watson
+  cavities (metric in-circle at the candidate) with exact star-shaped validity,
+  constrained boundaries that are never split, fixed regions and an admission
+  callback for pole zones, and per-criterion diagnostics of refused insertions
+  and unresolved triangles.
+- Planar constrained Delaunay and refinement: output coordinates are moved
+  instead of copied, cavity traversal storage is reused, stale heap entries
+  are not rotated, and the ghost-slot indexing in `attach_to_hull` is fixed;
+  new benchmark rows `cdt-2d` and `ruppert-2d` on the ledger's inputs.
+- Native test: PLC contact pairs are refused in either kind order.
 - Native surface-to-tetrahedra recovery and refinement are faster with
   identical output (contact pairs bucketed by cell without sorting, edge rows
   and closure read from edge-use runs, source-face indices built on first

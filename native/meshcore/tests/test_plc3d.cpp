@@ -1768,6 +1768,96 @@ void test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons() 
   PHX_CHECK(source.failure.reason == kPlcInvalidPolygon);
 }
 
+// One triangle, declared as a polygon, with a segment or a free point.
+// Corners and extras are given in (u, v, w) with the triangle in w = 0;
+// `x_normal` maps w to x (the triangle then sits at the lowest x of the
+// segment's span), else w maps to z. `extras_first` declares the extra
+// points before the triangle's corners.
+PlcFailure single_triangle_contact(const std::vector<std::array<double, 3>>& extras,
+                                   bool has_segment, bool x_normal, bool extras_first,
+                                   int32_t& status) {
+  const std::array<std::array<double, 3>, 3> corners{{{-1, -1, 0}, {2, -1, 0}, {-1, 2, 0}}};
+  std::vector<double> points;
+  std::array<int32_t, 3> loop{};
+  std::vector<int32_t> extra_ids;
+  const auto add = [&](const std::array<double, 3>& uvw) {
+    const auto id = static_cast<int32_t>(points.size() / 3);
+    if (x_normal) {
+      points.insert(points.end(), {uvw[2], uvw[0], uvw[1]});
+    } else {
+      points.insert(points.end(), {uvw[0], uvw[1], uvw[2]});
+    }
+    return id;
+  };
+  if (extras_first) {
+    for (const auto& extra : extras) extra_ids.push_back(add(extra));
+  }
+  for (std::size_t k = 0; k < 3; ++k) loop[k] = add(corners[k]);
+  if (!extras_first) {
+    for (const auto& extra : extras) extra_ids.push_back(add(extra));
+  }
+  const std::array<int64_t, 2> offsets{0, 3};
+  const std::array<int32_t, 1> polygon_facets{0};
+  const std::array<int32_t, 2> facet_regions{0, 0};  // an internal sheet: no closure
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(points.size() / 3);
+  input.points = points.data();
+  input.polygon_count = 1;
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = loop.data();
+  input.polygon_facets = polygon_facets.data();
+  input.facet_count = 1;
+  input.facet_regions = facet_regions.data();
+  if (has_segment) {
+    input.segment_count = 1;
+    input.segments = extra_ids.data();
+  }
+  PlcRecovery source;
+  status = prepare_plc_source(input, source);
+  return source.failure;
+}
+
+// The contact check sweeps items by lower x, so a segment piercing a
+// triangle arrives before it when the segment reaches lower x (x_normal) and
+// after it otherwise; both orders, and both declaration orders, are refused
+// and report the pair in sweep order. A free point on the closed triangle
+// never precedes it (its x is at least the triangle's lowest; equal lower x
+// sorts the triangle first): the point is refused inside the triangle and on
+// its lowest-x edge, declared before and after the corners.
+void test_source_preparation_refuses_contacts_in_either_kind_order() {
+  for (const bool x_normal : {false, true}) {
+    for (const bool extras_first : {false, true}) {
+      int32_t status = PHX_MC_OK;
+      const PlcFailure pierced = single_triangle_contact(
+          {{0, 0, -1}, {0, 0, 1}}, true, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_CONSTRAINT_INTERSECTION);
+      PHX_CHECK(pierced.reason == kPlcIntersecting);
+      PHX_CHECK(pierced.first_kind == (x_normal ? kPlcEdge : kPlcPolygon));
+      PHX_CHECK(pierced.second_kind == (x_normal ? kPlcPolygon : kPlcEdge));
+      PHX_CHECK(pierced.first == 0 && pierced.second == 0);
+
+      // The same segment beside the triangle is a legal contact.
+      const PlcFailure beside = single_triangle_contact(
+          {{1, 1, -1}, {1, 1, 1}}, true, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_OK && beside.reason == kPlcNoFailure);
+
+      const int64_t free_id = extras_first ? 0 : 3;
+      for (const std::array<double, 3>& on : {std::array<double, 3>{0, 0, 0},
+                                               std::array<double, 3>{-1, 0.5, 0}}) {
+        const PlcFailure touched =
+            single_triangle_contact({on}, false, x_normal, extras_first, status);
+        PHX_CHECK(status == PHX_MC_CONSTRAINT_INTERSECTION);
+        PHX_CHECK(touched.reason == kPlcIntersecting);
+        PHX_CHECK(touched.first_kind == kPlcPolygon && touched.first == 0);
+        PHX_CHECK(touched.second_kind == kPlcPoint && touched.second == free_id);
+      }
+      const PlcFailure apart =
+          single_triangle_contact({{1, 1, 0.5}}, false, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_OK && apart.reason == kPlcNoFailure);
+    }
+  }
+}
+
 
 void test_recover_plc_publishes_a_single_region_tetrahedron() {
   const std::array<double, 12> points{0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
@@ -3864,6 +3954,7 @@ int main() {
   test_protection_index_keeps_nonincident_segment_candidates();
   test_source_preparation_triangulates_and_compiles_plc_edges();
   test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons();
+  test_source_preparation_refuses_contacts_in_either_kind_order();
   test_conforming_nonrepresentable_segment_uses_vertex_cavity();
   test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming();
   test_conforming_missing_boundary_edges_recover_with_exact_witnesses();

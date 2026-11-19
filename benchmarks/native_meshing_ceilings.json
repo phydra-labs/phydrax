@@ -3,20 +3,26 @@
     "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
     "measured": "2026-11-19",
     "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions); recovery rows: CGAL CDT_3 on the ledger's icosphere and grid torus surfaces (the generators of this benchmark); refinement rows: Gmsh HXT generate(3) wall time, minimum of three, on the same generated surface given as a discrete surface with MeshSizeMin = MeshSizeMax = the mean surface edge (element counts within 1% of this benchmark's); surface remesh rows: the ledger's surface remeshing table, MMGS library time (MMGS_mmgslib) on the same generated surfaces with -hsiz h -hausd h^2/4",
-    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, optimizer off", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4"}
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, optimizer off", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4"}
   },
   "rows": {
     "delaunay-2d": {
-      "1000": {"tool": "cgal", "seconds": 0.00035, "allowed_ratio": 2.0},
-      "10000": {"tool": "cgal", "seconds": 0.00364, "allowed_ratio": 2.0},
-      "100000": {"tool": "cgal", "seconds": 0.038, "allowed_ratio": 2.0},
-      "1000000": {"tool": "cgal", "seconds": 0.410, "allowed_ratio": 2.0}
+      "1000": {"tool": "cgal", "seconds": 0.00035, "allowed_ratio": 1.0},
+      "10000": {"tool": "cgal", "seconds": 0.00364, "allowed_ratio": 1.0},
+      "100000": {"tool": "cgal", "seconds": 0.038, "allowed_ratio": 1.0},
+      "1000000": {"tool": "cgal", "seconds": 0.410, "allowed_ratio": 1.0}
     },
     "delaunay-3d": {
-      "1000": {"tool": "cgal", "seconds": 0.0028, "allowed_ratio": 1.8},
-      "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.8},
-      "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.8},
-      "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.8}
+      "1000": {"tool": "cgal", "seconds": 0.0028, "allowed_ratio": 1.0},
+      "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.0},
+      "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.0},
+      "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.0}
+    },
+    "regular-3d": {
+      "1000": {"tool": "cgal-regular", "seconds": 0.0027, "allowed_ratio": 1.0},
+      "10000": {"tool": "cgal-regular", "seconds": 0.031, "allowed_ratio": 1.0},
+      "100000": {"tool": "cgal-regular", "seconds": 0.321, "allowed_ratio": 1.0},
+      "1000000": {"tool": "cgal-regular", "seconds": 3.27, "allowed_ratio": 1.0}
     },
     "implicit-sphere": {
       "20": {"tool": "cgal", "seconds": 0.001394, "allowed_ratio": 1.0},

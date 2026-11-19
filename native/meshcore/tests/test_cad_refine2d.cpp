@@ -332,6 +332,71 @@ void varying_metric() {
     }
   }
 }
+struct PoleProbe {
+  std::vector<std::array<double,2>> candidates;
+  std::vector<std::array<double,2>> evaluations;
+};
+
+CadMetric2D pole_metric(const double* p,void* context) {
+  auto& probe=*static_cast<PoleProbe*>(context);
+  probe.evaluations.push_back({p[0],p[1]});
+  return {1,0,1};
+}
+
+int32_t pole_admit(void* context,const double* p) {
+  auto& probe=*static_cast<PoleProbe*>(context);
+  probe.candidates.push_back({p[0],p[1]});
+  return std::hypot(p[0],p[1])>=0.9 && p[0]<=2;
+}
+
+void fixed_pole_zone() {
+  Fixture f;
+  constexpr double pi=3.14159265358979323846;
+  f.points={0,0};
+  for(int i=0;i<8;++i) {
+    const double a=2*pi*i/8;
+    f.points.push_back(std::cos(a)); f.points.push_back(std::sin(a));
+  }
+  for(int i=0;i<16;++i) {
+    const double a=2*pi*i/16;
+    f.points.push_back(4*std::cos(a)); f.points.push_back(4*std::sin(a));
+  }
+  for(int i=0;i<8;++i) { f.segments.push_back(1+i); f.segments.push_back(1+(i+1)%8); }
+  for(int i=0;i<16;++i) { f.segments.push_back(9+i); f.segments.push_back(9+(i+1)%16); }
+  std::vector<uint8_t> fixed(25,0);
+  std::fill(fixed.begin(),fixed.begin()+9,1);
+  PoleProbe probe;
+  CadRefine2DInput in;
+  in.points=f.points.data(); in.point_count=25;
+  in.segments=f.segments.data(); in.segment_count=24;
+  in.metric=pole_metric; in.metric_context=&probe; in.point_cap=2000;
+  in.fixed_vertices=fixed.data(); in.admit_point=pole_admit; in.admit_context=&probe;
+  CadRefine2DResult result;
+  const int status=cad_refine2d(in,result);
+  PHX_CHECK(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED);
+  int64_t excluded=0;
+  for(const auto& p:probe.candidates) excluded+=std::hypot(p[0],p[1])<0.9 || p[0]>2;
+  // Fault caught: skipping candidate admission or counting a different refusal.
+  PHX_CHECK(excluded>0 && result.stats.excluded_refusals==excluded);
+  // Fault caught: evaluating the singular zone or inserting through its guard.
+  PHX_CHECK(!probe.evaluations.empty());
+  for(const auto& p:probe.evaluations) PHX_CHECK(std::hypot(p[0],p[1])>=0.9);
+  for(int32_t i=in.point_count;i<result.triangulation.vertex_count();++i) {
+    const double* p=result.triangulation.point(i);
+    PHX_CHECK(std::hypot(p[0],p[1])>=0.9);
+  }
+  int64_t skipped=0;
+  const auto& tr=result.triangulation;
+  for(std::size_t t=0;t<tr.triangles.size();++t) {
+    if(!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+    const auto& cell=tr.triangles[t];
+    if(cell.v[0]<9 && cell.v[1]<9 && cell.v[2]<9) ++skipped;
+  }
+  // Fault caught: scanning fixed cap triangles or misreporting their count.
+  PHX_CHECK(skipped>0 && result.stats.fixed_triangles_skipped==skipped);
+  check_topology(f,result);
+}
+
 }  // namespace
 
 int main() {
@@ -342,6 +407,7 @@ int main() {
   hole_and_small_angle();
   varying_metric();
   adversarial_metrics();
+  fixed_pole_zone();
   const Fixture f=rectangle(6,6,6,6);
   int32_t status;
   auto r=run(f,height_field,nullptr,status);

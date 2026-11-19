@@ -192,6 +192,57 @@ inline int insphere_filtered(const double* a, const double* b, const double* c, 
   return sign != 0 ? sign : insphere(a, b, c, d, e);
 }
 
+// The floating stage of power3d: insphere_stage with the lift of row k
+// |p_k - e|^2 - (w_k - w_e). That lift takes two roundings more than the
+// insphere lift (the weight difference and the subtraction), each within
+// eps of M_k = |p_k - e|^2 + |w_k - w_e| >= |lift_k|; with M_k in place of
+// the lift in the permanent (at most 24 M X Y Z, bounded by 25 M X Y Z as in
+// insphere_stage), Shewchuk's insphere analysis holds with the lift error
+// grown from 3 eps to 5 eps of M_k, which a doubled coefficient covers.
+// Weights and coordinates in their domains keep every product normal.
+[[gnu::always_inline]] inline int power3d_stage(const double* a, const double* b,
+                                                const double* c, const double* d,
+                                                const double* e, double wa, double wb,
+                                                double wc, double wd, double we) noexcept {
+  const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
+  const double aey = a[1] - e[1], bey = b[1] - e[1], cey = c[1] - e[1], dey = d[1] - e[1];
+  const double aez = a[2] - e[2], bez = b[2] - e[2], cez = c[2] - e[2], dez = d[2] - e[2];
+  const double ab = aex * bey - bex * aey;
+  const double bc = bex * cey - cex * bey;
+  const double cd = cex * dey - dex * cey;
+  const double da = dex * aey - aex * dey;
+  const double ac = aex * cey - cex * aey;
+  const double bd = bex * dey - dex * bey;
+  const double abc = aez * bc - bez * ac + cez * ab;
+  const double bcd = bez * cd - cez * bd + dez * bc;
+  const double cda = cez * da + dez * ac + aez * cd;
+  const double dab = dez * ab + aez * bd + bez * da;
+  const double asquare = aex * aex + aey * aey + aez * aez;
+  const double bsquare = bex * bex + bey * bey + bez * bez;
+  const double csquare = cex * cex + cey * cey + cez * cez;
+  const double dsquare = dex * dex + dey * dey + dez * dez;
+  const double aweight = wa - we, bweight = wb - we, cweight = wc - we, dweight = wd - we;
+  const double alift = asquare - aweight, blift = bsquare - bweight;
+  const double clift = csquare - cweight, dlift = dsquare - dweight;
+  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
+  const double x = std::fmax(std::fmax(std::fabs(aex), std::fabs(bex)),
+                             std::fmax(std::fabs(cex), std::fabs(dex)));
+  const double y = std::fmax(std::fmax(std::fabs(aey), std::fabs(bey)),
+                             std::fmax(std::fabs(cey), std::fabs(dey)));
+  const double z = std::fmax(std::fmax(std::fabs(aez), std::fabs(bez)),
+                             std::fmax(std::fabs(cez), std::fabs(dez)));
+  const double lift = std::fmax(
+      std::fmax(asquare + std::fabs(aweight), bsquare + std::fabs(bweight)),
+      std::fmax(csquare + std::fabs(cweight), dsquare + std::fabs(dweight)));
+  const double permanent = 25.0 * lift * (x * y * z);
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (32.0 + 448.0 * kEpsilon) * kEpsilon * permanent;
+  // power3d is the negated Shewchuk determinant.
+  if (det > errbound) return -1;
+  if (-det > errbound) return 1;
+  return 0;
+}
+
 int power2d(const double* a, const double* b, const double* c, const double* d, double wa,
             double wb, double wc, double wd);
 int power3d(const double* a, const double* b, const double* c, const double* d, const double* e,

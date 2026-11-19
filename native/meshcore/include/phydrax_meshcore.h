@@ -2630,6 +2630,40 @@ PHX_MC_API int32_t phx_mc_cad_geometry_evaluate(const phx_mc_cad_model* model,
                                                 int64_t count, const double* parameters,
                                                 int32_t quantity, double* result);
 
+/* Sampled curve construction controls; tolerances and sizes are physical.
+ * A sampled construction is not a chord-sag certificate. */
+typedef struct phx_mc_cad_curve_controls {
+  const double* face_sizes;       /* (surface_count,) */
+  const double* face_tolerances;  /* (surface_count,) */
+  const double* curve_tolerances; /* (curve_count,), infinity means none */
+  double tolerance_fraction;
+  double grading;
+  double minimum_size;
+} phx_mc_cad_curve_controls;
+
+typedef struct phx_mc_cad_curve_failure {
+  int32_t curve;
+  double first, last; /* normalized curve parameters */
+} phx_mc_cad_curve_failure;
+
+typedef struct phx_mc_cad_curve_statistics {
+  int64_t first_order_evaluations, second_order_evaluations, sag_evaluations;
+  int64_t small_feature_resamples, sag_splits, parameter_count, unresolved_count;
+} phx_mc_cad_curve_statistics;
+
+/* Test entry for shared curve discretization. All capacities and pointers are
+ * validated before any output write. offsets contains curve_count + 1 rows;
+ * parameters contains normalized parameters shared by every use; sag_splits
+ * has one count per curve. PHX_MC_UNRESOLVED exports the proposal and its
+ * unresolved intervals if construction reached a complete proposal; if it
+ * could not, outputs are untouched. This stage samples sag; it does not certify it. */
+PHX_MC_API int32_t phx_mc_cad_curves_test(
+    const phx_mc_cad_model* model, const phx_mc_cad_curve_controls* controls,
+    int64_t offset_capacity, int64_t* offsets, int64_t parameter_capacity, double* parameters,
+    int64_t failure_capacity, phx_mc_cad_curve_failure* failures,
+    int64_t split_capacity, int64_t* sag_splits,
+    phx_mc_cad_curve_statistics* statistics);
+
 #ifdef __cplusplus
 }
 #endif
