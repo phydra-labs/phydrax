@@ -23,8 +23,7 @@ import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import VerdictStatus, verify_tetrahedra, verify_volume
-from ..discretization._cell_geometry import CellGeometrySpec
-from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_geometry_validity import AffineTetrahedra
 from ..discretization._cell_mesh import CellMesh
 from ._domain_coverage import PiecewiseLinearDomain
 from ._embedding_state import (
@@ -35,17 +34,6 @@ from ._embedding_state import (
 from ._mesh_certificates import MeshCertificateStatus
 
 
-_TETRAHEDRA = frozenset(("tetrahedron", "simplex:3"))
-
-
-class AffineTetrahedra(NamedTuple):
-    """Exact vertex coordinates and cells (mesh block order) of an affine map."""
-
-    points: np.ndarray
-    cells: np.ndarray
-    cell_ids: np.ndarray
-
-
 class TetrahedralDegreeProof(NamedTuple):
     """The decided native global-embedding theorem of one mesh."""
 
@@ -53,38 +41,6 @@ class TetrahedralDegreeProof(NamedTuple):
     findings: tuple[MeshCertificateFinding, ...]
     boundary_facet_count: int
     shell_count: int
-
-
-def affine_tetrahedra(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
-) -> AffineTetrahedra | None:
-    """The mesh's tetrahedra when ``geometry`` is exactly its affine vertex map.
-
-    The theorems apply to nonperiodic three-dimensional meshes of tetrahedra
-    whose coordinate map is the affine interpolation of the stored vertex
-    coordinates (``CellGeometrySpec.affine``), with every reference vertex at
-    its mesh vertex; otherwise ``None``.
-    """
-    if (
-        mesh.periodic_topology is not None
-        or mesh.topological_dimension != 3
-        or mesh.ambient_dimension != 3
-        or any(
-            block.cell_kind not in _TETRAHEDRA or block.arity != 4
-            for block in mesh.blocks
-        )
-        or cell_geometry_id(geometry) != cell_geometry_id(CellGeometrySpec.affine(mesh))
-    ):
-        return None
-    cells = np.concatenate(
-        tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
-    )
-    cell_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
-    )
-    return AffineTetrahedra(
-        np.asarray(mesh.coordinates, dtype=np.float64), cells, cell_ids
-    )
 
 
 def _finding(
@@ -282,9 +238,7 @@ def prove_tetrahedral_coverage(
 
 
 __all__ = [
-    "AffineTetrahedra",
     "TetrahedralDegreeProof",
-    "affine_tetrahedra",
     "prove_tetrahedral_coverage",
     "prove_tetrahedral_embedding",
 ]

@@ -37,7 +37,7 @@ from enum import IntEnum
 from fractions import Fraction
 from functools import cache
 from itertools import product
-from typing import Any, assert_never, NoReturn, SupportsIndex
+from typing import Any, assert_never, NamedTuple, NoReturn, SupportsIndex
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -166,6 +166,49 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
             ),
             "content": array_tree_fingerprint(geometry),
         }
+    )
+
+
+_TETRAHEDRA = frozenset(("tetrahedron", "simplex:3"))
+
+
+class AffineTetrahedra(NamedTuple):
+    """Exact vertex coordinates and cells (mesh block order) of an affine map."""
+
+    points: np.ndarray
+    cells: np.ndarray
+    cell_ids: np.ndarray
+
+
+def affine_tetrahedra(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> AffineTetrahedra | None:
+    """The mesh's tetrahedra when ``geometry`` is exactly its affine vertex map.
+
+    The native tetrahedron theorems apply to nonperiodic three-dimensional
+    meshes of tetrahedra whose coordinate map is the affine interpolation of
+    the stored vertex coordinates (``CellGeometrySpec.affine``), with every
+    reference vertex at its mesh vertex; otherwise ``None``.
+    """
+    if (
+        mesh.periodic_topology is not None
+        or mesh.topological_dimension != 3
+        or mesh.ambient_dimension != 3
+        or any(
+            block.cell_kind not in _TETRAHEDRA or block.arity != 4
+            for block in mesh.blocks
+        )
+        or cell_geometry_id(geometry) != cell_geometry_id(CellGeometrySpec.affine(mesh))
+    ):
+        return None
+    cells = np.concatenate(
+        tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
+    )
+    cell_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    return AffineTetrahedra(
+        np.asarray(mesh.coordinates, dtype=np.float64), cells, cell_ids
     )
 
 
@@ -359,6 +402,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     those proofs answer: ``cells x 2 x 16`` bytes, all-zero where no map record
     exists. It is not identity-bearing; reuse treats the digest only as an
     index and compares the complete exact cell map before accepting a proof.
+
+    ``native_affine_tetrahedra`` records the proof the certifying route selected
+    for affine tetrahedra: the exact native Jacobian sign and margin with a
+    rigorous determinant enclosure (``phx_mc_tetrahedra_validity``) instead of
+    the rational per-cell proof. It is identity-bearing, records no map digests,
+    and every recomputation (revalidation, archive restore) uses the same proof.
     """
 
     status: Array
@@ -389,6 +438,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
     cell_map_digests: bytes = eqx.field(static=True)
+    native_affine_tetrahedra: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -432,6 +482,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.policy_id = computed.policy_id
         self.certificate_id = computed.certificate_id
         self.cell_map_digests = computed.cell_map_digests
+        self.native_affine_tetrahedra = computed.native_affine_tetrahedra
 
     @classmethod
     def _from_computed(
@@ -456,6 +507,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         geometry_layout_id: str,
         policy_id: str,
         cell_map_digests: bytes | None = None,
+        native_affine_tetrahedra: bool = False,
     ) -> CellValidityCertificate:
         execution = _normalize_proof_arrays(
             status, determinant_lower, determinant_upper, depth
@@ -585,6 +637,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             "topology_id": topology_id_,
             "policy_id": policy_id,
             "cell_map_digests": cell_map_digests,
+            "native_affine_tetrahedra": native_affine_tetrahedra,
         }
         values["certificate_id"] = canonical_fingerprint(
             {
@@ -608,6 +661,11 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
                 "source_depth": array_tree_fingerprint(source.depth),
                 "maximum_coefficient_rounding_error": rounding_error,
                 "maximum_element_coefficient_rounding_error": element_rounding_error,
+                **(
+                    {"proof": "native-affine-tetrahedra"}
+                    if native_affine_tetrahedra
+                    else {}
+                ),
             }
         )
         return reconstruct_strict(cls, values)
@@ -631,7 +689,14 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             raise TypeError("mesh must be CellMesh or None.")
         if not isinstance(policy, CellValidityPolicy):
             raise TypeError("policy must be CellValidityPolicy.")
-        rebuilt = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+        if type(value.native_affine_tetrahedra) is not bool:
+            raise TypeError("Stored validity proof selection must be a bool.")
+        rebuilt = certify_cell_geometry_validity(
+            geometry,
+            mesh=mesh,
+            policy=policy,
+            native_affine_tetrahedra=value.native_affine_tetrahedra,
+        )
         from ..geometry._mesh_certificates import _same_tree_content
 
         if not _same_tree_content(value, rebuilt):
@@ -743,7 +808,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             raise ValueError(
                 "Validity certificate policy does not reproduce its controls."
             )
-        fresh = certify_cell_geometry_validity(geometry, mesh=mesh, policy=self.policy)
+        fresh = certify_cell_geometry_validity(
+            geometry,
+            mesh=mesh,
+            policy=self.policy,
+            native_affine_tetrahedra=self.native_affine_tetrahedra,
+        )
         if (
             fresh.certificate_id != self.certificate_id
             or fresh.cell_map_digests != self.cell_map_digests
@@ -2621,6 +2691,8 @@ class ComputedCellValidity:
         ]
         | None,
         /,
+        *,
+        native_affine_tetrahedra: bool = False,
     ) -> None:
         if type(policy) is not CellValidityPolicy:
             raise TypeError("Computed validity requires an exact CellValidityPolicy.")
@@ -2633,7 +2705,11 @@ class ComputedCellValidity:
         self.geometry = geometry
         self.mesh = mesh
         self.certificate = certify_cell_geometry_validity(
-            geometry, mesh=mesh, policy=policy, parent=parent
+            geometry,
+            mesh=mesh,
+            policy=policy,
+            parent=parent,
+            native_affine_tetrahedra=native_affine_tetrahedra,
         )
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -3210,6 +3286,74 @@ def _polyhedral_coordinates(
     return points
 
 
+def _certify_native_affine_tetrahedra(
+    element: ScalarCoordinateElement,
+    cell_kind: str,
+    coordinates: ExactCoordinateBank,
+    routes: NDArray[np.int64],
+    values: NDArray[np.float64],
+    policy: CellValidityPolicy,
+    proofs: _CellProofs,
+    /,
+) -> tuple[_BlockCertificate, bool, NDArray[np.uint8]]:
+    """Exact native validity of affine tetrahedra, the route-selected proof.
+
+    The native kernel decides the exact signs of the Jacobian determinant
+    ``det[v1 - v0, v2 - v0, v3 - v0]`` and of ``det^2 - floor^2 prod |v_k - v0|^2``
+    (the affine quality criterion of the rational proof) and encloses the
+    determinant rigorously. Cells with a coordinate outside the native exact
+    domain, or every cell under a floor outside it, take the rational proof.
+    """
+    # Only this explicitly selected proof loads the native library.
+    from .._meshcore import tetrahedra_validity, validity_coordinates
+
+    count = routes.shape[0]
+    floor = policy.determinant_floor()
+    native = np.all(validity_coordinates(values[routes]), axis=(1, 2)) & bool(
+        floor < 1.0 and validity_coordinates(floor)
+    )
+    status = np.full(count, CellValidityStatus.UNRESOLVED, dtype=np.int32)
+    lower = np.full(count, np.nan, dtype=np.float64)
+    upper = np.full(count, np.nan, dtype=np.float64)
+    depth = np.zeros(count, dtype=np.int64)
+    apex_unique = np.ones(count, dtype=np.bool_)
+    digests = np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8)
+    rows = np.flatnonzero(native)
+    if rows.size:
+        valid, native_lower, native_upper = tetrahedra_validity(
+            values, routes[rows], floor
+        )
+        status[rows] = np.where(
+            valid, CellValidityStatus.CERTIFIED_VALID, CellValidityStatus.INVALID
+        )
+        lower[rows] = native_lower
+        upper[rows] = native_upper
+    rest = np.flatnonzero(~native)
+    has_unsupported_map = False
+    if rest.size:
+        proof, has_unsupported_map, rest_digests = _certify_source_block(
+            element,
+            cell_kind,
+            coordinates,
+            routes[rest],
+            policy,
+            proofs,
+            execution_map=True,
+            point_bounds=(values, values),
+        )
+        status[rest] = proof.status
+        lower[rest] = proof.lower
+        upper[rest] = proof.upper
+        depth[rest] = proof.depth
+        apex_unique[rest] = proof.apex_flags()
+        digests[rest] = rest_digests
+    return (
+        _BlockCertificate(status, lower, upper, depth, apex_unique),
+        has_unsupported_map,
+        digests,
+    )
+
+
 def certify_cell_geometry_validity(
     geometry: CellMesh | CellGeometrySpec,
     /,
@@ -3223,6 +3367,7 @@ def certify_cell_geometry_validity(
         CellValidityCertificate | ValidatedCellValidityParent | ComputedCellValidity, ...
     ]
     | None = None,
+    native_affine_tetrahedra: bool = False,
 ) -> CellValidityCertificate:
     """Certify determinant positivity of every mapped cell with Bernstein bounds.
 
@@ -3235,6 +3380,12 @@ def certify_cell_geometry_validity(
     map a parent proved reuses that recorded proof after a digest lookup and
     full exact map comparison, never by cell index; every other cell is proved.
     The result is identical to the certificate of a full proof.
+
+    ``native_affine_tetrahedra`` selects the exact native proof of affine
+    tetrahedra (a route's explicit choice, recorded in the certificate
+    identity); it requires ``geometry`` to be the affine vertex map of a
+    nonperiodic tetrahedral mesh. Otherwise every cell takes the rational proof
+    and the native library is never loaded.
     """
 
     policy_ = CellValidityPolicy() if policy is None else policy
@@ -3264,6 +3415,15 @@ def certify_cell_geometry_validity(
         routes = tuple(np.asarray(value, dtype=np.int64) for value in resolved_routes)
         names = tuple(block.name for block in mesh_.blocks)
         kinds = tuple(block.cell_kind for block in mesh_.blocks)
+    if type(native_affine_tetrahedra) is not bool:
+        raise TypeError("native_affine_tetrahedra must be a bool.")
+    if native_affine_tetrahedra and (
+        mesh_ is None or affine_tetrahedra(mesh_, spec) is None
+    ):
+        raise ValueError(
+            "The native affine tetrahedron proof requires the affine vertex map "
+            "of a nonperiodic tetrahedral mesh."
+        )
     values = np.asarray(spec.coordinates, dtype=np.float64)
     execution_coordinates = ExactCoordinateBank.from_binary64(values)
     source_coordinates = (
@@ -3506,6 +3666,22 @@ def certify_cell_geometry_validity(
                     policy_,
                 )
             )
+        elif native_affine_tetrahedra and isinstance(element, ScalarCoordinateElement):
+            certificate, has_unsupported_map, block_digests = (
+                _certify_native_affine_tetrahedra(
+                    element,
+                    kind,
+                    execution_coordinates,
+                    route,
+                    values,
+                    policy_,
+                    proofs,
+                )
+            )
+            digests[cursor : cursor + cell_count, 0] = block_digests
+            blocks.append(certificate)
+            if has_unsupported_map:
+                unsupported.add(name)
         elif isinstance(element, ScalarCoordinateElement):
             try:
                 certificate, has_unsupported_map, block_digests = _certify_source_block(
@@ -3647,6 +3823,7 @@ def certify_cell_geometry_validity(
         geometry_layout_id=spec.geometry_layout_id,
         policy_id=policy_.policy_id,
         cell_map_digests=digests.tobytes(),
+        native_affine_tetrahedra=native_affine_tetrahedra,
     )
 
 

@@ -18,6 +18,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_validity import affine_tetrahedra
 from ..discretization._cell_mesh import CellMesh
 from ..discretization._exact_algebraic_geometry import ExactScalar
 from ..discretization._mapped_geometry_measure import exact_block_cell_measures
@@ -1560,7 +1561,7 @@ def _tetrahedral_degree_coverage(
     region interfaces are exactly the declared oriented source triangles tile
     each declared region exactly; no partition or measure is needed.
     """
-    from ._tetrahedral_degree import affine_tetrahedra, prove_tetrahedral_coverage
+    from ._tetrahedral_degree import prove_tetrahedral_coverage
 
     tetrahedra = affine_tetrahedra(mesh, geometry)
     proof_id = (

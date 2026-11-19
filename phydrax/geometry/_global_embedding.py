@@ -30,6 +30,7 @@ from ..discretization._cell_geometry import (
     PerCellRestrictedCellGeometryElement,
 )
 from ..discretization._cell_geometry_validity import (
+    affine_tetrahedra,
     cell_geometry_id,
     CellValidityCertificate,
     CellValidityStatus,
@@ -1753,10 +1754,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         if nested_evidence is None and tetrahedral_degree:
             # The native theorem is requested explicitly; other proofs never
             # load the native library.
-            from ._tetrahedral_degree import (
-                affine_tetrahedra,
-                prove_tetrahedral_embedding,
-            )
+            from ._tetrahedral_degree import prove_tetrahedral_embedding
 
             tetrahedra = (
                 affine_tetrahedra(mesh, geometry)

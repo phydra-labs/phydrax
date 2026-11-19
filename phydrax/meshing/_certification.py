@@ -500,6 +500,8 @@ def _acceptance_validity(
             ).policy_id
             == validity_policy.policy_id
         ),
+        # The PLC route selects the exact native proof of its affine tetrahedra.
+        native_affine_tetrahedra=inputs.schedule.route == "volume_plc",
     )
     return computed.certificate, computed
 
