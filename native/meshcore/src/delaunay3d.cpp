@@ -32,12 +32,9 @@
 #include "triangulation3d.hpp"
 
 namespace phx::mc {
-namespace {
-
-
 
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, phx_mc_mesh** mesh) {
+                       bool weighted, bool canonical, phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -57,12 +54,11 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
     return status;
   }
   std::vector<int32_t> vertex_map;
-  const std::vector<int32_t> representatives =
-      deduplicate_points(points, point_count, 3, active_weights, vertex_map);
-  const std::vector<int32_t> order = brio_hilbert_order(points, 3, representatives);
+  const std::vector<int32_t> order =
+      deduplicated_insertion_order(points, point_count, 3, active_weights, vertex_map);
 
   std::vector<char> alive(static_cast<std::size_t>(point_count), 0);
-  for (int32_t vertex : representatives) {
+  for (int32_t vertex : order) {
     alive[static_cast<std::size_t>(vertex)] = 1;
   }
   auto result = std::make_unique<phx_mc_mesh>();
@@ -83,12 +79,11 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
   result->input_point_count = point_count;
   result->points.assign(points, points + 3 * point_count);
   result->vertex_map = std::move(vertex_map);
-  canonicalize_cells(*result);
+  if (canonical) canonicalize_cells(*result);
   *mesh = result.release();
   return PHX_MC_OK;
 }
 
-}  // namespace
 }  // namespace phx::mc
 
 extern "C" {
@@ -97,7 +92,7 @@ int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points, phx_mc_mes
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    return phx::mc::triangulate_3d(point_count, points, nullptr, false, mesh);
+    return phx::mc::triangulate_3d(point_count, points, nullptr, false, true, mesh);
   });
 }
 
@@ -106,7 +101,25 @@ int32_t phx_mc_regular_3d(int64_t point_count, const double* points, const doubl
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    return phx::mc::triangulate_3d(point_count, points, weights, true, mesh);
+    return phx::mc::triangulate_3d(point_count, points, weights, true, true, mesh);
+  });
+}
+
+int32_t phx_mc_triangulate(int32_t dimension, int64_t point_count, const double* points,
+                           const double* weights, uint32_t options, phx_mc_mesh** mesh) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (mesh != nullptr) *mesh = nullptr;
+    if ((dimension != 2 && dimension != 3) ||
+        (options & ~PHX_MC_TRIANGULATION_CANONICAL) != 0U) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const bool canonical = (options & PHX_MC_TRIANGULATION_CANONICAL) != 0U;
+    const bool weighted = weights != nullptr;
+    return dimension == 2
+               ? phx::mc::triangulate_2d(point_count, points, weights, weighted, canonical, mesh)
+               : phx::mc::triangulate_3d(point_count, points, weights, weighted, canonical, mesh);
   });
 }
 

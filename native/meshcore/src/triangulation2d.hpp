@@ -404,12 +404,11 @@ class Triangulation2D {
 inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* points,
                                  int64_t point_count, const double* weights,
                                  std::vector<int32_t>& vertex_map) {
-  const std::vector<int32_t> representatives =
-      deduplicate_points(points, point_count, 2, weights, vertex_map);
-  if (representatives.size() < 3) {
+  const std::vector<int32_t> order =
+      deduplicated_insertion_order(points, point_count, 2, weights, vertex_map);
+  if (order.size() < 3) {
     return PHX_MC_DEGENERATE_INPUT;
   }
-  const std::vector<int32_t> order = brio_hilbert_order(points, 2, representatives);
   const int32_t a = order[0];
   int32_t b = order[1];
   std::size_t third = 2;
