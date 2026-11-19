@@ -324,6 +324,19 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Planar quality refinement processes bad triangles through a deterministic
+  spatial bucket queue (`refine_queue.hpp`, one bucket where buckets do not
+  pay) and constructs inserted points from a canonical vertex order. Declared
+  identity change: refined planar meshes (points, triangles, segment and
+  constraint ids, parents) and their triangulation fingerprints change,
+  including the periodic-box cap triangulation; non-refining constrained
+  Delaunay output is unchanged. Refined meshes are permutation-invariant on
+  generic input; 1e6-point refinement runs about 2.2x faster, with minimum
+  angles above Triangle's at equal input.
+- CAD chart refinement uses the same queue (2x faster at 1e6 triangles; chart
+  meshes change, no fingerprinted consumer yet), and curve discretization
+  gives every representation span at least the ceiling of its metric length,
+  keeping boundary segments within unit length in every adjacent face metric.
 - Native zero-set surface remeshing constructs without per-edit proofs (a
   floating-point adapter with curvature sizing, projection on point jets and
   quality repair) and certifies afterwards: `zero_set_certify` proves the
