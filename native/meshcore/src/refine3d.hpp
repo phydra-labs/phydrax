@@ -28,6 +28,12 @@ inline double cell_size_target(const std::array<double, 4>& corner_sizes) noexce
     if (!(size > 0.0)) return std::numeric_limits<double>::infinity();
     scale = std::max(scale, size);
   }
+  // Equal targets are their own mean (s / s is exactly 1), as the general
+  // rule below computes it.
+  if (corner_sizes[0] == corner_sizes[1] && corner_sizes[0] == corner_sizes[2] &&
+      corner_sizes[0] == corner_sizes[3]) {
+    return corner_sizes[0];
+  }
   // Normalized by the largest target so the sum cannot overflow.
   double normalized_sum = 0.0;
   for (double size : corner_sizes) normalized_sum += size / scale;

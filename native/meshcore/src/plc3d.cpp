@@ -1043,14 +1043,53 @@ class SourcePreparer {
       int side = 0;
       for (int32_t vertex : other) {
         if (std::find(plane.begin(), plane.end(), vertex) != plane.end()) continue;
-        const int sign = orient3d(point(plane[0]), point(plane[1]), point(plane[2]), point(vertex));
+        const int sign =
+            orient3d_filtered(point(plane[0]), point(plane[1]), point(plane[2]), point(vertex));
         if (sign == 0 || (side != 0 && sign != side)) return false;
         side = sign;
       }
       return side != 0;
     };
-    if (shared == 2) return apart(a, b);
+    if (shared == 2) return apart(a, b) || opposite_in_plane(a, b);
     return shared < 2 && (apart(a, b) || apart(b, a));
+  }
+
+  // Whether triangles a and b, sharing an edge, are coplanar with their
+  // apexes strictly on opposite sides of it: they then meet in the edge.
+  // A projection along an axis that keeps a nondegenerate keeps every side
+  // in the plane.
+  bool opposite_in_plane(const Triple& a, const Triple& b) const {
+    int32_t apex_a = -1, apex_b = -1;
+    for (int32_t vertex : a) {
+      if (std::find(b.begin(), b.end(), vertex) == b.end()) apex_a = vertex;
+    }
+    for (int32_t vertex : b) {
+      if (std::find(a.begin(), a.end(), vertex) == a.end()) apex_b = vertex;
+    }
+    if (apex_a < 0 || apex_b < 0 ||
+        orient3d_filtered(point(a[0]), point(a[1]), point(a[2]), point(apex_b)) != 0) {
+      return false;
+    }
+    const int axis = projection_axis(point(a[0]), point(a[1]), point(a[2]));
+    if (axis < 0) return false;
+    int32_t edge[2]{};
+    for (int corner = 0, count = 0; corner < 3; ++corner) {
+      if (a[static_cast<std::size_t>(corner)] != apex_a) {
+        edge[count++] = a[static_cast<std::size_t>(corner)];
+      }
+    }
+    const auto planar = [&](int32_t vertex, double* out) {
+      out[0] = point(vertex)[(axis + 1) % 3];
+      out[1] = point(vertex)[(axis + 2) % 3];
+    };
+    double p[2], q[2], first[2], second[2];
+    planar(edge[0], p);
+    planar(edge[1], q);
+    planar(apex_a, first);
+    planar(apex_b, second);
+    const int side_a = orient2d(p, q, first);
+    const int side_b = orient2d(p, q, second);
+    return side_a != 0 && side_b != 0 && side_a != side_b;
   }
 
   int32_t legal_pair(const Item& first, const Item& second) const {
@@ -2800,6 +2839,18 @@ class PlcRecoveryBuilder {
     complex.enable_labels();
     vertex_tet_.assign(static_cast<std::size_t>(count), -1);
     incidence_.assign(static_cast<std::size_t>(count), {});
+    {
+      std::vector<int32_t> degree(static_cast<std::size_t>(count), 0);
+      for (const Tetrahedron& tet : complex.tets) {
+        if (tet.v[0] == kDeadVertex) continue;
+        for (int32_t vertex : tet.v) {
+          if (vertex >= 0) ++degree[static_cast<std::size_t>(vertex)];
+        }
+      }
+      for (std::size_t vertex = 0; vertex < incidence_.size(); ++vertex) {
+        incidence_[vertex].reserve(static_cast<std::size_t>(degree[vertex]));
+      }
+    }
     for (std::size_t t = 0; t < complex.tets.size(); ++t) {
       const Tetrahedron& tet = complex.tets[t];
       if (tet.v[0] == kDeadVertex) continue;

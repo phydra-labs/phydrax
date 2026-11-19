@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -523,21 +524,34 @@ struct FeatureRecord {
   std::int32_t row;
 };
 
-// The largest metric length of one binary64 coordinate step at `p`.
-double coordinate_resolution(const TetMesh& mesh, const double* p) {
-  double resolution = 0.0;
-  for (int axis = 0; axis < 3; ++axis) {
-    const double magnitude = std::abs(p[axis]);
-    const double step = std::nextafter(magnitude, std::numeric_limits<double>::infinity()) -
-                        magnitude;
-    // The step is a power of two, so the transform of the step along an axis
-    // is the step times the transform of that axis.
-    std::array<double, 3> unit{};
-    unit[static_cast<std::size_t>(axis)] = 1.0;
-    resolution = std::max(resolution, step * geometry::length(mesh.metric_transform(unit)));
+// The largest metric length of one binary64 coordinate step at a point.
+class CoordinateResolution {
+ public:
+  explicit CoordinateResolution(const TetMesh& mesh) {
+    // The step is a power of two, so the transform of the step along an
+    // axis is the step times the transform of that axis.
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      std::array<double, 3> unit{};
+      unit[axis] = 1.0;
+      scales_[axis] = geometry::length(mesh.metric_transform(unit));
+    }
   }
-  return resolution;
-}
+  double operator()(const double* p) const noexcept {
+    double resolution = 0.0;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const double magnitude = std::abs(p[axis]);
+      // The next representable value above a nonnegative (or infinite or
+      // NaN, whose step is NaN either way) magnitude.
+      const double above =
+          std::bit_cast<double>(std::bit_cast<std::uint64_t>(magnitude) + 1U);
+      resolution = std::max(resolution, (above - magnitude) * scales_[axis]);
+    }
+    return resolution;
+  }
+
+ private:
+  std::array<double, 3> scales_{};
+};
 
 // lambda(v) for every live vertex slot: the distance from v to the nearest
 // feature not incident to v. Point features are the live vertices, line
@@ -551,8 +565,10 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
   // The shortest incident edge bounds lambda from above and sets the query
-  // radius.
+  // radius. Squared lengths are compared: the square root (of metric_distance)
+  // is correctly rounded and monotone, so it commutes with the minimum.
   const TetrahedralComplex& complex = mesh.complex();
+  const bool metric = mesh.metric_active();
   for (std::size_t row = 0; row < complex.tets.size(); ++row) {
     const std::int32_t cell = static_cast<std::int32_t>(row);
     if (!complex.live(cell) || is_ghost(complex.tets[row])) continue;
@@ -561,12 +577,21 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
       for (int second = first + 1; second < 4; ++second) {
         const std::int32_t a = tetrahedron.v[first];
         const std::int32_t b = tetrahedron.v[second];
-        const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
-        sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
-        sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
+        const double* p = mesh.point(a);
+        const double* q = mesh.point(b);
+        double squared = 0.0;
+        if (metric) {
+          const auto d = mesh.metric_transform({p[0] - q[0], p[1] - q[1], p[2] - q[2]});
+          squared = geometry::dot(d.data(), d.data());
+        } else {
+          squared = geometry::squared_distance(p, q);
+        }
+        sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], squared);
+        sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], squared);
       }
     }
   }
+  for (double& size : sizes) size = std::sqrt(size);
 
   // Features by corner slots (-1 past the last corner): the live vertices,
   // the planes, the distinct lines.
@@ -716,6 +741,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
 
   std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
   smallest = infinity;
+  const CoordinateResolution coordinate_resolution(mesh);
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
     if (!mesh.live_vertex(vertex)) continue;
@@ -783,7 +809,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     if (!std::isfinite(lambda)) return false;
     // Features nearer than the coordinate spacing at v cannot be separated by
     // a representable point; lambda is floored there, which keeps it positive.
-    lambda = std::max(lambda, coordinate_resolution(mesh, p));
+    lambda = std::max(lambda, coordinate_resolution(p));
     sizes[slot] = lambda;
     smallest = std::min(smallest, lambda);
   }
@@ -1627,9 +1653,21 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // cone insertion touches only the cells, facets and segments around it.
   detail::LocalIncidence incidence;
   if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
+  // Only boundary splits read the facet rows by face; a fixed boundary only
+  // checks its faces distinct.
   std::map<FaceKey, std::size_t> facet_rows_by_face;
-  for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
-    if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second) {
+  if (mesh.policy_ != BoundaryPolicy::kFixed) {
+    for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
+      if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second) {
+        return PHX_MC_INTERNAL_ERROR;
+      }
+    }
+  } else {
+    std::vector<FaceKey> faces;
+    faces.reserve(mesh.facets_.size());
+    for (const TetSnapshotFacet& facet : mesh.facets_) faces.push_back(sorted_face(facet.vertices));
+    std::sort(faces.begin(), faces.end());
+    if (std::adjacent_find(faces.begin(), faces.end()) != faces.end()) {
       return PHX_MC_INTERNAL_ERROR;
     }
   }
@@ -1908,13 +1946,19 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // an upper bound of the true lfs(x) (lfs is 1-Lipschitz), so the estimate
   // never falls below lfs_min > 0 and insertion_guard keeps the packing
   // argument (Ruppert, Shewchuk) bounding the vertex count.
+  // feature_size_at keeps the metric distances from its point to its
+  // neighbors (in neighbor order) for clear_of.
+  std::vector<double> neighbor_distances;
+  const CoordinateResolution coordinate_resolution(mesh);
   const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors) {
+    neighbor_distances.clear();
     double size = std::numeric_limits<double>::infinity();
     for (std::int32_t vertex : neighbors) {
-      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] +
-                                metric_distance(mesh, point, mesh.point(vertex)));
+      const double distance = metric_distance(mesh, point, mesh.point(vertex));
+      neighbor_distances.push_back(distance);
+      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] + distance);
     }
-    return std::max(size, coordinate_resolution(mesh, point));
+    return std::max(size, coordinate_resolution(point));
   };
   const auto spacing_guard = [&](double feature_size, double target_size) {
     const double guard = kSizeGuardFraction * feature_size;
@@ -1942,12 +1986,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   };
   // The spacing guard: no natural neighbor of a point (a vertex of its
   // cavity, which holds its nearest vertex in a Delaunay neighborhood) lies
-  // closer than `radius`.
-  const auto clear_of = [&](const double* point, std::span<const std::int32_t> neighbors,
-                            double radius) {
+  // closer than `radius`; it reads the neighbors feature_size_at measured
+  // last.
+  const auto clear_of = [&](double radius) {
     if (!(radius > 0.0) || !std::isfinite(radius)) return false;
-    for (std::int32_t vertex : neighbors) {
-      if (metric_distance(mesh, point, mesh.point(vertex)) < radius) return false;
+    for (double distance : neighbor_distances) {
+      if (distance < radius) return false;
     }
     return true;
   };
@@ -2253,8 +2297,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         return PHX_MC_OK;
       }
       const double feature_size = feature_size_at(point, cavity_vertices);
-      if (radius > 0.0 &&
-          !clear_of(point, cavity_vertices, insertion_guard(feature_size, radius, target))) {
+      if (radius > 0.0 && !clear_of(insertion_guard(feature_size, radius, target))) {
         return PHX_MC_OK;
       }
       const std::size_t facet_count = mesh.facets_.size();
@@ -2665,7 +2708,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                                    int& outcome) -> std::int32_t {
     outcome = 2;
     const double feature_size = feature_size_at(point, interior.vertices);
-    if (!clear_of(point, interior.vertices, insertion_guard(feature_size, radius, size))) {
+    if (!clear_of(insertion_guard(feature_size, radius, size))) {
       return PHX_MC_OK;
     }
     removed_cells.clear();
@@ -2790,7 +2833,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         break;
       }
       const double feature_size = feature_size_at(candidate, interior.vertices);
-      if (!clear_of(candidate, interior.vertices, insertion_guard(feature_size, radius, size))) {
+      if (!clear_of(insertion_guard(feature_size, radius, size))) {
         break;
       }
       const double quality = screen_cone(mesh, interior.boundary, candidate, radius_edge_bound,
