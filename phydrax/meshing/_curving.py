@@ -34,7 +34,16 @@ from enum import StrEnum
 from fractions import Fraction
 from hashlib import sha256
 from itertools import product
-from typing import cast, final, NamedTuple, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import (
+    cast,
+    final,
+    Literal,
+    NamedTuple,
+    overload,
+    Protocol,
+    runtime_checkable,
+    TYPE_CHECKING,
+)
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -115,7 +124,7 @@ from ._association import (
 )
 from ._canonical import certify_cell_mesh
 from ._certification import MeshCertificationReport
-from ._contracts import MeshingFailure
+from ._contracts import MeshingFailure, MeshingFailureCategory, MeshingFailureEvidence
 from ._coupling import PeriodicCoupling
 from ._lineage import CellMeshTransition, MeshTransitionKind
 from ._native_construction import NativeMeshOrganization
@@ -564,6 +573,157 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
                 "accepted_round": accepted_round,
                 "cell_result": None if cell_result is None else cell_result.result_id,
             }
+        )
+
+
+class _CurvingScreen(NamedTuple):
+    """Sampled diagnostics, not validity or source-acceptance evidence."""
+
+    lattice_order: int
+    minimum_scaled_jacobian: float
+    maximum_distortion: float
+    failing_cells: int
+    relaxed_cells: int
+
+
+@final
+class HighOrderCurvingCandidate(StrictModule, NonTrainableState):
+    """Pending curved geometry; screens do not establish validity or acceptance.
+
+    The lattice screen cannot detect global overlap, a negative Jacobian between
+    samples, or deviation from the source between nodes.
+    """
+
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    policy: HighOrderCurvingPolicy
+    screens: _CurvingScreen
+    certified_steps: tuple[str, ...] = eqx.field(static=True)
+    candidate_id: str = eqx.field(static=True)
+    _straight: CellGeometrySpec = eqx.field(repr=False)
+    _association: GeometryAssociation = eqx.field(repr=False)
+    _projection: AbstractBRepProjection = eqx.field(repr=False)
+    _source_result: CellMeshingResult | None = eqx.field(repr=False)
+    _prior_transition: CellMeshTransition | None = eqx.field(repr=False)
+    _minimizations: tuple[MinimizationResult, ...] = eqx.field(repr=False)
+    _round: int = eqx.field(static=True, repr=False)
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        straight: CellGeometrySpec,
+        association: GeometryAssociation,
+        projection: AbstractBRepProjection,
+        policy: HighOrderCurvingPolicy,
+        source_result: CellMeshingResult | None,
+        prior_transition: CellMeshTransition | None,
+        minimizations: tuple[MinimizationResult, ...],
+        round_: int,
+        screens: _CurvingScreen,
+        /,
+    ) -> None:
+        self.mesh = mesh
+        self.geometry = geometry
+        self.policy = policy
+        self.screens = screens
+        self.certified_steps = (
+            "constrained_node_projection",
+            "node_classification",
+            "straight_geometry_source_maps",
+        )
+        self._straight = straight
+        self._association = association
+        self._projection = projection
+        self._source_result = source_result
+        self._prior_transition = prior_transition
+        self._minimizations = minimizations
+        self._round = round_
+        self.candidate_id = canonical_fingerprint(
+            {
+                "kind": "high-order-curving-candidate",
+                "mesh": mesh.mesh_id,
+                "geometry": cell_geometry_id(geometry),
+                "straight": cell_geometry_id(straight),
+                "coordinates": array_tree_fingerprint(np.asarray(geometry.coordinates)),
+                "policy": policy.policy_id,
+                "association": association.association_id,
+                "projection": projection.projection_id,
+                "source": None if source_result is None else source_result.result_id,
+                "transition": None
+                if prior_transition is None
+                else prior_transition.transition_id,
+                "certified_steps": self.certified_steps,
+                "screens": screens._asdict(),
+                "round": round_,
+            }
+        )
+
+    def prove(self, /) -> HighOrderCurvingResult:
+        """Certify this exact geometry without moving or replacing its nodes."""
+        classes = _node_classes(
+            self.mesh, self.geometry, self._association, self._projection
+        )
+        blocks = _distortion_blocks(self.mesh, self.geometry, self.policy.degree)
+        local = _local_evidence(
+            self.mesh, self.geometry, classes, self._projection, blocks, self.policy
+        )
+        if not local.passes(self.policy):
+            validity = local.computed_validity.certificate
+            raise MeshingFailure(
+                MeshingFailureCategory.QUALITY_REJECTED,
+                "Curved candidate failed fixed-geometry local certification.",
+                stage="curving_proof",
+                evidence=MeshingFailureEvidence(
+                    logical_findings=(
+                        f"invalid cells: {validity.invalid_count}",
+                        f"unresolved cells: {validity.unresolved_count}",
+                        f"maximum residual: {float(np.max(local.residuals, initial=0.0))}",
+                    )
+                ),
+            )
+        evidence = _evidence(
+            self.mesh,
+            self.geometry,
+            classes,
+            self._projection,
+            blocks,
+            self.policy,
+            source_result=self._source_result,
+            prior_transition=self._prior_transition,
+            local=local,
+        )
+        if not evidence.accepted or (
+            self._source_result is not None and evidence.target_result is None
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.QUALITY_REJECTED,
+                "Curved candidate failed fixed-geometry certification.",
+                stage="curving_proof",
+                evidence=MeshingFailureEvidence(
+                    logical_findings=(
+                        f"cell validity: {evidence.certificate.all_certified}",
+                        f"invalid cells: {evidence.certificate.invalid_count}",
+                        f"unresolved cells: {evidence.certificate.unresolved_count}",
+                        f"embedding: {evidence.embedding.status}",
+                        f"maximum residual: {evidence.maximum_residual}",
+                        f"source failure: {evidence.source_failure}",
+                        *(
+                            f"{finding.check}: {finding.detail}"
+                            for finding in evidence.embedding.findings
+                        ),
+                    )
+                ),
+            )
+        return HighOrderCurvingResult(
+            HighOrderCurvingStatus.CURVED,
+            self.geometry,
+            self._straight,
+            evidence,
+            evidence,
+            self._minimizations,
+            self._round,
+            cell_result=evidence.target_result,
         )
 
 
@@ -1152,13 +1312,23 @@ def _determinant_degree(kind: str, degree: int, embedded: bool, /) -> int:
             raise ValueError(f"No curving sample lattice for {kind!r}.")
 
 
-def _control_lattice(kind: str, degree: int, embedded: bool, /) -> np.ndarray:
+def _control_lattice(
+    kind: str, degree: int, embedded: bool, /, *, minimum_order: int = 1
+) -> np.ndarray:
     """Polynomial control lattice on the reference simplex, prism, or cube."""
-    order = max(_determinant_degree(kind, degree, embedded), 1)
+    order = max(_determinant_degree(kind, degree, embedded), minimum_order)
     dimension = reference_cell_topology(kind).dimension
     grid = np.asarray(tuple(product(range(order + 1), repeat=dimension)), np.float64)
+    if minimum_order > 1 and (
+        kind in ("triangle", "tetrahedron", "prism") or kind.startswith("simplex:")
+    ):
+        grid = grid[
+            np.sum(grid[:, : 2 if kind == "prism" else dimension], axis=1) <= order
+        ]
     grid = grid / order
-    if kind in ("triangle", "tetrahedron", "prism") or kind.startswith("simplex:"):
+    if minimum_order == 1 and (
+        kind in ("triangle", "tetrahedron", "prism") or kind.startswith("simplex:")
+    ):
         grid = grid[np.sum(grid[:, : 2 if kind == "prism" else dimension], axis=1) <= 1.0]
     if kind == "pyramid":
         scale = 1.0 - grid[:, 2]
@@ -1241,7 +1411,7 @@ class _CurvingEnergy(StrictModule):
 
 
 def _distortion_blocks(
-    mesh: CellMesh, geometry: CellGeometrySpec, degree: int, /
+    mesh: CellMesh, geometry: CellGeometrySpec, degree: int, /, *, minimum_order: int = 1
 ) -> tuple[_BlockDistortion, ...]:
     """Sample tables and straight-sided target inverses of every block."""
     elements, routes, _ = geometry.resolve(mesh)
@@ -1253,7 +1423,9 @@ def _distortion_blocks(
             raise TypeError("Curving requires a canonical scalar cell-geometry element.")
         dimension = reference_cell_topology(block.cell_kind).dimension
         embedded = ambient > dimension
-        samples = _control_lattice(block.cell_kind, degree, embedded)
+        samples = _control_lattice(
+            block.cell_kind, degree, embedded, minimum_order=minimum_order
+        )
         if isinstance(element, PerCellRestrictedCellGeometryElement):
             if not block.cell_count:
                 raise ValueError(
@@ -1320,11 +1492,21 @@ def _relaxation_star(
     node carries the distortion, so the round solves that coupled star alone and
     every other node keeps its position.
     """
-    routes = tuple(np.asarray(block.routes, dtype=np.int64) for block in blocks)
     unproven = np.split(
         np.asarray(certificate.status) != CellValidityStatus.CERTIFIED_VALID,
         certificate.block_offsets[1:-1],
     )
+    return _relaxation_star_for_cells(blocks, tuple(unproven), fixed, rings)
+
+
+def _relaxation_star_for_cells(
+    blocks: tuple[_BlockDistortion, ...],
+    unproven: tuple[np.ndarray, ...],
+    fixed: np.ndarray,
+    rings: int,
+    /,
+) -> tuple[np.ndarray, tuple[_BlockDistortion, ...]]:
+    routes = tuple(np.asarray(block.routes, dtype=np.int64) for block in blocks)
     star = np.zeros(fixed.shape, dtype=np.bool_)
     for route, cells in zip(routes, unproven, strict=True):
         star[route[cells]] = True
@@ -2019,6 +2201,220 @@ def _project_constrained(
     return _apply_periodic(result, periodic), rows, projectors
 
 
+def _screen_cells(
+    blocks: tuple[_BlockDistortion, ...], coordinates: np.ndarray, /
+) -> tuple[_CurvingScreen, tuple[np.ndarray, ...]]:
+    values = jnp.asarray(coordinates, dtype=jnp.float64)
+    failing = []
+    for block in blocks:
+        cells = block.routes.shape[0]
+        samples = block.gradients.shape[1 if block.per_cell_gradients else 0]
+        width = values.shape[1] * block.gradients.shape[-1]
+        batch_size = max(1, _QUALITY_WORKSET_ENTRIES // (samples * width))
+        batches = []
+        for start in range(0, cells, batch_size):
+            workset = _quality_workset(block, start, min(batch_size, cells - start))
+            frobenius, determinant, jacobian = workset.ratios(values)
+            finite = jnp.all(jnp.isfinite(jacobian), axis=(-1, -2))
+            finite = finite & jnp.isfinite(frobenius) & jnp.isfinite(determinant)
+            if not block.embedded:
+                finite = finite & (determinant_small_linear(block.plan, jacobian) > 0.0)
+            batches.append(np.asarray(jnp.any(~finite | (determinant <= 0.0), axis=1)))
+        failing.append(np.concatenate(batches))
+    scaled, distortion = _sampled_quality(blocks, coordinates)
+    screen = _CurvingScreen(
+        5, scaled, distortion, sum(int(np.count_nonzero(value)) for value in failing), 0
+    )
+    return screen, tuple(failing)
+
+
+def _screened_curving(
+    mesh: CellMesh,
+    association: GeometryAssociation,
+    projection: AbstractBRepProjection,
+    policy: HighOrderCurvingPolicy,
+    periodic: tuple[PeriodicCoupling, ...],
+    source_result: CellMeshingResult | None,
+    prior_transition: CellMeshTransition | None,
+    /,
+) -> HighOrderCurvingCandidate:
+    straight = _straight_geometry(
+        mesh,
+        policy.degree,
+        source_geometry=None if source_result is None else source_result.geometry,
+    )
+    classes = _node_classes(mesh, straight, association, projection)
+    if not np.all(classes.resolved):
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            "Curving node association is unresolved.",
+            stage="curving_screen",
+        )
+    blocks = _distortion_blocks(mesh, straight, policy.degree, minimum_order=5)
+    pairs = _periodic_nodes(mesh, straight, tuple(periodic))
+    fixed = classes.fixed.copy()
+    fixed[pairs.targets] = True
+    elements, routes, _ = straight.resolve(mesh)
+    layout = (
+        {
+            block.name: element
+            for block, element in zip(mesh.blocks, elements, strict=True)
+        },
+        {block.name: route for block, route in zip(mesh.blocks, routes, strict=True)},
+    )
+    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+    edges = _incidence_pairs(mesh, 0, 1)
+    edge_vertices = edges[np.argsort(edges[:, 1], kind="stable"), 0].reshape(-1, 2)
+    length = float(
+        np.mean(
+            np.linalg.norm(
+                vertices[edge_vertices[:, 0]] - vertices[edge_vertices[:, 1]], axis=1
+            )
+        )
+    )
+    cache = _NodeProjectionCache(projection, classes)
+    coordinates, constrained_rows, projectors = _project_constrained(
+        projection,
+        np.asarray(straight.coordinates, dtype=np.float64),
+        classes,
+        pairs,
+        cache=cache,
+    )
+
+    def geometry(values: np.ndarray, /) -> CellGeometrySpec:
+        return _geometry_with_exact_coordinate_bank(
+            mesh,
+            layout[0],
+            layout[1],
+            straight,
+            values,
+            identity_context=("curving-candidate",),
+        )
+
+    screen, failing = _screen_cells(blocks, coordinates)
+    minimizations: list[MinimizationResult] = []
+    admissible = True
+    relaxed_cells = [np.zeros(block.routes.shape[0], dtype=np.bool_) for block in blocks]
+    for round_ in range(1, policy.relaxation_rounds + 1):
+        if screen.failing_cells == 0:
+            break
+        movable, star_blocks = _relaxation_star_for_cells(blocks, failing, fixed, round_)
+        if not np.any(movable):
+            break
+        for block, seen in zip(blocks, relaxed_cells, strict=True):
+            seen |= np.any(movable[np.asarray(block.routes, dtype=np.int64)], axis=1)
+        relaxed_constraints = movable[constrained_rows]
+        relaxed_rows = constrained_rows[relaxed_constraints]
+        energy = _CurvingEnergy(
+            blocks=star_blocks,
+            constrained_rows=jnp.asarray(relaxed_rows, dtype=jnp.int32),
+            feet=jnp.asarray(coordinates[relaxed_rows]),
+            normal_projectors=jnp.asarray(projectors[relaxed_constraints]),
+            reference=jnp.asarray(coordinates),
+            weights=jnp.asarray(
+                (
+                    policy.distortion_weight,
+                    policy.tangent_weight / length**2,
+                    policy.displacement_weight / length**2,
+                ),
+                dtype=jnp.float64,
+            ),
+            regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
+        )
+        relaxed = optimize_cell_geometry_coordinates(
+            geometry(coordinates),
+            energy,
+            fixed_coordinates=~movable,
+            method=NewtonTrustRegion(),
+            termination=policy.termination,
+            length_scale=length,
+        )
+        minimizations.append(relaxed.minimization)
+        admissible = relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        moved = np.asarray(relaxed.coordinates, dtype=np.float64)
+        if not np.all(np.isfinite(moved)):
+            break
+        coordinates, constrained_rows, projectors = _project_constrained(
+            projection,
+            moved,
+            classes,
+            pairs,
+            cache=cache,
+        )
+        screen, failing = _screen_cells(blocks, coordinates)
+    if (
+        screen.failing_cells
+        or not np.isfinite(screen.maximum_distortion)
+        or not admissible
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.QUALITY_REJECTED,
+            "Curved candidate failed its sampled screen or relaxation admission.",
+            stage="curving_screen",
+        )
+    screen = screen._replace(
+        relaxed_cells=sum(int(np.count_nonzero(mask)) for mask in relaxed_cells)
+    )
+    return HighOrderCurvingCandidate(
+        mesh,
+        geometry(coordinates),
+        straight,
+        association,
+        projection,
+        policy,
+        source_result,
+        prior_transition,
+        tuple(minimizations),
+        len(minimizations),
+        screen,
+    )
+
+
+@overload
+def curve_cell_mesh(
+    mesh: CellMesh,
+    association: GeometryAssociation,
+    projection: AbstractBRepProjection,
+    /,
+    *,
+    policy: HighOrderCurvingPolicy,
+    periodic: tuple[PeriodicCoupling, ...] = (),
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
+    prove: Literal[True],
+) -> HighOrderCurvingResult: ...
+
+
+@overload
+def curve_cell_mesh(
+    mesh: CellMesh,
+    association: GeometryAssociation,
+    projection: AbstractBRepProjection,
+    /,
+    *,
+    policy: HighOrderCurvingPolicy,
+    periodic: tuple[PeriodicCoupling, ...] = (),
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
+    prove: Literal[False] = False,
+) -> HighOrderCurvingCandidate: ...
+
+
+@overload
+def curve_cell_mesh(
+    mesh: CellMesh,
+    association: GeometryAssociation,
+    projection: AbstractBRepProjection,
+    /,
+    *,
+    policy: HighOrderCurvingPolicy,
+    periodic: tuple[PeriodicCoupling, ...] = (),
+    source_result: CellMeshingResult | None = None,
+    prior_transition: CellMeshTransition | None = None,
+    prove: bool,
+) -> HighOrderCurvingResult | HighOrderCurvingCandidate: ...
+
+
 @collection_scope()
 def curve_cell_mesh(
     mesh: CellMesh,
@@ -2030,7 +2426,8 @@ def curve_cell_mesh(
     periodic: tuple[PeriodicCoupling, ...] = (),
     source_result: CellMeshingResult | None = None,
     prior_transition: CellMeshTransition | None = None,
-) -> HighOrderCurvingResult:
+    prove: bool = False,
+) -> HighOrderCurvingResult | HighOrderCurvingCandidate:
     """Curve a mesh with local, global, source, and optional material acceptance.
 
     ``source_result`` retains target-bound certification. ``prior_transition`` must
@@ -2044,6 +2441,18 @@ def curve_cell_mesh(
     """
     _require_inputs(mesh, association, projection, policy)
     source_result = _curving_source_result(mesh, source_result, prior_transition)
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be bool.")
+    if not prove:
+        return _screened_curving(
+            mesh,
+            association,
+            projection,
+            policy,
+            periodic,
+            source_result,
+            prior_transition,
+        )
     straight = _straight_geometry(
         mesh,
         policy.degree,
@@ -2271,6 +2680,7 @@ def curve_cell_mesh(
 __all__ = [
     "CurvedGeometryEvidence",
     "HighOrderCurvingPolicy",
+    "HighOrderCurvingCandidate",
     "HighOrderCurvingResult",
     "HighOrderCurvingStatus",
     "curve_cell_mesh",

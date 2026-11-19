@@ -1625,6 +1625,7 @@ def test_cad_scoped_fidelity_preserves_parent_identities_and_curving(
         projection,
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
         source_result=result,
+        prove=True,
     )
     assert curved.cell_result is not None
     old_association = next(
@@ -1638,6 +1639,7 @@ def test_cad_scoped_fidelity_preserves_parent_identities_and_curving(
         projection,
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
         source_result=old_result,
+        prove=True,
     )
     assert old_curved.cell_result is not None
     assert curved.result_id == old_curved.result_id

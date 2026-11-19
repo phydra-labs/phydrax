@@ -94,12 +94,13 @@ def test_curving_evidence_reuses_only_matching_embedding_inputs() -> None:
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2)
     with pytest.raises(TypeError, match="source_result must be CellMeshingResult"):
-        phx.meshing.curve_cell_mesh(
+        phx.meshing.curve_cell_mesh(  # ty: ignore[no-matching-overload]
             mesh,
             association,
             projection,
             policy=policy,
-            source_result=mesh,  # ty: ignore[invalid-argument-type]
+            source_result=mesh,
+            prove=True,
         )
     with pytest.raises(TypeError, match="source_result must be CellMeshingResult"):
         phx.meshing.verify_curved_geometry(
@@ -543,7 +544,9 @@ def test_cad_curving_scenario_2() -> None:
         association = phx.meshing.associate_mesh_vertices(
             mesh, projection, policy=_POLICY
         )
-        result = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+        result = phx.meshing.curve_cell_mesh(
+            mesh, association, projection, policy=policy, prove=True
+        )
         assert result.status is _STATUS.CURVED
         assert result.evidence.certificate.all_certified
         assert result.evidence.maximum_residual <= policy.residual_tolerance
@@ -591,6 +594,7 @@ def test_cad_curving_scenario_2() -> None:
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1),
         periodic=(coupling,),
         source_result=result,
+        prove=True,
     )
     nodes = np.asarray(curved.geometry.coordinates)
     straight = np.asarray(curved.straight.coordinates)
@@ -620,7 +624,9 @@ def test_cad_curving_scenario_2() -> None:
     mesh = _icosphere(1)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
-    curved = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+    curved = phx.meshing.curve_cell_mesh(
+        mesh, association, projection, policy=policy, prove=True
+    )
 
     accepted = phx.meshing.verify_curved_geometry(
         curved.geometry, mesh, association, projection, policy=policy
@@ -650,6 +656,7 @@ def test_bisection_of_curved_p2_mesh_keeps_exact_coordinate_map_equality() -> No
         projection,
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1),
         source_result=source,
+        prove=True,
     )
     assert curved.status is _STATUS.CURVED and curved.cell_result is not None
     bank = curved.geometry.exact_coordinate_bank
@@ -697,7 +704,11 @@ def test_unresolved_projection_rolls_back_with_infinite_residual_evidence(
 
     monkeypatch.setattr(_curving, "_node_classes", unresolved_classes)
     result = phx.meshing.curve_cell_mesh(
-        mesh, association, projection, policy=phx.meshing.HighOrderCurvingPolicy(degree=2)
+        mesh,
+        association,
+        projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+        prove=True,
     )
     assert result.status is _STATUS.UNRESOLVED_ASSOCIATION
     assert not result.evidence.accepted
@@ -720,7 +731,9 @@ def _curve_plate(
         termination=phx.optim.OptimizationTermination(maximum_steps=steps),
         accept_valid_nonconverged_relaxation=accept,
     )
-    return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+    return phx.meshing.curve_cell_mesh(
+        mesh, association, projection, policy=policy, prove=True
+    )
 
 
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_its_star() -> None:
@@ -807,6 +820,101 @@ def test_star_relaxation_is_independent_of_the_length_unit() -> None:
     )
 
 
+def test_screened_sphere_candidate_proves_the_produced_geometry() -> None:
+    projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
+    mesh = _icosphere(1)
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
+    candidate = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+    assert isinstance(candidate, phx.meshing.HighOrderCurvingCandidate)
+    assert candidate.screens.lattice_order == 5
+    assert candidate.screens.failing_cells == 0
+    assert not hasattr(candidate, "evidence")
+    assert not hasattr(candidate, "accepted")
+    coordinates = np.asarray(candidate.geometry.coordinates)
+    np.testing.assert_allclose(np.linalg.norm(coordinates, axis=1), 1.0, atol=1e-7)
+
+    _, routes, _ = candidate.geometry.resolve(mesh)
+    reference_nodes = np.asarray(
+        phx.discretization.lagrange_element("triangle", 2).reference_nodes
+    )
+    route = np.asarray(routes[0], dtype=np.int64)
+    samples = np.asarray(
+        [(i / 20, j / 20) for i in range(21) for j in range(21 - i)],
+        dtype=np.float64,
+    )
+    barycentric = np.column_stack((1 - samples.sum(axis=1), samples))
+    reference_barycentric = np.column_stack(
+        (1 - reference_nodes.sum(axis=1), reference_nodes)
+    )
+    derivatives = np.asarray(((-1, -1), (1, 0), (0, 1)), dtype=np.float64)
+    gradients = np.empty((len(samples), len(reference_nodes), 2), dtype=np.float64)
+    for node, bary in enumerate(reference_barycentric):
+        owners = np.flatnonzero(bary > 0.25)
+        if len(owners) == 1:
+            owner = owners[0]
+            gradients[:, node] = (4 * barycentric[:, owner, None] - 1) * derivatives[
+                owner
+            ]
+        else:
+            first, second = owners
+            gradients[:, node] = 4 * (
+                barycentric[:, first, None] * derivatives[second]
+                + barycentric[:, second, None] * derivatives[first]
+            )
+    jacobian = np.einsum("sni,cna->csai", gradients, coordinates[route])
+    normals = np.cross(jacobian[..., 0], jacobian[..., 1])
+    vertices = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
+    straight_normals = np.cross(
+        vertices[:, 1] - vertices[:, 0], vertices[:, 2] - vertices[:, 0]
+    )
+    assert np.min(np.einsum("csa,ca->cs", normals, straight_normals)) > 0
+
+    result = candidate.prove()
+    assert result.status is _STATUS.CURVED
+    assert result.evidence.accepted
+    assert result.geometry.geometry_layout_id == candidate.geometry.geometry_layout_id
+    np.testing.assert_array_equal(result.geometry.coordinates, coordinates)
+    with pytest.raises(TypeError, match="source_result must be CellMeshingResult"):
+        phx.meshing.curve_cell_mesh(
+            mesh,
+            association,
+            projection,
+            policy=policy,
+            source_result=candidate,  # ty: ignore[invalid-argument-type]
+        )
+
+    edge_node = np.flatnonzero(np.sum(reference_barycentric > 0.25, axis=1) == 2)[0]
+    other_vertex = np.flatnonzero(reference_barycentric[edge_node] == 0)[0]
+    changed = coordinates.copy()
+    edge_row = route[0, edge_node]
+    changed[edge_row] += 20 * (vertices[0, other_vertex] - changed[edge_row])
+    inverted_jacobian = np.einsum("sni,na->sai", gradients, changed[route[0]])
+    inverted_normals = np.cross(inverted_jacobian[..., 0], inverted_jacobian[..., 1])
+    assert np.min(inverted_normals @ straight_normals[0]) < 0
+    original = candidate.geometry
+    broken_geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(original.block_names, original.elements, strict=True)),
+        dict(zip(original.block_names, original.geometry_dofs, strict=True)),
+        changed,
+    )
+    broken = phx.meshing.HighOrderCurvingCandidate(
+        mesh,
+        broken_geometry,
+        original,
+        association,
+        projection,
+        policy,
+        None,
+        None,
+        (),
+        0,
+        candidate.screens,
+    )
+    with pytest.raises(phx.meshing.MeshingFailure):
+        broken.prove()
+
+
 def test_valid_projection_is_accepted_without_relaxation() -> None:
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     mesh = _icosphere(1)
@@ -814,7 +922,9 @@ def test_valid_projection_is_accepted_without_relaxation() -> None:
 
     def curve(rounds: Any) -> Any:
         policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=rounds)
-        return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+        return phx.meshing.curve_cell_mesh(
+            mesh, association, projection, policy=policy, prove=True
+        )
 
     projected = curve(0)
     relaxed = curve(3)

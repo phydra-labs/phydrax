@@ -1464,6 +1464,7 @@ def _curve_cad_result(
         projection,
         policy=policy,
         source_result=straight,
+        prove=True,
     )
     failures: list[dict[str, str]] = []
     result = curved.cell_result if curved.cell_result is not None else straight

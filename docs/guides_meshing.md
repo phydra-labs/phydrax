@@ -3010,9 +3010,19 @@ curved = phx.meshing.curve_cell_mesh(
     association,
     projection,
     policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+    prove=True,
 )
 assert curved.status is phx.meshing.HighOrderCurvingStatus.CURVED
 ```
+
+By default, `curve_cell_mesh` returns a pending `HighOrderCurvingCandidate`.
+Calling `candidate.prove()` certifies that exact geometry without changing it;
+`prove=True` instead runs the certified construction and rollback algorithm.
+The candidate screens Jacobian positivity and finite distortion at a lattice of
+at least order 5 (56 points on a tetrahedron). They cannot detect global overlap,
+a Jacobian that turns negative between samples, or source deviation between
+nodes. `candidate.certified_steps` names the construction operations that still
+use certified decisions, including constrained-node projection.
 
 A B-Rep `GeometryAssociation` classifies mesh entities against one source owner
 and exact revision. Each row retains the definition dimension and index

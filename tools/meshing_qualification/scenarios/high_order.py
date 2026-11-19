@@ -185,6 +185,7 @@ def native_high_order_curving() -> dict[str, object]:
         projection,
         policy=policy,
         source_result=straight_result,
+        prove=True,
     )
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:
         raise RuntimeError(

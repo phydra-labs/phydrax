@@ -129,7 +129,9 @@ def curve(
     mesh: Any, association: Any, projection: Any, degree: Any, exact_volume: Any
 ) -> Any:
     policy = phx.meshing.HighOrderCurvingPolicy(degree=degree)
-    curved = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+    curved = phx.meshing.curve_cell_mesh(
+        mesh, association, projection, policy=policy, prove=True
+    )
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:
         raise RuntimeError(f"P{degree} curving ended with status {curved.status}.")
     certificate = phx.discretization.certify_cell_geometry_validity(

@@ -1576,7 +1576,9 @@ def _cad_curving_degree(
     """Curve, independently certify, and measure one geometry degree."""
     policy = phx.meshing.HighOrderCurvingPolicy(degree=degree)
     curved, curving_record = _measured(
-        lambda: phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+        lambda: phx.meshing.curve_cell_mesh(
+            mesh, association, projection, policy=policy, prove=True
+        )
     )
     # ty: ignore[unresolved-attribute]
     if curved.status is not phx.meshing.HighOrderCurvingStatus.CURVED:

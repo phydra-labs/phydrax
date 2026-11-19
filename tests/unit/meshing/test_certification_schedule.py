@@ -242,6 +242,7 @@ def test_certified_planar_curving_preserves_parent_identities() -> None:
         projection,
         policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
         source_result=source,
+        prove=True,
     )
     assert curved.status == phx.meshing.HighOrderCurvingStatus.CURVED
     assert curved.cell_result is not None

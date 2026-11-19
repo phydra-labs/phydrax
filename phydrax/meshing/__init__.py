@@ -170,6 +170,7 @@ _DEFERRED_EXPORTS = {
     "PeriodicCoupling": "._coupling",
     "curve_cell_mesh": "._curving",
     "CurvedGeometryEvidence": "._curving",
+    "HighOrderCurvingCandidate": "._curving",
     "HighOrderCurvingPolicy": "._curving",
     "HighOrderCurvingResult": "._curving",
     "HighOrderCurvingStatus": "._curving",
@@ -528,6 +529,7 @@ if TYPE_CHECKING:
     from ._curving import (
         curve_cell_mesh,
         CurvedGeometryEvidence,
+        HighOrderCurvingCandidate,
         HighOrderCurvingPolicy,
         HighOrderCurvingResult,
         HighOrderCurvingStatus,
@@ -1017,6 +1019,7 @@ __all__ = [
     "GmshSurfaceAlgorithm",
     "GmshVolumeAlgorithm",
     "HessianMetricEvidence",
+    "HighOrderCurvingCandidate",
     "HighOrderCurvingPolicy",
     "HighOrderCurvingResult",
     "HighOrderCurvingStatus",

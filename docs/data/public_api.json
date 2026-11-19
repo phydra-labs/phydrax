@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a0027a80cccb740f8db56d2d4cce6616a7c46b8de41ea637a579aacc7755a931",
+  "manifest_id": "74ebe4b66517147ac8962efeafb67c2e6a45015765f7ad9366bad570c0600435",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -27006,6 +27006,7 @@
       "phydrax.meshing.GmshSurfaceAlgorithm",
       "phydrax.meshing.GmshVolumeAlgorithm",
       "phydrax.meshing.HessianMetricEvidence",
+      "phydrax.meshing.HighOrderCurvingCandidate",
       "phydrax.meshing.HighOrderCurvingPolicy",
       "phydrax.meshing.HighOrderCurvingResult",
       "phydrax.meshing.HighOrderCurvingStatus",
