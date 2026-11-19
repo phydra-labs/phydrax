@@ -719,9 +719,25 @@ class SourcePreparer {
     std::sort(uses.begin(), uses.end());
     std::vector<int32_t> parent(triangles_.size());
     std::iota(parent.begin(), parent.end(), 0);
+    edge_runs_.clear();
+    triangle_edge_runs_.assign(3 * triangles_.size(), -1);
     for (std::size_t begin = 0; begin < uses.size();) {
       std::size_t end = begin + 1;
       while (end < uses.size() && uses[end].first == uses[begin].first) ++end;
+      const auto run = static_cast<int32_t>(edge_runs_.size());
+      edge_runs_.push_back(static_cast<uint32_t>(begin));
+      for (std::size_t use = begin; use < end; ++use) {
+        const auto triangle = static_cast<std::size_t>(uses[use].second);
+        const Triple& face = triangles_[triangle];
+        for (int k = 0; k < 3; ++k) {
+          int32_t& slot = triangle_edge_runs_[3 * triangle + static_cast<std::size_t>(k)];
+          if (slot < 0 &&
+              topology::undirected_edge(face[k], face[(k + 1) % 3]) == uses[begin].first) {
+            slot = run;
+            break;
+          }
+        }
+      }
       if (end - begin == 2) {
         const int32_t a = uses[begin].second, b = uses[begin + 1].second;
         const int32_t facet = triangle_facet_[static_cast<std::size_t>(a)];
@@ -735,6 +751,7 @@ class SourcePreparer {
       }
       begin = end;
     }
+    edge_runs_.push_back(static_cast<uint32_t>(uses.size()));
     std::vector<int32_t> group_of_root(triangles_.size(), -1);
     triangle_group_.resize(triangles_.size());
     int32_t group_count = 0;
@@ -747,14 +764,22 @@ class SourcePreparer {
     edge_uses_ = std::move(uses);
   }
 
-  bool internal_edge(uint64_t key) const {
-    const auto first = std::lower_bound(edge_uses_.begin(), edge_uses_.end(), key,
+  // The run of edge_uses_ of key `key`, else -1.
+  int32_t edge_run(uint64_t key) const {
+    const auto found = std::lower_bound(edge_uses_.begin(), edge_uses_.end(), key,
         [](const auto& use, uint64_t wanted) { return use.first < wanted; });
-    const auto last = std::upper_bound(first, edge_uses_.end(), key,
-        [](uint64_t wanted, const auto& use) { return wanted < use.first; });
-    return last - first == 2 &&
-           triangle_group_[static_cast<std::size_t>(first->second)] ==
-               triangle_group_[static_cast<std::size_t>((first + 1)->second)];
+    if (found == edge_uses_.end() || found->first != key) return -1;
+    const auto row = static_cast<uint32_t>(found - edge_uses_.begin());
+    return static_cast<int32_t>(
+        std::upper_bound(edge_runs_.begin(), edge_runs_.end(), row) - edge_runs_.begin() - 1);
+  }
+
+  // An edge used by exactly two triangles of one group.
+  bool internal_run(std::size_t run) const {
+    const uint32_t begin = edge_runs_[run];
+    return edge_runs_[run + 1] - begin == 2 &&
+           triangle_group_[static_cast<std::size_t>(edge_uses_[begin].second)] ==
+               triangle_group_[static_cast<std::size_t>(edge_uses_[begin + 1].second)];
   }
 
   int32_t add_edge(int32_t first, int32_t second) {
@@ -768,6 +793,10 @@ class SourcePreparer {
   }
 
   int32_t build_edges() {
+    const std::size_t runs = edge_runs_.size() - 1;
+    // Runs whose edge already has a row.
+    std::vector<char> listed(runs, 0);
+    edge_ids_.reserve(static_cast<std::size_t>(input_.segment_count) + runs);
     for (int64_t segment = 0; segment < input_.segment_count; ++segment) {
       const int32_t a = input_.segments[2 * segment];
       const int32_t b = input_.segments[2 * segment + 1];
@@ -781,17 +810,18 @@ class SourcePreparer {
                     existing->second, kPlcEdge, segment);
       }
       if (add_edge(a, b) < 0) return PHX_MC_INDEX_RANGE_ERROR;
+      if (const int32_t run = edge_run(key); run >= 0) listed[static_cast<std::size_t>(run)] = 1;
     }
-    for (const Triple& face : triangles_) {
+    for (std::size_t triangle = 0; triangle < triangles_.size(); ++triangle) {
+      const Triple& face = triangles_[triangle];
       for (int k = 0; k < 3; ++k) {
+        const auto run = static_cast<std::size_t>(
+            triangle_edge_runs_[3 * triangle + static_cast<std::size_t>(k)]);
+        if (internal_run(run) || listed[run] != 0) continue;
+        listed[run] = 1;
         const int32_t a = face[static_cast<std::size_t>(k)];
         const int32_t b = face[static_cast<std::size_t>((k + 1) % 3)];
-        const uint64_t key = topology::undirected_edge(a, b);
-        if (!internal_edge(key) && edge_ids_.find(key) == edge_ids_.end()) {
-          if (add_edge(std::min(a, b), std::max(a, b)) < 0) {
-            return PHX_MC_INDEX_RANGE_ERROR;
-          }
-        }
+        if (add_edge(std::min(a, b), std::max(a, b)) < 0) return PHX_MC_INDEX_RANGE_ERROR;
       }
     }
     // Internal edges of declared facets between triangles that are not
@@ -799,14 +829,10 @@ class SourcePreparer {
     // recover them, so recovery keeps them as edges, while published results
     // omit them (PlcRecovery::hidden_plc_edges).
     const std::size_t visible = edges_.size() / 2;
-    for (std::size_t begin = 0; begin < edge_uses_.size();) {
-      std::size_t end = begin + 1;
-      while (end < edge_uses_.size() && edge_uses_[end].first == edge_uses_[begin].first) ++end;
-      const uint64_t key = edge_uses_[begin].first;
-      const int32_t a = edge_uses_[begin].second;
-      const int32_t b = edge_uses_[end - 1].second;
-      begin = end;
-      if (!internal_edge(key) || edge_ids_.contains(key) ||
+    for (std::size_t run = 0; run < runs; ++run) {
+      const int32_t a = edge_uses_[edge_runs_[run]].second;
+      const int32_t b = edge_uses_[edge_runs_[run + 1] - 1].second;
+      if (!internal_run(run) || listed[run] != 0 ||
           !declared(triangle_facet_[static_cast<std::size_t>(a)]) || coplanar(a, b)) {
         continue;
       }
@@ -893,9 +919,10 @@ class SourcePreparer {
   // Visits every pair (i, j), i < j, of `items` whose closed boxes overlap,
   // once, through a uniform grid of cells of the median item extent: two
   // overlapping boxes both meet the cell of the larger lower corner on each
-  // axis (the cell index is monotone in the coordinate), where the pair is
-  // visited. False, visiting nothing, when the boxes would fill more than
-  // eight cells per item on average (the caller sweeps instead).
+  // axis, where the pair is visited. The cell index is monotone in the
+  // coordinate, so that cell is the larger of the boxes' lower cells. False,
+  // visiting nothing, when the boxes would fill more than eight cells per
+  // item on average (the caller sweeps instead).
   template <class Visit>
   bool grid_pairs(const std::vector<Item>& items, const Visit& visit) const {
     constexpr int64_t kAxisCells = int64_t{1} << 20;
@@ -919,45 +946,86 @@ class SourcePreparer {
     const auto cell = [&](double value, int axis) {
       return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
     };
-    std::vector<std::pair<uint64_t, uint32_t>> entries;
+    // Lower and upper cells of every box (all below kAxisCells).
+    std::vector<std::array<int64_t, 6>> spans(items.size());
     const std::size_t limit = 8 * items.size();
+    std::size_t total = 0;
     for (std::size_t row = 0; row < items.size(); ++row) {
-      int64_t low[3], high[3];
       std::size_t cells = 1;
       for (int axis = 0; axis < 3; ++axis) {
-        low[axis] = cell(items[row].box.lower[axis], axis);
-        high[axis] = cell(items[row].box.upper[axis], axis);
-        if (high[axis] >= kAxisCells) return false;
-        cells *= static_cast<std::size_t>(high[axis] - low[axis] + 1);
+        spans[row][axis] = cell(items[row].box.lower[axis], axis);
+        spans[row][axis + 3] = cell(items[row].box.upper[axis], axis);
+        if (spans[row][axis + 3] >= kAxisCells) return false;
+        cells *= static_cast<std::size_t>(spans[row][axis + 3] - spans[row][axis] + 1);
       }
-      if (entries.size() + cells > limit) return false;
-      for (int64_t x = low[0]; x <= high[0]; ++x) {
-        for (int64_t y = low[1]; y <= high[1]; ++y) {
-          for (int64_t z = low[2]; z <= high[2]; ++z) {
-            const auto key = static_cast<uint64_t>(x << 40 | y << 20 | z);
-            entries.push_back({key, static_cast<uint32_t>(row)});
+      total += cells;
+      if (total > limit) return false;
+    }
+    const auto key_of = [](int64_t x, int64_t y, int64_t z) {
+      return static_cast<uint64_t>(x << 40 | y << 20 | z);
+    };
+    // Registrations bucketed by cell (cells numbered in order of first
+    // registration through an open-addressing table), rows ascending in
+    // each bucket.
+    constexpr uint64_t kEmpty = ~uint64_t{0};
+    std::size_t capacity = 16;
+    while (capacity < 2 * total) capacity <<= 1;
+    const std::size_t mask = capacity - 1;
+    std::vector<uint64_t> table(capacity, kEmpty);
+    std::vector<uint32_t> table_cell(capacity);
+    std::vector<uint64_t> cell_keys;
+    std::vector<uint32_t> starts(1, 0U);
+    std::vector<uint32_t> registered(total);
+    std::size_t at = 0;
+    for (std::size_t row = 0; row < items.size(); ++row) {
+      const std::array<int64_t, 6>& span = spans[row];
+      for (int64_t x = span[0]; x <= span[3]; ++x) {
+        for (int64_t y = span[1]; y <= span[4]; ++y) {
+          for (int64_t z = span[2]; z <= span[5]; ++z) {
+            const uint64_t key = key_of(x, y, z);
+            std::size_t slot = static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & mask;
+            while (table[slot] != kEmpty && table[slot] != key) slot = (slot + 1) & mask;
+            if (table[slot] == kEmpty) {
+              table[slot] = key;
+              table_cell[slot] = static_cast<uint32_t>(cell_keys.size());
+              cell_keys.push_back(key);
+              starts.push_back(0U);
+            }
+            registered[at++] = table_cell[slot];
+            ++starts[table_cell[slot] + 1];
           }
         }
       }
     }
-    std::sort(entries.begin(), entries.end());
-    for (std::size_t begin = 0; begin < entries.size();) {
-      std::size_t end = begin + 1;
-      while (end < entries.size() && entries[end].first == entries[begin].first) ++end;
-      for (std::size_t a = begin; a < end; ++a) {
-        for (std::size_t b = a + 1; b < end; ++b) {
-          const Box& first = items[entries[a].second].box;
-          const Box& second = items[entries[b].second].box;
-          uint64_t key = 0;
-          for (int axis = 0; axis < 3; ++axis) {
-            const double corner = std::max(first.lower[axis], second.lower[axis]);
-            key = key << 20 | static_cast<uint64_t>(cell(corner, axis));
+    for (std::size_t bucket = 1; bucket < starts.size(); ++bucket) {
+      starts[bucket] += starts[bucket - 1];
+    }
+    std::vector<uint32_t> cursor(starts.begin(), starts.end() - 1);
+    std::vector<uint32_t> rows(total);
+    at = 0;
+    for (std::size_t row = 0; row < items.size(); ++row) {
+      const std::array<int64_t, 6>& span = spans[row];
+      const std::size_t cells = static_cast<std::size_t>((span[3] - span[0] + 1) *
+                                                         (span[4] - span[1] + 1) *
+                                                         (span[5] - span[2] + 1));
+      for (std::size_t k = 0; k < cells; ++k) {
+        rows[cursor[registered[at++]]++] = static_cast<uint32_t>(row);
+      }
+    }
+    for (std::size_t bucket = 0; bucket < cell_keys.size(); ++bucket) {
+      const uint32_t begin = starts[bucket];
+      const uint32_t end = starts[bucket + 1];
+      for (uint32_t a = begin; a < end; ++a) {
+        const std::array<int64_t, 6>& first = spans[rows[a]];
+        for (uint32_t b = a + 1; b < end; ++b) {
+          const std::array<int64_t, 6>& second = spans[rows[b]];
+          if (key_of(std::max(first[0], second[0]), std::max(first[1], second[1]),
+                     std::max(first[2], second[2])) != cell_keys[bucket]) {
+            continue;
           }
-          if (key != entries[begin].first) continue;
-          visit(entries[a].second, entries[b].second);
+          visit(rows[a], rows[b]);
         }
       }
-      begin = end;
     }
     return true;
   }
@@ -986,6 +1054,9 @@ class SourcePreparer {
   }
 
   int32_t legal_pair(const Item& first, const Item& second) const {
+    // Sweep order sorts kinds only among equal lower x; the tests below take
+    // the lower kind first.
+    if (second.kind < first.kind) return legal_pair(second, first);
     Contact contact;
     if (first.kind == kTriangle && second.kind == kTriangle) {
       const Triple& a = triangles_[static_cast<std::size_t>(first.index)];
@@ -1051,44 +1122,58 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
+  // Every edge's uses by the triangles bounding a region sum to zero (each
+  // use signed by its direction and the region's side); the first failing
+  // (region, edge key) pair in that order is reported.
   int32_t check_closure() {
-    struct Entry { int32_t region; uint64_t key; int32_t coefficient; };
-    std::vector<Entry> entries;
-    for (std::size_t triangle = 0; triangle < triangles_.size(); ++triangle) {
-      const int32_t facet = triangle_facet_[triangle];
-      const int32_t positive = input_.facet_regions[2 * facet];
-      const int32_t negative = input_.facet_regions[2 * facet + 1];
-      if (positive == negative) continue;
-      const Triple& face = triangles_[triangle];
-      for (int k = 0; k < 3; ++k) {
-        const int32_t a = face[static_cast<std::size_t>(k)];
-        const int32_t b = face[static_cast<std::size_t>((k + 1) % 3)];
-        const int32_t sense = a < b ? 1 : -1;
-        const uint64_t key = topology::undirected_edge(a, b);
-        if (positive >= 0) entries.push_back({positive, key, -sense});
-        if (negative >= 0) entries.push_back({negative, key, sense});
+    bool open = false;
+    int32_t open_region = 0;
+    uint64_t open_key = 0;
+    std::vector<std::pair<int32_t, int32_t>> sums;  // (region, coefficient) of one edge
+    for (std::size_t run = 0; run + 1 < edge_runs_.size(); ++run) {
+      const uint64_t key = edge_uses_[edge_runs_[run]].first;
+      sums.clear();
+      for (uint32_t use = edge_runs_[run]; use < edge_runs_[run + 1]; ++use) {
+        const auto triangle = static_cast<std::size_t>(edge_uses_[use].second);
+        if (use > edge_runs_[run] && edge_uses_[use - 1].second == edge_uses_[use].second) continue;
+        const int32_t facet = triangle_facet_[triangle];
+        const int32_t positive = input_.facet_regions[2 * facet];
+        const int32_t negative = input_.facet_regions[2 * facet + 1];
+        if (positive == negative) continue;
+        const Triple& face = triangles_[triangle];
+        for (int k = 0; k < 3; ++k) {
+          if (triangle_edge_runs_[3 * triangle + static_cast<std::size_t>(k)] !=
+              static_cast<int32_t>(run)) {
+            continue;
+          }
+          const int32_t sense =
+              face[static_cast<std::size_t>(k)] < face[static_cast<std::size_t>((k + 1) % 3)] ? 1
+                                                                                             : -1;
+          if (positive >= 0) sums.push_back({positive, -sense});
+          if (negative >= 0) sums.push_back({negative, sense});
+        }
+      }
+      std::sort(sums.begin(), sums.end());
+      for (std::size_t begin = 0; begin < sums.size();) {
+        std::size_t end = begin;
+        int64_t sum = 0;
+        for (; end < sums.size() && sums[end].first == sums[begin].first; ++end) {
+          sum += sums[end].second;
+        }
+        const int32_t region = sums[begin].first;
+        if (sum != 0 && (!open || region < open_region ||
+                         (region == open_region && key < open_key))) {
+          open = true;
+          open_region = region;
+          open_key = key;
+        }
+        begin = end;
       }
     }
-    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
-      return a.region < b.region || (a.region == b.region && a.key < b.key);
-    });
-    for (std::size_t begin = 0; begin < entries.size();) {
-      std::size_t end = begin;
-      int64_t sum = 0;
-      while (end < entries.size() && entries[end].region == entries[begin].region &&
-             entries[end].key == entries[begin].key) {
-        sum += entries[end].coefficient;
-        ++end;
-      }
-      if (sum != 0) {
-        const auto edge = edge_ids_.find(entries[begin].key);
-        return fail(PHX_MC_INVALID_INPUT, kPlcOpenBoundary, kPlcRegion,
-                    entries[begin].region, kPlcEdge,
-                    edge == edge_ids_.end() ? -1 : edge->second);
-      }
-      begin = end;
-    }
-    return PHX_MC_OK;
+    if (!open) return PHX_MC_OK;
+    const auto edge = edge_ids_.find(open_key);
+    return fail(PHX_MC_INVALID_INPUT, kPlcOpenBoundary, kPlcRegion, open_region, kPlcEdge,
+                edge == edge_ids_.end() ? -1 : edge->second);
   }
 
   void publish_source() {
@@ -1115,7 +1200,11 @@ class SourcePreparer {
   std::vector<int32_t> triangle_group_;
   std::vector<char> declared_;
   std::size_t hidden_edges_ = 0;
-  std::vector<std::pair<uint64_t, int32_t>> edge_uses_;
+  std::vector<std::pair<uint64_t, int32_t>> edge_uses_;  // (edge key, triangle), sorted
+  // Start of each run of equal keys in edge_uses_ (and its end), and the run
+  // of every triangle edge (3 * triangle + k: edge k -> k + 1).
+  std::vector<uint32_t> edge_runs_;
+  std::vector<int32_t> triangle_edge_runs_;
   std::vector<int32_t> edges_;
   std::unordered_map<uint64_t, int32_t> edge_ids_;
 };
@@ -1226,12 +1315,13 @@ struct PlcEdgePoint {
 };
 
 // Subfaces keyed by sorted vertex triple, indexed by vertex and by source
-// triangle so that local queries never scan the table. `unverified` holds
-// every key not known to be a face of the current complex: each added key,
-// plus the keys the owner marks when an edit removes a cell through them.
-// Iteration is in key order; lookups go through an open-addressing index of
-// the map's nodes (linear probing, backward-shift erase), whose iterators
-// stay valid while their entries live.
+// triangle so that local queries never scan the table (both indices are
+// built at their first query and kept current from then on). `unverified`
+// holds every key not known to be a face of the current complex: each added
+// key, plus the keys the owner marks when an edit removes a cell through
+// them. Iteration is in key order; lookups go through an open-addressing
+// index of the map's nodes (linear probing, backward-shift erase), whose
+// iterators stay valid while their entries live.
 class SourceFaceTable {
  public:
   using Map = std::map<Triple, PlcSourceFace>;
@@ -1268,8 +1358,7 @@ class SourceFaceTable {
       }
     }
     place({key, inserted});
-    for (int32_t vertex : key) by_vertex_[vertex].push_back(key);
-    by_triangle_[face.source_triangle].push_back(key);
+    if (indexed_) add_to_indices(key, face.source_triangle);
     unverified_.insert(key);
     return true;
   }
@@ -1277,8 +1366,10 @@ class SourceFaceTable {
     const auto found = find(key);
     if (found == faces_.end()) return false;
     unplace(key);
-    for (int32_t vertex : key) drop(by_vertex_, vertex, key);
-    drop(by_triangle_, found->second.source_triangle, key);
+    if (indexed_) {
+      for (int32_t vertex : key) drop(by_vertex_, vertex, key);
+      drop(by_triangle_, found->second.source_triangle, key);
+    }
     unverified_.erase(key);
     faces_.erase(found);
     return true;
@@ -1288,12 +1379,17 @@ class SourceFaceTable {
     index_.clear();
     by_vertex_.clear();
     by_triangle_.clear();
+    indexed_ = false;
     unverified_.clear();
   }
 
   // Keys through `vertex`, and keys of source triangle `triangle`, in key order.
-  std::vector<Triple> keys_through(int32_t vertex) const { return sorted(by_vertex_, vertex); }
+  std::vector<Triple> keys_through(int32_t vertex) const {
+    build_indices();
+    return sorted(by_vertex_, vertex);
+  }
   std::vector<Triple> keys_of_triangle(int32_t triangle) const {
+    build_indices();
     return sorted(by_triangle_, triangle);
   }
 
@@ -1342,26 +1438,40 @@ class SourceFaceTable {
     }
     index_[hole] = Entry{};
   }
-  using Index = std::unordered_map<int32_t, std::vector<Triple>>;
+  // Keys by vertex or by source triangle (both nonnegative indices).
+  using Index = std::vector<std::vector<Triple>>;
+  void build_indices() const {
+    if (indexed_) return;
+    for (const auto& [key, face] : faces_) add_to_indices(key, face.source_triangle);
+    indexed_ = true;
+  }
+  void add_to_indices(const Triple& key, int32_t triangle) const {
+    for (int32_t vertex : key) entry(by_vertex_, vertex).push_back(key);
+    entry(by_triangle_, triangle).push_back(key);
+  }
+  static std::vector<Triple>& entry(Index& index, int32_t at) {
+    const auto row = static_cast<std::size_t>(at);
+    if (row >= index.size()) index.resize(row + 1);
+    return index[row];
+  }
   static void drop(Index& index, int32_t at, const Triple& key) {
-    const auto found = index.find(at);
-    std::vector<Triple>& keys = found->second;
+    std::vector<Triple>& keys = index[static_cast<std::size_t>(at)];
     *std::find(keys.begin(), keys.end(), key) = keys.back();
     keys.pop_back();
-    if (keys.empty()) index.erase(found);
   }
   static std::vector<Triple> sorted(const Index& index, int32_t at) {
-    const auto found = index.find(at);
-    if (found == index.end()) return {};
-    std::vector<Triple> keys = found->second;
+    const auto row = static_cast<std::size_t>(at);
+    if (row >= index.size()) return {};
+    std::vector<Triple> keys = index[row];
     std::sort(keys.begin(), keys.end());
     return keys;
   }
 
   Map faces_;
   std::vector<Entry> index_;  // a power of two entries, at most half full
-  Index by_vertex_;
-  Index by_triangle_;
+  mutable Index by_vertex_;
+  mutable Index by_triangle_;
+  mutable bool indexed_ = false;
   std::set<Triple> unverified_;
 };
 

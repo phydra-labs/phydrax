@@ -178,40 +178,39 @@ class ProtectionIndex {
     }
   }
 
-  // The rows whose boxes may lie closer than 2 `reach` to `point`, in no
-  // particular order, each once: every row a distance below 2 `reach` can
-  // come from.
-  void candidates(const double* point, double reach, std::vector<std::size_t>& rows) const {
-    rows.clear();
+  // Calls visit(row) for the rows whose boxes may lie closer than 2 `reach`
+  // to `point`, in no particular order, each once: every row a distance
+  // below 2 `reach` can come from.
+  template <class Visit>
+  void candidates(const double* point, double reach, Visit&& visit) const {
     // Subtraction, squaring, summation, and square root are monotone in each
     // absolute coordinate difference, so the clamped-box distance is also a
     // lower bound for the actual represented closest-point calculation. A
     // squared box distance of at least (2 reach)^2 (1 + 2^-40), rounded
     // down, bounds every such distance by at least 2 reach after rounding.
     const double threshold = 4.0 * reach * reach * (1.0 + 0x1p-40);
-    const auto far = [&](const Box& box) {
+    const auto take = [&](uint32_t row) {
+      const Box& box = boxes_[row];
       double squared = 0.0;
       for (int axis = 0; axis < 3; ++axis) {
         const double gap = point[axis] - std::clamp(point[axis], box.lower[axis], box.upper[axis]);
         squared += gap * gap;
       }
-      return squared >= threshold;
-    };
-    const auto take = [&](uint32_t row) {
-      if (!far(boxes_[row])) rows.push_back(row);
+      if (!(squared >= threshold)) visit(static_cast<std::size_t>(row));
     };
     for (const uint32_t row : unbounded_) take(row);
     if (starts_.empty()) return;
     // A box that is not far meets the cube of half side 2 reach (1 + 2^-20)
-    // around the point on every axis; its bounds round outward.
+    // around the point on every axis; its bounds, widened by a relative
+    // 2^-50 of their magnitude, round outward.
     const double half = 2.0 * reach * (1.0 + 0x1p-20);
     std::size_t first[3], last[3];
     double cells = 1.0;
     for (int axis = 0; axis < 3; ++axis) {
-      first[axis] = coordinate(std::nextafter(point[axis] - half,
-                                              -std::numeric_limits<double>::infinity()), axis);
-      last[axis] = coordinate(std::nextafter(point[axis] + half,
-                                             std::numeric_limits<double>::infinity()), axis);
+      const double low = point[axis] - half;
+      const double high = point[axis] + half;
+      first[axis] = coordinate(low - std::fabs(low) * 0x1p-50, axis);
+      last[axis] = coordinate(high + std::fabs(high) * 0x1p-50, axis);
       cells *= static_cast<double>(last[axis] - first[axis] + 1);
     }
     if (!(cells <= static_cast<double>(rows_.size()))) {
@@ -231,14 +230,13 @@ class ProtectionIndex {
     }
     for (std::size_t z = first[2]; z <= last[2]; ++z) {
       for (std::size_t y = first[1]; y <= last[1]; ++y) {
-        for (std::size_t x = first[0]; x <= last[0]; ++x) {
-          const std::size_t at = (z * dims_[1] + y) * dims_[0] + x;
-          for (uint32_t index = starts_[at]; index < starts_[at + 1]; ++index) {
-            const uint32_t row = rows_[index];
-            if (stamps_[row] == stamp_) continue;
-            stamps_[row] = stamp_;
-            take(row);
-          }
+        const std::size_t base = (z * dims_[1] + y) * dims_[0];
+        for (uint32_t index = starts_[base + first[0]]; index < starts_[base + last[0] + 1];
+             ++index) {
+          const uint32_t row = rows_[index];
+          if (stamps_[row] == stamp_) continue;
+          stamps_[row] = stamp_;
+          take(row);
         }
       }
     }
@@ -388,8 +386,6 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
   point_index.build(points, count, {}, 1, side);
   if (!edges.empty()) segment_index.build(points, 0, edges, 2, side);
   triangle_index.build(points, 0, triangles, 3, side);
-  std::vector<std::size_t> rows;
-  rows.reserve(std::max({count, edges.size() / 2, triangles.size() / 3}));
   // Each radius depends only on its vertex; the vertices go cell by cell,
   // so consecutive queries read nearby cells.
   for (const uint32_t vertex : point_index.order()) {
@@ -397,12 +393,10 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     if (acute[v] == 0) continue;
     const double* p = points + 3 * v;
     double reach = reaches[v];
-    point_index.candidates(p, reach, rows);
-    for (std::size_t u : rows) {
+    point_index.candidates(p, reach, [&](std::size_t u) {
       if (u != v) reach = std::min(reach, 0.5 * distance(p, points + 3 * u));
-    }
-    segment_index.candidates(p, reach, rows);
-    for (std::size_t row : rows) {
+    });
+    segment_index.candidates(p, reach, [&](std::size_t row) {
       const std::size_t e = 2 * row;
       if (static_cast<std::size_t>(edges[e]) != v &&
           static_cast<std::size_t>(edges[e + 1]) != v) {
@@ -410,11 +404,10 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
                                     p, points + 3 * static_cast<std::size_t>(edges[e]),
                                     points + 3 * static_cast<std::size_t>(edges[e + 1])));
       }
-    }
+    });
     // The minimum is independent of row order, so rows whose boxes are
     // farther than 2 reach are skipped.
-    triangle_index.candidates(p, reach, rows);
-    for (std::size_t row : rows) {
+    triangle_index.candidates(p, reach, [&](std::size_t row) {
       const std::size_t a = static_cast<std::size_t>(triangles[3 * row]);
       const std::size_t b = static_cast<std::size_t>(triangles[3 * row + 1]);
       const std::size_t c = static_cast<std::size_t>(triangles[3 * row + 2]);
@@ -422,7 +415,7 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
         reach = std::min(reach, 0.5 * point_triangle_distance(
                                     p, points + 3 * a, points + 3 * b, points + 3 * c));
       }
-    }
+    });
     radii[v] = reach;
   }
   return radii;
