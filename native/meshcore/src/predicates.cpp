@@ -24,6 +24,10 @@ constexpr double kO3dErrBoundA = (7.0 + 56.0 * kEpsilon) * kEpsilon;
 constexpr double kO3dErrBoundB = (3.0 + 28.0 * kEpsilon) * kEpsilon;
 constexpr double kIccErrBoundA = (10.0 + 96.0 * kEpsilon) * kEpsilon;
 constexpr double kIccErrBoundB = (4.0 + 48.0 * kEpsilon) * kEpsilon;
+constexpr double kIccErrBoundBCompensated = (4.0 + 128.0 * kEpsilon) * kEpsilon;
+constexpr double kIccErrBoundBCompensatedExact = 64.0 * kEpsilon * kEpsilon;
+constexpr double kIccErrBoundC = (44.0 + 576.0 * kEpsilon) * kEpsilon * kEpsilon;
+constexpr double kResultErrBound = (3.0 + 8.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundA = (16.0 + 224.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundB = (5.0 + 72.0 * kEpsilon) * kEpsilon;
 
@@ -146,38 +150,191 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
 
 // ---------------------------------------------------------------- incircle
 
+// Exact p q - r s as a four-component expansion (zeros allowed).
+void product_difference(double p, double q, double r, double s, double* h) {
+  double pq1, pq0, rs1, rs0;
+  two_product(p, q, pq1, pq0);
+  two_product(r, s, rs1, rs0);
+  two_two_diff(pq1, pq0, rs1, rs0, h);
+}
+
+// Exact (x^2 + y^2) m for the four-component minor m; `h` holds at most 32
+// components.
+int lifted_minor(double x, double y, const double* minor, double* h) {
+  double xm[8], xxm[16], ym[8], yym[16];
+  const int xlen = scale_expansion_zeroelim(4, minor, x, xm);
+  const int xxlen = scale_expansion_zeroelim(xlen, xm, x, xxm);
+  const int ylen = scale_expansion_zeroelim(4, minor, y, ym);
+  const int yylen = scale_expansion_zeroelim(ylen, ym, y, yym);
+  return fast_expansion_sum_zeroelim(xxlen, xxm, yylen, yym, h);
+}
+
+// Stage D: the exact sign on the exact coordinate differences.
 [[gnu::noinline, gnu::cold]]
-int incircle_adapt(const double* const* p, double permanent) {
+int incircle_expansion(const double* const* p) {
   const double* d = p[3];
-  double x[3], y[3];
-  bool exact_differences = true;
-  for (int k = 0; k < 3; ++k) {
-    x[k] = p[k][0] - d[0];
-    y[k] = p[k][1] - d[1];
-    exact_differences = exact_differences && two_diff_tail(p[k][0], d[0], x[k]) == 0.0 &&
-                        two_diff_tail(p[k][1], d[1], y[k]) == 0.0;
-  }
   Expansion rx[3], ry[3], lift[3];
-  for (int k = 0; k < 3; ++k) {
-    rx[k] = Expansion(x[k]);
-    ry[k] = Expansion(y[k]);
-    lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
-  }
-  const Expansion stage_b = lifted2_rows(rx, ry, lift);
-  const double estimate = stage_b.estimate();
-  const double errbound = kIccErrBoundB * permanent;
-  if (estimate >= errbound || -estimate >= errbound) {
-    return sign_of(estimate);
-  }
-  if (exact_differences) {
-    return stage_b.sign();
-  }
   for (int k = 0; k < 3; ++k) {
     rx[k] = Expansion::difference(p[k][0], d[0]);
     ry[k] = Expansion::difference(p[k][1], d[1]);
     lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
   }
   return lifted2_rows(rx, ry, lift).sign();
+}
+
+// The double-double value hi + lo (an unevaluated sum).
+struct DoubleDouble {
+  double hi;
+  double lo;
+};
+
+// x^2 + y^2 to within 3.02 u^2 (x^2 + y^2), u = 2^-53, with |lo| <= 2.01 u
+// (x^2 + y^2).
+inline DoubleDouble square_sum_dd(double x, double y) {
+  double xx, xx_error, yy, yy_error, hi, tail;
+  two_product(x, x, xx, xx_error);
+  two_product(y, y, yy, yy_error);
+  two_sum(xx, yy, hi, tail);
+  return {hi, tail + (xx_error + yy_error)};
+}
+
+// p q - r s to within 3.02 u^2 Q, Q = |p q| + |r s|, with |lo| <= 2.01 u Q.
+inline DoubleDouble product_difference_dd(double p, double q, double r, double s) {
+  double pq, pq_error, rs, rs_error, hi, tail;
+  two_product(p, q, pq, pq_error);
+  two_product(r, s, rs, rs_error);
+  two_diff(pq, rs, hi, tail);
+  return {hi, tail + (pq_error - rs_error)};
+}
+
+// l m without the l.lo m.lo term.
+inline DoubleDouble product_dd(DoubleDouble l, DoubleDouble m) {
+  double hi, error;
+  two_product(l.hi, m.hi, hi, error);
+  return {hi, error + (l.hi * m.lo + l.lo * m.hi)};
+}
+
+// Stage B on a compensated estimate, ahead of Shewchuk's stage-B expansion:
+// E, the double-double evaluation of the determinant D~ of the rounded
+// differences, rounded once. With u = 2^-53, Pi the exact permanent of the
+// rounded differences (sum of |monomials| of D~) and P >= Pi (1 - u)^7 the
+// stage-A permanent: the lifts and minors carry 3.02u^2 relative error, the
+// three lifted products 23.4u^2 L_k Q_k, their summation 29u^2 Pi and the
+// final rounding u |E|, so |D~ - E| <= 52.4u^2 Pi + u |E|. When every
+// difference is exact, D = D~ and |E| > fl(64u^2 P) >= 63.9u^2 P gives |D -
+// E| < |E|. Otherwise each of the twelve degree-4 monomials of the exact D
+// moves by at most (4u + 22.1u^2) of its rounded value, so |D - D~| <= (4u +
+// 22.1u^2) Pi, |D - E| <= (4u + 103u^2) P + u |E|, and |E| > fl((4 + 128u)
+// u P) >= (4u + 123.9u^2) P gives |D - E| < |E|. In-domain coordinates and
+// their rounded differences are multiples of 2^-172, so every nonzero
+// product here is at least 2^-688 in magnitude: none underflows. Returns the
+// certified sign, or 0.
+int incircle_compensated(const double* const* p, double permanent) {
+  const double *a = p[0], *b = p[1], *c = p[2], *d = p[3];
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const DoubleDouble at =
+      product_dd(square_sum_dd(adx, ady), product_difference_dd(bdx, cdy, cdx, bdy));
+  const DoubleDouble bt =
+      product_dd(square_sum_dd(bdx, bdy), product_difference_dd(cdx, ady, adx, cdy));
+  const DoubleDouble ct =
+      product_dd(square_sum_dd(cdx, cdy), product_difference_dd(adx, bdy, bdx, ady));
+  double ab_hi, ab_tail, hi, tail;
+  two_sum(at.hi, bt.hi, ab_hi, ab_tail);
+  two_sum(ab_hi, ct.hi, hi, tail);
+  const double estimate = hi + (((ab_tail + tail) + (at.lo + bt.lo)) + ct.lo);
+  const bool exact_differences =
+      two_diff_tail(a[0], d[0], adx) == 0.0 && two_diff_tail(a[1], d[1], ady) == 0.0 &&
+      two_diff_tail(b[0], d[0], bdx) == 0.0 && two_diff_tail(b[1], d[1], bdy) == 0.0 &&
+      two_diff_tail(c[0], d[0], cdx) == 0.0 && two_diff_tail(c[1], d[1], cdy) == 0.0;
+  const double errbound =
+      (exact_differences ? kIccErrBoundBCompensatedExact : kIccErrBoundBCompensated) * permanent;
+  if (estimate > errbound) return 1;
+  if (-estimate > errbound) return -1;
+  return 0;
+}
+
+// Shewchuk's incircleadapt from stage B on. Stage B: the exact determinant
+// of the rounded differences (on stack buffers), whose estimate decides
+// against iccerrboundB and whose sign is exact when every difference is.
+// Stage C: that estimate plus the first-order terms in the difference tails,
+// against iccerrboundC. Stage D: the full expansion. Every sign is exact.
+[[gnu::noinline, gnu::cold]]
+IncircleDecision incircle_expansion_stages(const double* const* p, double permanent) {
+  const double *a = p[0], *b = p[1], *c = p[2], *d = p[3];
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  double bc[4], ca[4], ab[4];
+  product_difference(bdx, cdy, cdx, bdy, bc);
+  product_difference(cdx, ady, adx, cdy, ca);
+  product_difference(adx, bdy, bdx, ady, ab);
+  double adet[32], bdet[32], cdet[32], abdet[64], fin[96];
+  const int alen = lifted_minor(adx, ady, bc, adet);
+  const int blen = lifted_minor(bdx, bdy, ca, bdet);
+  const int clen = lifted_minor(cdx, cdy, ab, cdet);
+  const int ablen = fast_expansion_sum_zeroelim(alen, adet, blen, bdet, abdet);
+  const int finlen = fast_expansion_sum_zeroelim(ablen, abdet, clen, cdet, fin);
+  double det = 0.0;
+  for (int k = 0; k < finlen; ++k) det += fin[k];
+  const double errbound_b = kIccErrBoundB * permanent;
+  if (det >= errbound_b || -det >= errbound_b) {
+    return {sign_of(det), IncircleStage::kBExpansion};
+  }
+  const double adxtail = two_diff_tail(a[0], d[0], adx);
+  const double adytail = two_diff_tail(a[1], d[1], ady);
+  const double bdxtail = two_diff_tail(b[0], d[0], bdx);
+  const double bdytail = two_diff_tail(b[1], d[1], bdy);
+  const double cdxtail = two_diff_tail(c[0], d[0], cdx);
+  const double cdytail = two_diff_tail(c[1], d[1], cdy);
+  if (adxtail == 0.0 && bdxtail == 0.0 && cdxtail == 0.0 && adytail == 0.0 &&
+      bdytail == 0.0 && cdytail == 0.0) {
+    return {sign_of(fin[finlen - 1]), IncircleStage::kBExpansion};
+  }
+  const double errbound_c = kIccErrBoundC * permanent + kResultErrBound * std::fabs(det);
+  det += ((adx * adx + ady * ady) *
+              ((bdx * cdytail + cdy * bdxtail) - (bdy * cdxtail + cdx * bdytail)) +
+          2.0 * (adx * adxtail + ady * adytail) * (bdx * cdy - bdy * cdx)) +
+         ((bdx * bdx + bdy * bdy) *
+              ((cdx * adytail + ady * cdxtail) - (cdy * adxtail + adx * cdytail)) +
+          2.0 * (bdx * bdxtail + bdy * bdytail) * (cdx * ady - cdy * adx)) +
+         ((cdx * cdx + cdy * cdy) *
+              ((adx * bdytail + bdy * adxtail) - (ady * bdxtail + bdx * adytail)) +
+          2.0 * (cdx * cdxtail + cdy * cdytail) * (adx * bdy - ady * bdx));
+  if (det >= errbound_c || -det >= errbound_c) {
+    return {sign_of(det), IncircleStage::kC};
+  }
+  return {incircle_expansion(p), IncircleStage::kD};
+}
+
+// The stages after stage A: the compensated stage B, then the expansions.
+[[gnu::noinline]]
+IncircleDecision incircle_adapt(const double* const* p, double permanent) {
+  const int sign = incircle_compensated(p, permanent);
+  if (sign != 0) return {sign, IncircleStage::kBCompensated};
+  return incircle_expansion_stages(p, permanent);
+}
+
+// Stage A, then incircle_adapt; inlined into both public entry points.
+[[gnu::always_inline]] inline IncircleDecision incircle_staged(const double* a, const double* b,
+                                                               const double* c, const double* d) {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double alift = adx * adx + ady * ady;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double clift = cdx * cdx + cdy * cdy;
+  const double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
+  const double errbound = kIccErrBoundA * permanent;
+  if (det > errbound || -det > errbound) {
+    return {sign_of(det), IncircleStage::kA};
+  }
+  const double* p[4] = {a, b, c, d};
+  return incircle_adapt(p, permanent);
 }
 
 // ---------------------------------------------------------------- insphere (Shewchuk sign)
@@ -832,25 +989,13 @@ int orient3d(const double* a, const double* b, const double* c, const double* d)
   return -orient3d_shewchuk(a, b, c, d);
 }
 
+IncircleDecision incircle_decision(const double* a, const double* b, const double* c,
+                                   const double* d) {
+  return incircle_staged(a, b, c, d);
+}
+
 int incircle(const double* a, const double* b, const double* c, const double* d) {
-  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
-  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
-  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-  const double alift = adx * adx + ady * ady;
-  const double cdxady = cdx * ady, adxcdy = adx * cdy;
-  const double blift = bdx * bdx + bdy * bdy;
-  const double adxbdy = adx * bdy, bdxady = bdx * ady;
-  const double clift = cdx * cdx + cdy * cdy;
-  const double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
-  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
-                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
-                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
-  const double errbound = kIccErrBoundA * permanent;
-  if (det > errbound || -det > errbound) {
-    return sign_of(det);
-  }
-  const double* p[4] = {a, b, c, d};
-  return incircle_adapt(p, permanent);
+  return incircle_staged(a, b, c, d).sign;
 }
 
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e) {

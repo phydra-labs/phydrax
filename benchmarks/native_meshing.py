@@ -187,12 +187,32 @@ def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    # Uniform points on the unit 3-torus at the default initial margin.
+    lattice = np.eye(3, dtype=np.float64)
+    rows: list[_Row] = []
+    for size in sizes:
+        points = _uniform_points(size, 3, 20261121)
+        rows.append(
+            _Row(
+                "periodic-3d",
+                size,
+                lambda points=points: _meshcore.periodic_delaunay(
+                    points, points, lattice, lattice
+                ),
+                _cells,
+            )
+        )
+    return tuple(rows)
+
+
 def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
         (frozenset({"cdt-2d", "ruppert-2d"}), lambda: _planar_rows(sizes)),
         (frozenset({"regular-3d"}), lambda: _regular_rows(sizes)),
+        (frozenset({"periodic-3d"}), lambda: _periodic_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
         (
