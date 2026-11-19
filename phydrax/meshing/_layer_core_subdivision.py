@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
 from ..discretization import CellMesh
@@ -1009,8 +1008,8 @@ class _PreparedWallTriangles:
             [tuple(fraction_down(value) for value in vertex) for vertex in vertices],
             dtype=np.float64,
         ).reshape(-1, 3)
-        # Float32 BVH storage is explicitly outward-rounded even when JAX
-        # x64 is disabled. Extreme coordinates use the exhaustive owner.
+        # Float32 boxes are explicitly outward-rounded even when JAX x64 is
+        # disabled. Extreme coordinates use the exhaustive owner.
         limit = np.finfo(np.float32).max / 4
         if (
             triangles
@@ -1020,16 +1019,16 @@ class _PreparedWallTriangles:
             and np.all(np.abs(lower_boxes) <= limit)
             and np.all(np.abs(upper_boxes) <= limit)
         ):
-            self.wall_bvh = prepare_bvh(lower_boxes, upper_boxes, dtype=np.float32)
+            self.wall_boxes = _float32_outward(lower_boxes, upper_boxes)
             self.vertex_tree = cKDTree(approximate_vertices)
         else:
-            self.wall_bvh = None
+            self.wall_boxes = None
             self.vertex_tree = None
 
     def candidates(
         self, point: tuple[Fraction, ...], /
     ) -> tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...]:
-        if self.wall_bvh is None or self.vertex_tree is None:
+        if self.wall_boxes is None or self.vertex_tree is None:
             return self.triangles
         # The seed is an actual wall vertex; its approximate selection has no
         # bearing on correctness. Its exact L1 distance bounds the true
@@ -1050,15 +1049,35 @@ class _PreparedWallTriangles:
             or np.any(np.abs(upper) > limit)
         ):
             return self.triangles
-        query_bvh = prepare_bvh(lower[None, :], upper[None, :], dtype=np.float32)
-        selected = sorted(
-            int(index)
-            for indices, _ in bvh_overlap_pair_blocks(
-                self.wall_bvh, query_bvh, include_touching=True, item_block=256
-            )
-            for index in indices
+        # One query box against the boxes prepared once for this wall: the
+        # touching overlap set, in item order.
+        query_lower, query_upper = _float32_outward(lower[None, :], upper[None, :])
+        wall_lower, wall_upper = self.wall_boxes
+        hit = np.all(
+            np.minimum(wall_upper, query_upper) - np.maximum(wall_lower, query_lower)
+            >= 0.0,
+            axis=1,
         )
-        return tuple(self.triangles[index] for index in selected)
+        return tuple(self.triangles[int(index)] for index in np.flatnonzero(hit))
+
+
+def _float32_outward(
+    lower: np.ndarray, upper: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Float32-representable bounds rounded outward, held as float64."""
+    cast_lower = lower.astype(np.float32)
+    cast_upper = upper.astype(np.float32)
+    cast_lower = np.where(
+        cast_lower.astype(np.float64) > lower,
+        np.nextafter(cast_lower, np.float32(-np.inf)),
+        cast_lower,
+    )
+    cast_upper = np.where(
+        cast_upper.astype(np.float64) < upper,
+        np.nextafter(cast_upper, np.float32(np.inf)),
+        cast_upper,
+    )
+    return cast_lower.astype(np.float64), cast_upper.astype(np.float64)
 
 
 def _distance_increment_at_least(
