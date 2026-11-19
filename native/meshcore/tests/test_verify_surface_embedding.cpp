@@ -73,6 +73,18 @@ void check_adjacent_contacts() {
             {0,1,2, 0,3,4}};
   auto findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
   PHX_CHECK(has(findings, PHX_MC_SURFACE_CONTACT));  // shared-vertex piercing
+  // Reverse the pair: the first triangle's opposite edge now pierces.
+  mesh.triangles = {0,3,4, 0,1,2};
+  PHX_CHECK(has(verify(mesh, PHX_MC_VERDICT_VIOLATED), PHX_MC_SURFACE_CONTACT));
+
+  // One opposite vertex lies in the first triangle's plane; this must use
+  // the full exact classifier, and the two triangles overlap along a segment.
+  mesh = {{0,0,0, 2,0,0, 0,2,0, 1,0,0, 0,0,1}, {0,1,2, 0,3,4}};
+  PHX_CHECK(has(verify(mesh, PHX_MC_VERDICT_VIOLATED), PHX_MC_SURFACE_CONTACT));
+
+  // Both planes cut the opposite triangle, but their cut segments miss.
+  mesh = {{0,0,0, 1,0,0, 0,1,0, -1,0,1, 0,-1,-1}, {0,1,2, 0,3,4}};
+  PHX_CHECK(!has(verify(mesh, PHX_MC_VERDICT_VIOLATED), PHX_MC_SURFACE_CONTACT));
 
   mesh = {{0,0,0, 2,0,0, 0,2,0, 1,1,0}, {0,1,2, 0,1,3}};
   findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
