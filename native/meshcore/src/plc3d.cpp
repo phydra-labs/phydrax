@@ -1546,25 +1546,114 @@ class PlcRecoveryBuilder {
   // void supports the whole source point set: the closed exterior boundary
   // is then the convex hull, whose faces are present in every triangulation
   // of the source points. Interfaces between two regions may be nonconvex.
-  bool convex_boundary() const {
-    bool exterior = false;
+  //
+  // A triangle T supports the points iff its plane is the plane of a facet
+  // of their hull. The hull triangles of the symbolically perturbed Delaunay
+  // triangulation lie in supporting planes and triangulate the hull
+  // boundary, so a facet through a vertex a of T holds a hull triangle h
+  // incident to a, or, when a is no hull vertex, a hull triangle containing
+  // a, which is then the coplanar apex of the cell below h (a point inside
+  // the circumcircle of h would conflict with that cell otherwise). A
+  // nondegenerate such h coplanar with T proves T supporting; a triangle
+  // without one is decided by the scan of all points, so the answer is the
+  // scan's for every triangle.
+  bool convex_boundary() {
+    const bool built = build_source_triangulation();
+    std::vector<std::size_t> exterior;
     for (std::size_t triangle = 0; triangle < candidate_.input_triangles.size() / 3; ++triangle) {
       const int32_t facet = input_.polygon_facets[candidate_.input_polygons[triangle]];
-      if (input_.facet_regions[2 * facet] >= 0 && input_.facet_regions[2 * facet + 1] >= 0) {
-        continue;
-      }
-      exterior = true;
-      const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
-      bool positive = false;
-      bool negative = false;
-      for (int32_t vertex = 0; vertex < source_point_count_; ++vertex) {
-        const int side = orient(face[0], face[1], face[2], vertex);
-        positive = positive || side > 0;
-        negative = negative || side < 0;
-        if (positive && negative) return false;
+      if (input_.facet_regions[2 * facet] < 0 || input_.facet_regions[2 * facet + 1] < 0) {
+        exterior.push_back(triangle);
       }
     }
-    return exterior;
+    if (exterior.empty()) return false;
+    std::vector<int64_t> offsets;
+    std::vector<std::array<int32_t, 3>> hull;
+    if (built) hull_triangles_by_vertex(offsets, hull);
+    for (const std::size_t triangle : exterior) {
+      const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
+      bool supported = false;
+      for (int corner = 0; corner < 3 && !supported && !offsets.empty(); ++corner) {
+        const auto vertex = static_cast<std::size_t>(face[corner]);
+        for (int64_t at = offsets[vertex]; at < offsets[vertex + 1] && !supported; ++at) {
+          const std::array<int32_t, 3>& h = hull[static_cast<std::size_t>(at)];
+          supported = orient(face[0], face[1], face[2], h[0]) == 0 &&
+                      orient(face[0], face[1], face[2], h[1]) == 0 &&
+                      orient(face[0], face[1], face[2], h[2]) == 0;
+        }
+      }
+      if (!supported && !supports_source_points(face)) return false;
+    }
+    return true;
+  }
+
+  // Whether all source points lie on one closed side of the plane of face.
+  bool supports_source_points(const int32_t* face) const {
+    bool positive = false;
+    bool negative = false;
+    for (int32_t vertex = 0; vertex < source_point_count_; ++vertex) {
+      const int side = orient(face[0], face[1], face[2], vertex);
+      positive = positive || side > 0;
+      negative = negative || side < 0;
+      if (positive && negative) return false;
+    }
+    return true;
+  }
+
+  // The Delaunay triangulation of the source points alone, kept for the
+  // first build_triangulation; false (and none kept) when the points span
+  // no tetrahedron.
+  bool build_source_triangulation() {
+    work_points_ = candidate_.points;
+    const auto count = static_cast<std::size_t>(source_point_count_);
+    triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr,
+                                                       source_point_count_);
+    triangulation_->set_exact_points(&exact_points_);
+    triangulation_->set_affine_metric(input_.affine_metric);
+    alive_.assign(count, 1);
+    std::vector<int32_t> all(count);
+    std::iota(all.begin(), all.end(), 0);
+    source_triangulation_ready_ =
+        triangulation_->build(brio_hilbert_order(work_points_.data(), 3, all), alive_) ==
+        PHX_MC_OK;
+    if (!source_triangulation_ready_) triangulation_.reset();
+    return source_triangulation_ready_;
+  }
+
+  // Nondegenerate hull triangles of the source triangulation by vertex (CSR
+  // over source points): those incident to it and those whose plane holds
+  // it as the apex of the cell below.
+  void hull_triangles_by_vertex(std::vector<int64_t>& offsets,
+                                std::vector<std::array<int32_t, 3>>& hull) const {
+    offsets.clear();
+    hull.clear();
+    const auto count = static_cast<std::size_t>(source_point_count_);
+    const Triangulation3D& triangulation = *triangulation_;
+    std::vector<std::pair<int32_t, std::array<int32_t, 3>>> uses;
+    const TetrahedralComplex& complex = triangulation.complex();
+    for (std::size_t cell = 0; cell < complex.tets.size(); ++cell) {
+      const Tetrahedron& ghost = complex.tets[cell];
+      if (!complex.live(static_cast<int32_t>(cell))) continue;
+      const int slot = vertex_slot(ghost, kGhostVertex);
+      if (slot < 0) continue;
+      std::array<int32_t, 3> h{};
+      for (int k = 0, at = 0; k < 4; ++k) {
+        if (k != slot) h[static_cast<std::size_t>(at++)] = ghost.v[k];
+      }
+      if (collinear(ref(h[0]), ref(h[1]), ref(h[2]))) continue;
+      for (const int32_t vertex : h) uses.push_back({vertex, h});
+      const Tetrahedron& below = complex.tets[static_cast<std::size_t>(ghost.n[slot])];
+      const int32_t apex = below.v[neighbor_slot(below, static_cast<int32_t>(cell))];
+      if (orient(h[0], h[1], h[2], apex) == 0) uses.push_back({apex, h});
+    }
+    std::sort(uses.begin(), uses.end());
+    offsets.assign(count + 1, 0);
+    hull.reserve(uses.size());
+    for (const auto& [vertex, h] : uses) {
+      ++offsets[static_cast<std::size_t>(vertex) + 1];
+      hull.push_back(h);
+    }
+    for (std::size_t vertex = 0; vertex < count; ++vertex) offsets[vertex + 1] += offsets[vertex];
   }
 
   // A polygon's triangulation diagonal is not a PLC constraint when the
@@ -2160,6 +2249,12 @@ class PlcRecoveryBuilder {
       }
     }
     prepare_planar_polygons();
+    const int32_t point_status = validate_points(
+        candidate_.points.data(), static_cast<int64_t>(candidate_.points.size() / 3), 3, nullptr);
+    if (point_status != PHX_MC_OK) {
+      status_ = fail(point_status, kPlcNonrepresentable, kPlcPoint, -1);
+      return false;
+    }
     corner_count_ = convex_boundary() ? 0 : kPlcCornerCount;
     if (input_count > kMaxMeshPoints - corner_count_) {
       status_ = fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, input_count);
@@ -2184,12 +2279,6 @@ class PlcRecoveryBuilder {
           corner_points_.push_back((corner >> axis) & 1 ? center + reach : center - reach);
         }
       }
-    }
-    const int32_t point_status = validate_points(
-        candidate_.points.data(), static_cast<int64_t>(candidate_.points.size() / 3), 3, nullptr);
-    if (point_status != PHX_MC_OK) {
-      status_ = fail(point_status, kPlcNonrepresentable, kPlcPoint, -1);
-      return false;
     }
     if (corner_count_ != 0) {
       const int32_t corner_status = validate_points(corner_points_.data(), corner_count_, 3, nullptr);
@@ -2269,12 +2358,13 @@ class PlcRecoveryBuilder {
     }
     // Acute input vertices (two incident source edges at an angle below 90
     // degrees) are the apices of the concentric split shells.
-    const std::vector<double> radii = protection_radii(
+    source_protection_ = protection_radii(
         candidate_.points.data(), source_point_count_, source_edges,
         candidate_.input_triangles, input_.affine_metric);
+    source_protection_edges_ = std::move(source_edges);
     shell_apex_.assign(static_cast<std::size_t>(source_point_count_), 0);
-    for (std::size_t vertex = 0; vertex < radii.size(); ++vertex) {
-      shell_apex_[vertex] = radii[vertex] > 0.0 ? 1 : 0;
+    for (std::size_t vertex = 0; vertex < source_protection_.size(); ++vertex) {
+      shell_apex_[vertex] = source_protection_[vertex] > 0.0 ? 1 : 0;
     }
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
@@ -2339,22 +2429,40 @@ class PlcRecoveryBuilder {
     return found == carrier_vertex_.end() ? -1 : found->second;
   }
 
+  // The Delaunay triangulation of the candidate points and the corners. The
+  // first one extends the source triangulation of convex_boundary by the
+  // corners (the triangulation is unique under the symbolic perturbation,
+  // so the insertion order does not matter).
   int32_t build_triangulation() {
-    triangulation_.reset();
-    work_points_ = candidate_.points;
-    work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
     volume_count_ = 0;
     local_edits_ = false;
+    if (source_triangulation_ready_) {
+      source_triangulation_ready_ = false;
+      work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+      const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
+      triangulation_->rebind(work_points_.data(), count);
+      triangulation_->reserve_vertices(count);
+      alive_.resize(static_cast<std::size_t>(count), 1);
+      for (int32_t corner = source_point_count_; corner < count; ++corner) {
+        const int32_t status = triangulation_->insert(corner, alive_);
+        if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
+      }
+    } else {
+      triangulation_.reset();
+      work_points_ = candidate_.points;
+      work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+      const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
+      triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
+      triangulation_->set_exact_points(&exact_points_);
+      triangulation_->set_affine_metric(input_.affine_metric);
+      alive_.assign(static_cast<std::size_t>(count), 1);
+      std::vector<int32_t> all(static_cast<std::size_t>(count));
+      std::iota(all.begin(), all.end(), 0);
+      const std::vector<int32_t> order = brio_hilbert_order(work_points_.data(), 3, all);
+      const int32_t status = triangulation_->build(order, alive_);
+      if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
+    }
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
-    triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
-    triangulation_->set_exact_points(&exact_points_);
-    triangulation_->set_affine_metric(input_.affine_metric);
-    alive_.assign(static_cast<std::size_t>(count), 1);
-    std::vector<int32_t> all(static_cast<std::size_t>(count));
-    std::iota(all.begin(), all.end(), 0);
-    const std::vector<int32_t> order = brio_hilbert_order(work_points_.data(), 3, all);
-    const int32_t status = triangulation_->build(order, alive_);
-    if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     TetrahedralComplex& complex = triangulation_->complex();
     complex.enable_labels();
     vertex_tet_.assign(static_cast<std::size_t>(count), -1);
@@ -3068,10 +3176,12 @@ class PlcRecoveryBuilder {
   }
 
   // Recovers every chain interval of every source edge, in row order. A
-  // missing interval is first recovered without new vertices (planar flips on
-  // an incident facet plane, else one edge removal); otherwise an encroached
-  // interval is split by split_source_edge, the pass goes on with the next
-  // edge, and the next pass rescans. An interval
+  // missing interval is first recovered by flips (try_edge_removal), then
+  // by planar flips on an incident facet plane, then by an edge removal with
+  // volume Steiner points (steiner_edge_removal), so its segment keeps its
+  // vertices; otherwise an encroached interval is split by
+  // split_source_edge, the pass goes on with the next edge, and the next
+  // pass rescans. An interval
   // whose closed diametral ball holds no other vertex is strongly Delaunay
   // and so present in every Delaunay tetrahedralization of the vertices: it
   // can be missing only after local recovery edits, and the restart rebuilds.
@@ -3081,8 +3191,8 @@ class PlcRecoveryBuilder {
   // recovery with protecting shells) shows that every such split vertex has
   // insertion radius at least a constant fraction of the local feature size
   // of the PLC at that vertex, so a packing argument bounds the number of
-  // split vertices. Recovery edits never remove a chain interval (edge
-  // removal skips them; a planar flip removes only an edge crossing the
+  // split vertices. Recovery edits never remove a chain interval (flips and
+  // edge removals skip them; a planar flip removes only an edge crossing the
   // target, which no source interval of a valid PLC does), so after a
   // rebuild every non-encroached interval stays present: rebuild-only
   // restarts cannot follow each other without a split in between.
@@ -3698,9 +3808,11 @@ class PlcRecoveryBuilder {
   }
 
   // Validated replacement of `cells` by `tets`; an inconsistent proposal is
-  // rolled back and reported as not applied.
+  // rolled back and reported as not applied. `created` receives the ids of
+  // the new cells.
   int32_t replace_cells(const std::vector<int32_t>& cells,
-                        const std::vector<std::array<int32_t, 4>>& tets, bool& applied) {
+                        const std::vector<std::array<int32_t, 4>>& tets, bool& applied,
+                        std::vector<int32_t>* created = nullptr) {
     applied = false;
     TetrahedralComplex& complex = triangulation_->complex();
     CavityEdit edit(complex);
@@ -3734,6 +3846,7 @@ class PlcRecoveryBuilder {
       for (int32_t vertex : tet.v) set_vertex_hint(vertex, id);
     }
     if (hint < 0 || !triangulation_->set_hint(hint)) return PHX_MC_INTERNAL_ERROR;
+    if (created != nullptr) created->assign(edit.created().begin(), edit.created().end());
     applied = true;
     return PHX_MC_OK;
   }
@@ -3742,7 +3855,20 @@ class PlcRecoveryBuilder {
   // the closed link ring of (u, v), which they split into two chains; each is
   // triangulated by edge removal and the new chain triangulations share the
   // fins (u, a, b) and (v, b, a). This is the 3-2 flip for a ring of three.
-  int32_t remove_edge_toward(int32_t u, int32_t v, int32_t a, int32_t b, bool& applied) {
+  //
+  // With `steiner`, a chain without such a triangulation is filled by cones
+  // from one volume Steiner point p instead (cf. Si, TetGen -Y: a Steiner
+  // point in the volume rather than on the segment). The star of (u, v) is
+  // star-shaped from u, so the fins lie in it and cut it into two halves,
+  // one per chain; the half of chain c0 = a, ..., cm = b is bounded by the
+  // fins and the faces (u, ci, ci+1), (v, ci+1, ci) of its cells, and p is
+  // a binary64 point on the segment from the midpoint of ab toward the
+  // centroid of c1, ..., cm-1 (halving toward ab) that sees all of them
+  // exactly and touches no source entity. The cones replace v and u by p in
+  // each cell of the chain and add (u, a, b, p) and (v, a, b, p); the edit
+  // validates the tiling exactly, and p stays as a volume Steiner point.
+  int32_t remove_edge_toward(int32_t u, int32_t v, int32_t a, int32_t b, bool& applied,
+                             bool steiner = false) {
     applied = false;
     // A recovered source interval is never traded for another edge.
     if (chain_intervals_.contains(topology::undirected_edge(u, v))) return PHX_MC_OK;
@@ -3770,12 +3896,103 @@ class PlcRecoveryBuilder {
         first_chain.size() + second_chain.size() != links.size() + 2) {
       return PHX_MC_OK;
     }
+    // Placeholder ids of the Steiner points of the two chains.
+    constexpr int32_t kFirst = std::numeric_limits<int32_t>::min() / 2;
     std::vector<std::array<int32_t, 4>> tets;
-    if (!triangulate_link_chain(u, v, first_chain, tets) ||
-        !triangulate_link_chain(u, v, second_chain, tets)) {
-      return PHX_MC_OK;
+    std::vector<std::array<double, 3>> centers;
+    for (const std::vector<int32_t>* chain : {&first_chain, &second_chain}) {
+      if (triangulate_link_chain(u, v, *chain, tets)) continue;
+      std::array<double, 3> location{};
+      const int32_t placeholder = kFirst + static_cast<int32_t>(centers.size());
+      if (!steiner || !chain_cone(u, v, cells, *chain, placeholder, location, tets)) {
+        return PHX_MC_OK;
+      }
+      centers.push_back(location);
     }
-    return replace_cells(cells, tets, applied);
+    std::vector<int32_t> added;
+    for (std::size_t row = 0; row < centers.size(); ++row) {
+      int32_t vertex = -1;
+      const int32_t point_status = add_volume_point(centers[row].data(), vertex);
+      if (point_status != PHX_MC_OK) return point_status;
+      added.push_back(vertex);
+      for (auto& tet : tets) {
+        std::replace(tet.begin(), tet.end(), kFirst + static_cast<int32_t>(row), vertex);
+      }
+    }
+    const int32_t replace_status = replace_cells(cells, tets, applied);
+    if (!applied) {
+      for (int32_t vertex : added) alive_[static_cast<std::size_t>(vertex)] = 0;
+    }
+    return replace_status;
+  }
+
+  // The cones of remove_edge_toward from a Steiner point over the half of
+  // the star of (u, v) on chain c0 = a, ..., cm = b, appended to `tets`
+  // with `placeholder` for the point, whose binary64 position goes to
+  // `location`; false when no candidate point sees every face exactly.
+  bool chain_cone(int32_t u, int32_t v, const std::vector<int32_t>& cells,
+                  const std::vector<int32_t>& chain, int32_t placeholder,
+                  std::array<double, 3>& location, std::vector<std::array<int32_t, 4>>& tets) {
+    const std::size_t m = chain.size() - 1;
+    if (m < 2) return false;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<std::array<int32_t, 4>> cones;
+    for (std::size_t k = 0; k < m; ++k) {
+      const auto cell = std::find_if(cells.begin(), cells.end(), [&](int32_t id) {
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(id)];
+        return vertex_slot(tet, chain[k]) >= 0 && vertex_slot(tet, chain[k + 1]) >= 0;
+      });
+      if (cell == cells.end()) return false;
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(*cell)];
+      std::array<int32_t, 4> cone{tet.v[0], tet.v[1], tet.v[2], tet.v[3]};
+      cone[static_cast<std::size_t>(vertex_slot(tet, v))] = placeholder;
+      cones.push_back(cone);
+      cone = {tet.v[0], tet.v[1], tet.v[2], tet.v[3]};
+      cone[static_cast<std::size_t>(vertex_slot(tet, u))] = placeholder;
+      cones.push_back(cone);
+    }
+    const int32_t a = chain.front();
+    const int32_t b = chain.back();
+    double middle[3];
+    double centroid[3] = {0.0, 0.0, 0.0};
+    for (int axis = 0; axis < 3; ++axis) {
+      middle[axis] = 0.5 * (point(a)[axis] + point(b)[axis]);
+      for (std::size_t k = 1; k < m; ++k) {
+        centroid[axis] += point(chain[k])[axis] / static_cast<double>(m - 1);
+      }
+    }
+    for (double fraction = 0.5; fraction > 0x1p-30; fraction *= 0.5) {
+      for (int axis = 0; axis < 3; ++axis) {
+        location[static_cast<std::size_t>(axis)] =
+            middle[axis] + fraction * (centroid[axis] - middle[axis]);
+      }
+      if (!geometry::point_in_domain(location.data())) continue;
+      const ExactPointRef center{location.data(), nullptr};
+      const auto sign = [&](const std::array<int32_t, 4>& tet) {
+        ExactPointRef corners[4];
+        for (int k = 0; k < 4; ++k) {
+          corners[k] = tet[static_cast<std::size_t>(k)] == placeholder
+              ? center : ref(tet[static_cast<std::size_t>(k)]);
+        }
+        return orient3d(corners[0], corners[1], corners[2], corners[3]);
+      };
+      if (!std::all_of(cones.begin(), cones.end(),
+                       [&](const auto& tet) { return sign(tet) > 0; })) {
+        continue;
+      }
+      std::array<int32_t, 4> fins[2] = {{u, a, b, placeholder}, {v, a, b, placeholder}};
+      bool flat = false;
+      for (auto& fin : fins) {
+        const int side = sign(fin);
+        flat = flat || side == 0;
+        if (side < 0) std::swap(fin[1], fin[2]);
+      }
+      if (flat || !clear_of_sources(location.data())) continue;
+      tets.insert(tets.end(), cones.begin(), cones.end());
+      tets.insert(tets.end(), std::begin(fins), std::end(fins));
+      return true;
+    }
+    return false;
   }
 
   // Steiner-free recovery of a missing edge ab whose crossing cells all
@@ -3842,33 +4059,309 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
-  int32_t try_edge_removal(std::size_t edge, int32_t a, int32_t b, bool& recovered) {
-    recovered = false;
-    const int32_t start = finite_vertex_cell(a);
-    if (start < 0) return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcPoint, a);
-    std::vector<int32_t> crossing;
-    const int32_t status = collect_edge_cavity(
-        triangulation_->complex(), work_points_.data(), a, b, start, edge_scratch_, crossing);
-    if (status != PHX_MC_OK) return PHX_MC_OK;
-    std::sort(crossing.begin(), crossing.end());
-    crossing.erase(std::unique(crossing.begin(), crossing.end()), crossing.end());
-    return recover_edge_by_removal(edge, a, b, crossing, recovered);
+  // Whether the open segment ab meets triangle `face` other than in a shared
+  // vertex or edge (the narrow phase of collect_edge_cavity).
+  bool segment_meets_face(int32_t a, int32_t b, const int32_t* face) const {
+    const double* segment[2] = {point(a), point(b)};
+    const int64_t segment_ids[2] = {a, b};
+    const double* triangle[3] = {point(face[0]), point(face[1]), point(face[2])};
+    const int64_t triangle_ids[3] = {face[0], face[1], face[2]};
+    Contact contact;
+    return intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids, contact) !=
+               PHX_MC_OK ||
+           !legal_contact(contact.kind);
   }
 
-  // Flip recovery of an unsplittable source edge: planar flips on a covered
-  // incident facet plane, else one edge removal (or 2-3 flip) around ab. An
-  // unrealizable flip leaves a valid mesh, so later recovery stages may
-  // continue from it; every other failure is returned unchanged.
+  // The finite cells with a face the open segment ab meets (as
+  // collect_edge_cavity decides), sorted; false when the star of a is not
+  // available. ab leaves a through the face opposite a of a star cell it
+  // meets, and two cells sharing a face it meets both hold it, so the cells
+  // form one chain across met faces, walked from the star of a.
+  bool crossing_cells(int32_t a, int32_t b, std::vector<int32_t>& crossing) {
+    crossing.clear();
+    if (vertex_cells(a, crossing_star_) != PHX_MC_OK) return false;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    int32_t face[3];
+    for (int32_t cell : crossing_star_) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      if (is_ghost(tet)) continue;
+      oriented_facet(tet.v, vertex_slot(tet, a), face);
+      if (segment_meets_face(a, b, face)) crossing.push_back(cell);
+    }
+    for (std::size_t at = 0; at < crossing.size(); ++at) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(crossing[at])];
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t next = tet.n[slot];
+        if (!complex.live(next) || is_ghost(complex.tets[static_cast<std::size_t>(next)]) ||
+            std::find(crossing.begin(), crossing.end(), next) != crossing.end()) {
+          continue;
+        }
+        oriented_facet(tet.v, slot, face);
+        if (segment_meets_face(a, b, face)) crossing.push_back(next);
+      }
+    }
+    std::sort(crossing.begin(), crossing.end());
+    return true;
+  }
+
+  // Whether the open segment ab meets the interior of the cell `v`, by the
+  // narrow phase of collect_edge_cavity.
+  bool segment_crosses_cell(int32_t a, int32_t b, const std::array<int32_t, 4>& v) const {
+    for (int slot = 0; slot < 4; ++slot) {
+      int32_t face[3];
+      oriented_facet(v.data(), slot, face);
+      if (segment_meets_face(a, b, face)) return true;
+    }
+    return false;
+  }
+
+  // Whether every cell of `cells` is finite with no constrained face, so a
+  // flip replacing them moves no mark.
+  bool free_cells(const std::vector<int32_t>& cells) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    return std::all_of(cells.begin(), cells.end(), [&](int32_t cell) {
+      if (is_ghost(complex.tets[static_cast<std::size_t>(cell)])) return false;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (complex.constraint(cell, slot) != kNoConstraint) return false;
+      }
+      return true;
+    });
+  }
+
+  // A flip toward a missing edge ab: the cells it replaces, the cells
+  // replacing them, and the number of cells ab would cross after it.
+  struct EdgeFlip {
+    std::vector<int32_t> cells;
+    std::vector<std::array<int32_t, 4>> tets;
+    std::size_t crossed = 0;
+  };
+
+  // The flips of the cells ab crosses (`crossing`, sorted), fewest crossed
+  // cells after them first: the 2-3 flips of faces between two crossed
+  // cells and the edge removals (n-to-2n-4 flips, the 3-2 flip for n = 3)
+  // of their edges away from a and b, each with every new cell exactly
+  // positive. Chain intervals and cells with a marked face or a ghost
+  // vertex are never flipped.
+  int32_t edge_flips(int32_t a, int32_t b, const std::vector<int32_t>& crossing,
+                     std::vector<EdgeFlip>& flips) {
+    flips.clear();
+    const TetrahedralComplex& complex = triangulation_->complex();
+    EdgeFlip flip;
+    std::vector<std::array<int32_t, 2>> links;
+    std::vector<int32_t> ring;
+    const auto consider = [&]() {
+      if (flip.tets.empty() || !free_cells(flip.cells)) return;
+      flip.crossed = crossing.size();
+      for (int32_t cell : flip.cells) {
+        if (std::binary_search(crossing.begin(), crossing.end(), cell)) --flip.crossed;
+      }
+      for (const auto& tet : flip.tets) {
+        if (orient(tet[0], tet[1], tet[2], tet[3]) <= 0) return;
+        if (segment_crosses_cell(a, b, tet)) ++flip.crossed;
+      }
+      flips.push_back(flip);
+    };
+    std::set<uint64_t> tried;
+    for (int32_t cell : crossing) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t other = tet.n[slot];
+        if (other < cell || !std::binary_search(crossing.begin(), crossing.end(), other)) {
+          continue;
+        }
+        const Tetrahedron& across = complex.tets[static_cast<std::size_t>(other)];
+        const int far = neighbor_slot(across, cell);
+        if (far < 0) continue;
+        int32_t face[3];
+        oriented_facet(tet.v, slot, face);
+        flip.cells = {cell, other};
+        flip.tets.clear();
+        // The 2-3 flip is convex exactly when its three cells have one sign.
+        int sign = 0;
+        for (int side = 0; side < 3 && sign != 2; ++side) {
+          flip.tets.push_back({face[side], face[(side + 1) % 3], tet.v[slot], across.v[far]});
+          const auto& made = flip.tets.back();
+          const int own = orient(made[0], made[1], made[2], made[3]);
+          sign = own == 0 || (side > 0 && own != sign) ? 2 : own;
+        }
+        if (sign == 2) continue;
+        if (sign < 0) {
+          for (auto& made : flip.tets) std::swap(made[0], made[1]);
+        }
+        consider();
+      }
+      for (int i = 0; i < 4; ++i) {
+        for (int j = i + 1; j < 4; ++j) {
+          const int32_t u = tet.v[i];
+          const int32_t v = tet.v[j];
+          if (u == a || u == b || v == a || v == b) continue;
+          const uint64_t key = topology::undirected_edge(u, v);
+          if (!tried.insert(key).second || chain_intervals_.contains(key)) continue;
+          const int32_t status = edge_cells(u, v, flip.cells);
+          if (status != PHX_MC_OK) return status;
+          flip.tets.clear();
+          if (!free_cells(flip.cells) || !link_edges(flip.cells, u, v, links)) continue;
+          std::vector<char> used(links.size(), 0);
+          if (!link_chain(links, used, links.front()[0], links.front()[0], ring) ||
+              ring.size() != links.size() + 1) {
+            continue;
+          }
+          ring.pop_back();
+          if (triangulate_link_chain(u, v, ring, flip.tets)) consider();
+        }
+      }
+    }
+    std::stable_sort(flips.begin(), flips.end(), [](const EdgeFlip& x, const EdgeFlip& y) {
+      return x.crossed < y.crossed;
+    });
+    return PHX_MC_OK;
+  }
+
+  // Lowers the number of cells ab crosses (`crossing`, sorted) below
+  // `bound` by at most `depth` flips of edge_flips, depth first in their
+  // order; a flip that leads nowhere is undone. On success `lowered` is set
+  // and `crossing` holds the cells ab crosses now, or `recovered` when a
+  // single edge removal on the way made ab an edge; otherwise the complex
+  // holds its cells as before.
+  int32_t lower_crossing(std::size_t edge, int32_t a, int32_t b, std::vector<int32_t>& crossing,
+                         std::size_t bound, int depth, bool& lowered, bool& recovered) {
+    lowered = false;
+    std::vector<EdgeFlip> flips;
+    int32_t status = edge_flips(a, b, crossing, flips);
+    if (status != PHX_MC_OK) return status;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<int32_t> next;
+    std::vector<int32_t> created;
+    std::vector<std::array<int32_t, 4>> removed;
+    for (const EdgeFlip& flip : flips) {
+      if (depth == 1 && flip.crossed >= bound) break;
+      removed.clear();
+      for (int32_t cell : flip.cells) {
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        removed.push_back({tet.v[0], tet.v[1], tet.v[2], tet.v[3]});
+      }
+      bool applied = false;
+      status = replace_cells(flip.cells, flip.tets, applied, &created);
+      if (status != PHX_MC_OK) return status;
+      if (!applied) continue;
+      if (crossing_cells(a, b, next)) {
+        if (next.size() < bound) {
+          crossing = std::move(next);
+          lowered = true;
+          return PHX_MC_OK;
+        }
+        if (depth > 1) {
+          status = recover_edge_by_removal(edge, a, b, next, recovered);
+          if (status != PHX_MC_OK || recovered) return status;
+          status = lower_crossing(edge, a, b, next, bound, depth - 1, lowered, recovered);
+          if (status != PHX_MC_OK || recovered) return status;
+          if (lowered) {
+            crossing = std::move(next);
+            return PHX_MC_OK;
+          }
+        }
+      }
+      const std::vector<int32_t> undone = created;
+      status = replace_cells(undone, removed, applied);
+      if (status != PHX_MC_OK) return status;
+      if (!applied) {
+        return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge,
+                    static_cast<int64_t>(edge));
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  // Flip recovery of a missing edge ab without new vertices (cf. Si,
+  // TetGen's recoveredgebyflips and flipnm). Each round first tries the
+  // single edge removal toward ab (recover_edge_by_removal), else lowers
+  // the number of cells ab crosses by a short sequence of flips
+  // (lower_crossing). Every flip is validated exactly (replace_cells), so
+  // the complex stays a valid tetrahedralization holding every recovered
+  // interval and mark. Termination: each round strictly lowers the number
+  // of cells ab crosses, recounted on the complex, or ends the recovery,
+  // and ab is an edge once it crosses none.
+  int32_t try_edge_removal(std::size_t edge, int32_t a, int32_t b, bool& recovered) {
+    constexpr int kFlipDepth = 3;
+    recovered = false;
+    std::vector<int32_t> crossing;
+    if (!crossing_cells(a, b, crossing)) return PHX_MC_OK;
+    while (!crossing.empty()) {
+      int32_t status = recover_edge_by_removal(edge, a, b, crossing, recovered);
+      if (status != PHX_MC_OK || recovered) return status;
+      bool lowered = false;
+      status = lower_crossing(edge, a, b, crossing, crossing.size(), kFlipDepth, lowered,
+                              recovered);
+      if (status != PHX_MC_OK || recovered || !lowered) return status;
+    }
+    bool present = false;
+    const int32_t status = has_edge(a, b, present);
+    if (status != PHX_MC_OK) return status;
+    recovered = present;
+    return PHX_MC_OK;
+  }
+
+  // Edge removal with volume Steiner points (remove_edge_toward with
+  // `steiner`) of an edge of a cell ab crosses, away from a and b, with a and
+  // b on its link; the first that applies makes ab an edge.
+  int32_t steiner_edge_removal(std::size_t edge, int32_t a, int32_t b, bool& recovered) {
+    recovered = false;
+    std::vector<int32_t> crossing;
+    if (!crossing_cells(a, b, crossing)) return PHX_MC_OK;
+    const TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<std::array<int32_t, 2>> edges;
+    for (int32_t cell : crossing) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      for (int i = 0; i < 4; ++i) {
+        for (int j = i + 1; j < 4; ++j) {
+          const int32_t u = std::min(tet.v[i], tet.v[j]);
+          const int32_t v = std::max(tet.v[i], tet.v[j]);
+          if (u < 0 || u == a || u == b || v == a || v == b) continue;
+          edges.push_back({u, v});
+        }
+      }
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    for (const auto& [u, v] : edges) {
+      const int32_t status = remove_edge_toward(u, v, a, b, recovered, true);
+      if (status != PHX_MC_OK) {
+        return fail(status, kPlcNonrepresentable, kPlcEdge, static_cast<int64_t>(edge));
+      }
+      if (recovered) break;
+    }
+    if (!recovered) return PHX_MC_OK;
+    bool present = false;
+    const int32_t status = has_edge(a, b, present);
+    if (status != PHX_MC_OK) return status;
+    if (!present) {
+      return fail(PHX_MC_INTERNAL_ERROR, kPlcNonrepresentable, kPlcEdge,
+                  static_cast<int64_t>(edge));
+    }
+    return PHX_MC_OK;
+  }
+
+  // Recovery of a missing source edge before any split: flips
+  // (try_edge_removal), then planar flips on a covered incident facet plane,
+  // then, under FIXED (where every boundary split point would be suppressed
+  // again), an edge removal with volume Steiner points
+  // (steiner_edge_removal). An unrealizable flip leaves a valid mesh, so
+  // later recovery stages may continue from it; every other failure is
+  // returned unchanged.
   int32_t try_planar_source_edge(std::size_t edge, int32_t a, int32_t b,
                                  bool& recovered) {
+    int32_t status = try_edge_removal(edge, a, b, recovered);
+    if (status != PHX_MC_OK || recovered) return status;
     const PlcFailure prior = failure_;
-    int32_t status = recover_planar_source_edge(edge, a, b, recovered);
+    status = recover_planar_source_edge(edge, a, b, recovered);
     if (status == PHX_MC_CONSTRAINT_INTERSECTION && failure_.reason == kPlcFixedSegment) {
       failure_ = prior;
       status = PHX_MC_OK;
     }
-    if (status != PHX_MC_OK || recovered) return status;
-    return try_edge_removal(edge, a, b, recovered);
+    if (status != PHX_MC_OK || recovered || input_.policy != BoundaryPolicy::kFixed) {
+      return status;
+    }
+    return steiner_edge_removal(edge, a, b, recovered);
   }
 
   // Exact Lawson test for crossing edge (left, right) with apices before and
@@ -7163,9 +7656,16 @@ class PlcRecoveryBuilder {
     candidate_.points.resize(3 * kept);
     candidate_.witnesses.resize(kept);
     candidate_.vertex_dimension.resize(kept);
-    candidate_.protection = protection_radii(
-        candidate_.points.data(), static_cast<int64_t>(published_points),
-        candidate_.segments, candidate_.input_triangles, input_.affine_metric);
+    // The radii of the source points are those of initialize_points when
+    // the published points and segments are the source ones.
+    if (published_points == static_cast<std::size_t>(source_point_count_) &&
+        candidate_.segments == source_protection_edges_) {
+      candidate_.protection = std::move(source_protection_);
+    } else {
+      candidate_.protection = protection_radii(
+          candidate_.points.data(), static_cast<int64_t>(published_points),
+          candidate_.segments, candidate_.input_triangles, input_.affine_metric);
+    }
     for (std::size_t row : published_volume) {
       const double* coordinates =
           point(first_volume + static_cast<int32_t>(row));
@@ -7191,6 +7691,13 @@ class PlcRecoveryBuilder {
   std::vector<char> alive_;
   std::unique_ptr<Triangulation3D> triangulation_;
   bool incremental_triangulation_ready_ = false;
+  // triangulation_ holds the Delaunay triangulation of the source points
+  // built by convex_boundary, not yet extended by build_triangulation.
+  bool source_triangulation_ready_ = false;
+  // Protection radii of the source points over the source edges (as
+  // protection_radii receives them), for publish.
+  std::vector<double> source_protection_;
+  std::vector<int32_t> source_protection_edges_;
   std::vector<int32_t> vertex_tet_;
   // Live cells (finite and ghost) through each work vertex, kept current
   // from the complex's edit journal.
@@ -7211,8 +7718,8 @@ class PlcRecoveryBuilder {
   std::vector<std::vector<std::size_t>> vertex_rows_;
   // Rows with a chain interval not known to be an edge of the complex.
   std::set<std::size_t> unverified_rows_;
-  // Traversal marks of edge-removal cavities, reused across calls.
-  EdgeCavityScratch edge_scratch_;
+  // The star of the first endpoint of crossing_cells, reused across calls.
+  std::vector<int32_t> crossing_star_;
   std::vector<std::uint32_t> star_marks_;
   std::vector<int32_t> star_;
   std::uint32_t star_stamp_ = 0;

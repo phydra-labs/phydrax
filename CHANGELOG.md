@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Native C entry `phx_mc_triangulate(dimension, count, points, weights, options,
+  mesh)` builds the 2D or 3D Delaunay (weights null) or regular triangulation
+  with options; `PHX_MC_TRIANGULATION_CANONICAL` requests the canonical cell
+  rotation and order of `phx_mc_delaunay_2d/3d` and `phx_mc_regular_2d/3d`
+  (which keep it). Without it the cells are the same set, positively
+  oriented, in an unspecified deterministic order, without the cost of the
+  sort.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
@@ -308,6 +315,43 @@
   refinement carry no lineage. Icosphere level 4 at a fixed boundary:
   refinement 6.0 s -> 0.44 s, and after improvement (radius-edge 2, 15
   degrees) no unmet cell, as before.
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants)
+  recovers a missing source edge by flips before it splits the edge: the
+  2-3 flips and edge removals around the cells the edge crosses that lower
+  their number, up to three flips ahead (cf. TetGen's flipnm), then planar
+  flips, then, under FIXED, an edge removal whose non-triangulable half is
+  coned from one volume Steiner point. Split points, and with them the
+  Steiner suppression of FIXED boundaries, become rare: the (u, v) grid
+  tori of 10,000 and 90,000 triangles, whose cospherical rows made every
+  split point's star span the torus hole, recover with no boundary split in
+  0.28 s and 2.0 s instead of 0.72 s and 31 s, the torus of 1,000,000
+  triangles in 22 s, each with a boundary equal to the input. Recovered
+  meshes, their volume Steiner points and their suppression evidence can
+  change; boundaries and regions do not.
+- The exact stage of the native insphere predicate evaluates the determinant
+  on integers (128-bit products, 384-bit sums) whenever the coordinates, or
+  the exact differences, of the five points span at most 61 or 62 bits, and
+  on expansions otherwise. Signs are unchanged; nearly cospherical inputs,
+  where nearly every test is exact, triangulate 4 to 7 times faster (the
+  vertices of an icosphere of 81,920 triangles: 1.68 s to 0.26 s).
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants) decides
+  whether the exterior boundary is convex from the hull of the Delaunay
+  triangulation of the source points instead of testing every point against
+  every exterior triangle (the same answer; a triangle without a coplanar
+  hull triangle is still decided by the full scan), and reuses that
+  triangulation for recovery, extended by the scaffold corners when needed.
+  The icosphere of 20,480 triangles recovers in 0.83 s instead of 3.06 s.
+  Cell identities of recovered meshes may change; boundaries and regions do
+  not.
+- Native point-set Delaunay and regular triangulations run about 2.4x (3D)
+  and 2.5x (2D) faster at 10^6 random points with the same cells: an
+  unweighted insertion no longer sorts the cavity's boundary vertices or
+  checks for removed vertices (no vertex of a Delaunay cavity can be removed;
+  the check stays for weighted insertion and for insertion after local
+  edits), deduplication and the BRIO/Hilbert order come from one radix sort
+  of branch-free Hilbert keys, canonical output sorts by first vertex, and
+  the expansion stages of the exact predicates run out of line. The
+  insertion order and every output are unchanged.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and

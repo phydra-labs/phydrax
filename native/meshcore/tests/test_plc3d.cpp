@@ -2886,14 +2886,16 @@ void build_sheet_in_box(const std::vector<double>& points, const std::vector<int
 
 // A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
 // flat offset faces), as an internal sheet of region 0 inside a box hull.
-// Under FIXED the split point of the segment (15, 21) is suppressed last;
-// vertices 15, 21, 20, 22 are coplanar up to an orientation of ~4e-22, so
-// the star of the split point holds a sliver over a subface. Its wedge has
-// no Steiner-free fill (the exhaustive search fails) and its kernel is
-// pinched to the sliver's plane, so no binary64 cone point exists either;
-// the point is removed only once the wedge is merged with the cells beyond
-// its link faces. Before that the recovery refused FIXED_SEGMENT.
-void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
+// Vertices 15, 21, 20, 22 are coplanar up to an orientation of ~4e-22.
+// Under FIXED the segment (15, 21) used to be split, and the star of its
+// split point held a sliver over a subface whose wedge no Steiner-free fill
+// or binary64 cone point covered; the point was removed only by merging
+// the wedge with the cells beyond its link faces (before that, FIXED_SEGMENT
+// was refused). The flips of edge recovery now recover the segment without
+// a split: no point is suppressed, the recovery publishes the input points
+// alone, and the search budgets, which bound only suppression searches,
+// change nothing.
+void test_sliver_wedge_segment_recovers_without_a_split() {
   const std::vector<double> points{
       -0x1.321f529b7e48dp-2, 0x1.64ab155864700p-9, -0x1.9f044e4d6d58ep-4,
       -0x1.321f529b7e48dp-2, 0x1.44e4bff842afcp-8, -0x1.9f6d8f547cb34p-4,
@@ -2979,69 +2981,18 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
   if (status != PHX_MC_OK) return;
   check_conforming_recovery(result, point_count, faces);
   check_fixed_boundary(result, point_count);
-  PHX_CHECK(result.suppression_search.searches > 0);
-  PHX_CHECK(result.suppression_search.merges > 0);
-  PHX_CHECK(result.suppression_search.max_merge_layers >= 1);
-  PHX_CHECK(result.suppression_search.exhausted == 0);
-  // The declared search budget bounds the exhaustive searches of the whole
-  // recovery. With exactly the states they expand it recovers the same
-  // complex. Since PlcPinchedWedge (relocation by peeling, wave 7), a search
-  // over the budget is inconclusive rather than a refusal: with one state
-  // fewer the over-budget search is recorded (exceeded, its states, bytes
-  // and depth) and the later passes still remove the point, here the grown
-  // pass; the route rows record the search fills. With fewer bytes than
-  // one chunk of states every search is inconclusive, and the later passes
-  // still remove every split point: the recovery publishes, with the search
-  // evidence of all of them. (Before PlcChainInterval it refused
-  // OUTSIDE_DOMAIN: the cones of option 2 from vertex 24 ran across the new
-  // subface (19, 24, 65), dropping the chain interval (19, 65).)
-  const PlcSuppressionSearch evidence = result.suppression_search;
+  PHX_CHECK(result.points.size() == points.size());
+  const PlcSuppressionSearch& evidence = result.suppression_search;
   PHX_CHECK(evidence.node_budget == kPlcSearchNodeBudget);
   PHX_CHECK(evidence.byte_budget == kPlcSearchByteBudget);
-  PHX_CHECK(evidence.exceeded == 0 && evidence.exceeded_nodes == 0 && evidence.inconclusive == 0);
-  PHX_CHECK(evidence.max_bytes >= 4096 * 40 && evidence.max_depth > 0);
-  PHX_CHECK(evidence.peeled == 0 && evidence.peeled_after_inconclusive == 0);
-  PHX_CHECK(static_cast<int64_t>(result.suppression_routes.size()) >= evidence.fills);
-  for (const PlcSuppressionRoute& route : result.suppression_routes) {
-    PHX_CHECK(route.route == kPlcRouteSearch && route.states > 0 && route.point >= 0);
-  }
-  PlcInput exact = input;
-  exact.search_node_budget = evidence.nodes;
+  PHX_CHECK(evidence.searches == 0 && evidence.wraps == 0 && result.suppression_routes.empty());
+  PlcInput no_search = input;
+  no_search.search_node_budget = 0;
+  no_search.search_byte_budget = 0;
   PlcRecovery same;
-  PHX_CHECK(recover_plc(exact, same) == PHX_MC_OK);
+  PHX_CHECK(recover_plc(no_search, same) == PHX_MC_OK);
   PHX_CHECK(same.points == result.points && same.tets == result.tets &&
             same.faces == result.faces && same.segments == result.segments);
-  PHX_CHECK(same.suppression_search.nodes == evidence.nodes);
-  PlcInput short_nodes = input;
-  short_nodes.search_node_budget = evidence.nodes - 1;
-  PlcRecovery inconclusive;
-  PHX_CHECK(recover_plc(short_nodes, inconclusive) == PHX_MC_OK);
-  {
-    const PlcSuppressionSearch& over = inconclusive.suppression_search;
-    PHX_CHECK(over.node_budget == evidence.nodes - 1 && over.exceeded == 1);
-    PHX_CHECK(over.inconclusive >= 1 && over.exceeded_nodes <= evidence.max_nodes);
-    PHX_CHECK(over.nodes == evidence.nodes - 1);
-    check_conforming_recovery(inconclusive, point_count, faces);
-    check_fixed_boundary(inconclusive, point_count);
-    // Deterministic in the declared budget: the same route again.
-    PlcRecovery again;
-    PHX_CHECK(recover_plc(short_nodes, again) == PHX_MC_OK);
-    PHX_CHECK(again.points == inconclusive.points && again.tets == inconclusive.tets);
-    PHX_CHECK(again.suppression_routes.size() == inconclusive.suppression_routes.size());
-  }
-  PlcInput short_bytes = input;
-  short_bytes.search_byte_budget = 4096 * 40 - 1;
-  PlcRecovery starved;
-  PHX_CHECK(recover_plc(short_bytes, starved) == PHX_MC_OK);
-  PHX_CHECK(starved.suppression_search.byte_budget == 4096 * 40 - 1);
-  PHX_CHECK(starved.suppression_search.searches > 0);
-  PHX_CHECK(starved.suppression_search.inconclusive == starved.suppression_search.searches);
-  PHX_CHECK(starved.suppression_search.nodes == 0 && starved.suppression_search.exceeded == 1);
-  check_conforming_recovery(starved, point_count, faces);
-  check_fixed_boundary(starved, point_count);
-  PlcRecovery starved_again;
-  PHX_CHECK(recover_plc(short_bytes, starved_again) == PHX_MC_OK);
-  PHX_CHECK(starved_again.points == starved.points && starved_again.tets == starved.tets);
   PlcInput negative = input;
   negative.search_byte_budget = -1;
   PlcRecovery invalid;
@@ -3050,18 +3001,15 @@ void test_suppression_merges_a_sliver_wedge_with_its_neighbours() {
 
 // The minimal configuration of the lost chain interval (PlcChainInterval),
 // reduced from the sliver wedge above: four disjoint triangles of its sheet
-// inside the same box. Recovery splits the segment (6, 9), a free edge of
-// the sheet triangle (6, 7, 9), at a point s. The star of s is one wedge
-// that meets the new subface (6, 7, 9) of the contraction onto 6 from both
-// sides, and the cones of option 2 from vertex 7 are all positive yet run
-// across that subface (as chains, its two sides cancel). Wave 8 committed
-// them, losing the subface and the chain interval (6, 9), and refused
-// OUTSIDE_DOMAIN at the final embedded check with any budget. Now an apex
-// must carry every wall through it as a cone face, and a removal commits
-// only with its chain interval and its new subfaces. With the default
-// budget and with fewer bytes than one chunk of states (every search
-// inconclusive) the recovery publishes, deterministically.
-void test_suppression_keeps_the_subface_through_a_cone_apex() {
+// inside the same box. Recovery used to split the segment (6, 9), a free
+// edge of the sheet triangle (6, 7, 9), at a point s whose star was one
+// wedge meeting the new subface (6, 7, 9) of the contraction onto 6 from
+// both sides; cones from vertex 7, all positive, ran across that subface
+// (wave 8 lost it and the chain interval (6, 9)). Flips now recover the
+// segment without a split, so with the default budget and with fewer bytes
+// than one chunk of states no search runs and the recovery publishes the
+// input points, deterministically.
+void test_sheet_segment_through_a_cone_apex_recovers_without_a_split() {
   const std::vector<double> points{
       -0x1.04f3d3509a726p-2, 0x1.74437725edd60p-6, -0x1.56aafd8a8568cp-4,
       -0x1.04f3d3509a726p-2, 0x1.bfc4b98e1d95ep-8, -0x1.56aafd8a8568cp-4,
@@ -3105,12 +3053,8 @@ void test_suppression_keeps_the_subface_through_a_cone_apex() {
     check_fixed_boundary(result, point_count);
     const PlcSuppressionSearch& evidence = result.suppression_search;
     PHX_CHECK(evidence.byte_budget == bytes);
-    if (bytes == kPlcSearchByteBudget) {
-      PHX_CHECK(evidence.exceeded == 0 && evidence.inconclusive == 0);
-    } else {
-      PHX_CHECK(evidence.searches > 0 && evidence.inconclusive == evidence.searches);
-      PHX_CHECK(evidence.nodes == 0 && evidence.exceeded == 1);
-    }
+    PHX_CHECK(evidence.searches == 0 && evidence.exceeded == 0 && evidence.inconclusive == 0);
+    PHX_CHECK(result.points.size() == points.size());
     PlcRecovery again;
     PHX_CHECK(recover_plc(input, again) == PHX_MC_OK);
     PHX_CHECK(again.points == result.points && again.tets == result.tets &&
@@ -3123,12 +3067,14 @@ void test_suppression_keeps_the_subface_through_a_cone_apex() {
 // merged cavity each time, for hours. Its open sides around the point stayed
 // the same set while the region kept growing far from it, and region
 // exhaustion was the only stop. This reduced patch of such an input
-// (plc3d_recurring_obstruction_fixture.hpp) shows that growth. Wave 8.1
-// grew six wedges to their regions' ends (3,240 cells), about 30 s here.
-// Growth now stops at the first repeated obstruction (SuppressionGrowth), no
-// region is exhausted, and the pinched pass removes the point by peeling.
-// CONFORMING, no declared segments, as the torus input.
-void test_suppression_growth_stops_at_a_recurring_obstruction() {
+// (plc3d_recurring_obstruction_fixture.hpp) showed that growth: wave 8.1
+// grew six wedges to their regions' ends (3,240 cells), about 30 s here,
+// and later growth stopped at the first repeated obstruction and a pinched
+// pass peeled the point. The flips of edge recovery now recover the
+// segments those split points came from, so no wedge grows: no merge, no
+// peeling, no exhausted region. CONFORMING, no declared segments, as the
+// torus input.
+void test_recurring_obstruction_patch_recovers_without_growth() {
   const std::vector<double>& points = phx::mc::test::recurring_obstruction_points();
   const std::vector<int32_t>& triangles = phx::mc::test::recurring_obstruction_triangles();
   const std::size_t point_count = points.size() / 3;
@@ -3146,7 +3092,7 @@ void test_suppression_growth_stops_at_a_recurring_obstruction() {
   check_conforming_recovery(result, point_count, faces);
   const PlcSuppressionSearch& evidence = result.suppression_search;
   PHX_CHECK(evidence.exhausted == 0 && evidence.max_exhausted_cells == 0);
-  PHX_CHECK(evidence.merges > 0 && evidence.peeled >= 1);
+  PHX_CHECK(evidence.merges == 0 && evidence.peeled == 0);
   PlcRecovery again;
   PHX_CHECK(recover_plc(input, again) == PHX_MC_OK);
   PHX_CHECK(again.points == result.points && again.tets == result.tets &&
@@ -3160,16 +3106,15 @@ void test_suppression_growth_stops_at_a_recurring_obstruction() {
 // Here vertices 9, 16, 17 are the source vertices 36, 88, 89. A cluster of
 // source vertices lies within ~3e-3 of the edge length of 88, nearly on the
 // line of the edge (needle facets such as (9, 17, 16), height ~1e-3 of its
-// length). Recovery splits the segments through the cluster and places
-// volume Steiner points of planar fan flips and earlier suppressions a few
-// 1e-6 of an edge length from their subfaces. The last non-binary64 split
-// point of the segment (32, 37) (source (129, 167); 129 lies within 1.1e-4
-// of the line of (36, 88)) then had a wedge that no fill covers while those
-// points stay wall vertices, and growth that never enclosed a vertex
-// exhausted its region: recovery refused STEINER_SUPPRESSION, as the full
-// surface did. Merged cavities now enclose volume Steiner points, which
-// leave with the split point.
-void test_suppression_merges_enclose_volume_steiner_points() {
+// length). Recovery used to split the segments through the cluster and
+// place volume Steiner points of planar fan flips and earlier suppressions a
+// few 1e-6 of an edge length from their subfaces; the last non-binary64
+// split point of the segment (32, 37) (source (129, 167)) then had a wedge
+// that no fill covered while those points stayed wall vertices, removed
+// only by merged cavities that enclosed them. The flips of edge recovery
+// now recover those segments, and every split point left is removed without
+// merging: the recovery publishes the input points alone.
+void test_lobed_edge_patch_recovers_without_merging() {
   const std::vector<double> points{
       -0x1.e72d6ad559595p-4, -0x1.34bee8af41e50p-5, -0x1.0e00f058de8edp-4,
       -0x1.e3b3727ee20bdp-4, -0x1.d79f1875dacf5p-4, 0x1.95c560de94dc0p-7,
@@ -3264,7 +3209,8 @@ void test_suppression_merges_enclose_volume_steiner_points() {
   PHX_CHECK(status == PHX_MC_OK);
   if (status != PHX_MC_OK) return;
   check_conforming_recovery(result, point_count, faces);
-  PHX_CHECK(result.suppression_search.merges > 0);
+  PHX_CHECK(result.suppression_search.merges == 0);
+  PHX_CHECK(result.points.size() == points.size());
   // The region-0 cells fill the closed surface: their volumes sum to its
   // signed volume.
   double enclosed = 0.0;
@@ -3695,9 +3641,9 @@ int main() {
   test_offset_tie_envelope_recovers_under_both_policies();
   test_suppression_wedge_without_delaunay_fill_is_searched();
   test_relocation_peels_a_pinched_wedge();
-  test_suppression_merges_a_sliver_wedge_with_its_neighbours();
-  test_suppression_keeps_the_subface_through_a_cone_apex();
-  test_suppression_growth_stops_at_a_recurring_obstruction();
-  test_suppression_merges_enclose_volume_steiner_points();
+  test_sliver_wedge_segment_recovers_without_a_split();
+  test_sheet_segment_through_a_cone_apex_recovers_without_a_split();
+  test_recurring_obstruction_patch_recovers_without_growth();
+  test_lobed_edge_patch_recovers_without_merging();
   return phx::mc::test::finish("test_plc3d");
 }

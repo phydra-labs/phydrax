@@ -785,6 +785,133 @@ void test_performance() {
   check_vertex_map(regular);
 }
 
+// Cells and vertex map of phx_mc_triangulate with `options`.
+Result triangulate(int dimension, const std::vector<double>& points,
+                   const std::vector<double>* weights, uint32_t options) {
+  phx_mc_mesh* mesh = nullptr;
+  const int64_t count = static_cast<int64_t>(points.size()) / dimension;
+  Result result;
+  result.status = phx_mc_triangulate(dimension, count, points.data(),
+                                     weights == nullptr ? nullptr : weights->data(), options,
+                                     &mesh);
+  if (result.status != PHX_MC_OK) {
+    PHX_CHECK(mesh == nullptr);
+    return result;
+  }
+  PHX_CHECK(phx_mc_mesh_dimension(mesh) == dimension);
+  const int64_t cells = phx_mc_mesh_cell_count(mesh);
+  result.cells.resize(static_cast<std::size_t>((dimension + 1) * cells));
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, cells, result.cells.data()) == PHX_MC_OK);
+  result.vertex_map.resize(static_cast<std::size_t>(count));
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, count, result.vertex_map.data()) == PHX_MC_OK);
+  phx_mc_mesh_free(mesh);
+  return result;
+}
+
+// Reference canonical form: each cell as the smallest of its orientation-
+// preserving vertex orders (the cyclic rotations of a triangle, the even
+// permutations of a tetrahedron), cells sorted.
+std::vector<std::vector<int32_t>> canonical_set(const std::vector<int32_t>& cells, int width) {
+  std::vector<std::vector<int32_t>> result;
+  std::vector<std::array<int, 4>> orders;
+  std::array<int, 4> order = {0, 1, 2, 3};
+  do {
+    int inversions = 0;
+    for (int i = 0; i < width; ++i) {
+      for (int j = i + 1; j < width; ++j) inversions += order[i] > order[j] ? 1 : 0;
+    }
+    if (inversions % 2 == 0) orders.push_back(order);
+  } while (std::next_permutation(order.begin(), order.begin() + width));
+  for (std::size_t cell = 0; cell < cells.size(); cell += static_cast<std::size_t>(width)) {
+    std::vector<int32_t> best;
+    for (const auto& permutation : orders) {
+      std::vector<int32_t> candidate;
+      for (int k = 0; k < width; ++k) candidate.push_back(cells[cell + permutation[k]]);
+      if (best.empty() || candidate < best) best = candidate;
+    }
+    result.push_back(best);
+  }
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
+void test_triangulate_options() {
+  for (int dimension = 2; dimension <= 3; ++dimension) {
+    const int width = dimension + 1;
+    std::vector<double> random = random_points(4000, 91U + static_cast<std::uint64_t>(dimension));
+    random.resize(static_cast<std::size_t>(dimension) * 3000);
+    // Duplicates, a cospherical lattice block and random points.
+    const std::vector<double> repeated(random.begin(), random.begin() + 50 * dimension);
+    random.insert(random.end(), repeated.begin(), repeated.end());
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        for (int k = 0; k < (dimension == 3 ? 6 : 1); ++k) {
+          random.insert(random.end(), {2.0 + i, 2.0 + j});
+          if (dimension == 3) random.push_back(2.0 + k);
+        }
+      }
+    }
+    std::uint64_t seed = 5;
+    std::vector<double> weights(random.size() / static_cast<std::size_t>(dimension));
+    for (double& weight : weights) weight = 0.01 * uniform(seed);
+    for (const std::vector<double>* weighting : {static_cast<const std::vector<double>*>(nullptr),
+                                                 static_cast<const std::vector<double>*>(&weights)}) {
+      phx_mc_mesh* reference_mesh = nullptr;
+      const int64_t count = static_cast<int64_t>(random.size()) / dimension;
+      const double* weight_data = weighting == nullptr ? nullptr : weighting->data();
+      int32_t status = PHX_MC_INTERNAL_ERROR;
+      if (dimension == 2) {
+        status = weighting == nullptr
+                     ? phx_mc_delaunay_2d(count, random.data(), &reference_mesh)
+                     : phx_mc_regular_2d(count, random.data(), weight_data, &reference_mesh);
+      } else {
+        status = weighting == nullptr
+                     ? phx_mc_delaunay_3d(count, random.data(), &reference_mesh)
+                     : phx_mc_regular_3d(count, random.data(), weight_data, &reference_mesh);
+      }
+      PHX_CHECK(status == PHX_MC_OK);
+      const int64_t reference_count = phx_mc_mesh_cell_count(reference_mesh);
+      std::vector<int32_t> reference(static_cast<std::size_t>(width * reference_count));
+      std::vector<int32_t> reference_map(static_cast<std::size_t>(count));
+      PHX_CHECK(phx_mc_mesh_copy_cells(reference_mesh, reference_count, reference.data()) ==
+                PHX_MC_OK);
+      PHX_CHECK(phx_mc_mesh_copy_vertex_map(reference_mesh, count, reference_map.data()) ==
+                PHX_MC_OK);
+      phx_mc_mesh_free(reference_mesh);
+
+      const Result canonical =
+          triangulate(dimension, random, weighting, PHX_MC_TRIANGULATION_CANONICAL);
+      PHX_CHECK(canonical.status == PHX_MC_OK);
+      PHX_CHECK(canonical.cells == reference);
+      PHX_CHECK(canonical.vertex_map == reference_map);
+      const Result raw = triangulate(dimension, random, weighting, 0U);
+      PHX_CHECK(raw.status == PHX_MC_OK);
+      PHX_CHECK(raw.vertex_map == reference_map);
+      PHX_CHECK(canonical_set(raw.cells, width) == canonical_set(reference, width));
+      // Every raw cell is positively oriented.
+      bool positive = true;
+      for (std::size_t cell = 0; cell < raw.cells.size(); cell += static_cast<std::size_t>(width)) {
+        const auto at = [&](int k) {
+          return random.data() + static_cast<std::ptrdiff_t>(dimension) * raw.cells[cell + k];
+        };
+        positive = positive && (dimension == 2 ? orient2d(at(0), at(1), at(2))
+                                               : orient3d(at(0), at(1), at(2), at(3))) > 0;
+      }
+      PHX_CHECK(positive);
+    }
+  }
+  const std::vector<double> points = random_points(10, 3U);
+  phx_mc_mesh* mesh = nullptr;
+  PHX_CHECK(phx_mc_triangulate(4, 10, points.data(), nullptr, 0U, &mesh) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(mesh == nullptr);
+  PHX_CHECK(phx_mc_triangulate(3, 10, points.data(), nullptr, 2U, &mesh) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(mesh == nullptr);
+  PHX_CHECK(phx_mc_triangulate(3, 10, points.data(), nullptr, 0U, nullptr) ==
+            PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
@@ -803,5 +930,6 @@ int main() {
   test_status_codes();
   test_performance();
   test_floating_point_hazards();
+  test_triangulate_options();
   return phx::mc::test::finish("test_delaunay3d");
 }

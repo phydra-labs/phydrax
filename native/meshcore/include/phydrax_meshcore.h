@@ -232,6 +232,16 @@ PHX_MC_API int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points,
 PHX_MC_API int32_t phx_mc_regular_3d(int64_t point_count, const double* points,
                                      const double* weights, phx_mc_mesh** mesh);
 
+/* The triangulations above, of dimension 2 or 3, with options. weights NULL
+ * gives the Delaunay triangulation, otherwise the regular one. Without
+ * PHX_MC_TRIANGULATION_CANONICAL the cells are positively oriented and the
+ * cell set is the same, but cell rotation and order are unspecified
+ * (deterministic for the input); the canonical ordering above costs a sort. */
+#define PHX_MC_TRIANGULATION_CANONICAL 1u
+PHX_MC_API int32_t phx_mc_triangulate(int32_t dimension, int64_t point_count,
+                                      const double* points, const double* weights,
+                                      uint32_t options, phx_mc_mesh** mesh);
+
 /* Constrained Delaunay triangulation of points (n, 2) and segments (m, 2)
  * (input point indices), refined to the requested angle and area criteria.
  * keep_convex_hull != 0 meshes the convex hull; otherwise outside and hole

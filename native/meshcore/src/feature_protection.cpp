@@ -570,6 +570,33 @@ int filtered_insphere(const ExactPointRef& a, const ExactPointRef& b, const Exac
   return determinant > 0.0 ? -1 : 1;
 }
 
+// Exact stages of the ExactPointRef predicates, out of line: their
+// expansion coordinates would otherwise enlarge the stack frame of every
+// call, including the binary64 fast path.
+[[gnu::noinline, gnu::cold]] int exact_orient3d(const ExactPointRef& a, const ExactPointRef& b,
+                                                const ExactPointRef& c, const ExactPointRef& d,
+                                                const int64_t* ids) {
+  Expansion pa[3], pb[3], pc[3], pd[3];
+  exact_point(a, pa);
+  exact_point(b, pb);
+  exact_point(c, pc);
+  exact_point(d, pd);
+  return ids == nullptr ? orient3d_sign(pa, pb, pc, pd)
+                        : orient3d_sos_sign(pa, pb, pc, pd, ids[0], ids[1], ids[2], ids[3]);
+}
+
+[[gnu::noinline, gnu::cold]] int exact_insphere_sos(
+    const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
+    const ExactPointRef& d, const ExactPointRef& e, const int64_t* ids) {
+  Expansion pa[3], pb[3], pc[3], pd[3], pe[3];
+  exact_point(a, pa);
+  exact_point(b, pb);
+  exact_point(c, pc);
+  exact_point(d, pd);
+  exact_point(e, pe);
+  return insphere_sos_sign(pa, pb, pc, pd, pe, ids[0], ids[1], ids[2], ids[3], ids[4]);
+}
+
 }  // namespace
 
 Expansion coordinate(const ExactPointRef& point, int axis) {
@@ -582,12 +609,7 @@ int orient3d(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef
     return orient3d(a.carrier, b.carrier, c.carrier, d.carrier);
   }
   if (const int sign = filtered_orient3d(a, b, c, d); sign != 0) return sign;
-  Expansion pa[3], pb[3], pc[3], pd[3];
-  exact_point(a, pa);
-  exact_point(b, pb);
-  exact_point(c, pc);
-  exact_point(d, pd);
-  return orient3d_sign(pa, pb, pc, pd);
+  return exact_orient3d(a, b, c, d, nullptr);
 }
 
 int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
@@ -596,12 +618,8 @@ int orient3d_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
     return orient3d_sos(a.carrier, b.carrier, c.carrier, d.carrier, ia, ib, ic, id);
   }
   if (const int sign = filtered_orient3d(a, b, c, d); sign != 0) return sign;
-  Expansion pa[3], pb[3], pc[3], pd[3];
-  exact_point(a, pa);
-  exact_point(b, pb);
-  exact_point(c, pc);
-  exact_point(d, pd);
-  return orient3d_sos_sign(pa, pb, pc, pd, ia, ib, ic, id);
+  const int64_t ids[4] = {ia, ib, ic, id};
+  return exact_orient3d(a, b, c, d, ids);
 }
 
 int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPointRef& c,
@@ -613,13 +631,8 @@ int insphere_sos(const ExactPointRef& a, const ExactPointRef& b, const ExactPoin
                         ie);
   }
   if (const int sign = filtered_insphere(a, b, c, d, e); sign != 0) return sign;
-  Expansion pa[3], pb[3], pc[3], pd[3], pe[3];
-  exact_point(a, pa);
-  exact_point(b, pb);
-  exact_point(c, pc);
-  exact_point(d, pd);
-  exact_point(e, pe);
-  return insphere_sos_sign(pa, pb, pc, pd, pe, ia, ib, ic, id, ie);
+  const int64_t ids[5] = {ia, ib, ic, id, ie};
+  return exact_insphere_sos(a, b, c, d, e, ids);
 }
 
 int affine_insphere_sos(const double* linear, int orientation,

@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace phx::mc {
@@ -56,6 +59,7 @@ T lifted3_rows(const T* x, const T* y, const T* z, const T* lift) {
 
 // ---------------------------------------------------------------- orient2d
 
+[[gnu::noinline, gnu::cold]]
 int orient2d_adapt(const double* a, const double* b, const double* c, double detsum) {
   const double acx = a[0] - c[0];
   const double bcx = b[0] - c[0];
@@ -83,23 +87,14 @@ int orient2d_adapt(const double* a, const double* b, const double* c, double det
   return (ex * fy - ey * fx).sign();
 }
 
-// ---------------------------------------------------------------- orient3d (Shewchuk sign)
-
-int orient3d_shewchuk(const double* a, const double* b, const double* c, const double* d) {
+// Stages B and C of orient3d_shewchuk (out of line: the expansions would
+// otherwise enlarge the stack frame of every filtered call).
+[[gnu::noinline, gnu::cold]] int orient3d_adapt(const double* a, const double* b,
+                                                const double* c, const double* d,
+                                                double permanent) {
   const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
   const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
   const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
-  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-  const double cdxady = cdx * ady, adxcdy = adx * cdy;
-  const double adxbdy = adx * bdy, bdxady = bdx * ady;
-  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
-  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
-                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
-                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
-  const double errbound_a = kO3dErrBoundA * permanent;
-  if (det > errbound_a || -det > errbound_a) {
-    return sign_of(det);
-  }
   const Expansion rx[3] = {Expansion(adx), Expansion(bdx), Expansion(cdx)};
   const Expansion ry[3] = {Expansion(ady), Expansion(bdy), Expansion(cdy)};
   const Expansion rz[3] = {Expansion(adz), Expansion(bdz), Expansion(cdz)};
@@ -127,8 +122,29 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
   return orient3d_rows(fx, fy, fz).sign();
 }
 
+// ---------------------------------------------------------------- orient3d (Shewchuk sign)
+
+int orient3d_shewchuk(const double* a, const double* b, const double* c, const double* d) {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+  const double errbound_a = kO3dErrBoundA * permanent;
+  if (det > errbound_a || -det > errbound_a) {
+    return sign_of(det);
+  }
+  return orient3d_adapt(a, b, c, d, permanent);
+}
+
 // ---------------------------------------------------------------- incircle
 
+[[gnu::noinline, gnu::cold]]
 int incircle_adapt(const double* const* p, double permanent) {
   const double* d = p[3];
   double x[3], y[3];
@@ -164,6 +180,171 @@ int incircle_adapt(const double* const* p, double permanent) {
 
 // ---------------------------------------------------------------- insphere (Shewchuk sign)
 
+// Exact integer evaluation. Binary64 values whose set bits all lie within
+// `width` bits of one another are integers times a common power of two;
+// the determinant's sign does not depend on that power, so it is evaluated
+// on the integers: 128-bit products and 384-bit two's complement sums.
+struct Wide {
+  std::uint64_t w[6];
+};
+
+Wide wide_from(__int128 value) {
+  const auto low = static_cast<std::uint64_t>(value);
+  const auto high = static_cast<std::uint64_t>(static_cast<unsigned __int128>(value) >> 64);
+  const std::uint64_t extension = value < 0 ? ~std::uint64_t{0} : 0;
+  return {{low, high, extension, extension, extension, extension}};
+}
+
+bool wide_negative(const Wide& value) { return (value.w[5] >> 63) != 0; }
+
+Wide wide_negated(const Wide& value) {
+  Wide result{};
+  unsigned __int128 carry = 1;
+  for (int i = 0; i < 6; ++i) {
+    const unsigned __int128 sum = static_cast<unsigned __int128>(~value.w[i]) + carry;
+    result.w[i] = static_cast<std::uint64_t>(sum);
+    carry = sum >> 64;
+  }
+  return result;
+}
+
+void wide_add(Wide& total, const Wide& value) {
+  unsigned __int128 carry = 0;
+  for (int i = 0; i < 6; ++i) {
+    const unsigned __int128 sum =
+        static_cast<unsigned __int128>(total.w[i]) + value.w[i] + carry;
+    total.w[i] = static_cast<std::uint64_t>(sum);
+    carry = sum >> 64;
+  }
+}
+
+// Product modulo 2^384 (exact for the bounded operands below).
+Wide wide_product(const Wide& left, const Wide& right) {
+  const bool negative = wide_negative(left) != wide_negative(right);
+  const Wide a = wide_negative(left) ? wide_negated(left) : left;
+  const Wide b = wide_negative(right) ? wide_negated(right) : right;
+  Wide result{};
+  for (int i = 0; i < 6; ++i) {
+    if (a.w[i] == 0) continue;
+    unsigned __int128 carry = 0;
+    for (int j = 0; i + j < 6; ++j) {
+      const unsigned __int128 term =
+          static_cast<unsigned __int128>(a.w[i]) * b.w[j] + result.w[i + j] + carry;
+      result.w[i + j] = static_cast<std::uint64_t>(term);
+      carry = term >> 64;
+    }
+  }
+  return negative ? wide_negated(result) : result;
+}
+
+int wide_sign(const Wide& value) {
+  if (wide_negative(value)) return -1;
+  for (const std::uint64_t limb : value.w) {
+    if (limb != 0) return 1;
+  }
+  return 0;
+}
+
+// values[i] = integers[i] * 2^e for one e, with |integers[i]| < 2^width;
+// false when the set bits of the values span more than `width` bits.
+bool common_integers(const double* values, int count, int width, std::int64_t* integers) {
+  int lowest = std::numeric_limits<int>::max();
+  int highest = std::numeric_limits<int>::min();
+  for (int i = 0; i < count; ++i) {
+    if (values[i] == 0.0) continue;
+    int exponent = 0;
+    const double fraction = std::frexp(std::fabs(values[i]), &exponent);
+    // fraction * 2^53 is an integer below 2^53; its trailing zero bits
+    // raise the lowest set bit above exponent - 53.
+    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(fraction, 53));
+    lowest = std::min(lowest, exponent - 53 + std::countr_zero(mantissa));
+    highest = std::max(highest, exponent);
+  }
+  if (highest == std::numeric_limits<int>::min()) {
+    std::fill(integers, integers + count, std::int64_t{0});
+    return true;
+  }
+  if (highest - lowest > width) return false;
+  for (int i = 0; i < count; ++i) {
+    integers[i] = static_cast<std::int64_t>(std::ldexp(values[i], -lowest));
+  }
+  return true;
+}
+
+// Sign of lifted3_rows on integer rows below 2^62 in magnitude.
+int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const std::int64_t* z) {
+  const auto minor = [&](int i, int j) {
+    return static_cast<__int128>(x[i]) * y[j] - static_cast<__int128>(x[j]) * y[i];
+  };
+  const Wide ab = wide_from(minor(0, 1)), bc = wide_from(minor(1, 2));
+  const Wide cd = wide_from(minor(2, 3)), da = wide_from(minor(3, 0));
+  const Wide ac = wide_from(minor(0, 2)), bd = wide_from(minor(1, 3));
+  const auto row = [&](int k) { return wide_from(z[k]); };
+  const auto cofactor = [&](int k0, const Wide& m0, int k1, const Wide& m1, bool minus,
+                            int k2, const Wide& m2) {
+    Wide total = wide_product(row(k0), m0);
+    const Wide second = wide_product(row(k1), m1);
+    wide_add(total, minus ? wide_negated(second) : second);
+    wide_add(total, wide_product(row(k2), m2));
+    return total;
+  };
+  // abc = z0 bc - z1 ac + z2 ab; bcd = z1 cd - z2 bd + z3 bc;
+  // cda = z2 da + z3 ac + z0 cd; dab = z3 ab + z0 bd + z1 da.
+  const Wide abc = cofactor(0, bc, 1, ac, true, 2, ab);
+  const Wide bcd = cofactor(1, cd, 2, bd, true, 3, bc);
+  const Wide cda = cofactor(2, da, 3, ac, false, 0, cd);
+  const Wide dab = cofactor(3, ab, 0, bd, false, 1, da);
+  const auto lift = [&](int k) {
+    return wide_from(static_cast<__int128>(x[k]) * x[k] + static_cast<__int128>(y[k]) * y[k] +
+                     static_cast<__int128>(z[k]) * z[k]);
+  };
+  // det = (l3 abc - l2 dab) + (l1 cda - l0 bcd).
+  Wide det = wide_product(lift(3), abc);
+  wide_add(det, wide_negated(wide_product(lift(2), dab)));
+  wide_add(det, wide_product(lift(1), cda));
+  wide_add(det, wide_negated(wide_product(lift(0), bcd)));
+  return wide_sign(det);
+}
+
+// The exact insphere sign by integers: on the coordinates (differences then
+// below 2^62) or on exact differences; false when neither fits.
+bool insphere_integer(const double* const* p, const double* x, const double* y,
+                      const double* z, bool exact_differences, int& sign) {
+  double coordinates[15];
+  for (int k = 0; k < 5; ++k) {
+    for (int axis = 0; axis < 3; ++axis) coordinates[3 * k + axis] = p[k][axis];
+  }
+  std::int64_t integers[15];
+  std::int64_t ix[4], iy[4], iz[4];
+  if (common_integers(coordinates, 15, 61, integers)) {
+    for (int k = 0; k < 4; ++k) {
+      ix[k] = integers[3 * k] - integers[12];
+      iy[k] = integers[3 * k + 1] - integers[13];
+      iz[k] = integers[3 * k + 2] - integers[14];
+    }
+  } else {
+    if (!exact_differences) return false;
+    double differences[12];
+    for (int k = 0; k < 4; ++k) {
+      differences[k] = x[k];
+      differences[4 + k] = y[k];
+      differences[8 + k] = z[k];
+    }
+    if (!common_integers(differences, 12, 62, integers)) return false;
+    for (int k = 0; k < 4; ++k) {
+      ix[k] = integers[k];
+      iy[k] = integers[4 + k];
+      iz[k] = integers[8 + k];
+    }
+  }
+  sign = insphere_integer_rows(ix, iy, iz);
+  return true;
+}
+
+int insphere_expansion(const double* const* p, const double* x, const double* y,
+                       const double* z, bool exact_differences, double permanent);
+
+[[gnu::noinline, gnu::cold]]
 int insphere_adapt(const double* const* p, double permanent) {
   const double* e = p[4];
   double x[4], y[4], z[4];
@@ -176,6 +357,16 @@ int insphere_adapt(const double* const* p, double permanent) {
                         two_diff_tail(p[k][1], e[1], y[k]) == 0.0 &&
                         two_diff_tail(p[k][2], e[2], z[k]) == 0.0;
   }
+  int integer_sign = 0;
+  if (insphere_integer(p, x, y, z, exact_differences, integer_sign)) return integer_sign;
+  return insphere_expansion(p, x, y, z, exact_differences, permanent);
+}
+
+// The expansion stages of insphere_adapt (values whose bits span too much).
+[[gnu::noinline, gnu::cold]]
+int insphere_expansion(const double* const* p, const double* x, const double* y,
+                       const double* z, bool exact_differences, double permanent) {
+  const double* e = p[4];
   Expansion rx[4], ry[4], rz[4], lift[4];
   for (int k = 0; k < 4; ++k) {
     rx[k] = Expansion(x[k]);
@@ -433,6 +624,7 @@ int rank_order(const std::int64_t* ids, int count, int* order) {
 }
 
 // Sign of det of the perturbed matrix with rows [p_rank, 1] in rank order.
+[[gnu::noinline, gnu::cold]]
 int orientation_sos_sign(const double* const* points, const std::int64_t* ids, int dimension,
                          int* parity_out) {
   int order[4];
@@ -468,6 +660,7 @@ int orientation_sos_sign(const double* const* points, const std::int64_t* ids, i
 }
 
 // Lifted-coordinate SoS in 2D: cofactor of row t's lift is (-1)^t orient2d(others).
+[[gnu::noinline, gnu::cold]]
 int lifted_sos_2d(const double* const* p, const std::int64_t* ids) {
   int order[4];
   rank_order(ids, 4, order);
@@ -489,6 +682,7 @@ int lifted_sos_2d(const double* const* p, const std::int64_t* ids) {
 }
 
 // Lifted-coordinate SoS in 3D: the result is -(-1)^t orient3d(others).
+[[gnu::noinline, gnu::cold]]
 int lifted_sos_3d(const double* const* p, const std::int64_t* ids) {
   int order[5];
   rank_order(ids, 5, order);
