@@ -31,6 +31,7 @@ struct CadFaceMesh {
   std::vector<std::array<int32_t, 3>> slivers;
   std::vector<CadFaceEdge> boundary_edges;
   CadRefine2DStats stats;
+  int64_t omitted_pole_points = 0;
 };
 
 // Validates the shared curve discretization once before any face consumes it.
@@ -41,6 +42,7 @@ int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
-                      CadFaceMesh& result);
+                      CadFaceMesh& result,
+                      std::vector<std::array<double, 2>>* metric_points = nullptr);
 
 }  // namespace phx::mc

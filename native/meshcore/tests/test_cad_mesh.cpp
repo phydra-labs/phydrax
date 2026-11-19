@@ -39,6 +39,13 @@ struct PlaneWithHole {
     real_offsets.push_back(static_cast<int64_t>(reals.size()));
     return static_cast<int32_t>(kinds.size() - 1);
   }
+  int32_t mapped(int32_t surface, int32_t pcurve) {
+    kinds.push_back(PHX_MC_CAD_NODE_SURFACE_MAPPED);
+    integers.insert(integers.end(), {surface, pcurve});
+    integer_offsets.push_back(static_cast<int64_t>(integers.size()));
+    real_offsets.push_back(static_cast<int64_t>(reals.size()));
+    return static_cast<int32_t>(kinds.size() - 1);
+  }
 
   PlaneWithHole() {
     surface_nodes.push_back(add("plane", {0,0,0, 1,0,0, 0,1,0}));
@@ -85,15 +92,20 @@ struct PlaneWithHole {
   }
 };
 
-void check_angle(const std::array<double, 3>& p, const std::array<double, 3>& q,
-                 const std::array<double, 3>& r) {
+bool angle_ok(const std::array<double, 3>& p, const std::array<double, 3>& q,
+              const std::array<double, 3>& r) {
   const std::array<double, 3> a{q[0]-p[0], q[1]-p[1], q[2]-p[2]};
   const std::array<double, 3> b{r[0]-p[0], r[1]-p[1], r[2]-p[2]};
   const double dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
   const double aa = a[0]*a[0] + a[1]*a[1] + a[2]*a[2];
   const double bb = b[0]*b[0] + b[1]*b[1] + b[2]*b[2];
-  PHX_CHECK(aa > 0 && bb > 0);
-  PHX_CHECK(dot / std::sqrt(aa * bb) <= std::cos(25.0 * 3.14159265358979323846 / 180) + 1e-12);
+  return aa > 0 && bb > 0 &&
+         dot / std::sqrt(aa * bb) <= std::cos(25.0 * 3.14159265358979323846 / 180) + 1e-12;
+}
+
+void check_angle(const std::array<double, 3>& p, const std::array<double, 3>& q,
+                 const std::array<double, 3>& r) {
+  PHX_CHECK(angle_ok(p, q, r));
 }
 
 void check_loop(const CadFaceMesh& mesh, std::size_t begin, std::size_t count) {
@@ -273,6 +285,136 @@ void periodic_patch(bool torus, bool ungraded = false) {
   }
 }
 
+void polar_patch(bool cone, bool trim = false) {
+  constexpr double pi = 3.14159265358979323846;
+  constexpr double turn = 2.0 * pi;
+  constexpr double angle = 0.78539816339744830962;
+  const double low = cone ? 1.0 : 0.5;
+  const double pole = cone ? 0.0 : pi / 2.0;
+  const double radius = cone ? std::tan(angle) : std::cos(low);
+  const double height = cone ? low : std::sin(low);
+  PlaneWithHole bank;
+  bank.kinds.clear(); bank.integers.clear(); bank.reals.clear();
+  bank.integer_offsets = {0}; bank.real_offsets = {0};
+  bank.surface_nodes.clear(); bank.curve_nodes.clear(); bank.pcurve_nodes.clear();
+  std::vector<double> frame{0,0,0, 1,0,0, 0,1,0, 0,0,1};
+  if (cone) { frame.push_back(0); frame.push_back(angle); }
+  else frame.push_back(1);
+  bank.surface_nodes.push_back(bank.add(cone ? "cone" : "sphere", frame));
+  bank.curve_nodes.push_back(bank.add("circle3", {0,0,height, 1,0,0, 0,1,0, radius}));
+  if (cone) bank.curve_nodes.push_back(bank.add("line3", {0,0,0, std::tan(angle),0,1}));
+  else bank.curve_nodes.push_back(bank.add("circle3", {0,0,0, 1,0,0, 0,0,1, 1}));
+  bank.corners = {radius,0,height, 0,0,cone ? 0.0 : 1.0};
+  bank.curve_corners = {0,0, 0,1};
+  bank.ranges = {0,turn, low,pole};
+  bank.pcurve_nodes.push_back(bank.add("line2", {0,low, 1,0}));
+  bank.pcurve_nodes.push_back(bank.add("line2", {turn,0, 0,1}));
+  bank.pcurve_nodes.push_back(bank.add("line2", {0,pole, 1,0}));
+  bank.pcurve_nodes.push_back(bank.add("line2", {0,0, 0,1}));
+  bank.use_entities = {0,1,1,1}; bank.use_kinds = {0,0,1,0};
+  bank.senses = {1,1,-1,-1};
+  bank.use_ranges = {0,turn, low,pole, 0,turn, low,pole};
+  bank.loop_offsets = {0,4}; bank.loop_surfaces = {0};
+  bank.periods = {turn,0}; bank.domains = {0,turn, std::min(low,pole),std::max(low,pole)};
+  constexpr double size = 0.2;
+  const double meridian = std::abs(pole-low) * (cone ? 1/std::cos(angle) : 1);
+  const int counts[2] = {static_cast<int>(std::ceil(turn * radius / size)),
+                         static_cast<int>(std::ceil(meridian / size))};
+  bank.samples.clear(); bank.sample_offsets = {0};
+  for (int n : counts) {
+    for (int i = 0; i <= n; ++i) bank.samples.push_back(static_cast<double>(i) / n);
+    bank.sample_offsets.push_back(static_cast<int64_t>(bank.samples.size()));
+  }
+  if (trim) {
+    const std::array<std::array<double, 2>, 4> uv{{{2,1.0},{2,1.45},{3,1.45},{3,1.0}}};
+    for (const auto& p : uv)
+      bank.corners.insert(bank.corners.end(), {std::cos(p[1])*std::cos(p[0]),
+                                               std::cos(p[1])*std::sin(p[0]), std::sin(p[1])});
+    for (int32_t i = 0; i < 4; ++i) {
+      const int32_t j = (i + 1) % 4;
+      const double du = uv[j][0] - uv[i][0], dv = uv[j][1] - uv[i][1];
+      const int32_t pcurve = bank.add("line2", {uv[i][0], uv[i][1], du, dv});
+      bank.pcurve_nodes.push_back(pcurve);
+      bank.curve_nodes.push_back(bank.mapped(bank.surface_nodes[0], pcurve));
+      bank.curve_corners.insert(bank.curve_corners.end(), {2+i, 2+j});
+      bank.ranges.insert(bank.ranges.end(), {0,1});
+      bank.use_entities.push_back(2+i);
+      bank.use_kinds.push_back(0); bank.senses.push_back(1);
+      bank.use_ranges.insert(bank.use_ranges.end(), {0,1});
+      const double length = du == 0 ? std::abs(dv) : std::abs(du * std::cos(uv[i][1]));
+      const int n = static_cast<int>(std::ceil(length / size));
+      for (int k = 0; k <= n; ++k) bank.samples.push_back(static_cast<double>(k) / n);
+      bank.sample_offsets.push_back(static_cast<int64_t>(bank.samples.size()));
+    }
+    bank.loop_offsets = {0,4,8}; bank.loop_surfaces = {0,0};
+  }
+  phx_mc_cad_model model = bank.model();
+  model.corner_count = trim ? 6 : 2; model.curve_count = trim ? 6 : 2;
+  model.loop_count = trim ? 2 : 1; model.use_count = trim ? 8 : 4;
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
+  std::vector<std::array<double, 2>> metric_points;
+  CadFaceMesh result;
+  const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, size, 0.4, 0.5,
+                                                result, &metric_points);
+  std::fprintf(stderr, "%s status=%d faces=%zu slivers=%zu omitted=%lld fixed=%lld excluded=%lld unresolved=%lld lens=%lld outside=%lld proximity=%lld nonstar=%lld\n",
+               trim ? "sphere-trim" : cone ? "cone" : "sphere-cap", status, result.triangles.size(),
+               result.slivers.size(), static_cast<long long>(result.omitted_pole_points),
+               static_cast<long long>(result.stats.fixed_triangles_skipped),
+               static_cast<long long>(result.stats.excluded_refusals),
+               static_cast<long long>(result.stats.unresolved_triangles),
+               static_cast<long long>(result.stats.encroachment_refusals),
+               static_cast<long long>(result.stats.outside_refusals),
+               static_cast<long long>(result.stats.proximity_refusals),
+               static_cast<long long>(result.stats.nonstar_refusals));
+  if (trim) {
+    PHX_CHECK(status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(result.stats.unresolved_triangles == 1);
+    PHX_CHECK(result.stats.encroachment_refusals == 1);
+    PHX_CHECK(result.stats.excluded_refusals == 0);
+    PHX_CHECK(result.stats.proximity_refusals == 0);
+    PHX_CHECK(result.omitted_pole_points == 6);
+  } else {
+    PHX_CHECK(status == PHX_MC_OK);
+  }
+  PHX_CHECK(!result.slivers.empty());
+  PHX_CHECK(result.stats.fixed_triangles_skipped > 0);
+  PHX_CHECK(!metric_points.empty());
+  const double ring_spacing = size * (cone ? std::cos(angle) : 1.0);
+  for (const auto& uv : metric_points) PHX_CHECK(std::abs(uv[1] - pole) >= ring_spacing);
+  int bad_angles = 0;
+  for (const auto& cell : result.triangles) {
+    const auto& a = result.vertices[cell[0]].uv;
+    const auto& b = result.vertices[cell[1]].uv;
+    const auto& c = result.vertices[cell[2]].uv;
+    PHX_CHECK(phx::mc::orient2d(a.data(), b.data(), c.data()) > 0);
+    const auto position = [cone](const std::array<double, 2>& uv) {
+      const double r = cone ? uv[1] : std::cos(uv[1]);
+      return std::array<double, 3>{r*std::cos(uv[0]), r*std::sin(uv[0]),
+                                   cone ? uv[1] : std::sin(uv[1])};
+    };
+    const auto x = position(a), y = position(b), z = position(c);
+    const std::array<std::array<double, 3>, 3> xyz{x,y,z};
+    const std::array<std::array<double, 2>, 3> charts{a,b,c};
+    for (int i = 0; i < 3; ++i) {
+      if (angle_ok(xyz[i], xyz[(i+1)%3], xyz[(i+2)%3])) continue;
+      ++bad_angles;
+      PHX_CHECK(trim && std::abs(charts[i][1] - pole) < 1e-14);
+      const auto& q = charts[(i+1)%3];
+      const auto& r = charts[(i+2)%3];
+      PHX_CHECK((std::abs(q[0]-2.0)<1e-14 && std::abs(q[1]-1.45)<1e-14) ||
+                (std::abs(r[0]-2.0)<1e-14 && std::abs(r[1]-1.45)<1e-14));
+    }
+    const double px = (x[0]+y[0]+z[0])/3, py = (x[1]+y[1]+z[1])/3;
+    const double pz = (x[2]+y[2]+z[2])/3;
+    const double error = cone ? std::abs(std::hypot(px,py)-pz)/std::sqrt(2.0)
+                              : std::abs(std::hypot(std::hypot(px,py),pz)-1.0);
+    PHX_CHECK(error < 0.2);
+  }
+  PHX_CHECK(bad_angles == (trim ? 1 : 0));
+}
+
 }  // namespace
 
 int main() {
@@ -280,5 +422,8 @@ int main() {
   periodic_patch(false);
   periodic_patch(true);
   periodic_patch(true, true);
+  polar_patch(false);
+  polar_patch(false, true);
+  polar_patch(true);
   return phx::mc::test::finish("test_cad_mesh");
 }

@@ -37,11 +37,18 @@ int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
 namespace {
 
 
+struct PoleBoundary {
+  int64_t use;
+  int32_t first_vertex;
+  int32_t count;
+};
+
 struct FaceBoundary {
   std::vector<CadFaceVertex> vertices;
   std::vector<int32_t> segments;
   std::vector<CadFaceEdge> edges;
   std::vector<std::vector<int32_t>> loops;
+  std::vector<PoleBoundary> poles;
 };
 
 double use_parameter(const phx_mc_cad_model& model, int64_t use, double s) {
@@ -72,18 +79,23 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
     std::array<double, 2> previous_uv{};
     int32_t previous_corner = -1;
     for (int64_t use = first_use; use < last_use; ++use) {
-      if (model.use_kinds[use] != 0) return PHX_MC_INVALID_INPUT;
+      const bool pole = model.use_kinds[use] == 1;
+      if (!pole && model.use_kinds[use] != 0) return PHX_MC_INVALID_INPUT;
       const int32_t entity = model.use_entities[use];
-      if (entity < 0 || entity >= model.curve_count) return PHX_MC_INVALID_INPUT;
-      const int64_t begin = curves.offsets[entity];
-      const int64_t count = curves.offsets[entity + 1] - begin;
+      if (entity < 0 || (pole ? entity >= model.corner_count : entity >= model.curve_count))
+        return PHX_MC_INVALID_INPUT;
+      const int64_t begin = pole ? 0 : curves.offsets[entity];
+      const int64_t count = pole ? 9 : curves.offsets[entity + 1] - begin;
       const bool forward = model.use_senses[use] > 0;
-      const int32_t start_corner = model.curve_corners[2 * entity + (forward ? 0 : 1)];
-      const int32_t end_corner = model.curve_corners[2 * entity + (forward ? 1 : 0)];
+      const int32_t start_corner = pole ? entity : model.curve_corners[2 * entity + (forward ? 0 : 1)];
+      const int32_t end_corner = pole ? entity : model.curve_corners[2 * entity + (forward ? 1 : 0)];
+      if (pole) boundary.poles.push_back({use, static_cast<int32_t>(boundary.vertices.size()),
+                                          static_cast<int32_t>(count - 1)});
       if (use != first_use && start_corner != previous_corner) return PHX_MC_INVALID_INPUT;
       for (int64_t j = 0; j <= count - 1; ++j) {
         const int64_t index = forward ? j : count - 1 - j;
-        const double s = curves.parameters[begin + index];
+        const double s = pole ? static_cast<double>(index) / (count - 1)
+                              : curves.parameters[begin + index];
         std::array<double, 2> uv;
         if (!chart_point(geometry, use, use_parameter(model, use, s), workspace, uv))
           return PHX_MC_INVALID_INPUT;
@@ -93,14 +105,15 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
           previous_corner = end_corner;
           continue;
         }
-        const int32_t dimension = j == 0 ? 0 : 1;
+        const int32_t dimension = (pole || j == 0) ? 0 : 1;
         const int32_t classification = dimension == 0 ? start_corner : entity;
         rows.push_back(static_cast<int32_t>(boundary.vertices.size()));
         boundary.vertices.push_back({uv, dimension, classification, static_cast<int32_t>(index)});
         const int64_t next_index = forward ? index + 1 : index - 1;
-        const double next_s = curves.parameters[begin + next_index];
+        const double next_s = pole ? static_cast<double>(next_index) / (count - 1)
+                                   : curves.parameters[begin + next_index];
         boundary.edges.push_back({{rows.back(), -1}, static_cast<int32_t>(use),
-                                  entity, {s, next_s}});
+                                  pole ? -1 : entity, {s, next_s}});
       }
     }
     if (previous_corner != boundary.vertices[rows.front()].entity) return PHX_MC_INVALID_INPUT;
@@ -130,6 +143,14 @@ struct BoundaryNode {
 };
 
 
+struct PoleZone {
+  int axis;
+  double origin;
+  double direction;
+  double width;
+  double spacing;
+};
+
 struct FaceMetric {
   const cad::CadGeometry* geometry;
   int32_t face;
@@ -142,6 +163,8 @@ struct FaceMetric {
   std::vector<BoundarySample> boundary;
   std::vector<int32_t> boundary_order;
   std::vector<BoundaryNode> boundary_tree;
+  std::vector<PoleZone> poles;
+  std::vector<std::array<double, 2>>* metric_points;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -205,6 +228,7 @@ void grade_boundary(const FaceMetric& context, int32_t index, const double* poin
 CadMetric2D face_metric(const double chart[2], void* opaque) {
   auto& context = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
+  if (context.metric_points) context.metric_points->push_back({uv[0], uv[1]});
   double jet[18];
   cad::SurfaceDifferential differential;
   if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) {
@@ -355,6 +379,160 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
 
 
 
+bool in_pole_zone(const FaceMetric& metric, const double uv[2]) {
+  for (const PoleZone& zone : metric.poles) {
+    const double distance = zone.direction * (uv[zone.axis] - zone.origin);
+    if (distance >= 0.0 && distance <= zone.width) return true;
+  }
+  return false;
+}
+
+int32_t admit_face_point(void* opaque, const double point[2]) {
+  const auto& metric = *static_cast<FaceMetric*>(opaque);
+  const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
+  for (const PoleZone& zone : metric.poles) {
+    const double distance = zone.direction * (uv[zone.axis] - zone.origin);
+    if (distance >= 0.0 && distance <= zone.spacing) return 0;
+  }
+  return 1;
+}
+
+bool in_trim(const FaceBoundary& boundary, std::size_t outer,
+             const std::array<double, 2>& uv) {
+  if (!contains(boundary, boundary.loops[outer], uv)) return false;
+  for (const auto& loop : boundary.loops) {
+    for (std::size_t j = 0; j < loop.size(); ++j) {
+      const auto& a = boundary.vertices[loop[j]].uv;
+      const auto& b = boundary.vertices[loop[(j + 1) % loop.size()]].uv;
+      if (orient2d(a.data(), b.data(), uv.data()) == 0 &&
+          uv[0] >= std::min(a[0], b[0]) && uv[0] <= std::max(a[0], b[0]) &&
+          uv[1] >= std::min(a[1], b[1]) && uv[1] <= std::max(a[1], b[1])) return false;
+    }
+  }
+  for (std::size_t i = 0; i < boundary.loops.size(); ++i)
+    if (i != outer && contains(boundary, boundary.loops[i], uv)) return false;
+  return true;
+}
+
+int near_boundary(const FaceBoundary& boundary, FaceMetric& metric,
+                  const std::array<double, 2>& uv) {
+  const double p[2] = {uv[0] * metric.scale_u, uv[1] * metric.scale_v};
+  const CadMetric2D m = face_metric(p, &metric);
+  if (!std::isfinite(m.uu) || !std::isfinite(m.uv) || !std::isfinite(m.vv)) return -1;
+  const auto dot = [&](double ax, double ay, double bx, double by) {
+    return ax * (m.uu * bx + m.uv * by) + ay * (m.uv * bx + m.vv * by);
+  };
+  // Check vertices explicitly; the following loop handles segment interiors.
+  // Half a local metric unit matches the refinement kernel's proximity floor.
+  for (const CadFaceVertex& vertex : boundary.vertices) {
+    const double dx = p[0] - vertex.uv[0] * metric.scale_u;
+    const double dy = p[1] - vertex.uv[1] * metric.scale_v;
+    if (dot(dx, dy, dx, dy) < 0.25) return 1;
+  }
+  for (std::size_t i = 0; i < boundary.segments.size(); i += 2) {
+    const auto& a = boundary.vertices[boundary.segments[i]].uv;
+    const auto& b = boundary.vertices[boundary.segments[i + 1]].uv;
+    const double ax = a[0] * metric.scale_u, ay = a[1] * metric.scale_v;
+    const double dx = (b[0] - a[0]) * metric.scale_u;
+    const double dy = (b[1] - a[1]) * metric.scale_v;
+    const double denominator = dot(dx, dy, dx, dy);
+    if (!(denominator > 0.0)) continue;
+    const double t = dot(p[0] - ax, p[1] - ay, dx, dy) / denominator;
+    if (!(t > 0.0 && t < 1.0)) continue;
+    const double ex = p[0] - ax - t * dx, ey = p[1] - ay - t * dy;
+    if (dot(ex, ey, ex, ey) < 0.25) return true;
+  }
+  return false;
+}
+
+int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundary,
+                   std::size_t outer, FaceMetric& metric, std::vector<double>& points,
+                   std::vector<uint8_t>& fixed, int64_t& omitted) {
+  std::array<double, 2> low = boundary.vertices.front().uv, high = low;
+  for (const CadFaceVertex& vertex : boundary.vertices)
+    for (int axis = 0; axis < 2; ++axis) {
+      low[axis] = std::min(low[axis], vertex.uv[axis]);
+      high[axis] = std::max(high[axis], vertex.uv[axis]);
+    }
+  for (const PoleBoundary& pole : boundary.poles) {
+    const auto& start = boundary.vertices[pole.first_vertex].uv;
+    const auto& almost_end = boundary.vertices[pole.first_vertex + pole.count - 1].uv;
+    const int axis = std::abs(start[0] - almost_end[0]) <
+                             std::abs(start[1] - almost_end[1]) ? 0 : 1;
+    const int free_axis = 1 - axis;
+    const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
+    const double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
+    if (!(limit > 0.0)) return PHX_MC_INVALID_INPUT;
+    const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
+    double jet[18];
+    if (!surface_jet(metric, middle, jet)) return PHX_MC_INVALID_INPUT;
+    const int derivative = axis == 0 ? 3 : 6;
+    const double speed = std::hypot(std::hypot(jet[derivative], jet[derivative + 1]),
+                                    jet[derivative + 2]);
+    if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
+    const double spacing = std::min(limit, metric.size / speed);
+    if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
+    double width = std::min(limit, 3.0 * spacing);
+    while (width < limit) {
+      double uv[2] = {middle[0], middle[1]};
+      uv[axis] = start[axis] + direction * width;
+      if (!surface_jet(metric, uv, jet)) return PHX_MC_INVALID_INPUT;
+      const double e = jet[3] * jet[3] + jet[4] * jet[4] + jet[5] * jet[5];
+      const double g = jet[6] * jet[6] + jet[7] * jet[7] + jet[8] * jet[8];
+      const double ratio = (e / (metric.scale_u * metric.scale_u)) /
+                           (g / (metric.scale_v * metric.scale_v));
+      if (ratio >= 0.5 && ratio <= 2.0) break;
+      const double next = std::min(limit, width + spacing);
+      if (!(next > width)) return PHX_MC_UNRESOLVED;
+      width = next;
+    }
+    metric.poles.push_back({axis, start[axis], direction, width, spacing});
+    const double first = geometry.model().use_ranges[2 * pole.use];
+    const double last = geometry.model().use_ranges[2 * pole.use + 1];
+    std::array<double, 2> end;
+    if (!chart_point(geometry, pole.use,
+                     geometry.model().use_senses[pole.use] > 0 ? last : first,
+                     metric.workspace, end)) return PHX_MC_INVALID_INPUT;
+    for (double offset = spacing; offset <= width; offset += spacing) {
+      std::array<double, 2> uv = start;
+      uv[axis] = start[axis] + direction * offset;
+      if (offset == spacing && direction * (uv[axis] - start[axis]) < spacing)
+        uv[axis] = std::nextafter(uv[axis], direction > 0.0
+                                  ? std::numeric_limits<double>::infinity()
+                                  : -std::numeric_limits<double>::infinity());
+      std::array<double, 3> previous;
+      if (!evaluate_position(geometry, metric.face, uv, metric.workspace, previous))
+        return PHX_MC_INVALID_INPUT;
+      double length = 0.0;
+      for (int i = 1; i <= 16; ++i) {
+        uv[free_axis] = start[free_axis] + (end[free_axis] - start[free_axis]) * i / 16.0;
+        std::array<double, 3> next;
+        if (!evaluate_position(geometry, metric.face, uv, metric.workspace, next))
+          return PHX_MC_INVALID_INPUT;
+        length += distance(previous, next);
+        previous = next;
+      }
+      const int count = std::max(8, static_cast<int>(std::ceil(length / metric.size)));
+      for (int i = 1; i < count; ++i) {
+        uv[free_axis] = start[free_axis] + (end[free_axis] - start[free_axis]) * i / count;
+        if (!in_trim(boundary, outer, uv)) continue;
+        const int proximity = near_boundary(boundary, metric, uv);
+        if (proximity < 0) return PHX_MC_INVALID_INPUT;
+        if (proximity > 0) {
+          ++omitted;
+          continue;
+        }
+        points.push_back(uv[0] * metric.scale_u);
+        points.push_back(uv[1] * metric.scale_v);
+        fixed.push_back(1);
+      }
+    }
+  }
+  for (std::size_t i = 0; i < boundary.vertices.size(); ++i)
+    if (in_pole_zone(metric, boundary.vertices[i].uv.data())) fixed[i] = 1;
+  return PHX_MC_OK;
+}
+
 double maximum_cosine(const SurfaceTriangulation& surface,
                       const std::vector<int32_t>& cells) {
   double maximum = -1.0;
@@ -373,7 +551,8 @@ double maximum_cosine(const SurfaceTriangulation& surface,
 }
 
 void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& metric,
-            std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
+            const std::vector<uint8_t>& fixed, std::vector<CadFaceVertex>& vertices,
+            SurfaceTriangulation& surface) {
   std::vector<std::vector<int32_t>> incident(vertices.size());
   for (std::size_t cell = 0; cell < surface.cells.size(); ++cell) {
     for (const int32_t v : surface.cells[cell]) incident[v].push_back(static_cast<int32_t>(cell));
@@ -381,7 +560,7 @@ void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& me
   cad::EvaluationWorkspace workspace;
   for (int pass = 0; pass < 2; ++pass) {
     for (std::size_t v = 0; v < vertices.size(); ++v) {
-      if (vertices[v].dimension != 2 || incident[v].empty()) continue;
+      if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty()) continue;
       std::vector<int32_t> neighbors;
       for (const int32_t cell : incident[v])
         for (const int32_t u : surface.cells[cell])
@@ -435,7 +614,7 @@ void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& me
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
-                      CadFaceMesh& result) {
+                      CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points) {
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
@@ -443,7 +622,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   cad::EvaluationWorkspace workspace;
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary);
   if (status != PHX_MC_OK) return status;
-  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}};
+  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, metric_points};
+  if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);
   if (status != PHX_MC_OK) return status;
 
@@ -486,6 +666,10 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     holes.push_back(seed[0] * metric.scale_u);
     holes.push_back(seed[1] * metric.scale_v);
   }
+  std::vector<uint8_t> fixed(boundary.vertices.size(), 0);
+  int64_t omitted_pole_points = 0;
+  status = seed_poles(geometry, boundary, outer, metric, points, fixed, omitted_pole_points);
+  if (status != PHX_MC_OK) return status;
   CadRefine2DInput input;
   input.points = points.data();
   input.point_count = static_cast<int32_t>(points.size() / 2);
@@ -496,6 +680,9 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.point_cap = std::max<int32_t>(input.point_count * 100, 10000);
   input.metric = face_metric;
   input.metric_context = &metric;
+  input.fixed_vertices = fixed.data();
+  input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
+  input.admit_context = &metric;
   CadRefine2DResult refined;
   status = cad_refine2d(input, refined);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
@@ -506,6 +693,12 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   surface.points.resize(3 * static_cast<std::size_t>(tri.vertex_count()));
   surface.normals.resize(3 * static_cast<std::size_t>(tri.vertex_count()), 0.0);
   std::vector<CadFaceVertex> vertices(static_cast<std::size_t>(tri.vertex_count()));
+  std::vector<uint8_t> mapped_fixed(static_cast<std::size_t>(tri.vertex_count()), 0);
+  for (std::size_t i = 0; i < fixed.size(); ++i) {
+    const int32_t mapped = refined.vertex_map[i];
+    if (mapped < 0 || mapped >= tri.vertex_count()) return PHX_MC_INVALID_INPUT;
+    mapped_fixed[mapped] |= fixed[i];
+  }
   for (int32_t i = 0; i < tri.vertex_count(); ++i) {
     const double* p = tri.point(i);
     std::array<double, 2> uv{p[0] / metric.scale_u, p[1] / metric.scale_v};
@@ -535,9 +728,27 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   const int32_t prepare_status = surface.prepare();
   if (prepare_status != PHX_MC_OK) return prepare_status;
   surface.sweep();
-  smooth(geometry, face, metric, vertices, surface);
+  smooth(geometry, face, metric, mapped_fixed, vertices, surface);
   result.slivers.clear();
-  result.triangles = std::move(surface.cells);
+  result.triangles.clear();
+  std::vector<std::pair<int32_t, int32_t>> pole_edges;
+  for (const auto& edge : boundary.edges) {
+    if (edge.curve >= 0) continue;
+    const int32_t a = refined.vertex_map[edge.vertices[0]];
+    const int32_t b = refined.vertex_map[edge.vertices[1]];
+    pole_edges.emplace_back(std::min(a, b), std::max(a, b));
+  }
+  std::sort(pole_edges.begin(), pole_edges.end());
+  for (const auto& cell : surface.cells) {
+    bool sliver = false;
+    for (int i = 0; i < 3; ++i) {
+      const int32_t a = cell[i], b = cell[(i + 1) % 3];
+      if (std::binary_search(pole_edges.begin(), pole_edges.end(),
+                             std::make_pair(std::min(a, b), std::max(a, b)))) sliver = true;
+    }
+    if (sliver) result.slivers.push_back(cell);
+    else result.triangles.push_back(cell);
+  }
   result.vertices = std::move(vertices);
   result.boundary_edges = std::move(boundary.edges);
   for (auto& edge : result.boundary_edges) {
@@ -545,6 +756,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     edge.vertices[1] = refined.vertex_map[edge.vertices[1]];
   }
   result.stats = refined.stats;
+  result.omitted_pole_points = omitted_pole_points;
   return status;
 }
 
