@@ -760,9 +760,10 @@ class ConstrainedMesher {
   // triangle (p, q, m) and replaces g by two ghosts.
   void attach_to_hull(int32_t g, int32_t p, int32_t q, int32_t m, int32_t id) {
     const Triangle2D old = tri_.triangles[static_cast<std::size_t>(g)];
-    const int32_t inner = old.n[tri_.edge_index(g, p, q)];
-    const int32_t ghost_q = old.n[tri_.edge_index(g, q, kInfiniteVertex)];
-    const int32_t ghost_p = old.n[tri_.edge_index(g, kInfiniteVertex, p)];
+    // Ghosts store the hull edge as v[0] -> v[1], with infinity in v[2].
+    const int32_t inner = old.n[2];
+    const int32_t ghost_q = old.n[0];
+    const int32_t ghost_p = old.n[1];
     const uint8_t region = tri_.region[static_cast<std::size_t>(inner)];
     tri_.release(g);
     const int32_t f = tri_.allocate();

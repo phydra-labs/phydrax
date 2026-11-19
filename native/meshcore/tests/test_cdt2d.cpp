@@ -16,6 +16,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
+#include "triangulation2d.hpp"
 
 namespace {
 
@@ -313,6 +314,41 @@ void check_quality(const Result& r, double min_angle, double max_area) {
   }
 }
 
+void test_ghost_layout() {
+  // Begin with one triangle, then insert outside each side and on hull edges.
+  const std::vector<double> points = {
+      0, 0, 2, 0, 0, 2, 1, -1, 2, 2, -1, 1, 1, 0, 0, 1,
+      3, -1, -1, 3, 3, 3};
+  Triangulation2D tri;
+  tri.reset(points.data(), static_cast<int64_t>(points.size() / 2), nullptr);
+  tri.initialize(0, 1, 2);
+  auto check_ghosts = [&]() {
+    int ghosts = 0;
+    for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
+      if (!tri.live[t] || !tri.is_ghost(static_cast<int32_t>(t))) continue;
+      ++ghosts;
+      const Triangle2D& ghost = tri.triangles[t];
+      PHX_CHECK(ghost.v[0] >= 0 && ghost.v[1] >= 0 && ghost.v[2] == kInfiniteVertex);
+      for (int k = 0; k < 3; ++k) {
+        const int32_t neighbor = ghost.n[k];
+        PHX_CHECK(neighbor >= 0 && static_cast<std::size_t>(neighbor) < tri.triangles.size());
+        if (neighbor < 0 || static_cast<std::size_t>(neighbor) >= tri.triangles.size()) continue;
+        PHX_CHECK(tri.live[static_cast<std::size_t>(neighbor)] != 0);
+        const int opposite = tri.edge_index(neighbor, ghost.v[prev3(k)], ghost.v[next3(k)]);
+        PHX_CHECK(opposite >= 0);
+        if (opposite >= 0) PHX_CHECK(tri.triangles[neighbor].n[opposite] == static_cast<int32_t>(t));
+        PHX_CHECK(tri.is_ghost(neighbor) == (k != 2));
+      }
+    }
+    PHX_CHECK(ghosts >= 3);
+  };
+  check_ghosts();
+  for (int32_t vertex = 3; vertex < tri.vertex_count(); ++vertex) {
+    tri.insert(vertex);
+    check_ghosts();
+  }
+}
+
 void test_ruppert_square() {
   Input in;
   in.points = {0, 0, 1, 0, 1, 1, 0, 1};
@@ -582,6 +618,7 @@ int main() {
   test_random_segments();
   test_lattice_segments();
   test_hole_carving();
+  test_ghost_layout();
   test_ruppert_square();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
