@@ -583,13 +583,20 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   std::nth_element(lengths.begin(), lengths.begin() + static_cast<std::ptrdiff_t>(lengths.size() / 2),
                    lengths.end());
   double cell = lengths[lengths.size() / 2];
+  // Metric images of the live vertices, feature boxes over them.
+  std::vector<std::array<double, 3>> world(slot_count);
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
+      world[slot] = metric_point(mesh, mesh.point(static_cast<std::int32_t>(slot)));
+    }
+  }
   const auto feature_box = [&](std::span<const std::int32_t> corners, double* lower,
                                double* upper) {
-    const auto first = metric_point(mesh, mesh.point(corners[0]));
+    const auto& first = world[static_cast<std::size_t>(corners[0])];
     std::copy(first.begin(), first.end(), lower);
     std::copy(first.begin(), first.end(), upper);
     for (std::int32_t corner : corners.subspan(1)) {
-      const auto point = metric_point(mesh, mesh.point(corner));
+      const auto& point = world[static_cast<std::size_t>(corner)];
       for (int axis = 0; axis < 3; ++axis) {
         lower[axis] = std::min(lower[axis], point[axis]);
         upper[axis] = std::max(upper[axis], point[axis]);
@@ -611,21 +618,35 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
     if (!mesh.live_vertex(vertex)) continue;
-    const auto world = metric_point(mesh, mesh.point(vertex));
-    if (!register_box(point_grid, cell, world.data(), world.data(), vertex)) {
+    if (!register_box(point_grid, cell, world[slot].data(), world[slot].data(), vertex)) {
       return false;
     }
   }
+  // A feature whose box lies farther than lambda from v cannot lower lambda:
+  // the box distance bounds the feature distance from below (a relative
+  // slack of 1e-9 covers the rounding of either).
+  std::vector<std::array<double, 6>> line_boxes(lines.size());
+  std::vector<std::array<double, 6>> plane_boxes(planes.size());
   for (std::size_t row = 0; row < lines.size(); ++row) {
-    double lower[3], upper[3];
-    feature_box(lines[row], lower, upper);
-    if (!register_box(line_grid, cell, lower, upper, static_cast<std::int32_t>(row))) return false;
+    double* box = line_boxes[row].data();
+    feature_box(lines[row], box, box + 3);
+    if (!register_box(line_grid, cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
   }
   for (std::size_t row = 0; row < planes.size(); ++row) {
-    double lower[3], upper[3];
-    feature_box(planes[row], lower, upper);
-    if (!register_box(plane_grid, cell, lower, upper, static_cast<std::int32_t>(row))) return false;
+    double* box = plane_boxes[row].data();
+    feature_box(planes[row], box, box + 3);
+    if (!register_box(plane_grid, cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
   }
+  const auto beyond = [](const std::array<double, 6>& box, const std::array<double, 3>& point,
+                         double radius) {
+    double squared = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double gap = std::max({0.0, box[static_cast<std::size_t>(axis)] - point[static_cast<std::size_t>(axis)],
+                                   point[static_cast<std::size_t>(axis)] - box[static_cast<std::size_t>(axis) + 3]});
+      squared += gap * gap;
+    }
+    return squared > radius * radius * (1.0 + 1e-9);
+  };
 
   smallest = infinity;
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
@@ -634,9 +655,9 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     const double* p = mesh.point(vertex);
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
-    const auto world = metric_point(mesh, p);
-    const double lower[3]{world[0] - lambda, world[1] - lambda, world[2] - lambda};
-    const double upper[3]{world[0] + lambda, world[1] + lambda, world[2] + lambda};
+    const auto& here = world[slot];
+    const double lower[3]{here[0] - lambda, here[1] - lambda, here[2] - lambda};
+    const double upper[3]{here[0] + lambda, here[1] + lambda, here[2] + lambda};
     const bool visited =
         visit_box(point_grid, cell, lower, upper, [&](std::int32_t other) {
           if (other != vertex) {
@@ -645,14 +666,16 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
         }) &&
         visit_box(line_grid, cell, lower, upper, [&](std::int32_t row) {
           const auto& line = lines[static_cast<std::size_t>(row)];
-          if (line[0] != vertex && line[1] != vertex) {
+          if (line[0] != vertex && line[1] != vertex &&
+              !beyond(line_boxes[static_cast<std::size_t>(row)], here, lambda)) {
             lambda = std::min(lambda, metric_segment_distance(
                                           mesh, p, mesh.point(line[0]), mesh.point(line[1])));
           }
         }) &&
         visit_box(plane_grid, cell, lower, upper, [&](std::int32_t row) {
           const auto& plane = planes[static_cast<std::size_t>(row)];
-          if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex) {
+          if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex &&
+              !beyond(plane_boxes[static_cast<std::size_t>(row)], here, lambda)) {
             lambda = std::min(lambda, metric_triangle_distance(
                                           mesh, p, mesh.point(plane[0]), mesh.point(plane[1]),
                                           mesh.point(plane[2])));
@@ -2381,10 +2404,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
 
   // Interior refinement in rounds (the batched scheme of Gmsh's HXT): every
   // violating cell of a round proposes its circumcenter; proposals are taken
-  // in Hilbert order of their points, each walking from its own cell while
-  // that is still live, so walks stay short and consecutive cavities share
-  // cache lines; the cells an insertion creates are the next round's
-  // candidates. Bowyer-Watson insertion keeps the constrained Delaunay
+  // along the Hilbert curve, each walking from its own cell while that is
+  // still live, so walks stay short and consecutive cavities share cache
+  // lines. The first round is sorted by circumcenter; the cells an insertion
+  // creates are the next round's candidates, already in curve order as their
+  // insertions were. Bowyer-Watson insertion keeps the constrained Delaunay
   // property where the cavity is Delaunay, so interior insertions are not
   // followed by flips. A cell left unchanged keeps its cause and is not
   // proposed again; the round count is capped (no cap is reached on the
@@ -2717,6 +2741,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       const Tetrahedron& tet = mesh.tet(slot);
       Proposal proposal{};
       proposal.has_target = cell_target(mesh, tet.v, proposal.target);
+      // Only the first round is sorted (below), by circumcenter.
       double center[3];
       const CellScreen screen =
           mesh.metric_active()
@@ -2725,7 +2750,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                             mesh.point(tet.v[3]), radius_edge_bound,
                             proposal.has_target ? proposal.target
                                                 : std::numeric_limits<double>::infinity(),
-                            center);
+                            pass == 0 ? center : nullptr);
       if (screen == CellScreen::kMeets) continue;
       if (screen == CellScreen::kUncertain) {
         geometry::TetrahedronShape shape;
@@ -2737,7 +2762,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         }
         std::copy_n(shape.circumcenter.begin(), 3, center);
       }
-      proposal.key = frame.key(center);
+      if (pass == 0) proposal.key = frame.key(center);
       proposal.cell_id = mesh.cell_id(slot);
       proposal.slot = slot;
       proposals.push_back(proposal);
@@ -2748,9 +2773,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       std::fill(pending_round.begin(), pending_round.end(), 0U);
       round = 1;
     }
-    std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
-      return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
-    });
+    // Later rounds keep the order in which the previous round's insertions,
+    // taken along the curve, created their cells.
+    if (pass == 0) {
+      std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
+        return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
+      });
+    }
     for (const Proposal& proposal : proposals) {
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {
         continue;

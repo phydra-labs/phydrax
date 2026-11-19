@@ -268,6 +268,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) sorts only its
+  first round of proposals along the Hilbert curve: later rounds take the
+  cells in the order the previous round's insertions created them, which is
+  already curve order. The local feature size skips segments and facets
+  whose boxes lie beyond the current bound (same sizes). Ledger L3 shapes at
+  their Gmsh HXT element counts (now within 0.7% of them), refine + improve:
+  sphere 1.17 + 0.20 s, torus 1.41 + 0.23 s, two cylinders 1.11 + 0.20 s.
+  Refined meshes change.
 - Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) screens
   each cell in closed form (no trigonometry or square roots: radius-edge,
   dihedral sines, relative determinant, orientation by the floating stage of
