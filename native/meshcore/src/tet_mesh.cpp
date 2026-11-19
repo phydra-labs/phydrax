@@ -196,19 +196,6 @@ int32_t TetMesh::assign_initial_ids(
   }
 }
 
-bool TetMesh::live_vertex(std::int32_t slot) const noexcept {
-  return slot >= 0 && static_cast<std::size_t>(slot) < vertex_live_.size() &&
-         vertex_live_[static_cast<std::size_t>(slot)] != 0;
-}
-
-std::int32_t TetMesh::vertex_slot(std::uint64_t logical_id) const noexcept {
-  return vertex_index_.slot(logical_id);
-}
-
-std::int32_t TetMesh::cell_slot(std::uint64_t logical_id) const noexcept {
-  return cell_index_.slot(logical_id);
-}
-
 std::unordered_map<std::uint64_t, double> TetMesh::vertex_sizes() const {
   std::unordered_map<std::uint64_t, double> sizes;
   for (std::size_t slot = 0; slot < vertex_sizes_.size() && slot < vertex_live_.size(); ++slot) {
@@ -303,23 +290,6 @@ void TetIdIndex::forget(std::uint64_t id) noexcept {
   if (value >= 0 || value == kPending) --live_;
 }
 
-std::uint64_t TetMesh::vertex_id(std::int32_t slot) const noexcept {
-  return slot >= 0 && static_cast<std::size_t>(slot) < vertex_ids_.size()
-             ? vertex_ids_[static_cast<std::size_t>(slot)]
-             : std::numeric_limits<std::uint64_t>::max();
-}
-
-std::uint64_t TetMesh::cell_id(std::int32_t slot) const noexcept {
-  return slot >= 0 && static_cast<std::size_t>(slot) < cell_ids_.size()
-             ? cell_ids_[static_cast<std::size_t>(slot)]
-             : std::numeric_limits<std::uint64_t>::max();
-}
-
-const double* TetMesh::point(std::int32_t slot) const noexcept {
-  if (!live_vertex(slot)) return nullptr;
-  return points_.data() + 3 * static_cast<std::size_t>(slot);
-}
-
 const SourceWitness& TetMesh::witness(std::int32_t slot) const noexcept {
   static const SourceWitness none{};
   return slot >= 0 && static_cast<std::size_t>(slot) < witnesses_.size()
@@ -342,12 +312,6 @@ double TetMesh::protection_radius(std::int32_t slot) const noexcept {
 bool TetMesh::protected_vertex(std::int32_t slot) const noexcept {
   return slot >= 0 && static_cast<std::size_t>(slot) < protected_vertices_.size() &&
          protected_vertices_[static_cast<std::size_t>(slot)] != 0;
-}
-
-const Tetrahedron& TetMesh::tet(std::int32_t slot) const noexcept {
-  static const Tetrahedron dead{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
-                                {-1, -1, -1, -1}, 0, 0};
-  return complex_.live(slot) ? complex_.tets[static_cast<std::size_t>(slot)] : dead;
 }
 
 }  // namespace phx::mc

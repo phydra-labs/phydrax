@@ -558,17 +558,39 @@ class TetMesh {
 
   // Number of vertex slots (live and dead).
   std::size_t vertex_slot_count() const noexcept { return vertex_ids_.size(); }
-  bool live_vertex(std::int32_t slot) const noexcept;
-  std::int32_t vertex_slot(std::uint64_t logical_id) const noexcept;
-  std::int32_t cell_slot(std::uint64_t logical_id) const noexcept;
-  std::uint64_t vertex_id(std::int32_t slot) const noexcept;
-  std::uint64_t cell_id(std::int32_t slot) const noexcept;
-  const double* point(std::int32_t slot) const noexcept;
+  // The hot accessors are defined here so the kernels inline them.
+  bool live_vertex(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < vertex_live_.size() &&
+           vertex_live_[static_cast<std::size_t>(slot)] != 0;
+  }
+  std::int32_t vertex_slot(std::uint64_t logical_id) const noexcept {
+    return vertex_index_.slot(logical_id);
+  }
+  std::int32_t cell_slot(std::uint64_t logical_id) const noexcept {
+    return cell_index_.slot(logical_id);
+  }
+  std::uint64_t vertex_id(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < vertex_ids_.size()
+               ? vertex_ids_[static_cast<std::size_t>(slot)]
+               : std::numeric_limits<std::uint64_t>::max();
+  }
+  std::uint64_t cell_id(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < cell_ids_.size()
+               ? cell_ids_[static_cast<std::size_t>(slot)]
+               : std::numeric_limits<std::uint64_t>::max();
+  }
+  const double* point(std::int32_t slot) const noexcept {
+    return live_vertex(slot) ? points_.data() + 3 * static_cast<std::size_t>(slot) : nullptr;
+  }
   const SourceWitness& witness(std::int32_t slot) const noexcept;
   std::int8_t vertex_dimension(std::int32_t slot) const noexcept;
   double protection_radius(std::int32_t slot) const noexcept;
   bool protected_vertex(std::int32_t slot) const noexcept;
-  const Tetrahedron& tet(std::int32_t slot) const noexcept;
+  const Tetrahedron& tet(std::int32_t slot) const noexcept {
+    static const Tetrahedron dead{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
+                                  {-1, -1, -1, -1}, 0, 0};
+    return complex_.live(slot) ? complex_.tets[static_cast<std::size_t>(slot)] : dead;
+  }
   bool positive(const std::int32_t* vertices) const;
   // The exact position of a live vertex: the source point S of its witness
   // (authoritative; the carrier is its correctly rounded realization), else
@@ -684,13 +706,16 @@ class TetMesh {
   // at `point` (no source witness) with size target `size` (0: none). The
   // caller has checked that the cavity is one region with no constrained
   // face, constrained segment or vertex inside, and that every cone cell
-  // over `boundary` (cavity cell, face slot whose neighbor stays) is
-  // positive on carriers; a cone over a source-witnessed vertex is checked
-  // exactly here. New cells and the vertex take fresh IDs and no lineage.
-  // Created cell slots are returned in `created`.
+  // over `boundary` (cavity cell and face slot whose neighbor stays, that
+  // neighbor and its face slot) is positive on carriers; `vertices` are the
+  // distinct vertices of the boundary faces. A cone over a source-witnessed
+  // vertex is checked exactly here. New cells and the vertex take fresh IDs
+  // and no lineage. Created cell slots are returned in `created`, one per
+  // boundary face in order.
   TetEditStatus insert_interior_vertex(const double* point, double size,
                                        std::span<const std::int32_t> cells,
-                                       std::span<const std::pair<std::int32_t, int>> boundary,
+                                       std::span<const BoundaryFacet> boundary,
+                                       std::span<const std::int32_t> vertices,
                                        std::vector<std::int32_t>& created);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
@@ -910,9 +935,16 @@ class TetMesh {
     std::int32_t apex = -1;
     std::array<std::int32_t, 4> vertices{};
   };
+  // An outer edge of a cone cell's face through the center, waiting for the
+  // second cone cell that holds it (`cell` -1 once paired).
+  struct ConeEdge {
+    static constexpr std::uint64_t kEmpty = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t key = kEmpty;
+    std::int32_t cell = -1;
+    std::int32_t face = -1;
+  };
   std::vector<ConeFace> cone_faces_;
-  std::vector<std::uint64_t> cone_edge_keys_;
-  std::vector<std::int64_t> cone_edge_sides_;
+  std::vector<ConeEdge> cone_edges_;
 };
 
 }  // namespace phx::mc

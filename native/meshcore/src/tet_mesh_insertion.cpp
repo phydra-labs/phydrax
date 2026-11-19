@@ -3016,7 +3016,8 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
 
 TetEditStatus TetMesh::insert_interior_vertex(
     const double* point, double size, std::span<const std::int32_t> cells,
-    std::span<const std::pair<std::int32_t, int>> boundary, std::vector<std::int32_t>& created) {
+    std::span<const BoundaryFacet> boundary, std::span<const std::int32_t> vertices,
+    std::vector<std::int32_t>& created) {
   created.clear();
   if (periodic_identity_.bound || !periodic_orbits_.empty() || !quotient_cells_.empty() ||
       cells.empty() || boundary.size() < 4) {
@@ -3029,6 +3030,7 @@ TetEditStatus TetMesh::insert_interior_vertex(
   }
   if (vertex_ids_.size() >= static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
       boundary.size() > std::numeric_limits<std::uint64_t>::max() - next_cell_id_ ||
+      boundary.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max() - 3) ||
       next_vertex_id_ == std::numeric_limits<std::uint64_t>::max() ||
       generation_ == std::numeric_limits<std::uint64_t>::max()) {
     return TetEditStatus::kIndexOverflow;
@@ -3036,6 +3038,12 @@ TetEditStatus TetMesh::insert_interior_vertex(
   const std::int32_t center = static_cast<std::int32_t>(vertex_ids_.size());
   const std::int32_t region = complex_.region(cells.front());
   const SourceWitness no_witness{};
+  // Carriers are the exact points of unwitnessed vertices, whose cones the
+  // caller checked; a cone over a witnessed vertex is decided on its source
+  // point.
+  const bool witnessed = std::any_of(vertices.begin(), vertices.end(), [&](std::int32_t vertex) {
+    return witness(vertex).stratum != SourceStratum::kNone;
+  });
   const std::uint64_t vertex_id = next_vertex_id_;
   std::size_t staged_cells = 0;
   bool vertex_staged = false;
@@ -3045,30 +3053,28 @@ TetEditStatus TetMesh::insert_interior_vertex(
   };
   try {
     cone_faces_.clear();
-    for (const auto& [cell, face] : boundary) {
-      const Tetrahedron& tet = complex_.tets[static_cast<std::size_t>(cell)];
+    for (const BoundaryFacet& face : boundary) {
+      if (!complex_.live(face.tet) || face.slot < 0 || face.slot > 3 || face.back < 0 ||
+          face.back > 3 || !complex_.live(face.outside)) {
+        return TetEditStatus::kRejectedTopology;
+      }
+      const Tetrahedron& tet = complex_.tets[static_cast<std::size_t>(face.tet)];
+      if (tet.n[face.slot] != face.outside ||
+          complex_.tets[static_cast<std::size_t>(face.outside)].n[face.back] != face.tet) {
+        return TetEditStatus::kRejectedTopology;
+      }
       ConeFace cone;
       std::copy_n(tet.v, 4, cone.vertices.begin());
-      cone.vertices[static_cast<std::size_t>(face)] = center;
-      cone.apex = face;
-      cone.outside = tet.n[face];
-      if (!complex_.live(cone.outside)) return TetEditStatus::kRejectedTopology;
-      cone.outside_face = neighbor_slot(complex_.tets[static_cast<std::size_t>(cone.outside)], cell);
-      if (cone.outside_face < 0) return TetEditStatus::kRejectedTopology;
-      cone.constraint = complex_.constraint(cell, face);
-      // Carriers are the exact points of unwitnessed vertices, whose cone
-      // the caller checked; a witnessed corner is decided on its source point.
-      bool witnessed = false;
-      for (int corner = 0; corner < 4; ++corner) {
-        if (corner == face) continue;
-        witnessed = witnessed ||
-                    witnesses_[static_cast<std::size_t>(tet.v[corner])].stratum != SourceStratum::kNone;
-      }
+      cone.vertices[static_cast<std::size_t>(face.slot)] = center;
+      cone.apex = face.slot;
+      cone.outside = face.outside;
+      cone.outside_face = face.back;
+      cone.constraint = complex_.constraint(face.tet, face.slot);
       if (witnessed) {
         const double* carriers[4];
         const SourceWitness* records[4];
         for (int corner = 0; corner < 4; ++corner) {
-          if (corner == face) {
+          if (corner == face.slot) {
             carriers[corner] = point;
             records[corner] = &no_witness;
           } else {
@@ -3100,8 +3106,7 @@ TetEditStatus TetMesh::insert_interior_vertex(
     created.reserve(boundary.size());
     std::size_t table = 16;
     while (table < 4 * boundary.size()) table *= 2;
-    cone_edge_keys_.assign(table, std::numeric_limits<std::uint64_t>::max());
-    cone_edge_sides_.resize(table);
+    cone_edges_.assign(table, ConeEdge{});
     if (vertex_index_.used(vertex_id)) return TetEditStatus::kRejectedTopology;
     vertex_index_.bind(vertex_id, TetIdIndex::kPending);
     vertex_staged = true;
@@ -3147,17 +3152,21 @@ TetEditStatus TetMesh::insert_interior_vertex(
   if (cell_ids_.size() < complex_.tets.size()) {
     cell_ids_.resize(complex_.tets.size(), std::numeric_limits<std::uint64_t>::max());
   }
-  const std::size_t mask = cone_edge_keys_.size() - 1;
+  // A face through the center is matched by its other edge: the first cell
+  // to hold it waits in `cone_edges_` for the second. Every outer face keeps
+  // the label of the removed cell, which the cell beyond holds as well, so
+  // each created cell is labeled on its own side only.
+  const std::size_t mask = cone_edges_.size() - 1;
   bool linked = true;
+  std::size_t unmatched = 0;  // faces through the center not yet paired
   for (std::size_t row = 0; row < cone_faces_.size(); ++row) {
     const ConeFace& cone = cone_faces_[row];
     const std::int32_t slot = created[row];
     Tetrahedron& tet = complex_.tets[static_cast<std::size_t>(slot)];
     tet = Tetrahedron{{cone.vertices[0], cone.vertices[1], cone.vertices[2], cone.vertices[3]},
-                      {-1, -1, -1, -1}, 0, 0};
+                      {-1, -1, -1, -1}, 0, 0, 0, region};
     tet.n[cone.apex] = cone.outside;
     complex_.tets[static_cast<std::size_t>(cone.outside)].n[cone.outside_face] = slot;
-    // A face through the center is matched by its other edge.
     for (int face = 0; face < 4; ++face) {
       if (face == cone.apex) continue;
       std::int32_t ends[2]{};
@@ -3170,43 +3179,32 @@ TetEditStatus TetMesh::insert_interior_vertex(
           (static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::min(ends[0], ends[1]))) << 32) |
           static_cast<std::uint32_t>(std::max(ends[0], ends[1]));
       std::size_t probe = static_cast<std::size_t>((key * 0x9e3779b97f4a7c15ULL) >> 40) & mask;
-      while (cone_edge_keys_[probe] != std::numeric_limits<std::uint64_t>::max() &&
-             cone_edge_keys_[probe] != key) {
+      while (cone_edges_[probe].key != ConeEdge::kEmpty && cone_edges_[probe].key != key) {
         probe = (probe + 1) & mask;
       }
-      if (cone_edge_keys_[probe] == key) {
-        const std::int64_t side = cone_edge_sides_[probe];
-        if (side < 0) {
+      ConeEdge& entry = cone_edges_[probe];
+      if (entry.key == key) {
+        if (entry.cell < 0) {
           linked = false;
           continue;
         }
-        const std::int32_t other = static_cast<std::int32_t>(side >> 2);
-        const int other_face = static_cast<int>(side & 3);
-        tet.n[face] = other;
-        complex_.tets[static_cast<std::size_t>(other)].n[other_face] = slot;
-        cone_edge_sides_[probe] = -1;
+        tet.n[face] = entry.cell;
+        complex_.tets[static_cast<std::size_t>(entry.cell)].n[entry.face] = slot;
+        entry.cell = -1;
+        --unmatched;
       } else {
-        cone_edge_keys_[probe] = key;
-        cone_edge_sides_[probe] = (static_cast<std::int64_t>(slot) << 2) | face;
+        entry = ConeEdge{key, slot, face};
+        ++unmatched;
       }
     }
-  }
-  for (std::size_t probe = 0; probe < cone_edge_keys_.size(); ++probe) {
-    linked = linked && (cone_edge_keys_[probe] == std::numeric_limits<std::uint64_t>::max() ||
-                        cone_edge_sides_[probe] < 0);
-  }
-  if (!linked) return TetEditStatus::kStaleGeneration;
-  for (std::size_t row = 0; row < cone_faces_.size(); ++row) {
-    const std::int32_t slot = created[row];
-    complex_.set_region(slot, region);
-    for (int face = 0; face < 4; ++face) {
-      complex_.set_facet_constraint(
-          slot, face, face == cone_faces_[row].apex ? cone_faces_[row].constraint : kNoConstraint);
+    if (cone.constraint != kNoConstraint) {
+      complex_.set_cell_face_constraint(slot, cone.apex, cone.constraint);
     }
     const std::uint64_t id = next_cell_id_ + row;
     cell_ids_[static_cast<std::size_t>(slot)] = id;
     cell_index_.set_slot(id, slot);
   }
+  if (!linked || unmatched != 0) return TetEditStatus::kStaleGeneration;
   next_cell_id_ += cone_faces_.size();
   complex_.finite_count += static_cast<std::int64_t>(cone_faces_.size()) -
                            static_cast<std::int64_t>(cells.size());

@@ -307,6 +307,99 @@
   direction bounds each cover sample by explicit points of its nearest
   triangles in vectorized binary64 with a proven rounding margin instead of
   an exact rational search.
+- Native tetrahedral refinement's Bowyer-Watson growth tests a neighbor's
+  circumsphere once per cavity (a cell found outside keeps its own visit
+  stamp) and decides clear insphere signs with the predicate's own floating
+  stage inlined. Same meshes on the six ledger rows; L3 refinement 1.20 ->
+  1.16 s (torus), 0.97 -> 0.95 s (two cylinders).
+- Native tetrahedral refinement's interior cone commit takes each cavity
+  boundary face with the cell beyond it and that cell's face (found during
+  the star check) and the cavity's distinct boundary vertices, so it checks
+  source witnesses once per vertex instead of per face corner, keeps its
+  edge-pairing entries in one table, and writes each cone cell's region and
+  outer label with the cell. Its local feature sizes measure only point
+  features within the query radius and sample one edge per cell for the grid
+  cell; improvement's first quality sweep reads each cell by slot and
+  computes the dihedral target's sine once. Same meshes on the six ledger
+  rows; L3 refine + improve about 3% faster.
+- Native tetrahedral refinement's interior cavity keeps its walk and cavity
+  marks in the cells' own visit stamps instead of two slot-sized banks,
+  decides each cone cell's exact and binary64 positivity from one floating
+  orientation stage (the exact predicate only within its error bound), and
+  the complex writes a constraint ID only for a constrained face. Same meshes
+  on the six ledger rows; L3 torus refinement about 2% faster.
+- Native tetrahedral cells (`Tetrahedron`, shared by Delaunay/PLC
+  construction, recovery and the tetrahedral mesh) carry their region and a
+  per-face constrained flag in one 48-byte record; the complex keeps only the
+  constraint IDs, read when a flag is set. Walks and cavities read one
+  record per cell instead of three banks. Same triangulations, recoveries
+  and meshes; L3 refinement 1.24 -> 1.20 s (torus), 1.06 -> 1.01 s (two
+  cylinders); recovery unchanged (sphere 81,920 0.95 s, torus 90k 1.51 s).
+- Native tetrahedral refinement scans acute input features over flat sorted
+  incidence rows instead of ordered maps and sets of every boundary edge,
+  screens a later round's candidate cells only when their turn comes (most
+  die to earlier insertions of the round), and its constrained-Delaunay flip
+  pass marks seed cells by slot instead of binary-searching their IDs. Same
+  features, flips and meshes; L3 refinement 1.40 -> 1.24 s (torus),
+  1.10 -> 1.06 s (two cylinders).
+- Native tetrahedral refinement keeps its local-feature-size and protection
+  grids as sorted flat cell ranges behind one open-addressing table instead
+  of a hash map of vectors (same sizes and protected regions, same meshes);
+  L3 refinement 1.41 -> 1.36 s (torus), 1.11 -> 1.09 s (two cylinders).
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) sorts only its
+  first round of proposals along the Hilbert curve: later rounds take the
+  cells in the order the previous round's insertions created them, which is
+  already curve order. The local feature size skips segments and facets
+  whose boxes lie beyond the current bound (same sizes). Ledger L3 shapes at
+  their Gmsh HXT element counts (now within 0.7% of them), refine + improve:
+  sphere 1.17 + 0.20 s, torus 1.41 + 0.23 s, two cylinders 1.11 + 0.20 s.
+  Refined meshes change.
+- Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) screens
+  each cell in closed form (no trigonometry or square roots: radius-edge,
+  dihedral sines, relative determinant, orientation by the floating stage of
+  orient3d, each with a relative margin of 1e-6) and fully measures a cell
+  that clearly meets its targets only when an edit first reads it. The
+  improved mesh is unchanged; on the ledger L3 shapes improvement takes
+  0.19-0.22 s instead of 0.25-0.28 s.
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) places points
+  sliver-aware: when a cone cell that meets the radius-edge and size criteria
+  (and so is never refined) would have a dihedral angle below 15 degrees, up
+  to three points displaced by 0.3 circumradii from the circumcenter, inside
+  the refined cell's circumball and under the same spacing guard, are tried
+  and the best is inserted. Refinement then leaves about a third of the
+  slivers, and improvement has that much less to do. Cells are screened
+  against the criteria in closed form (cell_shape decides only cells within a
+  relative 1e-6 of a limit), cone cells that clearly meet them are not
+  revisited, a proposal is measured only when its turn comes (most die to
+  earlier insertions of their round), the circumcenter's cavity is built once,
+  and proposals are ordered on a 4096^3 Hilbert grid. Ledger L3 shapes at
+  their Gmsh HXT element counts (one thread, refine + improve): sphere
+  1.47 + 0.84 -> 1.29 + 0.25 s, torus 1.76 + 0.88 -> 1.58 + 0.28 s, two
+  cylinders 1.36 + 0.81 -> 1.21 + 0.25 s, with 1-2% more cells; 0 unmet,
+  minimum dihedral 15 degrees, radius-edge at most 1.9, boundary unchanged.
+  Refined meshes and vertex counts change.
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) measures each
+  proposed cell once per round, records unmet cells from the proposed cells
+  instead of a whole-mesh pass, decides clear cavity orientation tests by the
+  predicate's floating stage inline, labels created cells on their own side,
+  computes Hilbert keys without branches (same keys), and tests each face
+  between two unchanged seed cells once in the constrained Delaunay flip
+  pass (the test is symmetric). The hot `TetMesh` accessors are inline. On
+  the ledger L3 shapes at their Gmsh HXT element counts (one thread):
+  sphere 2.06 -> 1.66 s, torus 2.01 -> 1.80 s, two cylinders 1.68 -> 1.39 s;
+  meshes may differ where the flip pass now flips from the other side.
+- Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) measures
+  every cell once and afterwards only the cells an accepted edit creates or
+  moves, keeping each live cell's measurement: the vertex phase, the shape
+  pass and the unmet records read only the cells that miss a target, instead
+  of four whole-mesh quality passes and two snapshots. Its worklists are flat
+  heaps (same order as before); a refused edge removal is not recomputed
+  until a vertex it read changes; ring retriangulations skip triangles
+  scoring below the ring's worst cell; edge valences walk around the edge.
+  The whole-boundary retessellation is tried only on boundaries of at most
+  256 faces (its embedding check is quadratic). On the two-cylinder ledger
+  shape (846,031 cells after refinement, one thread) improvement takes
+  0.80 s instead of 1.97 s with the same mesh.
 - The native persistent tetrahedral state keeps cell, vertex, facet and
   segment identities in flat tables indexed by ID (a sparse map only for
   caller-chosen IDs far beyond the used range) and builds its adjacency by

@@ -56,9 +56,13 @@ class LocalIncidence {
   bool insert_logical(const TetMesh& mesh, std::int32_t cell,
                       const LocalCell& vertices);
   bool erase(std::int32_t cell, const LocalCell& vertices);
+  // The finite cells containing `vertex` into `cells` (unsorted).
+  void collect_star(std::int32_t vertex, std::vector<std::int32_t>& cells) const;
   // Finite cells containing `vertex`, sorted by cell ID.
   Star vertex_star(std::int32_t vertex) const;
   std::size_t edge_valence(std::int32_t first, std::int32_t second) const;
+  // The same count by walking around the edge from `seed`, a cell holding it.
+  std::size_t edge_valence(std::int32_t first, std::int32_t second, std::int32_t seed) const;
   // Finite cells containing the edge (sorted slots); empty if it is absent.
   // The span stays valid until the next edge_star call.
   std::span<const std::int32_t> edge_star(std::int32_t first, std::int32_t second) const;
@@ -90,8 +94,6 @@ class LocalIncidence {
                                       std::vector<std::uint64_t>& created_cells);
 
  private:
-  // The finite cells containing `vertex` into `cells` (unsorted).
-  void collect_star(std::int32_t vertex, std::vector<std::int32_t>& cells) const;
   // The finite cells containing both endpoints into `cells` (sorted slots).
   void collect_edge(std::int32_t first, std::int32_t second,
                     std::vector<std::int32_t>& cells) const;
