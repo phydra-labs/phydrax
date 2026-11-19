@@ -434,125 +434,105 @@ void collect_unmet(const TetMesh& mesh, double radius_edge_bound,
   }
 }
 
-struct GridKey {
-  std::array<std::int64_t, 3> cell{};
-  bool operator==(const GridKey&) const noexcept = default;
-};
-struct GridHash {
-  std::size_t operator()(const GridKey& key) const noexcept {
-    std::uint64_t mixed = static_cast<std::uint64_t>(key.cell[0]) * 0x9e3779b97f4a7c15ULL ^
-                          static_cast<std::uint64_t>(key.cell[1]) * 0xc2b2ae3d27d4eb4fULL ^
-                          static_cast<std::uint64_t>(key.cell[2]) * 0x165667b19e3779f9ULL;
-    mixed ^= mixed >> 29;
-    return static_cast<std::size_t>(mixed);
+// A dense uniform grid of cubic cells over a box; coordinates outside it
+// clamp to its boundary cells, so any box query reads a superset of the
+// cells its part inside the grid meets.
+struct DenseFrame {
+  double origin[3]{};
+  double cell = 0.0;
+  std::size_t dims[3]{};
+
+  // Cells of side at least `side` over [lower, upper], the side grown until
+  // there are at most `cap` cells. False for a non-finite frame.
+  bool fit(const double* lower, const double* upper, double side, double cap) {
+    for (int attempt = 0; attempt < 64; ++attempt) {
+      if (!(side > 0.0) || !std::isfinite(side)) return false;
+      double count = 1.0;
+      double spans[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        spans[axis] = std::floor((upper[axis] - lower[axis]) / side) + 1.0;
+        if (!(spans[axis] >= 1.0) || !std::isfinite(spans[axis])) return false;
+        count *= spans[axis];
+      }
+      if (count <= cap) {
+        for (int axis = 0; axis < 3; ++axis) {
+          origin[axis] = lower[axis];
+          dims[axis] = static_cast<std::size_t>(spans[axis]);
+        }
+        cell = side;
+        return true;
+      }
+      side *= std::max(1.125, std::cbrt(count / cap));
+    }
+    return false;
+  }
+  std::size_t size() const noexcept { return dims[0] * dims[1] * dims[2]; }
+  // The clamped cell coordinate of the finite or infinite `value` on `axis`.
+  std::size_t coordinate(double value, std::size_t axis) const noexcept {
+    const double scaled = std::floor((value - origin[axis]) / cell);
+    if (!(scaled > 0.0)) return 0;
+    const double top = static_cast<double>(dims[axis] - 1);
+    return scaled < top ? static_cast<std::size_t>(scaled) : dims[axis] - 1;
+  }
+  std::size_t index(std::size_t x, std::size_t y, std::size_t z) const noexcept {
+    return (z * dims[1] + y) * dims[0] + x;
   }
 };
 
-bool grid_cell(const double* point, double cell, GridKey& key) {
-  for (int axis = 0; axis < 3; ++axis) {
-    const double scaled = std::floor(point[axis] / cell);
-    if (!(std::abs(scaled) < 0x1p62)) return false;
-    key.cell[static_cast<std::size_t>(axis)] = static_cast<std::int64_t>(scaled);
-  }
-  return true;
-}
-
-// A uniform grid of items registered in the cells their boxes meet, built
-// once and then queried: the (cell, item) pairs sorted by cell, the occupied
-// cells in an open-addressing table over their ranges.
-class CellGrid {
+// Items of a DenseFrame grouped by cell in registration order (a counting
+// sort); an item is registered in every cell of its cell range.
+template <class Item>
+class DenseBuckets {
  public:
-  bool add(double cell, const double* lower, const double* upper, std::int32_t item) {
-    GridKey first;
-    GridKey last;
-    if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
-    for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
-      for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
-        for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
-          entries_.push_back({GridKey{{x, y, z}}, item});
+  // `range(row, first, last)` sets the inclusive cell range of item `row` per
+  // axis or returns false to skip it; `make(row)` returns its record.
+  template <class Range, class Make>
+  void build(const DenseFrame& frame, std::size_t item_count, Range&& range, Make&& make) {
+    starts_.assign(frame.size() + 1, 0U);
+    std::vector<std::size_t> cursor;
+    for (int pass = 0; pass < 2; ++pass) {
+      for (std::size_t row = 0; row < item_count; ++row) {
+        std::size_t first[3];
+        std::size_t last[3];
+        if (!range(row, first, last)) continue;
+        for (std::size_t z = first[2]; z <= last[2]; ++z) {
+          for (std::size_t y = first[1]; y <= last[1]; ++y) {
+            for (std::size_t x = first[0]; x <= last[0]; ++x) {
+              const std::size_t at = frame.index(x, y, z);
+              if (pass == 0) {
+                ++starts_[at + 1];
+              } else {
+                items_[cursor[at]++] = make(row);
+              }
+            }
+          }
         }
       }
-    }
-    return true;
-  }
-
-  // Groups the registered pairs by cell (items in registration order).
-  void finish() {
-    std::stable_sort(entries_.begin(), entries_.end(), [](const Entry& a, const Entry& b) {
-      return a.key.cell < b.key.cell;
-    });
-    keys_.clear();
-    starts_.clear();
-    items_.resize(entries_.size());
-    for (std::size_t row = 0; row < entries_.size(); ++row) {
-      if (row == 0 || !(entries_[row].key == entries_[row - 1].key)) {
-        keys_.push_back(entries_[row].key);
-        starts_.push_back(static_cast<std::uint32_t>(row));
+      if (pass == 0) {
+        for (std::size_t at = 1; at < starts_.size(); ++at) starts_[at] += starts_[at - 1];
+        items_.resize(starts_.back());
+        cursor.assign(starts_.begin(), starts_.end() - 1);
       }
-      items_[row] = entries_[row].item;
-    }
-    starts_.push_back(static_cast<std::uint32_t>(entries_.size()));
-    std::vector<Entry>().swap(entries_);
-    std::size_t size = 16;
-    while (size < 2 * keys_.size()) size *= 2;
-    table_.assign(size, -1);
-    for (std::size_t row = 0; row < keys_.size(); ++row) {
-      std::size_t probe = GridHash{}(keys_[row]) & (size - 1);
-      while (table_[probe] >= 0) probe = (probe + 1) & (size - 1);
-      table_[probe] = static_cast<std::int32_t>(row);
     }
   }
 
-  bool empty() const noexcept { return keys_.empty(); }
-
-  // The items of the cell `key` (empty when unoccupied).
-  std::span<const std::int32_t> items(const GridKey& key) const noexcept {
-    if (keys_.empty()) return {};
-    const std::size_t mask = table_.size() - 1;
-    for (std::size_t probe = GridHash{}(key) & mask; table_[probe] >= 0; probe = (probe + 1) & mask) {
-      const std::size_t row = static_cast<std::size_t>(table_[probe]);
-      if (keys_[row] == key) {
-        return std::span<const std::int32_t>(items_).subspan(starts_[row], starts_[row + 1] - starts_[row]);
-      }
-    }
-    return {};
-  }
-
-  // Calls `visit` on the items of every occupied cell meeting [lower, upper];
-  // a box spanning more cells than are occupied reads every occupied cell.
-  template <class Visit>
-  bool visit_box(double cell, const double* lower, const double* upper, Visit&& visit) const {
-    GridKey first;
-    GridKey last;
-    if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
-    double span = 1.0;
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-      span *= static_cast<double>(last.cell[axis] - first.cell[axis]) + 1.0;
-    }
-    if (span > static_cast<double>(keys_.size())) {
-      for (std::int32_t item : items_) visit(item);
-      return true;
-    }
-    for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
-      for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
-        for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
-          for (std::int32_t item : items(GridKey{{x, y, z}})) visit(item);
-        }
-      }
-    }
-    return true;
+  std::span<const Item> items(std::size_t at) const noexcept {
+    return std::span<const Item>(items_).subspan(starts_[at], starts_[at + 1] - starts_[at]);
   }
 
  private:
-  struct Entry {
-    GridKey key;
-    std::int32_t item;
-  };
-  std::vector<Entry> entries_;
-  std::vector<GridKey> keys_;
-  std::vector<std::uint32_t> starts_;
-  std::vector<std::int32_t> items_;
-  std::vector<std::int32_t> table_;
+  std::vector<std::size_t> starts_;
+  std::vector<Item> items_;
+};
+
+// A point, line or plane feature of local_feature_sizes: its metric box, its
+// corner slots (-1 past the last corner) and, for a feature registered in
+// several cells, its row among those (else -1).
+struct FeatureRecord {
+  double lower[3];
+  double upper[3];
+  std::int32_t corners[3];
+  std::int32_t row;
 };
 
 // The largest metric length of one binary64 coordinate step at `p`.
@@ -583,8 +563,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
   // The shortest incident edge bounds lambda from above and sets the query
-  // radius; one edge per cell samples the edge lengths for the grid cell.
-  std::vector<double> lengths;
+  // radius.
   const TetrahedralComplex& complex = mesh.complex();
   for (std::size_t row = 0; row < complex.tets.size(); ++row) {
     const std::int32_t cell = static_cast<std::int32_t>(row);
@@ -597,122 +576,157 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
         const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
         sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
         sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
-        if (first == 0 && second == 1) lengths.push_back(length);
       }
     }
   }
-  if (lengths.empty()) return false;
 
-  std::vector<std::array<std::int32_t, 2>> lines;
-  std::vector<std::array<std::int32_t, 3>> planes;
-  planes.reserve(facets.size());
+  // Features by corner slots (-1 past the last corner): the live vertices,
+  // the planes, the distinct lines.
+  std::vector<std::array<std::int32_t, 3>> features;
+  std::vector<std::uint64_t> lines;
   lines.reserve(segments.size() + 3 * facets.size());
-  const auto ordered = [](std::int32_t a, std::int32_t b) {
-    return a < b ? std::array<std::int32_t, 2>{a, b} : std::array<std::int32_t, 2>{b, a};
+  const auto line_key = [](std::int32_t a, std::int32_t b) {
+    const auto low = static_cast<std::uint32_t>(std::min(a, b));
+    const auto high = static_cast<std::uint32_t>(std::max(a, b));
+    return (static_cast<std::uint64_t>(low) << 32) | high;
   };
   for (const TetSnapshotSegment& segment : segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    lines.push_back(ordered(a, b));
+    lines.push_back(line_key(a, b));
   }
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
+      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
+    }
+  }
+  const std::size_t plane_begin = features.size();
   for (const TetSnapshotFacet& facet : facets) {
     std::array<std::int32_t, 3> slots{};
     for (std::size_t corner = 0; corner < 3; ++corner) {
       slots[corner] = mesh.vertex_slot(facet.vertices[corner]);
       if (!mesh.live_vertex(slots[corner])) return false;
     }
-    planes.push_back(slots);
+    features.push_back(slots);
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      lines.push_back(ordered(slots[corner], slots[(corner + 1) % 3]));
+      lines.push_back(line_key(slots[corner], slots[(corner + 1) % 3]));
     }
   }
+  const std::size_t plane_end = features.size();
   std::sort(lines.begin(), lines.end());
   lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+  for (std::uint64_t key : lines) {
+    features.push_back({static_cast<std::int32_t>(key >> 32),
+                        static_cast<std::int32_t>(key & 0xffffffffU), -1});
+  }
 
-  // Cells of the median sampled edge length, coarsened so that no feature box
-  // spans more than 17 cells per axis.
-  std::nth_element(lengths.begin(), lengths.begin() + static_cast<std::ptrdiff_t>(lengths.size() / 2),
-                   lengths.end());
-  double cell = lengths[lengths.size() / 2];
-  // Metric images of the live vertices, feature boxes over them.
+  // Cells of 1.5 median shortest incident edges (measured best on the ledger
+  // shapes: a query reads about 3 cells per axis).
+  std::vector<double> radii;
+  radii.reserve(slot_count);
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (std::isfinite(sizes[slot])) radii.push_back(sizes[slot]);
+  }
+  if (radii.empty()) return false;
+  std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2),
+                   radii.end());
+  double cell = 1.5 * radii[radii.size() / 2];
+  // The edge of a plane opposite a corner is a line not incident to it,
+  // measured first (as its line feature would be), so that the query starts
+  // from a near feature.
+  for (std::size_t row = plane_begin; row < plane_end; ++row) {
+    const auto& corners = features[row];
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t vertex = corners[corner];
+      const std::int32_t a = corners[(corner + 1) % 3];
+      const std::int32_t b = corners[(corner + 2) % 3];
+      if (a == b || a == vertex || b == vertex) continue;
+      double& size = sizes[static_cast<std::size_t>(vertex)];
+      size = std::min(size, metric_segment_distance(mesh, mesh.point(vertex),
+                                                    mesh.point(std::min(a, b)),
+                                                    mesh.point(std::max(a, b))));
+    }
+  }
+  // Metric images of the live vertices; the features' metric boxes over them.
   std::vector<std::array<double, 3>> world(slot_count);
+  double frame_lower[3]{infinity, infinity, infinity};
+  double frame_upper[3]{-infinity, -infinity, -infinity};
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
       world[slot] = metric_point(mesh, mesh.point(static_cast<std::int32_t>(slot)));
-    }
-  }
-  const auto feature_box = [&](std::span<const std::int32_t> corners, double* lower,
-                               double* upper) {
-    const auto& first = world[static_cast<std::size_t>(corners[0])];
-    std::copy(first.begin(), first.end(), lower);
-    std::copy(first.begin(), first.end(), upper);
-    for (std::int32_t corner : corners.subspan(1)) {
-      const auto& point = world[static_cast<std::size_t>(corner)];
-      for (int axis = 0; axis < 3; ++axis) {
-        lower[axis] = std::min(lower[axis], point[axis]);
-        upper[axis] = std::max(upper[axis], point[axis]);
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        frame_lower[axis] = std::min(frame_lower[axis], world[slot][axis]);
+        frame_upper[axis] = std::max(frame_upper[axis], world[slot][axis]);
       }
     }
-  };
+  }
+  std::vector<FeatureRecord> records(features.size());
   double extent = 0.0;
-  for (const auto& plane : planes) {
-    double lower[3], upper[3];
-    feature_box(plane, lower, upper);
-    for (int axis = 0; axis < 3; ++axis) extent = std::max(extent, upper[axis] - lower[axis]);
+  for (std::size_t row = 0; row < features.size(); ++row) {
+    FeatureRecord& record = records[row];
+    const auto& corners = features[row];
+    const auto& first = world[static_cast<std::size_t>(corners[0])];
+    std::copy(first.begin(), first.end(), record.lower);
+    std::copy(first.begin(), first.end(), record.upper);
+    for (std::size_t corner = 1; corner < 3 && corners[corner] >= 0; ++corner) {
+      const auto& point = world[static_cast<std::size_t>(corners[corner])];
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        record.lower[axis] = std::min(record.lower[axis], point[axis]);
+        record.upper[axis] = std::max(record.upper[axis], point[axis]);
+      }
+    }
+    std::copy(corners.begin(), corners.end(), record.corners);
+    if (row >= plane_begin && row < plane_end) {
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        extent = std::max(extent, record.upper[axis] - record.lower[axis]);
+      }
+    }
   }
+  // No plane box spans more than 17 cells per axis.
   cell = std::max(cell, extent / 16.0);
-  if (!(cell > 0.0) || !std::isfinite(cell)) return false;
-
-  CellGrid point_grid;
-  CellGrid line_grid;
-  CellGrid plane_grid;
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    const std::int32_t vertex = static_cast<std::int32_t>(slot);
-    if (!mesh.live_vertex(vertex)) continue;
-    if (!point_grid.add(cell, world[slot].data(), world[slot].data(), vertex)) return false;
+  DenseFrame frame;
+  if (!frame.fit(frame_lower, frame_upper, cell,
+                 std::max(4096.0, 8.0 * static_cast<double>(slot_count)))) {
+    return false;
   }
-  // A feature whose box lies farther than lambda from v cannot lower lambda:
-  // the box distance bounds the feature distance from below (a relative
-  // slack of 1e-9 covers the rounding of either).
-  std::vector<std::array<double, 6>> line_boxes(lines.size());
-  std::vector<std::array<double, 6>> plane_boxes(planes.size());
-  for (std::size_t row = 0; row < lines.size(); ++row) {
-    double* box = line_boxes[row].data();
-    feature_box(lines[row], box, box + 3);
-    if (!line_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
-  }
-  for (std::size_t row = 0; row < planes.size(); ++row) {
-    double* box = plane_boxes[row].data();
-    feature_box(planes[row], box, box + 3);
-    if (!plane_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
-  }
-  point_grid.finish();
-  line_grid.finish();
-  plane_grid.finish();
-  const auto beyond = [](const std::array<double, 6>& box, const std::array<double, 3>& point,
-                         double radius) {
-    double squared = 0.0;
-    for (int axis = 0; axis < 3; ++axis) {
-      const double gap = std::max({0.0, box[static_cast<std::size_t>(axis)] - point[static_cast<std::size_t>(axis)],
-                                   point[static_cast<std::size_t>(axis)] - box[static_cast<std::size_t>(axis) + 3]});
-      squared += gap * gap;
-    }
-    return squared > radius * radius * (1.0 + 1e-9);
-  };
-  // A point whose metric image lies farther than `radius` from v's cannot
-  // lower lambda (the relative slack of 1e-9 covers the rounding of either
-  // distance), so only nearer ones are measured.
-  const auto near = [](const std::array<double, 3>& point, const std::array<double, 3>& here,
-                       double radius) {
-    double squared = 0.0;
+  // A small feature (box at most one cell wide per axis) is registered once,
+  // in the cell of its box's lower corner, so a query of radius r reads the
+  // cells of [x - r - cell, x + r]; a large one in every cell its box meets,
+  // and a query reads it once (stamped with the query's vertex slot + 1).
+  const auto small = [&](const FeatureRecord& record) {
     for (std::size_t axis = 0; axis < 3; ++axis) {
-      const double gap = point[axis] - here[axis];
-      squared += gap * gap;
+      if (!(record.upper[axis] - record.lower[axis] <= frame.cell)) return false;
     }
-    return squared <= radius * radius * (1.0 + 1e-9);
+    return true;
   };
+  std::int32_t large_count = 0;
+  for (FeatureRecord& record : records) record.row = small(record) ? -1 : large_count++;
+  DenseBuckets<FeatureRecord> small_grid;
+  DenseBuckets<FeatureRecord> large_grid;
+  small_grid.build(frame, records.size(), [&](std::size_t row, std::size_t* first,
+                                              std::size_t* last) {
+    const FeatureRecord& record = records[row];
+    if (record.row >= 0) return false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = last[axis] = frame.coordinate(record.lower[axis], axis);
+    }
+    return true;
+  }, [&](std::size_t row) { return records[row]; });
+  large_grid.build(frame, large_count > 0 ? records.size() : 0, [&](std::size_t row,
+                                                                    std::size_t* first,
+                                                                    std::size_t* last) {
+    const FeatureRecord& record = records[row];
+    if (record.row < 0) return false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = frame.coordinate(record.lower[axis], axis);
+      last[axis] = frame.coordinate(record.upper[axis], axis);
+    }
+    return true;
+  }, [&](std::size_t row) { return records[row]; });
+  std::vector<FeatureRecord>().swap(records);
 
+  std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
   smallest = infinity;
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
@@ -721,32 +735,64 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
     const auto& here = world[slot];
-    const double lower[3]{here[0] - lambda, here[1] - lambda, here[2] - lambda};
-    const double upper[3]{here[0] + lambda, here[1] + lambda, here[2] + lambda};
-    const bool visited =
-        point_grid.visit_box(cell, lower, upper, [&](std::int32_t other) {
-          if (other != vertex && near(world[static_cast<std::size_t>(other)], here, lambda)) {
-            lambda = std::min(lambda, metric_distance(mesh, p, mesh.point(other)));
+    // A feature whose box lies farther than lambda from v cannot lower
+    // lambda: the box distance bounds the feature distance from below (a
+    // relative slack of 1e-9 covers the rounding of either); the cell ranges
+    // cover that slack.
+    const auto measure = [&](const FeatureRecord& record) {
+      double squared = 0.0;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double gap = std::max(
+            {0.0, record.lower[axis] - here[axis], here[axis] - record.upper[axis]});
+        squared += gap * gap;
+      }
+      if (squared > lambda * lambda * (1.0 + 1e-9)) return;
+      const std::int32_t* corners = record.corners;
+      if (corners[0] == vertex || corners[1] == vertex || corners[2] == vertex) return;
+      const double distance =
+          corners[1] < 0   ? metric_distance(mesh, p, mesh.point(corners[0]))
+          : corners[2] < 0 ? metric_segment_distance(mesh, p, mesh.point(corners[0]),
+                                                     mesh.point(corners[1]))
+                           : metric_triangle_distance(mesh, p, mesh.point(corners[0]),
+                                                      mesh.point(corners[1]),
+                                                      mesh.point(corners[2]));
+      lambda = std::min(lambda, distance);
+    };
+    const double reach = lambda * (1.0 + 1e-9);
+    std::size_t first[3];
+    std::size_t last[3];
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      first[axis] = frame.coordinate(here[axis] - reach - frame.cell, axis);
+      last[axis] = frame.coordinate(here[axis] + reach, axis);
+    }
+    for (std::size_t z = first[2]; z <= last[2]; ++z) {
+      for (std::size_t y = first[1]; y <= last[1]; ++y) {
+        for (std::size_t x = first[0]; x <= last[0]; ++x) {
+          for (const FeatureRecord& record : small_grid.items(frame.index(x, y, z))) {
+            measure(record);
           }
-        }) &&
-        line_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
-          const auto& line = lines[static_cast<std::size_t>(row)];
-          if (line[0] != vertex && line[1] != vertex &&
-              !beyond(line_boxes[static_cast<std::size_t>(row)], here, lambda)) {
-            lambda = std::min(lambda, metric_segment_distance(
-                                          mesh, p, mesh.point(line[0]), mesh.point(line[1])));
+        }
+      }
+    }
+    if (large_count > 0) {
+      const std::uint32_t stamp = static_cast<std::uint32_t>(slot) + 1U;
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        first[axis] = frame.coordinate(here[axis] - reach, axis);
+      }
+      for (std::size_t z = first[2]; z <= last[2]; ++z) {
+        for (std::size_t y = first[1]; y <= last[1]; ++y) {
+          for (std::size_t x = first[0]; x <= last[0]; ++x) {
+            for (const FeatureRecord& record : large_grid.items(frame.index(x, y, z))) {
+              std::uint32_t& mark = seen[static_cast<std::size_t>(record.row)];
+              if (mark == stamp) continue;
+              mark = stamp;
+              measure(record);
+            }
           }
-        }) &&
-        plane_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
-          const auto& plane = planes[static_cast<std::size_t>(row)];
-          if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex &&
-              !beyond(plane_boxes[static_cast<std::size_t>(row)], here, lambda)) {
-            lambda = std::min(lambda, metric_triangle_distance(
-                                          mesh, p, mesh.point(plane[0]), mesh.point(plane[1]),
-                                          mesh.point(plane[2])));
-          }
-        });
-    if (!visited || !std::isfinite(lambda)) return false;
+        }
+      }
+    }
+    if (!std::isfinite(lambda)) return false;
     // Features nearer than the coordinate spacing at v cannot be separated by
     // a representable point; lambda is floored there, which keeps it positive.
     lambda = std::max(lambda, coordinate_resolution(mesh, p));
@@ -861,8 +907,11 @@ bool measurably_positive(const double* a, const double* b, const double* c,
 
 // insphere (positive when e lies strictly inside the circumsphere of the
 // positively oriented a, b, c, d) through its first, floating stage inlined:
-// Shewchuk's stage A expression and error bound, as the predicate evaluates
-// them, decide the clear cases here.
+// Shewchuk's stage A expression decides the clear cases here, against his
+// bound with the permanent replaced by 25 L X Y Z (X, Y, Z the largest
+// coordinate differences per axis, L the largest lift). Every product in the
+// permanent is at most the matching product of maxima, so it is at most
+// 24 L X Y Z up to a relative 1e-15, and the bound stays valid.
 int inside_sphere(const double* a, const double* b, const double* c, const double* d,
                   const double* e) noexcept {
   const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
@@ -889,27 +938,11 @@ int inside_sphere(const double* a, const double* b, const double* c, const doubl
   const double clift = cex * cex + cey * cey + cez * cez;
   const double dlift = dex * dex + dey * dey + dez * dez;
   const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
-  const double aezplus = std::fabs(aez), bezplus = std::fabs(bez);
-  const double cezplus = std::fabs(cez), dezplus = std::fabs(dez);
-  const double aexbeyplus = std::fabs(aexbey), bexaeyplus = std::fabs(bexaey);
-  const double bexceyplus = std::fabs(bexcey), cexbeyplus = std::fabs(cexbey);
-  const double cexdeyplus = std::fabs(cexdey), dexceyplus = std::fabs(dexcey);
-  const double dexaeyplus = std::fabs(dexaey), aexdeyplus = std::fabs(aexdey);
-  const double aexceyplus = std::fabs(aexcey), cexaeyplus = std::fabs(cexaey);
-  const double bexdeyplus = std::fabs(bexdey), dexbeyplus = std::fabs(dexbey);
-  const double permanent =
-      ((cexdeyplus + dexceyplus) * bezplus + (dexbeyplus + bexdeyplus) * cezplus +
-       (bexceyplus + cexbeyplus) * dezplus) *
-          alift +
-      ((dexaeyplus + aexdeyplus) * cezplus + (aexceyplus + cexaeyplus) * dezplus +
-       (cexdeyplus + dexceyplus) * aezplus) *
-          blift +
-      ((aexbeyplus + bexaeyplus) * dezplus + (bexdeyplus + dexbeyplus) * aezplus +
-       (dexaeyplus + aexdeyplus) * bezplus) *
-          clift +
-      ((bexceyplus + cexbeyplus) * aezplus + (cexaeyplus + aexceyplus) * bezplus +
-       (aexbeyplus + bexaeyplus) * cezplus) *
-          dlift;
+  const double x = std::max({std::fabs(aex), std::fabs(bex), std::fabs(cex), std::fabs(dex)});
+  const double y = std::max({std::fabs(aey), std::fabs(bey), std::fabs(cey), std::fabs(dey)});
+  const double z = std::max({std::fabs(aez), std::fabs(bez), std::fabs(cez), std::fabs(dez)});
+  const double lift = std::max({alift, blift, clift, dlift});
+  const double permanent = 25.0 * lift * (x * y * z);
   constexpr double kEpsilon = 0x1p-53;
   const double errbound = (16.0 + 224.0 * kEpsilon) * kEpsilon * permanent;
   // insphere is the negated Shewchuk determinant.
@@ -1018,6 +1051,10 @@ class InteriorCavity {
           candidate.stamp = member;
           cells.push_back(next);
           stack_.push_back(next);
+          // Its neighbors are read next (the stack is last in, first out).
+          for (std::int32_t beyond : candidate.n) {
+            if (beyond >= 0) __builtin_prefetch(&tets[static_cast<std::size_t>(beyond)]);
+          }
         } else {
           candidate.stamp = rejected;
         }
@@ -1357,7 +1394,7 @@ bool acute_input_features(
   features.clear();
   // Flat incidence rows grouped by a stable sort on their keys (each group in
   // input order): segment ends and facet corners by apex, facet sides by
-  // edge; the (group, edge) pairs of the facets sorted for lookup.
+  // edge.
   struct End {
     std::int32_t apex;
     std::int32_t end;
@@ -1374,10 +1411,8 @@ bool acute_input_features(
     std::int32_t last;
     std::int32_t group;
   };
-  using GroupEdge = std::array<std::int32_t, 3>;
   std::vector<End> ends;
   std::vector<Corner> corners;
-  std::vector<GroupEdge> group_edges;
   std::vector<Side> sides;
   ends.reserve(2 * segments.size());
   for (const TetSnapshotSegment& segment : segments) {
@@ -1387,13 +1422,10 @@ bool acute_input_features(
     ends.push_back({a, b});
     ends.push_back({b, a});
   }
-  // Corners and (group, edge) pairs are read only at segment apexes.
+  // Corners are read only at segment apexes.
   const bool with_corners = !ends.empty();
   sides.reserve(3 * facets.size());
-  if (with_corners) {
-    corners.reserve(3 * facets.size());
-    group_edges.reserve(3 * facets.size());
-  }
+  if (with_corners) corners.reserve(3 * facets.size());
   for (const TetSnapshotFacet& facet : facets) {
     std::int32_t slots[3];
     for (int corner = 0; corner < 3; ++corner) {
@@ -1406,18 +1438,13 @@ bool acute_input_features(
       const std::int32_t low = std::min(slots[corner], next);
       const std::int32_t high = std::max(slots[corner], next);
       sides.push_back({low, high, last, facet.source});
-      if (with_corners) {
-        corners.push_back({slots[corner], next, last, facet.source});
-        group_edges.push_back({facet.source, low, high});
-      }
+      if (with_corners) corners.push_back({slots[corner], next, last, facet.source});
     }
   }
   std::stable_sort(ends.begin(), ends.end(),
                    [](const End& x, const End& y) { return x.apex < y.apex; });
   std::stable_sort(corners.begin(), corners.end(),
                    [](const Corner& x, const Corner& y) { return x.apex < y.apex; });
-  std::sort(group_edges.begin(), group_edges.end());
-  group_edges.erase(std::unique(group_edges.begin(), group_edges.end()), group_edges.end());
   std::stable_sort(sides.begin(), sides.end(), [](const Side& x, const Side& y) {
     return x.a != y.a ? x.a < y.a : x.b < y.b;
   });
@@ -1428,6 +1455,10 @@ bool acute_input_features(
     std::copy(world.begin(), world.end(), out);
   };
 
+  // The groups of the facets at an apex that hold the segment (apex, end):
+  // those facets' corners at the apex, which are the corners with `end` as a
+  // side.
+  std::vector<std::int32_t> edge_groups;
   for (std::size_t begin = 0, stop = 0; begin < ends.size(); begin = stop) {
     const std::int32_t apex = ends[begin].apex;
     for (stop = begin; stop < ends.size() && ends[stop].apex == apex; ++stop) {}
@@ -1444,11 +1475,16 @@ bool acute_input_features(
         const double cosine = cosine3(ray, other);
         if (cosine > kRightAngleCosine) smallest = std::min(smallest, degrees(cosine));
       }
-      const std::int32_t low = std::min(apex, ends[first].end);
-      const std::int32_t high = std::max(apex, ends[first].end);
+      const std::int32_t end = ends[first].end;
+      edge_groups.clear();
       for (auto corner = at_apex.first; corner != at_apex.second; ++corner) {
-        const GroupEdge key{corner->group, low, high};
-        if (std::binary_search(group_edges.begin(), group_edges.end(), key)) continue;
+        if (corner->first == end || corner->second == end) edge_groups.push_back(corner->group);
+      }
+      for (auto corner = at_apex.first; corner != at_apex.second; ++corner) {
+        if (std::find(edge_groups.begin(), edge_groups.end(), corner->group) !=
+            edge_groups.end()) {
+          continue;
+        }
         double rays[2][3];
         direction(apex, corner->first, rays[0]);
         direction(apex, corner->second, rays[1]);
@@ -1537,7 +1573,7 @@ bool acute_input_features(
 }
 
 // Point queries against the protected regions of acute features over one
-// hash grid in which every feature is registered in the cells its region's
+// dense grid in which every feature is registered in the cells its region's
 // bounding box meets.
 class ProtectionIndex {
  public:
@@ -1548,35 +1584,53 @@ class ProtectionIndex {
     if (features_.empty()) return true;
     std::vector<double> radii;
     radii.reserve(features_.size());
+    boxes_.resize(features_.size());
     double extent = 0.0;
-    for (const AcuteFeature& feature : features_) {
-      double lower[3], upper[3];
+    double frame_lower[3]{std::numeric_limits<double>::infinity(),
+                          std::numeric_limits<double>::infinity(),
+                          std::numeric_limits<double>::infinity()};
+    double frame_upper[3]{-frame_lower[0], -frame_lower[1], -frame_lower[2]};
+    for (std::size_t row = 0; row < features_.size(); ++row) {
+      const AcuteFeature& feature = features_[row];
+      double* lower = boxes_[row].data();
+      double* upper = lower + 3;
       box(feature, lower, upper);
-      for (int axis = 0; axis < 3; ++axis) extent = std::max(extent, upper[axis] - lower[axis]);
+      for (int axis = 0; axis < 3; ++axis) {
+        extent = std::max(extent, upper[axis] - lower[axis]);
+        frame_lower[axis] = std::min(frame_lower[axis], lower[axis]);
+        frame_upper[axis] = std::max(frame_upper[axis], upper[axis]);
+      }
       radii.push_back(feature.radius);
     }
     std::nth_element(radii.begin(), radii.begin() + static_cast<std::ptrdiff_t>(radii.size() / 2),
                      radii.end());
     // Cells of the median radius, coarsened so that no region box spans more
     // than 17 cells per axis.
-    cell_ = std::max(radii[radii.size() / 2], extent / 16.0);
-    if (!(cell_ > 0.0) || !std::isfinite(cell_)) return false;
-    for (std::size_t row = 0; row < features_.size(); ++row) {
-      double lower[3], upper[3];
-      box(features_[row], lower, upper);
-      if (!grid_.add(cell_, lower, upper, static_cast<std::int32_t>(row))) return false;
+    if (!frame_.fit(frame_lower, frame_upper, std::max(radii[radii.size() / 2], extent / 16.0),
+                    std::max(4096.0, 8.0 * static_cast<double>(features_.size())))) {
+      return false;
     }
-    grid_.finish();
+    grid_.build(frame_, features_.size(), [&](std::size_t row, std::size_t* first,
+                                              std::size_t* last) {
+      for (std::size_t axis = 0; axis < 3; ++axis) {
+        first[axis] = frame_.coordinate(boxes_[row][axis], axis);
+        last[axis] = frame_.coordinate(boxes_[row][axis + 3], axis);
+      }
+      return true;
+    }, [](std::size_t row) { return static_cast<std::int32_t>(row); });
+    std::vector<std::array<double, 6>>().swap(boxes_);
     return true;
   }
 
   // The lowest-indexed feature whose protected region holds `point`, else -1.
   std::int32_t find(const double* point) const {
-    GridKey key;
+    if (features_.empty()) return -1;
     const auto world = metric_point(mesh_, point);
-    if (grid_.empty() || !grid_cell(world.data(), cell_, key)) return -1;
+    const std::size_t at = frame_.index(frame_.coordinate(world[0], 0),
+                                        frame_.coordinate(world[1], 1),
+                                        frame_.coordinate(world[2], 2));
     std::int32_t protecting = -1;
-    for (std::int32_t row : grid_.items(key)) {
+    for (std::int32_t row : grid_.items(at)) {
       if (protecting >= 0 && row > protecting) continue;
       const AcuteFeature& feature = features_[static_cast<std::size_t>(row)];
       const double distance =
@@ -1601,8 +1655,9 @@ class ProtectionIndex {
 
   const TetMesh& mesh_;
   std::span<const AcuteFeature> features_;
-  CellGrid grid_;
-  double cell_ = 0.0;
+  std::vector<std::array<double, 6>> boxes_;
+  DenseFrame frame_;
+  DenseBuckets<std::int32_t> grid_;
 };
 
 }  // namespace
@@ -1666,12 +1721,26 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // Embedded segments: constrained segments on no constrained face (a curve
   // inside a region). No cavity boundary face carries one, so its
   // encroachment is tested on the cells around a center, its split cavity is
-  // seeded with its edge star, and its halves stay embedded.
+  // seeded with its edge star, and its halves stay embedded. The constrained
+  // faces are the facet bank's rows, so a segment on a facet edge is on one;
+  // only the others read their edge star.
+  std::vector<EdgeKey> facet_edges;
+  facet_edges.reserve(3 * mesh.facets_.size());
+  for (const TetSnapshotFacet& facet : mesh.facets_) {
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      facet_edges.push_back(sorted_edge(facet.vertices[corner], facet.vertices[(corner + 1) % 3]));
+    }
+  }
+  std::sort(facet_edges.begin(), facet_edges.end());
   std::set<EdgeKey> embedded_segments;
   for (const TetSnapshotSegment& segment : mesh.segments_) {
     const std::int32_t first = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t second = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(first) || !mesh.live_vertex(second)) return PHX_MC_INTERNAL_ERROR;
+    if (std::binary_search(facet_edges.begin(), facet_edges.end(),
+                           sorted_edge(segment.vertices[0], segment.vertices[1]))) {
+      continue;
+    }
     const std::span<const std::int32_t> star = incidence.edge_star(first, second);
     bool on_face = false;
     for (std::int32_t cell : star) {
@@ -2719,20 +2788,26 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // proposal cell's circumball conflicts with it, so it is admitted only when
   // its cavity is found, holds the proposal cell, meets no constrained face
   // that could be split (encroachment was decided for the circumcenter) and
-  // clears the spacing guard; the circumcenter's cavity is rebuilt when it
-  // wins. Natural radius and size stay the circumcenter's. Slivers left by
-  // refinement are improvement's work; most of them start here, as cone cells
-  // that meet the radius-edge and size criteria and so are never refined.
-  // Measured on the ledger shapes at their Gmsh HXT element counts: the
-  // slivers below 15 degrees that refinement leaves drop by about two thirds,
-  // for under 2% more vertices.
+  // clears the spacing guard; the best attempt's cavity is kept while later
+  // attempts build theirs. Natural radius and size stay the circumcenter's.
+  // Slivers left by refinement are improvement's work; most of them start
+  // here, as cone cells that meet the radius-edge and size criteria and so
+  // are never refined. Six attempts: each sliver left costs improvement far
+  // more than the attempts that avoid it (on the ledger L3 rows, three to six
+  // attempts add about 0.02 s of refinement and save about 0.05 s of
+  // improvement).
   constexpr double kSliverDegrees = 15.0;
   constexpr double kPickFraction = 0.3;
-  constexpr int kPickAttempts = 3;
+  constexpr int kPickAttempts = 6;
   const double sliver_sine = std::sin(kSliverDegrees * std::numbers::pi / 180.0);
   const double sliver_sine_squared = sliver_sine * sliver_sine;
   std::vector<std::uint8_t> cone_meets;
   std::vector<std::uint8_t> best_meets;
+  // The best attempt's cavity while later attempts build theirs (the mesh is
+  // not edited between them, so it stays current).
+  std::vector<std::int32_t> best_cells;
+  std::vector<BoundaryFacet> best_boundary;
+  std::vector<std::int32_t> best_vertices;
   const auto commit_center = [&](std::int32_t start, const double* center, double radius,
                                  double size, int& outcome) -> std::int32_t {
     if (mesh.metric_active() || !embedded_segments.empty()) {
@@ -2759,6 +2834,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (!std::all_of(candidate, candidate + 3,
                        [](double value) { return coordinate_in_domain(value); })) {
         break;
+      }
+      if (built_best) {
+        best_cells.swap(interior.cells);
+        best_boundary.swap(interior.boundary);
+        best_vertices.swap(interior.vertices);
       }
       built_best = false;
       if (interior.build(mesh, start, candidate, false, is_embedded) !=
@@ -2788,9 +2868,10 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       if (!(quality < sliver_sine_squared)) break;
     }
-    if (!built_best && interior.build(mesh, start, best_point, false, is_embedded) !=
-                           InteriorCavity::Status::kFound) {
-      return PHX_MC_INTERNAL_ERROR;
+    if (!built_best) {
+      interior.cells.swap(best_cells);
+      interior.boundary.swap(best_boundary);
+      interior.vertices.swap(best_vertices);
     }
     return commit_interior(best_point, radius, size, best_meets, outcome);
   };

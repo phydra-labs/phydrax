@@ -307,6 +307,33 @@
   direction bounds each cover sample by explicit points of its nearest
   triangles in vectorized binary64 with a proven rounding margin instead of
   an exact rational search.
+- Native tetrahedral state creation checks that each constrained segment is a
+  cell edge among its first endpoint's cells (a counting sort) instead of
+  sorting every cell edge between segment endpoints; improvement indexes the
+  constrained segments once, so a cavity edit's segment check no longer scans
+  the segment bank; refinement takes a segment on a facet edge as lying on a
+  constrained face without its edge star, finds the facets holding a segment
+  among the facet corners at its apex, and indexes protected regions on the
+  dense feature grid (the hash grid is gone). Same meshes on the six ledger
+  rows and on the stuffed-torus rows of the native meshing benchmark, whose
+  create + refine + improve takes 0.261 instead of 0.397 s (97,010 tets) and
+  4.9 instead of 7.6 s (2,539,154 tets).
+- Native tetrahedral refinement's sliver-aware placement tries up to six
+  displaced points instead of three and keeps the best attempt's cavity
+  instead of rebuilding it; Bowyer-Watson growth prefetches the neighbors of
+  each accepted cell and decides clear insphere signs against a semi-static
+  bound (largest coordinate differences and lift). Meshes change (slightly
+  more refinement vertices, fewer slivers left to improvement); on the six
+  ledger rows 0 unmet, minimum dihedral 15 degrees, radius-edge at most 1.61,
+  boundary equal, and refine + improve 0.640 / 0.756 (torus / two cylinders
+  L2) and 0.699 / 0.811 M tets/s (L3), up from 0.586 / 0.672 and 0.627 /
+  0.750.
+- Native tetrahedral refinement's local feature sizes register features on a
+  dense grid by counting sort: a feature at most one cell wide once (with its
+  box and corners, at its box's lower corner), a wider one in every cell it
+  meets; each vertex starts from the facet edges opposite it. Same sizes and
+  meshes on the six ledger rows; the precomputation takes 10.5 instead of 16
+  ms on the torus L2 row and 55 instead of 81 ms on torus L3.
 - Native tetrahedral refinement's Bowyer-Watson growth tests a neighbor's
   circumsphere once per cavity (a cell found outside keeps its own visit
   stamp) and decides clear insphere signs with the predicate's own floating
