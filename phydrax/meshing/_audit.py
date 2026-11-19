@@ -759,6 +759,8 @@ def _mesh_evidence_issues(
         for owner in meshes
         for entities in owner.topology.entity_sets
     }
+    # One sorted identity table per entity set serves every scope.
+    sorted_ids: dict[str, np.ndarray] = {}
     for value in (*patches, *zones, *labels, *attributes):
         scope = value.scope
         binding = bindings.get(scope.entity_set_id)
@@ -784,9 +786,13 @@ def _mesh_evidence_issues(
             )
         ):
             issues.append("organization_binding")
-        if not np.all(
-            np.isin(np.asarray(scope.entity_ids), np.asarray(entities.entity_ids))
-        ):
+        table = sorted_ids.get(scope.entity_set_id)
+        if table is None:
+            table = np.sort(np.asarray(entities.entity_ids, dtype=np.int64))
+            sorted_ids[scope.entity_set_id] = table
+        requested = np.asarray(scope.entity_ids, dtype=np.int64)
+        position = np.minimum(np.searchsorted(table, requested), table.size - 1)
+        if table.size == 0 or not np.all(table[position] == requested):
             issues.append("organization_entity_ids")
     resolved_sources = {}
     for association in associations:

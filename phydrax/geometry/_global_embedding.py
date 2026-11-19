@@ -13,7 +13,7 @@ from fractions import Fraction
 from functools import cache
 from itertools import chain, combinations, product
 from math import gcd, isfinite, lcm
-from typing import cast, Literal, NoReturn, SupportsIndex
+from typing import cast, Literal, NoReturn, SupportsIndex, TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -166,6 +166,10 @@ from ._stratum_subdivision import (
     subdivided_stratum_separation,
     subdivided_stratum_separations,
 )
+
+
+if TYPE_CHECKING:
+    from ._tetrahedral_degree import TetrahedralDegreeProof
 
 
 class _SingularReferenceFactorMap(ValueError):
@@ -1668,6 +1672,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         validated_validity: ComputedCellValidity
         | ValidatedCellValidityParent
         | None = None,
+        tetrahedral_degree: bool = False,
     ) -> None:
         """Compute every proof obligation from inputs; no caller-supplied verdict exists.
 
@@ -1675,6 +1680,12 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
         :mod:`._nested_restriction_embedding`: when its exact premises hold,
         the target follows from the source certificate it carries; otherwise
         every obligation is proved here from scratch.
+        ``tetrahedral_degree`` offers the exact native degree theorem of
+        :mod:`._tetrahedral_degree` for nonperiodic affine tetrahedra without
+        declared junctions: when it decides (certified or violated) the
+        certificate records the check ``tetrahedral_degree`` and its findings;
+        when the mesh is outside the theorem or it is unresolved, the exact
+        cell-contact proof runs instead.
         """
         if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
             raise TypeError(
@@ -1738,6 +1749,27 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
                 # A mapped source binds a mapped target only when every
                 # (some non-affine) source cell bears target cells.
                 nested_evidence = None
+        degree: TetrahedralDegreeProof | None = None
+        if nested_evidence is None and tetrahedral_degree:
+            # The native theorem is requested explicitly; other proofs never
+            # load the native library.
+            from ._tetrahedral_degree import (
+                affine_tetrahedra,
+                prove_tetrahedral_embedding,
+            )
+
+            tetrahedra = (
+                affine_tetrahedra(mesh, geometry)
+                if validity.all_certified
+                and not junctions
+                and periodic_topology is None
+                and periodic_restriction is None
+                else None
+            )
+            if tetrahedra is not None:
+                degree = prove_tetrahedral_embedding(mesh, tetrahedra)
+                if degree.status == "unresolved":
+                    degree = None
         if nested_evidence is not None:
             assert nested_restriction is not None
             # Affine reparametrization keeps each cell map's degree, so the
@@ -1750,6 +1782,22 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             )
             outcome = _nested_restriction_outcome(
                 mesh, validity, binding, nested_restriction, nested_evidence
+            )
+        elif degree is not None:
+            binding = MeshCertificateBinding(
+                mesh, geometry, "affine", junction_vertices=junctions
+            )
+            cell_count = len(cell_global_ids(mesh))
+            outcome = _ProofOutcome(
+                degree.findings,
+                ("cell_validity", "tetrahedral_degree"),
+                EmbeddingCounts(
+                    cell_count=cell_count,
+                    source_bound_count=cell_count,
+                    boundary_facet_count=degree.boundary_facet_count,
+                    shell_count=degree.shell_count,
+                ),
+                (),
             )
         else:
             prepared_cells: tuple[EmbeddingCell, ...] | None = None
@@ -2053,6 +2101,7 @@ class GlobalEmbeddingCertificate(StrictModule, NonTrainableState):
             periodic=value.periodic,
             periodic_restriction=value.periodic_restriction_premise,
             nested_restriction=value.nested_restriction_premise,
+            tetrahedral_degree="tetrahedral_degree" in value.evaluated_checks,
         )
         from ._mesh_certificates import _same_tree_content
 
@@ -8219,11 +8268,13 @@ def certify_global_embedding(
     periodic_restriction: PeriodicRestrictionPremise | None = None,
     nested_restriction: NestedRestrictionPremise | None = None,
     validated_validity: ComputedCellValidity | ValidatedCellValidityParent | None = None,
+    tetrahedral_degree: bool = False,
 ) -> GlobalEmbeddingCertificate:
     """Certify exact global cell contacts after local coordinate-map validation.
 
     ``nested_restriction`` carries a certified source embedding and the exact
-    transition to this target; see :class:`GlobalEmbeddingCertificate`.
+    transition to this target; ``tetrahedral_degree`` offers the native degree
+    theorem of affine tetrahedra; see :class:`GlobalEmbeddingCertificate`.
     """
     return GlobalEmbeddingCertificate(
         mesh,
@@ -8234,6 +8285,7 @@ def certify_global_embedding(
         periodic_restriction=periodic_restriction,
         nested_restriction=nested_restriction,
         validated_validity=validated_validity,
+        tetrahedral_degree=tetrahedral_degree,
     )
 
 

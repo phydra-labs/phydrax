@@ -17,10 +17,18 @@ def native_volume(
     source: NativePlcSource,
     specification: phx.meshing.VolumeMeshingSpec,
     group: phx.execution.ExecutionGroup,
+    prove: bool,
 ) -> None:
     plan = NativeMeshingProvider().plan(source, specification)
     assert_type(plan, NativeMeshingPlan)
     assert_type(plan.execute(), phx.meshing.CellMeshingResult)
+    assert_type(plan.execute(prove=True), phx.meshing.CellMeshingResult)
+    assert_type(plan.execute(prove=False), phx.meshing.CellMeshingCandidate)
+    assert_type(plan.execute(prove=False).prove(), phx.meshing.CellMeshingResult)
+    assert_type(
+        plan.execute(prove=prove),
+        phx.meshing.CellMeshingCandidate | phx.meshing.CellMeshingResult,
+    )
     assert_type(plan.execute(execution_group=group), phx.meshing.MeshAssembly)
 
 

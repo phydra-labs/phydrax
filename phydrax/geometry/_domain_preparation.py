@@ -234,16 +234,10 @@ class DomainCoveragePreparation:
         )
 
 
-def prepare_domain_coverage(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    cell_regions: ArrayLike,
-    region_count: int,
-    /,
-) -> DomainCoveragePreparation:
-    """Validate dense region-table indices and defer exact maps until consumed."""
-    if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("Domain coverage requires CellMesh and CellGeometrySpec inputs.")
+def dense_cell_regions(
+    mesh: CellMesh, cell_regions: ArrayLike, region_count: int, /
+) -> np.ndarray:
+    """Validate one dense region-table index per target cell in mesh block order."""
     if (
         isinstance(region_count, bool)
         or not isinstance(region_count, int)
@@ -263,6 +257,22 @@ def prepare_domain_coverage(
         raise ValueError("cell_regions must assign every target cell exactly once.")
     if np.any(regions < 0) or np.any(regions >= region_count):
         raise ValueError("cell_regions must index the dense domain.region_ids table.")
+    regions.setflags(write=False)
+    return regions
+
+
+def prepare_domain_coverage(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    cell_regions: ArrayLike,
+    region_count: int,
+    /,
+) -> DomainCoveragePreparation:
+    """Validate dense region-table indices and defer exact maps until consumed."""
+    if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
+        raise TypeError("Domain coverage requires CellMesh and CellGeometrySpec inputs.")
+    regions = dense_cell_regions(mesh, cell_regions, region_count)
+    cell_count = regions.shape[0]
     assignments: list[CellCoverageAssignment] = []
     cursor = 0
     for block_index, block in enumerate(mesh.blocks):
@@ -279,7 +289,6 @@ def prepare_domain_coverage(
                 )
             )
             cursor += 1
-    regions.setflags(write=False)
     return DomainCoveragePreparation(
         regions, tuple(assignments), _LazyCoordinateMaps(mesh, geometry, cell_count)
     )
@@ -288,5 +297,6 @@ def prepare_domain_coverage(
 __all__ = [
     "CellCoverageAssignment",
     "DomainCoveragePreparation",
+    "dense_cell_regions",
     "prepare_domain_coverage",
 ]
