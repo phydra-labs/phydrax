@@ -1,0 +1,22 @@
+{
+  "provenance": {
+    "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
+    "measured": "2026-11-19",
+    "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube)",
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort"}
+  },
+  "rows": {
+    "delaunay-2d": {
+      "1000": {"tool": "cgal", "seconds": 0.00035, "allowed_ratio": 2.0},
+      "10000": {"tool": "cgal", "seconds": 0.00364, "allowed_ratio": 2.0},
+      "100000": {"tool": "cgal", "seconds": 0.038, "allowed_ratio": 2.0},
+      "1000000": {"tool": "cgal", "seconds": 0.410, "allowed_ratio": 2.0}
+    },
+    "delaunay-3d": {
+      "1000": {"tool": "cgal", "seconds": 0.0028, "allowed_ratio": 1.8},
+      "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.8},
+      "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.8},
+      "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.8}
+    }
+  }
+}

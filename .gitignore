@@ -182,6 +182,9 @@ benchmarks/*
 !benchmarks/memory_*.json
 # Accelerator-qualification compiled-region evidence driver (no retained record).
 !benchmarks/accelerator_region_evidence.py
+# Native meshing kernels against measured reference ceilings.
+!benchmarks/native_meshing.py
+!benchmarks/native_meshing_ceilings.json
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv
