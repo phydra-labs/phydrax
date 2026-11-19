@@ -66,6 +66,12 @@ CadRefine2DResult run(const Fixture& f,CadMetric2DFunction metric,void* context,
   status=cad_refine2d(in,result);
   return result;
 }
+void report_refusals(const char* name,int32_t status,const CadRefine2DResult& r) {
+  std::fprintf(stderr,"%s status=%d refused(lens/outside/proximity/nonstar)=%lld/%lld/%lld/%lld\n",
+      name,status,static_cast<long long>(r.stats.encroachment_refusals),
+      static_cast<long long>(r.stats.outside_refusals),static_cast<long long>(r.stats.proximity_refusals),
+      static_cast<long long>(r.stats.nonstar_refusals));
+}
 void check_topology(const Fixture& f,const CadRefine2DResult& result) {
   const auto& tr=result.triangulation;
   // Fault caught: altered boundary coordinates or splitting a supplied edge.
@@ -176,6 +182,7 @@ void metric_errors() {
   PHX_CHECK(status==PHX_MC_INVALID_INPUT);
   PHX_CHECK(b.stats.metric_evaluations>0);
   auto c=run(f,height_field,nullptr,status,static_cast<int>(f.points.size()/2));
+  report_refusals("cap",status,c);
   // Fault caught: exceeding the caller's point cap without an unresolved status.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
   check_topology(f,c);
@@ -190,6 +197,7 @@ void hole_and_small_angle() {
   CadMetric2D metric{1,0,1};
   int32_t status;
   const auto r=run(f,constant,&metric,status);
+  report_refusals("hole",status,r);
   PHX_CHECK(status==PHX_MC_OK);
   check_topology(f,r);
   for(std::size_t t=0;t<r.triangulation.triangles.size();++t) {
@@ -203,6 +211,7 @@ void hole_and_small_angle() {
   }
   Fixture wedge{{0,0,0.8,0,0.8,0.1},{0,1,1,2,2,0},{}};
   const auto small=run(wedge,constant,&metric,status);
+  report_refusals("small-angle",status,small);
   // Fault caught: treating a protected acute input angle as refinable.
   PHX_CHECK(status==PHX_MC_OK);
   PHX_CHECK(small.stats.insertions==0);
@@ -213,6 +222,7 @@ void adversarial_metrics() {
   for(unsigned seed : {17u,239u,8191u}) {
     int32_t status;
     const auto first=run(f,adversarial,&seed,status,static_cast<int>(f.points.size()/2)+5);
+    report_refusals("seeded-metric",status,first);
     // Fault caught: cycling past a finite point cap or silently accepting it.
     PHX_CHECK(status==PHX_MC_UNRESOLVED);
     PHX_CHECK(first.triangulation.vertex_count()<=static_cast<int>(f.points.size()/2)+5);
@@ -275,10 +285,12 @@ int main() {
   const Fixture f=rectangle(6,6,6,6);
   int32_t status;
   auto r=run(f,height_field,nullptr,status);
-  PHX_CHECK(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED);
+  report_refusals("height-field",status,r);
+  PHX_CHECK(status==PHX_MC_OK || (status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles>0));
   check_topology(f,r);
   r=run(f,gradient,nullptr,status);
-  PHX_CHECK(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED);
+  report_refusals("gradient",status,r);
+  PHX_CHECK(status==PHX_MC_OK || (status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles>0));
   check_topology(f,r);
   return phx::mc::test::finish("test_cad_refine2d");
 }
