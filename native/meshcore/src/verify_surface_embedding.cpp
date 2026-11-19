@@ -202,9 +202,22 @@ struct Tree {
       }
       items[t] = {code, t};
     }
-    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-      return a.morton == b.morton ? a.triangle < b.triangle : a.morton < b.morton;
-    });
+    {
+      // Stable radix passes preserve input order for equal Morton keys.
+      std::vector<Item> scratch(items.size());
+      for (int shift = 0; shift < 30; shift += 10) {
+        std::array<size_t, 1024> offsets{};
+        for (const Item& item : items) ++offsets[(item.morton >> shift) & 1023U];
+        size_t total = 0;
+        for (size_t& count : offsets) {
+          const size_t size = count;
+          count = total;
+          total += size;
+        }
+        for (const Item& item : items) scratch[offsets[(item.morton >> shift) & 1023U]++] = item;
+        items.swap(scratch);
+      }
+    }
     nodes.reserve(static_cast<size_t>(n / 2 + 1));
     build(0, n);
   }
