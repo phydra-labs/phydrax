@@ -167,7 +167,7 @@ class Adapter {
 
   // ---- edits
   bool split(int32_t h);
-  bool collapse(int32_t h, bool require_quality_gain);
+  bool collapse(int32_t h, bool require_quality_gain, bool at_endpoint = false);
   bool flip(int32_t h);
   bool relocate(int32_t v, const Point& goal, bool require_quality_gain);
   // Mean apex of the equilateral triangles on the star's opposite edges.
@@ -399,13 +399,14 @@ double Adapter::star_minimum_angle(int32_t v) const {
 }
 
 // Collapse half-edge h (a -> b), keeping vertex a: at the projected midpoint
-// when a is free, else at a's position. A kept vertex b never goes, so no
-// kept triangle changes (b is in none, and neither is the edge a -> b).
-bool Adapter::collapse(int32_t h, bool require_quality_gain) {
+// when a is free and `at_endpoint` is not asked, else at a's position (no
+// projection, and only b's triangles change). A kept vertex b never goes, so
+// no kept triangle changes (b is in none, and neither is the edge a -> b).
+bool Adapter::collapse(int32_t h, bool require_quality_gain, bool at_endpoint) {
   const int32_t g = twin(h);
   const int32_t a = tail(h), b = head(h);
   if (role(b) != Role::kFree) return false;
-  const bool free = role(a) == Role::kFree;
+  const bool free = role(a) == Role::kFree && !at_endpoint;
   const int32_t c = corners_[static_cast<size_t>(prev(h))];
   const int32_t d = corners_[static_cast<size_t>(prev(g))];
   if (c == d) return false;
@@ -497,7 +498,7 @@ bool Adapter::collapse(int32_t h, bool require_quality_gain) {
     }
     free_triangles_.push_back(t);
   }
-  if (role(a) == Role::kFree) {
+  if (free) {
     positions_[static_cast<size_t>(a)] = on;
     normals_[static_cast<size_t>(a)] = normal;
     sizes_[static_cast<size_t>(a)] = size;
@@ -669,7 +670,12 @@ void Adapter::collapse_short() {
     if (!alive_triangle(h / 3)) continue;
     const int32_t a = tail(h), b = head(h);
     const double limit = kShort * edge_size(a, b);
-    if (norm2(sub(position(a), position(b))) < limit * limit) collapse(h, false);
+    const double length2 = norm2(sub(position(a), position(b)));
+    if (!(length2 < limit * limit)) continue;
+    // Edges far below the size (coarsening a fine input) merge into an
+    // endpoint, without a projection; nearer the size, at the projected
+    // midpoint, which spaces the survivors evenly.
+    collapse(h, false, length2 < 0.25 * limit * limit);
   }
 }
 
