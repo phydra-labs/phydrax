@@ -527,10 +527,14 @@ class Triangulation3D {
                                identity(v[0]), identity(v[1]), identity(v[2]),
                                identity(v[3]), identity(p)) > 0;
     }
-    return power3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
-                       weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]],
-                       weights_[p], identity(v[0]), identity(v[1]), identity(v[2]),
-                       identity(v[3]), identity(p)) > 0;
+    const double* q[5]{point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p)};
+    const double w[5]{weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]], weights_[p]};
+    // A sign the floating stage decides is the unperturbed sign.
+    const int sign = power3d_stage(q[0], q[1], q[2], q[3], q[4], w[0], w[1], w[2], w[3], w[4]);
+    if (sign != 0) return sign > 0;
+    return power3d_sos(q[0], q[1], q[2], q[3], q[4], w[0], w[1], w[2], w[3], w[4],
+                       identity(v[0]), identity(v[1]), identity(v[2]), identity(v[3]),
+                       identity(p)) > 0;
   }
   // The index ordering the symbolic perturbation of vertex v.
   int64_t identity(int32_t v) const noexcept {

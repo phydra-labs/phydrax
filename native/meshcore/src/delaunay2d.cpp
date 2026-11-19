@@ -78,8 +78,7 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
     }
   }
   result->points.assign(points, points + 2 * point_count);
-  triangulation.finite_cells(result->cells);
-  for (int32_t& vertex : result->cells) vertex = order[static_cast<std::size_t>(vertex)];
+  triangulation.finite_cells(result->cells);  // input indices (identities)
   if (canonical) canonicalize_cells(*result);
   *mesh = result.release();
   return PHX_MC_OK;
