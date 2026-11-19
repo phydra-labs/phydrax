@@ -544,13 +544,13 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
   const TemplateDefinition& definition = *current.definition;
   const ProgramData& data = order == 0 ? definition.value
                             : order == 1 ? definition.tangent : definition.hessian;
-  if (workspace.bound_program != &data) {
-    workspace.bound_program = nullptr;
-    const int32_t status = workspace.program.bind(
+  if (workspace.bound_program[order] != &data) {
+    workspace.bound_program[order] = nullptr;
+    const int32_t status = workspace.program[order].bind(
         data.instructions, data.instruction_count, data.indices, data.index_count,
         data.parameters, data.parameter_count, data.workspace_size);
     if (status != PHX_MC_OK) return status;
-    workspace.bound_program = &data;
+    workspace.bound_program[order] = &data;
   }
   workspace.lower.assign(data.seeds, data.seeds + data.workspace_size);
   workspace.upper.assign(data.seeds, data.seeds + data.workspace_size);
@@ -567,7 +567,7 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     workspace.lower[slot] = lo;
     workspace.upper[slot] = hi;
   }
-  const int32_t status = workspace.program.execute(workspace.lower.data(), workspace.upper.data(),
+  const int32_t status = workspace.program[order].execute(workspace.lower.data(), workspace.upper.data(),
                                                     data.workspace_size);
   if (status != PHX_MC_OK) return status;
   for (int64_t i = 0; i < data.output_count; ++i) {

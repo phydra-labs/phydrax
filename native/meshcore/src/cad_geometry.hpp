@@ -67,8 +67,8 @@ struct IntervalEvaluationWorkspace {
   const double* coefficient_lower = nullptr;
   const double* coefficient_upper = nullptr;
   int64_t coefficient_count = 0;
-  const ProgramData* bound_program = nullptr;
-  PreparedIntervalProgram program;
+  const ProgramData* bound_program[3] = {};
+  PreparedIntervalProgram program[3];
   std::vector<double> lower, upper;
 };
 

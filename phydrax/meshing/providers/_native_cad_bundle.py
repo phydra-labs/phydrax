@@ -32,11 +32,14 @@ import math
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import final
 
 import numpy as np
 
 from ..._meshcore import CadModel
+from ...discretization._coordinate_enclosure import ExactScalar
+from ...discretization._exact_algebraic_geometry import coefficient_endpoint
 from ...geometry._meshing_domain import (
     _PlacedSurfacePatch,
     MeshingDomain,
@@ -1032,6 +1035,100 @@ def cad_geometry_bundle(domain: MeshingDomain, /) -> CadGeometryBundle:
     return CadGeometryBundle(domain.domain_id, model, edge_curve_rows)
 
 
+def _coefficient_sources(
+    entity: object, numeric: np.ndarray, /
+) -> tuple[ExactScalar, ...] | None:
+    """Exact real-bank entries for source nodes supported by interval jets."""
+    if isinstance(entity, CylinderPatch):
+        return (*entity.origin_exact, *entity.first_axis_exact, *entity.second_axis_exact,
+                *entity.axis_exact, entity.radius_exact)
+    if isinstance(entity, TorusPatch):
+        return (*entity.center_exact, *entity.first_axis_exact, *entity.second_axis_exact,
+                *entity.axis_exact, entity.major_radius_exact, entity.minor_radius_exact)
+    if isinstance(entity, LineCurve):
+        return (*entity.origin_exact, *entity.direction_exact)
+    if isinstance(entity, ExactLineCurve):
+        return (*entity.first_exact, *entity.last_exact)
+    if isinstance(entity, CircleCurve):
+        return (*entity.center_exact, *entity.first_axis_exact, *entity.second_axis_exact,
+                entity.radius_exact)
+    if isinstance(entity, EllipseCurve):
+        return (*entity.center_exact, *entity.first_axis_exact, *entity.second_axis_exact,
+                entity.first_radius_exact, entity.second_radius_exact)
+    if isinstance(entity, AffinePCurve):
+        return (*entity.matrix[0], *entity.matrix[1], *entity.offset)
+    if isinstance(entity, _PlacedSurfacePatch):
+        matrix = entity.placement.matrix
+        return tuple(matrix[row][column] for row in range(3) for column in range(3)) + tuple(
+            matrix[row][3] for row in range(3)
+        )
+    if isinstance(entity, (PlacedSurface, PlacedCurve)):
+        matrix = entity.affine.matrix
+        return tuple(matrix[row][column] for row in range(3) for column in range(3)) + tuple(
+            matrix[row][3] for row in range(3)
+        )
+    if isinstance(entity, SurfaceIsoparametricCurve):
+        exact = entity.fixed_value_exact
+        return (Fraction.from_float(entity.fixed_value) if exact is None else exact,)
+    if isinstance(entity, CurveTrimSegment):
+        if entity.first_root is not None or entity.last_root is not None:
+            return None
+        return (Fraction.from_float(entity.first), Fraction.from_float(entity.last))
+    if type(entity) in (PlanePatch, SpherePatch, ConePatch, ParabolaCurve, HyperbolaCurve,
+                        ExtrusionSurface, RevolutionSurface):
+        return tuple(Fraction.from_float(float(value)) for value in numeric)
+    return None
+
+
+def coefficient_bounds(
+    bundle: CadGeometryBundle, domain: MeshingDomain, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare source coefficient enclosures lazily for native certification.
+
+    Unhandled source nodes receive unbounded intervals, which cause a native
+    interval evaluation to refuse rather than certify a rounded construction.
+    """
+    if bundle.bundle_id != domain.domain_id:
+        raise ValueError("CAD coefficient bounds require the bundle's source domain.")
+    bank = _NodeBank()
+    for patch in domain.patches:
+        bank.node(patch.surface)
+    edge_curve_rows = np.full(len(domain.curves), -1, dtype=np.int32)
+    regular = np.flatnonzero(domain.curve_owners[:, 0] >= 0)
+    edge_curve_rows[regular] = np.arange(regular.size, dtype=np.int32)
+    _curve_nodes(bank, domain, edge_curve_rows)
+    for patch in domain.patches:
+        for loop in patch.loops:
+            for use in loop:
+                bank.node(use.pcurve)
+    integer_offsets, integers = _ragged(bank.integers, np.int64)
+    real_offsets, reals = _ragged(bank.reals, np.float64)
+    if (
+        not np.array_equal(np.asarray(bank.kinds, dtype=np.int32), bundle.model.node_kinds)
+        or not np.array_equal(integer_offsets, bundle.model.node_integer_offsets)
+        or not np.array_equal(integers, bundle.model.node_integers)
+        or not np.array_equal(real_offsets, bundle.model.node_real_offsets)
+        or not np.array_equal(reals, bundle.model.node_reals)
+    ):
+        raise ValueError("CAD coefficient provenance no longer matches the bundle.")
+    lower = np.full(reals.shape, -np.inf, dtype=np.float64)
+    upper = np.full(reals.shape, np.inf, dtype=np.float64)
+    for entity in bank._entities:
+        index = bank._memo[id(entity)]
+        first, last = real_offsets[index], real_offsets[index + 1]
+        exact = _coefficient_sources(entity, reals[first:last])
+        if exact is None:
+            continue
+        if len(exact) != last - first:
+            raise ValueError("CAD exact coefficient count does not match its native node.")
+        for offset, value in enumerate(exact):
+            lower[first + offset] = coefficient_endpoint(value, upper=False, saturate=True)
+            upper[first + offset] = coefficient_endpoint(value, upper=True, saturate=True)
+    lower.setflags(write=False)
+    upper.setflags(write=False)
+    return lower, upper
+
+
 __all__ = [
     "CAD_TEMPLATES",
     "CadBundleSupportError",
@@ -1040,4 +1137,5 @@ __all__ = [
     "cad_bundle_support_issues",
     "cad_entity_model",
     "cad_geometry_bundle",
+    "coefficient_bounds",
 ]

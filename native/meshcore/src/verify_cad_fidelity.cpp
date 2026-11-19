@@ -163,12 +163,6 @@ std::vector<phx_mc_fidelity_finding> association_findings(
   for (int64_t chord = 0; chord < chord_count; ++chord)
     if (owners[static_cast<std::size_t>(chord)] < 0)
       findings.push_back({PHX_MC_FIDELITY_MISSING_CHORD, -1, -1, -1, -1, chord});
-  std::sort(findings.begin(), findings.end(), [](const auto& a, const auto& b) {
-    if (a.kind != b.kind) return a.kind < b.kind;
-    if (a.triangle != b.triangle) return a.triangle < b.triangle;
-    if (a.edge != b.edge) return a.edge < b.edge;
-    return a.chord < b.chord;
-  });
   return findings;
 }
 }  // namespace
