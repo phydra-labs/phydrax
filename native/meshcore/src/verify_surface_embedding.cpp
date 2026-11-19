@@ -70,8 +70,8 @@ int64_t next_corner(int64_t corner) {
   return corner % 3 == 2 ? corner - 2 : corner + 1;
 }
 
-void pair_packed_edges(int64_t n, const int64_t* triangles, std::vector<int64_t>& parent,
-                       std::vector<Finding>& out) {
+void pair_packed_edges(int64_t point_count, int64_t n, const int64_t* triangles,
+                       std::vector<int64_t>& parent, std::vector<Finding>& out) {
   using PackedEdge = std::pair<uint64_t, int64_t>;
   std::vector<PackedEdge> edges;
   edges.reserve(static_cast<size_t>(3*n));
@@ -81,7 +81,19 @@ void pair_packed_edges(int64_t n, const int64_t* triangles, std::vector<int64_t>
                          static_cast<uint64_t>(std::max(a, b));
     edges.emplace_back(key, corner);
   }
-  std::sort(edges.begin(), edges.end());
+  if (point_count <= 3*n) {
+    std::vector<size_t> offsets(static_cast<size_t>(point_count) + 1, 0);
+    for (const PackedEdge& edge : edges) ++offsets[(edge.first >> 32) + 1];
+    for (size_t i = 1; i < offsets.size(); ++i) offsets[i] += offsets[i - 1];
+    std::vector<size_t> cursor(offsets.begin(), offsets.end() - 1);
+    std::vector<PackedEdge> grouped(edges.size());
+    for (const PackedEdge& edge : edges) grouped[cursor[edge.first >> 32]++] = edge;
+    for (size_t v = 0; v < cursor.size(); ++v)
+      std::sort(grouped.begin() + offsets[v], grouped.begin() + offsets[v + 1]);
+    edges.swap(grouped);
+  } else {
+    std::sort(edges.begin(), edges.end());
+  }
   for (size_t i = 0; i < edges.size();) {
     size_t j = i + 1;
     while (j < edges.size() && edges[j].first == edges[i].first) ++j;
@@ -109,7 +121,7 @@ void topology(int64_t point_count, int64_t n, const int64_t* triangles,
   std::vector<int64_t> parent(static_cast<size_t>(3 * n));
   std::iota(parent.begin(), parent.end(), int64_t{0});
   if (static_cast<uint64_t>(point_count) <= uint64_t{1} << 32)
-    pair_packed_edges(n, triangles, parent, out);
+    pair_packed_edges(point_count, n, triangles, parent, out);
   else
     pair_wide_edges(n, triangles, parent, out);
   // Every corner at a vertex must be in one edge-connected component.
