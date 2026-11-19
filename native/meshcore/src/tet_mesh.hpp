@@ -637,6 +637,9 @@ class TetMesh {
   const double* point(std::int32_t slot) const noexcept {
     return live_vertex(slot) ? points_.data() + 3 * static_cast<std::size_t>(slot) : nullptr;
   }
+  // The carriers of every vertex slot, three per slot, unchecked: for loops
+  // over the corners of live cells. Valid until the next vertex insertion.
+  const double* carriers() const noexcept { return points_.data(); }
   const SourceWitness& witness(std::int32_t slot) const noexcept;
   std::int8_t vertex_dimension(std::int32_t slot) const noexcept;
   double protection_radius(std::int32_t slot) const noexcept;

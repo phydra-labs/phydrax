@@ -969,6 +969,12 @@ class InteriorCavity {
   Status build(const TetMesh& mesh, std::int32_t start, const double* point,
                bool has_embedded, IsEmbedded&& is_embedded) {
     std::vector<Tetrahedron>& tets = complex_.tets;
+    // Every corner read below is a vertex of a live finite cell.
+    const double* const carriers = mesh.carriers();
+    const auto at = [carriers](std::int32_t vertex) {
+      return carriers + 3 * static_cast<std::size_t>(vertex);
+    };
+    const bool metric = mesh.metric_active();
     cells.clear();
     boundary.clear();
     vertices.clear();
@@ -986,7 +992,7 @@ class InteriorCavity {
       for (int face = 0; face < 4 && exit < 0; ++face) {
         std::int32_t facet[3];
         oriented_facet(tet.v, face, facet);
-        if (orientation(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]), point) < 0) {
+        if (orientation(at(facet[0]), at(facet[1]), at(facet[2]), point) < 0) {
           exit = face;
         }
       }
@@ -1029,12 +1035,11 @@ class InteriorCavity {
             candidate.region != region) {
           continue;
         }
-        const double* corners[4]{mesh.point(candidate.v[0]), mesh.point(candidate.v[1]),
-                                 mesh.point(candidate.v[2]), mesh.point(candidate.v[3])};
-        const int side = mesh.metric_active()
-                             ? mesh.metric_insphere(corners[0], corners[1], corners[2],
-                                                    corners[3], point)
-                             : inside_sphere(corners[0], corners[1], corners[2], corners[3], point);
+        const double* corners[4]{at(candidate.v[0]), at(candidate.v[1]), at(candidate.v[2]),
+                                 at(candidate.v[3])};
+        const int side = metric ? mesh.metric_insphere(corners[0], corners[1], corners[2],
+                                                       corners[3], point)
+                                : inside_sphere(corners[0], corners[1], corners[2], corners[3], point);
         if (side > 0) {
           candidate.stamp = member;
           cells.push_back(next);
@@ -1069,7 +1074,7 @@ class InteriorCavity {
           if (beyond.stamp == member) continue;
           const double* cone[4];
           for (int corner = 0; corner < 4; ++corner) {
-            cone[corner] = corner == face ? point : mesh.point(tet.v[corner]);
+            cone[corner] = corner == face ? point : at(tet.v[corner]);
           }
           if (!measurably_positive(cone[0], cone[1], cone[2], cone[3])) {
             dropped_.push_back(cell);
@@ -1248,6 +1253,7 @@ double screen_cone(const TetMesh& mesh, std::span<const BoundaryFacet> boundary,
                    std::vector<std::uint8_t>& meets) {
   meets.assign(boundary.size(), 0U);
   double worst = std::numeric_limits<double>::infinity();
+  const double* const carriers = mesh.carriers();
   for (std::size_t row = 0; row < boundary.size(); ++row) {
     const std::int32_t cell = boundary[row].tet;
     const int face = boundary[row].slot;
@@ -1255,7 +1261,8 @@ double screen_cone(const TetMesh& mesh, std::span<const BoundaryFacet> boundary,
     const double* corners[4];
     std::array<double, 4> sizes{};
     for (int corner = 0; corner < 4; ++corner) {
-      corners[corner] = corner == face ? point : mesh.point(tet.v[corner]);
+      corners[corner] =
+          corner == face ? point : carriers + 3 * static_cast<std::size_t>(tet.v[corner]);
       sizes[static_cast<std::size_t>(corner)] =
           corner == face ? point_size : mesh.vertex_size(tet.v[corner]);
     }
@@ -2728,7 +2735,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // `size` (0: none); `outcome` is 0 when inserted, 2 when refused. The
   // created cells are the next round's candidates, except those `meets`
   // (per cavity boundary row, from screen_cone; empty: none) marks as clearly
-  // meeting the criteria, which the round would skip.
+  // meeting the criteria, which the round would skip. Only boundary splits
+  // and the blocked boundary edges read the local incidence after the initial
+  // flips, so a fixed boundary leaves it stale.
   const auto commit_interior = [&](const double* point, double radius, double size,
                                    std::span<const std::uint8_t> meets,
                                    int& outcome) -> std::int32_t {
@@ -2738,10 +2747,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       return PHX_MC_OK;
     }
     removed_cells.clear();
-    for (std::int32_t cell : interior.cells) {
-      detail::LocalCell vertices{};
-      std::copy_n(mesh.tet(cell).v, 4, vertices.begin());
-      removed_cells.push_back(vertices);
+    if (boundary_splittable) {
+      for (std::int32_t cell : interior.cells) {
+        detail::LocalCell vertices{};
+        std::copy_n(mesh.tet(cell).v, 4, vertices.begin());
+        removed_cells.push_back(vertices);
+      }
     }
     const TetEditStatus status =
         mesh.insert_interior_vertex(point, size, interior.cells, interior.boundary,
@@ -2754,9 +2765,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     for (std::size_t row = 0; row < created_slots.size(); ++row) {
       const std::int32_t slot = created_slots[row];
-      detail::LocalCell vertices{};
-      std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
-      if (!incidence.insert_logical(mesh, slot, vertices)) return PHX_MC_INTERNAL_ERROR;
+      if (boundary_splittable) {
+        detail::LocalCell vertices{};
+        std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+        if (!incidence.insert_logical(mesh, slot, vertices)) return PHX_MC_INTERNAL_ERROR;
+      }
       if (meets.empty() || meets[row] == 0U) enqueue_slot(slot);
     }
     record_feature_size(static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1, feature_size);
