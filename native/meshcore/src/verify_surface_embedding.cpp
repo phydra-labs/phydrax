@@ -30,12 +30,10 @@ int64_t root(std::vector<int64_t>& parent, int64_t x) {
   return x;
 }
 
-void topology(int64_t point_count, int64_t n, const int64_t* triangles,
-              std::vector<Finding>& out) {
+void pair_wide_edges(int64_t n, const int64_t* triangles, std::vector<int64_t>& parent,
+                     std::vector<Finding>& out) {
   std::vector<Edge> edges;
   edges.reserve(static_cast<size_t>(3 * n));
-  std::vector<int64_t> parent(static_cast<size_t>(3 * n));
-  std::iota(parent.begin(), parent.end(), int64_t{0});
   for (int64_t t = 0; t < n; ++t) {
     for (int k = 0; k < 3; ++k) {
       const int l = (k + 1) % 3;
@@ -66,6 +64,54 @@ void topology(int64_t point_count, int64_t n, const int64_t* triangles,
     }
     i = j;
   }
+}
+
+int64_t next_corner(int64_t corner) {
+  return corner % 3 == 2 ? corner - 2 : corner + 1;
+}
+
+void pair_packed_edges(int64_t n, const int64_t* triangles, std::vector<int64_t>& parent,
+                       std::vector<Finding>& out) {
+  using PackedEdge = std::pair<uint64_t, int64_t>;
+  std::vector<PackedEdge> edges;
+  edges.reserve(static_cast<size_t>(3*n));
+  for (int64_t corner = 0; corner < 3*n; ++corner) {
+    const int64_t a = triangles[corner], b = triangles[next_corner(corner)];
+    const uint64_t key = (static_cast<uint64_t>(std::min(a, b)) << 32) |
+                         static_cast<uint64_t>(std::max(a, b));
+    edges.emplace_back(key, corner);
+  }
+  std::sort(edges.begin(), edges.end());
+  for (size_t i = 0; i < edges.size();) {
+    size_t j = i + 1;
+    while (j < edges.size() && edges[j].first == edges[i].first) ++j;
+    const int64_t x = edges[i].second, x_next = next_corner(x);
+    const bool x_forward = triangles[x] < triangles[x_next];
+    const int64_t a = static_cast<int64_t>(edges[i].first >> 32);
+    const int64_t b = static_cast<int64_t>(edges[i].first & 0xffffffffULL);
+    if (j - i != 2) {
+      out.push_back({PHX_MC_SURFACE_EDGE, a, b, 0});
+    } else {
+      const int64_t y = edges[i+1].second, y_next = next_corner(y);
+      const bool y_forward = triangles[y] < triangles[y_next];
+      if (x_forward == y_forward) out.push_back({PHX_MC_SURFACE_EDGE, a, b, 0});
+      const int64_t xa = x_forward ? x : x_next, xb = x_forward ? x_next : x;
+      const int64_t ya = y_forward ? y : y_next, yb = y_forward ? y_next : y;
+      parent[root(parent, xa)] = root(parent, ya);
+      parent[root(parent, xb)] = root(parent, yb);
+    }
+    i = j;
+  }
+}
+
+void topology(int64_t point_count, int64_t n, const int64_t* triangles,
+              std::vector<Finding>& out) {
+  std::vector<int64_t> parent(static_cast<size_t>(3 * n));
+  std::iota(parent.begin(), parent.end(), int64_t{0});
+  if (static_cast<uint64_t>(point_count) <= uint64_t{1} << 32)
+    pair_packed_edges(n, triangles, parent, out);
+  else
+    pair_wide_edges(n, triangles, parent, out);
   // Every corner at a vertex must be in one edge-connected component.
   // The point-indexed table avoids sorting a second bank of 3*n corners.
   std::vector<int64_t> first_root(static_cast<size_t>(point_count), -1);
