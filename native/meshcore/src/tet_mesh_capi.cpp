@@ -1237,8 +1237,8 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
       const TetSnapshotVertex& vertex = snapshot.vertices[row];
       request->vertex_ids[row] = vertex.id;
       std::copy(vertex.carrier.begin(), vertex.carrier.end(), request->points + 3 * row);
-      const auto size = mesh->state.vertex_sizes().find(vertex.id);
-      request->vertex_size_targets[row] = size == mesh->state.vertex_sizes().end() ? 0.0 : size->second;
+      request->vertex_size_targets[row] =
+          mesh->state.vertex_size(mesh->state.vertex_slot(vertex.id));
       request->witness_strata[row] = static_cast<int8_t>(vertex.witness.stratum);
       request->witness_entities[row] = vertex.witness.entity;
       request->witness_parameters[2 * row] = vertex.witness.parameters[0];
@@ -1270,8 +1270,7 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
       request->cell_regions[row] = cell.region;
       std::array<double, 4> corner_sizes{};
       for (std::size_t corner = 0; corner < corner_sizes.size(); ++corner) {
-        const auto found = mesh->state.vertex_sizes().find(cell.vertices[corner]);
-        if (found != mesh->state.vertex_sizes().end()) corner_sizes[corner] = found->second;
+        corner_sizes[corner] = mesh->state.vertex_size(mesh->state.vertex_slot(cell.vertices[corner]));
       }
       const double target = phx::mc::cell_size_target(corner_sizes);
       request->cell_size_targets[row] = std::isfinite(target) ? target : 0.0;

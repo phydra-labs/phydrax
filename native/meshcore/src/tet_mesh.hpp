@@ -376,6 +376,54 @@ struct TetReplacementProbeCache {
   std::map<std::array<std::int32_t, 3>, std::size_t> facet_row_by_face;
 };
 
+// Logical IDs of one entity kind: which were ever used and the slot of each
+// live one. IDs handed out by the counters are dense and index a flat table;
+// a caller-chosen ID far beyond every used one goes to a sparse map, so the
+// table stays proportional to the number of used IDs.
+class TetIdIndex {
+ public:
+  static constexpr std::int32_t kUnused = -1;
+  static constexpr std::int32_t kRetired = -2;  // used, no longer live
+  static constexpr std::int32_t kPending = -3;  // live, slot not yet assigned
+
+  void clear() noexcept;
+  void reserve(std::size_t count);
+  // Replaces the contents by the IDs 0 .. count - 1, each live at its own slot.
+  void assign_identity(std::size_t count);
+  // The slot of a live ID, else -1.
+  std::int32_t slot(std::uint64_t id) const noexcept {
+    const std::int32_t value = state(id);
+    return value >= 0 ? value : -1;
+  }
+  bool used(std::uint64_t id) const noexcept { return state(id) != kUnused; }
+  // Records `id` as used and live at `slot` (a slot or kPending).
+  void bind(std::uint64_t id, std::int32_t slot);
+  // Records `id` as used and not live.
+  void mark_used(std::uint64_t id);
+  // Moves a live ID to `slot`.
+  void set_slot(std::uint64_t id, std::int32_t slot) noexcept;
+  // A live ID stays used but is no longer live.
+  void retire(std::uint64_t id) noexcept;
+  // Forgets `id` entirely (rollback of a staged binding).
+  void forget(std::uint64_t id) noexcept;
+  std::size_t live_count() const noexcept { return live_; }
+
+ private:
+  std::int32_t state(std::uint64_t id) const noexcept {
+    if (id < dense_.size()) return dense_[static_cast<std::size_t>(id)];
+    if (sparse_.empty()) return kUnused;
+    const auto found = sparse_.find(id);
+    return found == sparse_.end() ? kUnused : found->second;
+  }
+  // Writes `value` for `id`, keeping the used and live counts.
+  void write(std::uint64_t id, std::int32_t value);
+
+  std::vector<std::int32_t> dense_;
+  std::unordered_map<std::uint64_t, std::int32_t> sparse_;
+  std::size_t used_ = 0;
+  std::size_t live_ = 0;
+};
+
 class TetMesh {
  public:
   explicit TetMesh(BoundaryPolicy policy = BoundaryPolicy::kFixed);
@@ -484,10 +532,14 @@ class TetMesh {
   // relocation probe's domain and apply_edit_batch must decide it.
   bool apply_relocation_edit(const TetEdit& operation, TetEditStatus& status);
 
-  // Retained circumradius size targets by vertex ID (see vertex_sizes_).
-  const std::unordered_map<std::uint64_t, double>& vertex_sizes() const noexcept {
-    return vertex_sizes_;
+  // The retained circumradius size target of a vertex slot (0: none).
+  double vertex_size(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < vertex_sizes_.size()
+               ? vertex_sizes_[static_cast<std::size_t>(slot)]
+               : 0.0;
   }
+  // The retained size field by live vertex ID (vertices with a target only).
+  std::unordered_map<std::uint64_t, double> vertex_sizes() const;
   const std::vector<TetUnmetRecord>& unmet_records() const noexcept {
     return unmet_records_;
   }
@@ -658,12 +710,17 @@ class TetMesh {
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,
                                    bool keep_walk, TetInsertionCavity& cavity,
                                    const TetSegmentIndex* segment_index = nullptr) const;
-  // Replaces the retained size field by `sizes` (one value per vertex of
-  // `current`, in snapshot order; 0 leaves a vertex unconstrained) unless
-  // `sizes` is empty, which keeps the retained field.
-  int32_t install_vertex_sizes(const TetMeshSnapshot& current, std::span<const double> sizes);
-  int32_t install_vertex_sizes(std::span<const std::uint64_t> vertex_ids,
-                               std::span<const double> sizes);
+  // Replaces the retained size field by `sizes` (one value per live vertex,
+  // in slot order, the snapshot order; 0 leaves a vertex unconstrained)
+  // unless `sizes` is empty, which keeps the retained field.
+  int32_t install_vertex_sizes(std::span<const double> sizes);
+  void set_vertex_size(std::int32_t slot, double size) {
+    if (static_cast<std::size_t>(slot) >= vertex_sizes_.size()) {
+      if (size == 0.0) return;
+      vertex_sizes_.resize(static_cast<std::size_t>(slot) + 1, 0.0);
+    }
+    vertex_sizes_[static_cast<std::size_t>(slot)] = size;
+  }
   // True if an edge of `removed_slots` absent from `kept_edges` (local edge
   // keys) is a constrained segment.
   bool removes_constrained_segment(std::span<const std::int32_t> removed_slots,
@@ -808,16 +865,14 @@ class TetMesh {
   std::vector<TetPeriodicQuotientCell> quotient_cells_;
   std::vector<TetPeriodicEntityOrbitMap> periodic_entity_maps_;
   std::vector<TetUnmetRecord> unmet_records_;
-  // Hard circumradius size targets by vertex ID, installed by the `sizes` of
-  // refinement/improvement and interpolated to the vertices they insert; a
-  // vertex without an entry is unconstrained.
-  std::unordered_map<std::uint64_t, double> vertex_sizes_;
-  std::unordered_map<std::uint64_t, std::int32_t> vertex_slots_;
-  std::unordered_map<std::uint64_t, std::int32_t> cell_slots_;
-  std::unordered_set<std::uint64_t> used_vertex_ids_;
-  std::unordered_set<std::uint64_t> used_cell_ids_;
-  std::unordered_set<std::uint64_t> used_facet_ids_;
-  std::unordered_set<std::uint64_t> used_segment_ids_;
+  // Hard circumradius size targets by vertex slot, installed by the `sizes` of
+  // refinement/improvement and interpolated to the vertices they insert; 0
+  // (or a slot beyond the bank) leaves a vertex unconstrained.
+  std::vector<double> vertex_sizes_;
+  TetIdIndex vertex_index_;
+  TetIdIndex cell_index_;
+  TetIdIndex facet_index_;
+  TetIdIndex segment_index_;
   std::unordered_set<std::uint64_t> used_periodic_orbit_ids_;
   std::unordered_set<std::uint64_t> used_quotient_cell_ids_;
   std::array<std::unordered_set<std::uint64_t>, 4> used_periodic_lifted_ids_;

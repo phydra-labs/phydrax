@@ -38,202 +38,153 @@ LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept
   return {first, second};
 }
 
-std::size_t LocalEdgeHash::operator()(const LocalEdgeKey& edge) const noexcept {
-  const std::uint64_t first = static_cast<std::uint32_t>(edge.first);
-  const std::uint64_t second = static_cast<std::uint32_t>(edge.second);
-  return std::hash<std::uint64_t>{}((first << 32) | second);
-}
-
-std::size_t LocalPositionHash::operator()(const LocalPositionKey& point) const noexcept {
-  std::size_t seed = 0;
-  for (std::uint64_t bits : point.bits) {
-    seed ^= std::hash<std::uint64_t>{}(bits) + 0x9e3779b9U + (seed << 6) +
-            (seed >> 2);
-  }
-  return seed;
-}
-
-LocalPositionKey local_position_key(const double* point) noexcept {
-  LocalPositionKey key;
-  for (std::size_t axis = 0; axis < key.bits.size(); ++axis) {
-    key.bits[axis] = point[axis] == 0.0
-                         ? 0
-                         : std::bit_cast<std::uint64_t>(point[axis]);
-  }
-  return key;
-}
-
-void LocalIncidence::reserve(std::size_t vertex_count, std::size_t edge_count) {
-  vertex_cells_.reserve(vertex_count);
-  edge_cells_.reserve(edge_count);
-  vertex_positions_.reserve(vertex_count);
-}
-
-bool LocalIncidence::initialize(const TetMesh& mesh,
-                                const TetMeshSnapshot& snapshot) {
-  vertex_cells_.clear();
-  edge_cells_.clear();
-  vertex_positions_.clear();
+bool LocalIncidence::initialize(const TetMesh& mesh) {
+  mesh_ = &mesh;
   ++topology_revision_;
-  if (snapshot.cells.size() > std::numeric_limits<std::size_t>::max() / 6) {
-    return false;
-  }
-  reserve(snapshot.vertices.size(), 6 * snapshot.cells.size());
-  for (const TetSnapshotVertex& vertex : snapshot.vertices) {
-    const std::int32_t slot = mesh.vertex_slot(vertex.id);
-    if (!mesh.live_vertex(slot) ||
-        !insert_vertex_position(slot, mesh.point(slot))) {
-      return false;
+  const std::size_t vertex_count = mesh.vertex_ids_.size();
+  vertex_cell_.assign(vertex_count, -1);
+  vertex_degree_.assign(vertex_count, 0);
+  const std::vector<Tetrahedron>& tets = mesh.complex().tets;
+  for (std::size_t slot = 0; slot < tets.size(); ++slot) {
+    const Tetrahedron& tet = tets[slot];
+    if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+    for (std::int32_t vertex : tet.v) {
+      if (vertex < 0 || static_cast<std::size_t>(vertex) >= vertex_count) return false;
+      vertex_cell_[static_cast<std::size_t>(vertex)] = static_cast<std::int32_t>(slot);
+      ++vertex_degree_[static_cast<std::size_t>(vertex)];
     }
   }
-  for (const TetSnapshotCell& cell : snapshot.cells) {
-    const std::int32_t slot = mesh.cell_slot(cell.id);
-    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return false;
-    LocalCell vertices{};
-    std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
-    if (!insert_logical(mesh, slot, vertices)) return false;
-  }
   return true;
-}
-
-bool LocalIncidence::insert_vertex_position(std::int32_t vertex,
-                                            const double* point) {
-  if (vertex < 0 || point == nullptr) return false;
-  return vertex_positions_.emplace(local_position_key(point), vertex).second;
-}
-
-bool LocalIncidence::erase_vertex_position(
-    std::int32_t vertex, const LocalPositionKey& old_key) noexcept {
-  const auto found = vertex_positions_.find(old_key);
-  if (found == vertex_positions_.end() || found->second != vertex) return false;
-  vertex_positions_.erase(found);
-  return true;
-}
-
-LocalIncidence::PositionStatus LocalIncidence::prepare_position_move(
-    std::int32_t vertex, const double* old_point, const double* new_point,
-    PositionMove& move) {
-  if (vertex < 0 || old_point == nullptr || new_point == nullptr) {
-    return PositionStatus::kIndexMismatch;
-  }
-  move = PositionMove{};
-  move.vertex_slot = vertex;
-  move.old_key = local_position_key(old_point);
-  move.new_key = local_position_key(new_point);
-  const auto current = vertex_positions_.find(move.old_key);
-  if (current == vertex_positions_.end() || current->second != vertex) {
-    return PositionStatus::kIndexMismatch;
-  }
-  if (move.old_key == move.new_key) {
-    move.unchanged = true;
-    return PositionStatus::kReady;
-  }
-  if (vertex_positions_.contains(move.new_key)) return PositionStatus::kDuplicate;
-
-  PositionMap staged;
-  staged.reserve(1);
-  const auto [node, inserted] = staged.emplace(move.new_key, vertex);
-  if (!inserted) return PositionStatus::kIndexMismatch;
-  move.staged_node = staged.extract(node);
-  return PositionStatus::kReady;
-}
-
-bool LocalIncidence::commit_position_move(PositionMove&& move) noexcept {
-  if (move.unchanged) return true;
-  const auto current = vertex_positions_.find(move.old_key);
-  if (current == vertex_positions_.end() || current->second != move.vertex_slot) {
-    return false;
-  }
-  auto old_node = vertex_positions_.extract(current);
-  auto inserted = vertex_positions_.insert(std::move(move.staged_node));
-  if (inserted.inserted) return true;
-  vertex_positions_.insert(std::move(old_node));
-  return false;
 }
 
 bool LocalIncidence::insert_logical(const TetMesh& mesh, std::int32_t cell,
                                     const LocalCell& vertices) {
-  const std::uint64_t cell_id = mesh.cell_id(cell);
+  if (mesh_ != &mesh) return false;
   for (std::int32_t vertex : vertices) {
-    std::vector<std::int32_t>& cells = vertex_cells_[vertex];
-    const auto position = std::lower_bound(
-        cells.begin(), cells.end(), cell_id,
-        [&](std::int32_t existing, std::uint64_t id) {
-          return mesh.cell_id(existing) < id;
-        });
-    if (position != cells.end() && mesh.cell_id(*position) == cell_id) return false;
-    cells.insert(position, cell);
-  }
-  for (int first = 0; first < 4; ++first) {
-    for (int second = first + 1; second < 4; ++second) {
-      std::vector<std::int32_t>& cells =
-          edge_cells_[sorted_local_edge(vertices[first], vertices[second])];
-      if (std::find(cells.begin(), cells.end(), cell) != cells.end()) return false;
-      cells.push_back(cell);
-      std::sort(cells.begin(), cells.end());
+    if (vertex < 0) return false;
+    if (static_cast<std::size_t>(vertex) >= vertex_degree_.size()) {
+      vertex_degree_.resize(static_cast<std::size_t>(vertex) + 1, 0);
+      vertex_cell_.resize(static_cast<std::size_t>(vertex) + 1, -1);
     }
+    vertex_cell_[static_cast<std::size_t>(vertex)] = cell;
+    ++vertex_degree_[static_cast<std::size_t>(vertex)];
   }
   ++topology_revision_;
-  return true;
-}
-
-bool LocalIncidence::erase_cell(std::vector<std::int32_t>& cells,
-                                std::int32_t cell) {
-  const auto found = std::find(cells.begin(), cells.end(), cell);
-  if (found == cells.end()) return false;
-  cells.erase(found);
   return true;
 }
 
 bool LocalIncidence::erase(std::int32_t cell, const LocalCell& vertices) {
+  (void)cell;
   for (std::int32_t vertex : vertices) {
-    const auto found = vertex_cells_.find(vertex);
-    if (found == vertex_cells_.end() || !erase_cell(found->second, cell)) return false;
-    if (found->second.empty()) vertex_cells_.erase(found);
-  }
-  for (int first = 0; first < 4; ++first) {
-    for (int second = first + 1; second < 4; ++second) {
-      const auto found =
-          edge_cells_.find(sorted_local_edge(vertices[first], vertices[second]));
-      if (found == edge_cells_.end() || !erase_cell(found->second, cell)) return false;
-      if (found->second.empty()) edge_cells_.erase(found);
+    if (vertex < 0 || static_cast<std::size_t>(vertex) >= vertex_degree_.size() ||
+        vertex_degree_[static_cast<std::size_t>(vertex)] == 0) {
+      return false;
     }
+    --vertex_degree_[static_cast<std::size_t>(vertex)];
   }
   ++topology_revision_;
   return true;
 }
 
+void LocalIncidence::collect_star(std::int32_t vertex, std::vector<std::int32_t>& cells) const {
+  cells.clear();
+  if (mesh_ == nullptr || vertex < 0 ||
+      static_cast<std::size_t>(vertex) >= vertex_degree_.size()) {
+    return;
+  }
+  const std::size_t expected =
+      static_cast<std::size_t>(vertex_degree_[static_cast<std::size_t>(vertex)]);
+  if (expected == 0) return;
+  const TetrahedralComplex& complex = mesh_->complex();
+  const std::int32_t seed = vertex_cell_[static_cast<std::size_t>(vertex)];
+  if (complex.live(seed) &&
+      vertex_slot(complex.tets[static_cast<std::size_t>(seed)], vertex) >= 0) {
+    if (visited_.size() < complex.tets.size()) visited_.resize(complex.tets.size(), 0);
+    if (++visit_ == 0) {
+      std::fill(visited_.begin(), visited_.end(), 0);
+      visit_ = 1;
+    }
+    stack_.assign(1, seed);
+    visited_[static_cast<std::size_t>(seed)] = visit_;
+    while (!stack_.empty()) {
+      const std::int32_t cell = stack_.back();
+      stack_.pop_back();
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+      if (!is_ghost(tet)) cells.push_back(cell);
+      for (int face = 0; face < 4; ++face) {
+        if (tet.v[face] == vertex) continue;
+        const std::int32_t next = tet.n[face];
+        if (next < 0 || visited_[static_cast<std::size_t>(next)] == visit_) continue;
+        visited_[static_cast<std::size_t>(next)] = visit_;
+        stack_.push_back(next);
+      }
+    }
+    if (cells.size() == expected) return;
+  }
+  // A pinched star (its cells not face-connected around the vertex) or a
+  // stale hint: scan every cell.
+  cells.clear();
+  for (std::size_t slot = 0; slot < complex.tets.size(); ++slot) {
+    const Tetrahedron& tet = complex.tets[slot];
+    if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+    if (vertex_slot(tet, vertex) >= 0) cells.push_back(static_cast<std::int32_t>(slot));
+  }
+  if (!cells.empty()) vertex_cell_[static_cast<std::size_t>(vertex)] = cells.front();
+}
+
+void LocalIncidence::collect_edge(std::int32_t first, std::int32_t second,
+                                  std::vector<std::int32_t>& cells) const {
+  collect_star(first, cells);
+  if (mesh_ == nullptr) return;
+  const TetrahedralComplex& complex = mesh_->complex();
+  std::size_t kept = 0;
+  for (std::int32_t cell : cells) {
+    if (vertex_slot(complex.tets[static_cast<std::size_t>(cell)], second) >= 0) {
+      cells[kept++] = cell;
+    }
+  }
+  cells.resize(kept);
+  std::sort(cells.begin(), cells.end());
+}
+
 LocalIncidence::Star LocalIncidence::vertex_star(std::int32_t vertex) const {
   std::vector<std::int32_t> result;
-  const auto found = vertex_cells_.find(vertex);
-  if (found != vertex_cells_.end()) result = found->second;
+  collect_star(vertex, result);
+  std::sort(result.begin(), result.end(), [&](std::int32_t a, std::int32_t b) {
+    return mesh_->cell_id(a) < mesh_->cell_id(b);
+  });
   return Star(this, vertex, topology_revision_, std::move(result));
 }
 
 std::size_t LocalIncidence::edge_valence(std::int32_t first,
                                          std::int32_t second) const {
-  const auto found = edge_cells_.find(sorted_local_edge(first, second));
-  return found == edge_cells_.end() ? 0 : found->second.size();
+  if (first == second || mesh_ == nullptr) return 0;
+  collect_star(first, star_scratch_);
+  const TetrahedralComplex& complex = mesh_->complex();
+  std::size_t count = 0;
+  for (std::int32_t cell : star_scratch_) {
+    count += vertex_slot(complex.tets[static_cast<std::size_t>(cell)], second) >= 0;
+  }
+  return count;
 }
 
 std::span<const std::int32_t> LocalIncidence::edge_star(std::int32_t first,
                                                         std::int32_t second) const {
-  const auto found = edge_cells_.find(sorted_local_edge(first, second));
-  if (found == edge_cells_.end()) return {};
-  return found->second;
+  if (first == second || mesh_ == nullptr) return {};
+  collect_edge(first, second, edge_scratch_);
+  return edge_scratch_;
 }
 
 std::int32_t LocalIncidence::edge_cell_outside(
     const TetMesh& mesh, std::int32_t first, std::int32_t second,
     std::span<const std::int32_t> removed_slots) const {
-  const auto found = edge_cells_.find(sorted_local_edge(first, second));
-  if (found == edge_cells_.end()) return -1;
+  if (first == second || mesh_ != &mesh) return -1;
+  collect_star(first, star_scratch_);
   std::int32_t result = -1;
   std::uint64_t result_id = std::numeric_limits<std::uint64_t>::max();
-  for (std::int32_t cell : found->second) {
-    if (!mesh.complex().live(cell) || is_ghost(mesh.tet(cell)) ||
-        std::find(removed_slots.begin(), removed_slots.end(), cell) !=
-            removed_slots.end()) {
+  for (std::int32_t cell : star_scratch_) {
+    if (vertex_slot(mesh.tet(cell), second) < 0 ||
+        std::find(removed_slots.begin(), removed_slots.end(), cell) != removed_slots.end()) {
       continue;
     }
     const std::uint64_t cell_id = mesh.cell_id(cell);
@@ -272,13 +223,11 @@ TetEditStatus LocalIncidence::relocate(
   if (moved_vertices.size() != 1) return TetEditStatus::kRejectedTopology;
   const TetEditVertex& moved = moved_vertices.front();
   const std::int32_t slot = mesh.vertex_slot(moved.id);
-  if (slot < 0 || star.owner_ != this || star.vertex_ != slot ||
-      star.revision_ != topology_revision_) {
-    return TetEditStatus::kRejectedTopology;
-  }
-  const auto current_star = vertex_cells_.find(slot);
-  if (current_star == vertex_cells_.end() ||
-      current_star->second.size() != star.cells_.size()) {
+  if (slot < 0 || mesh_ != &mesh || star.owner_ != this || star.vertex_ != slot ||
+      star.revision_ != topology_revision_ ||
+      static_cast<std::size_t>(slot) >= vertex_degree_.size() ||
+      static_cast<std::size_t>(vertex_degree_[static_cast<std::size_t>(slot)]) !=
+          star.cells_.size()) {
     return TetEditStatus::kRejectedTopology;
   }
   std::uint64_t previous_cell_id = 0;
@@ -291,37 +240,23 @@ TetEditStatus LocalIncidence::relocate(
     if (has_previous_cell && cell_id <= previous_cell_id) {
       return TetEditStatus::kRejectedTopology;
     }
-    const Tetrahedron& tet = mesh.tet(cell);
-    bool contains_moved = false;
-    for (std::int32_t vertex : tet.v) {
-      contains_moved = contains_moved || vertex == slot;
-    }
-    if (!contains_moved) return TetEditStatus::kRejectedTopology;
+    if (vertex_slot(mesh.tet(cell), slot) < 0) return TetEditStatus::kRejectedTopology;
     previous_cell_id = cell_id;
     has_previous_cell = true;
   }
-  PositionMove point_move;
-  const PositionStatus position_status = prepare_position_move(
-      slot, mesh.point(slot), moved.carrier.data(), point_move);
-  if (position_status == PositionStatus::kDuplicate) {
-    return TetEditStatus::kInvalidGeometry;
-  }
-  if (position_status != PositionStatus::kReady) {
-    return TetEditStatus::kStaleGeneration;
-  }
-  const TetEditStatus status =
-      mesh.relocate_with_complete_star(moved_vertices, star.cells());
-  if (status == TetEditStatus::kApplied && !commit_position_move(std::move(point_move))) {
-    return TetEditStatus::kStaleGeneration;
-  }
-  return status;
+  // Exact positivity of every moved star cell excludes a move onto another
+  // vertex, so no position index is kept. A relocation moves a point, not
+  // the topology: the star stays current.
+  return mesh.relocate_with_complete_star(moved_vertices, star.cells());
 }
 
 TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& operation,
                                              const Star* collapsed_star) {
   try {
     const bool collapse = operation.kind == TetEditKind::kCollapse;
-    if (collapse != (collapsed_star != nullptr)) return TetEditStatus::kRejectedTopology;
+    if (collapse != (collapsed_star != nullptr) || mesh_ != &mesh) {
+      return TetEditStatus::kRejectedTopology;
+    }
     std::vector<std::int32_t> removed_slots;
     std::vector<LocalCell> removed_cells;
     removed_slots.reserve(operation.removed_cell_ids.size());
@@ -336,11 +271,9 @@ TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& opera
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       removed_cells.push_back(vertices);
     }
-    std::int32_t removed_vertex = -1;
-    LocalPositionKey removed_position{};
     if (collapse) {
       if (operation.removed_vertex_ids.size() != 1) return TetEditStatus::kRejectedTopology;
-      removed_vertex = mesh.vertex_slot(operation.removed_vertex_ids.front());
+      const std::int32_t removed_vertex = mesh.vertex_slot(operation.removed_vertex_ids.front());
       const Star& star = *collapsed_star;
       if (removed_vertex < 0 || star.owner_ != this || star.vertex_ != removed_vertex ||
           star.revision_ != topology_revision_) {
@@ -351,7 +284,6 @@ TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& opera
       std::sort(removed_sorted.begin(), removed_sorted.end());
       std::sort(star_sorted.begin(), star_sorted.end());
       if (removed_sorted != star_sorted) return TetEditStatus::kRejectedTopology;
-      removed_position = local_position_key(mesh.point(removed_vertex));
     }
     const TetEditStatus status = mesh.replace_local_cavity(operation, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
@@ -369,9 +301,6 @@ TetEditStatus LocalIncidence::replace_cavity(TetMesh& mesh, const TetEdit& opera
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       if (!insert_logical(mesh, slot, vertices)) return TetEditStatus::kStaleGeneration;
     }
-    if (collapse && !erase_vertex_position(removed_vertex, removed_position)) {
-      return TetEditStatus::kStaleGeneration;
-    }
     return TetEditStatus::kApplied;
   } catch (const std::bad_alloc&) {
     return TetEditStatus::kAllocationFailure;
@@ -383,6 +312,7 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
                                           std::span<const std::int32_t> removed_vertices,
                                           std::vector<std::uint64_t>& created_cells) {
   try {
+    if (mesh_ != &mesh) return TetEditStatus::kRejectedTopology;
     std::vector<LocalCell> removed_cells;
     removed_cells.reserve(cavity.size());
     for (std::int32_t slot : cavity) {
@@ -393,23 +323,12 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       removed_cells.push_back(vertices);
     }
-    if (vertex_positions_.contains(local_position_key(vertex.carrier.data()))) {
-      return TetEditStatus::kInvalidGeometry;
-    }
-    std::vector<LocalPositionKey> removed_positions;
-    removed_positions.reserve(removed_vertices.size());
     for (std::int32_t removed : removed_vertices) {
       if (!mesh.live_vertex(removed)) return TetEditStatus::kRejectedTopology;
-      removed_positions.push_back(local_position_key(mesh.point(removed)));
     }
     const TetEditStatus status =
         mesh.insert_local_cone(vertex, cavity, removed_vertices, created_cells, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
-    for (std::size_t index = 0; index < removed_vertices.size(); ++index) {
-      if (!erase_vertex_position(removed_vertices[index], removed_positions[index])) {
-        return TetEditStatus::kStaleGeneration;
-      }
-    }
     for (std::size_t index = 0; index < cavity.size(); ++index) {
       if (!erase(cavity[index], removed_cells[index])) return TetEditStatus::kStaleGeneration;
     }
@@ -421,9 +340,6 @@ TetEditStatus LocalIncidence::insert_cone(TetMesh& mesh, const TetEditVertex& ve
       LocalCell vertices{};
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       if (!insert_logical(mesh, slot, vertices)) return TetEditStatus::kStaleGeneration;
-    }
-    if (!insert_vertex_position(mesh.vertex_slot(vertex.id), vertex.carrier.data())) {
-      return TetEditStatus::kStaleGeneration;
     }
     return TetEditStatus::kApplied;
   } catch (const std::bad_alloc&) {
@@ -437,6 +353,7 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
                                                     std::span<const std::size_t> segment_rows,
                                                     std::vector<std::uint64_t>& created_cells) {
   try {
+    if (mesh_ != &mesh) return TetEditStatus::kRejectedTopology;
     std::vector<std::int32_t> removed_slots;
     std::vector<LocalCell> removed_cells;
     removed_slots.reserve(cavity.size());
@@ -448,9 +365,6 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       removed_slots.push_back(slot);
       removed_cells.push_back(vertices);
-    }
-    if (vertex_positions_.contains(local_position_key(vertex.carrier.data()))) {
-      return TetEditStatus::kInvalidGeometry;
     }
     const TetEditStatus status = mesh.insert_local_boundary_point(
         vertex, cavity, facet_rows, segment_rows, created_cells, segment_index_);
@@ -468,9 +382,6 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
       LocalCell vertices{};
       std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
       if (!insert_logical(mesh, slot, vertices)) return TetEditStatus::kStaleGeneration;
-    }
-    if (!insert_vertex_position(mesh.vertex_slot(vertex.id), vertex.carrier.data())) {
-      return TetEditStatus::kStaleGeneration;
     }
     return TetEditStatus::kApplied;
   } catch (const std::bad_alloc&) {
@@ -1901,7 +1812,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
 
   TetMeshSnapshot initial;
   if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-  const std::int32_t installed = mesh.install_vertex_sizes(initial, vertex_sizes);
+  const std::int32_t installed = mesh.install_vertex_sizes(vertex_sizes);
   if (installed != PHX_MC_OK) return installed;
   // Size targets by local vertex slot; slots are append-only during this run.
   std::vector<double> slot_sizes;
@@ -1909,8 +1820,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     slot_sizes.assign(mesh.vertex_ids_.size(), 0.0);
     for (std::size_t slot = 0; slot < slot_sizes.size(); ++slot) {
       if (mesh.vertex_live_[slot] == 0) continue;
-      const auto found = mesh.vertex_sizes_.find(mesh.vertex_ids_[slot]);
-      if (found != mesh.vertex_sizes_.end()) slot_sizes[slot] = found->second;
+      slot_sizes[slot] = mesh.vertex_size(static_cast<std::int32_t>(slot));
     }
   };
   refresh_slot_sizes();
@@ -1988,7 +1898,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
             return PHX_MC_INTERNAL_ERROR;
           }
           if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-          if (center_size > 0.0) mesh.vertex_sizes_[center_id] = center_size;
+          if (center_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(center_id), center_size);
           refresh_slot_sizes();
         }
       }
@@ -2003,7 +1913,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // The fixed-boundary star retessellation runs before this index is built;
   // later edits maintain it (flips alter cells, insertion adds one point,
   // collapse removes one, and relocation moves one).
-  if (!incidence.initialize(mesh, initial)) return PHX_MC_INTERNAL_ERROR;
+  if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
   std::set<LogicalEdgeKey> source_edges;
   for (const TetSnapshotSegment& segment : initial.constrained_segments) {
     source_edges.insert(sorted_logical_edge(segment.vertices[0], segment.vertices[1]));
@@ -2193,7 +2103,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (status != TetEditStatus::kApplied) return status;
     // The commit erased the removed vertices' size entries.
     for (std::int32_t vertex : removed) slot_sizes[static_cast<std::size_t>(vertex)] = 0.0;
-    if (candidate_size > 0.0) mesh.vertex_sizes_[inserted.id] = candidate_size;
+    if (candidate_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(inserted.id), candidate_size);
     slot_sizes.resize(mesh.vertex_ids_.size(), 0.0);
     slot_sizes[static_cast<std::size_t>(mesh.vertex_slot(inserted.id))] = candidate_size;
     std::vector<std::int32_t> created_slots;
@@ -3391,7 +3301,7 @@ std::int32_t repair_boundary_quality(
     // compound operation must not install or alter the live retained field.
     TetMesh evaluation(mesh.policy());
     mesh.copy_state_to(evaluation);
-    query_status = evaluation.install_vertex_sizes(initial, vertex_sizes);
+    query_status = evaluation.install_vertex_sizes(vertex_sizes);
     if (query_status == PHX_MC_OK) {
       query_status = evaluate_mesh_quality(evaluation, request, initial_quality);
     }
@@ -3405,7 +3315,7 @@ std::int32_t repair_boundary_quality(
   for (const auto& record : initial_quality) unmet_ids.insert(record.cell_id);
   unmet_cells = static_cast<std::int64_t>(unmet_ids.size());
   detail::LocalIncidence incidence;
-  if (!incidence.initialize(mesh, initial)) return PHX_MC_INTERNAL_ERROR;
+  if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
   using Face = std::array<std::uint64_t, 3>;
   const auto face_key = [](Face face) { std::sort(face.begin(), face.end()); return face; };
   std::map<Face, TetSnapshotFacet> facet_by_key;
@@ -3589,7 +3499,6 @@ std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest&
   }
   records.clear();
   const double floor = std::max(request.minimum_relative_determinant, kMetricDeterminantFloor);
-  const auto& sizes = mesh.vertex_sizes();
   for (const TetSnapshotCell& cell : snapshot.cells) {
     std::array<const double*, 4> points{};
     std::array<double, 4> corner_sizes{};
@@ -3604,12 +3513,8 @@ std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest&
       points[corner] = snapshot_points.empty()
           ? mesh.point(slot)
           : snapshot_points.data() + 3 * candidate_rows.at(cell.vertices[corner]);
-      const auto found = sizes.find(cell.vertices[corner]);
-      if (found == sizes.end()) {
-        sized = false;
-      } else {
-        corner_sizes[corner] = found->second;
-      }
+      corner_sizes[corner] = mesh.vertex_size(slot);
+      sized = sized && corner_sizes[corner] > 0.0;
     }
     if (!live || orient3d(points[0], points[1], points[2], points[3]) <= 0) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_VALIDITY,

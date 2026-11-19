@@ -2,6 +2,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <algorithm>
+#include <map>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -4326,6 +4327,222 @@ void persistent_entries_under_floating_point_hazards() {
   });
 }
 
+// A Kuhn grid of n^3 cubes (six cells each, cells shuffled and corners
+// rotated), two regions split by the plane x = n / 2 whose faces form an
+// interior constrained group, the six boundary sides as groups, and one
+// constrained segment. The built state is compared as sets against
+// references computed here: cells and regions, face adjacency, constraint
+// labels, facets and segments; malformed variants are refused.
+void flat_build_matches_reference_sets() {
+  using phx::mc::BoundaryPolicy;
+  using phx::mc::TetMesh;
+  using phx::mc::TetMeshSnapshot;
+  constexpr int n = 4;
+  const auto index = [](int i, int j, int k) { return i + (n + 1) * (j + (n + 1) * k); };
+  std::vector<double> points;
+  for (int k = 0; k <= n; ++k) {
+    for (int j = 0; j <= n; ++j) {
+      for (int i = 0; i <= n; ++i) {
+        points.insert(points.end(), {double(i), double(j), double(k)});
+      }
+    }
+  }
+  std::vector<std::array<int32_t, 4>> cells;
+  constexpr int kAxes[6][3] = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}};
+  for (int k = 0; k < n; ++k) {
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) {
+        for (const auto& axes : kAxes) {
+          int corner[3]{i, j, k};
+          std::array<int32_t, 4> cell{index(i, j, k), 0, 0, 0};
+          for (int step = 0; step < 3; ++step) {
+            ++corner[axes[step]];
+            cell[static_cast<std::size_t>(step + 1)] = index(corner[0], corner[1], corner[2]);
+          }
+          const double* p[4];
+          for (int c = 0; c < 4; ++c) p[c] = points.data() + 3 * cell[static_cast<std::size_t>(c)];
+          if (phx::mc::orient3d(p[0], p[1], p[2], p[3]) < 0) std::swap(cell[2], cell[3]);
+          cells.push_back(cell);
+        }
+      }
+    }
+  }
+  // Shuffle by a stride coprime to the count; rotate corners by 3-cycles.
+  std::vector<std::array<int32_t, 4>> shuffled(cells.size());
+  for (std::size_t row = 0; row < cells.size(); ++row) {
+    std::array<int32_t, 4> cell = cells[(row * 97) % cells.size()];
+    if (row % 3 == 1) cell = {cell[1], cell[2], cell[0], cell[3]};
+    if (row % 3 == 2) cell = {cell[2], cell[0], cell[1], cell[3]};
+    shuffled[row] = cell;
+  }
+  std::vector<int32_t> tetrahedra;
+  std::vector<int32_t> regions;
+  for (const auto& cell : shuffled) {
+    tetrahedra.insert(tetrahedra.end(), cell.begin(), cell.end());
+    double x = 0.0;
+    for (int32_t v : cell) x += points[3 * static_cast<std::size_t>(v)];
+    regions.push_back(x < 2.0 * n ? 1 : 2);
+  }
+  // Reference face incidence: sorted face -> (row, oriented face).
+  using Face = std::array<int32_t, 3>;
+  std::map<Face, std::vector<std::pair<std::size_t, Face>>> incidence;
+  for (std::size_t row = 0; row < shuffled.size(); ++row) {
+    for (int slot = 0; slot < 4; ++slot) {
+      int32_t oriented[3];
+      phx::mc::oriented_facet(shuffled[row].data(), slot, oriented);
+      Face key{oriented[0], oriented[1], oriented[2]};
+      std::sort(key.begin(), key.end());
+      incidence[key].push_back({row, Face{oriented[0], oriented[1], oriented[2]}});
+    }
+  }
+  std::vector<int32_t> faces;
+  std::vector<int32_t> face_sources;
+  std::map<Face, int32_t> expected_sources;
+  for (const auto& [key, uses] : incidence) {
+    const double* p[3];
+    for (int c = 0; c < 3; ++c) p[c] = points.data() + 3 * static_cast<std::size_t>(key[c]);
+    int32_t source = -1;
+    if (uses.size() == 1) {
+      for (int axis = 0; axis < 3 && source < 0; ++axis) {
+        if (p[0][axis] == p[1][axis] && p[1][axis] == p[2][axis]) {
+          source = 2 * axis + (p[0][axis] == 0.0 ? 0 : 1);
+        }
+      }
+    } else if (p[0][0] == 0.5 * n && p[1][0] == 0.5 * n && p[2][0] == 0.5 * n) {
+      source = 6;
+    }
+    if (source < 0) continue;
+    faces.insert(faces.end(), uses.front().second.begin(), uses.front().second.end());
+    face_sources.push_back(source);
+    expected_sources.emplace(key, source);
+  }
+  const std::vector<int32_t> segments{index(0, 0, 0), index(1, 0, 0)};
+  const std::vector<int32_t> segment_sources{0};
+
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  PHX_CHECK(mesh.build(points, tetrahedra, regions, faces, face_sources, segments,
+                       segment_sources) == PHX_MC_OK);
+  TetMeshSnapshot snapshot;
+  PHX_CHECK(mesh.snapshot(snapshot) == phx::mc::TetEditStatus::kApplied);
+  PHX_CHECK(mesh.complex().audit());
+  PHX_CHECK(snapshot.vertices.size() == points.size() / 3);
+  for (std::size_t row = 0; row < snapshot.vertices.size(); ++row) {
+    PHX_CHECK(snapshot.vertices[row].id == row);
+    PHX_CHECK(std::equal(snapshot.vertices[row].carrier.begin(),
+                         snapshot.vertices[row].carrier.end(), points.begin() + 3 * row));
+  }
+  using Cell = std::pair<std::array<uint64_t, 4>, int32_t>;
+  std::vector<Cell> expected_cells;
+  std::vector<Cell> built_cells;
+  for (std::size_t row = 0; row < shuffled.size(); ++row) {
+    std::array<uint64_t, 4> key{};
+    for (int c = 0; c < 4; ++c) key[c] = static_cast<uint64_t>(shuffled[row][c]);
+    std::sort(key.begin(), key.end());
+    expected_cells.push_back({key, regions[row]});
+  }
+  for (const auto& cell : snapshot.cells) {
+    std::array<uint64_t, 4> key = cell.vertices;
+    std::sort(key.begin(), key.end());
+    built_cells.push_back({key, cell.region});
+  }
+  std::sort(expected_cells.begin(), expected_cells.end());
+  std::sort(built_cells.begin(), built_cells.end());
+  PHX_CHECK(built_cells == expected_cells);
+  // Adjacency and labels against the reference incidence.
+  for (const auto& cell : snapshot.cells) {
+    const int32_t slot = mesh.cell_slot(cell.id);
+    PHX_CHECK(slot >= 0);
+    if (slot < 0) continue;
+    const phx::mc::Tetrahedron& tet = mesh.tet(slot);
+    for (int k = 0; k < 4; ++k) {
+      int32_t oriented[3];
+      phx::mc::oriented_facet(tet.v, k, oriented);
+      Face key{oriented[0], oriented[1], oriented[2]};
+      std::sort(key.begin(), key.end());
+      const auto uses = incidence.find(key);
+      PHX_CHECK(uses != incidence.end());
+      if (uses == incidence.end()) continue;
+      const phx::mc::Tetrahedron& across = mesh.tet(tet.n[k]);
+      PHX_CHECK(phx::mc::is_ghost(across) == (uses->second.size() == 1));
+      PHX_CHECK(phx::mc::neighbor_slot(across, slot) >= 0);
+      const auto source = expected_sources.find(key);
+      PHX_CHECK(mesh.complex().constraint(slot, k) ==
+                (source == expected_sources.end() ? phx::mc::kNoConstraint : source->second));
+    }
+  }
+  std::vector<std::pair<Face, int32_t>> built_facets;
+  for (const auto& facet : snapshot.constrained_facets) {
+    Face key{static_cast<int32_t>(facet.vertices[0]), static_cast<int32_t>(facet.vertices[1]),
+             static_cast<int32_t>(facet.vertices[2])};
+    std::sort(key.begin(), key.end());
+    built_facets.push_back({key, facet.source});
+  }
+  std::sort(built_facets.begin(), built_facets.end());
+  const std::vector<std::pair<Face, int32_t>> expected_facets(expected_sources.begin(),
+                                                              expected_sources.end());
+  PHX_CHECK(built_facets == expected_facets);
+  PHX_CHECK(snapshot.constrained_segments.size() == 1);
+  PHX_CHECK(snapshot.constrained_segments.front().vertices ==
+            (std::array<uint64_t, 2>{static_cast<uint64_t>(segments[0]),
+                                     static_cast<uint64_t>(segments[1])}));
+
+  const auto refused = [&](const std::vector<int32_t>& cell_bank, const std::vector<int32_t>& region_bank,
+                           const std::vector<int32_t>& face_bank,
+                           const std::vector<int32_t>& source_bank,
+                           const std::vector<int32_t>& segment_bank) {
+    TetMesh bad(BoundaryPolicy::kConforming);
+    return bad.build(points, cell_bank, region_bank, face_bank, source_bank, segment_bank,
+                     std::vector<int32_t>(segment_bank.size() / 2, 0)) == PHX_MC_INVALID_INPUT;
+  };
+  // A face of three cells: one cell repeated.
+  std::vector<int32_t> repeated = tetrahedra;
+  repeated.insert(repeated.end(), tetrahedra.begin(), tetrahedra.begin() + 4);
+  std::vector<int32_t> repeated_regions = regions;
+  repeated_regions.push_back(regions.front());
+  PHX_CHECK(refused(repeated, repeated_regions, faces, face_sources, segments));
+  // A boundary face left unconstrained.
+  PHX_CHECK(refused(tetrahedra, regions, std::vector<int32_t>(faces.begin() + 3, faces.end()),
+                    std::vector<int32_t>(face_sources.begin() + 1, face_sources.end()), segments));
+  // A constrained face constrained twice.
+  std::vector<int32_t> twice = faces;
+  twice.insert(twice.end(), faces.begin(), faces.begin() + 3);
+  std::vector<int32_t> twice_sources = face_sources;
+  twice_sources.push_back(face_sources.front());
+  PHX_CHECK(refused(tetrahedra, regions, twice, twice_sources, segments));
+  // A segment that is no cell edge, and a repeated segment.
+  PHX_CHECK(refused(tetrahedra, regions, faces, face_sources, {index(0, 0, 0), index(2, 2, 2)}));
+  PHX_CHECK(refused(tetrahedra, regions, faces, face_sources,
+                    {segments[0], segments[1], segments[1], segments[0]}));
+  // Two cells on the same side of a shared face: a cell's apex is replaced
+  // by its neighbor's apex across face 0, so both cells cover one side.
+  {
+    std::vector<int32_t> folded = tetrahedra;
+    for (std::size_t row = 0; row < shuffled.size(); ++row) {
+      int32_t oriented[3];
+      phx::mc::oriented_facet(shuffled[row].data(), 0, oriented);
+      Face key{oriented[0], oriented[1], oriented[2]};
+      std::sort(key.begin(), key.end());
+      const auto& face_uses = incidence.at(key);
+      if (face_uses.size() != 2) continue;
+      const std::size_t other = face_uses[0].first == row ? face_uses[1].first : face_uses[0].first;
+      // The neighbor's apex across the face replaces this cell's apex: the
+      // two cells then lie on the same side of the shared face.
+      int32_t apex = -1;
+      for (int32_t v : shuffled[other]) {
+        if (std::find(key.begin(), key.end(), v) == key.end()) apex = v;
+      }
+      int32_t* first = folded.data() + 4 * row;
+      std::array<int32_t, 4> cell{apex, shuffled[row][1], shuffled[row][2], shuffled[row][3]};
+      const double* p[4];
+      for (int c = 0; c < 4; ++c) p[c] = points.data() + 3 * static_cast<std::size_t>(cell[c]);
+      if (phx::mc::orient3d(p[0], p[1], p[2], p[3]) < 0) std::swap(cell[2], cell[3]);
+      std::copy(cell.begin(), cell.end(), first);
+      break;
+    }
+    PHX_CHECK(refused(folded, regions, faces, face_sources, segments));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -4352,5 +4569,6 @@ int main() {
   exact_boundary_subface_coverage_rejects_gap_reversal_and_overlap();
   declared_plane_admission_refuses_and_records_vertices();
   periodic_closure_accepts_edit_touching_one_orbit_copy();
+  flat_build_matches_reference_sets();
   return phx::mc::test::finish("test_tet_mesh");
 }

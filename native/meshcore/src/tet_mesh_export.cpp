@@ -117,9 +117,11 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
     staged.quotient_cells = quotient_cells_;
     staged.periodic_identity = periodic_identity_;
     staged.periodic_entity_maps = periodic_entity_maps_;
+    const bool vertex_lineage = !vertex_ancestry_.empty();
+    const bool cell_lineage = include_cell_ancestry && !cell_ancestry_.empty();
     for (std::size_t slot = 0; slot < vertex_ids_.size(); ++slot) {
       if (!vertex_live_[slot]) continue;
-      TetSnapshotVertex vertex;
+      TetSnapshotVertex& vertex = staged.vertices.emplace_back();
       vertex.id = vertex_ids_[slot];
       std::copy_n(points_.data() + 3 * slot, 3, vertex.carrier.begin());
       vertex.witness = witnesses_[slot];
@@ -129,17 +131,18 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
       vertex.has_edge_parameter = vertex_has_edge_parameter_[slot] != 0;
       vertex.edge_endpoints = vertex_edge_endpoints_[slot];
       vertex.edge_parameter = vertex_edge_parameters_[slot];
-      const auto ancestry = vertex_ancestry_.find(vertex.id);
-      if (ancestry != vertex_ancestry_.end()) vertex.ancestry = ancestry->second;
-      staged.vertices.push_back(vertex);
+      if (vertex_lineage) {
+        const auto ancestry = vertex_ancestry_.find(vertex.id);
+        if (ancestry != vertex_ancestry_.end()) vertex.ancestry = ancestry->second;
+      }
     }
     for (std::size_t slot = 0; slot < complex_.tets.size(); ++slot) {
-      const std::int32_t local_slot = static_cast<std::int32_t>(slot);
-      if (!complex_.live(local_slot) || is_ghost(complex_.tets[slot])) continue;
-      TetSnapshotCell cell;
+      const Tetrahedron& tet = complex_.tets[slot];
+      if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+      TetSnapshotCell& cell = staged.cells.emplace_back();
       cell.id = cell_ids_[slot];
-      cell.region = complex_.region(local_slot);
-      if (include_cell_ancestry) {
+      cell.region = complex_.region(static_cast<std::int32_t>(slot));
+      if (cell_lineage) {
         const auto ancestry = cell_ancestry_.find(cell.id);
         if (ancestry != cell_ancestry_.end()) {
           cell.ancestor_cell_ids = *ancestry->second.ancestor_cell_ids;
@@ -147,11 +150,10 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
         }
       }
       for (int corner = 0; corner < 4; ++corner) {
-        const std::int32_t vertex = complex_.tets[slot].v[corner];
+        const std::int32_t vertex = tet.v[corner];
         if (!live_vertex(vertex)) return TetEditStatus::kInvalidGeometry;
-        cell.vertices[corner] = vertex_id(vertex);
+        cell.vertices[corner] = vertex_ids_[static_cast<std::size_t>(vertex)];
       }
-      staged.cells.push_back(std::move(cell));
     }
     using std::swap;
     swap(output, staged);

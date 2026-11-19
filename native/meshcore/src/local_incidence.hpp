@@ -1,16 +1,16 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Per-improvement-call vertex/cell and exact carrier-key incidence.
+// Vertex/cell incidence of a TetMesh for local edits: one incident cell and
+// the finite-cell degree per vertex slot, stars gathered by walking face
+// adjacency. A star the walk cannot reach whole (a pinched vertex) is found
+// by a scan, so stars are always complete.
 #pragma once
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <span>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -23,41 +23,8 @@ using LocalEdgeKey = std::pair<std::int32_t, std::int32_t>;
 
 LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept;
 
-struct LocalEdgeHash {
-  std::size_t operator()(const LocalEdgeKey& edge) const noexcept;
-};
-
-struct LocalPositionKey {
-  std::array<std::uint64_t, 3> bits{};
-
-  bool operator==(const LocalPositionKey&) const noexcept = default;
-};
-
-struct LocalPositionHash {
-  std::size_t operator()(const LocalPositionKey& point) const noexcept;
-};
-
-LocalPositionKey local_position_key(const double* point) noexcept;
-
 class LocalIncidence {
  public:
-  using PositionMap = std::unordered_map<LocalPositionKey, std::int32_t,
-                                          LocalPositionHash>;
-
-  enum class PositionStatus : std::uint8_t {
-    kReady,
-    kDuplicate,
-    kIndexMismatch,
-  };
-
-  struct PositionMove {
-    LocalPositionKey old_key{};
-    LocalPositionKey new_key{};
-    std::int32_t vertex_slot = -1;
-    bool unchanged = false;
-    PositionMap::node_type staged_node;
-  };
-
   class Star {
    public:
     std::size_t size() const noexcept { return cells_.size(); }
@@ -82,25 +49,18 @@ class LocalIncidence {
     std::vector<std::int32_t> cells_;
   };
 
-  bool initialize(const TetMesh& mesh, const TetMeshSnapshot& snapshot);
+  bool initialize(const TetMesh& mesh);
   // The caller owns and updates this index after each constrained segment split.
   void bind_segment_index(const TetSegmentIndex& index) noexcept { segment_index_ = &index; }
-  void reserve(std::size_t vertex_count, std::size_t edge_count);
-  bool insert_vertex_position(std::int32_t vertex, const double* point);
-  bool erase_vertex_position(std::int32_t vertex,
-                             const LocalPositionKey& old_key) noexcept;
-  PositionStatus prepare_position_move(std::int32_t vertex,
-                                       const double* old_point,
-                                       const double* new_point,
-                                       PositionMove& move);
-  bool commit_position_move(PositionMove&& move) noexcept;
 
   bool insert_logical(const TetMesh& mesh, std::int32_t cell,
                       const LocalCell& vertices);
   bool erase(std::int32_t cell, const LocalCell& vertices);
+  // Finite cells containing `vertex`, sorted by cell ID.
   Star vertex_star(std::int32_t vertex) const;
   std::size_t edge_valence(std::int32_t first, std::int32_t second) const;
   // Finite cells containing the edge (sorted slots); empty if it is absent.
+  // The span stays valid until the next edge_star call.
   std::span<const std::int32_t> edge_star(std::int32_t first, std::int32_t second) const;
   std::int32_t edge_cell_outside(
       const TetMesh& mesh, std::int32_t first, std::int32_t second,
@@ -130,15 +90,23 @@ class LocalIncidence {
                                       std::vector<std::uint64_t>& created_cells);
 
  private:
-  static bool erase_cell(std::vector<std::int32_t>& cells, std::int32_t cell);
+  // The finite cells containing `vertex` into `cells` (unsorted).
+  void collect_star(std::int32_t vertex, std::vector<std::int32_t>& cells) const;
+  // The finite cells containing both endpoints into `cells` (sorted slots).
+  void collect_edge(std::int32_t first, std::int32_t second,
+                    std::vector<std::int32_t>& cells) const;
 
-  // Direct cell incidence, not a link walk, retains disconnected/nonmanifold stars.
-  std::unordered_map<std::int32_t, std::vector<std::int32_t>> vertex_cells_;
-  std::unordered_map<LocalEdgeKey, std::vector<std::int32_t>, LocalEdgeHash>
-      edge_cells_;
-  PositionMap vertex_positions_;
+  const TetMesh* mesh_ = nullptr;
+  // Per vertex slot: one incident cell (a hint, checked before use) and the
+  // number of finite cells containing it.
+  mutable std::vector<std::int32_t> vertex_cell_;
+  std::vector<std::int32_t> vertex_degree_;
+  mutable std::vector<std::uint32_t> visited_;
+  mutable std::uint32_t visit_ = 0;
+  mutable std::vector<std::int32_t> stack_;
+  mutable std::vector<std::int32_t> star_scratch_;
+  mutable std::vector<std::int32_t> edge_scratch_;
   const TetSegmentIndex* segment_index_ = nullptr;
   std::uint64_t topology_revision_ = 0;
-
 };
 }  // namespace phx::mc::detail
