@@ -684,9 +684,9 @@ def _register_model_archive_types() -> None:
         ImplicitChartRows,
     )
     from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
-    from ..geometry.implicit._restricted_delaunay_coverage import (
-        RestrictedDelaunayBoundaryWitness,
-        RestrictedDelaunayCoverageTransportWitness,
+    from ..geometry.implicit._tubular_projection_coverage import (
+        TubularProjectionBoundaryWitness,
+        TubularProjectionCoverageTransportWitness,
     )
     from ..geometry.multiregion_surface._contracts import (
         MultiRegionSurfaceCapacityEvidence,
@@ -1203,8 +1203,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.geometry", PlcSourcePointWitness),
         ("phydrax.geometry.brep", BRepProjectionResult),
         ("phydrax.geometry.brep", BRepProjectionPolicy),
-        ("phydrax.geometry.implicit", RestrictedDelaunayBoundaryWitness),
-        ("phydrax.geometry.implicit", RestrictedDelaunayCoverageTransportWitness),
+        ("phydrax.geometry.implicit", TubularProjectionBoundaryWitness),
+        ("phydrax.geometry.implicit", TubularProjectionCoverageTransportWitness),
         ("phydrax.geometry.simplicial", MeshRegion),
         ("phydrax", SemanticProvenance),
         ("phydrax", SpatialCoordinateContract),

@@ -1822,18 +1822,9 @@ PHX_MC_API void phx_mc_periodic_refinement_free(
     phx_mc_periodic_refinement* refinement);
 
 /* ---------------------------------------------------------- surface kernels */
-PHX_MC_API int32_t phx_mc_restricted_dual_3d(
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const double* domain, int64_t facet_capacity, int32_t* facets, int32_t* cells,
-    double* endpoints, int32_t* kinds, int32_t* item_status, int64_t* facet_count);
 PHX_MC_API int32_t phx_mc_restricted_centers_3d(
     int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
     double* center_bounds, int32_t* item_status);
-PHX_MC_API int32_t phx_mc_restricted_rays_3d(
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const double* center_bounds, int64_t ray_count, const int32_t* facets,
-    const int32_t* cells, const double* domain, double* endpoint_bounds,
-    int32_t* kinds, int32_t* item_status);
 
 typedef struct phx_mc_surface_reconnect_request {
   int64_t vertex_count;

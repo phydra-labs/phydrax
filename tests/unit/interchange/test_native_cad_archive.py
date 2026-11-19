@@ -3464,7 +3464,7 @@ def test_restricted_coverage_witness_archive_replays_proof_cold(
             if (
                 node.get("kind") == "dataclass"
                 and str(node.get("type", "")).rsplit(":", 1)[-1]
-                == "RestrictedDelaunayBoundaryWitness"
+                == "TubularProjectionBoundaryWitness"
             ):
                 return node
             for child in node.values():

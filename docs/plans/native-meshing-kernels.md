@@ -103,10 +103,32 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: the S3 rows of the benchmark beaten; quick CAD profile passes with the new volume stage.
 
 ## Later slices (planned when S3 is accepted; same rules)
-- S1 implicit field to tetrahedra (box tree with a-priori curvature sizing, Newton-projected surface
-  sample, Delaunay, boundary from signs). Targets: torus 0.02 / 0.01 in 10 / 20 ms, inside tolerance.
-- S2 quadric CAD solid to surface and volume, then P2: native geometry bundle, curves by size
-  integration, faces in parameter space, volume by S3. Targets: Gmsh HXT per size; curving at or below
-  Netgen's 0.075 s per 100k tets with certified validity.
+- S1 implicit field to tetrahedra by isosurface stuffing on a body-centered cubic lattice
+  (`implicit_stuffing.cpp`; Labelle and Shewchuk 2007, with quadrilateral splits through the smallest
+  identity instead of the parity rule): lattice spacing from the chord rule, cut points by batched
+  regula falsi, warping, conforming stencils. The analytic profile route certifies the result with the
+  existing tubular-projection degree proof and certified facet deviation; a rejected lattice is
+  repaired by a finer one. Targets: torus 0.02 / 0.01 in 10 / 20 ms, inside tolerance. Kernel measured
+  (`24bd51f30`): 1.05 / 2.59 ms. Route cutover (`implicit_stuffing`): torus 0.02 end to end 8,188
+  cells, certified, fidelity 0.0132 / 0.0117; certification after construction 478 s -> 28 s
+  (profiled) by the per-triangle Hessian bound, interval-field distances, vectorized reverse bound and
+  native batched interval programs. Remaining certification cost: the global embedding (twice) and the
+  distance evidence (three times per acceptance); next: native embedding via `phx_mc_verify_volume`
+  and one evidence computation per acceptance. General implicit fields (the adaptive route) follow
+  with the box-tree grading of the lattice.
+- S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
+  one native call `phx_mc_cad_mesh` on a flat geometry bundle; curves split once by integrating the
+  size field and shared by every use; faces meshed in their native parameter chart by metric Delaunay
+  refinement that never splits a curve, then physical flips and smoothing; seams as two chart copies
+  of one curve, poles by float ring caps; volume by S3 with the boundary fixed; P2 nodes from stored
+  parameters with Bernstein validity checks; certification after construction (existing certifiers
+  first, then native verifiers) with local repair. Slices S2-A geometry bundle, S2-B curves, S2-C
+  metric refinement kernel, S2-D faces and surface assembly, S2-E solid route cutover, S2-F native
+  verifiers, S2-G P2. Decisions (Nov 19): every face kind now, including B-spline/NURBS and T-spline
+  (one path, no staged split); construction-ancestry fields leave the CAD witness; closed-form
+  quadric evaluators only with benchmark evidence; P2 through the target's geometry order. Targets:
+  Gmsh HXT per size (0.0215 / 0.0653 / 0.303 / 2.00 s); curving at or below Netgen's 0.0125 / 0.075 s
+  with certified validity.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
-- S5 spline CAD and STEP. S6 layers, hex-dominant, overset, Voronoi. S7 threads and devices at scale.
+- S5 STEP import and remaining exchange formats. S6 layers, hex-dominant, overset, Voronoi. S7 threads
+  and devices at scale.

@@ -36,8 +36,8 @@ from ..geometry._source_fidelity import (
 )
 from ..geometry._source_fidelity_certificate import SourceFidelityWitness
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
-from ..geometry.implicit._restricted_delaunay_coverage import (
-    RestrictedDelaunayBoundaryWitness,
+from ..geometry.implicit._tubular_projection_coverage import (
+    TubularProjectionBoundaryWitness,
 )
 from ..typing import checked
 from ._certification_schedule import MeshCertificationSchedule
@@ -267,9 +267,9 @@ def _require_coverage_witness_binding(
         fidelity_witness, SourceBoundaryDistanceWitness
     ):
         raise ValueError(
-            "Restricted coverage requires its analytic domain and distance witness."
+            "Projection coverage requires its analytic domain and distance witness."
         )
-    if isinstance(witness, RestrictedDelaunayBoundaryWitness):
+    if isinstance(witness, TubularProjectionBoundaryWitness):
         root = witness
         target = (witness.mesh_id, witness.geometry_id, witness.topology_id)
         distance_id = witness.distance_witness_id
@@ -293,7 +293,7 @@ def _require_coverage_witness_binding(
         or distance_id != fidelity_witness.witness_id
     ):
         raise ValueError(
-            "Restricted coverage premises must bind the same source, target and distance witness."
+            "Projection coverage premises must bind the same source, target and distance witness."
         )
 
 

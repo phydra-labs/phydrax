@@ -127,9 +127,9 @@ from ..geometry.implicit._chart_restriction import (
     ImplicitChartPremise,
     ValidatedImplicitChartParent,
 )
-from ..geometry.implicit._restricted_delaunay_coverage import (
-    RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageTransportWitness,
+from ..geometry.implicit._tubular_projection_coverage import (
+    TubularProjectionBoundaryWitness,
+    TubularProjectionCoverageTransportWitness,
 )
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ..typing import checked
@@ -5573,36 +5573,36 @@ def _retarget_coverage_witness(
     target_distance_witness: SourceFidelityWitness | None,
     transition: CellGeometryTransition,
     /,
-) -> RestrictedDelaunayCoverageTransportWitness:
+) -> TubularProjectionCoverageTransportWitness:
     if original.cell_regions is None or target_regions is None:
         raise ValueError(
-            "Restricted coverage transport requires source and target region rows."
+            "Projection coverage transport requires source and target region rows."
         )
     if not isinstance(target_distance_witness, SourceBoundaryDistanceWitness):
         raise ValueError(
-            "Restricted coverage transport requires a renewed source-distance witness."
+            "Projection coverage transport requires a renewed source-distance witness."
         )
     source_witness = original.source_coverage_witness
-    if isinstance(source_witness, RestrictedDelaunayBoundaryWitness):
+    if isinstance(source_witness, TubularProjectionBoundaryWitness):
         if not isinstance(original.fidelity_witness, SourceBoundaryDistanceWitness):
             raise ValueError(
-                "Direct restricted coverage lacks its source-distance witness."
+                "Direct projection coverage lacks its source-distance witness."
             )
         root_witness = source_witness
         root_distance = original.fidelity_witness
         transitions = (transition,)
         stages = (np.asarray(original.cell_regions), np.asarray(target_regions))
-    elif isinstance(source_witness, RestrictedDelaunayCoverageTransportWitness):
+    elif isinstance(source_witness, TubularProjectionCoverageTransportWitness):
         if source_witness.target_distance_witness_id != getattr(
             original.fidelity_witness, "witness_id", None
         ):
             raise ValueError(
-                "Prior restricted coverage and current fidelity witness disagree."
+                "Prior projection coverage and current fidelity witness disagree."
             )
         if not np.array_equal(
             source_witness.stage_cell_regions[-1], np.asarray(original.cell_regions)
         ):
-            raise ValueError("Prior restricted coverage region endpoint is stale.")
+            raise ValueError("Prior projection coverage region endpoint is stale.")
         root_witness = source_witness.root_witness
         root_distance = source_witness.root_distance_witness
         transitions = (*source_witness.transitions, transition)
@@ -5611,7 +5611,7 @@ def _retarget_coverage_witness(
         raise TypeError(
             "No source coverage transport accepts this retained witness type."
         )
-    return RestrictedDelaunayCoverageTransportWitness(
+    return TubularProjectionCoverageTransportWitness(
         root_witness=root_witness,
         root_distance_witness=root_distance,
         transitions=transitions,
@@ -7700,12 +7700,12 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
         if not isinstance(
             source_coverage_witness,
             (
-                RestrictedDelaunayBoundaryWitness,
-                RestrictedDelaunayCoverageTransportWitness,
+                TubularProjectionBoundaryWitness,
+                TubularProjectionCoverageTransportWitness,
             ),
         ):
             raise ValueError(
-                "Polyhedral coverage renewal transports only restricted-Delaunay coverage."
+                "Polyhedral coverage renewal transports only tubular-projection coverage."
             )
         if certification_inputs is None or not isinstance(
             certification_inputs.fidelity_witness, SourceBoundaryDistanceWitness

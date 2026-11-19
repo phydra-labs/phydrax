@@ -50,12 +50,12 @@ from ._source_fidelity import _AdaptiveImplicitBoundaryCarrier
 from ._source_fidelity_certificate import SourceFidelityCertificate
 from .implicit._adaptive_discovery import AdaptiveImplicitSurface
 from .implicit._analytic_profile import AnalyticImplicitProfile
-from .implicit._restricted_delaunay_coverage import (
-    RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageTransportWitness,
-    RestrictedDelaunayCoverageUnavailable,
-    RestrictedDelaunayCoverageWitness,
-    validate_restricted_delaunay_coverage_witness,
+from .implicit._tubular_projection_coverage import (
+    TubularProjectionBoundaryWitness,
+    TubularProjectionCoverageTransportWitness,
+    TubularProjectionCoverageUnavailable,
+    TubularProjectionCoverageWitness,
+    validate_tubular_projection_coverage_witness,
 )
 
 
@@ -71,7 +71,7 @@ type CoverageDomain = (
     | AdaptiveImplicitSurface
     | AnalyticImplicitProfile
 )
-type SourceCoverageWitness = RestrictedDelaunayCoverageWitness | PlcSourcePointWitness
+type SourceCoverageWitness = TubularProjectionCoverageWitness | PlcSourcePointWitness
 type CoverageMethod = Literal[
     "exact_oriented_facets", "mapped_reference_charts", "source_boundary_homotopy"
 ]
@@ -489,13 +489,13 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             if not isinstance(
                 source_coverage_witness_,
                 (
-                    RestrictedDelaunayBoundaryWitness,
-                    RestrictedDelaunayCoverageTransportWitness,
+                    TubularProjectionBoundaryWitness,
+                    TubularProjectionCoverageTransportWitness,
                     PlcSourcePointWitness,
                 ),
             ):
                 raise TypeError(
-                    "source_coverage_witness must be a restricted-Delaunay or PLC source-point witness or None."
+                    "source_coverage_witness must be a tubular-projection or PLC source-point witness or None."
                 )
             if (
                 self.source_coverage_witness is None
@@ -1047,7 +1047,7 @@ def _coverage_boundary_partition(
                     "analytic_source_distance_witness",
                     "unresolved",
                     "source_region",
-                    detail="Analytic restricted coverage requires a current distance-only SourceBoundaryDistanceWitness.",
+                    detail="Analytic tubular-projection coverage requires a current distance-only SourceBoundaryDistanceWitness.",
                 )
             )
             return _BoundaryCoverageProof(
@@ -1056,23 +1056,23 @@ def _coverage_boundary_partition(
         if not isinstance(
             source_coverage_witness,
             (
-                RestrictedDelaunayBoundaryWitness,
-                RestrictedDelaunayCoverageTransportWitness,
+                TubularProjectionBoundaryWitness,
+                TubularProjectionCoverageTransportWitness,
             ),
         ):
             findings.append(
                 _coverage_finding(
-                    "restricted_delaunay_coverage_witness",
+                    "tubular_projection_coverage_witness",
                     "unresolved",
                     "source_region",
-                    detail="Analytic source coverage requires retained restricted-Delaunay intersections, orientation, and whole-volume classification.",
+                    detail="Analytic source coverage requires a tubular-projection witness of boundary orientation, projection degree, and whole-volume classification.",
                 )
             )
             return _BoundaryCoverageProof(
                 (), 0, None, 0, 0, "source_boundary_homotopy", None, None, ()
             )
         try:
-            proof = validate_restricted_delaunay_coverage_witness(
+            proof = validate_tubular_projection_coverage_witness(
                 mesh,
                 geometry,
                 domain,
@@ -1081,7 +1081,7 @@ def _coverage_boundary_partition(
                 source_coverage_witness,
                 embedding=embedding,
             )
-        except RestrictedDelaunayCoverageUnavailable as error:
+        except TubularProjectionCoverageUnavailable as error:
             findings.append(
                 _coverage_finding(
                     error.check,
@@ -1096,10 +1096,10 @@ def _coverage_boundary_partition(
         except (TypeError, ValueError, IndexError) as error:
             findings.append(
                 _coverage_finding(
-                    "restricted_delaunay_witness",
+                    "tubular_projection_witness",
                     "violated",
                     "mesh",
-                    detail=f"Retained restricted-Delaunay witness is structurally invalid: {error}",
+                    detail=f"Retained tubular-projection witness is structurally invalid: {error}",
                 )
             )
             return _BoundaryCoverageProof(
@@ -1108,10 +1108,10 @@ def _coverage_boundary_partition(
         except (ArithmeticError, FloatingPointError) as error:
             findings.append(
                 _coverage_finding(
-                    "restricted_delaunay_interval",
+                    "tubular_projection_interval",
                     "unresolved",
                     "mesh",
-                    detail=f"Restricted-Delaunay interval revalidation is unresolved: {error}",
+                    detail=f"Tubular-projection interval revalidation is unresolved: {error}",
                 )
             )
             return _BoundaryCoverageProof(
@@ -1140,7 +1140,7 @@ def _coverage_boundary_partition(
                 "source_region",
                 detail="PLC source-point evidence applies only to piecewise-linear source domains."
                 if isinstance(source_coverage_witness, PlcSourcePointWitness)
-                else "Restricted-Delaunay analytic coverage evidence cannot be applied to this source-domain type.",
+                else "Tubular-projection analytic coverage evidence cannot be applied to this source-domain type.",
             )
         )
     if isinstance(domain, MappedReferenceDomain):
@@ -1584,13 +1584,13 @@ def _prove_coverage(
     if source_coverage_witness is not None and not isinstance(
         source_coverage_witness,
         (
-            RestrictedDelaunayBoundaryWitness,
-            RestrictedDelaunayCoverageTransportWitness,
+            TubularProjectionBoundaryWitness,
+            TubularProjectionCoverageTransportWitness,
             PlcSourcePointWitness,
         ),
     ):
         raise TypeError(
-            "source_coverage_witness must be a restricted-Delaunay or PLC source-point witness or None."
+            "source_coverage_witness must be a tubular-projection or PLC source-point witness or None."
         )
     source_revision = _coverage_source_revision(domain, source)
     findings: list[MeshCertificateFinding] = []

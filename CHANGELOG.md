@@ -278,6 +278,35 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- **Breaking:** an `AnalyticImplicitProfile` volume is meshed by isosurface
+  stuffing instead of restricted Delaunay. The route literal
+  `implicit_restricted_delaunay` is now `implicit_stuffing`,
+  `PreparedRestrictedImplicitVolume` / `prepare_restricted_implicit_volume`
+  are `PreparedStuffedImplicitVolume` / `prepare_stuffed_implicit_volume`, and
+  the construction-independent boundary proof is renamed to what it proves:
+  `phydrax.geometry.implicit._tubular_projection_coverage` with
+  `TubularProjectionBoundaryWitness`,
+  `TubularProjectionCoverageTransportWitness`,
+  `TubularProjectionCoverageWitness`, `TubularProjectionCoverageProof`,
+  `TubularProjectionCoverageUnavailable` and the
+  `validate_tubular_projection_*` validators; check codes
+  `restricted_*` are `projection_*`. The lattice spacing follows the chord
+  rule from the profile's curvature bound; a lattice rejected by the exact
+  volume certificate, the profile topology, the certified facet deviation or
+  the size controls is repaired by a finer one. Meshes, cell counts, witness
+  identities and stored results change; regenerate archives. The native
+  restricted dual and ray kernels (`phx_mc_restricted_dual_3d`,
+  `phx_mc_restricted_rays_3d`) and their bindings are removed.
+- Analytic profile certification is sharper and faster with the same
+  guarantees: `AnalyticImplicitProfile.triangle_distance_upper` bounds the
+  distance over a triangle by the vertex interval values plus the Hessian
+  bound `1 / (R - t)` at the triangle's own distance `t` times
+  `diameter^2 / 6` (previously a fixed tube or the triangle's centroid ball);
+  `boundary_distance` encloses distances with the certified interval field
+  instead of per-point rational square roots; and the source-to-target
+  direction bounds each cover sample by explicit points of its nearest
+  triangles in vectorized binary64 with a proven rounding margin instead of
+  an exact rational search.
 - The native persistent tetrahedral state keeps cell, vertex, facet and
   segment identities in flat tables indexed by ID (a sparse map only for
   caller-chosen IDs far beyond the used range) and builds its adjacency by

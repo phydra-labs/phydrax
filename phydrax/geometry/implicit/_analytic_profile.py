@@ -37,7 +37,7 @@ from .._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from .._rational import binary64_norm_upper
+from .._rational import binary64_difference_magnitude, binary64_norm_upper
 from .._source_boundary_records import (
     SourceBoundaryDistance,
     SourceBoundarySamples,
@@ -65,23 +65,10 @@ def _upper_fraction(value: Fraction) -> float:
     return float(np.nextafter(rounded, np.inf)) if Fraction(rounded) < value else rounded
 
 
-_INTERVAL_BATCH_SIZE = 64
-
-
 def _evaluate_interval_points(
     program: PreparedIntervalFunction, points: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_parts: list[np.ndarray] = []
-    upper_parts: list[np.ndarray] = []
-    for start in range(0, points.shape[0], _INTERVAL_BATCH_SIZE):
-        stop = min(start + _INTERVAL_BATCH_SIZE, points.shape[0])
-        lower, upper = program.evaluate(points[start:stop], points[start:stop])
-        lower_parts.append(np.asarray(lower, dtype=np.float64))
-        upper_parts.append(np.asarray(upper, dtype=np.float64))
-    if not lower_parts:
-        empty = np.empty((0,), dtype=np.float64)
-        return empty, empty.copy()
-    return np.concatenate(lower_parts, axis=0), np.concatenate(upper_parts, axis=0)
+    return _evaluate_interval_boxes(program, points, points, ())
 
 
 def _evaluate_interval_boxes(
@@ -90,17 +77,16 @@ def _evaluate_interval_boxes(
     upper: np.ndarray,
     output_shape: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    lower_parts: list[np.ndarray] = []
-    upper_parts: list[np.ndarray] = []
-    for start in range(0, lower.shape[0], _INTERVAL_BATCH_SIZE):
-        stop = min(start + _INTERVAL_BATCH_SIZE, lower.shape[0])
-        bound_lower, bound_upper = program.evaluate(lower[start:stop], upper[start:stop])
-        lower_parts.append(np.asarray(bound_lower, dtype=np.float64))
-        upper_parts.append(np.asarray(bound_upper, dtype=np.float64))
-    if not lower_parts:
+    # The profile's programs use the native batched executor: one call encloses
+    # every box, independent of how the boxes are partitioned.
+    if lower.shape[0] == 0:
         empty = np.empty((0, *output_shape), dtype=np.float64)
         return empty, empty.copy()
-    return np.concatenate(lower_parts, axis=0), np.concatenate(upper_parts, axis=0)
+    bound_lower, bound_upper = program.evaluate(lower, upper)
+    return (
+        np.asarray(bound_lower, dtype=np.float64),
+        np.asarray(bound_upper, dtype=np.float64),
+    )
 
 
 def _decided_trigonometric(angles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
@@ -241,24 +227,6 @@ def _sphere_cube_cover(
     )
 
 
-def _sqrt_fraction_bounds(value: Fraction) -> tuple[Fraction, Fraction]:
-    """Exact dyadic enclosure of a nonnegative rational square root."""
-    if value <= 0:
-        return Fraction(0), Fraction(0)
-    scale = 1 << 128
-    floor = math.isqrt((value.numerator << 256) // value.denominator)
-    lower = Fraction(floor, scale)
-    return lower, lower if lower * lower == value else Fraction(floor + 1, scale)
-
-
-def _absolute_interval(lower: Fraction, upper: Fraction) -> tuple[Fraction, Fraction]:
-    if lower <= 0 <= upper:
-        return Fraction(0), max(-lower, upper)
-    if upper < 0:
-        return -upper, -lower
-    return lower, upper
-
-
 def _state_identity(geometry: CompiledGeometry) -> str:
     return canonical_fingerprint(
         {
@@ -308,10 +276,16 @@ class _AnalyticFieldBounds:
 
             return jax.grad(scalar)(point)
 
-        object.__setattr__(self, "_value_program", prepare_interval_function(values, 3))
+        object.__setattr__(
+            self,
+            "_value_program",
+            prepare_interval_function(values, 3, batch_capacity=1, execution="batched"),
+        )
         gradient_program: PreparedIntervalFunction | None = None
         try:
-            gradient_program = prepare_interval_function(gradients, 3)
+            gradient_program = prepare_interval_function(
+                gradients, 3, batch_capacity=1, execution="batched"
+            )
         except IntervalExtensionError:
             gradient_program = None
         object.__setattr__(self, "_gradient_program", gradient_program)
@@ -405,6 +379,12 @@ def _implicit_scope_banks(
             )
         )
     return tuple(banks)
+
+
+def _triangle_diameter_upper(triangles: np.ndarray, /) -> np.ndarray:
+    """Directed upper bound of the longest edge of each ``(3, 3)`` triangle."""
+    edges = binary64_difference_magnitude(triangles, np.roll(triangles, -1, axis=1))[1]
+    return np.max(binary64_norm_upper(edges), axis=1)
 
 
 @final
@@ -671,7 +651,9 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 axis=-1,
             )
 
-        self._map_program = prepare_interval_function(parameter_map, 2)
+        self._map_program = prepare_interval_function(
+            parameter_map, 2, batch_capacity=1, execution="batched"
+        )
 
     @property
     def ambient_dimension(self) -> int:
@@ -876,10 +858,58 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         if values.ndim != 2 or values.shape[1] != 3 or not np.all(np.isfinite(values)):
             raise ValueError("points must be finite with shape (N, 3).")
         self.validate_source_integrity()
-        lower, upper = _exact_boundary_distance(
-            values, self.family, self.center, self.radius, self.major_radius
+        # The field is the exact signed distance; its outward interval at each
+        # point encloses the distance after taking the absolute value.
+        value_lower, value_upper = self.field_bounds.point_values(values)
+        value_lower = value_lower.reshape((-1,))
+        value_upper = value_upper.reshape((-1,))
+        straddles = (value_lower <= 0.0) & (value_upper >= 0.0)
+        lower = np.where(
+            straddles, 0.0, np.minimum(np.abs(value_lower), np.abs(value_upper))
         )
+        upper = np.maximum(np.abs(value_lower), np.abs(value_upper))
         return SourceBoundaryDistance(lower, upper, "certified")
+
+    def triangle_distance_upper(self, triangles: ArrayLike, /) -> np.ndarray:
+        """Certified upper bound of the distance to the source over each triangle.
+
+        ``triangles`` has shape ``(N, 3, 3)``. The profile field is a signed
+        distance of reach ``R``: at distance ``t < R`` from the zero set the
+        principal curvatures of its level sets, hence its Hessian norm, are at
+        most ``1 / (R - t)``. A triangle lies within ``t`` = min(vertex
+        distance + diameter, interval bound over its box) of the zero set, and
+        linear interpolation of the field over it errs by at most the Hessian
+        bound times ``diameter^2 / 6``. Every operation rounds outward.
+        """
+        values = np.asarray(triangles, dtype=np.float64)
+        if (
+            values.ndim != 3
+            or values.shape[1:] != (3, 3)
+            or not np.all(np.isfinite(values))
+        ):
+            raise ValueError("triangles must be finite with shape (N, 3, 3).")
+        if values.shape[0] == 0:
+            return np.empty((0,), dtype=np.float64)
+        # The field is the signed distance: its interval encloses the distance.
+        value_lower, value_upper = self.field_bounds.point_values(values.reshape((-1, 3)))
+        vertex_distance = np.maximum(np.abs(value_lower), np.abs(value_upper))
+        error = np.max(vertex_distance.reshape((-1, 3)), axis=1)
+        diameter = _triangle_diameter_upper(values)
+        boxes = self.field_bounds.boxes(np.min(values, axis=1), np.max(values, axis=1))
+        box_bound = np.maximum(np.abs(boxes.value_lower), np.abs(boxes.value_upper))
+        distance = np.minimum(np.nextafter(error + diameter, np.inf), box_bound)
+        in_tube = distance < self.reach_lower
+        margin = np.nextafter(
+            np.where(in_tube, self.reach_lower - distance, 1.0), -np.inf
+        )
+        hessian = np.nextafter(1.0 / margin, np.inf)
+        curvature = np.nextafter(
+            np.nextafter(hessian * np.nextafter(diameter * diameter, np.inf), np.inf)
+            / 6.0,
+            np.inf,
+        )
+        interpolation = np.nextafter(error + curvature, np.inf)
+        return np.where(in_tube, np.minimum(box_bound, interpolation), box_bound)
 
     def project_boundary(
         self,
@@ -933,9 +963,8 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 tuple(() for _ in range(count)),
                 tuple("" for _ in range(count)),
             )
-        lower, upper = _exact_boundary_distance(
-            values, self.family, self.center, self.radius, self.major_radius
-        )
+        distance = self.boundary_distance(values)
+        lower, upper = distance.lower, distance.upper
         projected = np.full((values.shape[0], 3), np.nan, dtype=np.float64)
         parameters = np.full((values.shape[0], 2), np.nan, dtype=np.float64)
         normals = np.full((values.shape[0], 3), np.nan, dtype=np.float64)
@@ -1197,51 +1226,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 raise OverflowError(
                     "The requested analytic boundary cover exceeds array index capacity."
                 )
-
-
-def _exact_boundary_distance(
-    points: np.ndarray,
-    family: AnalyticImplicitFamily,
-    center: np.ndarray,
-    radius: float,
-    major_radius: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    lower = np.empty((points.shape[0],), dtype=np.float64)
-    upper = np.empty_like(lower)
-    center_q = tuple(Fraction(float(value)) for value in center)
-    minor_q = Fraction(float(radius))
-    major_q = Fraction(float(major_radius))
-    for index, point in enumerate(points):
-        delta = tuple(
-            Fraction(float(value)) - origin
-            for value, origin in zip(point, center_q, strict=True)
-        )
-        if family == "sphere":
-            square = sum((component * component for component in delta), Fraction(0))
-            radial_lower, radial_upper = _sqrt_fraction_bounds(square)
-        else:
-            rho_lower, rho_upper = _sqrt_fraction_bounds(
-                delta[0] * delta[0] + delta[1] * delta[1]
-            )
-            radial_lower, radial_upper = rho_lower - major_q, rho_upper - major_q
-            if radial_lower <= 0 <= radial_upper:
-                radial_square_lower = Fraction(0)
-            else:
-                radial_square_lower = min(
-                    radial_lower * radial_lower, radial_upper * radial_upper
-                )
-            radial_square_upper = max(
-                radial_lower * radial_lower, radial_upper * radial_upper
-            )
-            square_lower = radial_square_lower + delta[2] * delta[2]
-            square_upper = radial_square_upper + delta[2] * delta[2]
-            radial_lower, _ = _sqrt_fraction_bounds(square_lower)
-            _, radial_upper = _sqrt_fraction_bounds(square_upper)
-        signed_lower, signed_upper = radial_lower - minor_q, radial_upper - minor_q
-        absolute_lower, absolute_upper = _absolute_interval(signed_lower, signed_upper)
-        lower[index] = max(0.0, _lower_fraction(absolute_lower))
-        upper[index] = max(lower[index], _upper_fraction(absolute_upper))
-    return lower, upper
 
 
 @final

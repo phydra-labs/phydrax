@@ -3776,114 +3776,100 @@ def _triangle_centroid_balls(
     return centers, radii
 
 
-_CENTROID_QUERY_CHUNK = 256
+_REVERSE_CANDIDATES = 16
+_REVERSE_CHUNK = 65536
 
 
-def _centroid_candidate_rows(
+def _paired_triangle_distance_upper(
+    points: np.ndarray, triangles: np.ndarray, /
+) -> np.ndarray:
+    """Upper bounds of the distances from points ``(n, 3)`` to triangles ``(n, 3, 3)``.
+
+    Every candidate ``q = a + v (b - a) + w (c - a)`` uses binary64 weights with
+    ``v, w >= 0`` and ``v + w <= 1`` as real numbers (the complement is rounded
+    down), so ``q`` lies in the closed triangle and ``|p - q|`` bounds the
+    distance above. The candidates are the clipped plane projection and the
+    clipped projections onto the three edges. Evaluating ``|p - q|`` in binary64
+    errs by a few units in the last place of the coordinate scale ``s``; the
+    returned bound adds ``64 u (4 s + d)`` for unit roundoff ``u``.
+    """
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    ab, ac, bc = b - a, c - a, c - b
+    ap, bp = points - a, points - b
+    d00 = np.einsum("ij,ij->i", ab, ab)
+    d01 = np.einsum("ij,ij->i", ab, ac)
+    d11 = np.einsum("ij,ij->i", ac, ac)
+    d20 = np.einsum("ij,ij->i", ap, ab)
+    d21 = np.einsum("ij,ij->i", ap, ac)
+    determinant = d00 * d11 - d01 * d01
+    regular = determinant > 0.0
+    safe = np.where(regular, determinant, 1.0)
+    plane_v = np.where(regular, (d11 * d20 - d01 * d21) / safe, 0.0)
+    plane_w = np.where(regular, (d00 * d21 - d01 * d20) / safe, 0.0)
+
+    def clipped(fraction: np.ndarray, length: np.ndarray, /) -> np.ndarray:
+        ratio = np.where(
+            length > 0.0, fraction / np.where(length > 0.0, length, 1.0), 0.0
+        )
+        return np.clip(ratio, 0.0, 1.0)
+
+    def complement(value: np.ndarray, /) -> np.ndarray:
+        return np.maximum(np.nextafter(1.0 - value, -np.inf), 0.0)
+
+    edge_bc = clipped(np.einsum("ij,ij->i", bp, bc), np.einsum("ij,ij->i", bc, bc))
+    plane_v = np.clip(plane_v, 0.0, 1.0)
+    weights = (
+        (plane_v, np.minimum(np.maximum(plane_w, 0.0), complement(plane_v))),
+        (clipped(d20, d00), np.zeros_like(d00)),
+        (np.zeros_like(d00), clipped(d21, d11)),
+        (complement(edge_bc), edge_bc),
+    )
+    scale = np.max(
+        np.abs(np.concatenate((points[:, None, :], triangles), axis=1)), axis=(1, 2)
+    )
+    upper = np.full((points.shape[0],), np.inf, dtype=np.float64)
+    unit = np.finfo(np.float64).eps / 2.0
+    for v, w in weights:
+        offset = ap - v[:, None] * ab - w[:, None] * ac
+        distance = np.sqrt(np.einsum("ij,ij->i", offset, offset))
+        upper = np.minimum(upper, distance + 64.0 * unit * (4.0 * scale + distance))
+    return np.nextafter(upper, np.inf)
+
+
+def _reverse_distance_upper(
     sample_points: np.ndarray,
-    center_values: np.ndarray,
-    center_scale: float,
-    radius_bound: float,
+    triangle_values: np.ndarray,
+    exact_rows: np.ndarray,
     /,
-) -> Iterator[tuple[int, np.ndarray]]:
-    """Yield each sample's centroid rows inside its ``_nearest_triangle_distance_upper`` ball.
+) -> np.ndarray:
+    """Upper bound of each sample's distance to the union of the target triangles.
 
-    A first box query, doubled from the triangle radius until it meets a
-    centroid, gives an offset ``U >= m``; the second box of half-width
-    ``reach(U) >= reach(m)`` then contains every centroid of the ball. Samples
-    are queried in bounded chunks, so the pair working set stays bounded.
+    Any triangle bounds the minimum above, so each sample is bounded by its
+    nearest triangles by centroid among the exactly binary64 rows; a sample
+    whose candidates are all inexact keeps an infinite bound.
     """
-    from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+    from scipy.spatial import cKDTree
 
-    center_bvh = prepare_bvh(center_values, center_values, dtype=np.float64)
-
-    def pairs(points: np.ndarray, widths: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        query = prepare_bvh(
-            points - widths[:, None], points + widths[:, None], dtype=np.float64
+    rows = np.flatnonzero(exact_rows)
+    result = np.full((sample_points.shape[0],), np.inf, dtype=np.float64)
+    if rows.size == 0:
+        return result
+    tree = cKDTree(np.mean(triangle_values[rows], axis=1))
+    count = min(_REVERSE_CANDIDATES, rows.size)
+    for start in range(0, sample_points.shape[0], _REVERSE_CHUNK):
+        points = sample_points[start : start + _REVERSE_CHUNK]
+        _, nearest = tree.query(points, k=count)
+        candidates = rows[
+            np.asarray(nearest, dtype=np.int64).reshape((points.shape[0], count))
+        ]
+        bounds = _paired_triangle_distance_upper(
+            np.repeat(points, count, axis=0),
+            triangle_values[candidates.reshape((-1,))],
         )
-        return bvh_overlap_pairs_host(query, center_bvh, include_touching=True)
-
-    for start in range(0, sample_points.shape[0], _CENTROID_QUERY_CHUNK):
-        points = sample_points[start : start + _CENTROID_QUERY_CHUNK]
-        upper = np.full((points.shape[0],), np.inf, dtype=np.float64)
-        widths = np.full(
-            (points.shape[0],),
-            max(radius_bound, float(np.spacing(center_scale))),
-            dtype=np.float64,
+        result[start : start + points.shape[0]] = np.min(
+            bounds.reshape((points.shape[0], count)), axis=1
         )
-        pending = np.arange(points.shape[0], dtype=np.int64)
-        while pending.size:
-            local, rows = pairs(points[pending], widths[pending])
-            offsets = np.linalg.norm(center_values[rows] - points[pending][local], axis=1)
-            found = pending[local]
-            np.minimum.at(upper, found, offsets)
-            pending = pending[~np.isfinite(upper[pending])]
-            widths[pending] *= 2.0
-        scale = center_scale + np.max(np.abs(points), axis=1)
-        reach = (upper + 1.0e-9 * (upper + radius_bound + scale) + radius_bound) * (
-            1.0 + 1.0e-6
-        )
-        local, rows = pairs(points, reach)
-        bounds = np.searchsorted(local, np.arange(points.shape[0] + 1, dtype=np.int64))
-        for row in range(points.shape[0]):
-            yield start + row, rows[bounds[row] : bounds[row + 1]]
-
-
-def _nearest_triangle_distance_upper(
-    point: Point3,
-    point_value: np.ndarray,
-    triangles: tuple[Triangle3, ...],
-    center_values: np.ndarray,
-    radius_values: np.ndarray,
-    rows: np.ndarray,
-    center_scale: float,
-    radius_bound: float,
-    box_lower: np.ndarray,
-    box_upper: np.ndarray,
-    vertex_values: np.ndarray,
-    /,
-) -> Fraction:
-    """Return ``min_T sqrt_up(d_T^2)`` over every triangle, pruning provable losers.
-
-    Each triangle contains its exact centroid ``c_T`` and lies within its
-    rational radius ``r_T`` of it, so ``|p - c_T| - r_T <= d_T <= |p - c_T|``
-    and ``m = min_T |p - c_T|`` bounds the minimum distance above. A triangle
-    whose float lower bound exceeds the float ``m`` by ``slack`` has
-    ``d_T > m + slack / 2``: ``slack`` is a billion times the binary64 error
-    of the centroid rounding, the offsets, the radius rounding and the
-    nearest-offset, and also of the few-ulp gap between ``sqrt_up`` and the
-    exact minimum. A pruned triangle's ``sqrt_up`` therefore exceeds the
-    survivors' minimum, which is the minimum over all triangles exactly.
-
-    Only centroids within ``m + slack + max_T r_T`` can survive; ``rows`` (from
-    ``_centroid_candidate_rows``) contains every centroid of that ball widened
-    by a relative ``1e-6``. The same argument then prunes with sharper bounds:
-    the distance to a triangle's outward-rounded bounding box bounds ``d_T``
-    below, and the nearest triangle vertex bounds the minimum above, so far
-    points keep only the triangles facing them.
-    """
-    from ..geometry._domain_boundary import _point_triangle_squared
-
-    scale = center_scale + float(np.max(np.abs(point_value)))
-    offsets = np.linalg.norm(center_values[rows] - point_value, axis=1)
-    nearest = float(np.min(offsets))
-    slack = 1.0e-9 * (nearest + radius_bound + scale)
-    candidates = rows[offsets - radius_values[rows] <= nearest + slack]
-    vertex_nearest = float(
-        np.min(np.linalg.norm(vertex_values[candidates] - point_value, axis=2))
-    )
-    upper = min(nearest, vertex_nearest)
-    gaps = np.maximum(
-        np.maximum(
-            box_lower[candidates] - point_value, point_value - box_upper[candidates]
-        ),
-        0.0,
-    )
-    candidates = candidates[np.linalg.norm(gaps, axis=1) <= upper + slack]
-    return min(
-        fraction_sqrt_interval(_point_triangle_squared(point, triangles[row]))[1]
-        for row in candidates.tolist()
-    )
+    return result
 
 
 def _analytic_profile_distance_evidence(
@@ -3897,7 +3883,7 @@ def _analytic_profile_distance_evidence(
 
     if not isinstance(source, AnalyticImplicitProfile):
         raise TypeError(
-            "A distance-only restricted witness requires AnalyticImplicitProfile authority."
+            "A distance-only analytic witness requires AnalyticImplicitProfile authority."
         )
     source.validate_source_integrity()
     if (
@@ -3951,6 +3937,26 @@ def _analytic_profile_distance_evidence(
         raise ValueError(
             "Analytic profile does not provide certified physical distance enclosures."
         )
+    # The profile's second-order triangle bound applies to triangles whose
+    # rational vertices are exactly binary64; the centroid ball bounds the rest.
+    triangle_values = np.asarray(
+        [
+            [[float(value) for value in vertex] for vertex in triangle]
+            for triangle in target_triangles
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 3, 3))
+    exact_rows = [
+        all(
+            Fraction.from_float(float(triangle_values[row, corner, axis])) == value
+            for corner, vertex in enumerate(triangle)
+            for axis, value in enumerate(vertex)
+        )
+        for row, triangle in enumerate(target_triangles)
+    ]
+    second_order = source.triangle_distance_upper(
+        np.where(np.asarray(exact_rows)[:, None, None], triangle_values, 0.0)
+    )
     mesh_lower = Fraction(0)
     mesh_upper = Fraction(0)
     for row, center in enumerate(centers):
@@ -3969,7 +3975,10 @@ def _analytic_profile_distance_evidence(
         mesh_lower = max(
             mesh_lower, max(Fraction(0), distance_lower - rounding - radii[row])
         )
-        mesh_upper = max(mesh_upper, distance_upper + rounding + radii[row])
+        facet_upper = distance_upper + rounding + radii[row]
+        if exact_rows[row]:
+            facet_upper = min(facet_upper, Fraction.from_float(float(second_order[row])))
+        mesh_upper = max(mesh_upper, facet_upper)
 
     samples = source.boundary_cover(witness.cover_radius)
     sample_points = np.asarray(samples.points, dtype=np.float64)
@@ -3992,48 +4001,17 @@ def _analytic_profile_distance_evidence(
         raise ValueError(
             "Analytic profile source samples do not reproduce a complete certified boundary cover."
         )
-    radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
-    center_scale = float(np.max(np.abs(center_values)))
-    radius_bound = float(np.max(radius_values))
-    vertex_values = np.asarray(
-        [
-            [[float(value) for value in vertex] for vertex in triangle]
-            for triangle in target_triangles
-        ],
-        dtype=np.float64,
+    distance_upper = _reverse_distance_upper(
+        sample_points, triangle_values, np.asarray(exact_rows, dtype=np.bool_)
     )
-    box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
-    box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
-    reverse_upper = Fraction(0)
-    for sample_row, rows in _centroid_candidate_rows(
-        sample_points, center_values, center_scale, radius_bound
-    ):
-        point = (
-            Fraction.from_float(float(sample_points[sample_row, 0])),
-            Fraction.from_float(float(sample_points[sample_row, 1])),
-            Fraction.from_float(float(sample_points[sample_row, 2])),
+    if not np.all(np.isfinite(distance_upper)):
+        raise ValueError(
+            "Analytic distance evidence requires target facets with exactly binary64 vertices."
         )
-        cover_radius = covering_radii[sample_row]
-        point_error = point_errors[sample_row]
-        distance_upper = _nearest_triangle_distance_upper(
-            point,
-            sample_points[sample_row],
-            target_triangles,
-            center_values,
-            radius_values,
-            rows,
-            center_scale,
-            radius_bound,
-            box_lower,
-            box_upper,
-            vertex_values,
-        )
-        reverse_upper = max(
-            reverse_upper,
-            distance_upper
-            + Fraction.from_float(float(cover_radius))
-            + Fraction.from_float(float(point_error)),
-        )
+    reverse = np.nextafter(
+        np.nextafter(distance_upper + covering_radii, np.inf) + point_errors, np.inf
+    )
+    reverse_upper = Fraction.from_float(float(np.max(reverse)))
     return mesh_lower, mesh_upper, reverse_upper
 
 

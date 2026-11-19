@@ -40,12 +40,12 @@ from ..geometry._supermesh import (
     PreparedCommonRefinement,
 )
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
-from ..geometry.implicit._restricted_delaunay_coverage import (
-    RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageProof,
-    RestrictedDelaunayCoverageTransportWitness,
-    RestrictedDelaunayCoverageWitness,
-    validate_restricted_delaunay_coverage_witness,
+from ..geometry.implicit._tubular_projection_coverage import (
+    TubularProjectionBoundaryWitness,
+    TubularProjectionCoverageProof,
+    TubularProjectionCoverageTransportWitness,
+    TubularProjectionCoverageWitness,
+    validate_tubular_projection_coverage_witness,
 )
 from ..typing import checked, ConvertibleToArray, parse
 from ._contracts import MeshingFailureCategory, VolumeMeshingSpec
@@ -254,10 +254,10 @@ class PolyhedralAdaptationEvidence(NamedTuple):
 class PolyhedralCoverageRenewal(NamedTuple):
     source_witness_id: str
     source_distance_witness_id: str
-    target_witness: RestrictedDelaunayBoundaryWitness
+    target_witness: TubularProjectionBoundaryWitness
     target_distance_witness: SourceBoundaryDistanceWitness
     common_refinement_id: str
-    proof: RestrictedDelaunayCoverageProof
+    proof: TubularProjectionCoverageProof
     renewal_id: str
 
 
@@ -892,7 +892,7 @@ def _coverage_region_rows(
 ) -> np.ndarray:
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Restricted coverage requires polyhedral connectivity.")
+        raise TypeError("Projection coverage requires polyhedral connectivity.")
     return np.asarray(
         [
             classes[int(identifier)]
@@ -906,7 +906,7 @@ def _renew_restricted_coverage(
     source: CellMesh,
     source_geometry: CellGeometrySpec,
     source_classes: Mapping[int, int],
-    source_witness: RestrictedDelaunayCoverageWitness,
+    source_witness: TubularProjectionCoverageWitness,
     source_distance: SourceBoundaryDistanceWitness,
     profile: AnalyticImplicitProfile,
     target: CellMesh,
@@ -917,10 +917,10 @@ def _renew_restricted_coverage(
 ) -> PolyhedralCoverageRenewal:
     if common_refinement.status is not CommonRefinementStatus.SUCCESS:
         raise PolyhedralAdaptationError(
-            "Restricted coverage renewal requires complete physical overlap.",
+            "Projection coverage renewal requires complete physical overlap.",
             category=MeshingFailureCategory.TRANSFER_FAILED,
         )
-    source_proof = validate_restricted_delaunay_coverage_witness(
+    source_proof = validate_tubular_projection_coverage_witness(
         source,
         source_geometry,
         profile,
@@ -931,7 +931,7 @@ def _renew_restricted_coverage(
     target_connectivity = target.connectivity
     if not isinstance(target_connectivity, PolyhedralConnectivity):
         raise TypeError(
-            "Restricted coverage renewal requires polyhedral target incidence."
+            "Projection coverage renewal requires polyhedral target incidence."
         )
     boundary = np.asarray(target_connectivity.face_neighbor, dtype=np.int64) < 0
     target_face_ids = np.sort(
@@ -949,7 +949,7 @@ def _renew_restricted_coverage(
         cover_radius=source_distance.cover_radius,
         target_facet_global_ids=target_face_ids,
     )
-    target_witness = RestrictedDelaunayBoundaryWitness(
+    target_witness = TubularProjectionBoundaryWitness(
         mesh_id=target.mesh_id,
         geometry_id=target_geometry_id,
         topology_id=target.topology_id,
@@ -959,7 +959,7 @@ def _renew_restricted_coverage(
         domain_id=profile.domain_id,
         distance_witness_id=target_distance.witness_id,
     )
-    proof = validate_restricted_delaunay_coverage_witness(
+    proof = validate_tubular_projection_coverage_witness(
         target,
         target_geometry,
         profile,
@@ -1055,7 +1055,7 @@ def adapt_polyhedral_mesh(
     cell_classes: ArrayLike | None = None,
     protected_face_ids: ConvertibleToArray = (),
     common_refinement_policy: CommonRefinementPolicy | None = None,
-    source_coverage_witness: RestrictedDelaunayCoverageWitness | None = None,
+    source_coverage_witness: TubularProjectionCoverageWitness | None = None,
     source_distance_witness: SourceBoundaryDistanceWitness | None = None,
     source_coverage_profile: AnalyticImplicitProfile | None = None,
 ) -> PolyhedralAdaptationOutcome:
@@ -1101,10 +1101,10 @@ def adapt_polyhedral_mesh(
         )
     if source_coverage_witness is not None and not isinstance(
         source_coverage_witness,
-        (RestrictedDelaunayBoundaryWitness, RestrictedDelaunayCoverageTransportWitness),
+        (TubularProjectionBoundaryWitness, TubularProjectionCoverageTransportWitness),
     ):
         raise TypeError(
-            "source_coverage_witness has an unsupported restricted coverage type."
+            "source_coverage_witness has an unsupported projection coverage type."
         )
     if source_distance_witness is not None and not isinstance(
         source_distance_witness, SourceBoundaryDistanceWitness

@@ -156,7 +156,7 @@ def test_native_provider_keeps_analytic_volume_algorithms_distinct() -> None:
         NativeMeshingOptions("implicit_adaptive_tetrahedral")
     ).plan(source, specification)
 
-    assert restricted.route == "implicit_restricted_delaunay"
+    assert restricted.route == "implicit_stuffing"
     assert adaptive.route == "implicit_adaptive_tetrahedral"
     assert restricted.plan_id != adaptive.plan_id
 

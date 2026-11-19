@@ -263,7 +263,7 @@ The global-embedding theorem is computed once per mesh, coordinate map and
 validity policy and handed on explicitly: a route that already proved it
 passes the certificate in its certification request (or
 `certify_cell_mesh(..., embedding=...)`), and `revalidate(..., embedding=...)`
-accepts an in-hand certificate. Each consumer, including restricted-Delaunay
+accepts an in-hand certificate. Each consumer, including tubular-projection
 coverage replay, reuses it only after checking that it binds the same mesh,
 coordinate map, local-validity proof and junction set; there is no process
 cache.
@@ -1046,10 +1046,14 @@ refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
 `FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an
 internal diagonal of a coplanar facet group is recovered like any other segment.
 
-An analytic implicit profile with established reach uses restricted Delaunay
-for volume meshing by default. Adaptive implicit volume discovery is distinct
+An analytic implicit profile with established reach is meshed by isosurface
+stuffing (`implicit_stuffing`) by default: a body-centered cubic lattice is
+cut at the zero set, the floating-point result is accepted only after its
+exact volume certificate, profile topology and certified facet deviation, and a
+rejected lattice is repaired by a finer one. Its boundary coverage is the
+tubular-projection degree proof. Adaptive implicit volume discovery is distinct
 and must be selected explicitly as `implicit_adaptive_tetrahedral`; it is not a
-fallback for restricted-Delaunay failure. A direct `BRepModel` volume request
+fallback for stuffing failure. A direct `BRepModel` volume request
 builds and accepts its parametric boundary mesh internally before CAD
 tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
@@ -1328,7 +1332,7 @@ instead of findings. Validity, determinant, construction and nonrepresentable
 rows, size, source fidelity, protected features and coverage stay hard. Hard
 schedules keep their identities; `SOFT` enters the schedule identity. The PLC, CAD,
 image, envelope and adaptive implicit volume routes support soft targets. Routes
-whose acceptance never reads these rows (restricted Delaunay, layer core, hex
+whose acceptance never reads these rows (isosurface stuffing, layer core, hex
 families, polyhedral carriers) refuse `SOFT` rather than ignore it.
 Qualification profiles declare `SOFT` only where the source authored the
 targets as aims; the profile records that source.

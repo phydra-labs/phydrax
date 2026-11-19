@@ -287,9 +287,9 @@ from phydrax.geometry.implicit._adaptive_discovery import (
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from phydrax.geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
-from phydrax.geometry.implicit._restricted_delaunay_coverage import (
-    RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageTransportWitness,
+from phydrax.geometry.implicit._tubular_projection_coverage import (
+    TubularProjectionBoundaryWitness,
+    TubularProjectionCoverageTransportWitness,
 )
 from phydrax.geometry.reconstruction._boundary import ReconstructedTriangleBoundarySource
 from phydrax.geometry.reconstruction._core import (
@@ -2874,8 +2874,8 @@ def _rebuild_domain_coverage_certificate(
     geometry: CellGeometrySpec,
     /,
 ) -> DomainCoverageCertificate:
-    from phydrax.geometry.implicit._restricted_delaunay_coverage import (
-        RestrictedDelaunayCoverageTransportWitness,
+    from phydrax.geometry.implicit._tubular_projection_coverage import (
+        TubularProjectionCoverageTransportWitness,
     )
 
     if (
@@ -2908,14 +2908,12 @@ def _rebuild_domain_coverage_certificate(
     if source_witness is not None and not isinstance(
         source_witness,
         (
-            RestrictedDelaunayBoundaryWitness,
-            RestrictedDelaunayCoverageTransportWitness,
+            TubularProjectionBoundaryWitness,
+            TubularProjectionCoverageTransportWitness,
             PlcSourcePointWitness,
         ),
     ):
-        raise TypeError(
-            "Coverage certificate lost its typed restricted-Delaunay witness."
-        )
+        raise TypeError("Coverage certificate lost its typed tubular-projection witness.")
     embedding = GlobalEmbeddingCertificate.from_stored_fields(value.embedding)
     fidelity = None
     if value.fidelity is not None:
@@ -3913,16 +3911,16 @@ def _rebuild_scoped_fidelity_input(
 def _rebuild_restricted_coverage_witness(
     value: object, /
 ) -> (
-    RestrictedDelaunayBoundaryWitness
-    | RestrictedDelaunayCoverageTransportWitness
+    TubularProjectionBoundaryWitness
+    | TubularProjectionCoverageTransportWitness
     | PlcSourcePointWitness
 ):
     witness = _rebuild_continuation_value(value)
     if not isinstance(
         witness,
         (
-            RestrictedDelaunayBoundaryWitness,
-            RestrictedDelaunayCoverageTransportWitness,
+            TubularProjectionBoundaryWitness,
+            TubularProjectionCoverageTransportWitness,
             PlcSourcePointWitness,
         ),
     ):
@@ -4942,8 +4940,8 @@ def _rebuild_continuation_value(
         if not np.array_equal(samples.points, value.points):
             raise ValueError("Source boundary sample coordinates changed on restoration.")
         return samples
-    if type(value) is RestrictedDelaunayBoundaryWitness:
-        witness = RestrictedDelaunayBoundaryWitness(
+    if type(value) is TubularProjectionBoundaryWitness:
+        witness = TubularProjectionBoundaryWitness(
             mesh_id=value.mesh_id,
             geometry_id=value.geometry_id,
             topology_id=value.topology_id,
@@ -4955,11 +4953,11 @@ def _rebuild_continuation_value(
         )
         if witness.witness_id != value.witness_id:
             raise ValueError(
-                "Restricted Delaunay witness identity changed on restoration."
+                "Tubular-projection witness identity changed on restoration."
             )
         return witness
-    if type(value) is RestrictedDelaunayCoverageTransportWitness:
-        root_witness = _rebuild_as(value.root_witness, RestrictedDelaunayBoundaryWitness)
+    if type(value) is TubularProjectionCoverageTransportWitness:
+        root_witness = _rebuild_as(value.root_witness, TubularProjectionBoundaryWitness)
         root_distance_witness = _rebuild_as(
             value.root_distance_witness, SourceBoundaryDistanceWitness
         )
@@ -4982,7 +4980,7 @@ def _rebuild_continuation_value(
                     target_geometry,
                 )
             )
-        witness = RestrictedDelaunayCoverageTransportWitness(
+        witness = TubularProjectionCoverageTransportWitness(
             root_witness=root_witness,
             root_distance_witness=root_distance_witness,
             transitions=tuple(transitions),
@@ -4991,7 +4989,7 @@ def _rebuild_continuation_value(
         )
         if witness.witness_id != value.witness_id:
             raise ValueError(
-                "Restricted coverage transport identity changed on restoration."
+                "Projection coverage transport identity changed on restoration."
             )
         return witness
     if isinstance(value, SurfaceChartWitness):
@@ -8605,14 +8603,14 @@ def _source_coverage_archive_fixture() -> tuple[
         source,
         specification,
         NativeMeshingOptions(
-            "implicit_restricted_delaunay",
+            "implicit_stuffing",
             volume_schedule=NativeVolumeSchedule(),
         ),
         coordinate_contract,
     ).execute()
     request = construction.certification
     if request.source_coverage_witness is None:
-        raise ValueError("Restricted coverage fixture omitted its native witness.")
+        raise ValueError("Projection coverage fixture omitted its native witness.")
     inputs = MeshCertificationInputs(
         construction.mesh,
         construction.geometry,
@@ -8653,7 +8651,7 @@ def _source_coverage_archive_fixture() -> tuple[
         ),
     )
     if result.certification is None:
-        raise ValueError("Restricted coverage fixture lost computed certification.")
+        raise ValueError("Projection coverage fixture lost computed certification.")
     return source, result
 
 
@@ -8718,9 +8716,9 @@ def _write_source_coverage_artifact(directory: Path, /) -> None:
     )
     report = result.certification
     if report is None or report.inputs.source_coverage_witness is None:
-        raise ValueError("Restricted coverage report omitted its witness.")
+        raise ValueError("Projection coverage report omitted its witness.")
     if report.coverage is None:
-        raise ValueError("Restricted coverage report omitted its material certificate.")
+        raise ValueError("Projection coverage report omitted its material certificate.")
     query_points = np.asarray(((0.75, 0.0, 0.0), (1.1, 0.2, -0.1)))
     distance = source.boundary_distance(query_points)
     print(
@@ -8783,14 +8781,14 @@ def _rebuild_source_coverage_composition(
         source=report.inputs.source,
     )
     if report.coverage is None:
-        raise ValueError("Cold restricted coverage lost its computed domain certificate.")
+        raise ValueError("Cold projection coverage lost its computed domain certificate.")
     if not isinstance(report.inputs.domain, AnalyticImplicitProfile):
         raise TypeError(
-            "Cold restricted coverage lost its analytic profile domain owner."
+            "Cold projection coverage lost its analytic profile domain owner."
         )
     coverage_source = report.inputs.source
     if coverage_source is None:
-        raise TypeError("Cold restricted coverage lost its source boundary query.")
+        raise TypeError("Cold projection coverage lost its source boundary query.")
     query_points = np.asarray(_expected_array(expected["query_points"]), dtype=np.float64)
     distance = source.boundary_distance(query_points)
     np.testing.assert_array_equal(
@@ -8816,7 +8814,7 @@ def _rebuild_source_coverage_composition(
         or coverage_source.source_revision != source.source_revision
     ):
         raise ValueError(
-            "Cold restricted coverage continuation changed its source or proof identity."
+            "Cold projection coverage continuation changed its source or proof identity."
         )
     rebuilt_entries = tuple(
         CompositionEntry(

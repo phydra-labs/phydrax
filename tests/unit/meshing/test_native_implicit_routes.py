@@ -64,16 +64,17 @@ from phydrax.geometry.implicit import (
     AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
 )
-from phydrax.geometry.implicit._restricted_delaunay_coverage import (
+from phydrax.geometry.implicit._analytic_profile import _triangle_diameter_upper
+from phydrax.geometry.implicit._source_charts import (
+    prepare_adaptive_implicit_root_charts,
+)
+from phydrax.geometry.implicit._tubular_projection_coverage import (
     _prove_degree_one_normal_fiber,
     _prove_face_projection_orientation,
     _revalidate_oriented_surface_topology,
-    RestrictedDelaunayBoundaryWitness,
-    RestrictedDelaunayCoverageUnavailable,
-    validate_restricted_delaunay_boundary_witness,
-)
-from phydrax.geometry.implicit._source_charts import (
-    prepare_adaptive_implicit_root_charts,
+    TubularProjectionBoundaryWitness,
+    TubularProjectionCoverageUnavailable,
+    validate_tubular_projection_boundary_witness,
 )
 from phydrax.meshing._association import GeometryAssociationKind
 from phydrax.meshing._audit import _boundary_issues
@@ -85,14 +86,7 @@ from phydrax.meshing._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from phydrax.meshing._implicit_volume import (
-    _inside_seed_rows,
-    _root_edge_bank,
-    _strict_region_site_mask,
-    _tetra_quality,
-    _topology_matches,
-    _triangle_diameter_upper,
-)
+from phydrax.meshing._implicit_volume import _tetra_quality, _topology_matches
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._volume_generation import NativeVolumeSchedule
@@ -991,7 +985,7 @@ def test_native_implicit_route_rejects_sampled_discovery() -> None:
 @pytest.mark.parametrize(
     "route",
     (
-        "implicit_restricted_delaunay",
+        "implicit_stuffing",
         "implicit_adaptive_tetrahedral",
     ),
 )
@@ -1007,7 +1001,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
         root_tolerance=1.0e-8,
     )
     discovery: AdaptiveImplicitSurface | None = None
-    if route == "implicit_restricted_delaunay":
+    if route == "implicit_stuffing":
         source: NativeImplicitSource | AnalyticImplicitProfile = AnalyticImplicitProfile(
             geometry,
             contract,
@@ -1103,7 +1097,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
     )
     assert _boundary_issues(construction.mesh, boundary) == ()
     assert len(construction.organization.zones) == 1
-    if route == "implicit_restricted_delaunay":
+    if route == "implicit_stuffing":
         assert isinstance(source, AnalyticImplicitProfile)
         assert construction.certification.domain is source
         assert construction.certification.fidelity_source is source
@@ -1111,11 +1105,11 @@ def test_native_implicit_volume_route_builds_region_mesh(
         distance_witness = construction.certification.fidelity_witness
         coverage_witness = construction.certification.source_coverage_witness
         assert isinstance(distance_witness, SourceBoundaryDistanceWitness)
-        assert isinstance(coverage_witness, RestrictedDelaunayBoundaryWitness)
+        assert isinstance(coverage_witness, TubularProjectionBoundaryWitness)
         assert distance_witness.source_id == source.source_id
         assert distance_witness.source_revision == source.source_revision
         assert distance_witness.cover_radius < source.tube_radius
-        proof = validate_restricted_delaunay_boundary_witness(
+        proof = validate_tubular_projection_boundary_witness(
             construction.mesh,
             construction.geometry,
             source,
@@ -1136,8 +1130,8 @@ def test_native_implicit_volume_route_builds_region_mesh(
             embedding,
             embedding.validity.determinant_lower * 0.5,
         )
-        with pytest.raises(RestrictedDelaunayCoverageUnavailable):
-            validate_restricted_delaunay_boundary_witness(
+        with pytest.raises(TubularProjectionCoverageUnavailable):
+            validate_tubular_projection_boundary_witness(
                 construction.mesh,
                 construction.geometry,
                 source,
@@ -1147,7 +1141,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 embedding=forged_embedding,
             )
         # Witness identities are static fields; forge one through the constructor.
-        forged_binding = RestrictedDelaunayBoundaryWitness(
+        forged_binding = TubularProjectionBoundaryWitness(
             mesh_id="forged-restricted-mesh",
             geometry_id=coverage_witness.geometry_id,
             topology_id=coverage_witness.topology_id,
@@ -1157,8 +1151,8 @@ def test_native_implicit_volume_route_builds_region_mesh(
             domain_id=coverage_witness.domain_id,
             distance_witness_id=coverage_witness.distance_witness_id,
         )
-        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as forged_witness:
-            validate_restricted_delaunay_boundary_witness(
+        with pytest.raises(TubularProjectionCoverageUnavailable) as forged_witness:
+            validate_tubular_projection_boundary_witness(
                 construction.mesh,
                 construction.geometry,
                 source,
@@ -1166,7 +1160,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 distance_witness,
                 forged_binding,
             )
-        assert forged_witness.value.check == "restricted_witness_binding"
+        assert forged_witness.value.check == "projection_witness_binding"
         forged_vertex_ids = np.asarray(
             construction.mesh.vertex_global_ids, dtype=np.int64
         ).copy()
@@ -1176,8 +1170,8 @@ def test_native_implicit_volume_route_builds_region_mesh(
             construction.mesh,
             jnp.asarray(forged_vertex_ids),
         )
-        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as forged_target:
-            validate_restricted_delaunay_boundary_witness(
+        with pytest.raises(TubularProjectionCoverageUnavailable) as forged_target:
+            validate_tubular_projection_boundary_witness(
                 forged_mesh,
                 construction.geometry,
                 source,
@@ -1185,7 +1179,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 distance_witness,
                 coverage_witness,
             )
-        assert forged_target.value.check == "restricted_mesh_identity"
+        assert forged_target.value.check == "projection_mesh_identity"
         from phydrax.discretization._cell_geometry import CellGeometrySpec
         from phydrax.discretization._cell_geometry_validity import cell_geometry_id
         from phydrax.discretization._cell_mesh import CellMesh
@@ -1215,7 +1209,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             cover_radius=distance_witness.cover_radius,
             target_facet_global_ids=off_source_boundary_ids,
         )
-        off_source_coverage = RestrictedDelaunayBoundaryWitness(
+        off_source_coverage = TubularProjectionBoundaryWitness(
             mesh_id=off_source_mesh.mesh_id,
             geometry_id=cell_geometry_id(off_source_geometry),
             topology_id=off_source_mesh.topology_id,
@@ -1225,8 +1219,8 @@ def test_native_implicit_volume_route_builds_region_mesh(
             domain_id=source.domain_id,
             distance_witness_id=off_source_distance.witness_id,
         )
-        with pytest.raises(RestrictedDelaunayCoverageUnavailable) as off_source:
-            validate_restricted_delaunay_boundary_witness(
+        with pytest.raises(TubularProjectionCoverageUnavailable) as off_source:
+            validate_tubular_projection_boundary_witness(
                 off_source_mesh,
                 off_source_geometry,
                 source,
@@ -1690,7 +1684,7 @@ def test_projection_refuses_whole_face_normal_tangency() -> None:
         (center[0] + radius + step, center[1], center[2]),
         (center[0] + radius, center[1] + step, center[2]),
     )
-    with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="tangent"):
+    with pytest.raises(TubularProjectionCoverageUnavailable, match="tangent"):
         _prove_face_projection_orientation(
             profile,
             triangle,
@@ -1711,7 +1705,7 @@ def test_projection_refuses_missing_band_and_hidden_shell() -> None:
     complete_faces, _complete_triangles = _octahedral_surface(center, source_radius)
     _revalidate_oriented_surface_topology(complete_faces, 2)
 
-    with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="edges"):
+    with pytest.raises(TubularProjectionCoverageUnavailable, match="edges"):
         _revalidate_oriented_surface_topology(complete_faces[:-1], 2)
 
     inner_radius = source_radius - Fraction(1, 20)
@@ -1720,9 +1714,9 @@ def test_projection_refuses_missing_band_and_hidden_shell() -> None:
     outer_faces, outer_triangles = _octahedral_surface(
         center, outer_radius, vertex_offset=6
     )
-    with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="components"):
+    with pytest.raises(TubularProjectionCoverageUnavailable, match="components"):
         _revalidate_oriented_surface_topology(inner_faces + outer_faces, 2)
-    with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="preimages"):
+    with pytest.raises(TubularProjectionCoverageUnavailable, match="preimages"):
         _prove_degree_one_normal_fiber(
             profile,
             inner_triangles + outer_triangles,
@@ -1730,53 +1724,7 @@ def test_projection_refuses_missing_band_and_hidden_shell() -> None:
         )
 
 
-def test_restricted_root_bank_batches_and_retains_strict_evidence() -> None:
-    geometry, _grid = _geometry_and_grid()
-    profile = AnalyticImplicitProfile(
-        geometry,
-        SpatialCoordinateContract.si(),
-        source_id="restricted-root-bank",
-        source_revision="restricted-root-bank-r1",
-    )
-    edge_points = (
-        ((0.5, 0.0, 0.0), (2.0, 0.0, 0.0)),
-        ((1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
-        ((0.55, -0.6, 0.0), (1.0, -0.2, 0.0)),
-        ((-2.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
-    )
-    endpoint_bounds = np.asarray(
-        [((first, first), (second, second)) for first, second in edge_points],
-        dtype=np.float64,
-    )
-    roots_by_edge = _root_edge_bank(profile, endpoint_bounds, 1.0e-3)
-    assert tuple(len(roots) for roots in roots_by_edge) == (1, 0, 0, 2)
-    for roots in roots_by_edge:
-        for (
-            parameter_bounds,
-            coordinate_bounds,
-            value_bounds,
-            derivative_bounds,
-            orientation,
-        ) in roots:
-            assert np.all(np.isfinite(parameter_bounds))
-            assert np.all(np.isfinite(coordinate_bounds))
-            assert np.all(np.isfinite(value_bounds))
-            assert np.all(np.isfinite(derivative_bounds))
-            assert derivative_bounds[0] > 0.0 or derivative_bounds[1] < 0.0
-            assert orientation in (-1, 1)
-
-    tangent_bounds = np.asarray(
-        (
-            ((-1.0, 0.0, 0.75), (-1.0, 0.0, 0.75)),
-            ((1.0, 0.0, 0.75), (1.0, 0.0, 0.75)),
-        ),
-        dtype=np.float64,
-    )[None, ...]
-    with pytest.raises(MeshingFailure):
-        _root_edge_bank(profile, tangent_bounds, 1.0e-3)
-
-
-def test_restricted_surface_topology_ignores_unreferenced_volume_vertices() -> None:
+def test_implicit_surface_topology_ignores_unreferenced_volume_vertices() -> None:
     geometry, _grid = _geometry_and_grid()
     profile = AnalyticImplicitProfile(
         geometry,
@@ -1797,67 +1745,7 @@ def test_restricted_surface_topology_ignores_unreferenced_volume_vertices() -> N
     assert _topology_matches(profile, np.asarray(faces, dtype=np.int64))
 
 
-def test_restricted_region_sites_require_strict_side_but_not_cover_clearance() -> None:
-    geometry, _grid = _geometry_and_grid()
-    profile = AnalyticImplicitProfile(
-        geometry,
-        SpatialCoordinateContract.si(),
-        source_id="restricted-region-site-signs",
-        source_revision="restricted-region-site-signs-r1",
-    )
-    candidates = np.asarray(
-        (
-            (0.75 - 1.0e-8, 0.0, 0.0),
-            (0.75, 0.0, 0.0),
-            (0.75 + 1.0e-8, 0.0, 0.0),
-            (1.6, 0.0, 0.0),
-        ),
-        dtype=np.float64,
-    )
-    carrier = np.asarray(
-        ((-1.5, -1.5, -1.5), (1.5, 1.5, 1.5)),
-        dtype=np.float64,
-    )
-    np.testing.assert_array_equal(
-        _strict_region_site_mask(profile, candidates, carrier),
-        np.asarray((True, False, True, False), dtype=np.bool_),
-    )
-
-
-def test_restricted_inside_witness_uses_a_certified_cell_star() -> None:
-    geometry, _grid = _geometry_and_grid()
-    profile = AnalyticImplicitProfile(
-        geometry,
-        SpatialCoordinateContract.si(),
-        source_id="restricted-witness-star",
-        source_revision="restricted-witness-star-r1",
-    )
-    points = np.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (0.25, 0.0, 0.0),
-            (0.0, 0.25, 0.0),
-            (0.0, 0.0, 0.25),
-            (0.0, 0.0, -0.25),
-        ),
-        dtype=np.float64,
-    )
-    tetrahedra = np.asarray(
-        ((0, 1, 2, 3), (0, 1, 2, 4)),
-        dtype=np.int64,
-    )
-    assert _inside_seed_rows(profile, points, tetrahedra) == (0, 1)
-    touching_source = points.copy()
-    touching_source[3] = (0.75, 0.0, 0.0)
-    with pytest.raises(MeshingFailure, match="boundary-free ball"):
-        _inside_seed_rows(
-            profile,
-            touching_source,
-            np.asarray(((0, 1, 2, 3),), dtype=np.int64),
-        )
-
-
-def test_restricted_projection_degree_refuses_an_off_source_boundary() -> None:
+def test_projection_degree_refuses_an_off_source_boundary() -> None:
     geometry, _grid = _geometry_and_grid()
     profile = AnalyticImplicitProfile(
         geometry,
@@ -1873,11 +1761,11 @@ def test_restricted_projection_degree_refuses_an_off_source_boundary() -> None:
     radius = Fraction.from_float(profile.radius)
     tube = Fraction.from_float(profile.reach_lower)
     _faces, triangles = _octahedral_surface(center, radius + 3 * tube)
-    with pytest.raises(RestrictedDelaunayCoverageUnavailable, match="preimages"):
+    with pytest.raises(TubularProjectionCoverageUnavailable, match="preimages"):
         _prove_degree_one_normal_fiber(profile, triangles, tube)
 
 
-def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> None:
+def test_stuffed_torus_projection_degree_accepts_complete_volume() -> None:
     contract = SpatialCoordinateContract.si()
     geometry = Torus(
         (0.0, 0.0, 0.0),
@@ -1914,7 +1802,7 @@ def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> 
         profile,
         specification,
         NativeMeshingOptions(
-            "implicit_restricted_delaunay",
+            "implicit_stuffing",
             volume_schedule=NativeVolumeSchedule(),
         ),
         contract,
@@ -1922,10 +1810,10 @@ def test_native_restricted_torus_projection_degree_accepts_complete_volume() -> 
     distance_witness = construction.certification.fidelity_witness
     coverage_witness = construction.certification.source_coverage_witness
     assert isinstance(distance_witness, SourceBoundaryDistanceWitness)
-    assert isinstance(coverage_witness, RestrictedDelaunayBoundaryWitness)
+    assert isinstance(coverage_witness, TubularProjectionBoundaryWitness)
     regions = construction.certification.cell_regions
     assert regions is not None
-    proof = validate_restricted_delaunay_boundary_witness(
+    proof = validate_tubular_projection_boundary_witness(
         construction.mesh,
         construction.geometry,
         profile,
@@ -1959,7 +1847,7 @@ def test_qualification_implicit_volume_preserves_hard_controls() -> None:
     assert specification.protected_features[0].hard
 
 
-def test_restricted_implicit_volume_refuses_soft_shape_strength() -> None:
+def test_stuffed_implicit_volume_refuses_soft_shape_strength() -> None:
     from phydrax.meshing._sizing import SizeControlStrength
 
     contract = SpatialCoordinateContract.si()
@@ -1988,7 +1876,7 @@ def test_restricted_implicit_volume_refuses_soft_shape_strength() -> None:
         prepare_native_implicit(
             profile,
             specification,
-            NativeMeshingOptions("implicit_restricted_delaunay", volume_schedule=soft),
+            NativeMeshingOptions("implicit_stuffing", volume_schedule=soft),
             contract,
         )
 
@@ -2030,7 +1918,7 @@ def _exact_circumcenter(vertices: np.ndarray, /) -> tuple[Fraction, ...]:
     )
 
 
-def test_restricted_tetra_radius_edge_bounds_the_exact_circumradius_ratio() -> None:
+def test_implicit_tetra_radius_edge_bounds_the_exact_circumradius_ratio() -> None:
     # LIN counterexample: per-axis maxima against the box midpoint missed the
     # farthest box corner and gave a radius-edge ratio below the exact one.
     vertices = _binary64_rows(
@@ -2072,7 +1960,7 @@ def test_restricted_tetra_radius_edge_bounds_the_exact_circumradius_ratio() -> N
     assert Fraction(float(radius_edge[0])) ** 2 * edge_squared >= radius_squared
 
 
-def test_restricted_tetra_minimum_dihedral_is_a_lower_bound() -> None:
+def test_implicit_tetra_minimum_dihedral_is_a_lower_bound() -> None:
     # LIN counterexample: the round-to-nearest arccos estimate published
     # 9.858257410430951 degrees above the exact minimum 9.85825741043092873...
     vertices = _binary64_rows(
@@ -2125,7 +2013,7 @@ def test_restricted_tetra_minimum_dihedral_is_a_lower_bound() -> None:
         assert exact - mpmath.mpf(minimum_dihedral) < mpmath.mpf(2) ** -30
 
 
-def test_restricted_facet_diameter_bound_encloses_negative_differences() -> None:
+def test_triangle_diameter_bound_encloses_negative_differences() -> None:
     # WIN-5 C6: ``nextafter(p - q, +inf)`` shrinks negative components, so the
     # edge-length bound 0x1.81cde9998a48ap-9 was below the exact length. The
     # third vertex lies near the midpoint, so ``p - q`` is the longest edge.

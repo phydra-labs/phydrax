@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Revalidated restricted-Delaunay coverage for established analytic regions."""
+"""Revalidated tubular-projection coverage for established analytic regions."""
 
 from __future__ import annotations
 
@@ -43,8 +43,8 @@ type ReferenceTetrahedron = tuple[
 ]
 
 
-class RestrictedDelaunayCoverageUnavailable(ValueError):
-    """A retained restricted-Delaunay premise cannot establish source coverage."""
+class TubularProjectionCoverageUnavailable(ValueError):
+    """A retained tubular-projection premise cannot establish source coverage."""
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class RestrictedDelaunayCoverageUnavailable(ValueError):
 
 
 @final
-class RestrictedDelaunayBoundaryWitness(StrictModule, NonTrainableState):
+class TubularProjectionBoundaryWitness(StrictModule, NonTrainableState):
     """Input binding for the independently replayed analytic boundary proof.
 
     The separate distance witness binds a complete certified source-cover
@@ -119,19 +119,19 @@ class RestrictedDelaunayBoundaryWitness(StrictModule, NonTrainableState):
         ) = identities
         self.witness_id = canonical_fingerprint(
             {
-                "kind": "restricted-delaunay-boundary-witness",
+                "kind": "tubular-projection-boundary-witness",
                 "identities": identities,
             }
         )
 
 
 @final
-class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState):
+class TubularProjectionCoverageTransportWitness(StrictModule, NonTrainableState):
     """Flattened exact transition chain preserving a restricted source degree."""
 
     __strict_contract__ = True
 
-    root_witness: RestrictedDelaunayBoundaryWitness
+    root_witness: TubularProjectionBoundaryWitness
     root_distance_witness: SourceBoundaryDistanceWitness
     transitions: tuple[CellGeometryTransition, ...]
     stage_cell_regions: tuple[np.ndarray, ...]
@@ -145,14 +145,14 @@ class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState
         self,
         /,
         *,
-        root_witness: RestrictedDelaunayBoundaryWitness,
+        root_witness: TubularProjectionBoundaryWitness,
         root_distance_witness: SourceBoundaryDistanceWitness,
         transitions: tuple[CellGeometryTransition, ...],
         stage_cell_regions: tuple[ArrayLike, ...],
         target_distance_witness_id: str,
     ) -> None:
-        if not isinstance(root_witness, RestrictedDelaunayBoundaryWitness):
-            raise TypeError("root_witness must be RestrictedDelaunayBoundaryWitness.")
+        if not isinstance(root_witness, TubularProjectionBoundaryWitness):
+            raise TypeError("root_witness must be TubularProjectionBoundaryWitness.")
         if not isinstance(root_distance_witness, SourceBoundaryDistanceWitness):
             raise TypeError(
                 "root_distance_witness must be SourceBoundaryDistanceWitness."
@@ -226,7 +226,7 @@ class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState
         self.target_topology_id = last.target_topology_id
         self.witness_id = canonical_fingerprint(
             {
-                "kind": "restricted-delaunay-coverage-transport-witness",
+                "kind": "tubular-projection-coverage-transport-witness",
                 "root": root_witness.witness_id,
                 "root_distance": root_distance_witness.witness_id,
                 "transitions": tuple(value.transition_id for value in transition_chain),
@@ -238,12 +238,12 @@ class RestrictedDelaunayCoverageTransportWitness(StrictModule, NonTrainableState
         )
 
 
-type RestrictedDelaunayCoverageWitness = (
-    RestrictedDelaunayBoundaryWitness | RestrictedDelaunayCoverageTransportWitness
+type TubularProjectionCoverageWitness = (
+    TubularProjectionBoundaryWitness | TubularProjectionCoverageTransportWitness
 )
 
 
-class RestrictedDelaunayCoverageProof(NamedTuple):
+class TubularProjectionCoverageProof(NamedTuple):
     witness_id: str
     degree_id: str
     source_facet_count: int
@@ -259,8 +259,8 @@ def _unavailable(
     /,
     *,
     status: Literal["violated", "unresolved"] = "unresolved",
-) -> RestrictedDelaunayCoverageUnavailable:
-    return RestrictedDelaunayCoverageUnavailable(check, detail, status=status)
+) -> TubularProjectionCoverageUnavailable:
+    return TubularProjectionCoverageUnavailable(check, detail, status=status)
 
 
 def _fraction_det(
@@ -287,7 +287,7 @@ def _contains_point(tetra: np.ndarray, points: np.ndarray, point: np.ndarray) ->
     denominator = _fraction_det(first, second, third)
     if denominator == 0:
         raise _unavailable(
-            "restricted_target_degeneracy",
+            "projection_target_degeneracy",
             "A target tetrahedron is exactly degenerate.",
             status="violated",
         )
@@ -462,7 +462,7 @@ def _fraction_point(point: ArrayLike, /) -> ReferencePoint3:
     values = np.asarray(point, dtype=np.float64)
     if values.shape != (3,) or not np.all(np.isfinite(values)):
         raise _unavailable(
-            "restricted_target_geometry",
+            "projection_target_geometry",
             "A target boundary vertex is not a finite physical point.",
             status="violated",
         )
@@ -540,7 +540,7 @@ def _canonical_cell_mesh(mesh: CellMesh, /) -> CellMesh:
         )
     except (TypeError, ValueError, IndexError, ArithmeticError) as error:
         raise _unavailable(
-            "restricted_mesh_identity",
+            "projection_mesh_identity",
             f"Target mesh does not reconstruct from its canonical topology and coordinates: {error}",
             status="violated",
         ) from error
@@ -550,7 +550,7 @@ def _canonical_cell_mesh(mesh: CellMesh, /) -> CellMesh:
         or renewed.geometry_id != mesh.geometry_id
     ):
         raise _unavailable(
-            "restricted_mesh_identity",
+            "projection_mesh_identity",
             "Target mesh content differs from its retained mesh, topology, or geometry identity.",
             status="violated",
         )
@@ -612,7 +612,7 @@ def _face_normal_interval(
         )
         if any(value <= 0 for value in projections):
             raise _unavailable(
-                "restricted_projection_orientation",
+                "projection_orientation",
                 "A complete spherical target face is tangent to or reverses the analytic source normal.",
                 status="violated",
             )
@@ -631,7 +631,7 @@ def _face_normal_interval(
         )
         if not math.isfinite(distance_upper) or distance_upper <= 0.0:
             raise _unavailable(
-                "restricted_projection_transversality",
+                "projection_transversality",
                 "Exact spherical face-normal separation is outside binary64 resolution.",
             )
         lower = _fraction_float_lower(
@@ -639,7 +639,7 @@ def _face_normal_interval(
         )
         if lower <= 0.0:
             raise _unavailable(
-                "restricted_projection_transversality",
+                "projection_transversality",
                 "Exact spherical face-normal separation is below binary64 interval resolution.",
             )
         return lower, np.inf
@@ -693,7 +693,7 @@ def _prove_face_projection_orientation(
             continue
         if derivative[1] <= 0.0:
             raise _unavailable(
-                "restricted_projection_orientation",
+                "projection_orientation",
                 f"Target boundary face {face_id} is tangent to or reverses the analytic source normal.",
                 status="violated",
             )
@@ -705,7 +705,7 @@ def _prove_face_projection_orientation(
             for child in children
         ):
             raise _unavailable(
-                "restricted_projection_transversality",
+                "projection_transversality",
                 f"Target boundary face {face_id} remains unresolved at exact subdivision resolution.",
             )
         child_boxes = tuple(_triangle_box(child) for child in children)
@@ -715,7 +715,7 @@ def _prove_face_projection_orientation(
             for child_lower, child_upper in child_boxes
         ):
             raise _unavailable(
-                "restricted_projection_transversality",
+                "projection_transversality",
                 f"Target boundary face {face_id} has no further representable interval subdivision.",
             )
         pending.extend(children)
@@ -744,7 +744,7 @@ def _triangle_barycentric_line(
     )
     if coordinate_pair is None:
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "A target boundary triangle has zero exact area.",
             status="violated",
         )
@@ -782,7 +782,7 @@ def _line_triangle_intersection(
     normal = _cross3(_subtract3(second, first), _subtract3(third, first))
     if normal == (Fraction(0), Fraction(0), Fraction(0)):
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "A target boundary triangle has zero exact area.",
             status="violated",
         )
@@ -830,7 +830,7 @@ def _line_triangle_intersection(
         return True, 0
     if sum(barycentric, Fraction(0)) != 1:
         raise _unavailable(
-            "restricted_projection_fiber",
+            "projection_fiber",
             "Exact normal-fiber intersection arithmetic failed.",
             status="violated",
         )
@@ -919,7 +919,7 @@ def _revalidate_oriented_surface_topology(
 ) -> tuple[set[int], dict[tuple[int, int], list[int]], int, int]:
     if not faces:
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "An analytic target projection needs a nonempty oriented boundary.",
             status="violated",
         )
@@ -931,7 +931,7 @@ def _revalidate_oriented_surface_topology(
     for face_index, face in enumerate(faces):
         if len(set(face)) != 3:
             raise _unavailable(
-                "restricted_target_boundary",
+                "projection_target_boundary",
                 "A target boundary triangle repeats a vertex row.",
                 status="violated",
             )
@@ -939,7 +939,7 @@ def _revalidate_oriented_surface_topology(
         key_face = (ordered_face[0], ordered_face[1], ordered_face[2])
         if key_face in seen_faces:
             raise _unavailable(
-                "restricted_target_boundary",
+                "projection_target_boundary",
                 "Target boundary contains duplicate vertex faces.",
                 status="violated",
             )
@@ -960,7 +960,7 @@ def _revalidate_oriented_surface_topology(
         for edge, incident in edge_faces.items()
     ):
         raise _unavailable(
-            "restricted_boundary_orientation",
+            "projection_boundary_orientation",
             "Target boundary edges must have exactly two oppositely oriented incident faces.",
             status="violated",
         )
@@ -969,7 +969,7 @@ def _revalidate_oriented_surface_topology(
         for first, second in link_edges:
             if first == second or second in link.get(first, set()):
                 raise _unavailable(
-                    "restricted_boundary_vertex_link",
+                    "projection_boundary_vertex_link",
                     f"Target boundary vertex {vertex} has a repeated or degenerate link edge.",
                     status="violated",
                 )
@@ -977,7 +977,7 @@ def _revalidate_oriented_surface_topology(
             link.setdefault(second, set()).add(first)
         if not link or any(len(neighbors) != 2 for neighbors in link.values()):
             raise _unavailable(
-                "restricted_boundary_vertex_link",
+                "projection_boundary_vertex_link",
                 f"Target boundary vertex {vertex} does not have a cyclic 2-manifold link.",
                 status="violated",
             )
@@ -990,7 +990,7 @@ def _revalidate_oriented_surface_topology(
                 pending_vertices.append(neighbor)
         if reached != set(link):
             raise _unavailable(
-                "restricted_boundary_vertex_link",
+                "projection_boundary_vertex_link",
                 f"Target boundary vertex {vertex} has multiple disconnected link cycles.",
                 status="violated",
             )
@@ -1013,7 +1013,7 @@ def _revalidate_oriented_surface_topology(
     euler = len(surface_vertices) - len(edge_faces) + len(faces)
     if components != 1 or euler != expected_euler:
         raise _unavailable(
-            "restricted_boundary_topology",
+            "projection_boundary_topology",
             "Target boundary components and Euler characteristic differ from the connected analytic sphere or torus.",
             status="violated",
         )
@@ -1037,28 +1037,28 @@ def _prove_degree_one_normal_fiber(
             continue
         if fiber_count != 1:
             raise _unavailable(
-                "restricted_projection_degree",
+                "projection_degree",
                 f"A regular complete normal-tube fiber has {fiber_count} target preimages, not degree one.",
                 status="violated",
             )
         return anchor, normal, parameters
     raise _unavailable(
-        "restricted_projection_regular_fiber",
+        "projection_regular_fiber",
         "No exact regular normal fiber was found in the dense rational source-anchor set.",
     )
 
 
-def validate_restricted_delaunay_boundary_witness(
+def validate_tubular_projection_boundary_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     profile: AnalyticImplicitProfile,
     cell_regions: ArrayLike,
     distance_witness: SourceBoundaryDistanceWitness,
-    witness: RestrictedDelaunayBoundaryWitness,
+    witness: TubularProjectionBoundaryWitness,
     /,
     *,
     embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
-) -> RestrictedDelaunayCoverageProof:
+) -> TubularProjectionCoverageProof:
     """Prove degree-one source coverage by exact tubular projection.
 
     The nominal profile contract admits only one connected signed-distance
@@ -1086,15 +1086,15 @@ def validate_restricted_delaunay_boundary_witness(
     from .._source_fidelity import _analytic_profile_distance_evidence
 
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("Restricted coverage requires CellMesh and CellGeometrySpec.")
+        raise TypeError("Projection coverage requires CellMesh and CellGeometrySpec.")
     if not isinstance(profile, AnalyticImplicitProfile):
         raise TypeError(
-            "Restricted coverage requires AnalyticImplicitProfile source authority."
+            "Projection coverage requires AnalyticImplicitProfile source authority."
         )
     if not isinstance(distance_witness, SourceBoundaryDistanceWitness):
         raise TypeError("distance_witness must be SourceBoundaryDistanceWitness.")
-    if not isinstance(witness, RestrictedDelaunayBoundaryWitness):
-        raise TypeError("witness must be RestrictedDelaunayBoundaryWitness.")
+    if not isinstance(witness, TubularProjectionBoundaryWitness):
+        raise TypeError("witness must be TubularProjectionBoundaryWitness.")
     if embedding is not None and type(embedding) not in (
         EmbeddingCertificate,
         ValidatedGlobalEmbedding,
@@ -1128,14 +1128,14 @@ def validate_restricted_delaunay_boundary_witness(
     )
     expected_witness_id = canonical_fingerprint(
         {
-            "kind": "restricted-delaunay-boundary-witness",
+            "kind": "tubular-projection-boundary-witness",
             "identities": retained,
         }
     )
     if identities != retained or witness.witness_id != expected_witness_id:
         raise _unavailable(
-            "restricted_witness_binding",
-            "Restricted witness does not authenticate the current mesh, profile, domain, and separate distance proof.",
+            "projection_witness_binding",
+            "Projection witness does not authenticate the current mesh, profile, domain, and separate distance proof.",
             status="violated",
         )
     if (
@@ -1179,7 +1179,7 @@ def validate_restricted_delaunay_boundary_witness(
         or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
     ):
         raise _unavailable(
-            "restricted_target_topology",
+            "projection_target_topology",
             "Analytic projection coverage requires a nonperiodic full-dimensional tetrahedral target.",
         )
 
@@ -1230,7 +1230,7 @@ def validate_restricted_delaunay_boundary_witness(
         )
         if not validity.all_certified:
             raise _unavailable(
-                "restricted_target_map",
+                "projection_target_map",
                 "Every target tetrahedron needs a certified positive affine P1 map.",
             )
         if type(embedding) is ValidatedGlobalEmbedding:
@@ -1242,8 +1242,8 @@ def validate_restricted_delaunay_boundary_witness(
             embedding = EmbeddingCertificate.from_stored_fields(embedding)
             embedding.require_inputs(mesh, geometry, validity)
         else:
-            raise TypeError("Restricted coverage has an invalid embedding proof type.")
-    except RestrictedDelaunayCoverageUnavailable:
+            raise TypeError("Projection coverage has an invalid embedding proof type.")
+    except TubularProjectionCoverageUnavailable:
         raise
     except (
         TypeError,
@@ -1253,14 +1253,14 @@ def validate_restricted_delaunay_boundary_witness(
         FloatingPointError,
     ) as error:
         raise _unavailable(
-            "restricted_target_embedding",
+            "projection_target_embedding",
             f"Target map or exact global embedding could not be revalidated: {error}",
         ) from error
     if embedding.status != "certified":
         status = "violated" if embedding.status == "violated" else "unresolved"
         detail = "; ".join(value.detail for value in embedding.findings)
         raise _unavailable(
-            "restricted_target_embedding",
+            "projection_target_embedding",
             detail
             or "Target cell contacts and outward boundary shells are not certified.",
             status=status,
@@ -1268,7 +1268,7 @@ def validate_restricted_delaunay_boundary_witness(
 
     if cell_geometry_id(geometry) != witness.geometry_id:
         raise _unavailable(
-            "restricted_target_geometry",
+            "projection_target_geometry",
             "Target geometry content changed while revalidating the exact P1 maps.",
             status="violated",
         )
@@ -1278,7 +1278,7 @@ def validate_restricted_delaunay_boundary_witness(
     )
     if output_cell_rows.shape != (target_cell_count, 4):
         raise _unavailable(
-            "restricted_target_geometry",
+            "projection_target_geometry",
             "Target tetrahedron vertex rows do not align with all target cells.",
             status="violated",
         )
@@ -1289,7 +1289,7 @@ def validate_restricted_delaunay_boundary_witness(
         for row, cell in enumerate(_iter_embedding_cells(mesh, geometry)):
             if not cell.affine:
                 raise _unavailable(
-                    "restricted_target_map",
+                    "projection_target_map",
                     f"Target tetrahedron {row} has unsupported non-affine or unavailable coordinate-map evidence.",
                 )
             expected = tuple(
@@ -1297,16 +1297,16 @@ def validate_restricted_delaunay_boundary_witness(
             )
             if cell.corner_images != expected:
                 raise _unavailable(
-                    "restricted_target_geometry",
+                    "projection_target_geometry",
                     f"Target tetrahedron {row} does not realize its exact mesh-coordinate vertex map.",
                     status="violated",
                 )
             validated_cell_count += 1
     except UnsupportedEmbeddingMap as error:
-        raise _unavailable("restricted_target_map", str(error)) from error
+        raise _unavailable("projection_target_map", str(error)) from error
     if validated_cell_count != target_cell_count:
         raise _unavailable(
-            "restricted_target_geometry",
+            "projection_target_geometry",
             "Target physical cell maps do not align with tetrahedron ancestry.",
             status="violated",
         )
@@ -1332,7 +1332,7 @@ def validate_restricted_delaunay_boundary_witness(
         for cell in output_cell_rows
     ):
         raise _unavailable(
-            "restricted_interior_degree",
+            "projection_interior_degree",
             "The established analytic interior witness is absent from the complete target tetrahedral union.",
             status="violated",
         )
@@ -1353,7 +1353,7 @@ def validate_restricted_delaunay_boundary_witness(
         or np.any(face_vertices >= target_coordinates.shape[0])
     ):
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "Recomputed tetrahedral boundary incidence has inconsistent exact row shapes.",
             status="violated",
         )
@@ -1368,7 +1368,7 @@ def validate_restricted_delaunay_boundary_witness(
         or not np.array_equal(entity_boundary_mask, boundary_mask)
     ):
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "Target boundary face IDs do not align with the actual tetrahedral boundary subset.",
             status="violated",
         )
@@ -1380,7 +1380,7 @@ def validate_restricted_delaunay_boundary_witness(
         or np.any(boundary_ids < 0)
     ):
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "Target analytic coverage requires a nonempty boundary with unique canonical face IDs.",
             status="violated",
         )
@@ -1391,7 +1391,7 @@ def validate_restricted_delaunay_boundary_witness(
             face_index = int(cell_faces[cell_row, local_face])
             if face_index < 0 or face_index >= len(owners):
                 raise _unavailable(
-                    "restricted_target_boundary",
+                    "projection_target_boundary",
                     "A tetrahedron names an out-of-range face row.",
                     status="violated",
                 )
@@ -1401,7 +1401,7 @@ def validate_restricted_delaunay_boundary_witness(
         for face_row, face_owners in enumerate(owners)
     ):
         raise _unavailable(
-            "restricted_target_boundary",
+            "projection_target_boundary",
             "Every target face must have exactly one boundary owner or two interior owners.",
             status="violated",
         )
@@ -1418,7 +1418,7 @@ def validate_restricted_delaunay_boundary_witness(
         )
         if len(set(raw_vertices)) != 3:
             raise _unavailable(
-                "restricted_target_boundary",
+                "projection_target_boundary",
                 "A target boundary triangle repeats a vertex row.",
                 status="violated",
             )
@@ -1433,7 +1433,7 @@ def validate_restricted_delaunay_boundary_witness(
         outward_normal = _cross3(first_edge, second_edge)
         if outward_normal == (Fraction(0), Fraction(0), Fraction(0)):
             raise _unavailable(
-                "restricted_target_boundary",
+                "projection_target_boundary",
                 f"Target boundary face {int(boundary_ids[boundary_position])} is exactly degenerate.",
                 status="violated",
             )
@@ -1453,7 +1453,7 @@ def validate_restricted_delaunay_boundary_witness(
         inward_measure = _dot3(outward_normal, _subtract3(cell_center, face_center))
         if inward_measure == 0:
             raise _unavailable(
-                "restricted_target_boundary",
+                "projection_target_boundary",
                 "An exact target cell centroid is coplanar with its boundary face.",
                 status="violated",
             )
@@ -1526,7 +1526,7 @@ def validate_restricted_delaunay_boundary_witness(
             "degree": 1,
         }
     )
-    return RestrictedDelaunayCoverageProof(
+    return TubularProjectionCoverageProof(
         witness.witness_id,
         degree_id,
         0,
@@ -1635,7 +1635,7 @@ def _require_nested_reference_partition(
     ):
         raise _unavailable(
             "nested_reference_cell_kind",
-            "Restricted analytic transport currently supports tetrahedral whole-root cells only.",
+            "Projection coverage transport currently supports tetrahedral whole-root cells only.",
         )
 
     # Rows are always oriented as source-fine cell -> target/coarse cell.
@@ -1748,7 +1748,7 @@ def _require_nested_reference_partition(
         ):
             raise _unavailable(
                 "nested_reference_cell_kind",
-                "Restricted analytic transport currently supports tetrahedral preserved cells only.",
+                "Projection coverage transport currently supports tetrahedral preserved cells only.",
             )
         for target_id_raw, source_id_raw, target_in_source in zip(
             np.asarray(group.target_cell_ids, dtype=np.int64),
@@ -1808,25 +1808,25 @@ def _require_nested_reference_partition(
         )
 
 
-def validate_restricted_delaunay_coverage_transport_witness(
+def validate_tubular_projection_coverage_transport_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     profile: AnalyticImplicitProfile,
     cell_regions: ArrayLike,
     distance_witness: SourceBoundaryDistanceWitness,
-    witness: RestrictedDelaunayCoverageTransportWitness,
+    witness: TubularProjectionCoverageTransportWitness,
     /,
     *,
     embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
-) -> RestrictedDelaunayCoverageProof:
+) -> TubularProjectionCoverageProof:
     """Revalidate every exact transport stage and its analytic projection degree.
 
     A prepared ``embedding`` of the current target is reused by the final stage.
     """
     from ...discretization._cell_geometry_validity import cell_geometry_id
 
-    if not isinstance(witness, RestrictedDelaunayCoverageTransportWitness):
-        raise TypeError("witness must be RestrictedDelaunayCoverageTransportWitness.")
+    if not isinstance(witness, TubularProjectionCoverageTransportWitness):
+        raise TypeError("witness must be TubularProjectionCoverageTransportWitness.")
     if not isinstance(profile, AnalyticImplicitProfile) or not isinstance(
         distance_witness, SourceBoundaryDistanceWitness
     ):
@@ -1837,7 +1837,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
     mesh = _canonical_cell_mesh(mesh)
     expected_witness_id = canonical_fingerprint(
         {
-            "kind": "restricted-delaunay-coverage-transport-witness",
+            "kind": "tubular-projection-coverage-transport-witness",
             "root": witness.root_witness.witness_id,
             "root_distance": witness.root_distance_witness.witness_id,
             "transitions": tuple(value.transition_id for value in witness.transitions),
@@ -1909,7 +1909,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
     root_mesh = _canonical_cell_mesh(transitions[0].source_mesh)
     root_geometry = transitions[0].source_geometry
     root_regions = witness.stage_cell_regions[0]
-    root_proof = validate_restricted_delaunay_boundary_witness(
+    root_proof = validate_tubular_projection_boundary_witness(
         root_mesh,
         root_geometry,
         profile,
@@ -1918,7 +1918,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
         witness.root_witness,
     )
     stage_degree_ids = [root_proof.degree_id]
-    final_proof: RestrictedDelaunayCoverageProof | None = None
+    final_proof: TubularProjectionCoverageProof | None = None
 
     for index, transition in enumerate(transitions):
         try:
@@ -2018,7 +2018,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
                 cover_radius=witness.root_distance_witness.cover_radius,
                 target_facet_global_ids=stage_face_ids[stage_boundary_mask],
             )
-        stage_witness = RestrictedDelaunayBoundaryWitness(
+        stage_witness = TubularProjectionBoundaryWitness(
             mesh_id=target_mesh.mesh_id,
             geometry_id=target_geometry_id,
             topology_id=target_mesh.topology_id,
@@ -2028,7 +2028,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
             domain_id=profile.domain_id,
             distance_witness_id=stage_distance.witness_id,
         )
-        stage_proof = validate_restricted_delaunay_boundary_witness(
+        stage_proof = validate_tubular_projection_boundary_witness(
             target_mesh,
             transition.target_geometry,
             profile,
@@ -2060,7 +2060,7 @@ def validate_restricted_delaunay_coverage_transport_witness(
             "degree": 1,
         }
     )
-    return RestrictedDelaunayCoverageProof(
+    return TubularProjectionCoverageProof(
         witness.witness_id,
         degree_id,
         0,
@@ -2070,24 +2070,24 @@ def validate_restricted_delaunay_coverage_transport_witness(
     )
 
 
-def validate_restricted_delaunay_coverage_witness(
+def validate_tubular_projection_coverage_witness(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     profile: AnalyticImplicitProfile,
     cell_regions: ArrayLike,
     distance_witness: SourceBoundaryDistanceWitness,
-    witness: RestrictedDelaunayCoverageWitness,
+    witness: TubularProjectionCoverageWitness,
     /,
     *,
     embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
-) -> RestrictedDelaunayCoverageProof:
-    """Validate the direct restricted proof or its exact transported continuation.
+) -> TubularProjectionCoverageProof:
+    """Validate the direct projection proof or its exact transported continuation.
 
     ``embedding`` is an optional prepared global-embedding certificate of the
     current target; it is checked against these inputs, then reused.
     """
-    if isinstance(witness, RestrictedDelaunayBoundaryWitness):
-        return validate_restricted_delaunay_boundary_witness(
+    if isinstance(witness, TubularProjectionBoundaryWitness):
+        return validate_tubular_projection_boundary_witness(
             mesh,
             geometry,
             profile,
@@ -2096,8 +2096,8 @@ def validate_restricted_delaunay_coverage_witness(
             witness,
             embedding=embedding,
         )
-    if isinstance(witness, RestrictedDelaunayCoverageTransportWitness):
-        return validate_restricted_delaunay_coverage_transport_witness(
+    if isinstance(witness, TubularProjectionCoverageTransportWitness):
+        return validate_tubular_projection_coverage_transport_witness(
             mesh,
             geometry,
             profile,
@@ -2107,17 +2107,17 @@ def validate_restricted_delaunay_coverage_witness(
             embedding=embedding,
         )
     raise TypeError(
-        "witness must be a direct or transported restricted-Delaunay coverage witness."
+        "witness must be a direct or transported tubular-projection coverage witness."
     )
 
 
 __all__ = [
-    "RestrictedDelaunayBoundaryWitness",
-    "RestrictedDelaunayCoverageProof",
-    "RestrictedDelaunayCoverageTransportWitness",
-    "RestrictedDelaunayCoverageWitness",
-    "RestrictedDelaunayCoverageUnavailable",
-    "validate_restricted_delaunay_coverage_transport_witness",
-    "validate_restricted_delaunay_coverage_witness",
-    "validate_restricted_delaunay_boundary_witness",
+    "TubularProjectionBoundaryWitness",
+    "TubularProjectionCoverageProof",
+    "TubularProjectionCoverageTransportWitness",
+    "TubularProjectionCoverageWitness",
+    "TubularProjectionCoverageUnavailable",
+    "validate_tubular_projection_coverage_transport_witness",
+    "validate_tubular_projection_coverage_witness",
+    "validate_tubular_projection_boundary_witness",
 ]

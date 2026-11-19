@@ -46,16 +46,14 @@ from phydrax.geometry._source_boundary_records import (
 )
 from phydrax.geometry._source_fidelity import (
     _box_gap_upper,
-    _centroid_candidate_rows,
     _DerivativeCache,
     _exact_triangle2,
-    _nearest_triangle_distance_upper,
     _normal_deviation_for_cell,
     _partition_findings,
     _require_reference_chart_partition,
+    _reverse_distance_upper,
     _same_triangle_chain_boundary,
     _surface_target_chart_rows,
-    _triangle_centroid_balls,
     _volume_boundary_facet_lookup,
     certify_source_fidelity,
     polyhedral_face_triangle_vertex_ids,
@@ -1772,13 +1770,19 @@ def test_exact_triangle_distance_degenerate_and_tied() -> None:
 
 
 @pytest.mark.parametrize("origin", (0.0, 1.0e6))
-def test_pruned_reverse_distance_equals_the_exact_minimum_over_every_triangle(
+def test_reverse_distance_bound_is_sound_and_tight_at_the_nearest_centroid(
     origin: float,
 ) -> None:
     generator = np.random.default_rng(7)
     corners = origin + generator.uniform(-1.0, 1.0, size=(60, 3, 3))
     # Near ties: translated copies sit a sub-ulp-scale step farther away.
     corners[30:40] = corners[:10] + 1.0e-12
+    # A degenerate (collinear) triangle stays a valid candidate.
+    corners[50] = (
+        corners[50, 0],
+        corners[50, 1],
+        0.5 * (corners[50, 0] + corners[50, 1]),
+    )
 
     def exact(value: np.ndarray) -> tuple[Fraction, Fraction, Fraction]:
         return (
@@ -1791,46 +1795,22 @@ def test_pruned_reverse_distance_equals_the_exact_minimum_over_every_triangle(
         (exact(triangle[0]), exact(triangle[1]), exact(triangle[2]))
         for triangle in corners
     )
-    centers, radii = _triangle_centroid_balls(triangles)
-    center_values = np.asarray(
-        [[float(value) for value in center] for center in centers], dtype=np.float64
-    )
-    radius_values = np.asarray([float(radius) for radius in radii], dtype=np.float64)
-    center_scale = float(np.max(np.abs(center_values)))
-    radius_bound = float(np.max(radius_values))
-    vertex_values = np.asarray(
-        [
-            [[float(value) for value in vertex] for vertex in triangle]
-            for triangle in triangles
-        ],
-        dtype=np.float64,
-    )
-    box_lower = np.nextafter(np.min(vertex_values, axis=1), -np.inf)
-    box_upper = np.nextafter(np.max(vertex_values, axis=1), np.inf)
     samples = origin + generator.uniform(-1.5, 1.5, size=(25, 3))
-    for row, rows in _centroid_candidate_rows(
-        samples, center_values, center_scale, radius_bound
-    ):
-        sample = samples[row]
+    bounds = _reverse_distance_upper(
+        samples, corners, np.ones((corners.shape[0],), dtype=np.bool_)
+    )
+    centroids = np.mean(corners, axis=1)
+    for row in range(samples.shape[0]):
+        sample = samples[row : row + 1].reshape((3,))
         point = exact(sample)
-        unpruned = min(
-            fraction_sqrt_interval(_point_triangle_squared(point, triangle))[1]
+        distances = [
+            fraction_sqrt_interval(_point_triangle_squared(point, triangle))
             for triangle in triangles
-        )
-        pruned = _nearest_triangle_distance_upper(
-            point,
-            sample,
-            triangles,
-            center_values,
-            radius_values,
-            rows,
-            center_scale,
-            radius_bound,
-            box_lower,
-            box_upper,
-            vertex_values,
-        )
-        assert pruned == unpruned
+        ]
+        bound = Fraction.from_float(float(bounds[row]))
+        assert bound >= min(lower for lower, _ in distances)
+        nearest = int(np.argmin(np.linalg.norm(centroids - sample, axis=1)))
+        assert bound <= distances[nearest][1] + Fraction(1, 2**30) * (1 + abs(origin))
 
 
 def test_missing_fidelity_witness_retains_unbounded_failure_evidence() -> None:

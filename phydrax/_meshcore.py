@@ -1159,15 +1159,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_periodic_refinement_copy_points": (_I32, (_P, _I64, _P)),
     "phx_mc_periodic_refinement_copy_cells": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_periodic_refinement_free": (None, (_P,)),
-    "phx_mc_restricted_dual_3d": (
-        _I32,
-        (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P, _P, _P, _P),
-    ),
     "phx_mc_restricted_centers_3d": (_I32, (_I64, _P, _I64, _P, _P, _P)),
-    "phx_mc_restricted_rays_3d": (
-        _I32,
-        (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P, _P, _P, _P),
-    ),
     "phx_mc_surface_reconnect": (
         _I32,
         (ctypes.POINTER(_SurfaceReconnectRequest),),
@@ -3822,14 +3814,6 @@ class PeriodicRefinementResult(NamedTuple):
     shifts: np.ndarray
 
 
-class RestrictedDual3D(NamedTuple):
-    facets: np.ndarray
-    cells: np.ndarray
-    endpoints: np.ndarray
-    kinds: np.ndarray
-    status: np.ndarray
-
-
 def _restricted_tetrahedra(
     points: object,
     tetrahedra: object,
@@ -3845,82 +3829,6 @@ def _restricted_tetrahedra(
     ):
         raise ValueError("tetrahedra must contain valid four-vertex point indices.")
     return coordinates, cells
-
-
-def _restricted_domain(
-    carrier_lower: object,
-    carrier_upper: object,
-    /,
-) -> np.ndarray:
-    lower = _real_array(carrier_lower, "carrier_lower")
-    upper = _real_array(carrier_upper, "carrier_upper")
-    if lower.shape != (3,) or upper.shape != (3,):
-        raise ValueError("carrier_lower and carrier_upper must have shape (3,).")
-    if (
-        not np.all(np.isfinite(lower))
-        or not np.all(np.isfinite(upper))
-        or np.any(lower >= upper)
-    ):
-        raise ValueError("carrier bounds must be finite and strictly ordered.")
-    return np.ascontiguousarray(np.concatenate((lower, upper)), dtype=np.float64)
-
-
-def restricted_dual_3d(
-    points: object,
-    tetrahedra: object,
-    carrier_lower: object,
-    carrier_upper: object,
-    /,
-) -> RestrictedDual3D:
-    """Return numerical restricted dual candidates; statuses are not certificates."""
-    coordinates, cells = _restricted_tetrahedra(points, tetrahedra)
-    bounds = _restricted_domain(carrier_lower, carrier_upper)
-    count = cells.shape[0]
-    capacity = 4 * count
-    if count == 0:
-        return RestrictedDual3D(
-            np.empty((0, 3), dtype=np.int32),
-            np.empty((0, 2), dtype=np.int32),
-            np.empty((0, 2, 3), dtype=np.float64),
-            np.empty((0,), dtype=np.int32),
-            np.empty((0,), dtype=np.int32),
-        )
-    if capacity > np.iinfo(np.int64).max:
-        raise OverflowError("The restricted dual facet extent exceeds int64.")
-    facets = np.empty((capacity, 3), dtype=np.int32)
-    incident = np.empty((capacity, 2), dtype=np.int32)
-    endpoints = np.empty((capacity, 2, 3), dtype=np.float64)
-    kinds = np.empty((capacity,), dtype=np.int32)
-    item_status = np.empty((capacity,), dtype=np.int32)
-    facet_count = np.zeros((1,), dtype=np.int64)
-    status = load_meshcore()["phx_mc_restricted_dual_3d"](
-        coordinates.shape[0],
-        coordinates.ctypes.data,
-        count,
-        cells.ctypes.data,
-        bounds.ctypes.data,
-        capacity,
-        facets.ctypes.data,
-        incident.ctypes.data,
-        endpoints.ctypes.data,
-        kinds.ctypes.data,
-        item_status.ctypes.data,
-        facet_count.ctypes.data,
-    )
-    _raise_for_call(status, "restricted_dual_3d")
-    used = int(facet_count[0])
-    if not 0 <= used <= capacity:
-        raise MeshcoreError(
-            MeshcoreStatus.INTERNAL_ERROR,
-            "restricted_dual_3d returned an invalid facet count",
-        )
-    return RestrictedDual3D(
-        facets[:used],
-        incident[:used],
-        endpoints[:used],
-        kinds[:used],
-        item_status[:used],
-    )
 
 
 def restricted_centers_3d(
@@ -3944,57 +3852,6 @@ def restricted_centers_3d(
     )
     _raise_for_call(status, "restricted_centers_3d")
     return bounds, item_status
-
-
-def restricted_rays_3d(
-    points: object,
-    tetrahedra: object,
-    center_bounds: object,
-    facets: object,
-    incident_cells: object,
-    carrier_lower: object,
-    carrier_upper: object,
-    /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bound hull dual rays; each incident-cell row retains both cell slots."""
-    coordinates, cells = _restricted_tetrahedra(points, tetrahedra)
-    centers = _real_array(center_bounds, "center_bounds")
-    faces = _native_integer_array(facets, "facets", np.dtype(np.int32))
-    owners = _native_integer_array(incident_cells, "incident_cells", np.dtype(np.int32))
-    bounds = _restricted_domain(carrier_lower, carrier_upper)
-    if (
-        centers.shape != (cells.shape[0], 2, 3)
-        or faces.ndim != 2
-        or faces.shape[1] != 3
-        or owners.shape != (faces.shape[0], 2)
-        or np.any(faces < 0)
-        or np.any(faces >= coordinates.shape[0])
-        or np.any(owners[:, 0] < 0)
-        or np.any(owners[:, 0] >= cells.shape[0])
-    ):
-        raise ValueError("restricted ray facets, incident cells, and centers must align.")
-    ray_count = faces.shape[0]
-    endpoints = np.empty((ray_count, 2, 2, 3), dtype=np.float64)
-    kinds = np.empty((ray_count,), dtype=np.int32)
-    item_status = np.empty((ray_count,), dtype=np.int32)
-    if ray_count == 0:
-        return endpoints, kinds, item_status
-    status = load_meshcore()["phx_mc_restricted_rays_3d"](
-        coordinates.shape[0],
-        coordinates.ctypes.data,
-        cells.shape[0],
-        cells.ctypes.data,
-        centers.ctypes.data,
-        ray_count,
-        faces.ctypes.data,
-        owners.ctypes.data,
-        bounds.ctypes.data,
-        endpoints.ctypes.data,
-        kinds.ctypes.data,
-        item_status.ctypes.data,
-    )
-    _raise_for_call(status, "restricted_rays_3d")
-    return endpoints, kinds, item_status
 
 
 class SurfaceReconnectResult(NamedTuple):
@@ -11451,7 +11308,6 @@ __all__ = [
     "TET_MESH_UNMET_NO_FACET",
     "QuadraticValidityDecision",
     "RestrictedPowerCells",
-    "RestrictedDual3D",
     "RestrictedPowerFailure",
     "arrange_triangles",
     "arrange_tetrahedra_exact",
@@ -11498,9 +11354,7 @@ __all__ = [
     "regular_3d",
     "relocated_tet_mesh_arrays",
     "restricted_power_cells",
-    "restricted_dual_3d",
     "restricted_centers_3d",
-    "restricted_rays_3d",
     "restricted_power_cells_exact",
     "segment_triangle_intersections",
     "simplex_quadratic_bounds",

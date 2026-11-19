@@ -386,7 +386,7 @@ or complete flag cannot create source coverage. For bounded coverage,
 unavailable exact source measures remain `None`; per-cell material assignments
 are retained and checked independently.
 AnalyticImplicitProfile volume coverage supports the established exact
-sphere/ring-torus region through a RestrictedDelaunayBoundaryWitness that binds
+sphere/ring-torus region through a TubularProjectionBoundaryWitness that binds
 the target mesh, analytic profile, source/domain, and separate source-distance
 witness identities. The validator independently recomputes normal-gradient
 transversality over the complete target boundary, verifies its closed embedded
@@ -1040,7 +1040,7 @@ an enclosure claim.
 `AnalyticImplicitProfile` is a distinct restricted-source premise for nominal
 three-dimensional spheres and full nonsingular ring tori. It establishes their
 reach, topology, and certified boundary-distance/cover facts; those facts are
-not inferred for arbitrary implicit fields. Native restricted-Delaunay and
+not inferred for arbitrary implicit fields. The native isosurface-stuffing and
 general adaptive implicit tetrahedral routes therefore remain separate.
 
 `discover_periodic_trigonometric_surface` discovers a `TrigonometricLevelSet` on
