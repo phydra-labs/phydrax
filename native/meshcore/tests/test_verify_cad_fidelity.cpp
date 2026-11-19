@@ -15,20 +15,21 @@ int main() {
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
                            PHX_MC_CAD_NODE_ISOPARAMETRIC, PHX_MC_CAD_NODE_TEMPLATE,
                            PHX_MC_CAD_NODE_SURFACE_MAPPED, PHX_MC_CAD_NODE_EXTRUSION,
-                           PHX_MC_CAD_NODE_RULED};
-  const int64_t offsets[] = {0, 1, 3, 4, 6, 8, 10, 12, 13, 15, 16, 18};
+                           PHX_MC_CAD_NODE_RULED, PHX_MC_CAD_NODE_REVOLUTION};
+  const int64_t offsets[] = {0, 1, 3, 4, 6, 8, 10, 12, 13, 15, 16, 18, 19};
   const int64_t integers[] = {template_index("sphere"), 0, 3, template_index("circle3"),
-                              2, 0, 2, 1, 0, 0, 0, 1, template_index("circle2"), 0, 7, 2, 2, 3};
+                              2, 0, 2, 1, 0, 0, 0, 1, template_index("circle2"), 0, 7, 2, 2, 3, 2};
   const std::vector<double> coefficients = {
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 2.0,
       1.0, 0.25, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.5, -0.25, 0.75,
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0,
       0.2, 0.8, 0.2, 0.8, 0.25, -0.125,
-      0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.5, 0.25, -0.5, 1.0};
-  const int64_t real_offsets[] = {0, 13, 25, 35, 37, 39, 40, 41, 48, 48, 51, 51};
+      0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.5, 0.25, -0.5, 1.0,
+      0.1, 0.2, 0.3, 0.0, 0.0, 1.0};
+  const int64_t real_offsets[] = {0, 13, 25, 35, 37, 39, 40, 41, 48, 48, 51, 51, 57};
   const int64_t empty[] = {0};
   phx_mc_cad_model model{};
-  model.node_count = 11;
+  model.node_count = 12;
   model.node_kinds = kinds;
   model.node_integer_offsets = offsets;
   model.node_integers = integers;
@@ -44,7 +45,7 @@ int main() {
   workspace.coefficient_count = static_cast<int64_t>(coefficients.size());
   EvaluationWorkspace point_workspace;
   const double lo[] = {0.1, -0.4}, hi[] = {0.6, 0.3};
-  for (int node : {0, 1, 9, 10}) {
+  for (int node : {0, 1, 9, 10, 11}) {
     for (int order = 0; order <= 2; ++order) {
       std::array<double, 18> lower{}, upper{}, jet{};
       PHX_CHECK(geometry.interval_jets(node, lo, hi, order, lower.data(), upper.data(), workspace) ==

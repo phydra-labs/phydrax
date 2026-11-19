@@ -229,6 +229,78 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
         input_lower[i] > input_upper[i])
       return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_REVOLUTION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double curve_lower[9], curve_upper[9];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         input_lower + 1, input_upper + 1, order, curve_lower,
+                                         curve_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int64_t offset = model_.node_real_offsets[index];
+    interval::Interval origin[3], axis[3];
+    for (int i = 0; i < 3; ++i) {
+      origin[i] = {workspace.coefficient_lower[offset + i], workspace.coefficient_upper[offset + i]};
+      axis[i] = {workspace.coefficient_lower[offset + 3 + i],
+                 workspace.coefficient_upper[offset + 3 + i]};
+      if (!interval::finite(origin[i]) || !interval::finite(axis[i])) return PHX_MC_INVALID_ARGUMENT;
+    }
+    const auto sin_enclosure = phx::mc::elementary::sin(input_lower[0], input_upper[0]);
+    const auto cos_enclosure = phx::mc::elementary::cos(input_lower[0], input_upper[0]);
+    const interval::Interval sine{sin_enclosure.lower, sin_enclosure.upper};
+    const interval::Interval cosine{cos_enclosure.lower, cos_enclosure.upper};
+    const interval::Interval negative_sine{-sine.upper, -sine.lower};
+    const interval::Interval negative_cosine{-cosine.upper, -cosine.lower};
+    double result_lower[18]{}, result_upper[18]{};
+    for (int derivative = 0; derivative <= order; ++derivative) {
+      interval::Interval relative[3], radial[3], axial[3], cross[3];
+      auto dot = interval::point(0.0);
+      for (int i = 0; i < 3; ++i) {
+        const int k = derivative * 3 + i;
+        relative[i] = {curve_lower[k], curve_upper[k]};
+        if (derivative == 0) relative[i] = interval::subtract(relative[i], origin[i]);
+        dot = interval::add(dot, interval::multiply(axis[i], relative[i]));
+      }
+      for (int i = 0; i < 3; ++i) {
+        axial[i] = interval::multiply(axis[i], dot);
+        radial[i] = interval::subtract(relative[i], axial[i]);
+      }
+      for (int i = 0; i < 3; ++i)
+        cross[i] = interval::subtract(interval::multiply(axis[(i + 1) % 3], radial[(i + 2) % 3]),
+                                      interval::multiply(axis[(i + 2) % 3], radial[(i + 1) % 3]));
+      for (int i = 0; i < 3; ++i) {
+        auto value = interval::add(axial[i], interval::multiply(cosine, radial[i]));
+        value = interval::add(value, interval::multiply(sine, cross[i]));
+        if (derivative == 0) value = interval::add(value, origin[i]);
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        const int row = derivative == 0 ? 0 : derivative == 1 ? 6 : 15;
+        result_lower[row + i] = value.lower;
+        result_upper[row + i] = value.upper;
+        if (derivative < order) {
+          value = interval::add(interval::multiply(negative_sine, radial[i]),
+                                interval::multiply(cosine, cross[i]));
+          if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+          const int angle_row = derivative == 0 ? 3 : 12;
+          result_lower[angle_row + i] = value.lower;
+          result_upper[angle_row + i] = value.upper;
+        }
+        if (derivative == 0 && order >= 2) {
+          value = interval::add(interval::multiply(negative_cosine, radial[i]),
+                                interval::multiply(negative_sine, cross[i]));
+          if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+          result_lower[9 + i] = value.lower;
+          result_upper[9 + i] = value.upper;
+        }
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
   if (current.kind == PHX_MC_CAD_NODE_RULED) {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
