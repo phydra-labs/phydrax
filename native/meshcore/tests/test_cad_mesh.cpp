@@ -227,6 +227,10 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, const PlaneWithHol
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &short_arrays) == PHX_MC_CAPACITY_EXCEEDED);
   if (!result.points.empty()) PHX_CHECK(result.points[0] == 42.0);
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &arrays) == PHX_MC_OK);
+  for (const auto& failure : result.face_failures)
+    std::fprintf(stderr, "failure face=%d loop=%d use=%d axis=%d reason=%d turns=%lld parameter=%.17g\n",
+                 failure.face, failure.loop, failure.use, failure.axis, failure.reason,
+                 static_cast<long long>(failure.turns), failure.parameter);
   for (std::size_t i = 0; i < result.stats.size(); ++i)
     std::fprintf(stderr, "  face=%zu unresolved=%lld lens=%lld proximity=%lld excluded=%lld\n",
                  i, static_cast<long long>(result.stats[i].unresolved_triangles),
@@ -795,16 +799,33 @@ void quadric_assembly() {
       cumulative[i+1] = cumulative[i] + std::hypot(std::hypot(jet[3],jet[4]),jet[5]) *
                                       std::abs(last-first)/intervals;
     }
-    const int count = std::max(3, static_cast<int>(std::ceil(cumulative.back()/spacing)));
-    samples.push_back(0.0);
-    for (int i = 1; i < count; ++i) {
-      const double target = cumulative.back()*i/count;
-      const auto it = std::lower_bound(cumulative.begin(), cumulative.end(), target);
-      const int j = static_cast<int>(it-cumulative.begin());
-      const double fraction = (target-cumulative[j-1])/(cumulative[j]-cumulative[j-1]);
-      samples.push_back((j-1+fraction)/intervals);
+    std::vector<double> breaks{0.0, 1.0};
+    for (int64_t use = 0; use < model.use_count; ++use) {
+      if (model.use_kinds[use] != 0 || model.use_entities[use] != curve) continue;
+      int degree = 0;
+      geometry.curve_breakpoints(geometry.pcurve_node(use), model.use_ranges[2*use],
+                                 model.use_ranges[2*use+1], breaks, degree);
     }
-    samples.push_back(1.0);
+    std::sort(breaks.begin(), breaks.end());
+    breaks.erase(std::unique(breaks.begin(), breaks.end()), breaks.end());
+    const auto arc = [&](double s) {
+      const double position = s * intervals;
+      const int j = std::min(static_cast<int>(position), intervals - 1);
+      return cumulative[j] + (position-j)*(cumulative[j+1]-cumulative[j]);
+    };
+    samples.push_back(0.0);
+    for (std::size_t span = 1; span < breaks.size(); ++span) {
+      const double low = arc(breaks[span-1]), high = arc(breaks[span]);
+      const int count = std::max(1, static_cast<int>(std::ceil((high-low)/spacing)));
+      for (int i = 1; i < count; ++i) {
+        const double target = low + (high-low)*i/count;
+        const auto it = std::lower_bound(cumulative.begin(), cumulative.end(), target);
+        const int j = static_cast<int>(it-cumulative.begin());
+        const double fraction = (target-cumulative[j-1])/(cumulative[j]-cumulative[j-1]);
+        samples.push_back((j-1+fraction)/intervals);
+      }
+      samples.push_back(breaks[span]);
+    }
     offsets.push_back(static_cast<int64_t>(samples.size()));
   }
   const CadCurveDiscretization input{offsets.data(),samples.data()};
@@ -823,6 +844,28 @@ void quadric_assembly() {
   const SurfaceArrays mesh = run(), again = run();
   check_deterministic(mesh, again);
   check_closed(mesh, 2);
+  PlaneWithHole bank;
+  const SurfaceArrays generated = assemble_surface(model, bank, spacing);
+  check_closed(generated, 2);
+  std::array<double, 3> maximum_metric_lengths{};
+  for (std::size_t t = 0; t < generated.patches.size(); ++t) {
+    const int face = generated.patches[t];
+    for (int k = 0; k < 3; ++k) {
+      if (generated.uses[3*t+k] < 0) continue;
+      const int next = (k+1)%3;
+      const double du = generated.uv[6*t+2*k] - generated.uv[6*t+2*next];
+      const double dv = generated.uv[6*t+2*k+1] - generated.uv[6*t+2*next+1];
+      const double e = face == 2 ? 0.36 : 1.0;
+      const double g = face == 2 ? 9.0 : 5.76;
+      maximum_metric_lengths[face] = std::max(maximum_metric_lengths[face],
+                                               std::sqrt(e*du*du+g*dv*dv)/spacing);
+    }
+  }
+  for (int face = 0; face < 3; ++face) {
+    std::fprintf(stderr, "quadric face=%d max_boundary_metric_length=%.17g\n",
+                 face, maximum_metric_lengths[face]);
+    PHX_CHECK(maximum_metric_lengths[face] <= 1.0 + 1e-12);
+  }
   for (std::size_t i = 0; i < mesh.regions.size(); i += 2)
     PHX_CHECK(mesh.regions[i] == -1 && mesh.regions[i+1] == 0);
   for (std::size_t i = 0; i < mesh.points.size(); i += 3) {

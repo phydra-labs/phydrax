@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 #include "chart_surface.hpp"
@@ -62,10 +63,18 @@ double use_parameter(const phx_mc_cad_model& model, int64_t use, double s) {
 }
 
 bool chart_point(const cad::CadGeometry& geometry, int64_t use, double parameter,
+                 double interior, cad::EvaluationWorkspace& workspace,
+                 std::array<double, 2>& uv) {
+  return geometry.jets_in_span(geometry.pcurve_node(use), parameter, interior, 0,
+                               uv.data(), workspace) &&
+         std::isfinite(uv[0]) && std::isfinite(uv[1]);
+}
+bool chart_point(const cad::CadGeometry& geometry, int64_t use, double parameter,
                  cad::EvaluationWorkspace& workspace, std::array<double, 2>& uv) {
   return geometry.jets(geometry.pcurve_node(use), &parameter, 0, uv.data(), workspace) &&
          std::isfinite(uv[0]) && std::isfinite(uv[1]);
 }
+
 
 uint64_t ulp_gap(double a, double b) {
   const auto ordered = [](double value) {
@@ -141,12 +150,50 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
       if (pole) boundary.poles.push_back({use, static_cast<int32_t>(boundary.vertices.size()),
                                           static_cast<int32_t>(count - 1)});
       if (use != first_use && start_corner != previous_corner) return PHX_MC_INVALID_INPUT;
+      std::array<Expansion, 2> shift;
+      std::array<double, 2> previous_raw{};
       for (int64_t j = 0; j <= count - 1; ++j) {
         const int64_t index = forward ? j : count - 1 - j;
         const double s = pole ? static_cast<double>(index) / (count - 1)
                               : curves.parameters[begin + index];
+        const double parameter = use_parameter(model, use, s);
+        const int64_t adjacent = j == count - 1 ? (forward ? index - 1 : index + 1)
+                                                : (forward ? index + 1 : index - 1);
+        const double adjacent_s = pole ? static_cast<double>(adjacent) / (count - 1)
+                                       : curves.parameters[begin + adjacent];
+        const double adjacent_parameter = use_parameter(model, use, adjacent_s);
+        const double interior = std::midpoint(parameter, adjacent_parameter);
         std::array<double, 2> uv;
-        if (!chart_point(geometry, use, use_parameter(model, use, s), workspace, uv))
+        if (!chart_point(geometry, use, parameter, interior, workspace, uv))
+          return PHX_MC_INVALID_INPUT;
+        if (j > 0 && j < count - 1) {
+          for (int axis = 0; axis < 2; ++axis) {
+            const double period = model.surface_periods[2 * face + axis];
+            if (!(period > 0.0) || uv[axis] == previous_raw[axis]) continue;
+            int64_t turns = 0;
+            const int decision = exact_turn(previous_raw[axis], uv[axis], period, turns);
+            if (decision != 1) {
+              result.failure = {face, static_cast<int32_t>(loop), static_cast<int32_t>(use), axis,
+                                decision < 0 ? PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE
+                                             : PHX_MC_CAD_FACE_SHEET_MISMATCH,
+                                turns, parameter};
+              return PHX_MC_UNRESOLVED;
+            }
+            shift[axis] = shift[axis] - Expansion::product(static_cast<double>(turns), period);
+          }
+        }
+        for (int axis = 0; axis < 2; ++axis) {
+          const Expansion exact = Expansion(uv[axis]) + shift[axis];
+          const double shifted = exact.estimate();
+          if (!std::isfinite(shifted) || !(exact - Expansion(shifted)).is_zero()) {
+            result.failure = {face, static_cast<int32_t>(loop), static_cast<int32_t>(use), axis,
+                              PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE, 0, parameter};
+            return PHX_MC_UNRESOLVED;
+          }
+          uv[axis] = shifted;
+        }
+        if (j < count - 1 &&
+            !chart_point(geometry, use, adjacent_parameter, interior, workspace, previous_raw))
           return PHX_MC_INVALID_INPUT;
         if (j == 0 && use == first_use) first_uv = uv;
         if (j == 0 && use != first_use) uv = previous_uv;
