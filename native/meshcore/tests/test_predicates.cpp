@@ -3,6 +3,7 @@
 //
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 #include "check.hpp"
@@ -379,6 +380,95 @@ void test_floating_point_hazards() {
   });
 }
 
+// insphere (whose exact stage runs on integers when the coordinates or the
+// differences span at most 61 or 62 bits, else on expansions) against the
+// expansion-coordinate insphere_sign on random, rounded-cospherical, exactly
+// cospherical, and mixed-scale (expansion fallback) inputs.
+void test_insphere_exact_paths() {
+  std::uint64_t seed = 77;
+  int checked = 0, zeros = 0, mismatches = 0;
+  const auto compare = [&](const double* const* p) {
+    Expansion e[5][3];
+    for (int k = 0; k < 5; ++k) {
+      for (int axis = 0; axis < 3; ++axis) e[k][axis] = Expansion(p[k][axis]);
+    }
+    const int expected = insphere_sign(e[0], e[1], e[2], e[3], e[4]);
+    const int actual = insphere(p[0], p[1], p[2], p[3], p[4]);
+    mismatches += expected == actual ? 0 : 1;
+    zeros += expected == 0 ? 1 : 0;
+    ++checked;
+  };
+  // Points of the unit sphere, rounded (near-degenerate), at four scales.
+  std::vector<double> sphere;
+  for (int i = 0; i < 400; ++i) {
+    double v[3];
+    for (double& c : v) c = 2.0 * uniform(seed) - 1.0;
+    const double norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (double c : v) sphere.push_back(c / norm);
+  }
+  for (const double scale : {1.0, 0x1p-40, 0x1p40, 3.0e-7}) {
+    for (int trial = 0; trial < 4000; ++trial) {
+      double points[5][3];
+      const double* p[5];
+      for (int k = 0; k < 5; ++k) {
+        const auto row = static_cast<std::size_t>(splitmix64(seed++) % 400);
+        for (int axis = 0; axis < 3; ++axis) points[k][axis] = scale * sphere[3 * row + axis];
+        p[k] = points[k];
+      }
+      compare(p);
+    }
+  }
+  // Exactly cospherical integer points (radius 45), some with a sixth row
+  // nudged by one unit: exact zeros and the smallest nonzero values.
+  std::vector<double> lattice;
+  for (int x = -45; x <= 45; ++x) {
+    for (int y = -45; y <= 45; ++y) {
+      const int z2 = 45 * 45 - x * x - y * y;
+      const int z = static_cast<int>(std::lround(std::sqrt(std::max(z2, 0))));
+      if (z2 >= 0 && z * z == z2) lattice.insert(lattice.end(), {double(x), double(y), double(z)});
+    }
+  }
+  const std::size_t rows = lattice.size() / 3;
+  for (int trial = 0; trial < 20000; ++trial) {
+    double points[5][3];
+    const double* p[5];
+    for (int k = 0; k < 5; ++k) {
+      const auto row = static_cast<std::size_t>(splitmix64(seed++) % rows);
+      for (int axis = 0; axis < 3; ++axis) points[k][axis] = lattice[3 * row + axis];
+      p[k] = points[k];
+    }
+    if (trial % 3 == 1) points[4][trial % 3] += 1.0;
+    if (trial % 5 == 2) {
+      for (auto& point : points) {
+        for (double& c : point) c = c * 0x1p-30 + 0.75;  // inexact differences
+      }
+    }
+    compare(p);
+  }
+  // Mixed scales: one coordinate tiny, so neither integer form fits.
+  for (int trial = 0; trial < 20000; ++trial) {
+    double points[5][3];
+    const double* p[5];
+    for (int k = 0; k < 5; ++k) {
+      for (int axis = 0; axis < 3; ++axis) points[k][axis] = uniform(seed) - 0.5;
+      p[k] = points[k];
+    }
+    points[trial % 5][trial % 3] = 0x1p-90 * (uniform(seed) - 0.5);
+    // Make the fifth point cospherical up to rounding: mirror the first.
+    points[4][0] = -points[0][0];
+    points[4][1] = points[0][1];
+    points[4][2] = points[0][2];
+    points[3][0] = -points[1][0];
+    points[3][1] = points[1][1];
+    points[3][2] = points[1][2];
+    compare(p);
+  }
+  PHX_CHECK(mismatches == 0);
+  PHX_CHECK(zeros > 100);
+  std::printf("insphere exact paths: %d checked, %d exact zeros, %d mismatches\n", checked, zeros,
+              mismatches);
+}
+
 }  // namespace
 
 int main() {
@@ -386,6 +476,7 @@ int main() {
   test_orient3d_exact_zero_and_ulp();
   test_orientation_conventions();
   test_incircle_insphere_exact_zero_and_ulp();
+  test_insphere_exact_paths();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();

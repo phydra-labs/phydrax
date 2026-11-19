@@ -291,6 +291,12 @@
   vertex, edge and position tables. Results are unchanged; on the 184,213-cell
   icosphere refinement (level 4) refinement takes 4.7 s instead of 6.0 s and
   improvement 0.55 s instead of 0.98 s (one thread).
+- The exact stage of the native insphere predicate evaluates the determinant
+  on integers (128-bit products, 384-bit sums) whenever the coordinates, or
+  the exact differences, of the five points span at most 61 or 62 bits, and
+  on expansions otherwise. Signs are unchanged; nearly cospherical inputs,
+  where nearly every test is exact, triangulate 4 to 7 times faster (the
+  vertices of an icosphere of 81,920 triangles: 1.68 s to 0.26 s).
 - Native closed-surface recovery (`phx_mc_plc3d_recover` and variants) decides
   whether the exterior boundary is convex from the hull of the Delaunay
   triangulation of the source points instead of testing every point against

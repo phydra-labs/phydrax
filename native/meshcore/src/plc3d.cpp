@@ -2358,12 +2358,13 @@ class PlcRecoveryBuilder {
     }
     // Acute input vertices (two incident source edges at an angle below 90
     // degrees) are the apices of the concentric split shells.
-    const std::vector<double> radii = protection_radii(
+    source_protection_ = protection_radii(
         candidate_.points.data(), source_point_count_, source_edges,
         candidate_.input_triangles, input_.affine_metric);
+    source_protection_edges_ = std::move(source_edges);
     shell_apex_.assign(static_cast<std::size_t>(source_point_count_), 0);
-    for (std::size_t vertex = 0; vertex < radii.size(); ++vertex) {
-      shell_apex_[vertex] = radii[vertex] > 0.0 ? 1 : 0;
+    for (std::size_t vertex = 0; vertex < source_protection_.size(); ++vertex) {
+      shell_apex_[vertex] = source_protection_[vertex] > 0.0 ? 1 : 0;
     }
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
@@ -7270,9 +7271,16 @@ class PlcRecoveryBuilder {
     candidate_.points.resize(3 * kept);
     candidate_.witnesses.resize(kept);
     candidate_.vertex_dimension.resize(kept);
-    candidate_.protection = protection_radii(
-        candidate_.points.data(), static_cast<int64_t>(published_points),
-        candidate_.segments, candidate_.input_triangles, input_.affine_metric);
+    // The radii of the source points are those of initialize_points when
+    // the published points and segments are the source ones.
+    if (published_points == static_cast<std::size_t>(source_point_count_) &&
+        candidate_.segments == source_protection_edges_) {
+      candidate_.protection = std::move(source_protection_);
+    } else {
+      candidate_.protection = protection_radii(
+          candidate_.points.data(), static_cast<int64_t>(published_points),
+          candidate_.segments, candidate_.input_triangles, input_.affine_metric);
+    }
     for (std::size_t row : published_volume) {
       const double* coordinates =
           point(first_volume + static_cast<int32_t>(row));
@@ -7301,6 +7309,10 @@ class PlcRecoveryBuilder {
   // triangulation_ holds the Delaunay triangulation of the source points
   // built by convex_boundary, not yet extended by build_triangulation.
   bool source_triangulation_ready_ = false;
+  // Protection radii of the source points over the source edges (as
+  // protection_radii receives them), for publish.
+  std::vector<double> source_protection_;
+  std::vector<int32_t> source_protection_edges_;
   std::vector<int32_t> vertex_tet_;
   // Live cells (finite and ghost) through each work vertex, kept current
   // from the complex's edit journal.
