@@ -152,6 +152,8 @@ set(PHX_MC_HEADERS
   src/cad_geometry.hpp
   src/cad_geometry_programs.inc
   src/cad_jet.hpp
+  src/cdt2d.hpp
+  src/chart_surface.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
