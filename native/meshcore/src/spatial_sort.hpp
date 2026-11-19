@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -146,7 +147,9 @@ inline void hilbert_keys(const double* points, int dimension, std::span<const in
     }
   }
   const double extent[3] = {upper[0] - lower[0], upper[1] - lower[1], upper[2] - lower[2]};
-  constexpr std::size_t kLanes = 8;
+  // Lanes are independent dependency chains through the transpose: enough
+  // of them keep the vector units busy.
+  constexpr std::size_t kLanes = 32;
   keys.reserve(candidates.size());
   for (std::size_t begin = 0; begin < candidates.size(); begin += kLanes) {
     const std::size_t end = std::min(candidates.size(), begin + kLanes);
@@ -167,8 +170,8 @@ inline int brio_round_count(std::size_t count) {
 }
 inline std::uint32_t brio_round(int32_t index, int rounds) {
   const std::uint64_t hash = splitmix64(static_cast<std::uint64_t>(index) ^ 0x5DEECE66DULL);
-  int level = 0;
-  while (level < rounds - 1 && ((hash >> level) & 1U) == 0U) ++level;
+  // The number of trailing zero bits, at most rounds - 1.
+  const int level = std::min(std::countr_zero(hash), rounds - 1);
   return static_cast<std::uint32_t>(rounds - 1 - level);
 }
 
