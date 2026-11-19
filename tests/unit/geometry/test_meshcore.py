@@ -67,7 +67,6 @@ from phydrax._meshcore import (
     triangle_dual_quads,
     zero_set_certify,
     zero_set_remesh,
-    ZeroSetCertificate,
 )
 from phydrax.geometry import (
     ConstrainedDelaunayTriangulation,
@@ -2479,6 +2478,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     assert remeshed.orientation == 1
     assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
     assert np.min(_minimum_triangle_angles(remeshed.vertices, remeshed.triangles)) >= 30.0
+    controls = (0.005, 0.15, 30.0)
     certificate = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
@@ -2488,19 +2488,36 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         1,
         vertices,
         faces,
-        0.005,
+        *controls,
     )
     assert 0.0 <= certificate.distance <= 0.01
     # Input triangles the remesh left untouched are the carrier's own.
-    assert 0 <= certificate.carrier_triangles < remeshed.triangles.shape[0]
+    assert 0 <= certificate.counters[3] < remeshed.triangles.shape[0]
+    # Nothing needed repair: the certified surface is the constructed one.
+    assert certificate.counters[4] == 0
+    np.testing.assert_array_equal(certificate.vertices, remeshed.vertices)
+    np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
     # The carrier certified against itself, listed from other corners: every
     # triangle is accepted at the carrier's distance.
-    assert zero_set_certify(
-        vertices, faces, value, gradient, 0.01, 1, vertices, faces[:, (1, 2, 0)], 0.005
-    ) == ZeroSetCertificate(0.005, faces.shape[0])
+    own = zero_set_certify(
+        vertices,
+        faces,
+        value,
+        gradient,
+        0.01,
+        1,
+        vertices,
+        faces[:, (1, 2, 0)],
+        *controls,
+    )
+    assert own.distance == 0.005
+    assert own.counters[3] == faces.shape[0]
+    # A vertex lifted off the sphere cannot be repaired by splitting its star.
+    lifted = np.array(remeshed.vertices)
+    lifted[0] *= 1.05
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         zero_set_certify(
-            1.05 * remeshed.vertices,
+            lifted,
             remeshed.triangles,
             value,
             gradient,
@@ -2508,7 +2525,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
             1,
             vertices,
             faces,
-            0.005,
+            *controls,
         )
 
 

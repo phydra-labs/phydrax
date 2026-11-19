@@ -1876,7 +1876,7 @@ def implicit_layer_wall(
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
-            distance = zero_set_certify(
+            certified = zero_set_certify(
                 remeshed.vertices,
                 remeshed.triangles,
                 value_box,
@@ -1886,7 +1886,9 @@ def implicit_layer_wall(
                 vertices,
                 faces,
                 scaffold_distance,
-            ).distance
+                edge_length,
+                _CARRIER_MINIMUM_ANGLE_DEGREES,
+            )
         except (MeshcoreError, ValueError, OverflowError) as error:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -1894,8 +1896,9 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             ) from error
-        vertices = np.array(remeshed.vertices, dtype=np.float64, copy=True)
-        faces = np.array(remeshed.triangles, dtype=np.int64, copy=True)
+        distance = certified.distance
+        vertices = np.array(certified.vertices, dtype=np.float64, copy=True)
+        faces = np.array(certified.triangles, dtype=np.int64, copy=True)
         worst = float(np.max(_face_radius_edge_ratios(vertices, faces)))
         if not worst <= radius_edge_bound:
             raise MeshingFailure(
@@ -1913,6 +1916,7 @@ def implicit_layer_wall(
             *_carrier_quality(vertices, faces, "after"),
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_unmet_count", float(remeshed.counters[4])),
+            ("carrier_remesh_repair_splits", float(certified.counters[4])),
         )
     wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)
     return ImplicitLayerWall(

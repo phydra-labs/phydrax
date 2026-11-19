@@ -2147,14 +2147,16 @@ def _remesh_implicit_carrier(
     carrier_distance: float,
     admission_tolerance: float,
     /,
-) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, np.ndarray, float]:
     """Remesh the scaffold carrier natively and certify every resulting triangle.
 
     Construction is floating point; every triangle of the result is then
-    certified within ``admission_tolerance`` of the zero set and transversal
-    to the field gradient, except triangles kept from the carrier around
-    creases, which carry the carrier's ``carrier_distance``. The result must
-    meet the FIXED-fill radius-edge bound or the route refuses.
+    certified within ``admission_tolerance`` of the zero set, transversal to
+    the field gradient and embedded, except triangles kept from the carrier
+    around creases, which carry the carrier's ``carrier_distance``; refused
+    triangles are repaired locally. Returns the certified surface, its
+    distance, and the construction and certification counters. The result
+    must meet the FIXED-fill radius-edge bound or the route refuses.
     """
     value, gradient = _implicit_field_box_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
@@ -2168,7 +2170,7 @@ def _remesh_implicit_carrier(
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
         )
-        distance = zero_set_certify(
+        certified = zero_set_certify(
             remeshed.vertices,
             remeshed.triangles,
             value,
@@ -2178,7 +2180,9 @@ def _remesh_implicit_carrier(
             vertices,
             faces,
             carrier_distance,
-        ).distance
+            edge_length,
+            _CARRIER_MINIMUM_ANGLE_DEGREES,
+        )
     except (MeshcoreError, ValueError, OverflowError) as error:
         raise _failure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -2186,7 +2190,7 @@ def _remesh_implicit_carrier(
             provider_code="native_implicit_carrier_remesh",
             stage="surface_meshing",
         ) from error
-    worst = _maximum_face_radius_edge_ratio(remeshed.vertices, remeshed.triangles)
+    worst = _maximum_face_radius_edge_ratio(certified.vertices, certified.triangles)
     if schedule.radius_edge_bound is None and not np.isfinite(worst):
         raise _failure(
             MeshingFailureCategory.QUALITY_REJECTED,
@@ -2210,10 +2214,11 @@ def _remesh_implicit_carrier(
             stage="surface_meshing",
         )
     return (
-        remeshed.vertices,
-        remeshed.triangles,
-        distance,
+        certified.vertices,
+        certified.triangles,
+        certified.distance,
         remeshed.counters,
+        certified.counters,
         edge_length,
     )
 
@@ -2391,7 +2396,7 @@ def _implicit_plc_carrier(
         # The scaffold carrier provably cannot meet the FIXED-fill bound.
         admission_tolerance = _implicit_carrier_admission_tolerance(source, specification)
         scaffold_vertices, scaffold_triangles = vertices, triangles
-        vertices, triangles, carrier_distance, counters, edge_length = (
+        vertices, triangles, carrier_distance, counters, certification, edge_length = (
             _remesh_implicit_carrier(
                 source,
                 specification,
@@ -2436,8 +2441,11 @@ def _implicit_plc_carrier(
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_admission_tolerance", admission_tolerance),
             ("carrier_remesh_unmet_count", float(counters[4])),
-            ("carrier_remesh_transversality_refusals", float(counters[6])),
-            ("carrier_remesh_distance_refusals", float(counters[7])),
+            ("carrier_remesh_transversality_refusals", float(certification[0])),
+            ("carrier_remesh_distance_refusals", float(certification[1])),
+            ("carrier_remesh_embedding_refusals", float(certification[2])),
+            ("carrier_remesh_kept_carrier_triangles", float(certification[3])),
+            ("carrier_remesh_repair_splits", float(certification[4])),
         )
     carrier_revision = canonical_fingerprint(
         {

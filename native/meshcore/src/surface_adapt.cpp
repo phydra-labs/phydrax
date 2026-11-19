@@ -5,7 +5,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "phydrax_meshcore.h"
@@ -31,6 +33,9 @@ constexpr double kCreaseCosine = 0.70710678118654752;
 constexpr int kSizeSweeps = 5;
 constexpr int kQualitySweeps = 8;
 constexpr int kFidelitySweeps = 12;
+// Certification rounds: the first, and up to three after local repairs.
+constexpr int kRepairRounds = 4;
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
 inline Point sub(const Point& a, const Point& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
 inline Point add(const Point& a, const Point& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
@@ -84,8 +89,14 @@ class Adapter {
   Adapter(const SurfaceOracle& oracle, const AdaptTargets& targets, AdaptCounters& counters)
       : oracle_(oracle), targets_(targets), counters_(counters) {}
 
-  int32_t load(const std::vector<Point>& points, const std::vector<Triangle>& triangles);
+  // `place` projects the free vertices onto the source; without it every
+  // vertex keeps its position (a surface constructed before, to repair).
+  int32_t load(const std::vector<Point>& points, const std::vector<Triangle>& triangles,
+               bool place);
   void run();
+  // Splits the longest edge that is not kept of every flagged triangle (rows
+  // as loaded), then restores angles by Delaunay flips; returns the splits.
+  int64_t repair(const std::vector<uint8_t>& refused);
   void store(std::vector<Point>& points, std::vector<Triangle>& triangles) const;
 
  private:
@@ -174,6 +185,12 @@ class Adapter {
   void smooth();
   int64_t improve_quality();
   int64_t repair_fidelity();
+  // Splits the longest edge of triangle t that is not kept; false when none
+  // is or the split is refused.
+  bool split_longest(int32_t t);
+  // Splits the longest edge of every listed triangle still holding the
+  // listed corners (an earlier split may reshape one); returns the splits.
+  int64_t split_listed(const std::vector<std::pair<int32_t, std::array<int32_t, 3>>>& listed);
   // The largest sampled distance of each listed triangle from the surface.
   void deviations(const std::vector<int32_t>& triangles, std::vector<double>& out) const;
   std::vector<int32_t> alive_triangles() const;
@@ -222,7 +239,8 @@ int32_t Adapter::new_triangle() {
   return static_cast<int32_t>(corners_.size() / 3 - 1);
 }
 
-int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triangle>& triangles) {
+int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triangle>& triangles,
+                      bool place) {
   const size_t n = points.size(), m = triangles.size();
   if (n > static_cast<size_t>(INT32_MAX / 4) || m > static_cast<size_t>(INT32_MAX / 12))
     return PHX_MC_CAPACITY_EXCEEDED;
@@ -264,7 +282,7 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
     if (vertex_corner_[v] >= 0 && valence(static_cast<int32_t>(v)) != corner_count[v])
       return PHX_MC_INVALID_INPUT;
   // Crease edges by the input's own turn.
-  for (size_t c = 0; c < 3 * m; ++c) {
+  for (size_t c = 0; c < 3 * m && targets_.keep_creases; ++c) {
     const auto h = static_cast<int32_t>(c);
     const int32_t g = twin(h);
     if (g < h) continue;
@@ -308,7 +326,7 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
     if (vertex_corner_[v] < 0) continue;
     if (!found[at]) return PHX_MC_UNRESOLVED;
     const SurfacePoint& surface = projected[at++];
-    if (roles_[v] == Role::kFree) positions_[v] = surface.on;
+    if (place && roles_[v] == Role::kFree) positions_[v] = surface.on;
     normals_[v] = surface.normal;
     sizes_[v] = size_at(effective_curvature(surface.curvature_first, surface.curvature_second));
   }
@@ -798,30 +816,53 @@ int64_t Adapter::repair_fidelity() {
       offenders.push_back({alive[i], {corners_[base], corners_[base + 1], corners_[base + 2]}});
     }
     above = static_cast<int64_t>(offenders.size());
-    int64_t split_count = 0;
-    for (const auto& [t, sampled] : offenders) {
-      const size_t base = 3 * static_cast<size_t>(t);
-      if (!alive_triangle(t) || corners_[base] != sampled[0] || corners_[base + 1] != sampled[1] ||
-          corners_[base + 2] != sampled[2])
-        continue;
-      int32_t longest = -1;
-      double hi = -1;
-      for (size_t k = 0; k < 3; ++k) {
-        const auto h = static_cast<int32_t>(base + k);
-        if (kept_edge(h)) continue;
-        const double length = norm2(sub(position(tail(h)), position(head(h))));
-        if (length > hi) {
-          hi = length;
-          longest = h;
-        }
-      }
-      if (longest >= 0 && split(longest)) ++split_count;
-    }
-    if (above == 0 || split_count == 0) break;
+    if (above == 0 || split_listed(offenders) == 0) break;
     // Splits leave long thin pairs; Delaunay flips restore the angles.
     flip_delaunay();
   }
   return above;
+}
+
+bool Adapter::split_longest(int32_t t) {
+  const size_t base = 3 * static_cast<size_t>(t);
+  int32_t longest = -1;
+  double hi = -1;
+  for (size_t k = 0; k < 3; ++k) {
+    const auto h = static_cast<int32_t>(base + k);
+    if (kept_edge(h)) continue;
+    const double length = norm2(sub(position(tail(h)), position(head(h))));
+    if (length > hi) {
+      hi = length;
+      longest = h;
+    }
+  }
+  return longest >= 0 && split(longest);
+}
+
+int64_t Adapter::split_listed(
+    const std::vector<std::pair<int32_t, std::array<int32_t, 3>>>& listed) {
+  int64_t splits = 0;
+  for (const auto& [t, sampled] : listed) {
+    const size_t base = 3 * static_cast<size_t>(t);
+    if (!alive_triangle(t) || corners_[base] != sampled[0] || corners_[base + 1] != sampled[1] ||
+        corners_[base + 2] != sampled[2])
+      continue;
+    if (split_longest(t)) ++splits;
+  }
+  return splits;
+}
+
+int64_t Adapter::repair(const std::vector<uint8_t>& refused) {
+  std::vector<std::pair<int32_t, std::array<int32_t, 3>>> listed;
+  for (size_t t = 0; t < refused.size(); ++t) {
+    if (!refused[t]) continue;
+    const size_t base = 3 * t;
+    listed.push_back(
+        {static_cast<int32_t>(t), {corners_[base], corners_[base + 1], corners_[base + 2]}});
+  }
+  const int64_t splits = split_listed(listed);
+  if (splits > 0) flip_delaunay();
+  return splits;
 }
 
 void Adapter::run() {
@@ -869,7 +910,7 @@ int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
       !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
   Adapter adapter(oracle, targets, counters);
-  const int32_t status = adapter.load(points, triangles);
+  const int32_t status = adapter.load(points, triangles, true);
   if (status != PHX_MC_OK) {
     points.clear();
     triangles.clear();
@@ -878,6 +919,85 @@ int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
   adapter.run();
   adapter.store(points, triangles);
   return PHX_MC_OK;
+}
+
+int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                        const SurfaceOracle& oracle, const AdaptTargets& targets,
+                        const TriangleCertifier& certifier, const CarrierEvidence& carrier,
+                        CertifyCounters& counters) {
+  if (!(targets.edge_length > 0) || !(targets.tolerance > 0) ||
+      !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
+    return PHX_MC_INVALID_ARGUMENT;
+  counters = CertifyCounters{};
+  if (!closed_manifold(triangles, points.size())) return PHX_MC_INVALID_INPUT;
+  // What earlier rounds decided, by triangle key: a repair changes only the
+  // stars it splits and the flips around them. A triangle refused before
+  // (for either reason) has its contacts classified again.
+  struct Decided {
+    TriangleKey key;
+    double bound;
+    bool refused;
+  };
+  const auto by_key = [](const Decided& entry, const TriangleKey& key) { return entry.key < key; };
+  std::vector<Decided> decided, next;
+  std::vector<uint8_t> refused, changed, illegal;
+  for (int round = 0;; ++round) {
+    const size_t m = triangles.size();
+    refused.assign(m, 0);
+    changed.assign(m, 0);
+    next.clear();
+    next.reserve(m);
+    double maximum = 0;
+    int64_t carried = 0;
+    for (size_t t = 0; t < m; ++t) {
+      const Point& a = points[static_cast<size_t>(triangles[t][0])];
+      const Point& b = points[static_cast<size_t>(triangles[t][1])];
+      const Point& c = points[static_cast<size_t>(triangles[t][2])];
+      const TriangleKey key = triangle_key(a, b, c);
+      const auto found = std::lower_bound(decided.begin(), decided.end(), key, by_key);
+      const bool known = found != decided.end() && found->key == key;
+      changed[t] = known && !found->refused ? 0 : 1;
+      double bound = kInfinity;
+      if (std::binary_search(carrier.keys.begin(), carrier.keys.end(), key)) {
+        bound = carrier.distance;
+        ++carried;
+      } else if (known) {
+        bound = found->bound;
+      } else {
+        bound = certifier.bound(a, b, c);
+        if (!(bound < kInfinity)) ++counters.refused_fidelity;
+      }
+      if (bound < kInfinity)
+        maximum = std::max(maximum, bound);
+      else
+        refused[t] = 1;
+      next.push_back({key, bound, false});
+    }
+    counters.refused_embedding += refuse_illegal_contacts(
+        points, triangles, round == 0 ? nullptr : &changed, illegal);
+    int64_t count = 0;
+    for (size_t t = 0; t < m; ++t) {
+      refused[t] = static_cast<uint8_t>(refused[t] | illegal[t]);
+      next[t].refused = refused[t] != 0;
+      count += refused[t];
+    }
+    counters.rounds = round + 1;
+    counters.carrier = carried;
+    counters.distance = maximum;
+    if (count == 0) return PHX_MC_OK;
+    if (round + 1 == kRepairRounds) return PHX_MC_UNRESOLVED;
+    std::sort(next.begin(), next.end(),
+              [](const Decided& x, const Decided& y) { return x.key < y.key; });
+    decided.swap(next);
+    AdaptCounters edits;
+    Adapter adapter(oracle, targets, edits);
+    const int32_t status = adapter.load(points, triangles, false);
+    if (status != PHX_MC_OK) return status;
+    const int64_t splits = adapter.repair(refused);
+    counters.repair_splits += splits;
+    if (splits == 0) return PHX_MC_UNRESOLVED;
+    adapter.store(points, triangles);
+  }
 }
 
 }  // namespace phx::mc::remesh

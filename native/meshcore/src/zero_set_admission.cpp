@@ -25,15 +25,10 @@ using phx::mc::geometry::next_down;
 using phx::mc::geometry::next_up;
 
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
-constexpr int kNewtonSteps = 16;
 // Midpoint levels of the uncertifiable-point search: the residual maximum of
 // a triangle is located to 2^-6 of its extent before the full subdivision.
 constexpr int kWitnessLevels = 6;
 
-// The three quotients of the axis are each rounded once, which turns a unit
-// vector by at most sqrt(3) 2^-53 radians; a common error of the length does
-// not turn it.
-constexpr double kAxisRounding = 0x1p-51;
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
     lower[d] = least(a[d], b[d], c[d]);
@@ -591,138 +586,11 @@ bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c
   return true;
 }
 
-// The source normals near the triangle are orientation * grad f / |grad f| at
-// zero-set points within the tolerance of it, so over bbox(T) widened by the
-// tolerance. With the gradient enclosure's midpoint g and radius vector r
-// (|r| < |g|), every enclosed direction lies within asin(|r| / |g|) of g. An
-// admitted triangle's points lie within the tolerance of Z, so across its
-// smallest altitude it tilts from the local tangent plane by up to
-// asin(2 tolerance / altitude), which widens the cone. Both terms are upper
-// bounds: every norm, quotient and arcsine is rounded toward the wider cone
-// with binary64 operations and the elementary interval kernel, so the
-// half-angle is the same double on every platform and never too small. An
-// undecided or zero-straddling enclosure constrains nothing (a crease
-// enclosure holds both sides' gradients, so the crease is kept).
-NormalCone ZeroSetBandAdmission::normal_cone(const Point& a, const Point& b, const Point& c,
-                                             const std::array<VertexEvidence, 3>& evidence) const {
-  NormalCone cone;
-  const double tilt = normal_cone_floor(a, b, c, evidence);
-  if (!(tilt < kOpenCone)) return cone;
-  Point lower{}, upper{};
-  bounding_box(a, b, c, lower, upper);
-  for (int d = 0; d < 3; ++d) {
-    lower[d] = next_down(lower[d] - tolerance_);
-    upper[d] = next_up(upper[d] + tolerance_);
-  }
-  std::array<Interval, 3> gradient{};
-  if (!gradient_over(gradient_, lower, upper, gradient)) return cone;
-  Point middle{}, spread{};
-  for (int d = 0; d < 3; ++d) {
-    const Interval& g = gradient[static_cast<size_t>(d)];
-    middle[d] = g.lower + 0.5 * (g.upper - g.lower);
-    spread[d] = next_up(std::max(g.upper - middle[d], middle[d] - g.lower));
-  }
-  // |r| from above and |g| from below, their quotient and its arcsine rounded
-  // up: the half-angle holds every enclosed direction about the midpoint.
-  const double least_parts[3] = {std::fabs(middle[0]), std::fabs(middle[1]),
-                                 std::fabs(middle[2])};
-  const double middle_norm = geometry::norm_lower(least_parts);
-  const double spread_norm = geometry::norm_upper(spread.data());
-  if (!(spread_norm < middle_norm) || !std::isfinite(middle_norm)) return cone;
-  const double half =
-      next_up(next_up(asin_upper(next_up(spread_norm / middle_norm)) + tilt) + kAxisRounding);
-  if (!(half < cone.half_angle)) return cone;
-  // The axis is the midpoint's direction with its length rounded to nearest in
-  // a fixed order; kAxisRounding above covers how far that rounding turns it.
-  const double length =
-      std::sqrt((middle[0] * middle[0] + middle[1] * middle[1]) + middle[2] * middle[2]);
-  if (!(length > 0) || !std::isfinite(length)) return cone;
-  for (int d = 0; d < 3; ++d) cone.axis[d] = orientation_ * middle[d] / length;
-  cone.half_angle = half;
-  return cone;
-}
-
-// asin(2 tolerance / altitude) from above. The smallest altitude is twice the
-// area over the longest edge: the edges are enclosed componentwise, the area
-// is bounded from below and the longest edge from above, and every product
-// and quotient on the way is rounded up.
-double ZeroSetBandAdmission::normal_cone_floor(const Point& a, const Point& b, const Point& c,
-                                               const std::array<VertexEvidence, 3>&) const {
-  const IntervalVector u = enclosed_difference(b, a);
-  const IntervalVector w = enclosed_difference(c, a);
-  const IntervalVector e = enclosed_difference(c, b);
-  const double twice_area = norm_lower(cross(u, w));
-  const double longest = greatest(norm_upper(u), norm_upper(w), norm_upper(e));
-  if (!(twice_area > 0) || !(longest > 0)) return kOpenCone;
-  // 2 tolerance is exact.
-  const double tilt = next_up(next_up(2 * tolerance_ * longest) / twice_area);
-  return tilt < 1 ? asin_upper(tilt) : kOpenCone;
-}
-
-Point ZeroSetBandAdmission::project(const Point& position) const {
-  std::array<Interval, 3> gradient{};
-  Interval value{};
-  if (!gradient_over(gradient_, position, position, gradient) ||
-      !value_.evaluate(position, position, &value) || !finite(value))
-    return position;
-  Point direction{};
-  double norm = 0;
-  for (int d = 0; d < 3; ++d) {
-    direction[d] = 0.5 * (gradient[static_cast<size_t>(d)].lower +
-                          gradient[static_cast<size_t>(d)].upper);
-    norm += direction[d] * direction[d];
-  }
-  norm = std::sqrt(norm);
-  if (!(norm > 0) || !std::isfinite(norm)) return position;
-  for (double& component : direction) component /= norm;
-  const double start = 0.5 * (value.lower + value.upper);
-  if (start == 0) return position;
-  // phi(t) = f(position - t u); its root lies near t = f / |grad f|.
-  const double reach = 2 * std::fabs(start) / norm;
-  Interval step{-reach, reach};
-  for (int iteration = 0; iteration < kNewtonSteps; ++iteration) {
-    const double middle = 0.5 * (step.lower + step.upper);
-    Point at{}, lower{}, upper{};
-    for (int d = 0; d < 3; ++d) {
-      at[d] = position[d] - middle * direction[d];
-      const double first = position[d] - step.lower * direction[d];
-      const double second = position[d] - step.upper * direction[d];
-      lower[d] = next_down(std::min(first, second));
-      upper[d] = next_up(std::max(first, second));
-    }
-    Interval at_value{};
-    std::array<Interval, 3> slope_gradient{};
-    if (!value_.evaluate(at, at, &at_value) || !finite(at_value) ||
-        !gradient_over(gradient_, lower, upper, slope_gradient))
-      return position;
-    Interval slope{0, 0};
-    for (int d = 0; d < 3; ++d)
-      slope = subtract(slope, multiply(slope_gradient[static_cast<size_t>(d)],
-                                       point(direction[d])));
-    if (!(slope.lower > 0) && !(slope.upper < 0)) break;
-    const double q[4] = {at_value.lower / slope.lower, at_value.lower / slope.upper,
-                         at_value.upper / slope.lower, at_value.upper / slope.upper};
-    const Interval newton{next_down(middle - next_up(greatest(q[0], q[1], q[2], q[3]))),
-                          next_up(middle - next_down(least(q[0], q[1], q[2], q[3])))};
-    const Interval narrowed{std::max(step.lower, newton.lower),
-                            std::min(step.upper, newton.upper)};
-    if (narrowed.lower > narrowed.upper) return position;  // no root on this segment
-    const bool settled = narrowed.lower == step.lower && narrowed.upper == step.upper;
-    step = narrowed;
-    if (settled) break;
-  }
-  const double t = 0.5 * (step.lower + step.upper);
-  Point projected{};
-  for (int d = 0; d < 3; ++d) projected[d] = position[d] - t * direction[d];
-  return projected;
-}
-
 namespace {
 struct ZeroSetRemeshResult {
   std::vector<Point> points;
   std::vector<Triangle> triangles;
 };
-
 
 // The implicit source as a floating-point oracle: second-order jets of f from
 // the point executor (value, gradient, Hessian), Newton projection along the
@@ -966,19 +834,26 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
   return PHX_MC_OK;
 }
 
-// A triangle's corner coordinates in its own cyclic order, rotated to start
-// at the lexicographically least corner: equal for the same oriented
-// triangle whatever corner it lists first.
-using TriangleKey = std::array<Point, 3>;
-TriangleKey triangle_key(const Point& a, const Point& b, const Point& c) {
-  if (b < a && b < c) return {b, c, a};
-  if (c < a && c < b) return {c, a, b};
-  return {a, b, c};
-}
+// The band admission as a triangle certifier: the certified distance bound
+// of an admitted triangle, +inf otherwise.
+class ZeroSetCertifier final : public TriangleCertifier {
+ public:
+  explicit ZeroSetCertifier(const ZeroSetBandAdmission& admission) : admission_(admission) {}
+  double bound(const Point& a, const Point& b, const Point& c) const override {
+    const std::array<VertexEvidence, 3> evidence{admission_.evaluate(a), admission_.evaluate(b),
+                                                 admission_.evaluate(c)};
+    return admission_.admits(a, b, c, evidence) ? admission_.distance_bound(a, b, c, evidence)
+                                                : kInfinity;
+  }
 
-// Certification of a closed surface against the zero set (see
-// phx_mc_zero_set_certify).
-int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request) {
+ private:
+  const ZeroSetBandAdmission& admission_;
+};
+
+// Certification with local repair of a closed surface against the zero set
+// (see phx_mc_zero_set_certify).
+int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
+                         ZeroSetRemeshResult& result) {
   if (request.vertex_count < 3 || request.triangle_count < 1 ||
       !phx::mc::addressable(request.vertex_count, 3, sizeof(double)) ||
       !phx::mc::addressable(request.triangle_count, 3, sizeof(int64_t)) ||
@@ -990,7 +865,9 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request) {
       !phx::mc::addressable(request.carrier_triangle_count, 3, sizeof(int64_t)) ||
       (request.carrier_vertex_count > 0 && request.carrier_vertices == nullptr) ||
       (request.carrier_triangle_count > 0 && request.carrier_triangles == nullptr) ||
-      !(request.carrier_distance >= 0) || !std::isfinite(request.carrier_distance))
+      !(request.carrier_distance >= 0) || !std::isfinite(request.carrier_distance) ||
+      !(request.edge_length > 0) || !std::isfinite(request.edge_length) ||
+      !(request.minimum_angle_degrees > 0) || !(request.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
   IntervalBoxProgram value, gradient;
   const auto bind = [](IntervalBoxProgram& program, const phx_mc_interval_box_program& source,
@@ -1006,54 +883,65 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request) {
   if (status != PHX_MC_OK) return status;
   status = bind(gradient, request.gradient, 3);
   if (status != PHX_MC_OK) return status;
-  const auto corner = [](const double* vertices, int64_t vertex_count, const int64_t* triangles,
-                         size_t row, size_t k, Point& p) {
-    const int64_t v = triangles[3 * row + k];
-    if (v < 0 || v >= vertex_count) return false;
-    for (size_t d = 0; d < 3; ++d) p[d] = vertices[3 * static_cast<size_t>(v) + d];
-    return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+  ImplicitOracle oracle;
+  status = oracle.bind(request.value);
+  if (status != PHX_MC_OK) return status;
+  oracle.set_orientation(request.orientation);
+  oracle.set_reach(request.edge_length + request.carrier_distance);
+  const auto load = [](const double* vertices, int64_t vertex_count, const int64_t* triangles,
+                       int64_t triangle_count, std::vector<Point>& points,
+                       std::vector<Triangle>& rows) {
+    points.resize(static_cast<size_t>(vertex_count));
+    for (size_t v = 0; v < points.size(); ++v)
+      for (size_t d = 0; d < 3; ++d) {
+        points[v][d] = vertices[3 * v + d];
+        if (!std::isfinite(points[v][d])) return false;
+      }
+    rows.resize(static_cast<size_t>(triangle_count));
+    for (size_t t = 0; t < rows.size(); ++t)
+      for (size_t k = 0; k < 3; ++k) {
+        rows[t][k] = triangles[3 * t + k];
+        if (rows[t][k] < 0 || rows[t][k] >= vertex_count) return false;
+      }
+    return true;
   };
-  std::vector<TriangleKey> carrier(static_cast<size_t>(request.carrier_triangle_count));
-  for (size_t row = 0; row < carrier.size(); ++row) {
-    Point a{}, b{}, c{};
-    if (!corner(request.carrier_vertices, request.carrier_vertex_count, request.carrier_triangles,
-                row, 0, a) ||
-        !corner(request.carrier_vertices, request.carrier_vertex_count, request.carrier_triangles,
-                row, 1, b) ||
-        !corner(request.carrier_vertices, request.carrier_vertex_count, request.carrier_triangles,
-                row, 2, c))
-      return PHX_MC_INVALID_INPUT;
-    carrier[row] = triangle_key(a, b, c);
-  }
-  std::sort(carrier.begin(), carrier.end());
+  std::vector<Point> points, carrier_points;
+  std::vector<Triangle> triangles, carrier_triangles;
+  if (!load(request.vertices, request.vertex_count, request.triangles, request.triangle_count,
+            points, triangles) ||
+      !load(request.carrier_vertices, request.carrier_vertex_count, request.carrier_triangles,
+            request.carrier_triangle_count, carrier_points, carrier_triangles))
+    return PHX_MC_INVALID_INPUT;
+  CarrierEvidence carrier;
+  carrier.distance = request.carrier_distance;
+  for (const Triangle& t : carrier_triangles)
+    carrier.keys.push_back(triangle_key(carrier_points[static_cast<size_t>(t[0])],
+                                        carrier_points[static_cast<size_t>(t[1])],
+                                        carrier_points[static_cast<size_t>(t[2])]));
+  std::sort(carrier.keys.begin(), carrier.keys.end());
   AdmissionMemo memo;
   const ZeroSetBandAdmission admission(value, gradient, request.tolerance, request.orientation,
                                        &memo);
-  double maximum = 0;
-  int64_t kept = 0;
-  for (size_t row = 0; row < static_cast<size_t>(request.triangle_count); ++row) {
-    Point a{}, b{}, c{};
-    if (!corner(request.vertices, request.vertex_count, request.triangles, row, 0, a) ||
-        !corner(request.vertices, request.vertex_count, request.triangles, row, 1, b) ||
-        !corner(request.vertices, request.vertex_count, request.triangles, row, 2, c))
-      return PHX_MC_INVALID_INPUT;
-    if (std::binary_search(carrier.begin(), carrier.end(), triangle_key(a, b, c))) {
-      ++kept;
-      maximum = std::max(maximum, request.carrier_distance);
-      continue;
-    }
-    const std::array<VertexEvidence, 3> evidence{admission.evaluate(a), admission.evaluate(b),
-                                                 admission.evaluate(c)};
-    double bound = kInfinity;
-    if (admission.admits(a, b, c, evidence)) bound = admission.distance_bound(a, b, c, evidence);
-    maximum = std::max(maximum, bound);
-  }
+  const ZeroSetCertifier certifier(admission);
+  CertifyCounters certified;
+  status = certify_surface(points, triangles, oracle,
+                           AdaptTargets{request.edge_length, request.tolerance,
+                                        request.minimum_angle_degrees},
+                           certifier, carrier, certified);
   const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
-  request.failures[0] = refusals.transversality;
-  request.failures[1] = refusals.distance;
-  request.failures[2] = kept;
-  if (!(maximum <= request.tolerance)) return PHX_MC_UNRESOLVED;
-  *request.distance = maximum;
+  request.counters[0] = refusals.transversality;
+  request.counters[1] = refusals.distance;
+  request.counters[2] = certified.refused_embedding;
+  request.counters[3] = certified.carrier;
+  request.counters[4] = certified.repair_splits;
+  request.counters[5] = certified.rounds;
+  if (status != PHX_MC_OK) return status;
+  // Carrier triangles are accepted at the carrier's distance, which may
+  // exceed the tolerance.
+  if (!(certified.distance <= request.tolerance)) return PHX_MC_UNRESOLVED;
+  *request.distance = certified.distance;
+  result.points = std::move(points);
+  result.triangles = std::move(triangles);
   return PHX_MC_OK;
 }
 }  // namespace
@@ -1076,12 +964,18 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* 
 }
 
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request) {
-  if (request == nullptr || request->distance == nullptr || request->failures == nullptr)
+  if (request == nullptr || request->distance == nullptr || request->counters == nullptr ||
+      request->result == nullptr)
     return PHX_MC_INVALID_ARGUMENT;
+  *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    return phx::mc::remesh::certify_zero_set(*request);
+    auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
+    const int32_t status = phx::mc::remesh::certify_zero_set(*request, *owned);
+    if (status != PHX_MC_OK) return status;
+    *request->result = owned.release();
+    return PHX_MC_OK;
   });
 }
 

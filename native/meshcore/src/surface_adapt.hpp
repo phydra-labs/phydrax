@@ -7,9 +7,9 @@
 // triangle corners and the opposite half-edge of every corner) and runs
 // worklist sweeps of edge splits, edge collapses, edge flips and tangential
 // relocations, every new or moved vertex projected onto the source by the
-// oracle. Exact predicates decide nothing here and no edit is proved: the
-// caller certifies the finished surface (source distance, transversality,
-// embedding) and repairs what fails. The oracle is floating point too.
+// oracle. Exact predicates decide nothing here and no edit is proved:
+// certify_surface certifies the finished surface (surface_certify.hpp) and
+// repairs what fails locally. The oracle is floating point too.
 //
 // Target size: h at every vertex, lowered where the source curves so that a
 // well-shaped triangle of that size keeps its sagitta within the tolerance
@@ -33,7 +33,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "surface_remesh.hpp"
+#include "surface_certify.hpp"
 
 namespace phx::mc::remesh {
 
@@ -67,6 +67,9 @@ struct AdaptTargets {
   double edge_length = 0;              // h
   double tolerance = 0;                // distance target, both directions
   double minimum_angle_degrees = 30;   // quality target
+  // Keep the input's triangles around creases (edges turning more than 45
+  // degrees) bitwise; off for sources without creases.
+  bool keep_creases = true;
 };
 
 struct AdaptCounters {
@@ -84,5 +87,26 @@ struct AdaptCounters {
 int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                       const SurfaceOracle& oracle, const AdaptTargets& targets,
                       AdaptCounters& counters);
+
+struct CertifyCounters {
+  double distance = 0;            // maximum certified or carrier bound
+  int64_t refused_fidelity = 0;   // certifier refusals, over all rounds
+  int64_t refused_embedding = 0;  // degenerate or illegal-contact triangles, over all rounds
+  int64_t carrier = 0;            // triangles accepted from the carrier
+  int64_t repair_splits = 0;
+  int64_t rounds = 0;             // certification rounds run
+};
+
+// Certifies (points, triangles) (surface_certify.hpp) and repairs refused
+// triangles locally: the longest edge of each that is not kept is split at
+// its projected midpoint, Delaunay flips restore the angles, and only the
+// triangles that changed (or were refused) are decided again, for at most
+// four rounds. Vertices are not moved otherwise. PHX_MC_OK leaves the
+// certified surface (compacted after a repair); PHX_MC_UNRESOLVED leaves the
+// last state with a refused triangle. Counters hold the evidence either way.
+int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                        const SurfaceOracle& oracle, const AdaptTargets& targets,
+                        const TriangleCertifier& certifier, const CarrierEvidence& carrier,
+                        CertifyCounters& counters);
 
 }  // namespace phx::mc::remesh
