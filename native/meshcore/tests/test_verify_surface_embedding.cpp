@@ -66,6 +66,27 @@ void check_contacts() {
   PHX_CHECK(has(verify(mesh, PHX_MC_VERDICT_VIOLATED), PHX_MC_SURFACE_CONTACT));
 }
 
+void check_adjacent_contacts() {
+  // Each pair is deliberately open; inspect contact evidence independently of
+  // the expected boundary-edge findings.
+  Mesh mesh{{0,0,0, 2,0,0, 0,2,0, 0.5,0.5,-1, 0.5,0.5,1},
+            {0,1,2, 0,3,4}};
+  auto findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
+  PHX_CHECK(has(findings, PHX_MC_SURFACE_CONTACT));  // shared-vertex piercing
+
+  mesh = {{0,0,0, 2,0,0, 0,2,0, 1,1,0}, {0,1,2, 0,1,3}};
+  findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
+  PHX_CHECK(has(findings, PHX_MC_SURFACE_CONTACT));  // coplanar shared-edge fold
+
+  mesh = {{0,0,0, 2,0,0, 0,2,0, 1,0,0, 0,1,0}, {0,1,2, 0,3,4}};
+  findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
+  PHX_CHECK(has(findings, PHX_MC_SURFACE_CONTACT));  // coplanar shared-vertex overlap
+
+  mesh = {{0,0,0, 2,0,0, 0,2,0, 0,0,1}, {0,1,2, 0,1,3}};
+  findings = verify(mesh, PHX_MC_VERDICT_VIOLATED);
+  PHX_CHECK(!has(findings, PHX_MC_SURFACE_CONTACT));  // noncoplanar shared edge
+}
+
 void check_refusal() {
   Mesh mesh = tetrahedron();
   mesh.triangles.resize(9);
@@ -94,6 +115,7 @@ int main() {
   check_closed_and_edges();
   check_vertex_link();
   check_contacts();
+  check_adjacent_contacts();
   check_refusal();
   return phx::mc::test::finish("test_verify_surface_embedding");
 }
