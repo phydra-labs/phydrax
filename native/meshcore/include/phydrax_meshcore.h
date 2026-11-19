@@ -580,6 +580,8 @@ PHX_MC_API int32_t phx_mc_tet_mesh_periodic_identity(
     int64_t periodic_topology_id_capacity, char* periodic_topology_id,
     int64_t cell_entity_set_id_capacity, char* cell_entity_set_id,
     int64_t edge_entity_set_id_capacity, char* edge_entity_set_id);
+/* Vertices are written in slot order; cells, facets and segments in ascending
+ * ID order, their corners as rows of the vertex banks. */
 typedef struct phx_mc_tet_mesh_snapshot_request {
   int64_t vertex_capacity;
   int64_t cell_capacity;
@@ -634,17 +636,17 @@ typedef struct phx_mc_tet_mesh_snapshot_request {
   uint64_t* cell_ancestor_ids;
   int32_t* cell_ancestry_edit_kinds;
   uint64_t* cell_ids;
-  uint64_t* cell_vertices;
+  int64_t* cell_vertex_rows;
   int32_t* cell_regions;
   /* Canonical mean circumradius target; zero if any corner is unconstrained. */
   double* cell_size_targets;
   uint64_t* facet_ids;
-  uint64_t* facet_vertices;
+  int64_t* facet_vertex_rows;
   int32_t* facet_sources;
   int8_t* facet_orientations;
   int8_t* protected_facets;
   uint64_t* segment_ids;
-  uint64_t* segment_vertices;
+  int64_t* segment_vertex_rows;
   int32_t* segment_sources;
   int8_t* protected_segments;
   double* source_points;

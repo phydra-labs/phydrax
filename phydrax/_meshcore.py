@@ -781,16 +781,16 @@ class _TetMeshSnapshotRequest(ctypes.Structure):
         ("cell_ancestor_ids", _P),
         ("cell_ancestry_edit_kinds", _P),
         ("cell_ids", _P),
-        ("cell_vertices", _P),
+        ("cell_vertex_rows", _P),
         ("cell_regions", _P),
         ("cell_size_targets", _P),
         ("facet_ids", _P),
-        ("facet_vertices", _P),
+        ("facet_vertex_rows", _P),
         ("facet_sources", _P),
         ("facet_orientations", _P),
         ("protected_facets", _P),
         ("segment_ids", _P),
-        ("segment_vertices", _P),
+        ("segment_vertex_rows", _P),
         ("segment_sources", _P),
         ("protected_segments", _P),
         ("source_points", _P),
@@ -7661,6 +7661,31 @@ def _tet_mesh_pointer(array: np.ndarray | None, /) -> int | None:
     return int(array.ctypes.data)
 
 
+def _source_group_labels(
+    groups: np.ndarray, labels: np.ndarray, values: np.ndarray, kind: str, /
+) -> np.ndarray:
+    """``values`` (source group rows) as their group's source ID (int64).
+
+    ``groups`` and ``labels`` give each source row's group and source ID; a
+    group carries one source ID. A value naming no group is kept.
+    """
+    unique_groups, first_rows, inverse = np.unique(
+        groups, return_index=True, return_inverse=True
+    )
+    unique_labels = labels[first_rows]
+    if np.any(labels != unique_labels[inverse.reshape((-1,))]):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"one {kind} group has multiple source IDs"
+        )
+    result = values.astype(np.int64)
+    if unique_groups.size == 0:
+        return result
+    positions = np.minimum(np.searchsorted(unique_groups, values), unique_groups.size - 1)
+    named = unique_groups[positions] == values
+    result[named] = unique_labels[positions[named]]
+    return result
+
+
 def _tet_radius_target(value: float | None, /) -> float | None:
     """Validate the optional target before its native zero encoding."""
     if value is None:
@@ -8441,16 +8466,16 @@ class TetMesh3D:
             cell_ancestor_ids = np.empty((cell_ancestor_count,), dtype=np.uint64)
             cell_ancestry_edit_kinds = np.empty((cell_count,), dtype=np.int32)
             cell_ids = np.empty((cell_count,), dtype=np.uint64)
-            cell_vertices = np.empty((cell_count, 4), dtype=np.uint64)
+            cell_vertices = np.empty((cell_count, 4), dtype=np.int64)
             regions = np.empty((cell_count,), dtype=np.int32)
             cell_size_targets = np.empty((cell_count,), dtype=np.float64)
             facet_ids = np.empty((facet_count,), dtype=np.uint64)
-            facet_vertices = np.empty((facet_count, 3), dtype=np.uint64)
+            facet_vertices = np.empty((facet_count, 3), dtype=np.int64)
             facet_sources = np.empty((facet_count,), dtype=np.int32)
             facet_orientations = np.empty((facet_count,), dtype=np.int8)
             protected_facets = np.empty((facet_count,), dtype=np.int8)
             segment_ids = np.empty((segment_count,), dtype=np.uint64)
-            segment_vertices = np.empty((segment_count, 2), dtype=np.uint64)
+            segment_vertices = np.empty((segment_count, 2), dtype=np.int64)
             segment_sources = np.empty((segment_count,), dtype=np.int32)
             protected_segments = np.empty((segment_count,), dtype=np.int8)
             source_points = np.empty((source_point_count, 3), dtype=np.float64)
@@ -8549,16 +8574,16 @@ class TetMesh3D:
                 ("cell_ancestry_offsets", cell_ancestry_offsets),
                 ("cell_ancestor_ids", cell_ancestor_ids),
                 ("cell_ancestry_edit_kinds", cell_ancestry_edit_kinds),
-                ("cell_vertices", cell_vertices),
+                ("cell_vertex_rows", cell_vertices),
                 ("cell_regions", regions),
                 ("cell_size_targets", cell_size_targets),
                 ("facet_ids", facet_ids),
-                ("facet_vertices", facet_vertices),
+                ("facet_vertex_rows", facet_vertices),
                 ("facet_sources", facet_sources),
                 ("facet_orientations", facet_orientations),
                 ("protected_facets", protected_facets),
                 ("segment_ids", segment_ids),
-                ("segment_vertices", segment_vertices),
+                ("segment_vertex_rows", segment_vertices),
                 ("segment_sources", segment_sources),
                 ("protected_segments", protected_segments),
                 ("source_points", source_points),
@@ -8648,122 +8673,44 @@ class TetMesh3D:
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh vertex size targets"
                 )
-            if np.any(~np.isfinite(cell_size_targets)) or np.any(cell_size_targets < 0.0):
-                raise MeshcoreError(
-                    MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh cell size targets"
-                )
             if (
-                vertex_ancestry_offsets.shape != (vertex_count + 1,)
-                or vertex_ancestry_offsets[0] != 0
+                vertex_ancestry_offsets[0] != 0
                 or vertex_ancestry_offsets[-1] != vertex_ancestry_count
                 or np.any(np.diff(vertex_ancestry_offsets) < 0)
-                or vertex_ancestor_winding.shape != (vertex_ancestry_count, 3)
-                or vertex_ancestry_weights.shape != (vertex_ancestry_count,)
                 or np.any(~np.isfinite(vertex_ancestry_weights))
-                or cell_ancestry_offsets.shape != (cell_count + 1,)
                 or cell_ancestry_offsets[0] != 0
                 or cell_ancestry_offsets[-1] != cell_ancestor_count
-                or np.any(np.diff(cell_ancestry_offsets) < 0)
-                or cell_ancestry_edit_kinds.shape != (cell_count,)
             ):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR,
                     "invalid TetMesh ancestry snapshot extents",
                 )
-            valid_edit_kinds = (-1, *(int(kind) for kind in TetMeshEditKind))
-            if np.any(~np.isin(cell_ancestry_edit_kinds, valid_edit_kinds)):
-                raise MeshcoreError(
-                    MeshcoreStatus.INTERNAL_ERROR,
-                    "unknown TetMesh ancestry edit kind",
-                )
-
-            vertex_index = {
-                int(identifier): row for row, identifier in enumerate(vertex_ids)
-            }
-
-            def remap(values: np.ndarray, width: int) -> np.ndarray:
-                mapped = np.fromiter(
-                    (vertex_index[int(identifier)] for identifier in values.reshape(-1)),
-                    dtype=np.int64,
-                    count=values.size,
-                )
-                return mapped.reshape((-1, width))
-
-            face_id_bank = np.unique(source_face_ids)
-            segment_id_bank = np.unique(source_segment_ids)
-            face_group_rows = np.searchsorted(face_id_bank, source_face_ids).astype(
-                np.int32
+            # Native writes cells, facets and segments in ID order with their
+            # corners as vertex rows, and every cell's size target and lineage.
+            face_id_bank, face_group_rows = np.unique(
+                source_face_ids, return_inverse=True
             )
-            segment_group_rows = np.searchsorted(
-                segment_id_bank, source_segment_ids
-            ).astype(np.int32)
-            face_labels_by_group: dict[int, int] = {}
-            for group, label in zip(
-                source_face_groups.tolist(), source_face_ids.tolist(), strict=True
-            ):
-                if group in face_labels_by_group and face_labels_by_group[group] != label:
-                    raise MeshcoreError(
-                        MeshcoreStatus.INTERNAL_ERROR,
-                        "one face group has multiple source IDs",
-                    )
-                face_labels_by_group[group] = label
-            segment_labels_by_group: dict[int, int] = {}
-            for group, label in zip(
-                source_segment_groups.tolist(), source_segment_ids.tolist(), strict=True
-            ):
-                if (
-                    group in segment_labels_by_group
-                    and segment_labels_by_group[group] != label
-                ):
-                    raise MeshcoreError(
-                        MeshcoreStatus.INTERNAL_ERROR,
-                        "one segment group has multiple source IDs",
-                    )
-                segment_labels_by_group[group] = label
-            cell_order = np.argsort(cell_ids, kind="stable")
-            facet_order = np.argsort(facet_ids, kind="stable")
-            segment_order = np.argsort(segment_ids, kind="stable")
-            output_face_sources = np.asarray(
-                [
-                    face_labels_by_group.get(int(value), int(value))
-                    for value in facet_sources
-                ],
-                dtype=np.int64,
+            segment_id_bank, segment_group_rows = np.unique(
+                source_segment_ids, return_inverse=True
             )
-            output_segment_sources = np.asarray(
-                [
-                    segment_labels_by_group.get(int(value), int(value))
-                    for value in segment_sources
-                ],
-                dtype=np.int64,
-            )
-            cell_ancestry_offsets_sorted = np.empty((cell_count + 1,), dtype=np.int64)
-            cell_ancestry_offsets_sorted[0] = 0
-            cell_ancestor_ids_sorted = np.empty_like(cell_ancestor_ids)
-            ancestor_cursor = 0
-            for output_row, source_row in enumerate(cell_order.tolist()):
-                start = int(cell_ancestry_offsets[source_row])
-                end = int(cell_ancestry_offsets[source_row + 1])
-                count = end - start
-                cell_ancestor_ids_sorted[ancestor_cursor : ancestor_cursor + count] = (
-                    cell_ancestor_ids[start:end]
-                )
-                ancestor_cursor += count
-                cell_ancestry_offsets_sorted[output_row + 1] = ancestor_cursor
-            cell_ancestry_edit_kinds_sorted = cell_ancestry_edit_kinds[cell_order]
+            face_group_rows = face_group_rows.astype(np.int32)
+            segment_group_rows = segment_group_rows.astype(np.int32)
             vertex_size_targets.setflags(write=False)
-            cell_size_targets = cell_size_targets[cell_order]
             cell_size_targets.setflags(write=False)
             return TetMeshArrays(
                 points,
                 vertex_size_targets,
-                remap(cell_vertices[cell_order], 4),
-                regions[cell_order],
+                cell_vertices,
+                regions,
                 cell_size_targets,
-                remap(facet_vertices[facet_order], 3),
-                output_face_sources[facet_order],
-                remap(segment_vertices[segment_order], 2),
-                output_segment_sources[segment_order],
+                facet_vertices,
+                _source_group_labels(
+                    source_face_groups, source_face_ids, facet_sources, "face"
+                ),
+                segment_vertices,
+                _source_group_labels(
+                    source_segment_groups, source_segment_ids, segment_sources, "segment"
+                ),
                 dimensions,
                 radii,
                 protected_vertices,
@@ -8771,12 +8718,12 @@ class TetMesh3D:
                 edge_witness_endpoints,
                 edge_parameters,
                 vertex_ids,
-                cell_ids[cell_order],
-                facet_ids[facet_order],
-                facet_orientations[facet_order],
-                protected_facets[facet_order],
-                segment_ids[segment_order],
-                protected_segments[segment_order],
+                cell_ids,
+                facet_ids,
+                facet_orientations,
+                protected_facets,
+                segment_ids,
+                protected_segments,
                 source_points,
                 source_faces,
                 face_group_rows,
@@ -8802,9 +8749,9 @@ class TetMesh3D:
                 vertex_ancestor_ids,
                 vertex_ancestor_winding,
                 vertex_ancestry_weights,
-                cell_ancestry_offsets_sorted,
-                cell_ancestor_ids_sorted,
-                cell_ancestry_edit_kinds_sorted,
+                cell_ancestry_offsets,
+                cell_ancestor_ids,
+                cell_ancestry_edit_kinds,
                 periodic_snapshot,
                 _tet_implicit_source_snapshot(self._library, self._live()),
             )

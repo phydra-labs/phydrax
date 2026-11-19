@@ -416,58 +416,6 @@ void periodic_state_from_view(const phx_mc_tet_periodic_state_view& view,
   maps = periodic_entity_maps_from_view(view.identity_map);
 }
 
-bool tet_snapshot_counts(const TetMeshSnapshot& snapshot,
-                         std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES>& counts) noexcept {
-  std::size_t members = 0;
-  std::size_t quotient_lifted = 0;
-  std::size_t entity_lifted = 0;
-  std::size_t entity_quotient = 0;
-  std::size_t entity_winding = 0;
-  std::size_t entity_corners = 0;
-  std::size_t entity_representatives = 0;
-  std::size_t vertex_ancestry = 0;
-  std::size_t cell_ancestors = 0;
-  const auto add = [](std::size_t value, std::size_t& total) {
-    if (value > std::numeric_limits<std::size_t>::max() - total) return false;
-    total += value;
-    return true;
-  };
-  for (const TetPeriodicOrbit& orbit : snapshot.periodic_orbits) {
-    if (!add(orbit.members.size(), members)) return false;
-  }
-  for (const TetPeriodicQuotientCell& cell : snapshot.quotient_cells) {
-    if (!add(cell.lifted_cell_ids.size(), quotient_lifted)) return false;
-  }
-  for (const TetPeriodicEntityOrbitMap& map : snapshot.periodic_entity_maps) {
-    if (!add(map.lifted_entity_ids.size(), entity_lifted) ||
-        !add(map.quotient_entity_ids.size(), entity_quotient) ||
-        !add(map.winding_shifts.size(), entity_winding) ||
-        !add(map.corner_permutations.size(), entity_corners) ||
-        !add(map.representative_lifted_rows.size(), entity_representatives)) return false;
-  }
-  for (const TetSnapshotVertex& vertex : snapshot.vertices) {
-    if (!add(vertex.ancestry.size(), vertex_ancestry)) return false;
-  }
-  for (const TetSnapshotCell& cell : snapshot.cells) {
-    if (!add(cell.ancestor_cell_ids.size(), cell_ancestors)) return false;
-  }
-  const std::size_t values[PHX_MC_TET_MESH_SNAPSHOT_SIZES] = {
-      snapshot.vertices.size(), snapshot.cells.size(), snapshot.constrained_facets.size(),
-      snapshot.constrained_segments.size(), snapshot.source_points.size() / 3,
-      snapshot.source_faces.size() / 3, snapshot.source_segments.size() / 2,
-      snapshot.periodic_orbits.size(), members, snapshot.quotient_cells.size(),
-      quotient_lifted, snapshot.periodic_entity_maps.size(), entity_lifted,
-      entity_quotient, entity_winding, entity_corners, entity_representatives,
-      vertex_ancestry, cell_ancestors};
-  for (std::size_t index = 0; index < counts.size(); ++index) {
-    if (values[index] > static_cast<std::size_t>(std::numeric_limits<int64_t>::max())) {
-      return false;
-    }
-    counts[index] = static_cast<int64_t>(values[index]);
-  }
-  return true;
-}
-
 bool valid_create_request(const phx_mc_tet_mesh_create_request& request) noexcept {
   if (request.result == nullptr || request.point_count < 0 || request.tetrahedron_count < 0 ||
       request.face_count < 0 || request.segment_count < 0 || request.source_point_count < 0 ||
@@ -713,10 +661,10 @@ bool valid_edit_request(const phx_mc_tet_mesh_edit_request& request) noexcept {
   return true;
 }
 
+using SnapshotSizes = std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES>;
+
 int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& request,
-                                  const TetMeshSnapshot& snapshot) noexcept {
-  std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> counts{};
-  if (!tet_snapshot_counts(snapshot, counts)) return PHX_MC_INDEX_RANGE_ERROR;
+                                  const SnapshotSizes& counts) noexcept {
   const int64_t capacities[PHX_MC_TET_MESH_SNAPSHOT_SIZES] = {
       request.vertex_capacity, request.cell_capacity, request.facet_capacity,
       request.segment_capacity, request.source_point_capacity, request.source_face_capacity,
@@ -775,12 +723,12 @@ int32_t validate_snapshot_request(const phx_mc_tet_mesh_snapshot_request& reques
       !check(request.vertex_edge_witness_present, 0) ||
       !check(request.vertex_edge_witness_endpoints, 0) ||
       !check(request.vertex_edge_parameters, 0) ||
-      !check(request.cell_ids, 1) || !check(request.cell_vertices, 1) ||
+      !check(request.cell_ids, 1) || !check(request.cell_vertex_rows, 1) ||
       !check(request.cell_regions, 1) || !check(request.cell_size_targets, 1) ||
       !check(request.facet_ids, 2) ||
-      !check(request.facet_vertices, 2) || !check(request.facet_sources, 2) ||
+      !check(request.facet_vertex_rows, 2) || !check(request.facet_sources, 2) ||
       !check(request.facet_orientations, 2) || !check(request.protected_facets, 2) ||
-      !check(request.segment_ids, 3) || !check(request.segment_vertices, 3) ||
+      !check(request.segment_ids, 3) || !check(request.segment_vertex_rows, 3) ||
       !check(request.segment_sources, 3) || !check(request.protected_segments, 3) ||
       !check(request.source_points, 4) || !check(request.source_faces, 5) ||
       !check(request.source_face_groups, 5) || !check(request.source_face_ids, 5) ||
@@ -1081,16 +1029,7 @@ int32_t phx_mc_tet_mesh_protect_facet_sources(
 int32_t phx_mc_tet_mesh_snapshot_sizes(const phx_mc_tet_mesh* mesh, int64_t* sizes) {
   if (mesh == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
-    TetMeshSnapshot snapshot;
-    const TetEditStatus status = mesh->state.snapshot(snapshot);
-    if (status != TetEditStatus::kApplied) {
-      return status == TetEditStatus::kAllocationFailure ? PHX_MC_ALLOCATION_FAILURE
-                                                        : PHX_MC_INTERNAL_ERROR;
-    }
-    std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> snapshot_counts{};
-    if (!tet_snapshot_counts(snapshot, snapshot_counts)) return PHX_MC_INDEX_RANGE_ERROR;
-    std::copy(snapshot_counts.begin(), snapshot_counts.end(), sizes);
-    return PHX_MC_OK;
+    return mesh->state.snapshot_sizes(sizes) ? PHX_MC_OK : PHX_MC_INDEX_RANGE_ERROR;
   });
 }
 
@@ -1223,176 +1162,18 @@ int32_t phx_mc_tet_mesh_snapshot(const phx_mc_tet_mesh* mesh,
                                  const phx_mc_tet_mesh_snapshot_request* request) {
   if (mesh == nullptr || request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return guarded([&]() -> int32_t {
-    TetMeshSnapshot snapshot;
-    const TetEditStatus state_status = mesh->state.snapshot(snapshot);
-    if (state_status != TetEditStatus::kApplied) {
-      return state_status == TetEditStatus::kAllocationFailure ? PHX_MC_ALLOCATION_FAILURE
-                                                              : PHX_MC_INTERNAL_ERROR;
-    }
-    const int32_t valid = validate_snapshot_request(*request, snapshot);
+    SnapshotSizes sizes{};
+    if (!mesh->state.snapshot_sizes(sizes.data())) return PHX_MC_INDEX_RANGE_ERROR;
+    const int32_t valid = validate_snapshot_request(*request, sizes);
     if (valid != PHX_MC_OK) return valid;
-    std::size_t vertex_ancestry_offset = 0;
-    request->vertex_ancestry_offsets[0] = 0;
-    for (std::size_t row = 0; row < snapshot.vertices.size(); ++row) {
-      const TetSnapshotVertex& vertex = snapshot.vertices[row];
-      request->vertex_ids[row] = vertex.id;
-      std::copy(vertex.carrier.begin(), vertex.carrier.end(), request->points + 3 * row);
-      request->vertex_size_targets[row] =
-          mesh->state.vertex_size(mesh->state.vertex_slot(vertex.id));
-      request->witness_strata[row] = static_cast<int8_t>(vertex.witness.stratum);
-      request->witness_entities[row] = vertex.witness.entity;
-      request->witness_parameters[2 * row] = vertex.witness.parameters[0];
-      request->witness_parameters[2 * row + 1] = vertex.witness.parameters[1];
-      request->witness_deviations[row] = vertex.witness.deviation;
-      request->vertex_dimensions[row] = vertex.stratum_dimension;
-      request->protection_radii[row] = vertex.protection_radius;
-      request->protected_vertices[row] = vertex.protected_vertex ? 1 : 0;
-      request->vertex_edge_witness_present[row] = vertex.has_edge_parameter ? 1 : 0;
-      std::copy(vertex.edge_endpoints.begin(), vertex.edge_endpoints.end(),
-                request->vertex_edge_witness_endpoints + 2 * row);
-      request->vertex_edge_parameters[row] = vertex.edge_parameter;
-      for (const phx::mc::TetVertexAncestry& ancestry : vertex.ancestry) {
-        request->vertex_ancestor_ids[vertex_ancestry_offset] = ancestry.source_vertex_id;
-        std::copy(ancestry.source_winding.begin(), ancestry.source_winding.end(),
-                  request->vertex_ancestor_winding + 3 * vertex_ancestry_offset);
-        request->vertex_ancestry_weights[vertex_ancestry_offset] = ancestry.weight;
-        ++vertex_ancestry_offset;
-      }
-      request->vertex_ancestry_offsets[row + 1] =
-          static_cast<int64_t>(vertex_ancestry_offset);
+    switch (mesh->state.export_snapshot(*request, sizes.data())) {
+      case TetEditStatus::kApplied:
+        return PHX_MC_OK;
+      case TetEditStatus::kAllocationFailure:
+        return PHX_MC_ALLOCATION_FAILURE;
+      default:
+        return PHX_MC_INTERNAL_ERROR;
     }
-    std::size_t cell_ancestor_offset = 0;
-    request->cell_ancestry_offsets[0] = 0;
-    for (std::size_t row = 0; row < snapshot.cells.size(); ++row) {
-      const TetSnapshotCell& cell = snapshot.cells[row];
-      request->cell_ids[row] = cell.id;
-      std::copy(cell.vertices.begin(), cell.vertices.end(), request->cell_vertices + 4 * row);
-      request->cell_regions[row] = cell.region;
-      std::array<double, 4> corner_sizes{};
-      for (std::size_t corner = 0; corner < corner_sizes.size(); ++corner) {
-        corner_sizes[corner] = mesh->state.vertex_size(mesh->state.vertex_slot(cell.vertices[corner]));
-      }
-      const double target = phx::mc::cell_size_target(corner_sizes);
-      request->cell_size_targets[row] = std::isfinite(target) ? target : 0.0;
-      if (!cell.ancestor_cell_ids.empty()) {
-        copy_bank(cell.ancestor_cell_ids,
-                  request->cell_ancestor_ids + cell_ancestor_offset);
-      }
-      cell_ancestor_offset += cell.ancestor_cell_ids.size();
-      request->cell_ancestry_edit_kinds[row] = cell.edit_kind;
-      request->cell_ancestry_offsets[row + 1] =
-          static_cast<int64_t>(cell_ancestor_offset);
-    }
-    for (std::size_t row = 0; row < snapshot.constrained_facets.size(); ++row) {
-      const TetSnapshotFacet& facet = snapshot.constrained_facets[row];
-      request->facet_ids[row] = facet.id;
-      std::copy(facet.vertices.begin(), facet.vertices.end(), request->facet_vertices + 3 * row);
-      request->facet_sources[row] = facet.source;
-      request->facet_orientations[row] = facet.orientation;
-      request->protected_facets[row] = facet.protected_facet ? 1 : 0;
-    }
-    for (std::size_t row = 0; row < snapshot.constrained_segments.size(); ++row) {
-      const TetSnapshotSegment& segment = snapshot.constrained_segments[row];
-      request->segment_ids[row] = segment.id;
-      std::copy(segment.vertices.begin(), segment.vertices.end(), request->segment_vertices + 2 * row);
-      request->segment_sources[row] = segment.source;
-      request->protected_segments[row] = segment.protected_segment ? 1 : 0;
-    }
-    copy_bank(snapshot.source_points, request->source_points);
-    copy_bank(snapshot.source_faces, request->source_faces);
-    copy_bank(snapshot.source_face_groups, request->source_face_groups);
-    copy_bank(snapshot.source_face_ids, request->source_face_ids);
-    copy_bank(snapshot.source_face_tolerances, request->source_face_tolerances);
-    copy_bank(snapshot.source_segments, request->source_segments);
-    copy_bank(snapshot.source_segment_groups, request->source_segment_groups);
-    copy_bank(snapshot.source_segment_ids, request->source_segment_ids);
-    copy_bank(snapshot.source_segment_tolerances, request->source_segment_tolerances);
-    copy_bank(snapshot.source_face_planes, request->source_face_planes);
-    copy_bank(snapshot.source_face_plane_tolerances, request->source_face_plane_tolerances);
-    std::size_t member_offset = 0;
-    for (std::size_t row = 0; row < snapshot.periodic_orbits.size(); ++row) {
-      const TetPeriodicOrbit& orbit = snapshot.periodic_orbits[row];
-      phx_mc_tet_periodic_orbit& output = request->periodic_orbits[row];
-      output.id = orbit.id;
-      output.representative_vertex_id = orbit.representative_vertex_id;
-      output.member_offset = static_cast<int64_t>(member_offset);
-      output.member_count = static_cast<int64_t>(orbit.members.size());
-      for (const TetPeriodicVertexMember& member : orbit.members) {
-        phx_mc_tet_periodic_vertex_member& target = request->periodic_members[member_offset++];
-        target.vertex_id = member.vertex_id;
-        std::copy(member.winding.begin(), member.winding.end(), target.winding);
-        std::copy(member.representative_to_member.begin(),
-                  member.representative_to_member.end(), target.representative_to_member);
-      }
-    }
-    std::size_t quotient_lifted_offset = 0;
-    for (std::size_t row = 0; row < snapshot.quotient_cells.size(); ++row) {
-      const TetPeriodicQuotientCell& cell = snapshot.quotient_cells[row];
-      phx_mc_tet_periodic_quotient_cell& target = request->periodic_quotient_cells[row];
-      target.orbit_id = cell.orbit_id;
-      target.id = cell.id;
-      std::copy(cell.representative_vertices.begin(), cell.representative_vertices.end(),
-                target.representative_vertices);
-      for (int corner = 0; corner < 4; ++corner) {
-        std::copy(cell.winding[corner].begin(), cell.winding[corner].end(),
-                  target.winding + 3 * corner);
-      }
-      target.region = cell.region;
-      target.lifted_cell_offset = static_cast<int64_t>(quotient_lifted_offset);
-      target.lifted_cell_count = static_cast<int64_t>(cell.lifted_cell_ids.size());
-      if (!cell.lifted_cell_ids.empty()) {
-        std::copy(cell.lifted_cell_ids.begin(), cell.lifted_cell_ids.end(),
-                  request->periodic_quotient_lifted_cell_ids + quotient_lifted_offset);
-      }
-      quotient_lifted_offset += cell.lifted_cell_ids.size();
-    }
-    std::size_t lifted_offset = 0;
-    std::size_t quotient_offset = 0;
-    std::size_t winding_offset = 0;
-    std::size_t corner_offset = 0;
-    std::size_t representative_offset = 0;
-    for (std::size_t row = 0; row < snapshot.periodic_entity_maps.size(); ++row) {
-      const TetPeriodicEntityOrbitMap& map = snapshot.periodic_entity_maps[row];
-      phx_mc_tet_periodic_entity_orbit_map& target = request->periodic_entity_maps[row];
-      target.dimension = map.dimension;
-      target.arity = map.arity;
-      target.rank = map.rank;
-      target.lifted_offset = static_cast<int64_t>(lifted_offset);
-      target.lifted_count = static_cast<int64_t>(map.lifted_entity_ids.size());
-      target.quotient_offset = static_cast<int64_t>(quotient_offset);
-      target.quotient_count = static_cast<int64_t>(map.quotient_entity_ids.size());
-      target.winding_offset = static_cast<int64_t>(winding_offset);
-      target.corner_permutation_offset = static_cast<int64_t>(corner_offset);
-      target.representative_offset = static_cast<int64_t>(representative_offset);
-      if (!map.lifted_entity_ids.empty()) {
-        copy_bank(map.lifted_entity_ids, request->periodic_entity_lifted_ids + lifted_offset);
-        copy_bank(map.lifted_to_quotient,
-                  request->periodic_entity_lifted_to_quotient + lifted_offset);
-        copy_bank(map.orientation_signs,
-                  request->periodic_entity_orientation_signs + lifted_offset);
-      }
-      if (!map.quotient_entity_ids.empty()) {
-        copy_bank(map.quotient_entity_ids,
-                  request->periodic_entity_quotient_ids + quotient_offset);
-        copy_bank(map.representative_lifted_rows,
-                  request->periodic_entity_representative_rows + representative_offset);
-      }
-      if (!map.winding_shifts.empty()) {
-        copy_bank(map.winding_shifts,
-                  request->periodic_entity_winding_shifts + winding_offset);
-      }
-      if (!map.corner_permutations.empty()) {
-        copy_bank(map.corner_permutations,
-                  request->periodic_entity_corner_permutations + corner_offset);
-      }
-      lifted_offset += map.lifted_entity_ids.size();
-      quotient_offset += map.quotient_entity_ids.size();
-      winding_offset += map.winding_shifts.size();
-      corner_offset += map.corner_permutations.size();
-      representative_offset += map.representative_lifted_rows.size();
-    }
-    *request->generation = snapshot.generation;
-    return PHX_MC_OK;
   });
 }
 

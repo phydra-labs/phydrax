@@ -20,7 +20,7 @@ namespace {
 struct TetGeometrySnapshot {
   std::vector<double> points;
   std::vector<uint64_t> cell_ids;
-  std::vector<uint64_t> cell_vertices;
+  std::vector<int64_t> cell_vertices;
 };
 
 void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
@@ -64,9 +64,10 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
       vertex_ancestry_weights(vertex_ancestors), source_points(3 * source_points_count),
       source_face_tolerances(source_faces_count), source_segment_tolerances(source_segments_count),
       source_face_planes(9 * source_faces_count), source_face_plane_tolerances(source_faces_count);
-  std::vector<uint64_t> cells_ids(cells), cell_vertices(4 * cells), facet_ids(facets),
-      facet_vertices(3 * facets), segment_ids(segments), segment_vertices(2 * segments),
+  std::vector<uint64_t> cells_ids(cells), facet_ids(facets), segment_ids(segments),
       vertex_ancestor_ids(vertex_ancestors), cell_ancestor_ids(cell_ancestors);
+  std::vector<int64_t> cell_vertices(4 * cells), facet_vertices(3 * facets),
+      segment_vertices(2 * segments);
   std::vector<int64_t> vertex_ancestry_offsets(vertices + 1), cell_ancestry_offsets(cells + 1),
       vertex_ancestor_winding(3 * vertex_ancestors);
   phx_mc_tet_mesh_snapshot_request snapshot{};
@@ -110,16 +111,16 @@ void capture_vertex_edge_witnesses(const phx_mc_tet_mesh* mesh,
   snapshot.cell_ancestor_ids = cell_ancestor_ids.data();
   snapshot.cell_ancestry_edit_kinds = cell_edit_kinds.data();
   snapshot.cell_ids = cells_ids.data();
-  snapshot.cell_vertices = cell_vertices.data();
+  snapshot.cell_vertex_rows = cell_vertices.data();
   snapshot.cell_regions = cell_regions.data();
   snapshot.cell_size_targets = snapshot_cell_sizes.data();
   snapshot.facet_ids = facet_ids.data();
-  snapshot.facet_vertices = facet_vertices.data();
+  snapshot.facet_vertex_rows = facet_vertices.data();
   snapshot.facet_sources = facet_sources.data();
   snapshot.facet_orientations = facet_orientations.data();
   snapshot.protected_facets = protected_facets.data();
   snapshot.segment_ids = segment_ids.data();
-  snapshot.segment_vertices = segment_vertices.data();
+  snapshot.segment_vertex_rows = segment_vertices.data();
   snapshot.segment_sources = segment_sources.data();
   snapshot.protected_segments = protected_segments.data();
   snapshot.source_points = source_points.data();
@@ -237,11 +238,11 @@ void persistent_create_snapshot_and_rejection() {
   std::array<int64_t, 2> cell_ancestry_offsets{};
   std::array<int32_t, 1> cell_ancestry_edit_kinds{};
   std::array<uint64_t, 1> cell_ids{};
-  std::array<uint64_t, 4> cell_vertices{};
+  std::array<int64_t, 4> cell_vertices{};
   std::array<int32_t, 1> cell_regions{};
   std::array<double, 1> snapshot_cell_sizes{};
   std::array<uint64_t, 4> facet_ids{};
-  std::array<uint64_t, 12> facet_vertices{};
+  std::array<int64_t, 12> facet_vertices{};
   std::array<int32_t, 4> facet_sources{};
   std::array<int8_t, 4> facet_orientations{};
   std::array<int8_t, 4> protected_facets{};
@@ -276,11 +277,11 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.cell_ancestry_offsets = cell_ancestry_offsets.data();
   snapshot.cell_ancestry_edit_kinds = cell_ancestry_edit_kinds.data();
   snapshot.cell_ids = cell_ids.data();
-  snapshot.cell_vertices = cell_vertices.data();
+  snapshot.cell_vertex_rows = cell_vertices.data();
   snapshot.cell_regions = cell_regions.data();
   snapshot.cell_size_targets = snapshot_cell_sizes.data();
   snapshot.facet_ids = facet_ids.data();
-  snapshot.facet_vertices = facet_vertices.data();
+  snapshot.facet_vertex_rows = facet_vertices.data();
   snapshot.facet_sources = facet_sources.data();
   snapshot.facet_orientations = facet_orientations.data();
   snapshot.protected_facets = protected_facets.data();
@@ -338,7 +339,8 @@ void persistent_create_snapshot_and_rejection() {
             std::string_view(source_map_id, sizeof(source_map_id) - 1));
   PHX_CHECK(std::string_view(copied_frame_id.data(), copied_frame_id.size()) ==
             std::string_view(frame_id, sizeof(frame_id) - 1));
-  constexpr std::array<uint64_t, 4> expected_cell_vertices{101, 211, 307, 409};
+  // Corners are rows of the vertex banks (IDs 101, 211, 307, 409).
+  constexpr std::array<int64_t, 4> expected_cell_vertices{0, 1, 2, 3};
   constexpr std::array<int64_t, 4> expected_source_ids{0, 1, 2, 3};
   PHX_CHECK(cell_vertices == expected_cell_vertices);
   PHX_CHECK(facet_ids == initial_facet_ids);
@@ -358,7 +360,7 @@ void persistent_create_snapshot_and_rejection() {
   std::array<double, 12> untouched_points{};
   untouched_points.fill(91.0);
   snapshot.points = untouched_points.data();
-  snapshot.cell_vertices = nullptr;
+  snapshot.cell_vertex_rows = nullptr;
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(untouched == untouched_expected);
   PHX_CHECK(untouched_points[0] == 91.0 && untouched_points[11] == 91.0);
@@ -522,7 +524,7 @@ void persistent_create_snapshot_and_rejection() {
   std::vector<int64_t> refined_vertex_ancestor_winding(3 * refined_vertex_ancestry + 3);
   std::vector<double> refined_vertex_ancestry_weights(refined_vertex_ancestry + 1);
   std::vector<uint64_t> refined_cell_ids(refined_cell_count);
-  std::vector<uint64_t> refined_cell_vertices(4 * refined_cell_count);
+  std::vector<int64_t> refined_cell_vertices(4 * refined_cell_count);
   std::vector<int32_t> refined_cell_regions(refined_cell_count);
   std::vector<double> refined_cell_size_targets(refined_cell_count);
   std::vector<int64_t> refined_cell_ancestry_offsets(refined_cell_count + 1);
@@ -555,14 +557,14 @@ void persistent_create_snapshot_and_rejection() {
   refined_snapshot.vertex_ancestor_winding = refined_vertex_ancestor_winding.data();
   refined_snapshot.vertex_ancestry_weights = refined_vertex_ancestry_weights.data();
   refined_snapshot.cell_ids = refined_cell_ids.data();
-  refined_snapshot.cell_vertices = refined_cell_vertices.data();
+  refined_snapshot.cell_vertex_rows = refined_cell_vertices.data();
   refined_snapshot.cell_regions = refined_cell_regions.data();
   refined_snapshot.cell_size_targets = refined_cell_size_targets.data();
   refined_snapshot.cell_ancestry_offsets = refined_cell_ancestry_offsets.data();
   refined_snapshot.cell_ancestor_ids = refined_cell_ancestor_ids.data();
   refined_snapshot.cell_ancestry_edit_kinds = refined_cell_ancestry_edit_kinds.data();
   refined_snapshot.facet_ids = facet_ids.data();
-  refined_snapshot.facet_vertices = facet_vertices.data();
+  refined_snapshot.facet_vertex_rows = facet_vertices.data();
   refined_snapshot.facet_sources = facet_sources.data();
   refined_snapshot.facet_orientations = facet_orientations.data();
   refined_snapshot.protected_facets = protected_facets.data();
@@ -584,12 +586,10 @@ void persistent_create_snapshot_and_rejection() {
         [&] {
           std::array<const double*, 4> result{};
           for (std::size_t corner = 0; corner < 4; ++corner) {
-            const uint64_t id = refined_cell_vertices[4 * row + corner];
-            const auto found =
-                std::find(refined_vertex_ids.begin(), refined_vertex_ids.end(), id);
-            PHX_CHECK(found != refined_vertex_ids.end());
-            result[corner] = refined_points.data() +
-                             3 * static_cast<std::size_t>(found - refined_vertex_ids.begin());
+            const int64_t vertex_row = refined_cell_vertices[4 * row + corner];
+            PHX_CHECK(vertex_row >= 0 &&
+                      static_cast<std::size_t>(vertex_row) < refined_vertex_ids.size());
+            result[corner] = refined_points.data() + 3 * static_cast<std::size_t>(vertex_row);
           }
           return result;
         }()};
@@ -707,7 +707,7 @@ void persistent_create_snapshot_and_rejection() {
   if (mesh == nullptr) return;
 
   std::array<uint64_t, 1> optional_segment_ids{};
-  std::array<uint64_t, 2> optional_segment_vertices{};
+  std::array<int64_t, 2> optional_segment_vertices{};
   std::array<int32_t, 1> optional_segment_source_rows{};
   std::array<int8_t, 1> optional_protected_segments{};
   std::array<int32_t, 2> optional_source_segments{};
@@ -717,7 +717,7 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.segment_capacity = 1;
   snapshot.source_segment_capacity = 1;
   snapshot.segment_ids = optional_segment_ids.data();
-  snapshot.segment_vertices = optional_segment_vertices.data();
+  snapshot.segment_vertex_rows = optional_segment_vertices.data();
   snapshot.segment_sources = optional_segment_source_rows.data();
   snapshot.protected_segments = optional_protected_segments.data();
   snapshot.source_segments = optional_source_segments.data();
@@ -726,7 +726,7 @@ void persistent_create_snapshot_and_rejection() {
   snapshot.source_segment_tolerances = optional_source_segment_tolerances.data();
   snapshot.vertex_ids = vertex_ids.data();
   snapshot.points = copied_points.data();
-  snapshot.cell_vertices = cell_vertices.data();
+  snapshot.cell_vertex_rows = cell_vertices.data();
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> optional_id_sizes{};
   constexpr std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES>
       expected_optional_id_sizes{
@@ -740,7 +740,7 @@ void persistent_create_snapshot_and_rejection() {
   constexpr std::array<uint64_t, 4> row_facet_ids{0, 1, 2, 3};
   PHX_CHECK(vertex_ids == row_vertex_ids && cell_ids == row_cell_ids &&
             facet_ids == row_facet_ids);
-  constexpr std::array<uint64_t, 2> row_segment_vertices{0, 1};
+  constexpr std::array<int64_t, 2> row_segment_vertices{0, 1};
   PHX_CHECK(optional_segment_ids[0] == 0 &&
             optional_segment_vertices == row_segment_vertices &&
             optional_segment_source_rows[0] == 0 &&
@@ -1019,11 +1019,11 @@ void persistent_periodic_state_and_atomic_relocation() {
   std::array<uint64_t, 4> cell_ancestor_ids{};
   std::array<int32_t, 4> cell_ancestry_edit_kinds{};
   std::array<uint64_t, 4> snapshot_cell_ids{};
-  std::array<uint64_t, 16> snapshot_cell_vertices{};
+  std::array<int64_t, 16> snapshot_cell_vertices{};
   std::array<double, 4> snapshot_cell_size_targets{};
   std::array<int32_t, 4> snapshot_regions{};
   std::array<uint64_t, 4> snapshot_facet_ids{};
-  std::array<uint64_t, 12> snapshot_facet_vertices{};
+  std::array<int64_t, 12> snapshot_facet_vertices{};
   std::array<int32_t, 4> snapshot_facet_sources{};
   std::array<int8_t, 4> snapshot_facet_orientations{};
   std::array<int8_t, 4> protected_facets{};
@@ -1094,11 +1094,11 @@ void persistent_periodic_state_and_atomic_relocation() {
   snapshot.cell_ancestor_ids = cell_ancestor_ids.data();
   snapshot.cell_ancestry_edit_kinds = cell_ancestry_edit_kinds.data();
   snapshot.cell_ids = snapshot_cell_ids.data();
-  snapshot.cell_vertices = snapshot_cell_vertices.data();
+  snapshot.cell_vertex_rows = snapshot_cell_vertices.data();
   snapshot.cell_regions = snapshot_regions.data();
   snapshot.cell_size_targets = snapshot_cell_size_targets.data();
   snapshot.facet_ids = snapshot_facet_ids.data();
-  snapshot.facet_vertices = snapshot_facet_vertices.data();
+  snapshot.facet_vertex_rows = snapshot_facet_vertices.data();
   snapshot.facet_sources = snapshot_facet_sources.data();
   snapshot.facet_orientations = snapshot_facet_orientations.data();
   snapshot.protected_facets = protected_facets.data();
@@ -1527,11 +1527,11 @@ void persistent_collapse_replaces_vertex_star() {
   std::array<uint64_t, 4> cell_ancestor_ids{};
   std::array<int32_t, 1> cell_ancestry_edit_kinds{};
   std::array<uint64_t, 1> snapshot_cell_ids{};
-  std::array<uint64_t, 4> snapshot_cell_vertices{};
+  std::array<int64_t, 4> snapshot_cell_vertices{};
   std::array<int32_t, 1> snapshot_regions{};
   std::array<double, 1> snapshot_cell_size_targets{};
   std::array<uint64_t, 4> snapshot_facet_ids{};
-  std::array<uint64_t, 12> snapshot_facet_vertices{};
+  std::array<int64_t, 12> snapshot_facet_vertices{};
   std::array<int32_t, 4> snapshot_facet_sources{};
   std::array<int8_t, 4> snapshot_facet_orientations{};
   std::array<int8_t, 4> protected_facets{};
@@ -1568,11 +1568,11 @@ void persistent_collapse_replaces_vertex_star() {
   snapshot.cell_ancestor_ids = cell_ancestor_ids.data();
   snapshot.cell_ancestry_edit_kinds = cell_ancestry_edit_kinds.data();
   snapshot.cell_ids = snapshot_cell_ids.data();
-  snapshot.cell_vertices = snapshot_cell_vertices.data();
+  snapshot.cell_vertex_rows = snapshot_cell_vertices.data();
   snapshot.cell_regions = snapshot_regions.data();
   snapshot.cell_size_targets = snapshot_cell_size_targets.data();
   snapshot.facet_ids = snapshot_facet_ids.data();
-  snapshot.facet_vertices = snapshot_facet_vertices.data();
+  snapshot.facet_vertex_rows = snapshot_facet_vertices.data();
   snapshot.facet_sources = snapshot_facet_sources.data();
   snapshot.facet_orientations = snapshot_facet_orientations.data();
   snapshot.protected_facets = protected_facets.data();
@@ -1587,12 +1587,14 @@ void persistent_collapse_replaces_vertex_star() {
   PHX_CHECK(phx_mc_tet_mesh_snapshot(mesh, &snapshot) == PHX_MC_OK);
   constexpr std::array<int64_t, 2> expected_ancestry_offsets{0, 4};
   constexpr std::array<uint64_t, 4> expected_vertex_ids{101, 211, 307, 409};
+  // The replacement cell's corners (IDs 101, 211, 307, 409) as vertex rows.
+  constexpr std::array<int64_t, 4> expected_cell_vertices{0, 1, 2, 3};
   constexpr std::array<double, 12> expected_points{
       0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
   PHX_CHECK(generation == generation_before_collapse + 1 &&
             snapshot_vertex_ids == expected_vertex_ids);
   PHX_CHECK(snapshot_cell_ids[0] == replacement_cell_ids[0] &&
-            snapshot_cell_vertices == replacement_vertices &&
+            snapshot_cell_vertices == expected_cell_vertices &&
             snapshot_regions[0] == 0);
   PHX_CHECK(cell_ancestry_offsets == expected_ancestry_offsets &&
             cell_ancestor_ids == cell_ids &&
@@ -3941,9 +3943,9 @@ struct ExactReals : std::vector<double> {
 struct TetMeshBanks {
   std::array<int64_t, PHX_MC_TET_MESH_SNAPSHOT_SIZES> sizes{};
   uint64_t generation = 0;
-  std::vector<uint64_t> vertex_ids, cell_ids, cell_vertices, facet_ids, facet_vertices,
-      segment_ids, segment_vertices, edge_witness_endpoints, vertex_ancestor_ids,
-      cell_ancestor_ids;
+  std::vector<uint64_t> vertex_ids, cell_ids, facet_ids, segment_ids, edge_witness_endpoints,
+      vertex_ancestor_ids, cell_ancestor_ids;
+  std::vector<int64_t> cell_vertices, facet_vertices, segment_vertices;
   ExactReals points, vertex_sizes, cell_sizes, witness_parameters, witness_deviations,
       protection_radii, edge_parameters, vertex_ancestry_weights, source_points,
       source_face_tolerances, source_face_planes, source_face_plane_tolerances,
@@ -4040,16 +4042,16 @@ TetMeshBanks capture_banks(const phx_mc_tet_mesh* mesh) {
   snapshot.cell_ancestor_ids = banks.cell_ancestor_ids.data();
   snapshot.cell_ancestry_edit_kinds = banks.cell_edit_kinds.data();
   snapshot.cell_ids = banks.cell_ids.data();
-  snapshot.cell_vertices = banks.cell_vertices.data();
+  snapshot.cell_vertex_rows = banks.cell_vertices.data();
   snapshot.cell_regions = banks.cell_regions.data();
   snapshot.cell_size_targets = banks.cell_sizes.data();
   snapshot.facet_ids = banks.facet_ids.data();
-  snapshot.facet_vertices = banks.facet_vertices.data();
+  snapshot.facet_vertex_rows = banks.facet_vertices.data();
   snapshot.facet_sources = banks.facet_sources.data();
   snapshot.facet_orientations = banks.facet_orientations.data();
   snapshot.protected_facets = banks.protected_facets.data();
   snapshot.segment_ids = banks.segment_ids.data();
-  snapshot.segment_vertices = banks.segment_vertices.data();
+  snapshot.segment_vertex_rows = banks.segment_vertices.data();
   snapshot.segment_sources = banks.segment_sources.data();
   snapshot.protected_segments = banks.protected_segments.data();
   snapshot.source_points = banks.source_points.data();

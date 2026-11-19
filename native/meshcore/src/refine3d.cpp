@@ -29,18 +29,6 @@
 #include "exact_scalar.hpp"
 
 namespace phx::mc {
-double cell_size_target(const std::array<double, 4>& corner_sizes) noexcept {
-  double scale = 0.0;
-  for (double size : corner_sizes) {
-    if (!(size > 0.0)) return std::numeric_limits<double>::infinity();
-    scale = std::max(scale, size);
-  }
-  // Normalized by the largest target so the sum cannot overflow.
-  double normalized_sum = 0.0;
-  for (double size : corner_sizes) normalized_sum += size / scale;
-  return std::min(scale, scale * (0.25 * normalized_sum));
-}
-
 namespace {
 
 template <class Exit>

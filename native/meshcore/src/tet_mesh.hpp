@@ -6,6 +6,7 @@
 // are caller-visible and never inferred from coordinates.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -27,6 +28,8 @@
 #include "plc3d.hpp"
 #include "source_construction.hpp"
 #include "zero_set_admission.hpp"
+
+struct phx_mc_tet_mesh_snapshot_request;
 
 namespace phx::mc {
 namespace detail {
@@ -407,6 +410,48 @@ class TetIdIndex {
   // Forgets `id` entirely (rollback of a staged binding).
   void forget(std::uint64_t id) noexcept;
   std::size_t live_count() const noexcept { return live_; }
+  // Calls visit(ids, slots) on consecutive blocks (spans of at most
+  // kVisitBlock) of the live IDs in ascending order and their slots; false
+  // when a live ID has no slot yet (kPending), whose block is not visited.
+  static constexpr std::size_t kVisitBlock = 512;
+  template <class Visit>
+  bool visit_live(Visit&& visit) const {
+    std::array<std::uint64_t, kVisitBlock + 1> ids;
+    std::array<std::int32_t, kVisitBlock + 1> slots;
+    std::size_t count = 0;
+    bool pending = false;
+    // Branch-free compaction: the table is mostly retired IDs.
+    const auto take = [&](std::uint64_t id, std::int32_t slot) {
+      ids[count] = id;
+      slots[count] = slot;
+      count += slot >= 0 ? 1 : 0;
+      pending |= slot == kPending;
+      if (count == kVisitBlock) {
+        if (pending) return false;
+        visit(std::span<const std::uint64_t>(ids.data(), count),
+              std::span<const std::int32_t>(slots.data(), count));
+        count = 0;
+      }
+      return true;
+    };
+    for (std::size_t id = 0; id < dense_.size(); ++id) {
+      if (!take(static_cast<std::uint64_t>(id), dense_[id])) return false;
+    }
+    // Sparse IDs all lie beyond the dense table (it stops growing once one exists).
+    if (!sparse_.empty()) {
+      std::vector<std::pair<std::uint64_t, std::int32_t>> sparse(sparse_.begin(), sparse_.end());
+      std::sort(sparse.begin(), sparse.end());
+      for (const auto& [id, slot] : sparse) {
+        if (!take(id, slot)) return false;
+      }
+    }
+    if (pending) return false;
+    if (count != 0) {
+      visit(std::span<const std::uint64_t>(ids.data(), count),
+            std::span<const std::int32_t>(slots.data(), count));
+    }
+    return true;
+  }
 
  private:
   std::int32_t state(std::uint64_t id) const noexcept {
@@ -512,6 +557,16 @@ class TetMesh {
   // vertices. Returns false without mutation if a group is absent.
   bool protect_facet_sources(std::span<const std::int32_t> sources);
   TetEditStatus snapshot(TetMeshSnapshot& output) const;
+  // The public snapshot's bank sizes (PHX_MC_TET_MESH_SNAPSHOT_SIZES values)
+  // from the live counters; false when one is not representable.
+  bool snapshot_sizes(std::int64_t* sizes) const;
+  // Writes the public snapshot into the caller's banks, whose capacities hold
+  // `sizes` (snapshot_sizes): vertices in slot order, cells, facets and
+  // segments in ascending ID order with their corners as vertex rows, in one
+  // pass over the live state. kInvalidGeometry when the state disagrees with
+  // `sizes`.
+  TetEditStatus export_snapshot(const phx_mc_tet_mesh_snapshot_request& request,
+                                const std::int64_t* sizes) const;
   TetEditStatus apply_edit_batch(const TetEditBatch& batch,
                                  std::vector<TetEditResult>& results);
   // Exact refusal probe of a single-operation flip, ring reconnection or collapse batch

@@ -19,10 +19,31 @@
 #include <vector>
 
 #include "expansion.hpp"
+#include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "refine3d.hpp"
 
 namespace phx::mc {
 namespace {
+
+template <class T>
+void copy_into(const std::vector<T>& source, T* destination) {
+  if (!source.empty()) std::copy(source.begin(), source.end(), destination);
+}
+
+// Rows of `records` (facets or segments) in ascending ID order.
+template <class Record>
+std::vector<std::uint32_t> id_order(const std::vector<Record>& records) {
+  std::vector<std::uint32_t> order(records.size());
+  for (std::size_t row = 0; row < order.size(); ++row) order[row] = static_cast<std::uint32_t>(row);
+  const auto by_id = [&records](std::uint32_t a, std::uint32_t b) {
+    return records[a].id < records[b].id;
+  };
+  if (!std::is_sorted(order.begin(), order.end(), by_id)) {
+    std::sort(order.begin(), order.end(), by_id);
+  }
+  return order;
+}
 
 bool same_bits(double a, double b) {
   return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
@@ -157,6 +178,323 @@ TetEditStatus TetMesh::snapshot_internal(TetMeshSnapshot& output,
     }
     using std::swap;
     swap(output, staged);
+    return TetEditStatus::kApplied;
+  } catch (const std::bad_alloc&) {
+    return TetEditStatus::kAllocationFailure;
+  } catch (const std::length_error&) {
+    return TetEditStatus::kIndexOverflow;
+  }
+}
+
+bool TetMesh::snapshot_sizes(std::int64_t* sizes) const {
+  std::size_t members = 0;
+  std::size_t quotient_lifted = 0;
+  std::size_t entity_lifted = 0;
+  std::size_t entity_quotient = 0;
+  std::size_t entity_winding = 0;
+  std::size_t entity_corners = 0;
+  std::size_t entity_representatives = 0;
+  for (const TetPeriodicOrbit& orbit : periodic_orbits_) members += orbit.members.size();
+  for (const TetPeriodicQuotientCell& cell : quotient_cells_) {
+    quotient_lifted += cell.lifted_cell_ids.size();
+  }
+  for (const TetPeriodicEntityOrbitMap& map : periodic_entity_maps_) {
+    entity_lifted += map.lifted_entity_ids.size();
+    entity_quotient += map.quotient_entity_ids.size();
+    entity_winding += map.winding_shifts.size();
+    entity_corners += map.corner_permutations.size();
+    entity_representatives += map.representative_lifted_rows.size();
+  }
+  std::size_t vertex_ancestry = 0;
+  for (const auto& [id, ancestry] : vertex_ancestry_) {
+    if (vertex_slot(id) >= 0) vertex_ancestry += ancestry.size();
+  }
+  std::size_t cell_ancestors = 0;
+  for (const auto& [id, record] : cell_ancestry_) {
+    if (cell_slot(id) >= 0 && record.ancestor_cell_ids) {
+      cell_ancestors += record.ancestor_cell_ids->size();
+    }
+  }
+  const std::size_t values[PHX_MC_TET_MESH_SNAPSHOT_SIZES] = {
+      vertex_index_.live_count(), static_cast<std::size_t>(complex_.finite_count),
+      facets_.size(), segments_.size(), source_points_.size() / 3, source_faces_.size() / 3,
+      source_segments_.size() / 2, periodic_orbits_.size(), members, quotient_cells_.size(),
+      quotient_lifted, periodic_entity_maps_.size(), entity_lifted, entity_quotient,
+      entity_winding, entity_corners, entity_representatives, vertex_ancestry,
+      cell_ancestors};
+  for (std::size_t bank = 0; bank < PHX_MC_TET_MESH_SNAPSHOT_SIZES; ++bank) {
+    if (values[bank] >= static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+      return false;
+    }
+    sizes[bank] = static_cast<std::int64_t>(values[bank]);
+  }
+  return true;
+}
+
+TetEditStatus TetMesh::export_snapshot(const phx_mc_tet_mesh_snapshot_request& request,
+                                       const std::int64_t* sizes) const {
+  try {
+    const std::size_t vertex_count = static_cast<std::size_t>(sizes[0]);
+    const std::size_t cell_count = static_cast<std::size_t>(sizes[1]);
+    const std::size_t vertex_ancestry_count = static_cast<std::size_t>(sizes[17]);
+    const std::size_t cell_ancestor_count = static_cast<std::size_t>(sizes[18]);
+    // Lineage is sparse: its live records sorted by slot (vertices) and ID
+    // (cells) are merged into the ordered passes below.
+    std::vector<std::pair<std::int32_t, const std::vector<TetVertexAncestry>*>> vertex_lineage;
+    vertex_lineage.reserve(vertex_ancestry_.size());
+    for (const auto& [id, ancestry] : vertex_ancestry_) {
+      const std::int32_t slot = vertex_slot(id);
+      if (slot >= 0) vertex_lineage.emplace_back(slot, &ancestry);
+    }
+    std::sort(vertex_lineage.begin(), vertex_lineage.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<std::pair<std::uint64_t, const TetCellAncestryRecord*>> cell_lineage;
+    cell_lineage.reserve(cell_ancestry_.size());
+    for (const auto& [id, record] : cell_ancestry_) {
+      if (cell_slot(id) >= 0) cell_lineage.emplace_back(id, &record);
+    }
+    std::sort(cell_lineage.begin(), cell_lineage.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    // Vertices in slot order; `vertices` holds each slot's output row (-1:
+    // dead) beside its size target, the two things a cell corner reads.
+    struct ExportVertex {
+      std::int64_t row = -1;
+      double size = 0.0;
+    };
+    std::vector<ExportVertex> vertices(vertex_ids_.size());
+    std::size_t row = 0;
+    std::size_t ancestry_row = 0;
+    auto vertex_record = vertex_lineage.begin();
+    request.vertex_ancestry_offsets[0] = 0;
+    for (std::size_t slot = 0; slot < vertex_ids_.size(); ++slot) {
+      if (vertex_live_[slot] == 0) continue;
+      if (row == vertex_count) return TetEditStatus::kInvalidGeometry;
+      vertices[slot] = {static_cast<std::int64_t>(row), vertex_size(static_cast<std::int32_t>(slot))};
+      request.vertex_ids[row] = vertex_ids_[slot];
+      std::copy_n(points_.data() + 3 * slot, 3, request.points + 3 * row);
+      request.vertex_size_targets[row] = vertices[slot].size;
+      const SourceWitness& witness = witnesses_[slot];
+      request.witness_strata[row] = static_cast<std::int8_t>(witness.stratum);
+      request.witness_entities[row] = witness.entity;
+      request.witness_parameters[2 * row] = witness.parameters[0];
+      request.witness_parameters[2 * row + 1] = witness.parameters[1];
+      request.witness_deviations[row] = witness.deviation;
+      request.vertex_dimensions[row] = vertex_dimension_[slot];
+      request.protection_radii[row] = protection_radii_[slot];
+      request.protected_vertices[row] = protected_vertices_[slot] != 0 ? 1 : 0;
+      request.vertex_edge_witness_present[row] = vertex_has_edge_parameter_[slot] != 0 ? 1 : 0;
+      request.vertex_edge_witness_endpoints[2 * row] = vertex_edge_endpoints_[slot][0];
+      request.vertex_edge_witness_endpoints[2 * row + 1] = vertex_edge_endpoints_[slot][1];
+      request.vertex_edge_parameters[row] = vertex_edge_parameters_[slot];
+      if (vertex_record != vertex_lineage.end() &&
+          vertex_record->first == static_cast<std::int32_t>(slot)) {
+        const std::vector<TetVertexAncestry>& ancestry = *vertex_record->second;
+        if (ancestry.size() > vertex_ancestry_count - ancestry_row) {
+          return TetEditStatus::kInvalidGeometry;
+        }
+        for (const TetVertexAncestry& ancestor : ancestry) {
+          request.vertex_ancestor_ids[ancestry_row] = ancestor.source_vertex_id;
+          std::copy_n(ancestor.source_winding.data(), 3,
+                      request.vertex_ancestor_winding + 3 * ancestry_row);
+          request.vertex_ancestry_weights[ancestry_row] = ancestor.weight;
+          ++ancestry_row;
+        }
+        ++vertex_record;
+      }
+      request.vertex_ancestry_offsets[row + 1] = static_cast<std::int64_t>(ancestry_row);
+      ++row;
+    }
+    if (row != vertex_count || ancestry_row != vertex_ancestry_count) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+    const auto vertex_row = [&vertices](std::int32_t slot) -> std::int64_t {
+      return slot >= 0 && static_cast<std::size_t>(slot) < vertices.size()
+                 ? vertices[static_cast<std::size_t>(slot)].row
+                 : -1;
+    };
+
+    // Cells in ID order straight from the ID table, the scattered cell reads
+    // prefetched a few cells ahead.
+    std::size_t cell_row = 0;
+    std::size_t ancestor_row = 0;
+    bool consistent = true;
+    auto cell_record = cell_lineage.begin();
+    request.cell_ancestry_offsets[0] = 0;
+    const std::vector<Tetrahedron>& tets = complex_.tets;
+    const bool complete = cell_index_.visit_live([&](std::span<const std::uint64_t> ids,
+                                                     std::span<const std::int32_t> slots) {
+      if (!consistent || ids.size() > cell_count - cell_row) {
+        consistent = false;
+        return;
+      }
+      constexpr std::size_t kAhead = 16;
+      for (std::size_t item = 0; item < slots.size(); ++item) {
+        if (item + kAhead < slots.size()) {
+          const std::size_t ahead = static_cast<std::size_t>(slots[item + kAhead]);
+          if (ahead < tets.size()) __builtin_prefetch(tets.data() + ahead);
+        }
+        const std::size_t slot = static_cast<std::size_t>(slots[item]);
+        if (slot >= tets.size()) {
+          consistent = false;
+          return;
+        }
+        const Tetrahedron& tet = tets[slot];
+        std::array<double, 4> corner_sizes;
+        std::int64_t* corners = request.cell_vertex_rows + 4 * cell_row;
+        for (int corner = 0; corner < 4; ++corner) {
+          const std::int32_t vertex = tet.v[corner];
+          if (vertex < 0 || static_cast<std::size_t>(vertex) >= vertices.size() ||
+              vertices[static_cast<std::size_t>(vertex)].row < 0) {
+            consistent = false;
+            return;
+          }
+          const ExportVertex& record = vertices[static_cast<std::size_t>(vertex)];
+          corners[corner] = record.row;
+          corner_sizes[static_cast<std::size_t>(corner)] = record.size;
+        }
+        const std::uint64_t id = ids[item];
+        request.cell_ids[cell_row] = id;
+        request.cell_regions[cell_row] = tet.region;
+        const double target = cell_size_target(corner_sizes);
+        request.cell_size_targets[cell_row] = std::isfinite(target) ? target : 0.0;
+        std::int32_t edit_kind = -1;
+        while (cell_record != cell_lineage.end() && cell_record->first < id) ++cell_record;
+        if (cell_record != cell_lineage.end() && cell_record->first == id) {
+          edit_kind = cell_record->second->edit_kind;
+          if (const auto& ancestors = cell_record->second->ancestor_cell_ids) {
+            if (ancestors->size() > cell_ancestor_count - ancestor_row) {
+              consistent = false;
+              return;
+            }
+            copy_into(*ancestors, request.cell_ancestor_ids + ancestor_row);
+            ancestor_row += ancestors->size();
+          }
+        }
+        request.cell_ancestry_edit_kinds[cell_row] = edit_kind;
+        request.cell_ancestry_offsets[cell_row + 1] = static_cast<std::int64_t>(ancestor_row);
+        ++cell_row;
+      }
+    });
+    if (!complete || !consistent || cell_row != cell_count ||
+        ancestor_row != cell_ancestor_count) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+
+    const std::vector<std::uint32_t> facet_order = id_order(facets_);
+    for (std::size_t out = 0; out < facet_order.size(); ++out) {
+      const TetSnapshotFacet& facet = facets_[facet_order[out]];
+      request.facet_ids[out] = facet.id;
+      for (int corner = 0; corner < 3; ++corner) {
+        const std::int64_t corner_row = vertex_row(vertex_slot(facet.vertices[corner]));
+        if (corner_row < 0) return TetEditStatus::kInvalidGeometry;
+        request.facet_vertex_rows[3 * out + corner] = corner_row;
+      }
+      request.facet_sources[out] = facet.source;
+      request.facet_orientations[out] = facet.orientation;
+      request.protected_facets[out] = facet.protected_facet ? 1 : 0;
+    }
+    const std::vector<std::uint32_t> segment_order = id_order(segments_);
+    for (std::size_t out = 0; out < segment_order.size(); ++out) {
+      const TetSnapshotSegment& segment = segments_[segment_order[out]];
+      request.segment_ids[out] = segment.id;
+      for (int corner = 0; corner < 2; ++corner) {
+        const std::int64_t corner_row = vertex_row(vertex_slot(segment.vertices[corner]));
+        if (corner_row < 0) return TetEditStatus::kInvalidGeometry;
+        request.segment_vertex_rows[2 * out + corner] = corner_row;
+      }
+      request.segment_sources[out] = segment.source;
+      request.protected_segments[out] = segment.protected_segment ? 1 : 0;
+    }
+
+    copy_into(source_points_, request.source_points);
+    copy_into(source_faces_, request.source_faces);
+    copy_into(source_face_groups_, request.source_face_groups);
+    copy_into(source_face_ids_, request.source_face_ids);
+    copy_into(source_face_tolerances_, request.source_face_tolerances);
+    copy_into(source_segments_, request.source_segments);
+    copy_into(source_segment_groups_, request.source_segment_groups);
+    copy_into(source_segment_ids_, request.source_segment_ids);
+    copy_into(source_segment_tolerances_, request.source_segment_tolerances);
+    copy_into(source_face_planes_, request.source_face_planes);
+    copy_into(source_face_plane_tolerances_, request.source_face_plane_tolerances);
+
+    std::size_t member_offset = 0;
+    for (std::size_t orbit_row = 0; orbit_row < periodic_orbits_.size(); ++orbit_row) {
+      const TetPeriodicOrbit& orbit = periodic_orbits_[orbit_row];
+      phx_mc_tet_periodic_orbit& output = request.periodic_orbits[orbit_row];
+      output.id = orbit.id;
+      output.representative_vertex_id = orbit.representative_vertex_id;
+      output.member_offset = static_cast<std::int64_t>(member_offset);
+      output.member_count = static_cast<std::int64_t>(orbit.members.size());
+      for (const TetPeriodicVertexMember& member : orbit.members) {
+        phx_mc_tet_periodic_vertex_member& target = request.periodic_members[member_offset++];
+        target.vertex_id = member.vertex_id;
+        std::copy(member.winding.begin(), member.winding.end(), target.winding);
+        std::copy(member.representative_to_member.begin(),
+                  member.representative_to_member.end(), target.representative_to_member);
+      }
+    }
+    std::size_t quotient_lifted_offset = 0;
+    for (std::size_t cell = 0; cell < quotient_cells_.size(); ++cell) {
+      const TetPeriodicQuotientCell& quotient = quotient_cells_[cell];
+      phx_mc_tet_periodic_quotient_cell& target = request.periodic_quotient_cells[cell];
+      target.orbit_id = quotient.orbit_id;
+      target.id = quotient.id;
+      std::copy(quotient.representative_vertices.begin(),
+                quotient.representative_vertices.end(), target.representative_vertices);
+      for (int corner = 0; corner < 4; ++corner) {
+        std::copy(quotient.winding[corner].begin(), quotient.winding[corner].end(),
+                  target.winding + 3 * corner);
+      }
+      target.region = quotient.region;
+      target.lifted_cell_offset = static_cast<std::int64_t>(quotient_lifted_offset);
+      target.lifted_cell_count = static_cast<std::int64_t>(quotient.lifted_cell_ids.size());
+      copy_into(quotient.lifted_cell_ids,
+                request.periodic_quotient_lifted_cell_ids + quotient_lifted_offset);
+      quotient_lifted_offset += quotient.lifted_cell_ids.size();
+    }
+    std::size_t lifted_offset = 0;
+    std::size_t quotient_offset = 0;
+    std::size_t winding_offset = 0;
+    std::size_t corner_offset = 0;
+    std::size_t representative_offset = 0;
+    for (std::size_t map_row = 0; map_row < periodic_entity_maps_.size(); ++map_row) {
+      const TetPeriodicEntityOrbitMap& map = periodic_entity_maps_[map_row];
+      phx_mc_tet_periodic_entity_orbit_map& target = request.periodic_entity_maps[map_row];
+      target.dimension = map.dimension;
+      target.arity = map.arity;
+      target.rank = map.rank;
+      target.lifted_offset = static_cast<std::int64_t>(lifted_offset);
+      target.lifted_count = static_cast<std::int64_t>(map.lifted_entity_ids.size());
+      target.quotient_offset = static_cast<std::int64_t>(quotient_offset);
+      target.quotient_count = static_cast<std::int64_t>(map.quotient_entity_ids.size());
+      target.winding_offset = static_cast<std::int64_t>(winding_offset);
+      target.corner_permutation_offset = static_cast<std::int64_t>(corner_offset);
+      target.representative_offset = static_cast<std::int64_t>(representative_offset);
+      if (!map.lifted_entity_ids.empty()) {
+        copy_into(map.lifted_entity_ids, request.periodic_entity_lifted_ids + lifted_offset);
+        copy_into(map.lifted_to_quotient,
+                  request.periodic_entity_lifted_to_quotient + lifted_offset);
+        copy_into(map.orientation_signs,
+                  request.periodic_entity_orientation_signs + lifted_offset);
+      }
+      if (!map.quotient_entity_ids.empty()) {
+        copy_into(map.quotient_entity_ids,
+                  request.periodic_entity_quotient_ids + quotient_offset);
+        copy_into(map.representative_lifted_rows,
+                  request.periodic_entity_representative_rows + representative_offset);
+      }
+      copy_into(map.winding_shifts, request.periodic_entity_winding_shifts + winding_offset);
+      copy_into(map.corner_permutations,
+                request.periodic_entity_corner_permutations + corner_offset);
+      lifted_offset += map.lifted_entity_ids.size();
+      quotient_offset += map.quotient_entity_ids.size();
+      winding_offset += map.winding_shifts.size();
+      corner_offset += map.corner_permutations.size();
+      representative_offset += map.representative_lifted_rows.size();
+    }
+    *request.generation = generation_;
     return TetEditStatus::kApplied;
   } catch (const std::bad_alloc&) {
     return TetEditStatus::kAllocationFailure;
