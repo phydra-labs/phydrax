@@ -202,6 +202,47 @@ void check_uses(const Fixture& f, const Run& r) {
   }
 }
 
+// Independently form physical tangent vectors for the UV chord. The test
+// fixtures supply their analytic constant principal curvatures.
+void check_face_metrics(const char* name, const Fixture& f, const Run& r,
+                        const std::vector<double>& sizes, const std::vector<double>& tolerances,
+                        const std::vector<double>& curvature, double theta=0.5) {
+  EvaluationWorkspace workspace;
+  double maximum=0;
+  for (std::size_t u=0;u<f.entities.size();++u) {
+    const int face=f.loop_faces[u], curve=f.entities[u];
+    double h=sizes[face];
+    if (curvature[face]>0)
+      h=std::min(h,std::sqrt(6*theta*tolerances[face]/curvature[face]));
+    const auto map=[&](double s) {
+      const double a=f.use_ranges[2*u], b=f.use_ranges[2*u+1];
+      return s==0 ? a : s==1 ? b : a+s*(b-a);
+    };
+    const auto begin=r.result.offsets[curve], end=r.result.offsets[curve+1];
+    for (auto i=begin+1;i<end;++i) {
+      const double a=r.result.parameters[i-1], b=r.result.parameters[i];
+      const double interior=map(a+(b-a)*0.5);
+      double uv[3][2], jet[9];
+      const bool left=r.geometry.jets_in_span(f.pcurves[u],map(a),interior,0,uv[0],workspace);
+      const bool right=r.geometry.jets_in_span(f.pcurves[u],map(b),interior,0,uv[2],workspace);
+      PHX_CHECK(left && right);
+      if (!left || !right) continue;
+      for (int k=0;k<2;++k) uv[1][k]=(uv[0][k]+uv[2][k])*0.5;
+      const double du=uv[2][0]-uv[0][0], dv=uv[2][1]-uv[0][1];
+      for (const auto& q:uv) {
+        const bool ok=r.geometry.jets(f.surfaces[face],q,1,jet,workspace);
+        PHX_CHECK(ok);
+        if (!ok) continue;
+        const double x=du*jet[3]+dv*jet[6], y=du*jet[4]+dv*jet[7], z=du*jet[5]+dv*jet[8];
+        const double metric=std::hypot(x,y,z)/h;
+        maximum=std::max(maximum,metric);
+        PHX_CHECK(metric<=1+1e-12);
+      }
+    }
+  }
+  std::printf("%s maximum boundary metric %.17g\n",name,maximum);
+}
+
 // The same rational quarter arc belongs to two faces, including a NURBS surface;
 // catches separate per-use sampling, reversed use ranges and seam duplication.
 void shared_nurbs_and_seam() {
@@ -229,6 +270,7 @@ void shared_nurbs_and_seam() {
     PHX_CHECK(std::memcmp(r.result.parameters.data(), repeat.result.parameters.data(),
                           r.result.parameters.size()*sizeof(double)) == 0);
   check_uses(f,r);
+  check_face_metrics("shared-nurbs",f,r,{0.18,0.13},{0.01,0.01},{0,1});
 }
 
 // A real cylindrical seam has two distinct UV copies but one 3D edge.
@@ -245,52 +287,7 @@ void cylindrical_seam() {
   PHX_CHECK(r.result.statistics.small_feature_resamples==0);
   PHX_CHECK(r.segments()>=5);
   check_uses(f,r);
-}
-
-// A deliberately oversized proposal must split by the face metric, not sag.
-void metric_repair() {
-  Fixture f; auto surface=plane(f), pc=line2(f);
-  auto curve=f.templ("line3",{0,0,0,1,0,0});
-  f.face(surface); f.curve(curve,0,1); f.use(0,0,pc,0,1);
-  CadGeometry geometry; PHX_CHECK(geometry.bind(f.model())==PHX_MC_OK);
-  const double size[]={0.6}, tol[]={100};
-  CurveControls controls{size,tol,tol,0.5,1.3,1e-8};
-  CurveStatistics stats;
-  std::vector<double> out;
-  PHX_CHECK(repair_curve_sag(geometry,controls,0,{0,1},out,stats)==PHX_MC_OK);
-  PHX_CHECK(out.size()==3 && stats.metric_splits==1 && stats.sag_splits==0);
-  PHX_CHECK(stats.metric_splits_per_curve[0]==1);
-  for (std::size_t i=1;i<out.size();++i) PHX_CHECK(out[i]-out[i-1]<=0.6);
-}
-
-// Only a declared pole corner may skip a singular metric; another singular
-// face must return its face and interval as unresolved.
-void metric_poles_and_singular_faces() {
-  for (int pole=0;pole<2;++pole) {
-    Fixture f;
-    const auto surface=pole ? f.templ("sphere",{0,0,0,1,0,0,0,1,0,0,0,1,1})
-                            : f.templ("plane",{0,0,0,1,0,0,1,0,0});
-    const auto pc=pole ? f.templ("line2",{0,pi/2,0,-0.1}) : line2(f);
-    const auto curve=pole ? f.node(PHX_MC_CAD_NODE_SURFACE_MAPPED,{surface,pc},{})
-                          : f.templ("line3",{0,0,0,1,0,0});
-    f.face(surface); f.curve(curve,0,1); f.use(0,0,pc,0,1);
-    if (pole) {
-      const auto pole_pc=f.templ("line2",{0,pi/2,1,0});
-      f.use(0,0,pole_pc,0,1); f.use_kinds.back()=1; f.entities.back()=0;
-    }
-    CadGeometry geometry; PHX_CHECK(geometry.bind(f.model())==PHX_MC_OK);
-    const double size[]={10}, tol[]={100};
-    CurveControls controls{size,tol,tol,0.5,1.3,1e-8};
-    CurveStatistics stats; std::vector<double> out;
-    const int status=repair_curve_sag(geometry,controls,0,{0,1},out,stats);
-    if (pole) {
-      PHX_CHECK(status==PHX_MC_OK);
-      PHX_CHECK(stats.metric_points_skipped==1);
-    } else {
-      PHX_CHECK(status==PHX_MC_UNRESOLVED && stats.unresolved.size()==1);
-      if (!stats.unresolved.empty()) PHX_CHECK(stats.unresolved[0].face==0);
-    }
-  }
+  check_face_metrics("cylindrical-seam",f,r,{0.2},{0.1},{1});
 }
 
 // Large UV separation can be a small physical gap, and conversely. This
@@ -352,6 +349,7 @@ void cubic_inflection() {
   PHX_CHECK(r.segments()>2);
   sag(r, [](double t) -> Vec { return {t,3*t*(1-t)*(1-2*t),0}; }, 0.002);
   check_uses(f,r);
+  check_face_metrics("cubic-inflection",f,r,{10,10},{0.004,0.004},{0,0});
 }
 
 // Interior knot is a mandatory break even when curvature and size are uniform.
@@ -377,7 +375,6 @@ void span_allocation() {
   PHX_CHECK(r.segments()>=4);
   for (std::size_t i=1;i<r.result.parameters.size();++i)
     PHX_CHECK(2.2*(r.result.parameters[i]-r.result.parameters[i-1])<=1+1e-12);
-  PHX_CHECK(r.result.statistics.metric_splits==0);
 }
 
 // Detects losing an interior repeated knot when a composite reverses its parameter.
@@ -502,31 +499,30 @@ void c_entry() {
   phx_mc_cad_curve_controls c{sizes,tolerances,tolerances,0.5,1.3,1e-8};
   int64_t offsets[2]={-7,-7}; double parameters[32];
   std::fill(parameters,parameters+32,-7.0);
-  phx_mc_cad_curve_failure failures[2]{{-7,-7,-7,-7},{-7,-7,-7,-7}};
-  int64_t splits[1]={-7}, metric_splits[1]={-7};
-  phx_mc_cad_curve_statistics stats{-7,-7,-7,-7,-7,-7,-7,-7,-7};
+  phx_mc_cad_curve_failure failures[2]{{-7,-7,-7},{-7,-7,-7}};
+  int64_t splits[1]={-7};
+  phx_mc_cad_curve_statistics stats{-7,-7,-7,-7,-7,-7,-7};
   auto unchanged=[&]() {
     PHX_CHECK(offsets[0]==-7 && offsets[1]==-7);
     for (double x:parameters) PHX_CHECK(x==-7);
     PHX_CHECK(failures[0].curve==-7 && failures[1].curve==-7);
-    PHX_CHECK(splits[0]==-7 && metric_splits[0]==-7);
+    PHX_CHECK(splits[0]==-7);
     PHX_CHECK(stats.parameter_count==-7 && stats.unresolved_count==-7);
   };
-  PHX_CHECK(phx_mc_cad_curves_test(nullptr,&c,2,offsets,32,parameters,2,failures,1,splits,metric_splits,&stats)==PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_cad_curves_test(nullptr,&c,2,offsets,32,parameters,2,failures,1,splits,&stats)==PHX_MC_INVALID_ARGUMENT);
   unchanged();
-  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,1,offsets,32,parameters,2,failures,1,splits,metric_splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,1,offsets,32,parameters,2,failures,1,splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
   unchanged();
-  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,1,parameters,2,failures,1,splits,metric_splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,1,parameters,2,failures,1,splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
   unchanged();
-  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,32,parameters,2,failures,0,splits,metric_splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,32,parameters,2,failures,0,splits,&stats)==PHX_MC_CAPACITY_EXCEEDED);
   unchanged();
-  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,32,parameters,2,failures,1,splits,metric_splits,&stats)==PHX_MC_OK);
+  PHX_CHECK(phx_mc_cad_curves_test(&m,&c,2,offsets,32,parameters,2,failures,1,splits,&stats)==PHX_MC_OK);
   const int64_t count=offsets[1]-offsets[0]-1;
   const int expected=static_cast<int>(std::ceil(2.0*(5.0-2.0)/0.7));
   PHX_CHECK(offsets[0]==0 && std::abs(count-expected)<=1);
   PHX_CHECK(stats.parameter_count==offsets[1] && stats.unresolved_count==0);
   PHX_CHECK(splits[0]==stats.sag_splits && splits[0]==0);
-  PHX_CHECK(metric_splits[0]==stats.metric_splits);
   PHX_CHECK(stats.first_order_evaluations+stats.second_order_evaluations>0);
   if (count>0 && count<32)
     for(int64_t i=0;i<=count;++i)
@@ -587,9 +583,8 @@ void quadric_closed_integral() {
     return std::sqrt(dx*dx+0.36);
   },0,pi/2);
   PHX_CHECK(r.segments()==4*static_cast<int>(std::ceil(length/0.229)));
-  PHX_CHECK(r.result.statistics.metric_splits==0);
   Run fine(f,{0.12,0.12},{100,100},{100});
-  PHX_CHECK(fine.result.statistics.metric_splits==0);
+  check_face_metrics("quadric-h012",f,fine,{0.12,0.12},{100,100},{1,1/0.6});
   const auto& params=fine.result.parameters;
   for (std::size_t i=1;i<params.size();++i) {
     const auto uv=[](double s) {
@@ -653,6 +648,6 @@ int main() {
   line_integral(); circle_integral(); ellipse_integral(); shared_nurbs_and_seam(); cylindrical_seam();
   cubic_inflection(); knot_breakpoint(); span_allocation(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
   surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift(); quadric_closed_integral();
-  anisotropic_small_features(); same_curve_small_feature(); metric_repair(); metric_poles_and_singular_faces(); gradation(); c_entry();
+  anisotropic_small_features(); same_curve_small_feature(); gradation(); c_entry();
   return phx::mc::test::finish("test_cad_curves");
 }

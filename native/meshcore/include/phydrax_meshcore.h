@@ -2605,13 +2605,11 @@ typedef struct phx_mc_cad_curve_controls {
 typedef struct phx_mc_cad_curve_failure {
   int32_t curve;
   double first, last; /* normalized curve parameters */
-  int32_t face; /* -1 for a curve-sag failure */
 } phx_mc_cad_curve_failure;
 
 typedef struct phx_mc_cad_curve_statistics {
   int64_t first_order_evaluations, second_order_evaluations, sag_evaluations;
   int64_t small_feature_resamples, sag_splits, parameter_count, unresolved_count;
-  int64_t metric_splits, metric_points_skipped;
 } phx_mc_cad_curve_statistics;
 
 /* Test entry for shared curve discretization. All capacities and pointers are
@@ -2620,13 +2618,11 @@ typedef struct phx_mc_cad_curve_statistics {
  * has one count per curve. PHX_MC_UNRESOLVED exports the proposal and its
  * unresolved intervals if construction reached a complete proposal; if it
  * could not, outputs are untouched. This stage samples sag; it does not certify it. */
-/* metric_splits also has one count per curve and uses split_capacity. */
 PHX_MC_API int32_t phx_mc_cad_curves_test(
     const phx_mc_cad_model* model, const phx_mc_cad_curve_controls* controls,
     int64_t offset_capacity, int64_t* offsets, int64_t parameter_capacity, double* parameters,
     int64_t failure_capacity, phx_mc_cad_curve_failure* failures,
     int64_t split_capacity, int64_t* sag_splits,
-    int64_t* metric_splits,
     phx_mc_cad_curve_statistics* statistics);
 
 #ifdef __cplusplus

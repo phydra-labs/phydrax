@@ -13,7 +13,6 @@ extern "C" int32_t phx_mc_cad_curves_test(
     int64_t offset_capacity, int64_t* offsets, int64_t parameter_capacity, double* parameters,
     int64_t failure_capacity, phx_mc_cad_curve_failure* failures,
     int64_t split_capacity, int64_t* sag_splits,
-    int64_t* metric_splits,
     phx_mc_cad_curve_statistics* statistics) {
   return phx::mc::guarded([&]() -> int32_t {
     if (model == nullptr || controls == nullptr || statistics == nullptr || offset_capacity < 0 ||
@@ -33,14 +32,12 @@ extern "C" int32_t phx_mc_cad_curves_test(
     if (result.offsets.size() > static_cast<uint64_t>(offset_capacity) ||
         result.parameters.size() > static_cast<uint64_t>(parameter_capacity) ||
         result.statistics.unresolved.size() > static_cast<uint64_t>(failure_capacity) ||
-        result.statistics.sag_splits_per_curve.size() > static_cast<uint64_t>(split_capacity) ||
-        result.statistics.metric_splits_per_curve.size() > static_cast<uint64_t>(split_capacity))
+        result.statistics.sag_splits_per_curve.size() > static_cast<uint64_t>(split_capacity))
       return PHX_MC_CAPACITY_EXCEEDED;
     if ((!result.offsets.empty() && offsets == nullptr) ||
         (!result.parameters.empty() && parameters == nullptr) ||
         (!result.statistics.unresolved.empty() && failures == nullptr) ||
-        (!result.statistics.sag_splits_per_curve.empty() && sag_splits == nullptr) ||
-        (!result.statistics.metric_splits_per_curve.empty() && metric_splits == nullptr))
+        (!result.statistics.sag_splits_per_curve.empty() && sag_splits == nullptr))
       return PHX_MC_INVALID_ARGUMENT;
     std::copy(result.offsets.begin(), result.offsets.end(), offsets);
     if (!result.parameters.empty())
@@ -48,12 +45,9 @@ extern "C" int32_t phx_mc_cad_curves_test(
     if (!result.statistics.sag_splits_per_curve.empty())
       std::copy(result.statistics.sag_splits_per_curve.begin(),
                 result.statistics.sag_splits_per_curve.end(), sag_splits);
-    if (!result.statistics.metric_splits_per_curve.empty())
-      std::copy(result.statistics.metric_splits_per_curve.begin(),
-                result.statistics.metric_splits_per_curve.end(), metric_splits);
     for (std::size_t i = 0; i < result.statistics.unresolved.size(); ++i) {
       const auto& failure = result.statistics.unresolved[i];
-      failures[i] = {failure.curve, failure.first, failure.last, failure.face};
+      failures[i] = {failure.curve, failure.first, failure.last};
     }
     *statistics = {result.statistics.first_order_evaluations,
                    result.statistics.second_order_evaluations,
@@ -61,8 +55,7 @@ extern "C" int32_t phx_mc_cad_curves_test(
                    result.statistics.small_feature_resamples,
                    result.statistics.sag_splits,
                    static_cast<int64_t>(result.parameters.size()),
-                   static_cast<int64_t>(result.statistics.unresolved.size()),
-                   result.statistics.metric_splits, result.statistics.metric_points_skipped};
+                   static_cast<int64_t>(result.statistics.unresolved.size())};
     return status;
   });
 }
