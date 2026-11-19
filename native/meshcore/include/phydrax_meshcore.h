@@ -2374,6 +2374,129 @@ PHX_MC_API int32_t phx_mc_implicit_stuffing(
     int64_t workspace_size, int64_t output_entry, const double* lower, const double* upper,
     double spacing, int64_t* degenerate_count, phx_mc_mesh** mesh);
 
+/* CAD geometry bundle: every surface, 3D curve and p-curve of a CAD model is a
+ * node of one geometry graph; a node's children precede it. Per node kind,
+ * the integers and reals (ragged, by offsets) are:
+ *   TEMPLATE         [template] / coefficients: a straight-line kind of the
+ *                    generated program table, coefficients in seed order
+ *   BSPLINE_CURVE    [degree, count, dimension] / knots (count + degree + 1),
+ *                    control points (count, dimension), weights (count);
+ *                    parameters outside the active knot interval are refused
+ *   BSPLINE_SURFACE  [u degree, v degree, u count, v count] / u knots, v knots,
+ *                    control points (u count, v count, 3), weights (u count,
+ *                    v count); parameters are clamped to the active domain
+ *                    with zero derivative across a clamped axis
+ *   TSPLINE_SURFACE  [pieces, coefficients, width, rows (pieces, width), -1
+ *                    padded] / piece bounds (pieces, 4: u0 u1 v0 v1),
+ *                    extraction operators (pieces, width, 16), control points
+ *                    (coefficients, 3), weights (coefficients); a point
+ *                    takes the first piece containing it
+ *   AFFINE           [child, dimension] / L (dimension, dimension), b:
+ *                    x -> L child(x) + b
+ *   REPARAMETERIZED  [child, reversed] / first, last: t -> child(first +
+ *                    s (last - first)), s = 1 - t when reversed, else t
+ *   OFFSET_SURFACE   [child] / signed distance d: S + d (Su x Sv) / |Su x Sv|
+ *   OFFSET_CURVE     [child, has direction] / distance, direction (3, when
+ *                    present): C + d n / |n|, n = (C'1, -C'0) for a planar
+ *                    child, else C' x direction
+ *   RULED            [first, second]: (1 - v) first(u) + v second(u)
+ *   EXTRUSION        [curve] / direction: curve(u) + v direction
+ *   REVOLUTION       [curve] / axis origin, axis direction: the profile
+ *                    point curve(v) turned by angle u about the axis
+ *   SURFACE_MAPPED   [surface, pcurve]: surface(pcurve(t))
+ *   ISOPARAMETRIC    [surface, fixed axis] / fixed value
+ *   INTERSECTION     [first surface, second surface, charts, output (0 point
+ *                    on the first surface, 1 first UV, 2 second UV), fixed
+ *                    chart or -1, terminal chart or -1, reversed, chart axes
+ *                    (charts)] / carrier sum, terminal threshold, then per
+ *                    chart start (4), end (4), lower (4), upper (4),
+ *                    preconditioner (3, 3): the root of S1(q01) = S2(q23)
+ *                    with one chart coordinate fixed, by 64 preconditioned
+ *                    clipped corrections from the chart's interpolation */
+enum {
+  PHX_MC_CAD_NODE_TEMPLATE = 0,
+  PHX_MC_CAD_NODE_BSPLINE_CURVE = 1,
+  PHX_MC_CAD_NODE_BSPLINE_SURFACE = 2,
+  PHX_MC_CAD_NODE_TSPLINE_SURFACE = 3,
+  PHX_MC_CAD_NODE_AFFINE = 4,
+  PHX_MC_CAD_NODE_REPARAMETERIZED = 5,
+  PHX_MC_CAD_NODE_OFFSET_SURFACE = 6,
+  PHX_MC_CAD_NODE_OFFSET_CURVE = 7,
+  PHX_MC_CAD_NODE_RULED = 8,
+  PHX_MC_CAD_NODE_EXTRUSION = 9,
+  PHX_MC_CAD_NODE_REVOLUTION = 10,
+  PHX_MC_CAD_NODE_SURFACE_MAPPED = 11,
+  PHX_MC_CAD_NODE_ISOPARAMETRIC = 12,
+  PHX_MC_CAD_NODE_INTERSECTION = 13
+};
+
+/* The flat CAD model (all arrays row-major, caller-owned). Surfaces carry
+ * their node, orientation, native periods (0 when not periodic) and parameter
+ * domain (+-inf when unbounded); curves their 3D node, corners and parameter
+ * range; loops their surface and uses; uses (curve traversals or collapsed
+ * pole sides) their entity, sense, parameter range and p-curve node;
+ * regions their oriented bounding surfaces. */
+typedef struct phx_mc_cad_model {
+  int64_t node_count;
+  const int32_t* node_kinds;           /* (N,) PHX_MC_CAD_NODE_* */
+  const int64_t* node_integer_offsets; /* (N + 1,) */
+  const int64_t* node_integers;
+  const int64_t* node_real_offsets; /* (N + 1,) */
+  const double* node_reals;
+  int64_t corner_count;
+  const double* corner_points; /* (C, 3) */
+  int64_t surface_count;
+  const int32_t* surface_nodes;           /* (F,) */
+  const int8_t* surface_orientations;     /* (F,) +1 or -1 */
+  const double* surface_periods;          /* (F, 2) */
+  const double* surface_parameter_domains; /* (F, 2, 2): (u lower, u upper), (v ...) */
+  int64_t curve_count;
+  const int32_t* curve_nodes;   /* (E,) */
+  const int32_t* curve_corners; /* (E, 2) start, end */
+  const double* curve_ranges;   /* (E, 2) */
+  int64_t loop_count;
+  const int64_t* loop_use_offsets; /* (L + 1,) */
+  const int32_t* loop_surfaces;    /* (L,) */
+  int64_t use_count;
+  const int8_t* use_kinds;        /* (U,) 0 curve, 1 pole */
+  const int32_t* use_entities;    /* (U,) curve or corner */
+  const int8_t* use_senses;       /* (U,) +1 or -1 */
+  const double* use_ranges;       /* (U, 2) first, last */
+  const int32_t* use_pcurve_nodes; /* (U,) */
+  int64_t region_count;
+  const int64_t* region_surface_offsets; /* (R + 1,) */
+  const int32_t* region_surfaces;
+  const int8_t* region_orientations;
+} phx_mc_cad_model;
+
+enum { PHX_MC_CAD_SURFACE = 0, PHX_MC_CAD_CURVE = 1, PHX_MC_CAD_PCURVE = 2 };
+enum {
+  PHX_MC_CAD_VALUE = 0,
+  PHX_MC_CAD_FIRST_DERIVATIVES = 1,
+  PHX_MC_CAD_SECOND_DERIVATIVES = 2,
+  PHX_MC_CAD_DIFFERENTIAL = 3
+};
+
+/* Binary64 geometry of one surface (by surface row), 3D curve (by curve row)
+ * or p-curve (by use row) at `count` parameter points ((count, 2) for a
+ * surface, (count,) otherwise). quantity VALUE, FIRST_DERIVATIVES or
+ * SECOND_DERIVATIVES writes the value and its derivatives order by order
+ * (surface: x, Su, Sv, Suu, Suv, Svv; curve: C, C', C''), as many as the
+ * order: 3 / 9 / 18 doubles per surface point, 3 / 6 / 9 per curve point and
+ * 2 / 4 / 6 per p-curve point. DIFFERENTIAL writes, per surface point, the
+ * first fundamental form E F G, the unit normal Su x Sv / |Su x Sv| and the
+ * principal curvatures k1 <= k2 for that normal (8 doubles), and per curve
+ * point the speed |C'| and the curvature (2 doubles). A malformed model or
+ * row is PHX_MC_INVALID_ARGUMENT / PHX_MC_INVALID_INPUT before any write; a
+ * point outside an entity's evaluation domain (B-spline curve knots,
+ * T-spline pieces, intersection charts) or a degenerate differential is
+ * PHX_MC_INVALID_INPUT with `result` unspecified. Floating-point proposals:
+ * nothing here bounds an error. */
+PHX_MC_API int32_t phx_mc_cad_geometry_evaluate(const phx_mc_cad_model* model,
+                                                int32_t entity_kind, int64_t entity,
+                                                int64_t count, const double* parameters,
+                                                int32_t quantity, double* result);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- Native CAD geometry bundle (S2-A of the native meshing plan): every surface,
+  3D curve and p-curve of a `MeshingDomain` becomes a node of one native
+  geometry graph (`_native_cad_bundle.cad_geometry_bundle`, cached by domain
+  identity) evaluated by `phx_mc_cad_geometry_evaluate` /
+  `_meshcore.cad_geometry_evaluate`: values, first and second derivatives,
+  first fundamental form, unit normal and principal curvatures. Straight-line
+  kinds are template programs generated from their JAX `evaluate`
+  (`tools/generate_cad_geometry_programs.py`); B-spline and T-spline kinds,
+  placements, offsets, swept, mapped and trimmed kinds and surface-surface
+  intersections are native nodes with truncated-Taylor jets. The interval
+  lowering gains `cosh`, `sinh` and constant-index `scatter-add`; the
+  interval-program point executors are internal C++ functions over a
+  caller-owned workspace.
 - Native meshing kernels (plan `docs/plans/native-meshing-kernels.md`):
   binary64 point and jet executors of interval programs
   (`evaluate_points`, `evaluate_jets`); an exact volume certificate
