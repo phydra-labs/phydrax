@@ -24,6 +24,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     IntervalBoxProgram,
     MeshcoreError,
+    zero_set_certify,
     zero_set_remesh,
 )
 from ..._physical import SpatialCoordinateContract
@@ -2145,15 +2146,15 @@ def _remesh_implicit_carrier(
     faces: np.ndarray,
     carrier_distance: float,
     admission_tolerance: float,
-    incidence: tuple[np.ndarray, np.ndarray] | None = None,
     /,
 ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, float]:
-    """Remesh the scaffold carrier under the native zero-set band admission.
+    """Remesh the scaffold carrier natively and certify every resulting triangle.
 
-    Every created triangle is certified within ``admission_tolerance`` of the
-    zero set and transversal to the field gradient; untouched scaffold
-    triangles keep their independently established ``carrier_distance``. The
-    result must meet the FIXED-fill radius-edge bound or the route refuses.
+    Construction is floating point; every triangle of the result is then
+    certified within ``admission_tolerance`` of the zero set and transversal
+    to the field gradient, except triangles kept from the carrier around
+    creases, which carry the carrier's ``carrier_distance``. The result must
+    meet the FIXED-fill radius-edge bound or the route refuses.
     """
     value, gradient = _implicit_field_box_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
@@ -2162,14 +2163,22 @@ def _remesh_implicit_carrier(
             vertices,
             faces,
             value,
-            gradient,
             admission_tolerance,
             carrier_distance,
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
-            incidence=incidence,
-            admission_limited_coarsening=True,
         )
+        distance = zero_set_certify(
+            remeshed.vertices,
+            remeshed.triangles,
+            value,
+            gradient,
+            admission_tolerance,
+            remeshed.orientation,
+            vertices,
+            faces,
+            carrier_distance,
+        ).distance
     except (MeshcoreError, ValueError, OverflowError) as error:
         raise _failure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -2203,7 +2212,7 @@ def _remesh_implicit_carrier(
     return (
         remeshed.vertices,
         remeshed.triangles,
-        remeshed.distance,
+        distance,
         remeshed.counters,
         edge_length,
     )
@@ -2382,13 +2391,6 @@ def _implicit_plc_carrier(
         # The scaffold carrier provably cannot meet the FIXED-fill bound.
         admission_tolerance = _implicit_carrier_admission_tolerance(source, specification)
         scaffold_vertices, scaffold_triangles = vertices, triangles
-        incidence = None
-        if 3 * len(triangles) <= np.iinfo(np.int32).max:
-            topology = extracted.topology
-            incidence = (
-                np.asarray(topology.vertex_face_offsets),
-                np.asarray(topology.vertex_faces),
-            )
         vertices, triangles, carrier_distance, counters, edge_length = (
             _remesh_implicit_carrier(
                 source,
@@ -2398,7 +2400,6 @@ def _implicit_plc_carrier(
                 triangles,
                 scaffold_distance,
                 admission_tolerance,
-                incidence,
             )
         )
         face_scaffold_rows = _nearest_scaffold_rows(

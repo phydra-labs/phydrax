@@ -547,15 +547,32 @@ class _ZeroSetRemeshRequest(ctypes.Structure):
         ("triangles", _P),
         ("triangle_count", _I64),
         ("value", _IntervalBoxProgram),
-        ("gradient", _IntervalBoxProgram),
         ("tolerance", _F64),
         ("carrier_distance", _F64),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
         ("result", _P),
         ("counters", _P),
+    )
+
+
+class _ZeroSetCertifyRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("value", _IntervalBoxProgram),
+        ("gradient", _IntervalBoxProgram),
+        ("tolerance", _F64),
+        ("orientation", _I32),
+        ("carrier_vertices", _P),
+        ("carrier_vertex_count", _I64),
+        ("carrier_triangles", _P),
+        ("carrier_triangle_count", _I64),
+        ("carrier_distance", _F64),
         ("distance", _P),
-        ("admission_limited_coarsening", _I32),
+        ("failures", _P),
     )
 
 
@@ -1241,10 +1258,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_surface_envelope_free": (None, (_P,)),
     "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
     "phx_mc_zero_set_remesh": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
-    "phx_mc_zero_set_remesh_i32": (
-        _I32,
-        (ctypes.POINTER(_ZeroSetRemeshRequest), _P, _I64, _P, _I64),
-    ),
+    "phx_mc_zero_set_remesh_i32": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
+    "phx_mc_zero_set_certify": (_I32, (ctypes.POINTER(_ZeroSetCertifyRequest),)),
     "phx_mc_zero_set_remesh_sizes": (_I32, (_P, _P)),
     "phx_mc_zero_set_remesh_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
     "phx_mc_zero_set_remesh_free": (None, (_P,)),
@@ -4557,10 +4572,10 @@ class TetMeshImplicitSnapshot(NamedTuple):
 class ZeroSetRemeshResult(NamedTuple):
     vertices: np.ndarray
     triangles: np.ndarray
-    distance: float
+    orientation: int
     counters: np.ndarray
-    """Splits, collapses, flips, relocations, unmet triangles, orientation, and
-    admissions refused for transversality and for distance."""
+    """Splits, collapses, flips, relocations, triangles below the minimum angle,
+    the orientation, triangles sampled above the tolerance, and 0."""
 
 
 def _interval_box_program(
@@ -4734,30 +4749,26 @@ def zero_set_remesh(
     vertices: object,
     triangles: object,
     value: IntervalBoxProgram,
-    gradient: IntervalBoxProgram,
     tolerance: float,
     carrier_distance: float,
     edge_length: float,
     minimum_angle_degrees: float,
     /,
-    *,
-    incidence: tuple[object, object] | None = None,
-    admission_limited_coarsening: bool,
 ) -> ZeroSetRemeshResult:
-    """Remesh a closed oriented carrier of ``{f = 0}`` under the zero-set band admission.
+    """Remesh a closed oriented carrier of ``{f = 0}`` by floating point.
 
-    Every created triangle has a certified distance to the zero set of at most
-    ``tolerance`` and a normal certified transversal to ``grad f`` with the
-    carrier's orientation. ``carrier_distance`` is the input carrier's declared
-    distance bound, retained by untouched input triangles; ``distance`` is the
-    maximum certified bound over the result. ``admission_limited_coarsening``
-    additionally centers vertices in the band (off the zero set) and collapses
-    edges below 4/5 of ``edge_length`` until the admission refuses them. A
-    carrier that is not closed (an edge not held by exactly two triangles, in
-    opposite directions) raises ``ValueError``.
+    Construction only, proving nothing: splits, collapses, flips and
+    tangential relocations toward ``edge_length``, lowered where the zero set
+    curves so that a well-shaped triangle stays within ``tolerance``; new and
+    moved vertices are projected onto ``{f = 0}``. Input edges turning by more
+    than 45 degrees are creases: every input triangle touching a crease vertex
+    is kept bitwise. ``orientation`` is the carrier's orientation
+    relative to ``grad f``; certify the result with ``zero_set_certify``. A
+    vertex further than ``edge_length + carrier_distance`` from the zero set
+    raises ``MeshcoreError`` (``UNRESOLVED``). A carrier that is not closed (an
+    edge not held by exactly two triangles, in opposite directions) raises
+    ``ValueError``.
     """
-    if not isinstance(admission_limited_coarsening, bool):
-        raise TypeError("admission_limited_coarsening must be a bool.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     input_faces = _index_array(triangles, "triangles")
     compact_faces = input_faces.dtype == np.dtype(np.int32)
@@ -4768,28 +4779,6 @@ def zero_set_remesh(
     )
     if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
         raise ValueError("triangles must be a nonempty (N, 3) integer array.")
-    incidence_arrays: tuple[np.ndarray, np.ndarray] | None = None
-    if incidence is not None:
-        if not compact_faces:
-            raise ValueError("Borrowed incidence requires int32 triangles.")
-        if not isinstance(incidence, tuple) or len(incidence) != 2:
-            raise TypeError("incidence must be an (offsets, face_rows) tuple.")
-        offsets = _index_array(incidence[0], "incidence offsets")
-        face_rows = _index_array(incidence[1], "incidence face rows")
-        if offsets.dtype != np.dtype(np.int32) or face_rows.dtype != np.dtype(np.int32):
-            raise TypeError("Borrowed incidence arrays must be int32.")
-        if offsets.ndim != 1 or offsets.size != points.shape[0] + 1:
-            raise ValueError(
-                "incidence offsets must contain one entry per vertex plus one."
-            )
-        if face_rows.ndim != 1 or face_rows.size != 3 * faces.shape[0]:
-            raise ValueError(
-                "incidence face rows must contain three entries per triangle."
-            )
-        incidence_arrays = (
-            np.ascontiguousarray(offsets),
-            np.ascontiguousarray(face_rows),
-        )
     controls = (tolerance, carrier_distance, edge_length, minimum_angle_degrees)
     if any(not np.isfinite(value_) for value_ in controls) or not (
         tolerance > 0.0
@@ -4802,44 +4791,25 @@ def zero_set_remesh(
             "and minimum_angle_degrees in (0, 60)."
         )
     value_view, value_arrays = _interval_box_program(value, 1, "value")
-    gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
     counters = np.zeros((8,), dtype=np.int64)
-    distance = np.zeros((1,), dtype=np.float64)
     request = _ZeroSetRemeshRequest(
         points.ctypes.data,
         points.shape[0],
         faces.ctypes.data,
         faces.shape[0],
         value_view,
-        gradient_view,
         float(tolerance),
         float(carrier_distance),
         float(edge_length),
         float(minimum_angle_degrees),
         ctypes.addressof(handle),
         counters.ctypes.data,
-        distance.ctypes.data,
-        int(admission_limited_coarsening),
     )
     library = load_meshcore()
-    if compact_faces:
-        if incidence_arrays is None:
-            status = library["phx_mc_zero_set_remesh_i32"](
-                ctypes.byref(request), 0, 0, 0, 0
-            )
-        else:
-            offsets, face_rows = incidence_arrays
-            status = library["phx_mc_zero_set_remesh_i32"](
-                ctypes.byref(request),
-                offsets.ctypes.data,
-                offsets.size,
-                face_rows.ctypes.data,
-                face_rows.size,
-            )
-    else:
-        status = library["phx_mc_zero_set_remesh"](ctypes.byref(request))
-    del value_arrays, gradient_arrays  # kept alive through the native call
+    entry = "phx_mc_zero_set_remesh_i32" if compact_faces else "phx_mc_zero_set_remesh"
+    status = library[entry](ctypes.byref(request))
+    del value_arrays  # kept alive through the native call
     _raise_for_call(status, "zero_set_remesh")
     if not handle.value:
         raise MeshcoreError(
@@ -4872,21 +4842,125 @@ def zero_set_remesh(
         )
     finally:
         library["phx_mc_zero_set_remesh_free"](handle)
-    certified = float(distance[0])
+    orientation = int(counters[5])
     if (
         not np.all(np.isfinite(out_vertices))
         or np.any(out_triangles < 0)
         or np.any(out_triangles >= vertex_count)
-        or not np.isfinite(certified)
-        or certified < 0.0
+        or orientation not in (-1, 1)
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
-            "zero_set_remesh returned invalid geometry or distance evidence.",
+            "zero_set_remesh returned invalid geometry or orientation.",
         )
     for output in (out_vertices, out_triangles, counters):
         output.setflags(write=False)
-    return ZeroSetRemeshResult(out_vertices, out_triangles, certified, counters)
+    return ZeroSetRemeshResult(out_vertices, out_triangles, orientation, counters)
+
+
+class ZeroSetCertificate(NamedTuple):
+    """Certified distance of a surface from ``{f = 0}``.
+
+    ``distance`` is the maximum over its triangles of the certified bound, or
+    of the carrier distance for the ``carrier_triangles`` triangles identical
+    to triangles of the carrier.
+    """
+
+    distance: float
+    carrier_triangles: int
+
+
+def zero_set_certify(
+    vertices: object,
+    triangles: object,
+    value: IntervalBoxProgram,
+    gradient: IntervalBoxProgram,
+    tolerance: float,
+    orientation: int,
+    carrier_vertices: object,
+    carrier_triangles: object,
+    carrier_distance: float,
+    /,
+) -> ZeroSetCertificate:
+    """Certify every triangle within ``tolerance`` of ``{f = 0}`` and transversal.
+
+    Each triangle's distance is bounded by interval forms of ``f`` against a
+    certified lower bound of ``|grad f|`` (subdividing where needed), and its
+    normal is certified transversal to ``grad f`` with ``orientation`` (+1 or
+    -1). A triangle with the corner coordinates, in the same cyclic order, of
+    a triangle of the carrier (the surface remeshed, within
+    ``carrier_distance`` of the zero set by its producer's evidence) is
+    accepted at ``carrier_distance`` without a proof: ``zero_set_remesh``
+    keeps the carrier's triangles around creases, where transversality is not
+    decidable. A triangle that cannot be certified raises ``MeshcoreError``
+    (``UNRESOLVED``) naming how many were refused for transversality and for
+    distance.
+    """
+    if orientation not in (-1, 1):
+        raise ValueError("orientation must be 1 or -1.")
+    if not np.isfinite(tolerance) or not tolerance > 0.0:
+        raise ValueError("tolerance must be positive and finite.")
+    if not np.isfinite(carrier_distance) or not carrier_distance >= 0.0:
+        raise ValueError("carrier_distance must be nonnegative and finite.")
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
+        raise ValueError("triangles must be a nonempty (N, 3) integer array.")
+    carrier_points = np.ascontiguousarray(
+        _points(carrier_vertices, "carrier_vertices", 3), dtype=np.float64
+    )
+    carrier_faces = _native_integer_array(
+        _index_array(carrier_triangles, "carrier_triangles"),
+        "carrier_triangles",
+        np.dtype(np.int64),
+    )
+    if carrier_faces.ndim != 2 or carrier_faces.shape[1] != 3:
+        raise ValueError("carrier_triangles must be an (N, 3) integer array.")
+    value_view, value_arrays = _interval_box_program(value, 1, "value")
+    gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
+    distance = np.zeros((1,), dtype=np.float64)
+    failures = np.zeros((3,), dtype=np.int64)
+    request = _ZeroSetCertifyRequest(
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        value_view,
+        gradient_view,
+        float(tolerance),
+        int(orientation),
+        carrier_points.ctypes.data,
+        carrier_points.shape[0],
+        carrier_faces.ctypes.data,
+        carrier_faces.shape[0],
+        float(carrier_distance),
+        distance.ctypes.data,
+        failures.ctypes.data,
+    )
+    status = load_meshcore()["phx_mc_zero_set_certify"](ctypes.byref(request))
+    del value_arrays, gradient_arrays  # kept alive through the native call
+    if status == MeshcoreStatus.UNRESOLVED:
+        raise MeshcoreError(
+            MeshcoreStatus.UNRESOLVED,
+            f"zero_set_certify refused {int(failures[0])} triangles for transversality "
+            f"and {int(failures[1])} for distance.",
+        )
+    _raise_for_call(status, "zero_set_certify")
+    certified = float(distance[0])
+    kept = int(failures[2])
+    if (
+        not np.isfinite(certified)
+        or certified < 0.0
+        or certified > tolerance
+        or not 0 <= kept <= faces.shape[0]
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "zero_set_certify returned invalid distance evidence.",
+        )
+    return ZeroSetCertificate(certified, kept)
 
 
 class LevelSetSplitResult(NamedTuple):
@@ -11922,6 +11996,8 @@ __all__ = [
     "SurfaceEnvelopeResult",
     "surface_envelope",
     "IntervalBoxProgram",
+    "ZeroSetCertificate",
     "ZeroSetRemeshResult",
+    "zero_set_certify",
     "zero_set_remesh",
 ]

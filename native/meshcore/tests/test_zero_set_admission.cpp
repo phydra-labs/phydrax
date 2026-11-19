@@ -487,180 +487,215 @@ double signed_volume(const std::vector<double>& v, const std::vector<int64_t>& t
   return volume / 6;
 }
 
+struct Remeshed {
+  int32_t status = PHX_MC_INTERNAL_ERROR;
+  std::vector<double> vertices;
+  std::vector<int64_t> triangles;
+  std::array<int64_t, 8> counters{};
+};
+
+// phx_mc_zero_set_remesh (or the int32 entry) on a carrier; arrays copied out.
+Remeshed construct(const Surface& input, const Program& value, double tolerance, double edge,
+                   bool compact = false) {
+  Remeshed out;
+  void* handle = nullptr;
+  const std::vector<int32_t> narrow = compact_indices(input.triangles);
+  const phx_mc_zero_set_remesh_request request{
+      input.vertices.data(),
+      static_cast<int64_t>(input.vertices.size() / 3),
+      compact ? reinterpret_cast<const int64_t*>(narrow.data()) : input.triangles.data(),
+      static_cast<int64_t>(input.triangles.size() / 3),
+      value.view(),
+      tolerance,
+      tolerance,
+      edge,
+      30.0,
+      &handle,
+      out.counters.data()};
+  out.status = compact ? phx_mc_zero_set_remesh_i32(&request) : phx_mc_zero_set_remesh(&request);
+  if (out.status != PHX_MC_OK) {
+    PHX_CHECK(handle == nullptr);
+    return out;
+  }
+  std::array<int64_t, 2> sizes{};
+  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  out.vertices.resize(static_cast<size_t>(3 * sizes[0]));
+  out.triangles.resize(static_cast<size_t>(3 * sizes[1]));
+  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0] - 1, sizes[1], out.vertices.data(),
+                                          out.triangles.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], out.vertices.data(),
+                                          out.triangles.data()) == PHX_MC_OK);
+  phx_mc_zero_set_remesh_free(handle);
+  return out;
+}
+
+using Failures = std::array<int64_t, 3>;
+
+// phx_mc_zero_set_certify, accepting the triangles of `carrier` (if any) at
+// carrier_distance.
+int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>& triangles,
+                const Program& value, const Program& gradient, double tolerance,
+                int32_t orientation, double& distance, Failures& failures,
+                const Surface* carrier = nullptr, double carrier_distance = 0) {
+  const phx_mc_zero_set_certify_request request{
+      vertices.data(),
+      static_cast<int64_t>(vertices.size() / 3),
+      triangles.data(),
+      static_cast<int64_t>(triangles.size() / 3),
+      value.view(),
+      gradient.view(),
+      tolerance,
+      orientation,
+      carrier == nullptr ? nullptr : carrier->vertices.data(),
+      carrier == nullptr ? 0 : static_cast<int64_t>(carrier->vertices.size() / 3),
+      carrier == nullptr ? nullptr : carrier->triangles.data(),
+      carrier == nullptr ? 0 : static_cast<int64_t>(carrier->triangles.size() / 3),
+      carrier_distance,
+      &distance,
+      failures.data()};
+  return phx_mc_zero_set_certify(&request);
+}
+
+// Every directed edge appears once and reversed once.
+bool closed_oriented(const std::vector<int64_t>& triangles) {
+  std::map<std::pair<int64_t, int64_t>, int> directed;
+  for (size_t f = 0; f < triangles.size(); f += 3)
+    for (size_t k = 0; k < 3; ++k) ++directed[{triangles[f + k], triangles[f + (k + 1) % 3]}];
+  bool closed = !directed.empty();
+  for (const auto& [edge, count] : directed)
+    closed = closed && count == 1 && directed.count({edge.second, edge.first}) == 1;
+  return closed;
+}
+
+// A coarse UV sphere (slivers at the poles) remeshed toward edge 0.3: a closed
+// outward surface on the sphere with its slivers gone, which certification
+// accepts within the tolerance; both entries agree, and malformed requests
+// are refused before construction.
 void remesh_sphere_carrier() {
   const Surface input = uv_sphere(8, 40);
   PHX_CHECK(signed_volume(input.vertices, input.triangles) > 0);
   const double before = minimum_angle(input.vertices, input.triangles);
   const Program value = sphere_value(), gradient = sphere_gradient();
-  void* handle = nullptr;
-  std::array<int64_t, 8> counters{};
-  double distance = -1;
   constexpr double tolerance = 0.05;
+  const Remeshed wide = construct(input, value, tolerance, 0.3);
+  PHX_CHECK(wide.status == PHX_MC_OK);
+  if (wide.status != PHX_MC_OK) return;
+  PHX_CHECK(wide.counters[5] == 1);
+  PHX_CHECK(wide.counters[1] > 0);
+  PHX_CHECK(closed_oriented(wide.triangles));
+  PHX_CHECK(signed_volume(wide.vertices, wide.triangles) > 0);
+  for (size_t v = 0; v < wide.vertices.size(); v += 3)
+    PHX_CHECK(sphere_distance({wide.vertices[v], wide.vertices[v + 1], wide.vertices[v + 2]}) <=
+              1e-9);
+  const double after = minimum_angle(wide.vertices, wide.triangles);
+  std::printf("sphere carrier: min angle %.2f -> %.2f deg, %lld -> %lld triangles, below %lld\n",
+              before, after, static_cast<long long>(input.triangles.size() / 3),
+              static_cast<long long>(wide.triangles.size() / 3),
+              static_cast<long long>(wide.counters[4]));
+  PHX_CHECK(before < 10.0);
+  PHX_CHECK(after >= 30.0);
+  PHX_CHECK(wide.counters[4] == 0);
+  double distance = -1;
+  Failures failures{-1, -1, -1};
+  PHX_CHECK(certify(wide.vertices, wide.triangles, value, gradient, tolerance,
+                    static_cast<int32_t>(wide.counters[5]), distance, failures) == PHX_MC_OK);
+  PHX_CHECK(distance >= 0 && distance <= tolerance);
+  PHX_CHECK(failures[0] == 0 && failures[1] == 0 && failures[2] == 0);
+  const Remeshed narrow = construct(input, value, tolerance, 0.3, true);
+  PHX_CHECK(narrow.status == PHX_MC_OK);
+  PHX_CHECK(narrow.vertices == wide.vertices);
+  PHX_CHECK(narrow.triangles == wide.triangles);
+  PHX_CHECK(narrow.counters == wide.counters);
+  // Malformed requests.
+  std::array<int64_t, 8> counters{};
+  void* handle = nullptr;
   phx_mc_zero_set_remesh_request request{
       input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
       input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
-      value.view(),          gradient.view(),
-      tolerance,             tolerance,
-      0.3,                   30.0,
-      &handle,               counters.data(),
-      &distance};
-  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
-  PHX_CHECK(handle != nullptr);
-  if (handle == nullptr) return;
-  PHX_CHECK(counters[5] == 1);
-  PHX_CHECK(distance >= 0 && distance <= tolerance);
-  std::array<int64_t, 2> sizes{};
-  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
-  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
-  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0] - 1, sizes[1], vertices.data(),
-                                          triangles.data()) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
-                                          triangles.data()) == PHX_MC_OK);
-  phx_mc_zero_set_remesh_free(handle);
-  // The compact borrowed-input ABI must produce exactly the same edits,
-  // certificates and ordering as the ordinary int64 entry.
-  std::vector<int32_t> compact = compact_indices(input.triangles);
-  const std::vector<int32_t> original_compact = compact;
-  void* compact_handle = nullptr;
-  std::array<int64_t, 8> compact_counters{};
-  double compact_distance = -1;
-  auto compact_request = request;
-  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
-  compact_request.result = &compact_handle;
-  compact_request.counters = compact_counters.data();
-  compact_request.distance = &compact_distance;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_OK);
-  PHX_CHECK(compact_handle != nullptr);
-  if (compact_handle != nullptr) {
-    std::array<int64_t, 2> compact_sizes{};
-    PHX_CHECK(phx_mc_zero_set_remesh_sizes(compact_handle, compact_sizes.data()) == PHX_MC_OK);
-    PHX_CHECK(compact_sizes == sizes);
-    std::vector<double> compact_vertices(static_cast<size_t>(3 * compact_sizes[0]));
-    std::vector<int64_t> compact_triangles(static_cast<size_t>(3 * compact_sizes[1]));
-    PHX_CHECK(phx_mc_zero_set_remesh_arrays(compact_handle, compact_sizes[0], compact_sizes[1],
-                                            compact_vertices.data(), compact_triangles.data()) ==
-              PHX_MC_OK);
-    PHX_CHECK(compact_vertices == vertices);
-    PHX_CHECK(compact_triangles == triangles);
-    PHX_CHECK(compact_counters == counters);
-    PHX_CHECK(compact_distance == distance);
-    PHX_CHECK(compact == original_compact);
-    phx_mc_zero_set_remesh_free(compact_handle);
-  }
-  // Admission-limited coarsening is opt-in: it keeps the certified band, may
-  // only remove vertices relative to the ordinary passes, and the flag is a
-  // strict boolean.
-  void* coarse_handle = nullptr;
-  std::array<int64_t, 8> coarse_counters{};
-  double coarse_distance = -1;
-  auto coarse_request = request;
-  coarse_request.result = &coarse_handle;
-  coarse_request.counters = coarse_counters.data();
-  coarse_request.distance = &coarse_distance;
-  coarse_request.admission_limited_coarsening = 1;
-  PHX_CHECK(phx_mc_zero_set_remesh(&coarse_request) == PHX_MC_OK);
-  PHX_CHECK(coarse_handle != nullptr);
-  if (coarse_handle != nullptr) {
-    std::array<int64_t, 2> coarse_sizes{};
-    PHX_CHECK(phx_mc_zero_set_remesh_sizes(coarse_handle, coarse_sizes.data()) == PHX_MC_OK);
-    PHX_CHECK(coarse_sizes[0] <= sizes[0]);
-    PHX_CHECK(coarse_distance >= 0 && coarse_distance <= tolerance);
-    PHX_CHECK(coarse_counters[5] == 1);
-    phx_mc_zero_set_remesh_free(coarse_handle);
-  }
-  coarse_request.admission_limited_coarsening = 2;
-  coarse_handle = nullptr;
-  PHX_CHECK(phx_mc_zero_set_remesh(&coarse_request) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(coarse_handle == nullptr);
-  PHX_CHECK(counters[1] > 0);
-  compact[0] = -1;
-  compact_handle = nullptr;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(compact_handle == nullptr);
-  compact = original_compact;
-  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
-  std::swap(compact[1], compact[2]);
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(compact_handle == nullptr);
-  compact = original_compact;
-  compact_request.triangles = reinterpret_cast<const int64_t*>(compact.data());
-  auto nonfinite_vertices = input.vertices;
-  nonfinite_vertices[0] = std::numeric_limits<double>::infinity();
-  compact_request.vertices = nonfinite_vertices.data();
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&compact_request, nullptr, 0, nullptr, 0) == PHX_MC_NONFINITE_INPUT);
-  PHX_CHECK(compact_handle == nullptr);
-  // The carrier must be closed: with one triangle left out (a border) or one
-  // repeated (an edge held twice in one direction) both entries refuse it
-  // before any edit.
+      gradient.view(),       tolerance,
+      tolerance,             0.3,
+      30.0,                  &handle,
+      counters.data()};
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);  // three outputs
+  request.value = value.view();
+  request.edge_length = 0;
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
+  request.edge_length = 0.3;
+  PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  auto nonfinite = input.vertices;
+  nonfinite[0] = std::numeric_limits<double>::infinity();
+  request.vertices = nonfinite.data();
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_NONFINITE_INPUT);
+  request.vertices = input.vertices.data();
+  auto outside = input.triangles;
+  outside[0] = -1;
+  request.triangles = outside.data();
+  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_INPUT);
+  // The carrier must be closed: one triangle left out (a border) or one
+  // repeated (an edge held twice in one direction) is refused.
   for (const bool repeated : {false, true}) {
     std::vector<int64_t> defective = input.triangles;
-    if (repeated) defective.insert(defective.end(), input.triangles.begin(),
-                                   input.triangles.begin() + 3);
-    else defective.resize(defective.size() - 3);
-    const std::vector<int32_t> defective_compact = compact_indices(defective);
-    void* defective_handle = nullptr;
-    std::array<int64_t, 8> defective_counters{};
-    double defective_distance = -1;
-    auto defective_request = request;
-    defective_request.triangles = defective.data();
-    defective_request.triangle_count = static_cast<int64_t>(defective.size() / 3);
-    defective_request.result = &defective_handle;
-    defective_request.counters = defective_counters.data();
-    defective_request.distance = &defective_distance;
-    PHX_CHECK(phx_mc_zero_set_remesh(&defective_request) == PHX_MC_INVALID_INPUT);
-    PHX_CHECK(defective_handle == nullptr);
-    defective_request.triangles = reinterpret_cast<const int64_t*>(defective_compact.data());
-    PHX_CHECK(phx_mc_zero_set_remesh_i32(&defective_request, nullptr, 0, nullptr, 0) ==
-              PHX_MC_INVALID_INPUT);
-    PHX_CHECK(defective_handle == nullptr);
+    if (repeated)
+      defective.insert(defective.end(), input.triangles.begin(), input.triangles.begin() + 3);
+    else
+      defective.resize(defective.size() - 3);
+    request.triangles = defective.data();
+    request.triangle_count = static_cast<int64_t>(defective.size() / 3);
+    PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_INPUT);
   }
-  // Closed oriented 2-manifold: every directed edge appears once, reversed once.
-  std::map<std::pair<int64_t, int64_t>, int> directed;
-  for (size_t f = 0; f < triangles.size(); f += 3)
-    for (size_t k = 0; k < 3; ++k) ++directed[{triangles[f + k], triangles[f + (k + 1) % 3]}];
-  bool manifold = true;
-  for (const auto& [edge, count] : directed)
-    manifold = manifold && count == 1 && directed.count({edge.second, edge.first}) == 1;
-  PHX_CHECK(manifold);
-  std::vector<double> edge_lengths;
-  for (const auto& item : directed) {
-    const auto& edge = item.first;
-    if (edge.first >= edge.second) continue;
-    const size_t a = static_cast<size_t>(edge.first) * 3;
-    const size_t b = static_cast<size_t>(edge.second) * 3;
-    edge_lengths.push_back(std::hypot(vertices[a] - vertices[b],
-                                      vertices[a + 1] - vertices[b + 1],
-                                      vertices[a + 2] - vertices[b + 2]));
-  }
-  std::sort(edge_lengths.begin(), edge_lengths.end());
-  const auto quantile = [&](double fraction) {
-    const double position = fraction * static_cast<double>(edge_lengths.size() - 1);
-    const size_t lower = static_cast<size_t>(position);
-    const size_t upper = std::min(lower + 1, edge_lengths.size() - 1);
-    return edge_lengths[lower] + (position - static_cast<double>(lower)) *
-                                    (edge_lengths[upper] - edge_lengths[lower]);
-  };
-  PHX_CHECK(!edge_lengths.empty());
-  if (!edge_lengths.empty()) {
-    PHX_CHECK(quantile(0.5) >= 0.15);
-    PHX_CHECK(quantile(0.95) >= 0.15 && quantile(0.95) <= 0.45);
-  }
-  PHX_CHECK(counters[3] > 0);
-  PHX_CHECK(signed_volume(vertices, triangles) > 0);
-  for (size_t v = 0; v < vertices.size(); v += 3)
-    PHX_CHECK(sphere_distance({vertices[v], vertices[v + 1], vertices[v + 2]}) <= distance);
-  const double after = minimum_angle(vertices, triangles);
-  std::printf("sphere carrier: min angle %.2f -> %.2f deg, %lld -> %lld triangles, "
-              "unmet %lld, distance %.3g\n",
-              before, after, static_cast<long long>(input.triangles.size() / 3),
-              static_cast<long long>(sizes[1]), static_cast<long long>(counters[4]), distance);
-  PHX_CHECK(before < 10.0);
-  PHX_CHECK(after > 20.0);
-  // Program/request validation.
-  request.value = gradient.view();  // three outputs where one is declared
-  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_zero_set_remesh(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(handle == nullptr);
+}
+
+// Certification refuses what it cannot prove: a vertex lifted out of the
+// band (distance), the opposite orientation (transversality), and malformed
+// requests. Carrier triangles are accepted only when identical (any starting
+// corner, same orientation) and at the carrier's distance.
+void certify_refusals() {
+  const Surface input = uv_sphere(8, 40);
+  const Program value = sphere_value(), gradient = sphere_gradient();
+  constexpr double tolerance = 0.05;
+  const Remeshed remeshed = construct(input, value, tolerance, 0.3);
+  PHX_CHECK(remeshed.status == PHX_MC_OK);
+  if (remeshed.status != PHX_MC_OK) return;
+  double distance = -1;
+  Failures failures{};
+  auto lifted = remeshed.vertices;
+  for (size_t d = 0; d < 3; ++d) lifted[d] *= 1.2;
+  PHX_CHECK(certify(lifted, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[1] > 0);
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, -1,
+                    distance, failures) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[0] > 0);
+  // The remeshed surface as its own carrier: every triangle accepted, listed
+  // from another corner; the lifted triangles are not the carrier's.
+  const Surface own{remeshed.vertices, remeshed.triangles};
+  auto rotated = remeshed.triangles;
+  for (size_t f = 0; f < rotated.size(); f += 3) std::rotate(&rotated[f], &rotated[f + 1], &rotated[f + 3]);
+  PHX_CHECK(certify(remeshed.vertices, rotated, value, gradient, tolerance, 1, distance, failures,
+                    &own, 0.01) == PHX_MC_OK);
+  PHX_CHECK(distance == 0.01);
+  PHX_CHECK(failures[2] == static_cast<int64_t>(rotated.size() / 3));
+  PHX_CHECK(certify(lifted, remeshed.triangles, value, gradient, tolerance, 1, distance, failures,
+                    &own, 0.01) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[1] > 0 && failures[2] < static_cast<int64_t>(rotated.size() / 3));
+  // A carrier further than the tolerance does not certify.
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures, &own, 2 * tolerance) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 0,
+                    distance, failures) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, value, tolerance, 1, distance,
+                    failures) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures, &own, -1) == PHX_MC_INVALID_ARGUMENT);
+  auto outside = remeshed.triangles;
+  outside[0] = static_cast<int64_t>(remeshed.vertices.size() / 3);
+  PHX_CHECK(certify(remeshed.vertices, outside, value, gradient, tolerance, 1, distance,
+                    failures) == PHX_MC_INVALID_INPUT);
+  const Surface broken{remeshed.vertices, outside};
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures, &broken, 0.01) == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(phx_mc_zero_set_certify(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // Octahedron subdivided `levels` times onto the unit sphere, every coordinate
@@ -706,233 +741,22 @@ Surface jittered_octasphere(int levels, double jitter, uint64_t seed) {
   return surface;
 }
 
-// The complete result of one small remesh, pinned. Which edits a remesh makes
-// depends on the order in which a vertex's star lists its faces: a reversed
-// order returns another valid closed surface, so no property of the output
-// shows it and the output itself is the reference. The expected arrays are
-// what the library at 464b28fe3 (before star storage was reused and scratch
-// pages were indexed directly) returns for this carrier through
-// phx_mc_zero_set_remesh. Carrier and admission use only correctly rounded
-// operations in a fixed order, so the arrays hold on every platform, and
-// both entries (owned stars, borrowed compact stars) must return them.
-void remesh_pinned_carrier() {
-  const Surface input = jittered_octasphere(2, 0.01, 1);
-  PHX_CHECK(input.triangles.size() == 3 * 128);
+// A jittered carrier (every coordinate moved up to 0.01 off the sphere) is
+// projected and remeshed within the tolerance, and certified.
+void remesh_jittered_carrier() {
+  const Surface input = jittered_octasphere(3, 0.01, 1);
   const Program value = sphere_value(), gradient = sphere_gradient();
-  const std::vector<double> expected_vertices{
-      0x1.4e0dd2d838ad8p-5, 0x1.771aa5ff42964p-1, 0x1.7b937e7c4c248p-1,
-      -0x1.c9678e0a25ed8p-2, 0x1.b985c60df75ebp-2, 0x1.ae39ad82c018ep-1,
-      0x1.97f300da1c46ep-3, 0x1.1ea719f3c9078p-3, 0x1.033ddb01b6829p+0,
-      -0x1.c1256feb7958bp-1, 0x1.adfd6b8cb2d17p-2, 0x1.8b2201b7f5c2ap-2,
-      -0x1.8e0baf7e80bf3p-1, -0x1.b9d13768deba6p-6, 0x1.67dac968eac05p-1,
-      -0x1.30bcaf7ddac2bp-2, -0x1.01204f68ba37bp+0, 0x1.fa1a5816b14ddp-7,
-      -0x1.8763db8961fe2p-1, -0x1.6f3eaaa27ff37p-1, 0x1.d9093dbe6fe33p-8,
-      -0x1.df1e7407b3769p-2, -0x1.9822c7c862593p-1, -0x1.f9af2f376e4a1p-2,
-      -0x1.ce48873ce0bb8p-2, 0x1.ab73bb6a3586ep-1, 0x1.ca03f35302948p-2,
-      0x1.d79218668d016p-8, 0x1.028727106948ap+0, 0x1.0dbd9668d098ap-2,
-      -0x1.05b33c8c2abd2p+0, -0x1.6e91c29d393d4p-3, 0x1.36f5f1f2a4621p-3,
-      0x1.0566e11190dbap-2, -0x1.04797674eb8abp+0, 0x1.99a3c208968bap-6,
-      -0x1.cdc4e50df89cdp-7, -0x1.bbe3af69d27b6p-1, 0x1.282fffe7bdbcdp-1,
-      -0x1.16bde77036b8ep-1, -0x1.706903a8f6237p-2, -0x1.a10e523dcfc56p-1,
-      -0x1.aab428a0e7e6fp-9, -0x1.1db4f74964ba5p-1, -0x1.c5f811a7f5b92p-1,
-      0x1.d49faca84a123p-2, -0x1.d8efd7398be69p-2, 0x1.a0deb89f76695p-1,
-      0x1.85ce62f155503p-1, 0x1.4b6ad3613d9f2p-6, 0x1.71dcdbbc40792p-1,
-      -0x1.9166ba2f0b3dfp-1, 0x1.5bf9cdaa01c26p-1, -0x1.006f068f88d4fp-3,
-      0x1.d187633943f3dp-2, 0x1.ce686eb11194cp-1, 0x1.b484a8effe62dp-3,
-      0x1.5bff1587dd78ap-1, 0x1.db478bb68ad5ap-2, 0x1.49427b4865498p-1,
-      0x1.b3e4f807d2e01p-1, 0x1.33c39a927c604p-1, -0x1.4ca2c265013cap-5,
-      0x1.064cd6059ba46p+0, 0x1.47a3536244c01p-5, 0x1.c6563b4f52fe2p-3,
-      -0x1.7c55f140152b3p-2, 0x1.eff8043c88d93p-1, -0x1.35a43250f68b9p-4,
-      -0x1.c706197bf59ffp-2, 0x1.4aa80b3c6ec52p-1, -0x1.62293a90f6fb0p-1,
-      -0x1.67dfb5a3fb020p-2, -0x1.2b6bf04602127p-5, 0x1.f3ca5ae55b87bp-1,
-      -0x1.ecb50e43c4ee3p-2, -0x1.def994e939045p-2, 0x1.9c23aa40091e6p-1,
-      -0x1.5b93839901ad1p-1, -0x1.5004c01187032p-1, 0x1.cf0da01ae80a7p-2,
-      -0x1.f767ba0b242b7p-6, -0x1.7a9adfb2ecd97p-2, 0x1.f62f5a6fb4749p-1,
-      0x1.3797c773bdd2bp-1, -0x1.9fe8b51c6d2dep-1, 0x1.e7a712a943e6ap-3,
-      0x1.dbb89648dd788p-2, -0x1.a381400863b66p-1, -0x1.d6d61ed41cf86p-2,
-      0x1.e18fa18a0038bp-1, -0x1.9e9b47c82fb40p-2, -0x1.d274b527d8a12p-3,
-      0x1.b46ebacc56114p-1, -0x1.d801913a6fc22p-2, 0x1.9c30291cffde5p-2,
-      0x1.57e42f8756274p-1, 0x1.ba4c973e1de05p-2, -0x1.5b5d1c0f427cfp-1,
-      0x1.e3cab3e7cc5fcp-2, 0x1.a2d3a899c696bp-1, -0x1.d233de72d0379p-2,
-      0x1.b6e41cfc369c6p-6, 0x1.f65ab52c831d4p-1, -0x1.5c39c1816a0b7p-2,
-      0x1.fa8624b124865p-1, 0x1.1510f6faae28ep-3, -0x1.3f600584807e3p-2,
-      0x1.4f11a02833f45p-2, 0x1.deee028024c3fp-9, -0x1.fcba543b7f947p-1,
-      0x1.f57928956891ep-4, 0x1.32f131ac1f773p-1, -0x1.b200f9687dc75p-1,
-      -0x1.978f09e596223p-1, 0x1.ab93c60ddd489p-3, -0x1.4b2feca36872ep-1,
-      -0x1.037669f51ad6bp+0, 0x1.a782eae39e46fp-3, -0x1.4a700a450f962p-3,
-      -0x1.1bdfb94ce7675p-2, 0x1.803ef7e29dc4dp-4, -0x1.01bad4ba869eep+0,
-      -0x1.99da3d9514bd9p-6, -0x1.ee962d065c760p-1, -0x1.9e8fe76b003f6p-2,
-      -0x1.cd5bc2f859abfp-1, -0x1.5df48a6b6b5e8p-2, -0x1.a10e00abf8dffp-2,
-      0x1.5758b1d50e393p-1, -0x1.e6201a6fa07c5p-3, -0x1.7e59de06f546fp-1,
-  };
-  const std::vector<int64_t> expected_triangles{
-      0, 1, 2,  3, 4, 1,  5, 6, 7,  8, 1, 0,  3, 1, 8,  9, 8, 0,
-      3, 10, 4,  5, 11, 12,  7, 13, 14,  15, 16, 2,  17, 3, 8,  18, 9, 0,
-      19, 0, 2,  20, 19, 21,  16, 19, 2,  21, 19, 16,  18, 0, 19,  20, 18, 19,
-      22, 8, 9,  22, 17, 8,  17, 22, 23,  1, 24, 2,  1, 4, 24,  4, 25, 24,
-      5, 12, 26,  6, 5, 26,  10, 26, 4,  10, 6, 26,  26, 12, 25,  26, 25, 4,
-      12, 15, 27,  15, 2, 27,  25, 12, 27,  24, 27, 2,  25, 27, 24,  28, 15, 12,
-      11, 28, 12,  28, 29, 30,  28, 11, 29,  30, 21, 31,  31, 16, 15,  31, 21, 16,
-      31, 15, 28,  28, 30, 31,  20, 32, 33,  18, 20, 33,  9, 18, 34,  22, 9, 34,
-      22, 34, 23,  18, 33, 34,  21, 30, 35,  20, 21, 35,  20, 35, 32,  32, 36, 37,
-      33, 32, 37,  23, 34, 37,  34, 33, 37,  17, 23, 38,  39, 10, 3,  17, 39, 3,
-      39, 17, 38,  36, 14, 40,  13, 40, 14,  37, 36, 40,  23, 37, 40,  38, 23, 40,
-      13, 38, 40,  41, 7, 14,  5, 7, 41,  11, 5, 41,  29, 41, 14,  11, 41, 29,
-      6, 42, 7,  6, 10, 42,  42, 13, 7,  42, 38, 13,  10, 39, 42,  42, 39, 38,
-      43, 14, 36,  29, 14, 43,  29, 43, 30,  32, 43, 36,  35, 30, 43,  32, 35, 43,
-  };
-  const std::array<int64_t, 8> expected_counters{0, 22, 0, 856, 0, 1, 0, 41283};
-  const double expected_distance = 0x1.9999999999999p-5;
-  const std::vector<int32_t> compact = compact_indices(input.triangles);
-  for (const bool borrowed : {false, true}) {
-    void* handle = nullptr;
-    std::array<int64_t, 8> counters{};
-    double distance = -1;
-    phx_mc_zero_set_remesh_request request{
-        input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
-        borrowed ? reinterpret_cast<const int64_t*>(compact.data()) : input.triangles.data(),
-        static_cast<int64_t>(input.triangles.size() / 3),
-        value.view(),          gradient.view(),
-        0.05,                  0.05,
-        0.8,                   30.0,
-        &handle,               counters.data(),
-        &distance};
-    request.admission_limited_coarsening = 1;
-    PHX_CHECK((borrowed ? phx_mc_zero_set_remesh_i32(&request, nullptr, 0, nullptr, 0)
-                        : phx_mc_zero_set_remesh(&request)) == PHX_MC_OK);
-    PHX_CHECK(handle != nullptr);
-    if (handle == nullptr) continue;
-    std::array<int64_t, 2> sizes{};
-    PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
-    std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
-    std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
-    PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
-                                            triangles.data()) == PHX_MC_OK);
-    phx_mc_zero_set_remesh_free(handle);
-    PHX_CHECK(vertices == expected_vertices);
-    PHX_CHECK(triangles == expected_triangles);
-    PHX_CHECK(counters == expected_counters);
-    PHX_CHECK(distance == expected_distance);
-  }
-}
-void remesh_edit_parity(int rings, int segments, double tolerance, double edge,
-                        double angle, bool require_split) {
-  const Surface input = uv_sphere(rings, segments);
-  const auto original_vertices = input.vertices;
-  const auto original_faces = input.triangles;
-  const Program value = sphere_value(), gradient = sphere_gradient();
-  std::vector<int32_t> compact = compact_indices(input.triangles);
-  const auto original = compact;
-  std::vector<int32_t> offsets(input.vertices.size() / 3 + 1, 0);
-  for (int32_t vertex : compact) ++offsets[static_cast<size_t>(vertex) + 1];
-  for (size_t i = 1; i < offsets.size(); ++i) offsets[i] += offsets[i - 1];
-  std::vector<int32_t> cursor = offsets;
-  std::vector<int32_t> incidence(compact.size());
-  for (size_t face = 0; face < compact.size() / 3; ++face)
-    for (size_t corner = 0; corner < 3; ++corner) {
-      const size_t vertex = static_cast<size_t>(compact[3 * face + corner]);
-      incidence[static_cast<size_t>(cursor[vertex]++)] = static_cast<int32_t>(face);
-    }
-  const auto original_offsets = offsets;
-  const auto original_incidence = incidence;
-  const int64_t offset_count = static_cast<int64_t>(offsets.size());
-  const int64_t incidence_count = static_cast<int64_t>(incidence.size());
-  void* wide_handle = nullptr;
-  void* compact_handle = nullptr;
-  std::array<int64_t, 8> wide_counts{}, compact_counts{};
-  double wide_distance = -1, compact_distance = -1;
-  phx_mc_zero_set_remesh_request request{
-      input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
-      input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
-      value.view(), gradient.view(), tolerance, tolerance, edge, angle,
-      &wide_handle, wide_counts.data(), &wide_distance};
-  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
-  request.triangles = reinterpret_cast<const int64_t*>(compact.data());
-  request.result = &compact_handle;
-  request.counters = compact_counts.data();
-  request.distance = &compact_distance;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
-                                       incidence.data(), incidence_count) == PHX_MC_OK);
-  PHX_CHECK(wide_handle != nullptr && compact_handle != nullptr);
-  if (wide_handle != nullptr && compact_handle != nullptr) {
-    std::array<int64_t, 2> a{}, b{};
-    PHX_CHECK(phx_mc_zero_set_remesh_sizes(wide_handle, a.data()) == PHX_MC_OK);
-    PHX_CHECK(phx_mc_zero_set_remesh_sizes(compact_handle, b.data()) == PHX_MC_OK);
-    PHX_CHECK(a == b);
-    std::vector<double> av(static_cast<size_t>(3 * a[0])), bv(static_cast<size_t>(3 * b[0]));
-    std::vector<int64_t> af(static_cast<size_t>(3 * a[1])), bf(static_cast<size_t>(3 * b[1]));
-    PHX_CHECK(phx_mc_zero_set_remesh_arrays(wide_handle, a[0], a[1], av.data(), af.data()) ==
-              PHX_MC_OK);
-    PHX_CHECK(phx_mc_zero_set_remesh_arrays(compact_handle, b[0], b[1], bv.data(), bf.data()) ==
-              PHX_MC_OK);
-    PHX_CHECK(av == bv && af == bf);
-    PHX_CHECK(wide_counts == compact_counts && wide_distance == compact_distance);
-    PHX_CHECK(require_split ? wide_counts[0] > 0 : wide_counts[1] > 0);
-    PHX_CHECK(compact == original && input.vertices == original_vertices &&
-              input.triangles == original_faces && offsets == original_offsets &&
-              incidence == original_incidence);
-    PHX_CHECK(signed_volume(av, af) > 0);
-    for (size_t i = 0; i < av.size(); i += 3)
-      PHX_CHECK(sphere_distance({av[i], av[i + 1], av[i + 2]}) <= wide_distance);
-    if (!require_split) {
-      bool moved = false;
-      for (size_t i = 0; i < av.size(); i += 3) {
-        bool original_vertex = false;
-        for (size_t j = 0; j < input.vertices.size(); j += 3)
-          if (av[i] == input.vertices[j] && av[i + 1] == input.vertices[j + 1] &&
-              av[i + 2] == input.vertices[j + 2]) original_vertex = true;
-        moved = moved || !original_vertex;
-      }
-      PHX_CHECK(moved);
-      PHX_CHECK(af.size() < input.triangles.size());
-    }
-  }
-  if (wide_handle != nullptr) phx_mc_zero_set_remesh_free(wide_handle);
-  if (compact_handle != nullptr) phx_mc_zero_set_remesh_free(compact_handle);
-  compact_handle = nullptr;
-  compact_counts.fill(-17);
-  compact_distance = -17;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count - 1,
-                                       incidence.data(), incidence_count) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(compact_handle == nullptr && compact_counts[0] == -17 && compact_distance == -17);
-  offsets[0] = 1;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
-                                       incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
-  offsets = original_offsets;
-  incidence[0] = -1;
-  PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
-                                       incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
-  incidence = original_incidence;
-  const size_t vertex = 0;
-  if (offsets[vertex + 1] - offsets[vertex] >= 2) {
-    incidence[static_cast<size_t>(offsets[vertex] + 1)] = incidence[static_cast<size_t>(offsets[vertex])];
-    PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
-                                         incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
-  }
-  incidence = original_incidence;
-  bool membership_checked = false;
-  for (size_t owner = 0; owner + 1 < offsets.size() && !membership_checked; ++owner) {
-    const int32_t begin = offsets[owner], end = offsets[owner + 1];
-    for (int32_t slot = begin; slot < end && !membership_checked; ++slot) {
-      const int32_t lo = slot == begin ? 0 : incidence[static_cast<size_t>(slot - 1)] + 1;
-      const int32_t hi = slot + 1 == end ? static_cast<int32_t>(compact.size() / 3)
-                                         : incidence[static_cast<size_t>(slot + 1)];
-      for (int32_t face = lo; face < hi; ++face) {
-        if (face == incidence[static_cast<size_t>(slot)]) continue;
-        const size_t at = 3 * static_cast<size_t>(face);
-        if (compact[at] == static_cast<int32_t>(owner) ||
-            compact[at + 1] == static_cast<int32_t>(owner) ||
-            compact[at + 2] == static_cast<int32_t>(owner)) continue;
-        incidence[static_cast<size_t>(slot)] = face;
-        PHX_CHECK(phx_mc_zero_set_remesh_i32(&request, offsets.data(), offset_count,
-                                             incidence.data(), incidence_count) == PHX_MC_INVALID_INPUT);
-        membership_checked = true;
-        break;
-      }
-    }
-  }
-  PHX_CHECK(membership_checked);
-  PHX_CHECK(compact_handle == nullptr && compact_counts[0] == -17 && compact_distance == -17);
+  constexpr double tolerance = 0.05;
+  const Remeshed remeshed = construct(input, value, tolerance, 0.4);
+  PHX_CHECK(remeshed.status == PHX_MC_OK);
+  if (remeshed.status != PHX_MC_OK) return;
+  PHX_CHECK(closed_oriented(remeshed.triangles));
+  PHX_CHECK(signed_volume(remeshed.vertices, remeshed.triangles) > 0);
+  double distance = -1;
+  Failures failures{};
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance,
+                    static_cast<int32_t>(remeshed.counters[5]), distance, failures) == PHX_MC_OK);
+  PHX_CHECK(distance <= tolerance);
 }
 
 
@@ -1160,96 +984,77 @@ const std::vector<int64_t> kRosetteTriangles{
     86, 21, 85, 85, 84, 86,
 };
 
-// Admission-limited coarsening of that carrier: the absorbing collapse merges
-// the rosette's core, so no triangle stays below full score and no edge of the
-// rosette core survives, within the same certified band and orientation.
+// Coarsening that carrier toward a length 300 times the rosette core's edges
+// (and a tolerance loose enough for that length): the core is absorbed, so no
+// edge of its scale survives, and the result is certified.
 void remesh_coarsening_absorbs_rosette() {
   PHX_CHECK(signed_volume(kRosettePoints, kRosetteTriangles) > 0);
   PHX_CHECK(minimum_angle(kRosettePoints, kRosetteTriangles) < 29.2);
   const Program value = sphere_value(), gradient = sphere_gradient();
-  constexpr double tolerance = 0.02 / 0.371, edge = 0.5;
-  void* handle = nullptr;
-  std::array<int64_t, 8> counters{};
+  constexpr double tolerance = 0.1, edge = 0.5;
+  const Remeshed remeshed = construct({kRosettePoints, kRosetteTriangles}, value, tolerance, edge);
+  PHX_CHECK(remeshed.status == PHX_MC_OK);
+  if (remeshed.status != PHX_MC_OK) return;
+  PHX_CHECK(remeshed.counters[4] == 0);
+  PHX_CHECK(remeshed.counters[5] == 1);
+  PHX_CHECK(closed_oriented(remeshed.triangles));
+  PHX_CHECK(signed_volume(remeshed.vertices, remeshed.triangles) > 0);
+  PHX_CHECK(minimum_angle(remeshed.vertices, remeshed.triangles) >= 30.0);
   double distance = -1;
-  phx_mc_zero_set_remesh_request request{
-      kRosettePoints.data(), static_cast<int64_t>(kRosettePoints.size() / 3),
-      kRosetteTriangles.data(), static_cast<int64_t>(kRosetteTriangles.size() / 3),
-      value.view(),          gradient.view(),
-      tolerance,             tolerance,
-      edge,                  30.0,
-      &handle,               counters.data(),
-      &distance,             1};
-  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
-  PHX_CHECK(handle != nullptr);
-  if (handle == nullptr) return;
-  std::array<int64_t, 2> sizes{};
-  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
-  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
-  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
-                                          triangles.data()) == PHX_MC_OK);
-  phx_mc_zero_set_remesh_free(handle);
-  PHX_CHECK(counters[4] == 0);  // no unmet triangle
-  PHX_CHECK(counters[5] == 1);
+  Failures failures{};
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures) == PHX_MC_OK);
   PHX_CHECK(distance >= 0 && distance <= tolerance);
-  PHX_CHECK(signed_volume(vertices, triangles) > 0);
-  PHX_CHECK(minimum_angle(vertices, triangles) >= 30.0);
   double shortest = std::numeric_limits<double>::infinity();
-  for (size_t f = 0; f < triangles.size(); f += 3)
-    for (int k = 0; k < 3; ++k) {
-      const double* p = &vertices[3 * static_cast<size_t>(triangles[f + static_cast<size_t>(k)])];
-      const double* q =
-          &vertices[3 * static_cast<size_t>(triangles[f + static_cast<size_t>((k + 1) % 3)])];
+  const auto& t = remeshed.triangles;
+  for (size_t f = 0; f < t.size(); f += 3)
+    for (size_t k = 0; k < 3; ++k) {
+      const double* p = &remeshed.vertices[3 * static_cast<size_t>(t[f + k])];
+      const double* q = &remeshed.vertices[3 * static_cast<size_t>(t[f + (k + 1) % 3])];
       shortest = std::min(shortest, std::hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]));
     }
   // The rosette core's edges reach 0.0016 (0.003 of the requested length);
   // no edge of that scale survives.
   PHX_CHECK(shortest > 0.2 * edge);
-  PHX_CHECK(sizes[0] < static_cast<int64_t>(kRosettePoints.size() / 3));
+  PHX_CHECK(remeshed.vertices.size() < kRosettePoints.size());
 }
 
-
-// The crease of a CSG lens is a turn its source admits: the fold factor leaves
-// it at full score, so remeshing keeps the crease and leaves nothing unmet
-// there (a fixed 90 degree turn limit scored every crease triangle unmet).
+// The crease of a CSG lens (input dihedral above 45 degrees) is a feature:
+// its vertices stay on it and its edges are neither split nor flipped, so the
+// sharp turn survives, while the rest of the lens is remeshed and certified
+// within the tolerance.
 void remesh_lens_crease() {
   const Surface input = lens_surface(4, 24);
   PHX_CHECK(signed_volume(input.vertices, input.triangles) > 0);
   PHX_CHECK(maximum_turn(input.vertices, input.triangles) > 100);
   const Program value = lens_value(), gradient = lens_gradient();
-  void* handle = nullptr;
-  std::array<int64_t, 8> counters{};
-  double distance = -1;
   constexpr double tolerance = 0.02;
-  phx_mc_zero_set_remesh_request request{
-      input.vertices.data(), static_cast<int64_t>(input.vertices.size() / 3),
-      input.triangles.data(), static_cast<int64_t>(input.triangles.size() / 3),
-      value.view(),          gradient.view(),
-      tolerance,             tolerance,
-      0.2,                   30.0,
-      &handle,               counters.data(),
-      &distance};
-  PHX_CHECK(phx_mc_zero_set_remesh(&request) == PHX_MC_OK);
-  PHX_CHECK(handle != nullptr);
-  if (handle == nullptr) return;
-  std::array<int64_t, 2> sizes{};
-  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
-  std::vector<double> vertices(static_cast<size_t>(3 * sizes[0]));
-  std::vector<int64_t> triangles(static_cast<size_t>(3 * sizes[1]));
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], vertices.data(),
-                                          triangles.data()) == PHX_MC_OK);
-  phx_mc_zero_set_remesh_free(handle);
-  const double turn = maximum_turn(vertices, triangles);
-  std::printf("lens crease: %lld -> %lld triangles, max turn %.1f deg, unmet %lld, "
-              "distance %.3g, counters %lld %lld %lld %lld\n",
+  const Remeshed remeshed = construct(input, value, tolerance, 0.2);
+  PHX_CHECK(remeshed.status == PHX_MC_OK);
+  if (remeshed.status != PHX_MC_OK) return;
+  const double turn = maximum_turn(remeshed.vertices, remeshed.triangles);
+  double distance = -1;
+  Failures failures{-1, -1, -1};
+  constexpr double carrier_distance = 0.01;
+  const int32_t status =
+      certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance,
+              static_cast<int32_t>(remeshed.counters[5]), distance, failures, &input,
+              carrier_distance);
+  std::printf("lens crease: %lld -> %lld triangles, max turn %.1f deg, below %lld, above %lld, "
+              "certify %d distance %.3g failures %lld %lld kept %lld\n",
               static_cast<long long>(input.triangles.size() / 3),
-              static_cast<long long>(sizes[1]), turn, static_cast<long long>(counters[4]),
-              distance, static_cast<long long>(counters[0]), static_cast<long long>(counters[1]),
-              static_cast<long long>(counters[2]), static_cast<long long>(counters[3]));
+              static_cast<long long>(remeshed.triangles.size() / 3), turn,
+              static_cast<long long>(remeshed.counters[4]),
+              static_cast<long long>(remeshed.counters[6]), status, distance,
+              static_cast<long long>(failures[0]), static_cast<long long>(failures[1]),
+              static_cast<long long>(failures[2]));
+  PHX_CHECK(failures[2] > 0);
+  PHX_CHECK(closed_oriented(remeshed.triangles));
+  PHX_CHECK(status == PHX_MC_OK);
   PHX_CHECK(distance >= 0 && distance <= tolerance);
   PHX_CHECK(turn > 100);
-  PHX_CHECK(counters[4] == 0);
 }
+
 void scratch_faces_eviction() {
   phx::mc::remesh::ScratchFaces scratch;
   constexpr int32_t count = 1030 * 1024 + 37;
@@ -1334,11 +1139,10 @@ int main() {
   near_band_distance_cases();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();
-  remesh_pinned_carrier();
+  certify_refusals();
+  remesh_jittered_carrier();
   remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();
-  remesh_edit_parity(5, 12, 0.08, 0.22, 25.0, true);
-  remesh_edit_parity(8, 40, 0.2, 1.0, 25.0, false);
   scratch_faces_eviction();
   return phx::mc::test::finish("test_zero_set_admission");
 }

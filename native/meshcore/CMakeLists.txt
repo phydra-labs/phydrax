@@ -77,6 +77,7 @@ set(PHX_MC_SOURCES
   src/predicates.cpp
   src/quadratic_bounds.cpp
   src/restricted_delaunay.cpp
+  src/surface_adapt.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
   src/surface_remesh.cpp

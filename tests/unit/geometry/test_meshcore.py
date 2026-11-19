@@ -11,8 +11,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import jax
 import numpy as np
 import pytest
+from jax import Array
 from scipy.spatial import ConvexHull
 
 from benchmarks.native_meshing import (
@@ -63,6 +65,9 @@ from phydrax._meshcore import (
     tetrahedron_intersection_moments,
     tetrahedron_intersection_simplices,
     triangle_dual_quads,
+    zero_set_certify,
+    zero_set_remesh,
+    ZeroSetCertificate,
 )
 from phydrax.geometry import (
     ConstrainedDelaunayTriangulation,
@@ -75,6 +80,7 @@ from phydrax.geometry import (
     PredicateMode,
     VoronoiDiagram,
 )
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 
 
 pytestmark = [
@@ -2447,6 +2453,63 @@ def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
     again = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
     np.testing.assert_array_equal(again.surface_vertices, remeshed.surface_vertices)
     np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
+
+
+def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+    def sphere(x: Array) -> Array:
+        return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
+
+    value = prepare_interval_function(
+        sphere, 3, batch_capacity=1, execution="native"
+    ).native_program
+    gradient = prepare_interval_function(
+        jax.grad(sphere), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if value is None or gradient is None:
+        raise RuntimeError(
+            "The unit sphere field must lower to native interval programs."
+        )
+    return value.box_program(), gradient.box_program()
+
+
+def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
+    value, gradient = _unit_sphere_box_programs()
+    vertices, faces = _icosphere(3)
+    remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
+    assert remeshed.orientation == 1
+    assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
+    assert np.min(_minimum_triangle_angles(remeshed.vertices, remeshed.triangles)) >= 30.0
+    certificate = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        value,
+        gradient,
+        0.01,
+        1,
+        vertices,
+        faces,
+        0.005,
+    )
+    assert 0.0 <= certificate.distance <= 0.01
+    # Input triangles the remesh left untouched are the carrier's own.
+    assert 0 <= certificate.carrier_triangles < remeshed.triangles.shape[0]
+    # The carrier certified against itself, listed from other corners: every
+    # triangle is accepted at the carrier's distance.
+    assert zero_set_certify(
+        vertices, faces, value, gradient, 0.01, 1, vertices, faces[:, (1, 2, 0)], 0.005
+    ) == ZeroSetCertificate(0.005, faces.shape[0])
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        zero_set_certify(
+            1.05 * remeshed.vertices,
+            remeshed.triangles,
+            value,
+            gradient,
+            0.01,
+            1,
+            vertices,
+            faces,
+            0.005,
+        )
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:

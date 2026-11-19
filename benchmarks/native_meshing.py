@@ -90,6 +90,7 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
+        (frozenset({"surface-remesh-sphere", "surface-remesh-torus"}), _remesh_rows),
         (
             frozenset(
                 {
@@ -420,6 +421,65 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 raise TypeError("An analytic profile volume prepares the stuffing route.")
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
+
+
+def _remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's surface remeshing rows: the unit icosphere (81,920
+    # triangles) and the R = 1, r = 0.4 grid torus (90,000) remeshed toward
+    # 1e4 triangles, i.e. the edge h of an equilateral triangle of area A/1e4,
+    # within tolerance h^2/4 and a 30 degree minimum angle. The row times the
+    # construction; certification (zero_set_certify) is a separate entry and
+    # is not timed. The row size is the input triangle count.
+    def sphere(x: Array) -> Array:
+        return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
+
+    def torus(x: Array) -> Array:
+        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
+        return ring * ring + x[2] * x[2] - 0.16
+
+    rows: list[_Row] = []
+    for name, function, area, (vertices, faces) in (
+        ("surface-remesh-sphere", sphere, 4.0 * math.pi, _icosphere(6)),
+        ("surface-remesh-torus", torus, 4.0 * math.pi**2 * 0.4, _uv_torus(300)),
+    ):
+        program = prepare_interval_function(
+            function, 3, batch_capacity=1, execution="native"
+        ).native_program
+        if program is None:
+            raise RuntimeError(
+                f"The {name} field must lower to a native interval program."
+            )
+        value = program.box_program()
+        edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * 1e4))
+        tolerance = edge * edge / 4.0
+        rows.append(
+            _Row(
+                name,
+                faces.shape[0],
+                lambda vertices=vertices, faces=faces, value=value, edge=edge, tolerance=tolerance: (
+                    _meshcore.zero_set_remesh(
+                        vertices, faces, value, tolerance, tolerance, edge, 30.0
+                    )
+                ),
+                _remeshed_triangles,
+                _remesh_unmet,
+            )
+        )
+    return tuple(rows)
+
+
+def _remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance (construction counters 4 and 6).
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return int(result.counters[4] + result.counters[6])
 
 
 def _constructed_cells(result: object, /) -> int:

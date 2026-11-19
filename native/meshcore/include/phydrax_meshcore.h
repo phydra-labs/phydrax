@@ -1938,27 +1938,53 @@ PHX_MC_API int32_t phx_mc_tet_mesh_create_with_implicit(
     const phx_mc_tet_implicit_source* source);
 PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
     const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* source);
-/* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
- * toward `edge_length` and `minimum_angle_degrees`. Closed is validated: every
- * edge is held by exactly two triangles, in opposite directions, else
- * PHX_MC_INVALID_INPUT. Every created triangle is
- * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
- * most `tolerance` (interval |f| over the triangle against a certified lower bound
- * of |grad f| over its widened box) and its normal is certified transversal to
- * grad f with the carrier's orientation (declared by the input triangles whose
- * sign is certified; disagreement is PHX_MC_INVALID_INPUT, none PHX_MC_UNRESOLVED).
- * `value` has one output, `gradient` three. Writes counters (splits, collapses,
- * flips, relocations, triangles below the angle or size target, orientation,
- * admissions refused for undecided or wrong transversality, admissions refused
- * for an uncertified distance) and
- * `distance`: the maximum over surviving triangles of the admitted certified
- * distance, or `carrier_distance` (the input carrier's declared bound) for
- * untouched input triangles. `admission_limited_coarsening` (0 or 1) also runs
- * the remesher's admission-limited coarsening pass, which centers vertices in
- * the band off the zero set and collapses edges below 4/5 of `edge_length`
- * until the admission refuses them; 0 keeps the quality/regularization passes
- * only. */
+/* Remeshes a closed, consistently oriented carrier of the zero set of f toward
+ * `edge_length` (lowered where the zero set curves, so that a well-shaped
+ * triangle stays within `tolerance`) and `minimum_angle_degrees`. Closed is
+ * validated: every edge is held by exactly two triangles, in opposite
+ * directions, else PHX_MC_INVALID_INPUT. Construction only, floating point,
+ * proving nothing: edge splits, collapses, flips and tangential relocations
+ * on flat arrays, new and moved vertices projected onto {f = 0} by Newton
+ * steps on second-order point jets of `value` (one output). Input edges
+ * whose triangles turn by more than 45 degrees are creases: every input
+ * triangle touching a crease vertex is kept bitwise (its corners and edges
+ * are never moved, split, flipped or collapsed). A vertex further than
+ * edge_length + carrier_distance from its projection is PHX_MC_UNRESOLVED.
+ * Writes counters
+ * (splits, collapses, flips, relocations, triangles below the minimum angle,
+ * the carrier's orientation relative to grad f by the floating-point majority
+ * of the input triangles, triangles whose sampled distance exceeds
+ * `tolerance`, 0). Certify the result with phx_mc_zero_set_certify. */
 typedef struct phx_mc_zero_set_remesh_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  phx_mc_interval_box_program value;
+  double tolerance;
+  double carrier_distance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  int64_t* counters;
+} phx_mc_zero_set_remesh_request;
+PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
+/* As above, request->triangles contains int32 indices. */
+PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_request* request);
+/* Certifies a triangle surface against the zero set of f: every triangle's
+ * distance to {f = 0} is at most `tolerance` (interval |f| over the triangle
+ * against a certified lower bound of |grad f| over its widened box,
+ * subdividing where needed) and its normal is transversal to grad f with
+ * `orientation` (+1 or -1). `value` has one output, `gradient` three. A
+ * triangle with the corner coordinates, in the same cyclic order, of a
+ * triangle of the carrier (the surface remeshed, within carrier_distance of
+ * the zero set by its producer's evidence) is accepted at carrier_distance
+ * without a proof; a NULL carrier with zero counts accepts none. On PHX_MC_OK
+ * `distance` is the maximum certified or carrier distance, at most
+ * `tolerance`; otherwise PHX_MC_UNRESOLVED. failures receives the numbers of
+ * triangles refused for transversality, refused for distance, and accepted
+ * from the carrier. */
+typedef struct phx_mc_zero_set_certify_request {
   const double* vertices;
   int64_t vertex_count;
   const int64_t* triangles;
@@ -1966,24 +1992,16 @@ typedef struct phx_mc_zero_set_remesh_request {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
   double tolerance;
+  int32_t orientation;
+  const double* carrier_vertices;
+  int64_t carrier_vertex_count;
+  const int64_t* carrier_triangles;
+  int64_t carrier_triangle_count;
   double carrier_distance;
-  double edge_length;
-  double minimum_angle_degrees;
-  void** result;
-  int64_t* counters;
   double* distance;
-  int32_t admission_limited_coarsening;
-} phx_mc_zero_set_remesh_request;
-PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
-/* As above, request->triangles contains int32 indices. Optional read-only
- * vertex-to-face CSR is either absent (both pointers null, both counts zero)
- * or has vertex_count + 1 int32 offsets and 3 * triangle_count int32 rows.
- * Each vertex's rows must be strictly increasing and match its incident
- * triangles exactly. The caller retains both banks until the call returns. */
-PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(
-    const phx_mc_zero_set_remesh_request* request, const int32_t* vertex_face_offsets,
-    int64_t vertex_face_offset_count, const int32_t* vertex_faces,
-    int64_t vertex_face_count);
+  int64_t* failures;
+} phx_mc_zero_set_certify_request;
+PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);
 PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes);
 PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
                                                  int64_t triangle_capacity, double* vertices,

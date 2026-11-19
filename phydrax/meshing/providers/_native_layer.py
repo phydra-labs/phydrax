@@ -30,7 +30,7 @@ import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing.providers._native_options as options_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
-from ..._meshcore import MeshcoreError, zero_set_remesh
+from ..._meshcore import MeshcoreError, zero_set_certify, zero_set_remesh
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1863,17 +1863,30 @@ def implicit_layer_wall(
                 )
             )
         try:
+            value_box, gradient_box = (
+                value_program.box_program(),
+                gradient_program.box_program(),
+            )
             remeshed = zero_set_remesh(
                 vertices,
                 faces,
-                value_program.box_program(),
-                gradient_program.box_program(),
+                value_box,
                 scaffold_distance,
                 scaffold_distance,
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
-                admission_limited_coarsening=False,
             )
+            distance = zero_set_certify(
+                remeshed.vertices,
+                remeshed.triangles,
+                value_box,
+                gradient_box,
+                scaffold_distance,
+                remeshed.orientation,
+                vertices,
+                faces,
+                scaffold_distance,
+            ).distance
         except (MeshcoreError, ValueError, OverflowError) as error:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -1893,7 +1906,7 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             )
-        distance = float(remeshed.distance)
+        # `distance` is the certified bound of the remeshed wall.
         evidence = (
             ("carrier_remeshed", 1.0),
             *before,
