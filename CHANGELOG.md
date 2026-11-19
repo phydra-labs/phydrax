@@ -311,6 +311,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral improvement collapses an interior vertex onto a
+  protected or boundary neighbor; the fixed boundary is reproduced exactly,
+  which clears the last unmet cells of the 90,000-face grid torus.
+- Fixed-boundary recovery, mesh-state creation and refinement setup are
+  faster (incidence-list edge lookup, triangle polygons taken as-is, flat
+  source face groups, exact shortcuts for sole-primitive faces and segment
+  endpoints, acute-feature protection skipped for a fixed boundary), with
+  identical output.
 - Native tetrahedral mesh export is one pass: `TetMesh3D.arrays()` reads the
   live state straight into the output banks (no staged snapshot, no per-cell
   allocation, no identity hash lookups, no per-element Python). Cells, facets
