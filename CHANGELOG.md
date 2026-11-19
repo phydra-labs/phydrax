@@ -268,6 +268,19 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants)
+  recovers a missing source edge by flips before it splits the edge: the
+  2-3 flips and edge removals around the cells the edge crosses that lower
+  their number, up to three flips ahead (cf. TetGen's flipnm), then planar
+  flips, then, under FIXED, an edge removal whose non-triangulable half is
+  coned from one volume Steiner point. Split points, and with them the
+  Steiner suppression of FIXED boundaries, become rare: the (u, v) grid
+  tori of 10,000 and 90,000 triangles, whose cospherical rows made every
+  split point's star span the torus hole, recover with no boundary split in
+  0.28 s and 2.0 s instead of 0.72 s and 31 s, the torus of 1,000,000
+  triangles in 22 s, each with a boundary equal to the input. Recovered
+  meshes, their volume Steiner points and their suppression evidence can
+  change; boundaries and regions do not.
 - The exact stage of the native insphere predicate evaluates the determinant
   on integers (128-bit products, 384-bit sums) whenever the coordinates, or
   the exact differences, of the five points span at most 61 or 62 bits, and
