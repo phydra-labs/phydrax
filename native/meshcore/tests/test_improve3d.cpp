@@ -1774,10 +1774,11 @@ void improvement_respects_refinement_size_field() {
   PHX_CHECK(collapsed > 0);
   PHX_CHECK(after.vertices.size() + static_cast<std::size_t>(collapsed) ==
             before.vertices.size() + static_cast<std::size_t>(inserted));
-  PHX_CHECK(sized.vertex_sizes().size() == after.vertices.size());
+  const std::unordered_map<std::uint64_t, double> retained = sized.vertex_sizes();
+  PHX_CHECK(retained.size() == after.vertices.size());
   for (const TetSnapshotVertex& vertex : after.vertices) {
-    const auto found = sized.vertex_sizes().find(vertex.id);
-    PHX_CHECK(found != sized.vertex_sizes().end() && found->second > 0.0);
+    const auto found = retained.find(vertex.id);
+    PHX_CHECK(found != retained.end() && found->second > 0.0);
   }
   const std::set<std::uint64_t> original = cell_ids_of(before);
   const std::set<std::uint64_t> violating = size_violations(sized, after, sized.vertex_sizes());

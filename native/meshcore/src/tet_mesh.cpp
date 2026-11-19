@@ -104,6 +104,10 @@ int32_t TetMesh::assign_initial_ids(
         (!segment_ids.empty() && segment_ids.size() != segments_.size())) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    // Without supplied IDs the built identities (slot order) stand.
+    if (vertex_ids.empty() && cell_ids.empty() && facet_ids.empty() && segment_ids.empty()) {
+      return install_vertex_sizes(initial_vertex_sizes);
+    }
     std::vector<std::uint64_t> staged_vertices = vertex_ids_;
     std::vector<std::uint64_t> staged_cells = cell_ids_;
     std::vector<TetSnapshotFacet> staged_facets = facets_;
@@ -117,26 +121,22 @@ int32_t TetMesh::assign_initial_ids(
       for (std::size_t row = 0; row < segment_ids.size(); ++row) staged_segments[row].id = segment_ids[row];
     }
 
-    std::unordered_map<std::uint64_t, std::int32_t> staged_vertex_slots;
-    std::unordered_map<std::uint64_t, std::int32_t> staged_cell_slots;
-    std::unordered_set<std::uint64_t> staged_used_vertices;
-    std::unordered_set<std::uint64_t> staged_used_cells;
-    std::unordered_set<std::uint64_t> staged_used_facets;
-    std::unordered_set<std::uint64_t> staged_used_segments;
-    staged_vertex_slots.reserve(staged_vertices.size());
-    staged_cell_slots.reserve(finite_cells);
-    staged_used_vertices.reserve(staged_vertices.size());
-    staged_used_cells.reserve(finite_cells);
-    staged_used_facets.reserve(staged_facets.size());
-    staged_used_segments.reserve(staged_segments.size());
+    TetIdIndex staged_vertex_index;
+    TetIdIndex staged_cell_index;
+    TetIdIndex staged_facet_index;
+    TetIdIndex staged_segment_index;
+    staged_vertex_index.reserve(staged_vertices.size());
+    staged_cell_index.reserve(finite_cells);
+    staged_facet_index.reserve(staged_facets.size());
+    staged_segment_index.reserve(staged_segments.size());
     std::uint64_t next_vertex = 0;
     for (std::size_t slot = 0; slot < staged_vertices.size(); ++slot) {
       const std::uint64_t id = staged_vertices[slot];
       if (id == std::numeric_limits<std::uint64_t>::max() || vertex_live_[slot] == 0 ||
-          !staged_vertex_slots.emplace(id, static_cast<std::int32_t>(slot)).second) {
+          staged_vertex_index.used(id)) {
         return PHX_MC_INVALID_INPUT;
       }
-      staged_used_vertices.insert(id);
+      staged_vertex_index.bind(id, static_cast<std::int32_t>(slot));
       next_vertex = std::max(next_vertex, id + 1);
     }
     std::uint64_t next_cell = 0;
@@ -144,17 +144,17 @@ int32_t TetMesh::assign_initial_ids(
       const std::uint64_t id = staged_cells[row];
       if (id == std::numeric_limits<std::uint64_t>::max() ||
           !complex_.live(static_cast<std::int32_t>(row)) ||
-          is_ghost(complex_.tets[row]) ||
-          !staged_cell_slots.emplace(id, static_cast<std::int32_t>(row)).second) {
+          is_ghost(complex_.tets[row]) || staged_cell_index.used(id)) {
         return PHX_MC_INVALID_INPUT;
       }
-      staged_used_cells.insert(id);
+      staged_cell_index.bind(id, static_cast<std::int32_t>(row));
       next_cell = std::max(next_cell, id + 1);
     }
     std::uint64_t next_facet = 0;
     for (TetSnapshotFacet& facet : staged_facets) {
       if (facet.id == std::numeric_limits<std::uint64_t>::max() ||
-          !staged_used_facets.insert(facet.id).second) return PHX_MC_INVALID_INPUT;
+          staged_facet_index.used(facet.id)) return PHX_MC_INVALID_INPUT;
+      staged_facet_index.mark_used(facet.id);
       for (std::uint64_t& vertex : facet.vertices) {
         const std::int32_t slot = vertex_slot(vertex);
         if (!live_vertex(slot)) return PHX_MC_INVALID_INPUT;
@@ -165,7 +165,8 @@ int32_t TetMesh::assign_initial_ids(
     std::uint64_t next_segment = 0;
     for (TetSnapshotSegment& segment : staged_segments) {
       if (segment.id == std::numeric_limits<std::uint64_t>::max() ||
-          !staged_used_segments.insert(segment.id).second) return PHX_MC_INVALID_INPUT;
+          staged_segment_index.used(segment.id)) return PHX_MC_INVALID_INPUT;
+      staged_segment_index.mark_used(segment.id);
       for (std::uint64_t& vertex : segment.vertices) {
         const std::int32_t slot = vertex_slot(vertex);
         if (!live_vertex(slot)) return PHX_MC_INVALID_INPUT;
@@ -173,28 +174,16 @@ int32_t TetMesh::assign_initial_ids(
       }
       next_segment = std::max(next_segment, segment.id + 1);
     }
-    std::vector<double> retained_sizes;
-    if (initial_vertex_sizes.empty() && !vertex_sizes_.empty()) {
-      retained_sizes.resize(vertex_ids_.size(), 0.0);
-      for (std::size_t row = 0; row < vertex_ids_.size(); ++row) {
-        const auto found = vertex_sizes_.find(vertex_ids_[row]);
-        if (found != vertex_sizes_.end()) retained_sizes[row] = found->second;
-      }
-    }
-    const int32_t size_status = install_vertex_sizes(
-        staged_vertices, initial_vertex_sizes.empty() ? std::span<const double>(retained_sizes)
-                                                       : initial_vertex_sizes);
+    const int32_t size_status = install_vertex_sizes(initial_vertex_sizes);
     if (size_status != PHX_MC_OK) return size_status;
     vertex_ids_.swap(staged_vertices);
     cell_ids_.swap(staged_cells);
     facets_.swap(staged_facets);
     segments_.swap(staged_segments);
-    vertex_slots_.swap(staged_vertex_slots);
-    cell_slots_.swap(staged_cell_slots);
-    used_vertex_ids_.swap(staged_used_vertices);
-    used_cell_ids_.swap(staged_used_cells);
-    used_facet_ids_.swap(staged_used_facets);
-    used_segment_ids_.swap(staged_used_segments);
+    std::swap(vertex_index_, staged_vertex_index);
+    std::swap(cell_index_, staged_cell_index);
+    std::swap(facet_index_, staged_facet_index);
+    std::swap(segment_index_, staged_segment_index);
     next_vertex_id_ = next_vertex;
     next_cell_id_ = next_cell;
     next_facet_id_ = next_facet;
@@ -213,13 +202,105 @@ bool TetMesh::live_vertex(std::int32_t slot) const noexcept {
 }
 
 std::int32_t TetMesh::vertex_slot(std::uint64_t logical_id) const noexcept {
-  const auto found = vertex_slots_.find(logical_id);
-  return found == vertex_slots_.end() ? -1 : found->second;
+  return vertex_index_.slot(logical_id);
 }
 
 std::int32_t TetMesh::cell_slot(std::uint64_t logical_id) const noexcept {
-  const auto found = cell_slots_.find(logical_id);
-  return found == cell_slots_.end() ? -1 : found->second;
+  return cell_index_.slot(logical_id);
+}
+
+std::unordered_map<std::uint64_t, double> TetMesh::vertex_sizes() const {
+  std::unordered_map<std::uint64_t, double> sizes;
+  for (std::size_t slot = 0; slot < vertex_sizes_.size() && slot < vertex_live_.size(); ++slot) {
+    if (vertex_live_[slot] != 0 && vertex_sizes_[slot] > 0.0) {
+      sizes.emplace(vertex_ids_[slot], vertex_sizes_[slot]);
+    }
+  }
+  return sizes;
+}
+
+void TetIdIndex::clear() noexcept {
+  dense_.clear();
+  sparse_.clear();
+  used_ = 0;
+  live_ = 0;
+}
+
+void TetIdIndex::reserve(std::size_t count) { dense_.reserve(count); }
+
+void TetIdIndex::assign_identity(std::size_t count) {
+  dense_.resize(count);
+  for (std::size_t id = 0; id < count; ++id) dense_[id] = static_cast<std::int32_t>(id);
+  sparse_.clear();
+  used_ = count;
+  live_ = count;
+}
+
+void TetIdIndex::write(std::uint64_t id, std::int32_t value) {
+  const std::int32_t previous = state(id);
+  if (previous == value) return;
+  if (id >= dense_.size()) {
+    // Dense while the table stays within a constant factor of the used IDs.
+    const std::uint64_t limit = 4 * static_cast<std::uint64_t>(used_) + 65536;
+    if (id < limit && sparse_.empty()) {
+      dense_.resize(std::max<std::size_t>(static_cast<std::size_t>(id) + 1,
+                                          std::min<std::size_t>(2 * dense_.size(),
+                                                                static_cast<std::size_t>(limit))),
+                    kUnused);
+    }
+  }
+  if (id < dense_.size()) {
+    dense_[static_cast<std::size_t>(id)] = value;
+  } else if (value == kUnused) {
+    sparse_.erase(id);
+  } else {
+    sparse_[id] = value;
+  }
+  used_ += (previous == kUnused) ? 1 : 0;
+  used_ -= (value == kUnused) ? 1 : 0;
+  const bool was_live = previous >= 0 || previous == kPending;
+  const bool is_live = value >= 0 || value == kPending;
+  live_ += is_live ? 1 : 0;
+  live_ -= was_live ? 1 : 0;
+}
+
+void TetIdIndex::bind(std::uint64_t id, std::int32_t slot) { write(id, slot); }
+
+void TetIdIndex::mark_used(std::uint64_t id) {
+  if (state(id) == kUnused) write(id, kRetired);
+}
+
+void TetIdIndex::set_slot(std::uint64_t id, std::int32_t slot) noexcept {
+  if (id < dense_.size()) {
+    dense_[static_cast<std::size_t>(id)] = slot;
+    return;
+  }
+  const auto found = sparse_.find(id);
+  if (found != sparse_.end()) found->second = slot;
+}
+
+void TetIdIndex::retire(std::uint64_t id) noexcept {
+  const std::int32_t value = state(id);
+  if (value >= 0 || value == kPending) {
+    if (id < dense_.size()) {
+      dense_[static_cast<std::size_t>(id)] = kRetired;
+    } else {
+      sparse_.find(id)->second = kRetired;
+    }
+    --live_;
+  }
+}
+
+void TetIdIndex::forget(std::uint64_t id) noexcept {
+  const std::int32_t value = state(id);
+  if (value == kUnused) return;
+  if (id < dense_.size()) {
+    dense_[static_cast<std::size_t>(id)] = kUnused;
+  } else {
+    sparse_.erase(id);
+  }
+  --used_;
+  if (value >= 0 || value == kPending) --live_;
 }
 
 std::uint64_t TetMesh::vertex_id(std::int32_t slot) const noexcept {

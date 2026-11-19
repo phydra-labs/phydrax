@@ -279,7 +279,7 @@ bool TetMesh::certify_replacement_probe(TetReplacementProbeCache& cache) const {
   expected.reserve(facets_.size());
   for (std::size_t row = 0; row < facets_.size(); ++row) {
     const TetSnapshotFacet& facet = facets_[row];
-    if (!used_facet_ids_.contains(facet.id) ||
+    if (!facet_index_.used(facet.id) ||
         !cache.facet_row_by_id.emplace(facet.id, row).second) {
       return false;
     }
@@ -298,7 +298,7 @@ bool TetMesh::certify_replacement_probe(TetReplacementProbeCache& cache) const {
   for (const TetSnapshotSegment& segment : segments_) {
     const std::int32_t a = vertex_slot(segment.vertices[0]);
     const std::int32_t b = vertex_slot(segment.vertices[1]);
-    if (!segment_ids.insert(segment.id).second || !used_segment_ids_.contains(segment.id) ||
+    if (!segment_ids.insert(segment.id).second || !segment_index_.used(segment.id) ||
         !live_vertex(a) || !live_vertex(b) ||
         a == b || !edges.contains(edge_key(a, b))) {
       return false;
@@ -444,7 +444,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
       return refuse(TetEditStatus::kIndexOverflow);
     }
     if (!changed_vertex_ids.insert(vertex.id).second ||
-        (used_vertex_ids_.contains(vertex.id) && vertex_slot(vertex.id) < 0)) {
+        (vertex_index_.used(vertex.id) && vertex_slot(vertex.id) < 0)) {
       return refuse(topology);
     }
     const std::int32_t slot = vertex_slot(vertex.id);
@@ -547,7 +547,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
   // Replacement facets, in order, then the future facet IDs.
   for (const TetEditFacet& facet : operation.replacement_facets) {
     if (facet.id == std::numeric_limits<std::uint64_t>::max() ||
-        used_facet_ids_.contains(facet.id) || facet.protected_facet ||
+        facet_index_.used(facet.id) || facet.protected_facet ||
         policy_ == BoundaryPolicy::kFixed) {
       return refuse(facet.protected_facet || policy_ == BoundaryPolicy::kFixed
                         ? TetEditStatus::kRejectedProtected
@@ -580,7 +580,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
   }
   for (const TetEditSegment& segment : operation.replacement_segments) {
     if (segment.id == std::numeric_limits<std::uint64_t>::max() ||
-        used_segment_ids_.contains(segment.id) || segment.protected_segment ||
+        segment_index_.used(segment.id) || segment.protected_segment ||
         policy_ == BoundaryPolicy::kFixed) {
       return refuse(segment.protected_segment || policy_ == BoundaryPolicy::kFixed
                         ? TetEditStatus::kRejectedProtected
@@ -852,7 +852,7 @@ bool TetMesh::probe_cavity_edit(const TetEdit& operation, TetReplacementProbeCac
   std::vector<std::array<std::int32_t, 4>> replacement_slots;
   replacement_slots.reserve(operation.replacement_cells.size());
   for (const TetEditCell& cell : operation.replacement_cells) {
-    if (cell.id == std::numeric_limits<std::uint64_t>::max() || used_cell_ids_.contains(cell.id) ||
+    if (cell.id == std::numeric_limits<std::uint64_t>::max() || cell_index_.used(cell.id) ||
         !replacement_ids.insert(cell.id).second) {
       return refuse(topology);
     }
@@ -1103,7 +1103,7 @@ bool TetMesh::probe_relocation_edit(const TetEdit& operation, TetEditStatus& sta
       return refuse(TetEditStatus::kIndexOverflow);
     }
     if (!changed_vertex_ids.insert(vertex.id).second ||
-        (used_vertex_ids_.contains(vertex.id) && vertex_slot(vertex.id) < 0)) {
+        (vertex_index_.used(vertex.id) && vertex_slot(vertex.id) < 0)) {
       return refuse(topology);
     }
     const std::int32_t slot = vertex_slot(vertex.id);

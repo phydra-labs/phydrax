@@ -261,6 +261,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The native persistent tetrahedral state keeps cell, vertex, facet and
+  segment identities in flat tables indexed by ID (a sparse map only for
+  caller-chosen IDs far beyond the used range) and builds its adjacency by
+  bucketing cell faces by their smallest vertex instead of ordered maps.
+  `phx_mc_tet_mesh_create` on 1.16 M tetrahedra takes 0.23 s instead of 5.0 s
+  (Apple M1 Max, one thread); its results, identities and refusals are
+  unchanged. Snapshots skip lineage lookups when no lineage is recorded.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and

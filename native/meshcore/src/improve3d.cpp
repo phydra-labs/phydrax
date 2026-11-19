@@ -1901,7 +1901,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
 
   TetMeshSnapshot initial;
   if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-  const std::int32_t installed = mesh.install_vertex_sizes(initial, vertex_sizes);
+  const std::int32_t installed = mesh.install_vertex_sizes(vertex_sizes);
   if (installed != PHX_MC_OK) return installed;
   // Size targets by local vertex slot; slots are append-only during this run.
   std::vector<double> slot_sizes;
@@ -1909,8 +1909,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     slot_sizes.assign(mesh.vertex_ids_.size(), 0.0);
     for (std::size_t slot = 0; slot < slot_sizes.size(); ++slot) {
       if (mesh.vertex_live_[slot] == 0) continue;
-      const auto found = mesh.vertex_sizes_.find(mesh.vertex_ids_[slot]);
-      if (found != mesh.vertex_sizes_.end()) slot_sizes[slot] = found->second;
+      slot_sizes[slot] = mesh.vertex_size(static_cast<std::int32_t>(slot));
     }
   };
   refresh_slot_sizes();
@@ -1988,7 +1987,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
             return PHX_MC_INTERNAL_ERROR;
           }
           if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-          if (center_size > 0.0) mesh.vertex_sizes_[center_id] = center_size;
+          if (center_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(center_id), center_size);
           refresh_slot_sizes();
         }
       }
@@ -2193,7 +2192,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (status != TetEditStatus::kApplied) return status;
     // The commit erased the removed vertices' size entries.
     for (std::int32_t vertex : removed) slot_sizes[static_cast<std::size_t>(vertex)] = 0.0;
-    if (candidate_size > 0.0) mesh.vertex_sizes_[inserted.id] = candidate_size;
+    if (candidate_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(inserted.id), candidate_size);
     slot_sizes.resize(mesh.vertex_ids_.size(), 0.0);
     slot_sizes[static_cast<std::size_t>(mesh.vertex_slot(inserted.id))] = candidate_size;
     std::vector<std::int32_t> created_slots;
@@ -3391,7 +3390,7 @@ std::int32_t repair_boundary_quality(
     // compound operation must not install or alter the live retained field.
     TetMesh evaluation(mesh.policy());
     mesh.copy_state_to(evaluation);
-    query_status = evaluation.install_vertex_sizes(initial, vertex_sizes);
+    query_status = evaluation.install_vertex_sizes(vertex_sizes);
     if (query_status == PHX_MC_OK) {
       query_status = evaluate_mesh_quality(evaluation, request, initial_quality);
     }
@@ -3589,7 +3588,6 @@ std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest&
   }
   records.clear();
   const double floor = std::max(request.minimum_relative_determinant, kMetricDeterminantFloor);
-  const auto& sizes = mesh.vertex_sizes();
   for (const TetSnapshotCell& cell : snapshot.cells) {
     std::array<const double*, 4> points{};
     std::array<double, 4> corner_sizes{};
@@ -3604,12 +3602,8 @@ std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest&
       points[corner] = snapshot_points.empty()
           ? mesh.point(slot)
           : snapshot_points.data() + 3 * candidate_rows.at(cell.vertices[corner]);
-      const auto found = sizes.find(cell.vertices[corner]);
-      if (found == sizes.end()) {
-        sized = false;
-      } else {
-        corner_sizes[corner] = found->second;
-      }
+      corner_sizes[corner] = mesh.vertex_size(slot);
+      sized = sized && corner_sizes[corner] > 0.0;
     }
     if (!live || orient3d(points[0], points[1], points[2], points[3]) <= 0) {
       records.push_back({cell.id, PHX_MC_TET_UNMET_VALIDITY,

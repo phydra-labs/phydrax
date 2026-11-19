@@ -1229,9 +1229,16 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
 
   TetMeshSnapshot initial;
   if (mesh.snapshot(initial) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-  const std::int32_t installed = mesh.install_vertex_sizes(initial, vertex_sizes);
+  const std::int32_t installed = mesh.install_vertex_sizes(vertex_sizes);
   if (installed != PHX_MC_OK) return installed;
-  std::unordered_map<std::uint64_t, double>& sizes = mesh.vertex_sizes_;
+  std::unordered_map<std::uint64_t, double> sizes = mesh.vertex_sizes();
+  // The retained field gains the targets of the vertices this pass inserts.
+  const ScopeExit retain_sizes{[&]() noexcept {
+    for (const auto& [id, size] : sizes) {
+      const std::int32_t slot = mesh.vertex_slot(id);
+      if (slot >= 0) mesh.set_vertex_size(slot, size);
+    }
+  }};
 
   using EdgeKey = std::array<std::uint64_t, 2>;
   using FaceKey = std::array<std::uint64_t, 3>;
