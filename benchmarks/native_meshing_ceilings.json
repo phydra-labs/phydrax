@@ -29,22 +29,22 @@
     "recover-sphere": {
       "5120": {"tool": "cgal-cdt3", "seconds": 0.088, "allowed_ratio": 1.0},
       "20480": {"tool": "cgal-cdt3", "seconds": 0.348, "allowed_ratio": 1.0},
-      "81920": {"tool": "cgal-cdt3", "seconds": 1.40, "allowed_ratio": 1.0},
+      "81920": {"tool": "cgal-cdt3", "seconds": 1.36, "allowed_ratio": 1.0},
       "327680": {"tool": "cgal-cdt3", "seconds": 5.55, "allowed_ratio": 1.0}
     },
     "recover-torus": {
       "10000": {"tool": "cgal-cdt3", "seconds": 0.300, "allowed_ratio": 1.0},
-      "90000": {"tool": "cgal-cdt3", "seconds": 2.71, "allowed_ratio": 1.0}
+      "90000": {"tool": "cgal-cdt3", "seconds": 2.74, "allowed_ratio": 1.0}
     },
-    "refine-improve-sphere": {
+    "surface-to-tets-sphere": {
       "20480": {"tool": "gmsh-hxt", "seconds": 0.9329, "allowed_ratio": 1.0},
       "81920": {"tool": "gmsh-hxt", "seconds": 5.304, "allowed_ratio": 1.0}
     },
-    "refine-improve-torus": {
+    "surface-to-tets-torus": {
       "67": {"tool": "gmsh-hxt", "seconds": 0.306, "allowed_ratio": 1.0},
       "22": {"tool": "gmsh-hxt", "seconds": 5.2707, "allowed_ratio": 1.0}
     },
-    "refine-improve-grid-torus": {
+    "surface-to-tets-grid-torus": {
       "10000": {"tool": "gmsh-hxt", "seconds": 0.7027, "allowed_ratio": 1.0},
       "90000": {"tool": "gmsh-hxt", "seconds": 9.7429, "allowed_ratio": 1.0}
     }

@@ -94,9 +94,9 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         (
             frozenset(
                 {
-                    "refine-improve-sphere",
-                    "refine-improve-torus",
-                    "refine-improve-grid-torus",
+                    "surface-to-tets-sphere",
+                    "surface-to-tets-torus",
+                    "surface-to-tets-grid-torus",
                 }
             ),
             _volume_rows,
@@ -186,6 +186,8 @@ def _recover(vertices: np.ndarray, faces: np.ndarray, /) -> _meshcore.PlcRecover
 def _recovered_cells(result: object, /) -> int:
     if not isinstance(result, _meshcore.PlcRecovery3D):
         raise TypeError("Boundary recovery returns a PlcRecovery3D.")
+    if result.status != _meshcore.MeshcoreStatus.OK:
+        raise RuntimeError(f"Boundary recovery returned {result.status!r}.")
     return result.tetrahedra.shape[0]
 
 
@@ -221,7 +223,13 @@ class _VolumeResult(NamedTuple):
     unmet: int
 
 
-def _refine_improve(recovered: _meshcore.PlcRecovery3D, size: float, /) -> _VolumeResult:
+def _surface_to_tets(
+    vertices: np.ndarray, faces: np.ndarray, size: float, /
+) -> _VolumeResult:
+    # The whole task Gmsh's generate(3) performs from a surface: boundary
+    # recovery, state creation, refinement, improvement and export.
+    recovered = _recover(vertices, faces)
+    _recovered_cells(recovered)
     mesh = _meshcore.TetMesh3D(
         recovered.points,
         recovered.tetrahedra,
@@ -277,28 +285,28 @@ def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _volume_rows() -> tuple[_Row, ...]:
-    # State creation, refinement (radius-edge 2) and improvement (radius-edge 2,
-    # dihedral 15 degrees) on the recovered surface with its boundary fixed. The
-    # circumradius target 1.75 sqrt(3/8) h, h the mean surface edge, matches
-    # Gmsh HXT's element counts. The sphere and grid torus row sizes are the
-    # triangle counts, the stuffed torus row size the stuffing spacing in
-    # thousandths. The grid torus (cocircular rows, every edge constrained) is
-    # a hard input for both tools.
+    # Surface to tetrahedra end to end (recovery, state creation, refinement to
+    # radius-edge 2, improvement to radius-edge 2 and dihedral 15 degrees,
+    # export) with the boundary fixed, against Gmsh HXT generate(3) on the same
+    # surface. The circumradius target 1.75 sqrt(3/8) h, h the mean surface
+    # edge, matches HXT's element counts. The sphere and grid torus row sizes
+    # are the triangle counts, the stuffed torus row size the stuffing spacing
+    # in thousandths. The grid torus (cocircular rows, every edge constrained)
+    # is a hard input for both tools.
     rows: list[_Row] = []
     shapes = (
-        ("refine-improve-sphere", faces.shape[0], (vertices, faces))
+        ("surface-to-tets-sphere", faces.shape[0], (vertices, faces))
         for vertices, faces in (_icosphere(5), _icosphere(6))
     )
     tori = (
-        ("refine-improve-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
+        ("surface-to-tets-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
         for thousandths in (67, 22)
     )
     grids = (
-        ("refine-improve-grid-torus", faces.shape[0], (vertices, faces))
+        ("surface-to-tets-grid-torus", faces.shape[0], (vertices, faces))
         for vertices, faces in (_uv_torus(100), _uv_torus(300))
     )
     for name, size, (vertices, faces) in (*shapes, *tori, *grids):
-        recovered = _recover(vertices, faces)
         edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
         spacing = float(
             np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
@@ -308,8 +316,8 @@ def _volume_rows() -> tuple[_Row, ...]:
             _Row(
                 name,
                 size,
-                lambda recovered=recovered, target=target: _refine_improve(
-                    recovered, target
+                lambda vertices=vertices, faces=faces, target=target: _surface_to_tets(
+                    vertices, faces, target
                 ),
                 _volume_cells,
                 _volume_unmet,
