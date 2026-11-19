@@ -291,6 +291,11 @@ class Triangulation3D {
     return orient_with(tetrahedron, slot, ExactPointRef{p, nullptr});
   }
   int orient_with(const Tetrahedron& tetrahedron, int slot, const ExactPointRef& p) const {
+    if (p.exact == nullptr && carriers_exact()) {
+      const double* q[4];
+      for (int k = 0; k < 4; ++k) q[k] = k == slot ? p.carrier : point(tetrahedron.v[k]);
+      return orient3d_filtered(q[0], q[1], q[2], q[3]);
+    }
     ExactPointRef q[4];
     for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : ref(tetrahedron.v[k]);
     if (carriers_only(q)) {
@@ -342,9 +347,15 @@ class Triangulation3D {
     const ConeInsertion inserted = insert_checked_cone(
         complex_, edit_,
         [this](const int32_t* v) {
+          // A sign the floating stage decides is the unperturbed sign.
+          if (carriers_exact()) {
+            const OrientationStage stage =
+                orientation_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]));
+            if (-stage.det > stage.errbound) return true;
+            if (stage.det > stage.errbound) return false;
+          }
           const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
           if (carriers_only(q)) {
-            // A sign the floating stage decides is the unperturbed sign.
             const OrientationStage stage =
                 orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
             if (-stage.det > stage.errbound) return true;
@@ -481,13 +492,20 @@ class Triangulation3D {
     }
     return true;
   }
+  // Whether every vertex is exact at its carrier (no exact position banked).
+  bool carriers_exact() const noexcept { return exact_ == nullptr || exact_->empty(); }
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
       if (metric_ == nullptr) {
+        // A sign the floating stage decides is the unperturbed sign.
+        if (carriers_exact()) {
+          const int sign =
+              insphere_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p));
+          if (sign != 0) return sign > 0;
+        }
         const ExactPointRef q[5]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p)};
         if (carriers_only(q)) {
-          // A sign the floating stage decides is the unperturbed sign.
           const int sign = insphere_stage(q[0].carrier, q[1].carrier, q[2].carrier,
                                           q[3].carrier, q[4].carrier);
           if (sign != 0) return sign > 0;
