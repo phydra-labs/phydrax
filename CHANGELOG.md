@@ -317,6 +317,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- PLC tetrahedral route: cell validity of affine tetrahedra is proved by the
+  exact native kernel when the route selects it (`native_affine_tetrahedra`
+  on `certify_cell_geometry_validity` and `CellValidityCertificate`, part of
+  its identity when set; mapped PLC geometry keeps the rational proof, which
+  never loads meshcore). Certificates with the flag get new identities, and
+  stored validity certificates without the field no longer restore.
+  PLC organization and certification are faster (packed-key row tables,
+  vectorized `GeometryAssociation` row validation, an affine shortcut in
+  `physical_plc_tetrahedra`, linear patch labeling): certified icosphere of
+  20,480 triangles 12.9 s instead of 22.4 s.
 - Native surface-to-tetrahedra on fixed boundaries is faster with unchanged
   output: unchecked carrier reads and no incidence maintenance in interior
   refinement, grid-indexed protection radii, a fixed-width exact integer
