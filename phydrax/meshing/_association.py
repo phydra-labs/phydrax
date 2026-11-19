@@ -30,8 +30,12 @@ transfer and projection (:func:`rederive_association`).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import StrEnum
 from fractions import Fraction
+from functools import partial
+from itertools import chain, repeat
+from operator import eq, is_, is_not
 from typing import (
     Any,
     cast,
@@ -991,6 +995,124 @@ def _unclassified_id(
     )
 
 
+def _present_rows(values: tuple[object, ...], /) -> np.ndarray:
+    """Per-row ``value is not None``."""
+    return np.fromiter(
+        map(is_not, values, repeat(None)), dtype=np.bool_, count=len(values)
+    )
+
+
+def _rows_are(values: tuple[object, ...], member: object, /) -> np.ndarray:
+    """Per-row ``value is member``."""
+    return np.fromiter(
+        map(is_, values, repeat(member)), dtype=np.bool_, count=len(values)
+    )
+
+
+def _distinct(values: tuple[object, ...], /) -> tuple[object, ...] | None:
+    """Distinct values in first-seen order, or ``None`` when one is unhashable."""
+    try:
+        return tuple(dict.fromkeys(values))
+    except TypeError:
+        return None
+
+
+def _canonical_name_paths(paths: tuple[object, ...], /) -> bool:
+    """Whether every row is a tuple of canonical (stripped, nonempty) names."""
+    if not set(map(type, paths)) <= {tuple}:
+        return False
+    distinct = _distinct(paths)
+    return distinct is not None and all(
+        isinstance(part, str) and part and part == part.strip()
+        for path in distinct
+        for part in cast(tuple[object, ...], path)
+    )
+
+
+def _region_side_pairs(pairs: tuple[object, ...], /) -> bool:
+    """Whether every row is a pair of canonical region IDs or ``None``."""
+    if not set(map(type, pairs)) <= {tuple}:
+        return False
+    distinct = _distinct(pairs)
+    return distinct is not None and all(
+        len(pair) == 2
+        and all(
+            value is None or (isinstance(value, str) and value and value == value.strip())
+            for value in pair
+        )
+        for pair in cast(tuple[tuple[object, ...], ...], distinct)
+    )
+
+
+def _fraction_pairs(
+    intervals: tuple[object, ...], accept: Callable[[Fraction, Fraction], bool], /
+) -> bool:
+    """Whether every non-``None`` row is an accepted pair of exact Fractions."""
+    present = tuple(filter(partial(is_not, None), intervals))
+    if not present:
+        return True
+    if not set(map(type, present)) <= {tuple}:
+        return False
+    # Every present row was just checked to be exactly a tuple.
+    pairs = cast(tuple[tuple[object, ...], ...], present)
+    if set(map(len, pairs)) != {2}:
+        return False
+    if not all(
+        issubclass(kind, Fraction) for kind in set(map(type, chain.from_iterable(pairs)))
+    ):
+        return False
+    return all(
+        accept(first, second)
+        for first, second in cast(
+            tuple[tuple[Fraction, Fraction], ...], tuple(dict.fromkeys(present))
+        )
+    )
+
+
+def _require_exact_parameter_rows(
+    kind: GeometryAssociationKind,
+    edge: np.ndarray,
+    witness_facet: np.ndarray,
+    resolved: np.ndarray,
+    interval: np.ndarray,
+    point: np.ndarray,
+    target_interval: np.ndarray,
+    /,
+) -> None:
+    """Exact edge parameters and partial target support, first failing row first."""
+    parameterized = edge & (
+        kind in (GeometryAssociationKind.CURVE, GeometryAssociationKind.PIECEWISE_LINEAR)
+    )
+    claims = interval | point
+    failures = (
+        (
+            (claims & ~parameterized) | (interval & point),
+            "Exact source parameters belong to one edge interval or point per row.",
+        ),
+        (~resolved & claims, "Unresolved edge rows cannot claim exact parameters."),
+        (
+            target_interval & (~resolved | ~((parameterized & interval) | witness_facet)),
+            "Partial target support requires a proved source edge or facet.",
+        ),
+        (
+            resolved
+            & edge
+            & (kind is GeometryAssociationKind.CURVE)
+            & (interval == point),
+            "Resolved curve-edge rows require exactly one interval or point parameter.",
+        ),
+    )
+    failed = np.zeros(edge.shape, dtype=np.bool_)
+    for mask, _ in failures:
+        failed |= mask
+    if not np.any(failed):
+        return
+    row = int(np.argmax(failed))
+    for mask, message in failures:
+        if mask[row]:
+            raise ValueError(message)
+
+
 def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> np.ndarray:
     return (
         np.full(shape, fill, dtype=dtype) if value is None else np.asarray(value, dtype)
@@ -1153,54 +1275,45 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                     "Exact geometry associations require zero residuals",
                     target_id=int(targets[rejected[0]]),
                 )
-        roles = (
-            tuple(None for _ in range(count))
-            if source_roles is None
-            else tuple(source_roles)
-        )
+        roles = (None,) * count if source_roles is None else tuple(source_roles)
         occurrences = (
-            tuple(() for _ in range(count))
+            ((),) * count
             if source_occurrence_paths is None
             else tuple(source_occurrence_paths)
         )
         region_sides = (
-            tuple((None, None) for _ in range(count))
+            ((None, None),) * count
             if source_region_sides is None
             else tuple(source_region_sides)
         )
         parameter_intervals = (
-            tuple(None for _ in range(count))
+            (None,) * count
             if source_parameter_intervals is None
             else tuple(source_parameter_intervals)
         )
         target_intervals = (
-            tuple(None for _ in range(count))
+            (None,) * count
             if target_parameter_intervals is None
             else tuple(target_parameter_intervals)
         )
         target_pieces = (
-            tuple(None for _ in range(count))
+            (None,) * count
             if target_reference_pieces is None
             else tuple(target_reference_pieces)
         )
         parameter_points = (
-            tuple(None for _ in range(count))
+            (None,) * count
             if source_parameter_points is None
             else tuple(source_parameter_points)
         )
-        if len(roles) != count or any(
-            role is not None and not isinstance(role, GeometrySourceEntityRole)
-            for role in roles
-        ):
+        # Row tables repeat few distinct values: types are checked on every row
+        # (C-level maps), contents once per distinct value.
+        if len(roles) != count or not set(map(type, roles)) <= {
+            type(None),
+            GeometrySourceEntityRole,
+        }:
             raise ValueError("Source roles must align with target association rows.")
-        if len(occurrences) != count or any(
-            not isinstance(path, tuple)
-            or any(
-                not isinstance(part, str) or not part or part != part.strip()
-                for part in path
-            )
-            for path in occurrences
-        ):
+        if len(occurrences) != count or not _canonical_name_paths(occurrences):
             raise ValueError("Source occurrence paths must be aligned immutable tuples.")
         dimensions, indices = _source_entities(
             association_kind,
@@ -1211,49 +1324,27 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             source_indices,
             occurrences,
         )
-        if len(region_sides) != count or any(
-            not isinstance(pair, tuple)
-            or len(pair) != 2
-            or any(
-                value is not None
-                and (not isinstance(value, str) or not value or value != value.strip())
-                for value in pair
-            )
-            for pair in region_sides
-        ):
+        if len(region_sides) != count or not _region_side_pairs(region_sides):
             raise ValueError(
                 "Source region sides must be aligned (minus, plus) ID pairs."
             )
-        if len(parameter_intervals) != count or any(
-            interval is not None
-            and (
-                not isinstance(interval, tuple)
-                or len(interval) != 2
-                or any(not isinstance(value, Fraction) for value in interval)
-                or interval[0] >= interval[1]
-            )
-            for interval in parameter_intervals
+        if len(parameter_intervals) != count or not _fraction_pairs(
+            parameter_intervals, lambda first, second: first < second
         ):
             raise ValueError(
                 "Source parameter intervals must be exact increasing Fraction pairs."
             )
-        if len(target_intervals) != count or any(
-            interval is not None
-            and (
-                not isinstance(interval, tuple)
-                or len(interval) != 2
-                or any(not isinstance(value, Fraction) for value in interval)
-                or not (0 <= interval[0] < interval[1] <= 1)
-            )
-            for interval in target_intervals
+        if len(target_intervals) != count or not _fraction_pairs(
+            target_intervals, lambda first, second: 0 <= first < second <= 1
         ):
             raise ValueError(
                 "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
             )
-        target_intervals = tuple(
-            None if interval == (Fraction(0), Fraction(1)) else interval
-            for interval in target_intervals
-        )
+        whole = (Fraction(0), Fraction(1))
+        if any(map(eq, target_intervals, repeat(whole))):
+            target_intervals = tuple(
+                None if interval == whole else interval for interval in target_intervals
+            )
         _validate_target_reference_piece_rows(target_pieces, roles, count)
         if source_boundary_witness_id is not None and (
             not isinstance(source_boundary_witness_id, str)
@@ -1261,93 +1352,51 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             or source_boundary_witness_id != source_boundary_witness_id.strip()
         ):
             raise ValueError("Source boundary witness identity must be nonempty.")
-        if any(piece is not None for piece in target_pieces):
-            if source_boundary_witness_id is None or any(
-                piece is None for piece in target_pieces
-            ):
+        edge = _rows_are(roles, GeometrySourceEntityRole.EDGE)
+        facet = _rows_are(roles, GeometrySourceEntityRole.FACET)
+        interval_rows = _present_rows(parameter_intervals)
+        pieces = _present_rows(target_pieces)
+        if np.any(pieces):
+            if source_boundary_witness_id is None or not np.all(pieces):
                 raise ValueError(
                     "Every witness-bound face row needs exact target pieces."
                 )
-            if any(
-                not resolved_[row]
-                or roles[row]
-                not in (GeometrySourceEntityRole.FACET, GeometrySourceEntityRole.EDGE)
-                or (
-                    roles[row] is GeometrySourceEntityRole.EDGE
-                    and parameter_intervals[row] is None
-                )
-                for row in range(count)
-            ):
+            if np.any(~resolved_ | ~(facet | edge) | (edge & ~interval_rows)):
                 raise ValueError(
                     "Exact target face pieces need resolved source facets or parameterized edges."
                 )
-        elif source_boundary_witness_id is not None and any(
-            not resolved_[row] or roles[row] is not GeometrySourceEntityRole.FACET
-            for row in range(count)
-        ):
+        elif source_boundary_witness_id is not None and np.any(~resolved_ | ~facet):
             raise ValueError(
                 "Witness-bound edge support requires resolved source facets."
             )
-        if len(parameter_points) != count or any(
-            value is not None and not isinstance(value, Fraction)
-            for value in parameter_points
+        if len(parameter_points) != count or not all(
+            issubclass(kind, Fraction)
+            for kind in set(map(type, parameter_points)) - {type(None)}
         ):
             raise ValueError("Source parameter points must be exact Fraction scalars.")
-        for row, (interval, point) in enumerate(
-            zip(parameter_intervals, parameter_points, strict=True)
-        ):
-            curve_edge = (
-                association_kind is GeometryAssociationKind.CURVE
-                and roles[row] is GeometrySourceEntityRole.EDGE
-            )
-            parameterized_edge = (
-                association_kind
-                in (
-                    GeometryAssociationKind.CURVE,
-                    GeometryAssociationKind.PIECEWISE_LINEAR,
-                )
-                and roles[row] is GeometrySourceEntityRole.EDGE
-            )
-            if (
-                (interval is not None or point is not None) and not parameterized_edge
-            ) or (interval is not None and point is not None):
-                raise ValueError(
-                    "Exact source parameters belong to one edge interval or point per row."
-                )
-            if not resolved_[row] and (interval is not None or point is not None):
-                raise ValueError("Unresolved edge rows cannot claim exact parameters.")
-            facet_edge = (
-                source_boundary_witness_id is not None
-                and roles[row] is GeometrySourceEntityRole.FACET
-            )
-            if target_intervals[row] is not None and (
-                not resolved_[row]
-                or not ((parameterized_edge and interval is not None) or facet_edge)
-            ):
-                raise ValueError(
-                    "Partial target support requires a proved source edge or facet."
-                )
-            if resolved_[row] and curve_edge and (interval is None) == (point is None):
-                raise ValueError(
-                    "Resolved curve-edge rows require exactly one interval or point parameter."
-                )
-        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and any(
-            resolved_[row]
-            and roles[row] is GeometrySourceEntityRole.FACET
-            and region_sides[row] == (None, None)
-            for row in range(count)
+        _require_exact_parameter_rows(
+            association_kind,
+            edge,
+            facet if source_boundary_witness_id is not None else np.zeros_like(facet),
+            resolved_,
+            interval_rows,
+            _present_rows(parameter_points),
+            _present_rows(target_intervals),
+        )
+        unsided = np.fromiter(
+            map(eq, region_sides, repeat((None, None))), dtype=np.bool_, count=count
+        )
+        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
+            resolved_ & facet & unsided
         ):
             raise ValueError(
                 "Resolved piecewise-linear facets need at least one incident source region."
             )
-        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and any(
-            resolved_[row] and roles[row] is None for row in range(count)
+        if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
+            resolved_ & ~_present_rows(roles)
         ):
             raise ValueError("Resolved piecewise-linear associations need source roles.")
-        if any(
-            not resolved_[row] and region_sides[row] != (None, None)
-            for row in range(count)
-        ):
+        if np.any(~resolved_ & ~unsided):
             raise ValueError("Unresolved rows cannot claim source region sides.")
         if (
             association_kind is GeometryAssociationKind.BREP

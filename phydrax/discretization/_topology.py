@@ -77,6 +77,77 @@ def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
     return not np.all(_row_run_starts(rows[_row_order(rows)]))
 
 
+def sorted_unique_rows(rows: np.ndarray, /) -> np.ndarray:
+    """The distinct rows of a rank-2 integer array in lexicographic order.
+
+    Equal to ``np.unique(rows, axis=0)``, through one packed-key sort.
+    """
+
+    ordered = rows[_row_order(rows)]
+    return ordered[_row_run_starts(ordered)] if ordered.shape[0] else ordered
+
+
+def unique_rows_inverse(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``np.unique(rows, axis=0, return_inverse=True, return_counts=True)``.
+
+    The same lexicographically sorted distinct rows, flat inverse and counts,
+    through one packed-key sort.
+    """
+
+    order = _row_order(rows)
+    ordered = rows[order]
+    if not ordered.shape[0]:
+        return ordered, np.empty((0,), np.int64), np.empty((0,), np.int64)
+    starts = _row_run_starts(ordered)
+    groups = np.cumsum(starts, dtype=np.int64) - 1
+    inverse = np.empty((rows.shape[0],), dtype=np.int64)
+    inverse[order] = groups
+    return ordered[starts], inverse, np.bincount(groups)
+
+
+def _row_keys(
+    table: np.ndarray, query: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Order-preserving int64 keys of two nonempty arrays' rows, if spans fit."""
+
+    lows = np.minimum(table.min(axis=0), query.min(axis=0)).astype(np.int64)
+    highs = np.maximum(table.max(axis=0), query.max(axis=0)).astype(np.int64)
+    spans = highs - lows + 1
+    if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
+        return None
+    table_key = np.zeros((table.shape[0],), dtype=np.int64)
+    query_key = np.zeros((query.shape[0],), dtype=np.int64)
+    for column, low, span in zip(range(table.shape[1]), lows, spans, strict=True):
+        table_key *= span
+        table_key += table[:, column].astype(np.int64) - low
+        query_key *= span
+        query_key += query[:, column].astype(np.int64) - low
+    return table_key, query_key
+
+
+def row_positions(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
+    """Row of ``table`` equal to each ``query`` row, or -1 (distinct table rows)."""
+
+    if table.ndim != 2 or query.ndim != 2 or table.shape[1] != query.shape[1]:
+        raise ValueError("Row lookup requires rank-2 arrays of equal width.")
+    if not table.shape[0] or not query.shape[0]:
+        return np.full((query.shape[0],), -1, dtype=np.int64)
+    keys = _row_keys(table, query)
+    if keys is None:
+        _, inverse = np.unique(
+            np.concatenate((table, query)), axis=0, return_inverse=True
+        )
+        inverse = inverse.reshape((-1,))
+        owners = np.full((int(inverse.max()) + 1,), -1, dtype=np.int64)
+        owners[inverse[: table.shape[0]]] = np.arange(table.shape[0], dtype=np.int64)
+        return owners[inverse[table.shape[0] :]]
+    table_keys, query_keys = keys
+    order = np.argsort(table_keys, kind="stable")
+    ordered = table_keys[order]
+    position = np.minimum(np.searchsorted(ordered, query_keys), ordered.size - 1)
+    return np.where(ordered[position] == query_keys, order[position], -1).astype(np.int64)
+
+
 class EntitySubset(StrictModule, NonTrainableState):
     """Named subset of one fixed-capacity entity set."""
 

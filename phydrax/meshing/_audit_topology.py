@@ -42,6 +42,7 @@ from .._meshcore import (
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
+from ..discretization._topology import sorted_unique_rows, unique_rows_inverse
 
 
 @dataclass(frozen=True)
@@ -333,7 +334,7 @@ def _collapsed(rows: np.ndarray, /) -> np.ndarray:
 
 
 def _duplicate_count(rows: np.ndarray, /) -> int:
-    _, counts = np.unique(_sorted_keys(rows), axis=0, return_counts=True)
+    _, _, counts = unique_rows_inverse(_sorted_keys(rows))
     return int(np.sum(counts[counts > 1] - 1))
 
 
@@ -373,8 +374,8 @@ def _star_components(
         second_cells = second_cells[linked]
     if entity_rows.shape[0] == 0:
         return 0
-    nodes = np.unique(
-        np.concatenate((entity_rows, entity_cells[:, None]), axis=1), axis=0
+    nodes = sorted_unique_rows(
+        np.concatenate((entity_rows, entity_cells[:, None]), axis=1)
     )
     queries = np.concatenate(
         (
@@ -397,7 +398,7 @@ def _star_components(
         )
     )
     entity_index = np.cumsum(starts, dtype=np.int64) - 1
-    pairs = np.unique(np.stack((entity_index, labels), axis=1), axis=0)
+    pairs = sorted_unique_rows(np.stack((entity_index, labels), axis=1))
     components = np.bincount(pairs[:, 0], minlength=int(np.count_nonzero(starts)))
     return int(np.count_nonzero(components > 1))
 
@@ -500,7 +501,7 @@ def _open_boundary_count(
         ridges = np.sort(np.stack((facets[slots], following[slots]), axis=1), axis=1)
     if ridges.shape[0] == 0:
         return 0
-    _, ridge_counts = np.unique(ridges, axis=0, return_counts=True)
+    _, _, ridge_counts = unique_rows_inverse(ridges)
     return int(np.count_nonzero(ridge_counts != 2))
 
 
@@ -1074,8 +1075,7 @@ def audit_welded_topology(
     unresolved: list[str] = []
     complex_ = _welded_complex(mesh, welded)
     keys = _sorted_keys(complex_.facets)
-    _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
-    inverse = inverse.reshape(-1)
+    _, inverse, counts = unique_rows_inverse(keys)
     first, second = _facet_links(inverse)
     twice = counts[inverse[first]] == 2
     pair_first = first[twice]
@@ -1112,10 +1112,8 @@ def audit_welded_topology(
                 ),
                 mesh.topological_dimension,
             )
-            _, star_inverse = np.unique(
-                _sorted_keys(star.facets), axis=0, return_inverse=True
-            )
-            star_first, star_second = _facet_links(star_inverse.reshape(-1))
+            _, star_inverse, _ = unique_rows_inverse(_sorted_keys(star.facets))
+            star_first, star_second = _facet_links(star_inverse)
         scope = (
             None
             if manifold_vertices is None

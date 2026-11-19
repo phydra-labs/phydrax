@@ -13,12 +13,15 @@ from typing import final
 
 import equinox as eqx
 import numpy as np
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
+from ...discretization._topology import _row_order, row_positions
 from ...geometry._affine_plc_boundary import AffinePlcBoundarySource
 from ...geometry._affine_plc_domain import AffinePlcDomain
 from ...geometry._affine_plc_geometry import map_affine_plc_mesh
@@ -446,70 +449,46 @@ def _boundary_face_entities(
     identifiers = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     if connectivity_faces.shape[0] != identifiers.size:
         raise ValueError("Canonical face incidence and face entity IDs are misaligned.")
-    rows = {
-        tuple(sorted(face)): int(identifier)
-        for face, identifier in zip(
-            connectivity_faces.tolist(), identifiers.tolist(), strict=True
-        )
-    }
-    if len(rows) != identifiers.size:
-        raise ValueError("Canonical volume faces do not have unique vertex incidence.")
-    try:
-        return np.asarray(
-            [
-                rows[tuple(sorted(face))]
-                for face in np.asarray(
-                    construction.boundary_faces, dtype=np.int64
-                ).tolist()
-            ],
-            dtype=np.int64,
-        )
-    except KeyError as error:
+    rows = _rows_of_simplices(
+        connectivity_faces, np.asarray(construction.boundary_faces, dtype=np.int64)
+    )
+    if np.any(rows < 0):
         raise ValueError(
             "A recovered boundary face is absent from canonical mesh incidence."
-        ) from error
+        )
+    return identifiers[rows]
 
 
-def _edge_entity_ids(mesh: CellMesh, /) -> dict[tuple[int, int], int]:
+def _edge_entities(mesh: CellMesh, edges: np.ndarray, /) -> np.ndarray:
+    """Entity IDs of the mesh edges with the given vertex pairs."""
     connectivity_edges, _ = simplex_volume_entities(mesh)
     identifiers = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
     if connectivity_edges.shape[0] != identifiers.size:
         raise ValueError("Canonical edge incidence and edge entity IDs are misaligned.")
-    rows = {
-        tuple(sorted(edge)): int(identifier)
-        for edge, identifier in zip(
-            connectivity_edges.tolist(), identifiers.tolist(), strict=True
-        )
-    }
-    if len(rows) != identifiers.size:
-        raise ValueError("Canonical volume edges do not have unique vertex incidence.")
-    return rows
+    rows = _rows_of_simplices(connectivity_edges, edges)
+    if np.any(rows < 0):
+        raise ValueError("A constrained segment is absent from canonical mesh edges.")
+    return identifiers[rows]
 
 
 def _faces_connected(faces: np.ndarray, /) -> bool:
-    if faces.shape[0] <= 1:
+    """Whether the faces form one component through shared vertex pairs."""
+    count = faces.shape[0]
+    if count <= 1:
         return True
-    edge_rows: dict[tuple[int, int], list[int]] = {}
-    for row, face in enumerate(faces.tolist()):
-        for pair in combinations(face, 2):
-            edge_rows.setdefault(tuple(sorted(pair)), []).append(row)
-    parents = list(range(faces.shape[0]))
-
-    def find(row: int, /) -> int:
-        while parents[row] != row:
-            parents[row] = parents[parents[row]]
-            row = parents[row]
-        return row
-
-    for incident in edge_rows.values():
-        if len(incident) < 2:
-            continue
-        root = find(incident[0])
-        for row in incident[1:]:
-            other = find(row)
-            if other != root:
-                parents[other] = root
-    return len({find(row) for row in range(faces.shape[0])}) == 1
+    pairs = np.asarray(tuple(combinations(range(faces.shape[1]), 2)), dtype=np.int64)
+    edges = np.sort(faces[:, pairs], axis=2).reshape((-1, 2))
+    owners = np.repeat(np.arange(count, dtype=np.int64), pairs.shape[0])
+    order = _row_order(edges)
+    ordered = edges[order]
+    same = np.all(ordered[1:] == ordered[:-1], axis=1)
+    first = owners[order][:-1][same]
+    second = owners[order][1:][same]
+    graph = coo_matrix(
+        (np.ones((first.size,), dtype=np.int8), (first, second)), shape=(count, count)
+    )
+    components, _ = connected_components(graph, directed=False)
+    return components == 1
 
 
 def _patches_and_labels(
@@ -534,17 +513,20 @@ def _patches_and_labels(
     if facet_regions.shape != (len(construction.facet_ids), 2):
         raise ValueError("PLC facet region incidence must align with source facets.")
     patches: list[MeshPatch] = []
-    facet_faces: dict[int, np.ndarray] = {}
-    region_boundary_faces: list[list[int]] = [[] for _ in range(len(region_scopes))]
     region_patch_sides: list[list[tuple[str, int]]] = [
         [] for _ in range(len(region_scopes))
     ]
+    # Face rows of every facet, ascending, by one stable sort.
+    facet_order = np.argsort(face_facets, kind="stable")
+    facet_bounds = np.searchsorted(
+        face_facets[facet_order],
+        np.arange(len(construction.facet_ids) + 1, dtype=np.int64),
+    )
     for facet, identity in enumerate(construction.facet_ids):
-        selected_mask = face_facets == facet
-        selected = boundary_face_ids[selected_mask]
+        selected_rows = facet_order[facet_bounds[facet] : facet_bounds[facet + 1]]
+        selected = boundary_face_ids[selected_rows]
         if selected.size == 0:
             raise ValueError(f"PLC facet {identity!r} has no constrained mesh faces.")
-        facet_faces[facet] = selected
         first = int(facet_regions[facet, 0])
         second = int(facet_regions[facet, 1])
         sides = (first, second)
@@ -565,7 +547,7 @@ def _patches_and_labels(
         patch = MeshPatch(
             f"source-facet:{identity}:{'/'.join(path)}",
             _mesh_scope(mesh, 2, selected),
-            connected=_faces_connected(boundary_faces[selected_mask]),
+            connected=_faces_connected(boundary_faces[selected_rows]),
             adjacent_zone_ids=adjacent,
             source_adjacent_region_ids=source_pair,
             source_adjacent_region_occurrence_paths=source_paths,
@@ -573,49 +555,39 @@ def _patches_and_labels(
         patches.append(patch)
         if sides[0] != sides[1]:
             for side_index, region in enumerate(sides):
-                if region < 0:
-                    continue
-                region_boundary_faces[region].extend(int(value) for value in selected)
-                region_patch_sides[region].append(
-                    (patch.patch_id, 1 if side_index == 0 else -1)
-                )
+                if region >= 0:
+                    region_patch_sides[region].append(
+                        (patch.patch_id, 1 if side_index == 0 else -1)
+                    )
     for control in specification.patch_controls:
         selected_facets = _rows_from_stable_ids(
             np.asarray(control.scope.entity_ids, dtype=np.int64),
             source.complex.facet_entity_ids,
             "facet",
         )
-        selected = np.concatenate([facet_faces[int(facet)] for facet in selected_facets])
         selected_rows = np.flatnonzero(np.isin(face_facets, selected_facets))
-        adjacent_rows = sorted(
-            {
-                int(region)
-                for facet in selected_facets.tolist()
-                for region in facet_regions[int(facet)]
-                if int(region) >= 0
-            }
-        )
+        adjacent_rows = np.unique(facet_regions[selected_facets])
         patches.append(
             MeshPatch(
                 control.name,
-                _mesh_scope(mesh, 2, selected),
+                _mesh_scope(mesh, 2, boundary_face_ids[selected_rows]),
                 connected=_faces_connected(boundary_faces[selected_rows]),
-                adjacent_zone_ids=tuple(zone_ids[row] for row in adjacent_rows),
+                adjacent_zone_ids=tuple(
+                    zone_ids[row] for row in adjacent_rows.tolist() if row >= 0
+                ),
             )
         )
 
-    interfaces: list[int] = []
-    sheets: list[int] = []
-    for face_row, facet in enumerate(face_facets.tolist()):
-        positive, negative = facet_regions[facet]
-        if positive == negative:
-            sheets.append(int(boundary_face_ids[face_row]))
-        elif positive >= 0 and negative >= 0:
-            interfaces.append(int(boundary_face_ids[face_row]))
+    face_sides = facet_regions[face_facets]
+    distinct = face_sides[:, 0] != face_sides[:, 1]
+    interfaces = boundary_face_ids[distinct & np.all(face_sides >= 0, axis=1)]
+    sheets = boundary_face_ids[~distinct]
     labels: list[MeshLabel] = []
     region_evidence: list[RegionBoundaryEvidence] = []
     for region, (region_id, occurrence_path, source_scope) in enumerate(region_scopes):
-        selected = np.unique(np.asarray(region_boundary_faces[region], dtype=np.int64))
+        selected = np.unique(
+            boundary_face_ids[distinct & np.any(face_sides == region, axis=1)]
+        )
         if selected.size == 0 or not region_patch_sides[region]:
             raise ValueError(
                 f"PLC region occurrence {region_id!r} has no oriented boundary patches."
@@ -652,28 +624,28 @@ def _patches_and_labels(
         ("material_interface", interfaces),
         ("internal_sheet", sheets),
     ):
-        if selected:
-            labels.append(
-                MeshLabel(
-                    name, _mesh_scope(mesh, 2, np.asarray(selected, dtype=np.int64))
-                )
-            )
-    edge_ids_by_key = _edge_entity_ids(mesh)
+        if selected.size:
+            labels.append(MeshLabel(name, _mesh_scope(mesh, 2, selected)))
     explicit = source.complex.segments.shape[0]
-    internal = np.asarray(
-        [
-            edge_ids_by_key[tuple(sorted(edge))]
-            for edge, source_edge in zip(
-                construction.segments.tolist(),
-                construction.segment_source_edges.tolist(),
-                strict=True,
-            )
-            if construction.source_segment_complex_rows[source_edge] < explicit
-        ],
-        dtype=np.int64,
+    internal = (
+        np.asarray(construction.source_segment_complex_rows, dtype=np.int64)[
+            np.asarray(construction.segment_source_edges, dtype=np.int64)
+        ]
+        < explicit
     )
-    if internal.size:
-        labels.append(MeshLabel("internal_curve", _mesh_scope(mesh, 1, internal)))
+    if np.any(internal):
+        labels.append(
+            MeshLabel(
+                "internal_curve",
+                _mesh_scope(
+                    mesh,
+                    1,
+                    _edge_entities(
+                        mesh, np.asarray(construction.segments, dtype=np.int64)[internal]
+                    ),
+                ),
+            )
+        )
     return tuple(patches), tuple(labels), tuple(region_evidence)
 
 
@@ -794,18 +766,10 @@ def _object_rows(values: list[object], /) -> np.ndarray:
 
 def _rows_of_simplices(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
     """Row of the unique simplices ``table`` with each ``query`` vertex set, or -1."""
-    count = table.shape[0]
-    combined = np.sort(
-        np.concatenate(
-            (np.asarray(table, dtype=np.int64), np.asarray(query, dtype=np.int64))
-        ),
-        axis=1,
+    return row_positions(
+        np.sort(np.asarray(table, dtype=np.int64), axis=1),
+        np.sort(np.asarray(query, dtype=np.int64), axis=1),
     )
-    _, inverse = np.unique(combined, axis=0, return_inverse=True)
-    inverse = inverse.reshape((-1,))
-    owners = np.full((int(inverse.max(initial=-1)) + 1,), -1, dtype=np.int64)
-    owners[inverse[:count]] = np.arange(count, dtype=np.int64)
-    return owners[inverse[count:]]
 
 
 def _single_region(rows: np.ndarray, values: np.ndarray, count: int, /) -> np.ndarray:
