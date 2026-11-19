@@ -324,6 +324,29 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native periodic Delaunay triangulates directly on the flat torus: each point
+  is one vertex, cells carry lattice offsets, walks and cavities run through
+  the covering space, bootstrapped from the certified image triangulation of a
+  BRIO sample and falling back to it whenever the quotient is not a valid
+  triangulation of the torus. Filters run on rounded translates with a bound
+  for their rounding; signs and the tie-breaking stay exact, so cells, keys and
+  support bounds are unchanged. Declared identity change: `certified_margin`
+  is now the least `initial_margin * 2^k` holding every published cell's
+  circumball (same `required_margin` formula, facet closure), never larger
+  than before, so `certified_periodic_margin`, periodic shell certificates and
+  owner-local view ids can change, and stored archives with a larger margin
+  must be regenerated. New `periodic-3d` benchmark row (CGAL Periodic_3).
+- Native in-circle tests the floating filter cannot decide go through
+  Shewchuk's adaptive stages (B, C, D) with a double-double estimate of the
+  stage-B determinant in front; signs remain exact and every 2D Delaunay,
+  regular, CDT and Ruppert output is byte-identical. Near-cocircular input is
+  much faster (the published 206-point ring's undecided tests 583 ns -> 18 ns
+  each); `test_predicates` checks every stage against the unfiltered
+  expansion on 461,144 near-degenerate cases.
+- Native zero-set remeshing collapses edges far below the collapse threshold
+  onto an endpoint instead of a projected midpoint (no point jet per collapse
+  when coarsening a fine input); new `surface-remesh-sphere-1e3` and
+  `surface-remesh-sphere-1e5` benchmark rows (the MMGS sphere ladder).
 - Native surface-to-tetrahedra is faster with identical output: a PLC
   recovery that needed no local edits, Steiner points or metric marks its
   cells as Delaunay, and refinement of the adopted mesh skips its initial flip
