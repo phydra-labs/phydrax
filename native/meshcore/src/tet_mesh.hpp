@@ -36,7 +36,15 @@ namespace detail {
 class LocalIncidence;
 }
 struct TetQualityRequest;
-using TetSegmentIndex = std::map<std::array<std::uint64_t, 2>, std::size_t>;
+// A sorted pair of vertex IDs (an edge), hashed for the segment lookups of
+// refinement and improvement (find, insert, erase; never iterated).
+struct EdgeIdHash {
+  std::size_t operator()(const std::array<std::uint64_t, 2>& edge) const noexcept {
+    const std::uint64_t mixed = (edge[0] * 0x9E3779B97F4A7C15ULL) ^ (edge[1] + (edge[1] << 21));
+    return static_cast<std::size_t>((mixed ^ (mixed >> 29)) * 0xBF58476D1CE4E5B9ULL);
+  }
+};
+using TetSegmentIndex = std::unordered_map<std::array<std::uint64_t, 2>, std::size_t, EdgeIdHash>;
 
 enum class TetEditKind : std::uint8_t {
   kSplit,
@@ -481,6 +489,9 @@ struct RecoveredTopology {
   // it alone, since recovery proved the faces pairwise legal (no other row
   // of a group overlaps one), so the coverage proofs are not repeated.
   bool self_covered = false;
+  // The recovery published cells of a Delaunay triangulation of its points
+  // (PlcRecovery::delaunay), so every unconstrained face is locally Delaunay.
+  bool delaunay = false;
 };
 
 class TetMesh {
@@ -996,6 +1007,10 @@ class TetMesh {
   std::array<std::unordered_set<std::uint64_t>, 4> used_periodic_lifted_ids_;
   std::array<std::unordered_set<std::uint64_t>, 4> used_periodic_quotient_ids_;
   std::uint64_t generation_ = 0;
+  // The generation at which the cells were proven constrained Delaunay (a
+  // Delaunay PLC recovery adopted, RecoveredTopology::delaunay); any edit
+  // advances the generation past it. UINT64_MAX: never.
+  std::uint64_t delaunay_generation_ = std::numeric_limits<std::uint64_t>::max();
   std::uint64_t next_vertex_id_ = 0;
   std::uint64_t next_cell_id_ = 0;
   std::uint64_t next_facet_id_ = 0;
@@ -1013,17 +1028,28 @@ class TetMesh {
     std::int32_t constraint = kNoConstraint;
     std::int32_t apex = -1;
     std::array<std::int32_t, 4> vertices{};
+    // Local indices of the corners of the facet opposite the center, in
+    // kOrientedFacet[apex] order.
+    std::array<std::uint32_t, 3> locals{};
   };
   // An outer edge of a cone cell's face through the center, waiting for the
-  // second cone cell that holds it (`cell` -1 once paired).
+  // second cone cell that holds it (`cell` -1 once paired); cones over more
+  // than kDenseConeVertices boundary vertices pair their edges this way.
   struct ConeEdge {
     static constexpr std::uint64_t kEmpty = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t key = kEmpty;
     std::int32_t cell = -1;
     std::int32_t face = -1;
   };
+  static constexpr std::uint32_t kDenseConeVertices = 512;
   std::vector<ConeFace> cone_faces_;
   std::vector<ConeEdge> cone_edges_;
+  // Per vertex slot: cone_epoch_ << 32 | its local index in the current cone.
+  std::vector<std::uint64_t> cone_vertex_tags_;
+  // Directed boundary edge (from, to) of local indices, row-major over a
+  // power-of-two side: cone_epoch_ << 32 | 4 cone row + facet corner.
+  std::vector<std::uint64_t> cone_edge_owners_;
+  std::uint32_t cone_epoch_ = 0;
 };
 
 }  // namespace phx::mc

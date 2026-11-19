@@ -26,6 +26,7 @@
 #include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
+#include "spatial_sort.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
 
@@ -823,57 +824,71 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
 constexpr int kHilbertBits = 12;
 constexpr std::uint32_t kHilbertMax = (1U << kHilbertBits) - 1U;
 
-// Index of the 3D Hilbert curve through the grid point (x, y, z), by
-// Skilling's transpose ("Programming the Hilbert curve", AIP Conf. Proc. 707,
-// 2004): undo the excess work, Gray-encode, then interleave the bits. The
-// per-bit choices are masks, not branches (the same bits).
-std::uint64_t hilbert_key(std::uint32_t x, std::uint32_t y, std::uint32_t z) noexcept {
-  std::uint32_t axes[3]{x, y, z};
-  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
-    const std::uint32_t p = q - 1;
-    for (int axis = 0; axis < 3; ++axis) {
-      // Set bit: invert the low bits of axis 0; clear bit: exchange them.
-      const std::uint32_t set = 0U - static_cast<std::uint32_t>((axes[axis] & q) != 0);
-      const std::uint32_t swap = (axes[0] ^ axes[axis]) & p & ~set;
-      axes[0] ^= (p & set) | swap;
-      axes[axis] ^= swap;
-    }
-  }
-  for (int axis = 1; axis < 3; ++axis) axes[axis] ^= axes[axis - 1];
-  std::uint32_t flip = 0;
-  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
-    flip ^= (q - 1) & (0U - static_cast<std::uint32_t>((axes[2] & q) != 0));
-  }
-  for (std::uint32_t& axis : axes) axis ^= flip;
-  // Interleave: bit b of axis a goes to bit 3 b + (2 - a).
-  const auto spread = [](std::uint64_t value) {
-    value &= 0x1fffffULL;
-    value = (value | value << 32) & 0x1f00000000ffffULL;
-    value = (value | value << 16) & 0x1f0000ff0000ffULL;
-    value = (value | value << 8) & 0x100f00f00f00f00fULL;
-    value = (value | value << 4) & 0x10c30c30c30c30c3ULL;
-    value = (value | value << 2) & 0x1249249249249249ULL;
-    return value;
-  };
-  return spread(axes[0]) << 2 | spread(axes[1]) << 1 | spread(axes[2]);
-}
-
-// Hilbert keys of points in a box: each axis scaled by the largest extent.
+// Hilbert grid of points in a box: each axis scaled by the largest extent.
 struct HilbertFrame {
   double lower[3]{};
   double scale = 0.0;
 
-  std::uint64_t key(const double* point) const noexcept {
-    std::uint32_t grid[3];
-    for (int axis = 0; axis < 3; ++axis) {
+  std::array<std::uint32_t, 3> grid(const double* point) const noexcept {
+    std::array<std::uint32_t, 3> cell{};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
       const double scaled = (point[axis] - lower[axis]) * scale;
-      grid[axis] = !(scaled > 0.0) ? 0U
+      cell[axis] = !(scaled > 0.0) ? 0U
                    : scaled >= static_cast<double>(kHilbertMax) ? kHilbertMax
                                                                  : static_cast<std::uint32_t>(scaled);
     }
-    return hilbert_key(grid[0], grid[1], grid[2]);
+    return cell;
   }
 };
+
+// Sets each item's key to the index of the 3D Hilbert curve through its grid
+// point (Skilling's transpose, hilbert_transpose), 32 independent lanes at a
+// time.
+template <class Item>
+void assign_hilbert_keys(std::vector<Item>& items,
+                         std::span<const std::array<std::uint32_t, 3>> grids) {
+  constexpr std::size_t kLanes = 32;
+  for (std::size_t begin = 0; begin < items.size(); begin += kLanes) {
+    const std::size_t end = std::min(items.size(), begin + kLanes);
+    std::uint32_t lanes[3][kLanes] = {};
+    for (std::size_t at = begin; at < end; ++at) {
+      for (std::size_t axis = 0; axis < 3; ++axis) lanes[axis][at - begin] = grids[at][axis];
+    }
+    hilbert_transpose<3, kHilbertBits, kLanes>(lanes);
+    for (std::size_t at = begin; at < end; ++at) {
+      const std::uint32_t transposed[3]{lanes[0][at - begin], lanes[1][at - begin],
+                                        lanes[2][at - begin]};
+      items[at].key = interleave_transpose(transposed, 3);
+    }
+  }
+}
+
+// Sorts `items` by (key, cell_id), keys below 2^(3 kHilbertBits): a stable
+// radix sort on the key, one kHilbertBits digit per pass, then each run of
+// equal keys (a few items in one grid cell) by cell ID.
+template <class Item>
+void sort_by_key_then_id(std::vector<Item>& items, std::vector<Item>& scratch) {
+  constexpr std::size_t kBuckets = std::size_t{1} << kHilbertBits;
+  std::vector<std::size_t> starts(kBuckets + 1);
+  scratch.resize(items.size());
+  for (int pass = 0; pass < 3; ++pass) {
+    const int shift = kHilbertBits * pass;
+    std::fill(starts.begin(), starts.end(), 0);
+    for (const Item& item : items) ++starts[((item.key >> shift) & kHilbertMax) + 1];
+    for (std::size_t bucket = 1; bucket <= kBuckets; ++bucket) starts[bucket] += starts[bucket - 1];
+    for (const Item& item : items) scratch[starts[(item.key >> shift) & kHilbertMax]++] = item;
+    items.swap(scratch);
+  }
+  for (std::size_t begin = 0, end = 0; begin < items.size(); begin = end) {
+    end = begin + 1;
+    while (end < items.size() && items[end].key == items[begin].key) ++end;
+    if (end - begin > 1) {
+      std::sort(items.begin() + static_cast<std::ptrdiff_t>(begin),
+                items.begin() + static_cast<std::ptrdiff_t>(end),
+                [](const Item& a, const Item& b) { return a.cell_id < b.cell_id; });
+    }
+  }
+}
 
 // A cell exactly positively oriented whose binary64 orientation determinant
 // is positive as well (so it is measurable), from one floating evaluation:
@@ -1674,6 +1689,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
   }
   TetSegmentIndex segment_rows_by_edge;
+  segment_rows_by_edge.reserve(mesh.segments_.size());
   for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
     const TetSnapshotSegment& segment = mesh.segments_[row];
     if (!segment_rows_by_edge
@@ -1917,13 +1933,15 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // Delaunay refinement assumes a constrained Delaunay triangulation: a cell
   // whose circumsphere holds a vertex is not removed by inserting its
   // circumcenter, which then lies near that vertex. The input (a recovered
-  // PLC) and every insertion are flipped toward it (flip_to_constrained_delaunay).
+  // PLC) and every insertion are flipped toward it (flip_to_constrained_delaunay),
+  // except an input proven constrained Delaunay and unedited since
+  // (TetMesh::delaunay_generation_), where every face test would fail.
   const std::function<bool(std::uint64_t, std::uint64_t)> is_segment =
       [&](std::uint64_t first, std::uint64_t second) {
         return segment_rows_by_edge.contains(sorted_edge(first, second));
       };
   std::vector<std::uint64_t> flipped;
-  {
+  if (mesh.delaunay_generation_ != mesh.generation_) {
     std::vector<std::uint64_t> all_cells;
     for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
       const std::int32_t cell = static_cast<std::int32_t>(row);
@@ -2686,6 +2704,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     double target;
   };
   std::vector<Proposal> proposals;
+  std::vector<Proposal> sorted_scratch;
+  std::vector<std::array<std::uint32_t, 3>> proposal_grids;
   // Every proposed cell ID: a live cell that misses a criterion when the
   // rounds end was proposed (each created cell is evaluated in the round
   // after its creation), so the unmet records measure only these.
@@ -3034,7 +3054,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
         double center[3];
         if (!violates(slot, proposal, center)) continue;
-        proposal.key = frame.key(center);
+        proposal_grids.push_back(frame.grid(center));
       }
       proposals.push_back(proposal);
     }
@@ -3046,9 +3066,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // Later rounds keep the order in which the previous round's insertions,
     // taken along the curve, created their cells.
     if (pass == 0) {
-      std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
-        return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
-      });
+      assign_hilbert_keys(proposals, std::span<const std::array<std::uint32_t, 3>>(proposal_grids));
+      sort_by_key_then_id(proposals, sorted_scratch);
     }
     for (Proposal& proposal : proposals) {
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {
