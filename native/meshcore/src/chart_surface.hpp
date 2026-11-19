@@ -17,20 +17,20 @@
 #include "topology_keys.hpp"
 
 namespace phx::mc {
-namespace {
+namespace chart_surface_detail {
 
 using Triangle = std::array<int32_t, 3>;
 using Flags = std::array<int8_t, 3>;
 
 // Physical flips need the opposite-angle sum to exceed pi by this cotangent
 // margin, so cocircular quadrilaterals never oscillate.
-constexpr double kFlipMargin = 1.0e-12;
+inline constexpr double kFlipMargin = 1.0e-12;
 
 using geometry::Vector3;
 using geometry::cross;
 using geometry::dot;
 
-double metric_dot(const Vector3& a, const Vector3& b, const double* metric) {
+inline double metric_dot(const Vector3& a, const Vector3& b, const double* metric) {
   if (metric == nullptr) {
     return dot(a, b);
   }
@@ -39,7 +39,7 @@ double metric_dot(const Vector3& a, const Vector3& b, const double* metric) {
          a.z * (metric[6] * b.x + metric[7] * b.y + metric[8] * b.z);
 }
 
-double metric_area(const Vector3& a, const Vector3& b, const double* metric, double product) {
+inline double metric_area(const Vector3& a, const Vector3& b, const double* metric, double product) {
   if (metric == nullptr) {
     const Vector3 area = cross(a, b);
     return std::sqrt(dot(area, area));
@@ -47,7 +47,7 @@ double metric_area(const Vector3& a, const Vector3& b, const double* metric, dou
   return std::sqrt(metric_dot(a, a, metric) * metric_dot(b, b, metric) - product * product);
 }
 
-bool metric_valid(const double* metric) {
+inline bool metric_valid(const double* metric) {
   for (int k = 0; k < 9; ++k) {
     if (!std::isfinite(metric[k])) {
       return false;
@@ -871,5 +871,7 @@ class SurfaceTriangulation {
   }
 
 };
-}  // namespace
+}  // namespace chart_surface_detail
+using chart_surface_detail::SurfaceTriangulation;
+using chart_surface_detail::metric_valid;
 }  // namespace phx::mc

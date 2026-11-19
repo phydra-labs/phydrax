@@ -22,10 +22,10 @@
 #include "triangulation2d.hpp"
 
 namespace phx::mc {
-namespace {
+namespace cdt2d_detail {
 
-constexpr int32_t kFree = -1;
-constexpr int32_t kHullConstraint = -2;
+inline constexpr int32_t kFree = -1;
+inline constexpr int32_t kHullConstraint = -2;
 
 struct StatusError {
   int32_t status;
@@ -42,7 +42,7 @@ T dot_value(const double* a, const double* b, const double* v, Difference differ
 
 // Exact sign of (a - v) . (b - v); negative iff v lies strictly inside the
 // circle with diameter ab.
-int dot_sign(const double* a, const double* b, const double* v) {
+inline int dot_sign(const double* a, const double* b, const double* v) {
   const Approx filtered = dot_value<Approx>(
       a, b, v, [](double x, double y) { return Approx::exact(x) - Approx::exact(y); });
   const int sign = filtered.certified_sign();
@@ -54,22 +54,22 @@ int dot_sign(const double* a, const double* b, const double* v) {
          }).sign();
 }
 
-bool same_point(const double* a, const double* b) { return a[0] == b[0] && a[1] == b[1]; }
+inline bool same_point(const double* a, const double* b) { return a[0] == b[0] && a[1] == b[1]; }
 
 // For m collinear with a and b: whether m lies strictly between them.
-bool strictly_between(const double* a, const double* b, const double* m) {
+inline bool strictly_between(const double* a, const double* b, const double* m) {
   const int axis = a[0] != b[0] ? 0 : 1;
   return (a[axis] < m[axis] && m[axis] < b[axis]) || (b[axis] < m[axis] && m[axis] < a[axis]);
 }
 
 // For u collinear with a and b: whether u lies on the ray from a through b.
-bool same_direction(const double* a, const double* b, const double* u) {
+inline bool same_direction(const double* a, const double* b, const double* u) {
   const int axis = a[0] != b[0] ? 0 : 1;
   return (b[axis] > a[axis]) == (u[axis] > a[axis]) && u[axis] != a[axis];
 }
 
 // Rounds a constructed coordinate into the exact domain; false when impossible.
-bool snap_to_domain(double* xy) {
+inline bool snap_to_domain(double* xy) {
   for (int axis = 0; axis < 2; ++axis) {
     if (!std::isfinite(xy[axis]) || std::fabs(xy[axis]) > kCoordinateMaxMagnitude) {
       return false;
@@ -1081,5 +1081,7 @@ class ConstrainedMesher {
     }
   }
 };
-}  // namespace
+}  // namespace cdt2d_detail
+using cdt2d_detail::ConstrainedMesher;
+using cdt2d_detail::StatusError;
 }  // namespace phx::mc
