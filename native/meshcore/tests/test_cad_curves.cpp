@@ -202,6 +202,47 @@ void check_uses(const Fixture& f, const Run& r) {
   }
 }
 
+// Independently form physical tangent vectors for the UV chord. The test
+// fixtures supply their analytic constant principal curvatures.
+void check_face_metrics(const char* name, const Fixture& f, const Run& r,
+                        const std::vector<double>& sizes, const std::vector<double>& tolerances,
+                        const std::vector<double>& curvature, double theta=0.5) {
+  EvaluationWorkspace workspace;
+  double maximum=0;
+  for (std::size_t u=0;u<f.entities.size();++u) {
+    const int face=f.loop_faces[u], curve=f.entities[u];
+    double h=sizes[face];
+    if (curvature[face]>0)
+      h=std::min(h,std::sqrt(6*theta*tolerances[face]/curvature[face]));
+    const auto map=[&](double s) {
+      const double a=f.use_ranges[2*u], b=f.use_ranges[2*u+1];
+      return s==0 ? a : s==1 ? b : a+s*(b-a);
+    };
+    const auto begin=r.result.offsets[curve], end=r.result.offsets[curve+1];
+    for (auto i=begin+1;i<end;++i) {
+      const double a=r.result.parameters[i-1], b=r.result.parameters[i];
+      const double interior=map(a+(b-a)*0.5);
+      double uv[3][2], jet[9];
+      const bool left=r.geometry.jets_in_span(f.pcurves[u],map(a),interior,0,uv[0],workspace);
+      const bool right=r.geometry.jets_in_span(f.pcurves[u],map(b),interior,0,uv[2],workspace);
+      PHX_CHECK(left && right);
+      if (!left || !right) continue;
+      for (int k=0;k<2;++k) uv[1][k]=(uv[0][k]+uv[2][k])*0.5;
+      const double du=uv[2][0]-uv[0][0], dv=uv[2][1]-uv[0][1];
+      for (const auto& q:uv) {
+        const bool ok=r.geometry.jets(f.surfaces[face],q,1,jet,workspace);
+        PHX_CHECK(ok);
+        if (!ok) continue;
+        const double x=du*jet[3]+dv*jet[6], y=du*jet[4]+dv*jet[7], z=du*jet[5]+dv*jet[8];
+        const double metric=std::hypot(x,y,z)/h;
+        maximum=std::max(maximum,metric);
+        PHX_CHECK(metric<=1+1e-12);
+      }
+    }
+  }
+  std::printf("%s maximum boundary metric %.17g\n",name,maximum);
+}
+
 // The same rational quarter arc belongs to two faces, including a NURBS surface;
 // catches separate per-use sampling, reversed use ranges and seam duplication.
 void shared_nurbs_and_seam() {
@@ -229,6 +270,7 @@ void shared_nurbs_and_seam() {
     PHX_CHECK(std::memcmp(r.result.parameters.data(), repeat.result.parameters.data(),
                           r.result.parameters.size()*sizeof(double)) == 0);
   check_uses(f,r);
+  check_face_metrics("shared-nurbs",f,r,{0.18,0.13},{0.01,0.01},{0,1});
 }
 
 // A real cylindrical seam has two distinct UV copies but one 3D edge.
@@ -245,6 +287,7 @@ void cylindrical_seam() {
   PHX_CHECK(r.result.statistics.small_feature_resamples==0);
   PHX_CHECK(r.segments()>=5);
   check_uses(f,r);
+  check_face_metrics("cylindrical-seam",f,r,{0.2},{0.1},{1});
 }
 
 // Large UV separation can be a small physical gap, and conversely. This
@@ -306,6 +349,7 @@ void cubic_inflection() {
   PHX_CHECK(r.segments()>2);
   sag(r, [](double t) -> Vec { return {t,3*t*(1-t)*(1-2*t),0}; }, 0.002);
   check_uses(f,r);
+  check_face_metrics("cubic-inflection",f,r,{10,10},{0.004,0.004},{0,0});
 }
 
 // Interior knot is a mandatory break even when curvature and size are uniform.
@@ -318,6 +362,19 @@ void knot_breakpoint() {
   Run r(f,{10},{100},{100});
   bool found=false; for (double t:r.result.parameters) found |= t==0.25;
   PHX_CHECK(found);
+}
+
+// Two span integrals of 1.1 each require four intervals, not ceil(2.2)=3.
+void span_allocation() {
+  Fixture f; auto surface=plane(f);
+  auto curve=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE,{1,3,3},
+      {0,0,0.5,1,1, 0,0,0, 1.1,0,0, 2.2,0,0, 1,1,1});
+  auto pc=f.templ("line2",{0,0,2.2,0});
+  f.face(surface); f.curve(curve,0,1); f.use(0,0,pc,0,1);
+  Run r(f,{1},{100},{100});
+  PHX_CHECK(r.segments()>=4);
+  for (std::size_t i=1;i<r.result.parameters.size();++i)
+    PHX_CHECK(2.2*(r.result.parameters[i]-r.result.parameters[i-1])<=1+1e-12);
 }
 
 // Detects losing an interior repeated knot when a composite reverses its parameter.
@@ -496,7 +553,7 @@ void intersection_integral() {
 }
 
 // The full closed branch of the quadric fixture, checked against independent
-// quadrature, catches rounding each chart's integral up separately.
+// quadrature, catches under-allocating the integral of an individual chart.
 void quadric_closed_integral() {
   Fixture f;
   auto a=f.templ("cylinder",{0,0,0,1,0,0,0,1,0,0,0,1,1});
@@ -516,14 +573,31 @@ void quadric_closed_integral() {
   }
   auto curve=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,4,0,-1,-1,0,2,2,2,2},data);
   auto pc=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,4,1,-1,-1,0,2,2,2,2},data);
-  f.face(a); f.curve(curve,0,4,true); f.use(0,0,pc,0,4);
-  Run r(f,{0.229},{100},{100});
+  auto pc2=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,4,2,-1,-1,0,2,2,2,2},data);
+  f.face(a); f.face(b); f.curve(curve,0,4,true);
+  f.use(0,0,pc,0,4); f.use(1,0,pc2,0,4);
+  Run r(f,{0.229,0.229},{100,100},{100});
   const double length=integrate([](double t) {
     const double s=std::sin(t), c=std::cos(t);
     const double dx=-0.36*s*c/std::sqrt(1-0.36*s*s);
     return std::sqrt(dx*dx+0.36);
-  },0,2*pi);
-  PHX_CHECK(std::abs(r.segments()-static_cast<int>(std::ceil(length/0.229)))<=1);
+  },0,pi/2);
+  PHX_CHECK(r.segments()==4*static_cast<int>(std::ceil(length/0.229)));
+  Run fine(f,{0.12,0.12},{100,100},{100});
+  check_face_metrics("quadric-h012",f,fine,{0.12,0.12},{100,100},{1,1/0.6});
+  const auto& params=fine.result.parameters;
+  for (std::size_t i=1;i<params.size();++i) {
+    const auto uv=[](double s) {
+      const double t=2*pi*s;
+      return std::array<double,2>{std::asin(0.6*std::cos(t)),0.6*std::sin(t)};
+    };
+    const auto x=uv(params[i-1]), y=uv(params[i]);
+    PHX_CHECK(std::hypot(y[0]-x[0],y[1]-x[1])<=0.12+1e-12);
+    const double ta=2*pi*params[i-1], tb=2*pi*params[i];
+    const double za=std::sqrt(1-0.36*std::cos(ta)*std::cos(ta));
+    const double zb=std::sqrt(1-0.36*std::cos(tb)*std::cos(tb));
+    PHX_CHECK(std::hypot(0.6*(tb-ta),zb-za)<=0.12+1e-12);
+  }
 }
 
 // A chart sheet change is an exact graph breakpoint; omitting it mixes gauges.
@@ -547,7 +621,8 @@ void intersection_chart_shift() {
   }
   auto curve=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,2,0,-1,-1,0,2,2},data);
   auto pc=f.node(PHX_MC_CAD_NODE_INTERSECTION,{a,b,2,1,-1,-1,0,2,2},data);
-  f.face(a); f.curve(curve,0,2); f.use(0,0,pc,0,2);
+  auto wrapped=f.node(PHX_MC_CAD_NODE_AFFINE,{pc,2},{1,0,0,1,0,0});
+  f.face(a); f.curve(curve,0,2); f.use(0,0,wrapped,0,2);
   Run r(f,{0.2},{100},{100});
   PHX_CHECK(std::find(r.result.parameters.begin(),r.result.parameters.end(),0.5)
             != r.result.parameters.end());
@@ -557,12 +632,21 @@ void intersection_chart_shift() {
   PHX_CHECK(r.geometry.jets(pc,&left,0,before,workspace));
   PHX_CHECK(r.geometry.jets(pc,&right,0,after,workspace));
   PHX_CHECK_NEAR(after[0]-before[0],2*pi,1e-12);
+  double left_limit[2], right_limit[2];
+  PHX_CHECK(r.geometry.jets_in_span(wrapped,1.0,0.5,0,left_limit,workspace));
+  PHX_CHECK(r.geometry.jets_in_span(wrapped,1.0,1.5,0,right_limit,workspace));
+  PHX_CHECK(!r.geometry.jets_in_span(wrapped,1.0,1.0,0,before,workspace));
+  const auto expected=coord(0.1,0);
+  PHX_CHECK_NEAR(left_limit[0],expected[0],1e-12);
+  PHX_CHECK_NEAR(left_limit[1],expected[1],1e-12);
+  PHX_CHECK_NEAR(right_limit[0]-left_limit[0],2*pi,1e-12);
+  PHX_CHECK_NEAR(right_limit[1],left_limit[1],1e-12);
 }
 }  // namespace
 
 int main() {
   line_integral(); circle_integral(); ellipse_integral(); shared_nurbs_and_seam(); cylindrical_seam();
-  cubic_inflection(); knot_breakpoint(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
+  cubic_inflection(); knot_breakpoint(); span_allocation(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
   surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift(); quadric_closed_integral();
   anisotropic_small_features(); same_curve_small_feature(); gradation(); c_entry();
   return phx::mc::test::finish("test_cad_curves");
