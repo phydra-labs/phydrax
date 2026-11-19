@@ -193,6 +193,67 @@ struct Tree {
   }
 };
 
+// A strict separating plane proves that the closed triangles do not meet
+// beyond a shared vertex. The filtered predicate falls back to exact signs.
+bool same_strict_side(const double* const plane[3], const double* a, const double* b) {
+  const int first = phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], a);
+  return first != 0 &&
+         first == phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], b);
+}
+
+bool separate_triangle(const double* const plane[3], const double* const other[3]) {
+  const int first = phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], other[0]);
+  return first != 0 &&
+         first == phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], other[1]) &&
+         first == phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], other[2]);
+}
+
+bool clear_shared_edge(const double* a, const double* b, const double* c, const double* d) {
+  if (phx::mc::orient3d_filtered(a, b, c, d) != 0) return true;
+  // Coplanar nondegenerate triangles lie on opposite sides of their common
+  // edge exactly when their intersection is just that edge.
+  for (int axis = 0; axis < 3; ++axis) {
+    const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+    const double aa[2] = {a[u], a[v]}, bb[2] = {b[u], b[v]};
+    const double cc[2] = {c[u], c[v]}, dd[2] = {d[u], d[v]};
+    const int side = phx::mc::orient2d_filtered(aa, bb, cc);
+    if (side != 0) return side == -phx::mc::orient2d_filtered(aa, bb, dd);
+  }
+  return false;
+}
+
+bool clear_pair(const double* const p[3], const double* const q[3],
+                const int64_t* pi, const int64_t* qi) {
+  bool shared_p[3] = {}, shared_q[3] = {};
+  int shared = 0;
+  for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+    if (pi[i] == qi[j]) {
+      shared_p[i] = shared_q[j] = true;
+      ++shared;
+    }
+  }
+  if (shared == 2) {
+    const double *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+    for (int i = 0; i < 3; ++i) {
+      if (shared_p[i]) {
+        if (!a) a = p[i]; else b = p[i];
+      } else c = p[i];
+      if (!shared_q[i]) d = q[i];
+    }
+    return clear_shared_edge(a, b, c, d);
+  }
+  if (shared == 1) {
+    const double *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+    for (int i = 0; i < 3; ++i) {
+      if (!shared_p[i]) { if (!a) a = p[i]; else b = p[i]; }
+      if (!shared_q[i]) { if (!c) c = q[i]; else d = q[i]; }
+    }
+    return same_strict_side(p, c, d) || same_strict_side(q, a, b);
+  }
+  if (shared == 0) return separate_triangle(p, q) || separate_triangle(q, p);
+  return false;
+}
+
 int32_t classify_pair(const double* points, const int64_t* triangles, int64_t a, int64_t b,
                       std::vector<Finding>& out) {
   if (a > b) std::swap(a, b);
@@ -204,6 +265,7 @@ int32_t classify_pair(const double* points, const int64_t* triangles, int64_t a,
     p[j] = points + 3*pi[j];
     q[j] = points + 3*qi[j];
   }
+  if (clear_pair(p, q, pi, qi)) return PHX_MC_OK;
   phx::mc::Contact contact;
   const int32_t status = phx::mc::intersect_triangles(p, q, pi, qi, contact);
   if (status != PHX_MC_OK) return status;
