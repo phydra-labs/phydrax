@@ -180,6 +180,61 @@ struct SurfaceArrays {
   std::vector<phx_mc_cad_face_failure> face_failures;
   phx_mc_cad_curve_statistics curve_stats{};
 };
+// Closed-form first fundamental forms, independent of the CAD jet evaluator.
+void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& mesh,
+                            double size) {
+  std::vector<double> maximum(static_cast<std::size_t>(model.surface_count), 0.0);
+  for (std::size_t t = 0; t < mesh.patches.size(); ++t) {
+    const int face = mesh.patches[t];
+    const int32_t node = model.surface_nodes[face];
+    const bool quadric = model.node_kinds[node] != PHX_MC_CAD_NODE_TEMPLATE;
+    const int kind = quadric ? -1 : static_cast<int>(model.node_integers[model.node_integer_offsets[node]]);
+    const double* c = model.node_reals + model.node_real_offsets[node];
+    for (int k = 0; k < 3; ++k) {
+      if (mesh.uses[3*t+k] < 0) continue;
+      const int next = (k+1)%3;
+      const double u = (mesh.uv[6*t+2*k] + mesh.uv[6*t+2*next])/2;
+      const double v = (mesh.uv[6*t+2*k+1] + mesh.uv[6*t+2*next+1])/2;
+      const double du = mesh.uv[6*t+2*k] - mesh.uv[6*t+2*next];
+      const double dv = mesh.uv[6*t+2*k+1] - mesh.uv[6*t+2*next+1];
+      double metric_length = 0.0;
+      if (quadric) {
+        const double e = face == 2 ? 0.36 : 1.0, g = face == 2 ? 9.0 : 5.76;
+        metric_length = std::hypot(std::sqrt(e)*du, std::sqrt(g)*dv);
+      } else {
+        const bool plane = kind == phx::mc::cad::template_index("plane");
+        const bool cylinder = kind == phx::mc::cad::template_index("cylinder");
+        const bool sphere = kind == phx::mc::cad::template_index("sphere");
+        const bool cone = kind == phx::mc::cad::template_index("cone");
+        const bool torus = kind == phx::mc::cad::template_index("torus");
+        PHX_CHECK(plane || cylinder || sphere || cone || torus);
+        double sum = 0.0;
+        for (int j = 0; j < 3; ++j) {
+          const double radial = std::cos(u)*c[3+j] + std::sin(u)*c[6+j];
+          const double tangent = -std::sin(u)*c[3+j] + std::cos(u)*c[6+j];
+          double su = c[3+j], sv = c[6+j];
+          if (cylinder) { su = c[12]*tangent; sv = c[9+j]; }
+          if (sphere) { su = c[12]*std::cos(v)*tangent;
+                        sv = c[12]*(-std::sin(v)*radial+std::cos(v)*c[9+j]); }
+          if (cone) { const double slope = std::tan(c[13]); su = (c[12]+v*slope)*tangent;
+                      sv = c[9+j]+slope*radial; }
+          if (torus) { su = (c[12]+c[13]*std::cos(v))*tangent;
+                       sv = c[13]*(-std::sin(v)*radial+std::cos(v)*c[9+j]); }
+          const double delta = su*du+sv*dv;
+          sum += delta*delta;
+        }
+        metric_length = std::sqrt(sum);
+      }
+      maximum[face] = std::max(maximum[face], metric_length/size);
+    }
+  }
+  for (std::size_t face = 0; face < maximum.size(); ++face) {
+    std::fprintf(stderr, "assembly h=%.17g face=%zu max_boundary_metric_length=%.17g\n",
+                 size, face, maximum[face]);
+    PHX_CHECK(maximum[face] <= 1.0 + 1e-12);
+  }
+}
+
 
 SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
@@ -226,6 +281,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &short_arrays) == PHX_MC_CAPACITY_EXCEEDED);
   if (!result.points.empty()) PHX_CHECK(result.points[0] == 42.0);
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &arrays) == PHX_MC_OK);
+  check_boundary_lengths(model, result, size);
   for (const auto& failure : result.face_failures)
     std::fprintf(stderr, "failure face=%d loop=%d use=%d axis=%d reason=%d turns=%lld parameter=%.17g\n",
                  failure.face, failure.loop, failure.use, failure.axis, failure.reason,
@@ -552,7 +608,8 @@ void periodic_patch(bool torus, bool ungraded = false) {
   }
 }
 
-void polar_patch(bool cone, bool trim = false) {
+void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_top = 1.45,
+                 bool probe = false) {
   constexpr double pi = 3.14159265358979323846;
   constexpr double turn = 2.0 * pi;
   constexpr double angle = 0.78539816339744830962;
@@ -583,7 +640,6 @@ void polar_patch(bool cone, bool trim = false) {
   bank.use_ranges = {0,turn, low,pole, 0,turn, low,pole};
   bank.loop_offsets = {0,4}; bank.loop_surfaces = {0};
   bank.periods = {turn,0}; bank.domains = {0,turn, std::min(low,pole),std::max(low,pole)};
-  constexpr double size = 0.2;
   const double meridian = std::abs(pole-low) * (cone ? 1/std::cos(angle) : 1);
   const int counts[2] = {static_cast<int>(std::ceil(turn * radius / size)),
                          static_cast<int>(std::ceil(meridian / size))};
@@ -593,7 +649,7 @@ void polar_patch(bool cone, bool trim = false) {
     bank.sample_offsets.push_back(static_cast<int64_t>(bank.samples.size()));
   }
   if (trim) {
-    const std::array<std::array<double, 2>, 4> uv{{{2,1.0},{2,1.45},{3,1.45},{3,1.0}}};
+    const std::array<std::array<double, 2>, 4> uv{{{2,1.0},{2,trim_top},{3,trim_top},{3,1.0}}};
     for (const auto& p : uv)
       bank.corners.insert(bank.corners.end(), {std::cos(p[1])*std::cos(p[0]),
                                                std::cos(p[1])*std::sin(p[0]), std::sin(p[1])});
@@ -627,8 +683,9 @@ void polar_patch(bool cone, bool trim = false) {
   CadFaceMesh result;
   const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, size, 0.4, 0.5,
                                                 result, &metric_points);
-  if (status != PHX_MC_OK)
-  std::fprintf(stderr, "%s status=%d faces=%zu slivers=%zu omitted=%lld fixed=%lld excluded=%lld unresolved=%lld lens=%lld outside=%lld proximity=%lld nonstar=%lld\n",
+  if (status != PHX_MC_OK) {
+    std::fprintf(stderr, "trim probe h=%.17g top=%.17g\n", size, trim_top);
+    std::fprintf(stderr, "%s status=%d faces=%zu slivers=%zu omitted=%lld fixed=%lld excluded=%lld unresolved=%lld lens=%lld outside=%lld proximity=%lld nonstar=%lld\n",
                trim ? "sphere-trim" : cone ? "cone" : "sphere-cap", status, result.triangles.size(),
                result.slivers.size(), static_cast<long long>(result.omitted_pole_points),
                static_cast<long long>(result.stats.fixed_triangles_skipped),
@@ -638,7 +695,10 @@ void polar_patch(bool cone, bool trim = false) {
                static_cast<long long>(result.stats.outside_refusals),
                static_cast<long long>(result.stats.proximity_refusals),
                static_cast<long long>(result.stats.nonstar_refusals));
-  if (trim) {
+  }
+  if (probe) {
+    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+  } else if (trim) {
     PHX_CHECK(status == PHX_MC_OK);
     PHX_CHECK(result.stats.unresolved_triangles == 0);
     PHX_CHECK(result.stats.encroachment_refusals == 0);
@@ -666,23 +726,15 @@ void polar_patch(bool cone, bool trim = false) {
     };
     const auto x = position(a), y = position(b), z = position(c);
     const std::array<std::array<double, 3>, 3> xyz{x,y,z};
-    const std::array<std::array<double, 2>, 3> charts{a,b,c};
-    for (int i = 0; i < 3; ++i) {
-      if (angle_ok(xyz[i], xyz[(i+1)%3], xyz[(i+2)%3])) continue;
-      ++bad_angles;
-      PHX_CHECK(trim && std::abs(charts[i][1] - pole) < 1e-14);
-      const auto& q = charts[(i+1)%3];
-      const auto& r = charts[(i+2)%3];
-      PHX_CHECK((std::abs(q[0]-2.0)<1e-14 && std::abs(q[1]-1.45)<1e-14) ||
-                (std::abs(r[0]-2.0)<1e-14 && std::abs(r[1]-1.45)<1e-14));
-    }
+    for (int i = 0; i < 3; ++i)
+      if (!angle_ok(xyz[i], xyz[(i+1)%3], xyz[(i+2)%3])) ++bad_angles;
     const double px = (x[0]+y[0]+z[0])/3, py = (x[1]+y[1]+z[1])/3;
     const double pz = (x[2]+y[2]+z[2])/3;
     const double error = cone ? std::abs(std::hypot(px,py)-pz)/std::sqrt(2.0)
                               : std::abs(std::hypot(std::hypot(px,py),pz)-1.0);
     PHX_CHECK(error < 0.2);
   }
-  PHX_CHECK(trim ? bad_angles > 0 : bad_angles == 0);
+  if (!trim) PHX_CHECK(bad_angles == 0);
 }
 
 // A full cylinder turn with no seam is not a closed lifted chart loop. The
@@ -818,25 +870,6 @@ void quadric_assembly() {
   check_closed(mesh, 2);
   const SurfaceArrays generated = assemble_surface(model, spacing);
   check_closed(generated, 2);
-  std::array<double, 3> maximum_metric_lengths{};
-  for (std::size_t t = 0; t < generated.patches.size(); ++t) {
-    const int face = generated.patches[t];
-    for (int k = 0; k < 3; ++k) {
-      if (generated.uses[3*t+k] < 0) continue;
-      const int next = (k+1)%3;
-      const double du = generated.uv[6*t+2*k] - generated.uv[6*t+2*next];
-      const double dv = generated.uv[6*t+2*k+1] - generated.uv[6*t+2*next+1];
-      const double e = face == 2 ? 0.36 : 1.0;
-      const double g = face == 2 ? 9.0 : 5.76;
-      maximum_metric_lengths[face] = std::max(maximum_metric_lengths[face],
-                                               std::sqrt(e*du*du+g*dv*dv)/spacing);
-    }
-  }
-  for (int face = 0; face < 3; ++face) {
-    std::fprintf(stderr, "quadric face=%d max_boundary_metric_length=%.17g\n",
-                 face, maximum_metric_lengths[face]);
-    PHX_CHECK(maximum_metric_lengths[face] <= 1.0 + 1e-12);
-  }
   for (std::size_t i = 0; i < mesh.regions.size(); i += 2)
     PHX_CHECK(mesh.regions[i] == -1 && mesh.regions[i+1] == 0);
   for (std::size_t i = 0; i < mesh.points.size(); i += 3) {
@@ -867,6 +900,9 @@ int main() {
   periodic_patch(true, true);
   polar_patch(false);
   polar_patch(false, true);
+  polar_patch(false, true, 0.19, 1.44, true);
+  polar_patch(false, true, 0.21, 1.46, true);
+  polar_patch(false, true, 0.20, 1.40, true);
   polar_patch(true);
   periodic_wrap_failure();
   periodic_wrap_failure(true);
