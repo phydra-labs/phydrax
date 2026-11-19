@@ -849,38 +849,6 @@ struct HilbertFrame {
   }
 };
 
-// The floating stage of orient3d (Shewchuk's stage A expression and error
-// bound): `det` the negated orientation determinant, `errbound` its bound.
-struct OrientationStage {
-  double det;
-  double errbound;
-};
-OrientationStage orientation_stage(const double* a, const double* b, const double* c,
-                                   const double* d) noexcept {
-  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
-  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
-  const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
-  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-  const double cdxady = cdx * ady, adxcdy = adx * cdy;
-  const double adxbdy = adx * bdy, bdxady = bdx * ady;
-  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
-  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
-                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
-                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
-  constexpr double kEpsilon = 0x1p-53;
-  return {det, (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent};
-}
-
-// orient3d through its first, floating stage inlined: the clear cases are
-// decided here, so only near-degenerate tests reach the exact predicate.
-int orientation(const double* a, const double* b, const double* c, const double* d) noexcept {
-  const OrientationStage stage = orientation_stage(a, b, c, d);
-  // orient3d is the negated Shewchuk determinant.
-  if (stage.det > stage.errbound) return -1;
-  if (-stage.det > stage.errbound) return 1;
-  return orient3d(a, b, c, d);
-}
-
 // A cell exactly positively oriented whose binary64 orientation determinant
 // is positive as well (so it is measurable), from one floating evaluation:
 // beyond the error bound its sign is both; within it, the exact predicate
@@ -891,52 +859,6 @@ bool measurably_positive(const double* a, const double* b, const double* c,
   if (-stage.det > stage.errbound) return true;
   if (!(-stage.det > 0.0)) return false;
   return orient3d(a, b, c, d) > 0;
-}
-
-// insphere (positive when e lies strictly inside the circumsphere of the
-// positively oriented a, b, c, d) through its first, floating stage inlined:
-// Shewchuk's stage A expression decides the clear cases here, against his
-// bound with the permanent replaced by 25 L X Y Z (X, Y, Z the largest
-// coordinate differences per axis, L the largest lift). Every product in the
-// permanent is at most the matching product of maxima, so it is at most
-// 24 L X Y Z up to a relative 1e-15, and the bound stays valid.
-int inside_sphere(const double* a, const double* b, const double* c, const double* d,
-                  const double* e) noexcept {
-  const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
-  const double aey = a[1] - e[1], bey = b[1] - e[1], cey = c[1] - e[1], dey = d[1] - e[1];
-  const double aez = a[2] - e[2], bez = b[2] - e[2], cez = c[2] - e[2], dez = d[2] - e[2];
-  const double aexbey = aex * bey, bexaey = bex * aey;
-  const double ab = aexbey - bexaey;
-  const double bexcey = bex * cey, cexbey = cex * bey;
-  const double bc = bexcey - cexbey;
-  const double cexdey = cex * dey, dexcey = dex * cey;
-  const double cd = cexdey - dexcey;
-  const double dexaey = dex * aey, aexdey = aex * dey;
-  const double da = dexaey - aexdey;
-  const double aexcey = aex * cey, cexaey = cex * aey;
-  const double ac = aexcey - cexaey;
-  const double bexdey = bex * dey, dexbey = dex * bey;
-  const double bd = bexdey - dexbey;
-  const double abc = aez * bc - bez * ac + cez * ab;
-  const double bcd = bez * cd - cez * bd + dez * bc;
-  const double cda = cez * da + dez * ac + aez * cd;
-  const double dab = dez * ab + aez * bd + bez * da;
-  const double alift = aex * aex + aey * aey + aez * aez;
-  const double blift = bex * bex + bey * bey + bez * bez;
-  const double clift = cex * cex + cey * cey + cez * cez;
-  const double dlift = dex * dex + dey * dey + dez * dez;
-  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
-  const double x = std::max({std::fabs(aex), std::fabs(bex), std::fabs(cex), std::fabs(dex)});
-  const double y = std::max({std::fabs(aey), std::fabs(bey), std::fabs(cey), std::fabs(dey)});
-  const double z = std::max({std::fabs(aez), std::fabs(bez), std::fabs(cez), std::fabs(dez)});
-  const double lift = std::max({alift, blift, clift, dlift});
-  const double permanent = 25.0 * lift * (x * y * z);
-  constexpr double kEpsilon = 0x1p-53;
-  const double errbound = (16.0 + 224.0 * kEpsilon) * kEpsilon * permanent;
-  // insphere is the negated Shewchuk determinant.
-  if (det > errbound) return -1;
-  if (-det > errbound) return 1;
-  return insphere(a, b, c, d, e);
 }
 
 // Advances a visit stamp over `marks`, clearing them when it wraps.
@@ -992,7 +914,7 @@ class InteriorCavity {
       for (int face = 0; face < 4 && exit < 0; ++face) {
         std::int32_t facet[3];
         oriented_facet(tet.v, face, facet);
-        if (orientation(at(facet[0]), at(facet[1]), at(facet[2]), point) < 0) {
+        if (orient3d_filtered(at(facet[0]), at(facet[1]), at(facet[2]), point) < 0) {
           exit = face;
         }
       }
@@ -1039,7 +961,7 @@ class InteriorCavity {
                                  at(candidate.v[3])};
         const int side = metric ? mesh.metric_insphere(corners[0], corners[1], corners[2],
                                                        corners[3], point)
-                                : inside_sphere(corners[0], corners[1], corners[2], corners[3], point);
+                                : insphere_filtered(corners[0], corners[1], corners[2], corners[3], point);
         if (side > 0) {
           candidate.stamp = member;
           cells.push_back(next);

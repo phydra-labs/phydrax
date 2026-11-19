@@ -297,7 +297,7 @@ bool collect_source_regions(
 
 int TetMesh::metric_insphere(const double* a, const double* b, const double* c,
                              const double* d, const double* e) const {
-  if (!metric_active_) return insphere(a, b, c, d, e);
+  if (!metric_active_) return insphere_filtered(a, b, c, d, e);
   const double* points[4]{a, b, c, d};
   std::array<std::array<Dyadic, 3>, 4> delta{};
   std::array<Dyadic, 4> lift{};

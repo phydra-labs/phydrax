@@ -66,9 +66,12 @@ class LocalIncidence {
   // Finite cells containing the edge (sorted slots); empty if it is absent.
   // The span stays valid until the next edge_star call.
   std::span<const std::int32_t> edge_star(std::int32_t first, std::int32_t second) const;
+  // The finite cell of least ID holding the edge, not among `removed_slots`
+  // (-1: none); `seed`, when a live cell holding the edge, starts a walk
+  // around it.
   std::int32_t edge_cell_outside(
       const TetMesh& mesh, std::int32_t first, std::int32_t second,
-      std::span<const std::int32_t> removed_slots) const;
+      std::span<const std::int32_t> removed_slots, std::int32_t seed = -1) const;
   TetEditStatus relocate(TetMesh& mesh,
                          std::span<const TetEditVertex> moved_vertices,
                          const Star& star);
