@@ -167,5 +167,5 @@ tetrahedra, then implicit volumes, then the CAD solid.
 | F6 / F6b metric adaptation | MMG3D, Omega_h | S4-3D | Windows |
 | F10 queries (closest point, signed distance, winding number, point location) | libigl AABB / FastWindingNumberBVH | S0 queries | macOS after S3 |
 | F8 hex-dominant, F9 prism layers, F13 overset, F14 Voronoi | cfMesh / snappyHexMesh, Gmsh / Netgen, TIOGA, VoroCrust | S6 | assigned after S3 |
-| STEP import, spline faces | the S2 rows on the STEP models (washer, NIST) | S5 | Linux after S2 |
+| STEP import and exchange formats (spline faces are S2, decision D1) | the S2 rows on the STEP models (washer, NIST) | S5 | Linux after S2 |
 | Threads and devices | each row above at 1-8 threads | S7 | macOS |
