@@ -118,7 +118,7 @@ tetrahedra, then implicit volumes, then the CAD solid.
   ledger solids takes sphere 4.2 / 9.7 ms (CGAL opt=0 1.4 / 2.5 ms; NOT met) and torus 42 / 103 ms
   (Gmsh 90 / 224 ms; met) with 2,400 / 5,736 and 22,856 / 50,576 cells, minimum dihedral 30.0 / 20.9 /
   20.5 / 19.9 degrees; all four certify (fidelity sphere 0.0088 / 0.0047, torus 0.0086 / 0.0058),
-  acceptance with certification 9.2 / 31 s (sphere) and 70 / 189 s (torus). The sphere gap is cell
+  acceptance with certification 9.6 / 35 s (sphere) and 74 / 197 s (torus). The sphere gap is cell
   count: the stuffing kernel and the exact volume certificate alone exceed CGAL's time at the
   certified spacing, and grading cannot coarsen a solid only four to five spacings thick. Remaining:
   native certifiers (global embedding, validity, distance evidence once per acceptance) and fewer
