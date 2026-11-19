@@ -3157,7 +3157,7 @@ class TetrahedraVerdict(NamedTuple):
     first_unresolved_shell_cell: int
 
 
-def _tetrahedra(points: object, cells: object, /) -> tuple[np.ndarray, np.ndarray]:
+def _tetrahedral_mesh(points: object, cells: object, /) -> tuple[np.ndarray, np.ndarray]:
     point_array = np.ascontiguousarray(_points(points, "points", 3), dtype=np.float64)
     cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
     if cell_array.ndim != 2 or cell_array.shape[1] != 4:
@@ -3175,7 +3175,7 @@ def verify_tetrahedra(points: object, cells: object, /) -> TetrahedraVerdict:
     orientations, an embedded edge-manifold boundary whose shells have winding
     number 0 in front and 1 behind.
     """
-    point_array, cell_array = _tetrahedra(points, cells)
+    point_array, cell_array = _tetrahedral_mesh(points, cells)
     verdict = _TetrahedraVerdict()
     status = load_meshcore()["phx_mc_verify_tetrahedra"](
         point_array.shape[0],
@@ -3251,7 +3251,7 @@ def verify_volume(
     mesh globally embedded (``verify_tetrahedra``), each region's cells tile
     exactly the solid its declared boundary bounds.
     """
-    point_array, cell_array = _tetrahedra(points, cells)
+    point_array, cell_array = _tetrahedral_mesh(points, cells)
     surface_array = _native_integer_array(surface, "surface", np.dtype(np.int32))
     if surface_array.ndim != 2 or surface_array.shape[1] != 3:
         raise ValueError("surface must have shape (f, 3).")
@@ -3323,7 +3323,7 @@ def tetrahedra_validity(
     binary64 enclosure ``lower <= d <= upper``. Cell coordinates outside
     ``validity_coordinates`` raise ``ValueError``.
     """
-    point_array, cell_array = _tetrahedra(points, cells)
+    point_array, cell_array = _tetrahedral_mesh(points, cells)
     count = cell_array.shape[0]
     valid = np.zeros((count,), dtype=np.int8)
     lower = np.zeros((count,), dtype=np.float64)

@@ -3393,11 +3393,10 @@ def certify_cell_geometry_validity(
             if reorder_safe
             else (
                 (row, None, None, None)
+                # The basis of a plain finite element is the same in every cell.
                 for row in range(
                     min(route.shape[0], 1)
                     if type(element) is FiniteElementSpec
-                    and element.degree == 2
-                    and element.cell_kind in ("tetrahedron", "simplex:3")
                     else route.shape[0]
                 )
             )

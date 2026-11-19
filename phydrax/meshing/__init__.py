@@ -314,6 +314,7 @@ _DEFERRED_EXPORTS = {
     "evaluate_finite_volume_quality": "._quality",
     "FiniteVolumeQualityEvaluation": "._quality",
     "summarize_cell_quality": "._quality",
+    "CellMeshingCandidate": ".providers._native",
     "CellMeshingResult": "._result",
     "MeshCertificationInputs": "._certification_inputs",
     "MeshCertificationReport": "._certification",
@@ -880,6 +881,7 @@ if TYPE_CHECKING:
         VoroCrustProvider,
     )
     from .providers._native import (
+        CellMeshingCandidate as CellMeshingCandidate,
         NativeMeshingPlan as NativeMeshingPlan,
         NativeMeshingProvider as NativeMeshingProvider,
     )
@@ -962,6 +964,7 @@ __all__ = [
     "CellMeshExportResult",
     "CellMeshImportResult",
     "CellMeshTransition",
+    "CellMeshingCandidate",
     "CellMeshingResult",
     "MeshCertificationInputs",
     "MeshCertificationReport",

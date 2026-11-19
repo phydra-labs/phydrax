@@ -73,7 +73,10 @@ type CoverageDomain = (
 )
 type SourceCoverageWitness = TubularProjectionCoverageWitness | PlcSourcePointWitness
 type CoverageMethod = Literal[
-    "exact_oriented_facets", "mapped_reference_charts", "source_boundary_homotopy"
+    "exact_oriented_facets",
+    "mapped_reference_charts",
+    "source_boundary_homotopy",
+    "tetrahedral_degree",
 ]
 
 
@@ -319,6 +322,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
         root_charts: AdaptiveImplicitRootChartMap | None = None,
         chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
         _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
+        tetrahedral_degree: bool = False,
     ) -> None:
         if fidelity is not None and source is None:
             source = fidelity.source
@@ -334,6 +338,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             root_charts=root_charts,
             chart_parent=chart_parent,
             _validated_parent_embedding=_validated_parent_embedding,
+            tetrahedral_degree=tetrahedral_degree,
         )
         self.binding = proof.binding
         self.domain = domain
@@ -562,6 +567,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             fidelity=fidelity_,
             source_coverage_witness=source_coverage_witness_,
             chart_parent=chart_parent,
+            tetrahedral_degree=self.coverage_method == "tetrahedral_degree",
         )
         if any(
             finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
@@ -616,6 +622,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=value.source,
             fidelity=value.fidelity,
             chart_parent=chart_parent,
+            tetrahedral_degree=value.coverage_method == "tetrahedral_degree",
         )
         if any(
             finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
@@ -667,6 +674,7 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
             source=source,
             fidelity=value.fidelity,
             chart_parent=chart_parent,
+            tetrahedral_degree=value.coverage_method == "tetrahedral_degree",
         )
         if any(
             finding.check == "mapped_chart_parent_premise" for finding in fresh.findings
@@ -1536,6 +1544,71 @@ def _upper_sum(first: float, second: float, /) -> float:
     return fraction_up(Fraction(first) + Fraction(second))
 
 
+def _tetrahedral_degree_coverage(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain,
+    regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate,
+    source_revision: str,
+    findings: list[MeshCertificateFinding],
+    /,
+) -> _CoverageProof | None:
+    """Coverage by the native degree theorem, or ``None`` when it does not certify.
+
+    With the mesh globally embedded (``embedding``), cells whose boundary and
+    region interfaces are exactly the declared oriented source triangles tile
+    each declared region exactly; no partition or measure is needed.
+    """
+    from ._tetrahedral_degree import affine_tetrahedra, prove_tetrahedral_coverage
+
+    tetrahedra = affine_tetrahedra(mesh, geometry)
+    proof_id = (
+        None
+        if tetrahedra is None
+        else prove_tetrahedral_coverage(mesh, tetrahedra, domain, regions)
+    )
+    if proof_id is None:
+        return None
+    facet_count = domain.facets.shape[0]
+    return _CoverageProof(
+        MeshCertificateBinding(
+            mesh,
+            geometry,
+            embedding.binding.coordinate_scope,
+            source_id=domain.source_id,
+            source_revision=source_revision,
+        ),
+        regions,
+        tuple(None for _ in domain.region_ids),
+        tuple(None for _ in domain.region_ids),
+        (),
+        facet_count,
+        facet_count,
+        facet_count,
+        tuple(findings),
+        None,
+        "tetrahedral_degree",
+        proof_id,
+        None,
+        tuple(
+            canonical_fingerprint(
+                {
+                    "kind": "tetrahedral-region-degree",
+                    "coverage": proof_id,
+                    "embedding": embedding.certificate_id,
+                    "region": row,
+                    "region_id": region_id,
+                    "occurrence_path": path,
+                }
+            )
+            for row, (region_id, path) in enumerate(
+                zip(domain.region_ids, domain.region_occurrence_paths, strict=True)
+            )
+        ),
+    )
+
+
 def _prove_coverage(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1550,13 +1623,19 @@ def _prove_coverage(
     root_charts: AdaptiveImplicitRootChartMap | None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None,
+    tetrahedral_degree: bool = False,
 ) -> _CoverageProof:
-    """Recompute exact source chains or a witnessed source-boundary homotopy."""
+    """Recompute exact source chains or a witnessed source-boundary homotopy.
+
+    ``tetrahedral_degree`` first offers the exact native degree theorem of
+    affine tetrahedra over a piecewise-linear domain; when it does not certify,
+    the exact partition proof runs.
+    """
     from ._approximate_source_coverage import (
         exact_planar_cad_boundary,
         SourceCoverageUnavailable,
     )
-    from ._domain_preparation import prepare_domain_coverage
+    from ._domain_preparation import dense_cell_regions, prepare_domain_coverage
 
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
         raise TypeError(
@@ -1639,6 +1718,23 @@ def _prove_coverage(
         raise ValueError(
             "Domain coverage requires matching full-dimensional mesh and source domain."
         )
+    if (
+        tetrahedral_degree
+        and isinstance(domain, PiecewiseLinearDomain)
+        and embedding.status == "certified"
+        and source_coverage_witness is None
+    ):
+        degree = _tetrahedral_degree_coverage(
+            mesh,
+            geometry,
+            domain,
+            dense_cell_regions(mesh, cell_regions, len(domain.region_ids)),
+            embedding,
+            source_revision,
+            findings,
+        )
+        if degree is not None:
+            return degree
     preparation = prepare_domain_coverage(
         mesh, geometry, cell_regions, len(domain.region_ids)
     )
@@ -1754,6 +1850,7 @@ def certify_domain_coverage(
     root_charts: AdaptiveImplicitRootChartMap | None = None,
     chart_parent: tuple[CellMesh, CellGeometrySpec] | None = None,
     _validated_parent_embedding: ValidatedGlobalEmbedding | None = None,
+    tetrahedral_degree: bool = False,
 ) -> DomainCoverageCertificate:
     """Compute exact or witnessed bounded coverage from source authority.
 
@@ -1761,6 +1858,10 @@ def certify_domain_coverage(
     Its mesh, geometry, source, witness, domain and controls must be the same
     live operands as the coverage request; a mismatch is refused explicitly.
     The map is consumed transiently and is not retained by the certificate.
+    ``tetrahedral_degree`` offers the native degree theorem of affine
+    tetrahedra over a piecewise-linear domain (coverage method
+    ``tetrahedral_degree``); the exact partition proof runs when it does not
+    certify.
     """
     return DomainCoverageCertificate(
         mesh,
@@ -1774,6 +1875,7 @@ def certify_domain_coverage(
         root_charts=root_charts,
         chart_parent=chart_parent,
         _validated_parent_embedding=_validated_parent_embedding,
+        tetrahedral_degree=tetrahedral_degree,
     )
 
 

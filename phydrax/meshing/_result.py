@@ -438,6 +438,7 @@ def _restored_global_embedding(
         nested_restriction=(
             None if nested is None else _restored_nested_restriction_premise(nested)
         ),
+        tetrahedral_degree="tetrahedral_degree" in stored.evaluated_checks,
     )
     if embedding.certificate_id != stored.certificate_id:
         raise ValueError("Stored global embedding does not reproduce its proof.")

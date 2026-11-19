@@ -2140,7 +2140,9 @@ def test_unsplit_plc_route_retains_no_source_point_witness() -> None:
     assert report is not None
     assert report.inputs.source_coverage_witness is None
     assert report.coverage is not None
-    assert report.coverage.coverage_method == "exact_oriented_facets"
+    # An unsplit boundary is exactly the declared surface: the native degree
+    # theorem certifies coverage without the planar partition.
+    assert report.coverage.coverage_method == "tetrahedral_degree"
     assert report.coverage.source_distance_upper is None
 
 

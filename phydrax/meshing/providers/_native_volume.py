@@ -775,6 +775,89 @@ def _face_order_sign(
     return -1 if inversions % 2 else 1
 
 
+_TETRAHEDRON_EDGES = np.asarray(
+    [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]], dtype=np.int64
+)
+_TETRAHEDRON_FACES = np.asarray(
+    [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]], dtype=np.int64
+)
+_TRIANGLE_EDGES = np.asarray([[0, 1], [1, 2], [0, 2]], dtype=np.int64)
+
+
+def _object_rows(values: list[object], /) -> np.ndarray:
+    """One-dimensional object array holding ``values`` (tuples stay elements)."""
+    rows = np.empty((len(values),), dtype=object)
+    for row, value in enumerate(values):
+        rows[row] = value
+    return rows
+
+
+def _rows_of_simplices(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
+    """Row of the unique simplices ``table`` with each ``query`` vertex set, or -1."""
+    count = table.shape[0]
+    combined = np.sort(
+        np.concatenate(
+            (np.asarray(table, dtype=np.int64), np.asarray(query, dtype=np.int64))
+        ),
+        axis=1,
+    )
+    _, inverse = np.unique(combined, axis=0, return_inverse=True)
+    inverse = inverse.reshape((-1,))
+    owners = np.full((int(inverse.max(initial=-1)) + 1,), -1, dtype=np.int64)
+    owners[inverse[:count]] = np.arange(count, dtype=np.int64)
+    return owners[inverse[count:]]
+
+
+def _single_region(rows: np.ndarray, values: np.ndarray, count: int, /) -> np.ndarray:
+    """The one value each row carries, -1 for rows with none or several."""
+    sentinel = np.iinfo(np.int64).max
+    lower = np.full((count,), sentinel, dtype=np.int64)
+    upper = np.full((count,), -1, dtype=np.int64)
+    valid = rows >= 0
+    np.minimum.at(lower, rows[valid], values[valid])
+    np.maximum.at(upper, rows[valid], values[valid])
+    return np.where(lower == upper, lower, -1)
+
+
+def _face_order_signs(source: np.ndarray, target: np.ndarray, /) -> np.ndarray:
+    """Permutation parities from oriented recovered triangles to mesh face order."""
+    position = np.argmax(target[:, :, None] == source[:, None, :], axis=2)
+    inversions = (
+        (position[:, 0] > position[:, 1]).astype(np.int8)
+        + (position[:, 0] > position[:, 2])
+        + (position[:, 1] > position[:, 2])
+    )
+    return np.where(inversions % 2 == 1, -1, 1).astype(np.int8)
+
+
+def _segment_edge_orientations(
+    construction: VolumeConstruction, edges: np.ndarray, source_rows: np.ndarray, /
+) -> np.ndarray:
+    """Orientation of each constrained edge along its source segment's parameter."""
+    input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)[edges]
+    endpoints = np.asarray(construction.source_segment_vertices, dtype=np.int64)[
+        source_rows
+    ]
+    on_segment = (np.asarray(construction.witness_strata)[edges] == 1) & (
+        np.asarray(construction.witness_entities, dtype=np.int64)[edges]
+        == source_rows[:, None]
+    )
+    first = input_vertices == endpoints[:, :1]
+    second = input_vertices == endpoints[:, 1:]
+    if not np.all(first | second | on_segment):
+        raise ValueError("Constrained PLC edge endpoints lost exact source parameters.")
+    parameters = np.where(
+        first,
+        0.0,
+        np.where(
+            second,
+            1.0,
+            np.asarray(construction.witness_parameters, dtype=np.float64)[edges, 0],
+        ),
+    )
+    return np.where(parameters[:, 1] > parameters[:, 0], 1, -1).astype(np.int8)
+
+
 def _source_associations(
     source: NativePlcSource, construction: VolumeConstruction, /
 ) -> tuple[GeometryAssociation, ...]:
@@ -901,174 +984,163 @@ def _source_associations(
     )
 
     cells, connectivity_edges, connectivity_faces = _tetrahedron_regions(construction)
-    edge_regions: dict[tuple[int, int], set[int]] = {}
-    face_regions: dict[tuple[int, ...], set[int]] = {}
-    for cell, region in zip(
-        cells.tolist(), construction.cell_regions.tolist(), strict=True
-    ):
-        for pair in combinations(cell, 2):
-            edge_regions.setdefault(tuple(sorted(pair)), set()).add(region)
-        for triple in combinations(cell, 3):
-            face_regions.setdefault(tuple(sorted(triple)), set()).add(region)
-
-    segment_source_by_edge: dict[
-        tuple[int, int], tuple[str, tuple[str, ...], float, int]
-    ] = {}
-    for edge, source_id, path, source_row in zip(
-        construction.segments.tolist(),
-        construction.segment_source_ids,
-        construction.segment_source_occurrence_paths,
-        construction.segment_source_edges.tolist(),
-        strict=True,
-    ):
-        key = tuple(sorted(edge))
-        residual = float(
-            np.max(construction.witness_deviations[np.asarray(edge, dtype=np.int64)])
-        )
-        segment_source_by_edge[key] = (source_id, path, residual, source_row)
-    face_source_by_face: dict[
-        tuple[int, int, int],
-        tuple[str, tuple[str, ...], float, int, int, tuple[int, int, int]],
-    ] = {}
-    for face, source_id, path, facet, orientation in zip(
-        construction.boundary_faces.tolist(),
-        construction.face_source_ids,
-        construction.face_source_occurrence_paths,
-        construction.face_source_facets.tolist(),
-        construction.face_orientations.tolist(),
-        strict=True,
-    ):
-        key = tuple(sorted(face))
-        residual = float(
-            np.max(construction.witness_deviations[np.asarray(face, dtype=np.int64)])
-        )
-        face_source_by_face[key] = (
-            source_id,
-            path,
-            residual,
-            facet,
-            orientation,
-            (face[0], face[1], face[2]),
-        )
-    face_facet_edges: dict[tuple[int, int], set[int]] = {}
-    for face, facet in zip(
-        construction.boundary_faces.tolist(),
-        construction.face_source_facets.tolist(),
-        strict=True,
-    ):
-        for pair in combinations(face, 2):
-            face_facet_edges.setdefault(tuple(sorted(pair)), set()).add(facet)
-
-    edge_sources: list[str] = []
-    edge_paths: list[tuple[str, ...]] = []
-    edge_roles: list[GeometrySourceEntityRole] = []
-    edge_residuals: list[float] = []
-    edge_region_sides: list[tuple[str | None, str | None]] = []
-    edge_orientations = np.zeros((edge_ids.size,), dtype=np.int8)
-    for row, edge in enumerate(connectivity_edges.tolist()):
-        key = tuple(sorted(edge))
-        constrained = segment_source_by_edge.get(key)
-        if constrained is not None:
-            local_id, path, residual, source_row = constrained
-            edge_sources.append(_cached_source_key(1, local_id, path))
-            edge_paths.append(path)
-            edge_roles.append(GeometrySourceEntityRole.EDGE)
-            edge_region_sides.append((None, None))
-            edge_residuals.append(residual)
-            source_endpoints = construction.source_segment_vertices[source_row]
-            parameters: list[float] = []
-            for vertex in edge:
-                input_vertex = int(construction.input_vertices[vertex])
-                if input_vertex == int(source_endpoints[0]):
-                    parameters.append(0.0)
-                elif input_vertex == int(source_endpoints[1]):
-                    parameters.append(1.0)
-                elif (
-                    construction.witness_strata[vertex] == 1
-                    and construction.witness_entities[vertex] == source_row
-                ):
-                    parameters.append(float(construction.witness_parameters[vertex, 0]))
-                else:
-                    raise ValueError(
-                        "Constrained PLC edge endpoints lost exact source parameters."
-                    )
-            edge_orientations[row] = 1 if parameters[1] > parameters[0] else -1
-            continue
-        facets = face_facet_edges.get(key, set())
-        if len(facets) == 1:
-            facet = next(iter(facets))
-            local_id = construction.facet_ids[facet]
-            path = construction.facet_occurrence_paths[facet]
-            edge_sources.append(_cached_source_key(2, local_id, path))
-            edge_paths.append(path)
-            edge_roles.append(GeometrySourceEntityRole.FACET)
-            edge_residuals.append(
-                float(
-                    np.max(
-                        construction.witness_deviations[np.asarray(edge, dtype=np.int64)]
-                    )
-                )
+    deviations = np.asarray(construction.witness_deviations, dtype=np.float64)
+    cell_regions = np.asarray(construction.cell_regions, dtype=np.int64)
+    region_keys = _object_rows(
+        [
+            _cached_source_key(3, identifier, path)
+            for identifier, path in zip(
+                construction.region_ids,
+                construction.region_occurrence_paths,
+                strict=True,
             )
-            edge_region_sides.append(_facet_region_sides(facet))
-            continue
-        regions = edge_regions.get(key, set())
-        if len(regions) != 1:
-            raise ValueError(
-                "Every PLC mesh edge must have one source stratum or region."
-            )
-        region = next(iter(regions))
-        local_id = construction.region_ids[region]
-        path = construction.region_occurrence_paths[region]
-        edge_sources.append(_cached_source_key(3, local_id, path))
-        edge_paths.append(path)
-        edge_roles.append(GeometrySourceEntityRole.REGION)
-        edge_region_sides.append((None, None))
-        edge_residuals.append(0.0)
-
-    face_sources: list[str] = []
-    face_paths: list[tuple[str, ...]] = []
-    face_roles: list[GeometrySourceEntityRole] = []
-    face_residuals: list[float] = []
-    face_orientations = np.zeros((face_ids.size,), dtype=np.int8)
-    face_region_sides: list[tuple[str | None, str | None]] = []
-    for row, face in enumerate(connectivity_faces.tolist()):
-        key = tuple(sorted(face))
-        constrained = face_source_by_face.get(key)
-        if constrained is not None:
-            local_id, path, residual, facet, orientation, source_face = constrained
-            face_sources.append(_cached_source_key(2, local_id, path))
-            face_paths.append(path)
-            face_roles.append(GeometrySourceEntityRole.FACET)
-            face_residuals.append(residual)
-            face_orientations[row] = orientation * _face_order_sign(
-                source_face, (face[0], face[1], face[2])
-            )
-            face_region_sides.append(_facet_region_sides(facet))
-            continue
-        regions = face_regions.get(key, set())
-        if len(regions) != 1:
-            raise ValueError("Every PLC mesh face must have one source facet or region.")
-        region = next(iter(regions))
-        local_id = construction.region_ids[region]
-        path = construction.region_occurrence_paths[region]
-        face_sources.append(_cached_source_key(3, local_id, path))
-        face_paths.append(path)
-        face_roles.append(GeometrySourceEntityRole.REGION)
-        face_residuals.append(0.0)
-        face_region_sides.append((None, None))
-
-    cell_sources = tuple(
-        _cached_source_key(
-            3,
-            construction.region_ids[int(region)],
-            construction.region_occurrence_paths[int(region)],
-        )
-        for region in construction.cell_regions
+        ]
     )
-    cell_paths = tuple(
-        construction.region_occurrence_paths[int(region)]
-        for region in construction.cell_regions
+    region_paths = _object_rows(list(construction.region_occurrence_paths))
+    facet_keys = _object_rows(
+        [
+            _cached_source_key(2, identifier, path)
+            for identifier, path in zip(
+                construction.facet_ids, construction.facet_occurrence_paths, strict=True
+            )
+        ]
     )
+    facet_paths = _object_rows(list(construction.facet_occurrence_paths))
+    facet_sides = _object_rows(
+        [_facet_region_sides(facet) for facet in range(len(construction.facet_ids))]
+    )
+    none_sides = _object_rows([(None, None)])
+
+    # Edges: a constrained segment, else the one source facet whose recovered
+    # faces contain it, else the one region of its cells.
+    edge_count = connectivity_edges.shape[0]
+    edge_region = _single_region(
+        _rows_of_simplices(
+            connectivity_edges, cells[:, _TETRAHEDRON_EDGES].reshape((-1, 2))
+        ),
+        np.repeat(cell_regions, _TETRAHEDRON_EDGES.shape[0]),
+        edge_count,
+    )
+    boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
+    face_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
+    facet_edge_rows = _rows_of_simplices(
+        connectivity_edges, boundary_faces[:, _TRIANGLE_EDGES].reshape((-1, 2))
+    )
+    edge_facet = _single_region(
+        facet_edge_rows,
+        np.repeat(face_facets, _TRIANGLE_EDGES.shape[0]),
+        edge_count,
+    )
+    segment_edges = np.asarray(construction.segments, dtype=np.int64).reshape((-1, 2))
+    segment_rows = _rows_of_simplices(connectivity_edges, segment_edges)
+    if np.any(segment_rows < 0) or np.any(facet_edge_rows < 0):
+        raise ValueError("Constrained PLC edges must be canonical mesh edges.")
+    edge_segment = np.full((edge_count,), -1, dtype=np.int64)
+    edge_segment[segment_rows] = np.arange(segment_rows.size, dtype=np.int64)
+    constrained_edges = edge_segment >= 0
+    facet_edges = ~constrained_edges & (edge_facet >= 0)
+    region_edges = ~constrained_edges & ~facet_edges
+    if np.any(region_edges & (edge_region < 0)):
+        raise ValueError("Every PLC mesh edge must have one source stratum or region.")
+    segment_keys = _object_rows(
+        [
+            _cached_source_key(1, identifier, path)
+            for identifier, path in zip(
+                construction.segment_source_ids,
+                construction.segment_source_occurrence_paths,
+                strict=True,
+            )
+        ]
+    )
+    segment_paths = _object_rows(list(construction.segment_source_occurrence_paths))
+    selected_segments = edge_segment[constrained_edges]
+    selected_facets = edge_facet[facet_edges]
+    selected_regions = edge_region[region_edges]
+    edge_keys = np.empty((edge_count,), dtype=object)
+    edge_keys[constrained_edges] = segment_keys[selected_segments]
+    edge_keys[facet_edges] = facet_keys[selected_facets]
+    edge_keys[region_edges] = region_keys[selected_regions]
+    edge_path_rows = np.empty((edge_count,), dtype=object)
+    edge_path_rows[constrained_edges] = segment_paths[selected_segments]
+    edge_path_rows[facet_edges] = facet_paths[selected_facets]
+    edge_path_rows[region_edges] = region_paths[selected_regions]
+    edge_side_rows = np.repeat(none_sides, edge_count)
+    edge_side_rows[facet_edges] = facet_sides[selected_facets]
+    # np.full would turn the string enum into str; slice assignment keeps it.
+    edge_role_rows = np.empty((edge_count,), dtype=object)
+    edge_role_rows[:] = GeometrySourceEntityRole.REGION
+    edge_role_rows[constrained_edges] = GeometrySourceEntityRole.EDGE
+    edge_role_rows[facet_edges] = GeometrySourceEntityRole.FACET
+    edge_residual_values = np.where(
+        region_edges, 0.0, np.max(deviations[connectivity_edges], axis=1)
+    )
+    edge_orientations = np.zeros((edge_count,), dtype=np.int8)
+    edge_orientations[constrained_edges] = _segment_edge_orientations(
+        construction,
+        connectivity_edges[constrained_edges],
+        np.asarray(construction.segment_source_edges, dtype=np.int64)[selected_segments],
+    )
+    edge_sources = edge_keys.tolist()
+    edge_paths = edge_path_rows.tolist()
+    edge_roles = edge_role_rows.tolist()
+    edge_residuals = edge_residual_values
+    edge_region_sides = edge_side_rows.tolist()
+
+    # Faces: a recovered boundary face of its source facet, else the one
+    # region of its cells.
+    face_count = connectivity_faces.shape[0]
+    face_region = _single_region(
+        _rows_of_simplices(
+            connectivity_faces, cells[:, _TETRAHEDRON_FACES].reshape((-1, 3))
+        ),
+        np.repeat(cell_regions, _TETRAHEDRON_FACES.shape[0]),
+        face_count,
+    )
+    boundary_rows = _rows_of_simplices(connectivity_faces, boundary_faces)
+    if np.any(boundary_rows < 0):
+        raise ValueError("Recovered PLC faces must be canonical mesh faces.")
+    constrained_faces = np.zeros((face_count,), dtype=np.bool_)
+    constrained_faces[boundary_rows] = True
+    region_faces = ~constrained_faces
+    if np.any(region_faces & (face_region < 0)):
+        raise ValueError("Every PLC mesh face must have one source facet or region.")
+    boundary_keys = _object_rows(
+        [
+            _cached_source_key(2, identifier, path)
+            for identifier, path in zip(
+                construction.face_source_ids,
+                construction.face_source_occurrence_paths,
+                strict=True,
+            )
+        ]
+    )
+    face_keys = np.empty((face_count,), dtype=object)
+    face_keys[boundary_rows] = boundary_keys
+    face_keys[region_faces] = region_keys[face_region[region_faces]]
+    face_path_rows = np.empty((face_count,), dtype=object)
+    face_path_rows[boundary_rows] = _object_rows(
+        list(construction.face_source_occurrence_paths)
+    )
+    face_path_rows[region_faces] = region_paths[face_region[region_faces]]
+    face_side_rows = np.repeat(none_sides, face_count)
+    face_side_rows[boundary_rows] = facet_sides[face_facets]
+    face_role_rows = np.empty((face_count,), dtype=object)
+    face_role_rows[:] = GeometrySourceEntityRole.REGION
+    face_role_rows[boundary_rows] = GeometrySourceEntityRole.FACET
+    face_residual_values = np.zeros((face_count,), dtype=np.float64)
+    face_residual_values[boundary_rows] = np.max(deviations[boundary_faces], axis=1)
+    face_orientations = np.zeros((face_count,), dtype=np.int8)
+    face_orientations[boundary_rows] = np.asarray(
+        construction.face_orientations, dtype=np.int8
+    ) * _face_order_signs(boundary_faces, connectivity_faces[boundary_rows])
+    face_sources = face_keys.tolist()
+    face_paths = face_path_rows.tolist()
+    face_roles = face_role_rows.tolist()
+    face_residuals = face_residual_values
+    face_region_sides = face_side_rows.tolist()
+
+    cell_sources = tuple(region_keys[cell_regions].tolist())
+    cell_paths = tuple(region_paths[cell_regions].tolist())
     cell_association = GeometryAssociation(
         GeometryAssociationKind.PIECEWISE_LINEAR,
         source.source_id,

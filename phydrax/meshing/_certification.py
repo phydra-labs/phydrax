@@ -794,6 +794,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 junction_vertices=inputs.junction_vertices,
                 nested_restriction=embedding_premise,
                 validated_validity=validated_validity,
+                tetrahedral_degree=inputs.schedule.route == "volume_plc",
             )
         else:
             embedding.require_inputs(
@@ -948,6 +949,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                     root_charts=root_charts,
                     chart_parent=chart_parent,
                     _validated_parent_embedding=_validated_chart_parent_embedding,
+                    tetrahedral_degree=inputs.schedule.route == "volume_plc",
                 )
                 findings.extend(coverage.findings)
             else:
