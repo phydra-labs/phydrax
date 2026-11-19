@@ -79,6 +79,16 @@ CadRefine2DResult run(const Fixture& f,CadMetric2DFunction metric,void* context,
   in.metric=metric; in.metric_context=context; in.point_cap=cap;
   CadRefine2DResult result;
   status=cad_refine2d(in,result);
+  // Fault caught: retaining transient refusal evidence after successful refinement.
+  if(status==PHX_MC_OK) PHX_CHECK(result.unresolved.empty());
+  if(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED) {
+    PHX_CHECK(result.unresolved.size()==static_cast<std::size_t>(result.stats.unresolved_triangles));
+    int32_t previous=-1;
+    for(const auto& evidence:result.unresolved) {
+      PHX_CHECK(evidence.triangle>previous && (evidence.bad_size || evidence.bad_angle));
+      previous=evidence.triangle;
+    }
+  }
   return result;
 }
 void report_refusals(const char* name,int32_t status,const CadRefine2DResult& r) {
@@ -445,6 +455,31 @@ void permutation_invariance() {
     PHX_CHECK(std::memcmp(a_cells.data(),b_cells.data(),a_cells.size()*sizeof(a_cells[0]))==0);
 }
 
+void blocked_boundary_evidence() {
+  const double points[]={0,0,4,0,4,1,3.9,1,0,1};
+  const int32_t segments[]={2,3,0,1};
+  CadMetric2D m{1,0,1};
+  CadRefine2DInput in;
+  in.points=points; in.point_count=5; in.segments=segments; in.segment_count=2;
+  in.keep_convex_hull=true; in.metric=constant; in.metric_context=&m; in.point_cap=1000;
+  CadRefine2DResult result;
+  const int32_t status=cad_refine2d(in,result);
+  PHX_CHECK(status==PHX_MC_UNRESOLVED);
+  int observed=0;
+  for(const auto& e:result.unresolved) if(e.refusal==CadRefine2DRefusal::encroachment) {
+    ++observed;
+    // Fault caught: returning a BVH position instead of the input segment index.
+    PHX_CHECK(e.segment==1);
+    // Independent Euclidean diametral-lens test for the blocked bottom segment.
+    PHX_CHECK((e.candidate[0]-points[0])*(e.candidate[0]-points[2])+
+              (e.candidate[1]-points[1])*(e.candidate[1]-points[3])<0);
+    PHX_CHECK(e.triangle>=0 && static_cast<std::size_t>(e.triangle)<result.triangulation.triangles.size());
+    PHX_CHECK(e.bad_size || e.bad_angle);
+  }
+  PHX_CHECK(observed>0);
+  PHX_CHECK(result.unresolved.size()==static_cast<std::size_t>(result.stats.unresolved_triangles));
+}
+
 }  // namespace
 
 int main() {
@@ -457,6 +492,7 @@ int main() {
   adversarial_metrics();
   fixed_pole_zone();
   permutation_invariance();
+  blocked_boundary_evidence();
   const Fixture f=rectangle(6,6,6,6);
   int32_t status;
   auto r=run(f,height_field,nullptr,status);
