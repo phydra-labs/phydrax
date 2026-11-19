@@ -168,6 +168,39 @@ std::size_t LocalIncidence::edge_valence(std::int32_t first,
   return count;
 }
 
+std::size_t LocalIncidence::edge_valence(std::int32_t first, std::int32_t second,
+                                         std::int32_t seed) const {
+  if (first == second || mesh_ == nullptr) return 0;
+  const TetrahedralComplex& complex = mesh_->complex();
+  if (!complex.live(seed) || vertex_slot(complex.tets[static_cast<std::size_t>(seed)], first) < 0 ||
+      vertex_slot(complex.tets[static_cast<std::size_t>(seed)], second) < 0) {
+    return edge_valence(first, second);
+  }
+  // The cells around an edge of the closed (ghost-completed) complex form one
+  // cycle: each step leaves through the face holding the edge that it did not
+  // enter by. A broken cycle falls back to the star.
+  std::size_t count = 0;
+  std::int32_t previous = -1;
+  std::int32_t current = seed;
+  for (std::size_t step = 0; step <= complex.tets.size(); ++step) {
+    const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(current)];
+    if (!is_ghost(tet)) ++count;
+    std::int32_t next = -1;
+    for (int face = 0; face < 4; ++face) {
+      if (tet.v[face] == first || tet.v[face] == second) continue;
+      if (tet.n[face] != previous) {
+        next = tet.n[face];
+        break;
+      }
+    }
+    if (!complex.live(next)) return edge_valence(first, second);
+    if (next == seed) return count;
+    previous = current;
+    current = next;
+  }
+  return edge_valence(first, second);
+}
+
 std::span<const std::int32_t> LocalIncidence::edge_star(std::int32_t first,
                                                         std::int32_t second) const {
   if (first == second || mesh_ == nullptr) return {};
@@ -842,17 +875,21 @@ bool quality_vector_for_cells(const TetMesh& mesh,
   return !quality.empty();
 }
 
+// Sorted score vector of live cells, read from `cell_quality`: the current
+// local_flip_quality of every live cell by slot (improve_mesh measures each
+// cell when it is created or moved and keeps the measurement until then).
 bool quality_vector_for_slots(const TetMesh& mesh,
                               std::span<const std::int32_t> cell_slots,
-                              const TetQualityRequest& request,
+                              std::span<const FlipQuality> cell_quality,
                               QualityVector& quality) {
   quality.clear();
   quality.reserve(cell_slots.size());
   for (std::int32_t slot : cell_slots) {
-    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return false;
-    LocalCell cell{};
-    std::copy_n(mesh.tet(slot).v, 4, cell.begin());
-    const FlipQuality measure = local_flip_quality(mesh, cell, request);
+    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot)) ||
+        static_cast<std::size_t>(slot) >= cell_quality.size()) {
+      return false;
+    }
+    const FlipQuality& measure = cell_quality[static_cast<std::size_t>(slot)];
     if (measure.validity_class < 0) return false;
     quality.push_back(measure);
   }
@@ -870,6 +907,9 @@ struct EdgeRemovalScratch {
   std::vector<FlipQuality> candidate_quality;
   std::vector<std::pair<std::size_t, std::size_t>> pending;
   std::set<LocalEdgeKey> ring_edges;
+  // Per ring vertex pair (i, j): -1 not yet tested, else whether the edge
+  // exists outside the ring's cells.
+  std::vector<std::int8_t> exterior_edges;
   std::array<FlipQuality, 2> triangle_quality{};
   QualityVector before_quality;
   QualityVector reconstructed_quality;
@@ -1061,6 +1101,7 @@ TetEditStatus prepare_quality_reconnection(
 bool make_face_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence,
     std::int32_t cell_slot, int face_slot, const TetQualityRequest& request,
+    std::span<const FlipQuality> cell_quality,
     const std::set<LogicalEdgeKey>& source_edges,
     std::array<std::int32_t, 2>& removed,
     std::array<LocalCell, 3>& replacement_cells,
@@ -1111,7 +1152,7 @@ bool make_face_removal_proposal(
     replacement_cells[child++] = cell;
   }
   if (child != replacement_cells.size()) return false;
-  if (!quality_vector_for_slots(mesh, removed, request, before_quality) ||
+  if (!quality_vector_for_slots(mesh, removed, cell_quality, before_quality) ||
       !quality_vector_for_cells(mesh, replacement_cells, request, after_quality)) {
     return false;
   }
@@ -1121,6 +1162,7 @@ bool make_face_removal_proposal(
 TetEditStatus make_edge_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence, std::int32_t start,
     std::int32_t first, std::int32_t second, const TetQualityRequest& request,
+    std::span<const FlipQuality> cell_quality,
     const std::set<LogicalEdgeKey>& source_edges, EdgeRemovalScratch& scratch) {
   auto& removed_slots = scratch.removed_slots;
   auto& ring = scratch.ring;
@@ -1178,6 +1220,7 @@ TetEditStatus make_edge_removal_proposal(
   }
   quality_offsets.assign(table_size, std::numeric_limits<std::size_t>::max());
   choices.assign(table_size, -1);
+  scratch.exterior_edges.assign(table_size, -1);
   for (std::size_t index = 0; index + 1 < count; ++index) {
     choices[index * count + index + 1] = 0;
   }
@@ -1203,25 +1246,20 @@ TetEditStatus make_edge_removal_proposal(
   }
   // The ring's own cells decide which replacement cells may be considered
   // (see admissible_size_excess).
-  if (!quality_vector_for_slots(mesh, removed_slots, request, scratch.before_quality)) {
+  if (!quality_vector_for_slots(mesh, removed_slots, cell_quality, scratch.before_quality)) {
     return TetEditStatus::kRejectedTopology;
   }
   const double size_excess_bound = admissible_size_excess(scratch.before_quality);
+  // A triangulation holding a cell scoring below the ring's worst cell has a
+  // sorted vector below the ring's and is refused. The optimum maximizes the
+  // worst score first, so it holds no such cell whenever any triangulation
+  // avoids them, and every interval optimum likewise: excluding those
+  // triangles leaves the accepted optimum, and every refusal, unchanged.
+  const double worst_before = scratch.before_quality.front().primary;
 
   const auto triangle_cells = [&](std::size_t i, std::size_t k, std::size_t j,
                                   LocalCell& first_cell, LocalCell& second_cell,
                                   std::array<FlipQuality, 2>& triangle_quality) {
-    const std::array<LocalEdgeKey, 3> sides{
-        sorted_local_edge(ring[i], ring[k]),
-        sorted_local_edge(ring[k], ring[j]),
-        sorted_local_edge(ring[i], ring[j])};
-    const bool exterior_conflict = std::any_of(
-        sides.begin(), sides.end(), [&](const LocalEdgeKey& edge) {
-          return !ring_edges.contains(edge) &&
-                 incidence.edge_cell_outside(mesh, edge.first, edge.second,
-                                             removed_slots) >= 0;
-        });
-    if (exterior_conflict) return false;
     first_cell = {ring[k], ring[i], ring[j], first};
     second_cell = {ring[i], ring[k], ring[j], second};
     if (!mesh.positive(first_cell.data()) || !mesh.positive(second_cell.data())) {
@@ -1236,7 +1274,23 @@ TetEditStatus make_edge_removal_proposal(
     if (flip_quality_less(triangle_quality[1], triangle_quality[0])) {
       std::swap(triangle_quality[0], triangle_quality[1]);
     }
-    return true;
+    if (triangle_quality[0].primary < worst_before) return false;
+    const std::array<std::array<std::size_t, 2>, 3> sides{{{i, k}, {k, j}, {i, j}}};
+    // Each ring diagonal is tested once per proposal: an exterior edge
+    // between its ends (the edge would be duplicated) excludes it.
+    return std::none_of(
+        sides.begin(), sides.end(), [&](const std::array<std::size_t, 2>& side) {
+          const LocalEdgeKey edge = sorted_local_edge(ring[side[0]], ring[side[1]]);
+          if (ring_edges.contains(edge)) return false;
+          std::int8_t& known = scratch.exterior_edges[side[0] * count + side[1]];
+          if (known < 0) {
+            known = incidence.edge_cell_outside(mesh, edge.first, edge.second,
+                                                removed_slots) >= 0
+                        ? 1
+                        : 0;
+          }
+          return known != 0;
+        });
   };
 
   const auto interval_span = [&](std::size_t i, std::size_t j) {
@@ -1671,6 +1725,30 @@ bool free_interior_vertex(const TetMesh& mesh, std::int32_t vertex) {
          !mesh.protected_vertex(vertex) && mesh.protection_radius(vertex) == 0.0 &&
          mesh.witness(vertex).stratum == SourceStratum::kNone;
 }
+
+// Worklist of logical IDs popped smallest first, each ID at most once per
+// pop: a flat binary heap that may hold duplicates and drops them when the
+// ID is popped, so an ID is pending exactly when it was pushed after its last
+// pop (the semantics, and so the order, of an ordered set).
+class IdWorklist {
+ public:
+  bool empty() const noexcept { return heap_.empty(); }
+  void push(std::uint64_t id) {
+    heap_.push_back(id);
+    std::push_heap(heap_.begin(), heap_.end(), std::greater<>{});
+  }
+  std::uint64_t pop() {
+    const std::uint64_t id = heap_.front();
+    while (!heap_.empty() && heap_.front() == id) {
+      std::pop_heap(heap_.begin(), heap_.end(), std::greater<>{});
+      heap_.pop_back();
+    }
+    return id;
+  }
+
+ private:
+  std::vector<std::uint64_t> heap_;
+};
 }  // namespace
 
 std::int32_t flip_to_constrained_delaunay(
@@ -1810,8 +1888,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     return PHX_MC_INVALID_ARGUMENT;
   }
 
-  TetMeshSnapshot initial;
-  if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
   const std::int32_t installed = mesh.install_vertex_sizes(vertex_sizes);
   if (installed != PHX_MC_OK) return installed;
   // Size targets by local vertex slot; slots are append-only during this run.
@@ -1828,86 +1904,101 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   request.minimum_relative_determinant =
       std::max(requested.minimum_relative_determinant, kMetricDeterminantFloor);
   request.slot_sizes = &slot_sizes;
-  bool has_unmet_quality = false;
-  QualityVector before_cavity_quality;
-  before_cavity_quality.reserve(initial.cells.size());
-  for (const TetSnapshotCell& cell : initial.cells) {
-    const std::int32_t slot = mesh.cell_slot(cell.id);
-    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return PHX_MC_INTERNAL_ERROR;
-    LocalCell vertices{};
-    std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
-    const FlipQuality quality = local_flip_quality(mesh, vertices, request);
-    if (quality.validity_class < 0) return PHX_MC_INVALID_INPUT;
-    before_cavity_quality.push_back(quality);
-    has_unmet_quality = has_unmet_quality || !cell_quality_meets_target(quality);
-  }
-  sort_quality_vector(before_cavity_quality);
-  if (has_unmet_quality) {
-    TetEdit operation;
-    if (make_fixed_boundary_star_retriangulation(
-            mesh, initial, mesh.next_vertex_id_, mesh.next_cell_id_, operation)) {
-      // The fan center's size target interpolates the boundary vertices'.
-      double center_size = 0.0;
-      for (const TetVertexAncestry& ancestor : operation.changed_vertices.front().ancestry) {
-        const double size = vertex_size(request, mesh.vertex_slot(ancestor.source_vertex_id));
-        if (!(size > 0.0)) {
-          center_size = 0.0;
-          break;
-        }
-        center_size += ancestor.weight * size;
-      }
-      QualityVector after_cavity_quality;
-      after_cavity_quality.reserve(operation.replacement_cells.size());
-      for (const TetEditCell& cell : operation.replacement_cells) {
-        std::array<const double*, 4> points{};
-        std::array<double, 4> sizes{};
-        for (int corner = 0; corner < 3; ++corner) {
-          const std::int32_t slot = mesh.vertex_slot(
-              cell.vertices[static_cast<std::size_t>(corner)]);
-          if (!mesh.live_vertex(slot)) return PHX_MC_INTERNAL_ERROR;
-          points[static_cast<std::size_t>(corner)] = mesh.point(slot);
-          sizes[static_cast<std::size_t>(corner)] = vertex_size(request, slot);
-        }
-        points[3] = operation.changed_vertices.front().carrier.data();
-        sizes[3] = center_size;
-        CellMeasure measure;
-        if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return PHX_MC_INVALID_INPUT;
-        after_cavity_quality.push_back(quality_from_measure(measure, request));
-      }
-      sort_quality_vector(after_cavity_quality);
-      // This whole-mesh retessellation would discard every interior vertex,
-      // so it may create no cell beyond its size target at all.
-      if (improves_quality_vector(before_cavity_quality, after_cavity_quality, 1.0)) {
-        TetEditBatch batch;
-        batch.expected_generation = mesh.generation();
-        batch.source_revision = mesh.source_revision();
-        batch.frame_id = mesh.frame_id();
-        batch.identity_bound = mesh.identity_bound();
-        batch.source_id = mesh.source_id();
-        batch.source_map_id = mesh.source_map_id();
-        batch.periodic_identity = mesh.periodic_identity();
-        const std::uint64_t center_id = operation.changed_vertices.front().id;
-        batch.operations.push_back(std::move(operation));
-        std::vector<TetEditResult> results;
-        const TetEditStatus status = mesh.apply_edit_batch(batch, results);
-        if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
-        if (status == TetEditStatus::kIndexOverflow) return PHX_MC_INDEX_RANGE_ERROR;
-        if (status == TetEditStatus::kStaleGeneration) return PHX_MC_INTERNAL_ERROR;
-        if (status == TetEditStatus::kApplied) {
-          if (results.size() != 1 || results.front().status != TetEditStatus::kApplied) {
-            return PHX_MC_INTERNAL_ERROR;
-          }
-          if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
-          if (center_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(center_id), center_size);
-          refresh_slot_sizes();
-        }
-      }
+  // Whole-boundary retessellation: the fan from the boundary vertices'
+  // centroid over every boundary face replaces the whole mesh when that
+  // improves its sorted score vector. It discards every interior vertex and
+  // checks every pair of boundary faces for an exact embedding, so it is a
+  // repair for a coarse boundary only: it is tried on boundaries of at most
+  // kRetessellationFaceLimit faces, which bounds that quadratic check.
+  constexpr std::size_t kRetessellationFaceLimit = 256;
+  const auto retessellate_coarse_boundary = [&]() -> std::int32_t {
+    if (mesh.facets_.size() > kRetessellationFaceLimit) return PHX_MC_OK;
+    TetMeshSnapshot initial;
+    if (mesh.snapshot_internal(initial, false) != TetEditStatus::kApplied) {
+      return PHX_MC_INTERNAL_ERROR;
     }
+    bool has_unmet_quality = false;
+    QualityVector before_cavity_quality;
+    before_cavity_quality.reserve(initial.cells.size());
+    for (const TetSnapshotCell& cell : initial.cells) {
+      const std::int32_t slot = mesh.cell_slot(cell.id);
+      if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return PHX_MC_INTERNAL_ERROR;
+      LocalCell vertices{};
+      std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
+      const FlipQuality quality = local_flip_quality(mesh, vertices, request);
+      if (quality.validity_class < 0) return PHX_MC_INVALID_INPUT;
+      before_cavity_quality.push_back(quality);
+      has_unmet_quality = has_unmet_quality || !cell_quality_meets_target(quality);
+    }
+    sort_quality_vector(before_cavity_quality);
+    TetEdit operation;
+    if (!has_unmet_quality ||
+        !make_fixed_boundary_star_retriangulation(mesh, initial, mesh.next_vertex_id_,
+                                                  mesh.next_cell_id_, operation)) {
+      return PHX_MC_OK;
+    }
+    // The fan center's size target interpolates the boundary vertices'.
+    double center_size = 0.0;
+    for (const TetVertexAncestry& ancestor : operation.changed_vertices.front().ancestry) {
+      const double size = vertex_size(request, mesh.vertex_slot(ancestor.source_vertex_id));
+      if (!(size > 0.0)) {
+        center_size = 0.0;
+        break;
+      }
+      center_size += ancestor.weight * size;
+    }
+    QualityVector after_cavity_quality;
+    after_cavity_quality.reserve(operation.replacement_cells.size());
+    for (const TetEditCell& cell : operation.replacement_cells) {
+      std::array<const double*, 4> points{};
+      std::array<double, 4> sizes{};
+      for (int corner = 0; corner < 3; ++corner) {
+        const std::int32_t slot = mesh.vertex_slot(
+            cell.vertices[static_cast<std::size_t>(corner)]);
+        if (!mesh.live_vertex(slot)) return PHX_MC_INTERNAL_ERROR;
+        points[static_cast<std::size_t>(corner)] = mesh.point(slot);
+        sizes[static_cast<std::size_t>(corner)] = vertex_size(request, slot);
+      }
+      points[3] = operation.changed_vertices.front().carrier.data();
+      sizes[3] = center_size;
+      CellMeasure measure;
+      if (!measure_cell(mesh, points, cell_size_target(sizes), measure)) return PHX_MC_INVALID_INPUT;
+      after_cavity_quality.push_back(quality_from_measure(measure, request));
+    }
+    sort_quality_vector(after_cavity_quality);
+    // This whole-mesh retessellation would discard every interior vertex,
+    // so it may create no cell beyond its size target at all.
+    if (!improves_quality_vector(before_cavity_quality, after_cavity_quality, 1.0)) {
+      return PHX_MC_OK;
+    }
+    TetEditBatch batch;
+    batch.expected_generation = mesh.generation();
+    batch.source_revision = mesh.source_revision();
+    batch.frame_id = mesh.frame_id();
+    batch.identity_bound = mesh.identity_bound();
+    batch.source_id = mesh.source_id();
+    batch.source_map_id = mesh.source_map_id();
+    batch.periodic_identity = mesh.periodic_identity();
+    const std::uint64_t center_id = operation.changed_vertices.front().id;
+    batch.operations.push_back(std::move(operation));
+    std::vector<TetEditResult> results;
+    const TetEditStatus status = mesh.apply_edit_batch(batch, results);
+    if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
+    if (status == TetEditStatus::kIndexOverflow) return PHX_MC_INDEX_RANGE_ERROR;
+    if (status == TetEditStatus::kStaleGeneration) return PHX_MC_INTERNAL_ERROR;
+    if (status != TetEditStatus::kApplied) return PHX_MC_OK;
+    if (results.size() != 1 || results.front().status != TetEditStatus::kApplied) {
+      return PHX_MC_INTERNAL_ERROR;
+    }
+    if (center_size > 0.0) mesh.set_vertex_size(mesh.vertex_slot(center_id), center_size);
+    refresh_slot_sizes();
+    return PHX_MC_OK;
+  };
+  if (const std::int32_t status = retessellate_coarse_boundary(); status != PHX_MC_OK) {
+    return status;
   }
-  QualityVector{}.swap(before_cavity_quality);
   LocalIncidence incidence;
-  if (initial.cells.size() >
-      std::numeric_limits<std::size_t>::max() / 6) {
+  if (mesh.complex().tets.size() > std::numeric_limits<std::size_t>::max() / 6) {
     return PHX_MC_INDEX_RANGE_ERROR;
   }
   // The fixed-boundary star retessellation runs before this index is built;
@@ -1915,15 +2006,55 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // collapse removes one, and relocation moves one).
   if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
   std::set<LogicalEdgeKey> source_edges;
-  for (const TetSnapshotSegment& segment : initial.constrained_segments) {
+  for (const TetSnapshotSegment& segment : mesh.segments_) {
     source_edges.insert(sorted_logical_edge(segment.vertices[0], segment.vertices[1]));
   }
-  std::set<LogicalEdgeKey> rejected_high_edges;
   // Topology and vertex worklists. Each holds only entries whose own cell, or
   // star for a vertex, may violate a target, and an entry returns only after
   // an accepted edit changed that cell or star or was made while processing it.
-  std::set<std::uint64_t> pending_cells;
-  std::set<std::uint64_t> pending_vertices;
+  IdWorklist pending_cells;
+  IdWorklist pending_vertices;
+  // The current local_flip_quality of every live cell by slot: measured
+  // once for every cell below, then for each cell an accepted edit creates
+  // or moves (enqueue_violating_cell), so it is read instead of remeasured.
+  std::vector<FlipQuality> cell_quality;
+  // Edit clock and, per vertex slot (append-only in this run), the clock of
+  // the last accepted edit that changed its star (a cell containing it was
+  // created, removed or moved). Every accepted edit touches each vertex of the
+  // cells it creates or moves (touch_vertex), which queues it as well.
+  std::uint64_t edit_clock = 0;
+  std::vector<std::uint64_t> vertex_clock;
+  const auto touch_vertex = [&](std::uint64_t vertex_id) {
+    pending_vertices.push(vertex_id);
+    const std::int32_t slot = mesh.vertex_slot(vertex_id);
+    if (slot < 0) return;
+    if (vertex_clock.size() <= static_cast<std::size_t>(slot)) {
+      vertex_clock.resize(mesh.vertex_ids_.size(), 0);
+    }
+    vertex_clock[static_cast<std::size_t>(slot)] = ++edit_clock;
+  };
+  // Refused edge removals. A proposal is a function of the edge's ring cells
+  // (each contains both ends), their vertices' positions and size targets,
+  // and the edges among the ring vertices; an edit changing any of these
+  // changes the star of an end or a ring vertex. A refusal therefore stands
+  // while no vertex it read has been touched since, and is not recomputed.
+  struct EdgeRefusal {
+    std::uint64_t clock = 0;
+    TetEditStatus status = TetEditStatus::kRejectedTopology;
+    std::vector<std::int32_t> vertices;
+  };
+  struct LogicalEdgeHash {
+    std::size_t operator()(const LogicalEdgeKey& key) const noexcept {
+      return std::hash<std::uint64_t>{}(key.first * 0x9e3779b97f4a7c15ULL ^ key.second);
+    }
+  };
+  std::unordered_map<LogicalEdgeKey, EdgeRefusal, LogicalEdgeHash> edge_refusals;
+  const auto refusal_stands = [&](const EdgeRefusal& refusal) {
+    return std::all_of(refusal.vertices.begin(), refusal.vertices.end(), [&](std::int32_t slot) {
+      return static_cast<std::size_t>(slot) >= vertex_clock.size() ||
+             vertex_clock[static_cast<std::size_t>(slot)] <= refusal.clock;
+    });
+  };
   // Cells found below the determinant floor. Every cell an accepted edit
   // creates or moves is admissible, so the below-floor cells left when the
   // edit loop converges are among these (the clearing pass's candidates).
@@ -1947,13 +2078,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     touched.reserve(operation.replacement_cells.size() + boundary_neighbors.size());
     for (const TetEditCell& cell : operation.replacement_cells) {
       touched.push_back(cell.id);
-      pending_vertices.insert(cell.vertices.begin(), cell.vertices.end());
+      for (std::uint64_t vertex : cell.vertices) touch_vertex(vertex);
     }
     touched.insert(touched.end(), boundary_neighbors.begin(), boundary_neighbors.end());
     std::sort(touched.begin(), touched.end());
     touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
     affected_cells.swap(touched);
-    rejected_high_edges.clear();
     return TetEditStatus::kApplied;
   };
 
@@ -1966,14 +2096,29 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   EdgeRemovalScratch edge_scratch;
   const auto try_edge_removal = [&](std::int32_t first, std::int32_t second,
                                    std::vector<std::uint64_t>& affected) {
+    const LogicalEdgeKey key = sorted_logical_edge(mesh.vertex_id(first), mesh.vertex_id(second));
+    const auto refused = edge_refusals.find(key);
+    if (refused != edge_refusals.end() && refusal_stands(refused->second)) {
+      return refused->second.status;
+    }
+    const auto refuse = [&](TetEditStatus status) {
+      EdgeRefusal& refusal = edge_refusals[key];
+      refusal.clock = edit_clock;
+      refusal.status = status;
+      refusal.vertices.assign({first, second});
+      refusal.vertices.insert(refusal.vertices.end(), edge_scratch.ring.begin(),
+                              edge_scratch.ring.end());
+      return status;
+    };
+    edge_scratch.ring.clear();
     const std::span<const std::int32_t> no_removed;
     const std::int32_t start =
         incidence.edge_cell_outside(mesh, first, second, no_removed);
-    if (start < 0) return TetEditStatus::kRejectedTopology;
+    if (start < 0) return refuse(TetEditStatus::kRejectedTopology);
     const TetEditStatus proposal = make_edge_removal_proposal(
-        mesh, incidence, start, first, second, request, source_edges,
+        mesh, incidence, start, first, second, request, cell_quality, source_edges,
         edge_scratch);
-    if (proposal != TetEditStatus::kApplied) return proposal;
+    if (proposal != TetEditStatus::kApplied) return refuse(proposal);
     const TetEditKind kind = edge_scratch.removed_slots.size() == 3
                                  ? TetEditKind::kFlip32
                                  : TetEditKind::kRingReconnect;
@@ -1987,6 +2132,14 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   QualityVector face_after_quality;
   face_before_quality.reserve(2);
   face_after_quality.reserve(3);
+  // Whether each live cell, by slot, misses a target, as of its last
+  // measurement, and the IDs of the cells measured missing one. Every cell is
+  // measured once below, and every accepted edit measures each cell it
+  // creates or moves (enqueue_affected, enqueue_vertex_edit), so the flag of
+  // a live cell is current and every cell missing a target is listed: the
+  // vertex phase, the shape pass and the final records read only these.
+  std::vector<std::uint8_t> violating_slots;
+  std::vector<std::uint64_t> violating_ids;
   const auto enqueue_violating_cell = [&](std::uint64_t id) {
     const std::int32_t slot = mesh.cell_slot(id);
     if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return true;
@@ -1994,7 +2147,17 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
     const FlipQuality quality = local_flip_quality(mesh, vertices, request);
     if (quality.validity_class < 0) return false;
-    if (!cell_quality_meets_target(quality)) pending_cells.insert(id);
+    const bool violating = !cell_quality_meets_target(quality);
+    if (violating_slots.size() <= static_cast<std::size_t>(slot)) {
+      violating_slots.resize(mesh.complex().tets.size(), 0);
+      cell_quality.resize(mesh.complex().tets.size());
+    }
+    violating_slots[static_cast<std::size_t>(slot)] = violating ? 1 : 0;
+    cell_quality[static_cast<std::size_t>(slot)] = quality;
+    if (violating) {
+      pending_cells.push(id);
+      violating_ids.push_back(id);
+    }
     if (quality.validity_class == kBelowDeterminantFloor) below_floor_cells.insert(id);
     return true;
   };
@@ -2017,13 +2180,16 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     return true;
   };
-  for (const TetSnapshotCell& cell : initial.cells) {
-    if (!enqueue_violating_cell(cell.id)) return PHX_MC_INVALID_INPUT;
+  violating_slots.assign(mesh.complex().tets.size(), 0);
+  cell_quality.assign(mesh.complex().tets.size(), FlipQuality{});
+  for (std::size_t slot = 0; slot < mesh.complex().tets.size(); ++slot) {
+    const std::int32_t cell = static_cast<std::int32_t>(slot);
+    if (!mesh.complex().live(cell) || is_ghost(mesh.tet(cell))) continue;
+    if (!enqueue_violating_cell(mesh.cell_id(cell))) return PHX_MC_INVALID_INPUT;
   }
-  initial = TetMeshSnapshot{};
-  for (std::uint64_t id : pending_cells) {
+  for (std::uint64_t id : violating_ids) {
     const Tetrahedron& tet = mesh.tet(mesh.cell_slot(id));
-    for (std::int32_t vertex : tet.v) pending_vertices.insert(mesh.vertex_id(vertex));
+    for (std::int32_t vertex : tet.v) pending_vertices.push(mesh.vertex_id(vertex));
   }
 
   // Sorted score vector of the cone from `candidate` over the boundary faces
@@ -2078,7 +2244,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       }
     }
     if (mesh.next_vertex_id_ == std::numeric_limits<std::uint64_t>::max() ||
-        !quality_vector_for_slots(mesh, cells, request, insertion_before)) {
+        !quality_vector_for_slots(mesh, cells, cell_quality, insertion_before)) {
       return TetEditStatus::kRejectedTopology;
     }
     const double target = slots_size_target(request, mesh.tet(slot).v);
@@ -2112,11 +2278,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       const std::int32_t created = mesh.cell_slot(id);
       created_slots.push_back(created);
       for (std::int32_t vertex : mesh.tet(created).v) {
-        pending_vertices.insert(mesh.vertex_id(vertex));
+        touch_vertex(mesh.vertex_id(vertex));
       }
     }
     if (!enqueue_vertex_edit(created_slots)) return TetEditStatus::kStaleGeneration;
-    rejected_high_edges.clear();
     ++inserted_vertices;
     collapsed_vertices += static_cast<std::int64_t>(removed.size());
     return TetEditStatus::kApplied;
@@ -2255,7 +2420,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
                                    std::span<const std::array<double, 3>> seeds,
                                    double initial_step) -> TetEditStatus {
     std::array<double, 3> candidate{};
-    if (!quality_vector_for_slots(mesh, cells, request, cavity_before_quality) ||
+    if (!quality_vector_for_slots(mesh, cells, cell_quality, cavity_before_quality) ||
         !cavity_kernel_point(mesh, cells, members, seeds, initial_step, candidate) ||
         !measure_cone(slot, candidate.data(), cells, members, cone_quality)) {
       return TetEditStatus::kRejectedTopology;
@@ -2387,7 +2552,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return PHX_MC_OK;
     LocalCell current{};
     std::copy_n(mesh.tet(slot).v, 4, current.begin());
-    const FlipQuality quality = local_flip_quality(mesh, current, request);
+    const FlipQuality quality = cell_quality[static_cast<std::size_t>(slot)];
     if (quality.validity_class < 0) return PHX_MC_INTERNAL_ERROR;
     if (cell_quality_meets_target(quality)) return PHX_MC_OK;
     // An accepted edit made while processing this cell need not remove it
@@ -2445,13 +2610,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
 
     bool changed = false;
     // Larger closed rings can repair a cavity that no 2-3 flip can improve.
-    // Try them first, then memoize failures until any topology edit changes
-    // the local incidence and quality state.
+    // Try them first; a refused removal is memoized (edge_refusals).
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second) <= 4 ||
-          rejected_high_edges.contains(edge.key)) {
-        continue;
-      }
+      if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, affected);
@@ -2462,7 +2623,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         changed = true;
         break;
       }
-      rejected_high_edges.insert(edge.key);
     }
     if (changed) return requeue_current();
 
@@ -2471,26 +2631,19 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       std::array<LocalCell, 3> replacements{};
       std::array<std::int32_t, 3> blocked_edge{-1, -1, -1};
       if (!make_face_removal_proposal(
-              mesh, incidence, slot, face.slot, request, source_edges,
+              mesh, incidence, slot, face.slot, request, cell_quality, source_edges,
               removed, replacements, blocked_edge, face_before_quality,
               face_after_quality)) {
         if (blocked_edge[0] >= 0) {
-          const LogicalEdgeKey key = sorted_logical_edge(
-              mesh.vertex_id(blocked_edge[1]), mesh.vertex_id(blocked_edge[2]));
-          const std::size_t valence =
-              incidence.edge_valence(blocked_edge[1], blocked_edge[2]);
-          if (valence <= 4 || !rejected_high_edges.contains(key)) {
-            std::vector<std::uint64_t> affected;
-            const TetEditStatus status =
-                try_edge_removal(blocked_edge[1], blocked_edge[2], affected);
-            const std::int32_t error = fatal_edit_error(status);
-            if (error != PHX_MC_OK) return error;
-            if (status == TetEditStatus::kApplied) {
-              if (!enqueue_affected(affected)) return PHX_MC_INTERNAL_ERROR;
-              changed = true;
-              break;
-            }
-            if (valence > 4) rejected_high_edges.insert(key);
+          std::vector<std::uint64_t> affected;
+          const TetEditStatus status =
+              try_edge_removal(blocked_edge[1], blocked_edge[2], affected);
+          const std::int32_t error = fatal_edit_error(status);
+          if (error != PHX_MC_OK) return error;
+          if (status == TetEditStatus::kApplied) {
+            if (!enqueue_affected(affected)) return PHX_MC_INTERNAL_ERROR;
+            changed = true;
+            break;
           }
         }
         continue;
@@ -2509,7 +2662,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (changed) return requeue_current();
 
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second) > 4) continue;
+      if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, affected);
@@ -2690,9 +2843,17 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   QualityVector before_quality;
   QualityVector after_quality;
   std::vector<TetEditCell> replacement_cells;
+  std::vector<std::int32_t> star_probe;
   const auto vertex_step = [&](std::uint64_t vertex_id) -> std::int32_t {
     const std::int32_t removed = mesh.vertex_slot(vertex_id);
     if (!free_interior_vertex(mesh, removed)) return PHX_MC_OK;
+    // A star whose cells all meet the targets has nothing to improve.
+    incidence.collect_star(removed, star_probe);
+    if (std::none_of(star_probe.begin(), star_probe.end(), [&](std::int32_t cell) {
+          return violating_slots[static_cast<std::size_t>(cell)] != 0;
+        })) {
+      return PHX_MC_OK;
+    }
     LocalIncidence::Star star = incidence.vertex_star(removed);
     if (!interior_quality(mesh, star.cells(), request, before_quality)) return PHX_MC_OK;
     if (quality_vector_meets_target(before_quality)) return PHX_MC_OK;
@@ -2736,9 +2897,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       const std::int32_t error = fatal_edit_error(status);
       if (error != PHX_MC_OK) return error;
       if (status == TetEditStatus::kApplied) {
+        // A link vertex whose cells all held the survivor loses cells
+        // without appearing in a replacement cell.
+        for (std::int32_t neighbor : neighbors) touch_vertex(mesh.vertex_id(neighbor));
         for (const TetEditCell& cell : operation.replacement_cells) {
           changed_slots.push_back(mesh.cell_slot(cell.id));
-          pending_vertices.insert(cell.vertices.begin(), cell.vertices.end());
+          for (std::uint64_t vertex : cell.vertices) touch_vertex(vertex);
         }
         if (!enqueue_vertex_edit(changed_slots)) return PHX_MC_INTERNAL_ERROR;
         // The edit erased the removed vertex's size entry.
@@ -2808,7 +2972,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
             // NO_IMPROVEMENT record relies on.
             for (std::int32_t slot : star) {
               for (std::int32_t vertex : mesh.tet(slot).v) {
-                pending_vertices.insert(mesh.vertex_id(vertex));
+                touch_vertex(mesh.vertex_id(vertex));
               }
             }
             if (!enqueue_vertex_edit(star.cells())) return PHX_MC_INTERNAL_ERROR;
@@ -2962,7 +3126,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     const std::int32_t error = fatal_edit_error(status);
     if (error != PHX_MC_OK || status != TetEditStatus::kApplied) return error;
     for (std::int32_t slot : star) {
-      for (std::int32_t corner : mesh.tet(slot).v) pending_vertices.insert(mesh.vertex_id(corner));
+      for (std::int32_t corner : mesh.tet(slot).v) touch_vertex(mesh.vertex_id(corner));
     }
     if (!enqueue_vertex_edit(star.cells())) return PHX_MC_INTERNAL_ERROR;
     ++relocated_vertices;
@@ -3061,17 +3225,27 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // the pass existed.
   std::vector<std::uint64_t> clearing_order;
   std::vector<std::uint64_t> shape_order;
+  // Compacts violating_ids to the live cells that miss a target now, sorted by
+  // ID (every such cell is listed; see violating_slots).
+  const auto compact_violating_ids = [&]() {
+    std::sort(violating_ids.begin(), violating_ids.end());
+    violating_ids.erase(std::unique(violating_ids.begin(), violating_ids.end()),
+                        violating_ids.end());
+    std::erase_if(violating_ids, [&](std::uint64_t logical_id) {
+      const std::int32_t slot = mesh.cell_slot(logical_id);
+      return !mesh.complex().live(slot) || is_ghost(mesh.tet(slot)) ||
+             violating_slots[static_cast<std::size_t>(slot)] == 0;
+    });
+  };
   for (;;) {
     while (!pending_cells.empty() || !pending_vertices.empty()) {
       while (!pending_cells.empty()) {
-        const std::uint64_t logical_id = *pending_cells.begin();
-        pending_cells.erase(pending_cells.begin());
+        const std::uint64_t logical_id = pending_cells.pop();
         const std::int32_t error = topology_step(logical_id);
         if (error != PHX_MC_OK) return error;
       }
       while (!pending_vertices.empty()) {
-        const std::uint64_t vertex_id = *pending_vertices.begin();
-        pending_vertices.erase(pending_vertices.begin());
+        const std::uint64_t vertex_id = pending_vertices.pop();
         shape_refused.erase(vertex_id);
         const std::int32_t error = vertex_step(vertex_id);
         if (error != PHX_MC_OK) return error;
@@ -3094,18 +3268,15 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
              kBelowDeterminantFloor;
     });
     if (cleared_any) continue;
+    compact_violating_ids();
     shape_order.clear();
-    for (std::size_t index = 0; index < mesh.complex().tets.size(); ++index) {
-      const std::int32_t slot = static_cast<std::int32_t>(index);
-      if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) continue;
-      LocalCell vertices{};
-      std::copy_n(mesh.tet(slot).v, 4, vertices.begin());
-      const FlipQuality quality = local_flip_quality(mesh, vertices, request);
+    for (std::uint64_t logical_id : violating_ids) {
+      const FlipQuality& quality =
+          cell_quality[static_cast<std::size_t>(mesh.cell_slot(logical_id))];
       if (quality.validity_class == kAboveDeterminantFloor && !cell_quality_meets_target(quality)) {
-        shape_order.push_back(mesh.cell_id(slot));
+        shape_order.push_back(logical_id);
       }
     }
-    std::sort(shape_order.begin(), shape_order.end());
     bool relocated_any = false;
     for (std::uint64_t logical_id : shape_order) {
       bool relocated = false;
@@ -3116,15 +3287,26 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!relocated_any) break;
   }
 
-  TetMeshSnapshot final_state;
-  if (mesh.snapshot_internal(final_state, false) != TetEditStatus::kApplied) return PHX_MC_INTERNAL_ERROR;
   // The records cover improvement's own targets. The size field is a
   // constraint on improvement's edits, not one of its targets: residual size
   // violations are refinement's records (and the route's size compliance).
-  std::vector<TetUnmetRecord> records;
-  if (final_state.cells.size() <= records.max_size() / 3) {
-    records.reserve(3 * final_state.cells.size());
+  // A cell meets the targets exactly when it has no record below (the
+  // measures and bounds are the same), so only the listed violating cells are
+  // measured, in slot (snapshot) order.
+  compact_violating_ids();
+  std::vector<std::int32_t> final_slots;
+  final_slots.reserve(violating_ids.size());
+  for (std::uint64_t logical_id : violating_ids) final_slots.push_back(mesh.cell_slot(logical_id));
+  std::sort(final_slots.begin(), final_slots.end());
+  std::vector<TetSnapshotCell> final_cells(final_slots.size());
+  for (std::size_t row = 0; row < final_slots.size(); ++row) {
+    final_cells[row].id = mesh.cell_id(final_slots[row]);
+    for (int corner = 0; corner < 4; ++corner) {
+      final_cells[row].vertices[corner] = mesh.vertex_id(mesh.tet(final_slots[row]).v[corner]);
+    }
   }
+  std::vector<TetUnmetRecord> records;
+  records.reserve(3 * final_cells.size());
   // Improvement never edits a constrained face. A tetrahedron's circumsphere
   // contains each face's circumcircle and its shortest edge is at most the
   // face's, so its radius-edge ratio is at least that of each of its faces:
@@ -3137,7 +3319,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     double ratio = std::numeric_limits<double>::quiet_NaN();
   };
   std::map<std::array<std::uint64_t, 3>, ForcingFacet> unmeetable_faces;
-  for (const TetSnapshotFacet& facet : final_state.constrained_facets) {
+  for (const TetSnapshotFacet& facet : mesh.facets_) {
     if (request.radius_edge_bound == 0.0) break;
     std::array<const double*, 3> corners{};
     for (int corner = 0; corner < 3; ++corner) {
@@ -3177,7 +3359,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     return forcing;
   };
-  for (const TetSnapshotCell& cell : final_state.cells) {
+  for (const TetSnapshotCell& cell : final_cells) {
     std::array<std::int32_t, 4> slots{};
     std::array<const double*, 4> points{};
     bool live = true;

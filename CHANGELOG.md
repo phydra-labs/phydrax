@@ -261,6 +261,18 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) measures
+  every cell once and afterwards only the cells an accepted edit creates or
+  moves, keeping each live cell's measurement: the vertex phase, the shape
+  pass and the unmet records read only the cells that miss a target, instead
+  of four whole-mesh quality passes and two snapshots. Its worklists are flat
+  heaps (same order as before); a refused edge removal is not recomputed
+  until a vertex it read changes; ring retriangulations skip triangles
+  scoring below the ring's worst cell; edge valences walk around the edge.
+  The whole-boundary retessellation is tried only on boundaries of at most
+  256 faces (its embedding check is quadratic). On the two-cylinder ledger
+  shape (846,031 cells after refinement, one thread) improvement takes
+  0.80 s instead of 1.97 s with the same mesh.
 - The native persistent tetrahedral state keeps cell, vertex, facet and
   segment identities in flat tables indexed by ID (a sparse map only for
   caller-chosen IDs far beyond the used range) and builds its adjacency by
