@@ -274,6 +274,18 @@
   vertex, edge and position tables. Results are unchanged; on the 184,213-cell
   icosphere refinement (level 4) refinement takes 4.7 s instead of 6.0 s and
   improvement 0.55 s instead of 0.98 s (one thread).
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) refines in rounds:
+  the violating cells of a round propose their circumcenters, inserted in
+  Hilbert order by a flat Bowyer-Watson cavity without per-insertion flips,
+  hash tables or ancestry. The local feature size is precomputed per vertex
+  and extended by the natural neighbors instead of scanning the boundary per
+  insertion, and the spacing guard reads the cavity's vertices. A
+  circumcenter beyond a fixed face is replaced once by the apex of the
+  regular tetrahedron on that face. Refined meshes, vertex counts, unmet rows
+  and identities change; regenerate stored results. Cells created by
+  refinement carry no lineage. Icosphere level 4 at a fixed boundary:
+  refinement 6.0 s -> 0.44 s, and after improvement (radius-edge 2, 15
+  degrees) no unmet cell, as before.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and

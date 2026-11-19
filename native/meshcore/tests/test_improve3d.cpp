@@ -1111,15 +1111,9 @@ void fixed_mapped_cube_slivers_are_improved_transactionally() {
     source_vertex_ids.push_back(vertex.id);
   }
 
-  // Match the layer-core fixture's declared soft uniform size control.
-  const std::vector<double> vertex_sizes(recovered.points.size() / 3, 0.75);
-  std::int64_t inserted = 0;
-  std::int64_t refinement_unmet = 0;
-  const std::int32_t refinement_status =
-      refine_mesh(mesh, 2.0, vertex_sizes, inserted, refinement_unmet);
-  PHX_CHECK(refinement_status == PHX_MC_OK || refinement_status == PHX_MC_UNRESOLVED);
-  PHX_CHECK(refinement_unmet >= 0);
-  if (refinement_status != PHX_MC_OK && refinement_status != PHX_MC_UNRESOLVED) return;
+  // Improvement acts on the recovered slivers directly: refinement now
+  // places apex points over fixed faces and would remove them first.
+  const std::int64_t inserted = 0;
 
   TetMeshSnapshot before;
   PHX_CHECK(mesh.snapshot(before) == TetEditStatus::kApplied);
