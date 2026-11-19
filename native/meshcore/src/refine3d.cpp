@@ -1049,12 +1049,18 @@ class InteriorCavity {
       }
     }
 
+    // Shrinking: a cell with a boundary face whose cone is not positive stays
+    // so as cells leave (its face stays on the boundary), as does a cell cut
+    // off from the root, so every such cell is dropped at once and the result
+    // is the one dropping them one at a time gives. A cavity cell with a
+    // vertex off the boundary (or an embedded segment inside) can be cured by
+    // a later drop, so those leave one at a time, the first in cavity order.
     for (;;) {
       boundary.clear();
       vertices.clear();
+      dropped_.clear();
       if (marks_.size() < mesh.vertex_slot_count()) marks_.resize(mesh.vertex_slot_count(), 0U);
       const std::uint32_t mark = next_stamp(marks_, mark_stamp_);
-      std::int32_t drop = -1;
       for (std::int32_t cell : cells) {
         const Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
         for (int face = 0; face < 4; ++face) {
@@ -1066,7 +1072,7 @@ class InteriorCavity {
             cone[corner] = corner == face ? point : mesh.point(tet.v[corner]);
           }
           if (!measurably_positive(cone[0], cone[1], cone[2], cone[3])) {
-            drop = cell;
+            dropped_.push_back(cell);
             break;
           }
           boundary.push_back({cell, face, outside, neighbor_slot(beyond, cell)});
@@ -1079,9 +1085,9 @@ class InteriorCavity {
             }
           }
         }
-        if (drop >= 0) break;
       }
-      if (drop < 0) {
+      if (dropped_.empty()) {
+        std::int32_t drop = -1;
         if (has_embedded) {
           kept_edges_.clear();
           for (const BoundaryFacet& face : boundary) {
@@ -1112,16 +1118,17 @@ class InteriorCavity {
             break;
           }
         }
+        if (drop < 0) return Status::kFound;
+        dropped_.push_back(drop);
       }
-      if (drop < 0) return Status::kFound;
-      if (drop == root) {
+      if (dropped_.front() == root) {
         cells.clear();
         boundary.clear();
         vertices.clear();
         return Status::kRefused;
       }
-      // Keep the root's component of the cavity without the dropped cell.
-      tets[static_cast<std::size_t>(drop)].stamp = 0U;
+      // Keep the root's component of the cavity without the dropped cells.
+      for (std::int32_t cell : dropped_) tets[static_cast<std::size_t>(cell)].stamp = 0U;
       const std::uint32_t reached = next_cell_stamp();
       if (reached < member) {
         // The stamp wrapped and cleared every membership (once in 2^32
@@ -1178,6 +1185,7 @@ class InteriorCavity {
   std::vector<std::int32_t> walk_;
   std::vector<std::int32_t> stack_;
   std::vector<std::uint64_t> kept_edges_;
+  std::vector<std::int32_t> dropped_;
 };
 
 // A point on the domain side of the constrained face `face` of the finite
