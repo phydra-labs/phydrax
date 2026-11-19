@@ -84,10 +84,30 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    # The ledger's weighted points: uniform in the unit cube, weights uniform
+    # in [0, (0.5 n^(-1/3))^2), so some points are redundant.
+    rows: list[_Row] = []
+    for size in sizes:
+        points = _uniform_points(size, 3, 20261119)
+        limit = (0.5 * size ** (-1.0 / 3.0)) ** 2
+        weights = limit * np.random.default_rng(20261120).random(size, dtype=np.float64)
+        rows.append(
+            _Row(
+                "regular-3d",
+                size,
+                lambda points=points, weights=weights: _meshcore.regular_3d(points, weights),
+                _cells,
+            )
+        )
+    return tuple(rows)
+
+
 def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
+        (frozenset({"regular-3d"}), lambda: _regular_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
         (
