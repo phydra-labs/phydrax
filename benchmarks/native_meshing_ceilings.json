@@ -54,8 +54,17 @@
       "10000": {"tool": "gmsh-hxt", "seconds": 0.7027, "allowed_ratio": 1.0},
       "90000": {"tool": "gmsh-hxt", "seconds": 9.7429, "allowed_ratio": 1.0}
     },
+    "surface-remesh-sphere-1e3": {
+      "20480": {"tool": "mmgs", "seconds": 0.037, "allowed_ratio": 1.0},
+      "81920": {"tool": "mmgs", "seconds": 0.095, "allowed_ratio": 1.0}
+    },
     "surface-remesh-sphere": {
-      "81920": {"tool": "mmgs", "seconds": 0.237, "allowed_ratio": 1.0}
+      "81920": {"tool": "mmgs", "seconds": 0.237, "allowed_ratio": 1.0},
+      "327680": {"tool": "mmgs", "seconds": 0.607, "allowed_ratio": 1.0}
+    },
+    "surface-remesh-sphere-1e5": {
+      "327680": {"tool": "mmgs", "seconds": 3.82, "allowed_ratio": 1.0},
+      "1310720": {"tool": "mmgs", "seconds": 6.90, "allowed_ratio": 1.0}
     },
     "surface-remesh-torus": {
       "90000": {"tool": "mmgs", "seconds": 0.274, "allowed_ratio": 1.0}
