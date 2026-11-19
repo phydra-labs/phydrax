@@ -101,6 +101,8 @@ set(PHX_MC_SOURCES
   src/metric_relocation.cpp
   src/cad_geometry.cpp
   src/cad_refine2d.cpp
+  src/cad_curves.cpp
+  src/cad_curves_capi.cpp
   src/cad_faces.cpp
   src/cad_mesh.cpp
   src/cad_capi.cpp
@@ -159,6 +161,7 @@ set(PHX_MC_HEADERS
   src/cdt2d.hpp
   src/chart_surface.hpp
   src/cad_refine2d.hpp
+  src/cad_curves.hpp
   src/cad_curve_discretization.hpp
   src/cad_faces.hpp
   src/cad_mesh.hpp
@@ -290,5 +293,6 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_wide_integer)
   phx_mc_add_test(test_cad_geometry)
   phx_mc_add_test(test_cad_refine2d)
+  phx_mc_add_test(test_cad_curves)
   phx_mc_add_test(test_cad_mesh)
 endif()
