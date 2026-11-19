@@ -259,7 +259,9 @@ class Expansion {
       capacity_ = other.capacity_;
       size_ = other.size_;
     } else {
-      std::memcpy(inline_, other.inline_, static_cast<std::size_t>(other.size_) * sizeof(double));
+      // An expansion without a heap block holds at most kInline terms.
+      const int count = std::clamp(other.size_, 0, kInline);
+      std::memcpy(inline_, other.inline_, static_cast<std::size_t>(count) * sizeof(double));
       size_ = other.size_;
     }
     other.size_ = 0;
