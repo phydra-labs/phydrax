@@ -291,13 +291,11 @@ class Triangulation3D {
     return orient_with(tetrahedron, slot, ExactPointRef{p, nullptr});
   }
   int orient_with(const Tetrahedron& tetrahedron, int slot, const ExactPointRef& p) const {
-    if (exact_ == nullptr && p.exact == nullptr) {
-      const double* q[4];
-      for (int k = 0; k < 4; ++k) q[k] = k == slot ? p.carrier : point(tetrahedron.v[k]);
-      return orient3d(q[0], q[1], q[2], q[3]);
-    }
     ExactPointRef q[4];
     for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : ref(tetrahedron.v[k]);
+    if (carriers_only(q)) {
+      return orient3d_filtered(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
+    }
     return orient3d(q[0], q[1], q[2], q[3]);
   }
 
@@ -344,12 +342,15 @@ class Triangulation3D {
     const ConeInsertion inserted = insert_checked_cone(
         complex_, edit_,
         [this](const int32_t* v) {
-          if (exact_ == nullptr) {
-            return orient3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), v[0], v[1],
-                                v[2], v[3]) > 0;
+          const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
+          if (carriers_only(q)) {
+            // A sign the floating stage decides is the unperturbed sign.
+            const OrientationStage stage =
+                orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
+            if (-stage.det > stage.errbound) return true;
+            if (stage.det > stage.errbound) return false;
           }
-          return orient3d_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), v[0], v[1], v[2],
-                              v[3]) > 0;
+          return orient3d_sos(q[0], q[1], q[2], q[3], v[0], v[1], v[2], v[3]) > 0;
         },
         p, cavity_, boundary_, true);
     switch (inserted) {
@@ -471,12 +472,27 @@ class Triangulation3D {
     std::fill(vertex_stamp_.begin(), vertex_stamp_.end(), 0U);
     stamp_value_ = 1;
   }
+  // Whether every reference is exact at its carrier, so the binary64
+  // predicates decide them.
+  template <std::size_t N>
+  static bool carriers_only(const ExactPointRef (&refs)[N]) noexcept {
+    for (const ExactPointRef& point : refs) {
+      if (point.exact != nullptr) return false;
+    }
+    return true;
+  }
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
-      if (exact_ == nullptr && metric_ == nullptr) {
-        return insphere_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
-                            v[0], v[1], v[2], v[3], p) > 0;
+      if (metric_ == nullptr) {
+        const ExactPointRef q[5]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p)};
+        if (carriers_only(q)) {
+          // A sign the floating stage decides is the unperturbed sign.
+          const int sign = insphere_stage(q[0].carrier, q[1].carrier, q[2].carrier,
+                                          q[3].carrier, q[4].carrier);
+          if (sign != 0) return sign > 0;
+        }
+        return insphere_sos(q[0], q[1], q[2], q[3], q[4], v[0], v[1], v[2], v[3], p) > 0;
       }
       return delaunay_insphere(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p),
                                v[0], v[1], v[2], v[3], p) > 0;

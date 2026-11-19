@@ -519,9 +519,13 @@ class CavityEdit {
     return EditStatus::kOk;
   }
 
+  // The table keeps the capacity of the largest cone seen; each cone probes
+  // only the power-of-two prefix sized to it (at least six slots per created
+  // cell), so a small cone stays within a few cache lines.
   void reserve_star_table(std::size_t count) {
     std::size_t capacity = 64;
     while (capacity < 6 * count) capacity <<= 1;
+    star_capacity_ = capacity;
     if (star_table_.size() < capacity) {
       star_table_.assign(capacity, StarSlot{0, 0, 0, 0});
       star_stamp_ = 0;
@@ -538,7 +542,7 @@ class CavityEdit {
       for (StarSlot& slot : star_table_) slot.stamp = 0;
       star_stamp_ = 1;
     }
-    const std::size_t mask = star_table_.size() - 1;
+    const std::size_t mask = star_capacity_ - 1;
     std::size_t pending = 0;
     for (int32_t id : ids_) {
       Tetrahedron& tet = complex_.tets[static_cast<std::size_t>(id)];
@@ -616,6 +620,7 @@ class CavityEdit {
   std::vector<Preserved> preserved_, inner_constraints_;
   std::vector<FacetSlot> facets_;
   std::vector<StarSlot> star_table_;
+  std::size_t star_capacity_ = 0;
   std::uint32_t star_stamp_ = 0;
 };
 

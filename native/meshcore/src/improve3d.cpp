@@ -211,21 +211,54 @@ std::span<const std::int32_t> LocalIncidence::edge_star(std::int32_t first,
 
 std::int32_t LocalIncidence::edge_cell_outside(
     const TetMesh& mesh, std::int32_t first, std::int32_t second,
-    std::span<const std::int32_t> removed_slots) const {
+    std::span<const std::int32_t> removed_slots, std::int32_t seed) const {
   if (first == second || mesh_ != &mesh) return -1;
-  collect_star(first, star_scratch_);
+  const TetrahedralComplex& complex = mesh.complex();
   std::int32_t result = -1;
   std::uint64_t result_id = std::numeric_limits<std::uint64_t>::max();
-  for (std::int32_t cell : star_scratch_) {
-    if (vertex_slot(mesh.tet(cell), second) < 0 ||
-        std::find(removed_slots.begin(), removed_slots.end(), cell) != removed_slots.end()) {
-      continue;
-    }
+  const auto consider = [&](std::int32_t cell) {
+    if (std::find(removed_slots.begin(), removed_slots.end(), cell) != removed_slots.end()) return;
     const std::uint64_t cell_id = mesh.cell_id(cell);
     if (cell_id < result_id) {
       result = cell;
       result_id = cell_id;
     }
+  };
+  if (complex.live(seed) && vertex_slot(mesh.tet(seed), first) >= 0 &&
+      vertex_slot(mesh.tet(seed), second) >= 0) {
+    // The cells around an edge of the closed complex form one cycle (see
+    // edge_valence); a broken cycle falls back to a star.
+    std::int32_t previous = -1;
+    std::int32_t current = seed;
+    for (std::size_t step = 0; step <= complex.tets.size(); ++step) {
+      const Tetrahedron& tet = mesh.tet(current);
+      if (!is_ghost(tet)) consider(current);
+      std::int32_t next = -1;
+      for (int face = 0; face < 4; ++face) {
+        if (tet.v[face] == first || tet.v[face] == second) continue;
+        if (tet.n[face] != previous) {
+          next = tet.n[face];
+          break;
+        }
+      }
+      if (!complex.live(next)) break;
+      if (next == seed) return result;
+      previous = current;
+      current = next;
+    }
+    result = -1;
+    result_id = std::numeric_limits<std::uint64_t>::max();
+  }
+  // The cells holding the edge, from the smaller of its ends' stars.
+  const bool by_second =
+      static_cast<std::size_t>(second) < vertex_degree_.size() &&
+      static_cast<std::size_t>(first) < vertex_degree_.size() &&
+      vertex_degree_[static_cast<std::size_t>(second)] <
+          vertex_degree_[static_cast<std::size_t>(first)];
+  collect_star(by_second ? second : first, star_scratch_);
+  const std::int32_t other = by_second ? first : second;
+  for (std::int32_t cell : star_scratch_) {
+    if (vertex_slot(mesh.tet(cell), other) >= 0) consider(cell);
   }
   return result;
 }
@@ -1910,10 +1943,11 @@ std::int32_t flip_to_constrained_delaunay(
     TetMesh& mesh, detail::LocalIncidence& incidence, std::span<const std::uint64_t> seeds,
     const std::function<bool(std::uint64_t, std::uint64_t)>& is_segment,
     std::vector<std::uint64_t>& created) {
+  // Faces to test, last in first out: the faces each edit creates, above the
+  // seeds' faces, which are taken from the last seed's last face down
+  // without being listed.
   std::vector<std::pair<std::uint64_t, int>> pending;
-  for (std::uint64_t id : seeds) {
-    for (int face = 0; face < 4; ++face) pending.emplace_back(id, face);
-  }
+  std::size_t seed_faces = 4 * seeds.size();
   // The local Delaunay test of a face is symmetric (the insphere signs from
   // either side agree), so a face between two unchanged seeds is tested only
   // from the seed in the lower slot: its entry is still pending, or was
@@ -1949,9 +1983,18 @@ std::int32_t flip_to_constrained_delaunay(
     }
     return TetEditStatus::kApplied;
   };
-  while (!pending.empty()) {
-    const auto [cell_id, face] = pending.back();
-    pending.pop_back();
+  while (!pending.empty() || seed_faces != 0) {
+    std::uint64_t cell_id = 0;
+    int face = 0;
+    if (!pending.empty()) {
+      cell_id = pending.back().first;
+      face = pending.back().second;
+      pending.pop_back();
+    } else {
+      --seed_faces;
+      cell_id = seeds[seed_faces / 4];
+      face = static_cast<int>(seed_faces % 4);
+    }
     const std::int32_t slot = mesh.cell_slot(cell_id);
     if (slot < 0 || !mesh.complex().live(slot)) continue;
     const Tetrahedron& cell = mesh.tet(slot);
@@ -2279,7 +2322,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     return PHX_MC_OK;
   };
   EdgeRemovalScratch edge_scratch;
-  const auto try_edge_removal = [&](std::int32_t first, std::int32_t second,
+  // `seed`: a cell that may hold the edge, where the search for its cells
+  // starts.
+  const auto try_edge_removal = [&](std::int32_t first, std::int32_t second, std::int32_t seed,
                                    std::vector<std::uint64_t>& affected) {
     const LogicalEdgeKey key = sorted_logical_edge(mesh.vertex_id(first), mesh.vertex_id(second));
     const auto refused = edge_refusals.find(key);
@@ -2298,7 +2343,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     edge_scratch.ring.clear();
     const std::span<const std::int32_t> no_removed;
     const std::int32_t start =
-        incidence.edge_cell_outside(mesh, first, second, no_removed);
+        incidence.edge_cell_outside(mesh, first, second, no_removed, seed);
     if (start < 0) return refuse(TetEditStatus::kRejectedTopology);
     const TetEditStatus proposal = make_edge_removal_proposal(
         mesh, incidence, start, first, second, request, cell_quality, source_edges,
@@ -2693,7 +2738,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       return TetEditStatus::kRejectedTopology;
     }
     const std::span<const std::int32_t> no_removed;
-    const std::int32_t start = incidence.edge_cell_outside(mesh, first, second, no_removed);
+    const std::int32_t start =
+        incidence.edge_cell_outside(mesh, first, second, no_removed, slot);
     if (start < 0 || !collect_edge_ring(mesh, start, first, second, ring_cells, ring_vertices)) {
       return TetEditStatus::kRejectedTopology;
     }
@@ -2815,7 +2861,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
-          try_edge_removal(edge.first, edge.second, affected);
+          try_edge_removal(edge.first, edge.second, slot, affected);
       const std::int32_t error = fatal_edit_error(status);
       if (error != PHX_MC_OK) return error;
       if (status == TetEditStatus::kApplied) {
@@ -2837,7 +2883,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         if (blocked_edge[0] >= 0) {
           std::vector<std::uint64_t> affected;
           const TetEditStatus status =
-              try_edge_removal(blocked_edge[1], blocked_edge[2], affected);
+              try_edge_removal(blocked_edge[1], blocked_edge[2], blocked_edge[0], affected);
           const std::int32_t error = fatal_edit_error(status);
           if (error != PHX_MC_OK) return error;
           if (status == TetEditStatus::kApplied) {
@@ -2865,7 +2911,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
-          try_edge_removal(edge.first, edge.second, affected);
+          try_edge_removal(edge.first, edge.second, slot, affected);
       const std::int32_t error = fatal_edit_error(status);
       if (error != PHX_MC_OK) return error;
       if (status == TetEditStatus::kApplied) {
