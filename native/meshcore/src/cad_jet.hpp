@@ -98,7 +98,7 @@ inline void sine_cosine(const Taylor& x, Taylor& sine, Taylor& cosine,
   // d^n sin = sin(x + n pi / 2): the cycle s, c, -s, -c.
   const double sine_cycle[4] = {s, c, -s, -c};
   const double cosine_cycle[4] = {c, -s, -c, s};
-  double fs[kMaxOrder + 1], fc[kMaxOrder + 1];
+  double fs[kMaxOrder + 1]{}, fc[kMaxOrder + 1]{};
   double factorial = 1.0;
   for (int n = 0; n <= t.order; ++n) {
     if (n > 0) factorial *= n;
