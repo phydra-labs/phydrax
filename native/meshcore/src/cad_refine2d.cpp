@@ -40,7 +40,13 @@ class Refinement {
  public:
   Refinement(const CadRefine2DInput& input, CadRefine2DResult& result)
       : input_(input), result_(result), tri_(result.triangulation),
-        sine_(std::sin(input.min_angle_degrees * (3.14159265358979323846 / 180.0))) {}
+        sine_(std::sin(input.min_angle_degrees * (3.14159265358979323846 / 180.0))) {
+    if (input_.fixed_vertices) {
+      fixed_.assign(static_cast<std::size_t>(tri_.vertex_count()),0);
+      for (int32_t i=0;i<input_.point_count;++i)
+        if (input_.fixed_vertices[i]) fixed_[result_.vertex_map[i]]=1;
+    }
+  }
 
 
   void initialize_grid() {
@@ -108,6 +114,7 @@ class Refinement {
 
   int32_t classify(int32_t t, bool& bad_size, bool& bad_angle) {
     if (!inside(t)) return PHX_MC_INVALID_ARGUMENT;
+    if (fixed_triangle(t)) { bad_size=false; bad_angle=false; return PHX_MC_OK; }
     double radius=0;
     geometry(t,radius,nullptr,&bad_size,&bad_angle);
     return status_;
@@ -117,8 +124,13 @@ class Refinement {
     result_.stats.unresolved_triangles=0;
     result_.stats.unresolved_size=0;
     result_.stats.unresolved_angle=0;
+    result_.stats.fixed_triangles_skipped=0;
     for (std::size_t t=0;t<tri_.triangles.size();++t) {
       if (!inside(static_cast<int32_t>(t))) continue;
+      if (fixed_triangle(static_cast<int32_t>(t))) {
+        ++result_.stats.fixed_triangles_skipped;
+        continue;
+      }
       double radius=0.0;
       bool bad_size=false, bad_angle=false;
       if (geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle))
@@ -136,6 +148,7 @@ class Refinement {
   Triangulation2D& tri_;
   double sine_;
   int32_t status_ = PHX_MC_OK;
+  std::vector<uint8_t> fixed_;
   std::vector<Entry> heap_;
   std::vector<int32_t> heap_positions_;
   std::vector<uint64_t> marks_;
@@ -231,6 +244,15 @@ class Refinement {
     return index;
   }
 
+  bool fixed_triangle(int32_t t) const {
+    if (fixed_.empty()) return false;
+    const auto& cell=tri_.triangles[t];
+    for (int k=0;k<3;++k) {
+      const auto v=static_cast<std::size_t>(cell.v[k]);
+      if (v>=fixed_.size() || !fixed_[v]) return false;
+    }
+    return true;
+  }
   bool inside(int32_t t) const {
     return t >= 0 && tri_.live[static_cast<std::size_t>(t)] &&
            tri_.region[static_cast<std::size_t>(t)] && !tri_.is_ghost(t);
@@ -313,6 +335,7 @@ class Refinement {
     return bad_size || bad_angle;
   }
   void enqueue(int32_t t) {
+    if (fixed_triangle(t)) return;
     double radius=0;
     if (geometry(t,radius,nullptr)) heap_add({radius,vertices(t),t});
   }
@@ -345,6 +368,10 @@ class Refinement {
     double radius, p[2];
     if (!geometry(t,radius,p) || status_ != PHX_MC_OK) return;
     if (!std::isfinite(p[0]) || !std::isfinite(p[1])) { ++result_.stats.unresolved_triangles; return; }
+    if (input_.admit_point && !input_.admit_point(input_.admit_context,p)) {
+      refuse(result_.stats.excluded_refusals);
+      return;
+    }
     std::pair<int32_t,int> blocked{-1,-1};
     const int32_t host=tri_.walk(t,p,&blocked);
     if (!inside(host)) { refuse(result_.stats.outside_refusals); return; }
@@ -463,6 +490,8 @@ int32_t cad_refine2d_bad_triangle(const CadRefine2DInput& input,
                                   bool& bad_size, bool& bad_angle) {
   if (!input.metric || triangle<0 ||
       static_cast<std::size_t>(triangle)>=result.triangulation.triangles.size() ||
+      (input.fixed_vertices && (input.point_count<0 ||
+       static_cast<std::size_t>(input.point_count)!=result.vertex_map.size())) ||
       !(input.min_angle_degrees>=0 && input.min_angle_degrees<60))
     return PHX_MC_INVALID_ARGUMENT;
   return Refinement(input,result).classify(triangle,bad_size,bad_angle);
