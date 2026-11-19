@@ -263,8 +263,19 @@ bool common_integers(const double* values, int count, int width, std::int64_t* i
   return true;
 }
 
-// value = a * b as a two's-complement 128-bit value in two little-endian limbs,
-// exact for |a|, |b| < 2^63.
+// The 128-bit pieces of the integer insphere rows. Compilers with a native
+// 128-bit integer evaluate them in it; elsewhere the wide-integer limb helpers
+// give the same two's-complement bits.
+#if defined(__SIZEOF_INT128__)
+__extension__ using SignedWide = __int128;
+__extension__ using UnsignedWide = unsigned __int128;
+
+void store_wide(UnsignedWide wide, std::uint64_t (&value)[2]) {
+  value[0] = static_cast<std::uint64_t>(wide);
+  value[1] = static_cast<std::uint64_t>(wide >> 64);
+}
+#else
+// value = a * b as a two's-complement 128-bit value, exact for |a|, |b| < 2^63.
 void signed_product(std::int64_t a, std::int64_t b, std::uint64_t (&value)[2]) {
   const std::uint64_t ua = a < 0 ? ~static_cast<std::uint64_t>(a) + 1 : static_cast<std::uint64_t>(a);
   const std::uint64_t ub = b < 0 ? ~static_cast<std::uint64_t>(b) + 1 : static_cast<std::uint64_t>(b);
@@ -276,6 +287,54 @@ void signed_product(std::int64_t a, std::int64_t b, std::uint64_t (&value)[2]) {
     value[1] = zero[1];
   }
 }
+#endif
+
+// value = a d - b c in two's-complement 128-bit limbs, exact for |a|..|d| < 2^62.
+void signed_minor(std::int64_t a, std::int64_t b, std::int64_t c, std::int64_t d,
+                  std::uint64_t (&value)[2]) {
+#if defined(__SIZEOF_INT128__)
+  store_wide(static_cast<UnsignedWide>(static_cast<SignedWide>(a) * d -
+                                       static_cast<SignedWide>(b) * c),
+             value);
+#else
+  std::uint64_t right[2];
+  signed_product(a, d, value);
+  signed_product(b, c, right);
+  accumulate(value, right, 2, true);
+#endif
+}
+
+// value = x^2 + y^2 + z^2 as an unsigned 128-bit value, exact for |x|, |y|, |z| < 2^62.
+void square_sum(std::int64_t x, std::int64_t y, std::int64_t z, std::uint64_t (&value)[2]) {
+#if defined(__SIZEOF_INT128__)
+  store_wide(static_cast<UnsignedWide>(static_cast<SignedWide>(x) * x +
+                                       static_cast<SignedWide>(y) * y +
+                                       static_cast<SignedWide>(z) * z),
+             value);
+#else
+  value[0] = 0;
+  value[1] = 0;
+  for (const std::int64_t coordinate : {x, y, z}) {
+    std::uint64_t square[2];
+    signed_product(coordinate, coordinate, square);
+    accumulate(value, square, 2, false);
+  }
+#endif
+}
+
+// The magnitude of a two's-complement 128-bit value; true when it is negative.
+bool wide_magnitude(const std::uint64_t (&value)[2], std::uint64_t (&magnitude)[2]) {
+  const bool negative = limbs_negative(value);
+#if defined(__SIZEOF_INT128__)
+  const UnsignedWide bits = (static_cast<UnsignedWide>(value[1]) << 64) | value[0];
+  store_wide(negative ? ~bits + 1 : bits, magnitude);
+#else
+  magnitude[0] = 0;
+  magnitude[1] = 0;
+  accumulate(magnitude, value, 2, negative);
+#endif
+  return negative;
+}
 
 // Sign of lifted3_rows on integer rows below 2^62 in magnitude: minors below
 // 2^125 and lifts below 2^126 in 128 bits, cofactors below 2^189 in three
@@ -283,10 +342,7 @@ void signed_product(std::int64_t a, std::int64_t b, std::uint64_t (&value)[2]) {
 int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const std::int64_t* z) {
   // minor(i, j) = x_i y_j - x_j y_i, below 2^125 in magnitude.
   const auto minor = [&](int i, int j, std::uint64_t (&value)[2]) {
-    std::uint64_t right[2];
-    signed_product(x[i], y[j], value);
-    signed_product(x[j], y[i], right);
-    accumulate(value, right, 2, true);
+    signed_minor(x[i], x[j], y[i], y[j], value);
   };
   std::uint64_t ab[2], bc[2], cd[2], da[2], ac[2], bd[2];
   minor(0, 1, ab);
@@ -300,14 +356,8 @@ int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const st
                             bool minus) {
     const std::uint64_t row =
         z[k] < 0 ? ~static_cast<std::uint64_t>(z[k]) + 1 : static_cast<std::uint64_t>(z[k]);
-    const bool negative = limbs_negative(m);
-    std::uint64_t right[2]{m[0], m[1]};
-    if (negative) {
-      std::uint64_t zero[2]{};
-      accumulate(zero, right, 2, true);
-      right[0] = zero[0];
-      right[1] = zero[1];
-    }
+    std::uint64_t right[2];
+    const bool negative = wide_magnitude(m, right);
     std::uint64_t product[3];
     limbs_product(&row, 1, right, 2, product);
     accumulate(total, product, 3, ((z[k] < 0) != negative) != minus);
@@ -330,13 +380,9 @@ int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const st
   // det = (l3 abc - l2 dab) + (l1 cda - l0 bcd).
   std::uint64_t det[5]{};
   const auto add_lifted = [&](int k, const std::uint64_t (&cofactor)[3], bool minus) {
-    // x^2 + y^2 + z^2 below 2^126: three unsigned 128-bit squares summed.
-    std::uint64_t left[2]{};
-    for (const std::int64_t coordinate : {x[k], y[k], z[k]}) {
-      std::uint64_t square[2];
-      signed_product(coordinate, coordinate, square);
-      accumulate(left, square, 2, false);
-    }
+    // x^2 + y^2 + z^2 below 2^126.
+    std::uint64_t left[2];
+    square_sum(x[k], y[k], z[k], left);
     const bool negative = limbs_negative(cofactor);
     std::uint64_t size[3]{cofactor[0], cofactor[1], cofactor[2]};
     if (negative) {
