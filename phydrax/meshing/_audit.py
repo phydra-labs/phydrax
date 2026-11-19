@@ -75,11 +75,11 @@ from ._organization import (
     validate_mesh_zones,
 )
 from ._quality import (
+    _summarized_cell_quality,
     _with_certified_mapped_measures,
     CellQualityEvaluation,
     CellQualityReport,
     evaluate_cell_quality,
-    summarize_cell_quality,
 )
 from ._scope import MeshingEntityKind
 
@@ -316,6 +316,9 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     finding count in deterministic order; ``unresolved`` names checks that could
     not be decided. ``manifold_scope`` is the declared vertex scope of the
     manifold checks (``None``: every vertex of the mesh was checked).
+    ``tetrahedral_degree`` records that the certifying route selected the
+    native tetrahedral degree theorem as the authority for the topology checks
+    it implies (see ``audit_cell_mesh``).
     ``policy`` is the audit policy that decided the report; ``report_id`` binds
     its identity, so the report is recomputed from itself.
     """
@@ -337,6 +340,7 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     boundary_counts: tuple[int, ...] = eqx.field(static=True)
     connectivity_entries: int = eqx.field(static=True)
     unused_vertex_count: int = eqx.field(static=True)
+    tetrahedral_degree: bool = eqx.field(static=True)
     manifold_scope: CellMeshManifoldScope | None
     quality: CellQualityReport
     validity: CellValidityCertificate
@@ -700,6 +704,23 @@ def _patch_zone_adjacency_issues(
     valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
     source_rows = np.asarray(incidence.relation.source_indices, dtype=np.int64)[valid]
     target_rows = np.asarray(incidence.relation.target_indices, dtype=np.int64)[valid]
+    patch_order = np.argsort(patch_ids, kind="stable")
+    sorted_patch_ids = patch_ids[patch_order]
+    # Only faces some adjacent patch names are examined; keeping every
+    # incidence of those faces (a superset of rows is harmless) leaves their
+    # counts and zones exact without grouping the whole relation.
+    examined = np.zeros((patch_ids.size,), dtype=np.bool_)
+    if patch_ids.size:
+        for patch in adjacent_patches:
+            position = np.minimum(
+                np.searchsorted(
+                    sorted_patch_ids, np.asarray(patch.scope.entity_ids, dtype=np.int64)
+                ),
+                patch_ids.size - 1,
+            )
+            examined[patch_order[position]] = True
+    kept = examined[source_rows]
+    source_rows, target_rows = source_rows[kept], target_rows[kept]
     # Distinct (patch row, cell row) incidences grouped by patch row; a relation
     # already in strictly increasing pair order needs no sort.
     incident_pairs = source_rows * cell_ids.size + target_rows
@@ -735,8 +756,6 @@ def _patch_zone_adjacency_issues(
             cell_zone_codes[cell_order[position[present]]] = code
     incident_zones = cell_zone_codes[incident_cell_rows]
 
-    patch_order = np.argsort(patch_ids, kind="stable")
-    sorted_patch_ids = patch_ids[patch_order]
     for patch in adjacent_patches:
         scope = patch.scope
         expected = set(patch.adjacent_zone_ids)
@@ -1901,6 +1920,7 @@ def _topology_findings(
     *,
     global_embedding: GlobalEmbeddingCertificate | None = None,
     manifold_scope: CellMeshManifoldScope | None = None,
+    degree_certified: bool = False,
 ) -> tuple[tuple[tuple[str, int, CellMeshAuditDisposition], ...], tuple[str, ...]]:
     skip = CellMeshAuditDisposition.SKIP
     periodic_mesh = mesh.periodic_topology is not None
@@ -1925,6 +1945,7 @@ def _topology_findings(
         ),
         manifold_vertices=scope_rows,
         star_supplement=star_supplement,
+        degree_certified=degree_certified,
     )
     self_intersections = evidence.self_intersections
     unresolved = list(evidence.unresolved)
@@ -1978,6 +1999,7 @@ def audit_cell_mesh(
     layer_core_root_geometry: LayerCoreRootGeometry | None = None,
     certification_inputs: MeshCertificationInputs | None = None,
     computed_root: ComputedLayerCoreRoot | None = None,
+    tetrahedral_degree: bool = False,
 ) -> CellMeshAuditReport:
     """Audit bindings, welded topology, sampled quality, and certified validity.
 
@@ -1991,6 +2013,14 @@ def audit_cell_mesh(
     must bind the exact same geometry and periodic topology. A ``manifold_scope``
     restricts the vertex and edge star checks of a resident patch to the declared
     vertex stars; the report records it.
+    ``tetrahedral_degree`` is the certifying route's selection of the native
+    tetrahedral degree theorem (``phx_mc_verify_tetrahedra``) as the authority
+    for the topology checks and quality thresholds it implies; it requires
+    ``global_embedding``. When that certificate decided the theorem certified,
+    the implied topology checks are taken from it unless vertices weld
+    (``audit_welded_topology``), and so are zero measure and mean-ratio
+    thresholds with an aspect threshold of at least 2^294; anything else is
+    evaluated here. The report records the selection.
     Partial layer/core source associations additionally require the current
     validated fidelity witness and original ``association_source``; exact
     occurrence, side, orientation and target support are independently replayed.
@@ -2005,6 +2035,12 @@ def audit_cell_mesh(
         raise TypeError("mesh must be CellMesh.")
     if not isinstance(geometry, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec.")
+    if type(tetrahedral_degree) is not bool:
+        raise TypeError("tetrahedral_degree must be a bool.")
+    if tetrahedral_degree and global_embedding is None:
+        raise ValueError(
+            "The tetrahedral degree theorem is taken from a global embedding certificate."
+        )
     audit_policy = CellMeshAuditPolicy() if policy is None else policy
     if not isinstance(audit_policy, CellMeshAuditPolicy):
         raise TypeError("policy must be CellMeshAuditPolicy or None.")
@@ -2268,11 +2304,20 @@ def audit_cell_mesh(
         from ..geometry._global_embedding import certify_global_embedding
 
         global_embedding = certify_global_embedding(mesh, geometry, validity_)
+    # The route-selected degree theorem decides only when the bound embedding
+    # certificate was decided by it and certified.
+    degree_certified = (
+        tetrahedral_degree
+        and global_embedding is not None
+        and global_embedding.status == "certified"
+        and "tetrahedral_degree" in global_embedding.evaluated_checks
+    )
     topology_findings, unresolved_checks = _topology_findings(
         mesh,
         audit_policy,
         global_embedding=global_embedding,
         manifold_scope=manifold_scope,
+        degree_certified=degree_certified,
     )
     unresolved = list(unresolved_checks)
     if validity_.unresolved_count:
@@ -2294,12 +2339,13 @@ def audit_cell_mesh(
         if disposition != CellMeshAuditDisposition.SKIP
     )
     issues.extend(rejected)
-    quality_report = summarize_cell_quality(
+    quality_report = _summarized_cell_quality(
         mesh,
         quality_evaluation,
-        minimum_measure=audit_policy.minimum_measure,
-        minimum_mean_ratio=audit_policy.minimum_mean_ratio,
-        maximum_aspect_ratio=audit_policy.maximum_aspect_ratio,
+        audit_policy.minimum_measure,
+        audit_policy.minimum_mean_ratio,
+        audit_policy.maximum_aspect_ratio,
+        degree_certified=degree_certified,
     )
     issues.extend(quality_report.failed_gates)
     if audit_policy.require_complete_association and not _complete_association_coverage(
@@ -2337,6 +2383,7 @@ def audit_cell_mesh(
         boundary_counts=boundary_counts,
         connectivity_entries=entries,
         unused_vertex_count=unused,
+        tetrahedral_degree=tetrahedral_degree,
         manifold_scope=manifold_scope,
         quality=quality_report,
         validity=validity_,
@@ -2365,6 +2412,9 @@ def audit_cell_mesh(
                     {}
                     if manifold_scope is None
                     else {"manifold_scope": manifold_scope.scope_id}
+                ),
+                **(
+                    {"topology_proof": "tetrahedral-degree"} if tetrahedral_degree else {}
                 ),
             }
         ),
