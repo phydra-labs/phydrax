@@ -367,9 +367,8 @@
   fallback, and canonical cell ordering runs in linear time (radix sort on the
   first vertex, branch-free ranks within each group) for every caller, with
   byte-identical output. New benchmark row `regular-3d` (CGAL Regular_3).
-  Measured against CGAL back to back on a loaded machine: 2D 0.86-0.91x,
-  3D 0.87-0.90x, regular 3D 0.95-0.98x at 1e3-1e6 points; quiet-machine
-  acceptance pending.
+  Quiet-machine acceptance against CGAL measured back to back at 1e3-1e6
+  points: 2D 0.88-0.94x, 3D 0.87-0.92x, regular 3D 0.95-0.98x.
 - Native CAD curve parameters: one shared parameter set per curve for every
   use and both seam copies, breakpoints from the curve representation only,
   size integration with curvature and gradation, degree-aware sampling and a
