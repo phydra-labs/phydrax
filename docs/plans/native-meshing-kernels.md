@@ -113,6 +113,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
   static-field array walk over per-row identity tuples about 4.6 s of it), audit 11.0 s (welded
   topology 5.5, quality 3.6, evidence 1.0). NOT met: L6 "in seconds"; the remainder is generic numpy
   topology/quality work and per-row association tuples, not per-row Python loops.
+- Update (Nov 19, certify2): the route adopts the native recovery (`TetMesh3D.from_recovery`); the
+  acceptance audit takes the topology checks and default quality thresholds the degree theorem implies
+  from the embedding certificate (`CellMeshAuditReport.tetrahedral_degree`); simplex `CellMesh`
+  topology is built once with value-sorted packed row keys. Certified icosphere execute under
+  cProfile: L4 0.99 s, L5 3.9 s, L6 23.6 s (19.3 s without the profiler). L6 split: native about
+  1.9 s; `CellMesh` topology 3.45 s; source tables and size field 1.7 s; source associations 8.6 s
+  (Equinox's static-field walk about 4.6 s of it); audit 4.4 s (sampled quality evaluation 2.7,
+  coincident-vertex search 0.5, edge coverage 0.4, evidence 0.3). NOT met: L6 "in seconds".
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice

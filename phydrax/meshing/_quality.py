@@ -2525,6 +2525,14 @@ def _decide_quality_gates(
     return measure, ratio, aspect
 
 
+# A global embedding certified by the native tetrahedral degree theorem has
+# positively oriented cells and every coordinate zero or of magnitude in
+# [2^-120, 2^120] (its exact predicate domain): distinct vertices are then at
+# least 2^-172 and less than 2^122 apart, so no cell fails a zero measure or
+# mean-ratio threshold, nor an aspect threshold of at least 2^294.
+_DEGREE_DECIDED_ASPECT_RATIO = float(2**294)
+
+
 def summarize_cell_quality(
     mesh: CellMesh,
     evaluation: CellQualityEvaluation,
@@ -2543,6 +2551,30 @@ def summarize_cell_quality(
     exceeds the threshold times its shortest. Decisions are exact on the
     represented binary64 mesh coordinates and never read the sampled floats.
     """
+    return _summarized_cell_quality(
+        mesh,
+        evaluation,
+        minimum_measure,
+        minimum_mean_ratio,
+        maximum_aspect_ratio,
+        degree_certified=False,
+    )
+
+
+def _summarized_cell_quality(
+    mesh: CellMesh,
+    evaluation: CellQualityEvaluation,
+    minimum_measure: float,
+    minimum_mean_ratio: float,
+    maximum_aspect_ratio: float,
+    /,
+    *,
+    degree_certified: bool,
+) -> CellQualityReport:
+    """``summarize_cell_quality``; ``degree_certified`` states that the native
+    tetrahedral degree theorem certified the global embedding of exactly this
+    mesh, which decides the thresholds it implies on exact (unmapped) measures:
+    no cell fails them."""
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
     if not isinstance(evaluation, CellQualityEvaluation):
@@ -2563,10 +2595,21 @@ def summarize_cell_quality(
         float(minimum_measure), float(minimum_mean_ratio), float(maximum_aspect_ratio)
     )
     _require_quality_thresholds(thresholds)
-    measure_ids, ratio_ids, aspect_ids = (
-        tuple(int(value) for value in np.sort(identifiers[mask]))
-        for mask in _decide_quality_gates(mesh, evaluation, thresholds)
-    )
+    if (
+        degree_certified
+        and evaluation.measure_absolute_errors is None
+        and thresholds.measure == 0.0
+        and thresholds.mean_ratio == 0.0
+        and thresholds.aspect_ratio >= _DEGREE_DECIDED_ASPECT_RATIO
+    ):
+        measure_ids: tuple[int, ...] = ()
+        ratio_ids: tuple[int, ...] = ()
+        aspect_ids: tuple[int, ...] = ()
+    else:
+        measure_ids, ratio_ids, aspect_ids = (
+            tuple(int(value) for value in np.sort(identifiers[mask]))
+            for mask in _decide_quality_gates(mesh, evaluation, thresholds)
+        )
     return CellQualityReport(
         evaluation,
         mesh_id=mesh.mesh_id,

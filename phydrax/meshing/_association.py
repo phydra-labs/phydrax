@@ -101,6 +101,22 @@ type SourceBoundaryTargetPiece = (
 type SourceBoundaryTargetPieceRow = tuple[SourceBoundaryTargetPiece, ...]
 
 
+@final
+class _StaticRows[RowT](tuple[RowT, ...]):
+    """Immutable host-metadata row bank held as one static PyTree leaf.
+
+    A plain tuple is a PyTree node, so Equinox's construction-time search for
+    JAX arrays in static fields visits every row element. JAX registers node
+    types exactly, so this final tuple subclass is a single leaf. It is built
+    only from rows ``GeometryAssociation`` validated to be host metadata
+    (strings, roles, exact Fractions, integers, ``None`` and their tuples),
+    which already refuses arrays and tracers. Equality, hashing, ordering,
+    iteration and the canonical fingerprint are the tuple's.
+    """
+
+    __slots__ = ()
+
+
 def _target_piece_sort_key(piece: SourceBoundaryTargetPiece, /) -> tuple[Any, ...]:
     if isinstance(piece, SourceBoundaryImagePullback):
         return (
@@ -1131,6 +1147,10 @@ def _fraction_rows_fingerprint(rows: tuple[tuple[Fraction, ...] | None, ...], /)
 class GeometryAssociation(StrictModule, NonTrainableState):
     """Audited map from exact mesh entities to authoritative geometry entities.
 
+    The per-row static banks (source entity IDs, roles, occurrence paths,
+    region sides, parameter intervals and points, target pieces) are stored as
+    validated immutable tuples, each one static PyTree leaf.
+
     Source rows may carry explicit ``source_dimensions``/``source_indices``;
     B-Rep rows require them and bind the occurrence-qualified source entity.
     ``-1`` marks an unresolved row without a candidate. ``parameters`` hold
@@ -1416,7 +1436,8 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.source_revision = revision
         self.target_entity_set_id = entity_set
         self.target_global_ids = jnp.asarray(targets)
-        self.source_entity_ids = sources
+        # The per-row banks were validated above to hold host metadata only.
+        self.source_entity_ids = _StaticRows(sources)
         self.residuals = jnp.asarray(distances)
         self.resolved = jnp.asarray(resolved_)
         self.ambiguous = jnp.asarray(ambiguous_)
@@ -1429,14 +1450,14 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.exact = bool(exact)
         self.provenance = provenance
         self.parent_association_id = parent
-        self.source_roles = roles
-        self.source_occurrence_paths = occurrences
-        self.source_region_sides = region_sides
-        self.source_parameter_intervals = parameter_intervals
-        self.target_parameter_intervals = target_intervals
-        self.target_reference_pieces = target_pieces
+        self.source_roles = _StaticRows(roles)
+        self.source_occurrence_paths = _StaticRows(occurrences)
+        self.source_region_sides = _StaticRows(region_sides)
+        self.source_parameter_intervals = _StaticRows(parameter_intervals)
+        self.target_parameter_intervals = _StaticRows(target_intervals)
+        self.target_reference_pieces = _StaticRows(target_pieces)
         self.source_boundary_witness_id = source_boundary_witness_id
-        self.source_parameter_points = parameter_points
+        self.source_parameter_points = _StaticRows(parameter_points)
         self.association_id = canonical_fingerprint(
             {
                 "kind": "geometry-association",

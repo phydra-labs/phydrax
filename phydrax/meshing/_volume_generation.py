@@ -2195,23 +2195,40 @@ def generate_plc_volume(
         affine=global_affine,
         size_convention=convention,
     )
-    state = TetMesh3D(
-        recovery.points,
-        recovery.tetrahedra,
-        recovery.tetrahedron_regions,
-        recovery.faces,
-        face_sources,
-        segments,
-        segment_sources,
-        boundary_policy=native_boundary_policy,
-        face_orientations=np.asarray(recovery.face_orientations, dtype=np.int8),
-        protection_radii=recovery.protection_radii,
-        source=tables.source,
-        source_id=source_id,
-        source_revision=source_revision,
-        source_map_id=source_map_id,
-        frame_id=frame_id,
-        affine_metric=None if global_affine is None else global_affine[:3, :3],
+    # A native recovery is adopted with the cell adjacency it proved; a kept
+    # carrier (assembled from arrays) is constructed and validated from them.
+    state = (
+        TetMesh3D(
+            recovery.points,
+            recovery.tetrahedra,
+            recovery.tetrahedron_regions,
+            recovery.faces,
+            face_sources,
+            segments,
+            segment_sources,
+            boundary_policy=native_boundary_policy,
+            face_orientations=np.asarray(recovery.face_orientations, dtype=np.int8),
+            protection_radii=recovery.protection_radii,
+            source=tables.source,
+            source_id=source_id,
+            source_revision=source_revision,
+            source_map_id=source_map_id,
+            frame_id=frame_id,
+            affine_metric=None if global_affine is None else global_affine[:3, :3],
+        )
+        if recovery.native is None
+        else TetMesh3D.from_recovery(
+            recovery,
+            face_sources=face_sources,
+            segment_sources=segment_sources,
+            boundary_policy=native_boundary_policy,
+            source=tables.source,
+            source_id=source_id,
+            source_revision=source_revision,
+            source_map_id=source_map_id,
+            frame_id=frame_id,
+            affine_metric=None if global_affine is None else global_affine[:3, :3],
+        )
     )
     mapped_proposal_run = None
     mapped_predecessor_identity = None

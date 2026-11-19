@@ -39,7 +39,7 @@ from .._meshcore import (
     MeshcoreStatus,
     triangle_intersection_classes,
 )
-from ..discretization import CellMesh, PolyhedralConnectivity
+from ..discretization import CellMesh, PolyhedralConnectivity, SimplicialConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._topology import sorted_unique_rows, unique_rows_inverse
@@ -1039,6 +1039,99 @@ def _self_intersections(
     return intersections, undecided
 
 
+# Native tetrahedral degree theorem -------------------------------------------------
+
+_FAN_EDGE_CORNERS = ((0, 1), (1, 2), (0, 2))
+
+
+def _boundary_fans_pinched(mesh: CellMesh, /) -> bool | None:
+    """Whether boundary triangles meet some vertex in two or more edge-linked fans.
+
+    The triangles of an edge-manifold boundary at one vertex link through
+    their shared edges into disjoint cycles (fans). ``None`` when the mesh is
+    not a simplicial tetrahedral complex or its boundary is not edge-manifold.
+    """
+
+    connectivity = mesh.connectivity
+    if (
+        not isinstance(connectivity, SimplicialConnectivity)
+        or connectivity.dimension != 3
+    ):
+        return None
+    faces = np.asarray(connectivity.entities[2], dtype=np.int64)[
+        np.asarray(connectivity.boundary_masks[2], dtype=np.bool_)
+    ]
+    count = faces.shape[0]
+    if count == 0:
+        return False
+    # Edge occurrence k * count + t is the k-th edge of triangle t; its two
+    # endpoints are the corners `_FAN_EDGE_CORNERS[k]` of that (ascending) row.
+    corners = np.asarray(_FAN_EDGE_CORNERS, dtype=np.int64)
+    edges = np.concatenate([faces[:, pair] for pair in _FAN_EDGE_CORNERS])
+    _, inverse, counts = unique_rows_inverse(edges)
+    if np.any(counts != 2):
+        return None
+    order = np.argsort(inverse, kind="stable")
+    first, second = order[0::2], order[1::2]
+    triangles = np.arange(3 * count, dtype=np.int64) % count
+    local = np.repeat(np.arange(3, dtype=np.int64), count)
+    # Corner node 3 t + j is corner j of triangle t; a shared edge links the
+    # corners of each of its endpoints in its two triangles (rows ascend, so
+    # both occurrences list the endpoints in the same order).
+    links = [
+        (
+            3 * triangles[first] + corners[local[first], end],
+            3 * triangles[second] + corners[local[second], end],
+        )
+        for end in (0, 1)
+    ]
+    rows = np.concatenate([value[0] for value in links])
+    columns = np.concatenate([value[1] for value in links])
+    graph = coo_matrix(
+        (np.ones(rows.size, dtype=np.int8), (rows, columns)),
+        shape=(3 * count, 3 * count),
+    )
+    _, labels = connected_components(graph, directed=False)
+    vertices = faces.reshape(-1)
+    fans = sorted_unique_rows(np.stack((vertices, labels.astype(np.int64)), axis=1))
+    return fans.shape[0] > np.unique(vertices).size
+
+
+def _degree_certified_evidence(
+    mesh: CellMesh, check_manifold: bool, /
+) -> WeldedTopologyEvidence | None:
+    """Welded-topology counts implied by a certified native degree theorem.
+
+    ``phx_mc_verify_tetrahedra`` certified positive cells whose shared faces
+    carry opposite orientations and an embedded boundary whose triangles meet
+    only in shared vertices and edges, every boundary edge in exactly two of
+    them. Without welding this excludes collapsed and duplicate cells,
+    nonmanifold and inconsistent facets, open boundary ridges and boundary
+    self-intersections. An edge star is one fan between its two boundary faces
+    or one cycle, since a second would cover the edge's neighborhood twice.
+    A vertex link is embedded in the unit sphere: closed (an interior vertex)
+    it is the whole sphere, otherwise each component has a boundary cycle, one
+    per boundary fan, so one fan gives a connected star. ``None`` when some
+    boundary vertex has several fans (its star is evaluated instead).
+    """
+
+    pinched = _boundary_fans_pinched(mesh) if check_manifold else False
+    if pinched is None or pinched:
+        return None
+    return WeldedTopologyEvidence(
+        coincident_vertices=0,
+        collapsed_cells=0,
+        duplicate_cells=0,
+        nonmanifold_facets=0,
+        nonmanifold_edges=0,
+        nonmanifold_vertices=0,
+        inconsistent_facets=0,
+        open_facets=0,
+        self_intersections=0,
+        unresolved=(),
+    )
+
+
 # Entry point ---------------------------------------------------------------------
 
 
@@ -1053,6 +1146,7 @@ def audit_welded_topology(
     check_self_intersection: bool,
     manifold_vertices: np.ndarray | None = None,
     star_supplement: tuple[tuple[str, np.ndarray], ...] = (),
+    degree_certified: bool = False,
 ) -> WeldedTopologyEvidence:
     """Evaluate the welded-topology checks of one mesh with host coordinates.
 
@@ -1062,7 +1156,10 @@ def audit_welded_topology(
     ``star_supplement`` adds dense ``(cell kind, vertex keys)`` blocks of star
     cells absent from ``mesh``, where keys below the vertex count are mesh rows
     and larger keys name non-resident vertices. Supplementary cells only enter
-    the star checks.
+    the star checks. ``degree_certified`` states that the native tetrahedral
+    degree theorem certified the global embedding of exactly these cells and
+    coordinates: when no vertices weld and no star scope is declared, the
+    counts it implies are taken from it (``_degree_certified_evidence``).
     """
 
     if coincident_tolerance is None:
@@ -1072,6 +1169,15 @@ def audit_welded_topology(
         welded, coincident = _coincident_representatives(
             points, coincident_tolerance * diagonal
         )
+    if (
+        degree_certified
+        and coincident == 0
+        and manifold_vertices is None
+        and not star_supplement
+    ):
+        implied = _degree_certified_evidence(mesh, check_manifold)
+        if implied is not None:
+            return implied
     unresolved: list[str] = []
     complex_ = _welded_complex(mesh, welded)
     keys = _sorted_keys(complex_.facets)

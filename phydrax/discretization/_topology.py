@@ -35,33 +35,53 @@ def _bool_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array
     return jnp.asarray(array)
 
 
-def _row_order(rows: np.ndarray, /) -> np.ndarray:
-    """Return the stable lexicographic order of rank-2 integer rows.
+def _row_value_keys(
+    rows: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int] | None:
+    """Order-preserving mixed-radix int64 keys of nonempty rank-2 integer rows.
 
-    Rows whose per-column value spans fit one mixed-radix int64 key sort in a
-    single pass: with the row index in the key's low bits when both fit, so a
-    plain value sort of distinct keys yields the stable order, else by a stable
-    argsort. Wider rows fall back to a column-wise lexicographic sort.
+    Returns the keys, column lows and spans and the span product, or ``None``
+    when the product of the per-column value spans exceeds int64.
     """
 
-    if rows.size == 0:
-        return np.arange(rows.shape[0], dtype=np.int64)
     lows = np.min(rows, axis=0).astype(np.int64)
     spans = np.max(rows, axis=0).astype(np.int64) - lows + 1
     span_product = math.prod(int(span) for span in spans)
     if span_product > np.iinfo(np.int64).max:
-        return np.lexsort(rows.T[::-1])
+        return None
     key = np.zeros((rows.shape[0],), dtype=np.int64)
     for column, low, span in zip(rows.T, lows, spans, strict=True):
         key *= span
         key += column.astype(np.int64) - low
+    return key, lows, spans, span_product
+
+
+def _row_order(rows: np.ndarray, /) -> np.ndarray:
+    """Return the stable lexicographic order of rank-2 integer rows.
+
+    Rows whose per-column value spans fit one mixed-radix int64 key sort in a
+    single pass: with the row index in the key's low bits when both fit one
+    uint64, so a plain value sort of distinct keys yields the stable order,
+    else by a stable argsort. Wider rows fall back to a column-wise
+    lexicographic sort.
+    """
+
+    if rows.size == 0:
+        return np.arange(rows.shape[0], dtype=np.int64)
+    values = _row_value_keys(rows)
+    if values is None:
+        return np.lexsort(rows.T[::-1])
+    key, _, _, span_product = values
     index_bits = (rows.shape[0] - 1).bit_length()
-    if span_product << index_bits > np.iinfo(np.int64).max:
+    largest_packed = ((span_product - 1) << index_bits) | ((1 << index_bits) - 1)
+    if largest_packed > np.iinfo(np.uint64).max:
         return np.argsort(key, kind="stable")
-    key <<= index_bits
-    key |= np.arange(rows.shape[0], dtype=np.int64)
-    key.sort()
-    key &= (1 << index_bits) - 1
+    # The key is nonnegative, so its uint64 view orders like the int64 key.
+    packed = key.view(np.uint64)
+    packed <<= np.uint64(index_bits)
+    packed |= np.arange(rows.shape[0], dtype=np.uint64)
+    packed.sort()
+    packed &= np.uint64((1 << index_bits) - 1)
     return key
 
 
@@ -74,6 +94,12 @@ def _row_run_starts(ordered: np.ndarray, /) -> np.ndarray:
 def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
     """Return whether any two rows of a rank-2 integer array are equal."""
 
+    values = _row_value_keys(rows) if rows.size else None
+    if values is not None:
+        # Equal rows are exactly equal keys; their order is immaterial.
+        key = values[0]
+        key.sort()
+        return bool(np.any(key[1:] == key[:-1]))
     return not np.all(_row_run_starts(rows[_row_order(rows)]))
 
 
@@ -83,8 +109,22 @@ def sorted_unique_rows(rows: np.ndarray, /) -> np.ndarray:
     Equal to ``np.unique(rows, axis=0)``, through one packed-key sort.
     """
 
-    ordered = rows[_row_order(rows)]
-    return ordered[_row_run_starts(ordered)] if ordered.shape[0] else ordered
+    values = _row_value_keys(rows) if rows.size else None
+    if values is None:
+        ordered = rows[_row_order(rows)]
+        return ordered[_row_run_starts(ordered)] if ordered.shape[0] else ordered
+    # Keys order rows lexicographically, so the sorted distinct keys decode to
+    # the sorted distinct rows.
+    key, lows, spans, _ = values
+    key.sort()
+    starts = np.ones((key.size,), dtype=np.bool_)
+    np.not_equal(key[1:], key[:-1], out=starts[1:])
+    key = key[starts]
+    result = np.empty((key.size, rows.shape[1]), dtype=rows.dtype)
+    for column in range(rows.shape[1] - 1, -1, -1):
+        key, digit = np.divmod(key, spans[column])
+        result[:, column] = digit + lows[column]
+    return result
 
 
 def unique_rows_inverse(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
