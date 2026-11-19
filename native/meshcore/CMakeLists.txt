@@ -163,6 +163,7 @@ set(PHX_MC_HEADERS
   src/cad_refine2d.hpp
   src/cad_curves.hpp
   src/cad_curve_discretization.hpp
+  src/refine_queue.hpp
   src/cad_faces.hpp
   src/cad_mesh.hpp
 )

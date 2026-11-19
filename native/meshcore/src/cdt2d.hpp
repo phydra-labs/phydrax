@@ -19,6 +19,7 @@
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "refine_queue.hpp"
 #include "triangulation2d.hpp"
 
 namespace phx::mc {
@@ -95,6 +96,21 @@ struct BadOrder {
     return std::lexicographical_compare(right.v, right.v + 3, left.v, left.v + 3);
   }
 };
+using BadQueue = SpatialRefinementQueue<BadTriangle, BadOrder>;
+
+inline BadQueue make_bad_queue(const Triangulation2D& tri, int32_t input_count,
+                               double max_area) {
+  if (!std::isfinite(max_area)) return BadQueue(0.0, 0.0, 0.0, 0.0, 0.0, input_count);
+  const double* first = tri.point(0);
+  double xmin = first[0], xmax = first[0], ymin = first[1], ymax = first[1];
+  for (int32_t v = 1; v < input_count; ++v) {
+    const double* p = tri.point(v);
+    xmin = std::min(xmin, p[0]); xmax = std::max(xmax, p[0]);
+    ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]);
+  }
+  return BadQueue(xmin, ymin, xmax, ymax, ((xmax - xmin) * (ymax - ymin)) / max_area,
+                  input_count);
+}
 
 struct Quality {
   bool bad = false;
@@ -110,7 +126,8 @@ class ConstrainedMesher {
         max_area_(max_area),
         angle_enabled_(min_angle_degrees > 0.0),
         sin_min_angle_(
-            angle::sine(min_angle_degrees * (3.14159265358979323846 / 180.0))) {
+            angle::sine(min_angle_degrees * (3.14159265358979323846 / 180.0))),
+        bad_queue_(make_bad_queue(triangulation, input_count, max_area)) {
     constraint_sources_.assign(static_cast<std::size_t>(input_count), -1);
     constraint_parents_.assign(2 * static_cast<std::size_t>(input_count), -1);
     constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
@@ -182,13 +199,11 @@ class ConstrainedMesher {
         split_subsegment(t, k);
         continue;
       }
-      if (bad_queue_.empty()) {
+      BadTriangle entry{};
+      if (!bad_queue_.pop_current(entry, [this](const BadTriangle& candidate) {
+            return matches(candidate);
+          })) {
         break;
-      }
-      const BadTriangle entry = bad_queue_.top();
-      bad_queue_.pop();
-      if (!matches(entry)) {
-        continue;
       }
       process_bad_triangle(entry);
     }
@@ -214,7 +229,7 @@ class ConstrainedMesher {
   // constrained chain it was inserted on, {-1, -1} for circumcenters.
   std::vector<std::pair<int32_t, int32_t>> chain_ends_;
   std::deque<std::pair<int32_t, int32_t>> segment_queue_;
-  std::priority_queue<BadTriangle, std::vector<BadTriangle>, BadOrder> bad_queue_;
+  BadQueue bad_queue_;
   std::vector<int32_t> flip_stack_;
   std::vector<int32_t> cavity_stack_;
   std::vector<std::uint64_t> marks_;
@@ -569,6 +584,19 @@ class ConstrainedMesher {
                        {triangle.v[first], triangle.v[next3(first)], triangle.v[prev3(first)]}, t};
   }
 
+  void enqueue_bad(const BadTriangle& entry) {
+    if (!bad_queue_.spatial()) {
+      bad_queue_.push(entry);
+      return;
+    }
+    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(entry.slot)];
+    const double* a = tri_.point(triangle.v[0]);
+    const double* b = tri_.point(triangle.v[1]);
+    const double* c = tri_.point(triangle.v[2]);
+    bad_queue_.push(entry, (a[0] + b[0] + c[0]) / 3.0,
+                    (a[1] + b[1] + c[1]) / 3.0);
+  }
+
   bool matches(const BadTriangle& entry) const {
     if (tri_.live[static_cast<std::size_t>(entry.slot)] == 0 || tri_.is_ghost(entry.slot)) {
       return false;
@@ -601,7 +629,7 @@ class ConstrainedMesher {
   void enqueue_triangle_checks(int32_t t) {
     const Quality q = quality(t);
     if (q.bad) {
-      bad_queue_.push(make_entry(t, q.badness));
+      enqueue_bad(make_entry(t, q.badness));
     }
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     for (int k = 0; k < 3; ++k) {
@@ -870,8 +898,11 @@ class ConstrainedMesher {
       m[0] = po[0] + ratio * dx;
       m[1] = po[1] + ratio * dy;
     } else {
-      m[0] = 0.5 * (pa[0] + pb[0]);
-      m[1] = 0.5 * (pa[1] + pb[1]);
+      const bool a_first = pa[0] < pb[0] || (pa[0] == pb[0] && pa[1] < pb[1]);
+      const double* first = a_first ? pa : pb;
+      const double* second = a_first ? pb : pa;
+      m[0] = 0.5 * (first[0] + second[0]);
+      m[1] = 0.5 * (first[1] + second[1]);
     }
     if (!snap_to_domain(m)) {
       return false;
@@ -981,9 +1012,16 @@ class ConstrainedMesher {
   void process_bad_triangle(const BadTriangle& entry) {
     const int32_t t = entry.slot;
     const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
-    const double* p0 = tri_.point(triangle.v[0]);
-    const double* p1 = tri_.point(triangle.v[1]);
-    const double* p2 = tri_.point(triangle.v[2]);
+    const double* points[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
+                               tri_.point(triangle.v[2])};
+    const auto less = [](const double* a, const double* b) {
+      return (a[0] < b[0]) | ((a[0] == b[0]) & (a[1] < b[1]));
+    };
+    int first = static_cast<int>(less(points[1], points[0]));
+    first += (2 - first) * static_cast<int>(less(points[2], points[first]));
+    const double* p0 = points[first];
+    const double* p1 = points[next3(first)];
+    const double* p2 = points[prev3(first)];
     const double bx = p1[0] - p0[0], by = p1[1] - p0[1];
     const double cx = p2[0] - p0[0], cy = p2[1] - p0[1];
     const double denominator = 2.0 * (bx * cy - by * cx);
@@ -1040,7 +1078,7 @@ class ConstrainedMesher {
       progress = split_named_subsegment(a, b) || progress;
     }
     if (progress && matches(entry)) {
-      bad_queue_.push(entry);
+      enqueue_bad(entry);
     }
   }
 

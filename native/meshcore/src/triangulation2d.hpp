@@ -19,6 +19,8 @@
 // tests are broken by index-ordered symbolic perturbation with vertex ids.
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -99,7 +101,9 @@ class Triangulation2D {
       }
       slot = static_cast<int32_t>(triangles.size());
       triangles.push_back({{0, 0, 0}, {-1, -1, -1}});
-      constraints.insert(constraints.end(), 3, -1);
+      constraints.push_back(-1);
+      constraints.push_back(-1);
+      constraints.push_back(-1);
       region.push_back(0);
       live.push_back(0);
       marks_.push_back(0);
@@ -219,7 +223,7 @@ class Triangulation2D {
   }
 
   // Exact conflict of point p (vertex id p, coordinates q) with live triangle t.
-  bool conflict(int32_t t, const double* q, int32_t p) const {
+  [[gnu::always_inline]] bool conflict(int32_t t, const double* q, int32_t p) const {
     const Triangle2D& tri = triangles[t];
     if (tri.v[2] == kInfiniteVertex) {
       const int side = orient2d_filtered(point(tri.v[0]), point(tri.v[1]), q);
@@ -231,20 +235,23 @@ class Triangulation2D {
     return finite_conflict(t, q, p);
   }
 
-  bool finite_conflict(int32_t t, const double* q, int32_t p) const {
+  [[gnu::always_inline]] bool finite_conflict(int32_t t, const double* q, int32_t p) const {
+    if (weights != nullptr) return power_conflict(t, q, p);
     const Triangle2D& tri = triangles[t];
-    if (weights != nullptr) {
-      return power2d_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q,
-                         weights[tri.v[0]], weights[tri.v[1]], weights[tri.v[2]], weights[p],
-                         identity(tri.v[0]), identity(tri.v[1]), identity(tri.v[2]),
-                         identity(p)) > 0;
-    }
     // A sign the floating stage decides is the unperturbed sign.
     const int sign = incircle_stage(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q);
-    if (sign != 0) return sign > 0;
+    if (sign != 0) [[likely]] return sign > 0;
     return incircle_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q,
                         identity(tri.v[0]), identity(tri.v[1]), identity(tri.v[2]),
                         identity(p)) > 0;
+  }
+
+  bool power_conflict(int32_t t, const double* q, int32_t p) const {
+    const Triangle2D& tri = triangles[t];
+    return power2d_sos(point(tri.v[0]), point(tri.v[1]), point(tri.v[2]), q,
+                       weights[tri.v[0]], weights[tri.v[1]], weights[tri.v[2]], weights[p],
+                       identity(tri.v[0]), identity(tri.v[1]), identity(tri.v[2]),
+                       identity(p)) > 0;
   }
 
   // Stochastic visibility walk (edge order from splitmix64 of a step counter).
@@ -261,21 +268,8 @@ class Triangulation2D {
     for (;;) {
       const Triangle2D& tri = triangles[t];
       const int first = static_cast<int>(splitmix64(walk_step++) % 3U);
-      int32_t target = -1;
-      int crossed = -1;
-      for (int i = 0; i < 3; ++i) {
-        const int k = (first + i) % 3;
-        const int32_t nb = tri.n[k];
-        if (nb == previous) {
-          continue;
-        }
-        if (orient2d_filtered(point(tri.v[next3(k)]), point(tri.v[prev3(k)]), q) < 0) {
-          target = nb;
-          crossed = k;
-          break;
-        }
-      }
-      if (target < 0) {
+      const int crossed = exit_edge(tri, q, previous, first);
+      if (crossed < 0) {
         return t;
       }
       if (blocked != nullptr && constraint(t, crossed) != -1) {
@@ -283,34 +277,104 @@ class Triangulation2D {
         return -1;
       }
       previous = t;
-      t = target;
+      t = tri.n[crossed];
+      prefetch_read(&triangles[static_cast<std::size_t>(t)]);
       if (is_ghost(t)) {
         return t;
       }
     }
   }
 
-  // Bowyer-Watson insertion of vertex p (unconstrained triangulations).
+  // The edge a walk step leaves finite triangle `tri` through: the first k
+  // of first, first + 1, first + 2 (mod 3) whose neighbor is not `previous`
+  // and with orient2d(v[k+1], v[k+2], q) < 0, else -1. The three
+  // orientations are evaluated at once (each exactly as orient2d_filtered
+  // does; exact predicates have no side effects), so the choice costs no
+  // data-dependent branch.
+  int exit_edge(const Triangle2D& tri, const double* q, int32_t previous, int first) const {
+    const double* a = point(tri.v[0]);
+    const double* b = point(tri.v[1]);
+    const double* c = point(tri.v[2]);
+    const double ax = a[0] - q[0], ay = a[1] - q[1];
+    const double bx = b[0] - q[0], by = b[1] - q[1];
+    const double cx = c[0] - q[0], cy = c[1] - q[1];
+    // Edge k runs from v[k+1] to v[k+2]: (b, c), (c, a), (a, b).
+    const double left[3] = {bx * cy, cx * ay, ax * by};
+    const double right[3] = {by * cx, cy * ax, ay * bx};
+    constexpr double kEpsilon = 0x1p-53;
+    constexpr double kBound = (3.0 + 16.0 * kEpsilon) * kEpsilon;
+    unsigned negative = 0;
+    unsigned uncertain = 0;
+    for (int k = 0; k < 3; ++k) {
+      const double det = left[k] - right[k];
+      const double errbound = kBound * (std::fabs(left[k]) + std::fabs(right[k]));
+      negative |= static_cast<unsigned>(-det > errbound) << k;
+      uncertain |= static_cast<unsigned>(!(det > errbound) && !(-det > errbound)) << k;
+    }
+    if (uncertain != 0) [[unlikely]] {
+      for (int k = 0; k < 3; ++k) {
+        if (((uncertain >> k) & 1U) != 0 &&
+            orient2d(point(tri.v[next3(k)]), point(tri.v[prev3(k)]), q) < 0) {
+          negative |= 1U << k;
+        }
+      }
+    }
+    negative &= static_cast<unsigned>(tri.n[0] != previous) |
+                static_cast<unsigned>(tri.n[1] != previous) << 1 |
+                static_cast<unsigned>(tri.n[2] != previous) << 2;
+    // kExit[first][mask]: the first set bit of mask from `first` on.
+    static constexpr int8_t kExit[3][8] = {{-1, 0, 1, 0, 2, 0, 1, 0},
+                                           {-1, 0, 1, 1, 2, 2, 1, 1},
+                                           {-1, 0, 1, 0, 2, 2, 2, 2}};
+    return kExit[first][negative];
+  }
+
+  // Bowyer-Watson insertion of vertex p, distinct from every vertex
+  // (unconstrained triangulations). The cone triangles reuse the cavity's
+  // slots last-removed first, then free slots, then new ones (as releasing
+  // the cavity and allocating would).
   Insertion insert(int32_t p) {
     const double* q = point(p);
     const int32_t start = walk(hint, q);
-    if (!conflict(start, q, p)) {
+    // Unweighted, the walk's triangle conflicts: q lies in the closure of a
+    // finite one (not at a vertex, so strictly inside its circumcircle) or
+    // strictly outside a ghost's hull edge.
+    if (weights != nullptr && !conflict(start, q, p)) {
       return Insertion::kRedundant;
     }
     epoch_ += 2;
     const std::uint64_t inside = epoch_;
     const std::uint64_t outside = epoch_ + 1;
-    stack_.clear();
-    cavity_.clear();
-    boundary_.clear();
-    stack_.push_back(start);
+    // Scratch arrays are sized ahead (a popped triangle adds at most three
+    // stack entries and boundary edges) and addressed through locals.
+    std::size_t top = 0, removed = 0, edges = 0;
+    int32_t* stack = stack_.data();
+    int32_t* cavity = cavity_.data();
+    BoundaryEdge* boundary = boundary_.data();
+    const auto reserve_scratch = [&]() {
+      if (top + 4 <= stack_.size() && removed + 1 <= cavity_.size() &&
+          edges + 3 <= boundary_.size()) [[likely]] {
+        return;
+      }
+      stack_.resize(std::max(stack_.size(), 2 * (top + 4)));
+      cavity_.resize(std::max(cavity_.size(), 2 * (removed + 1)));
+      boundary_.resize(std::max(boundary_.size(), 2 * (edges + 3)));
+      stack = stack_.data();
+      cavity = cavity_.data();
+      boundary = boundary_.data();
+    };
+    reserve_scratch();
+    stack[top++] = start;
     marks_[start] = inside;
-    while (!stack_.empty()) {
-      const int32_t t = stack_.back();
-      stack_.pop_back();
-      cavity_.push_back(t);
+    int64_t finite_removed = 0;
+    while (top != 0) {
+      reserve_scratch();
+      const int32_t t = stack[--top];
+      cavity[removed++] = t;
+      const Triangle2D& tri = triangles[t];
+      finite_removed += tri.v[2] != kInfiniteVertex ? 1 : 0;
       for (int k = 0; k < 3; ++k) {
-        const int32_t nb = triangles[t].n[k];
+        const int32_t nb = tri.n[k];
         const std::uint64_t mark = marks_[nb];
         if (mark == inside) {
           continue;
@@ -324,21 +388,23 @@ class Triangulation2D {
               prefetch_read(&marks_[static_cast<std::size_t>(next)]);
             }
           }
-          stack_.push_back(nb);
+          stack[top++] = nb;
         } else {
           marks_[nb] = outside;
-          const Triangle2D& tri = triangles[t];
-          boundary_.push_back({tri.v[next3(k)], tri.v[prev3(k)], nb});
+          // The slot of nb facing t (two triangles share at most one edge).
+          const int32_t* around = triangles[nb].n;
+          const int back = around[0] == t ? 0 : around[1] == t ? 1 : 2;
+          boundary[edges++] = {tri.v[next3(k)], tri.v[prev3(k)], nb, back};
         }
       }
     }
     if (weights != nullptr) {
       // Vertices strictly inside the cavity lose their whole star.
-      for (const BoundaryEdge& edge : boundary_) {
-        vertex_marks_[static_cast<std::size_t>(edge.u + 1)] = epoch_;
+      for (std::size_t e = 0; e < edges; ++e) {
+        vertex_marks_[static_cast<std::size_t>(boundary[e].u + 1)] = epoch_;
       }
-      for (int32_t t : cavity_) {
-        for (int32_t vertex : triangles[t].v) {
+      for (std::size_t c = 0; c < removed; ++c) {
+        for (int32_t vertex : triangles[cavity[c]].v) {
           if (vertex != kInfiniteVertex &&
               vertex_marks_[static_cast<std::size_t>(vertex + 1)] != epoch_) {
             vertex_marks_[static_cast<std::size_t>(vertex + 1)] = epoch_;
@@ -347,57 +413,73 @@ class Triangulation2D {
         }
       }
     }
-    for (int32_t t : cavity_) {
-      release(t);
+    finite_count -= finite_removed;
+    const std::size_t reused = std::min(removed, edges);
+    for (std::size_t c = 0; c < removed - reused; ++c) {
+      live[static_cast<std::size_t>(cavity[c])] = 0;
+      free_slots.push_back(cavity[c]);
     }
-    created_.clear();
-    for (const BoundaryEdge& edge : boundary_) {
-      const int32_t t = allocate();
-      created_.push_back(t);
+    if (created_.size() < edges) created_.resize(2 * edges);
+    int32_t* created = created_.data();
+    int32_t ghosts[2] = {-1, -1};
+    int ghost_count = 0;
+    for (std::size_t e = 0; e < edges; ++e) {
+      const BoundaryEdge& edge = boundary[e];
+      const int32_t t = e < reused ? cavity[removed - 1 - e] : allocate();
+      created[e] = t;
       Triangle2D& tri = triangles[t];
       tri.v[0] = edge.u;
       tri.v[1] = edge.w;
       tri.v[2] = p;
       tri.n[2] = edge.outside;
+      triangles[edge.outside].n[edge.back] = t;
       vertex_slots_[static_cast<std::size_t>(edge.u + 1)] = t;
-      const int j = edge_index(edge.outside, edge.w, edge.u);
-      triangles[edge.outside].n[j] = t;
+      int32_t* constraint_row = constraints.data() + 3 * static_cast<std::size_t>(t);
+      constraint_row[0] = constraint_row[1] = constraint_row[2] = -1;
+      if (edge.u == kInfiniteVertex || edge.w == kInfiniteVertex) {
+        ghosts[ghost_count++ & 1] = t;
+      }
     }
-    // New triangle (u, w, p) meets (w, x, p) across w - p.
-    for (int32_t t : created_) {
-      const int32_t other = vertex_slots_[static_cast<std::size_t>(triangles[t].v[1] + 1)];
-      triangles[t].n[0] = other;
-      triangles[other].n[1] = t;
-    }
-    for (int32_t t : created_) {
-      Triangle2D& tri = triangles[t];
-      constraints[3 * static_cast<std::size_t>(t)] = -1;
-      constraints[3 * static_cast<std::size_t>(t) + 1] = -1;
-      constraints[3 * static_cast<std::size_t>(t) + 2] = -1;
-      if (tri.v[0] == kInfiniteVertex) {
-        tri = {{tri.v[1], tri.v[2], tri.v[0]}, {tri.n[1], tri.n[2], tri.n[0]}};
-      } else if (tri.v[1] == kInfiniteVertex) {
-        tri = {{tri.v[2], tri.v[0], tri.v[1]}, {tri.n[2], tri.n[0], tri.n[1]}};
-      } else {
+    // New triangle (u, w, p) meets (w, x, p) across w - p. Each vertex's
+    // triangle is the last new one around it.
+    Triangle2D* slots = triangles.data();
+    for (std::size_t e = 0; e < edges; ++e) {
+      const int32_t t = created[e];
+      Triangle2D& tri = slots[t];
+      const int32_t other = vertex_slots_[static_cast<std::size_t>(tri.v[1] + 1)];
+      tri.n[0] = other;
+      slots[other].n[1] = t;
+      const bool finite_u = tri.v[0] != kInfiniteVertex;
+      const bool finite_w = tri.v[1] != kInfiniteVertex;
+      if (finite_u) vertex_triangle[static_cast<std::size_t>(tri.v[0])] = t;
+      if (finite_w) vertex_triangle[static_cast<std::size_t>(tri.v[1])] = t;
+      if (finite_u && finite_w) {
         ++finite_count;
         hint = t;
       }
-      for (int32_t vertex : tri.v) {
-        if (vertex != kInfiniteVertex) {
-          vertex_triangle[static_cast<std::size_t>(vertex)] = t;
-        }
+    }
+    vertex_triangle[static_cast<std::size_t>(p)] = created[edges - 1];
+    // Ghosts keep the infinite vertex in v[2].
+    for (int g = 0; g < ghost_count; ++g) {
+      Triangle2D& tri = slots[ghosts[g]];
+      if (tri.v[0] == kInfiniteVertex) {
+        tri = {{tri.v[1], tri.v[2], tri.v[0]}, {tri.n[1], tri.n[2], tri.n[0]}};
+      } else {
+        tri = {{tri.v[2], tri.v[0], tri.v[1]}, {tri.n[2], tri.n[0], tri.n[1]}};
       }
     }
     return Insertion::kInserted;
   }
 
-  // Finite live triangles as a flat CCW vertex array.
+  // Finite live triangles as a flat CCW array of vertex identities.
   void finite_cells(std::vector<int32_t>& cells) const {
-    cells.clear();
-    cells.reserve(static_cast<std::size_t>(3 * finite_count));
+    cells.resize(static_cast<std::size_t>(3 * finite_count));
+    int32_t* out = cells.data();
     for (std::size_t t = 0; t < triangles.size(); ++t) {
-      if (live[t] != 0 && triangles[t].v[2] != kInfiniteVertex) {
-        cells.insert(cells.end(), triangles[t].v, triangles[t].v + 3);
+      const Triangle2D& tri = triangles[t];
+      if (live[t] != 0 && tri.v[2] != kInfiniteVertex) {
+        for (int k = 0; k < 3; ++k) out[k] = static_cast<int32_t>(identity(tri.v[k]));
+        out += 3;
       }
     }
   }
@@ -407,6 +489,7 @@ class Triangulation2D {
     int32_t u;
     int32_t w;
     int32_t outside;
+    int32_t back;  // slot of `outside` across the edge
   };
 
   std::vector<std::uint64_t> marks_;         // per slot, cavity epochs

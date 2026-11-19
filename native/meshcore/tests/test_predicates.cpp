@@ -469,6 +469,65 @@ void test_insphere_exact_paths() {
               mismatches);
 }
 
+// power3d_stage decides only what power3d decides, with its sign: rounded
+// near-orthogonal weighted points (weights from one sphere, so the power
+// determinant nearly vanishes) at several scales and weight magnitudes,
+// exactly orthogonal integer configurations (exact zeros, which the stage
+// must leave undecided) and those with one weight nudged by one unit.
+void test_power3d_stage_agrees() {
+  std::uint64_t seed = 91;
+  int checked = 0, decided = 0, zeros = 0, mismatches = 0;
+  const auto compare = [&](const double (&p)[5][3], const double (&w)[5]) {
+    const int exact = power3d(p[0], p[1], p[2], p[3], p[4], w[0], w[1], w[2], w[3], w[4]);
+    const int stage = power3d_stage(p[0], p[1], p[2], p[3], p[4], w[0], w[1], w[2], w[3], w[4]);
+    mismatches += stage != 0 && stage != exact ? 1 : 0;
+    decided += stage != 0 ? 1 : 0;
+    zeros += exact == 0 ? 1 : 0;
+    ++checked;
+  };
+  for (const double scale : {1.0, 0x1p-40, 0x1p40, 3.0e-7}) {
+    for (const double spread : {0.0, 1.0, 1e6}) {
+      for (int trial = 0; trial < 3000; ++trial) {
+        double center[3], p[5][3], w[5];
+        for (double& c : center) c = scale * (uniform(seed) - 0.5);
+        const double radius = scale * (0.25 + uniform(seed));
+        for (int k = 0; k < 5; ++k) {
+          double squared = 0.0;
+          for (int axis = 0; axis < 3; ++axis) {
+            p[k][axis] = scale * (2.0 * uniform(seed) - 1.0);
+            squared += (p[k][axis] - center[axis]) * (p[k][axis] - center[axis]);
+          }
+          // Orthogonal to the sphere (center, radius) up to rounding, with
+          // a common offset `spread` scale^2 that leaves the power test
+          // unchanged but enlarges the weights.
+          w[k] = squared - radius * radius + spread * scale * scale;
+        }
+        compare(p, w);
+      }
+    }
+  }
+  // Integer points with w = |p|^2 - 45^2 are exactly orthogonal to the
+  // sphere of radius 45 at the origin: the determinant is exactly zero.
+  for (int trial = 0; trial < 20000; ++trial) {
+    double p[5][3], w[5];
+    for (int k = 0; k < 5; ++k) {
+      double squared = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        p[k][axis] = static_cast<double>(static_cast<int>(splitmix64(seed++) % 121) - 60);
+        squared += p[k][axis] * p[k][axis];
+      }
+      w[k] = squared - 45.0 * 45.0;
+    }
+    if (trial % 3 == 1) w[trial % 5] += trial % 2 == 0 ? 1.0 : -1.0;
+    compare(p, w);
+  }
+  PHX_CHECK(mismatches == 0);
+  PHX_CHECK(zeros > 1000);
+  PHX_CHECK(decided > checked / 4);
+  std::printf("power3d stage: %d checked, %d decided, %d exact zeros, %d mismatches\n", checked,
+              decided, zeros, mismatches);
+}
+
 }  // namespace
 
 int main() {
@@ -477,6 +536,7 @@ int main() {
   test_orientation_conventions();
   test_incircle_insphere_exact_zero_and_ulp();
   test_insphere_exact_paths();
+  test_power3d_stage_agrees();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();

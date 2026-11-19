@@ -181,7 +181,6 @@ bool discretize(Context& c, std::vector<double>& points) {
   }
   struct Span {
     std::vector<double> cumulative;
-    double quota = 0;
     int count = 1;
   };
   std::vector<Span> spans(borders.size());
@@ -198,31 +197,16 @@ bool discretize(Context& c, std::vector<double>& points) {
       cumulative[i-start]=cumulative[i-start-2]+area;
     }
     if (!(cumulative.back()>0) || !std::isfinite(cumulative.back())) return false;
-    total+=cumulative.back();
+    if (cumulative.back()>kMaxPoints) return false;
+    spans[span].count=std::max(1,static_cast<int>(std::ceil(cumulative.back())));
+    total+=spans[span].count;
   }
-  if (!std::isfinite(total) || total>kMaxPoints) return false;
-  int count=std::max(static_cast<int>(spans.size()),static_cast<int>(std::ceil(total)));
-  if (m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1]) count=std::max(count,3);
-  int assigned=0;
-  for (auto& span:spans) {
-    span.quota=count*span.cumulative.back()/total;
-    span.count=std::max(1,static_cast<int>(std::floor(span.quota)));
-    assigned+=span.count;
+  if (total>kMaxPoints) return false;
+  if (m.curve_corners[2*c.curve]==m.curve_corners[2*c.curve+1] && total<3) {
+    spans.back().count+=3-static_cast<int>(total);
+    total=3;
   }
-  while (assigned<count) {
-    auto best=std::max_element(spans.begin(),spans.end(),[](const Span& a,const Span& b) {
-      return a.quota-a.count < b.quota-b.count;
-    });
-    ++best->count; ++assigned;
-  }
-  while (assigned>count) {
-    auto best=spans.end();
-    for (auto it=spans.begin();it!=spans.end();++it)
-      if (it->count>1 && (best==spans.end() ||
-          it->count-it->quota > best->count-best->quota)) best=it;
-    if (best==spans.end()) return false;
-    --best->count; --assigned;
-  }
+  const int count=static_cast<int>(total);
   points.clear(); points.reserve(static_cast<std::size_t>(count)+1); points.push_back(0);
   for (std::size_t span=0; span<spans.size(); ++span) {
     const std::size_t start=begins[span], end=borders[span];
@@ -232,7 +216,34 @@ bool discretize(Context& c, std::vector<double>& points) {
     if (inverse_curve_table(parameters.data(),spans[span].cumulative.data(),
                             static_cast<int64_t>(parameters.size()),n,placed.data()) != PHX_MC_OK)
       return false;
-    points.insert(points.end(),placed.begin()+1,placed.end());
+    // Verify each placed interval against the same piecewise-linear integral
+    // table used by inversion; bisection handles rounding at the unit bound.
+    const auto& cumulative=spans[span].cumulative;
+    auto integral_at = [&](double s) {
+      auto it=std::lower_bound(parameters.begin(),parameters.end(),s);
+      if (it==parameters.begin()) return cumulative.front();
+      if (it==parameters.end()) return cumulative.back();
+      const std::size_t i=static_cast<std::size_t>(it-parameters.begin());
+      const double fraction=(s-parameters[i-1])/(parameters[i]-parameters[i-1]);
+      return cumulative[i-1]+fraction*(cumulative[i]-cumulative[i-1]);
+    };
+    for (int k=1;k<=n;++k) {
+      double left=points.back(), value=integral_at(left);
+      const double right=placed[k], end_value=integral_at(right);
+      while (end_value-value>1) {
+        double mid=left+(right-left)*0.5;
+        double mid_value=integral_at(mid);
+        while (mid_value-value>1) {
+          mid=left+(mid-left)*0.5;
+          if (!(mid>left)) return false;
+          mid_value=integral_at(mid);
+        }
+        if (!(mid>left && mid<right) || points.size()>=kMaxPoints) return false;
+        points.push_back(mid);
+        left=mid; value=mid_value;
+      }
+      points.push_back(right);
+    }
   }
   return true;
 }
@@ -400,12 +411,67 @@ bool feature_sizes(const CadGeometry& g, const CurveControls& controls,
   }
   return true;
 }
+bool pole_corner(const phx_mc_cad_model& m, int32_t face, int32_t corner) {
+  for (int64_t l=0;l<m.loop_count;++l) if (m.loop_surfaces[l]==face)
+    for (int64_t u=m.loop_use_offsets[l];u<m.loop_use_offsets[l+1];++u)
+      if (m.use_kinds[u]==1 && m.use_entities[u]==corner) return true;
+  return false;
+}
+
+// -1: passed, -2: evaluation failed, -3: malformed face reported;
+// nonnegative: the face whose metric requires bisection.
+int metric_screen(Context& c, double a, double b) {
+  const auto& m=c.geometry.model();
+  for (const Use& use:c.uses) {
+    double uv[3][2];
+    const double ta=c.use_parameter(use.row,a), tb=c.use_parameter(use.row,b);
+    c.stats.value_evaluations+=2;
+    const double interior=c.use_parameter(use.row,a+(b-a)*0.5);
+    if (!c.geometry.jets_in_span(c.geometry.pcurve_node(use.row),ta,interior,0,uv[0],c.workspace) ||
+        !c.geometry.jets_in_span(c.geometry.pcurve_node(use.row),tb,interior,0,uv[2],c.workspace)) return -2;
+    for (int k=0;k<2;++k) uv[1][k]=(uv[0][k]+uv[2][k])*0.5;
+    const double du=uv[2][0]-uv[0][0], dv=uv[2][1]-uv[0][1];
+    for (int k=0;k<3;++k) {
+      const bool endpoint=(k==0 && a==0) || (k==2 && b==1);
+      const int corner=k==0 ? m.curve_corners[2*c.curve] : m.curve_corners[2*c.curve+1];
+      if (endpoint && pole_corner(m,use.face,corner)) {
+        ++c.stats.metric_points_skipped;
+        continue;
+      }
+      double jet[18];
+      ++c.stats.second_order_evaluations;
+      if (!c.geometry.jets(c.geometry.surface_node(use.face),uv[k],2,jet,c.workspace)) return -2;
+      SurfaceDifferential d;
+      if (!surface_differential(jet,d) || !std::isfinite(d.curvatures[0]) ||
+          !std::isfinite(d.curvatures[1]) || !std::isfinite(d.first_form[0]) ||
+          !std::isfinite(d.first_form[1]) || !std::isfinite(d.first_form[2])) {
+        c.stats.unresolved.push_back({c.curve,a,b,use.face});
+        return -3;
+      }
+      const double curvature=std::max(std::abs(d.curvatures[0]),std::abs(d.curvatures[1]));
+      double h=c.controls.face_sizes[use.face];
+      if (curvature>0 && std::isfinite(c.controls.face_tolerances[use.face]))
+        h=std::min(h,std::sqrt(6*c.controls.tolerance_fraction*
+                                c.controls.face_tolerances[use.face]/curvature));
+      const double length2=d.first_form[0]*du*du+2*d.first_form[1]*du*dv+d.first_form[2]*dv*dv;
+      if (!std::isfinite(length2) || !std::isfinite(h) || !(h>0)) {
+        c.stats.unresolved.push_back({c.curve,a,b,use.face});
+        return -3;
+      }
+      if (length2>h*h) return use.face;
+    }
+  }
+  return -1;
+}
+
 bool sag(Context& c, double a, double b, const double* x, const double* y,
          int depth, std::vector<double>& out) {
-  constexpr double q = 0.28867513459481288225;
-  double p[3], r[3];
-  const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
-  if (!c.value(s1,p) || !c.value(s2,r)) return false;
+  double p[3]{}, r[3]{};
+  if (c.controls.sag_check) {
+    constexpr double q = 0.28867513459481288225;
+    const double s1=a+(b-a)*(0.5-q), s2=a+(b-a)*(0.5+q);
+    if (!c.value(s1,p) || !c.value(s2,r)) return false;
+  }
   double tol=c.controls.curve_tolerances[c.curve];
   for (const Use& u:c.uses) tol=std::min(tol,c.controls.face_tolerances[u.face]);
   tol*=c.controls.tolerance_fraction;
@@ -416,13 +482,23 @@ bool sag(Context& c, double a, double b, const double* x, const double* y,
     const double t=length2>0 ? std::clamp((px*dx+py*dy+pz*dz)/length2,0.0,1.0) : 0.0;
     return std::hypot(px-t*dx,py-t*dy,pz-t*dz);
   };
-  if (deviation(p)<=tol && deviation(r)<=tol) { out.push_back(b); return true; }
+  const bool sag_failed=c.controls.sag_check && (deviation(p)>tol || deviation(r)>tol);
+  const int metric_face=metric_screen(c,a,b);
+  if (metric_face==-2) return false;
+  if (metric_face==-3) { out.push_back(b); return true; }
+  if (!sag_failed && metric_face<0) { out.push_back(b); return true; }
   const double mid=(a+b)*0.5;
   if (depth==kSagDepth || !(mid>a && mid<b) || out.size()>=kMaxPoints) {
-    c.stats.unresolved.push_back({c.curve,a,b}); out.push_back(b); return true;
+    c.stats.unresolved.push_back({c.curve,a,b,metric_face}); out.push_back(b); return true;
   }
-  ++c.stats.sag_splits;
-  ++c.stats.sag_splits_per_curve[c.curve];
+  if (sag_failed) {
+    ++c.stats.sag_splits;
+    ++c.stats.sag_splits_per_curve[c.curve];
+  }
+  if (metric_face>=0) {
+    ++c.stats.metric_splits;
+    ++c.stats.metric_splits_per_curve[c.curve];
+  }
   double z[3]; if (!c.value(mid,z)) return false;
   return sag(c,a,mid,x,z,depth+1,out) && sag(c,mid,b,z,y,depth+1,out);
 }
@@ -458,7 +534,7 @@ int32_t repair_curve_sag(const CadGeometry& geometry, const CurveControls& contr
                          std::vector<double>& output, CurveStatistics& stats) {
   const auto& m=geometry.model();
   if (curve<0 || curve>=m.curve_count || input.size()<2 || !controls.curve_tolerances ||
-      (m.surface_count && !controls.face_tolerances) ||
+      (m.surface_count && (!controls.face_tolerances || !controls.face_sizes)) ||
       !(controls.tolerance_fraction>0) || !std::isfinite(controls.tolerance_fraction))
     return PHX_MC_INVALID_ARGUMENT;
   for (std::size_t i=0;i<input.size();++i)
@@ -471,6 +547,8 @@ int32_t repair_curve_sag(const CadGeometry& geometry, const CurveControls& contr
         uses.push_back({static_cast<int32_t>(u),m.loop_surfaces[l]});
   if (stats.sag_splits_per_curve.size()<static_cast<std::size_t>(m.curve_count))
     stats.sag_splits_per_curve.resize(static_cast<std::size_t>(m.curve_count),0);
+  if (stats.metric_splits_per_curve.size()<static_cast<std::size_t>(m.curve_count))
+    stats.metric_splits_per_curve.resize(static_cast<std::size_t>(m.curve_count),0);
   Context c{geometry,controls,stats,curve,uses};
   std::vector<double> repaired{input[0]};
   double x[3],y[3];
@@ -521,13 +599,9 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
       if (!discretize(c,points)) return c.failure_status;
     }
     std::vector<double> repaired;
-    if (controls.sag_check) {
-      const int32_t status=repair_curve_sag(geometry,controls,e,points,repaired,output.statistics);
-      if (status!=PHX_MC_OK && status!=PHX_MC_UNRESOLVED) return status;
-      output.parameters.insert(output.parameters.end(),repaired.begin(),repaired.end());
-    } else {
-      output.parameters.insert(output.parameters.end(),points.begin(),points.end());
-    }
+    const int32_t status=repair_curve_sag(geometry,controls,e,points,repaired,output.statistics);
+    if (status!=PHX_MC_OK && status!=PHX_MC_UNRESOLVED) return status;
+    output.parameters.insert(output.parameters.end(),repaired.begin(),repaired.end());
     output.offsets.push_back(static_cast<int64_t>(output.parameters.size()));
   }
   const int32_t status=output.statistics.unresolved.empty()?PHX_MC_OK:PHX_MC_UNRESOLVED;

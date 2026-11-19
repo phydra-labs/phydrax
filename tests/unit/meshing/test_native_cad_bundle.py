@@ -14,6 +14,7 @@ curve within the domain tolerance plus binary64 resolution.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from fractions import Fraction
 
@@ -36,10 +37,12 @@ from phydrax.geometry._meshing_domain import (
     PatchCurveUse,
 )
 from phydrax.geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
+from phydrax.geometry.brep._intersection import intersect_surface_regions
 from phydrax.geometry.brep._intersection_curve import (
     CurveTrimSegment,
     IntersectionCurve,
     IntersectionPCurve,
+    SurfaceRegion,
 )
 from phydrax.geometry.brep._patches import (
     AbstractCurve,
@@ -693,6 +696,82 @@ def test_bundle_tables_mirror_the_domain(quadric_domain: MeshingDomain) -> None:
     np.testing.assert_array_equal(model.corner_points, quadric_domain.corner_points)
     assert model.region_surface_offsets.size == len(quadric_domain.regions) + 1
     assert all(not array.flags.writeable for array in model)
+
+
+@pytest.mark.parametrize("kind", ("sphere", "cylinder", "cone"))
+def test_pole_edges_do_not_alias_curve_rows(kind: str) -> None:
+    contract = phx.SpatialCoordinateContract.si()
+    if kind == "sphere":
+        source = phx.geometry.brep.brep_sphere(1.0, coordinate_contract=contract)
+    elif kind == "cylinder":
+        source = phx.geometry.brep.brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    else:
+        source = phx.geometry.brep.brep_cone(1.0, 0.0, 1.0, coordinate_contract=contract)
+    domain = MeshingDomain.from_brep(source)
+    bundle = cad_geometry_bundle(domain)
+    model = bundle.model
+    rows = bundle.edge_curve_rows
+    geometry = source.geometry
+    expected = [
+        geometry.edge_curves[domain.source_indices[1][edge]] >= 0
+        for edge in range(len(domain.curves))
+    ]
+    np.testing.assert_array_equal(rows >= 0, expected)
+    np.testing.assert_array_equal(rows[rows >= 0], np.arange(sum(expected)))
+    assert not rows.flags.writeable
+    assert model.curve_nodes.size == sum(expected)
+    for edge, row in enumerate(rows):
+        if row < 0:
+            continue
+        source_curve = geometry.curves[
+            geometry.edge_curves[domain.source_indices[1][edge]]
+        ]
+        lower, upper = model.curve_ranges[row]
+        parameters = np.linspace(lower, upper, 7)
+        actual = cad_geometry_evaluate(
+            model, CadEntityKind.CURVE, int(row), parameters, CadGeometryQuantity.VALUE
+        )
+        np.testing.assert_allclose(
+            actual, source_curve.evaluate(jnp.asarray(parameters)), rtol=0.0, atol=1e-14
+        )
+        np.testing.assert_array_equal(
+            model.curve_corners[row], (domain.curves[edge].start, domain.curves[edge].end)
+        )
+    uses = [use for patch in domain.patches for loop in patch.loops for use in loop]
+    for index, use in enumerate(uses):
+        entity = rows[use.curve] if isinstance(use, PatchCurveUse) else use.corner
+        assert model.use_entities[index] == entity
+
+
+def test_intersection_pcurve_crosses_declared_periodic_chart_transition() -> None:
+    first = CylinderPatch((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0)
+    second = CylinderPatch((0, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 0), 0.5)
+    bounds = np.asarray(((0.0, -2.0), (math.tau, 2.0)), dtype=np.float64)
+    result = intersect_surface_regions(
+        SurfaceRegion(first, bounds), SurfaceRegion(second, bounds)
+    )
+    assert result.complete
+    candidates = [
+        (curve, node)
+        for curve in result.curves
+        for node in range(1, curve.num_charts)
+        if np.any(
+            np.asarray(curve.node_period_shifts[node, 0, :2])
+            != np.asarray(curve.node_period_shifts[node, 1, :2])
+        )
+    ]
+    assert candidates
+    curve, node = candidates[0]
+    pcurve = curve.p_curve("first")
+    parameters = np.asarray((node - 1e-6, float(node), node + 1e-6), dtype=np.float64)
+    model = cad_entity_model((first,), (), ((pcurve, pcurve.first, pcurve.last),))
+    native = cad_geometry_evaluate(
+        model, CadEntityKind.PCURVE, 0, parameters, CadGeometryQuantity.VALUE
+    )
+    reference = np.asarray(pcurve.evaluate(jnp.asarray(parameters)))
+    assert np.max(np.abs(native - reference)) <= 4.0 * _EPSILON * max(
+        1.0, float(np.max(np.abs(reference)))
+    )
 
 
 def test_bundle_is_cached_by_domain_identity(quadric_domain: MeshingDomain) -> None:
