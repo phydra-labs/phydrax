@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- `NativeMeshingPlan.execute(prove=False)` returns a `CellMeshingCandidate`
+  (the constructed mesh, uncertified); `candidate.prove()` certifies exactly
+  that mesh. `prove=True` (the default) certifies as before.
+- Native exact affine tetrahedron validity (`phx_mc_tetrahedra_validity`):
+  exact determinant and quality-margin signs with a rigorous determinant
+  bound.
 - Isosurface stuffing (`NativeIntervalProgram.stuff_tetrahedra(..., levels=,
   lipschitz=)`, `phx_mc_implicit_stuffing`) runs on a graded body-centered
   cubic lattice: the uniform lattice within one spacing of the zero set,
@@ -311,6 +317,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- PLC tetrahedral volumes are certified by exact native degree theorems
+  (`phx_mc_verify_tetrahedra`, labeled `phx_mc_verify_volume`): positive
+  cells, oppositely paired faces, an embedded edge-manifold boundary whose
+  shells have winding 0 in front and 1 behind, and a boundary and region
+  interfaces equal to the declared oriented triangles with matching labels.
+  The global-embedding check and the coverage method `tetrahedral_degree` are
+  selected by the `volume_plc` schedule only; other routes keep their proofs
+  and never load the native library. Certificate identities for this route
+  change; restoring re-runs the native verifier.
 - Native tetrahedral improvement collapses an interior vertex onto a
   protected or boundary neighbor; the fixed boundary is reproduced exactly,
   which clears the last unmet cells of the 90,000-face grid torus.
