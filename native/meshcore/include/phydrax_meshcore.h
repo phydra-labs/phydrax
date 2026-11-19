@@ -2591,6 +2591,47 @@ PHX_MC_API int32_t phx_mc_cad_geometry_evaluate(const phx_mc_cad_model* model,
                                                 int64_t count, const double* parameters,
                                                 int32_t quantity, double* result);
 
+/* Surface-stage construction with a shared normalized discretization for each
+ * curve row. Offsets has curve_count+1 entries; each range starts at 0, ends
+ * at 1 and increases strictly. Curve parameters are caller-owned. */
+typedef struct phx_mc_cad_surface_controls {
+  const int64_t* curve_offsets;
+  int64_t parameter_count;
+  const double* curve_parameters;
+  const double* patch_sizes;
+  const double* patch_tolerances;
+  double tolerance_fraction;
+} phx_mc_cad_surface_controls;
+
+typedef struct phx_mc_cad_face_stats {
+  int64_t metric_evaluations, insertions, unresolved_size, unresolved_angle;
+  int64_t encroachment_refusals, nonstar_refusals, outside_refusals, proximity_refusals;
+  int64_t unresolved_triangles, excluded_refusals, fixed_triangles_skipped, omitted_pole_points;
+} phx_mc_cad_face_stats;
+
+typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
+typedef struct phx_mc_cad_surface_arrays {
+  int64_t vertex_capacity, triangle_capacity, sliver_capacity, curve_edge_capacity, face_capacity;
+  double* points; int8_t* vertex_dimensions; int32_t* vertex_entities; double* vertex_parameters;
+  int32_t* triangles; int32_t* triangle_patches; double* triangle_uv;
+  int32_t* triangle_edge_uses; int32_t* facet_regions;
+  double* sliver_uv; int32_t* sliver_patches;
+  int32_t* curve_edges; int32_t* curve_edge_curves; double* curve_edge_parameters;
+  phx_mc_cad_face_stats* face_stats;
+} phx_mc_cad_surface_arrays;
+
+/* On OK or UNRESOLVED, *result owns a conforming candidate and its findings.
+ * Sizes are vertices, triangles, slivers, curve edges and faces, respectively.
+ * Export validates every capacity and required output before writing anything. */
+PHX_MC_API int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
+                                    const phx_mc_cad_surface_controls* controls,
+                                    phx_mc_cad_surface_result** result);
+PHX_MC_API int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,
+                                                    int64_t sizes[5]);
+PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_result* result,
+                                                     const phx_mc_cad_surface_arrays* arrays);
+PHX_MC_API void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result);
+
 #ifdef __cplusplus
 }
 #endif

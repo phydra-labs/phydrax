@@ -483,7 +483,7 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                            (g / (metric.scale_v * metric.scale_v));
       if (ratio >= 0.5 && ratio <= 2.0) break;
       const double next = std::min(limit, width + spacing);
-      if (!(next > width)) return PHX_MC_UNRESOLVED;
+      if (!(next > width)) return PHX_MC_RANGE_ERROR;
       width = next;
     }
     metric.poles.push_back({axis, start[axis], direction, width, spacing});
@@ -670,6 +670,9 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   int64_t omitted_pole_points = 0;
   status = seed_poles(geometry, boundary, outer, metric, points, fixed, omitted_pole_points);
   if (status != PHX_MC_OK) return status;
+  if (points.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
+      boundary.segments.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
+      holes.size()/2 > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_INDEX_RANGE_ERROR;
   CadRefine2DInput input;
   input.points = points.data();
   input.point_count = static_cast<int32_t>(points.size() / 2);
@@ -677,7 +680,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.segment_count = static_cast<int32_t>(boundary.segments.size() / 2);
   input.holes = holes.data();
   input.hole_count = static_cast<int32_t>(holes.size() / 2);
-  input.point_cap = std::max<int32_t>(input.point_count * 100, 10000);
+  input.point_cap = static_cast<int32_t>(std::min<int64_t>(
+      kMaxMeshPoints, std::max<int64_t>(int64_t{input.point_count} * 100, 10000)));
   input.metric = face_metric;
   input.metric_context = &metric;
   input.fixed_vertices = fixed.data();

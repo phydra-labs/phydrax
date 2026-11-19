@@ -3,11 +3,14 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <map>
 #include <vector>
 
 #include "cad_faces.hpp"
 #include "check.hpp"
 #include "predicates.hpp"
+#include "cad_quadric_model.inc"
 
 namespace {
 
@@ -149,6 +152,214 @@ void plane_with_hole() {
   // A missing carve would leave triangle centroids inside the square hole.
 }
 
+struct SurfaceArrays {
+  std::vector<double> points, parameters, uv, sliver_uv, edge_parameters;
+  std::vector<int8_t> dimensions;
+  std::vector<int32_t> entities, triangles, patches, uses, regions, sliver_patches, edges, edge_curves;
+  std::vector<phx_mc_cad_face_stats> stats;
+};
+
+SurfaceArrays assemble_surface(const phx_mc_cad_model& model, const PlaneWithHole& bank,
+                               double size) {
+  const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
+  const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
+  const phx_mc_cad_surface_controls controls{bank.sample_offsets.data(),
+      static_cast<int64_t>(bank.samples.size()), bank.samples.data(), sizes.data(), tolerances.data(), 0.5};
+  phx_mc_cad_surface_result* handle = nullptr;
+  PHX_CHECK(phx_mc_cad_mesh(&model, &controls, &handle) == PHX_MC_OK);
+  if (!handle) return {};
+  int64_t counts[5]{};
+  PHX_CHECK(phx_mc_cad_surface_result_sizes(handle, counts) == PHX_MC_OK);
+  const auto v = static_cast<std::size_t>(counts[0]), t = static_cast<std::size_t>(counts[1]);
+  const auto s = static_cast<std::size_t>(counts[2]), e = static_cast<std::size_t>(counts[3]);
+  const auto f = static_cast<std::size_t>(counts[4]);
+  SurfaceArrays result;
+  result.points.resize(3*v); result.dimensions.resize(v); result.entities.resize(v);
+  result.parameters.resize(2*v); result.triangles.resize(3*t); result.patches.resize(t);
+  result.uv.resize(6*t); result.uses.resize(3*t); result.regions.resize(2*t);
+  result.sliver_uv.resize(6*s); result.sliver_patches.resize(s); result.edges.resize(2*e);
+  result.edge_curves.resize(e); result.edge_parameters.resize(2*e); result.stats.resize(f);
+  phx_mc_cad_surface_arrays arrays{counts[0],counts[1],counts[2],counts[3],counts[4],
+      result.points.data(),result.dimensions.data(),result.entities.data(),result.parameters.data(),
+      result.triangles.data(),result.patches.data(),result.uv.data(),result.uses.data(),result.regions.data(),
+      result.sliver_uv.data(),result.sliver_patches.data(),result.edges.data(),result.edge_curves.data(),
+      result.edge_parameters.data(),result.stats.data()};
+  phx_mc_cad_surface_arrays short_arrays = arrays;
+  short_arrays.triangle_capacity = counts[1] - 1;
+  if (!result.points.empty()) result.points[0] = 42.0;
+  PHX_CHECK(phx_mc_cad_surface_result_export(handle, &short_arrays) == PHX_MC_CAPACITY_EXCEEDED);
+  if (!result.points.empty()) PHX_CHECK(result.points[0] == 42.0);
+  PHX_CHECK(phx_mc_cad_surface_result_export(handle, &arrays) == PHX_MC_OK);
+  phx_mc_cad_surface_result_free(handle);
+  return result;
+}
+
+template <class T>
+bool same_bytes(const std::vector<T>& a, const std::vector<T>& b) {
+  return a.size() == b.size() &&
+         (a.empty() || std::memcmp(a.data(), b.data(), a.size()*sizeof(T)) == 0);
+}
+
+void check_deterministic(const SurfaceArrays& a, const SurfaceArrays& b) {
+  PHX_CHECK(same_bytes(a.points,b.points) && same_bytes(a.parameters,b.parameters) &&
+            same_bytes(a.uv,b.uv) && same_bytes(a.sliver_uv,b.sliver_uv) &&
+            same_bytes(a.edge_parameters,b.edge_parameters) && same_bytes(a.dimensions,b.dimensions) &&
+            same_bytes(a.entities,b.entities) && same_bytes(a.triangles,b.triangles) &&
+            same_bytes(a.patches,b.patches) && same_bytes(a.uses,b.uses) &&
+            same_bytes(a.regions,b.regions) && same_bytes(a.sliver_patches,b.sliver_patches) &&
+            same_bytes(a.edges,b.edges) && same_bytes(a.edge_curves,b.edge_curves) &&
+            same_bytes(a.stats,b.stats));
+}
+
+void check_closed(const SurfaceArrays& mesh, int expected_euler) {
+  std::map<std::pair<int32_t,int32_t>, std::pair<int,int>> edges;
+  for (std::size_t i = 0; i < mesh.triangles.size(); i += 3)
+    for (int k = 0; k < 3; ++k) {
+      const int32_t a = mesh.triangles[i+k], b = mesh.triangles[i+(k+1)%3];
+      auto& entry = edges[std::minmax(a,b)];
+      ++entry.first; entry.second += a < b ? 1 : -1;
+    }
+  for (const auto& [edge, incidence] : edges) {
+    (void)edge;
+    PHX_CHECK(incidence.first == 2 && incidence.second == 0);
+  }
+  PHX_CHECK(static_cast<int64_t>(mesh.points.size()/3) - static_cast<int64_t>(edges.size()) +
+            static_cast<int64_t>(mesh.triangles.size()/3) == expected_euler);
+}
+
+void check_outward(const SurfaceArrays& mesh, bool torus) {
+  for (std::size_t i = 0; i < mesh.patches.size(); ++i) {
+    const double* a = mesh.points.data() + 3 * mesh.triangles[3*i];
+    const double* b = mesh.points.data() + 3 * mesh.triangles[3*i+1];
+    const double* c = mesh.points.data() + 3 * mesh.triangles[3*i+2];
+    const double x = (a[0]+b[0]+c[0])/3, y = (a[1]+b[1]+c[1])/3, z = (a[2]+b[2]+c[2])/3;
+    const double ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
+    const double vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2];
+    const double nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    if (torus) {
+      const double radial = std::hypot(x,y);
+      PHX_CHECK(nx*x*(radial-2)/radial + ny*y*(radial-2)/radial + nz*z > 0);
+    } else if (mesh.patches[i] == 0) {
+      PHX_CHECK(nx*x + ny*y > 0);
+    } else {
+      PHX_CHECK(nz * (mesh.patches[i] == 1 ? -1 : 1) > 0);
+    }
+  }
+}
+
+void check_torus_assembly(const phx_mc_cad_model& model, const PlaneWithHole& bank, double size) {
+  const SurfaceArrays mesh = assemble_surface(model, bank, size);
+  const SurfaceArrays again = assemble_surface(model, bank, size);
+  check_deterministic(mesh, again);
+  check_closed(mesh, 0);
+  check_outward(mesh, true);
+  for (std::size_t i = 0; i < mesh.points.size(); i += 3) {
+    const double radial = std::hypot(mesh.points[i], mesh.points[i+1]);
+    PHX_CHECK(std::abs((radial-2)*(radial-2)+mesh.points[i+2]*mesh.points[i+2]-0.25) < 4e-15);
+  }
+}
+
+void check_cylinder_assembly(PlaneWithHole bank, double size) {
+  constexpr double turn = 6.28318530717958647692;
+  bank.surface_nodes.push_back(bank.add("plane", {0,0,0, 1,0,0, 0,1,0}));
+  bank.surface_nodes.push_back(bank.add("plane", {0,0,1, 1,0,0, 0,1,0}));
+  bank.orientation = {1,-1,1};
+  bank.periods = {turn,0, 0,0, 0,0};
+  bank.domains = {0,turn,0,1, -1,1,-1,1, -1,1,-1,1};
+  for (int face = 1; face <= 2; ++face) {
+    bank.pcurve_nodes.push_back(bank.add("circle2", {0,0, 1,0, 0,1, 1}));
+    bank.use_entities.push_back(face == 1 ? 0 : 2);
+    bank.use_kinds.push_back(0); bank.senses.push_back(1);
+    bank.use_ranges.insert(bank.use_ranges.end(), {0,turn});
+  }
+  bank.loop_offsets = {0,4,5,6}; bank.loop_surfaces = {0,1,2};
+  phx_mc_cad_model model = bank.model();
+  model.corner_count = 2; model.surface_count = 3; model.curve_count = 3;
+  model.loop_count = 3; model.use_count = 6;
+  const SurfaceArrays mesh = assemble_surface(model, bank, size);
+  const SurfaceArrays again = assemble_surface(model, bank, size);
+  check_deterministic(mesh, again);
+  check_closed(mesh, 2);
+  check_outward(mesh, false);
+  for (std::size_t i = 0; i < mesh.points.size(); i += 3) {
+    const double radius = std::hypot(mesh.points[i], mesh.points[i+1]);
+    PHX_CHECK(std::abs(radius - 1.0) < 4e-15 || std::abs(mesh.points[i+2]) < 4e-15 ||
+              std::abs(mesh.points[i+2] - 1.0) < 4e-15);
+  }
+}
+
+void check_sphere_assembly(PlaneWithHole bank, double size) {
+  constexpr double pi = 3.14159265358979323846;
+  bank.curve_nodes = {bank.add("circle3", {0,0,0, 1,0,0, 0,0,1, 1})};
+  bank.corners = {0,0,-1, 0,0,1}; bank.curve_corners = {0,1};
+  bank.ranges = {-pi/2,pi/2};
+  bank.pcurve_nodes = {bank.add("line2", {0,-pi/2, 1,0}),
+                       bank.add("line2", {2*pi,0, 0,1}),
+                       bank.add("line2", {0,pi/2, 1,0}),
+                       bank.add("line2", {0,0, 0,1})};
+  bank.use_kinds = {1,0,1,0}; bank.use_entities = {0,0,1,0};
+  bank.senses = {1,1,-1,-1};
+  bank.use_ranges = {0,2*pi,-pi/2,pi/2,0,2*pi,-pi/2,pi/2};
+  bank.loop_offsets = {0,4}; bank.loop_surfaces = {0};
+  bank.periods = {2*pi,0}; bank.domains = {0,2*pi,-pi/2,pi/2};
+  bank.samples.clear(); bank.sample_offsets = {0};
+  const int n = static_cast<int>(std::ceil(pi/size));
+  for (int i = 0; i <= n; ++i) bank.samples.push_back(static_cast<double>(i)/n);
+  bank.sample_offsets.push_back(static_cast<int64_t>(bank.samples.size()));
+  phx_mc_cad_model model = bank.model();
+  model.corner_count = 2; model.surface_count = 1; model.curve_count = 1;
+  model.loop_count = 1; model.use_count = 4;
+  const SurfaceArrays mesh = assemble_surface(model, bank, size);
+  const SurfaceArrays again = assemble_surface(model, bank, size);
+  check_deterministic(mesh, again);
+  check_closed(mesh, 2);
+  for (std::size_t i = 0; i < mesh.points.size(); i += 3)
+    PHX_CHECK(std::abs(mesh.points[i]*mesh.points[i] + mesh.points[i+1]*mesh.points[i+1] +
+                       mesh.points[i+2]*mesh.points[i+2] - 1.0) < 4e-15);
+  for (std::size_t i = 0; i < mesh.triangles.size(); i += 3) {
+    const double* a = mesh.points.data() + 3*mesh.triangles[i];
+    const double* b = mesh.points.data() + 3*mesh.triangles[i+1];
+    const double* c = mesh.points.data() + 3*mesh.triangles[i+2];
+    const double ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2];
+    const double vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
+    PHX_CHECK((uy*vz-uz*vy)*a[0] + (uz*vx-ux*vz)*a[1] + (ux*vy-uy*vx)*a[2] > 0);
+  }
+}
+
+void check_cone_assembly(PlaneWithHole bank, double size) {
+  constexpr double pi = 3.14159265358979323846;
+  bank.surface_nodes.push_back(bank.add("plane", {0,0,1, 1,0,0, 0,1,0}));
+  bank.orientation = {1,1}; bank.periods = {2*pi,0, 0,0};
+  bank.domains = {0,2*pi,0,1, -1,1,-1,1};
+  bank.pcurve_nodes.push_back(bank.add("circle2", {0,0, 1,0, 0,1, 1}));
+  bank.use_entities.push_back(0); bank.use_kinds.push_back(0); bank.senses.push_back(1);
+  bank.use_ranges.insert(bank.use_ranges.end(), {0,2*pi});
+  bank.loop_offsets = {0,4,5}; bank.loop_surfaces = {0,1};
+  phx_mc_cad_model model = bank.model();
+  model.corner_count = 2; model.surface_count = 2; model.curve_count = 2;
+  model.loop_count = 2; model.use_count = 5;
+  const SurfaceArrays mesh = assemble_surface(model, bank, size);
+  const SurfaceArrays again = assemble_surface(model, bank, size);
+  check_deterministic(mesh, again);
+  check_closed(mesh, 2);
+  for (std::size_t i = 0; i < mesh.points.size(); i += 3) {
+    const double r = std::hypot(mesh.points[i], mesh.points[i+1]);
+    PHX_CHECK(std::abs(r-mesh.points[i+2]) < 4e-15 || std::abs(mesh.points[i+2]-1.0) < 4e-15);
+  }
+  for (std::size_t i = 0; i < mesh.patches.size(); ++i) {
+    const double* a=mesh.points.data()+3*mesh.triangles[3*i];
+    const double* b=mesh.points.data()+3*mesh.triangles[3*i+1];
+    const double* c=mesh.points.data()+3*mesh.triangles[3*i+2];
+    const double ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2];
+    const double vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
+    const double nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    if (mesh.patches[i] == 0)
+      PHX_CHECK(nx*(a[0]+b[0]+c[0]) + ny*(a[1]+b[1]+c[1]) -
+                nz*(a[2]+b[2]+c[2]) > 0);
+    else PHX_CHECK(nz > 0);
+  }
+}
+
 // Rectangular charts of a cylinder and a torus. Opposite chart sides reuse
 // the same curve row but have distinct UVs; this catches accidental seam welds.
 void periodic_patch(bool torus, bool ungraded = false) {
@@ -211,6 +422,8 @@ void periodic_patch(bool torus, bool ungraded = false) {
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
   const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
   PHX_CHECK(phx::mc::validate_cad_curve_discretization(model, curves) == PHX_MC_OK);
+  if (torus && !ungraded) check_torus_assembly(model, bank, requested_size);
+  if (!torus && !ungraded) check_cylinder_assembly(bank, requested_size);
   CadFaceMesh result;
   const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, requested_size, 0.4, 0.5, result);
   std::fprintf(stderr, "%s status=%d triangles=%zu unresolved=%lld lens=%lld outside=%lld proximity=%lld nonstar=%lld\n",
@@ -353,6 +566,8 @@ void polar_patch(bool cone, bool trim = false) {
   model.loop_count = trim ? 2 : 1; model.use_count = trim ? 8 : 4;
   CadGeometry geometry;
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  if (!cone && !trim) check_sphere_assembly(bank, size);
+  if (cone) check_cone_assembly(bank, size);
   const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
   std::vector<std::array<double, 2>> metric_points;
   CadFaceMesh result;
@@ -415,6 +630,83 @@ void polar_patch(bool cone, bool trim = false) {
   PHX_CHECK(bad_angles == (trim ? 1 : 0));
 }
 
+void quadric_assembly() {
+  phx_mc_cad_model model{};
+  model.node_count = quadric_node_kinds.size();
+  model.node_kinds = quadric_node_kinds.data();
+  model.node_integer_offsets = quadric_node_integer_offsets.data();
+  model.node_integers = quadric_node_integers.data();
+  model.node_real_offsets = quadric_node_real_offsets.data();
+  model.node_reals = quadric_node_reals.data();
+  model.corner_count = quadric_corner_points.size()/3; model.corner_points = quadric_corner_points.data();
+  model.surface_count = quadric_surface_nodes.size(); model.surface_nodes = quadric_surface_nodes.data();
+  model.surface_orientations = quadric_surface_orientations.data();
+  model.surface_periods = quadric_surface_periods.data();
+  model.surface_parameter_domains = quadric_surface_parameter_domains.data();
+  model.curve_count = quadric_curve_nodes.size(); model.curve_nodes = quadric_curve_nodes.data();
+  model.curve_corners = quadric_curve_corners.data(); model.curve_ranges = quadric_curve_ranges.data();
+  model.loop_count = quadric_loop_surfaces.size(); model.loop_use_offsets = quadric_loop_use_offsets.data();
+  model.loop_surfaces = quadric_loop_surfaces.data();
+  model.use_count = quadric_use_kinds.size(); model.use_kinds = quadric_use_kinds.data();
+  model.use_entities = quadric_use_entities.data(); model.use_senses = quadric_use_senses.data();
+  model.use_ranges = quadric_use_ranges.data(); model.use_pcurve_nodes = quadric_use_pcurve_nodes.data();
+  model.region_count = quadric_region_surface_offsets.size()-1;
+  model.region_surface_offsets = quadric_region_surface_offsets.data();
+  model.region_surfaces = quadric_region_surfaces.data();
+  model.region_orientations = quadric_region_orientations.data();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  PlaneWithHole bank;
+  bank.samples.clear(); bank.sample_offsets = {0};
+  phx::mc::cad::EvaluationWorkspace workspace;
+  constexpr int intervals = 4096;
+  constexpr double spacing = 0.12;
+  for (int32_t curve = 0; curve < model.curve_count; ++curve) {
+    std::array<double, intervals+1> cumulative{};
+    const double first = model.curve_ranges[2*curve], last = model.curve_ranges[2*curve+1];
+    for (int i = 0; i < intervals; ++i) {
+      const double parameter = first + (last-first)*(i+0.5)/intervals;
+      double jet[6];
+      PHX_CHECK(geometry.jets(geometry.curve_node(curve), &parameter, 1, jet, workspace));
+      cumulative[i+1] = cumulative[i] + std::hypot(std::hypot(jet[3],jet[4]),jet[5]) *
+                                      std::abs(last-first)/intervals;
+    }
+    const int count = std::max(3, static_cast<int>(std::ceil(cumulative.back()/spacing)));
+    bank.samples.push_back(0.0);
+    for (int i = 1; i < count; ++i) {
+      const double target = cumulative.back()*i/count;
+      const auto it = std::lower_bound(cumulative.begin(), cumulative.end(), target);
+      const int j = static_cast<int>(it-cumulative.begin());
+      const double fraction = (target-cumulative[j-1])/(cumulative[j]-cumulative[j-1]);
+      bank.samples.push_back((j-1+fraction)/intervals);
+    }
+    bank.samples.push_back(1.0);
+    bank.sample_offsets.push_back(static_cast<int64_t>(bank.samples.size()));
+  }
+  const SurfaceArrays mesh = assemble_surface(model, bank, spacing);
+  const SurfaceArrays again = assemble_surface(model, bank, spacing);
+  check_deterministic(mesh, again);
+  check_closed(mesh, 2);
+  for (std::size_t i = 0; i < mesh.regions.size(); i += 2)
+    PHX_CHECK(mesh.regions[i] == -1 && mesh.regions[i+1] == 0);
+  for (std::size_t i = 0; i < mesh.points.size(); i += 3) {
+    const double x=mesh.points[i], y=mesh.points[i+1], z=mesh.points[i+2];
+    const double first = std::abs(x*x+y*y-1.0);
+    const double second = std::abs(y*y+z*z-0.36);
+    PHX_CHECK(std::min(first,second) < 8e-15);
+  }
+  for (std::size_t i = 0; i < mesh.patches.size(); ++i) {
+    const double* a=mesh.points.data()+3*mesh.triangles[3*i];
+    const double* b=mesh.points.data()+3*mesh.triangles[3*i+1];
+    const double* c=mesh.points.data()+3*mesh.triangles[3*i+2];
+    const double ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2];
+    const double vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
+    const double nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    const double x=a[0]+b[0]+c[0], y=a[1]+b[1]+c[1], z=a[2]+b[2]+c[2];
+    PHX_CHECK(mesh.patches[i] < 2 ? nx*x+ny*y > 0 : ny*y+nz*z > 0);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -425,5 +717,6 @@ int main() {
   polar_patch(false);
   polar_patch(false, true);
   polar_patch(true);
+  quadric_assembly();
   return phx::mc::test::finish("test_cad_mesh");
 }
