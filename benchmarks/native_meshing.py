@@ -123,9 +123,7 @@ def _planar_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     for size in sizes:
         count = int(4 * np.sqrt(size))
         angles = 2 * np.pi * np.arange(count) / count
-        ring = np.column_stack(
-            (0.5 + 0.3 * np.cos(angles), 0.5 + 0.3 * np.sin(angles))
-        )
+        ring = np.column_stack((0.5 + 0.3 * np.cos(angles), 0.5 + 0.3 * np.sin(angles)))
         points = np.vstack((ring, _uniform_points(size - count, 2, 777 + size)))
         segments = np.column_stack(
             (np.arange(count), (np.arange(count) + 1) % count)
