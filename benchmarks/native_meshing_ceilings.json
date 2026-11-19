@@ -2,8 +2,8 @@
   "provenance": {
     "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
     "measured": "2026-11-19",
-    "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube)",
-    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort"}
+    "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions)",
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer"}
   },
   "rows": {
     "delaunay-2d": {
@@ -17,6 +17,14 @@
       "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.8},
       "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.8},
       "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.8}
+    },
+    "implicit-sphere": {
+      "20": {"tool": "cgal", "seconds": 0.001394, "allowed_ratio": 1.0},
+      "10": {"tool": "cgal", "seconds": 0.002506, "allowed_ratio": 1.0}
+    },
+    "implicit-torus": {
+      "20": {"tool": "gmsh", "seconds": 0.090405, "allowed_ratio": 1.0},
+      "10": {"tool": "gmsh", "seconds": 0.224389, "allowed_ratio": 1.0}
     }
   }
 }

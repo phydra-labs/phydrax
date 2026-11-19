@@ -2351,6 +2351,19 @@ PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* point
                                         int64_t surface_count, const int32_t* surface,
                                         phx_mc_volume_verdict* verdict);
 
+/* Tetrahedral mesh of {f <= 0} inside the box [lower, upper] by isosurface
+ * stuffing on a body-centered cubic lattice of the given spacing. f is entry
+ * output_entry of an interval program with three inputs, evaluated in
+ * binary64 by phx_mc_program_evaluate (seeds as there). Construction only:
+ * the result is certified afterwards (phx_mc_verify_volume and the source
+ * fidelity bounds). degenerate_count reports stencil tetrahedra with zero
+ * orientation, which are omitted (the volume certificate then fails). */
+PHX_MC_API int32_t phx_mc_implicit_stuffing(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
+    int64_t workspace_size, int64_t output_entry, const double* lower, const double* upper,
+    double spacing, int64_t* degenerate_count, phx_mc_mesh** mesh);
+
 #ifdef __cplusplus
 }
 #endif

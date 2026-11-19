@@ -13,16 +13,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 
 
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
@@ -71,7 +75,53 @@ def _rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 _cells,
             )
         )
+    rows.extend(_implicit_rows())
     return tuple(rows)
+
+
+def _implicit_rows() -> tuple[_Row, ...]:
+    # Sphere and torus of the external comparison (minor radius 0.371, major
+    # 0.742); the row size is the tolerance in thousandths. The lattice spacing
+    # follows the chord rule h = 2 sqrt(tolerance * radius).
+    radius = 0.371
+
+    def sphere(x: Array) -> Array:
+        return jnp.stack((jnp.sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]) - radius,))
+
+    def torus(x: Array) -> Array:
+        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 2.0 * radius
+        return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - radius,))
+
+    rows: list[_Row] = []
+    for name, field, half_extent in (
+        ("implicit-sphere", sphere, (0.4, 0.4, 0.4)),
+        ("implicit-torus", torus, (1.15, 1.15, 0.4)),
+    ):
+        program = prepare_interval_function(
+            field, 3, batch_capacity=1, execution="batched"
+        ).native_program
+        if program is None:
+            raise RuntimeError("The implicit rows need the native interval program.")
+        upper = np.asarray(half_extent, dtype=np.float64)
+        for thousandths in (20, 10):
+            spacing = 2.0 * math.sqrt(1e-3 * thousandths * radius)
+            rows.append(
+                _Row(
+                    name,
+                    thousandths,
+                    lambda program=program, upper=upper, spacing=spacing: (
+                        program.stuff_tetrahedra(-upper, upper, spacing)
+                    ),
+                    _stuffed_cells,
+                )
+            )
+    return tuple(rows)
+
+
+def _stuffed_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.StuffedVolume):
+        raise TypeError("Isosurface stuffing returns a StuffedVolume.")
+    return result.cells.shape[0]
 
 
 def _ceiling(

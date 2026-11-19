@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Native meshing kernels (plan `docs/plans/native-meshing-kernels.md`):
+  binary64 point and jet executors of interval programs
+  (`evaluate_points`, `evaluate_jets`); an exact volume certificate
+  (`phx_mc_verify_volume`: positive cells, paired interior faces and a
+  boundary equal to the given surface certify a tiling of the solid); and
+  isosurface stuffing of `{f <= 0}` on a body-centered cubic lattice
+  (`NativeIntervalProgram.stuff_tetrahedra`), whose quadrilateral splits
+  through the smallest identity keep neighboring stencils conforming. The
+  benchmark `python -m benchmarks.native_meshing` times each kernel against
+  the best measured reference tool.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and

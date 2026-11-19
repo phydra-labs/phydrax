@@ -42,6 +42,7 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
+  src/implicit_stuffing.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
   src/metric_float.cpp

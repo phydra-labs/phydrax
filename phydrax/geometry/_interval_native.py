@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._jax_program import custom_jvp_rule_owner
-from .._meshcore import _raise_for_call, load_meshcore
+from .._meshcore import _raise_for_call, implicit_stuffing, load_meshcore, StuffedVolume
 from ._interval_enclosure import (
     _as_interval,
     _CUSTOM_EXTENSIONS,
@@ -296,17 +296,10 @@ class NativeIntervalProgram:
             high[:, self._batch_output].reshape(shape),
         )
 
-    def _point_call(
-        self, entry: str, points: NDArray[np.float64], width: int, /
-    ) -> NDArray[np.float64]:
-        """Run a point executor; ``width`` values per output entry per point."""
+    def _point_workspace(self) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+        """Seed template and output entries of the point executors."""
         if self.batch_capacity != 1 or not self.elementwise:
             raise ValueError("point execution requires an elementwise one-box program.")
-        if points.ndim != 2 or points.shape[1] != self.input_dimension:
-            raise ValueError(
-                f"points must have shape (count, {self.input_dimension}); got {points.shape}."
-            )
-        coordinates = np.ascontiguousarray(points, dtype=np.float64)
         seeds = np.zeros((self.workspace_size,), dtype=np.float64)
         for seed in self.seeds:
             # Seeds of exact constants are degenerate; a rounded-out constant
@@ -315,7 +308,18 @@ class NativeIntervalProgram:
                 0.5 * (seed.lower + seed.upper)
             ).reshape((-1,))
         outputs = np.arange(self.workspace_size, dtype=np.int64)[self._batch_output]
-        outputs = np.ascontiguousarray(outputs.reshape((-1,)), dtype=np.int64)
+        return seeds, np.ascontiguousarray(outputs.reshape((-1,)), dtype=np.int64)
+
+    def _point_call(
+        self, entry: str, points: NDArray[np.float64], width: int, /
+    ) -> NDArray[np.float64]:
+        """Run a point executor; ``width`` values per output entry per point."""
+        seeds, outputs = self._point_workspace()
+        if points.ndim != 2 or points.shape[1] != self.input_dimension:
+            raise ValueError(
+                f"points must have shape (count, {self.input_dimension}); got {points.shape}."
+            )
+        coordinates = np.ascontiguousarray(points, dtype=np.float64)
         count = coordinates.shape[0]
         result = np.empty((count, outputs.size, width), dtype=np.float64)
         status = load_meshcore()[entry](
@@ -370,6 +374,29 @@ class NativeIntervalProgram:
             result[:, :, 0].reshape(shape),
             result[:, :, 1 : 1 + variables].reshape((*shape, variables)),
             hessian.reshape((*shape, variables, variables)),
+        )
+
+    def stuff_tetrahedra(
+        self, lower: NDArray[np.float64], upper: NDArray[np.float64], spacing: float, /
+    ) -> StuffedVolume:
+        """Tetrahedra of ``{f <= 0}`` in a box by isosurface stuffing.
+
+        ``f`` is the program's single output over three inputs; ``spacing`` is
+        the lattice spacing. A floating-point construction: the result is a
+        proposal certified afterwards.
+        """
+        if self.input_dimension != 3 or math.prod(self.output.shape) != 1:
+            raise ValueError("isosurface stuffing requires one output of three inputs.")
+        seeds, outputs = self._point_workspace()
+        return implicit_stuffing(
+            self.instructions,
+            self.indices,
+            self.parameters,
+            seeds,
+            int(outputs[0]),
+            lower,
+            upper,
+            spacing,
         )
 
     def evaluate_branches(

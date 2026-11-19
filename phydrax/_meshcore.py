@@ -998,6 +998,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
     ),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
+    "phx_mc_implicit_stuffing": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _P, _P),
+    ),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -3112,6 +3116,64 @@ def verify_volume(points: object, cells: object, surface: object, /) -> VolumeVe
         unmatched_surface_triangles=verdict.unmatched_surface_triangles,
         first_unmatched_surface_triangle=verdict.first_unmatched_surface_triangle,
     )
+
+
+class StuffedVolume(NamedTuple):
+    """Tetrahedra of ``{f <= 0}`` from isosurface stuffing (construction only)."""
+
+    points: np.ndarray
+    cells: np.ndarray
+    degenerate_count: int
+
+
+def implicit_stuffing(
+    instructions: np.ndarray,
+    indices: np.ndarray,
+    parameters: np.ndarray,
+    seeds: np.ndarray,
+    output_entry: int,
+    lower: object,
+    upper: object,
+    spacing: float,
+    /,
+) -> StuffedVolume:
+    """Isosurface stuffing of an interval program's zero set inside a box.
+
+    ``instructions``, ``indices`` and ``parameters`` are a validated native
+    interval program with three inputs; ``seeds`` its workspace template and
+    ``output_entry`` the workspace entry of f. The result is a proposal: it is
+    certified afterwards.
+    """
+    lower_array = _real_array(lower, "lower")
+    upper_array = _real_array(upper, "upper")
+    if lower_array.shape != (3,) or upper_array.shape != (3,):
+        raise ValueError("lower and upper must have shape (3,).")
+    degenerate = ctypes.c_int64()
+    handle = ctypes.c_void_p()
+    library = load_meshcore()
+    status = library["phx_mc_implicit_stuffing"](
+        instructions.ctypes.data,
+        instructions.shape[0],
+        indices.ctypes.data,
+        indices.size,
+        parameters.ctypes.data,
+        parameters.size,
+        seeds.ctypes.data,
+        seeds.size,
+        output_entry,
+        lower_array.ctypes.data,
+        upper_array.ctypes.data,
+        spacing,
+        ctypes.addressof(degenerate),
+        ctypes.addressof(handle),
+    )
+    _raise_for_call(status, "implicit_stuffing")
+    if not handle.value:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, "implicit_stuffing: missing mesh"
+        )
+    points, cells, _, _, _, _, _ = _read_mesh(library, handle)
+    return StuffedVolume(points, cells, degenerate.value)
 
 
 class RestrictedPowerCells(NamedTuple):
