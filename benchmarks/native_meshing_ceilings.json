@@ -7,16 +7,16 @@
   },
   "rows": {
     "delaunay-2d": {
-      "1000": {"tool": "cgal", "seconds": 0.00035, "allowed_ratio": 2.0},
-      "10000": {"tool": "cgal", "seconds": 0.00364, "allowed_ratio": 2.0},
-      "100000": {"tool": "cgal", "seconds": 0.038, "allowed_ratio": 2.0},
-      "1000000": {"tool": "cgal", "seconds": 0.410, "allowed_ratio": 2.0}
+      "1000": {"tool": "cgal", "seconds": 0.00035, "allowed_ratio": 1.0},
+      "10000": {"tool": "cgal", "seconds": 0.00364, "allowed_ratio": 1.0},
+      "100000": {"tool": "cgal", "seconds": 0.038, "allowed_ratio": 1.0},
+      "1000000": {"tool": "cgal", "seconds": 0.410, "allowed_ratio": 1.0}
     },
     "delaunay-3d": {
-      "1000": {"tool": "cgal", "seconds": 0.0028, "allowed_ratio": 1.8},
-      "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.8},
-      "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.8},
-      "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.8}
+      "1000": {"tool": "cgal", "seconds": 0.0028, "allowed_ratio": 1.0},
+      "10000": {"tool": "cgal", "seconds": 0.031, "allowed_ratio": 1.0},
+      "100000": {"tool": "cgal", "seconds": 0.322, "allowed_ratio": 1.0},
+      "1000000": {"tool": "cgal", "seconds": 3.26, "allowed_ratio": 1.0}
     },
     "implicit-sphere": {
       "20": {"tool": "cgal", "seconds": 0.001394, "allowed_ratio": 1.0},

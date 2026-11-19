@@ -147,7 +147,9 @@ inline void hilbert_keys(const double* points, int dimension, std::span<const in
     }
   }
   const double extent[3] = {upper[0] - lower[0], upper[1] - lower[1], upper[2] - lower[2]};
-  constexpr std::size_t kLanes = 8;
+  // Lanes are independent dependency chains through the transpose: enough
+  // of them keep the vector units busy.
+  constexpr std::size_t kLanes = 32;
   keys.reserve(candidates.size());
   for (std::size_t begin = 0; begin < candidates.size(); begin += kLanes) {
     const std::size_t end = std::min(candidates.size(), begin + kLanes);
