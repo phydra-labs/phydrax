@@ -2079,13 +2079,16 @@ def test_fixed_refinement_next_to_thin_pole_fans_is_bounded() -> None:
 
 
 def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() -> None:
-    # A FIXED CAD unit-sphere PLC (640 points, 1276 triangles) whose recovery
-    # leaves three split points to suppress through the volume. Each one's
-    # star spans much of the ball (476 to 718 link walls) and has no
-    # constrained Delaunay fill. Each wrap stops at its first stuck side
-    # (34, 52 and 15 cells) before a later fill option succeeds; a wrap that
-    # went on past its stuck sides laid 17,405 overlapping cells in the first
-    # star alone and did not finish in 20 minutes.
+    # A FIXED CAD unit-sphere PLC (640 points, 1276 triangles). Recovery used
+    # to leave three split points to suppress through the volume, each with a
+    # star spanning much of the ball (476 to 718 link walls) and no
+    # constrained Delaunay fill; a wrap that went on past its stuck sides laid
+    # 17,405 overlapping cells in the first star alone and did not finish in
+    # 20 minutes. Edge recovery now replaces one of those splits by an edge
+    # removal with one volume Steiner point, so the input points come first
+    # and unmoved, every published face uses input vertices only, and the
+    # two splits left are suppressed by wraps that stop at their first stuck
+    # side.
     data = np.load(
         Path(__file__).resolve().parents[2] / "data" / "meshing" / "cad_sphere_plc.npz"
     )
@@ -2100,11 +2103,13 @@ def test_fixed_cad_sphere_recovery_suppresses_its_splits_with_bounded_wraps() ->
         segment_tolerances=data["segment_tolerances"],
         boundary_policy=PlcBoundaryPolicy.FIXED,
     )
-    np.testing.assert_array_equal(recovered.points, data["points"])
+    np.testing.assert_array_equal(recovered.points[: data["points"].shape[0]], data["points"])
+    assert recovered.points.shape[0] == data["points"].shape[0] + 1
+    assert int(recovered.faces.max()) < data["points"].shape[0]
     assert recovered.faces.shape[0] == data["polygon_facets"].shape[0]
-    assert recovered.tetrahedra.shape[0] == 1329
+    assert recovered.tetrahedra.shape[0] == 1347
     evidence = recovered.suppression_search
-    assert (evidence.wraps, evidence.wrap_cells, evidence.max_wrap_cells) == (3, 101, 52)
+    assert (evidence.wraps, evidence.wrap_cells, evidence.max_wrap_cells) == (2, 140, 76)
     assert evidence.searches == 0
     assert evidence.max_wrap_cells < recovered.tetrahedra.shape[0]
 

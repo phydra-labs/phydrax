@@ -39,13 +39,23 @@ using geometry::point_triangle_distance;
 // coordinates, enclosing the rounded interior closest points of the
 // Voronoi-region kernel; triangles with a nearly degenerate corner angle
 // have unbounded boxes.
+//
+// The rows are sorted along the Morton curve of their box centers and cut
+// into leaves of up to kLeaf rows; a balanced binary tree over the leaves
+// takes the union of its children's boxes, built bottom up. Nodes are
+// stored in preorder with the index past their subtree, so a query is one
+// forward scan that jumps over every subtree whose box is too far.
 class ProtectionIndex {
+  static constexpr std::size_t kLeaf = 4;
+  struct Box {
+    double lower[3];
+    double upper[3];
+  };
   struct Node {
-    double lower[3]{};
-    double upper[3]{};
-    std::size_t left = 0;
-    std::size_t right = 0;
-    std::size_t row = std::numeric_limits<std::size_t>::max();
+    Box box;
+    uint32_t first = 0;
+    uint32_t count = 0;  // rows of a leaf; 0 for an inner node
+    uint32_t skip = 0;   // the node after this subtree
   };
 
  public:
@@ -53,12 +63,9 @@ class ProtectionIndex {
              std::size_t arity) {
     const std::size_t size = arity > 1 ? cells.size() / arity : count;
     if (size == 0) return;
-    nodes_.reserve(2 * size - 1);
-    std::vector<std::size_t> order(size);
-    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::vector<Box> boxes(size);
     for (std::size_t row = 0; row < size; ++row) {
-      Node node;
-      node.row = row;
+      Box& box = boxes[row];
       const double* a = points + 3 * (arity > 1 ? static_cast<std::size_t>(cells[arity * row]) : row);
       bool unbounded = false;
       if (arity == 3) {
@@ -73,16 +80,16 @@ class ProtectionIndex {
         unbounded = !(dot(normal, normal) >= 0x1p-30 * dot(ab, ab) * dot(ac, ac));
       }
       for (int axis = 0; axis < 3; ++axis) {
-        node.lower[axis] = node.upper[axis] = a[axis];
+        box.lower[axis] = box.upper[axis] = a[axis];
         if (arity == 2) {
           const double b = points[3 * static_cast<std::size_t>(cells[2 * row + 1]) + axis];
           const double reconstructed = a[axis] + (b - a[axis]);
           if (std::isfinite(reconstructed)) {
-            node.lower[axis] = std::min({a[axis], b, reconstructed});
-            node.upper[axis] = std::max({a[axis], b, reconstructed});
+            box.lower[axis] = std::min({a[axis], b, reconstructed});
+            box.upper[axis] = std::max({a[axis], b, reconstructed});
           } else {
-            node.lower[axis] = -std::numeric_limits<double>::infinity();
-            node.upper[axis] = std::numeric_limits<double>::infinity();
+            box.lower[axis] = -std::numeric_limits<double>::infinity();
+            box.upper[axis] = std::numeric_limits<double>::infinity();
           }
         } else if (arity == 3) {
           const double b = points[3 * static_cast<std::size_t>(cells[3 * row + 1]) + axis];
@@ -92,73 +99,127 @@ class ProtectionIndex {
           const double margin = 0x1p-20 * (upper - lower) +
                                 0x1p-40 * std::max(std::fabs(lower), std::fabs(upper));
           const bool finite = !unbounded && std::isfinite(margin);
-          node.lower[axis] = finite ? lower - margin : -std::numeric_limits<double>::infinity();
-          node.upper[axis] = finite ? upper + margin : std::numeric_limits<double>::infinity();
+          box.lower[axis] = finite ? lower - margin : -std::numeric_limits<double>::infinity();
+          box.upper[axis] = finite ? upper + margin : std::numeric_limits<double>::infinity();
         }
       }
-      nodes_.push_back(node);
     }
-    const auto build_range = [&](auto&& self, std::size_t first, std::size_t end)
-        -> std::size_t {
-      if (end - first == 1) return order[first];
-      Node node = nodes_[order[first]];
-      node.row = std::numeric_limits<std::size_t>::max();
-      for (std::size_t i = first + 1; i < end; ++i) {
-        for (int axis = 0; axis < 3; ++axis) {
-          node.lower[axis] = std::min(node.lower[axis], nodes_[order[i]].lower[axis]);
-          node.upper[axis] = std::max(node.upper[axis], nodes_[order[i]].upper[axis]);
-        }
-      }
-      int axis = 0;
-      for (int k = 1; k < 3; ++k) {
-        if (node.upper[k] - node.lower[k] > node.upper[axis] - node.lower[axis]) axis = k;
-      }
-      const auto center = [&](std::size_t row) {
-        const double value = std::midpoint(nodes_[row].lower[axis], nodes_[row].upper[axis]);
-        return std::isfinite(value) ? value : 0.0;
-      };
-      const std::size_t middle = first + (end - first) / 2;
-      std::nth_element(order.begin() + first, order.begin() + middle, order.begin() + end,
-                       [&](std::size_t a, std::size_t b) {
-                         const double x = center(a), y = center(b);
-                         return x < y || (x == y && a < b);
-                       });
-      node.left = self(self, first, middle);
-      node.right = self(self, middle, end);
-      const std::size_t index = nodes_.size();
-      nodes_.push_back(node);
-      return index;
+    // Morton order of the box centers (unbounded ones first), ties by row.
+    double low[3], high[3];
+    std::fill_n(low, 3, std::numeric_limits<double>::infinity());
+    std::fill_n(high, 3, -std::numeric_limits<double>::infinity());
+    const auto center = [&](const Box& box, int axis) {
+      return std::midpoint(box.lower[axis], box.upper[axis]);
     };
-    root_ = build_range(build_range, 0, size);
+    for (const Box& box : boxes) {
+      for (int axis = 0; axis < 3; ++axis) {
+        const double value = center(box, axis);
+        if (!std::isfinite(value)) continue;
+        low[axis] = std::min(low[axis], value);
+        high[axis] = std::max(high[axis], value);
+      }
+    }
+    const auto spread = [](uint64_t x) {
+      x &= 0x1FFFFFU;
+      x = (x | x << 32) & 0x1F00000000FFFFULL;
+      x = (x | x << 16) & 0x1F0000FF0000FFULL;
+      x = (x | x << 8) & 0x100F00F00F00F00FULL;
+      x = (x | x << 4) & 0x10C30C30C30C30C3ULL;
+      x = (x | x << 2) & 0x1249249249249249ULL;
+      return x;
+    };
+    std::vector<std::pair<uint64_t, uint32_t>> keys(size);
+    for (std::size_t row = 0; row < size; ++row) {
+      uint64_t code = 0;
+      for (int axis = 0; axis < 3; ++axis) {
+        const double value = center(boxes[row], axis);
+        const double extent = high[axis] - low[axis];
+        double scaled = std::isfinite(value) && extent > 0.0
+                            ? (value - low[axis]) / extent * 0x1.FFFFFp20 : 0.0;
+        scaled = std::clamp(scaled, 0.0, 0x1.FFFFFp20);
+        code |= spread(static_cast<uint64_t>(scaled)) << axis;
+      }
+      keys[row] = {code, static_cast<uint32_t>(row)};
+    }
+    std::sort(keys.begin(), keys.end());
+    rows_.resize(size);
+    boxes_.resize(size);
+    for (std::size_t at = 0; at < size; ++at) {
+      rows_[at] = keys[at].second;
+      boxes_[at] = boxes[keys[at].second];
+    }
+    const std::size_t leaves = (size + kLeaf - 1) / kLeaf;
+    nodes_.clear();
+    nodes_.reserve(2 * leaves - 1);
+    const auto merge = [](Box& into, const Box& box) {
+      for (int axis = 0; axis < 3; ++axis) {
+        into.lower[axis] = std::min(into.lower[axis], box.lower[axis]);
+        into.upper[axis] = std::max(into.upper[axis], box.upper[axis]);
+      }
+    };
+    const auto build_range = [&](auto&& self, std::size_t first, std::size_t end) -> void {
+      const std::size_t index = nodes_.size();
+      nodes_.emplace_back();
+      Box box;
+      if (end - first == 1) {
+        const std::size_t begin = first * kLeaf;
+        const std::size_t stop = std::min(size, begin + kLeaf);
+        box = boxes_[begin];
+        for (std::size_t at = begin + 1; at < stop; ++at) merge(box, boxes_[at]);
+        nodes_[index].first = static_cast<uint32_t>(begin);
+        nodes_[index].count = static_cast<uint32_t>(stop - begin);
+      } else {
+        const std::size_t middle = first + (end - first) / 2;
+        self(self, first, middle);
+        const std::size_t right = nodes_.size();
+        self(self, middle, end);
+        box = nodes_[index + 1].box;
+        merge(box, nodes_[right].box);
+      }
+      nodes_[index].box = box;
+      nodes_[index].skip = static_cast<uint32_t>(nodes_.size());
+    };
+    build_range(build_range, 0, leaves);
   }
 
+  // The rows whose boxes may lie closer than 2 `reach` to `point`, in no
+  // particular order: every row a distance below 2 `reach` can come from.
   void candidates(const double* point, double reach, std::vector<std::size_t>& rows) const {
     rows.clear();
-    if (nodes_.empty()) return;
-    const auto query = [&](auto&& self, std::size_t index) -> void {
-      const Node& node = nodes_[index];
-      const double nearest[3] = {
-          std::clamp(point[0], node.lower[0], node.upper[0]),
-          std::clamp(point[1], node.lower[1], node.upper[1]),
-          std::clamp(point[2], node.lower[2], node.upper[2])};
-      // Subtraction, squaring, summation, and square root are monotone in each
-      // absolute coordinate difference, so the clamped-box distance is also a
-      // lower bound for the actual represented closest-point calculation.
-      if (0.5 * distance(point, nearest) >= reach) return;
-      if (node.row != std::numeric_limits<std::size_t>::max()) {
-        rows.push_back(node.row);
-      } else {
-        self(self, node.left);
-        self(self, node.right);
+    // Subtraction, squaring, summation, and square root are monotone in each
+    // absolute coordinate difference, so the clamped-box distance is also a
+    // lower bound for the actual represented closest-point calculation. A
+    // squared box distance of at least (2 reach)^2 (1 + 2^-40), rounded
+    // down, bounds every such distance by at least 2 reach after rounding.
+    const double threshold = 4.0 * reach * reach * (1.0 + 0x1p-40);
+    const auto far = [&](const Box& box) {
+      double squared = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        const double gap = point[axis] - std::clamp(point[axis], box.lower[axis], box.upper[axis]);
+        squared += gap * gap;
       }
+      return squared >= threshold;
     };
-    query(query, root_);
-    std::sort(rows.begin(), rows.end());
+    for (std::size_t index = 0; index < nodes_.size();) {
+      const Node& node = nodes_[index];
+      if (far(node.box)) {
+        index = node.skip;
+        continue;
+      }
+      for (std::size_t at = node.first; at < node.first + node.count; ++at) {
+        if (!far(boxes_[at])) rows.push_back(rows_[at]);
+      }
+      ++index;
+    }
   }
+
+  // The rows along the Morton curve.
+  std::span<const uint32_t> order() const { return rows_; }
 
  private:
   std::vector<Node> nodes_;
-  std::size_t root_ = 0;
+  std::vector<uint32_t> rows_;
+  std::vector<Box> boxes_;
 };
 
 constexpr double kMinimumParameter = 0x1p-500;
@@ -222,39 +283,54 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     }
     points = world_points.data();
   }
-  std::vector<std::vector<int32_t>> incident(count);
+  // Incident vertices per vertex, in edge order.
+  std::vector<std::size_t> offsets(count + 1, 0);
   for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
-    incident[static_cast<std::size_t>(edges[e])].push_back(edges[e + 1]);
-    incident[static_cast<std::size_t>(edges[e + 1])].push_back(edges[e]);
+    ++offsets[static_cast<std::size_t>(edges[e]) + 1];
+    ++offsets[static_cast<std::size_t>(edges[e + 1]) + 1];
+  }
+  std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+  std::vector<int32_t> incident(offsets.back());
+  {
+    std::vector<std::size_t> next(offsets.begin(), offsets.end() - 1);
+    for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
+      incident[next[static_cast<std::size_t>(edges[e])]++] = edges[e + 1];
+      incident[next[static_cast<std::size_t>(edges[e + 1])]++] = edges[e];
+    }
   }
   std::vector<double> radii(count, 0.0);
-  ProtectionIndex point_index, segment_index, triangle_index;
-  std::vector<std::size_t> rows;
-  bool indexed = false;
+  std::vector<char> acute(count, 0);
   for (std::size_t v = 0; v < count; ++v) {
     const double* p = points + 3 * v;
-    const std::vector<int32_t>& around = incident[v];
-    bool acute = false;
-    for (std::size_t i = 0; i < around.size() && !acute; ++i) {
+    const std::span<const int32_t> around(incident.data() + offsets[v],
+                                          offsets[v + 1] - offsets[v]);
+    for (std::size_t i = 0; i < around.size() && acute[v] == 0; ++i) {
       const double* a = points + 3 * static_cast<std::size_t>(around[i]);
       const double u[3] = {a[0] - p[0], a[1] - p[1], a[2] - p[2]};
-      for (std::size_t j = i + 1; j < around.size() && !acute; ++j) {
+      for (std::size_t j = i + 1; j < around.size() && acute[v] == 0; ++j) {
         const double* b = points + 3 * static_cast<std::size_t>(around[j]);
         const double w[3] = {b[0] - p[0], b[1] - p[1], b[2] - p[2]};
-        acute = dot(u, w) > 0.0;
+        acute[v] = dot(u, w) > 0.0 ? 1 : 0;
       }
     }
-    if (!acute) continue;
-    if (!indexed) {
-      point_index.build(points, count, {}, 1);
-      if (!edges.empty()) segment_index.build(points, 0, edges, 2);
-      triangle_index.build(points, 0, triangles, 3);
-      rows.reserve(std::max({count, edges.size() / 2, triangles.size() / 3}));
-      indexed = true;
-    }
+  }
+  if (std::find(acute.begin(), acute.end(), 1) == acute.end()) return radii;
+  ProtectionIndex point_index, segment_index, triangle_index;
+  point_index.build(points, count, {}, 1);
+  if (!edges.empty()) segment_index.build(points, 0, edges, 2);
+  triangle_index.build(points, 0, triangles, 3);
+  std::vector<std::size_t> rows;
+  rows.reserve(std::max({count, edges.size() / 2, triangles.size() / 3}));
+  // Each radius depends only on its vertex; the vertices go along the Morton
+  // curve, so consecutive queries visit nearby nodes.
+  for (const uint32_t vertex : point_index.order()) {
+    const std::size_t v = vertex;
+    if (acute[v] == 0) continue;
+    const double* p = points + 3 * v;
     double reach = std::numeric_limits<double>::infinity();
-    for (int32_t other : around) {
-      reach = std::min(reach, distance(p, points + 3 * static_cast<std::size_t>(other)) / 3.0);
+    for (std::size_t at = offsets[v]; at < offsets[v + 1]; ++at) {
+      reach = std::min(reach,
+                       distance(p, points + 3 * static_cast<std::size_t>(incident[at])) / 3.0);
     }
     point_index.candidates(p, reach, rows);
     for (std::size_t u : rows) {

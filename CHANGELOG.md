@@ -320,6 +320,35 @@
   vertex, edge and position tables. Results are unchanged; on the 184,213-cell
   icosphere refinement (level 4) refinement takes 4.7 s instead of 6.0 s and
   improvement 0.55 s instead of 0.98 s (one thread).
+- Native PLC recovery locates region seeds by a visibility walk instead of
+  scanning every cell, and refuses (INVALID_SEED) a seed on any marked face
+  through it, whichever cell holds it; regions are unchanged otherwise.
+- Native PLC source validation tests the overlapping pairs of a uniform
+  grid of the source items' boxes (cells of the median item extent; the
+  sweep along x remains for boxes that would fill more than eight cells per
+  item) and decides most triangle pairs by one to six exact orientations
+  (a shared edge with the fourth vertex off the plane, or a triangle
+  strictly on one side of the other's plane) before the general exact
+  intersection. Verdicts and the reported first intersecting pair are
+  unchanged; on the icosphere of 327,680 triangles the validation takes a
+  fifth of its former time.
+- Native protection radii index their points, segments and triangles in
+  flat bounding volume hierarchies whose leaves follow the Morton curve of
+  the boxes, with node boxes built bottom up, and query the vertices along
+  that curve. Radii are unchanged.
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants)
+  recovers a missing source edge by flips before it splits the edge: the
+  2-3 flips and edge removals around the cells the edge crosses that lower
+  their number, up to three flips ahead (cf. TetGen's flipnm), then planar
+  flips, then, under FIXED, an edge removal whose non-triangulable half is
+  coned from one volume Steiner point. Split points, and with them the
+  Steiner suppression of FIXED boundaries, become rare: the (u, v) grid
+  tori of 10,000 and 90,000 triangles, whose cospherical rows made every
+  split point's star span the torus hole, recover with no boundary split in
+  0.28 s and 2.0 s instead of 0.72 s and 31 s, the torus of 1,000,000
+  triangles in 22 s, each with a boundary equal to the input. Recovered
+  meshes, their volume Steiner points and their suppression evidence can
+  change; boundaries and regions do not.
 - The exact stage of the native insphere predicate evaluates the determinant
   on integers (128-bit products, 384-bit sums) whenever the coordinates, or
   the exact differences, of the five points span at most 61 or 62 bits, and
