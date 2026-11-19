@@ -324,6 +324,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native surface-to-tetrahedra is faster with identical output: a PLC
+  recovery that needed no local edits, Steiner points or metric marks its
+  cells as Delaunay, and refinement of the adopted mesh skips its initial flip
+  pass while the mesh is unedited; interior insertions link cone cells across
+  a dense table of local boundary-vertex indices; the segment index and
+  improvement's source-edge set are hash containers and improvement's
+  insertion cavities use the segment index instead of scanning the segment
+  bank; recovery inserts its bounding corners into the untouched Delaunay
+  triangulation without per-cell validation; first-round refinement proposals
+  get batched Hilbert keys and a radix sort.
 - Planar quality refinement processes bad triangles through a deterministic
   spatial bucket queue (`refine_queue.hpp`, one bucket where buckets do not
   pay) and constructs inserted points from a canonical vertex order. Declared

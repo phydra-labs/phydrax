@@ -92,13 +92,16 @@ tetrahedra, then implicit volumes, then the CAD solid.
   radius-edge at most 2.
 
 ### S3-C One-call pipeline and certification
-- `native/meshcore/src/surface_to_tets.cpp` (new) and C entry `phx_mc_surface_to_tets`: recovery,
-  refinement, improvement in one call on flat arrays, returning cells, region labels, boundary
-  classification.
+- Pipeline (decided Nov 19, superseding a separate `surface_to_tets.cpp` / `phx_mc_surface_to_tets`
+  entry): recovery (`phx_mc_plc3d_recover`), adoption of the recovery's native mesh
+  (`TetMesh3D.from_recovery`, no array round trip), refinement and improvement on that native state,
+  and one export. The state never leaves native memory between stages and the Python glue is a fixed
+  handful of calls, so a single C entry would add an ABI without measurable gain; the benchmark's
+  `surface-to-tets-*` rows time exactly this composition end to end.
 - `native/meshcore/src/verify_volume.cpp` (new) and C entry `phx_mc_verify_volume`: exact orientation of
   every cell, combinatorial conformity, boundary equals the input surface, region consistency.
 - Python: the PLC volume route (`phydrax/meshing/providers/_native_volume.py`,
-  `_volume_generation.py`) cut over to the one call; `prove=True` runs the verifier and the existing
+  `_volume_generation.py`) cut over to that native-state pipeline; `prove=True` runs the verifier and the existing
   source-fidelity statement for the given surface; `prove=False` returns the candidate.
 - Tests: route tests updated; the certificate rejects a mesh with a flipped cell, a missing boundary
   face, and a cell outside the surface.
