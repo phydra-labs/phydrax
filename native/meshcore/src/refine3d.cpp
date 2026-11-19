@@ -440,14 +440,13 @@ struct GridKey {
 };
 struct GridHash {
   std::size_t operator()(const GridKey& key) const noexcept {
-    std::size_t seed = 0;
-    for (std::int64_t value : key.cell) {
-      seed ^= std::hash<std::int64_t>{}(value) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
-    }
-    return seed;
+    std::uint64_t mixed = static_cast<std::uint64_t>(key.cell[0]) * 0x9e3779b97f4a7c15ULL ^
+                          static_cast<std::uint64_t>(key.cell[1]) * 0xc2b2ae3d27d4eb4fULL ^
+                          static_cast<std::uint64_t>(key.cell[2]) * 0x165667b19e3779f9ULL;
+    mixed ^= mixed >> 29;
+    return static_cast<std::size_t>(mixed);
   }
 };
-using HashGrid = std::unordered_map<GridKey, std::vector<std::int32_t>, GridHash>;
 
 bool grid_cell(const double* point, double cell, GridKey& key) {
   for (int axis = 0; axis < 3; ++axis) {
@@ -458,51 +457,103 @@ bool grid_cell(const double* point, double cell, GridKey& key) {
   return true;
 }
 
-// Calls `visit` on the items of every occupied cell meeting [lower, upper];
-// a box spanning more cells than are occupied reads every occupied cell.
-template <class Visit>
-bool visit_box(const HashGrid& grid, double cell, const double* lower, const double* upper,
-               Visit&& visit) {
-  GridKey first;
-  GridKey last;
-  if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
-  double span = 1.0;
-  for (std::size_t axis = 0; axis < 3; ++axis) {
-    span *= static_cast<double>(last.cell[axis] - first.cell[axis]) + 1.0;
-  }
-  if (span > static_cast<double>(grid.size())) {
-    for (const auto& [key, items] : grid) {
-      (void)key;
-      for (std::int32_t item : items) visit(item);
+// A uniform grid of items registered in the cells their boxes meet, built
+// once and then queried: the (cell, item) pairs sorted by cell, the occupied
+// cells in an open-addressing table over their ranges.
+class CellGrid {
+ public:
+  bool add(double cell, const double* lower, const double* upper, std::int32_t item) {
+    GridKey first;
+    GridKey last;
+    if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
+    for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
+      for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
+        for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
+          entries_.push_back({GridKey{{x, y, z}}, item});
+        }
+      }
     }
     return true;
   }
-  for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
-    for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
-      for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
-        const auto found = grid.find(GridKey{{x, y, z}});
-        if (found == grid.end()) continue;
-        for (std::int32_t item : found->second) visit(item);
-      }
-    }
-  }
-  return true;
-}
 
-bool register_box(HashGrid& grid, double cell, const double* lower, const double* upper,
-                  std::int32_t item) {
-  GridKey first;
-  GridKey last;
-  if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
-  for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
-    for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
-      for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
-        grid[GridKey{{x, y, z}}].push_back(item);
+  // Groups the registered pairs by cell (items in registration order).
+  void finish() {
+    std::stable_sort(entries_.begin(), entries_.end(), [](const Entry& a, const Entry& b) {
+      return a.key.cell < b.key.cell;
+    });
+    keys_.clear();
+    starts_.clear();
+    items_.resize(entries_.size());
+    for (std::size_t row = 0; row < entries_.size(); ++row) {
+      if (row == 0 || !(entries_[row].key == entries_[row - 1].key)) {
+        keys_.push_back(entries_[row].key);
+        starts_.push_back(static_cast<std::uint32_t>(row));
       }
+      items_[row] = entries_[row].item;
+    }
+    starts_.push_back(static_cast<std::uint32_t>(entries_.size()));
+    std::vector<Entry>().swap(entries_);
+    std::size_t size = 16;
+    while (size < 2 * keys_.size()) size *= 2;
+    table_.assign(size, -1);
+    for (std::size_t row = 0; row < keys_.size(); ++row) {
+      std::size_t probe = GridHash{}(keys_[row]) & (size - 1);
+      while (table_[probe] >= 0) probe = (probe + 1) & (size - 1);
+      table_[probe] = static_cast<std::int32_t>(row);
     }
   }
-  return true;
-}
+
+  bool empty() const noexcept { return keys_.empty(); }
+
+  // The items of the cell `key` (empty when unoccupied).
+  std::span<const std::int32_t> items(const GridKey& key) const noexcept {
+    if (keys_.empty()) return {};
+    const std::size_t mask = table_.size() - 1;
+    for (std::size_t probe = GridHash{}(key) & mask; table_[probe] >= 0; probe = (probe + 1) & mask) {
+      const std::size_t row = static_cast<std::size_t>(table_[probe]);
+      if (keys_[row] == key) {
+        return std::span<const std::int32_t>(items_).subspan(starts_[row], starts_[row + 1] - starts_[row]);
+      }
+    }
+    return {};
+  }
+
+  // Calls `visit` on the items of every occupied cell meeting [lower, upper];
+  // a box spanning more cells than are occupied reads every occupied cell.
+  template <class Visit>
+  bool visit_box(double cell, const double* lower, const double* upper, Visit&& visit) const {
+    GridKey first;
+    GridKey last;
+    if (!grid_cell(lower, cell, first) || !grid_cell(upper, cell, last)) return false;
+    double span = 1.0;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      span *= static_cast<double>(last.cell[axis] - first.cell[axis]) + 1.0;
+    }
+    if (span > static_cast<double>(keys_.size())) {
+      for (std::int32_t item : items_) visit(item);
+      return true;
+    }
+    for (std::int64_t x = first.cell[0]; x <= last.cell[0]; ++x) {
+      for (std::int64_t y = first.cell[1]; y <= last.cell[1]; ++y) {
+        for (std::int64_t z = first.cell[2]; z <= last.cell[2]; ++z) {
+          for (std::int32_t item : items(GridKey{{x, y, z}})) visit(item);
+        }
+      }
+    }
+    return true;
+  }
+
+ private:
+  struct Entry {
+    GridKey key;
+    std::int32_t item;
+  };
+  std::vector<Entry> entries_;
+  std::vector<GridKey> keys_;
+  std::vector<std::uint32_t> starts_;
+  std::vector<std::int32_t> items_;
+  std::vector<std::int32_t> table_;
+};
 
 // The largest metric length of one binary64 coordinate step at `p`.
 double coordinate_resolution(const TetMesh& mesh, const double* p) {
@@ -612,15 +663,13 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   cell = std::max(cell, extent / 16.0);
   if (!(cell > 0.0) || !std::isfinite(cell)) return false;
 
-  HashGrid point_grid;
-  HashGrid line_grid;
-  HashGrid plane_grid;
+  CellGrid point_grid;
+  CellGrid line_grid;
+  CellGrid plane_grid;
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
     const std::int32_t vertex = static_cast<std::int32_t>(slot);
     if (!mesh.live_vertex(vertex)) continue;
-    if (!register_box(point_grid, cell, world[slot].data(), world[slot].data(), vertex)) {
-      return false;
-    }
+    if (!point_grid.add(cell, world[slot].data(), world[slot].data(), vertex)) return false;
   }
   // A feature whose box lies farther than lambda from v cannot lower lambda:
   // the box distance bounds the feature distance from below (a relative
@@ -630,13 +679,16 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   for (std::size_t row = 0; row < lines.size(); ++row) {
     double* box = line_boxes[row].data();
     feature_box(lines[row], box, box + 3);
-    if (!register_box(line_grid, cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
+    if (!line_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
   }
   for (std::size_t row = 0; row < planes.size(); ++row) {
     double* box = plane_boxes[row].data();
     feature_box(planes[row], box, box + 3);
-    if (!register_box(plane_grid, cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
+    if (!plane_grid.add(cell, box, box + 3, static_cast<std::int32_t>(row))) return false;
   }
+  point_grid.finish();
+  line_grid.finish();
+  plane_grid.finish();
   const auto beyond = [](const std::array<double, 6>& box, const std::array<double, 3>& point,
                          double radius) {
     double squared = 0.0;
@@ -659,12 +711,12 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     const double lower[3]{here[0] - lambda, here[1] - lambda, here[2] - lambda};
     const double upper[3]{here[0] + lambda, here[1] + lambda, here[2] + lambda};
     const bool visited =
-        visit_box(point_grid, cell, lower, upper, [&](std::int32_t other) {
+        point_grid.visit_box(cell, lower, upper, [&](std::int32_t other) {
           if (other != vertex) {
             lambda = std::min(lambda, metric_distance(mesh, p, mesh.point(other)));
           }
         }) &&
-        visit_box(line_grid, cell, lower, upper, [&](std::int32_t row) {
+        line_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
           const auto& line = lines[static_cast<std::size_t>(row)];
           if (line[0] != vertex && line[1] != vertex &&
               !beyond(line_boxes[static_cast<std::size_t>(row)], here, lambda)) {
@@ -672,7 +724,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
                                           mesh, p, mesh.point(line[0]), mesh.point(line[1])));
           }
         }) &&
-        visit_box(plane_grid, cell, lower, upper, [&](std::int32_t row) {
+        plane_grid.visit_box(cell, lower, upper, [&](std::int32_t row) {
           const auto& plane = planes[static_cast<std::size_t>(row)];
           if (plane[0] != vertex && plane[1] != vertex && plane[2] != vertex &&
               !beyond(plane_boxes[static_cast<std::size_t>(row)], here, lambda)) {
@@ -1366,8 +1418,9 @@ class ProtectionIndex {
     for (std::size_t row = 0; row < features_.size(); ++row) {
       double lower[3], upper[3];
       box(features_[row], lower, upper);
-      if (!register_box(grid_, cell_, lower, upper, static_cast<std::int32_t>(row))) return false;
+      if (!grid_.add(cell_, lower, upper, static_cast<std::int32_t>(row))) return false;
     }
+    grid_.finish();
     return true;
   }
 
@@ -1376,10 +1429,8 @@ class ProtectionIndex {
     GridKey key;
     const auto world = metric_point(mesh_, point);
     if (grid_.empty() || !grid_cell(world.data(), cell_, key)) return -1;
-    const auto found = grid_.find(key);
-    if (found == grid_.end()) return -1;
     std::int32_t protecting = -1;
-    for (std::int32_t row : found->second) {
+    for (std::int32_t row : grid_.items(key)) {
       if (protecting >= 0 && row > protecting) continue;
       const AcuteFeature& feature = features_[static_cast<std::size_t>(row)];
       const double distance =
@@ -1404,7 +1455,7 @@ class ProtectionIndex {
 
   const TetMesh& mesh_;
   std::span<const AcuteFeature> features_;
-  HashGrid grid_;
+  CellGrid grid_;
   double cell_ = 0.0;
 };
 

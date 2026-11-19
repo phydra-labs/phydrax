@@ -268,6 +268,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement keeps its local-feature-size and protection
+  grids as sorted flat cell ranges behind one open-addressing table instead
+  of a hash map of vectors (same sizes and protected regions, same meshes);
+  L3 refinement 1.41 -> 1.36 s (torus), 1.11 -> 1.09 s (two cylinders).
 - Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) sorts only its
   first round of proposals along the Hilbert curve: later rounds take the
   cells in the order the previous round's insertions created them, which is
