@@ -168,6 +168,62 @@ void periodic_rounding_gap() {
   PHX_CHECK(result.periodic_corner_gaps == 1);
   PHX_CHECK(result.max_periodic_corner_gap_ulps == 1);
 }
+// A single closed square use has one in-use sheet jump. Its raw endpoint
+// differs by one period, but lifting the later spans cancels that turn.
+void cancelling_sheet_jump(bool huge = false, bool wrapped = false) {
+  PlaneWithHole bank;
+  bank.kinds.clear(); bank.integers.clear(); bank.reals.clear();
+  bank.integer_offsets = {0}; bank.real_offsets = {0};
+  bank.surface_nodes = {bank.add("plane", {0,0,0, 1,0,0, 0,1,0})};
+  const auto spline = [&](int dimension, const std::vector<double>& data, int count) {
+    bank.kinds.push_back(PHX_MC_CAD_NODE_BSPLINE_CURVE);
+    bank.integers.insert(bank.integers.end(), {1,count,dimension});
+    bank.integer_offsets.push_back(static_cast<int64_t>(bank.integers.size()));
+    bank.reals.insert(bank.reals.end(), data.begin(), data.end());
+    bank.real_offsets.push_back(static_cast<int64_t>(bank.reals.size()));
+    return static_cast<int32_t>(bank.kinds.size()-1);
+  };
+  bank.curve_nodes = {spline(3, {0,0,.25,.5,.75,1,1,
+                                  -1,-1,0, 1,-1,0, 1,1,0, -1,1,0, -1,-1,0,
+                                  1,1,1,1,1}, 5)};
+  const double shift = huge ? 0x1p55 : 4.0;
+  bank.pcurve_nodes = {spline(2, {0,0,.25,.5,.5,.75,1,1,
+                                   -1,-1, 1,-1, (wrapped ? shift+1 : 1.0),1, shift+1,1,
+                                   shift-1,1, shift-1,-1, 1,1,1,1,1,1}, 6)};
+  bank.corners = {-1,-1,0}; bank.curve_corners = {0,0};
+  bank.ranges = {0,1}; bank.use_ranges = {0,1};
+  bank.use_kinds = {0}; bank.use_entities = {0}; bank.senses = {1};
+  bank.loop_offsets = {0,1}; bank.loop_surfaces = {0};
+  bank.periods = {4,0}; bank.domains = {-1,3,-1,1};
+  bank.samples = {0,.125,.25,.375,.5,.625,.75,.875,1};
+  bank.sample_offsets = {0,9};
+  auto model = bank.model();
+  model.corner_count = 1; model.curve_count = 1; model.loop_count = 1; model.use_count = 1;
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  const CadCurveDiscretization curves{bank.sample_offsets.data(),bank.samples.data()};
+  CadFaceMesh mesh;
+  const int32_t status = phx::mc::cad_mesh_face(geometry,curves,0,1.0,1.0,0.5,mesh);
+  if (wrapped) {
+    PHX_CHECK(status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(mesh.failure.reason == PHX_MC_CAD_FACE_PERIODIC_WRAP);
+    PHX_CHECK(mesh.failure.face == 0 && mesh.failure.loop == 0 &&
+              mesh.failure.axis == 0 && mesh.failure.turns == 1);
+  } else if (huge) {
+    PHX_CHECK(status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(mesh.failure.reason == PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE);
+    PHX_CHECK(mesh.failure.face == 0 && mesh.failure.use == 0 && mesh.failure.axis == 0);
+  } else {
+    PHX_CHECK(status == PHX_MC_OK);
+    PHX_CHECK(mesh.failure.reason == 0);
+    PHX_CHECK(!mesh.triangles.empty());
+    for (const auto& t : mesh.triangles)
+      PHX_CHECK(phx::mc::orient2d(mesh.vertices[t[0]].uv.data(),
+                                  mesh.vertices[t[1]].uv.data(),
+                                  mesh.vertices[t[2]].uv.data()) > 0);
+  }
+}
+
 
 struct SurfaceArrays {
   std::vector<double> points, parameters, uv, sliver_uv, edge_parameters;
@@ -895,6 +951,9 @@ void quadric_assembly() {
 int main() {
   plane_with_hole();
   periodic_rounding_gap();
+  cancelling_sheet_jump();
+  cancelling_sheet_jump(true);
+  cancelling_sheet_jump(false, true);
   periodic_patch(false);
   periodic_patch(true);
   periodic_patch(true, true);
