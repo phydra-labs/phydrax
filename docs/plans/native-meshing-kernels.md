@@ -22,8 +22,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Every replaced route is a clean cutover: callers, tests, docs, changelog, generated data in the same
   change; no compatibility path.
 - Determinism: the output depends on the input only (not on thread count or timing).
-- All work runs on the macOS machine only (user decision); native changes are validated by `ctest`
-  with Apple clang. Cross-platform byte identity is not required.
+- Work runs on three machines (user decision Nov 19): macOS (S3, S0-B, S1, S7, integration), Linux
+  (S2), Windows (S4); acceptance timings are taken on the macOS machine only, quiet, back to back with
+  the reference. Native changes pass `ctest` with Apple clang and with each machine's compiler.
+  Cross-platform byte identity is not required.
 
 ## S0 Foundations
 
@@ -149,3 +151,21 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
 - S5 STEP import and remaining exchange formats. S6 layers, hex-dominant, overset, Voronoi. S7 threads
   and devices at scale.
+
+## Row ownership (every ledger row; `.tmp/ledger/`)
+
+| Ledger rows | Reference to beat (single thread) | Slice | Machine |
+|---|---|---|---|
+| F1 point-set Delaunay 2D/3D, 1e3-1e6 | CGAL DT2 / DT3 | S0-B | macOS |
+| Regular triangulation 3D, periodic Delaunay (native-kernels §2-3) | CGAL Regular_3 (2.6-2.9x today), Periodic_3 (5x) | S0-B | macOS |
+| F1 planar CDT and quality refinement (square, square + ring + slit) | Triangle `pcQ`, `pq20a` / `pq30a` | S2-C (`cdt2d`) | Linux |
+| F3 surface to tetrahedra; recovery; refinement; export | Gmsh HXT on the same surface; CGAL CDT_3 | S3 | macOS |
+| Improvement passes on a given mesh (native-kernels §3) | MMG3D `-optim` at equal quality | S3-B | macOS |
+| F4 implicit to tetrahedra | CGAL make_mesh_3, Gmsh | S1 | macOS |
+| F2 CAD solid, F5 curved order 2/3 | Gmsh HXT per size; Netgen `Curve`, Gmsh `setOrder` | S2 | Linux |
+| F7 surface remesh and decimation (1e6 to 1e3-1e5, dense and noisy torus; sphere ladder) | MMGS, CGAL isotropic remeshing | S4-Surface | Windows |
+| F6 / F6b metric adaptation | MMG3D, Omega_h | S4-3D | Windows |
+| F10 queries (closest point, signed distance, winding number, point location) | libigl AABB / FastWindingNumberBVH | S0 queries | macOS after S3 |
+| F8 hex-dominant, F9 prism layers, F13 overset, F14 Voronoi | cfMesh / snappyHexMesh, Gmsh / Netgen, TIOGA, VoroCrust | S6 | assigned after S3 |
+| STEP import, spline faces | the S2 rows on the STEP models (washer, NIST) | S5 | Linux after S2 |
+| Threads and devices | each row above at 1-8 threads | S7 | macOS |
