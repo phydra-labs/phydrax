@@ -324,6 +324,19 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native surface-to-tetrahedra recovery and refinement are faster with
+  identical output (contact pairs bucketed by cell without sorting, edge rows
+  and closure read from edge-use runs, source-face indices built on first
+  query, direct protection-radius row visits, reserved incidence lists,
+  coplanar edge-sharing source triangles proved legal without the full
+  intersection test, fewer divisions and square roots in refinement setup).
+  Contact checking now also tests segment-triangle and point pairs that
+  arrive in reverse kind order.
+- PLC tetrahedral certification no longer runs per-row Python: audit
+  association and patch-zone checks, piecewise-linear domain measures (exact
+  integer arithmetic), source tables, size fields, scopes and association
+  fingerprints are vectorized with unchanged identities. The certified
+  81,920-triangle icosphere (636,257 cells) takes 32.8 s instead of 77.8 s.
 - Native meshing decides clear Delaunay predicate cases (recovery, flips) in
   their inline floating stage, links cavity stars through a table sized to
   each cone, and finds edge cells in improvement by walking around the edge;
