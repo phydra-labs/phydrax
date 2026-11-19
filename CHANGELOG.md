@@ -268,6 +268,15 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants) decides
+  whether the exterior boundary is convex from the hull of the Delaunay
+  triangulation of the source points instead of testing every point against
+  every exterior triangle (the same answer; a triangle without a coplanar
+  hull triangle is still decided by the full scan), and reuses that
+  triangulation for recovery, extended by the scaffold corners when needed.
+  The icosphere of 20,480 triangles recovers in 0.83 s instead of 3.06 s.
+  Cell identities of recovered meshes may change; boundaries and regions do
+  not.
 - Native point-set Delaunay and regular triangulations run about 2.4x (3D)
   and 2.5x (2D) faster at 10^6 random points with the same cells: an
   unweighted insertion no longer sorts the cavity's boundary vertices or
