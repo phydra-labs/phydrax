@@ -395,6 +395,41 @@ class _VolumeVerdict(ctypes.Structure):
     )
 
 
+class _CadModel(ctypes.Structure):
+    _fields_ = (
+        ("node_count", _I64),
+        ("node_kinds", _P),
+        ("node_integer_offsets", _P),
+        ("node_integers", _P),
+        ("node_real_offsets", _P),
+        ("node_reals", _P),
+        ("corner_count", _I64),
+        ("corner_points", _P),
+        ("surface_count", _I64),
+        ("surface_nodes", _P),
+        ("surface_orientations", _P),
+        ("surface_periods", _P),
+        ("surface_parameter_domains", _P),
+        ("curve_count", _I64),
+        ("curve_nodes", _P),
+        ("curve_corners", _P),
+        ("curve_ranges", _P),
+        ("loop_count", _I64),
+        ("loop_use_offsets", _P),
+        ("loop_surfaces", _P),
+        ("use_count", _I64),
+        ("use_kinds", _P),
+        ("use_entities", _P),
+        ("use_senses", _P),
+        ("use_ranges", _P),
+        ("use_pcurve_nodes", _P),
+        ("region_count", _I64),
+        ("region_surface_offsets", _P),
+        ("region_surfaces", _P),
+        ("region_orientations", _P),
+    )
+
+
 class _SurfaceReconnectRequest(ctypes.Structure):
     _fields_ = (
         ("vertex_count", _I64),
@@ -998,6 +1033,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
     ),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
+    "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_implicit_stuffing": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _P, _P),
@@ -3108,6 +3144,177 @@ def verify_volume(points: object, cells: object, surface: object, /) -> VolumeVe
         unmatched_surface_triangles=verdict.unmatched_surface_triangles,
         first_unmatched_surface_triangle=verdict.first_unmatched_surface_triangle,
     )
+
+
+class CadEntityKind(IntEnum):
+    """Entity table addressed by ``cad_geometry_evaluate``."""
+
+    SURFACE = 0
+    CURVE = 1
+    PCURVE = 2
+
+
+class CadGeometryQuantity(IntEnum):
+    """Values and derivatives (by order) or differential quantities."""
+
+    VALUE = 0
+    FIRST_DERIVATIVES = 1
+    SECOND_DERIVATIVES = 2
+    DIFFERENTIAL = 3
+
+
+class CadModel(NamedTuple):
+    """The flat CAD model of ``phx_mc_cad_model``: a geometry node graph and
+    corner, surface, curve, loop, use and region tables (see the C header)."""
+
+    node_kinds: np.ndarray
+    node_integer_offsets: np.ndarray
+    node_integers: np.ndarray
+    node_real_offsets: np.ndarray
+    node_reals: np.ndarray
+    corner_points: np.ndarray
+    surface_nodes: np.ndarray
+    surface_orientations: np.ndarray
+    surface_periods: np.ndarray
+    surface_parameter_domains: np.ndarray
+    curve_nodes: np.ndarray
+    curve_corners: np.ndarray
+    curve_ranges: np.ndarray
+    loop_use_offsets: np.ndarray
+    loop_surfaces: np.ndarray
+    use_kinds: np.ndarray
+    use_entities: np.ndarray
+    use_senses: np.ndarray
+    use_ranges: np.ndarray
+    use_pcurve_nodes: np.ndarray
+    region_surface_offsets: np.ndarray
+    region_surfaces: np.ndarray
+    region_orientations: np.ndarray
+
+
+_CAD_MODEL_DTYPES = (
+    np.int32,
+    np.int64,
+    np.int64,
+    np.int64,
+    np.float64,
+    np.float64,
+    np.int32,
+    np.int8,
+    np.float64,
+    np.float64,
+    np.int32,
+    np.int32,
+    np.float64,
+    np.int64,
+    np.int32,
+    np.int8,
+    np.int32,
+    np.int8,
+    np.float64,
+    np.int32,
+    np.int64,
+    np.int32,
+    np.int8,
+)
+
+
+def _cad_model_structure(model: CadModel, /) -> tuple[_CadModel, tuple[np.ndarray, ...]]:
+    """The native view of ``model`` and the contiguous arrays it points into."""
+    arrays = tuple(
+        np.ascontiguousarray(value, dtype=dtype)
+        for value, dtype in zip(model, _CAD_MODEL_DTYPES, strict=True)
+    )
+    view = CadModel(*arrays)
+    structure = _CadModel(
+        node_count=view.node_kinds.size,
+        node_kinds=view.node_kinds.ctypes.data,
+        node_integer_offsets=view.node_integer_offsets.ctypes.data,
+        node_integers=view.node_integers.ctypes.data,
+        node_real_offsets=view.node_real_offsets.ctypes.data,
+        node_reals=view.node_reals.ctypes.data,
+        corner_count=view.corner_points.size // 3,
+        corner_points=view.corner_points.ctypes.data,
+        surface_count=view.surface_nodes.size,
+        surface_nodes=view.surface_nodes.ctypes.data,
+        surface_orientations=view.surface_orientations.ctypes.data,
+        surface_periods=view.surface_periods.ctypes.data,
+        surface_parameter_domains=view.surface_parameter_domains.ctypes.data,
+        curve_count=view.curve_nodes.size,
+        curve_nodes=view.curve_nodes.ctypes.data,
+        curve_corners=view.curve_corners.ctypes.data,
+        curve_ranges=view.curve_ranges.ctypes.data,
+        loop_count=view.loop_surfaces.size,
+        loop_use_offsets=view.loop_use_offsets.ctypes.data,
+        loop_surfaces=view.loop_surfaces.ctypes.data,
+        use_count=view.use_kinds.size,
+        use_kinds=view.use_kinds.ctypes.data,
+        use_entities=view.use_entities.ctypes.data,
+        use_senses=view.use_senses.ctypes.data,
+        use_ranges=view.use_ranges.ctypes.data,
+        use_pcurve_nodes=view.use_pcurve_nodes.ctypes.data,
+        region_count=view.region_surface_offsets.size - 1,
+        region_surface_offsets=view.region_surface_offsets.ctypes.data,
+        region_surfaces=view.region_surfaces.ctypes.data,
+        region_orientations=view.region_orientations.ctypes.data,
+    )
+    return structure, arrays
+
+
+def cad_geometry_evaluate(
+    model: CadModel,
+    entity_kind: CadEntityKind,
+    entity: int,
+    parameters: object,
+    quantity: CadGeometryQuantity,
+    /,
+) -> np.ndarray:
+    """Binary64 geometry of one surface, 3D curve or p-curve of ``model``.
+
+    ``parameters`` is ``(n, 2)`` for a surface and ``(n,)`` otherwise. Returns
+    ``(n, width)``: the value and its derivatives order by order (surface x,
+    Su, Sv, Suu, Suv, Svv; curve C, C', C''), or for ``DIFFERENTIAL`` the first
+    fundamental form, unit normal and principal curvatures of a surface (8) or
+    the speed and curvature of a curve (2). Floating-point proposals that
+    bound nothing; a point outside an entity's evaluation domain is refused.
+    """
+    kind = CadEntityKind(entity_kind)
+    selected = CadGeometryQuantity(quantity)
+    inputs = 2 if kind is CadEntityKind.SURFACE else 1
+    points = _real_array(parameters, "parameters")
+    if (inputs == 2 and (points.ndim != 2 or points.shape[1] != 2)) or (
+        inputs == 1 and points.ndim != 1
+    ):
+        raise ValueError(
+            "parameters must have shape (n, 2) for a surface and (n,) otherwise."
+        )
+    match kind:
+        case CadEntityKind.PCURVE:
+            outputs = 2
+        case CadEntityKind.SURFACE | CadEntityKind.CURVE:
+            outputs = 3
+    match selected:
+        case CadGeometryQuantity.DIFFERENTIAL:
+            width = 8 if inputs == 2 else 2
+        case _:
+            terms = (selected + 1) * (selected + 2) // 2 if inputs == 2 else selected + 1
+            width = outputs * terms
+    # The native view borrows these contiguous arrays for the call.
+    structure, arrays = _cad_model_structure(model)
+    count = points.shape[0]
+    result = np.empty((count, width), dtype=np.float64)
+    status = load_meshcore()["phx_mc_cad_geometry_evaluate"](
+        ctypes.addressof(structure),
+        kind,
+        entity,
+        count,
+        points.ctypes.data,
+        selected,
+        result.ctypes.data,
+    )
+    del arrays
+    _raise_for_call(status, "cad_geometry_evaluate")
+    return result
 
 
 class StuffedVolume(NamedTuple):
@@ -11241,6 +11448,10 @@ __all__ = [
     "ARRANGEMENT_UNCLASSIFIED",
     "ArrangementClassification",
     "ArrangementFailure",
+    "CadEntityKind",
+    "CadGeometryQuantity",
+    "CadModel",
+    "cad_geometry_evaluate",
     "ConstrainedDelaunay2D",
     "ContactIntersections",
     "IntersectionClass",
