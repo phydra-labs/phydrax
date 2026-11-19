@@ -2742,3 +2742,253 @@ def test_trim_polygon_exact_boundary_and_batch_independence() -> None:
     reversed_result = domain.classify(queries[::-1])
     np.testing.assert_array_equal(reversed_result.inside, oracle[::-1, 0])
     np.testing.assert_array_equal(reversed_result.boundary, oracle[::-1, 1])
+
+
+@pytest.mark.parametrize(
+    "kind", ("plane", "cylinder", "sphere", "cone", "torus", "line", "circle")
+)
+def test_floating_carrier_proposals_against_dense_reference(kind: str) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.BRepPrimAPI import (
+        BRepPrimAPI_MakeBox,
+        BRepPrimAPI_MakeCylinder,
+        BRepPrimAPI_MakeSphere,
+        BRepPrimAPI_MakeTorus,
+    )
+    from OCP.gp import gp_Trsf, gp_Vec
+
+    from phydrax.geometry.brep._patches import (
+        CircleCurve,
+        ConePatch,
+        CylinderPatch,
+        ExactLineCurve,
+        LineCurve,
+        PlanePatch,
+        SpherePatch,
+        TorusPatch,
+    )
+
+    constructors = {
+        "plane": lambda: BRepPrimAPI_MakeBox(2.0, 2.0, 2.0).Shape(),
+        "cylinder": lambda: BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
+        "sphere": lambda: BRepPrimAPI_MakeSphere(1.0).Shape(),
+        "torus": lambda: BRepPrimAPI_MakeTorus(2.0, 0.5).Shape(),
+        "line": lambda: BRepPrimAPI_MakeBox(2.0, 2.0, 2.0).Shape(),
+        "circle": lambda: BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape(),
+    }
+    types = {
+        "plane": PlanePatch,
+        "cylinder": CylinderPatch,
+        "sphere": SpherePatch,
+        "cone": ConePatch,
+        "torus": TorusPatch,
+        "line": (LineCurve, ExactLineCurve),
+        "circle": CircleCurve,
+    }
+    if kind == "cone":
+        patch = ConePatch((5.0, -3.0, 2.0), (1, 0, 0), (0, 1, 0), (0, 0, 1), 1.0, 0.25)
+        model = _rectangle_face_model(patch, ((-np.pi, -1.0), (np.pi, 1.0)))
+        projection = phx.geometry.prepare_brep_projection(model)
+    else:
+        placement = gp_Trsf()
+        placement.SetTranslation(gp_Vec(5.0, -3.0, 2.0))
+        placed = BRepBuilderAPI_Transform(constructors[kind](), placement, False).Shape()
+        model, projection = _bound(placed)
+    dimension = 1 if kind in ("line", "circle") else 2
+    if dimension == 1:
+        index = next(
+            i
+            for i, carrier in enumerate(model.geometry.edge_curves)
+            if carrier >= 0 and isinstance(model.geometry.curves[carrier], types[kind])
+        )
+        primitive = model.geometry.curves[model.geometry.edge_curves[index]]
+    else:
+        index = next(
+            i for i, patch in enumerate(model.patches) if isinstance(patch, types[kind])
+        )
+        primitive = model.patches[index]
+    occurrence = projection._target_occurrences(dimension, index, None)[0]
+    rotation = np.asarray(occurrence.rotation, dtype=np.float64)
+    translation = np.asarray(occurrence.translation, dtype=np.float64)
+    rng = np.random.default_rng(849)
+    u, v = np.meshgrid(np.linspace(-np.pi, np.pi, 401), np.linspace(-1.0, 1.0, 201))
+    u, v = u.ravel(), v.ravel()
+    if isinstance(primitive, (LineCurve, ExactLineCurve)):
+        origin = np.asarray(
+            primitive.origin if isinstance(primitive, LineCurve) else primitive.first
+        )
+        direction = np.asarray(
+            primitive.direction
+            if isinstance(primitive, LineCurve)
+            else primitive.last - primitive.first
+        )
+        dense = origin + v[:, None] * direction
+    elif isinstance(primitive, PlanePatch):
+        origin = np.asarray(primitive.origin)
+        dense = (
+            origin
+            + u[:, None] * np.asarray(primitive.first_axis)
+            + v[:, None] * np.asarray(primitive.second_axis)
+        )
+    else:
+        origin = np.asarray(
+            primitive.center
+            if isinstance(primitive, (SpherePatch, TorusPatch, CircleCurve))
+            else primitive.origin
+        )
+        first, second = (
+            np.asarray(primitive.first_axis),
+            np.asarray(primitive.second_axis),
+        )
+        radial = np.cos(u)[:, None] * first + np.sin(u)[:, None] * second
+        if isinstance(primitive, CircleCurve):
+            dense = origin + float(primitive.radius) * radial
+        elif isinstance(primitive, CylinderPatch):
+            dense = (
+                origin
+                + float(primitive.radius) * radial
+                + v[:, None] * np.asarray(primitive.axis)
+            )
+        elif isinstance(primitive, SpherePatch):
+            latitude = v * (np.pi / 2.0)
+            dense = origin + float(primitive.radius) * (
+                np.cos(latitude)[:, None] * radial
+                + np.sin(latitude)[:, None] * np.asarray(primitive.axis)
+            )
+        elif isinstance(primitive, ConePatch):
+            radius = float(primitive.reference_radius) + v * np.tan(
+                float(primitive.semi_angle)
+            )
+            dense = (
+                origin
+                + radius[:, None] * radial
+                + v[:, None] * np.asarray(primitive.axis)
+            )
+        else:
+            tube = np.pi * v
+            dense = (
+                origin
+                + (
+                    float(primitive.major_radius)
+                    + float(primitive.minor_radius) * np.cos(tube)
+                )[:, None]
+                * radial
+                + float(primitive.minor_radius)
+                * np.sin(tube)[:, None]
+                * np.asarray(primitive.axis)
+            )
+    selected = rng.choice(len(dense), size=8, replace=False)
+    query = dense[selected] + rng.normal(scale=0.025, size=(8, 3))
+    world = query @ rotation.T + translation
+    feet, normals, tangents, usable = projection._floating_proposal(
+        dimension, index, world, np.full(8, 100.0)
+    )
+    assert usable.all()
+    assert not projection._floating_proposal(
+        dimension, index, world, np.full(8, 1.0e-16)
+    )[3].any()
+    local_feet = (feet - translation) @ rotation
+    distances = np.linalg.norm(feet - world, axis=1)
+    for row in range(len(query)):
+        assert (
+            distances[row] <= np.min(np.linalg.norm(dense - query[row], axis=1)) + 1.0e-12
+        )
+    np.testing.assert_allclose(np.linalg.norm(tangents[:, 0], axis=1), 1.0, atol=1e-12)
+    np.testing.assert_allclose(
+        np.sum((feet - world) * tangents[:, 0], axis=1), 0.0, atol=1e-12
+    )
+    if dimension == 2:
+        np.testing.assert_allclose(np.linalg.norm(normals, axis=1), 1.0, atol=1e-12)
+        np.testing.assert_allclose(
+            np.linalg.norm(tangents[:, 1], axis=1), 1.0, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            np.sum(normals * tangents[:, 0], axis=1), 0.0, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            np.sum(normals * tangents[:, 1], axis=1), 0.0, atol=1e-12
+        )
+    if isinstance(primitive, (LineCurve, ExactLineCurve)):
+        np.testing.assert_allclose(
+            np.linalg.norm(np.cross(local_feet - origin, direction), axis=1),
+            0.0,
+            atol=1e-12,
+        )
+    elif isinstance(primitive, PlanePatch):
+        plane_normal = np.cross(primitive.first_axis, primitive.second_axis)
+        np.testing.assert_allclose((local_feet - origin) @ plane_normal, 0.0, atol=1e-12)
+    elif isinstance(primitive, CircleCurve):
+        relative = local_feet - origin
+        np.testing.assert_allclose(
+            np.linalg.norm(relative, axis=1), float(primitive.radius), atol=1e-12
+        )
+        np.testing.assert_allclose(relative @ np.cross(first, second), 0.0, atol=1e-12)
+    if isinstance(primitive, SpherePatch):
+        np.testing.assert_allclose(
+            np.linalg.norm(local_feet - origin, axis=1),
+            float(primitive.radius),
+            atol=1e-12,
+        )
+    elif isinstance(primitive, CylinderPatch):
+        relative = local_feet - origin
+        axis = np.asarray(primitive.axis)
+        np.testing.assert_allclose(
+            np.linalg.norm(relative - (relative @ axis)[:, None] * axis, axis=1),
+            float(primitive.radius),
+            atol=1e-12,
+        )
+    elif isinstance(primitive, ConePatch):
+        relative = local_feet - origin
+        axis = np.asarray(primitive.axis)
+        axial = relative @ axis
+        radius = np.linalg.norm(relative - axial[:, None] * axis, axis=1)
+        np.testing.assert_allclose(
+            radius,
+            float(primitive.reference_radius)
+            + axial * np.tan(float(primitive.semi_angle)),
+            atol=1e-12,
+        )
+    elif isinstance(primitive, TorusPatch):
+        relative = local_feet - origin
+        axis = np.asarray(primitive.axis)
+        axial = relative @ axis
+        radial = np.linalg.norm(relative - axial[:, None] * axis, axis=1)
+        np.testing.assert_allclose(
+            np.hypot(radial - float(primitive.major_radius), axial),
+            float(primitive.minor_radius),
+            atol=1e-12,
+        )
+        singular = (origin + float(primitive.major_radius) * first)[
+            None, :
+        ] @ rotation.T + translation
+        assert not projection._floating_proposal(
+            dimension, index, singular, np.full(1, 10.0)
+        )[3][0]
+    if kind in ("sphere", "cylinder", "cone", "circle"):
+        singular = origin[None, :] @ rotation.T + translation
+        assert not projection._floating_proposal(dimension, index, singular, np.ones(1))[
+            3
+        ][0]
+
+
+def test_floating_straight_revolution_cylinder() -> None:
+    from phydrax.geometry.brep._patches import LineCurve, RevolutionSurface
+
+    model = brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    index = next(
+        i
+        for i, patch in enumerate(model.patches)
+        if isinstance(patch, RevolutionSurface)
+        and isinstance(patch.curve, LineCurve)
+        and np.linalg.norm(np.cross(patch.axis_direction, patch.curve.direction)) == 0
+    )
+    projection = phx.geometry.prepare_brep_projection(model)
+    points = np.asarray(((1.2, 0.0, 0.3), (0.0, -0.8, 1.2)), dtype=np.float64)
+    feet, normals, tangents, usable = projection._floating_proposal(
+        2, index, points, np.ones(2)
+    )
+    assert usable.all()
+    np.testing.assert_allclose(feet, ((1.0, 0.0, 0.3), (0.0, -1.0, 1.2)), atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(normals, axis=1), 1.0, atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(tangents, axis=2), 1.0, atol=1e-12)

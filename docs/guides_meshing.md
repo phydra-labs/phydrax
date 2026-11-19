@@ -3021,8 +3021,17 @@ Calling `candidate.prove()` certifies that exact geometry without changing it;
 The candidate screens Jacobian positivity and finite distortion at a lattice of
 at least order 5 (56 points on a tetrahedron). They cannot detect global overlap,
 a Jacobian that turns negative between samples, or source deviation between
-nodes. `candidate.certified_steps` names the construction operations that still
-use certified decisions, including constrained-node projection.
+nodes. For plane, cylinder (including axial-line revolution), sphere, cone
+and ring-torus faces and line and circle edges, screened construction proposes
+the nearest floating-point carrier
+foot, ignoring trims and periodic parameter ranges. It makes no uniqueness,
+distance-bound or trim-membership claim. Singular, nonfinite, ambiguous-use,
+and feet farther than twice the local minimum edge length, as well as unsupported
+source kinds such as intersection and spline curves, use certified projection.
+The screens report the maximum proposed displacement relative to that local
+length and the number of distinct nodes that needed certified fallback.
+`candidate.certified_steps` names constrained-node projection only when fallback
+occurred; node classification and straight geometry source maps remain certified.
 
 A B-Rep `GeometryAssociation` classifies mesh entities against one source owner
 and exact revision. Each row retains the definition dimension and index

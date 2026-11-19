@@ -584,6 +584,8 @@ class _CurvingScreen(NamedTuple):
     maximum_distortion: float
     failing_cells: int
     relaxed_cells: int
+    maximum_floating_projection_relative_distance: float
+    certified_projection_fallback_nodes: int
 
 
 @final
@@ -628,10 +630,10 @@ class HighOrderCurvingCandidate(StrictModule, NonTrainableState):
         self.policy = policy
         self.screens = screens
         self.certified_steps = (
-            "constrained_node_projection",
-            "node_classification",
-            "straight_geometry_source_maps",
-        )
+            ("constrained_node_projection",)
+            if screens.certified_projection_fallback_nodes
+            else ()
+        ) + ("node_classification", "straight_geometry_source_maps")
         self._straight = straight
         self._association = association
         self._projection = projection
@@ -2201,6 +2203,83 @@ def _project_constrained(
     return _apply_periodic(result, periodic), rows, projectors
 
 
+def _screened_project_constrained(
+    projection: AbstractBRepProjection,
+    coordinates: np.ndarray,
+    classes: _NodeClasses,
+    periodic: _PeriodicNodes,
+    lengths: np.ndarray,
+    fallback_nodes: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Project movable rows by floating carrier proposals or certified fallback."""
+    from ..geometry.brep._projection import NativeBRepProjection
+
+    rows = np.flatnonzero(classes.constrained & ~classes.fixed)
+    query = np.ascontiguousarray(coordinates[rows], dtype=np.float64)
+    feet = query.copy()
+    ambient = coordinates.shape[1]
+    projectors = np.broadcast_to(np.eye(ambient), (rows.size, ambient, ambient)).copy()
+    usable = np.zeros(rows.size, dtype=np.bool_)
+    maximum = 0.0
+    if isinstance(projection, NativeBRepProjection):
+        keys = np.stack((classes.dimensions[rows], classes.indices[rows]), axis=1)
+        for dimension, index in np.unique(keys, axis=0):
+            selected = np.flatnonzero((keys[:, 0] == dimension) & (keys[:, 1] == index))
+            proposed, normals, tangents, valid = projection._floating_proposal(
+                int(dimension), int(index), query[selected], lengths[rows[selected]]
+            )
+            accepted = selected[valid]
+            usable[accepted] = True
+            feet[accepted] = proposed[valid]
+            if dimension == 1:
+                tangent = tangents[valid, 0]
+                projectors[accepted] = (
+                    np.eye(ambient) - tangent[:, :, None] * tangent[:, None, :]
+                )
+            elif dimension == 2:
+                normal = normals[valid]
+                projectors[accepted] = normal[:, :, None] * normal[:, None, :]
+            if accepted.size:
+                maximum = max(
+                    maximum,
+                    float(
+                        np.max(
+                            np.linalg.norm(proposed[valid] - query[accepted], axis=1)
+                            / lengths[rows[accepted]]
+                        )
+                    ),
+                )
+    missing = rows[~usable]
+    if missing.size:
+        fallback_nodes[missing] = True
+        selected = np.zeros_like(classes.constrained)
+        selected[missing] = True
+        _, certified_feet, _, certified_projectors = _node_residuals(
+            projection, coordinates, classes._replace(constrained=selected)
+        )
+        feet[~usable] = certified_feet
+        projectors[~usable] = certified_projectors
+    result = coordinates.copy()
+    result[rows] = feet
+    return _apply_periodic(result, periodic), rows, projectors, maximum
+
+
+def _node_edge_lengths(
+    mesh: CellMesh, geometry: CellGeometrySpec, edge_lengths: np.ndarray, /
+) -> np.ndarray:
+    """Minimum incident straight edge length for each geometry node."""
+    dimensions, owners = _node_owners(mesh, geometry)
+    result = np.full(dimensions.shape, np.inf, dtype=np.float64)
+    for dimension in range(1, mesh.topological_dimension + 1):
+        incidence = _incidence_pairs(mesh, 1, dimension)
+        minimum = np.full(mesh.entity_set(dimension).count, np.inf, dtype=np.float64)
+        np.minimum.at(minimum, incidence[:, 1], edge_lengths[incidence[:, 0]])
+        selected = dimensions == dimension
+        result[selected] = minimum[owners[selected]]
+    return result
+
+
 def _screen_cells(
     blocks: tuple[_BlockDistortion, ...], coordinates: np.ndarray, /
 ) -> tuple[_CurvingScreen, tuple[np.ndarray, ...]]:
@@ -2223,7 +2302,13 @@ def _screen_cells(
         failing.append(np.concatenate(batches))
     scaled, distortion = _sampled_quality(blocks, coordinates)
     screen = _CurvingScreen(
-        5, scaled, distortion, sum(int(np.count_nonzero(value)) for value in failing), 0
+        5,
+        scaled,
+        distortion,
+        sum(int(np.count_nonzero(value)) for value in failing),
+        0,
+        0.0,
+        0,
     )
     return screen, tuple(failing)
 
@@ -2254,6 +2339,7 @@ def _screened_curving(
     pairs = _periodic_nodes(mesh, straight, tuple(periodic))
     fixed = classes.fixed.copy()
     fixed[pairs.targets] = True
+    screened_classes = classes._replace(fixed=fixed)
     elements, routes, _ = straight.resolve(mesh)
     layout = (
         {
@@ -2265,20 +2351,21 @@ def _screened_curving(
     vertices = np.asarray(mesh.coordinates, dtype=np.float64)
     edges = _incidence_pairs(mesh, 0, 1)
     edge_vertices = edges[np.argsort(edges[:, 1], kind="stable"), 0].reshape(-1, 2)
-    length = float(
-        np.mean(
-            np.linalg.norm(
-                vertices[edge_vertices[:, 0]] - vertices[edge_vertices[:, 1]], axis=1
-            )
-        )
+    edge_lengths = np.linalg.norm(
+        vertices[edge_vertices[:, 0]] - vertices[edge_vertices[:, 1]], axis=1
     )
-    cache = _NodeProjectionCache(projection, classes)
-    coordinates, constrained_rows, projectors = _project_constrained(
-        projection,
-        np.asarray(straight.coordinates, dtype=np.float64),
-        classes,
-        pairs,
-        cache=cache,
+    length = float(np.mean(edge_lengths))
+    node_lengths = _node_edge_lengths(mesh, straight, edge_lengths)
+    fallback_nodes = np.zeros(classes.fixed.shape, dtype=np.bool_)
+    coordinates, constrained_rows, projectors, maximum_projection_distance = (
+        _screened_project_constrained(
+            projection,
+            np.asarray(straight.coordinates, dtype=np.float64),
+            screened_classes,
+            pairs,
+            node_lengths,
+            fallback_nodes,
+        )
     )
 
     def geometry(values: np.ndarray, /) -> CellGeometrySpec:
@@ -2334,12 +2421,13 @@ def _screened_curving(
         moved = np.asarray(relaxed.coordinates, dtype=np.float64)
         if not np.all(np.isfinite(moved)):
             break
-        coordinates, constrained_rows, projectors = _project_constrained(
-            projection,
-            moved,
-            classes,
-            pairs,
-            cache=cache,
+        coordinates, constrained_rows, projectors, projection_distance = (
+            _screened_project_constrained(
+                projection, moved, screened_classes, pairs, node_lengths, fallback_nodes
+            )
+        )
+        maximum_projection_distance = max(
+            maximum_projection_distance, projection_distance
         )
         screen, failing = _screen_cells(blocks, coordinates)
     if (
@@ -2353,7 +2441,9 @@ def _screened_curving(
             stage="curving_screen",
         )
     screen = screen._replace(
-        relaxed_cells=sum(int(np.count_nonzero(mask)) for mask in relaxed_cells)
+        relaxed_cells=sum(int(np.count_nonzero(mask)) for mask in relaxed_cells),
+        maximum_floating_projection_relative_distance=maximum_projection_distance,
+        certified_projection_fallback_nodes=int(np.count_nonzero(fallback_nodes)),
     )
     return HighOrderCurvingCandidate(
         mesh,

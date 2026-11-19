@@ -5755,6 +5755,194 @@ class NativeBRepProjection(AbstractBRepProjection):
             preparation.orientations[key] = orientation
         return orientation
 
+    def _floating_proposal(
+        self,
+        dimension: int,
+        index: int,
+        points: np.ndarray,
+        lengths: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Propose carrier feet and frames in floating point, without certificates.
+
+        Trims are ignored: the nearest carrier foot to the starting point is
+        proposed, without periodic parameter lifting. The result does not prove
+        a distance bound, uniqueness, or trim membership. Singular, nonfinite,
+        ambiguous-occurrence, unsupported, and more than twice the local edge
+        length displacements are unusable and require certified projection.
+        """
+        count = points.shape[0]
+        feet = np.full_like(points, np.nan, dtype=np.float64)
+        normals = np.full_like(points, np.nan, dtype=np.float64)
+        tangents = np.full((count, 2, 3), np.nan, dtype=np.float64)
+        usable = np.zeros(count, dtype=np.bool_)
+        targets = self._target_occurrences(dimension, index, None)
+        if len(targets) != 1 or points.shape[1] != 3:
+            return feet, normals, tangents, usable
+        occurrence = targets[0]
+        rotation = np.asarray(occurrence.rotation, dtype=np.float64)
+        translation = np.asarray(occurrence.translation, dtype=np.float64)
+        query = (points - translation) @ rotation
+        local_feet = np.full_like(query, np.nan)
+        normal = np.full_like(query, np.nan)
+        tangent = np.full_like(query, np.nan)
+        valid = np.ones(count, dtype=np.bool_)
+        if dimension == 1:
+            carrier = self.model.geometry.edge_curves[index]
+            if carrier < 0:
+                return feet, normals, tangents, usable
+            curve = self.model.geometry.curves[carrier]
+            if isinstance(curve, (LineCurve, ExactLineCurve)):
+                if isinstance(curve, LineCurve):
+                    origin = np.asarray(curve.origin, dtype=np.float64)
+                    direction = np.asarray(curve.direction, dtype=np.float64)
+                else:
+                    origin = np.asarray(curve.first, dtype=np.float64)
+                    direction = np.asarray(curve.last, dtype=np.float64) - origin
+                norm = np.linalg.norm(direction)
+                if not np.isfinite(norm) or norm == 0.0:
+                    return feet, normals, tangents, usable
+                direction = direction / norm
+                local_feet = origin + ((query - origin) @ direction)[:, None] * direction
+                tangent[:] = direction
+            elif isinstance(curve, CircleCurve):
+                origin = np.asarray(curve.center, dtype=np.float64)
+                first = np.asarray(curve.first_axis, dtype=np.float64)
+                second = np.asarray(curve.second_axis, dtype=np.float64)
+                relative = query - origin
+                x, y = relative @ first, relative @ second
+                radial = np.hypot(x, y)
+                valid &= radial > 0.0
+                safe = np.where(radial > 0.0, radial, 1.0)
+                radial_direction = (x[:, None] * first + y[:, None] * second) / safe[
+                    :, None
+                ]
+                local_feet = origin + float(np.asarray(curve.radius)) * radial_direction
+                tangent = (-y[:, None] * first + x[:, None] * second) / safe[:, None]
+            else:
+                return feet, normals, tangents, usable
+        elif dimension == 2:
+            patch = self.model.patches[index]
+            if isinstance(patch, PlanePatch):
+                origin = np.asarray(patch.origin, dtype=np.float64)
+                first = np.asarray(patch.first_axis, dtype=np.float64)
+                second = np.asarray(patch.second_axis, dtype=np.float64)
+                cross = np.cross(first, second)
+                norm = np.linalg.norm(cross)
+                if not np.isfinite(norm) or norm == 0.0:
+                    return feet, normals, tangents, usable
+                normal[:] = cross / norm
+                tangent[:] = first / np.linalg.norm(first)
+                local_feet = (
+                    query - np.sum((query - origin) * normal, axis=1)[:, None] * normal
+                )
+            elif isinstance(patch, RevolutionSurface) and isinstance(
+                patch.curve, (LineCurve, ExactLineCurve)
+            ):
+                curve = patch.curve
+                if isinstance(curve, LineCurve):
+                    profile = np.asarray(curve.origin, dtype=np.float64)
+                    direction = np.asarray(curve.direction, dtype=np.float64)
+                else:
+                    profile = np.asarray(curve.first, dtype=np.float64)
+                    direction = np.asarray(curve.last, dtype=np.float64) - profile
+                origin = np.asarray(patch.axis_origin, dtype=np.float64)
+                axis = np.asarray(patch.axis_direction, dtype=np.float64)
+                if np.any(np.cross(direction, axis) != 0.0):
+                    return feet, normals, tangents, usable
+                offset = profile - origin
+                radius = np.linalg.norm(offset - np.dot(offset, axis) * axis)
+                relative = query - origin
+                axial = relative @ axis
+                radial = relative - axial[:, None] * axis
+                radial_length = np.linalg.norm(radial, axis=1)
+                valid &= (radial_length > 0.0) & (radius > 0.0)
+                normal = (
+                    radial / np.where(radial_length > 0.0, radial_length, 1.0)[:, None]
+                )
+                tangent = np.cross(axis, normal)
+                local_feet = origin + axial[:, None] * axis + radius * normal
+            elif isinstance(patch, (CylinderPatch, SpherePatch, ConePatch, TorusPatch)):
+                origin = np.asarray(
+                    patch.center
+                    if isinstance(patch, (SpherePatch, TorusPatch))
+                    else patch.origin,
+                    dtype=np.float64,
+                )
+                first = np.asarray(patch.first_axis, dtype=np.float64)
+                second = np.asarray(patch.second_axis, dtype=np.float64)
+                axis = np.asarray(patch.axis, dtype=np.float64)
+                frame = np.stack((first, second, axis))
+                if not np.allclose(frame @ frame.T, np.eye(3), rtol=0.0, atol=1e-12):
+                    return feet, normals, tangents, usable
+                relative = query - origin
+                x, y, z = relative @ first, relative @ second, relative @ axis
+                radial = np.hypot(x, y)
+                safe = np.where(radial > 0.0, radial, 1.0)
+                radial_direction = (x[:, None] * first + y[:, None] * second) / safe[
+                    :, None
+                ]
+                azimuth = (-y[:, None] * first + x[:, None] * second) / safe[:, None]
+                if isinstance(patch, SpherePatch):
+                    radius = float(np.asarray(patch.radius))
+                    distance = np.linalg.norm(relative, axis=1)
+                    valid &= (distance > 0.0) & (radius > 0.0)
+                    normal = relative / np.where(distance > 0.0, distance, 1.0)[:, None]
+                    local_feet = origin + radius * normal
+                    # A pole has a regular sphere tangent plane despite its chart singularity.
+                    tangent = np.where((radial > 0.0)[:, None], azimuth, first)
+                elif isinstance(patch, CylinderPatch):
+                    radius = float(np.asarray(patch.radius))
+                    valid &= (radial > 0.0) & (radius > 0.0)
+                    normal = radial_direction
+                    tangent = azimuth
+                    local_feet = origin + z[:, None] * axis + radius * radial_direction
+                elif isinstance(patch, ConePatch):
+                    slope = float(np.tan(np.asarray(patch.semi_angle)))
+                    reference = float(np.asarray(patch.reference_radius))
+                    axial = (z + slope * (radial - reference)) / (1.0 + slope * slope)
+                    radius = reference + slope * axial
+                    valid &= (radial > 0.0) & (radius > 0.0)
+                    normal = (radial_direction - slope * axis) / np.hypot(1.0, slope)
+                    tangent = azimuth
+                    local_feet = (
+                        origin
+                        + axial[:, None] * axis
+                        + radius[:, None] * radial_direction
+                    )
+                else:
+                    major = float(np.asarray(patch.major_radius))
+                    minor = float(np.asarray(patch.minor_radius))
+                    tube = np.hypot(radial - major, z)
+                    valid &= (radial > 0.0) & (tube > 0.0) & (major > minor > 0.0)
+                    safe_tube = np.where(tube > 0.0, tube, 1.0)
+                    normal = (
+                        (radial - major)[:, None] * radial_direction + z[:, None] * axis
+                    ) / safe_tube[:, None]
+                    tangent = azimuth
+                    local_feet = origin + major * radial_direction + minor * normal
+            else:
+                return feet, normals, tangents, usable
+        else:
+            return feet, normals, tangents, usable
+        feet = local_feet @ rotation.T + translation
+        tangents[:, 0] = tangent @ rotation.T
+        if dimension == 2:
+            normal *= self._face_orientation(index, occurrence.solid)
+            normals = normal @ rotation.T
+            tangents[:, 1] = np.cross(normals, tangents[:, 0])
+            valid &= np.all(np.isfinite(normals), axis=1)
+            valid &= np.all(np.isfinite(tangents[:, 1]), axis=1)
+        usable = (
+            valid
+            & np.all(np.isfinite(feet), axis=1)
+            & np.all(np.isfinite(tangents[:, 0]), axis=1)
+            & np.isfinite(lengths)
+            & (lengths > 0.0)
+            & (np.linalg.norm(feet - points, axis=1) <= 2.0 * lengths)
+        )
+        return feet, normals, tangents, usable
+
     def _project_one(
         self,
         dimension: int,

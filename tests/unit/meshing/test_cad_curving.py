@@ -833,6 +833,14 @@ def test_screened_sphere_candidate_proves_the_produced_geometry() -> None:
     assert not hasattr(candidate, "accepted")
     coordinates = np.asarray(candidate.geometry.coordinates)
     np.testing.assert_allclose(np.linalg.norm(coordinates, axis=1), 1.0, atol=1e-7)
+    assert candidate.screens.certified_projection_fallback_nodes == 0
+    assert "constrained_node_projection" not in candidate.certified_steps
+    certified = phx.meshing.curve_cell_mesh(
+        mesh, association, projection, policy=policy, prove=True
+    )
+    np.testing.assert_allclose(
+        coordinates, certified.geometry.coordinates, rtol=0.0, atol=1.0e-12
+    )
 
     _, routes, _ = candidate.geometry.resolve(mesh)
     reference_nodes = np.asarray(
@@ -1126,3 +1134,52 @@ def test_sampled_quality_worksets_preserve_original_floating_results(
     )
     actual = np.asarray(_curving._bounded_sampled_block_quality(block, values))
     np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
+
+
+def test_screened_intersection_edges_report_certified_fallback(tmp_path: Any) -> None:
+    from tools.meshing_qualification.scenarios.native_cad_profiles import (
+        _construction_vertex_association,
+        _quadric_case,
+    )
+
+    model, _, _, _ = _quadric_case("brep", tmp_path)
+    scope = phx.meshing.MeshingScope.whole(model, 2)
+    size = 0.125
+    deviation = size**2 / (4.0 * 0.6)
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        scope,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(
+            phx.meshing.UniformSizeControl(
+                scope, size, strength=phx.meshing.SizeControlStrength.SOFT
+            ),
+        ),
+        protected_features=(
+            phx.meshing.ProtectedFeature(
+                scope, phx.meshing.FeatureKind.SURFACE, maximum_deviation=deviation
+            ),
+        ),
+        maximum_deviation=deviation,
+    )
+    schedule = phx.meshing.NativeVolumeSchedule(
+        shape_strength=phx.meshing.SizeControlStrength.SOFT
+    )
+    provider = phx.meshing.NativeMeshingProvider(
+        phx.meshing.NativeMeshingOptions("cad_tetrahedral", volume_schedule=schedule)
+    )
+    source = provider.plan(
+        model, specification, coordinate_contract=model.coordinate_contract
+    ).execute(prove=True)
+    projection = phx.geometry.prepare_brep_projection(model)
+    candidate = phx.meshing.curve_cell_mesh(
+        source.mesh,
+        _construction_vertex_association(source),
+        projection,
+        policy=phx.meshing.HighOrderCurvingPolicy(degree=2),
+        source_result=source,
+    )
+    assert candidate.screens.certified_projection_fallback_nodes > 0
+    assert "constrained_node_projection" in candidate.certified_steps

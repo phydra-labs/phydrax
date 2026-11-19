@@ -7,6 +7,9 @@
   `CellMeshingCandidate.prove()` to certify an already constructed mesh.
 - `phydrax.meshing.HighOrderCurvingCandidate` represents pending high-order
   geometry, and `candidate.prove()` certifies that geometry without moving it.
+- Screened high-order curving proposes floating carrier feet for analytic
+  planes, quadrics, ring tori, lines and circles, reporting displacement and
+  certified-fallback screens; fixed-geometry proof remains explicit.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
