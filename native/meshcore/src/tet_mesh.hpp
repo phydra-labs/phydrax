@@ -558,17 +558,39 @@ class TetMesh {
 
   // Number of vertex slots (live and dead).
   std::size_t vertex_slot_count() const noexcept { return vertex_ids_.size(); }
-  bool live_vertex(std::int32_t slot) const noexcept;
-  std::int32_t vertex_slot(std::uint64_t logical_id) const noexcept;
-  std::int32_t cell_slot(std::uint64_t logical_id) const noexcept;
-  std::uint64_t vertex_id(std::int32_t slot) const noexcept;
-  std::uint64_t cell_id(std::int32_t slot) const noexcept;
-  const double* point(std::int32_t slot) const noexcept;
+  // The hot accessors are defined here so the kernels inline them.
+  bool live_vertex(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < vertex_live_.size() &&
+           vertex_live_[static_cast<std::size_t>(slot)] != 0;
+  }
+  std::int32_t vertex_slot(std::uint64_t logical_id) const noexcept {
+    return vertex_index_.slot(logical_id);
+  }
+  std::int32_t cell_slot(std::uint64_t logical_id) const noexcept {
+    return cell_index_.slot(logical_id);
+  }
+  std::uint64_t vertex_id(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < vertex_ids_.size()
+               ? vertex_ids_[static_cast<std::size_t>(slot)]
+               : std::numeric_limits<std::uint64_t>::max();
+  }
+  std::uint64_t cell_id(std::int32_t slot) const noexcept {
+    return slot >= 0 && static_cast<std::size_t>(slot) < cell_ids_.size()
+               ? cell_ids_[static_cast<std::size_t>(slot)]
+               : std::numeric_limits<std::uint64_t>::max();
+  }
+  const double* point(std::int32_t slot) const noexcept {
+    return live_vertex(slot) ? points_.data() + 3 * static_cast<std::size_t>(slot) : nullptr;
+  }
   const SourceWitness& witness(std::int32_t slot) const noexcept;
   std::int8_t vertex_dimension(std::int32_t slot) const noexcept;
   double protection_radius(std::int32_t slot) const noexcept;
   bool protected_vertex(std::int32_t slot) const noexcept;
-  const Tetrahedron& tet(std::int32_t slot) const noexcept;
+  const Tetrahedron& tet(std::int32_t slot) const noexcept {
+    static const Tetrahedron dead{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
+                                  {-1, -1, -1, -1}, 0, 0};
+    return complex_.live(slot) ? complex_.tets[static_cast<std::size_t>(slot)] : dead;
+  }
   bool positive(const std::int32_t* vertices) const;
   // The exact position of a live vertex: the source point S of its witness
   // (authoritative; the carrier is its correctly rounded realization), else

@@ -132,6 +132,12 @@ class TetrahedralComplex {
     constraints_[4 * static_cast<std::size_t>(t) + k] = id;
     constraints_[4 * static_cast<std::size_t>(other) + back] = id;
   }
+  // Labels the faces of cell t on its side only. For a commit that labels
+  // both sides of every face it creates, and keeps on each outer face the
+  // label the cell beyond already holds.
+  void set_cell_constraints(int32_t t, const std::array<int32_t, 4>& ids) {
+    std::copy(ids.begin(), ids.end(), constraints_.begin() + 4 * static_cast<std::ptrdiff_t>(t));
+  }
   void set_region(int32_t t, int32_t value) {
     regions_[static_cast<std::size_t>(t)] = value;
   }

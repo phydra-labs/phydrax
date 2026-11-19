@@ -332,17 +332,18 @@ struct UnmetCause {
   double apex_angle = std::numeric_limits<double>::quiet_NaN();
 };
 
-// Unmet records of every live cell in slot (snapshot) order.
+// Unmet records of the live cells among `slots` (ascending: slot, i.e.
+// snapshot, order); every live cell missing a criterion must be listed.
 void collect_unmet(const TetMesh& mesh, double radius_edge_bound,
                    const std::unordered_map<std::uint64_t, UnmetCause>& causes,
+                   std::span<const std::int32_t> slots,
                    std::vector<TetUnmetRecord>& records, std::int64_t& unmet_cells) {
   records.clear();
   unmet_cells = 0;
-  const std::vector<Tetrahedron>& tets = mesh.complex().tets;
-  for (std::size_t slot = 0; slot < tets.size(); ++slot) {
-    const Tetrahedron& tet = tets[slot];
+  for (std::int32_t slot : slots) {
+    const Tetrahedron& tet = mesh.tet(slot);
     if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
-    const std::uint64_t id = mesh.cell_id(static_cast<std::int32_t>(slot));
+    const std::uint64_t id = mesh.cell_id(slot);
     geometry::TetrahedronShape shape;
     bool cell_unmet = false;
     if (!cell_shape(mesh, tet, shape)) {
@@ -606,33 +607,38 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
 
 // Index of the 3D Hilbert curve through the 2^21-grid point (x, y, z), by
 // Skilling's transpose ("Programming the Hilbert curve", AIP Conf. Proc. 707,
-// 2004): undo the excess work, Gray-encode, then interleave the bits.
+// 2004): undo the excess work, Gray-encode, then interleave the bits. The
+// per-bit choices are masks, not branches (the same bits).
 std::uint64_t hilbert_key(std::uint32_t x, std::uint32_t y, std::uint32_t z) noexcept {
   constexpr int kBits = 21;
   std::uint32_t axes[3]{x, y, z};
   for (std::uint32_t q = 1U << (kBits - 1); q > 1; q >>= 1) {
     const std::uint32_t p = q - 1;
     for (int axis = 0; axis < 3; ++axis) {
-      if ((axes[axis] & q) != 0) {
-        axes[0] ^= p;
-      } else {
-        const std::uint32_t swap = (axes[0] ^ axes[axis]) & p;
-        axes[0] ^= swap;
-        axes[axis] ^= swap;
-      }
+      // Set bit: invert the low bits of axis 0; clear bit: exchange them.
+      const std::uint32_t set = 0U - static_cast<std::uint32_t>((axes[axis] & q) != 0);
+      const std::uint32_t swap = (axes[0] ^ axes[axis]) & p & ~set;
+      axes[0] ^= (p & set) | swap;
+      axes[axis] ^= swap;
     }
   }
   for (int axis = 1; axis < 3; ++axis) axes[axis] ^= axes[axis - 1];
   std::uint32_t flip = 0;
   for (std::uint32_t q = 1U << (kBits - 1); q > 1; q >>= 1) {
-    if ((axes[2] & q) != 0) flip ^= q - 1;
+    flip ^= (q - 1) & (0U - static_cast<std::uint32_t>((axes[2] & q) != 0));
   }
   for (std::uint32_t& axis : axes) axis ^= flip;
-  std::uint64_t key = 0;
-  for (int bit = kBits - 1; bit >= 0; --bit) {
-    for (const std::uint32_t axis : axes) key = (key << 1) | ((axis >> bit) & 1U);
-  }
-  return key;
+  // Interleave: bit b of axis a goes to bit 3 b + (2 - a).
+  const auto spread = [](std::uint64_t value) {
+    value &= 0x1fffffULL;
+    value = (value | value << 32) & 0x1f00000000ffffULL;
+    value = (value | value << 16) & 0x1f0000ff0000ffULL;
+    value = (value | value << 8) & 0x100f00f00f00f00fULL;
+    value = (value | value << 4) & 0x10c30c30c30c30c3ULL;
+    value = (value | value << 2) & 0x1249249249249249ULL;
+    return value;
+  };
+  return spread(axes[0]) << 2 | spread(axes[1]) << 1 | spread(axes[2]);
 }
 
 // Hilbert keys of points in a box: each axis scaled by the largest extent.
@@ -663,6 +669,28 @@ double float_orientation(const double* a, const double* b, const double* c,
   const double cdx = c[0] - d[0], cdy = c[1] - d[1], cdz = c[2] - d[2];
   return -(adx * (bdy * cdz - bdz * cdy) + bdx * (cdy * adz - cdz * ady) +
            cdx * (ady * bdz - adz * bdy));
+}
+
+// orient3d through its first, floating stage inlined: the predicate's own
+// expression and error bound (Shewchuk's stage A) decide the clear cases
+// here, so only near-degenerate tests reach the exact predicate.
+int orientation(const double* a, const double* b, const double* c, const double* d) noexcept {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent;
+  // orient3d is the negated Shewchuk determinant.
+  if (det > errbound) return -1;
+  if (-det > errbound) return 1;
+  return orient3d(a, b, c, d);
 }
 
 // Advances a visit stamp over `marks`, clearing them when it wraps.
@@ -711,7 +739,7 @@ class InteriorCavity {
       for (int face = 0; face < 4 && exit < 0; ++face) {
         std::int32_t facet[3];
         oriented_facet(tet.v, face, facet);
-        if (orient3d(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]), point) < 0) {
+        if (orientation(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]), point) < 0) {
           exit = face;
         }
       }
@@ -775,7 +803,7 @@ class InteriorCavity {
             cone[corner] = corner == face ? point : mesh.point(tet.v[corner]);
           }
           if (!(float_orientation(cone[0], cone[1], cone[2], cone[3]) > 0.0) ||
-              orient3d(cone[0], cone[1], cone[2], cone[3]) <= 0) {
+              orientation(cone[0], cone[1], cone[2], cone[3]) <= 0) {
             drop = cell;
             break;
           }
@@ -2237,12 +2265,29 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     frame.scale = extent > 0.0 && std::isfinite(extent) ? 2097151.0 / extent : 0.0;
   }
+  // A violating cell of a round, measured once: the shape and target of a
+  // cell are functions of its corners, so they hold while its ID is live.
   struct Proposal {
     std::uint64_t key;
     std::uint64_t cell_id;
     std::int32_t slot;
+    bool measured;
+    bool has_target;
+    double target;
+    geometry::TetrahedronShape shape;
   };
   std::vector<Proposal> proposals;
+  // Hilbert order of a round's proposals (sorted apart from the proposals).
+  struct ProposalOrder {
+    std::uint64_t key;
+    std::uint64_t cell_id;
+    std::size_t row;
+  };
+  std::vector<ProposalOrder> order;
+  // Every proposed cell ID: a live cell that misses a criterion when the
+  // rounds end was proposed (each created cell is evaluated in the round
+  // after its creation), so the unmet records measure only these.
+  std::vector<std::uint64_t> proposed_ids;
   InteriorCavity interior;
   std::vector<std::int32_t> created_slots;
   std::vector<detail::LocalCell> removed_cells;
@@ -2293,22 +2338,17 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     outcome = 0;
     return PHX_MC_OK;
   };
-  const auto refine_cell = [&](std::int32_t root_slot) -> std::int32_t {
+  const auto refine_cell = [&](const Proposal& proposal) -> std::int32_t {
     selective_fixed = false;
-    const std::uint64_t cell_id = mesh.cell_id(root_slot);
-    std::int32_t corners[4];
-    std::copy_n(mesh.tet(root_slot).v, 4, corners);
-    geometry::TetrahedronShape shape;
-    if (!cell_shape(mesh, mesh.tet(root_slot), shape)) {
+    const std::int32_t root_slot = proposal.slot;
+    const std::uint64_t cell_id = proposal.cell_id;
+    if (!proposal.measured) {
       unmet_causes[cell_id] = {PHX_MC_TET_UNMET_NONREPRESENTABLE};
       return PHX_MC_OK;
     }
-    double center_size = 0.0;
-    const bool has_center_size = cell_target(mesh, corners, center_size);
-    if (!(radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) &&
-        !(has_center_size && shape.circumradius > center_size)) {
-      return PHX_MC_OK;
-    }
+    const geometry::TetrahedronShape& shape = proposal.shape;
+    const double center_size = proposal.target;
+    const bool has_center_size = proposal.has_target;
     const double* center = shape.circumcenter.data();
     if (!std::all_of(shape.circumcenter.begin(), shape.circumcenter.end(),
                      [](double value) { return coordinate_in_domain(value); })) {
@@ -2435,34 +2475,58 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     proposals.clear();
     for (std::int32_t slot : pending) {
       if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
-      geometry::TetrahedronShape shape;
-      double target = 0.0;
-      if (cell_shape(mesh, mesh.tet(slot), shape) &&
-          !(radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) &&
-          !(cell_target(mesh, mesh.tet(slot).v, target) && shape.circumradius > target)) {
+      Proposal proposal{};
+      proposal.measured = cell_shape(mesh, mesh.tet(slot), proposal.shape);
+      proposal.has_target = cell_target(mesh, mesh.tet(slot).v, proposal.target);
+      if (proposal.measured &&
+          !(radius_edge_bound > 0.0 && proposal.shape.radius_edge_ratio > radius_edge_bound) &&
+          !(proposal.has_target && proposal.shape.circumradius > proposal.target)) {
         continue;
       }
-      proposals.push_back({frame.key(shape.circumcenter.data()), mesh.cell_id(slot), slot});
+      proposal.key = frame.key(proposal.shape.circumcenter.data());
+      proposal.cell_id = mesh.cell_id(slot);
+      proposal.slot = slot;
+      proposals.push_back(proposal);
+      proposed_ids.push_back(proposal.cell_id);
     }
     pending.clear();
     if (++round == 0) {
       std::fill(pending_round.begin(), pending_round.end(), 0U);
       round = 1;
     }
-    std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
+    order.resize(proposals.size());
+    for (std::size_t row = 0; row < proposals.size(); ++row) {
+      order[row] = {proposals[row].key, proposals[row].cell_id, row};
+    }
+    std::sort(order.begin(), order.end(), [](const ProposalOrder& a, const ProposalOrder& b) {
       return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
     });
-    for (const Proposal& proposal : proposals) {
+    for (const ProposalOrder& entry : order) {
+      const Proposal& proposal = proposals[entry.row];
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {
         continue;
       }
-      if (const std::int32_t error = refine_cell(proposal.slot); error != PHX_MC_OK) return error;
+      if (const std::int32_t error = refine_cell(proposal); error != PHX_MC_OK) return error;
     }
   }
 
   restore_bank_order();
+  // Cells left pending by the round cap were never proposed.
+  for (std::int32_t slot : pending) {
+    if (mesh.complex_.live(slot) && !is_ghost(mesh.tet(slot))) {
+      proposed_ids.push_back(mesh.cell_id(slot));
+    }
+  }
+  std::vector<std::int32_t> candidate_slots;
+  for (std::uint64_t id : proposed_ids) {
+    const std::int32_t slot = mesh.cell_slot(id);
+    if (slot >= 0) candidate_slots.push_back(slot);
+  }
+  std::sort(candidate_slots.begin(), candidate_slots.end());
+  candidate_slots.erase(std::unique(candidate_slots.begin(), candidate_slots.end()),
+                        candidate_slots.end());
   std::vector<TetUnmetRecord> records;
-  collect_unmet(mesh, radius_edge_bound, unmet_causes, records, unmet_cells);
+  collect_unmet(mesh, radius_edge_bound, unmet_causes, candidate_slots, records, unmet_cells);
   std::map<std::uint64_t, double> boundary_unmet;
   for (const EdgeKey& edge : blocked_boundary_edges) {
     const std::int32_t first_slot = mesh.vertex_slot(edge[0]);

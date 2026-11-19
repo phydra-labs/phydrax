@@ -1759,6 +1759,13 @@ std::int32_t flip_to_constrained_delaunay(
   for (std::uint64_t id : seeds) {
     for (int face = 0; face < 4; ++face) pending.emplace_back(id, face);
   }
+  // The local Delaunay test of a face is symmetric (the insphere signs from
+  // either side agree), so a face between two unchanged seeds is tested only
+  // from the seed in the lower slot: its entry is still pending, or was
+  // tested on these same two cells, or the cell died and the face's new cell
+  // tests it.
+  std::vector<std::uint64_t> seed_ids(seeds.begin(), seeds.end());
+  std::sort(seed_ids.begin(), seed_ids.end());
   const auto apply = [&](std::span<const std::int32_t> removed,
                          std::span<const LocalCell> replacements, TetEditKind kind) {
     TetEdit operation;
@@ -1788,6 +1795,10 @@ std::int32_t flip_to_constrained_delaunay(
     }
     const int back = neighbor_slot(mesh.tet(other), slot);
     if (back < 0) return PHX_MC_INTERNAL_ERROR;
+    const auto seed = [&](std::uint64_t id) {
+      return std::binary_search(seed_ids.begin(), seed_ids.end(), id);
+    };
+    if (other < slot && seed(cell_id) && seed(mesh.cell_id(other))) continue;
     const std::int32_t apex = mesh.tet(other).v[back];
     if (mesh.metric_insphere(mesh.point(cell.v[0]), mesh.point(cell.v[1]), mesh.point(cell.v[2]),
                              mesh.point(cell.v[3]), mesh.point(apex)) <= 0) {

@@ -3149,6 +3149,7 @@ TetEditStatus TetMesh::insert_interior_vertex(
   }
   const std::size_t mask = cone_edge_keys_.size() - 1;
   bool linked = true;
+  std::size_t unmatched = 0;  // faces through the center not yet paired
   for (std::size_t row = 0; row < cone_faces_.size(); ++row) {
     const ConeFace& cone = cone_faces_[row];
     const std::int32_t slot = created[row];
@@ -3185,24 +3186,24 @@ TetEditStatus TetMesh::insert_interior_vertex(
         tet.n[face] = other;
         complex_.tets[static_cast<std::size_t>(other)].n[other_face] = slot;
         cone_edge_sides_[probe] = -1;
+        --unmatched;
       } else {
         cone_edge_keys_[probe] = key;
         cone_edge_sides_[probe] = (static_cast<std::int64_t>(slot) << 2) | face;
+        ++unmatched;
       }
     }
   }
-  for (std::size_t probe = 0; probe < cone_edge_keys_.size(); ++probe) {
-    linked = linked && (cone_edge_keys_[probe] == std::numeric_limits<std::uint64_t>::max() ||
-                        cone_edge_sides_[probe] < 0);
-  }
-  if (!linked) return TetEditStatus::kStaleGeneration;
+  if (!linked || unmatched != 0) return TetEditStatus::kStaleGeneration;
+  // Every face through the center lies between two created cells and every
+  // outer face keeps the label of the removed cell, which the cell beyond
+  // holds as well, so each created cell is labeled on its own side only.
   for (std::size_t row = 0; row < cone_faces_.size(); ++row) {
     const std::int32_t slot = created[row];
     complex_.set_region(slot, region);
-    for (int face = 0; face < 4; ++face) {
-      complex_.set_facet_constraint(
-          slot, face, face == cone_faces_[row].apex ? cone_faces_[row].constraint : kNoConstraint);
-    }
+    std::array<std::int32_t, 4> labels{kNoConstraint, kNoConstraint, kNoConstraint, kNoConstraint};
+    labels[static_cast<std::size_t>(cone_faces_[row].apex)] = cone_faces_[row].constraint;
+    complex_.set_cell_constraints(slot, labels);
     const std::uint64_t id = next_cell_id_ + row;
     cell_ids_[static_cast<std::size_t>(slot)] = id;
     cell_index_.set_slot(id, slot);

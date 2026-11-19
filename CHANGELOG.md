@@ -261,6 +261,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement (`phx_mc_tet_mesh_refine`) measures each
+  proposed cell once per round, records unmet cells from the proposed cells
+  instead of a whole-mesh pass, decides clear cavity orientation tests by the
+  predicate's floating stage inline, labels created cells on their own side,
+  computes Hilbert keys without branches (same keys), and tests each face
+  between two unchanged seed cells once in the constrained Delaunay flip
+  pass (the test is symmetric). The hot `TetMesh` accessors are inline. On
+  the ledger L3 shapes at their Gmsh HXT element counts (one thread):
+  sphere 2.06 -> 1.66 s, torus 2.01 -> 1.80 s, two cylinders 1.68 -> 1.39 s;
+  meshes may differ where the flip pass now flips from the other side.
 - Native tetrahedral improvement (`phx_mc_tet_mesh_improve_quality`) measures
   every cell once and afterwards only the cells an accepted edit creates or
   moves, keeping each live cell's measurement: the vertex phase, the shape
