@@ -216,6 +216,7 @@ class ConstrainedMesher {
   std::deque<std::pair<int32_t, int32_t>> segment_queue_;
   std::priority_queue<BadTriangle, std::vector<BadTriangle>, BadOrder> bad_queue_;
   std::vector<int32_t> flip_stack_;
+  std::vector<int32_t> cavity_stack_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
   std::vector<int32_t> constraint_sources_;
@@ -1052,7 +1053,9 @@ class ConstrainedMesher {
     epoch_ += 2;
     const std::uint64_t inside = epoch_;
     const std::uint64_t outside = epoch_ + 1;
-    std::vector<int32_t> stack{start};
+    auto& stack = cavity_stack_;
+    stack.clear();
+    stack.push_back(start);
     marks_[static_cast<std::size_t>(start)] = inside;
     while (!stack.empty()) {
       const int32_t t = stack.back();
