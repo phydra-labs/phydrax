@@ -99,18 +99,32 @@ class Refinement {
       const Entry entry = heap_[0];
       heap_remove(entry.slot);
       if (!inside(entry.slot) || vertices(entry.slot) != entry.vertices) continue;
-      if (tri_.vertex_count() >= input_.point_cap) {
-        ++result_.stats.unresolved_triangles;
-        return PHX_MC_UNRESOLVED;
-      }
+      if (tri_.vertex_count() >= input_.point_cap) break;
       process(entry.slot);
       if (status_ != PHX_MC_OK) return status_;
     }
+    return summarize();
+  }
+
+  int32_t classify(int32_t t, bool& bad_size, bool& bad_angle) {
+    if (!inside(t)) return PHX_MC_INVALID_ARGUMENT;
+    double radius=0;
+    geometry(t,radius,nullptr,&bad_size,&bad_angle);
+    return status_;
+  }
+
+  int32_t summarize() {
     result_.stats.unresolved_triangles=0;
+    result_.stats.unresolved_size=0;
+    result_.stats.unresolved_angle=0;
     for (std::size_t t=0;t<tri_.triangles.size();++t) {
       if (!inside(static_cast<int32_t>(t))) continue;
       double radius=0.0;
-      if (geometry(static_cast<int32_t>(t),radius,nullptr)) ++result_.stats.unresolved_triangles;
+      bool bad_size=false, bad_angle=false;
+      if (geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle))
+        ++result_.stats.unresolved_triangles;
+      result_.stats.unresolved_size+=bad_size;
+      result_.stats.unresolved_angle+=bad_angle;
       if (status_!=PHX_MC_OK) return status_;
     }
     return result_.stats.unresolved_triangles ? PHX_MC_UNRESOLVED : PHX_MC_OK;
@@ -241,7 +255,8 @@ class Refinement {
   static double dot(const CadMetric2D& m, double x, double y, double u, double v) {
     return x * (m.uu * u + m.uv * v) + y * (m.uv * u + m.vv * v);
   }
-  bool geometry(int32_t t, double& radius, double* center) {
+  bool geometry(int32_t t, double& radius, double* center,
+                bool* size_reason=nullptr, bool* angle_reason=nullptr) {
     const Triangle2D& cell = tri_.triangles[static_cast<std::size_t>(t)];
     const double* a = tri_.point(cell.v[0]);
     const double* b = tri_.point(cell.v[1]);
@@ -273,6 +288,9 @@ class Refinement {
         tri_.constraint(t,next3(shortest)) != -1 && tri_.constraint(t,prev3(shortest)) != -1;
     const bool bad_angle = !protected_angle && sine_ * std::sqrt(lengths[next3(shortest)] *
         lengths[prev3(shortest)]) > area2;
+    const bool bad_size=radius > 0.70710678118654752440;
+    if (size_reason) *size_reason=bad_size;
+    if (angle_reason) *angle_reason=bad_angle;
     if (center) {
       center[0] = a[0]+dx; center[1] = a[1]+dy;
       if (bad_angle && input_.min_angle_degrees > 0) {
@@ -292,7 +310,7 @@ class Refinement {
         }
       }
     }
-    return radius > 0.70710678118654752440 || bad_angle;
+    return bad_size || bad_angle;
   }
   void enqueue(int32_t t) {
     double radius=0;
@@ -440,6 +458,16 @@ class Refinement {
 };
 
 }  // namespace
+int32_t cad_refine2d_bad_triangle(const CadRefine2DInput& input,
+                                  CadRefine2DResult& result, int32_t triangle,
+                                  bool& bad_size, bool& bad_angle) {
+  if (!input.metric || triangle<0 ||
+      static_cast<std::size_t>(triangle)>=result.triangulation.triangles.size() ||
+      !(input.min_angle_degrees>=0 && input.min_angle_degrees<60))
+    return PHX_MC_INVALID_ARGUMENT;
+  return Refinement(input,result).classify(triangle,bad_size,bad_angle);
+}
+
 
 int32_t cad_refine2d(const CadRefine2DInput& input, CadRefine2DResult& result) {
   if (!input.points || input.point_count < 3 || input.segment_count < 0 || input.hole_count < 0 ||

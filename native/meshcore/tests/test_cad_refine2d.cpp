@@ -56,6 +56,21 @@ Fixture rectangle(double width, double height, int nx, int ny) {
   for(int i=0;i<n;++i) { f.segments.push_back(i); f.segments.push_back((i+1)%n); }
   return f;
 }
+CadMetric2D graded_identity(const double* p, void* context) {
+  const auto& f=*static_cast<const Fixture*>(context);
+  const std::size_t n=f.points.size()/2;
+  double h=1;
+  for(std::size_t i=0;i<n;++i) {
+    const double* b=&f.points[2*i];
+    const double* prev=&f.points[2*((i+n-1)%n)];
+    const double* next=&f.points[2*((i+1)%n)];
+    const double spacing=std::min(std::hypot(b[0]-prev[0],b[1]-prev[1]),
+                                  std::hypot(b[0]-next[0],b[1]-next[1]));
+    h=std::min(h,spacing+0.3*std::hypot(p[0]-b[0],p[1]-b[1]));
+  }
+  const double scale=1/(h*h);
+  return {scale,0,scale};
+}
 CadRefine2DResult run(const Fixture& f,CadMetric2DFunction metric,void* context,int32_t& status,int cap=2000) {
   CadRefine2DInput in;
   in.points=f.points.data(); in.point_count=static_cast<int32_t>(f.points.size()/2);
@@ -185,6 +200,20 @@ void metric_errors() {
   report_refusals("cap",status,c);
   // Fault caught: exceeding the caller's point cap without an unresolved status.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
+  CadRefine2DInput recount;
+  recount.point_count=static_cast<int32_t>(f.points.size()/2);
+  recount.metric=height_field;
+  int64_t total=0, sizes=0, angles=0;
+  for(std::size_t t=0;t<c.triangulation.triangles.size();++t) {
+    if(!c.triangulation.live[t] || !c.triangulation.region[t] ||
+       c.triangulation.is_ghost(static_cast<int32_t>(t))) continue;
+    bool size=false, angle=false;
+    PHX_CHECK(cad_refine2d_bad_triangle(recount,c,static_cast<int32_t>(t),size,angle)==PHX_MC_OK);
+    total+=size || angle; sizes+=size; angles+=angle;
+  }
+  // Fault caught: reporting only one queued triangle on a point-cap exit.
+  PHX_CHECK(total>1 && c.stats.unresolved_triangles==total);
+  PHX_CHECK(c.stats.unresolved_size==sizes && c.stats.unresolved_angle==angles);
   check_topology(f,c);
 }
 void hole_and_small_angle() {
@@ -290,7 +319,19 @@ int main() {
   check_topology(f,r);
   r=run(f,gradient,nullptr,status);
   report_refusals("gradient",status,r);
-  PHX_CHECK(status==PHX_MC_OK || (status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles>0));
+  // Fault caught: a silently resolved or differently refused long boundary.
+  PHX_CHECK(status==PHX_MC_UNRESOLVED);
+  PHX_CHECK(r.stats.encroachment_refusals==21);
+  PHX_CHECK(r.stats.outside_refusals==0 && r.stats.proximity_refusals==0 &&
+            r.stats.nonstar_refusals==0 && r.stats.unresolved_triangles>0);
   check_topology(f,r);
+  Fixture fine=rectangle(6,6,24,24);
+  r=run(fine,graded_identity,&fine,status);
+  report_refusals("graded-quarter",status,r);
+  // Fault caught: failure to grade refinement from a finely sampled boundary.
+  PHX_CHECK(status==PHX_MC_OK && r.stats.unresolved_triangles==0);
+  PHX_CHECK(r.stats.encroachment_refusals==0 && r.stats.outside_refusals==0 &&
+            r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0);
+  check_topology(fine,r);
   return phx::mc::test::finish("test_cad_refine2d");
 }

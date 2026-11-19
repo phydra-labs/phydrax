@@ -33,6 +33,8 @@ struct CadRefine2DInput {
 struct CadRefine2DStats {
   int64_t metric_evaluations = 0;
   int64_t insertions = 0;
+  int64_t unresolved_size = 0;
+  int64_t unresolved_angle = 0;
   int64_t encroachment_refusals = 0;
   int64_t nonstar_refusals = 0;
   int64_t outside_refusals = 0;
@@ -47,10 +49,22 @@ struct CadRefine2DResult {
   CadRefine2DStats stats;
 };
 
-// The caller owns the callback context. Boundary constraints are never split.
-// The cavity uses the SPD metric at the candidate, not a Euclidean chart
-// circle: general spline charts can remain strongly anisotropic after scaling.
+// The caller owns the callback context and supplies a metric graded to boundary
+// spacing (face stage, design B.2); boundary constraints are never split.
+// With graded metrics and boundary lengths <= 1, no refusal was observed on the
+// measured fixtures, but this is not a general no-refusal guarantee.
+// On completed or point-cap exits, statistics count each unresolved triangle
+// and each size or angle criterion it misses; refusal counts identify the rule.
+// Refinement preserves exact orientation and constraints and terminates at the cap.
 // Invalid metrics return PHX_MC_INVALID_INPUT and record the evaluation point.
 int32_t cad_refine2d(const CadRefine2DInput& input, CadRefine2DResult& result);
+
+// Re-evaluate one live finite region triangle using the same centroid metric
+// and criteria as refinement; the callback context remains caller-owned.
+// Returns the metric status and sets the flags on success; it also records the
+// callback evaluation and any invalid metric point in result.stats.
+int32_t cad_refine2d_bad_triangle(const CadRefine2DInput& input,
+                                  CadRefine2DResult& result, int32_t triangle,
+                                  bool& bad_size, bool& bad_angle);
 
 }  // namespace phx::mc
