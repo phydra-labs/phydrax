@@ -6823,15 +6823,7 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         preparation = domain_owner.SourcePreparation.of(domain, preparation)
         family = self.specification.target.cell_families
         if set((*family.required, *family.preferred)) == {"quadrilateral"}:
-            match steering:
-                case "screened":
-                    raise _failure(
-                        "screened parametric quadrilateral surface is unsupported"
-                    )
-                case "certified":
-                    pass
-                case _:
-                    assert_never(steering)
+            # The quadrilateral route has no screened form; retain its certified construction.
             from ._native_surface_quad import execute_tensor_quads
 
             return execute_tensor_quads(self, preparation)

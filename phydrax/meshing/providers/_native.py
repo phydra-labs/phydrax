@@ -753,20 +753,13 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
 
     def execute(self, /, *, steering: ConstructionSteering) -> NativeMeshConstruction:
         steering = parse(steering, ConstructionSteering, "steering")
+        # Layered and multiregion fills have no screened construction.
+        if self.specification.layer_controls or len(self.domain.regions) != 1:
+            steering = "certified"
         match steering:
             case "certified":
                 pass
             case "screened":
-                if self.specification.layer_controls:
-                    raise _failure(
-                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                        "Screened CAD volume with layer_controls is unsupported.",
-                    )
-                if len(self.domain.regions) != 1:
-                    raise _failure(
-                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                        "Screened CAD volume with multiple regions is unsupported.",
-                    )
                 from ._native_cad_volume import (
                     CadDeferredSurface,
                     CadSurfaceConstructionData,

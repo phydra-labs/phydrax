@@ -3898,17 +3898,14 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
         surface_premises: CadDeferredSurface | None = None,
     ) -> NativeMeshConstruction:
         steering = parse(steering, ConstructionSteering, "steering")
+        # An accepted-surface source has no independent screened preparation.
+        if isinstance(self.source.surface, CellMeshingResult):
+            steering = "certified"
         match steering:
             case "certified":
                 if not isinstance(self.source.surface, CellMeshingResult):
                     raise ValueError("Certified CAD volume requires an accepted surface.")
             case "screened":
-                if len(self.source.domain.regions) != 1:
-                    raise MeshingFailure(
-                        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                        "Screened CAD volume with multiple regions is unsupported.",
-                        stage="source_inspection",
-                    )
                 if not isinstance(self.source.surface, CadSurfaceConstructionData):
                     raise ValueError(
                         "Screened CAD volume requires surface construction data."
