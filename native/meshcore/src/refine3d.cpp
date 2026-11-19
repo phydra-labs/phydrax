@@ -1268,7 +1268,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // Local incidence and constrained-bank row indices: a boundary split or a
   // cone insertion touches only the cells, facets and segments around it.
   detail::LocalIncidence incidence;
-  if (!incidence.initialize(mesh, initial)) return PHX_MC_INTERNAL_ERROR;
+  if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
   initial = TetMeshSnapshot{};
   std::map<FaceKey, std::size_t> facet_rows_by_face;
   for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {

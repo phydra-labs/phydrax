@@ -2175,7 +2175,7 @@ bool incidence_matches_mesh(const TetMesh& mesh,
   TetMeshSnapshot snapshot;
   if (mesh.snapshot(snapshot) != TetEditStatus::kApplied) return false;
   detail::LocalIncidence rebuilt;
-  if (!rebuilt.initialize(mesh, snapshot)) return false;
+  if (!rebuilt.initialize(mesh)) return false;
   for (const TetSnapshotVertex& vertex : snapshot.vertices) {
     const std::int32_t slot = mesh.vertex_slot(vertex.id);
     const detail::LocalIncidence::Star maintained = incidence.vertex_star(slot);
@@ -2208,7 +2208,7 @@ void incidence_route_matches_public_scan_after_collapse() {
   TetMeshSnapshot initial;
   PHX_CHECK(indexed_mesh.snapshot(initial) == TetEditStatus::kApplied);
   detail::LocalIncidence incidence;
-  PHX_CHECK(incidence.initialize(indexed_mesh, initial));
+  PHX_CHECK(incidence.initialize(indexed_mesh));
   const std::int32_t initial_survivor_slot = indexed_mesh.vertex_slot(1);
   const detail::LocalIncidence::Star stale_star =
       incidence.vertex_star(initial_survivor_slot);
@@ -2364,7 +2364,7 @@ void cavity_local_reconnection_matches_public_batch() {
   TetMeshSnapshot initial;
   PHX_CHECK(local_mesh.snapshot(initial) == TetEditStatus::kApplied);
   detail::LocalIncidence incidence;
-  PHX_CHECK(incidence.initialize(local_mesh, initial));
+  PHX_CHECK(incidence.initialize(local_mesh));
 
   // Replace the six cells around the apex edge (6, 7) by a fan from ring vertex 0.
   TetEdit fan;
@@ -2623,7 +2623,7 @@ void boundary_point_insertion_splits_segment_and_fans() {
   TetMeshSnapshot initial;
   PHX_CHECK(local_mesh.snapshot(initial) == TetEditStatus::kApplied);
   detail::LocalIncidence incidence;
-  PHX_CHECK(incidence.initialize(local_mesh, initial));
+  PHX_CHECK(incidence.initialize(local_mesh));
   const std::int32_t a = local_mesh.vertex_slot(0);
   const std::int32_t b = local_mesh.vertex_slot(1);
   std::vector<std::size_t> facet_rows;
@@ -2854,7 +2854,7 @@ void refused_boundary_insertion_restores_disk_constraints() {
   TetMeshSnapshot initial;
   PHX_CHECK(mesh.snapshot(initial) == TetEditStatus::kApplied);
   detail::LocalIncidence incidence;
-  PHX_CHECK(incidence.initialize(mesh, initial));
+  PHX_CHECK(incidence.initialize(mesh));
   std::vector<std::size_t> disk_rows;
   for (std::size_t row = 0; row < initial.constrained_facets.size(); ++row) {
     std::array<std::uint64_t, 3> key = initial.constrained_facets[row].vertices;
@@ -3297,7 +3297,7 @@ void implicit_boundary_fan_rejects_remote_contact_atomically() {
   TetMeshSnapshot initial;
   PHX_CHECK(mesh.snapshot(initial) == TetEditStatus::kApplied);
   detail::LocalIncidence incidence;
-  PHX_CHECK(incidence.initialize(mesh, initial));
+  PHX_CHECK(incidence.initialize(mesh));
   std::size_t disk_row = initial.constrained_facets.size();
   for (std::size_t row = 0; row < initial.constrained_facets.size(); ++row) {
     auto key = initial.constrained_facets[row].vertices;
