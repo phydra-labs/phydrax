@@ -237,6 +237,75 @@ void quadric_templates() {
   }, -7, 7, -7, 7);
 }
 
+// The closed-form evaluators against the generic route (template programs and
+// Taylor composition) on the same graph: every normalized Taylor coefficient
+// through order 4 within 4 ulp of the expansion's scale. Covers the quadric
+// templates, revolutions of both line kinds and placements of them.
+void closed_forms_match_programs() {
+  using phx::mc::cad::ClosedForm;
+  using phx::mc::cad::Evaluators;
+  using phx::mc::cad::kMaxOrder;
+  using phx::mc::cad::Taylor;
+  using phx::mc::cad::term;
+  Builder b;
+  const double radius = 1.5, minor = 0.4, r0 = 0.7, angle = 0.3;
+  const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t cylinder =
+      b.add_template("cylinder", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t cone = b.add_template(
+      "cone", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {r0}, {angle}}));
+  const int32_t sphere =
+      b.add_template("sphere", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t torus = b.add_template(
+      "torus", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}, {minor}}));
+  // A slanted line (a cone of revolution) and an exact line segment.
+  const int32_t line = b.add_template(
+      "line3", concat({v3(add(kOrigin, scaled(radius, kE1))), v3(add(kAxis, scaled(0.3, kE2)))}));
+  const int32_t exact = b.add_template(
+      "exact_line3", concat({v3(add(kOrigin, scaled(radius, kE1))),
+                             v3(add(kOrigin, add(scaled(0.5, kE1), scaled(2.0, kAxis))))}));
+  const int32_t revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {line}, concat({v3(kOrigin), v3(kAxis)}));
+  const int32_t exact_revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {exact}, concat({v3(kOrigin), v3(kAxis)}));
+  const std::vector<double> placement{0, -1, 0, 1, 0, 0, 0, 0, 1, 1.0, 2.0, 3.0};
+  const int32_t placed_revolution = b.add(PHX_MC_CAD_NODE_AFFINE, {revolution, 3}, placement);
+  const int32_t placed_torus = b.add(PHX_MC_CAD_NODE_AFFINE, {torus, 3}, placement);
+  const int32_t twice = b.add(PHX_MC_CAD_NODE_AFFINE, {placed_torus, 3}, placement);
+  const std::vector<int32_t> nodes{plane,           cylinder,          cone,
+                                   sphere,          torus,             revolution,
+                                   exact_revolution, placed_revolution, placed_torus,
+                                   twice};
+  b.surfaces = nodes;
+  phx_mc_cad_model model = b.model();
+  CadGeometry closed, programs;
+  PHX_CHECK(closed.bind(model) == PHX_MC_OK);
+  PHX_CHECK(programs.bind(model, Evaluators::kPrograms) == PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  std::mt19937_64 random(77);
+  std::uniform_real_distribution<double> uu(-7.0, 7.0), vv(-1.4, 1.4);
+  for (const int32_t node : nodes) {
+    PHX_CHECK(closed.node(node).closed != ClosedForm::kNone);
+    PHX_CHECK(programs.node(node).closed == ClosedForm::kNone);
+    for (int sample = 0; sample < 500; ++sample) {
+      const double point[2] = {uu(random), vv(random)};
+      Taylor fast[3], reference[3];
+      PHX_CHECK(closed.expand(node, point, kMaxOrder, fast, workspace));
+      PHX_CHECK(programs.expand(node, point, kMaxOrder, reference, workspace));
+      double scale = 1.0;
+      for (int i = 0; i < 3; ++i)
+        for (int n = 0; n <= kMaxOrder; ++n)
+          for (int j = 0; j <= n; ++j)
+            scale = std::max(scale, std::fabs(reference[i].c[term(n - j, j)]));
+      for (int i = 0; i < 3; ++i)
+        for (int n = 0; n <= kMaxOrder; ++n)
+          for (int j = 0; j <= n; ++j)
+            PHX_CHECK_NEAR(fast[i].c[term(n - j, j)], reference[i].c[term(n - j, j)],
+                           4.0 * kEpsilon * scale);
+    }
+  }
+}
+
 void curve_templates() {
   Builder b;
   const int32_t line = b.add_template("line3", concat({v3(kOrigin), v3(kE1)}));
@@ -589,6 +658,7 @@ void entry_point() {
 
 int main() {
   quadric_templates();
+  closed_forms_match_programs();
   curve_templates();
   composite_nodes();
   spline_nodes();

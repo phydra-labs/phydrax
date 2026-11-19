@@ -57,6 +57,17 @@ struct EvaluationWorkspace {
   std::vector<double> jets;
 };
 
+// Closed-form surface evaluators (decision D3) that stand in for a node's
+// generic expansion: the five quadric templates and the revolution of a line
+// profile. They evaluate the source's own formula, so they agree with the
+// template programs within a few ulp of the coordinate scale.
+enum class ClosedForm : int32_t { kNone, kPlane, kCylinder, kCone, kSphere, kTorus, kLineRevolution };
+
+// kPrograms keeps every node on its generic route (template programs and
+// Taylor composition): the reference of the closed forms in tests and
+// measurements.
+enum class Evaluators { kClosedForms, kPrograms };
+
 struct Node {
   int32_t kind = -1;
   int32_t inputs = 0;
@@ -72,13 +83,17 @@ struct Node {
   // first piece covering it.
   std::vector<double> u_breaks, v_breaks;
   std::vector<int32_t> cell_pieces;
+  // Closed-form nodes: the kind and its frame (see expand_closed).
+  ClosedForm closed = ClosedForm::kNone;
+  double closed_data[24] = {};
 };
 
 class CadGeometry {
  public:
   // Validates the model's geometry graph and entity tables; nothing is kept
   // but views into the caller's arrays, which must outlive this object.
-  int32_t bind(const phx_mc_cad_model& model);
+  int32_t bind(const phx_mc_cad_model& model, Evaluators evaluators = Evaluators::kClosedForms);
+  const phx_mc_cad_model& model() const noexcept { return model_; }
 
   int64_t surface_count() const noexcept { return model_.surface_count; }
   int64_t curve_count() const noexcept { return model_.curve_count; }
@@ -106,6 +121,8 @@ class CadGeometry {
  private:
   bool expand_template(const Node& node, const double* point, int order, Taylor* out,
                        EvaluationWorkspace& workspace) const;
+  bool expand_closed(const Node& node, const double* point, int order, Taylor* out) const;
+  void bind_closed_form(Node& node) const;
   bool expand_bspline_curve(const Node& node, double t, int order, Taylor* out) const;
   bool expand_bspline_surface(const Node& node, const double* point, int order,
                               Taylor* out) const;

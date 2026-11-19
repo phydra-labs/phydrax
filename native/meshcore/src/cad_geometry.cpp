@@ -20,8 +20,17 @@ namespace {
 constexpr int kMaxDegree = 31;
 // Reals per intersection chart: start, end, lower, upper (4 each), P (3, 3).
 constexpr int64_t kChartReals = 25;
-// Fixed preconditioned corrections of an intersection chart, as the source.
+// The source's chart iteration: fixed preconditioned corrections from the
+// chart's interpolation. It converges linearly at the preconditioner's
+// contraction rate, so evaluation runs kChartSteps of it, then Newton steps
+// with the residual Jacobian (the same root, quadratically) until a
+// correction is at rounding level (kSettled ulp of the coordinate). A
+// Jacobian that cannot be solved or a root that does not settle within
+// kNewtonIterations falls back to the source's kChartIterations.
 constexpr int kChartIterations = 64;
+constexpr int kChartSteps = 2;
+constexpr int kNewtonIterations = 8;
+constexpr double kSettled = 16.0;
 
 ProgramView view(const ProgramData& data, const std::vector<double>& seeds,
                  int64_t input_dimension) noexcept {
@@ -403,7 +412,7 @@ int32_t CadGeometry::validate_node(int32_t index) {
   }
 }
 
-int32_t CadGeometry::bind(const phx_mc_cad_model& m) {
+int32_t CadGeometry::bind(const phx_mc_cad_model& m, Evaluators evaluators) {
   static const bool kTemplatesValid = templates_valid();
   if (!kTemplatesValid) return PHX_MC_INTERNAL_ERROR;
   model_ = m;
@@ -440,6 +449,8 @@ int32_t CadGeometry::bind(const phx_mc_cad_model& m) {
   for (int64_t k = 0; k < m.node_count; ++k) {
     const int32_t status = validate_node(static_cast<int32_t>(k));
     if (status != PHX_MC_OK) return status;
+    if (evaluators == Evaluators::kClosedForms)
+      bind_closed_form(nodes_[static_cast<std::size_t>(k)]);
   }
   const auto node_with = [&](int32_t index, int inputs, int outputs) {
     return index >= 0 && index < m.node_count && node(index).inputs == inputs &&
@@ -481,6 +492,200 @@ int32_t CadGeometry::bind(const phx_mc_cad_model& m) {
         (m.region_orientations[k] != 1 && m.region_orientations[k] != -1))
       return PHX_MC_INVALID_INPUT;
   return PHX_MC_OK;
+}
+
+void CadGeometry::bind_closed_form(Node& node) const {
+  static const int32_t kPlane = template_index("plane"), kCylinder = template_index("cylinder"),
+                       kCone = template_index("cone"), kSphere = template_index("sphere"),
+                       kTorus = template_index("torus"), kLine = template_index("line3"),
+                       kExactLine = template_index("exact_line3");
+  double* data = node.closed_data;
+  // Every closed form is affine in its frame: a point (data 0..2) and
+  // `vectors` linear vectors after it, then the kind's scalars.
+  const auto vectors = [](ClosedForm kind) { return kind == ClosedForm::kLineRevolution ? 5 : 3; };
+  if (node.kind == PHX_MC_CAD_NODE_TEMPLATE) {
+    const int64_t id = node.integers[0];
+    // Template coefficients: origin or center, e1, e2, then axis and the
+    // kind's scalars (cylinder and sphere R; cone r0, semi-angle; torus R, r).
+    std::copy(node.reals, node.reals + node.real_count, data);
+    if (id == kPlane) {
+      node.closed = ClosedForm::kPlane;
+    } else if (id == kCylinder) {
+      node.closed = ClosedForm::kCylinder;
+    } else if (id == kCone) {
+      node.closed = ClosedForm::kCone;
+      data[13] = std::tan(node.reals[13]);
+    } else if (id == kSphere) {
+      node.closed = ClosedForm::kSphere;
+    } else if (id == kTorus) {
+      node.closed = ClosedForm::kTorus;
+    }
+    return;
+  }
+  if (node.kind == PHX_MC_CAD_NODE_AFFINE && node.integers[1] == 3) {
+    // A placement of a closed form is the closed form of the placed frame.
+    const Node& child = this->node(static_cast<int32_t>(node.integers[0]));
+    if (child.closed == ClosedForm::kNone) return;
+    const double* matrix = node.reals;
+    const double* offset = node.reals + 9;
+    std::copy(child.closed_data, child.closed_data + 24, data);
+    for (int slot = 0; slot <= vectors(child.closed); ++slot) {
+      const double* x = child.closed_data + 3 * slot;
+      for (int r = 0; r < 3; ++r)
+        data[3 * slot + r] = matrix[3 * r] * x[0] + matrix[3 * r + 1] * x[1] +
+                             matrix[3 * r + 2] * x[2] + (slot == 0 ? offset[r] : 0.0);
+    }
+    node.closed = child.closed;
+    return;
+  }
+  if (node.kind != PHX_MC_CAD_NODE_REVOLUTION) return;
+  const Node& profile = this->node(static_cast<int32_t>(node.integers[0]));
+  if (profile.kind != PHX_MC_CAD_NODE_TEMPLATE ||
+      (profile.integers[0] != kLine && profile.integers[0] != kExactLine))
+    return;
+  // Axis origin O, unit axis a, profile p(v) = p0 + v d (line; exact line
+  // (1 - v) first + v last: p0 = first, d = last - first). The revolution
+  // O + a (a.(p - O)) + r cos u + (a x r) sin u with r = (p - O) - a (a.(p - O))
+  // is affine in v: P0 + v P1 + (R0 + v R1) cos u + (C0 + v C1) sin u.
+  const double *origin = node.reals, *a = node.reals + 3, *p = profile.reals;
+  double d[3], relative[3];
+  for (int i = 0; i < 3; ++i) {
+    d[i] = profile.integers[0] == kExactLine ? p[3 + i] - p[i] : p[3 + i];
+    relative[i] = p[i] - origin[i];
+  }
+  const double dot = relative[0] * a[0] + relative[1] * a[1] + relative[2] * a[2];
+  const double slope = d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+  double *p0 = data, *p1 = data + 3, *r0 = data + 6, *r1 = data + 9;
+  for (int i = 0; i < 3; ++i) {
+    p0[i] = origin[i] + a[i] * dot;
+    p1[i] = a[i] * slope;
+    r0[i] = relative[i] - a[i] * dot;
+    r1[i] = d[i] - a[i] * slope;
+  }
+  for (const double* r : {r0, r1}) {
+    double* c = data + (r == r0 ? 12 : 15);
+    c[0] = a[1] * r[2] - a[2] * r[1];
+    c[1] = a[2] * r[0] - a[0] * r[2];
+    c[2] = a[0] * r[1] - a[1] * r[0];
+  }
+  node.closed = ClosedForm::kLineRevolution;
+}
+
+namespace {
+
+// Normalized derivatives cos^(n)(x) / n! and sin^(n)(x) / n!, n <= order.
+void trigonometric_series(double x, int order, double* cosine, double* sine) noexcept {
+  const double c = std::cos(x), s = std::sin(x);
+  const double cosine_cycle[4] = {c, -s, -c, s}, sine_cycle[4] = {s, c, -s, -c};
+  double factorial = 1.0;
+  for (int n = 0; n <= order; ++n) {
+    if (n > 1) factorial *= n;
+    cosine[n] = cosine_cycle[n % 4] / factorial;
+    sine[n] = sine_cycle[n % 4] / factorial;
+  }
+}
+
+}  // namespace
+
+// The source formulas of PlanePatch, CylinderPatch, ConePatch, SpherePatch,
+// TorusPatch and RevolutionSurface over a line, in the source's operation
+// order for the value; every Taylor coefficient is a product of a frame
+// vector and normalized trigonometric derivatives.
+bool CadGeometry::expand_closed(const Node& node, const double* point, int order,
+                                Taylor* out) const {
+  if (order > kMaxOrder) return false;
+  const Truncation local{2, order};
+  for (int i = 0; i < 3; ++i) clear(out[i], local);
+  const double* data = node.closed_data;
+  const double *origin = data, *e1 = data + 3, *e2 = data + 6, *axis = data + 9;
+  const double u = point[0], v = point[1];
+  double cu[kMaxOrder + 1], su[kMaxOrder + 1], cv[kMaxOrder + 1], sv[kMaxOrder + 1];
+  switch (node.closed) {
+    case ClosedForm::kPlane:
+      for (int i = 0; i < 3; ++i) {
+        out[i].c[0] = origin[i] + u * e1[i] + v * e2[i];
+        if (order >= 1) out[i].c[term(1, 0)] = e1[i], out[i].c[term(0, 1)] = e2[i];
+      }
+      return true;
+    case ClosedForm::kCylinder: {
+      const double radius = data[12];
+      trigonometric_series(u, order, cu, su);
+      for (int i = 0; i < 3; ++i) {
+        out[i].c[0] = origin[i] + radius * (cu[0] * e1[i] + su[0] * e2[i]) + v * axis[i];
+        for (int n = 1; n <= order; ++n)
+          out[i].c[term(n, 0)] = radius * (cu[n] * e1[i] + su[n] * e2[i]);
+        if (order >= 1) out[i].c[term(0, 1)] = axis[i];
+      }
+      return true;
+    }
+    case ClosedForm::kCone: {
+      const double slope = data[13], radius = data[12] + v * slope;
+      trigonometric_series(u, order, cu, su);
+      for (int i = 0; i < 3; ++i) {
+        const double radial = cu[0] * e1[i] + su[0] * e2[i];
+        out[i].c[0] = origin[i] + v * axis[i] + radius * radial;
+        for (int n = 1; n <= order; ++n) {
+          const double derivative = cu[n] * e1[i] + su[n] * e2[i];
+          out[i].c[term(n, 0)] = radius * derivative;
+          if (n + 1 <= order) out[i].c[term(n, 1)] = slope * derivative;
+        }
+        if (order >= 1) out[i].c[term(0, 1)] = axis[i] + slope * radial;
+      }
+      return true;
+    }
+    case ClosedForm::kSphere: {
+      const double radius = data[12];
+      trigonometric_series(u, order, cu, su);
+      trigonometric_series(v, order, cv, sv);
+      for (int i = 0; i < 3; ++i) {
+        const double equatorial = cu[0] * e1[i] + su[0] * e2[i];
+        out[i].c[0] = origin[i] + radius * (cv[0] * equatorial + sv[0] * axis[i]);
+        for (int n = 1; n <= order; ++n)
+          for (int j = 0; j <= n; ++j) {
+            const double turned = cu[n - j] * e1[i] + su[n - j] * e2[i];
+            out[i].c[term(n - j, j)] =
+                radius * (n == j ? cv[j] * turned + sv[j] * axis[i] : cv[j] * turned);
+          }
+      }
+      return true;
+    }
+    case ClosedForm::kTorus: {
+      const double major = data[12], minor = data[13];
+      trigonometric_series(u, order, cu, su);
+      trigonometric_series(v, order, cv, sv);
+      const double ring = major + minor * cv[0];
+      for (int i = 0; i < 3; ++i) {
+        out[i].c[0] = origin[i] + ring * (cu[0] * e1[i] + su[0] * e2[i]) +
+                      minor * sv[0] * axis[i];
+        for (int n = 1; n <= order; ++n)
+          for (int j = 0; j <= n; ++j) {
+            const double radial = cu[n - j] * e1[i] + su[n - j] * e2[i];
+            double value = (j == 0 ? ring : minor * cv[j]) * radial;
+            if (n == j) value += minor * sv[j] * axis[i];
+            out[i].c[term(n - j, j)] = value;
+          }
+      }
+      return true;
+    }
+    case ClosedForm::kLineRevolution: {
+      const double *p1 = data + 3, *r0 = data + 6, *r1 = data + 9, *c0 = data + 12,
+                   *c1 = data + 15;
+      trigonometric_series(u, order, cu, su);
+      for (int i = 0; i < 3; ++i) {
+        const double radial = r0[i] + v * r1[i], cross = c0[i] + v * c1[i];
+        out[i].c[0] = origin[i] + v * p1[i] + radial * cu[0] + cross * su[0];
+        for (int n = 1; n <= order; ++n) {
+          out[i].c[term(n, 0)] = radial * cu[n] + cross * su[n];
+          if (n + 1 <= order) out[i].c[term(n, 1)] = r1[i] * cu[n] + c1[i] * su[n];
+        }
+        if (order >= 1) out[i].c[term(0, 1)] = p1[i] + r1[i] * cu[0] + c1[i] * su[0];
+      }
+      return true;
+    }
+    case ClosedForm::kNone:
+      return false;
+  }
+  return false;
 }
 
 bool CadGeometry::expand_template(const Node& node, const double* point, int order, Taylor* out,
@@ -789,9 +994,11 @@ bool CadGeometry::expand_intersection(const Node& node, double t, int order, Tay
     if (k != axis) free[f++] = k;
   const double fraction = carrier - static_cast<double>(chart);
   double q[4];
-  for (int k = 0; k < 4; ++k) q[k] = start[k] + fraction * (end[k] - start[k]);
+  const auto interpolate = [&]() {
+    for (int k = 0; k < 4; ++k) q[k] = start[k] + fraction * (end[k] - start[k]);
+  };
   Taylor value[3], value_two[3];
-  for (int iteration = 0; iteration < kChartIterations; ++iteration) {
+  const auto chart_step = [&]() {
     if (!expand(first, q, 0, value, workspace) || !expand(second, q + 2, 0, value_two, workspace))
       return false;
     double residual[3];
@@ -801,26 +1008,56 @@ bool CadGeometry::expand_intersection(const Node& node, double t, int order, Tay
       const double correction = row[0] * residual[0] + row[1] * residual[1] + row[2] * residual[2];
       q[free[f]] = std::clamp(q[free[f]] - correction, lower[free[f]], upper[free[f]]);
     }
+    return true;
+  };
+  // Free-column Jacobian of S1(q01) - S2(q23) from first-order expansions.
+  const auto free_jacobian = [&](const Taylor* one, const Taylor* two, double* jacobian) {
+    for (int i = 0; i < 3; ++i)
+      for (int f = 0; f < 3; ++f) {
+        const int k = free[f];
+        const Taylor& source = k < 2 ? one[i] : two[i];
+        const double derivative = source.c[(k % 2) == 0 ? term(1, 0) : term(0, 1)];
+        jacobian[3 * i + f] = k < 2 ? derivative : -derivative;
+      }
+  };
+  interpolate();
+  for (int step = 0; step < kChartSteps; ++step)
+    if (!chart_step()) return false;
+  bool settled = false;
+  for (int iteration = 0; iteration < kNewtonIterations && !settled; ++iteration) {
+    if (!expand(first, q, 1, value, workspace) || !expand(second, q + 2, 1, value_two, workspace))
+      return false;
+    double residual[3], correction[3], jacobian[9];
+    for (int i = 0; i < 3; ++i) residual[i] = value[i].c[0] - value_two[i].c[0];
+    free_jacobian(value, value_two, jacobian);
+    if (!solve3(jacobian, residual, correction)) break;
+    settled = true;
+    for (int f = 0; f < 3; ++f) {
+      const int k = free[f];
+      const double scale = std::max(1.0, std::fabs(q[k]));
+      if (!(std::fabs(correction[f]) <= kSettled * std::numeric_limits<double>::epsilon() * scale))
+        settled = false;
+      q[k] = std::clamp(q[k] - correction[f], lower[k], upper[k]);
+    }
+  }
+  if (!settled) {
+    interpolate();
+    for (int step = 0; step < kChartIterations; ++step)
+      if (!chart_step()) return false;
   }
   const Truncation line{1, order};
   // q(carrier): the chart coordinate moves linearly; the free ones follow
   // the root by Newton steps on the expansion, one order per step.
   Taylor coordinates[4];
   for (int k = 0; k < 4; ++k) coordinates[k] = constant(q[k], line);
-  if (order >= 1) coordinates[axis].c[term(1, 0)] = end[axis] - start[axis];
+  Taylor local_first[3], local_second[3];
   if (order >= 1) {
-    Taylor local_first[3], local_second[3];
+    coordinates[axis].c[term(1, 0)] = end[axis] - start[axis];
     if (!expand(first, q, order, local_first, workspace) ||
         !expand(second, q + 2, order, local_second, workspace))
       return false;
     double jacobian[9];
-    for (int i = 0; i < 3; ++i)
-      for (int f = 0; f < 3; ++f) {
-        const int k = free[f];
-        const Taylor& source = k < 2 ? local_first[i] : local_second[i];
-        const double derivative = source.c[(k % 2) == 0 ? term(1, 0) : term(0, 1)];
-        jacobian[3 * i + f] = k < 2 ? derivative : -derivative;
-      }
+    free_jacobian(local_first, local_second, jacobian);
     for (int step = 0; step < order; ++step) {
       compose(local_first, 3, 2, coordinates, value, line);
       compose(local_second, 3, 2, coordinates + 2, value_two, line);
@@ -835,8 +1072,6 @@ bool CadGeometry::expand_intersection(const Node& node, double t, int order, Tay
   }
   if (output == 0) {
     if (order >= 1) {
-      Taylor local_first[3];
-      if (!expand(first, q, order, local_first, workspace)) return false;
       compose(local_first, 3, 2, coordinates, out, line);
     } else if (!expand(first, q, 0, out, workspace)) {
       return false;
@@ -856,6 +1091,7 @@ bool CadGeometry::expand(int32_t index, const double* point, int order, Taylor* 
   for (int k = 0; k < node.inputs; ++k)
     if (!std::isfinite(point[k])) return false;
   const Truncation local{node.inputs, order};
+  if (node.closed != ClosedForm::kNone) return expand_closed(node, point, order, out);
   switch (node.kind) {
     case PHX_MC_CAD_NODE_TEMPLATE:
       return expand_template(node, point, order, out, workspace);

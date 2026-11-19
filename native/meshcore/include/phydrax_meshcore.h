@@ -2411,8 +2411,10 @@ PHX_MC_API int32_t phx_mc_implicit_stuffing(
  *                    (charts)] / carrier sum, terminal threshold, then per
  *                    chart start (4), end (4), lower (4), upper (4),
  *                    preconditioner (3, 3): the root of S1(q01) = S2(q23)
- *                    with one chart coordinate fixed, by 64 preconditioned
- *                    clipped corrections from the chart's interpolation */
+ *                    with one chart coordinate fixed, from the chart's
+ *                    interpolation by two preconditioned clipped corrections
+ *                    (the source iteration) and Newton polishing to rounding
+ *                    level, else the source's 64 corrections */
 enum {
   PHX_MC_CAD_NODE_TEMPLATE = 0,
   PHX_MC_CAD_NODE_BSPLINE_CURVE = 1,

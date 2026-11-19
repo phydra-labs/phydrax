@@ -15,7 +15,12 @@
   intersections are native nodes with truncated-Taylor jets. The interval
   lowering gains `cosh`, `sinh` and constant-index `scatter-add`; the
   interval-program point executors are internal C++ functions over a
-  caller-owned workspace.
+  caller-owned workspace. Plane, cylinder, cone, sphere and torus templates,
+  revolutions of a line profile and placements of these evaluate through
+  closed forms of the source formulas (within 4 ulp of the coordinate scale
+  of the template programs); surface-surface intersection curves and their
+  p-curves take two source chart corrections and Newton polishing to
+  rounding level, falling back to the source's 64 corrections.
 - Native meshing kernels (plan `docs/plans/native-meshing-kernels.md`):
   binary64 point and jet executors of interval programs
   (`evaluate_points`, `evaluate_jets`); an exact volume certificate
