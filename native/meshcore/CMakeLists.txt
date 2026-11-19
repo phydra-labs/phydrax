@@ -100,6 +100,7 @@ set(PHX_MC_SOURCES
   src/angle_capi.cpp
   src/metric_relocation.cpp
   src/cad_geometry.cpp
+  src/cad_refine2d.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -154,6 +155,7 @@ set(PHX_MC_HEADERS
   src/cad_jet.hpp
   src/cdt2d.hpp
   src/chart_surface.hpp
+  src/cad_refine2d.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -281,4 +283,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_planar_partition)
   phx_mc_add_test(test_wide_integer)
   phx_mc_add_test(test_cad_geometry)
+  phx_mc_add_test(test_cad_refine2d)
 endif()
