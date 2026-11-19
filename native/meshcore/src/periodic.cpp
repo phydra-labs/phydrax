@@ -24,6 +24,7 @@
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "spatial_sort.hpp"
 #include "cavity.hpp"
 #include <map>
@@ -1148,7 +1149,7 @@ class PeriodicImageTriangulation {
         }
       }
       if (next < 0) return cell;
-      prefetch_read(&cells_[static_cast<std::size_t>(next)]);
+      prefetch(&cells_[static_cast<std::size_t>(next)]);
       previous = cell;
       cell = next;
     }
@@ -1880,7 +1881,7 @@ class PeriodicQuotient {
         }
       }
       if (next < 0) return cell;
-      prefetch_read(&cells_[static_cast<std::size_t>(next)]);
+      prefetch(&cells_[static_cast<std::size_t>(next)]);
       previous = cell;
       cell = next;
     }

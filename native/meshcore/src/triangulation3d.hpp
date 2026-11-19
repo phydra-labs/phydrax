@@ -15,6 +15,7 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "source_construction.hpp"
 #include "spatial_sort.hpp"
 
@@ -619,7 +620,7 @@ class Triangulation3D {
           // Its neighbors are read when it leaves the stack.
           for (int32_t next : joined.n) {
             if (static_cast<std::size_t>(next) < complex_.tets.size()) {
-              prefetch_read(&complex_.tets[static_cast<std::size_t>(next)]);
+              prefetch(&complex_.tets[static_cast<std::size_t>(next)]);
             }
           }
           cavity_.push_back(neighbor);
