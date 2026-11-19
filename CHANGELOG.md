@@ -268,6 +268,17 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral state creation checks that each constrained segment is a
+  cell edge among its first endpoint's cells (a counting sort) instead of
+  sorting every cell edge between segment endpoints; improvement indexes the
+  constrained segments once, so a cavity edit's segment check no longer scans
+  the segment bank; refinement takes a segment on a facet edge as lying on a
+  constrained face without its edge star, finds the facets holding a segment
+  among the facet corners at its apex, and indexes protected regions on the
+  dense feature grid (the hash grid is gone). Same meshes on the six ledger
+  rows and on the stuffed-torus rows of the native meshing benchmark, whose
+  create + refine + improve takes 0.261 instead of 0.397 s (97,010 tets) and
+  4.9 instead of 7.6 s (2,539,154 tets).
 - Native tetrahedral refinement's sliver-aware placement tries up to six
   displaced points instead of three and keeps the best attempt's cavity
   instead of rebuilding it; Bowyer-Watson growth prefetches the neighbors of

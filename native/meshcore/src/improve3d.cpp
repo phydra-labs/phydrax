@@ -2181,10 +2181,18 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // later edits maintain it (flips alter cells, insertion adds one point,
   // collapse removes one, and relocation moves one).
   if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
+  // Improvement edits no segment, so one index of the constrained segments
+  // serves every edit's segment check.
+  TetSegmentIndex segment_index;
   std::set<LogicalEdgeKey> source_edges;
-  for (const TetSnapshotSegment& segment : mesh.segments_) {
-    source_edges.insert(sorted_logical_edge(segment.vertices[0], segment.vertices[1]));
+  for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
+    const TetSnapshotSegment& segment = mesh.segments_[row];
+    const std::uint64_t a = segment.vertices[0];
+    const std::uint64_t b = segment.vertices[1];
+    segment_index.emplace(std::array<std::uint64_t, 2>{std::min(a, b), std::max(a, b)}, row);
+    source_edges.insert(sorted_logical_edge(a, b));
   }
+  incidence.bind_segment_index(segment_index);
   // Topology and vertex worklists. Each holds only entries whose own cell, or
   // star for a vertex, may violate a target, and an entry returns only after
   // an accepted edit changed that cell or star or was made while processing it.

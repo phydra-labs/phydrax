@@ -565,30 +565,46 @@ int32_t TetMesh::build_state(std::span<const double> points,
   claimed = {};
 
   if (segment_count != 0) {
-    // The cell edges between segment endpoints; a segment must be one of
-    // them, and each is constrained once.
-    std::vector<std::uint8_t> endpoint(vertex_count, 0);
-    for (std::int32_t vertex : segments) endpoint[static_cast<std::size_t>(vertex)] = 1;
-    std::vector<std::uint64_t> represented;
+    // A segment must be a cell edge (found among its first endpoint's cells,
+    // listed by a counting sort), and each is constrained once.
+    std::vector<std::uint32_t> starts(vertex_count + 1, 0U);
+    std::vector<std::uint8_t> first_endpoint(vertex_count, 0);
+    for (std::size_t row = 0; row < segment_count; ++row) {
+      first_endpoint[static_cast<std::size_t>(segments[2 * row])] = 1;
+    }
     for (std::size_t row = 0; row < cell_count; ++row) {
-      const Tetrahedron& tet = complex_.tets[row];
-      for (int a = 0; a < 4; ++a) {
-        if (endpoint[static_cast<std::size_t>(tet.v[a])] == 0) continue;
-        for (int b = a + 1; b < 4; ++b) {
-          if (endpoint[static_cast<std::size_t>(tet.v[b])] != 0) {
-            represented.push_back(edge_key(tet.v[a], tet.v[b]));
+      for (std::int32_t vertex : complex_.tets[row].v) {
+        if (first_endpoint[static_cast<std::size_t>(vertex)] != 0) {
+          ++starts[static_cast<std::size_t>(vertex) + 1];
+        }
+      }
+    }
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+      starts[vertex + 1] += starts[vertex];
+    }
+    std::vector<std::uint32_t> around(starts.back());
+    {
+      std::vector<std::uint32_t> cursor(starts.begin(), starts.end() - 1);
+      for (std::size_t row = 0; row < cell_count; ++row) {
+        for (std::int32_t vertex : complex_.tets[row].v) {
+          if (first_endpoint[static_cast<std::size_t>(vertex)] != 0) {
+            around[cursor[static_cast<std::size_t>(vertex)]++] = static_cast<std::uint32_t>(row);
           }
         }
       }
     }
-    std::sort(represented.begin(), represented.end());
-    represented.erase(std::unique(represented.begin(), represented.end()), represented.end());
     std::vector<std::uint64_t> constrained(segment_count);
     for (std::size_t row = 0; row < segment_count; ++row) {
-      constrained[row] = edge_key(segments[2 * row], segments[2 * row + 1]);
-      if (!std::binary_search(represented.begin(), represented.end(), constrained[row])) {
-        return PHX_MC_INVALID_INPUT;
+      const std::int32_t a = segments[2 * row];
+      const std::int32_t b = segments[2 * row + 1];
+      bool edge = false;
+      for (std::uint32_t at = starts[static_cast<std::size_t>(a)];
+           !edge && at < starts[static_cast<std::size_t>(a) + 1]; ++at) {
+        const Tetrahedron& tet = complex_.tets[around[at]];
+        edge = std::find(tet.v, tet.v + 4, b) != tet.v + 4;
       }
+      if (!edge) return PHX_MC_INVALID_INPUT;
+      constrained[row] = edge_key(a, b);
     }
     std::sort(constrained.begin(), constrained.end());
     if (std::adjacent_find(constrained.begin(), constrained.end()) != constrained.end()) {
