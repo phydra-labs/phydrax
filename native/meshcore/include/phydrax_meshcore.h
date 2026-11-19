@@ -2327,16 +2327,73 @@ PHX_MC_API int32_t phx_mc_planar_partition(
     const double* lower, const double* upper, int32_t* verdict,
     int64_t* first, int64_t* second);
 
-/* Certificate of a tetrahedral mesh (cells (m, 4), positively oriented by
- * orient3d) of the solid bounded by a closed, outward oriented, embedded
- * triangle surface (surface (f, 3)), checked exactly on the stored binary64
- * coordinates: every cell positive; every face shared by at most two cells,
- * with opposite induced orientations; the faces of exactly one cell, with
- * their outward orientation, are exactly the surface triangles. certified = 1
- * when every count of a failure is 0. Embedding of the surface is a premise,
- * certified separately. Returns PHX_MC_INVALID_INPUT for an index out of range. */
+/* Exact certificates of affine tetrahedral meshes (cells (m, 4) over points
+ * (n, 3)), checked on the stored binary64 coordinates; theorems in
+ * src/verify_volume.cpp. Every point a cell uses must lie in the exact
+ * predicate domain, otherwise the verdict is unresolved (counted in
+ * outside_domain_points). Cell and point indices out of range return
+ * PHX_MC_INVALID_INPUT. Each first_* names the smallest offending row, or -1. */
+enum phx_mc_verdict_status {
+  PHX_MC_VERDICT_CERTIFIED = 0,
+  PHX_MC_VERDICT_VIOLATED = 1,
+  PHX_MC_VERDICT_UNRESOLVED = 2
+};
+
+/* Global embedding: every cell positive (orient3d); every face in at most two
+ * cells with opposite induced orientations; every edge of the boundary B (the
+ * faces of exactly one cell, outward) in exactly two triangles of B with
+ * opposite directions; triangles of B meet only in shared vertices or a shared
+ * edge; the winding number of B is 0 in front of and 1 behind every shell
+ * (edge-connected component) of B. Then the cells tile the solid B bounds
+ * without overlap. Violated counts: nonpositive_cells, nonmanifold_faces,
+ * boundary_contacts (pairs; cells owning the smallest pair), misnested_shells.
+ * Unresolved counts (outside the theorem): outside_domain_points,
+ * nonmanifold_boundary_edges (edge uses), unresolved_shells (a shell of
+ * several without a vertex on no other shell). Shells are tested only when
+ * all cells are positive and B is an embedded edge-manifold. */
+typedef struct phx_mc_tetrahedra_verdict {
+  int32_t status; /* phx_mc_verdict_status */
+  int64_t boundary_faces;
+  int64_t boundary_shells;
+  int64_t outside_domain_points;
+  int64_t first_outside_domain_point;
+  int64_t nonpositive_cells;
+  int64_t first_nonpositive_cell;
+  int64_t nonmanifold_faces;
+  int64_t first_nonmanifold_cell;
+  int64_t nonmanifold_boundary_edges;
+  int64_t first_nonmanifold_boundary_cell;
+  int64_t boundary_contacts;
+  int64_t first_contact_cell;
+  int64_t second_contact_cell;
+  int64_t misnested_shells;
+  int64_t first_misnested_shell_cell;
+  int64_t unresolved_shells;
+  int64_t first_unresolved_shell_cell;
+} phx_mc_tetrahedra_verdict;
+PHX_MC_API int32_t phx_mc_verify_tetrahedra(int64_t point_count, const double* points,
+                                            int64_t cell_count, const int32_t* cells,
+                                            phx_mc_tetrahedra_verdict* verdict);
+
+/* Region coverage of a declared oriented triangle surface (surface (f, 3),
+ * surface_regions (f, 2): the triangle's right-hand normal points from region
+ * [0] into region [1], -1 the exterior, the two distinct) by labeled cells
+ * (cell_regions (m,), nonnegative): every cell positive; every face in at most
+ * two cells with opposite orientations; every boundary face a declared
+ * triangle with the cell on the side its region names and the exterior on the
+ * other; every face between cells of different regions a declared triangle
+ * with the two regions on its sides; no declared triangle between cells of one
+ * region; every declared triangle, once, a face of the mesh. certified = 1
+ * when every count is 0. With the mesh globally embedded
+ * (phx_mc_verify_tetrahedra), the cells of each region then tile exactly the
+ * points where that region's declared boundary has winding number one. Null
+ * cell_regions means region 0 for every cell; null surface_regions means
+ * (0, -1) for every triangle (the outward boundary of one solid). Labels out of
+ * range return PHX_MC_INVALID_INPUT. */
 typedef struct phx_mc_volume_verdict {
   int32_t certified;
+  int64_t outside_domain_points;
+  int64_t first_outside_domain_point;
   int64_t nonpositive_cells;
   int64_t first_nonpositive_cell;
   int64_t nonmanifold_faces;
@@ -2346,11 +2403,27 @@ typedef struct phx_mc_volume_verdict {
   int64_t first_unmatched_cell;
   int64_t unmatched_surface_triangles;
   int64_t first_unmatched_surface_triangle;
+  int64_t region_mismatches;
+  int64_t first_region_mismatch_cell;
 } phx_mc_volume_verdict;
 PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* points,
                                         int64_t cell_count, const int32_t* cells,
-                                        int64_t surface_count, const int32_t* surface,
+                                        const int32_t* cell_regions, int64_t surface_count,
+                                        const int32_t* surface, const int32_t* surface_regions,
                                         phx_mc_volume_verdict* verdict);
+
+/* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
+ * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
+ * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive
+ * (exact signs), else 0; lower[k] <= d <= upper[k] (rigorous binary64
+ * enclosure). floor is zero or in [2^-60, 1) (otherwise
+ * PHX_MC_INVALID_ARGUMENT); a cell coordinate that is nonzero with magnitude
+ * outside [2^-60, 2^60], where the degree-eight margin could leave exact
+ * binary64 expansion arithmetic, returns PHX_MC_INVALID_INPUT. */
+PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double* points,
+                                              int64_t cell_count, const int32_t* cells,
+                                              double floor, int8_t* valid, double* lower,
+                                              double* upper);
 
 /* Tetrahedral mesh of {f <= 0} inside the box [lower, upper] by isosurface
  * stuffing on a graded body-centered cubic lattice. f is entry output_entry

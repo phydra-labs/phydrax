@@ -380,9 +380,34 @@ class _TetMeshImplicitFacetRefusal(ctypes.Structure):
     )
 
 
+class _TetrahedraVerdict(ctypes.Structure):
+    _fields_ = (
+        ("status", _I32),
+        ("boundary_faces", _I64),
+        ("boundary_shells", _I64),
+        ("outside_domain_points", _I64),
+        ("first_outside_domain_point", _I64),
+        ("nonpositive_cells", _I64),
+        ("first_nonpositive_cell", _I64),
+        ("nonmanifold_faces", _I64),
+        ("first_nonmanifold_cell", _I64),
+        ("nonmanifold_boundary_edges", _I64),
+        ("first_nonmanifold_boundary_cell", _I64),
+        ("boundary_contacts", _I64),
+        ("first_contact_cell", _I64),
+        ("second_contact_cell", _I64),
+        ("misnested_shells", _I64),
+        ("first_misnested_shell_cell", _I64),
+        ("unresolved_shells", _I64),
+        ("first_unresolved_shell_cell", _I64),
+    )
+
+
 class _VolumeVerdict(ctypes.Structure):
     _fields_ = (
         ("certified", _I32),
+        ("outside_domain_points", _I64),
+        ("first_outside_domain_point", _I64),
         ("nonpositive_cells", _I64),
         ("first_nonpositive_cell", _I64),
         ("nonmanifold_faces", _I64),
@@ -392,6 +417,8 @@ class _VolumeVerdict(ctypes.Structure):
         ("first_unmatched_cell", _I64),
         ("unmatched_surface_triangles", _I64),
         ("first_unmatched_surface_triangle", _I64),
+        ("region_mismatches", _I64),
+        ("first_region_mismatch_cell", _I64),
     )
 
 
@@ -1032,7 +1059,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
     ),
-    "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
+    "phx_mc_verify_tetrahedra": (_I32, (_I64, _P, _I64, _P, _P)),
+    "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
+    "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_implicit_stuffing": (
         _I32,
@@ -3087,14 +3116,107 @@ def regular_3d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarr
     return _triangulate("phx_mc_regular_3d", points, weights, 3)
 
 
+class VerdictStatus(IntEnum):
+    """Outcome of an exact native certificate."""
+
+    CERTIFIED = 0
+    VIOLATED = 1
+    UNRESOLVED = 2
+
+
+class TetrahedraVerdict(NamedTuple):
+    """Exact global-embedding certificate of affine tetrahedra.
+
+    Violations: ``nonpositive_cells``, ``nonmanifold_faces`` (a face in more
+    than two cells, or two with equal induced orientation), ``boundary_contacts``
+    (pairs of boundary triangles meeting beyond a shared vertex or edge; the
+    cells owning the smallest pair) and ``misnested_shells`` (a boundary shell
+    with winding number other than 0 in front of it). Outside the theorem
+    (unresolved): ``outside_domain_points``, ``nonmanifold_boundary_edges``
+    (edge uses) and ``unresolved_shells``. Each ``first_*`` names the smallest
+    offending row, or -1.
+    """
+
+    status: VerdictStatus
+    boundary_faces: int
+    boundary_shells: int
+    outside_domain_points: int
+    first_outside_domain_point: int
+    nonpositive_cells: int
+    first_nonpositive_cell: int
+    nonmanifold_faces: int
+    first_nonmanifold_cell: int
+    nonmanifold_boundary_edges: int
+    first_nonmanifold_boundary_cell: int
+    boundary_contacts: int
+    first_contact_cell: int
+    second_contact_cell: int
+    misnested_shells: int
+    first_misnested_shell_cell: int
+    unresolved_shells: int
+    first_unresolved_shell_cell: int
+
+
+def _tetrahedra(points: object, cells: object, /) -> tuple[np.ndarray, np.ndarray]:
+    point_array = np.ascontiguousarray(_points(points, "points", 3), dtype=np.float64)
+    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
+        raise ValueError("cells must have shape (m, 4).")
+    if point_array.shape[0] > np.iinfo(np.int32).max:
+        raise OverflowError("points exceed native int32 vertex indices.")
+    return point_array, cell_array
+
+
+def verify_tetrahedra(points: object, cells: object, /) -> TetrahedraVerdict:
+    """Certify that positive ``(m, 4)`` cells tile the solid their boundary bounds.
+
+    Exact on the stored binary64 coordinates (theorem in the native
+    ``verify_volume.cpp``): positive cells, faces paired with opposite
+    orientations, an embedded edge-manifold boundary whose shells have winding
+    number 0 in front and 1 behind.
+    """
+    point_array, cell_array = _tetrahedra(points, cells)
+    verdict = _TetrahedraVerdict()
+    status = load_meshcore()["phx_mc_verify_tetrahedra"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        cell_array.shape[0],
+        cell_array.ctypes.data,
+        ctypes.addressof(verdict),
+    )
+    _raise_for_call(status, "verify_tetrahedra")
+    return TetrahedraVerdict(
+        status=VerdictStatus(verdict.status),
+        boundary_faces=verdict.boundary_faces,
+        boundary_shells=verdict.boundary_shells,
+        outside_domain_points=verdict.outside_domain_points,
+        first_outside_domain_point=verdict.first_outside_domain_point,
+        nonpositive_cells=verdict.nonpositive_cells,
+        first_nonpositive_cell=verdict.first_nonpositive_cell,
+        nonmanifold_faces=verdict.nonmanifold_faces,
+        first_nonmanifold_cell=verdict.first_nonmanifold_cell,
+        nonmanifold_boundary_edges=verdict.nonmanifold_boundary_edges,
+        first_nonmanifold_boundary_cell=verdict.first_nonmanifold_boundary_cell,
+        boundary_contacts=verdict.boundary_contacts,
+        first_contact_cell=verdict.first_contact_cell,
+        second_contact_cell=verdict.second_contact_cell,
+        misnested_shells=verdict.misnested_shells,
+        first_misnested_shell_cell=verdict.first_misnested_shell_cell,
+        unresolved_shells=verdict.unresolved_shells,
+        first_unresolved_shell_cell=verdict.first_unresolved_shell_cell,
+    )
+
+
 class VolumeVerdict(NamedTuple):
-    """Exact certificate of a tetrahedral mesh of the solid bounded by a surface.
+    """Exact region coverage of a declared oriented surface by labeled tetrahedra.
 
     ``certified`` holds when every failure count is zero; each ``first_*``
-    names the first offending cell or surface triangle, or is -1.
+    names the smallest offending cell, point or surface triangle, or is -1.
     """
 
     certified: bool
+    outside_domain_points: int
+    first_outside_domain_point: int
     nonpositive_cells: int
     first_nonpositive_cell: int
     nonmanifold_faces: int
@@ -3104,36 +3226,66 @@ class VolumeVerdict(NamedTuple):
     first_unmatched_cell: int
     unmatched_surface_triangles: int
     first_unmatched_surface_triangle: int
+    region_mismatches: int
+    first_region_mismatch_cell: int
 
 
-def verify_volume(points: object, cells: object, surface: object, /) -> VolumeVerdict:
-    """Certify ``(m, 4)`` cells as a tiling of the solid bounded by ``(f, 3)`` triangles.
+def verify_volume(
+    points: object,
+    cells: object,
+    surface: object,
+    /,
+    *,
+    cell_regions: object | None = None,
+    surface_regions: object | None = None,
+) -> VolumeVerdict:
+    """Certify labeled ``(m, 4)`` cells against declared ``(f, 3)`` surface triangles.
 
     Exact on the stored binary64 coordinates: every cell positively oriented,
-    every face shared by at most two cells with opposite orientations, and the
-    faces of exactly one cell are exactly the outward surface triangles. The
-    surface's embedding is a premise certified separately.
+    every face shared by at most two cells with opposite orientations, every
+    boundary face and every face between regions a declared triangle with the
+    cells' regions on its sides, and every declared triangle a mesh face. A
+    triangle's normal points from ``surface_regions[:, 0]`` into
+    ``surface_regions[:, 1]`` (-1: exterior). Without labels every cell is
+    region 0 and every triangle its outward boundary ``(0, -1)``. With the
+    mesh globally embedded (``verify_tetrahedra``), each region's cells tile
+    exactly the solid its declared boundary bounds.
     """
-    point_array = _points(points, "points", 3)
-    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    point_array, cell_array = _tetrahedra(points, cells)
     surface_array = _native_integer_array(surface, "surface", np.dtype(np.int32))
-    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
-        raise ValueError("cells must have shape (m, 4).")
     if surface_array.ndim != 2 or surface_array.shape[1] != 3:
         raise ValueError("surface must have shape (f, 3).")
+    regions = (
+        None
+        if cell_regions is None
+        else _native_integer_array(cell_regions, "cell_regions", np.dtype(np.int32))
+    )
+    if regions is not None and regions.shape != (cell_array.shape[0],):
+        raise ValueError("cell_regions must have shape (m,).")
+    sides = (
+        None
+        if surface_regions is None
+        else _native_integer_array(surface_regions, "surface_regions", np.dtype(np.int32))
+    )
+    if sides is not None and sides.shape != (surface_array.shape[0], 2):
+        raise ValueError("surface_regions must have shape (f, 2).")
     verdict = _VolumeVerdict()
     status = load_meshcore()["phx_mc_verify_volume"](
         point_array.shape[0],
         point_array.ctypes.data,
         cell_array.shape[0],
         cell_array.ctypes.data,
+        None if regions is None else regions.ctypes.data,
         surface_array.shape[0],
         surface_array.ctypes.data,
+        None if sides is None else sides.ctypes.data,
         ctypes.addressof(verdict),
     )
     _raise_for_call(status, "verify_volume")
     return VolumeVerdict(
         certified=verdict.certified == 1,
+        outside_domain_points=verdict.outside_domain_points,
+        first_outside_domain_point=verdict.first_outside_domain_point,
         nonpositive_cells=verdict.nonpositive_cells,
         first_nonpositive_cell=verdict.first_nonpositive_cell,
         nonmanifold_faces=verdict.nonmanifold_faces,
@@ -3143,7 +3295,51 @@ def verify_volume(points: object, cells: object, surface: object, /) -> VolumeVe
         first_unmatched_cell=verdict.first_unmatched_cell,
         unmatched_surface_triangles=verdict.unmatched_surface_triangles,
         first_unmatched_surface_triangle=verdict.first_unmatched_surface_triangle,
+        region_mismatches=verdict.region_mismatches,
+        first_region_mismatch_cell=verdict.first_region_mismatch_cell,
     )
+
+
+def validity_coordinates(values: object, /) -> bool:
+    """Whether ``tetrahedra_validity`` decides these coordinates exactly.
+
+    Every coordinate must be zero or of magnitude in [2**-60, 2**60], so that
+    the degree-eight validity margin is free of overflow and underflow.
+    """
+    magnitudes = np.abs(np.asarray(values, dtype=np.float64))
+    return bool(
+        np.all((magnitudes == 0.0) | ((magnitudes >= 2.0**-60) & (magnitudes <= 2.0**60)))
+    )
+
+
+def tetrahedra_validity(
+    points: object, cells: object, floor: float, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact affine validity of ``(m, 4)`` tetrahedra under a determinant floor.
+
+    Returns ``(valid, lower, upper)``: ``valid`` when the Jacobian determinant
+    ``d = det[v1 - v0, v2 - v0, v3 - v0]`` and ``d^2 - floor^2 |v1 - v0|^2
+    |v2 - v0|^2 |v3 - v0|^2`` are positive (exact signs), and a rigorous
+    binary64 enclosure ``lower <= d <= upper``. Cell coordinates outside
+    ``validity_coordinates`` raise ``ValueError``.
+    """
+    point_array, cell_array = _tetrahedra(points, cells)
+    count = cell_array.shape[0]
+    valid = np.zeros((count,), dtype=np.int8)
+    lower = np.zeros((count,), dtype=np.float64)
+    upper = np.zeros((count,), dtype=np.float64)
+    status = load_meshcore()["phx_mc_tetrahedra_validity"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        count,
+        cell_array.ctypes.data,
+        float(floor),
+        valid.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+    )
+    _raise_for_call(status, "tetrahedra_validity")
+    return valid.astype(np.bool_), lower, upper
 
 
 class CadEntityKind(IntEnum):
