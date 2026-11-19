@@ -324,6 +324,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native point-set Delaunay is faster with identical cells: cone cells are
+  linked through a dense directed-edge table before any topology write (a
+  cavity whose boundary is not a closed surface is refused with the complex
+  unchanged, and refinement reports it as a topology rejection), coordinates
+  are stored in insertion order with input-index tie-breaking, cavity growth
+  prefetches and avoids branches, and canonical cell ordering runs in linear
+  time (radix sort on the first vertex, branch-free ranks within each group)
+  for every caller, with byte-identical output. 3D Delaunay runs at
+  0.87-0.90x CGAL at 1e3-1e6 points (was 1.25-1.31x); 2D at 1.11-1.23x (was
+  1.33-1.62x).
 - Native surface-to-tetrahedra recovery and refinement are faster with
   identical output (contact pairs bucketed by cell without sorting, edge rows
   and closure read from edge-use runs, source-face indices built on first
