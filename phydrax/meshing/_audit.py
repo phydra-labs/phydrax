@@ -8,6 +8,8 @@ import json
 from collections import Counter
 from enum import StrEnum
 from fractions import Fraction
+from itertools import repeat
+from operator import is_
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
@@ -39,6 +41,7 @@ from ..discretization._cell_mesh import SimplicialConnectivity
 from ..discretization._coordinate_enclosure import evaluate_expression
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._reference_cell import reference_cell_topology
+from ..discretization._topology import sorted_unique_rows
 from ..discretization.fem._reference import (
     FiniteElementSpec,
     lagrange_reference_node_data,
@@ -502,8 +505,8 @@ def _corner_binding_holds(
         rows = route[:, np.asarray(dofs, dtype=np.int64)]
         if rows.shape != vertices.shape:
             return False
-        pairs = np.unique(
-            np.stack((rows.reshape(-1), vertices.reshape(-1)), axis=1), axis=0
+        pairs = sorted_unique_rows(
+            np.stack((rows.reshape(-1), vertices.reshape(-1)), axis=1)
         )
         targets = np.asarray(mesh.coordinates, dtype=np.float64)[pairs[:, 1]]
         if not exact_bank:
@@ -691,21 +694,28 @@ def _patch_zone_adjacency_issues(
 
     patch_entities = mesh.entity_set(patch_dimension)
     cell_entities = mesh.entity_set(zone_dimension)
-    patch_rows = {
-        int(identifier): row
-        for row, identifier in enumerate(np.asarray(patch_entities.entity_ids))
-    }
+    patch_ids = np.asarray(patch_entities.entity_ids, dtype=np.int64)
+    cell_ids = np.asarray(cell_entities.entity_ids, dtype=np.int64)
     incidence = mesh.topology.incidences[-1]
     valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
-    source_rows = np.asarray(incidence.relation.source_indices)[valid]
-    target_rows = np.asarray(incidence.relation.target_indices)[valid]
-    patch_cells = [set() for _ in range(patch_entities.count)]
-    cell_ids = np.asarray(cell_entities.entity_ids)
-    for patch_row, cell_row in zip(source_rows, target_rows, strict=True):
-        patch_cells[int(patch_row)].add(int(cell_ids[int(cell_row)]))
+    source_rows = np.asarray(incidence.relation.source_indices, dtype=np.int64)[valid]
+    target_rows = np.asarray(incidence.relation.target_indices, dtype=np.int64)[valid]
+    # Distinct (patch row, cell row) incidences grouped by patch row; a relation
+    # already in strictly increasing pair order needs no sort.
+    incident_pairs = source_rows * cell_ids.size + target_rows
+    if not np.all(incident_pairs[1:] > incident_pairs[:-1]):
+        incident_pairs = np.unique(incident_pairs)
+    incident_patch_rows = incident_pairs // max(cell_ids.size, 1)
+    incident_cell_rows = incident_pairs - incident_patch_rows * cell_ids.size
+    incident_counts = np.bincount(incident_patch_rows, minlength=patch_ids.size)
+    incident_offsets = np.concatenate(
+        (np.zeros((1,), dtype=np.int64), np.cumsum(incident_counts))
+    )
 
-    eligible_zone_ids: set[str] = set()
-    cell_zones: dict[int, str] = {}
+    cell_order = np.argsort(cell_ids, kind="stable")
+    sorted_cell_ids = cell_ids[cell_order]
+    zone_codes: dict[str, int] = {}
+    cell_zone_codes = np.full((cell_ids.size,), -1, dtype=np.int64)
     for zone in zones:
         scope = zone.scope
         if (
@@ -715,10 +725,18 @@ def _patch_zone_adjacency_issues(
             or scope.entity_set_id != cell_entities.entity_set_id
         ):
             continue
-        eligible_zone_ids.add(zone.zone_id)
-        for identifier in np.asarray(scope.entity_ids):
-            cell_zones[int(identifier)] = zone.zone_id
+        code = zone_codes.setdefault(zone.zone_id, len(zone_codes))
+        requested = np.asarray(scope.entity_ids, dtype=np.int64)
+        position = np.minimum(
+            np.searchsorted(sorted_cell_ids, requested), max(cell_ids.size - 1, 0)
+        )
+        if cell_ids.size:
+            present = sorted_cell_ids[position] == requested
+            cell_zone_codes[cell_order[position[present]]] = code
+    incident_zones = cell_zone_codes[incident_cell_rows]
 
+    patch_order = np.argsort(patch_ids, kind="stable")
+    sorted_patch_ids = patch_ids[patch_order]
     for patch in adjacent_patches:
         scope = patch.scope
         expected = set(patch.adjacent_zone_ids)
@@ -727,17 +745,32 @@ def _patch_zone_adjacency_issues(
             or scope.source_revision != mesh.numeric_version
             or scope.entity_dimension != patch_dimension
             or scope.entity_set_id != patch_entities.entity_set_id
-            or not expected <= eligible_zone_ids
+            or not expected.issubset(zone_codes)
         ):
             return ("patch_zone_adjacency",)
-        for identifier in np.asarray(scope.entity_ids):
-            patch_row = patch_rows.get(int(identifier))
-            if patch_row is None:
+        requested = np.asarray(scope.entity_ids, dtype=np.int64)
+        if patch_ids.size == 0:
+            if requested.size:
                 return ("patch_zone_adjacency",)
-            incident = patch_cells[patch_row]
-            observed = {cell_zones[cell] for cell in incident if cell in cell_zones}
-            if len(incident) != len(expected) or observed != expected:
-                return ("patch_zone_adjacency",)
+            continue
+        position = np.minimum(
+            np.searchsorted(sorted_patch_ids, requested), patch_ids.size - 1
+        )
+        if not np.all(sorted_patch_ids[position] == requested):
+            return ("patch_zone_adjacency",)
+        rows = patch_order[position]
+        # Each patch face meets exactly one cell of every adjacent zone.
+        width = len(expected)
+        if not np.all(incident_counts[rows] == width):
+            return ("patch_zone_adjacency",)
+        observed = np.sort(
+            incident_zones[incident_offsets[rows][:, None] + np.arange(width)], axis=1
+        )
+        expected_codes = np.sort(
+            np.asarray([zone_codes[zone] for zone in expected], dtype=np.int64)
+        )
+        if not np.all(observed == expected_codes):
+            return ("patch_zone_adjacency",)
     return ()
 
 
@@ -794,6 +827,29 @@ def _mesh_evidence_issues(
         position = np.minimum(np.searchsorted(table, requested), table.size - 1)
         if table.size == 0 or not np.all(table[position] == requested):
             issues.append("organization_entity_ids")
+    # Rows can conflict only with earlier rows sharing (kind, source, revision, target
+    # set, target id); only resolved rows whose key recurs need the pairwise replay.
+    group_targets: dict[tuple[object, ...], list[np.ndarray]] = {}
+    for association in associations:
+        if association.target_entity_set_id not in bindings:
+            continue
+        group_targets.setdefault(
+            (
+                association.association_kind,
+                association.source_id,
+                association.source_revision,
+                association.target_entity_set_id,
+            ),
+            [],
+        ).append(
+            np.asarray(association.target_global_ids, dtype=np.int64)[
+                np.asarray(association.resolved, dtype=np.bool_)
+            ]
+        )
+    recurring_targets: dict[tuple[object, ...], np.ndarray] = {}
+    for group, parts in group_targets.items():
+        values, counts = np.unique(np.concatenate(parts), return_counts=True)
+        recurring_targets[group] = values[counts > 1]
     resolved_sources = {}
     for association in associations:
         binding = bindings.get(association.target_entity_set_id)
@@ -804,13 +860,23 @@ def _mesh_evidence_issues(
             association.validate_target(binding[1])
         except ValueError:
             issues.append("association_target_ids")
-        target_ids = np.asarray(association.target_global_ids)
+        target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
         source_ids = association.source_entity_ids
-        resolved_rows = np.asarray(association.resolved)
         association_kind = association.association_kind
         source_id = association.source_id
         source_revision = association.source_revision
         target_entity_set_id = association.target_entity_set_id
+        replay_rows = np.flatnonzero(
+            np.asarray(association.resolved, dtype=np.bool_)
+            & np.isin(
+                target_ids,
+                recurring_targets[
+                    (association_kind, source_id, source_revision, target_entity_set_id)
+                ],
+            )
+        )
+        if replay_rows.size == 0:
+            continue
         source_occurrence_paths = association.source_occurrence_paths
         target_reference_pieces = association.target_reference_pieces
         source_boundary_witness_id = association.source_boundary_witness_id
@@ -818,11 +884,9 @@ def _mesh_evidence_issues(
         source_parameter_intervals = association.source_parameter_intervals
         source_roles = association.source_roles
         target_kinds: tuple[bool, bool] | None = None
-        for row, (identifier, source, resolved) in enumerate(
-            zip(target_ids, source_ids, resolved_rows, strict=True)
-        ):
-            if not resolved:
-                continue
+        for row in replay_rows.tolist():
+            identifier = target_ids[row]
+            source = source_ids[row]
             if target_kinds is None:
                 dimension = mesh.topological_dimension
                 target_kinds = (
@@ -975,30 +1039,58 @@ def _facet_edge_proof_tables(
             else association_source.reference_source
         )
     edge_set = mesh.entity_set(1).entity_set_id
-    rows: dict[tuple[Any, ...], list[tuple[GeometryAssociation, int]]] = {}
-    for association in associations:
-        if association.target_entity_set_id != edge_set:
-            continue
-        identifiers = np.asarray(association.target_global_ids, dtype=np.int64).tolist()
-        for row, identifier in enumerate(identifiers):
-            key = (
+    edge_associations = tuple(
+        association
+        for association in associations
+        if association.target_entity_set_id == edge_set
+    )
+    # A facet row needs replay when another edge row shares its (kind, source,
+    # revision, edge) key, or when it belongs to the authored layer/core source.
+    group_targets: dict[tuple[object, ...], list[np.ndarray]] = {}
+    for association in edge_associations:
+        group_targets.setdefault(
+            (
                 association.association_kind,
                 association.source_id,
                 association.source_revision,
-                identifier,
-            )
-            rows.setdefault(key, []).append((association, row))
+            ),
+            [],
+        ).append(np.asarray(association.target_global_ids, dtype=np.int64))
+    recurring_targets: dict[tuple[object, ...], np.ndarray] = {}
+    for group, parts in group_targets.items():
+        values, counts = np.unique(np.concatenate(parts), return_counts=True)
+        recurring_targets[group] = values[counts > 1]
     result: set[str] = set()
-    for group in rows.values():
-        for association, row in group:
-            if association.source_roles[row] is not GeometrySourceEntityRole.FACET:
-                continue
-            if len(group) > 1 or (
-                authored is not None
-                and (association.source_id, association.source_revision)
-                == (authored.source_id, authored.source_revision)
-            ):
-                result.add(association.association_id)
+    for association in edge_associations:
+        facet_rows = np.fromiter(
+            map(
+                is_,
+                association.source_roles,
+                repeat(GeometrySourceEntityRole.FACET),
+            ),
+            dtype=np.bool_,
+            count=len(association.source_roles),
+        )
+        if not np.any(facet_rows):
+            continue
+        if (
+            authored is not None
+            and (association.source_id, association.source_revision)
+            == (authored.source_id, authored.source_revision)
+        ) or np.any(
+            facet_rows
+            & np.isin(
+                np.asarray(association.target_global_ids, dtype=np.int64),
+                recurring_targets[
+                    (
+                        association.association_kind,
+                        association.source_id,
+                        association.source_revision,
+                    )
+                ],
+            )
+        ):
+            result.add(association.association_id)
     return result
 
 

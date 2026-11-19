@@ -1016,6 +1016,25 @@ request; unsupported combinations fail rather than falling back to another
 algorithm. The result is published only after canonical mathematical
 acceptance. Sources that own a coordinate contract bind it directly; otherwise
 the caller must supply the actual units and reference frame.
+
+Construction and certification are separate steps. `plan.execute()` is
+`plan.execute(prove=True)`: it constructs and then certifies. `plan.execute(prove=False)`
+returns the constructed `CellMeshingCandidate` (its `mesh`, `geometry` and
+`coordinate_contract`) with nothing on it certified; `candidate.prove()` runs the
+canonical acceptance of exactly that mesh, without construction or repair, and
+returns the same `CellMeshingResult` (equal identities) or raises its findings.
+Acceptance of the PLC tetrahedral route decides embedding and region coverage
+by exact native theorems over affine tetrahedra (`tetrahedral_degree`): every
+cell is positively oriented, every face lies in at most two oppositely oriented
+cells, the boundary triangles are edge-manifold and meet only in shared vertices
+and edges, and every boundary shell has winding number zero in front of it, so
+the covering degree is zero or one; the boundary and region interfaces must be
+exactly the declared oriented source triangles with the cells' regions on their
+sides. Local validity uses the native exact determinant enclosure. A mesh these
+theorems do not decide (a boundary that subdivides the source triangles,
+coordinates outside the exact predicate domain) takes the rational proofs. The
+certificates record which proof ran, and restore reproves the same one.
+
 PLC-backed sources scope dimension-1 entities by stable source identity: explicit
 segments and original polygon-loop edges, including shared seams between polygons
 of one facet. Edges introduced only by recovery triangulation are not source curves;

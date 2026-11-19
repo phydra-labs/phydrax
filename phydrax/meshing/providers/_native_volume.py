@@ -64,6 +64,7 @@ from .._volume_generation import (
     _split_shape_target_rows,
     generate_plc_volume,
     NativeVolumeSchedule,
+    object_rows,
     VolumeConstruction,
 )
 from ._native_affine_plc_witness import affine_plc_boundary_chart_witness
@@ -734,6 +735,36 @@ def _source_key(
     return key
 
 
+def _source_key_table(
+    source: NativePlcSource,
+    source_maps: tuple[dict[tuple[str, tuple[str, ...]], int], ...],
+    dimension: int,
+    /,
+) -> dict[tuple[str, tuple[str, ...]], str]:
+    """Keys of one dimension's authored identities whose scope row keeps the path.
+
+    The table equals :func:`_source_key` on every pair it holds; a pair it
+    lacks resolves through :func:`_source_key`, which refuses it.
+    """
+    identities = tuple(source_maps[dimension])
+    bank = np.asarray(source.scope_entity_ids(dimension), dtype=np.int64)
+    if not identities or bank.size == 0:
+        return {}
+    entity_ids = np.fromiter(
+        source_maps[dimension].values(), dtype=np.int64, count=len(identities)
+    )
+    positions = np.minimum(np.searchsorted(bank, entity_ids), bank.size - 1)
+    found = bank[positions] == entity_ids
+    keys = source.scope_entity_key_banks[dimension]
+    return {
+        identity: keys[position][0]
+        for identity, position, present in zip(
+            identities, positions.tolist(), found.tolist(), strict=True
+        )
+        if present and keys[position][1] == identity[1]
+    }
+
+
 def _face_order_sign(
     source: tuple[int, int, int], target: tuple[int, int, int], /
 ) -> int:
@@ -754,14 +785,6 @@ _TETRAHEDRON_FACES = np.asarray(
     [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]], dtype=np.int64
 )
 _TRIANGLE_EDGES = np.asarray([[0, 1], [1, 2], [0, 2]], dtype=np.int64)
-
-
-def _object_rows(values: list[object], /) -> np.ndarray:
-    """One-dimensional object array holding ``values`` (tuples stay elements)."""
-    rows = np.empty((len(values),), dtype=object)
-    for row, value in enumerate(values):
-        rows[row] = value
-    return rows
 
 
 def _rows_of_simplices(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
@@ -829,21 +852,24 @@ def _source_associations(
     complex_ = source.complex
     source_maps = _source_identity_maps(source)
     # One authored ID/occurrence pair resolves to one key; the mesh refers to
-    # each source entity from many simplices. The resolver is bound once: an
-    # Equinox module method lookup traverses the whole source pytree.
+    # each source entity from many simplices. Each dimension's pairs resolve
+    # in one pass; the resolver is bound once for the refusals: an Equinox
+    # module method lookup traverses the whole source pytree.
     key_for_scope = source.source_entity_key_for_scope
-    source_keys: dict[tuple[int, str, tuple[str, ...]], str] = {}
+    key_tables: dict[int, dict[tuple[str, tuple[str, ...]], str]] = {}
 
     def _cached_source_key(
         dimension: int, identifier: str, occurrence_path: tuple[str, ...], /
     ) -> str:
-        cache_key = (dimension, identifier, occurrence_path)
-        key = source_keys.get(cache_key)
+        table = key_tables.get(dimension)
+        if table is None:
+            table = _source_key_table(source, source_maps, dimension)
+            key_tables[dimension] = table
+        key = table.get((identifier, occurrence_path))
         if key is None:
             key = _source_key(
                 key_for_scope, source_maps, dimension, identifier, occurrence_path
             )
-            source_keys[cache_key] = key
         return key
 
     vertex_set, edge_set, face_set, cell_set = (
@@ -853,12 +879,14 @@ def _source_associations(
     edge_ids = np.asarray(edge_set.entity_ids, dtype=np.int64)
     face_ids = np.asarray(face_set.entity_ids, dtype=np.int64)
     cell_ids = np.asarray(cell_set.entity_ids, dtype=np.int64)
-    roles_by_dimension = {
-        0: GeometrySourceEntityRole.VERTEX,
-        1: GeometrySourceEntityRole.EDGE,
-        2: GeometrySourceEntityRole.FACET,
-        3: GeometrySourceEntityRole.REGION,
-    }
+    roles_by_dimension = object_rows(
+        (
+            GeometrySourceEntityRole.VERTEX,
+            GeometrySourceEntityRole.EDGE,
+            GeometrySourceEntityRole.FACET,
+            GeometrySourceEntityRole.REGION,
+        )
+    )
     input_vertices = np.asarray(construction.input_vertices, dtype=np.int64)
     witness_strata = np.asarray(construction.witness_strata, dtype=np.int8)
     if (
@@ -870,24 +898,17 @@ def _source_associations(
         raise ValueError(
             "PLC vertex ancestry must align with the recovered mesh vertex bank."
         )
-    vertex_dimensions_list: list[int] = []
-    for input_vertex, witness_stratum in zip(
-        input_vertices.tolist(), witness_strata.tolist(), strict=True
-    ):
-        if input_vertex >= 0:
-            vertex_dimensions_list.append(0)
-        elif witness_stratum in (1, 2):
-            vertex_dimensions_list.append(witness_stratum)
-        elif witness_stratum == 3:
-            # A point on its facet's declared exact plane is a facet point.
-            vertex_dimensions_list.append(2)
-        elif witness_stratum == 0:
-            vertex_dimensions_list.append(3)
-        else:
-            raise ValueError(
-                "Inserted PLC vertices must retain one source-stratum witness."
-            )
-    vertex_dimensions = np.asarray(vertex_dimensions_list, dtype=np.int64)
+    # Source vertices are dimension 0; inserted vertices take their witness
+    # stratum, a declared-plane point (stratum 3) is a facet point and an
+    # interior point (stratum 0) a region point.
+    inserted = input_vertices < 0
+    if np.any(inserted & ((witness_strata < 0) | (witness_strata > 3))):
+        raise ValueError("Inserted PLC vertices must retain one source-stratum witness.")
+    vertex_dimensions = np.where(
+        inserted,
+        np.asarray((3, 1, 2, 2), dtype=np.int64)[np.clip(witness_strata, 0, 3)],
+        0,
+    )
     vertex_keys = tuple(
         _cached_source_key(int(dimension), identity, path)
         for dimension, identity, path in zip(
@@ -940,9 +961,7 @@ def _source_associations(
         vertex_keys,
         construction.witness_deviations,
         exact=bool(np.all(construction.witness_deviations == 0.0)),
-        source_roles=tuple(
-            roles_by_dimension[int(dimension)] for dimension in vertex_dimensions
-        ),
+        source_roles=tuple(roles_by_dimension[vertex_dimensions].tolist()),
         source_occurrence_paths=construction.vertex_source_occurrence_paths,
         source_region_sides=vertex_region_sides,
     )
@@ -950,7 +969,7 @@ def _source_associations(
     cells, connectivity_edges, connectivity_faces = _tetrahedron_regions(construction)
     deviations = np.asarray(construction.witness_deviations, dtype=np.float64)
     cell_regions = np.asarray(construction.cell_regions, dtype=np.int64)
-    region_keys = _object_rows(
+    region_keys = object_rows(
         [
             _cached_source_key(3, identifier, path)
             for identifier, path in zip(
@@ -960,8 +979,8 @@ def _source_associations(
             )
         ]
     )
-    region_paths = _object_rows(list(construction.region_occurrence_paths))
-    facet_keys = _object_rows(
+    region_paths = object_rows(construction.region_occurrence_paths)
+    facet_keys = object_rows(
         [
             _cached_source_key(2, identifier, path)
             for identifier, path in zip(
@@ -969,11 +988,11 @@ def _source_associations(
             )
         ]
     )
-    facet_paths = _object_rows(list(construction.facet_occurrence_paths))
-    facet_sides = _object_rows(
+    facet_paths = object_rows(construction.facet_occurrence_paths)
+    facet_sides = object_rows(
         [_facet_region_sides(facet) for facet in range(len(construction.facet_ids))]
     )
-    none_sides = _object_rows([(None, None)])
+    none_sides = object_rows([(None, None)])
 
     # Edges: a constrained segment, else the one source facet whose recovered
     # faces contain it, else the one region of its cells.
@@ -1006,7 +1025,7 @@ def _source_associations(
     region_edges = ~constrained_edges & ~facet_edges
     if np.any(region_edges & (edge_region < 0)):
         raise ValueError("Every PLC mesh edge must have one source stratum or region.")
-    segment_keys = _object_rows(
+    segment_keys = object_rows(
         [
             _cached_source_key(1, identifier, path)
             for identifier, path in zip(
@@ -1016,7 +1035,7 @@ def _source_associations(
             )
         ]
     )
-    segment_paths = _object_rows(list(construction.segment_source_occurrence_paths))
+    segment_paths = object_rows(construction.segment_source_occurrence_paths)
     selected_segments = edge_segment[constrained_edges]
     selected_facets = edge_facet[facet_edges]
     selected_regions = edge_region[region_edges]
@@ -1068,7 +1087,7 @@ def _source_associations(
     region_faces = ~constrained_faces
     if np.any(region_faces & (face_region < 0)):
         raise ValueError("Every PLC mesh face must have one source facet or region.")
-    boundary_keys = _object_rows(
+    boundary_keys = object_rows(
         [
             _cached_source_key(2, identifier, path)
             for identifier, path in zip(
@@ -1082,7 +1101,7 @@ def _source_associations(
     face_keys[boundary_rows] = boundary_keys
     face_keys[region_faces] = region_keys[face_region[region_faces]]
     face_path_rows = np.empty((face_count,), dtype=object)
-    face_path_rows[boundary_rows] = _object_rows(
+    face_path_rows[boundary_rows] = object_rows(
         list(construction.face_source_occurrence_paths)
     )
     face_path_rows[region_faces] = region_paths[face_region[region_faces]]

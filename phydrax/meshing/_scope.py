@@ -544,9 +544,9 @@ class MeshingScope(StrictModule, NonTrainableState):
         identifiers = identifiers.astype(np.int64, copy=False)
         if identifiers.size == 0:
             raise ValueError("Meshing scopes must contain at least one entity.")
-        if np.any(identifiers < 0) or np.unique(identifiers).size != identifiers.size:
-            raise ValueError("Meshing scope entity_ids must be unique and non-negative.")
         identifiers = np.sort(identifiers, kind="stable")
+        if identifiers[0] < 0 or np.any(identifiers[1:] == identifiers[:-1]):
+            raise ValueError("Meshing scope entity_ids must be unique and non-negative.")
         sides = tuple(side_records)
         if any(not isinstance(side, MeshingScopeSide) for side in sides):
             raise TypeError("side_records must contain MeshingScopeSide values.")
@@ -558,23 +558,27 @@ class MeshingScope(StrictModule, NonTrainableState):
             or any(side.face.revision_id != revision for side in sides)
         ):
             raise ValueError("CAD sides require a matching geometry face revision.")
-        unqualified = (
-            tuple(int(value) for value in identifiers)
-            if unqualified_entity_ids is None
-            else tuple(unqualified_entity_ids)
-        )
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, np.integer))
-            or value < 0
-            for value in unqualified
-        ) or len(set(unqualified)) != len(unqualified):
-            raise ValueError("Unqualified IDs must be unique non-negative integers.")
-        unqualified = tuple(sorted(int(value) for value in unqualified))
+        if unqualified_entity_ids is None:
+            # The sorted unique non-negative entity IDs are their own projection.
+            unqualified = tuple(identifiers.tolist())
+        else:
+            unqualified = tuple(unqualified_entity_ids)
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, np.integer))
+                or value < 0
+                for value in unqualified
+            ) or len(set(unqualified)) != len(unqualified):
+                raise ValueError("Unqualified IDs must be unique non-negative integers.")
+            unqualified = tuple(sorted(int(value) for value in unqualified))
         sides = tuple(sorted(sides, key=_side_key))
-        if set(map(int, identifiers)) != set(unqualified) | {
-            side.entity_id for side in sides
-        }:
+        if not np.array_equal(
+            identifiers,
+            np.union1d(
+                np.asarray(unqualified, dtype=np.int64),
+                np.asarray([side.entity_id for side in sides], dtype=np.int64),
+            ),
+        ):
             raise ValueError("Entity IDs must be exactly the projection of scope parts.")
         self.source_id = source
         self.source_revision = revision

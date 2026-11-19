@@ -1121,12 +1121,11 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
 
 def _fraction_rows_fingerprint(rows: tuple[tuple[Fraction, ...] | None, ...], /) -> str:
     """Bind optional exact rational rows without serializing individual JSON tokens."""
-    return rational_chart_bank_fingerprint(
-        tuple(
-            () if row is None else (tuple((v.numerator, v.denominator) for v in row),)
-            for row in rows
-        )
-    )
+    tokens = {
+        row: () if row is None else (tuple((v.numerator, v.denominator) for v in row),)
+        for row in set(rows)
+    }
+    return rational_chart_bank_fingerprint(tuple(map(tokens.__getitem__, rows)))
 
 
 class GeometryAssociation(StrictModule, NonTrainableState):
@@ -1243,9 +1242,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Target geometry association IDs must be unique and non-negative."
             )
         count = targets.size
-        sources = tuple(str(value).strip() for value in source_entity_ids)
+        sources = tuple(map(str.strip, map(str, source_entity_ids)))
         distances = np.asarray(residuals, dtype=np.float64)
-        if len(sources) != count or any(not value for value in sources):
+        if len(sources) != count or not all(sources):
             raise ValueError(
                 "Source geometry IDs must match target entities and be non-empty."
             )
@@ -1453,7 +1452,13 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "ambiguous": array_tree_fingerprint(ambiguous_),
                 "parameters": array_tree_fingerprint(parameters_),
                 "source_roles": tuple(
-                    None if role is None else role.value for role in roles
+                    map(
+                        {
+                            role: None if role is None else role.value
+                            for role in set(roles)
+                        }.__getitem__,
+                        roles,
+                    )
                 ),
                 "source_occurrence_paths": occurrences,
                 "source_region_sides": region_sides,
@@ -1466,7 +1471,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                             target_intervals
                         )
                     }
-                    if any(interval is not None for interval in target_intervals)
+                    if any(map(is_not, target_intervals, repeat(None)))
                     else {}
                 ),
                 **(
@@ -1504,7 +1509,13 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 ),
                 "source_parameter_points": _fraction_rows_fingerprint(
                     tuple(
-                        None if point is None else (point,) for point in parameter_points
+                        map(
+                            {
+                                point: None if point is None else (point,)
+                                for point in set(parameter_points)
+                            }.__getitem__,
+                            parameter_points,
+                        )
                     )
                 ),
                 "orientations": array_tree_fingerprint(orientations_),
@@ -1562,11 +1573,11 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             raise ValueError("Geometry association contains undeclared target IDs.")
         dimension = entity_set.intrinsic_dimension
         if (
-            any(value is not None for value in self.target_parameter_intervals)
+            any(map(is_not, self.target_parameter_intervals, repeat(None)))
             and dimension != 1
         ):
             raise ValueError("Target parameter intervals require mesh-edge targets.")
-        has_pieces = any(value is not None for value in self.target_reference_pieces)
+        has_pieces = any(map(is_not, self.target_reference_pieces, repeat(None)))
         if has_pieces and dimension != 2:
             raise ValueError("Target reference pieces require mesh-face targets.")
         if (

@@ -17,8 +17,6 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ..geometry._rational import rational_vector
-from ..linalg._exact import determinant_exact
 from ..typing import Dim, HostFloat64, HostInt64, parse, Scope
 
 
@@ -155,37 +153,49 @@ class PiecewiseLinearDomain(StrictModule, NonTrainableState):
                 "facet regions must be distinct declared regions or exterior."
             )
 
-        exact_points = tuple(rational_vector(point) for point in points)
-        facet_keys: set[tuple[int, ...]] = set()
-        for facet in rows:
-            indices = tuple(int(value) for value in facet)
-            key = tuple(sorted(indices))
-            if key in facet_keys:
-                raise ValueError("source boundary contains a duplicate facet identity.")
-            facet_keys.add(key)
-            coordinates = tuple(exact_points[index] for index in indices)
-            if dimension == 2:
-                if coordinates[0] == coordinates[1]:
-                    raise ValueError("source boundary edges must be nondegenerate.")
-            elif not any(
+        integers, exponent = _dyadic_integer_coordinates(points)
+        _, first_rows, key_rows = np.unique(
+            np.sort(rows, axis=1), axis=0, return_index=True, return_inverse=True
+        )
+        duplicates = np.flatnonzero(
+            first_rows[key_rows.reshape(-1)] != np.arange(rows.shape[0])
+        )
+        corners = integers[rows]
+        if dimension == 2:
+            degenerate = np.flatnonzero(np.all(corners[:, 0] == corners[:, 1], axis=1))
+        else:
+            first_edge = corners[:, 1] - corners[:, 0]
+            second_edge = corners[:, 2] - corners[:, 0]
+            degenerate = np.flatnonzero(
                 (
-                    (coordinates[1][1] - coordinates[0][1])
-                    * (coordinates[2][2] - coordinates[0][2])
-                    - (coordinates[1][2] - coordinates[0][2])
-                    * (coordinates[2][1] - coordinates[0][1]),
-                    (coordinates[1][2] - coordinates[0][2])
-                    * (coordinates[2][0] - coordinates[0][0])
-                    - (coordinates[1][0] - coordinates[0][0])
-                    * (coordinates[2][2] - coordinates[0][2]),
-                    (coordinates[1][0] - coordinates[0][0])
-                    * (coordinates[2][1] - coordinates[0][1])
-                    - (coordinates[1][1] - coordinates[0][1])
-                    * (coordinates[2][0] - coordinates[0][0]),
+                    first_edge[:, 1] * second_edge[:, 2]
+                    - first_edge[:, 2] * second_edge[:, 1]
+                    == 0
                 )
-            ):
-                raise ValueError("source boundary triangles must be nondegenerate.")
+                & (
+                    first_edge[:, 2] * second_edge[:, 0]
+                    - first_edge[:, 0] * second_edge[:, 2]
+                    == 0
+                )
+                & (
+                    first_edge[:, 0] * second_edge[:, 1]
+                    - first_edge[:, 1] * second_edge[:, 0]
+                    == 0
+                )
+            )
+        # Report the first offending facet in row order; a duplicate precedes its degeneracy.
+        if duplicates.size and (not degenerate.size or duplicates[0] <= degenerate[0]):
+            raise ValueError("source boundary contains a duplicate facet identity.")
+        if degenerate.size:
+            raise ValueError(
+                "source boundary edges must be nondegenerate."
+                if dimension == 2
+                else "source boundary triangles must be nondegenerate."
+            )
 
-        measures = _oriented_region_measures(exact_points, rows, pairs, len(identifiers))
+        measures = _oriented_region_measures(
+            integers, exponent, rows, pairs, len(identifiers)
+        )
         if any(value <= 0 for value in measures):
             raise ValueError(
                 "each source region must be a closed, positively oriented chain."
@@ -221,66 +231,156 @@ class PiecewiseLinearDomain(StrictModule, NonTrainableState):
         return self.vertices.shape[1]
 
     def exact_region_measures(self, /) -> tuple[Fraction, ...]:
-        exact_points = tuple(rational_vector(point) for point in self.vertices)
+        integers, exponent = _dyadic_integer_coordinates(self.vertices)
         return _oriented_region_measures(
-            exact_points, self.facets, self.facet_regions, len(self.region_ids)
+            integers, exponent, self.facets, self.facet_regions, len(self.region_ids)
         )
 
 
+def _dyadic_integer_coordinates(points: np.ndarray, /) -> tuple[np.ndarray, int]:
+    """Python-integer coordinates ``m`` and one exponent ``e`` with ``points == m * 2**e``."""
+    mantissas, exponents = np.frexp(points)
+    # |mantissa| < 1, so the 53-bit significand is an exact int64.
+    significands = np.ldexp(mantissas, 53).astype(np.int64)
+    shifts = exponents.astype(np.int64) - 53
+    nonzero = significands != 0
+    exponent = int(shifts[nonzero].min()) if np.any(nonzero) else 0
+    shifts[~nonzero] = exponent
+    return significands.astype(object) << (shifts - exponent).astype(object), exponent
+
+
 def _oriented_region_measures(
-    points: tuple[tuple[Fraction, ...], ...],
+    integers: np.ndarray,
+    exponent: int,
     facets: np.ndarray,
     facet_regions: np.ndarray,
     region_count: int,
     /,
 ) -> tuple[Fraction, ...]:
-    dimension = len(points[0])
-    measures = [Fraction(0) for _ in range(region_count)]
-    incidence: list[dict[tuple[int, int], tuple[int, int]]] = [
-        {} for _ in range(region_count)
-    ]
-    for row, (first_region, second_region) in zip(facets, facet_regions, strict=True):
-        vertices = tuple(int(value) for value in row)
-        for region, orientation in ((int(first_region), 1), (int(second_region), -1)):
-            if region < 0:
-                continue
-            if dimension == 2:
-                start, end = vertices if orientation > 0 else vertices[::-1]
-                key = (start, end)
-                previous = incidence[region].get(key, (0, 0))
-                incidence[region][key] = (previous[0] + 1, previous[1] + 1)
-                measures[region] += (
-                    points[start][0] * points[end][1] - points[start][1] * points[end][0]
-                ) / 2
-            else:
-                signed = determinant_exact(tuple(points[index] for index in vertices)) / 6
-                measures[region] += signed if orientation > 0 else -signed
-                ordered = vertices if orientation > 0 else vertices[::-1]
-                for first, second in zip(ordered, ordered[1:] + ordered[:1], strict=True):
-                    key = (min(first, second), max(first, second))
-                    sign = 1 if first < second else -1
-                    count, balance = incidence[region].get(key, (0, 0))
-                    incidence[region][key] = (count + 1, balance + sign)
-    for region, edges in enumerate(incidence):
-        if not edges:
-            raise ValueError(f"source region {region} has no oriented boundary facets.")
-        if dimension == 2:
-            outgoing: dict[int, int] = {}
-            incoming: dict[int, int] = {}
-            for (start, end), (count, _) in edges.items():
-                if count != 1:
-                    raise ValueError("source region boundary repeats an oriented edge.")
-                outgoing[start] = outgoing.get(start, 0) + 1
-                incoming[end] = incoming.get(end, 0) + 1
-            if outgoing != incoming:
-                raise ValueError(
-                    "source region boundary edges do not form a closed chain."
+    """Exact oriented measures of closed region chains over dyadic integer coordinates."""
+    dimension = integers.shape[1]
+    corners = integers[facets]
+    if dimension == 2:
+        # Twice the signed area swept from the origin by each directed edge.
+        swept = corners[:, 0, 0] * corners[:, 1, 1] - corners[:, 0, 1] * corners[:, 1, 0]
+        scale = Fraction(2) ** (2 * exponent) / 2
+    else:
+        # Six times the signed volume of the tetrahedron spanned with the origin.
+        swept = (
+            corners[:, 0, 0]
+            * (corners[:, 1, 1] * corners[:, 2, 2] - corners[:, 1, 2] * corners[:, 2, 1])
+            - corners[:, 0, 1]
+            * (corners[:, 1, 0] * corners[:, 2, 2] - corners[:, 1, 2] * corners[:, 2, 0])
+            + corners[:, 0, 2]
+            * (corners[:, 1, 0] * corners[:, 2, 1] - corners[:, 1, 1] * corners[:, 2, 0])
+        )
+        scale = Fraction(2) ** (3 * exponent) / 6
+    first_regions = facet_regions[:, 0]
+    second_regions = facet_regions[:, 1]
+    # Each facet bounds facet_regions[:, 0] positively and facet_regions[:, 1] negatively.
+    sides = np.concatenate(
+        (np.flatnonzero(first_regions >= 0), np.flatnonzero(second_regions >= 0))
+    )
+    side_regions = np.concatenate(
+        (first_regions[first_regions >= 0], second_regions[second_regions >= 0])
+    )
+    side_orientations = np.concatenate(
+        (
+            np.ones((np.count_nonzero(first_regions >= 0),), dtype=np.int64),
+            -np.ones((np.count_nonzero(second_regions >= 0),), dtype=np.int64),
+        )
+    )
+    region_order = np.argsort(side_regions, kind="stable")
+    ordered_regions = side_regions[region_order]
+    region_starts = np.flatnonzero(
+        np.concatenate(
+            (np.ones((1,), dtype=np.bool_), ordered_regions[1:] != ordered_regions[:-1])
+        )
+    )
+    signed = swept[sides] * side_orientations.astype(object)
+    totals = dict(
+        zip(
+            ordered_regions[region_starts].tolist(),
+            np.add.reduceat(signed[region_order], region_starts).tolist(),
+            strict=True,
+        )
+    )
+    measures = tuple(totals.get(region, 0) * scale for region in range(region_count))
+    side_facets = facets[sides]
+    if dimension == 2:
+        forward = side_orientations > 0
+        starts = np.where(forward, side_facets[:, 0], side_facets[:, 1])
+        ends = np.where(forward, side_facets[:, 1], side_facets[:, 0])
+        edge_regions = side_regions
+        edge_low, edge_high = starts, ends
+        edge_signs = np.ones_like(starts)
+    else:
+        following = side_facets[:, (1, 2, 0)]
+        edge_low = np.minimum(side_facets, following).reshape(-1)
+        edge_high = np.maximum(side_facets, following).reshape(-1)
+        edge_signs = (
+            np.where(side_facets < following, 1, -1) * side_orientations[:, None]
+        ).reshape(-1)
+        edge_regions = np.repeat(side_regions, 3)
+    order = np.lexsort((edge_high, edge_low, edge_regions))
+    edge_regions, edge_low, edge_high, edge_signs = (
+        edge_regions[order],
+        edge_low[order],
+        edge_high[order],
+        edge_signs[order],
+    )
+    starts_group = np.ones((edge_regions.size,), dtype=np.bool_)
+    starts_group[1:] = (
+        (edge_regions[1:] != edge_regions[:-1])
+        | (edge_low[1:] != edge_low[:-1])
+        | (edge_high[1:] != edge_high[:-1])
+    )
+    group_starts = np.flatnonzero(starts_group)
+    counts = np.diff(np.append(group_starts, edge_regions.size))
+    balances = np.add.reduceat(edge_signs, group_starts)
+    group_regions = edge_regions[group_starts]
+    present = np.zeros((region_count,), dtype=np.bool_)
+    present[group_regions] = True
+    if dimension == 2:
+        repeated = np.zeros((region_count,), dtype=np.bool_)
+        repeated[group_regions[counts != 1]] = True
+        # Every vertex of a closed chain has equal in- and out-degree per region.
+        endpoint_regions = np.concatenate((edge_regions, edge_regions))
+        endpoints = np.concatenate((edge_low, edge_high))
+        endpoint_signs = np.concatenate(
+            (np.ones_like(edge_low), -np.ones_like(edge_high))
+        )
+        endpoint_order = np.lexsort((endpoints, endpoint_regions))
+        endpoint_regions = endpoint_regions[endpoint_order]
+        endpoints = endpoints[endpoint_order]
+        endpoint_starts = np.flatnonzero(
+            np.concatenate(
+                (
+                    np.ones((1,), dtype=np.bool_),
+                    (endpoint_regions[1:] != endpoint_regions[:-1])
+                    | (endpoints[1:] != endpoints[:-1]),
                 )
-        elif any(count != 2 or balance != 0 for count, balance in edges.values()):
-            raise ValueError(
-                "source region boundary triangles do not form a closed oriented chain."
             )
-    return tuple(measures)
+        )
+        imbalance = np.add.reduceat(endpoint_signs[endpoint_order], endpoint_starts)
+        open_chain = np.zeros((region_count,), dtype=np.bool_)
+        open_chain[endpoint_regions[endpoint_starts][imbalance != 0]] = True
+    else:
+        repeated = np.zeros((region_count,), dtype=np.bool_)
+        open_chain = np.zeros((region_count,), dtype=np.bool_)
+        open_chain[group_regions[(counts != 2) | (balances != 0)]] = True
+    for region in range(region_count):
+        if not present[region]:
+            raise ValueError(f"source region {region} has no oriented boundary facets.")
+        if repeated[region]:
+            raise ValueError("source region boundary repeats an oriented edge.")
+        if open_chain[region]:
+            raise ValueError(
+                "source region boundary edges do not form a closed chain."
+                if dimension == 2
+                else "source region boundary triangles do not form a closed oriented chain."
+            )
+    return measures
 
 
 __getattr__, __dir__ = deferred_exports(
