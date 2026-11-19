@@ -1,9 +1,12 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <vector>
 
 #include "check.hpp"
+#include "intersections.hpp"
+#include "predicates.hpp"
 #include "verify_surface_embedding.hpp"
 
 namespace {
@@ -99,6 +102,73 @@ void check_adjacent_contacts() {
   PHX_CHECK(!has(findings, PHX_MC_SURFACE_CONTACT));  // noncoplanar shared edge
 }
 
+bool triangle_valid(const double* const triangle[3]) {
+  for (int d = 0; d < 3; ++d) {
+    const int u = (d+1)%3, v = (d+2)%3;
+    const double a[2] = {triangle[0][u], triangle[0][v]};
+    const double b[2] = {triangle[1][u], triangle[1][v]};
+    const double c[2] = {triangle[2][u], triangle[2][v]};
+    if (phx::mc::orient2d_filtered(a, b, c) != 0) return true;
+  }
+  return false;
+}
+
+void check_random_adjacent_pairs() {
+  uint64_t state = 0x159d8ef1a42bc473ULL;
+  const auto coordinate = [&]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<double>(static_cast<int>(state % 7) - 3);
+  };
+  const int64_t first_ids[3] = {0, 1, 2};
+  for (int shared_edge = 0; shared_edge < 2; ++shared_edge) {
+    const int64_t second_ids[3] = {0, shared_edge ? 1 : 3, 4};
+    int tested = 0, zeros = 0, cleared = 0, failures = 0;
+    while (tested < 100000) {
+      std::array<std::array<double, 3>, 5> points{};
+      for (int i = 1; i < 5; ++i)
+        for (int d = 0; d < 3; ++d) points[i][d] = coordinate();
+      const double* p[3] = {points[0].data(), points[1].data(), points[2].data()};
+      const double* q[3] = {points[0].data(),
+                            points[shared_edge ? 1 : 3].data(), points[4].data()};
+      if (!triangle_valid(p) || !triangle_valid(q)) continue;
+      const bool clear = phx::mc::surface_embedding_pair_clear(p, q, first_ids, second_ids);
+      phx::mc::Contact contact;
+      PHX_CHECK(phx::mc::intersect_triangles(p, q, first_ids, second_ids, contact) == PHX_MC_OK);
+      const bool violation = contact.kind != PHX_MC_DISJOINT &&
+                             contact.kind != PHX_MC_SHARED_VERTEX &&
+                             contact.kind != PHX_MC_SHARED_EDGE;
+      const bool reduced_violation = clear ? false : violation;
+      PHX_CHECK(reduced_violation == violation);
+      cleared += clear;
+      failures += violation;
+      if (!shared_edge) {
+        const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], q[1]);
+        const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], q[2]);
+        if (s0 == 0 || s1 == 0) { ++zeros; PHX_CHECK(!clear); }
+        else if (s0 != s1) {
+          const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], p[1]);
+          const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], p[2]);
+          if (t0 == 0 || t1 == 0) { ++zeros; PHX_CHECK(!clear); }
+          else if (t0 != t1) {
+            for (int edge = 0; edge < 3; ++edge) {
+              const int x = phx::mc::orient3d_filtered(p[1], p[2], q[edge], q[(edge+1)%3]);
+              const int y = phx::mc::orient3d_filtered(q[1], q[2], p[edge], p[(edge+1)%3]);
+              if (x == 0 || y == 0) { ++zeros; PHX_CHECK(!clear); }
+            }
+          }
+        }
+      } else if (phx::mc::orient3d_filtered(p[0], p[1], p[2], q[2]) == 0) {
+        ++zeros;  // Coplanar shared edges are decided by exact 2D sides.
+      }
+      ++tested;
+    }
+    PHX_CHECK(zeros > 0);
+    PHX_CHECK(cleared > 0 && failures > 0);
+  }
+}
+
 void check_refusal() {
   Mesh mesh = tetrahedron();
   mesh.triangles.resize(9);
@@ -128,6 +198,7 @@ int main() {
   check_vertex_link();
   check_contacts();
   check_adjacent_contacts();
+  check_random_adjacent_pairs();
   check_refusal();
   return phx::mc::test::finish("test_verify_surface_embedding");
 }

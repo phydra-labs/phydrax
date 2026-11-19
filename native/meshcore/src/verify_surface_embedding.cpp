@@ -266,10 +266,14 @@ struct Tree {
 
 // A strict separating plane proves that the closed triangles do not meet
 // beyond a shared vertex. The filtered predicate falls back to exact signs.
-bool same_strict_side(const double* const plane[3], const double* a, const double* b) {
-  const int first = phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], a);
-  return first != 0 &&
-         first == phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], b);
+// The segment endpoints are strictly on opposite sides of the triangle plane.
+// All three line/edge orientations must be nonzero; an ambiguous contact or a
+// proper piercing is sent to the full classifier for its evidence.
+bool opposite_edge_misses(const double* a, const double* b, const double* const triangle[3]) {
+  const int s0 = phx::mc::orient3d_filtered(a, b, triangle[0], triangle[1]);
+  const int s1 = phx::mc::orient3d_filtered(a, b, triangle[1], triangle[2]);
+  const int s2 = phx::mc::orient3d_filtered(a, b, triangle[2], triangle[0]);
+  return s0 != 0 && s1 != 0 && s2 != 0 && (s0 != s1 || s1 != s2);
 }
 
 bool separate_triangle(const double* const plane[3], const double* const other[3]) {
@@ -319,7 +323,17 @@ bool clear_pair(const double* const p[3], const double* const q[3],
       if (!shared_p[i]) { if (!a) a = p[i]; else b = p[i]; }
       if (!shared_q[i]) { if (!c) c = q[i]; else d = q[i]; }
     }
-    return same_strict_side(p, c, d) || same_strict_side(q, a, b);
+    const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], c);
+    const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], d);
+    if (s0 == 0 || s1 == 0) return false;
+    if (s0 == s1) return true;
+    const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], a);
+    const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], b);
+    if (t0 == 0 || t1 == 0) return false;
+    if (t0 == t1) return true;
+    // For two noncoplanar triangles sharing one vertex, any other
+    // intersection reaches an opposite edge of at least one triangle.
+    return opposite_edge_misses(a, b, q) && opposite_edge_misses(c, d, p);
   }
   if (shared == 0) return separate_triangle(p, q) || separate_triangle(q, p);
   return false;
@@ -382,6 +396,13 @@ int32_t contacts(const double* points, int64_t n, const int64_t* triangles,
   return PHX_MC_OK;
 }
 }  // namespace
+
+bool phx::mc::surface_embedding_pair_clear(const double* const first[3],
+                                            const double* const second[3],
+                                            const int64_t* first_ids,
+                                            const int64_t* second_ids) {
+  return clear_pair(first, second, first_ids, second_ids);
+}
 
 extern "C" int32_t phx_mc_verify_surface_embedding(
     int64_t point_count, const double* points, int64_t triangle_count, const int64_t* triangles,
