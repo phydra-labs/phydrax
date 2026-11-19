@@ -16,7 +16,10 @@ from itertools import combinations
 import numpy as np
 from numpy.typing import NDArray
 
+from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
+from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.geometry._exact_polyhedral_geometry import triangle_contact_points3
+from phydrax.geometry._global_embedding import certify_global_embedding
 from phydrax.geometry._source_fidelity import _require_reference_chart_partition
 
 
@@ -164,4 +167,25 @@ def test_surface_embedding_differential() -> None:
     crossing_points = np.concatenate((points, points + np.asarray((0.25, 0.25, 0.25))))
     crossing_triangles = np.concatenate((triangles, triangles + 4))
     assert not _reference_surface(crossing_points, crossing_triangles)
+    assert not _surface_verdict(crossing_points, crossing_triangles)
+
+
+def _python_embedding(points: NDArray[np.float64], triangles: NDArray[np.int64]) -> bool:
+    mesh = CellMesh(points, (CellBlock("triangles", "triangle", triangles.astype(np.int32)),))
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    return certify_global_embedding(mesh, geometry, validity).status == "certified"
+
+
+def test_sphere_and_crossing_python_embedding() -> None:
+    points = np.asarray(((1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0),
+                         (0, 0, 1), (0, 0, -1)), dtype=np.float64)
+    triangles = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4),
+                            (1, 0, 5), (2, 1, 5), (3, 2, 5), (0, 3, 5)),
+                           dtype=np.int64)
+    assert _python_embedding(points, triangles)
+    assert _surface_verdict(points, triangles)
+    crossing_points = np.concatenate((points, points + np.asarray((0.5, 0.25, 0.125))))
+    crossing_triangles = np.concatenate((triangles, triangles + 6))
+    assert not _python_embedding(crossing_points, crossing_triangles)
     assert not _surface_verdict(crossing_points, crossing_triangles)
