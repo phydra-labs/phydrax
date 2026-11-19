@@ -14,9 +14,9 @@ curve within the domain tolerance plus binary64 resolution.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from fractions import Fraction
-import math
 
 import jax.numpy as jnp
 import numpy as np
@@ -723,8 +723,11 @@ def test_pole_edges_do_not_alias_curve_rows(kind: str) -> None:
     for edge, row in enumerate(rows):
         if row < 0:
             continue
-        source_curve = geometry.curves[geometry.edge_curves[domain.source_indices[1][edge]]]
-        parameters = np.linspace(*model.curve_ranges[row], 7)
+        source_curve = geometry.curves[
+            geometry.edge_curves[domain.source_indices[1][edge]]
+        ]
+        lower, upper = model.curve_ranges[row]
+        parameters = np.linspace(lower, upper, 7)
         actual = cad_geometry_evaluate(
             model, CadEntityKind.CURVE, int(row), parameters, CadGeometryQuantity.VALUE
         )
