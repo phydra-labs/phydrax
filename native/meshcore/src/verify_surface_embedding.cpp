@@ -264,18 +264,6 @@ struct Tree {
   }
 };
 
-// A strict separating plane proves that the closed triangles do not meet
-// beyond a shared vertex. The filtered predicate falls back to exact signs.
-// The segment endpoints are strictly on opposite sides of the triangle plane.
-// All three line/edge orientations must be nonzero; an ambiguous contact or a
-// proper piercing is sent to the full classifier for its evidence.
-bool opposite_edge_misses(const double* a, const double* b, const double* const triangle[3]) {
-  const int s0 = phx::mc::orient3d_filtered(a, b, triangle[0], triangle[1]);
-  const int s1 = phx::mc::orient3d_filtered(a, b, triangle[1], triangle[2]);
-  const int s2 = phx::mc::orient3d_filtered(a, b, triangle[2], triangle[0]);
-  return s0 != 0 && s1 != 0 && s2 != 0 && (s0 != s1 || s1 != s2);
-}
-
 bool separate_triangle(const double* const plane[3], const double* const other[3]) {
   const int first = phx::mc::orient3d_filtered(plane[0], plane[1], plane[2], other[0]);
   return first != 0 &&
@@ -318,22 +306,25 @@ bool clear_pair(const double* const p[3], const double* const q[3],
     return clear_shared_edge(a, b, c, d);
   }
   if (shared == 1) {
-    const double *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+    const double *common = nullptr, *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
     for (int i = 0; i < 3; ++i) {
-      if (!shared_p[i]) { if (!a) a = p[i]; else b = p[i]; }
+      if (shared_p[i]) common = p[i];
+      else if (!a) a = p[i]; else b = p[i];
       if (!shared_q[i]) { if (!c) c = q[i]; else d = q[i]; }
     }
-    const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], c);
-    const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], d);
+    const int s0 = phx::mc::orient3d_filtered(common, a, b, c);
+    const int s1 = phx::mc::orient3d_filtered(common, a, b, d);
     if (s0 == 0 || s1 == 0) return false;
     if (s0 == s1) return true;
-    const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], a);
-    const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], b);
+    const int t0 = phx::mc::orient3d_filtered(common, c, d, a);
+    const int t1 = phx::mc::orient3d_filtered(common, c, d, b);
     if (t0 == 0 || t1 == 0) return false;
     if (t0 == t1) return true;
-    // For two noncoplanar triangles sharing one vertex, any other
-    // intersection reaches an opposite edge of at least one triangle.
-    return opposite_edge_misses(a, b, q) && opposite_edge_misses(c, d, p);
+    // Both opposite edges cross the other plane. Their six line/edge signs
+    // are respectively (s0,h,-s1) and (t0,h,-t1), where
+    // h=orient(a,b,c,d). Thus one extra exact sign decides both edge tests.
+    const int h = phx::mc::orient3d_filtered(a, b, c, d);
+    return h != 0 && h != s0 && h != t0;
   }
   if (shared == 0) return separate_triangle(p, q) || separate_triangle(q, p);
   return false;

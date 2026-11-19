@@ -121,9 +121,7 @@ void check_random_adjacent_pairs() {
     state ^= state << 17;
     return static_cast<double>(static_cast<int>(state % 7) - 3);
   };
-  const int64_t first_ids[3] = {0, 1, 2};
   for (int shared_edge = 0; shared_edge < 2; ++shared_edge) {
-    const int64_t second_ids[3] = {0, shared_edge ? 1 : 3, 4};
     int tested = 0, zeros = 0, cleared = 0, failures = 0;
     while (tested < 100000) {
       std::array<std::array<double, 3>, 5> points{};
@@ -132,6 +130,13 @@ void check_random_adjacent_pairs() {
       const double* p[3] = {points[0].data(), points[1].data(), points[2].data()};
       const double* q[3] = {points[0].data(),
                             points[shared_edge ? 1 : 3].data(), points[4].data()};
+      int64_t first_ids[3] = {0, 1, 2};
+      int64_t second_ids[3] = {0, shared_edge ? 1 : 3, 4};
+      const int p_shift = tested % 3, q_shift = (tested / 3) % 3;
+      std::rotate(p, p + p_shift, p + 3);
+      std::rotate(first_ids, first_ids + p_shift, first_ids + 3);
+      std::rotate(q, q + q_shift, q + 3);
+      std::rotate(second_ids, second_ids + q_shift, second_ids + 3);
       if (!triangle_valid(p) || !triangle_valid(q)) continue;
       const bool clear = phx::mc::surface_embedding_pair_clear(p, q, first_ids, second_ids);
       phx::mc::Contact contact;
@@ -144,22 +149,24 @@ void check_random_adjacent_pairs() {
       cleared += clear;
       failures += violation;
       if (!shared_edge) {
-        const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], q[1]);
-        const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], q[2]);
+        const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], points[3].data());
+        const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], points[4].data());
         if (s0 == 0 || s1 == 0) { ++zeros; PHX_CHECK(!clear); }
         else if (s0 != s1) {
-          const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], p[1]);
-          const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], p[2]);
+          const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], points[1].data());
+          const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], points[2].data());
           if (t0 == 0 || t1 == 0) { ++zeros; PHX_CHECK(!clear); }
           else if (t0 != t1) {
             for (int edge = 0; edge < 3; ++edge) {
-              const int x = phx::mc::orient3d_filtered(p[1], p[2], q[edge], q[(edge+1)%3]);
-              const int y = phx::mc::orient3d_filtered(q[1], q[2], p[edge], p[(edge+1)%3]);
+              const int x = phx::mc::orient3d_filtered(points[1].data(), points[2].data(),
+                                                       q[edge], q[(edge+1)%3]);
+              const int y = phx::mc::orient3d_filtered(points[3].data(), points[4].data(),
+                                                       p[edge], p[(edge+1)%3]);
               if (x == 0 || y == 0) { ++zeros; PHX_CHECK(!clear); }
             }
           }
         }
-      } else if (phx::mc::orient3d_filtered(p[0], p[1], p[2], q[2]) == 0) {
+      } else if (phx::mc::orient3d_filtered(p[0], p[1], p[2], points[4].data()) == 0) {
         ++zeros;  // Coplanar shared edges are decided by exact 2D sides.
       }
       ++tested;
