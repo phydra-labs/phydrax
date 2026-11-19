@@ -170,18 +170,38 @@ def _uv_torus(around: int, /) -> tuple[np.ndarray, np.ndarray]:
     return vertices, faces
 
 
-def _recover(vertices: np.ndarray, faces: np.ndarray, /) -> _meshcore.PlcRecovery3D:
-    # A closed surface is one PLC facet made of its triangles (as an imported
-    # triangulated surface is), bounding region 0.
+def _recover(
+    vertices: np.ndarray, faces: np.ndarray, facets: np.ndarray, /
+) -> _meshcore.PlcRecovery3D:
+    # The surface's triangles are polygons of the given PLC facets, all
+    # bounding region 0.
     count = faces.shape[0]
+    facet_count = int(facets.max()) + 1
     return _meshcore.recover_plc_3d(
         vertices,
         np.arange(0, 3 * count + 1, 3, dtype=np.int64),
         faces.reshape((-1,)).astype(np.int32),
-        np.zeros((count,), dtype=np.int32),
-        np.asarray([[-1, 0]], dtype=np.int32),
+        facets.astype(np.int32),
+        np.tile(np.asarray([[-1, 0]], dtype=np.int32), (facet_count, 1)),
         boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
     )
+
+
+def _facets(vertices: np.ndarray, faces: np.ndarray, /) -> np.ndarray:
+    # One facet for the whole surface (as an imported triangulated surface
+    # is), unless recovery would then retriangulate coplanar neighbors (the
+    # grid torus's quads are planar trapezoids): the reference tool keeps the
+    # given triangles, so each triangle is then its own facet. Checked once,
+    # outside the timing.
+    single = np.zeros((faces.shape[0],), dtype=np.int32)
+    recovered = _recover(vertices, faces, single)
+    _recovered_cells(recovered)
+    boundary = np.unique(
+        np.sort(np.asarray(recovered.faces).reshape((-1, 3)), axis=1), axis=0
+    )
+    if np.array_equal(boundary, np.unique(np.sort(faces, axis=1), axis=0)):
+        return single
+    return np.arange(faces.shape[0], dtype=np.int32)
 
 
 def _recovered_cells(result: object, /) -> int:
@@ -198,21 +218,27 @@ def _recovery_rows() -> tuple[_Row, ...]:
     rows: list[_Row] = []
     for level in (4, 5, 6, 7):
         vertices, faces = _icosphere(level)
+        facets = _facets(vertices, faces)
         rows.append(
             _Row(
                 "recover-sphere",
                 faces.shape[0],
-                lambda vertices=vertices, faces=faces: _recover(vertices, faces),
+                lambda vertices=vertices, faces=faces, facets=facets: _recover(
+                    vertices, faces, facets
+                ),
                 _recovered_cells,
             )
         )
     for around in (100, 300):
         vertices, faces = _uv_torus(around)
+        facets = _facets(vertices, faces)
         rows.append(
             _Row(
                 "recover-torus",
                 faces.shape[0],
-                lambda vertices=vertices, faces=faces: _recover(vertices, faces),
+                lambda vertices=vertices, faces=faces, facets=facets: _recover(
+                    vertices, faces, facets
+                ),
                 _recovered_cells,
             )
         )
@@ -225,11 +251,11 @@ class _VolumeResult(NamedTuple):
 
 
 def _surface_to_tets(
-    vertices: np.ndarray, faces: np.ndarray, size: float, /
+    vertices: np.ndarray, faces: np.ndarray, facets: np.ndarray, size: float, /
 ) -> _VolumeResult:
     # The whole task Gmsh's generate(3) performs from a surface: boundary
     # recovery, state creation, refinement, improvement and export.
-    recovered = _recover(vertices, faces)
+    recovered = _recover(vertices, faces, facets)
     _recovered_cells(recovered)
     mesh = _meshcore.TetMesh3D(
         recovered.points,
@@ -313,12 +339,13 @@ def _volume_rows() -> tuple[_Row, ...]:
             np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
         )
         target = 1.75 * math.sqrt(3.0 / 8.0) * spacing
+        facets = _facets(vertices, faces)
         rows.append(
             _Row(
                 name,
                 size,
-                lambda vertices=vertices, faces=faces, target=target: _surface_to_tets(
-                    vertices, faces, target
+                lambda vertices=vertices, faces=faces, facets=facets, target=target: (
+                    _surface_to_tets(vertices, faces, facets, target)
                 ),
                 _volume_cells,
                 _volume_unmet,
