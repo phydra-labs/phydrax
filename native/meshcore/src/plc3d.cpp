@@ -799,6 +799,10 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
+  // Every pair of items (triangles, segments, and points no triangle or
+  // segment uses) whose closed boxes overlap is tested exactly (legal_pair).
+  // An illegal input reports its first illegal pair in the order of a sweep
+  // along x (items sorted by lower x, then kind and index).
   int32_t check_contacts() {
     std::vector<uint8_t> referenced(static_cast<std::size_t>(input_.point_count), 0);
     for (const Triple& face : triangles_) {
@@ -828,25 +832,131 @@ class SourcePreparer {
           (a.box.lower[0] == b.box.lower[0] &&
            (a.kind < b.kind || (a.kind == b.kind && a.index < b.index)));
     });
-    for (std::size_t i = 0; i < items.size(); ++i) {
-      for (std::size_t j = i + 1; j < items.size(); ++j) {
-        if (items[j].box.lower[0] > items[i].box.upper[0]) break;
-        if (!overlap(items[i].box, items[j].box)) continue;
-        if (legal_pair(items[i], items[j]) == PHX_MC_OK) continue;
-        const auto entity = [&](const Item& item) -> std::pair<int32_t, int64_t> {
-          if (item.kind == kTriangle) {
-            return {kPlcPolygon, triangle_polygon_[static_cast<std::size_t>(item.index)]};
-          }
-          if (item.kind == kSegment) return {kPlcEdge, item.index};
-          return {kPlcPoint, item.index};
-        };
-        const auto [first_kind, first] = entity(items[i]);
-        const auto [second_kind, second] = entity(items[j]);
-        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
-                    first_kind, first, second_kind, second);
+    // The first illegal pair (i, j), i < j, in sweep order.
+    std::size_t first = items.size();
+    std::size_t second = items.size();
+    const auto test = [&](std::size_t i, std::size_t j) {
+      if (i > first || (i == first && j >= second)) return;
+      if (!overlap(items[i].box, items[j].box)) return;
+      if (legal_pair(items[i], items[j]) == PHX_MC_OK) return;
+      first = i;
+      second = j;
+    };
+    if (!grid_pairs(items, test)) {
+      for (std::size_t i = 0; i < items.size() && first == items.size(); ++i) {
+        for (std::size_t j = i + 1; j < items.size() && first == items.size(); ++j) {
+          if (items[j].box.lower[0] > items[i].box.upper[0]) break;
+          test(i, j);
+        }
       }
     }
-    return PHX_MC_OK;
+    if (first == items.size()) return PHX_MC_OK;
+    const auto entity = [&](const Item& item) -> std::pair<int32_t, int64_t> {
+      if (item.kind == kTriangle) {
+        return {kPlcPolygon, triangle_polygon_[static_cast<std::size_t>(item.index)]};
+      }
+      if (item.kind == kSegment) return {kPlcEdge, item.index};
+      return {kPlcPoint, item.index};
+    };
+    const auto [first_kind, first_entity] = entity(items[first]);
+    const auto [second_kind, second_entity] = entity(items[second]);
+    return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
+                first_kind, first_entity, second_kind, second_entity);
+  }
+
+  // Visits every pair (i, j), i < j, of `items` whose closed boxes overlap,
+  // once, through a uniform grid of cells of the median item extent: two
+  // overlapping boxes both meet the cell of the larger lower corner on each
+  // axis (the cell index is monotone in the coordinate), where the pair is
+  // visited. False, visiting nothing, when the boxes would fill more than
+  // eight cells per item on average (the caller sweeps instead).
+  template <class Visit>
+  bool grid_pairs(const std::vector<Item>& items, const Visit& visit) const {
+    constexpr int64_t kAxisCells = int64_t{1} << 20;
+    if (items.size() < 64) return false;
+    std::vector<double> extents;
+    extents.reserve(items.size());
+    double origin[3];
+    std::copy_n(items.front().box.lower, 3, origin);
+    for (const Item& item : items) {
+      double extent = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        extent = std::max(extent, item.box.upper[axis] - item.box.lower[axis]);
+        origin[axis] = std::min(origin[axis], item.box.lower[axis]);
+      }
+      extents.push_back(extent);
+    }
+    const auto middle = extents.begin() + static_cast<std::ptrdiff_t>(extents.size() / 2);
+    std::nth_element(extents.begin(), middle, extents.end());
+    const double size = *middle;
+    if (!(size > 0.0) || !std::isfinite(size)) return false;
+    const auto cell = [&](double value, int axis) {
+      return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
+    };
+    std::vector<std::pair<uint64_t, uint32_t>> entries;
+    const std::size_t limit = 8 * items.size();
+    for (std::size_t row = 0; row < items.size(); ++row) {
+      int64_t low[3], high[3];
+      std::size_t cells = 1;
+      for (int axis = 0; axis < 3; ++axis) {
+        low[axis] = cell(items[row].box.lower[axis], axis);
+        high[axis] = cell(items[row].box.upper[axis], axis);
+        if (high[axis] >= kAxisCells) return false;
+        cells *= static_cast<std::size_t>(high[axis] - low[axis] + 1);
+      }
+      if (entries.size() + cells > limit) return false;
+      for (int64_t x = low[0]; x <= high[0]; ++x) {
+        for (int64_t y = low[1]; y <= high[1]; ++y) {
+          for (int64_t z = low[2]; z <= high[2]; ++z) {
+            const auto key = static_cast<uint64_t>(x << 40 | y << 20 | z);
+            entries.push_back({key, static_cast<uint32_t>(row)});
+          }
+        }
+      }
+    }
+    std::sort(entries.begin(), entries.end());
+    for (std::size_t begin = 0; begin < entries.size();) {
+      std::size_t end = begin + 1;
+      while (end < entries.size() && entries[end].first == entries[begin].first) ++end;
+      for (std::size_t a = begin; a < end; ++a) {
+        for (std::size_t b = a + 1; b < end; ++b) {
+          const Box& first = items[entries[a].second].box;
+          const Box& second = items[entries[b].second].box;
+          uint64_t key = 0;
+          for (int axis = 0; axis < 3; ++axis) {
+            const double corner = std::max(first.lower[axis], second.lower[axis]);
+            key = key << 20 | static_cast<uint64_t>(cell(corner, axis));
+          }
+          if (key != entries[begin].first) continue;
+          visit(entries[a].second, entries[b].second);
+        }
+      }
+      begin = end;
+    }
+    return true;
+  }
+
+  // Exact sufficient test that triangles a and b meet in at most their
+  // shared vertices or edge (a legal contact): two triangles sharing an edge
+  // meet in it when the fourth vertex is off the plane of the first; for a
+  // shared vertex, or none, the other triangle's vertices that are not
+  // shared lie strictly on one side of a triangle's plane, so the other
+  // triangle meets that plane in its shared vertex at most.
+  bool separated_triangles(const Triple& a, const Triple& b) const {
+    int shared = 0;
+    for (int32_t vertex : a) shared += std::find(b.begin(), b.end(), vertex) != b.end() ? 1 : 0;
+    const auto apart = [&](const Triple& plane, const Triple& other) {
+      int side = 0;
+      for (int32_t vertex : other) {
+        if (std::find(plane.begin(), plane.end(), vertex) != plane.end()) continue;
+        const int sign = orient3d(point(plane[0]), point(plane[1]), point(plane[2]), point(vertex));
+        if (sign == 0 || (side != 0 && sign != side)) return false;
+        side = sign;
+      }
+      return side != 0;
+    };
+    if (shared == 2) return apart(a, b);
+    return shared < 2 && (apart(a, b) || apart(b, a));
   }
 
   int32_t legal_pair(const Item& first, const Item& second) const {
@@ -854,6 +964,7 @@ class SourcePreparer {
     if (first.kind == kTriangle && second.kind == kTriangle) {
       const Triple& a = triangles_[static_cast<std::size_t>(first.index)];
       const Triple& b = triangles_[static_cast<std::size_t>(second.index)];
+      if (separated_triangles(a, b)) return PHX_MC_OK;
       const double* first_triangle[3] = {point(a[0]), point(a[1]), point(a[2])};
       const double* second_triangle[3] = {point(b[0]), point(b[1]), point(b[2])};
       const int64_t first_ids[3] = {a[0], a[1], a[2]};
@@ -7414,28 +7525,59 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
+  // The finite cell whose closure holds `seed`, found by the visibility walk
+  // (Triangulation3D::locate); refused (INVALID_SEED) outside the finite
+  // cells or on a marked face. The cells whose closures hold the seed are
+  // that cell, the two cells of a face, the ring of an edge, or the star of
+  // a vertex holding it, and every face of them through the seed is checked.
   int32_t seed_tet(const double* seed, int64_t row) {
     const TetrahedralComplex& complex = triangulation_->complex();
-    for (std::size_t t = 0; t < complex.tets.size(); ++t) {
-      const Tetrahedron& tet = complex.tets[t];
-      if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
-      int signs[4];
-      bool inside = true;
+    const ExactPointRef position{seed, nullptr};
+    const auto refuse = [&]() {
+      fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
+      return -1;
+    };
+    const int32_t found = triangulation_->locate(position);
+    if (!triangulation_->valid_live_cell(found) ||
+        is_ghost(complex.tets[static_cast<std::size_t>(found)])) {
+      return refuse();
+    }
+    const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(found)];
+    int zero_slots[4];
+    int zeros = 0;
+    for (int slot = 0; slot < 4; ++slot) {
+      const int sign = triangulation_->orient_with(tet, slot, position);
+      if (sign < 0) return refuse();
+      if (sign == 0) zero_slots[zeros++] = slot;
+    }
+    std::vector<int32_t> cells{found};
+    if (zeros == 1) {
+      cells.push_back(tet.n[zero_slots[0]]);
+    } else if (zeros == 2 || zeros == 3) {
+      int32_t ends[2] = {-1, -1};
+      int count = 0;
       for (int slot = 0; slot < 4; ++slot) {
-        signs[slot] = triangulation_->orient_with(tet, slot, seed);
-        inside = inside && signs[slot] >= 0;
-      }
-      if (!inside) continue;
-      for (int slot = 0; slot < 4; ++slot) {
-        if (signs[slot] == 0 && complex.constraint(static_cast<int32_t>(t), slot) != kNoConstraint) {
-          fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
-          return -1;
+        if (std::find(zero_slots, zero_slots + zeros, slot) == zero_slots + zeros) {
+          ends[count++] = tet.v[slot];
         }
       }
-      return static_cast<int32_t>(t);
+      const int32_t status =
+          zeros == 2 ? edge_cells(ends[0], ends[1], cells) : vertex_cells(ends[0], cells);
+      if (status != PHX_MC_OK) return -1;
+    } else if (zeros == 4) {
+      return refuse();
     }
-    fail(PHX_MC_INVALID_INPUT, kPlcInvalidSeed, kPlcSeed, row);
-    return -1;
+    for (int32_t cell : cells) {
+      const Tetrahedron& around = complex.tets[static_cast<std::size_t>(cell)];
+      if (is_ghost(around)) continue;
+      for (int slot = 0; slot < 4; ++slot) {
+        if (complex.constraint(cell, slot) != kNoConstraint &&
+            triangulation_->orient_with(around, slot, position) == 0) {
+          return refuse();
+        }
+      }
+    }
+    return found;
   }
 
   int32_t label_conflict(int32_t first, int32_t second, int32_t facet) {

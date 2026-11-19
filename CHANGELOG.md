@@ -332,6 +332,22 @@
   refinement carry no lineage. Icosphere level 4 at a fixed boundary:
   refinement 6.0 s -> 0.44 s, and after improvement (radius-edge 2, 15
   degrees) no unmet cell, as before.
+- Native PLC recovery locates region seeds by a visibility walk instead of
+  scanning every cell, and refuses (INVALID_SEED) a seed on any marked face
+  through it, whichever cell holds it; regions are unchanged otherwise.
+- Native PLC source validation tests the overlapping pairs of a uniform
+  grid of the source items' boxes (cells of the median item extent; the
+  sweep along x remains for boxes that would fill more than eight cells per
+  item) and decides most triangle pairs by one to six exact orientations
+  (a shared edge with the fourth vertex off the plane, or a triangle
+  strictly on one side of the other's plane) before the general exact
+  intersection. Verdicts and the reported first intersecting pair are
+  unchanged; on the icosphere of 327,680 triangles the validation takes a
+  fifth of its former time.
+- Native protection radii index their points, segments and triangles in
+  flat bounding volume hierarchies whose leaves follow the Morton curve of
+  the boxes, with node boxes built bottom up, and query the vertices along
+  that curve. Radii are unchanged.
 - Native closed-surface recovery (`phx_mc_plc3d_recover` and variants)
   recovers a missing source edge by flips before it splits the edge: the
   2-3 flips and edge removals around the cells the edge crosses that lower
