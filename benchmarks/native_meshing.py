@@ -91,7 +91,16 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
-        (frozenset({"refine-improve-sphere", "refine-improve-torus"}), _volume_rows),
+        (
+            frozenset(
+                {
+                    "refine-improve-sphere",
+                    "refine-improve-torus",
+                    "refine-improve-grid-torus",
+                }
+            ),
+            _volume_rows,
+        ),
     )
     rows: list[_Row] = []
     for family, build in families:
@@ -271,9 +280,10 @@ def _volume_rows() -> tuple[_Row, ...]:
     # State creation, refinement (radius-edge 2) and improvement (radius-edge 2,
     # dihedral 15 degrees) on the recovered surface with its boundary fixed. The
     # circumradius target 1.75 sqrt(3/8) h, h the mean surface edge, matches
-    # Gmsh HXT's element counts on the ledger shapes. The sphere row size is
-    # the icosphere's triangle count, the torus row size the stuffing spacing
-    # in thousandths.
+    # Gmsh HXT's element counts. The sphere and grid torus row sizes are the
+    # triangle counts, the stuffed torus row size the stuffing spacing in
+    # thousandths. The grid torus (cocircular rows, every edge constrained) is
+    # a hard input for both tools.
     rows: list[_Row] = []
     shapes = (
         ("refine-improve-sphere", faces.shape[0], (vertices, faces))
@@ -283,7 +293,11 @@ def _volume_rows() -> tuple[_Row, ...]:
         ("refine-improve-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
         for thousandths in (67, 22)
     )
-    for name, size, (vertices, faces) in (*shapes, *tori):
+    grids = (
+        ("refine-improve-grid-torus", faces.shape[0], (vertices, faces))
+        for vertices, faces in (_uv_torus(100), _uv_torus(300))
+    )
+    for name, size, (vertices, faces) in (*shapes, *tori, *grids):
         recovered = _recover(vertices, faces)
         edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
         spacing = float(
