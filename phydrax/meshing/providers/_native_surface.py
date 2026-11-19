@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import assert_never, final, Literal
+from typing import assert_never, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -97,6 +97,10 @@ from ._native_surface_association import (
     _surface_edges,
     associations as surface_associations,
 )
+
+
+if TYPE_CHECKING:
+    from phydrax.geometry.brep._measure import _BoundProgram
 
 
 @final
@@ -2916,7 +2920,7 @@ def _chord_endpoint_error(
 
 
 type _ChordJob = tuple[
-    PreparedIntervalFunction,
+    PreparedIntervalFunction | _BoundProgram,
     tuple[np.ndarray, np.ndarray],
     tuple[Fraction, Fraction],
     tuple[np.ndarray, np.ndarray],
@@ -2945,7 +2949,7 @@ def _second_order_chord_bound(
     return float(fraction_endpoint(bound, upper=True, saturate=True))
 
 
-def _second_order_chord_bounds(jobs: list[_ChordJob], /) -> list[float]:
+def _second_order_chord_bounds(jobs: Sequence[_ChordJob], /) -> list[float]:
     """Evaluate same-program boxes together, isolating typed interval refusals."""
     results = [math.inf] * len(jobs)
     groups: dict[int, list[int]] = {}
@@ -3291,7 +3295,9 @@ class _CurveChordBounds:
                 ),
             )
             program = (
-                self.preparation.mapped_curve_hessian(surface, use.pcurve)
+                self.preparation.mapped_curve_hessian(
+                    surface, use.pcurve, interval_first, interval_last
+                )
                 if _mapped_curve_is_c1(
                     surface, use.pcurve, chart_box, interval_first, interval_last
                 )

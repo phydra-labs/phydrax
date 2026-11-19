@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from decimal import Decimal, localcontext
 from fractions import Fraction
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -930,6 +931,98 @@ def _orthogonal_branch_root() -> tuple[
         parameter_upper=center + 1.0e-7,
     )
     return curve, sibling, root
+
+
+@pytest.mark.parametrize("side", ("first", "second"))
+@pytest.mark.parametrize("placed", (False, True))
+def test_intersection_mapped_chord_hessian_on_fixed_chart(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+    side: Literal["first", "second"],
+    placed: bool,
+) -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry._meshing_domain import (
+        _PlacedSurfacePatch,
+        MeshingDomain,
+        SourcePreparation,
+    )
+    from phydrax.geometry.brep import brep_sphere
+    from phydrax.geometry.brep._assembly import BRepAffinePlacement
+    from phydrax.meshing.providers._native_surface import _second_order_chord_bound
+
+    curve, _, _ = _orthogonal_branch_root
+    pcurve = curve.p_curve(side)
+    surface = curve.first.patch if side == "first" else curve.second.patch
+    if placed:
+        placement = BRepAffinePlacement.from_matrix(
+            ((1, Fraction(1, 3), 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        )
+        surface = _PlacedSurfacePatch(surface, placement)
+    model = brep_sphere(
+        1.0, coordinate_contract=SpatialCoordinateContract.si(), source_id="chart-chord"
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    bounds = []
+    for width in (1 / 64, 1 / 128, 1 / 256, 1 / 512):
+        first, last = 0.375, 0.375 + width
+        program = preparation.mapped_curve_hessian(surface, pcurve, first, last)
+        assert program is not None
+        low, high = program.evaluate(np.asarray(((first,),)), np.asarray(((last,),)))
+        samples = np.asarray(
+            surface.evaluate(pcurve.evaluate(jnp.linspace(first, last, 257))),
+            dtype=np.float64,
+        )
+        chord = (samples[0], samples[-1])
+        endpoints = (np.stack((chord[0], chord[0])), np.stack((chord[1], chord[1])))
+        bound = _second_order_chord_bound(
+            low[0], high[0], endpoints, (Fraction(first), Fraction(last)), chord
+        )
+        linear = samples[0] + np.linspace(0.0, 1.0, len(samples))[:, None] * (
+            samples[-1] - samples[0]
+        )
+        assert np.max(np.linalg.norm(samples - linear, axis=1)) <= bound + 1.0e-12
+        bounds.append(bound)
+    assert all(3.5 < a / b < 4.5 for a, b in zip(bounds, bounds[1:]))
+    assert preparation.mapped_curve_hessian(surface, pcurve, 0.875, 1.125) is None
+    assert preparation.mapped_curve_hessian(surface, pcurve, 1.0, 1.125) is None
+    assert preparation.mapped_curve_hessian(surface, pcurve, 0.875, 1.0) is None
+
+
+def test_reversed_trim_specializes_its_source_chart(
+    _orthogonal_branch_root: tuple[
+        IntersectionCurve, IntersectionCurve, TripleSurfaceIntersectionRoot
+    ],
+) -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
+    from phydrax.geometry.brep import brep_sphere
+    from phydrax.meshing.providers._native_surface import _second_order_chord_bound
+
+    curve, _, _ = _orthogonal_branch_root
+    pcurve = CurveTrimSegment(curve.p_curve("first"), 0.0, 1.0, reversed=True)
+    surface = curve.first.patch
+    model = brep_sphere(
+        1.0, coordinate_contract=SpatialCoordinateContract.si(), source_id="trim-chord"
+    )
+    preparation = SourcePreparation(MeshingDomain.from_brep(model))
+    first, last = 0.375, 0.390625
+    program = preparation.mapped_curve_hessian(surface, pcurve, first, last)
+    assert program is not None
+    low, high = program.evaluate(np.asarray(((first,),)), np.asarray(((last,),)))
+    samples = np.asarray(
+        surface.evaluate(pcurve.evaluate(jnp.linspace(first, last, 257))), dtype=np.float64
+    )
+    chord = (samples[0], samples[-1])
+    endpoints = (np.stack((chord[0], chord[0])), np.stack((chord[1], chord[1])))
+    bound = _second_order_chord_bound(
+        low[0], high[0], endpoints, (Fraction(first), Fraction(last)), chord
+    )
+    linear = samples[0] + np.linspace(0.0, 1.0, len(samples))[:, None] * (
+        samples[-1] - samples[0]
+    )
+    assert np.max(np.linalg.norm(samples - linear, axis=1)) <= bound + 1.0e-12
 
 
 def test_branch_bounding_box_unions_chart_enclosures(

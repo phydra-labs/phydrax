@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from ._curve_boundary import ParametricCurveBoundarySource
     from ._domain_boundary import _Point2, _Triangle2, CurvedTrimLens
     from .brep._intersection_curve import _IntersectionCurveHostAtlas, IntersectionCurve
+    from .brep._measure import _BoundProgram
     from .multiregion_surface import MultiRegionSurfaceTopology
 
 type MeshingSourceAccuracy = Literal[
@@ -1012,8 +1013,12 @@ class SourcePreparation:
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
         ] = {}
         self._mapped_hessians: dict[
-            tuple[int, int],
-            tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction | None],
+            tuple[int, int, int | None],
+            tuple[
+                AbstractSurfacePatch,
+                AbstractCurve,
+                PreparedIntervalFunction | _BoundProgram | None,
+            ],
         ] = {}
         self._trim_chains: dict[
             tuple[int, bool, int, tuple[_Point2, ...]],
@@ -1328,13 +1333,111 @@ class SourcePreparation:
         return entry[1]
 
     def mapped_curve_hessian(
-        self, surface: AbstractSurfacePatch, pcurve: AbstractCurve, /
-    ) -> PreparedIntervalFunction | None:
-        """Interval program of ``d^2/ds^2 surface(pcurve(s))``, if the maps trace."""
-        key = (id(surface), id(pcurve))
+        self,
+        surface: AbstractSurfacePatch,
+        pcurve: AbstractCurve,
+        first: float,
+        last: float,
+        /,
+    ) -> PreparedIntervalFunction | _BoundProgram | None:
+        """Prepare the mapped source Hessian for this curve interval."""
+        from .brep._intersection_curve import CurveTrimSegment, IntersectionPCurve
+
+        source = pcurve
+        wrappers: list[CurveTrimSegment] = []
+        lower, upper = first, last
+        while isinstance(source, CurveTrimSegment):
+            wrappers.append(source)
+            source = source.curve
+        chart: int | None = None
+        if isinstance(source, IntersectionPCurve):
+            try:
+                for wrapper in wrappers:
+                    lower, upper, _ = wrapper._source_interval(lower, upper)
+                lower, upper = source._branch_interval(lower, upper)
+            except ValueError:
+                # Outward affine transport may extend past an intermediate
+                # trim's domain; without a valid box, keep the first-order bound.
+                return None
+            # No derivative-match witness is assumed at a chart seam.
+            if lower == math.floor(lower) or math.floor(lower) != math.floor(upper):
+                return None
+            chart = min(math.floor(lower), source.curve.num_charts - 1)
+        key = (id(surface), id(pcurve), chart)
         entry = self._mapped_hessians.get(key)
         if entry is not None:
             return entry[2]
+        if isinstance(source, IntersectionPCurve) and chart is not None:
+            from ._rational import fraction_down, fraction_up
+            from .brep._measure import _BoundProgram, _cell_program
+            from .brep._root_bindings import _source_coefficients_are_binary
+            from .brep._trim_helpers import period_scalar_bounds, PeriodOffset
+
+            # The intersection source is the certified chart, not its floating
+            # point evaluator. Its coefficient and true-period enclosures make
+            # this program enclose g'' for g = surface o source chart. The
+            # _CurveChordBounds._point_bounds in providers/_native_surface.py
+            # encloses source endpoints; _chord_endpoint_error compares them
+            # with stored vertices obtained by its prepare_points method.
+            # Their maximum difference plus ||g''|| width²/8 bounds the
+            # distance from the whole source arc to the stored-vertex chord.
+            carrier = (
+                surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+            )
+            if not _source_coefficients_are_binary(carrier):
+                return None
+            try:
+                evaluate, coeff_lower, coeff_upper = (
+                    source._chart_evaluator_with_source_bounds(chart)
+                )
+            except (NotImplementedError, ValueError):
+                return None
+            period_lower, period_upper = period_scalar_bounds(
+                PeriodOffset(Fraction(0), Fraction(1))
+            )
+            extra_lower = [float(period_lower), *coeff_lower]
+            extra_upper = [float(period_upper), *coeff_upper]
+            for wrapper in wrappers:
+                start, stop = Fraction(wrapper.first), Fraction(wrapper.last)
+                for value in (start, stop - start):
+                    extra_lower.append(float(fraction_down(value)))
+                    extra_upper.append(float(fraction_up(value)))
+            matrix_offset = len(extra_lower) + 1
+            if isinstance(surface, _PlacedSurfacePatch):
+                for row in surface.placement.matrix[:3]:
+                    for value in row[:3]:
+                        extra_lower.append(float(fraction_down(value)))
+                        extra_upper.append(float(fraction_up(value)))
+
+            def chart_hessian(inputs: Array) -> Array:
+                def mapped_chart(parameter: Array) -> Array:
+                    current = parameter
+                    for index, wrapper in enumerate(wrappers):
+                        if wrapper.reversed:
+                            current = 1.0 - current
+                        offset = inputs[2 + len(coeff_lower) + 2 * index]
+                        scale = inputs[3 + len(coeff_lower) + 2 * index]
+                        current = offset + scale * current
+                    point = carrier.evaluate(
+                        evaluate(current, inputs[1], inputs[2 : 2 + len(coeff_lower)])
+                    )
+                    if isinstance(surface, _PlacedSurfacePatch):
+                        linear = inputs[matrix_offset : matrix_offset + 9].reshape((3, 3))
+                        return linear @ point
+                    return point
+
+                return jax.jacfwd(jax.jacfwd(mapped_chart))(inputs[0])
+
+            try:
+                program = _BoundProgram(
+                    _cell_program(chart_hessian, 1 + len(extra_lower)),
+                    np.asarray(extra_lower, dtype=np.float64),
+                    np.asarray(extra_upper, dtype=np.float64),
+                )
+            except (IntervalExtensionError, NotImplementedError):
+                program = None
+            self._mapped_hessians[key] = (surface, pcurve, program)
+            return program
 
         def mapped(parameter: Array) -> Array:
             return surface.evaluate(pcurve.evaluate(parameter[0]))

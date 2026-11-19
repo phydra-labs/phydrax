@@ -26,6 +26,67 @@ from phydrax.geometry.analytic._primitives import _finite_norm
 from phydrax.geometry.brep._patches import CylinderPatch
 
 
+@pytest.mark.parametrize(
+    ("lower", "upper", "expected"),
+    (
+        (0.125, 0.875, 0.0),
+        (-1.875, -1.125, -2.0),
+        (1.5, 1.5, 1.0),
+        (0.5, np.nextafter(1.0, -np.inf), 0.0),
+        (2.0**51 + 0.5, 2.0**51 + 0.5, 2.0**51),
+    ),
+)
+def test_floor_interval_is_exact_inside_a_piece(
+    lower: float, upper: float, expected: float
+) -> None:
+    (result,) = interval_enclosure._primitive(
+        "floor", ((np.asarray(lower), np.asarray(upper)),), {}
+    )
+    assert result[0] == result[1] == expected
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    (
+        (1.0, 1.5),
+        (0.5, 1.0),
+        (0.5, 1.5),
+        (-1.5, -1.0),
+        (-1.0, -0.5),
+        (1.0, 1.0),
+        (2.0**53, 2.0**53),
+        (-np.inf, 1.0),
+        (0.5, np.inf),
+        (np.nan, np.nan),
+    ),
+)
+def test_floor_interval_refuses_jumps_and_nonfinite_values(
+    lower: float, upper: float
+) -> None:
+    with pytest.raises(IntervalExtensionError, match="floor requires"):
+        interval_enclosure._primitive(
+            "floor", ((np.asarray(lower), np.asarray(upper)),), {}
+        )
+
+
+def test_floor_indexed_coefficient_program_encloses_samples() -> None:
+    coefficients = jnp.asarray((1.0, -2.0, 3.0), dtype=jnp.float64)
+
+    def point(x: jax.Array) -> jax.Array:
+        chart = jnp.minimum(jnp.floor(x[0]).astype(jnp.int32), 2)
+        return coefficients[chart] * x[0] ** 2
+
+    program = prepare_interval_function(point, 1, batch_capacity=1)
+    lower = np.asarray(((1.125,),), dtype=np.float64)
+    upper = np.asarray(((1.875,),), dtype=np.float64)
+    low, high = program.evaluate(lower, upper)
+    samples = -2.0 * np.linspace(lower[0, 0], upper[0, 0], 101) ** 2
+    assert low[0] <= np.min(samples)
+    assert high[0] >= np.max(samples)
+    with pytest.raises(IntervalExtensionError, match="floor requires"):
+        program.evaluate(np.asarray(((0.875,),)), np.asarray(((1.125,),)))
+
+
 @pytest.mark.parametrize("host", (True, False))
 def test_interval_products_enclose_exact_rational_endpoints(host: bool) -> None:
     operation = (

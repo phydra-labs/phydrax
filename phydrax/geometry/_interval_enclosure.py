@@ -1575,6 +1575,25 @@ def _primitive(
             return (_elementary("atan", values[0]),)
         case "tanh":
             return (_elementary("tanh", values[0]),)
+        case "floor":
+            lower = np.asarray(values[0][0], dtype=np.float64)
+            upper = np.asarray(values[0][1], dtype=np.float64)
+            floored = np.floor(lower)
+            # Floor is monotone, so equal endpoint floors prove the exact value
+            # throughout the box. Excluding integer endpoints also proves local
+            # constancy on a neighbourhood. A derivative jaxpr can eliminate
+            # floor entirely, so its caller must separately prove primal smoothness.
+            if (
+                np.any(~np.isfinite(lower))
+                or np.any(~np.isfinite(upper))
+                or np.any(lower > upper)
+                or np.any(lower == floored)
+                or np.any(floored != np.floor(upper))
+            ):
+                raise IntervalExtensionError(
+                    "floor requires a finite interval strictly inside one integer piece."
+                )
+            return ((floored, floored),)
         case "integer_pow":
             exponent = int(params["y"])
             if exponent == 0:

@@ -261,6 +261,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Host interval evaluation supports `floor` on finite boxes strictly inside
+  one integer piece and refuses boxes touching or crossing an integer.
+- Certified chord bounds for intersection-curve edges use second-order
+  enclosures inside one chart when exact-source Hessians are available. In the
+  quick two-cylinder CAD profile, curve point counts changed from 341, 341, 33
+  to 129, 129, 33 and the curve step from 7.80 to 3.89 CPU seconds. CAD meshes
+  and identities may change; regenerate stored results for affected models.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and

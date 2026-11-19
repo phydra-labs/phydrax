@@ -311,7 +311,7 @@ def test_spline_mapped_curve_has_rigorous_hessian_at_origin() -> None:
         np.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), dtype=np.float64),
         2,
     )
-    program = preparation.mapped_curve_hessian(surface, curve)
+    program = preparation.mapped_curve_hessian(surface, curve, 0.0, 0.0)
     assert program is not None
     box = np.asarray(((0.0,),), dtype=np.float64)
     lower, upper = program.evaluate(box, box)
