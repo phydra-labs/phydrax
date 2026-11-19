@@ -479,6 +479,13 @@ using detail::LocalIncidence;
 using detail::sorted_local_edge;
 using FaceKey = std::array<std::int32_t, 3>;
 using LogicalEdgeKey = std::pair<std::uint64_t, std::uint64_t>;
+struct LogicalEdgeHash {
+  std::size_t operator()(const LogicalEdgeKey& key) const noexcept {
+    return std::hash<std::uint64_t>{}(key.first * 0x9e3779b97f4a7c15ULL ^ key.second);
+  }
+};
+// The constrained segments' edges (looked up, never iterated).
+using LogicalEdgeSet = std::unordered_set<LogicalEdgeKey, LogicalEdgeHash>;
 // Validity classes of a measured cell (-1: not measurable).
 constexpr std::int8_t kBelowDeterminantFloor = 0;
 constexpr std::int8_t kAboveDeterminantFloor = 1;
@@ -1290,7 +1297,7 @@ bool make_face_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence,
     std::int32_t cell_slot, int face_slot, const TetQualityRequest& request,
     const CellQualities& cell_quality,
-    const std::set<LogicalEdgeKey>& source_edges,
+    const LogicalEdgeSet& source_edges,
     std::array<std::int32_t, 2>& removed,
     std::array<LocalCell, 3>& replacement_cells,
     std::array<std::int32_t, 3>& blocked_edge,
@@ -1351,7 +1358,7 @@ TetEditStatus make_edge_removal_proposal(
     const TetMesh& mesh, const LocalIncidence& incidence, std::int32_t start,
     std::int32_t first, std::int32_t second, const TetQualityRequest& request,
     const CellQualities& cell_quality,
-    const std::set<LogicalEdgeKey>& source_edges, EdgeRemovalScratch& scratch) {
+    const LogicalEdgeSet& source_edges, EdgeRemovalScratch& scratch) {
   auto& removed_slots = scratch.removed_slots;
   auto& ring = scratch.ring;
   auto& replacement_cells = scratch.replacement_cells;
@@ -2227,7 +2234,9 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // Improvement edits no segment, so one index of the constrained segments
   // serves every edit's segment check.
   TetSegmentIndex segment_index;
-  std::set<LogicalEdgeKey> source_edges;
+  LogicalEdgeSet source_edges;
+  segment_index.reserve(mesh.segments_.size());
+  source_edges.reserve(mesh.segments_.size());
   for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
     const TetSnapshotSegment& segment = mesh.segments_[row];
     const std::uint64_t a = segment.vertices[0];
@@ -2270,11 +2279,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     std::uint64_t clock = 0;
     TetEditStatus status = TetEditStatus::kRejectedTopology;
     std::vector<std::int32_t> vertices;
-  };
-  struct LogicalEdgeHash {
-    std::size_t operator()(const LogicalEdgeKey& key) const noexcept {
-      return std::hash<std::uint64_t>{}(key.first * 0x9e3779b97f4a7c15ULL ^ key.second);
-    }
   };
   std::unordered_map<LogicalEdgeKey, EdgeRefusal, LogicalEdgeHash> edge_refusals;
   const auto refusal_stands = [&](const EdgeRefusal& refusal) {
@@ -2542,7 +2546,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         return TetEditStatus::kInvalidGeometry;
       }
     }
-    if (mesh.insertion_cavity(slot, candidate, true, insertion) != TetCavityStatus::kFound) {
+    if (mesh.insertion_cavity(slot, candidate, true, insertion, &segment_index) !=
+        TetCavityStatus::kFound) {
       return TetEditStatus::kRejectedTopology;
     }
     return cone_insertion(slot, candidate, insertion.cells, insertion.members, {}, false);

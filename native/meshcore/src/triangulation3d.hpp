@@ -234,6 +234,19 @@ class Triangulation3D {
     building_ = false;
     return status;
   }
+  // Inserts `points` in order into the triangulation build() returned, which
+  // nothing has edited since (the caller's contract): it is still the
+  // Delaunay triangulation of the inserted points, so as in build() the
+  // cells need no validation.
+  int32_t extend(std::span<const int32_t> points, std::span<char> alive) {
+    building_ = true;
+    int32_t status = PHX_MC_OK;
+    for (std::size_t k = 0; k < points.size() && status == PHX_MC_OK; ++k) {
+      status = insert(points[k], alive);
+    }
+    building_ = false;
+    return status;
+  }
 
   void collect_cells(std::vector<int32_t>& cells) const {
     cells.clear();
