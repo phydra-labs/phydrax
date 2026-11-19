@@ -1919,9 +1919,17 @@ std::int32_t flip_to_constrained_delaunay(
   // either side agree), so a face between two unchanged seeds is tested only
   // from the seed in the lower slot: its entry is still pending, or was
   // tested on these same two cells, or the cell died and the face's new cell
-  // tests it.
-  std::vector<std::uint64_t> seed_ids(seeds.begin(), seeds.end());
-  std::sort(seed_ids.begin(), seed_ids.end());
+  // tests it. A slot is marked while it holds a seed: every cell this pass
+  // removes is unmarked, and the cells it creates are not seeds.
+  std::vector<std::uint8_t> seed_slot(mesh.complex().tets.size(), 0U);
+  for (std::uint64_t id : seeds) {
+    const std::int32_t slot = mesh.cell_slot(id);
+    if (slot >= 0) seed_slot[static_cast<std::size_t>(slot)] = 1U;
+  }
+  const auto seed = [&](std::int32_t slot) {
+    return static_cast<std::size_t>(slot) < seed_slot.size() &&
+           seed_slot[static_cast<std::size_t>(slot)] != 0U;
+  };
   const auto apply = [&](std::span<const std::int32_t> removed,
                          std::span<const LocalCell> replacements, TetEditKind kind) {
     TetEdit operation;
@@ -1931,6 +1939,11 @@ std::int32_t flip_to_constrained_delaunay(
                                                         neighbors);
     if (status == TetEditStatus::kApplied) status = incidence.replace_cavity(mesh, operation, nullptr);
     if (status != TetEditStatus::kApplied) return status;
+    for (std::int32_t slot : removed) {
+      if (static_cast<std::size_t>(slot) < seed_slot.size()) {
+        seed_slot[static_cast<std::size_t>(slot)] = 0U;
+      }
+    }
     for (const TetEditCell& cell : operation.replacement_cells) {
       created.push_back(cell.id);
       for (int face = 0; face < 4; ++face) pending.emplace_back(cell.id, face);
@@ -1951,10 +1964,7 @@ std::int32_t flip_to_constrained_delaunay(
     }
     const int back = neighbor_slot(mesh.tet(other), slot);
     if (back < 0) return PHX_MC_INTERNAL_ERROR;
-    const auto seed = [&](std::uint64_t id) {
-      return std::binary_search(seed_ids.begin(), seed_ids.end(), id);
-    };
-    if (other < slot && seed(cell_id) && seed(mesh.cell_id(other))) continue;
+    if (other < slot && seed(slot) && seed(other)) continue;
     const std::int32_t apex = mesh.tet(other).v[back];
     if (mesh.metric_insphere(mesh.point(cell.v[0]), mesh.point(cell.v[1]), mesh.point(cell.v[2]),
                              mesh.point(cell.v[3]), mesh.point(apex)) <= 0) {

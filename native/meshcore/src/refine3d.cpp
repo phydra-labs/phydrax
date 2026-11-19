@@ -1255,25 +1255,44 @@ bool acute_input_features(
     return found == plane_normals.end() ? nullptr : found->second.data();
   };
   features.clear();
-  using Edge = std::pair<std::int32_t, std::int32_t>;
-  const auto ordered = [](std::int32_t a, std::int32_t b) {
-    return a < b ? Edge{a, b} : Edge{b, a};
+  // Flat incidence rows grouped by a stable sort on their keys (each group in
+  // input order): segment ends and facet corners by apex, facet sides by
+  // edge; the (group, edge) pairs of the facets sorted for lookup.
+  struct End {
+    std::int32_t apex;
+    std::int32_t end;
   };
   struct Corner {
-    std::int32_t first = -1;
-    std::int32_t second = -1;
-    std::int32_t group = kNoConstraint;
+    std::int32_t apex;
+    std::int32_t first;
+    std::int32_t second;
+    std::int32_t group;
   };
-  std::map<std::int32_t, std::vector<std::int32_t>> segment_ends;
-  std::unordered_map<std::int32_t, std::vector<Corner>> facet_corners;
-  std::set<std::pair<std::int32_t, Edge>> group_edges;
-  std::map<Edge, std::vector<std::pair<std::int32_t, std::int32_t>>> edge_facets;
+  struct Side {
+    std::int32_t a;
+    std::int32_t b;
+    std::int32_t last;
+    std::int32_t group;
+  };
+  using GroupEdge = std::array<std::int32_t, 3>;
+  std::vector<End> ends;
+  std::vector<Corner> corners;
+  std::vector<GroupEdge> group_edges;
+  std::vector<Side> sides;
+  ends.reserve(2 * segments.size());
   for (const TetSnapshotSegment& segment : segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    segment_ends[a].push_back(b);
-    segment_ends[b].push_back(a);
+    ends.push_back({a, b});
+    ends.push_back({b, a});
+  }
+  // Corners and (group, edge) pairs are read only at segment apexes.
+  const bool with_corners = !ends.empty();
+  sides.reserve(3 * facets.size());
+  if (with_corners) {
+    corners.reserve(3 * facets.size());
+    group_edges.reserve(3 * facets.size());
   }
   for (const TetSnapshotFacet& facet : facets) {
     std::int32_t slots[3];
@@ -1284,11 +1303,24 @@ bool acute_input_features(
     for (int corner = 0; corner < 3; ++corner) {
       const std::int32_t next = slots[(corner + 1) % 3];
       const std::int32_t last = slots[(corner + 2) % 3];
-      facet_corners[slots[corner]].push_back({next, last, facet.source});
-      group_edges.emplace(facet.source, ordered(slots[corner], next));
-      edge_facets[ordered(slots[corner], next)].emplace_back(last, facet.source);
+      const std::int32_t low = std::min(slots[corner], next);
+      const std::int32_t high = std::max(slots[corner], next);
+      sides.push_back({low, high, last, facet.source});
+      if (with_corners) {
+        corners.push_back({slots[corner], next, last, facet.source});
+        group_edges.push_back({facet.source, low, high});
+      }
     }
   }
+  std::stable_sort(ends.begin(), ends.end(),
+                   [](const End& x, const End& y) { return x.apex < y.apex; });
+  std::stable_sort(corners.begin(), corners.end(),
+                   [](const Corner& x, const Corner& y) { return x.apex < y.apex; });
+  std::sort(group_edges.begin(), group_edges.end());
+  group_edges.erase(std::unique(group_edges.begin(), group_edges.end()), group_edges.end());
+  std::stable_sort(sides.begin(), sides.end(), [](const Side& x, const Side& y) {
+    return x.a != y.a ? x.a < y.a : x.b < y.b;
+  });
   const auto direction = [&](std::int32_t from, std::int32_t to, double* out) {
     const double* a = mesh.point(from);
     const double* b = mesh.point(to);
@@ -1296,28 +1328,34 @@ bool acute_input_features(
     std::copy(world.begin(), world.end(), out);
   };
 
-  for (const auto& [apex, ends] : segment_ends) {
+  for (std::size_t begin = 0, stop = 0; begin < ends.size(); begin = stop) {
+    const std::int32_t apex = ends[begin].apex;
+    for (stop = begin; stop < ends.size() && ends[stop].apex == apex; ++stop) {}
+    const auto at_apex = std::equal_range(
+        corners.begin(), corners.end(), Corner{apex, -1, -1, kNoConstraint},
+        [](const Corner& x, const Corner& y) { return x.apex < y.apex; });
     double smallest = 90.0;
-    for (std::size_t first = 0; first < ends.size(); ++first) {
+    for (std::size_t first = begin; first < stop; ++first) {
       double ray[3];
-      direction(apex, ends[first], ray);
-      for (std::size_t second = first + 1; second < ends.size(); ++second) {
+      direction(apex, ends[first].end, ray);
+      for (std::size_t second = first + 1; second < stop; ++second) {
         double other[3];
-        direction(apex, ends[second], other);
+        direction(apex, ends[second].end, other);
         const double cosine = cosine3(ray, other);
         if (cosine > kRightAngleCosine) smallest = std::min(smallest, degrees(cosine));
       }
-      const auto corners = facet_corners.find(apex);
-      if (corners == facet_corners.end()) continue;
-      for (const Corner& corner : corners->second) {
-        if (group_edges.contains({corner.group, ordered(apex, ends[first])})) continue;
-        double sides[2][3];
-        direction(apex, corner.first, sides[0]);
-        direction(apex, corner.second, sides[1]);
-        if (cosine3(ray, sides[0]) > kRightAngleCosine ||
-            cosine3(ray, sides[1]) > kRightAngleCosine) {
-          smallest = std::min(smallest, ray_sector_angle(ray, sides[0], sides[1],
-                                                         plane_normal(corner.group)));
+      const std::int32_t low = std::min(apex, ends[first].end);
+      const std::int32_t high = std::max(apex, ends[first].end);
+      for (auto corner = at_apex.first; corner != at_apex.second; ++corner) {
+        const GroupEdge key{corner->group, low, high};
+        if (std::binary_search(group_edges.begin(), group_edges.end(), key)) continue;
+        double rays[2][3];
+        direction(apex, corner->first, rays[0]);
+        direction(apex, corner->second, rays[1]);
+        if (cosine3(ray, rays[0]) > kRightAngleCosine ||
+            cosine3(ray, rays[1]) > kRightAngleCosine) {
+          smallest = std::min(smallest, ray_sector_angle(ray, rays[0], rays[1],
+                                                         plane_normal(corner->group)));
         }
       }
     }
@@ -1345,22 +1383,30 @@ bool acute_input_features(
     }
     return false;
   };
-  for (const auto& [edge, sides] : edge_facets) {
-    const auto [a, b] = edge;
+  for (std::size_t begin = 0, stop = 0; begin < sides.size(); begin = stop) {
+    const std::int32_t a = sides[begin].a;
+    const std::int32_t b = sides[begin].b;
+    for (stop = begin; stop < sides.size() && sides[stop].a == a && sides[stop].b == b; ++stop) {}
+    // Only facets of different groups meet at a ridge.
+    if (std::all_of(sides.begin() + static_cast<std::ptrdiff_t>(begin),
+                    sides.begin() + static_cast<std::ptrdiff_t>(stop),
+                    [&](const Side& side) { return side.group == sides[begin].group; })) {
+      continue;
+    }
     double along[3];
     direction(a, b, along);
     const double length_squared = dot3(along, along);
     if (!(length_squared > 0.0)) continue;
     double smallest = 90.0;
-    for (std::size_t first = 0; first < sides.size(); ++first) {
-      for (std::size_t second = first + 1; second < sides.size(); ++second) {
-        if (sides[first].second == sides[second].second) continue;
+    for (std::size_t first = begin; first < stop; ++first) {
+      for (std::size_t second = first + 1; second < stop; ++second) {
+        if (sides[first].group == sides[second].group) continue;
         double normal[2][3];
         for (const std::size_t side : {first, second}) {
           double offset[3];
-          direction(a, sides[side].first, offset);
+          direction(a, sides[side].last, offset);
           double* inward = normal[side == first ? 0 : 1];
-          if (const double* plane = plane_normal(sides[side].second); plane != nullptr) {
+          if (const double* plane = plane_normal(sides[side].group); plane != nullptr) {
             // The declared plane's direction perpendicular to the edge, toward the facet.
             cross3(plane, along, inward);
             if (dot3(inward, offset) < 0.0) {
@@ -1373,8 +1419,8 @@ bool acute_input_features(
         }
         const double cosine = cosine3(normal[0], normal[1]);
         if (cosine > kRightAngleCosine &&
-            (domain_wedge(a, b, sides[first].first, sides[second].first) ||
-             domain_wedge(a, b, sides[second].first, sides[first].first))) {
+            (domain_wedge(a, b, sides[first].last, sides[second].last) ||
+             domain_wedge(a, b, sides[second].last, sides[first].last))) {
           smallest = std::min(smallest, degrees(cosine));
         }
       }
@@ -2484,11 +2530,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     frame.scale =
         extent > 0.0 && std::isfinite(extent) ? static_cast<double>(kHilbertMax) / extent : 0.0;
   }
-  // A violating cell of a round, keyed by its circumcenter. Most proposals of
-  // a round die to earlier insertions of the same round before their turn, so
-  // a proposal holds only what orders it: its shape is measured (cell_shape)
-  // when its turn comes, and its target is a function of its corners, which
-  // holds while its ID is live.
+  // A candidate cell of a round, keyed by its circumcenter in the first round.
+  // Most candidates of a round die to earlier insertions of the same round
+  // before their turn, so a later round's candidate is screened only when its
+  // turn comes, and every proposal's shape is measured (cell_shape) then; its
+  // target is a function of its corners, which holds while its ID is live.
   struct Proposal {
     std::uint64_t key;
     std::uint64_t cell_id;
@@ -2784,40 +2830,49 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     return PHX_MC_OK;
   };
+  // Whether the live finite cell `slot` misses a criterion; fills the
+  // proposal's target and, with `center`, its circumcenter.
+  const auto violates = [&](std::int32_t slot, Proposal& proposal, double* center) {
+    const Tetrahedron& tet = mesh.tet(slot);
+    proposal.has_target = cell_target(mesh, tet.v, proposal.target);
+    const CellScreen screen =
+        mesh.metric_active()
+            ? CellScreen::kUncertain
+            : screen_cell(mesh.point(tet.v[0]), mesh.point(tet.v[1]), mesh.point(tet.v[2]),
+                          mesh.point(tet.v[3]), radius_edge_bound,
+                          proposal.has_target ? proposal.target
+                                              : std::numeric_limits<double>::infinity(),
+                          center);
+    if (screen == CellScreen::kMeets) return false;
+    if (screen == CellScreen::kUncertain) {
+      geometry::TetrahedronShape shape;
+      const bool measured = cell_shape(mesh, tet, shape);
+      if (measured &&
+          !(radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) &&
+          !(proposal.has_target && shape.circumradius > proposal.target)) {
+        return false;
+      }
+      if (center != nullptr) std::copy_n(shape.circumcenter.begin(), 3, center);
+    }
+    proposed_ids.push_back(proposal.cell_id);
+    return true;
+  };
   constexpr int kMaxRounds = 4096;
   for (int pass = 0; pass < kMaxRounds && !pending.empty(); ++pass) {
     proposals.clear();
     for (std::int32_t slot : pending) {
-      if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
-      const Tetrahedron& tet = mesh.tet(slot);
       Proposal proposal{};
-      proposal.has_target = cell_target(mesh, tet.v, proposal.target);
-      // Only the first round is sorted (below), by circumcenter.
-      double center[3];
-      const CellScreen screen =
-          mesh.metric_active()
-              ? CellScreen::kUncertain
-              : screen_cell(mesh.point(tet.v[0]), mesh.point(tet.v[1]), mesh.point(tet.v[2]),
-                            mesh.point(tet.v[3]), radius_edge_bound,
-                            proposal.has_target ? proposal.target
-                                                : std::numeric_limits<double>::infinity(),
-                            pass == 0 ? center : nullptr);
-      if (screen == CellScreen::kMeets) continue;
-      if (screen == CellScreen::kUncertain) {
-        geometry::TetrahedronShape shape;
-        const bool measured = cell_shape(mesh, tet, shape);
-        if (measured &&
-            !(radius_edge_bound > 0.0 && shape.radius_edge_ratio > radius_edge_bound) &&
-            !(proposal.has_target && shape.circumradius > proposal.target)) {
-          continue;
-        }
-        std::copy_n(shape.circumcenter.begin(), 3, center);
-      }
-      if (pass == 0) proposal.key = frame.key(center);
       proposal.cell_id = mesh.cell_id(slot);
       proposal.slot = slot;
+      // The first round is screened now and sorted by circumcenter (below);
+      // a later round's cell is screened at its turn, if it is still live.
+      if (pass == 0) {
+        if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
+        double center[3];
+        if (!violates(slot, proposal, center)) continue;
+        proposal.key = frame.key(center);
+      }
       proposals.push_back(proposal);
-      proposed_ids.push_back(proposal.cell_id);
     }
     pending.clear();
     if (++round == 0) {
@@ -2831,8 +2886,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
       });
     }
-    for (const Proposal& proposal : proposals) {
+    for (Proposal& proposal : proposals) {
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {
+        continue;
+      }
+      if (pass > 0 && (is_ghost(mesh.tet(proposal.slot)) ||
+                       !violates(proposal.slot, proposal, nullptr))) {
         continue;
       }
       if (const std::int32_t error = refine_cell(proposal); error != PHX_MC_OK) return error;

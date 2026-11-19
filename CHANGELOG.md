@@ -268,6 +268,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement scans acute input features over flat sorted
+  incidence rows instead of ordered maps and sets of every boundary edge,
+  screens a later round's candidate cells only when their turn comes (most
+  die to earlier insertions of the round), and its constrained-Delaunay flip
+  pass marks seed cells by slot instead of binary-searching their IDs. Same
+  features, flips and meshes; L3 refinement 1.40 -> 1.24 s (torus),
+  1.10 -> 1.06 s (two cylinders).
 - Native tetrahedral refinement keeps its local-feature-size and protection
   grids as sorted flat cell ranges behind one open-addressing table instead
   of a hash map of vectors (same sizes and protected regions, same meshes);
