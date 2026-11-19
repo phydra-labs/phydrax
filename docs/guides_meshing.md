@@ -1018,8 +1018,10 @@ algorithm. The default result is a pending `CellMeshingCandidate`, not an
 acceptance claim. `candidate.prove()` certifies exactly the produced mesh without
 remeshing or repair; `execute(prove=True)` runs certified construction and
 immediate acceptance. The candidate's `certified_steps` names construction work
-that still used its certified form. Sources that own a coordinate contract bind
-it directly; otherwise the caller must supply the actual units and reference frame.
+that still used its certified form. Its read-only `screens` mapping reports
+sampled measurements only; these are not certified bounds or compliance claims.
+Sources that own a coordinate contract bind it directly; otherwise the caller
+must supply the actual units and reference frame.
 PLC-backed sources scope dimension-1 entities by stable source identity: explicit
 segments and original polygon-loop edges, including shared seams between polygons
 of one facet. Edges introduced only by recovery triangulation are not source curves;
