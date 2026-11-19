@@ -876,6 +876,28 @@ PHX_MC_API int32_t phx_mc_interval_program_batch(
     double* upper, int64_t workspace_size, int64_t count, int32_t parallelism);
 /* Bit n advertises interval-program opcode n; bit 0 is reserved. */
 PHX_MC_API int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes);
+/* Point evaluation of a validated interval program at `count` points:
+ * binary64 with ordinary rounding, for proposals, never a certificate. seeds
+ * is a workspace_size template holding each seed's value at its entries; the
+ * point's input_dimension coordinates occupy entries 0 .. input_dimension - 1;
+ * points is (count, input_dimension) row-major. result is (count,
+ * output_count): the values of workspace entries `outputs`. Min/max
+ * winner-flag rows (21, 22) write zeros and decision rows (23) pass their
+ * comparison through. Points are processed in cache-sized blocks. */
+PHX_MC_API int32_t phx_mc_program_evaluate(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
+    int64_t workspace_size, int64_t input_dimension, const double* points, int64_t count,
+    const int64_t* outputs, int64_t output_count, double* result);
+/* Second-order forward jets of the same program in its input_dimension (1 to
+ * 3) inputs, as phx_mc_program_evaluate. result is (count, output_count,
+ * components) with components = 1 + n + n (n + 1) / 2: the value, the
+ * gradient, and the upper triangle of the Hessian row by row. */
+PHX_MC_API int32_t phx_mc_program_jet(
+    const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+    int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
+    int64_t workspace_size, int64_t input_dimension, const double* points, int64_t count,
+    const int64_t* outputs, int64_t output_count, double* result);
 /* Deterministic binary64 kernels: the same bits for the same input on every
  * platform, from correctly rounded + - * / and sqrt in a fixed order, without
  * libm or LAPACK. They steer floating-point proposals; their error bounds

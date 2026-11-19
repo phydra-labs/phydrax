@@ -974,6 +974,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _P, _I64, _I64, _P, _P),
     ),
+    "phx_mc_program_evaluate": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
+    ),
+    "phx_mc_program_jet": (
+        _I32,
+        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _I64, _P, _I64, _P),
+    ),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),

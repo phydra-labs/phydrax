@@ -1,11 +1,13 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // Straight-line outward interval execution. A whole program is validated before
 // the first workspace write; validated rows execute in source order.
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #include "capi_guard.hpp"
 #include "elementary.hpp"
@@ -808,6 +810,513 @@ void record_events(const int64_t* events, int64_t event_count, const int64_t* in
   }
 }
 
+// ---------------------------------------------------------------------------
+// Point executors of the same validated programs. They evaluate a batch of
+// boxes at points, in binary64 with ordinary rounding: proposals, never a
+// certificate. Layout is entry-major so that every row runs as a contiguous
+// loop over the batch: entry e of box j is values[e * count + j] (float), and
+// component c of entry e of box j is values[(e * components + c) * count + j]
+// (jets). Min/max winner flags have no point meaning; their rows write zeros,
+// and a decision row passes its comparison through, which at a point is
+// already decided.
+
+inline double float_power(double base, double exponent, double& invalid) noexcept {
+  const bool integer = integral_binary64(exponent);
+  invalid = !integer && base < 0.0 ? -1.0 : 0.0;
+  return std::pow(base, exponent);
+}
+
+void execute_float(const int64_t* instructions, int64_t instruction_count,
+                   const int64_t* indices, double* values, int64_t count) noexcept {
+  const auto column = [&](int64_t entry) { return values + entry * count; };
+  for (int64_t row_index = 0; row_index < instruction_count; ++row_index) {
+    const Row row = row_at(instructions, row_index);
+    for (int64_t k = 0; k < row.size; ++k) {
+      double* out = column(row.out + k);
+      switch (row.opcode) {
+        case kReduceSum: {
+          const int64_t base = row.a + k * row.aux;
+          const double* first = column(base);
+          for (int64_t j = 0; j < count; ++j) out[j] = row.aux > 0 ? first[j] : 0.0;
+          for (int64_t term = 1; term < row.aux; ++term) {
+            const double* next = column(base + term);
+            for (int64_t j = 0; j < count; ++j) out[j] += next[j];
+          }
+          continue;
+        }
+        case kExtremumPair:
+          for (int64_t j = 0; j < count; ++j) out[j] = 0.0;
+          for (int64_t j = 0; j < count; ++j) column(row.out + row.size + k)[j] = 0.0;
+          continue;
+        case kExtremumReduce:
+          for (int64_t lane = 0; lane < row.b; ++lane) {
+            double* flags = column(row.out + k * row.b + lane);
+            for (int64_t j = 0; j < count; ++j) flags[j] = 0.0;
+          }
+          continue;
+        default:
+          break;
+      }
+      const double* a = column(address(indices, row.a, row.a_index, k));
+      switch (row.opcode) {
+        case kGather:
+        case kDecide:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j];
+          continue;
+        case kNegate:
+          for (int64_t j = 0; j < count; ++j) out[j] = -a[j];
+          continue;
+        case kAbsolute:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::fabs(a[j]);
+          continue;
+        case kSquare:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] * a[j];
+          continue;
+        case kSqrt:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::sqrt(a[j]);
+          continue;
+        case kReciprocal:
+          for (int64_t j = 0; j < count; ++j) out[j] = 1.0 / a[j];
+          continue;
+        case kSine:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::sin(a[j]);
+          continue;
+        case kCosine:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::cos(a[j]);
+          continue;
+        case kExp:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::exp(a[j]);
+          continue;
+        case kLog:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::log(a[j]);
+          continue;
+        case kAtan:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::atan(a[j]);
+          continue;
+        case kTan:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::tan(a[j]);
+          continue;
+        case kAttain:
+          for (int64_t j = 0; j < count; ++j) out[j] = maximum(a[j], 1.0);
+          continue;
+        case kSelect: {
+          const double* first = column(row.b + k);
+          const double* second = column(row.b + row.aux + k);
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] > 0.0 ? second[j] : first[j];
+          continue;
+        }
+        default:
+          break;
+      }
+      const double* b = column(address(indices, row.b, row.b_index, k));
+      switch (row.opcode) {
+        case kAdd:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] + b[j];
+          break;
+        case kSubtract:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] - b[j];
+          break;
+        case kSubtractSame:
+          for (int64_t j = 0; j < count; ++j) out[j] = std::isfinite(a[j]) ? 0.0 : a[j] - b[j];
+          break;
+        case kMultiply:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] * b[j];
+          break;
+        case kDivideElementwise:
+          for (int64_t j = 0; j < count; ++j) out[j] = a[j] / b[j];
+          break;
+        case kMaximum:
+          for (int64_t j = 0; j < count; ++j) out[j] = maximum(a[j], b[j]);
+          break;
+        case kMinimum:
+          for (int64_t j = 0; j < count; ++j) out[j] = minimum(a[j], b[j]);
+          break;
+        case kCompare:
+          for (int64_t j = 0; j < count; ++j)
+            out[j] = (row.aux == 0 ? a[j] > b[j] : a[j] >= b[j]) ? 1.0 : 0.0;
+          break;
+        case kEqual:
+          for (int64_t j = 0; j < count; ++j)
+            out[j] = ((a[j] == b[j]) == (row.aux == 0)) ? 1.0 : 0.0;
+          break;
+        default: {  // kPowerElementwise
+          double* invalid = column(row.out + row.size + k);
+          for (int64_t j = 0; j < count; ++j) out[j] = float_power(a[j], b[j], invalid[j]);
+          break;
+        }
+      }
+    }
+  }
+}
+
+// Second-order forward jets in up to three variables: value, gradient (n) and
+// the upper triangle of the Hessian (n (n + 1) / 2), stored per component.
+class JetLayout {
+ public:
+  explicit JetLayout(int64_t variables) noexcept
+      : variables_(variables), components_(1 + variables + variables * (variables + 1) / 2) {}
+  int64_t variables() const noexcept { return variables_; }
+  int64_t components() const noexcept { return components_; }
+  int64_t gradient(int64_t i) const noexcept { return 1 + i; }
+  int64_t hessian(int64_t i, int64_t l) const noexcept {
+    const int64_t low = i < l ? i : l;
+    const int64_t high = i < l ? l : i;
+    return 1 + variables_ + low * variables_ - low * (low - 1) / 2 + (high - low);
+  }
+
+ private:
+  int64_t variables_;
+  int64_t components_;
+};
+
+struct JetView {
+  double* base;
+  int64_t count;
+  double* component(int64_t c) const noexcept { return base + c * count; }
+};
+
+// Per-thread derivative columns of one unary row, reused across rows.
+struct JetScratch {
+  std::vector<double> value, first, second;
+  void resize(int64_t count) {
+    const auto size = static_cast<std::size_t>(count);
+    value.resize(size);
+    first.resize(size);
+    second.resize(size);
+  }
+};
+
+JetScratch& jet_scratch() {
+  thread_local JetScratch scratch;
+  return scratch;
+}
+
+// f(a) with f' and f'' per point: g = f' g_a, H = f' H_a + f'' g_a g_a^T. Every
+// component is one contiguous loop over the batch.
+template <class Derivatives>
+void jet_unary(const JetLayout& layout, const JetView& a, const JetView& out,
+               Derivatives derivatives) {
+  const int64_t n = layout.variables();
+  const int64_t count = a.count;
+  JetScratch& s = jet_scratch();
+  s.resize(count);
+  double* value = s.value.data();
+  double* first = s.first.data();
+  double* second = s.second.data();
+  const double* a0 = a.component(0);
+  for (int64_t j = 0; j < count; ++j) derivatives(a0[j], value[j], first[j], second[j]);
+  for (int64_t i = 0; i < n; ++i)
+    for (int64_t l = i; l < n; ++l) {
+      const int64_t h = layout.hessian(i, l);
+      const double* ah = a.component(h);
+      const double* gi = a.component(layout.gradient(i));
+      const double* gl = a.component(layout.gradient(l));
+      double* oh = out.component(h);
+      for (int64_t j = 0; j < count; ++j) oh[j] = first[j] * ah[j] + second[j] * gi[j] * gl[j];
+    }
+  for (int64_t i = 0; i < n; ++i) {
+    const double* gi = a.component(layout.gradient(i));
+    double* og = out.component(layout.gradient(i));
+    for (int64_t j = 0; j < count; ++j) og[j] = first[j] * gi[j];
+  }
+  double* o0 = out.component(0);
+  for (int64_t j = 0; j < count; ++j) o0[j] = value[j];
+}
+
+// a * b: g = a g_b + b g_a, H = a H_b + b H_a + g_a g_b^T + g_b g_a^T.
+void jet_multiply(const JetLayout& layout, const JetView& a, const JetView& b,
+                  const JetView& out) noexcept {
+  const int64_t n = layout.variables();
+  const int64_t count = a.count;
+  const double* a0 = a.component(0);
+  const double* b0 = b.component(0);
+  for (int64_t i = 0; i < n; ++i)
+    for (int64_t l = i; l < n; ++l) {
+      const int64_t h = layout.hessian(i, l);
+      const double* ah = a.component(h);
+      const double* bh = b.component(h);
+      const double* agi = a.component(layout.gradient(i));
+      const double* agl = a.component(layout.gradient(l));
+      const double* bgi = b.component(layout.gradient(i));
+      const double* bgl = b.component(layout.gradient(l));
+      double* oh = out.component(h);
+      for (int64_t j = 0; j < count; ++j)
+        oh[j] = a0[j] * bh[j] + b0[j] * ah[j] + agi[j] * bgl[j] + bgi[j] * agl[j];
+    }
+  for (int64_t i = 0; i < n; ++i) {
+    const double* agi = a.component(layout.gradient(i));
+    const double* bgi = b.component(layout.gradient(i));
+    double* og = out.component(layout.gradient(i));
+    for (int64_t j = 0; j < count; ++j) og[j] = a0[j] * bgi[j] + b0[j] * agi[j];
+  }
+  double* o0 = out.component(0);
+  for (int64_t j = 0; j < count; ++j) o0[j] = a0[j] * b0[j];
+}
+
+// a / b from f b = a: g_f = (g_a - f g_b) / b, H_f = (H_a - f H_b - g_f g_b^T - g_b g_f^T) / b.
+void jet_divide(const JetLayout& layout, const JetView& a, const JetView& b,
+                const JetView& out) noexcept {
+  const int64_t n = layout.variables();
+  const int64_t count = a.count;
+  const double* a0 = a.component(0);
+  const double* b0 = b.component(0);
+  double* f = out.component(0);
+  for (int64_t j = 0; j < count; ++j) f[j] = a0[j] / b0[j];
+  for (int64_t i = 0; i < n; ++i) {
+    const double* agi = a.component(layout.gradient(i));
+    const double* bgi = b.component(layout.gradient(i));
+    double* og = out.component(layout.gradient(i));
+    for (int64_t j = 0; j < count; ++j) og[j] = (agi[j] - f[j] * bgi[j]) / b0[j];
+  }
+  for (int64_t i = 0; i < n; ++i)
+    for (int64_t l = i; l < n; ++l) {
+      const int64_t h = layout.hessian(i, l);
+      const double* ah = a.component(h);
+      const double* bh = b.component(h);
+      const double* fgi = out.component(layout.gradient(i));
+      const double* fgl = out.component(layout.gradient(l));
+      const double* bgi = b.component(layout.gradient(i));
+      const double* bgl = b.component(layout.gradient(l));
+      double* oh = out.component(h);
+      for (int64_t j = 0; j < count; ++j)
+        oh[j] = (ah[j] - f[j] * bh[j] - fgi[j] * bgl[j] - bgi[j] * fgl[j]) / b0[j];
+    }
+}
+
+// Per box, out takes every component of the first or the second operand.
+template <class Choose>
+void jet_choose(const JetLayout& layout, const JetView& first, const JetView& second,
+                const JetView& out, Choose choose_second) noexcept {
+  for (int64_t j = 0; j < first.count; ++j) {
+    const JetView& source = choose_second(j) ? second : first;
+    for (int64_t c = 0; c < layout.components(); ++c)
+      out.component(c)[j] = source.component(c)[j];
+  }
+}
+
+void jet_linear(const JetLayout& layout, const JetView& a, const JetView& b, double sign,
+                const JetView& out) noexcept {
+  for (int64_t c = 0; c < layout.components(); ++c) {
+    const double* x = a.component(c);
+    const double* y = b.component(c);
+    double* z = out.component(c);
+    for (int64_t j = 0; j < a.count; ++j) z[j] = x[j] + sign * y[j];
+  }
+}
+
+void jet_constant(const JetLayout& layout, const JetView& out, const double* values) noexcept {
+  for (int64_t j = 0; j < out.count; ++j) out.component(0)[j] = values[j];
+  for (int64_t c = 1; c < layout.components(); ++c)
+    for (int64_t j = 0; j < out.count; ++j) out.component(c)[j] = 0.0;
+}
+
+void execute_jet(const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
+                 const JetLayout& layout, double* values, int64_t count,
+                 std::vector<double>& scratch) {
+  const int64_t width = layout.components() * count;
+  const auto entry = [&](int64_t e) { return JetView{values + e * width, count}; };
+  for (int64_t row_index = 0; row_index < instruction_count; ++row_index) {
+    const Row row = row_at(instructions, row_index);
+    for (int64_t k = 0; k < row.size; ++k) {
+      const JetView out = entry(row.out + k);
+      switch (row.opcode) {
+        case kReduceSum: {
+          const int64_t base = row.a + k * row.aux;
+          for (int64_t c = 0; c < layout.components(); ++c) {
+            double* z = out.component(c);
+            for (int64_t j = 0; j < count; ++j)
+              z[j] = row.aux > 0 ? entry(base).component(c)[j] : 0.0;
+            for (int64_t term = 1; term < row.aux; ++term) {
+              const double* x = entry(base + term).component(c);
+              for (int64_t j = 0; j < count; ++j) z[j] += x[j];
+            }
+          }
+          continue;
+        }
+        case kExtremumPair:
+          scratch.assign(static_cast<std::size_t>(count), 0.0);
+          jet_constant(layout, out, scratch.data());
+          jet_constant(layout, entry(row.out + row.size + k), scratch.data());
+          continue;
+        case kExtremumReduce:
+          scratch.assign(static_cast<std::size_t>(count), 0.0);
+          for (int64_t lane = 0; lane < row.b; ++lane)
+            jet_constant(layout, entry(row.out + k * row.b + lane), scratch.data());
+          continue;
+        default:
+          break;
+      }
+      const JetView a = entry(address(indices, row.a, row.a_index, k));
+      const double* av = a.component(0);
+      switch (row.opcode) {
+        case kGather:
+        case kDecide:
+          jet_choose(layout, a, a, out, [](int64_t) { return false; });
+          continue;
+        case kNegate:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = -x, d1 = -1.0, d2 = 0.0;
+          });
+          continue;
+        case kAbsolute:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::fabs(x), d1 = std::signbit(x) ? -1.0 : 1.0, d2 = 0.0;
+          });
+          continue;
+        case kSquare:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = x * x, d1 = 2.0 * x, d2 = 2.0;
+          });
+          continue;
+        case kSqrt:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::sqrt(x), d1 = 0.5 / v, d2 = -0.25 / (v * x);
+          });
+          continue;
+        case kReciprocal:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = 1.0 / x, d1 = -v * v, d2 = 2.0 * v * v * v;
+          });
+          continue;
+        case kSine:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::sin(x), d1 = std::cos(x), d2 = -v;
+          });
+          continue;
+        case kCosine:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::cos(x), d1 = -std::sin(x), d2 = -v;
+          });
+          continue;
+        case kExp:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::exp(x), d1 = v, d2 = v;
+          });
+          continue;
+        case kLog:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::log(x), d1 = 1.0 / x, d2 = -d1 * d1;
+          });
+          continue;
+        case kAtan:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            const double denominator = 1.0 + x * x;
+            v = std::atan(x), d1 = 1.0 / denominator, d2 = -2.0 * x * d1 * d1;
+          });
+          continue;
+        case kTan:
+          jet_unary(layout, a, out, [](double x, double& v, double& d1, double& d2) {
+            v = std::tan(x), d1 = 1.0 + v * v, d2 = 2.0 * v * d1;
+          });
+          continue;
+        case kAttain:
+          scratch.resize(static_cast<std::size_t>(count));
+          for (int64_t j = 0; j < count; ++j) scratch[static_cast<std::size_t>(j)] = maximum(av[j], 1.0);
+          jet_constant(layout, out, scratch.data());
+          continue;
+        case kSelect: {
+          const JetView first = entry(row.b + k);
+          const JetView second = entry(row.b + row.aux + k);
+          jet_choose(layout, first, second, out, [&](int64_t j) { return av[j] > 0.0; });
+          continue;
+        }
+        default:
+          break;
+      }
+      const JetView b = entry(address(indices, row.b, row.b_index, k));
+      const double* bv = b.component(0);
+      switch (row.opcode) {
+        case kAdd:
+          jet_linear(layout, a, b, 1.0, out);
+          break;
+        case kSubtract:
+          jet_linear(layout, a, b, -1.0, out);
+          break;
+        case kSubtractSame:
+          scratch.resize(static_cast<std::size_t>(count));
+          for (int64_t j = 0; j < count; ++j)
+            scratch[static_cast<std::size_t>(j)] = std::isfinite(av[j]) ? 0.0 : av[j] - bv[j];
+          jet_constant(layout, out, scratch.data());
+          break;
+        case kMultiply:
+          jet_multiply(layout, a, b, out);
+          break;
+        case kDivideElementwise:
+          jet_divide(layout, a, b, out);
+          break;
+        case kMaximum:
+          jet_choose(layout, a, b, out, [&](int64_t j) { return bv[j] > av[j]; });
+          break;
+        case kMinimum:
+          jet_choose(layout, a, b, out, [&](int64_t j) { return bv[j] < av[j]; });
+          break;
+        case kCompare:
+        case kEqual:
+          scratch.resize(static_cast<std::size_t>(count));
+          for (int64_t j = 0; j < count; ++j) {
+            const bool truth = row.opcode == kCompare
+                                   ? (row.aux == 0 ? av[j] > bv[j] : av[j] >= bv[j])
+                                   : ((av[j] == bv[j]) == (row.aux == 0));
+            scratch[static_cast<std::size_t>(j)] = truth ? 1.0 : 0.0;
+          }
+          jet_constant(layout, out, scratch.data());
+          break;
+        default: {  // kPowerElementwise: a^p for a constant integral p, else exp(b log a)
+          const JetView invalid = entry(row.out + row.size + k);
+          scratch.resize(static_cast<std::size_t>(count));
+          bool constant_exponent = true;
+          for (int64_t i = 0; i < layout.variables() && constant_exponent; ++i)
+            for (int64_t j = 0; j < count; ++j)
+              if (b.component(layout.gradient(i))[j] != 0.0) {
+                constant_exponent = false;
+                break;
+              }
+          for (int64_t j = 0; j < count; ++j) {
+            double flag = 0.0;
+            float_power(av[j], bv[j], flag);
+            scratch[static_cast<std::size_t>(j)] = flag;
+          }
+          jet_constant(layout, invalid, scratch.data());
+          if (constant_exponent) {
+            // Exponent constant per box: f = a^p, f' = p a^(p-1), f'' = p (p-1) a^(p-2).
+            const int64_t n = layout.variables();
+            for (int64_t j = 0; j < count; ++j) {
+              const double x = av[j];
+              const double p = bv[j];
+              const double value = std::pow(x, p);
+              const double first = p == 0.0 ? 0.0 : p * std::pow(x, p - 1.0);
+              const double second = (p == 0.0 || p == 1.0) ? 0.0 : p * (p - 1.0) * std::pow(x, p - 2.0);
+              double gradient[3] = {0.0, 0.0, 0.0};
+              for (int64_t i = 0; i < n; ++i) gradient[i] = a.component(layout.gradient(i))[j];
+              for (int64_t i = 0; i < n; ++i)
+                for (int64_t l = i; l < n; ++l) {
+                  const int64_t h = layout.hessian(i, l);
+                  out.component(h)[j] = first * a.component(h)[j] + second * gradient[i] * gradient[l];
+                }
+              for (int64_t i = 0; i < n; ++i) out.component(layout.gradient(i))[j] = first * gradient[i];
+              out.component(0)[j] = value;
+            }
+          } else {
+            // f = exp(b log a): the jets of log a, b log a, and exp of that.
+            std::vector<double> log_jet(static_cast<std::size_t>(width));
+            std::vector<double> product_jet(static_cast<std::size_t>(width));
+            const JetView logarithm{log_jet.data(), count};
+            const JetView product_view{product_jet.data(), count};
+            jet_unary(layout, a, logarithm, [](double x, double& v, double& d1, double& d2) {
+              v = std::log(x), d1 = 1.0 / x, d2 = -d1 * d1;
+            });
+            jet_multiply(layout, b, logarithm, product_view);
+            jet_unary(layout, product_view, out, [](double x, double& v, double& d1, double& d2) {
+              v = std::exp(x), d1 = v, d2 = v;
+            });
+          }
+          break;
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 int32_t phx::mc::PreparedIntervalProgram::bind(
@@ -981,6 +1490,148 @@ int32_t phx_mc_interval_program_capabilities(uint64_t* opcodes) {
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (opcodes == nullptr) return PHX_MC_INVALID_ARGUMENT;
     *opcodes = kIntervalOpcodeCapabilities;
+    return PHX_MC_OK;
+  });
+}
+
+}  // extern "C"
+
+namespace {
+
+// Points per block of a point execution: the block's whole workspace (entries
+// times jet components times points) stays in cache.
+constexpr int64_t kPointBlock = 256;
+
+struct PointProgram {
+  const int64_t* instructions;
+  int64_t instruction_count;
+  const int64_t* indices;
+  const double* seeds;  // workspace_size template: seed values at their entries
+  int64_t workspace_size;
+  int64_t input_dimension;
+  const int64_t* outputs;
+  int64_t output_count;
+};
+
+int32_t point_arguments_valid(const int64_t* instructions, int64_t instruction_count,
+                              const int64_t* indices, int64_t index_count,
+                              const double* parameters, int64_t parameter_count,
+                              const double* seeds, int64_t workspace_size,
+                              int64_t input_dimension, const double* points, int64_t count,
+                              const int64_t* outputs, int64_t output_count,
+                              const double* result, int64_t result_width) {
+  if (!phx::mc::addressable(instruction_count, kFields, sizeof(int64_t)) ||
+      !phx::mc::addressable(index_count, 1, sizeof(int64_t)) ||
+      !phx::mc::addressable(parameter_count, 1, sizeof(double)) ||
+      !phx::mc::addressable(workspace_size, 1, sizeof(double)) ||
+      !phx::mc::addressable(count, input_dimension, sizeof(double)) ||
+      !phx::mc::addressable(count, result_width, sizeof(double)) || input_dimension < 1 ||
+      input_dimension > workspace_size || output_count < 0 ||
+      (instruction_count > 0 && instructions == nullptr) ||
+      (index_count > 0 && indices == nullptr) ||
+      (parameter_count > 0 && parameters == nullptr) ||
+      (workspace_size > 0 && seeds == nullptr) || (count > 0 && points == nullptr) ||
+      (output_count > 0 && outputs == nullptr) ||
+      (count > 0 && result_width > 0 && result == nullptr))
+    return PHX_MC_INVALID_ARGUMENT;
+  for (int64_t k = 0; k < output_count; ++k)
+    if (outputs[k] < 0 || outputs[k] >= workspace_size) return PHX_MC_INVALID_INPUT;
+  if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
+                     parameter_count, workspace_size))
+    return PHX_MC_INVALID_INPUT;
+  return PHX_MC_OK;
+}
+
+void evaluate_point_blocks(const PointProgram& program, const double* points, int64_t count,
+                           double* result) {
+  std::vector<double> values(static_cast<std::size_t>(program.workspace_size * kPointBlock));
+  for (int64_t start = 0; start < count; start += kPointBlock) {
+    const int64_t block = std::min(kPointBlock, count - start);
+    for (int64_t entry = 0; entry < program.workspace_size; ++entry)
+      std::fill_n(values.data() + entry * block, block, program.seeds[entry]);
+    for (int64_t d = 0; d < program.input_dimension; ++d)
+      for (int64_t j = 0; j < block; ++j)
+        values[static_cast<std::size_t>(d * block + j)] =
+            points[(start + j) * program.input_dimension + d];
+    execute_float(program.instructions, program.instruction_count, program.indices,
+                  values.data(), block);
+    for (int64_t j = 0; j < block; ++j)
+      for (int64_t k = 0; k < program.output_count; ++k)
+        result[(start + j) * program.output_count + k] =
+            values[static_cast<std::size_t>(program.outputs[k] * block + j)];
+  }
+}
+
+void jet_point_blocks(const PointProgram& program, const JetLayout& layout, const double* points,
+                      int64_t count, double* result) {
+  const int64_t components = layout.components();
+  std::vector<double> values(
+      static_cast<std::size_t>(program.workspace_size * components * kPointBlock));
+  std::vector<double> scratch;
+  for (int64_t start = 0; start < count; start += kPointBlock) {
+    const int64_t block = std::min(kPointBlock, count - start);
+    const int64_t width = components * block;
+    for (int64_t entry = 0; entry < program.workspace_size; ++entry) {
+      double* base = values.data() + entry * width;
+      std::fill_n(base, block, program.seeds[entry]);
+      std::fill_n(base + block, width - block, 0.0);
+    }
+    for (int64_t d = 0; d < program.input_dimension; ++d) {
+      double* base = values.data() + d * width;
+      for (int64_t j = 0; j < block; ++j) base[j] = points[(start + j) * program.input_dimension + d];
+      std::fill_n(base + layout.gradient(d) * block, block, 1.0);
+    }
+    execute_jet(program.instructions, program.instruction_count, program.indices, layout,
+                values.data(), block, scratch);
+    for (int64_t j = 0; j < block; ++j)
+      for (int64_t k = 0; k < program.output_count; ++k)
+        for (int64_t c = 0; c < components; ++c)
+          result[((start + j) * program.output_count + k) * components + c] =
+              values[static_cast<std::size_t>(program.outputs[k] * width + c * block + j)];
+  }
+}
+
+}  // namespace
+
+extern "C" {
+
+int32_t phx_mc_program_evaluate(const int64_t* instructions, int64_t instruction_count,
+                                const int64_t* indices, int64_t index_count,
+                                const double* parameters, int64_t parameter_count,
+                                const double* seeds, int64_t workspace_size,
+                                int64_t input_dimension, const double* points, int64_t count,
+                                const int64_t* outputs, int64_t output_count, double* result) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const int32_t status = point_arguments_valid(
+        instructions, instruction_count, indices, index_count, parameters, parameter_count,
+        seeds, workspace_size, input_dimension, points, count, outputs, output_count, result,
+        output_count);
+    if (status != PHX_MC_OK) return status;
+    const PointProgram program{instructions, instruction_count, indices,  seeds,
+                               workspace_size, input_dimension,  outputs,  output_count};
+    evaluate_point_blocks(program, points, count, result);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_program_jet(const int64_t* instructions, int64_t instruction_count,
+                           const int64_t* indices, int64_t index_count, const double* parameters,
+                           int64_t parameter_count, const double* seeds, int64_t workspace_size,
+                           int64_t input_dimension, const double* points, int64_t count,
+                           const int64_t* outputs, int64_t output_count, double* result) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (input_dimension < 1 || input_dimension > 3) return PHX_MC_INVALID_ARGUMENT;
+    const JetLayout layout(input_dimension);
+    if (!phx::mc::addressable(output_count, layout.components(), sizeof(double)))
+      return PHX_MC_INVALID_ARGUMENT;
+    const int32_t status = point_arguments_valid(
+        instructions, instruction_count, indices, index_count, parameters, parameter_count,
+        seeds, workspace_size, input_dimension, points, count, outputs, output_count, result,
+        output_count * layout.components());
+    if (status != PHX_MC_OK) return status;
+    const PointProgram program{instructions, instruction_count, indices,  seeds,
+                               workspace_size, input_dimension,  outputs,  output_count};
+    jet_point_blocks(program, layout, points, count, result);
     return PHX_MC_OK;
   });
 }

@@ -296,6 +296,82 @@ class NativeIntervalProgram:
             high[:, self._batch_output].reshape(shape),
         )
 
+    def _point_call(
+        self, entry: str, points: NDArray[np.float64], width: int, /
+    ) -> NDArray[np.float64]:
+        """Run a point executor; ``width`` values per output entry per point."""
+        if self.batch_capacity != 1 or not self.elementwise:
+            raise ValueError("point execution requires an elementwise one-box program.")
+        if points.ndim != 2 or points.shape[1] != self.input_dimension:
+            raise ValueError(
+                f"points must have shape (count, {self.input_dimension}); got {points.shape}."
+            )
+        coordinates = np.ascontiguousarray(points, dtype=np.float64)
+        seeds = np.zeros((self.workspace_size,), dtype=np.float64)
+        for seed in self.seeds:
+            # Seeds of exact constants are degenerate; a rounded-out constant
+            # proposes its midpoint.
+            seeds[seed.offset : seed.offset + seed.lower.size] = (
+                0.5 * (seed.lower + seed.upper)
+            ).reshape((-1,))
+        outputs = np.arange(self.workspace_size, dtype=np.int64)[self._batch_output]
+        outputs = np.ascontiguousarray(outputs.reshape((-1,)), dtype=np.int64)
+        count = coordinates.shape[0]
+        result = np.empty((count, outputs.size, width), dtype=np.float64)
+        status = load_meshcore()[entry](
+            self.instructions.ctypes.data,
+            self.instructions.shape[0],
+            self.indices.ctypes.data,
+            self.indices.size,
+            self.parameters.ctypes.data,
+            self.parameters.size,
+            seeds.ctypes.data,
+            self.workspace_size,
+            self.input_dimension,
+            coordinates.ctypes.data,
+            count,
+            outputs.ctypes.data,
+            outputs.size,
+            result.ctypes.data,
+        )
+        _raise_for_call(status, entry.removeprefix("phx_mc_"))
+        return result
+
+    def evaluate_points(self, points: NDArray[np.float64], /) -> NDArray[np.float64]:
+        """Evaluate the program at ``(count, input_dimension)`` points in binary64.
+
+        A floating-point proposal with ordinary rounding: it bounds nothing. The
+        interval executor of the same program is the certified counterpart.
+        """
+        result = self._point_call("phx_mc_program_evaluate", points, 1)
+        return result.reshape((points.shape[0], *self.output.shape[1:]))
+
+    def evaluate_jets(
+        self, points: NDArray[np.float64], /
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        """Value, gradient and Hessian of the program at points, in binary64.
+
+        For a program of one to three inputs and output shape ``(1, *s)``:
+        returns arrays of shapes ``(count, *s)``, ``(count, *s, n)`` and
+        ``(count, *s, n, n)``. A proposal, like `evaluate_points`.
+        """
+        variables = self.input_dimension
+        if not 1 <= variables <= 3:
+            raise ValueError("jet execution supports one to three inputs.")
+        components = 1 + variables + variables * (variables + 1) // 2
+        result = self._point_call("phx_mc_program_jet", points, components)
+        count, outputs = result.shape[0], result.shape[1]
+        shape = (count, *self.output.shape[1:])
+        upper = np.triu_indices(variables)
+        hessian = np.empty((count, outputs, variables, variables), dtype=np.float64)
+        hessian[:, :, upper[0], upper[1]] = result[:, :, 1 + variables :]
+        hessian[:, :, upper[1], upper[0]] = result[:, :, 1 + variables :]
+        return (
+            result[:, :, 0].reshape(shape),
+            result[:, :, 1 : 1 + variables].reshape((*shape, variables)),
+            hessian.reshape((*shape, variables, variables)),
+        )
+
     def evaluate_branches(
         self, lower: NDArray[np.float64], upper: NDArray[np.float64], /
     ) -> tuple[

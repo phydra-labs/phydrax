@@ -1,6 +1,6 @@
 """Native meshing kernels against the measured best reference per row.
 
-Each row times one native kernel on a fixed generated input, single threaded, with
+Run as `python -m benchmarks.native_meshing` from the repository root. Each row times one native kernel on a fixed generated input, single threaded, with
 host timing (the kernels return host arrays). The ceiling of a row is the best
 reference time measured on the development machine for the same input
 (`native_meshing_ceilings.json`, with its provenance); a row passes when the
@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from _runtime import capture_environment, measure_host
 
+from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 
 
