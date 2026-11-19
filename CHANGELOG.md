@@ -317,6 +317,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native surface-to-tetrahedra on fixed boundaries is faster with unchanged
+  output: unchecked carrier reads and no incidence maintenance in interior
+  refinement, grid-indexed protection radii, a fixed-width exact integer
+  insphere, hashed source-face lookups and sort-based planar polygon grouping
+  in recovery, and an exact-plane shortcut for coverage partners that share a
+  subject corner.
 - PLC tetrahedral volumes are certified by exact native degree theorems
   (`phx_mc_verify_tetrahedra`, labeled `phx_mc_verify_volume`): positive
   cells, oppositely paired faces, an embedded edge-manifold boundary whose
