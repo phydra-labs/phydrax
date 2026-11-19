@@ -695,6 +695,48 @@ def test_bundle_tables_mirror_the_domain(quadric_domain: MeshingDomain) -> None:
     assert all(not array.flags.writeable for array in model)
 
 
+@pytest.mark.parametrize("kind", ("sphere", "cylinder", "cone"))
+def test_pole_edges_do_not_alias_curve_rows(kind: str) -> None:
+    contract = phx.SpatialCoordinateContract.si()
+    if kind == "sphere":
+        source = phx.geometry.brep.brep_sphere(1.0, coordinate_contract=contract)
+    elif kind == "cylinder":
+        source = phx.geometry.brep.brep_cylinder(1.0, 1.0, coordinate_contract=contract)
+    else:
+        source = phx.geometry.brep.brep_cone(1.0, 0.0, 1.0, coordinate_contract=contract)
+    domain = MeshingDomain.from_brep(source)
+    bundle = cad_geometry_bundle(domain)
+    model = bundle.model
+    rows = bundle.edge_curve_rows
+    geometry = source.geometry
+    expected = [
+        geometry.edge_curves[domain.source_indices[1][edge]] >= 0
+        for edge in range(len(domain.curves))
+    ]
+    np.testing.assert_array_equal(rows >= 0, expected)
+    np.testing.assert_array_equal(rows[rows >= 0], np.arange(sum(expected)))
+    assert not rows.flags.writeable
+    assert model.curve_nodes.size == sum(expected)
+    for edge, row in enumerate(rows):
+        if row < 0:
+            continue
+        source_curve = geometry.curves[geometry.edge_curves[domain.source_indices[1][edge]]]
+        parameters = np.linspace(*model.curve_ranges[row], 7)
+        actual = cad_geometry_evaluate(
+            model, CadEntityKind.CURVE, int(row), parameters, CadGeometryQuantity.VALUE
+        )
+        np.testing.assert_allclose(
+            actual, source_curve.evaluate(jnp.asarray(parameters)), rtol=0.0, atol=1e-14
+        )
+        np.testing.assert_array_equal(
+            model.curve_corners[row], (domain.curves[edge].start, domain.curves[edge].end)
+        )
+    uses = [use for patch in domain.patches for loop in patch.loops for use in loop]
+    for index, use in enumerate(uses):
+        entity = rows[use.curve] if isinstance(use, PatchCurveUse) else use.corner
+        assert model.use_entities[index] == entity
+
+
 def test_bundle_is_cached_by_domain_identity(quadric_domain: MeshingDomain) -> None:
     first = cad_geometry_bundle(quadric_domain)
     second = cad_geometry_bundle(quadric_domain)
