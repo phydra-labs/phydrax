@@ -706,13 +706,16 @@ class TetMesh {
   // at `point` (no source witness) with size target `size` (0: none). The
   // caller has checked that the cavity is one region with no constrained
   // face, constrained segment or vertex inside, and that every cone cell
-  // over `boundary` (cavity cell, face slot whose neighbor stays) is
-  // positive on carriers; a cone over a source-witnessed vertex is checked
-  // exactly here. New cells and the vertex take fresh IDs and no lineage.
-  // Created cell slots are returned in `created`.
+  // over `boundary` (cavity cell and face slot whose neighbor stays, that
+  // neighbor and its face slot) is positive on carriers; `vertices` are the
+  // distinct vertices of the boundary faces. A cone over a source-witnessed
+  // vertex is checked exactly here. New cells and the vertex take fresh IDs
+  // and no lineage. Created cell slots are returned in `created`, one per
+  // boundary face in order.
   TetEditStatus insert_interior_vertex(const double* point, double size,
                                        std::span<const std::int32_t> cells,
-                                       std::span<const std::pair<std::int32_t, int>> boundary,
+                                       std::span<const BoundaryFacet> boundary,
+                                       std::span<const std::int32_t> vertices,
                                        std::vector<std::int32_t>& created);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
@@ -932,9 +935,16 @@ class TetMesh {
     std::int32_t apex = -1;
     std::array<std::int32_t, 4> vertices{};
   };
+  // An outer edge of a cone cell's face through the center, waiting for the
+  // second cone cell that holds it (`cell` -1 once paired).
+  struct ConeEdge {
+    static constexpr std::uint64_t kEmpty = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t key = kEmpty;
+    std::int32_t cell = -1;
+    std::int32_t face = -1;
+  };
   std::vector<ConeFace> cone_faces_;
-  std::vector<std::uint64_t> cone_edge_keys_;
-  std::vector<std::int64_t> cone_edge_sides_;
+  std::vector<ConeEdge> cone_edges_;
 };
 
 }  // namespace phx::mc

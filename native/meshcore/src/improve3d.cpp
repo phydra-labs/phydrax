@@ -890,9 +890,10 @@ bool quality_vector_for_cells(const TetMesh& mesh,
 // keeps a relative margin of 1e-6. A radius-edge ratio at most B bounds every
 // face angle phi by sin phi >= 1 / (2 B) (law of sines, R at least the face's
 // circumradius), so the face normals are well conditioned. Without a
-// radius-edge bound the screen decides nothing.
+// radius-edge bound the screen decides nothing. `sine_squared` is the squared
+// sine of the dihedral target.
 bool clearly_meets_targets(const std::array<const double*, 4>& p,
-                           const TetQualityRequest& request) noexcept {
+                           const TetQualityRequest& request, double sine_squared) noexcept {
   const double bound = request.radius_edge_bound;
   if (!(bound > 0.0)) return false;
   const double* o = p[0];
@@ -967,8 +968,6 @@ bool clearly_meets_targets(const std::array<const double*, 4>& p,
   }
   if (!(det_squared * kMargin > floor * floor * largest_product)) return false;
   if (request.minimum_dihedral_degrees == 0.0) return true;
-  const double sine = std::sin(request.minimum_dihedral_degrees * (std::numbers::pi / 180.0));
-  const double sine_squared = sine * sine;
   double normal_squared[4];
   for (int opposite = 0; opposite < 4; ++opposite) {
     const double* m = p[static_cast<std::size_t>((opposite + 1) & 3)];
@@ -2318,9 +2317,11 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // vertex phase, the shape pass and the final records read only these.
   std::vector<std::uint8_t> violating_slots;
   std::vector<std::uint64_t> violating_ids;
-  const auto enqueue_violating_cell = [&](std::uint64_t id) {
-    const std::int32_t slot = mesh.cell_slot(id);
-    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return true;
+  const double dihedral_sine =
+      std::sin(request.minimum_dihedral_degrees * (std::numbers::pi / 180.0));
+  const double dihedral_sine_squared = dihedral_sine * dihedral_sine;
+  // Measures the live finite cell at `slot`, whose ID is `id`.
+  const auto screen_slot = [&](std::int32_t slot, std::uint64_t id) {
     if (violating_slots.size() <= static_cast<std::size_t>(slot)) {
       violating_slots.resize(mesh.complex().tets.size(), 0);
       cell_quality.resize(mesh.complex().tets.size());
@@ -2330,7 +2331,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (!mesh.metric_active() &&
         clearly_meets_targets({mesh.point(vertices[0]), mesh.point(vertices[1]),
                                mesh.point(vertices[2]), mesh.point(vertices[3])},
-                              request)) {
+                              request, dihedral_sine_squared)) {
       violating_slots[static_cast<std::size_t>(slot)] = 0;
       cell_quality.defer(static_cast<std::size_t>(slot));
       return true;
@@ -2346,6 +2347,11 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     if (quality.validity_class == kBelowDeterminantFloor) below_floor_cells.insert(id);
     return true;
+  };
+  const auto enqueue_violating_cell = [&](std::uint64_t id) {
+    const std::int32_t slot = mesh.cell_slot(id);
+    if (!mesh.complex().live(slot) || is_ghost(mesh.tet(slot))) return true;
+    return screen_slot(slot, id);
   };
   const auto enqueue_affected = [&](std::span<const std::uint64_t> ids) {
     for (std::uint64_t id : ids) {
@@ -2371,7 +2377,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   for (std::size_t slot = 0; slot < mesh.complex().tets.size(); ++slot) {
     const std::int32_t cell = static_cast<std::int32_t>(slot);
     if (!mesh.complex().live(cell) || is_ghost(mesh.tet(cell))) continue;
-    if (!enqueue_violating_cell(mesh.cell_id(cell))) return PHX_MC_INVALID_INPUT;
+    if (!screen_slot(cell, mesh.cell_id(cell))) return PHX_MC_INVALID_INPUT;
   }
   for (std::uint64_t id : violating_ids) {
     const Tetrahedron& tet = mesh.tet(mesh.cell_slot(id));

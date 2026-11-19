@@ -582,7 +582,8 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
                          std::vector<double>& sizes, double& smallest) {
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
-  // The shortest incident edge bounds lambda from above and sets the query radius.
+  // The shortest incident edge bounds lambda from above and sets the query
+  // radius; one edge per cell samples the edge lengths for the grid cell.
   std::vector<double> lengths;
   const TetrahedralComplex& complex = mesh.complex();
   for (std::size_t row = 0; row < complex.tets.size(); ++row) {
@@ -596,7 +597,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
         const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
         sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
         sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
-        lengths.push_back(length);
+        if (first == 0 && second == 1) lengths.push_back(length);
       }
     }
   }
@@ -629,8 +630,8 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   std::sort(lines.begin(), lines.end());
   lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
 
-  // Cells of the median edge length, coarsened so that no feature box spans
-  // more than 17 cells per axis.
+  // Cells of the median sampled edge length, coarsened so that no feature box
+  // spans more than 17 cells per axis.
   std::nth_element(lengths.begin(), lengths.begin() + static_cast<std::ptrdiff_t>(lengths.size() / 2),
                    lengths.end());
   double cell = lengths[lengths.size() / 2];
@@ -699,6 +700,18 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     }
     return squared > radius * radius * (1.0 + 1e-9);
   };
+  // A point whose metric image lies farther than `radius` from v's cannot
+  // lower lambda (the relative slack of 1e-9 covers the rounding of either
+  // distance), so only nearer ones are measured.
+  const auto near = [](const std::array<double, 3>& point, const std::array<double, 3>& here,
+                       double radius) {
+    double squared = 0.0;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const double gap = point[axis] - here[axis];
+      squared += gap * gap;
+    }
+    return squared <= radius * radius * (1.0 + 1e-9);
+  };
 
   smallest = infinity;
   for (std::size_t slot = 0; slot < slot_count; ++slot) {
@@ -712,7 +725,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     const double upper[3]{here[0] + lambda, here[1] + lambda, here[2] + lambda};
     const bool visited =
         point_grid.visit_box(cell, lower, upper, [&](std::int32_t other) {
-          if (other != vertex) {
+          if (other != vertex && near(world[static_cast<std::size_t>(other)], here, lambda)) {
             lambda = std::min(lambda, metric_distance(mesh, p, mesh.point(other)));
           }
         }) &&
@@ -951,7 +964,9 @@ class InteriorCavity {
       for (std::int32_t cell : cells) {
         const Tetrahedron& tet = tets[static_cast<std::size_t>(cell)];
         for (int face = 0; face < 4; ++face) {
-          if (tets[static_cast<std::size_t>(tet.n[face])].stamp == member) continue;
+          const std::int32_t outside = tet.n[face];
+          const Tetrahedron& beyond = tets[static_cast<std::size_t>(outside)];
+          if (beyond.stamp == member) continue;
           const double* cone[4];
           for (int corner = 0; corner < 4; ++corner) {
             cone[corner] = corner == face ? point : mesh.point(tet.v[corner]);
@@ -960,7 +975,7 @@ class InteriorCavity {
             drop = cell;
             break;
           }
-          boundary.emplace_back(cell, face);
+          boundary.push_back({cell, face, outside, neighbor_slot(beyond, cell)});
           for (int corner = 0; corner < 4; ++corner) {
             if (corner == face) continue;
             const std::int32_t vertex = tet.v[corner];
@@ -975,9 +990,9 @@ class InteriorCavity {
       if (drop < 0) {
         if (has_embedded) {
           kept_edges_.clear();
-          for (const auto& [cell, face] : boundary) {
+          for (const BoundaryFacet& face : boundary) {
             std::int32_t facet[3];
-            oriented_facet(tets[static_cast<std::size_t>(cell)].v, face, facet);
+            oriented_facet(tets[static_cast<std::size_t>(face.tet)].v, face.slot, facet);
             for (int corner = 0; corner < 3; ++corner) {
               kept_edges_.push_back(slot_edge(facet[corner], facet[(corner + 1) % 3]));
             }
@@ -1041,7 +1056,7 @@ class InteriorCavity {
   }
 
   std::vector<std::int32_t> cells;  // root first
-  std::vector<std::pair<std::int32_t, int>> boundary;
+  std::vector<BoundaryFacet> boundary;  // cavity cell, face, the cell beyond, its face
   std::vector<std::int32_t> vertices;  // distinct boundary vertices
   std::int32_t root = -1;
   std::int32_t blocked_cell = -1;
@@ -1126,13 +1141,14 @@ void cross3(const double* u, const double* v, double* out) {
 // n_k opposite corner k, sin^2 theta_ij = D^2 |P_i - P_j|^2 / (|n_k|^2 |n_l|^2),
 // {k, l} the other two corners. `toward` receives the unit normal of the
 // worst cell's cavity face, pointing to `point`.
-double screen_cone(const TetMesh& mesh, std::span<const std::pair<std::int32_t, int>> boundary,
+double screen_cone(const TetMesh& mesh, std::span<const BoundaryFacet> boundary,
                    const double* point, double bound, double point_size, double* toward,
                    std::vector<std::uint8_t>& meets) {
   meets.assign(boundary.size(), 0U);
   double worst = std::numeric_limits<double>::infinity();
   for (std::size_t row = 0; row < boundary.size(); ++row) {
-    const auto [cell, face] = boundary[row];
+    const std::int32_t cell = boundary[row].tet;
+    const int face = boundary[row].slot;
     const Tetrahedron& tet = mesh.tet(cell);
     const double* corners[4];
     std::array<double, 4> sizes{};
@@ -2590,7 +2606,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       removed_cells.push_back(vertices);
     }
     const TetEditStatus status =
-        mesh.insert_interior_vertex(point, size, interior.cells, interior.boundary, created_slots);
+        mesh.insert_interior_vertex(point, size, interior.cells, interior.boundary,
+                                    interior.vertices, created_slots);
     const std::int32_t error = edit_error(status);
     if (error != PHX_MC_OK) return error;
     if (status != TetEditStatus::kApplied) return PHX_MC_OK;
@@ -2684,7 +2701,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       if (boundary_splittable &&
           std::any_of(interior.boundary.begin(), interior.boundary.end(), [&](const auto& entry) {
-            return mesh.complex_.constraint(entry.first, entry.second) != kNoConstraint;
+            return mesh.complex_.constraint(entry.tet, entry.slot) != kNoConstraint;
           })) {
         break;
       }
@@ -2798,7 +2815,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       std::int32_t encroached_cell = -1;
       int encroached_face = -1;
       bool segment_encroached = false;
-      for (const auto& [cell, face] : interior.boundary) {
+      for (const BoundaryFacet& entry : interior.boundary) {
+        const std::int32_t cell = entry.tet;
+        const int face = entry.slot;
         if (mesh.complex_.constraint(cell, face) == kNoConstraint) continue;
         std::int32_t facet[3];
         oriented_facet(mesh.tet(cell).v, face, facet);

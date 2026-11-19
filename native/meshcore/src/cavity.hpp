@@ -145,12 +145,10 @@ class TetrahedralComplex {
     label(t, k, id);
     label(other, back, id);
   }
-  // Labels the faces of cell t on its side only. For a commit that labels
-  // both sides of every face it creates, and keeps on each outer face the
-  // label the cell beyond already holds.
-  void set_cell_constraints(int32_t t, const std::array<int32_t, 4>& ids) {
-    for (int k = 0; k < 4; ++k) label(t, k, ids[static_cast<std::size_t>(k)]);
-  }
+  // Labels face k of cell t on its side only. For a commit that labels both
+  // sides of every face it creates, and keeps on each outer face the label
+  // the cell beyond already holds.
+  void set_cell_face_constraint(int32_t t, int k, int32_t id) { label(t, k, id); }
   void set_region(int32_t t, int32_t value) {
     tets[static_cast<std::size_t>(t)].region = value;
   }

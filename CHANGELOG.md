@@ -268,6 +268,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native tetrahedral refinement's interior cone commit takes each cavity
+  boundary face with the cell beyond it and that cell's face (found during
+  the star check) and the cavity's distinct boundary vertices, so it checks
+  source witnesses once per vertex instead of per face corner, keeps its
+  edge-pairing entries in one table, and writes each cone cell's region and
+  outer label with the cell. Its local feature sizes measure only point
+  features within the query radius and sample one edge per cell for the grid
+  cell; improvement's first quality sweep reads each cell by slot and
+  computes the dihedral target's sine once. Same meshes on the six ledger
+  rows; L3 refine + improve about 3% faster.
 - Native tetrahedral refinement's interior cavity keeps its walk and cavity
   marks in the cells' own visit stamps instead of two slot-sized banks,
   decides each cone cell's exact and binary64 positivity from one floating
