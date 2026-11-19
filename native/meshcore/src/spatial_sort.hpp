@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -167,8 +168,8 @@ inline int brio_round_count(std::size_t count) {
 }
 inline std::uint32_t brio_round(int32_t index, int rounds) {
   const std::uint64_t hash = splitmix64(static_cast<std::uint64_t>(index) ^ 0x5DEECE66DULL);
-  int level = 0;
-  while (level < rounds - 1 && ((hash >> level) & 1U) == 0U) ++level;
+  // The number of trailing zero bits, at most rounds - 1.
+  const int level = std::min(std::countr_zero(hash), rounds - 1);
   return static_cast<std::uint32_t>(rounds - 1 - level);
 }
 
