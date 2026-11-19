@@ -527,6 +527,7 @@ def _ceiling(
 def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     samples: list[float] = []
     count = 0
+    result: object = None
     unmet = 0
     for _ in range(repeats):
         result, seconds = measure_host(row.run)
