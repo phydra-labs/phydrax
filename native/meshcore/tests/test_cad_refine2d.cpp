@@ -207,9 +207,40 @@ void metric_errors() {
   for(std::size_t t=0;t<c.triangulation.triangles.size();++t) {
     if(!c.triangulation.live[t] || !c.triangulation.region[t] ||
        c.triangulation.is_ghost(static_cast<int32_t>(t))) continue;
+    const auto& tr=c.triangulation;
+    const auto& cell=tr.triangles[t];
+    const double* p[3]={tr.point(cell.v[0]),tr.point(cell.v[1]),tr.point(cell.v[2])};
+    const double centroid[2]={(p[0][0]+p[1][0]+p[2][0])/3,
+                              (p[0][1]+p[1][1]+p[2][1])/3};
+    const auto m=height_field(centroid,nullptr);
+    double length[3];
+    int shortest=0;
+    for(int k=0;k<3;++k) {
+      const double dx=p[next3(k)][0]-p[prev3(k)][0];
+      const double dy=p[next3(k)][1]-p[prev3(k)][1];
+      length[k]=std::sqrt(m.uu*dx*dx+2*m.uv*dx*dy+m.vv*dy*dy);
+      if(length[k]<length[shortest]) shortest=k;
+    }
+    const double semiperimeter=(length[0]+length[1]+length[2])/2;
+    const double area=std::sqrt(semiperimeter*(semiperimeter-length[0])*
+                                (semiperimeter-length[1])*(semiperimeter-length[2]));
+    const double radius=length[0]*length[1]*length[2]/(4*area);
+    const int j=next3(shortest), k=prev3(shortest);
+    const double cosine=(length[j]*length[j]+length[k]*length[k]-
+                         length[shortest]*length[shortest])/(2*length[j]*length[k]);
+    const double min_angle=std::acos(std::clamp(cosine,-1.0,1.0));
+    const bool protected_angle=cell.v[shortest]<recount.point_count &&
+        tr.constraint(static_cast<int32_t>(t),j)!=-1 &&
+        tr.constraint(static_cast<int32_t>(t),k)!=-1;
+    const bool expected_size=radius>std::sqrt(0.5);
+    const bool expected_angle=!protected_angle &&
+        min_angle<25.0*3.14159265358979323846/180.0;
     bool size=false, angle=false;
     PHX_CHECK(cad_refine2d_bad_triangle(recount,c,static_cast<int32_t>(t),size,angle)==PHX_MC_OK);
-    total+=size || angle; sizes+=size; angles+=angle;
+    // Fault caught: using a vertex metric or a wrong circumradius in the predicate.
+    PHX_CHECK(size==expected_size && angle==expected_angle);
+    total+=expected_size || expected_angle;
+    sizes+=expected_size; angles+=expected_angle;
   }
   // Fault caught: reporting only one queued triangle on a point-cap exit.
   PHX_CHECK(total>1 && c.stats.unresolved_triangles==total);
