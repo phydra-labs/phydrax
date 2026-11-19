@@ -156,6 +156,7 @@ set(PHX_MC_HEADERS
   src/cdt2d.hpp
   src/chart_surface.hpp
   src/cad_refine2d.hpp
+  src/refine_queue.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
