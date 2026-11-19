@@ -32,6 +32,9 @@ struct CadFaceMesh {
   std::vector<CadFaceEdge> boundary_edges;
   CadRefine2DStats stats;
   int64_t omitted_pole_points = 0;
+  int64_t periodic_corner_gaps = 0;
+  uint64_t max_periodic_corner_gap_ulps = 0;
+  phx_mc_cad_face_failure failure{};
 };
 
 // Validates the shared curve discretization once before any face consumes it.

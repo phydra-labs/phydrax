@@ -149,9 +149,16 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     CadFaceMesh local;
     status = cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta, local);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+    if (local.failure.reason != 0) {
+      output = CadSurfaceMesh{};
+      output.face_failures.push_back(local.failure);
+      return PHX_MC_UNRESOLVED;
+    }
     if (status == PHX_MC_UNRESOLVED) overall = status;
     mesh.face_stats.push_back(local.stats);
     mesh.omitted_pole_points.push_back(local.omitted_pole_points);
+    mesh.periodic_corner_gaps.push_back(local.periodic_corner_gaps);
+    mesh.max_periodic_corner_gap_ulps.push_back(local.max_periodic_corner_gap_ulps);
     std::vector<int32_t> global(local.vertices.size());
     for (std::size_t j = 0; j < local.vertices.size(); ++j) {
       const auto& vertex = local.vertices[j];

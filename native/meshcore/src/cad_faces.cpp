@@ -3,11 +3,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <vector>
 
 #include "chart_surface.hpp"
+#include "expansion.hpp"
 #include "predicates.hpp"
 
 #include "phydrax_meshcore.h"
@@ -65,10 +67,57 @@ bool chart_point(const cad::CadGeometry& geometry, int64_t use, double parameter
          std::isfinite(uv[0]) && std::isfinite(uv[1]);
 }
 
+uint64_t ulp_gap(double a, double b) {
+  const auto ordered = [](double value) {
+    const uint64_t bits = std::bit_cast<uint64_t>(value);
+    constexpr uint64_t sign = uint64_t{1} << 63;
+    return bits & sign ? ~bits : bits | sign;
+  };
+  if (a == b) return 0;
+  const uint64_t x = ordered(a), y = ordered(b);
+  return x > y ? x - y : y - x;
+}
+
+// Floating point proposes the integer; expansion arithmetic alone decides
+// whether the exact difference is a nonzero integer number of periods.
+int exact_turn(double first, double last, double period, int64_t& turns) {
+  const double ratio = (last - first) / period;
+  if (!std::isfinite(ratio) || std::abs(ratio) > 0x1p52) return -1;
+  const double candidate = std::nearbyint(ratio);
+  if (candidate == 0.0) return 0;
+  if (!(Expansion::difference(last, first) - Expansion::product(candidate, period)).is_zero())
+    return 0;
+  turns = static_cast<int64_t>(candidate);
+  return 1;
+}
+
+int32_t check_loop_closure(const phx_mc_cad_model& model, int32_t face, int32_t loop,
+                           const std::array<double, 2>& first, const std::array<double, 2>& last,
+                           CadFaceMesh& result) {
+  for (int axis = 0; axis < 2; ++axis) {
+    const double period = model.surface_periods[2 * face + axis];
+    if (!(period > 0.0) || first[axis] == last[axis]) continue;
+    int64_t turns = 0;
+    const int decision = exact_turn(first[axis], last[axis], period, turns);
+    if (decision != 0) {
+      result.failure = {face, loop, -1, axis,
+                        decision > 0 ? PHX_MC_CAD_FACE_PERIODIC_WRAP
+                                     : PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE,
+                        turns, 0.0};
+      return PHX_MC_UNRESOLVED;
+    }
+    ++result.periodic_corner_gaps;
+    result.max_periodic_corner_gap_ulps =
+        std::max(result.max_periodic_corner_gap_ulps, ulp_gap(first[axis], last[axis]));
+  }
+  return PHX_MC_OK;
+}
+
 // One endpoint value is chosen for each consecutive use occurrence: the end
 // of the preceding use, except at the loop closure where the first start wins.
 int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
-                      int32_t face, cad::EvaluationWorkspace& workspace, FaceBoundary& boundary) {
+                      int32_t face, cad::EvaluationWorkspace& workspace, FaceBoundary& boundary,
+                      CadFaceMesh& result) {
   const auto& model = geometry.model();
   for (int64_t loop = 0; loop < model.loop_count; ++loop) {
     if (model.loop_surfaces[loop] != face) continue;
@@ -76,7 +125,7 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
     const int64_t last_use = model.loop_use_offsets[loop + 1];
     if (first_use == last_use) return PHX_MC_INVALID_INPUT;
     std::vector<int32_t> rows;
-    std::array<double, 2> previous_uv{};
+    std::array<double, 2> first_uv{}, previous_uv{};
     int32_t previous_corner = -1;
     for (int64_t use = first_use; use < last_use; ++use) {
       const bool pole = model.use_kinds[use] == 1;
@@ -99,6 +148,7 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
         std::array<double, 2> uv;
         if (!chart_point(geometry, use, use_parameter(model, use, s), workspace, uv))
           return PHX_MC_INVALID_INPUT;
+        if (j == 0 && use == first_use) first_uv = uv;
         if (j == 0 && use != first_use) uv = previous_uv;
         if (j == count - 1) {
           previous_uv = uv;
@@ -117,6 +167,9 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
       }
     }
     if (previous_corner != boundary.vertices[rows.front()].entity) return PHX_MC_INVALID_INPUT;
+    const int32_t closure = check_loop_closure(model, face, static_cast<int32_t>(loop),
+                                               first_uv, previous_uv, result);
+    if (closure != PHX_MC_OK) return closure;
     for (std::size_t j = 0; j < rows.size(); ++j) {
       boundary.segments.push_back(rows[j]);
       boundary.segments.push_back(rows[(j + 1) % rows.size()]);
@@ -620,7 +673,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
   FaceBoundary boundary;
   cad::EvaluationWorkspace workspace;
-  int32_t status = make_boundary(geometry, curves, face, workspace, boundary);
+  result = CadFaceMesh{};
+  int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
   FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, metric_points};
   if (metric_points) metric_points->clear();

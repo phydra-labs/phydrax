@@ -1063,6 +1063,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
+    "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
+    "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
+    "phx_mc_cad_surface_result_free": (None, (_P,)),
     "phx_mc_implicit_stuffing": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
@@ -11924,4 +11928,152 @@ __all__ = [
     "IntervalBoxProgram",
     "ZeroSetRemeshResult",
     "zero_set_remesh",
+    "CadSurfaceResult",
+    "cad_mesh",
 ]
+
+
+class _CadSurfaceControls(ctypes.Structure):
+    _fields_ = (
+        ("face_sizes", _P), ("face_tolerances", _P), ("curve_tolerances", _P),
+        ("tolerance_fraction", _F64), ("grading", _F64), ("minimum_size", _F64),
+    )
+
+
+class _CadSurfaceArrays(ctypes.Structure):
+    _fields_ = (
+        ("vertex_capacity", _I64), ("triangle_capacity", _I64),
+        ("sliver_capacity", _I64), ("curve_edge_capacity", _I64), ("face_capacity", _I64),
+        ("curve_capacity", _I64), ("parameter_capacity", _I64), ("failure_capacity", _I64),
+        ("face_failure_capacity", _I64),
+        ("points", _P), ("vertex_dimensions", _P), ("vertex_entities", _P),
+        ("vertex_parameters", _P), ("triangles", _P), ("triangle_patches", _P),
+        ("triangle_uv", _P), ("triangle_edge_uses", _P), ("facet_regions", _P),
+        ("sliver_uv", _P), ("sliver_patches", _P), ("curve_edges", _P),
+        ("curve_edge_curves", _P), ("curve_edge_parameters", _P), ("face_stats", _P),
+        ("curve_offsets", _P), ("curve_parameters", _P), ("curve_sag_splits", _P),
+        ("curve_failures", _P), ("curve_statistics", _P), ("face_failures", _P),
+    )
+
+
+_CAD_FACE_STATS_DTYPE = np.dtype(
+    [(name, np.int64) for name in (
+        "metric_evaluations", "insertions", "unresolved_size", "unresolved_angle",
+        "encroachment_refusals", "nonstar_refusals", "outside_refusals",
+        "proximity_refusals", "unresolved_triangles", "excluded_refusals",
+        "fixed_triangles_skipped", "omitted_pole_points", "periodic_corner_gaps",
+    )] + [("max_periodic_corner_gap_ulps", np.uint64)], align=True,
+)
+_CAD_CURVE_STATS_DTYPE = np.dtype(
+    [(name, np.int64) for name in (
+        "first_order_evaluations", "second_order_evaluations", "sag_evaluations",
+        "small_feature_resamples", "sag_splits", "parameter_count", "unresolved_count",
+    )], align=True,
+)
+_CAD_CURVE_FAILURE_DTYPE = np.dtype(
+    [("curve", np.int32), ("first", np.float64), ("last", np.float64)], align=True,
+)
+_CAD_FACE_FAILURE_DTYPE = np.dtype(
+    [("face", np.int32), ("loop", np.int32), ("use", np.int32), ("axis", np.int32),
+     ("reason", np.int32), ("turns", np.int64), ("parameter", np.float64)], align=True,
+)
+
+
+class CadSurfaceResult(NamedTuple):
+    """Owned surface candidate and the curve/face construction findings."""
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    vertex_dimensions: np.ndarray
+    vertex_entities: np.ndarray
+    vertex_parameters: np.ndarray
+    triangles: np.ndarray
+    triangle_patches: np.ndarray
+    triangle_uv: np.ndarray
+    triangle_edge_uses: np.ndarray
+    facet_regions: np.ndarray
+    sliver_uv: np.ndarray
+    sliver_patches: np.ndarray
+    curve_edges: np.ndarray
+    curve_edge_curves: np.ndarray
+    curve_edge_parameters: np.ndarray
+    face_stats: np.ndarray
+    curve_offsets: np.ndarray
+    curve_parameters: np.ndarray
+    curve_sag_splits: np.ndarray
+    curve_failures: np.ndarray
+    curve_statistics: np.ndarray
+    face_failures: np.ndarray
+
+
+def cad_mesh(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    /,
+    *,
+    tolerance_fraction: float = 0.5,
+    grading: float = 1.3,
+    minimum_size: float = 1e-12,
+) -> CadSurfaceResult:
+    """Discretize the curves and assemble a native CAD surface candidate."""
+    sizes = _real_array(face_sizes, "face_sizes")
+    tolerances = _real_array(face_tolerances, "face_tolerances")
+    curve_tols = _real_array(curve_tolerances, "curve_tolerances")
+    if sizes.shape != (model.surface_nodes.size,) or tolerances.shape != sizes.shape:
+        raise ValueError("face sizes and tolerances must have one value per face.")
+    if curve_tols.shape != (model.curve_nodes.size,):
+        raise ValueError("curve tolerances must have one value per curve.")
+    structure, retained = _cad_model_structure(model)
+    controls = _CadSurfaceControls(
+        sizes.ctypes.data, tolerances.ctypes.data, curve_tols.ctypes.data,
+        tolerance_fraction, grading, minimum_size,
+    )
+    library = load_meshcore()
+    handle = ctypes.c_void_p()
+    status = MeshcoreStatus(library["phx_mc_cad_mesh"](
+        ctypes.addressof(structure), ctypes.addressof(controls), ctypes.addressof(handle)
+    ))
+    del retained
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "cad_mesh")
+    if not handle.value:
+        raise MeshcoreError(status, "cad_mesh: no complete candidate")
+    try:
+        counts = np.empty((9,), dtype=np.int64)
+        _raise_for_call(library["phx_mc_cad_surface_result_sizes"](handle, counts.ctypes.data),
+                        "cad_surface_result_sizes")
+        if np.any(counts < 0):
+            raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "negative CAD surface size")
+        v, t, s, e, f, c, p, failures, face_failure_count = counts
+        points = np.empty((v, 3), dtype=np.float64)
+        dimensions = np.empty((v,), dtype=np.int8)
+        entities = np.empty((v,), dtype=np.int32)
+        parameters = np.empty((v, 2), dtype=np.float64)
+        triangles = np.empty((t, 3), dtype=np.int32)
+        patches = np.empty((t,), dtype=np.int32)
+        uv = np.empty((t, 3, 2), dtype=np.float64)
+        uses = np.empty((t, 3), dtype=np.int32)
+        regions = np.empty((t, 2), dtype=np.int32)
+        sliver_uv = np.empty((s, 3, 2), dtype=np.float64)
+        sliver_patches = np.empty((s,), dtype=np.int32)
+        edges = np.empty((e, 2), dtype=np.int32)
+        edge_curves = np.empty((e,), dtype=np.int32)
+        edge_parameters = np.empty((e, 2), dtype=np.float64)
+        face_stats = np.empty((f,), dtype=_CAD_FACE_STATS_DTYPE)
+        offsets = np.empty((c + 1,), dtype=np.int64)
+        curve_parameters = np.empty((p,), dtype=np.float64)
+        splits = np.empty((c,), dtype=np.int64)
+        curve_failures = np.empty((failures,), dtype=_CAD_CURVE_FAILURE_DTYPE)
+        curve_statistics = np.empty((1,), dtype=_CAD_CURVE_STATS_DTYPE)
+        face_failures = np.empty((face_failure_count,), dtype=_CAD_FACE_FAILURE_DTYPE)
+        banks = (points, dimensions, entities, parameters, triangles, patches, uv, uses, regions,
+                 sliver_uv, sliver_patches, edges, edge_curves, edge_parameters, face_stats,
+                 offsets, curve_parameters, splits, curve_failures, curve_statistics, face_failures)
+        outputs = _CadSurfaceArrays(*(int(n) for n in counts), *(a.ctypes.data for a in banks))
+        _raise_for_call(library["phx_mc_cad_surface_result_export"](handle, ctypes.addressof(outputs)),
+                        "cad_surface_result_export")
+        return CadSurfaceResult(status, *banks)
+    finally:
+        library["phx_mc_cad_surface_result_free"](handle)
