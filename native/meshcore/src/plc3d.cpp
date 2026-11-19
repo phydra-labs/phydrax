@@ -1546,25 +1546,114 @@ class PlcRecoveryBuilder {
   // void supports the whole source point set: the closed exterior boundary
   // is then the convex hull, whose faces are present in every triangulation
   // of the source points. Interfaces between two regions may be nonconvex.
-  bool convex_boundary() const {
-    bool exterior = false;
+  //
+  // A triangle T supports the points iff its plane is the plane of a facet
+  // of their hull. The hull triangles of the symbolically perturbed Delaunay
+  // triangulation lie in supporting planes and triangulate the hull
+  // boundary, so a facet through a vertex a of T holds a hull triangle h
+  // incident to a, or, when a is no hull vertex, a hull triangle containing
+  // a, which is then the coplanar apex of the cell below h (a point inside
+  // the circumcircle of h would conflict with that cell otherwise). A
+  // nondegenerate such h coplanar with T proves T supporting; a triangle
+  // without one is decided by the scan of all points, so the answer is the
+  // scan's for every triangle.
+  bool convex_boundary() {
+    const bool built = build_source_triangulation();
+    std::vector<std::size_t> exterior;
     for (std::size_t triangle = 0; triangle < candidate_.input_triangles.size() / 3; ++triangle) {
       const int32_t facet = input_.polygon_facets[candidate_.input_polygons[triangle]];
-      if (input_.facet_regions[2 * facet] >= 0 && input_.facet_regions[2 * facet + 1] >= 0) {
-        continue;
-      }
-      exterior = true;
-      const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
-      bool positive = false;
-      bool negative = false;
-      for (int32_t vertex = 0; vertex < source_point_count_; ++vertex) {
-        const int side = orient(face[0], face[1], face[2], vertex);
-        positive = positive || side > 0;
-        negative = negative || side < 0;
-        if (positive && negative) return false;
+      if (input_.facet_regions[2 * facet] < 0 || input_.facet_regions[2 * facet + 1] < 0) {
+        exterior.push_back(triangle);
       }
     }
-    return exterior;
+    if (exterior.empty()) return false;
+    std::vector<int64_t> offsets;
+    std::vector<std::array<int32_t, 3>> hull;
+    if (built) hull_triangles_by_vertex(offsets, hull);
+    for (const std::size_t triangle : exterior) {
+      const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
+      bool supported = false;
+      for (int corner = 0; corner < 3 && !supported && !offsets.empty(); ++corner) {
+        const auto vertex = static_cast<std::size_t>(face[corner]);
+        for (int64_t at = offsets[vertex]; at < offsets[vertex + 1] && !supported; ++at) {
+          const std::array<int32_t, 3>& h = hull[static_cast<std::size_t>(at)];
+          supported = orient(face[0], face[1], face[2], h[0]) == 0 &&
+                      orient(face[0], face[1], face[2], h[1]) == 0 &&
+                      orient(face[0], face[1], face[2], h[2]) == 0;
+        }
+      }
+      if (!supported && !supports_source_points(face)) return false;
+    }
+    return true;
+  }
+
+  // Whether all source points lie on one closed side of the plane of face.
+  bool supports_source_points(const int32_t* face) const {
+    bool positive = false;
+    bool negative = false;
+    for (int32_t vertex = 0; vertex < source_point_count_; ++vertex) {
+      const int side = orient(face[0], face[1], face[2], vertex);
+      positive = positive || side > 0;
+      negative = negative || side < 0;
+      if (positive && negative) return false;
+    }
+    return true;
+  }
+
+  // The Delaunay triangulation of the source points alone, kept for the
+  // first build_triangulation; false (and none kept) when the points span
+  // no tetrahedron.
+  bool build_source_triangulation() {
+    work_points_ = candidate_.points;
+    const auto count = static_cast<std::size_t>(source_point_count_);
+    triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr,
+                                                       source_point_count_);
+    triangulation_->set_exact_points(&exact_points_);
+    triangulation_->set_affine_metric(input_.affine_metric);
+    alive_.assign(count, 1);
+    std::vector<int32_t> all(count);
+    std::iota(all.begin(), all.end(), 0);
+    source_triangulation_ready_ =
+        triangulation_->build(brio_hilbert_order(work_points_.data(), 3, all), alive_) ==
+        PHX_MC_OK;
+    if (!source_triangulation_ready_) triangulation_.reset();
+    return source_triangulation_ready_;
+  }
+
+  // Nondegenerate hull triangles of the source triangulation by vertex (CSR
+  // over source points): those incident to it and those whose plane holds
+  // it as the apex of the cell below.
+  void hull_triangles_by_vertex(std::vector<int64_t>& offsets,
+                                std::vector<std::array<int32_t, 3>>& hull) const {
+    offsets.clear();
+    hull.clear();
+    const auto count = static_cast<std::size_t>(source_point_count_);
+    const Triangulation3D& triangulation = *triangulation_;
+    std::vector<std::pair<int32_t, std::array<int32_t, 3>>> uses;
+    const TetrahedralComplex& complex = triangulation.complex();
+    for (std::size_t cell = 0; cell < complex.tets.size(); ++cell) {
+      const Tetrahedron& ghost = complex.tets[cell];
+      if (!complex.live(static_cast<int32_t>(cell))) continue;
+      const int slot = vertex_slot(ghost, kGhostVertex);
+      if (slot < 0) continue;
+      std::array<int32_t, 3> h{};
+      for (int k = 0, at = 0; k < 4; ++k) {
+        if (k != slot) h[static_cast<std::size_t>(at++)] = ghost.v[k];
+      }
+      if (collinear(ref(h[0]), ref(h[1]), ref(h[2]))) continue;
+      for (const int32_t vertex : h) uses.push_back({vertex, h});
+      const Tetrahedron& below = complex.tets[static_cast<std::size_t>(ghost.n[slot])];
+      const int32_t apex = below.v[neighbor_slot(below, static_cast<int32_t>(cell))];
+      if (orient(h[0], h[1], h[2], apex) == 0) uses.push_back({apex, h});
+    }
+    std::sort(uses.begin(), uses.end());
+    offsets.assign(count + 1, 0);
+    hull.reserve(uses.size());
+    for (const auto& [vertex, h] : uses) {
+      ++offsets[static_cast<std::size_t>(vertex) + 1];
+      hull.push_back(h);
+    }
+    for (std::size_t vertex = 0; vertex < count; ++vertex) offsets[vertex + 1] += offsets[vertex];
   }
 
   // A polygon's triangulation diagonal is not a PLC constraint when the
@@ -2160,6 +2249,12 @@ class PlcRecoveryBuilder {
       }
     }
     prepare_planar_polygons();
+    const int32_t point_status = validate_points(
+        candidate_.points.data(), static_cast<int64_t>(candidate_.points.size() / 3), 3, nullptr);
+    if (point_status != PHX_MC_OK) {
+      status_ = fail(point_status, kPlcNonrepresentable, kPlcPoint, -1);
+      return false;
+    }
     corner_count_ = convex_boundary() ? 0 : kPlcCornerCount;
     if (input_count > kMaxMeshPoints - corner_count_) {
       status_ = fail(PHX_MC_INDEX_RANGE_ERROR, kPlcNonrepresentable, kPlcPoint, input_count);
@@ -2184,12 +2279,6 @@ class PlcRecoveryBuilder {
           corner_points_.push_back((corner >> axis) & 1 ? center + reach : center - reach);
         }
       }
-    }
-    const int32_t point_status = validate_points(
-        candidate_.points.data(), static_cast<int64_t>(candidate_.points.size() / 3), 3, nullptr);
-    if (point_status != PHX_MC_OK) {
-      status_ = fail(point_status, kPlcNonrepresentable, kPlcPoint, -1);
-      return false;
     }
     if (corner_count_ != 0) {
       const int32_t corner_status = validate_points(corner_points_.data(), corner_count_, 3, nullptr);
@@ -2339,22 +2428,40 @@ class PlcRecoveryBuilder {
     return found == carrier_vertex_.end() ? -1 : found->second;
   }
 
+  // The Delaunay triangulation of the candidate points and the corners. The
+  // first one extends the source triangulation of convex_boundary by the
+  // corners (the triangulation is unique under the symbolic perturbation,
+  // so the insertion order does not matter).
   int32_t build_triangulation() {
-    triangulation_.reset();
-    work_points_ = candidate_.points;
-    work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
     volume_count_ = 0;
     local_edits_ = false;
+    if (source_triangulation_ready_) {
+      source_triangulation_ready_ = false;
+      work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+      const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
+      triangulation_->rebind(work_points_.data(), count);
+      triangulation_->reserve_vertices(count);
+      alive_.resize(static_cast<std::size_t>(count), 1);
+      for (int32_t corner = source_point_count_; corner < count; ++corner) {
+        const int32_t status = triangulation_->insert(corner, alive_);
+        if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
+      }
+    } else {
+      triangulation_.reset();
+      work_points_ = candidate_.points;
+      work_points_.insert(work_points_.end(), corner_points_.begin(), corner_points_.end());
+      const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
+      triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
+      triangulation_->set_exact_points(&exact_points_);
+      triangulation_->set_affine_metric(input_.affine_metric);
+      alive_.assign(static_cast<std::size_t>(count), 1);
+      std::vector<int32_t> all(static_cast<std::size_t>(count));
+      std::iota(all.begin(), all.end(), 0);
+      const std::vector<int32_t> order = brio_hilbert_order(work_points_.data(), 3, all);
+      const int32_t status = triangulation_->build(order, alive_);
+      if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
+    }
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
-    triangulation_ = std::make_unique<Triangulation3D>(work_points_.data(), nullptr, count);
-    triangulation_->set_exact_points(&exact_points_);
-    triangulation_->set_affine_metric(input_.affine_metric);
-    alive_.assign(static_cast<std::size_t>(count), 1);
-    std::vector<int32_t> all(static_cast<std::size_t>(count));
-    std::iota(all.begin(), all.end(), 0);
-    const std::vector<int32_t> order = brio_hilbert_order(work_points_.data(), 3, all);
-    const int32_t status = triangulation_->build(order, alive_);
-    if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     TetrahedralComplex& complex = triangulation_->complex();
     complex.enable_labels();
     vertex_tet_.assign(static_cast<std::size_t>(count), -1);
@@ -7191,6 +7298,9 @@ class PlcRecoveryBuilder {
   std::vector<char> alive_;
   std::unique_ptr<Triangulation3D> triangulation_;
   bool incremental_triangulation_ready_ = false;
+  // triangulation_ holds the Delaunay triangulation of the source points
+  // built by convex_boundary, not yet extended by build_triangulation.
+  bool source_triangulation_ready_ = false;
   std::vector<int32_t> vertex_tet_;
   // Live cells (finite and ghost) through each work vertex, kept current
   // from the complex's edit journal.

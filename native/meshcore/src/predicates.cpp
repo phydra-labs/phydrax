@@ -56,6 +56,7 @@ T lifted3_rows(const T* x, const T* y, const T* z, const T* lift) {
 
 // ---------------------------------------------------------------- orient2d
 
+[[gnu::noinline, gnu::cold]]
 int orient2d_adapt(const double* a, const double* b, const double* c, double detsum) {
   const double acx = a[0] - c[0];
   const double bcx = b[0] - c[0];
@@ -83,23 +84,14 @@ int orient2d_adapt(const double* a, const double* b, const double* c, double det
   return (ex * fy - ey * fx).sign();
 }
 
-// ---------------------------------------------------------------- orient3d (Shewchuk sign)
-
-int orient3d_shewchuk(const double* a, const double* b, const double* c, const double* d) {
+// Stages B and C of orient3d_shewchuk (out of line: the expansions would
+// otherwise enlarge the stack frame of every filtered call).
+[[gnu::noinline, gnu::cold]] int orient3d_adapt(const double* a, const double* b,
+                                                const double* c, const double* d,
+                                                double permanent) {
   const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
   const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
   const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
-  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-  const double cdxady = cdx * ady, adxcdy = adx * cdy;
-  const double adxbdy = adx * bdy, bdxady = bdx * ady;
-  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
-  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
-                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
-                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
-  const double errbound_a = kO3dErrBoundA * permanent;
-  if (det > errbound_a || -det > errbound_a) {
-    return sign_of(det);
-  }
   const Expansion rx[3] = {Expansion(adx), Expansion(bdx), Expansion(cdx)};
   const Expansion ry[3] = {Expansion(ady), Expansion(bdy), Expansion(cdy)};
   const Expansion rz[3] = {Expansion(adz), Expansion(bdz), Expansion(cdz)};
@@ -127,8 +119,29 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
   return orient3d_rows(fx, fy, fz).sign();
 }
 
+// ---------------------------------------------------------------- orient3d (Shewchuk sign)
+
+int orient3d_shewchuk(const double* a, const double* b, const double* c, const double* d) {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+  const double errbound_a = kO3dErrBoundA * permanent;
+  if (det > errbound_a || -det > errbound_a) {
+    return sign_of(det);
+  }
+  return orient3d_adapt(a, b, c, d, permanent);
+}
+
 // ---------------------------------------------------------------- incircle
 
+[[gnu::noinline, gnu::cold]]
 int incircle_adapt(const double* const* p, double permanent) {
   const double* d = p[3];
   double x[3], y[3];
@@ -164,6 +177,7 @@ int incircle_adapt(const double* const* p, double permanent) {
 
 // ---------------------------------------------------------------- insphere (Shewchuk sign)
 
+[[gnu::noinline, gnu::cold]]
 int insphere_adapt(const double* const* p, double permanent) {
   const double* e = p[4];
   double x[4], y[4], z[4];
@@ -433,6 +447,7 @@ int rank_order(const std::int64_t* ids, int count, int* order) {
 }
 
 // Sign of det of the perturbed matrix with rows [p_rank, 1] in rank order.
+[[gnu::noinline, gnu::cold]]
 int orientation_sos_sign(const double* const* points, const std::int64_t* ids, int dimension,
                          int* parity_out) {
   int order[4];
@@ -468,6 +483,7 @@ int orientation_sos_sign(const double* const* points, const std::int64_t* ids, i
 }
 
 // Lifted-coordinate SoS in 2D: cofactor of row t's lift is (-1)^t orient2d(others).
+[[gnu::noinline, gnu::cold]]
 int lifted_sos_2d(const double* const* p, const std::int64_t* ids) {
   int order[4];
   rank_order(ids, 4, order);
@@ -489,6 +505,7 @@ int lifted_sos_2d(const double* const* p, const std::int64_t* ids) {
 }
 
 // Lifted-coordinate SoS in 3D: the result is -(-1)^t orient3d(others).
+[[gnu::noinline, gnu::cold]]
 int lifted_sos_3d(const double* const* p, const std::int64_t* ids) {
   int order[5];
   rank_order(ids, 5, order);

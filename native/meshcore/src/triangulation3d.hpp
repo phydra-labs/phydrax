@@ -218,12 +218,17 @@ class Triangulation3D {
     complex_.tets.reserve(7 * count + 16);
     const int32_t initialized = initialize(a, b, c, d);
     if (initialized != PHX_MC_OK) return initialized;
-    for (std::size_t k = 2; k < count; ++k) {
+    // Only this loop edits the complex until build returns: it stays the
+    // (regular) Delaunay triangulation of the inserted points, so the cells
+    // it walks need no validation and an unweighted cavity buries no vertex.
+    building_ = true;
+    int32_t status = PHX_MC_OK;
+    for (std::size_t k = 2; k < count && status == PHX_MC_OK; ++k) {
       if (k == third || k == fourth) continue;
-      const int32_t status = insert(order[k], alive);
-      if (status != PHX_MC_OK) return status;
+      status = insert(order[k], alive);
     }
-    return PHX_MC_OK;
+    building_ = false;
+    return status;
   }
 
   void collect_cells(std::vector<int32_t>& cells) const {
@@ -253,16 +258,16 @@ class Triangulation3D {
       if (t < 0) return -1;
       hint_ = t;
     }
-    if (!valid_point_tet(t)) return -1;
+    if (!checked(t)) return -1;
     const int ghost_slot = vertex_slot(tet(t), kGhostVertex);
     if (ghost_slot >= 0) {
       const int32_t neighbor = tet(t).n[ghost_slot];
-      if (!valid_point_tet(neighbor)) return -1;
+      if (!checked(neighbor)) return -1;
       t = neighbor;
     }
     int32_t previous = -1;
     for (;;) {
-      if (!valid_point_tet(t)) return -1;
+      if (!checked(t)) return -1;
       const Tetrahedron& current = tet(t);
       const int first = static_cast<int>(splitmix64(walk_step_++) & 3U);
       int32_t next = -1;
@@ -271,7 +276,7 @@ class Triangulation3D {
         if (current.n[k] == previous) continue;
         if (orient_with(current, k, p) < 0) {
           next = current.n[k];
-          if (!valid_point_tet(next)) return -1;
+          if (!checked(next)) return -1;
           break;
         }
       }
@@ -286,6 +291,11 @@ class Triangulation3D {
     return orient_with(tetrahedron, slot, ExactPointRef{p, nullptr});
   }
   int orient_with(const Tetrahedron& tetrahedron, int slot, const ExactPointRef& p) const {
+    if (exact_ == nullptr && p.exact == nullptr) {
+      const double* q[4];
+      for (int k = 0; k < 4; ++k) q[k] = k == slot ? p.carrier : point(tetrahedron.v[k]);
+      return orient3d(q[0], q[1], q[2], q[3]);
+    }
     ExactPointRef q[4];
     for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : ref(tetrahedron.v[k]);
     return orient3d(q[0], q[1], q[2], q[3]);
@@ -300,7 +310,7 @@ class Triangulation3D {
   int32_t insert(int32_t p, std::span<char> alive, int32_t* duplicate = nullptr) {
     next_stamp();
     const int32_t origin = locate(ref(p));
-    if (!valid_point_tet(origin)) return PHX_MC_INTERNAL_ERROR;
+    if (!checked(origin)) return PHX_MC_INTERNAL_ERROR;
     if (duplicate != nullptr) {
       *duplicate = coincident_vertex(origin, ref(p));
       if (*duplicate >= 0) {
@@ -320,14 +330,28 @@ class Triangulation3D {
     int32_t status = grow_cavity(origin, p);
     if (status != PHX_MC_OK) return status;
     if (constraint_inside_) return PHX_MC_CONSTRAINT_INTERSECTION;
-    collect_removed_vertices();
+    // Every vertex of an unweighted Delaunay cavity stays on its boundary:
+    // a vertex strictly inside would have all its cells in conflict, so its
+    // lifted point would lie above the lower hull of the lifted points with
+    // p, but every point of the (perturbed) paraboloid is a lower-hull
+    // vertex. Weighted points can be buried; after a caller's local edits
+    // the complex need not be Delaunay, so the check stays.
+    removed_.clear();
+    if (!weights_.empty() || !building_) {
+      collect_removed_vertices();
+      if (weights_.empty() && !removed_.empty()) return PHX_MC_UNRESOLVED;
+    }
     const ConeInsertion inserted = insert_checked_cone(
         complex_, edit_,
         [this](const int32_t* v) {
+          if (exact_ == nullptr) {
+            return orient3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), v[0], v[1],
+                                v[2], v[3]) > 0;
+          }
           return orient3d_sos(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), v[0], v[1], v[2],
                               v[3]) > 0;
         },
-        p, cavity_, boundary_, !weights_.empty());
+        p, cavity_, boundary_, true);
     switch (inserted) {
       case ConeInsertion::kApplied: break;
       case ConeInsertion::kInvertedCell:
@@ -433,6 +457,8 @@ class Triangulation3D {
     }
     return ghost_count <= 1;
   }
+  // Cell validation, skipped while build() owns the complex.
+  bool checked(int32_t cell) const noexcept { return building_ || valid_point_tet(cell); }
   static constexpr std::uint8_t kNoConflict = 0;
   static constexpr std::uint8_t kConflict = 1;
   static constexpr std::uint8_t kInCavity = 2;
@@ -448,6 +474,10 @@ class Triangulation3D {
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
+      if (exact_ == nullptr && metric_ == nullptr) {
+        return insphere_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
+                            v[0], v[1], v[2], v[3], p) > 0;
+      }
       return delaunay_insphere(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p),
                                v[0], v[1], v[2], v[3], p) > 0;
     }
@@ -456,7 +486,7 @@ class Triangulation3D {
                        weights_[p], v[0], v[1], v[2], v[3], p) > 0;
   }
   bool conflict(int32_t t, int32_t p, bool& topology_valid) {
-    if (!valid_point_tet(t)) {
+    if (!checked(t)) {
       topology_valid = false;
       return false;
     }
@@ -483,7 +513,7 @@ class Triangulation3D {
   // in constraint_inside_ whether a constrained face has cavity cells on
   // both sides (reached around it).
   int32_t grow_cavity(int32_t origin, int32_t p) {
-    if (!valid_point_tet(origin)) return PHX_MC_INTERNAL_ERROR;
+    if (!checked(origin)) return PHX_MC_INTERNAL_ERROR;
     cavity_.clear();
     boundary_.clear();
     stack_.clear();
@@ -497,10 +527,10 @@ class Triangulation3D {
     while (!stack_.empty()) {
       const int32_t t = stack_.back();
       stack_.pop_back();
-      if (!valid_point_tet(t)) return PHX_MC_INTERNAL_ERROR;
+      if (!checked(t)) return PHX_MC_INTERNAL_ERROR;
       for (int k = 0; k < 4; ++k) {
         const int32_t neighbor = tet(t).n[k];
-        if (!valid_point_tet(neighbor)) return PHX_MC_INTERNAL_ERROR;
+        if (!checked(neighbor)) return PHX_MC_INTERNAL_ERROR;
         if (in_cavity(neighbor)) {
           if (complex_.constraint(t, k) != kNoConstraint) constraint_inside_ = true;
           continue;
@@ -603,6 +633,7 @@ class Triangulation3D {
   std::uint64_t walk_step_ = 0;
   int32_t hint_ = 0;
   bool constraint_inside_ = false;
+  bool building_ = false;
   std::size_t largest_cavity_ = 0;
   std::vector<int32_t> cavity_, stack_, removed_;
   std::vector<BoundaryFacet> boundary_;

@@ -13,6 +13,13 @@
   through the smallest identity keep neighboring stencils conforming. The
   benchmark `python -m benchmarks.native_meshing` times each kernel against
   the best measured reference tool.
+- Native C entry `phx_mc_triangulate(dimension, count, points, weights, options,
+  mesh)` builds the 2D or 3D Delaunay (weights null) or regular triangulation
+  with options; `PHX_MC_TRIANGULATION_CANONICAL` requests the canonical cell
+  rotation and order of `phx_mc_delaunay_2d/3d` and `phx_mc_regular_2d/3d`
+  (which keep it). Without it the cells are the same set, positively
+  oriented, in an unspecified deterministic order, without the cost of the
+  sort.
 - Exposed `phydrax.geometry.source_entity_id` and
   `phydrax.interchange.save_composition_archive` and
   `phydrax.interchange.load_composition_archive` for source identities and
@@ -284,6 +291,24 @@
   vertex, edge and position tables. Results are unchanged; on the 184,213-cell
   icosphere refinement (level 4) refinement takes 4.7 s instead of 6.0 s and
   improvement 0.55 s instead of 0.98 s (one thread).
+- Native closed-surface recovery (`phx_mc_plc3d_recover` and variants) decides
+  whether the exterior boundary is convex from the hull of the Delaunay
+  triangulation of the source points instead of testing every point against
+  every exterior triangle (the same answer; a triangle without a coplanar
+  hull triangle is still decided by the full scan), and reuses that
+  triangulation for recovery, extended by the scaffold corners when needed.
+  The icosphere of 20,480 triangles recovers in 0.83 s instead of 3.06 s.
+  Cell identities of recovered meshes may change; boundaries and regions do
+  not.
+- Native point-set Delaunay and regular triangulations run about 2.4x (3D)
+  and 2.5x (2D) faster at 10^6 random points with the same cells: an
+  unweighted insertion no longer sorts the cavity's boundary vertices or
+  checks for removed vertices (no vertex of a Delaunay cavity can be removed;
+  the check stays for weighted insertion and for insertion after local
+  edits), deduplication and the BRIO/Hilbert order come from one radix sort
+  of branch-free Hilbert keys, canonical output sorts by first vertex, and
+  the expansion stages of the exact predicates run out of line. The
+  insertion order and every output are unchanged.
 - Native implicit requests with a tolerance-derived resolution now select a
   carrier using a certified second-order forward distance bound when the
   interval field is smooth, its gradient is nonzero in the certified tube, and
