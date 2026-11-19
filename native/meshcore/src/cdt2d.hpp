@@ -562,10 +562,11 @@ class ConstrainedMesher {
 
   BadTriangle make_entry(int32_t t, double badness) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
-    BadTriangle entry{badness, {triangle.v[0], triangle.v[1], triangle.v[2]}, t};
-    const int first = static_cast<int>(std::min_element(entry.v, entry.v + 3) - entry.v);
-    std::rotate(entry.v, entry.v + first, entry.v + 3);
-    return entry;
+    int first = 0;
+    if (triangle.v[1] < triangle.v[first]) first = 1;
+    if (triangle.v[2] < triangle.v[first]) first = 2;
+    return BadTriangle{badness,
+                       {triangle.v[first], triangle.v[next3(first)], triangle.v[prev3(first)]}, t};
   }
 
   bool matches(const BadTriangle& entry) const {
