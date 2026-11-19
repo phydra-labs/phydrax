@@ -229,6 +229,203 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
         input_lower[i] > input_upper[i])
       return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_RULED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double a_lower[9], a_upper[9], b_lower[9], b_upper[9];
+    int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                    input_lower, input_upper, order, a_lower, a_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    status = interval_jets(static_cast<int32_t>(current.integers[1]),
+                           input_lower, input_upper, order, b_lower, b_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const interval::Interval v{input_lower[1], input_upper[1]};
+    const auto complement = interval::subtract(interval::point(1.0), v);
+    double result_lower[18]{}, result_upper[18]{};
+    for (int component = 0; component < 3; ++component) {
+      for (int derivative = 0; derivative <= order; ++derivative) {
+        const int k = derivative * 3 + component;
+        const auto value = interval::add(
+            interval::multiply(complement, {a_lower[k], a_upper[k]}),
+            interval::multiply(v, {b_lower[k], b_upper[k]}));
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        const int out = (derivative == 0 ? 0 : derivative == 1 ? 3 : 9) + component;
+        result_lower[out] = value.lower;
+        result_upper[out] = value.upper;
+      }
+      if (order >= 1) {
+        const auto value = interval::subtract({b_lower[component], b_upper[component]},
+                                              {a_lower[component], a_upper[component]});
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[6 + component] = value.lower;
+        result_upper[6 + component] = value.upper;
+      }
+      if (order >= 2) {
+        const auto value = interval::subtract({b_lower[3 + component], b_upper[3 + component]},
+                                              {a_lower[3 + component], a_upper[3 + component]});
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[12 + component] = value.lower;
+        result_upper[12 + component] = value.upper;
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_EXTRUSION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double curve_lower[9], curve_upper[9], result_lower[18]{}, result_upper[18]{};
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         input_lower, input_upper, order, curve_lower,
+                                         curve_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int64_t offset = model_.node_real_offsets[index];
+    const interval::Interval v{input_lower[1], input_upper[1]};
+    for (int component = 0; component < 3; ++component) {
+      const interval::Interval direction{workspace.coefficient_lower[offset + component],
+                                          workspace.coefficient_upper[offset + component]};
+      if (!interval::finite(direction)) return PHX_MC_INVALID_ARGUMENT;
+      const auto value = interval::add({curve_lower[component], curve_upper[component]},
+                                       interval::multiply(v, direction));
+      if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+      result_lower[component] = value.lower;
+      result_upper[component] = value.upper;
+      if (order >= 1) {
+        result_lower[3 + component] = curve_lower[3 + component];
+        result_upper[3 + component] = curve_upper[3 + component];
+        result_lower[6 + component] = direction.lower;
+        result_upper[6 + component] = direction.upper;
+      }
+      if (order >= 2) {
+        result_lower[9 + component] = curve_lower[6 + component];
+        result_upper[9 + component] = curve_upper[6 + component];
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_SURFACE_MAPPED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double chart_lower[6], chart_upper[6], surface_lower[18], surface_upper[18];
+    int32_t status = interval_jets(static_cast<int32_t>(current.integers[1]), input_lower,
+                                    input_upper, order, chart_lower, chart_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    status = interval_jets(static_cast<int32_t>(current.integers[0]), chart_lower, chart_upper,
+                           order, surface_lower, surface_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    double result_lower[9], result_upper[9];
+    for (int component = 0; component < 3; ++component) {
+      auto surface = [&](int term) {
+        const int k = term * 3 + component;
+        return interval::Interval{surface_lower[k], surface_upper[k]};
+      };
+      auto chart = [&](int term, int axis) {
+        const int k = term * 2 + axis;
+        return interval::Interval{chart_lower[k], chart_upper[k]};
+      };
+      auto value = surface(0);
+      result_lower[component] = value.lower;
+      result_upper[component] = value.upper;
+      if (order >= 1) {
+        value = interval::add(interval::multiply(surface(1), chart(1, 0)),
+                              interval::multiply(surface(2), chart(1, 1)));
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[3 + component] = value.lower;
+        result_upper[3 + component] = value.upper;
+      }
+      if (order >= 2) {
+        const auto u = chart(1, 0), v = chart(1, 1);
+        auto second = interval::multiply(surface(3), interval::multiply(u, u));
+        auto mixed = interval::multiply(surface(4), interval::multiply(u, v));
+        second = interval::add(second, interval::add(mixed, mixed));
+        second = interval::add(second, interval::multiply(surface(5), interval::multiply(v, v)));
+        second = interval::add(second, interval::multiply(surface(1), chart(2, 0)));
+        second = interval::add(second, interval::multiply(surface(2), chart(2, 1)));
+        if (!interval::finite(second)) return PHX_MC_UNRESOLVED;
+        result_lower[6 + component] = second.lower;
+        result_upper[6 + component] = second.upper;
+      }
+    }
+    for (int i = 0; i < (order + 1) * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_ISOPARAMETRIC) {
+    const int fixed = static_cast<int>(current.integers[1]);
+    const int64_t offset = model_.node_real_offsets[index];
+    double lo[2], hi[2];
+    lo[fixed] = workspace.coefficient_lower[offset];
+    hi[fixed] = workspace.coefficient_upper[offset];
+    lo[1 - fixed] = input_lower[0];
+    hi[1 - fixed] = input_upper[0];
+    double child_lower[18], child_upper[18];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]), lo, hi,
+                                         order, child_lower, child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int positions[] = {0, fixed == 0 ? 2 : 1, fixed == 0 ? 5 : 3};
+    for (int term = 0; term <= order; ++term)
+      for (int component = 0; component < current.outputs; ++component) {
+        const int out = term * current.outputs + component;
+        const int in = positions[term] * current.outputs + component;
+        output_lower[out] = child_lower[in];
+        output_upper[out] = child_upper[in];
+      }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_REPARAMETERIZED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    const int64_t offset = model_.node_real_offsets[index];
+    const interval::Interval first{workspace.coefficient_lower[offset],
+                                   workspace.coefficient_upper[offset]};
+    const interval::Interval last{workspace.coefficient_lower[offset + 1],
+                                  workspace.coefficient_upper[offset + 1]};
+    if (!interval::finite(first) || !interval::finite(last)) return PHX_MC_INVALID_ARGUMENT;
+    const auto delta = interval::subtract(last, first);
+    const bool reversed = current.integers[1] != 0;
+    const interval::Interval t{input_lower[0], input_upper[0]};
+    const auto fraction = reversed ? interval::subtract(interval::point(1.0), t) : t;
+    const auto parameter = interval::add(first, interval::multiply(fraction, delta));
+    if (!interval::finite(parameter)) return PHX_MC_UNRESOLVED;
+    double child_lower[9], child_upper[9], result_lower[9], result_upper[9];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         &parameter.lower, &parameter.upper, order, child_lower,
+                                         child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const interval::Interval slope = reversed ? interval::Interval{-delta.upper, -delta.lower}
+                                               : delta;
+    const auto squared = interval::multiply(slope, slope);
+    for (int term = 0; term <= order; ++term) {
+      const auto factor = term == 0 ? interval::point(1.0) : term == 1 ? slope : squared;
+      for (int component = 0; component < current.outputs; ++component) {
+        const int k = term * current.outputs + component;
+        const auto value = interval::multiply({child_lower[k], child_upper[k]}, factor);
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[k] = value.lower;
+        result_upper[k] = value.upper;
+      }
+    }
+    for (int i = 0; i < (order + 1) * current.outputs; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
   if (current.kind == PHX_MC_CAD_NODE_AFFINE) {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
