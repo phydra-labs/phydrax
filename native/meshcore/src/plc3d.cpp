@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <span>
 #include <map>
 #include "geometry3.hpp"
 #include "predicates.hpp"
@@ -1228,26 +1229,54 @@ struct PlcEdgePoint {
 // triangle so that local queries never scan the table. `unverified` holds
 // every key not known to be a face of the current complex: each added key,
 // plus the keys the owner marks when an edit removes a cell through them.
+// Iteration is in key order; lookups go through an open-addressing index of
+// the map's nodes (linear probing, backward-shift erase), whose iterators
+// stay valid while their entries live.
 class SourceFaceTable {
  public:
   using Map = std::map<Triple, PlcSourceFace>;
 
+  SourceFaceTable() = default;
+  SourceFaceTable(const SourceFaceTable&) = delete;
+  SourceFaceTable& operator=(const SourceFaceTable&) = delete;
+
   Map::const_iterator begin() const { return faces_.begin(); }
   Map::const_iterator end() const { return faces_.end(); }
-  bool contains(const Triple& key) const { return faces_.contains(key); }
-  Map::const_iterator find(const Triple& key) const { return faces_.find(key); }
-  const PlcSourceFace& at(const Triple& key) const { return faces_.at(key); }
+  bool contains(const Triple& key) const { return find(key) != faces_.end(); }
+  Map::const_iterator find(const Triple& key) const {
+    if (index_.empty()) return faces_.end();
+    const std::size_t mask = index_.size() - 1;
+    for (std::size_t at = hash(key) & mask;; at = (at + 1) & mask) {
+      const Entry& entry = index_[at];
+      if (entry.key[0] < 0) return faces_.end();
+      if (entry.key == key) return entry.face;
+    }
+  }
+  const PlcSourceFace& at(const Triple& key) const {
+    const auto found = find(key);
+    return found != faces_.end() ? found->second : faces_.at(key);
+  }
 
   bool emplace(const Triple& key, const PlcSourceFace& face) {
-    if (!faces_.emplace(key, face).second) return false;
+    const auto [inserted, fresh] = faces_.emplace(key, face);
+    if (!fresh) return false;
+    if (2 * faces_.size() > index_.size()) {
+      std::vector<Entry> previous(std::max<std::size_t>(16, 2 * index_.size()));
+      previous.swap(index_);
+      for (const Entry& entry : previous) {
+        if (entry.key[0] >= 0) place(entry);
+      }
+    }
+    place({key, inserted});
     for (int32_t vertex : key) by_vertex_[vertex].push_back(key);
     by_triangle_[face.source_triangle].push_back(key);
     unverified_.insert(key);
     return true;
   }
   bool erase(const Triple& key) {
-    const auto found = faces_.find(key);
+    const auto found = find(key);
     if (found == faces_.end()) return false;
+    unplace(key);
     for (int32_t vertex : key) drop(by_vertex_, vertex, key);
     drop(by_triangle_, found->second.source_triangle, key);
     unverified_.erase(key);
@@ -1256,6 +1285,7 @@ class SourceFaceTable {
   }
   void clear() {
     faces_.clear();
+    index_.clear();
     by_vertex_.clear();
     by_triangle_.clear();
     unverified_.clear();
@@ -1268,7 +1298,7 @@ class SourceFaceTable {
   }
 
   void mark_unverified(const Triple& key) {
-    if (faces_.contains(key)) unverified_.insert(key);
+    if (contains(key)) unverified_.insert(key);
   }
   void mark_all_unverified() {
     for (const auto& [key, face] : faces_) {
@@ -1279,6 +1309,39 @@ class SourceFaceTable {
   std::set<Triple>& unverified() { return unverified_; }
 
  private:
+  struct Entry {
+    Triple key{-1, -1, -1};  // key[0] < 0: empty
+    Map::const_iterator face;
+  };
+  static std::size_t hash(const Triple& key) {
+    std::uint64_t value = static_cast<std::uint32_t>(key[0]);
+    value = value * 0x9E3779B97F4A7C15ULL + static_cast<std::uint32_t>(key[1]);
+    value = value * 0x9E3779B97F4A7C15ULL + static_cast<std::uint32_t>(key[2]);
+    value ^= value >> 29;
+    return static_cast<std::size_t>((value * 0xBF58476D1CE4E5B9ULL) >> 16);
+  }
+  void place(const Entry& entry) {
+    const std::size_t mask = index_.size() - 1;
+    std::size_t at = hash(entry.key) & mask;
+    while (index_[at].key[0] >= 0) at = (at + 1) & mask;
+    index_[at] = entry;
+  }
+  // Removes the present `key`, shifting back the later entries of its run
+  // whose home slot does not lie cyclically after the hole.
+  void unplace(const Triple& key) {
+    const std::size_t mask = index_.size() - 1;
+    std::size_t hole = hash(key) & mask;
+    while (index_[hole].key != key) hole = (hole + 1) & mask;
+    for (std::size_t next = (hole + 1) & mask; index_[next].key[0] >= 0;
+         next = (next + 1) & mask) {
+      const std::size_t home = hash(index_[next].key) & mask;
+      if (((next - home) & mask) >= ((next - hole) & mask)) {
+        index_[hole] = index_[next];
+        hole = next;
+      }
+    }
+    index_[hole] = Entry{};
+  }
   using Index = std::unordered_map<int32_t, std::vector<Triple>>;
   static void drop(Index& index, int32_t at, const Triple& key) {
     const auto found = index.find(at);
@@ -1296,6 +1359,7 @@ class SourceFaceTable {
   }
 
   Map faces_;
+  std::vector<Entry> index_;  // a power of two entries, at most half full
   Index by_vertex_;
   Index by_triangle_;
   std::set<Triple> unverified_;
@@ -1806,7 +1870,10 @@ class PlcRecoveryBuilder {
       std::int32_t second;
     };
     std::vector<std::int32_t> facets(triangle_count);
-    std::map<std::uint64_t, std::vector<EdgeUse>> edge_uses;
+    // Edge uses grouped by undirected edge in key order, each group in
+    // triangle order (a stable sort of the uses in triangle order).
+    std::vector<std::pair<std::uint64_t, EdgeUse>> edge_uses;
+    edge_uses.reserve(3 * triangle_count);
     for (std::size_t row = 0; row < triangle_count; ++row) {
       const std::int32_t polygon = candidate_.input_polygons[row];
       facets[row] = input_.polygon_facets[polygon];
@@ -1814,10 +1881,12 @@ class PlcRecoveryBuilder {
       for (int side = 0; side < 3; ++side) {
         const std::int32_t first = triangle[side];
         const std::int32_t second = triangle[(side + 1) % 3];
-        edge_uses[topology::undirected_edge(first, second)].push_back(
-            {static_cast<std::int32_t>(row), first, second});
+        edge_uses.push_back({topology::undirected_edge(first, second),
+                             {static_cast<std::int32_t>(row), first, second}});
       }
     }
+    std::stable_sort(edge_uses.begin(), edge_uses.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
 
     std::vector<std::int32_t> parent(triangle_count);
     std::iota(parent.begin(), parent.end(), 0);
@@ -1837,29 +1906,46 @@ class PlcRecoveryBuilder {
              orient(a[0], a[1], a[2], b[1]) == 0 &&
              orient(a[0], a[1], a[2], b[2]) == 0;
     };
-    for (const auto& [edge, uses] : edge_uses) {
-      (void)edge;
-      if (uses.size() != 2 || uses[0].first != uses[1].second ||
-          uses[0].second != uses[1].first ||
-          facets[static_cast<std::size_t>(uses[0].triangle)] !=
-              facets[static_cast<std::size_t>(uses[1].triangle)] ||
-          !coplanar(uses[0].triangle, uses[1].triangle)) {
+    for (std::size_t begin = 0; begin < edge_uses.size();) {
+      std::size_t end = begin + 1;
+      while (end < edge_uses.size() && edge_uses[end].first == edge_uses[begin].first) ++end;
+      const std::size_t count = end - begin;
+      const EdgeUse& use = edge_uses[begin].second;
+      const EdgeUse& other = edge_uses[end - 1].second;
+      begin = end;
+      if (count != 2 || use.first != other.second || use.second != other.first ||
+          facets[static_cast<std::size_t>(use.triangle)] !=
+              facets[static_cast<std::size_t>(other.triangle)] ||
+          !coplanar(use.triangle, other.triangle)) {
         continue;
       }
-      const std::int32_t first_root = root(uses[0].triangle);
-      const std::int32_t second_root = root(uses[1].triangle);
+      const std::int32_t first_root = root(use.triangle);
+      const std::int32_t second_root = root(other.triangle);
       if (first_root != second_root) {
         parent[static_cast<std::size_t>(first_root)] = second_root;
       }
     }
 
-    std::map<std::int32_t, std::vector<std::int32_t>> components;
+    // Components by ascending root, members in ascending row (a counting
+    // sort on the roots).
+    std::vector<std::int32_t> roots(triangle_count);
+    std::vector<std::size_t> starts(triangle_count + 1, 0);
     for (std::size_t row = 0; row < triangle_count; ++row) {
-      components[root(static_cast<std::int32_t>(row))].push_back(
-          static_cast<std::int32_t>(row));
+      roots[row] = root(static_cast<std::int32_t>(row));
+      ++starts[static_cast<std::size_t>(roots[row]) + 1];
     }
-    for (const auto& [component_root, members] : components) {
-      (void)component_root;
+    std::partial_sum(starts.begin(), starts.end(), starts.begin());
+    std::vector<std::int32_t> component_rows(triangle_count);
+    {
+      std::vector<std::size_t> cursor(starts.begin(), starts.end() - 1);
+      for (std::size_t row = 0; row < triangle_count; ++row) {
+        component_rows[cursor[static_cast<std::size_t>(roots[row])]++] =
+            static_cast<std::int32_t>(row);
+      }
+    }
+    for (std::size_t component = 0; component < triangle_count; ++component) {
+      const std::span<const std::int32_t> members(component_rows.data() + starts[component],
+                                                  starts[component + 1] - starts[component]);
       if (members.size() < 2) continue;
       const std::int32_t source_triangle = members.front();
       const std::int32_t facet = facets[static_cast<std::size_t>(source_triangle)];
@@ -1978,7 +2064,8 @@ class PlcRecoveryBuilder {
       }
       PlcPlanarPolygon group{facet, source_triangle, axis,
                              {reference[0], reference[1], reference[2]}, orientation,
-                             members, std::move(loops), lower, upper, false, {}, {}, {}, false};
+                             std::vector<std::int32_t>(members.begin(), members.end()),
+                             std::move(loops), lower, upper, false, {}, {}, {}, false};
       const std::int32_t group_index = static_cast<std::int32_t>(planar_polygons_.size());
       planar_polygons_.push_back(std::move(group));
       for (std::int32_t polygon : component_polygons) {
