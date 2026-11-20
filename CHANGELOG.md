@@ -324,6 +324,29 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native surface-to-tetrahedra is faster with identical output: insphere
+  evaluates Shewchuk's stages B and C on stack expansions before the full
+  expansion (`insphere_decision` reports the deciding stage and tests pin the
+  stage B and C bounds); PLC recovery recognises a source that conforms to the
+  Delaunay triangulation of its points (every triangle a face, every edge row an
+  edge, every cell positive) and only labels its faces, without bounding
+  corners, reuses the preparation's sorted edge index, finds subfaces in a
+  lowest-vertex table and classifies regions from them (falling back to the
+  full classification, in order, on any conflict); the Delaunay build commits
+  each cone in one pass; refinement looks up facet edges in a slot table,
+  deduplicates feature lines by counting sort and queries feature sizes cell
+  by cell; subface legalisation keeps its edge map across flips and rechecks
+  only edges a flip or split can have changed (two small fixed-boundary
+  inputs: 422 s -> 4.7 s and more than 600 s -> 12.4 s).
+- Analytic implicit certification is faster with identical identities:
+  `AnalyticImplicitProfile.boundary_cover` checks each candidate count on its
+  parameter diagonals before building the full grid (same first admissible
+  count, bit-identical samples), and acceptance computes the analytic distance
+  evidence once for witness validation, the fidelity certificate and the
+  tubular coverage premise. A tolerance-0.002 sphere certifies in 66 s instead
+  of 428 s.
+- Planar constrained Delaunay refinement allocates and checks less per call
+  and per insertion; refined meshes are unchanged.
 - Analytic implicit profile volumes are meshed by restricted Delaunay
   refinement, surface first (`implicit_restricted_delaunay`,
   `phx_mc_implicit_restricted_delaunay`,
