@@ -23,6 +23,12 @@
 #include "triangulation2d.hpp"
 
 namespace phx::mc {
+// Scoped timer hook for the planar probe (tools/planar_probe.cpp); empty in
+// the library. Probe-only: not for integration.
+#ifndef PHX_CDT2D_SCOPE
+#define PHX_CDT2D_SCOPE(name) static_cast<void>(0)
+#endif
+
 namespace cdt2d_detail {
 
 inline constexpr int32_t kFree = -1;
@@ -249,6 +255,7 @@ class ConstrainedMesher {
     }
     for (;;) {
       if (!segment_queue_.empty()) {
+        PHX_CDT2D_SCOPE("r.segment");
         const auto [a, b] = segment_queue_.front();
         segment_queue_.pop_front();
         const auto [t, k] = find_edge(a, b);
@@ -259,11 +266,16 @@ class ConstrainedMesher {
         continue;
       }
       BadTriangle entry{};
-      if (!bad_queue_.pop_current(entry, [this](const BadTriangle& candidate) {
-            return matches(candidate);
-          })) {
+      bool popped;
+      {
+        PHX_CDT2D_SCOPE("r.pop");
+        popped = bad_queue_.pop_current(
+            entry, [this](const BadTriangle& candidate) { return matches(candidate); });
+      }
+      if (!popped) {
         break;
       }
+      PHX_CDT2D_SCOPE("r.process");
       process_bad_triangle(entry);
     }
     // Every bad region triangle is enqueued when created (initial scan and
@@ -720,6 +732,7 @@ class ConstrainedMesher {
   }
 
   void after_insertion(int32_t m) {
+    PHX_CDT2D_SCOPE("r.after_insertion");
     const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(m)];
     int32_t t = start;
     do {
@@ -733,6 +746,7 @@ class ConstrainedMesher {
   int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1},
                      int32_t source = -1, int32_t parent_first = -1, int32_t parent_second = -1,
                      double ratio = 0.0) {
+    PHX_CDT2D_SCOPE("r.new_vertex");
     if (tri_.vertex_count() >= kMaxMeshPoints) {
       throw StatusError{PHX_MC_INDEX_RANGE_ERROR};
     }
@@ -927,6 +941,7 @@ class ConstrainedMesher {
   // Lawson flips of free edges opposite m until every one is locally
   // Delaunay (a non-locally-Delaunay edge always has a strictly convex quad).
   void legalize(int32_t m, bool cavity_certificates = false) {
+    PHX_CDT2D_SCOPE("r.legalize");
     while (!flip_stack_.empty()) {
       const int32_t t = flip_stack_.back();
       flip_stack_.pop_back();
@@ -1171,7 +1186,10 @@ class ConstrainedMesher {
     auto& to_split = encroached_segments_;
     to_split.clear();
     std::pair<int32_t, int> blocked{-1, -1};
-    const int32_t located = tri_.walk(t, center, &blocked);
+    const int32_t located = [&] {
+      PHX_CDT2D_SCOPE("r.walk");
+      return tri_.walk(t, center, &blocked);
+    }();
     if (located < 0) {
       const Triangle2D& b = tri_.triangles[static_cast<std::size_t>(blocked.first)];
       to_split.emplace_back(b.v[next3(blocked.second)], b.v[prev3(blocked.second)]);
@@ -1201,15 +1219,18 @@ class ConstrainedMesher {
       }
       if (to_split.empty()) {
         const int32_t v = new_vertex(center);
-        // The cavity marks belong to the old triangles, not their reused slots.
-        marks_[static_cast<std::size_t>(located)] = 0;
-        if (zero_count == 1) {
-          marks_[static_cast<std::size_t>(host.n[zero_edge])] = 0;
-        }
-        if (zero_count == 1) {
-          split_edge(located, zero_edge, v, kFree);
-        } else {
-          split_triangle(located, v);
+        {
+          PHX_CDT2D_SCOPE("r.split");
+          // The cavity marks belong to the old triangles, not their reused slots.
+          marks_[static_cast<std::size_t>(located)] = 0;
+          if (zero_count == 1) {
+            marks_[static_cast<std::size_t>(host.n[zero_edge])] = 0;
+          }
+          if (zero_count == 1) {
+            split_edge(located, zero_edge, v, kFree);
+          } else {
+            split_triangle(located, v);
+          }
         }
         legalize(v, true);
         after_insertion(v);
@@ -1235,6 +1256,7 @@ class ConstrainedMesher {
   // constraints) that `center` encroaches upon.
   void collect_encroached_by(int32_t start, const double* center,
                              std::vector<std::pair<int32_t, int32_t>>& out) {
+    PHX_CDT2D_SCOPE("r.cavity");
     const int32_t id = tri_.vertex_count();
     if (marks_.size() < tri_.triangles.size()) {
       marks_.resize(tri_.triangles.size(), 0);

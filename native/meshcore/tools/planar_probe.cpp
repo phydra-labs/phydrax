@@ -15,6 +15,13 @@
 //     -o planar_probe        # add -fopenmp (Linux GCC) if the objects need it
 //   ./planar_probe benchmarks/native_meshing_inputs 50
 //
+// A second binary built with -DPROBE_SCOPES -o planar_probe_scoped adds the
+// refine breakdown (pop, process, segment, walk, cavity, new_vertex, split,
+// legalize, after_insertion: inclusive, overlapping, accumulated per call; the timers perturb
+// the totals, compare across platforms only). Keep planar_probe.cpp before
+// the objects on the link line: cad_refine2d.o carries an unscoped copy of
+// the inline mesher functions and the first definition wins.
+//
 // Columns per phase: median microseconds, mean minor faults, mean operator
 // new calls and bytes. "call" is the whole C entry plus phx_mc_mesh_free.
 #include <sys/resource.h>
@@ -55,6 +62,31 @@ void mark(const char* name) {
   marks->push_back(Mark{name, std::chrono::steady_clock::now(), minor_faults(), allocations, bytes});
   counting = was;
 }
+
+// Inclusive accumulated time of the refine scopes (nested scopes overlap).
+struct Accumulator {
+  const char* name;
+  double microseconds;
+  std::uint64_t count;
+};
+Accumulator scopes[16];
+int scope_count = 0;
+
+struct Scope {
+  int index;
+  std::chrono::steady_clock::time_point start;
+  explicit Scope(const char* name) {
+    index = 0;
+    while (index < scope_count && std::strcmp(scopes[index].name, name) != 0) ++index;
+    if (index == scope_count) scopes[scope_count++] = Accumulator{name, 0.0, 0};
+    start = std::chrono::steady_clock::now();
+  }
+  ~Scope() {
+    scopes[index].microseconds +=
+        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++scopes[index].count;
+  }
+};
 }  // namespace probe
 
 void* operator new(std::size_t size) {
@@ -72,6 +104,11 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 #define PHX_CDT2D_PHASE(name) ::probe::mark(name)
+#ifdef PROBE_SCOPES
+#define PROBE_CAT2(a, b) a##b
+#define PROBE_CAT(a, b) PROBE_CAT2(a, b)
+#define PHX_CDT2D_SCOPE(name) ::probe::Scope PROBE_CAT(probe_scope_, __LINE__)(name)
+#endif
 #include "../src/cdt2d.cpp"
 
 namespace {
@@ -123,6 +160,7 @@ void run(const Row& row, int calls) {
   std::vector<long> total_faults;
   std::vector<std::uint64_t> total_allocations, total_bytes;
   for (int call = -5; call < calls; ++call) {
+    if (call == 0) probe::scope_count = 0;
     std::vector<probe::Mark> marks;
     marks.reserve(16);
     probe::marks = &marks;
@@ -172,6 +210,11 @@ void run(const Row& row, int calls) {
     }
     std::printf("  %-15s %9.1f us  faults %7.1f  new %7.1f  bytes %10.0f\n", samples.front()[p].name,
                 median(times), faults / calls, allocations / calls, bytes / calls);
+  }
+  for (int s = 0; s < probe::scope_count; ++s) {
+    std::printf("    %-20s %9.1f us/call  %9.1f entries/call  (inclusive, scoped build)\n",
+                probe::scopes[s].name, probe::scopes[s].microseconds / calls,
+                static_cast<double>(probe::scopes[s].count) / calls);
   }
 }
 
