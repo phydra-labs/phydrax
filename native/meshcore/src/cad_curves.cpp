@@ -79,12 +79,15 @@ struct Context {
     const double ct = controls.curve_tolerances[curve];
     if (curvature > 0 && std::isfinite(ct)) h = std::min(h, std::sqrt(8 * theta * ct / curvature));
     for (const Use& use : uses) {
-      // The curve takes each face's smallest metric size, min(h, sqrt(4
-      // theta tol / |k|max)) (cad::fidelity_metric): its segments are fixed,
-      // and a segment longer than the face's unit across the curvature leaves
-      // the kernel triangles it can neither split nor meet (measured on the
-      // quadric with the tangent's size instead: proximity refusals where the
-      // intersection curve runs along the cylinder axis).
+      // The curve takes each face's smallest boundary-layer size, min(h,
+      // sqrt(4 (1 - alpha) theta tol / |k|max)) (cad::fidelity_metric at the
+      // layer's share, kLensShare): its segments are fixed, and a segment
+      // longer than the face's unit across the curvature leaves the kernel
+      // triangles it can neither split nor meet (measured on the quadric
+      // with the tangent's size instead: proximity refusals where the
+      // intersection curve runs along the cylinder axis). Its chords also
+      // keep their lens (the face's chart arc vs the chart chord, mapped)
+      // within alpha theta tol: L <= sqrt(8 alpha theta tol / kappa_l).
       double face_size=0;
       bool resolved=false, evaluated=false;
       for (int attempt=0; attempt<9 && !resolved; ++attempt) {
@@ -92,9 +95,9 @@ struct Context {
         const double delta=std::ldexp(std::sqrt(std::numeric_limits<double>::epsilon()),attempt-1);
         const double sample_s=attempt ? (s==0 ? delta : 1-delta) : s;
         const double u=use_parameter(use.row,sample_s);
-        double pc[4], sj[18];
-        ++stats.first_order_evaluations;
-        if (!geometry.jets(geometry.pcurve_node(use.row), &u, 1, pc, workspace)) continue;
+        double pc[6], sj[18];
+        ++stats.second_order_evaluations;
+        if (!geometry.jets(geometry.pcurve_node(use.row), &u, 2, pc, workspace)) continue;
         ++stats.second_order_evaluations;
         if (!geometry.jets(geometry.surface_node(use.face), pc, 2, sj, workspace)) continue;
         evaluated=true;
@@ -104,8 +107,22 @@ struct Context {
         const double kappa=std::max(std::abs(differential.curvatures[0]),
                                     std::abs(differential.curvatures[1]));
         const double tolerance=controls.face_tolerances[use.face];
-        if (kappa>0 && 4*theta*tolerance<kappa*face_size*face_size)
-          face_size=std::sqrt(4*theta*tolerance/kappa);
+        const double layer=(1-kLensShare)*theta*tolerance;
+        if (kappa>0 && 4*layer<kappa*face_size*face_size)
+          face_size=std::sqrt(4*layer/kappa);
+        // kappa_l: the mapped chart arc's acceleration |DS p''| over
+        // |DS p'|^2. The chord point is taken at the same parameter, so the
+        // arc's deviation p - chord ~ p'' (t - a)(b - t) / 2 counts whole.
+        double tangent[3], acceleration[3];
+        for (int k=0;k<3;++k) {
+          tangent[k]=sj[3+k]*pc[2]+sj[6+k]*pc[3];
+          acceleration[k]=sj[3+k]*pc[4]+sj[6+k]*pc[5];
+        }
+        const double kappa_l=std::hypot(acceleration[0],acceleration[1],acceleration[2])/
+            (tangent[0]*tangent[0]+tangent[1]*tangent[1]+tangent[2]*tangent[2]);
+        if (kappa_l>0 && std::isfinite(kappa_l) &&
+            8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
+          face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
         // Within the pole ring zone of the face (pole_ring_width, the face
         // stage's owner of it) the face stage seeds fixed rings (spacing <=
@@ -451,7 +468,35 @@ bool sag(Context& c, double a, double b, const double* x, const double* y,
     const double t=length2>0 ? std::clamp((px*dx+py*dy+pz*dz)/length2,0.0,1.0) : 0.0;
     return std::hypot(px-t*dx,py-t*dy,pz-t*dz);
   };
-  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol)) {
+  // Each use's lens at the segment's middle: the face's chart arc vs its
+  // chart chord at the same parameter, mapped, within the lens share
+  // kLensShare of the face's theta tol (both are quadratic in the segment
+  // and largest about its middle). -1: an evaluation failed.
+  const auto lens = [&]() -> int {
+    const double mid=(a+b)*0.5;
+    for (const Use& u:c.uses) {
+      double ends[3][2], xyz[2][3];
+      const double at[3]={a,b,mid};
+      for (int k=0;k<3;++k) {
+        const double t=c.use_parameter(u.row,at[k]);
+        ++c.stats.value_evaluations;
+        if (!c.geometry.jets(c.geometry.pcurve_node(u.row),&t,0,ends[k],c.workspace)) return -1;
+      }
+      const double chord[2]={(ends[0][0]+ends[1][0])*0.5,(ends[0][1]+ends[1][1])*0.5};
+      c.stats.value_evaluations+=2;
+      if (!c.geometry.jets(c.geometry.surface_node(u.face),ends[2],0,xyz[0],c.workspace) ||
+          !c.geometry.jets(c.geometry.surface_node(u.face),chord,0,xyz[1],c.workspace)) return -1;
+      if (std::hypot(xyz[0][0]-xyz[1][0],xyz[0][1]-xyz[1][1],xyz[0][2]-xyz[1][2]) >
+          kLensShare*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face]) return 0;
+    }
+    return 1;
+  };
+  int lens_ok=1;
+  if (c.controls.sag_check && deviation(p)<=tol && deviation(r)<=tol) {
+    lens_ok=lens();
+    if (lens_ok<0) return false;
+  }
+  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol && lens_ok)) {
     out.push_back(b); return true;
   }
   const double mid=(a+b)*0.5;

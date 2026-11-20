@@ -61,6 +61,25 @@ struct CadFaceMesh {
 // needs the curvature size).
 inline double pole_ring_width(double spacing) { return 3.0 * spacing; }
 
+// Share alpha of a face's theta * tol taken by a curve chord's lens (the
+// chart arc vs the chart chord, mapped); the face triangles that touch a
+// curve (one layer) keep their own interpolation error within the rest,
+// (1 - alpha) theta tol, so a fidelity check that adds the two per point
+// (V3) holds there; the rest of the face keeps theta tol. Derivation: per
+// unit curve length the boundary layer holds n = 1/L_c + 1/e vertices, with
+// chords L_c = sqrt(8 alpha theta tol / kappa_l) (lens ~ kappa_l L^2 / 8,
+// kappa_l the curvature of the mapped chart arc off its chord) and layer
+// edges e = sqrt(3) R, R = sqrt(2 (1 - alpha) theta tol / kappa) (own error
+// ~ kappa R^2 / 2). n ~ a / sqrt(alpha) + b / sqrt(1 - alpha) with
+// a / b = sqrt(3 kappa_l / (4 kappa)) is smallest at alpha / (1 - alpha) =
+// (a / b)^(2/3), and n(1/2) / n_min = sqrt(2) (a + b) / (a^(2/3) +
+// b^(2/3))^(3/2) <= 1.03 for a / b in [0.41, 2.4]. Measured on the quadric
+// fixture's chords: kappa_l / kappa_max in [1.4, 2.1] on the radius-1
+// cylinder's faces and in [0, 0.75] (median 0.22) on the radius-0.6 one,
+// i.e. a / b up to 1.26 (median 0.41 on the latter; below it the lens
+// is small and its share idle): the minimum is flat, so alpha = 1/2.
+inline constexpr double kLensShare = 0.5;
+
 // Exact chart segment contact under the shared-vertex/chord rule above.
 bool cad_face_segments_conflict(int32_t a, int32_t b, const std::array<double, 2>& auv,
                                 const std::array<double, 2>& buv, int32_t c, int32_t d,

@@ -434,6 +434,63 @@ double base_size(const FaceMetric& context, const double* jet) {
   return h;
 }
 
+// Lowers `best` to the distance from point to the nearest boundary chord
+// when nearer.
+void chord_distance(const FaceMetric& context, int32_t index, const double* point,
+                    double& best) {
+  const BoundaryNode& node = context.chord_tree[index];
+  double box_distance2 = 0.0;
+  for (int k = 0; k < 3; ++k) {
+    const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
+    box_distance2 += delta * delta;
+  }
+  if (box_distance2 >= best * best) return;
+  if (node.left >= 0) {
+    chord_distance(context, node.left, point, best);
+    chord_distance(context, node.right, point, best);
+    return;
+  }
+  for (int32_t i = node.begin; i < node.end; ++i) {
+    const BoundaryChord& chord = context.chords[context.chord_order[i]];
+    double t = 0.0, norm = 0.0, ab[3], ap[3];
+    for (int k = 0; k < 3; ++k) {
+      ab[k] = chord.b[k] - chord.a[k];
+      ap[k] = point[k] - chord.a[k];
+      t += ab[k] * ap[k];
+      norm += ab[k] * ab[k];
+    }
+    t = std::clamp(t / norm, 0.0, 1.0);
+    double distance2 = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      const double e = ap[k] - t * ab[k];
+      distance2 += e * e;
+    }
+    best = std::min(best, std::sqrt(distance2));
+  }
+}
+
+// The fraction of tol a face point's triangles get: the boundary layer's
+// (1 - kLensShare) theta next to a curve chord (whose lens takes the rest,
+// cad_faces.hpp), theta away from it. The curvature size sqrt(4 theta' tol
+// / |k|max) is the layer's s_l within s_l of a chord (which holds the
+// centroid and circumcentre of a triangle on it) and grows from there at
+// the boundary grading's rate up to theta's s_f: a stepped size left
+// triangles across the step whose split points were all too close
+// (measured: a proximity refusal on the quadric at h = 0.04925).
+double local_theta(const FaceMetric& context, const double* jet,
+                   const cad::SurfaceDifferential& differential) {
+  const double kappa = std::max(std::abs(differential.curvatures[0]),
+                                std::abs(differential.curvatures[1]));
+  if (context.chord_tree.empty() || !(kappa > 0.0)) return context.theta;
+  const double layer = (1.0 - kLensShare) * context.theta;
+  const double inner = std::sqrt(4.0 * layer * context.tolerance / kappa);
+  const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
+  double distance = inner + (outer - inner) / kBoundaryGrading;
+  chord_distance(context, 0, jet, distance);
+  const double size = inner + kBoundaryGrading * std::max(0.0, distance - inner);
+  return size >= outer ? context.theta : context.theta * (size * size) / (outer * outer);
+}
+
 CadMetric2D face_metric(const double chart[2], void* opaque) {
   auto& context = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
@@ -445,10 +502,12 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
     return {invalid, invalid, invalid};
   }
   // Fidelity: the isotropic size intersected with the request's curvature
-  // tensor (cad::fidelity_metric).
+  // tensor (cad::fidelity_metric), at the boundary layer's share near a
+  // curve.
   double m[3];
-  cad::fidelity_metric(differential, base_size(context, jet), context.theta, context.tolerance, m,
-                       nullptr);
+  const double h = base_size(context, jet);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, nullptr);
   return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
           m[2] / (context.scale_v * context.scale_v)};
 }
@@ -464,7 +523,8 @@ bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9])
   if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
   double m[3], lambda[2];
   const double h = base_size(context, jet);
-  cad::fidelity_metric(differential, h, context.theta, context.tolerance, m, lambda);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, lambda);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
   const double base = 1.0 / (h * h);
@@ -851,14 +911,19 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
     // The rings are isotropic: their spacing is the face metric's smallest
-    // size, the request h or the fidelity size sqrt(4 theta tol / |k|max).
+    // size, the request h or the boundary layer's fidelity size
+    // sqrt(4 (1 - alpha) theta tol / |k|max) (local_theta): the curves that
+    // end at the pole converge there, so its zone lies in their layer
+    // (measured: rings at theta's size left the sphere's kernel triangles
+    // between them unresolved).
     cad::SurfaceDifferential differential;
     if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
     const double curvature = std::max(std::abs(differential.curvatures[0]),
                                       std::abs(differential.curvatures[1]));
     double size = metric.size;
     if (curvature > 0.0)
-      size = std::min(size, std::sqrt(4.0 * metric.theta * metric.tolerance / curvature));
+      size = std::min(size, std::sqrt(4.0 * (1.0 - kLensShare) * metric.theta *
+                                      metric.tolerance / curvature));
     double spacing = std::min(limit, size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
     double width = std::min(limit, pole_ring_width(spacing));

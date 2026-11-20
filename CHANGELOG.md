@@ -334,6 +334,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD meshing splits each face's `theta * tol` at its curves: a curve
+  chord's lens (the face's chart arc vs its chart chord at the same
+  parameter, mapped) gets `alpha theta tol` (curve sizing from
+  `|DS p''| / |DS p'|^2` and a midpoint lens check in the curve sag check),
+  and the face triangles next to a curve get `(1 - alpha) theta tol` (the
+  face metric's curvature size graded from that layer back to `theta` at
+  the boundary grading's rate; pole rings take the layer's size), so the
+  fidelity verifier's per-point sum of lens and own deviation holds there.
+  `alpha = 1/2` minimises the boundary layer's vertex count within 3 % for
+  the measured lens/surface curvature ratios. Curve and face meshes change.
 - Native CAD face smoothing searches for better vertex positions: below the
   kernel's angle-pass target a compass search raises the star's worst 3D
   angle (the fans at fixed curve vertices held the smallest angles), and an
