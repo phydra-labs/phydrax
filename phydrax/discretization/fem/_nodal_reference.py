@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import cache
+from functools import lru_cache
 from itertools import product
 from typing import Any, cast, Sequence
 
@@ -405,7 +405,7 @@ def lobatto_unit(order: int, index: int, /) -> ExactNodalExpression:
     return ExactNodalExpression("lobatto-unit", (order, index))
 
 
-@cache
+@lru_cache(maxsize=64)
 def _lobatto_roots(order: int, /) -> tuple[LegendreLobattoRoot, ...]:
     if order < 2:
         return ()
@@ -590,7 +590,7 @@ def _equilateral_shift_2d(
     return result[0], result[1]
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _warp_and_blend_barycentric(
     order: int,
     dimension: int,

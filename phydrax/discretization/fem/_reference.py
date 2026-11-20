@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import cache
+from functools import lru_cache
 from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
@@ -330,7 +330,7 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
     return _lagrange_element(str(cell_kind), int(degree))
 
 
-@cache
+@lru_cache(maxsize=64)
 def _lagrange_element(cell: str, order: int, /) -> FiniteElementSpec:
     # Reference elements are immutable and depend only on (cell, order): build
     # each once per process, with concrete arrays even inside a trace.
