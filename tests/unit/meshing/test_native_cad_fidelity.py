@@ -1142,18 +1142,20 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
 
 
 _HALF_PI = np.float64(np.pi / 2)
+# pi/2 - rho*, rho* the positive root of rho = sin 2 rho, rounded down.
+_CAP_LATITUDE = float.fromhex("0x1.3f004dc9db074p-1")
 
 
 def _pole_region(uv: np.ndarray) -> np.ndarray:
     """V3's pole-region rows: +1 / -1 by pole, 0 elsewhere (the native predicate).
 
     A row is in a pole's region when a corner lies on the pole line or any
-    corner lies in the cap sigma v >= pi/4 (pi/4 rounded down, as natively).
+    corner lies in the cap sigma v >= _CAP_LATITUDE (the native kCapLatitude).
     """
     region = np.zeros(uv.shape[0], dtype=np.int64)
     for sigma in (1, -1):
         on = (uv[:, :, 1] == sigma * _HALF_PI).any(axis=1)
-        cap = (sigma * uv[:, :, 1] >= np.float64(np.pi / 4)).any(axis=1)
+        cap = (sigma * uv[:, :, 1] >= _CAP_LATITUDE).any(axis=1)
         region[on | cap] = sigma
     return region
 
