@@ -433,14 +433,14 @@ Remeshed construct(const Surface& input, const Program& value, double tolerance,
     return out;
   }
   std::array<int64_t, 2> sizes{};
-  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_surface_result_sizes(handle, sizes.data()) == PHX_MC_OK);
   out.vertices.resize(static_cast<size_t>(3 * sizes[0]));
   out.triangles.resize(static_cast<size_t>(3 * sizes[1]));
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0] - 1, sizes[1], out.vertices.data(),
-                                          out.triangles.data()) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1], out.vertices.data(),
-                                          out.triangles.data()) == PHX_MC_OK);
-  phx_mc_zero_set_remesh_free(handle);
+  PHX_CHECK(phx_mc_surface_result_arrays(handle, sizes[0] - 1, sizes[1], out.vertices.data(),
+                                         out.triangles.data()) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(phx_mc_surface_result_arrays(handle, sizes[0], sizes[1], out.vertices.data(),
+                                         out.triangles.data()) == PHX_MC_OK);
+  phx_mc_surface_result_free(handle);
   return out;
 }
 
@@ -480,15 +480,15 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
   PHX_CHECK((status == PHX_MC_OK) == (handle != nullptr));
   if (handle == nullptr) return status;
   std::array<int64_t, 2> sizes{};
-  PHX_CHECK(phx_mc_zero_set_remesh_sizes(handle, sizes.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_surface_result_sizes(handle, sizes.data()) == PHX_MC_OK);
   if (certified != nullptr) {
     certified->vertices.resize(static_cast<size_t>(3 * sizes[0]));
     certified->triangles.resize(static_cast<size_t>(3 * sizes[1]));
-    PHX_CHECK(phx_mc_zero_set_remesh_arrays(handle, sizes[0], sizes[1],
-                                            certified->vertices.data(),
-                                            certified->triangles.data()) == PHX_MC_OK);
+    PHX_CHECK(phx_mc_surface_result_arrays(handle, sizes[0], sizes[1],
+                                           certified->vertices.data(),
+                                           certified->triangles.data()) == PHX_MC_OK);
   }
-  phx_mc_zero_set_remesh_free(handle);
+  phx_mc_surface_result_free(handle);
   return status;
 }
 

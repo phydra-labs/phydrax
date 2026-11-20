@@ -1040,7 +1040,7 @@ an enclosure claim.
 `AnalyticImplicitProfile` is a distinct restricted-source premise for nominal
 three-dimensional spheres and full nonsingular ring tori. It establishes their
 reach, topology, and certified boundary-distance/cover facts; those facts are
-not inferred for arbitrary implicit fields. The native isosurface-stuffing and
+not inferred for arbitrary implicit fields. The native restricted Delaunay and
 general adaptive implicit tetrahedral routes therefore remain separate.
 
 `discover_periodic_trigonometric_surface` discovers a `TrigonometricLevelSet` on

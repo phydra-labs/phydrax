@@ -137,6 +137,21 @@ def numeric_array_fingerprint(value: np.ndarray, /) -> str:
     return digest.hexdigest()
 
 
+def _rational_chart_row_digest(row: tuple[tuple[tuple[int, int], ...], ...], /) -> bytes:
+    encoded_row = bytearray(b"rational-chart-row\0")
+    encoded_row.extend(len(row).to_bytes(8, "big"))
+    for point in row:
+        encoded_row.extend(len(point).to_bytes(8, "big"))
+        for numerator, denominator in point:
+            for value in (numerator, denominator):
+                magnitude = abs(value)
+                encoded = magnitude.to_bytes((magnitude.bit_length() + 7) // 8, "big")
+                encoded_row.append(value < 0)
+                encoded_row.extend(len(encoded).to_bytes(8, "big"))
+                encoded_row.extend(encoded)
+    return hashlib.sha256(encoded_row).digest()
+
+
 def rational_chart_bank_fingerprint(
     bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], /
 ) -> str:
@@ -146,22 +161,16 @@ def rational_chart_bank_fingerprint(
     rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
     for start in range(0, len(bank), _SEQUENCE_CHUNK):
         chunk = bank[start : start + _SEQUENCE_CHUNK]
+        # Row digests concatenate exactly as successive updates would; equal
+        # rows have equal digests, so a chunk of one row repeats its digest.
+        if chunk.count(chunk[0]) == len(chunk):
+            row_digest = rows.get(chunk[0])
+            if row_digest is None:
+                row_digest = rows[chunk[0]] = _rational_chart_row_digest(chunk[0])
+            digest.update(row_digest * len(chunk))
+            continue
         for row in set(chunk).difference(rows):
-            encoded_row = bytearray(b"rational-chart-row\0")
-            encoded_row.extend(len(row).to_bytes(8, "big"))
-            for point in row:
-                encoded_row.extend(len(point).to_bytes(8, "big"))
-                for numerator, denominator in point:
-                    for value in (numerator, denominator):
-                        magnitude = abs(value)
-                        encoded = magnitude.to_bytes(
-                            (magnitude.bit_length() + 7) // 8, "big"
-                        )
-                        encoded_row.append(value < 0)
-                        encoded_row.extend(len(encoded).to_bytes(8, "big"))
-                        encoded_row.extend(encoded)
-            rows[row] = hashlib.sha256(encoded_row).digest()
-        # Row digests concatenate exactly as successive updates would.
+            rows[row] = _rational_chart_row_digest(row)
         digest.update(b"".join(map(rows.__getitem__, chunk)))
     return digest.hexdigest()
 

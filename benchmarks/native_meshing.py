@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -229,6 +230,19 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         (
             frozenset(
                 {
+                    "mesh-remesh-torus-1e3",
+                    "mesh-remesh-torus",
+                    "mesh-remesh-torus-1e5",
+                    "mesh-remesh-noisy-torus-1e3",
+                    "mesh-remesh-noisy-torus",
+                    "mesh-remesh-noisy-torus-1e5",
+                }
+            ),
+            _mesh_remesh_rows,
+        ),
+        (
+            frozenset(
+                {
                     "surface-to-tets-sphere",
                     "surface-to-tets-torus",
                     "surface-to-tets-grid-torus",
@@ -287,15 +301,18 @@ def _icosphere(level: int, /) -> tuple[np.ndarray, np.ndarray]:
     return vertices, faces
 
 
-def _uv_torus(around: int, /) -> tuple[np.ndarray, np.ndarray]:
-    # The ledger's torus R = 1, r = 0.4 with an (around x around / 2) grid.
+def _uv_torus(
+    around: int, major: float = 1.0, minor: float = 0.4, /
+) -> tuple[np.ndarray, np.ndarray]:
+    # The ledger's grid torus (R = 1, r = 0.4 unless given) with an
+    # (around x around / 2) grid.
     across = around // 2
     u = 2.0 * np.pi * np.arange(around) / around
     w = 2.0 * np.pi * np.arange(across) / across
     grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
-    ring = 1.0 + 0.4 * np.cos(grid_w)
+    ring = major + minor * np.cos(grid_w)
     vertices = np.stack(
-        (ring * np.cos(grid_u), ring * np.sin(grid_u), 0.4 * np.sin(grid_w)), axis=-1
+        (ring * np.cos(grid_u), ring * np.sin(grid_u), minor * np.sin(grid_w)), axis=-1
     ).reshape((-1, 3))
     i, j = np.meshgrid(np.arange(around), np.arange(across), indexing="ij")
     a = (i * across + j).reshape((-1,))
@@ -409,9 +426,13 @@ def _surface_to_tets(
     return _VolumeResult(mesh.arrays().tetrahedra.shape[0], improved.unmet_cells)
 
 
-def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
-    # A well-shaped closed torus surface (R = 1, r = 0.4): the outward boundary
-    # of the isosurface-stuffed solid at the given lattice spacing.
+def _restricted_torus_surface(edge: float, /) -> tuple[np.ndarray, np.ndarray]:
+    # A well-shaped closed torus surface (R = 1, r = 0.4): the restricted
+    # Delaunay surface of the solid with facet edges at most `edge`, facet
+    # angles of at least 30 degrees and surface ball centers within edge / 8
+    # of the facets (the edge bound governs), without interior targets. Edges
+    # 0.072 and 0.025 give 14,010 and 123,098 triangles of mean edge 0.0524
+    # and 0.0177.
     def torus(x: Array) -> Array:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - 0.4,))
@@ -421,23 +442,18 @@ def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
     ).native_program
     if program is None:
         raise RuntimeError("The torus rows need the native interval program.")
-    upper = np.asarray((1.5, 1.5, 0.5), dtype=np.float64)
-    stuffed = program.stuff_tetrahedra(-upper, upper, spacing)
-    cells = stuffed.cells
-    faces = np.concatenate(
-        (
-            cells[:, [1, 2, 3]],
-            cells[:, [0, 3, 2]],
-            cells[:, [0, 1, 3]],
-            cells[:, [0, 2, 1]],
-        )
+    upper = np.asarray((1.4, 1.4, 0.4), dtype=np.float64)
+    criteria = _meshcore.RestrictedDelaunayCriteria(
+        edge, edge / 8.0, 30.0, math.inf, None, 0.0, 0.0, 0.8
     )
-    _, inverse, counts = np.unique(
-        np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True
+    volume = program.restricted_tetrahedra(
+        -upper, upper, criteria, 1, 0, np.empty((0, 3), dtype=np.float64)
     )
-    boundary = faces[counts[inverse.reshape((-1,))] == 1]
+    if volume.status is not _meshcore.MeshcoreStatus.OK or not volume.topology_matched:
+        raise RuntimeError("The torus rows need a resolved restricted torus surface.")
+    boundary = volume.boundary_faces
     used, local = np.unique(boundary, return_inverse=True)
-    return stuffed.points[used], local.reshape(boundary.shape).astype(np.int64)
+    return volume.points[used], local.reshape(boundary.shape).astype(np.int64)
 
 
 def _volume_rows() -> tuple[_Row, ...]:
@@ -446,17 +462,17 @@ def _volume_rows() -> tuple[_Row, ...]:
     # export) with the boundary fixed, against Gmsh HXT generate(3) on the same
     # surface. The circumradius target 1.75 sqrt(3/8) h, h the mean surface
     # edge, matches HXT's element counts. The sphere and grid torus row sizes
-    # are the triangle counts, the stuffed torus row size the stuffing spacing
-    # in thousandths. The grid torus (cocircular rows, every edge constrained)
-    # is a hard input for both tools.
+    # are the triangle counts, the restricted torus row size its facet edge
+    # bound in thousandths. The grid torus (cocircular rows, every edge
+    # constrained) is a hard input for both tools.
     rows: list[_Row] = []
     shapes = (
         ("surface-to-tets-sphere", faces.shape[0], (vertices, faces))
         for vertices, faces in (_icosphere(5), _icosphere(6))
     )
     tori = (
-        ("surface-to-tets-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
-        for thousandths in (67, 22)
+        ("surface-to-tets-torus", thousandths, _restricted_torus_surface(1e-3 * thousandths))
+        for thousandths in (72, 25)
     )
     grids = (
         ("surface-to-tets-grid-torus", faces.shape[0], (vertices, faces))
@@ -498,12 +514,13 @@ def _volume_unmet(result: object, /) -> int:
 def _implicit_rows() -> tuple[_Row, ...]:
     # The external comparison's sphere (radius 0.371) and torus (major 0.742,
     # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
-    # profile route's construction: stuffing at the route's spacing, lattice
-    # acceptance (exact volume certificate, topology, certified facet
-    # deviation) and the fixed-boundary quality pass when the stuffed cells
-    # need it, ending at the constructed arrays as the references end at their
-    # native meshes. Publication as a CellMesh and certification are not
-    # timed. The row size is the tolerance in thousandths.
+    # profile route's construction: restricted Delaunay refinement of the zero
+    # set from the interval box tree's seeds to the certified facet bound, of
+    # the interior cells in the same triangulation to radius-edge 2, sliver
+    # removal to 15 degrees and the fixed-boundary quality fallback, ending at
+    # the constructed arrays as the references end at their native meshes.
+    # Publication as a CellMesh and certification are not timed. The row size
+    # is the tolerance in thousandths.
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry import Sphere, Torus
     from phydrax.geometry.implicit import AnalyticImplicitProfile
@@ -513,7 +530,7 @@ def _implicit_rows() -> tuple[_Row, ...]:
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
-    from phydrax.meshing._implicit_volume import PreparedStuffedImplicitVolume
+    from phydrax.meshing._implicit_volume import PreparedRestrictedImplicitVolume
     from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_implicit import prepare_native_implicit
@@ -548,12 +565,12 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 profile,
                 specification,
                 NativeMeshingOptions(
-                    "implicit_stuffing", volume_schedule=NativeVolumeSchedule()
+                    "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
                 ),
                 contract,
             )
-            if not isinstance(prepared, PreparedStuffedImplicitVolume):
-                raise TypeError("An analytic profile volume prepares the stuffing route.")
+            if not isinstance(prepared, PreparedRestrictedImplicitVolume):
+                raise TypeError("An analytic profile volume prepares the restricted route.")
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
@@ -564,9 +581,10 @@ def _remesh_rows() -> tuple[_Row, ...]:
     # target triangle count N, i.e. the edge h of an equilateral triangle of
     # area A/N, within tolerance h^2/4 and a 30 degree minimum angle. The row
     # name carries the target (no suffix: 1e4; `-1e3`, `-1e5`); the row size is
-    # the input triangle count. The row times the construction; certification
-    # (zero_set_certify) is a separate entry and is not timed. Quality is
-    # measured independently against the exact surface.
+    # the input triangle count. The row times the construction; the quality
+    # stage (untimed) certifies it with zero_set_certify, a refusal counting
+    # as a miss, and measures the certified surface independently against the
+    # exact surface.
     def sphere(x: Array) -> Array:
         return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
@@ -574,17 +592,21 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return ring * ring + x[2] * x[2] - 0.16
 
-    values = []
+    programs = []
     for label, function in (("sphere", sphere), ("torus", torus)):
-        program = prepare_interval_function(
-            function, 3, batch_capacity=1, execution="native"
-        ).native_program
-        if program is None:
-            raise RuntimeError(
-                f"The {label} field must lower to a native interval program."
-            )
-        values.append(program.box_program())
-    sphere_value, torus_value = values
+        pair = []
+        for field in (function, jax.grad(function)):
+            program = prepare_interval_function(
+                field, 3, batch_capacity=1, execution="native"
+            ).native_program
+            if program is None:
+                raise RuntimeError(
+                    f"The {label} field and its gradient must lower to native "
+                    "interval programs."
+                )
+            pair.append(program.box_program())
+        programs.append(tuple(pair))
+    (sphere_value, sphere_gradient), (torus_value, torus_gradient) = programs
     spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
     sphere_rows = (
         ("surface-remesh-sphere-1e3", 5, 1e3),
@@ -595,11 +617,12 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ("surface-remesh-sphere-1e5", 8, 1e5),
     )
     rows: list[_Row] = []
-    for name, value, distance, samples, area, (vertices, faces), target in (
+    for name, value, gradient, distance, samples, area, (vertices, faces), target in (
         *(
             (
                 name,
                 sphere_value,
+                sphere_gradient,
                 _sphere_distance,
                 _sphere_samples,
                 4.0 * math.pi,
@@ -611,6 +634,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
         (
             "surface-remesh-torus",
             torus_value,
+            torus_gradient,
             _torus_distance,
             _torus_samples,
             4.0 * math.pi**2 * 0.4,
@@ -631,12 +655,156 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, distance=distance, samples=samples, tolerance=tolerance: (
-                    _remesh_quality(result, distance, samples, tolerance)
+                quality=lambda result, vertices=vertices, faces=faces, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                    _zero_set_quality(
+                        result,
+                        vertices,
+                        faces,
+                        value,
+                        gradient,
+                        tolerance,
+                        edge,
+                        distance,
+                        samples,
+                    )
                 ),
             )
         )
     return tuple(rows)
+
+
+# The ledger's F7 torus: R = 0.742, r = 0.371 on a 1000 x 500 grid
+# (1,000,000 triangles), and the same with every vertex moved along the exact
+# normal by N(0, 0.001) (seed 2), as `f7_setup.py`.
+_F7_MAJOR, _F7_MINOR, _F7_NOISE = 0.742, 0.371, 0.001
+# CGAL isotropic_remeshing's distances to the true torus on the noisy rows
+# (ledger M1, the smaller of its two directions), the reference those rows
+# may not exceed.
+_F7_NOISY_REFERENCE = {1e3: 0.0141, 1e4: 0.00248, 1e5: 0.00241}
+
+
+def _f7_torus(noisy: bool, /) -> tuple[np.ndarray, np.ndarray]:
+    vertices, faces = _uv_torus(1000, _F7_MAJOR, _F7_MINOR)
+    if not noisy:
+        return vertices, faces
+    u = 2.0 * np.pi * np.arange(1000) / 1000
+    w = 2.0 * np.pi * np.arange(500) / 500
+    grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
+    normals = np.stack(
+        (
+            np.cos(grid_w) * np.cos(grid_u),
+            np.cos(grid_w) * np.sin(grid_u),
+            np.sin(grid_w),
+        ),
+        axis=-1,
+    ).reshape((-1, 3))
+    noise = np.random.default_rng(2).normal(0.0, _F7_NOISE, vertices.shape[0])
+    return vertices + normals * noise[:, None], faces
+
+
+def _mesh_remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's F7 rows: the dense and the noisy torus remeshed with the
+    # input mesh as the only source toward N = 1e3 / 1e4 / 1e5 triangles: edge
+    # h of an equilateral triangle of area A/N and tolerance h^2 / (8 r), the
+    # sagitta of h on the minor circle; the noisy 1e4 / 1e5 rows allow the
+    # noise's 5 sigma more. The row name carries the target (no suffix: 1e4);
+    # the size is the input triangle count. The row times the construction;
+    # the certificate against the input (mesh_certify, both directions) and
+    # the distances to the true torus are measured after it, untimed.
+    area = 4.0 * math.pi**2 * _F7_MAJOR * _F7_MINOR
+    rows: list[_Row] = []
+    for noisy, label in ((False, "mesh-remesh-torus"), (True, "mesh-remesh-noisy-torus")):
+        vertices, faces = _f7_torus(noisy)
+        for suffix, target in (("-1e3", 1e3), ("", 1e4), ("-1e5", 1e5)):
+            edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * target))
+            tolerance = edge * edge / (8.0 * _F7_MINOR)
+            if noisy and target > 1e3:
+                tolerance += 5.0 * _F7_NOISE
+            true_tolerance = _F7_NOISY_REFERENCE[target] if noisy else tolerance
+            rows.append(
+                _Row(
+                    label + suffix,
+                    faces.shape[0],
+                    lambda vertices=vertices, faces=faces, edge=edge, tolerance=tolerance: (
+                        _meshcore.mesh_remesh(vertices, faces, tolerance, edge, 30.0)
+                    ),
+                    _mesh_remeshed_triangles,
+                    _mesh_remesh_unmet,
+                    quality=lambda result, vertices=vertices, faces=faces, edge=edge, tolerance=tolerance, true_tolerance=true_tolerance: (
+                        _mesh_remesh_quality(
+                            result, vertices, faces, edge, tolerance, true_tolerance
+                        )
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def _mesh_remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _mesh_remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance by the construction itself (counters 4 and 5).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return int(result.counters[4] + result.counters[5])
+
+
+def _mesh_remesh_quality(
+    result: object,
+    source_vertices: np.ndarray,
+    source_faces: np.ndarray,
+    edge: float,
+    tolerance: float,
+    true_tolerance: float,
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The certificate against the input (both directions, within the row's
+    # tolerance; a refusal is one miss), then angles and distances to the true
+    # torus as _surface_quality measures them, against `true_tolerance`, of
+    # the certified surface (the constructed one when refused).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    torus = (
+        lambda points: _torus_distance(points, _F7_MAJOR, _F7_MINOR),
+        lambda count: _torus_samples(count, _F7_MAJOR, _F7_MINOR),
+    )
+    try:
+        certificate = _meshcore.mesh_certify(
+            source_vertices,
+            source_faces,
+            result.vertices,
+            result.triangles,
+            tolerance,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, *torus, true_tolerance
+        )
+        return missed + 1, {
+            **measured,
+            "certified": 0.0,
+            "certified_tolerance": tolerance,
+        }
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, *torus, true_tolerance
+    )
+    return missed, {
+        **measured,
+        "certified": 1.0,
+        "certified_tolerance": tolerance,
+        "certified_surface_to_source": float(certificate.distances[0]),
+        "certified_source_to_surface": float(certificate.distances[1]),
+    }
 
 
 def _remeshed_triangles(result: object, /) -> int:
@@ -657,9 +825,11 @@ def _sphere_distance(points: np.ndarray, /) -> np.ndarray:
     return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
 
 
-def _torus_distance(points: np.ndarray, /) -> np.ndarray:
-    ring = np.linalg.norm(points[..., :2], axis=-1) - 1.0
-    return np.abs(np.hypot(ring, points[..., 2]) - 0.4)
+def _torus_distance(
+    points: np.ndarray, major: float = 1.0, minor: float = 0.4, /
+) -> np.ndarray:
+    ring = np.linalg.norm(points[..., :2], axis=-1) - major
+    return np.abs(np.hypot(ring, points[..., 2]) - minor)
 
 
 def _sphere_samples(count: int, /) -> np.ndarray:
@@ -667,10 +837,10 @@ def _sphere_samples(count: int, /) -> np.ndarray:
     return directions / np.linalg.norm(directions, axis=1, keepdims=True)
 
 
-def _torus_samples(count: int, /) -> np.ndarray:
+def _torus_samples(count: int, major: float = 1.0, minor: float = 0.4, /) -> np.ndarray:
     u, v = 2.0 * np.pi * np.random.default_rng(20261119).random((2, count))
-    ring = 1.0 + 0.4 * np.cos(v)
-    return np.stack((ring * np.cos(u), ring * np.sin(u), 0.4 * np.sin(v)), axis=1)
+    ring = major + minor * np.cos(v)
+    return np.stack((ring * np.cos(u), ring * np.sin(u), minor * np.sin(v)), axis=1)
 
 
 def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.ndarray:
@@ -701,8 +871,60 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
     return np.sqrt(squared)
 
 
-def _remesh_quality(
+def _zero_set_quality(
     result: object,
+    carrier_vertices: np.ndarray,
+    carrier_faces: np.ndarray,
+    value: _meshcore.IntervalBoxProgram,
+    gradient: _meshcore.IntervalBoxProgram,
+    tolerance: float,
+    edge: float,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The certificate against the zero set (zero_set_certify, the input as the
+    # carrier at the route's carrier distance, the tolerance; a refusal is one
+    # miss), then _surface_quality of the certified surface (of the
+    # constructed one when refused).
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    try:
+        certificate = _meshcore.zero_set_certify(
+            result.vertices,
+            result.triangles,
+            value,
+            gradient,
+            tolerance,
+            result.orientation,
+            carrier_vertices,
+            carrier_faces,
+            tolerance,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, distance, samples, tolerance
+        )
+        return missed + 1, {**measured, "certified": 0.0}
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, distance, samples, tolerance
+    )
+    return missed, {
+        **measured,
+        "certified": 1.0,
+        "certified_distance": certificate.distance,
+        "carrier_triangles": float(certificate.counters[3]),
+    }
+
+
+def _surface_quality(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
     distance: Callable[[np.ndarray], np.ndarray],
     samples: Callable[[int], np.ndarray],
     tolerance: float,
@@ -714,9 +936,7 @@ def _remesh_quality(
     # edge), both against the exact distance function.
     from scipy.spatial import cKDTree
 
-    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
-        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
-    corners = result.vertices[result.triangles]
+    corners = vertices[triangles]
     angles = []
     for k in range(3):
         first = corners[:, (k + 1) % 3] - corners[:, k]
@@ -757,10 +977,10 @@ def _remesh_quality(
 
 
 def _constructed_cells(result: object, /) -> int:
-    from phydrax.meshing._implicit_volume import StuffedImplicitConstruction
+    from phydrax.meshing._implicit_volume import RestrictedImplicitConstruction
 
-    if not isinstance(result, StuffedImplicitConstruction):
-        raise TypeError("The stuffing construction returns its constructed arrays.")
+    if not isinstance(result, RestrictedImplicitConstruction):
+        raise TypeError("The restricted construction returns its constructed arrays.")
     return result.tetrahedra.shape[0]
 
 

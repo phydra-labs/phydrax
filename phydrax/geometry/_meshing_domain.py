@@ -1510,6 +1510,150 @@ def _span_enclosures_for_chart(
     return tuple(enclosures)
 
 
+def _spline_knot_lines(
+    surface: AbstractSurfacePatch, /
+) -> tuple[tuple[int, Fraction, bool], ...]:
+    """Interior knot lines lacking a guaranteed C1 or C0 continuity."""
+    while isinstance(surface, _PlacedSurfacePatch):
+        surface = surface.source
+    if not isinstance(surface, BSplineSurfacePatch):
+        return ()
+    result: list[tuple[int, Fraction, bool]] = []
+    for axis, knots, degree, count in (
+        (0, surface.exact_u_knots, surface.u_degree, surface.control_points.shape[0]),
+        (1, surface.exact_v_knots, surface.v_degree, surface.control_points.shape[1]),
+    ):
+        for knot in sorted(set(knots)):
+            if knots[degree] < knot < knots[count]:
+                multiplicity = knots.count(knot)
+                if multiplicity >= degree:
+                    result.append((axis, knot, multiplicity > degree))
+    return tuple(result)
+
+
+def _spline_piecewise_interpolation_bound(
+    chart: _ExactUVChart,
+    spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
+    lines: tuple[tuple[int, Fraction, bool], ...],
+    /,
+) -> float:
+    """Bound a C0 chart by exact knot clipping and C1-piece Hessians.
+
+    On each clipped subtriangle t, S - I_T S is the sum of S - I_t S
+    and I_t S - I_T S. The first term has the ordinary span Hessian bound;
+    the second is affine and bounded by its largest norm at t's vertices.
+
+    Cells with more than three vertices cannot use this proof: their
+    interpolation basis is not specified by the chart API.
+    """
+    from ._source_interpolation import _exact_rational_surface_point_bounds
+
+    if len(chart) != 3:
+        return math.inf
+    a, b, c = chart
+    determinant = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    distinct = tuple(dict.fromkeys(chart))
+    if determinant == 0 and len(distinct) != 2:
+        return math.inf
+    corners = tuple(_exact_rational_surface_point_bounds(spans, point) for point in chart)
+    if any(value is None for value in corners):
+        return math.inf
+    pieces = [chart]
+    for axis, knot, discontinuous in lines:
+        if discontinuous:
+            continue
+        next_pieces = []
+        for piece in pieces:
+            if (
+                min(point[axis] for point in piece)
+                < knot
+                < max(point[axis] for point in piece)
+            ):
+                next_pieces.extend(
+                    _clip_parameter_polygon(piece, axis, knot, side)
+                    for side in (False, True)
+                )
+            else:
+                next_pieces.append(piece)
+        pieces = next_pieces
+
+    def vertex_error(point: tuple[Fraction, Fraction], /) -> Fraction | None:
+        if point in chart:
+            return Fraction(0)
+        value = _exact_rational_surface_point_bounds(spans, point)
+        if value is None:
+            return None
+        if determinant:
+            u = (
+                (point[0] - a[0]) * (c[1] - a[1]) - (point[1] - a[1]) * (c[0] - a[0])
+            ) / determinant
+            v = (
+                (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0])
+            ) / determinant
+            weights = (1 - u - v, u, v)
+        else:
+            first, last = distinct
+            axis = 0 if first[0] != last[0] else 1
+            ratio = (point[axis] - first[axis]) / (last[axis] - first[axis])
+            weights = tuple(
+                (1 - ratio if vertex == first else ratio)
+                if index == chart.index(vertex)
+                else Fraction(0)
+                for index, vertex in enumerate(chart)
+            )
+        squared = Fraction(0)
+        for component, bounds in enumerate(value):
+            lower = Fraction(0)
+            upper = Fraction(0)
+            for weight, corner in zip(weights, corners, strict=True):
+                if corner is None:
+                    return None
+                lower += weight * corner[component][0]
+                upper += weight * corner[component][1]
+            magnitude = max(abs(bounds[0] - upper), abs(bounds[1] - lower))
+            squared += magnitude * magnitude
+        return fraction_sqrt_interval(squared)[1]
+
+    maximum = Fraction(0)
+    for piece in pieces:
+        if len(piece) < 2:
+            continue
+        triangles = (
+            ((piece[0], piece[1], piece[1]),)
+            if len(piece) == 2
+            else tuple(
+                (piece[0], piece[i], piece[i + 1]) for i in range(1, len(piece) - 1)
+            )
+        )
+        for triangle in triangles:
+            errors = tuple(vertex_error(point) for point in triangle)
+            if any(error is None for error in errors):
+                return math.inf
+            hessian = _spline_interpolation_bound_from_enclosures(
+                triangle, _span_enclosures_for_chart(spans, triangle)
+            )
+            if not math.isfinite(hessian):
+                return math.inf
+            maximum = max(
+                maximum,
+                Fraction(hessian) + max(error for error in errors if error is not None),
+            )
+    return fraction_endpoint(maximum, upper=True, saturate=True)
+
+
+def _spline_chart_knot_status(
+    chart: _ExactUVChart, lines: tuple[tuple[int, Fraction, bool], ...], /
+) -> tuple[bool, bool]:
+    meets = tuple(
+        discontinuous
+        for axis, knot, discontinuous in lines
+        if min(point[axis] for point in chart)
+        <= knot
+        <= max(point[axis] for point in chart)
+    )
+    return bool(meets), any(meets)
+
+
 def _spline_interpolation_bound_from_enclosures(
     chart: _ExactUVChart,
     enclosures: tuple[RationalBSplineSurfaceHessianEnclosure, ...],
@@ -1550,13 +1694,34 @@ def _exact_spline_interpolation_bounds(
     cells: np.ndarray,
     spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     exact_charts: tuple[_ExactUVChart, ...],
+    surface: AbstractSurfacePatch,
     /,
 ) -> np.ndarray:
     result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
+    from .brep._tspline import TSplineSurfacePatch
+
+    source = surface
+    while isinstance(source, _PlacedSurfacePatch):
+        source = source.source
+    if isinstance(source, TSplineSurfacePatch):
+        certificate = source.basis_certificate
+        if not (
+            certificate.mesh_id == source.mesh.mesh_id
+            and certificate.passed
+            and certificate.trace_continuous
+            and certificate.continuity_order >= 1
+        ):
+            return result
+    lines = _spline_knot_lines(surface)
     for row, chart in enumerate(exact_charts):
-        result[row] = _spline_interpolation_bound_from_enclosures(
-            chart, _span_enclosures_for_chart(spans, chart)
-        )
+        meets, discontinuous = _spline_chart_knot_status(chart, lines)
+        if discontinuous:
+            continue
+        enclosures = _span_enclosures_for_chart(spans, chart)
+        if meets and enclosures:
+            result[row] = _spline_piecewise_interpolation_bound(chart, spans, lines)
+        else:
+            result[row] = _spline_interpolation_bound_from_enclosures(chart, enclosures)
     return result
 
 
@@ -4032,6 +4197,9 @@ class MeshingDomain(StrictModule, NonTrainableState):
     ) -> np.ndarray:
         """Bound surface-to-affine interpolation over complete UV chart cells.
 
+        Rows that cannot be bounded, including nontriangular cells meeting a
+        non-C1 knot line, are returned as positive infinity.
+
         ``preparation`` is the caller's `SourcePreparation` of this domain;
         without one the source is prepared for this query alone.
         """
@@ -4059,7 +4227,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
         spans = preparation.surface_spans(surface)
         if spans is not None:
             exact_charts = _exact_uv_chart_bank(charts, cells)
-            return _exact_spline_interpolation_bounds(cells, spans, exact_charts)
+            return _exact_spline_interpolation_bounds(cells, spans, exact_charts, surface)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
         prepared = preparation.derivative_program(surface, 2)
@@ -4089,8 +4257,8 @@ class MeshingDomain(StrictModule, NonTrainableState):
     ) -> tuple[Fraction | None, ...]:
         """Bound surface-to-affine interpolation over exact UV triangles to a budget.
 
-        Exact spline carriers keep their span Hessian bound. Other carriers refine
-        each triangle adaptively until its bound meets ``budgets[row]``, a vertex
+        Exact spline carriers use span derivative bounds without subdivision.
+        Other carriers refine each triangle until its bound meets ``budgets[row]``, a vertex
         lower bound exceeds it, or binary64 enclosure resolution is reached.
         ``None`` marks a row without a finite bound. ``preparation`` is the
         caller's `SourcePreparation` of this domain.
@@ -4125,7 +4293,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             ],
             dtype=np.float64,
         ).reshape(len(exact_charts), -1, 2)
-        bounds = _exact_spline_interpolation_bounds(cells, spans, exact_charts)
+        bounds = _exact_spline_interpolation_bounds(cells, spans, exact_charts, surface)
         return tuple(
             Fraction(float(value)) if math.isfinite(float(value)) else None
             for value in bounds

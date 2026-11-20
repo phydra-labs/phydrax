@@ -317,6 +317,22 @@ void check_quality(const Result& r, double min_angle, double max_area) {
   }
 }
 
+void test_cavity_legalization_predicate_order() {
+  const double w[2] = {0.0, 0.0}, u[2] = {1.0, 0.0}, x[2] = {0.0, 1.0};
+  const std::array<std::array<double, 2>, 3> candidates = {{
+      {{0.75, 0.75}}, {{1.25, 1.25}}, {{1.0, 1.0}},
+  }};
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const double* m = candidates[i].data();
+    const int cavity = incircle_sos(w, u, x, m, 0, 1, 2, 3);
+    const int legalize = incircle_sos(m, u, w, x, 3, 1, 0, 2);
+    PHX_CHECK(cavity == legalize);
+    PHX_CHECK(cavity != 0);
+    if (i == 0) PHX_CHECK(cavity > 0);
+    if (i == 1) PHX_CHECK(cavity < 0);
+  }
+}
+
 void test_ghost_layout() {
   // Begin with one triangle, then insert outside each side and on hull edges.
   const std::vector<double> points = {
@@ -375,6 +391,15 @@ void test_spatial_queue_order() {
   };
   PHX_CHECK((sequence(false) == std::vector<int>{1, 0, 3, 2}));
   PHX_CHECK(sequence(false) == sequence(true));
+  SpatialRefinementQueue<Entry, Worse> spatial(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int i = 0; i < 10; ++i) spatial.push({i, i}, 0.1, 0.1);
+    for (int i = 9; i >= 0; --i) {
+      PHX_CHECK(spatial.top().id == i);
+      spatial.pop();
+    }
+    PHX_CHECK(spatial.empty());
+  }
   SpatialRefinementQueue<Entry, Worse> single(0.0, 0.0, 1.0, 1.0, 10.0, 4);
   PHX_CHECK(!single.spatial());
   single.push({2, 0});
@@ -478,6 +503,22 @@ void test_ruppert_square() {
   for (int i = 0; i < 8; ++i) PHX_CHECK(r.points[i] == in.points[i]);
 }
 
+void test_refinement_angle_thresholds() {
+  for (const double min_angle : {24.9, 25.0, 25.1}) {
+    for (const double max_area : {0.04, kInf}) {
+      Input in;
+      in.points = {0, 0, 1, 0, 1, 1, 0, 1, 0.51, 0.28};
+      in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+      in.min_angle = min_angle;
+      in.max_area = max_area;
+      const Result r = run(in);
+      PHX_CHECK(r.status == PHX_MC_OK);
+      check_mesh(r);
+      check_quality(r, min_angle, max_area);
+    }
+  }
+}
+
 void test_ruppert_l_shape() {
   Input in;
   in.points = {0, 0, 2, 0, 2, 1, 1, 1, 1, 2, 0, 2};
@@ -498,6 +539,35 @@ void test_ruppert_l_shape() {
   const Result angle_only = run(in);
   PHX_CHECK(angle_only.status == PHX_MC_OK);
   check_quality(angle_only, 30.0, kInf);
+}
+
+// OK is reported without a final scan unless refinement gave up somewhere,
+// so OK must still certify every cell. Obtuse-cornered domains with interior
+// points and demanding angles exercise both outcomes.
+void test_ok_status_certifies_quality() {
+  std::uint64_t seed = 0x5eedf1a9u;
+  int ok = 0;
+  for (int round = 0; round < 60; ++round) {
+    Input in;
+    const int corners = 5 + round % 7;
+    for (int i = 0; i < corners; ++i) {
+      const double angle = 2.0 * 3.14159265358979323846 * (i + 0.3 * uniform(seed)) / corners;
+      in.points.insert(in.points.end(), {std::cos(angle), std::sin(angle)});
+      in.segments.insert(in.segments.end(), {i, (i + 1) % corners});
+    }
+    for (int i = 0; i < round % 9; ++i) {
+      in.points.insert(in.points.end(), {uniform(seed) - 0.5, uniform(seed) - 0.5});
+    }
+    in.min_angle = round % 2 == 0 ? 33.0 : 28.0;
+    in.max_area = round % 3 == 0 ? kInf : 0.02;
+    const Result r = run(in);
+    PHX_CHECK(r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED);
+    if (r.status == PHX_MC_OK) {
+      ++ok;
+      check_quality(r, in.min_angle, in.max_area);
+    }
+  }
+  PHX_CHECK(ok > 0);
 }
 
 void test_ruppert_slanted_polygon() {
@@ -731,10 +801,13 @@ int main() {
   test_lattice_segments();
   test_hole_carving();
   test_ghost_layout();
+  test_cavity_legalization_predicate_order();
   test_refinement_determinism();
   test_spatial_queue_order();
   test_ruppert_square();
+  test_refinement_angle_thresholds();
   test_ruppert_l_shape();
+  test_ok_status_certifies_quality();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();
   test_refinement_preserves_smooth_samples_and_constraint_junctions();

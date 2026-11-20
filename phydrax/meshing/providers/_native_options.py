@@ -28,7 +28,7 @@ from . import _native_schedules as schedules_owner
 NativeMeshingRoute: TypeAlias = Literal[
     "planar_constrained_delaunay",
     "implicit_surface",
-    "implicit_stuffing",
+    "implicit_restricted_delaunay",
     "implicit_adaptive_tetrahedral",
     "curve_arc_length",
     "parametric_surface",
@@ -56,7 +56,7 @@ _ROUTE_SCHEDULE_FIELDS: dict[NativeMeshingRoute, tuple[str, ...]] = {
     "planar_constrained_delaunay": (),
     "reconstructed_surface": (),
     "implicit_surface": ("implicit_policy",),
-    "implicit_stuffing": ("volume_schedule",),
+    "implicit_restricted_delaunay": ("volume_schedule",),
     "implicit_adaptive_tetrahedral": ("implicit_policy", "volume_schedule"),
     "curve_arc_length": ("curve_schedule",),
     "parametric_surface": ("surface_schedule",),

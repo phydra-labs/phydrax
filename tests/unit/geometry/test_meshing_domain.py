@@ -1495,18 +1495,205 @@ def test_meshing_domain_spline_spans_cover_crossing_and_touching_knot_charts() -
             assert all(enclosure.positive_denominator for enclosure in enclosures)
 
         domain = _rational_spline_domain(surface, f"rational-source-{index}")
-        bounds = domain.interpolation_bounds(0, chart_bank)
-        assert bounds.shape == (2,)
-        assert np.all(np.isfinite(bounds))
-        for bound, chart in zip(bounds, chart_bank, strict=True):
-            exact_float_bound = Fraction.from_float(float(bound))
-            assert exact_float_bound**2 >= _expected_interpolation_error_squared(chart)
+        if isinstance(surface, BSplineSurfacePatch):
+            bounds = domain.interpolation_bounds(0, chart_bank)
+            assert np.all(np.isposinf(bounds))
+            smooth = (
+                (Fraction(0), quarter),
+                (quarter, quarter),
+                (quarter, three_quarters),
+                (Fraction(0), three_quarters),
+            )
+            mixed = domain.interpolation_bounds(0, (crossing, smooth, touching))
+            assert np.isposinf(mixed[0])
+            assert np.isfinite(mixed[1])
+            assert np.isposinf(mixed[2])
+        else:
+            bounds = domain.interpolation_bounds(0, chart_bank)
+            assert bounds.shape == (2,)
+            assert np.all(np.isfinite(bounds))
+            for bound, chart in zip(bounds, chart_bank, strict=True):
+                exact_float_bound = Fraction.from_float(float(bound))
+                assert exact_float_bound**2 >= _expected_interpolation_error_squared(
+                    chart
+                )
 
         turns = domain.normal_turn_bounds(0, chart_bank)
         assert turns.shape == (2,)
         assert np.all(np.isfinite(turns))
         # The nearest binary64 pi is below pi; an upper enclosure must round up.
         assert np.all((0.0 <= turns) & (turns <= np.nextafter(np.pi, np.inf)))
+
+
+@pytest.mark.parametrize(
+    ("degree", "rational"),
+    ((1, False), (2, False), (2, True)),
+    ids=("linear-crease", "quadratic-double-knot", "rational-double-knot"),
+)
+def test_spline_interpolation_bound_covers_c0_knot_crease(
+    degree: int, rational: bool
+) -> None:
+    zero, half, one = Fraction(0), Fraction(1, 2), Fraction(1)
+    if degree == 1:
+        knots = (zero, zero, half, one, one)
+        u_control = (zero, half, one)
+        heights = (zero, one, zero)
+    else:
+        knots = (zero, zero, zero, half, half, one, one, one)
+        u_control = (zero, half / 2, half, half + half / 2, one)
+        heights = (zero, half, one, half, zero)
+    if rational:
+        # Collinear, uniformly spaced controls are C1 with unit weights. A
+        # single changed weight breaks that continuity at the double knot.
+        heights = (zero,) * len(u_control)
+    weights = tuple(
+        Fraction(2) if rational and index == 1 else one for index in range(len(u_control))
+    )
+    points = tuple(
+        tuple((u, v, height) for v in (zero, one))
+        for u, height in zip(u_control, heights, strict=True)
+    )
+    weight_grid = tuple((weight, weight) for weight in weights)
+    v_knots = (zero, zero, one, one)
+    surface = BSplineSurfacePatch(
+        np.asarray(points, dtype=np.float64),
+        np.asarray(weight_grid, dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        np.asarray(v_knots, dtype=np.float64),
+        degree,
+        1,
+        exact_control_points=points,
+        exact_weights=weight_grid,
+        exact_u_knots=knots,
+        exact_v_knots=v_knots,
+    )
+    domain = _rational_spline_domain(surface, f"crease-{degree}-{rational}")
+
+    def exact_point(u: Fraction, v: Fraction) -> tuple[Fraction, ...]:
+        # Evaluate each polynomial piece directly in Bernstein form, independent
+        # of the surface extraction and interpolation-bound implementations.
+        right = u > half
+        t = 2 * u - int(right)
+        start = degree if right else 0
+        basis = tuple(
+            Fraction(math.comb(degree, i)) * t**i * (one - t) ** (degree - i)
+            for i in range(degree + 1)
+        )
+        denominator = sum(
+            (basis[i] * weights[start + i] for i in range(degree + 1)), zero
+        )
+        x = (
+            sum(
+                (
+                    basis[i] * weights[start + i] * u_control[start + i]
+                    for i in range(degree + 1)
+                ),
+                zero,
+            )
+            / denominator
+        )
+        z = (
+            sum(
+                (
+                    basis[i] * weights[start + i] * heights[start + i]
+                    for i in range(degree + 1)
+                ),
+                zero,
+            )
+            / denominator
+        )
+        return x, v, z
+
+    charts = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((zero, zero), (half, zero), (zero, one)),
+        ((zero, zero), (half / 2, zero), (zero, one)),
+        (
+            (Fraction(99, 200), zero),
+            (Fraction(101, 200), zero),
+            (Fraction(99, 200), Fraction(1, 100)),
+        ),
+        ((zero, zero), (one, zero), (zero, zero)),
+    )
+    bounds = domain.interpolation_bounds(0, charts)
+    adaptive = domain.adaptive_interpolation_bounds(
+        0, charts, (Fraction(1, 10),) * len(charts)
+    )
+    for chart_index, (chart, bound, adaptive_bound) in enumerate(
+        zip(charts, bounds, adaptive, strict=True)
+    ):
+        assert math.isfinite(float(bound))
+        assert adaptive_bound is not None
+        vertices = tuple(exact_point(*vertex) for vertex in chart)
+        for barycentric in (
+            (half / 2, half, half / 2),
+            (Fraction(5, 8), Fraction(1, 8), Fraction(1, 4)),
+            (half, half / 2, half / 2),
+            (zero, half, half),
+        ):
+            uv = tuple(
+                sum((barycentric[i] * chart[i][axis] for i in range(3)), zero)
+                for axis in range(2)
+            )
+            actual = exact_point(*uv)
+            interpolated = tuple(
+                sum(barycentric[i] * vertices[i][axis] for i in range(3))
+                for axis in range(3)
+            )
+            distance_squared = sum(
+                (actual[axis] - interpolated[axis]) ** 2 for axis in range(3)
+            )
+            assert Fraction(float(bound)) ** 2 >= distance_squared
+            assert adaptive_bound**2 >= distance_squared
+            if chart_index == 0 and barycentric == (half / 2, half, half / 2):
+                if not rational:
+                    assert distance_squared == one
+            if chart_index == 0 and barycentric == (
+                Fraction(5, 8),
+                Fraction(1, 8),
+                Fraction(1, 4),
+            ):
+                if rational:
+                    assert distance_squared == Fraction(9, 7744)
+    # Away from the knot the polynomial pieces remain affine.
+    if not rational:
+        assert bounds[2] < 1e-12
+        assert adaptive[2] is not None and adaptive[2] < Fraction(1, 10**12)
+        assert Fraction(1, 100) <= Fraction(float(bounds[3])) < Fraction(15, 1000)
+        assert adaptive[3] is not None and Fraction(1, 100) <= adaptive[3] < Fraction(
+            15, 1000
+        )
+        assert Fraction(float(bounds[4])) >= one
+
+
+def test_spline_interpolation_bound_refuses_discontinuous_knot() -> None:
+    zero, half, one = Fraction(0), Fraction(1, 2), Fraction(1)
+    knots = (zero, zero, half, half, one, one)
+    v_knots = (zero, zero, one, one)
+    points = tuple(
+        tuple((u, v, z) for v in (zero, one))
+        for u, z in ((zero, zero), (half, zero), (half, one), (one, one))
+    )
+    weights = ((one, one),) * 4
+    surface = BSplineSurfacePatch(
+        np.asarray(points, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        np.asarray(v_knots, dtype=np.float64),
+        1,
+        1,
+        exact_control_points=points,
+        exact_weights=weights,
+        exact_u_knots=knots,
+        exact_v_knots=v_knots,
+    )
+    domain = _rational_spline_domain(surface, "discontinuous-spline")
+    charts = (
+        ((zero, zero), (one, zero), (zero, one)),
+        ((zero, zero), (half, zero), (zero, one)),
+    )
+    assert np.all(np.isinf(domain.interpolation_bounds(0, charts)))
+    assert domain.adaptive_interpolation_bounds(0, charts, (one, one)) == (None, None)
 
 
 def test_meshing_domain_preserves_trim_orientation_and_batched_queries() -> None:

@@ -53,8 +53,8 @@
       "81920": {"tool": "gmsh-hxt", "seconds": 5.304, "allowed_ratio": 1.0}
     },
     "surface-to-tets-torus": {
-      "67": {"tool": "gmsh-hxt", "seconds": 0.306, "allowed_ratio": 1.0},
-      "22": {"tool": "gmsh-hxt", "seconds": 5.2707, "allowed_ratio": 1.0}
+      "72": {"tool": "gmsh-hxt", "seconds": 0.1845, "allowed_ratio": 1.0},
+      "25": {"tool": "gmsh-hxt", "seconds": 4.2623, "allowed_ratio": 1.0}
     },
     "surface-to-tets-grid-torus": {
       "10000": {"tool": "gmsh-hxt", "seconds": 0.7027, "allowed_ratio": 1.0},
@@ -74,6 +74,24 @@
     },
     "surface-remesh-torus": {
       "90000": {"tool": "mmgs", "seconds": 0.274, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus-1e3": {
+      "1000000": {"tool": "mmgs", "seconds": 0.600, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus": {
+      "1000000": {"tool": "mmgs", "seconds": 0.775, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus-1e5": {
+      "1000000": {"tool": "mmgs", "seconds": 2.95, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus-1e3": {
+      "1000000": {"tool": "cgal", "seconds": 6.98, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus": {
+      "1000000": {"tool": "cgal", "seconds": 7.01, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus-1e5": {
+      "1000000": {"tool": "cgal", "seconds": 6.89, "allowed_ratio": 1.0}
     }
   }
 }

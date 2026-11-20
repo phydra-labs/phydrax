@@ -579,6 +579,39 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
     )
 
 
+class _MeshRemeshRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("tolerance", _F64),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("result", _P),
+        ("counters", _P),
+    )
+
+
+class _MeshCertifyRequest(ctypes.Structure):
+    _fields_ = (
+        ("source_vertices", _P),
+        ("source_vertex_count", _I64),
+        ("source_triangles", _P),
+        ("source_triangle_count", _I64),
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("tolerance", _F64),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("result", _P),
+        ("distances", _P),
+        ("counters", _P),
+    )
+
+
 class _LevelSetSplit3DRequest(ctypes.Structure):
     _fields_ = (
         ("point_count", _I64),
@@ -1081,12 +1114,20 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_verify_tetrahedra": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
+    "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
+    "phx_mc_verify_chart_partition": (
+        _I32,
+        (_I64, _I64, _P, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
+    ),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
-    "phx_mc_implicit_stuffing": (
+    "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
     ),
+    "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
+    "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_restricted_volume_free": (None, (_P,)),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -1263,9 +1304,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_zero_set_remesh": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
     "phx_mc_zero_set_remesh_i32": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
     "phx_mc_zero_set_certify": (_I32, (ctypes.POINTER(_ZeroSetCertifyRequest),)),
-    "phx_mc_zero_set_remesh_sizes": (_I32, (_P, _P)),
-    "phx_mc_zero_set_remesh_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
-    "phx_mc_zero_set_remesh_free": (None, (_P,)),
+    "phx_mc_mesh_remesh": (_I32, (ctypes.POINTER(_MeshRemeshRequest),)),
+    "phx_mc_mesh_certify": (_I32, (ctypes.POINTER(_MeshCertifyRequest),)),
+    "phx_mc_surface_result_sizes": (_I32, (_P, _P)),
+    "phx_mc_surface_result_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
+    "phx_mc_surface_result_free": (None, (_P,)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_implicit_contours": (
         _I32,
@@ -3678,77 +3721,166 @@ def verify_cad_fidelity(
 
 
 
-class StuffedVolume(NamedTuple):
-    """Tetrahedra of ``{f <= 0}`` from isosurface stuffing (construction only)."""
+
+class RestrictedDelaunayCriteria(NamedTuple):
+    """Refinement targets of `implicit_restricted_delaunay`.
+
+    Restricted facets are refined while their longest edge exceeds
+    ``facet_edge``, their circumcenter lies farther than ``facet_distance``
+    from their surface Delaunay ball center, or their smallest angle is below
+    ``facet_angle_degrees`` (at most 30). Inside cells are refined while their
+    circumradius exceeds ``cell_size`` or their radius-edge ratio exceeds
+    ``radius_edge_bound`` (None: no ratio target); cells then below the ratio,
+    ``minimum_dihedral_degrees`` or ``minimum_relative_determinant`` go through
+    the fixed-boundary quality improvement. Box roots closer than
+    ``seed_spacing * facet_edge`` to an earlier seed are left to refinement.
+    """
+
+    facet_edge: float
+    facet_distance: float
+    facet_angle_degrees: float
+    cell_size: float
+    radius_edge_bound: float | None
+    minimum_dihedral_degrees: float
+    minimum_relative_determinant: float
+    seed_spacing: float
+
+
+class RestrictedImplicitVolume(NamedTuple):
+    """Tetrahedra of ``{f <= 0}`` by restricted Delaunay refinement (construction only).
+
+    ``points`` rows are the vertices, ``cells`` positive tetrahedra and
+    ``boundary_faces`` the outward boundary triangles. The construction report:
+    refinement ``insertions``, surface ``repair_rounds``, whether the
+    restricted surface matched the requested topology, the box roots no
+    surface vertex covers, the facets still violating the criteria because
+    the separation bound refused their refinement point, and the cells the
+    quality improvement left unmet. ``status`` is ``UNRESOLVED`` when the
+    separation bound stopped or refused the refinement, or an inside cell
+    reached the far box; the arrays are then the proposal reached.
+    """
 
     points: np.ndarray
     cells: np.ndarray
-    degenerate_count: int
+    boundary_faces: np.ndarray
+    insertions: int
+    repair_rounds: int
+    topology_matched: bool
+    uncovered_roots: int
+    refused_facets: int
+    unmet_cells: int
+    status: MeshcoreStatus
 
 
-def implicit_stuffing(
+def implicit_restricted_delaunay(
     instructions: np.ndarray,
     indices: np.ndarray,
     parameters: np.ndarray,
-    seeds: np.ndarray,
+    seed_lower: np.ndarray,
+    seed_upper: np.ndarray,
     output_entry: int,
     lower: object,
     upper: object,
-    spacing: float,
-    levels: int,
-    lipschitz: float,
+    criteria: RestrictedDelaunayCriteria,
+    components: int,
+    euler_characteristic: int,
+    extra_seeds: object,
     /,
-) -> StuffedVolume:
-    """Isosurface stuffing of an interval program's zero set inside a box.
+) -> RestrictedImplicitVolume:
+    """Restricted Delaunay meshing of an interval program's solid ``{f <= 0}``.
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
-    interval program with three inputs; ``seeds`` its workspace template and
-    ``output_entry`` the workspace entry of f. The lattice has ``spacing``
-    near the zero set and coarsens up to ``levels`` times away from it, for f
-    with Lipschitz constant ``lipschitz``. The result is a proposal: it is
-    certified afterwards.
+    interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
+    interval workspace templates and ``output_entry`` the workspace entry of
+    f. The box ``[lower, upper]`` contains the zero set, whose restricted
+    surface should have ``components`` edge-connected components and Euler
+    characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
+    points near the zero set added to the box-tree seeds. The result is a
+    proposal: it is certified afterwards.
     """
     lower_array = _real_array(lower, "lower")
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
-    degenerate = ctypes.c_int64()
-    handle = ctypes.c_void_p()
+    seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
+    if seeds.ndim != 2 or seeds.shape[1] != 3:
+        raise ValueError("extra_seeds must have shape (n, 3).")
+    values = np.asarray(
+        (
+            criteria.facet_edge,
+            criteria.facet_distance,
+            criteria.facet_angle_degrees,
+            criteria.cell_size,
+            0.0 if criteria.radius_edge_bound is None else criteria.radius_edge_bound,
+            criteria.minimum_dihedral_degrees,
+            criteria.minimum_relative_determinant,
+            criteria.seed_spacing,
+        ),
+        dtype=np.float64,
+    )
+    topology = np.asarray((components, euler_characteristic), dtype=np.int64)
     library = load_meshcore()
-    status = library["phx_mc_implicit_stuffing"](
-        instructions.ctypes.data,
-        instructions.shape[0],
-        indices.ctypes.data,
-        indices.size,
-        parameters.ctypes.data,
-        parameters.size,
-        seeds.ctypes.data,
-        seeds.size,
-        output_entry,
-        lower_array.ctypes.data,
-        upper_array.ctypes.data,
-        spacing,
-        levels,
-        lipschitz,
-        ctypes.addressof(degenerate),
-        ctypes.addressof(handle),
+    handle = ctypes.c_void_p()
+    status = MeshcoreStatus(
+        library["phx_mc_implicit_restricted_delaunay"](
+            instructions.ctypes.data,
+            instructions.shape[0],
+            indices.ctypes.data,
+            indices.size,
+            parameters.ctypes.data,
+            parameters.size,
+            seed_lower.ctypes.data,
+            seed_upper.ctypes.data,
+            seed_lower.size,
+            output_entry,
+            lower_array.ctypes.data,
+            upper_array.ctypes.data,
+            values.ctypes.data,
+            topology.ctypes.data,
+            seeds.shape[0],
+            seeds.ctypes.data,
+            ctypes.addressof(handle),
+        )
     )
-    _raise_for_call(
-        status,
-        "implicit_stuffing",
-        contracts={
-            MeshcoreStatus.INVALID_INPUT: (
-                "f is NaN at a lattice vertex, or the solid {f <= 0} reaches the "
-                "lattice padding outside the box"
-            )
-        },
-    )
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "implicit_restricted_delaunay")
     if not handle.value:
         raise MeshcoreError(
-            MeshcoreStatus.INTERNAL_ERROR, "implicit_stuffing: missing mesh"
+            MeshcoreStatus.INTERNAL_ERROR, "implicit_restricted_delaunay: missing volume"
         )
-    points, cells, _, _, _, _, _ = _read_mesh(library, handle)
-    return StuffedVolume(points, cells, degenerate.value)
+    # The native handle is released even when a copy fails.
+    try:
+        sizes = np.zeros((3,), dtype=np.int64)
+        report = np.zeros((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_sizes"](
+                handle, sizes.ctypes.data, report.ctypes.data
+            ),
+            "restricted_volume_sizes",
+        )
+        points = np.empty((int(sizes[0]), 3), dtype=np.float64)
+        cells = np.empty((int(sizes[1]), 4), dtype=np.int32)
+        faces = np.empty((int(sizes[2]), 3), dtype=np.int32)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_copy"](
+                handle, points.ctypes.data, cells.ctypes.data, faces.ctypes.data
+            ),
+            "restricted_volume_copy",
+        )
+    finally:
+        library["phx_mc_restricted_volume_free"](handle)
+    return RestrictedImplicitVolume(
+        points,
+        cells,
+        faces,
+        int(report[0]),
+        int(report[1]),
+        bool(report[2]),
+        int(report[3]),
+        int(report[4]),
+        int(report[5]),
+        status,
+    )
 
 
 class RestrictedPowerCells(NamedTuple):
@@ -4960,9 +5092,7 @@ def zero_set_remesh(
     status = library[entry](ctypes.byref(request))
     del value_arrays  # kept alive through the native call
     _raise_for_call(status, "zero_set_remesh")
-    out_vertices, out_triangles = _take_zero_set_surface(
-        library, handle, "zero_set_remesh"
-    )
+    out_vertices, out_triangles = _take_surface_result(library, handle, "zero_set_remesh")
     orientation = int(counters[5])
     if orientation not in (-1, 1):
         raise MeshcoreError(
@@ -4973,10 +5103,10 @@ def zero_set_remesh(
     return ZeroSetRemeshResult(out_vertices, out_triangles, orientation, counters)
 
 
-def _take_zero_set_surface(
+def _take_surface_result(
     library: MeshcoreLibrary, handle: ctypes.c_void_p, call: str, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Copy out and free an owned zero-set surface result (read-only arrays)."""
+    """Copy out and free an owned surface result (read-only arrays)."""
     if not handle.value:
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"{call} returned no owned result handle."
@@ -4984,8 +5114,8 @@ def _take_zero_set_surface(
     try:
         sizes = np.empty((2,), dtype=np.int64)
         _raise_for_call(
-            library["phx_mc_zero_set_remesh_sizes"](handle, sizes.ctypes.data),
-            "zero_set_remesh_sizes",
+            library["phx_mc_surface_result_sizes"](handle, sizes.ctypes.data),
+            "surface_result_sizes",
         )
         vertex_count, triangle_count = (int(size) for size in sizes.tolist())
         if vertex_count < 3 or triangle_count < 1:
@@ -4995,17 +5125,17 @@ def _take_zero_set_surface(
         vertices = np.empty((vertex_count, 3), dtype=np.float64)
         triangles = np.empty((triangle_count, 3), dtype=np.int64)
         _raise_for_call(
-            library["phx_mc_zero_set_remesh_arrays"](
+            library["phx_mc_surface_result_arrays"](
                 handle,
                 vertex_count,
                 triangle_count,
                 vertices.ctypes.data,
                 triangles.ctypes.data,
             ),
-            "zero_set_remesh_arrays",
+            "surface_result_arrays",
         )
     finally:
-        library["phx_mc_zero_set_remesh_free"](handle)
+        library["phx_mc_surface_result_free"](handle)
     if (
         not np.all(np.isfinite(vertices))
         or np.any(triangles < 0)
@@ -5137,7 +5267,7 @@ def zero_set_certify(
             "embedding).",
         )
     _raise_for_call(status, "zero_set_certify")
-    out_vertices, out_triangles = _take_zero_set_surface(
+    out_vertices, out_triangles = _take_surface_result(
         library, handle, "zero_set_certify"
     )
     certified = float(distance[0])
@@ -5153,6 +5283,197 @@ def zero_set_certify(
         )
     counters.setflags(write=False)
     return ZeroSetCertificate(out_vertices, out_triangles, certified, counters)
+
+
+_MESH_SOURCE_CONTRACTS = {
+    MeshcoreStatus.INVALID_INPUT: (
+        "every surface must be a closed oriented 2-manifold with nondegenerate triangles."
+    )
+}
+
+
+class MeshRemeshResult(NamedTuple):
+    """A surface constructed from a triangle-mesh source (nothing proved).
+
+    ``counters`` (read-only int64): splits, collapses, flips, relocations,
+    triangles below the minimum angle, and triangles whose sampled distance to
+    the source exceeds the tolerance.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    counters: np.ndarray
+
+
+def mesh_remesh(
+    vertices: object,
+    triangles: object,
+    tolerance: float,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+) -> MeshRemeshResult:
+    """Remesh a closed oriented triangle mesh with itself as the source.
+
+    Construction only, proving nothing: as ``zero_set_remesh`` with the input
+    mesh as the surface (vertices projected to their nearest source point,
+    normals and principal curvature estimates interpolated from the source's
+    vertices). A source rough at this tolerance (vertex noise) is first
+    Taubin-smoothed at a radius of about ``edge_length / 2``, each vertex kept
+    within ``tolerance / 2`` of the input, and construction follows that copy;
+    certify against the input with ``mesh_certify``. A source that is not a
+    closed oriented 2-manifold with nondegenerate triangles raises
+    ``ValueError``.
+    """
+    points, faces = _surface_arrays(vertices, triangles, "vertices", "triangles")
+    _check_remesh_controls(tolerance, edge_length, minimum_angle_degrees)
+    handle = ctypes.c_void_p()
+    counters = np.zeros((6,), dtype=np.int64)
+    request = _MeshRemeshRequest(
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        float(tolerance),
+        float(edge_length),
+        float(minimum_angle_degrees),
+        ctypes.addressof(handle),
+        counters.ctypes.data,
+    )
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_mesh_remesh"](ctypes.byref(request)),
+        "mesh_remesh",
+        contracts=_MESH_SOURCE_CONTRACTS,
+    )
+    out_vertices, out_triangles = _take_surface_result(library, handle, "mesh_remesh")
+    counters.setflags(write=False)
+    return MeshRemeshResult(out_vertices, out_triangles, counters)
+
+
+def _surface_arrays(
+    vertices: object, triangles: object, vertices_name: str, triangles_name: str, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Contiguous float64 (V, 3) vertices and nonempty int64 (T, 3) triangles."""
+    points = np.ascontiguousarray(_points(vertices, vertices_name, 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, triangles_name), triangles_name, np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
+        raise ValueError(f"{triangles_name} must be a nonempty (N, 3) integer array.")
+    return points, faces
+
+
+def _check_remesh_controls(
+    tolerance: float, edge_length: float, minimum_angle_degrees: float, /
+) -> None:
+    controls = (tolerance, edge_length, minimum_angle_degrees)
+    if any(not np.isfinite(value_) for value_ in controls) or not (
+        tolerance > 0.0 and edge_length > 0.0 and 0.0 < minimum_angle_degrees < 60.0
+    ):
+        raise ValueError(
+            "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
+        )
+
+
+class MeshCertificate(NamedTuple):
+    """A surface certified against its source mesh in both directions.
+
+    ``vertices`` and ``triangles`` are the certified surface: the input unless
+    a refused triangle was repaired. ``distances`` (read-only float64) are the
+    largest certified bound from the surface to the source and from the source
+    to the surface, each within the tolerance. ``counters`` (read-only int64)
+    are the certifications refused for distance and the triangles refused for
+    embedding, the repair splits and the rounds run, all summed over every
+    pass, the source triangles not proved within the tolerance (0 here), and
+    the relocations restoring angles after repairs.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    distances: np.ndarray
+    counters: np.ndarray
+
+
+def mesh_certify(
+    source_vertices: object,
+    source_triangles: object,
+    vertices: object,
+    triangles: object,
+    tolerance: float,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+) -> MeshCertificate:
+    """Certify a ``mesh_remesh`` result against its source mesh, repairing it locally.
+
+    Every surface triangle gets an upper bound on the distance from each of
+    its points to the source: the source triangles over it (reached across
+    edges whose planar images along its normal meet its own) must cover it,
+    proved by the winding of their boundary with exact orientation
+    predicates, and the bound is the largest gap between the two surfaces
+    over the same planar point, taken at the vertices of the overlaps (edge
+    crossings within certified offsets, with rounding pads). Refused
+    triangles are repaired (longest edge split at its nearest source point,
+    flips, at most four rounds) with embedding checked exactly; then every
+    source triangle is bounded the same way against the certified surface,
+    along the surface's normals, and the surface triangles nearest a refused
+    one are split. After any repair, angles are restored by flips and
+    relocations and both directions are decided again, for at most three
+    further passes. Sources that are not closed oriented 2-manifolds with
+    nondegenerate triangles raise ``ValueError``; a refused triangle in
+    either direction raises ``MeshcoreError`` (``UNRESOLVED``) naming the
+    refusals.
+    """
+    source_points, source_faces = _surface_arrays(
+        source_vertices, source_triangles, "source_vertices", "source_triangles"
+    )
+    points, faces = _surface_arrays(vertices, triangles, "vertices", "triangles")
+    _check_remesh_controls(tolerance, edge_length, minimum_angle_degrees)
+    handle = ctypes.c_void_p()
+    distances = np.zeros((2,), dtype=np.float64)
+    counters = np.zeros((6,), dtype=np.int64)
+    request = _MeshCertifyRequest(
+        source_points.ctypes.data,
+        source_points.shape[0],
+        source_faces.ctypes.data,
+        source_faces.shape[0],
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        float(tolerance),
+        float(edge_length),
+        float(minimum_angle_degrees),
+        ctypes.addressof(handle),
+        distances.ctypes.data,
+        counters.ctypes.data,
+    )
+    library = load_meshcore()
+    status = library["phx_mc_mesh_certify"](ctypes.byref(request))
+    if status == MeshcoreStatus.UNRESOLVED:
+        raise MeshcoreError(
+            MeshcoreStatus.UNRESOLVED,
+            f"mesh_certify left triangles refused after {int(counters[3])} rounds and "
+            f"{int(counters[2])} repair splits ({int(counters[0])} refusals for distance, "
+            f"{int(counters[1])} for embedding, {int(counters[4])} source triangles not "
+            f"within {tolerance:g}; bounds {distances[0]:.3e} / {distances[1]:.3e}).",
+        )
+    _raise_for_call(status, "mesh_certify", contracts=_MESH_SOURCE_CONTRACTS)
+    out_vertices, out_triangles = _take_surface_result(library, handle, "mesh_certify")
+    if not (
+        np.all(np.isfinite(distances))
+        and np.all(distances >= 0.0)
+        and np.all(distances <= tolerance)
+        and counters[4] == 0
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "mesh_certify returned invalid distance evidence.",
+        )
+    distances.setflags(write=False)
+    counters.setflags(write=False)
+    return MeshCertificate(out_vertices, out_triangles, distances, counters)
 
 
 class LevelSetSplitResult(NamedTuple):
@@ -12188,6 +12509,10 @@ __all__ = [
     "SurfaceEnvelopeResult",
     "surface_envelope",
     "IntervalBoxProgram",
+    "MeshCertificate",
+    "MeshRemeshResult",
+    "mesh_certify",
+    "mesh_remesh",
     "ZeroSetCertificate",
     "ZeroSetRemeshResult",
     "zero_set_certify",

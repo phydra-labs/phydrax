@@ -133,10 +133,10 @@ class ConstrainedMesher {
     constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
   }
 
-  void publish_witnesses(phx_mc_mesh& mesh) const {
-    mesh.constraint_sources = constraint_sources_;
-    mesh.constraint_parents = constraint_parents_;
-    mesh.constraint_ratios = constraint_ratios_;
+  void publish_witnesses(phx_mc_mesh& mesh) {
+    mesh.constraint_sources = std::move(constraint_sources_);
+    mesh.constraint_parents = std::move(constraint_parents_);
+    mesh.constraint_ratios = std::move(constraint_ratios_);
   }
 
   // Inserts the edge chain from a to b; vertices exactly on the open segment
@@ -207,6 +207,14 @@ class ConstrainedMesher {
       }
       process_bad_triangle(entry);
     }
+    // Every bad region triangle is enqueued when created (initial scan and
+    // after_insertion) and its entry still matches when popped; the only
+    // triangles that can stay bad are flagged where processing gave up, where
+    // a circumcenter insertion kept the popped triangle, or where a hull or
+    // sliver insertion freed an edge of an older neighbor.
+    if (!may_be_unresolved_) {
+      return PHX_MC_OK;
+    }
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0 &&
@@ -232,8 +240,10 @@ class ConstrainedMesher {
   BadQueue bad_queue_;
   std::vector<int32_t> flip_stack_;
   std::vector<int32_t> cavity_stack_;
+  std::vector<std::pair<int32_t, int32_t>> encroached_segments_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
+  bool may_be_unresolved_ = false;
   std::vector<int32_t> constraint_sources_;
   std::vector<int32_t> constraint_parents_;
   std::vector<double> constraint_ratios_;
@@ -555,6 +565,15 @@ class ConstrainedMesher {
           shortest = k;
         }
       }
+      // The arithmetic mean bounds the product of the two edge lengths.
+      // A margin keeps the shortcut away from rounding and threshold cases.
+      // Below one, the angle cannot make a triangle bad or change the
+      // priority of an area-bad triangle; non-bad priorities are not queued.
+      if (std::isnormal(twice_area) &&
+          sin_min_angle_ * (0.5 * squared[next3(shortest)] +
+                            0.5 * squared[prev3(shortest)]) < 0.99 * twice_area) {
+        return result;
+      }
       const int32_t apex = triangle.v[shortest];
       const bool input_angle = (apex < input_count_ && tri_.constraint(t, next3(shortest)) != kFree &&
                                 tri_.constraint(t, prev3(shortest)) != kFree) ||
@@ -819,7 +838,7 @@ class ConstrainedMesher {
 
   // Lawson flips of free edges opposite m until every one is locally
   // Delaunay (a non-locally-Delaunay edge always has a strictly convex quad).
-  void legalize(int32_t m) {
+  void legalize(int32_t m, bool cavity_certificates = false) {
     while (!flip_stack_.empty()) {
       const int32_t t = flip_stack_.back();
       flip_stack_.pop_back();
@@ -835,12 +854,21 @@ class ConstrainedMesher {
       if (tri_.is_ghost(o)) {
         continue;
       }
+      // A current cavity mark describes the same oriented in-circle
+      // determinant as this edge test, up to an even permutation. Marks on
+      // replaced triangles are cleared before their slots can be reused.
+      const std::uint64_t mark =
+          cavity_certificates && static_cast<std::size_t>(o) < marks_.size()
+              ? marks_[static_cast<std::size_t>(o)]
+              : 0;
+      if (cavity_certificates && mark == epoch_ + 1) continue;
       const int32_t u = told.v[next3(i)];
       const int32_t w = told.v[prev3(i)];
       const int j = tri_.edge_index(o, w, u);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(o)].v[j];
-      if (incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
-          0) {
+      if (!(cavity_certificates && mark == epoch_) &&
+          incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
+              0) {
         continue;
       }
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
@@ -851,6 +879,9 @@ class ConstrainedMesher {
       const int32_t n_ux = oold.n[jw], c_ux = tri_.constraint(o, jw);
       const int32_t n_xw = oold.n[ju], c_xw = tri_.constraint(o, ju);
       const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
+      if (cavity_certificates && static_cast<std::size_t>(o) < marks_.size()) {
+        marks_[static_cast<std::size_t>(o)] = 0;
+      }
       tri_.release(t);
       tri_.release(o);
       const int32_t first = tri_.allocate();
@@ -916,7 +947,7 @@ class ConstrainedMesher {
       if (same_point(c, pa) || same_point(c, pb)) {
         return 0;
       }
-      const int side = orient2d(pa, pb, c);
+      const int side = orient2d_filtered(pa, pb, c);
       if (side == 0) {
         return strictly_between(pa, pb, c) ? 1 : 0;
       }
@@ -928,8 +959,8 @@ class ConstrainedMesher {
       const int32_t q = side > 0 ? b : a;
       const int32_t apex =
           tri_.triangles[static_cast<std::size_t>(near_side)].v[tri_.edge_index(near_side, p, q)];
-      return orient2d(tri_.point(q), tri_.point(apex), c) > 0 &&
-                     orient2d(tri_.point(apex), tri_.point(p), c) > 0
+      return orient2d_filtered(tri_.point(q), tri_.point(apex), c) > 0 &&
+                     orient2d_filtered(tri_.point(apex), tri_.point(p), c) > 0
                  ? 2
                  : 0;
     };
@@ -967,7 +998,7 @@ class ConstrainedMesher {
     if (!(ratio > 0.0 && ratio < 1.0)) {
       return false;
     }
-    const int side = orient2d(pa, pb, chosen);
+    const int side = orient2d_filtered(pa, pb, chosen);
     if (side == 0) {
       const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       split_edge(t, k, v, id);
@@ -981,10 +1012,13 @@ class ConstrainedMesher {
     const int32_t near_side = side > 0 ? t : across;
     const int32_t far_side = side > 0 ? across : t;
     if (tri_.is_ghost(near_side)) {
+      // The ghost's interior neighbor loses its constraint on p - q.
+      const int32_t inner = tri_.triangles[static_cast<std::size_t>(near_side)].n[2];
       const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       attach_to_hull(near_side, p, q, v, id);
       legalize(v);
       after_insertion(v);
+      flag_if_bad(inner);
       return true;
     }
     const uint8_t far_region = tri_.region[static_cast<std::size_t>(far_side)];
@@ -997,7 +1031,16 @@ class ConstrainedMesher {
     tri_.region[static_cast<std::size_t>(sliver)] = far_region;
     legalize(v);
     after_insertion(v);
+    flag_if_bad(far_side);
     return true;
+  }
+
+  // Conservative: a reused slot holds a new star triangle, already enqueued.
+  void flag_if_bad(int32_t t) {
+    if (tri_.live[static_cast<std::size_t>(t)] != 0 && !tri_.is_ghost(t) &&
+        tri_.region[static_cast<std::size_t>(t)] != 0 && quality(t).bad) {
+      may_be_unresolved_ = true;
+    }
   }
 
   // Splits the constrained edge a - b if it still exists; true on insertion.
@@ -1030,9 +1073,11 @@ class ConstrainedMesher {
     double center[2] = {p0[0] + (cy * b2 - by * c2) / denominator,
                         p0[1] + (bx * c2 - cx * b2) / denominator};
     if (!snap_to_domain(center)) {
+      may_be_unresolved_ = true;
       return;
     }
-    std::vector<std::pair<int32_t, int32_t>> to_split;
+    auto& to_split = encroached_segments_;
+    to_split.clear();
     std::pair<int32_t, int> blocked{-1, -1};
     const int32_t located = tri_.walk(t, center, &blocked);
     if (located < 0) {
@@ -1040,18 +1085,21 @@ class ConstrainedMesher {
       to_split.emplace_back(b.v[next3(blocked.second)], b.v[prev3(blocked.second)]);
     } else {
       if (tri_.is_ghost(located)) {
+        may_be_unresolved_ = true;
         return;
       }
       const Triangle2D& host = tri_.triangles[static_cast<std::size_t>(located)];
       int zero_count = 0;
       int zero_edge = -1;
       for (int k = 0; k < 3; ++k) {
-        if (orient2d(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]), center) == 0) {
+        if (orient2d_filtered(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]),
+                              center) == 0) {
           ++zero_count;
           zero_edge = k;
         }
       }
       if (zero_count >= 2) {
+        may_be_unresolved_ = true;
         return;
       }
       if (zero_count == 1 && tri_.constraint(located, zero_edge) != kFree) {
@@ -1061,13 +1109,19 @@ class ConstrainedMesher {
       }
       if (to_split.empty()) {
         const int32_t v = new_vertex(center);
+        // The cavity marks belong to the old triangles, not their reused slots.
+        marks_[static_cast<std::size_t>(located)] = 0;
+        if (zero_count == 1) {
+          marks_[static_cast<std::size_t>(host.n[zero_edge])] = 0;
+        }
         if (zero_count == 1) {
           split_edge(located, zero_edge, v, kFree);
         } else {
           split_triangle(located, v);
         }
-        legalize(v);
+        legalize(v, true);
         after_insertion(v);
+        may_be_unresolved_ = may_be_unresolved_ || matches(entry);
         return;
       }
     }
@@ -1079,6 +1133,8 @@ class ConstrainedMesher {
     }
     if (progress && matches(entry)) {
       enqueue_bad(entry);
+    } else if (!progress) {
+      may_be_unresolved_ = true;
     }
   }
 

@@ -79,6 +79,12 @@ struct AdaptCounters {
   int64_t below_angle = 0, above_tolerance = 0;
 };
 
+// An owned surface returned through the C ABI (phx_mc_surface_result_*).
+struct SurfaceResult {
+  std::vector<Point> points;
+  std::vector<Triangle> triangles;
+};
+
 // Remeshes (points, triangles) in place and compacts the output (only
 // vertices of surviving triangles, in first-use order). The input must be a
 // closed, consistently oriented 2-manifold (PHX_MC_INVALID_INPUT otherwise);
@@ -108,5 +114,22 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
                         const SurfaceOracle& oracle, const AdaptTargets& targets,
                         const TriangleCertifier& certifier, const CarrierEvidence& carrier,
                         CertifyCounters& counters);
+
+// certify_surface's local repair, for refusals decided elsewhere: the longest
+// edge of each flagged triangle that is not kept is split at its projected
+// midpoint and Delaunay flips follow; `splits` counts the splits. The
+// surface is compacted when anything was split and unchanged otherwise.
+int32_t repair_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                       const SurfaceOracle& oracle, const AdaptTargets& targets,
+                       const std::vector<uint8_t>& refused, int64_t& splits);
+
+// Restores angles after a repair: Delaunay flips, and the corners of every
+// triangle below the minimum angle relocated (tangentially, then projected)
+// while that lifts their stars; no collapses or splits. `relocations` counts
+// the moves. With any, the surface is stored (compacted, flips included);
+// with none it is left unchanged.
+int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                      const SurfaceOracle& oracle, const AdaptTargets& targets,
+                      int64_t& relocations);
 
 }  // namespace phx::mc::remesh

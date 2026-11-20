@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "floating_point_mode.hpp"
 #include "intersections.hpp"
 #include "predicates.hpp"
 #include "verify_surface_embedding.hpp"
@@ -151,7 +152,8 @@ void check_random_adjacent_pairs() {
       if (!shared_edge) {
         const int s0 = phx::mc::orient3d_filtered(p[0], p[1], p[2], points[3].data());
         const int s1 = phx::mc::orient3d_filtered(p[0], p[1], p[2], points[4].data());
-        if (s0 == 0 || s1 == 0) { ++zeros; PHX_CHECK(!clear); }
+        if (s0 == 0 && s1 == 0) ++zeros;  // Coplanar: decided by exact 2D separating lines.
+        else if (s0 == 0 || s1 == 0) { ++zeros; PHX_CHECK(!clear); }
         else if (s0 != s1) {
           const int t0 = phx::mc::orient3d_filtered(q[0], q[1], q[2], points[1].data());
           const int t1 = phx::mc::orient3d_filtered(q[0], q[1], q[2], points[2].data());
@@ -176,6 +178,122 @@ void check_random_adjacent_pairs() {
   }
 }
 
+// Coplanar pairs (the lifted chart partition case) sharing no vertex, one vertex or one
+// edge, in the plane z = 0 (axis-aligned fast path) and in the tilted plane z = x + y
+// (general coplanar path): the reduced 2D separation must never clear a pair the full
+// classifier flags, and must clear many disjoint ones.
+void check_random_coplanar_pairs() {
+  uint64_t state = 0x9e3779b97f4a7c15ULL;
+  const auto coordinate = [&]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<double>(static_cast<int>(state % 9) - 4);
+  };
+  for (int tilted = 0; tilted < 2; ++tilted)
+  for (int shared = 0; shared < 3; ++shared) {
+    int tested = 0, cleared = 0, failures = 0;
+    while (tested < 50000) {
+      std::array<std::array<double, 3>, 6> points{};
+      for (int i = 0; i < 6; ++i) {
+        points[i][0] = coordinate();
+        points[i][1] = coordinate();
+        points[i][2] = tilted ? points[i][0] + points[i][1] : 0.0;
+      }
+      const int64_t first_ids[3] = {0, 1, 2};
+      const int64_t second_ids[3] = {shared >= 1 ? 0 : 3, shared == 2 ? 1 : 4, 5};
+      const double* p[3] = {points[0].data(), points[1].data(), points[2].data()};
+      const double* q[3] = {points[second_ids[0]].data(), points[second_ids[1]].data(),
+                            points[5].data()};
+      if (!triangle_valid(p) || !triangle_valid(q)) continue;
+      // Distinct ids at one location (the chart's -0.0 / +0.0 case) stay in: clearing must
+      // then fail over to the full classifier, which reports the touching contact.
+      const bool clear = phx::mc::surface_embedding_pair_clear(p, q, first_ids, second_ids);
+      phx::mc::Contact contact;
+      PHX_CHECK(phx::mc::intersect_triangles(p, q, first_ids, second_ids, contact) == PHX_MC_OK);
+      const bool violation = contact.kind != PHX_MC_DISJOINT &&
+                             contact.kind != PHX_MC_SHARED_VERTEX &&
+                             contact.kind != PHX_MC_SHARED_EDGE;
+      PHX_CHECK(!(clear && violation));
+      cleared += clear;
+      failures += violation;
+      ++tested;
+    }
+    PHX_CHECK(cleared > 0 && failures > 0);
+  }
+}
+
+// The tree descent must visit every candidate pair and prune the rest: a soup of >= 200
+// local triangles spread over a 16x16x4 integer lattice (shared vertices, coplanar and
+// crossing pairs nearby, many far-apart pairs) must give exactly the all-pairs exact
+// classification.
+void check_random_soup() {
+  uint64_t state = 0x2545f4914f6cdd1dULL;
+  const auto next = [&]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+  };
+  constexpr int64_t nx = 16, ny = 16, nz = 4;
+  std::vector<double> points;
+  for (int64_t z = 0; z < nz; ++z)
+    for (int64_t y = 0; y < ny; ++y)
+      for (int64_t x = 0; x < nx; ++x) {
+        points.push_back(static_cast<double>(x));
+        points.push_back(static_cast<double>(y));
+        points.push_back(static_cast<double>(z));
+      }
+  const auto near = [&](int64_t base, int64_t extent) {
+    const int64_t offset = static_cast<int64_t>(next() % 5) - 2;
+    return std::clamp(base + offset, int64_t{0}, extent - 1);
+  };
+  std::vector<int64_t> triangles;
+  while (triangles.size() < 3*240) {
+    const int64_t x = static_cast<int64_t>(next() % nx), y = static_cast<int64_t>(next() % ny);
+    const int64_t z = static_cast<int64_t>(next() % nz);
+    int64_t ids[3];
+    ids[0] = x + nx*(y + ny*z);
+    for (int k = 1; k < 3; ++k) ids[k] = near(x, nx) + nx*(near(y, ny) + ny*near(z, nz));
+    if (ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0]) continue;
+    const double* p[3] = {&points[3*ids[0]], &points[3*ids[1]], &points[3*ids[2]]};
+    if (!triangle_valid(p)) continue;
+    triangles.insert(triangles.end(), ids, ids + 3);
+  }
+  const int64_t n = static_cast<int64_t>(triangles.size() / 3);
+  const phx::mc::GradualNearestScope mode;
+  PHX_CHECK(mode.established());
+  std::vector<phx::mc::SurfaceContact> found;
+  PHX_CHECK(phx::mc::surface_embedding_contacts(points.data(), n, triangles.data(), found) ==
+            PHX_MC_OK);
+  std::vector<phx::mc::SurfaceContact> expected;
+  for (int64_t a = 0; a < n; ++a)
+    for (int64_t b = a + 1; b < n; ++b) {
+      const double* p[3];
+      const double* q[3];
+      for (int j = 0; j < 3; ++j) {
+        p[j] = &points[3*triangles[3*a+j]];
+        q[j] = &points[3*triangles[3*b+j]];
+      }
+      phx::mc::Contact contact;
+      PHX_CHECK(phx::mc::intersect_triangles(p, q, &triangles[3*a], &triangles[3*b], contact) ==
+                PHX_MC_OK);
+      if (contact.kind != PHX_MC_DISJOINT && contact.kind != PHX_MC_SHARED_VERTEX &&
+          contact.kind != PHX_MC_SHARED_EDGE)
+        expected.push_back({a, b, contact.kind});
+    }
+  const auto order = [](const phx::mc::SurfaceContact& x, const phx::mc::SurfaceContact& y) {
+    return x.first != y.first ? x.first < y.first : x.second < y.second;
+  };
+  std::sort(found.begin(), found.end(), order);
+  std::sort(expected.begin(), expected.end(), order);
+  PHX_CHECK(!expected.empty());
+  PHX_CHECK(found.size() == expected.size());
+  for (size_t i = 0; i < std::min(found.size(), expected.size()); ++i)
+    PHX_CHECK(found[i].first == expected[i].first && found[i].second == expected[i].second &&
+              found[i].kind == expected[i].kind);
+}
+
 void check_refusal() {
   Mesh mesh = tetrahedron();
   mesh.triangles.resize(9);
@@ -185,6 +303,10 @@ void check_refusal() {
       0, &sentinel, &verdict) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(verdict.status == 123 && verdict.finding_count == 456);
   PHX_CHECK(sentinel.kind == 123 && sentinel.first == 456 && sentinel.second == 789);
+  // Edge keys pack two 32-bit vertex ids; larger point sets are refused before any read.
+  PHX_CHECK(phx_mc_verify_surface_embedding((int64_t{1} << 32) + 1, mesh.points.data(), 0,
+      nullptr, 1, &sentinel, &verdict) == PHX_MC_INDEX_RANGE_ERROR);
+  PHX_CHECK(verdict.status == 123 && sentinel.kind == 123);
   mesh.triangles[0] = 99;
   PHX_CHECK(phx_mc_verify_surface_embedding(4, mesh.points.data(), 3, mesh.triangles.data(),
       1, &sentinel, &verdict) == PHX_MC_INVALID_INPUT);
@@ -206,6 +328,8 @@ int main() {
   check_contacts();
   check_adjacent_contacts();
   check_random_adjacent_pairs();
+  check_random_coplanar_pairs();
+  check_random_soup();
   check_refusal();
   return phx::mc::test::finish("test_verify_surface_embedding");
 }

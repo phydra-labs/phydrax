@@ -22,14 +22,20 @@ from benchmarks.native_meshing import (
     _facets,
     _icosphere,
     _recover,
-    _stuffed_torus_surface,
+    _restricted_torus_surface,
+    _sphere_distance,
+    _sphere_samples,
+    _surface_quality,
     _uv_torus,
+    _zero_set_quality,
 )
 from phydrax._meshcore import (
     arrange_tetrahedra_exact,
     clip_reference_tetrahedron_exact,
     implicit_face_proposals,
     IntervalBoxProgram,
+    mesh_certify,
+    mesh_remesh,
     meshcore_available,
     meshcore_identity,
     MeshcoreError,
@@ -2532,6 +2538,49 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     assert carried.counters[3] > 0 and carried.counters[4] == 0
 
 
+def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
+    vertices, faces = _icosphere(4)
+    remeshed = mesh_remesh(vertices, faces, 0.01, 0.2, 30.0)
+    assert remeshed.triangles.shape[0] < faces.shape[0]
+    certificate = mesh_certify(
+        vertices, faces, remeshed.vertices, remeshed.triangles, 0.01, 0.2, 30.0
+    )
+    assert np.all(certificate.distances >= 0.0)
+    assert np.all(certificate.distances <= 0.01)
+    assert certificate.counters[4] == 0
+    # Corners go to their nearest source points: on the inscribed polyhedron,
+    # inside the unit sphere and within the tolerance of it.
+    radii = np.linalg.norm(certificate.vertices, axis=1)
+    assert np.all(radii <= 1.0 + 1e-12) and np.all(radii >= 1.0 - 0.01)
+    # Against a source 2% larger the surface is 0.02 away: refused.
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        mesh_certify(
+            1.02 * vertices, faces, remeshed.vertices, remeshed.triangles, 0.01, 0.2, 30.0
+        )
+    with pytest.raises(ValueError, match="closed oriented 2-manifold"):
+        mesh_remesh(vertices, faces[:-1], 0.01, 0.2, 30.0)
+
+
+def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
+    value, gradient = _unit_sphere_box_programs()
+    vertices, faces = _icosphere(3)
+    remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
+    controls = (value, gradient, 0.01, 0.15, _sphere_distance, _sphere_samples)
+    missed, measured = _zero_set_quality(remeshed, vertices, faces, *controls)
+    assert missed == 0 and measured["certified"] == 1.0
+    # A vertex lifted off the sphere: the certificate refuses it, which counts
+    # one miss beyond those of the sampled quality.
+    lifted = np.array(remeshed.vertices)
+    lifted[0] *= 1.05
+    missed, measured = _zero_set_quality(
+        remeshed._replace(vertices=lifted), vertices, faces, *controls
+    )
+    sampled, _ = _surface_quality(
+        lifted, remeshed.triangles, _sphere_distance, _sphere_samples, 0.01
+    )
+    assert measured["certified"] == 0.0 and missed == sampled + 1
+
+
 _LENS_SHIFT = 0.8
 
 
@@ -2932,8 +2981,10 @@ def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None
 _BENCHMARK_SURFACES = {
     "sphere-5": lambda: _icosphere(5),
     "sphere-6": lambda: _icosphere(6),
-    "stuffed-torus-67": lambda: _stuffed_torus_surface(0.067),
-    "stuffed-torus-22": lambda: _stuffed_torus_surface(0.022),
+    # The restricted Delaunay torus surfaces of facet edge 0.072 and 0.025
+    # (14,010 and 123,098 triangles).
+    "restricted-torus-72": lambda: _restricted_torus_surface(0.072),
+    "restricted-torus-25": lambda: _restricted_torus_surface(0.025),
     "grid-torus-100": lambda: _uv_torus(100),
     "grid-torus-300": lambda: _uv_torus(300),
 }
@@ -2986,7 +3037,7 @@ def test_mesh_adopted_from_recovery_is_the_array_built_mesh(surface: str) -> Non
 def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
     # Ghost order and adjacency are not in the snapshot: refinement and
     # improvement, which walk them, end in the same mesh.
-    vertices, faces = _BENCHMARK_SURFACES["stuffed-torus-67"]()
+    vertices, faces = _BENCHMARK_SURFACES["restricted-torus-72"]()
     recovery = _recover(vertices, faces, _facets(vertices, faces))
     edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
     spacing = np.mean(

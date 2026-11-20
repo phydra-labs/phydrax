@@ -319,6 +319,8 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
     shape = batch_shape + (a.shape[-2], b.shape[-1])
     if a.shape[-1] == 0:
         result = np.zeros(shape, dtype=np.float64)
+    elif math.prod(batch_shape) >= _COMPONENT_BATCH:
+        result = _component_matmul(a, b, batch_shape)
     else:
         result = np.multiply(a[..., :, 0, None], b[..., None, 0, :])
         for index in range(1, a.shape[-1]):
@@ -329,6 +331,49 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
     if right_vector:
         result = np.squeeze(result, axis=-1)
     return np.asarray(result, dtype=np.float64)
+
+
+# Batch size from which matrix entries are evaluated as contiguous batch arrays.
+_COMPONENT_BATCH = 512
+
+
+def _component_matmul(
+    a: np.ndarray, b: np.ndarray, batch_shape: tuple[int, ...], /
+) -> NDArray[np.float64]:
+    """Evaluate :func:`binary64_matmul` entry by entry over contiguous batches.
+
+    The products and left-to-right additions are those of the broadcast route;
+    only the memory layout differs, so every entry is bitwise identical. Small
+    matrix axes innermost would make every NumPy loop a few elements long.
+    """
+    rows, inner, columns = a.shape[-2], a.shape[-1], b.shape[-1]
+    rank = len(batch_shape)
+    left = np.ascontiguousarray(
+        np.broadcast_to(
+            np.moveaxis(
+                a.reshape((1,) * (rank + 2 - a.ndim) + a.shape), (-2, -1), (0, 1)
+            ),
+            (rows, inner, *batch_shape),
+        )
+    )
+    right = np.ascontiguousarray(
+        np.broadcast_to(
+            np.moveaxis(
+                b.reshape((1,) * (rank + 2 - b.ndim) + b.shape), (-2, -1), (0, 1)
+            ),
+            (inner, columns, *batch_shape),
+        )
+    )
+    result = np.empty((rows, columns, *batch_shape), dtype=np.float64)
+    product = np.empty(batch_shape, dtype=np.float64)
+    for row in range(rows):
+        for column in range(columns):
+            entry = result[row, column]
+            np.multiply(left[row, 0], right[0, column], out=entry)
+            for index in range(1, inner):
+                np.multiply(left[row, index], right[index, column], out=product)
+                np.add(entry, product, out=entry)
+    return np.moveaxis(result, (0, 1), (-2, -1))
 
 
 def binary64_difference_magnitude(
