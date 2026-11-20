@@ -1651,6 +1651,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_mesh_copy_constraint_sources": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_parents": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_ratios": (_I32, (_P, _I64, _P)),
+    "phx_mc_mesh_shape": (_I32, (_P, _P)),
+    "phx_mc_mesh_copy_all": (_I32, (_P, _I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P)),
     "phx_mc_mesh_free": (None, (_P,)),
     "phx_mc_deterministic_float_self_test": (_I32, (ctypes.POINTER(_I32),)),
     "phx_mc_metric_logarithms": (_I32, (_I64, _P, _P, _P)),
@@ -3341,12 +3343,12 @@ def _read_mesh(
     np.ndarray,
     np.ndarray,
 ]:
-    # The native handle is released even when a copy fails.
+    # The native handle is released even when a copy fails. Every array is
+    # written in full by the copy, so it is allocated uninitialized.
     try:
-        dimension = library["phx_mc_mesh_dimension"](handle)
-        point_count = library["phx_mc_mesh_point_count"](handle)
-        cell_count = library["phx_mc_mesh_cell_count"](handle)
-        input_count = library["phx_mc_mesh_input_point_count"](handle)
+        shape = (ctypes.c_int64 * 4)()
+        _raise_for_call(library["phx_mc_mesh_shape"](handle, shape), "mesh_shape")
+        dimension, point_count, cell_count, input_count = shape
         if (
             dimension not in (2, 3)
             or point_count < 0
@@ -3358,50 +3360,28 @@ def _read_mesh(
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "mesh handle reported invalid output sizes"
             )
-        points = np.zeros((point_count, dimension), dtype=np.float64)
-        cells = np.zeros((cell_count, dimension + 1), dtype=np.int32)
-        vertex_map = np.zeros((input_count,), dtype=np.int32)
-        cell_segments = np.zeros((cell_count, 3), dtype=np.int32)
+        points = np.empty((point_count, dimension), dtype=np.float64)
+        cells = np.empty((cell_count, dimension + 1), dtype=np.int32)
+        vertex_map = np.empty((input_count,), dtype=np.int32)
+        cell_segments = np.empty((cell_count, 3), dtype=np.int32)
         constraint_sources = np.empty((point_count,), dtype=np.int32)
         constraint_parents = np.empty((point_count, 2), dtype=np.int32)
         constraint_ratios = np.empty((point_count,), dtype=np.float64)
         _raise_for_call(
-            library["phx_mc_mesh_copy_points"](handle, point_count, points.ctypes.data),
-            "mesh_copy_points",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_cells"](handle, cell_count, cells.ctypes.data),
-            "mesh_copy_cells",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_vertex_map"](
-                handle, input_count, vertex_map.ctypes.data
+            library["phx_mc_mesh_copy_all"](
+                handle,
+                point_count,
+                cell_count,
+                input_count,
+                points.ctypes.data,
+                cells.ctypes.data,
+                vertex_map.ctypes.data,
+                cell_segments.ctypes.data,
+                constraint_sources.ctypes.data,
+                constraint_parents.ctypes.data,
+                constraint_ratios.ctypes.data,
             ),
-            "mesh_copy_vertex_map",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_cell_segments"](
-                handle, cell_count, cell_segments.ctypes.data
-            ),
-            "mesh_copy_cell_segments",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_sources"](
-                handle, point_count, constraint_sources.ctypes.data
-            ),
-            "mesh_copy_constraint_sources",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_parents"](
-                handle, point_count, constraint_parents.ctypes.data
-            ),
-            "mesh_copy_constraint_parents",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_ratios"](
-                handle, point_count, constraint_ratios.ctypes.data
-            ),
-            "mesh_copy_constraint_ratios",
+            "mesh_copy_all",
         )
     finally:
         library["phx_mc_mesh_free"](handle)

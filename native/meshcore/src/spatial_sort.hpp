@@ -173,6 +173,9 @@ inline std::uint32_t brio_round(int32_t index, int rounds) {
 // sorted stably by the whole key, which is the order of a full stable key
 // sort. The round (below 62) is one more radix pass. Digits constant over
 // all entries are skipped. `scratch` is working storage.
+// Few entries are sorted by std::stable_sort on the same fields instead (the
+// same stable order): the radix passes would clear and scan a 2048-bucket
+// histogram per digit.
 inline void radix_sort_keys(std::vector<SpatialKey>& keys, std::vector<SpatialKey>& scratch,
                             bool by_key, bool by_round) {
   constexpr int kDigitBits = 11;
@@ -180,6 +183,16 @@ inline void radix_sort_keys(std::vector<SpatialKey>& keys, std::vector<SpatialKe
   constexpr std::size_t kRoundBuckets = 64;
   const std::size_t count = keys.size();
   if (count < 2) return;
+  if (count <= 256) {
+    std::stable_sort(keys.begin(), keys.end(),
+                     [by_key, by_round](const SpatialKey& left, const SpatialKey& right) {
+                       if (by_round && left.round != right.round) {
+                         return left.round < right.round;
+                       }
+                       return by_key && left.key < right.key;
+                     });
+    return;
+  }
   std::uint64_t used = 0;
   if (by_key) {
     for (const SpatialKey& entry : keys) used |= entry.key;
