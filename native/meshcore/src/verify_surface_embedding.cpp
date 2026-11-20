@@ -270,9 +270,10 @@ bool coplanar(const double* const p[3], const double* const q[3]) {
     if (phx::mc::orient3d_filtered(p[0], p[1], p[2], q[k]) != 0) return false;
   return true;
 }
-// All six vertices share one coordinate bitwise (charts lifted to z = 0, axis-aligned flat
-// regions): the pair is exactly coplanar and dropping that coordinate is an isometry, so
-// exact 2D sides decide without the (always zero, exact-stage) orient3d calls.
+// All six vertices have equal values (==, so -0.0 and +0.0 agree) in one coordinate
+// (charts lifted to z = 0, axis-aligned flat regions): the pair is exactly coplanar and
+// dropping that coordinate is an isometry, so exact 2D sides decide without the (always
+// zero, exact-stage) orient3d calls.
 int common_axis(const double* const p[3], const double* const q[3]) {
   for (int axis = 0; axis < 3; ++axis) {
     const double value = p[0][axis];
@@ -347,16 +348,8 @@ bool clear_pair(const double* const p[3], const double* const q[3],
     const int s0 = phx::mc::orient3d_filtered(common, a, b, c);
     const int s1 = phx::mc::orient3d_filtered(common, a, b, d);
     if (s0 == 0 && s1 == 0) {
-      // Coplanar: an edge line through the common vertex with the other triangle's two
-      // free vertices strictly beyond it leaves only the common vertex.
       const int axis = projection_axis(p);
-      if (axis < 0) return false;
-      const double* cd[2] = {c, d};
-      const double* ab[2] = {a, b};
-      return line_separates(axis, common, a, b, cd, 2) ||
-             line_separates(axis, common, b, a, cd, 2) ||
-             line_separates(axis, common, c, d, ab, 2) ||
-             line_separates(axis, common, d, c, ab, 2);
+      return axis >= 0 && clear_planar(axis, p, q, shared_p, shared_q, shared);
     }
     if (s0 == 0 || s1 == 0) return false;
     if (s0 == s1) return true;
@@ -374,14 +367,8 @@ bool clear_pair(const double* const p[3], const double* const q[3],
   if (shared == 0) {
     if (separate_triangle(p, q) || separate_triangle(q, p)) return true;
     if (!coplanar(p, q)) return false;
-    // Coplanar disjoint convex triangles: some edge line strictly separates.
     const int axis = projection_axis(p);
-    if (axis < 0) return false;
-    for (int i = 0; i < 3; ++i) {
-      if (line_separates(axis, p[i], p[(i+1)%3], p[(i+2)%3], q, 3)) return true;
-      if (line_separates(axis, q[i], q[(i+1)%3], q[(i+2)%3], p, 3)) return true;
-    }
-    return false;
+    return axis >= 0 && clear_planar(axis, p, q, shared_p, shared_q, shared);
   }
   return false;
 }

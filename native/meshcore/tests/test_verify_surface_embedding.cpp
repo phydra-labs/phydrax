@@ -206,12 +206,8 @@ void check_random_coplanar_pairs() {
       const double* q[3] = {points[second_ids[0]].data(), points[second_ids[1]].data(),
                             points[5].data()};
       if (!triangle_valid(p) || !triangle_valid(q)) continue;
-      bool coincident = false;
-      for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-          if (first_ids[i] != second_ids[j] && p[i][0] == q[j][0] && p[i][1] == q[j][1])
-            coincident = true;
-      if (coincident) continue;
+      // Distinct ids at one location (the chart's -0.0 / +0.0 case) stay in: clearing must
+      // then fail over to the full classifier, which reports the touching contact.
       const bool clear = phx::mc::surface_embedding_pair_clear(p, q, first_ids, second_ids);
       phx::mc::Contact contact;
       PHX_CHECK(phx::mc::intersect_triangles(p, q, first_ids, second_ids, contact) == PHX_MC_OK);
