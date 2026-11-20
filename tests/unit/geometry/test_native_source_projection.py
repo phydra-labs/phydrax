@@ -38,7 +38,10 @@ from phydrax.geometry.brep._projection_contracts import (
     BRepProjectionPolicy,
 )
 from phydrax.geometry.brep._tspline import TSplineSurfacePatch
-from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
+from phydrax.geometry.implicit._analytic_profile import (
+    _ImplicitSourceProjectionResult,
+    AnalyticImplicitProfile,
+)
 from phydrax.units import METER
 
 
@@ -360,6 +363,7 @@ def test_analytic_implicit_projection_binds_frame_source_and_certified_distance(
     assert int(np.asarray(result.status)[0]) == SourceProjectionStatus.UNIQUE
     np.testing.assert_allclose(result.points, ((2.0, 0.0, 0.0),), atol=1e-14)
     source_parameters = np.asarray(result.parameters)
+
     # Neighboring binary64 angles enclose the exact polar angle π/2 for this
     # axis-aligned query; certify chart reconstruction over that parameter box.
     def sphere_chart(parameters: jax.Array) -> jax.Array:
@@ -390,6 +394,19 @@ def test_analytic_implicit_projection_binds_frame_source_and_certified_distance(
     )
 
 
+def _assert_tight_enclosure(
+    result: _ImplicitSourceProjectionResult, exact: float, scale: float
+) -> None:
+    # The interval field rounds every operation outward, so an exact distance
+    # may come back widened by an ulp or two; the contract is a certified
+    # enclosure of the exact distance at a few ulps of the coordinate scale.
+    lower = np.asarray(result.distance_lower_bounds)
+    upper = np.asarray(result.residuals)
+    assert lower.shape == upper.shape == (1,)
+    assert 0.0 <= lower[0] <= exact <= upper[0]
+    assert upper[0] - lower[0] <= 8.0 * np.finfo(np.float64).eps * scale
+
+
 def test_implicit_nonisolated_minimum_keeps_source_identity_without_a_point() -> None:
     profile = _sphere_profile()
     result = profile.project_boundary(np.zeros((1, 3), dtype=np.float64))
@@ -403,8 +420,7 @@ def test_implicit_nonisolated_minimum_keeps_source_identity_without_a_point() ->
             "zero-set",
         ),
     )
-    np.testing.assert_array_equal(result.residuals, (2.0,))
-    np.testing.assert_array_equal(result.distance_lower_bounds, (2.0,))
+    _assert_tight_enclosure(result, 2.0, 2.0)
     assert np.all(np.isnan(np.asarray(result.points)))
     assert np.all(np.isnan(np.asarray(result.parameters)))
     assert np.all(np.isnan(np.asarray(result.normals)))
@@ -416,7 +432,7 @@ def test_torus_projection_handles_unique_and_nonisolated_loci() -> None:
     profile = AnalyticImplicitProfile(geometry, SpatialCoordinateContract(METER))
     unique = profile.project_boundary(np.asarray(((2.5, 0.0, 0.0),)))
     np.testing.assert_allclose(unique.points, ((2.5, 0.0, 0.0),), atol=0.0)
-    np.testing.assert_allclose(unique.residuals, (0.0,), atol=0.0)
+    _assert_tight_enclosure(unique, 0.0, 2.5)
     assert int(np.asarray(unique.status)[0]) == SourceProjectionStatus.UNIQUE
 
     singular = profile.project_boundary(np.asarray(((0.0, 0.0, 0.0),)))
@@ -424,8 +440,7 @@ def test_torus_projection_handles_unique_and_nonisolated_loci() -> None:
     assert singular.entity_ids()[0]
     assert np.all(np.isnan(np.asarray(singular.points)))
     assert np.all(np.isnan(np.asarray(singular.parameters)))
-    np.testing.assert_allclose(singular.residuals, (1.5,), atol=0.0)
-    np.testing.assert_allclose(singular.distance_lower_bounds, (1.5,), atol=0.0)
+    _assert_tight_enclosure(singular, 1.5, 2.5)
 
 
 def test_implicit_projection_rejects_foreign_entities_and_occurrences() -> None:
