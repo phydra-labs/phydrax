@@ -133,10 +133,10 @@ class ConstrainedMesher {
     constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
   }
 
-  void publish_witnesses(phx_mc_mesh& mesh) const {
-    mesh.constraint_sources = constraint_sources_;
-    mesh.constraint_parents = constraint_parents_;
-    mesh.constraint_ratios = constraint_ratios_;
+  void publish_witnesses(phx_mc_mesh& mesh) {
+    mesh.constraint_sources = std::move(constraint_sources_);
+    mesh.constraint_parents = std::move(constraint_parents_);
+    mesh.constraint_ratios = std::move(constraint_ratios_);
   }
 
   // Inserts the edge chain from a to b; vertices exactly on the open segment
