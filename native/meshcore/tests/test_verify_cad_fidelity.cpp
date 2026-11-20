@@ -822,6 +822,95 @@ void carrier_inside_domain_leaf() {
   }
 }
 
+// A (demo_h family, trims): the faces of carrier_inside_domain_leaf trimmed
+// by the arc of the circle about (0.375, 0.025) of radius 1/8 from
+// A = (0.45, 0.125) to B = (0.3, 0.125) (chart sagitta 0.025, strictly
+// inside S2's domain), one chart triangle A B C with C = (0.375, 0). Each
+// certifies through the whole entry, the lens included, at tolerance 1/8 in
+// the splits of the first V3 (0186b551c and dd7715b2c: 0 per kind; c7a0e82fc:
+// 5, 14, 14, bounds 0.092 / 0.125 against 0.058 / 0.084). Fault caught: a
+// trim on an intersection, isoparametric or surface-mapped carrier asked
+// over the whole parameter plane.
+void carrier_inside_domain_trim() {
+  const double a[2] = {0.45, 0.125}, b[2] = {0.3, 0.125}, c[2] = {0.375, 0.0};
+  const double cx = 0.375, cy = 0.025, r = 0.125;
+  const double ta = std::atan2(a[1] - cy, a[0] - cx), tb = std::atan2(b[1] - cy, b[0] - cx);
+  for (int kind = 0; kind < 3; ++kind) {
+    Model m;
+    int32_t plane = -1;
+    const int32_t intersection = parabola_carrier(m, plane, 0.25, 0.75, 0);
+    const int32_t spline = intersection - 1;
+    int32_t curve = intersection;
+    if (kind == 1) curve = m.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {spline, 1}, {0.5});
+    if (kind == 2)
+      curve = m.add(PHX_MC_CAD_NODE_SURFACE_MAPPED,
+                    {spline, m.add_template("line2", {0, 0.5, 1, 0})}, {});
+    const int32_t swept = m.add(PHX_MC_CAD_NODE_EXTRUSION, {curve}, {0, 0, 1});
+    const int32_t arc = m.add_template("circle2", {cx, cy, 1, 0, 0, 1, r});
+    const int32_t bc = m.add_template("line2", {b[0], b[1], c[0] - b[0], c[1] - b[1]});
+    const int32_t ca = m.add_template("line2", {c[0], c[1], a[0] - c[0], a[1] - c[1]});
+    const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+    m.surface(swept);
+    m.corner(0, 0, 0);
+    m.curve(space, 0, 0);
+    m.use(0, 0, ta, tb, arc);
+    m.use(0, 0, 0.0, 1.0, bc);
+    m.use(0, 0, 0.0, 1.0, ca);
+    m.close_loop(0);
+    const phx_mc_cad_model view = m.view();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    EvaluationWorkspace point_workspace;
+    Mesh mesh;
+    mesh.uv = {a[0], a[1], b[0], b[1], c[0], c[1]};
+    mesh.points.resize(9);
+    for (int i = 0; i < 3; ++i)
+      PHX_CHECK(geometry.jets(swept, mesh.uv.data() + 2 * i, 0, mesh.points.data() + 3 * i,
+                              point_workspace));
+    // S on the arc against the mesh edge S(A) S(B): a lower bound of the row's distance.
+    double worst = 0.0;
+    const double* pa = mesh.points.data();
+    const double* pb = mesh.points.data() + 3;
+    for (int i = 0; i <= 2000; ++i) {
+      const double t = ta + (tb - ta) * i / 2000.0;
+      const double uv[2] = {cx + r * std::cos(t), cy + r * std::sin(t)};
+      double s[3];
+      PHX_CHECK(geometry.jets(swept, uv, 0, s, point_workspace));
+      double ab = 0.0, ap = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        ab += (pb[k] - pa[k]) * (pb[k] - pa[k]);
+        ap += (s[k] - pa[k]) * (pb[k] - pa[k]);
+      }
+      const double w = std::clamp(ap / ab, 0.0, 1.0);
+      double squared = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double d = s[k] - (pa[k] + w * (pb[k] - pa[k]));
+        squared += d * d;
+      }
+      worst = std::max(worst, std::sqrt(squared));
+    }
+    mesh.triangles = {0, 1, 2};
+    mesh.face_rows = {0};
+    mesh.mesh_triangles = {0, 1, 2};
+    mesh.chart_to_mesh = {0};
+    mesh.edge_chord = {0, 1, 2};
+    mesh.use_patch = {0, 0, 0};
+    mesh.use_range = m.use_ranges;
+    mesh.loop_count = 1;
+    mesh.chord_use = {0, 1, 2};
+    mesh.chord_loop = {0, 0, 0};
+    mesh.chord_uv = {a[0], a[1], b[0], b[1], b[0], b[1], c[0], c[1], c[0], c[1], a[0], a[1]};
+    mesh.chord_range = m.use_ranges;
+    const Verdict verdict = verify(m, mesh, 0.125, 8);
+    const char* name[3] = {"intersection", "isoparametric", "surface-mapped"};
+    std::printf("A trim (%s): status %d row %d reason %d upper %.6e splits %d; arc %.6e\n",
+                name[kind], verdict.status, verdict.item_status[0], verdict.reasons[0],
+                verdict.upper[0], verdict.subdivisions[0], worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.upper[0] >= worst &&
+              verdict.upper[0] < 0.125 && verdict.subdivisions[0] <= 4);
+  }
+}
+
 // C (demo_g): the square [0, 4]^2 with the clockwise hole H; (a) the hole
 // filled by a clockwise triangle, (b) the hole loop's uses given reversed and
 // the hole covered by a counter-clockwise triangle. V3 certified both
@@ -926,6 +1015,7 @@ int main() {
   empty_mesh_demo();
   carrier_inside_domain_lens();
   carrier_inside_domain_leaf();
+  carrier_inside_domain_trim();
   hole_orientation_demo();
   surface_without_loop_demo();
   lens_index_overflow();
