@@ -2015,8 +2015,10 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * stop_gradient or custom derivative rules are outside this contract). Once
  * every triangle is certified, the zero set ->
  * surface direction is decided over the domain box (lower xyz, upper xyz;
- * finite, lower < upper) through the possible-zero cover of the domain
- * (box_tree.hpp): every zero of f in the domain lies in a leaf, each kept box
+ * finite, lower < upper, holding every surface vertex) through the
+ * possible-zero cover of the domain
+ * (box_tree.hpp, guards included: a box where a guard fails is kept): every
+ * zero of f in the domain lies in a leaf, each kept box
  * is accepted at the first level where an outward bound of its distance to
  * the surface (box_reach, zero_set_tube.hpp) is below a radius D, and boxes
  * are subdivided otherwise down to a target diameter of D / 2; with no leaf

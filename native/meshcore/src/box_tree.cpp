@@ -100,8 +100,13 @@ int32_t straddling(const IntervalProgramView& program, const PreparedIntervalPro
         if (status != PHX_MC_OK) return status;
       }
     }
-    for (std::size_t b = 0; b < chunk; ++b)
-      keep[first + b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+    for (std::size_t b = 0; b < chunk; ++b) {
+      bool kept = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+      // A failed guard leaves f undefined in part of the box: kept.
+      for (int64_t g = 0; g < program.guard_count && !kept; ++g)
+        kept = !(lower[b * width + static_cast<std::size_t>(program.guards[g])] >= 0.0);
+      keep[first + b] = kept;
+    }
   }
   return PHX_MC_OK;
 }
@@ -117,6 +122,11 @@ int32_t possible_leaves(const IntervalProgramView& interval, Axes& axes, int32_t
                         const BoxAcceptance* accept, int64_t budget, int64_t& evaluated_boxes,
                         std::vector<DyadicLeaf>& leaves) {
   evaluated_boxes = 0;
+  if (interval.guard_count < 0 || (interval.guard_count > 0 && interval.guards == nullptr))
+    return PHX_MC_INVALID_ARGUMENT;
+  for (int64_t g = 0; g < interval.guard_count; ++g)
+    if (interval.guards[g] < 0 || interval.guards[g] >= interval.workspace_size)
+      return PHX_MC_INVALID_ARGUMENT;
   // One dispatch per program: the batch kernel when it admits every opcode
   // (as before), else the general executor (reciprocal fields).
   PreparedIntervalProgram general;

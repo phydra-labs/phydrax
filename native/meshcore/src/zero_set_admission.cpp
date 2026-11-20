@@ -927,7 +927,7 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
       field.instructions,    field.instruction_count, field.indices,
       field.index_count,     field.parameters,        field.parameter_count,
       field.workspace_lower, field.workspace_upper,   field.workspace_size,
-      field.outputs[0]};
+      field.outputs[0],      field.guards,            field.guard_count};
   bound = 0;
   const auto reach = [&](const std::array<double, 6>& box) {
     return box_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]});

@@ -46,6 +46,8 @@ struct Program {
   std::vector<int64_t> outputs;
   // Branch-evidence event rows (kind, test, size, a, a_index, boxes).
   std::vector<int64_t> events;
+  // Guard entries (real-power domain flags): lower end must be >= 0.
+  std::vector<int64_t> guards;
 
   void row(int64_t opcode, int64_t out, int64_t size, int64_t a, int64_t a_index, int64_t b,
            int64_t b_index, int64_t aux) {
@@ -58,7 +60,7 @@ struct Program {
             lower.data(),      upper.data(),
             static_cast<int64_t>(lower.size()),
             outputs.data(),    static_cast<int64_t>(outputs.size()),
-            nullptr,           0};
+            guards.data(),     static_cast<int64_t>(guards.size())};
   }
   bool bind(IntervalBoxProgram& program) const {
     const auto v = view();
@@ -962,6 +964,38 @@ void remesh_jittered_carrier() {
   PHX_CHECK(distance <= tolerance);
 }
 
+// MAC's counterexample to a cover without guards (review of 1e334aaf0, F1):
+// f = (p - 1)(2 - p) with p = m^0.5 by the real power (opcode 27) and m = x x
+// + y y + z z by products, guarded on the power's domain flag. A box whose m
+// enclosure reaches below 0 has the flag's lower end at -1 and a placeholder
+// p; ignoring the guard dropped every box straddling a coordinate plane,
+// down to the whole domain. Its zeros include the sphere of radius 2, about 1
+// from an octasphere on the unit sphere: the certificate refuses from the
+// cover (the gradient here is only a direction, which the cover does not
+// read).
+void cover_keeps_guarded_boxes() {
+  constexpr int64_t kPower = 27;
+  Program root = seeded({1.0, 2.0, 0.5}, 15);
+  root.row(kMultiply, 6, 3, 0, -1, 0, -1, 0);
+  root.row(kReduceSum, 9, 1, 6, -1, -1, 0, 3);
+  root.row(kPower, 10, 1, 9, -1, 5, -1, 0);
+  root.row(kSubtract, 12, 1, 10, -1, 3, -1, 0);
+  root.row(kSubtract, 13, 1, 4, -1, 10, -1, 0);
+  root.row(kMultiply, 14, 1, 12, -1, 13, -1, 0);
+  root.outputs = {14};
+  root.guards = {11};
+  const Program gradient = sphere_gradient();
+  const Surface surface = jittered_octasphere(4, 0.0, 1);
+  double distance = -1;
+  Failures failures{};
+  const int32_t status = certify(surface.vertices, surface.triangles, root, gradient, 0.01, 1,
+                                 distance, failures, nullptr, 0, nullptr, nullptr, nullptr, 0.3);
+  std::printf("guarded cover: certify %d, leaves outside %lld, proof %lld\n", status,
+              static_cast<long long>(failures[7]), static_cast<long long>(failures[8]));
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[7] != 0 && failures[8] == 0);
+}
+
 
 // Lens: intersection of the unit balls centered at (0, 0, -+kLensShift),
 // f = max(f1, f2) with f1 = |x - c1|^2 - 1, f2 = |x - c2|^2 - 1. The caps meet on
@@ -1468,6 +1502,7 @@ int main() {
   sphere_cases();
   torus_cases();
   near_band_distance_cases();
+  cover_keeps_guarded_boxes();
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();
   certify_refusals();

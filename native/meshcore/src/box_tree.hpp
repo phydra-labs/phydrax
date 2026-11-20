@@ -25,7 +25,10 @@
 namespace phx::mc {
 
 // An interval program of f over three inputs (workspace entries 0 to 2):
-// its validated bytecode, its interval workspace templates and f's entry.
+// its validated bytecode, its interval workspace templates and f's entry,
+// and its guard entries (real-power bases and their domain flags: where a
+// guard's lower end is negative, f is undefined somewhere in the box and its
+// output enclosure proves nothing, so the box is kept).
 struct IntervalProgramView {
   const int64_t* instructions;
   int64_t instruction_count;
@@ -37,6 +40,8 @@ struct IntervalProgramView {
   const double* seed_upper;
   int64_t workspace_size;
   int64_t output;
+  const int64_t* guards = nullptr;
+  int64_t guard_count = 0;
 };
 
 // A segment from `negative` (f < 0) to `positive` (f > 0 at its making) and
