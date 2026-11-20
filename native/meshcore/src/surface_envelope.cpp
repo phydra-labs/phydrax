@@ -901,7 +901,7 @@ int32_t remesh_envelope(EnvelopeData& data, std::array<int64_t, 5>& counters) {
   const EnvelopeBandCertifier certifier(data, cloud);
   phx::mc::remesh::CertifyCounters certified;
   status = phx::mc::remesh::certify_surface(points, triangles, oracle, targets, certifier, {},
-                                            nullptr, certified);
+                                            nullptr, false, certified);
   if (status != PHX_MC_OK) return status;
   counters = {adapted.splits + certified.repair_splits, adapted.collapses, adapted.flips,
               adapted.relocations, adapted.below_angle};

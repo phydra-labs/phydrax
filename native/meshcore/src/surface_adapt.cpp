@@ -1018,7 +1018,8 @@ int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
 int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                         const SurfaceOracle& oracle, const AdaptTargets& targets,
                         const TriangleCertifier& certifier, const CarrierEvidence& carrier,
-                        const TriangleCertifier* repair_certifier, CertifyCounters& counters) {
+                        const TriangleCertifier* repair_certifier, bool margin_from_start,
+                        CertifyCounters& counters) {
   if (!(targets.edge_length > 0) || !(targets.tolerance > 0) ||
       !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
@@ -1092,10 +1093,11 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
       next[t].refused = refused[t] != 0;
       count += refused[t];
     }
-    // Once the surface needs a repair, every triangle decided this round
-    // (all of them in the first) must also stand in the tighter band: one
-    // proved only by `certifier` is repaired too, not refused.
-    if (repair_certifier != nullptr && (round > 0 || count > 0))
+    // Once the surface needs a repair (or from the start when asked), every
+    // triangle decided this round (all of them in the first) must also stand
+    // in the tighter band: one proved only by `certifier` is repaired too,
+    // not refused.
+    if (repair_certifier != nullptr && (margin_from_start || round > 0 || count > 0))
       for (size_t t = 0; t < m; ++t) {
         if (!fresh[t] || refused[t] || counters.carried[t]) continue;
         const Point& a = points[static_cast<size_t>(triangles[t][0])];

@@ -115,17 +115,19 @@ struct CertifyCounters {
 // its projected midpoint, Delaunay flips restore the angles, and only the
 // triangles that changed (or were refused) are decided again, for at most
 // four rounds. Vertices are not moved otherwise. With `repair_certifier`
-// (a tighter band, leaving the other direction room), a triangle a repair
-// created must also be proved by it: one proved only by `certifier` is
-// repaired again but not refused, and when only such triangles remain after
-// the last round (or no split takes) the last surface without a refusal
-// stands. PHX_MC_OK leaves the certified surface (compacted after a
-// repair); PHX_MC_UNRESOLVED leaves the last state with a refused triangle.
-// Counters hold the evidence either way.
+// (a tighter band, leaving the other direction room), once a repair is
+// needed (or from the first round with `margin_from_start`) every triangle
+// decided in a round must also be proved by it: one proved only by
+// `certifier` is repaired as well but not refused, and when only such
+// triangles remain after the last round (or no split takes) the last
+// surface without a refusal stands. PHX_MC_OK leaves the certified surface
+// (compacted after a repair); PHX_MC_UNRESOLVED leaves the last state with a
+// refused triangle. Counters hold the evidence either way.
 int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                         const SurfaceOracle& oracle, const AdaptTargets& targets,
                         const TriangleCertifier& certifier, const CarrierEvidence& carrier,
-                        const TriangleCertifier* repair_certifier, CertifyCounters& counters);
+                        const TriangleCertifier* repair_certifier, bool margin_from_start,
+                        CertifyCounters& counters);
 
 // certify_surface's local repair, for refusals decided elsewhere: the longest
 // edge of each flagged triangle that is not kept is split at its projected

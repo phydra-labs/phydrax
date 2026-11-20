@@ -4,6 +4,7 @@
 
 
 import importlib.metadata
+import math
 import os
 import subprocess
 import sys
@@ -2595,6 +2596,38 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
             0.15,
             30.0,
         )
+
+
+def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> None:
+    # Built toward 1,000 triangles at h^2 / 4 and certified at 2/3 of that:
+    # every triangle is proved forward without a repair, but the tube bounds
+    # the zero set beyond the tolerance. One repair into 0.8 of the tolerance
+    # gives the reverse proof room, so both directions certify.
+    value, gradient, branches = _unit_sphere_box_programs()
+    vertices, faces = _icosphere(5)
+    edge = math.sqrt(16.0 * math.pi / (math.sqrt(3.0) * 1000.0))
+    built = edge * edge / 4.0
+    remeshed = zero_set_remesh(vertices, faces, value, built, built, edge, 30.0)
+    tolerance = built / 1.5
+    certificate = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        branches,
+        gradient,
+        tolerance,
+        remeshed.orientation,
+        np.empty((0, 3), dtype=np.float64),
+        np.empty((0, 3), dtype=np.int64),
+        np.empty((0, 2, 3), dtype=np.float64),
+        _CERTIFIED_DOMAIN,
+        edge,
+        30.0,
+    )
+    assert certificate.counters[4] > 0 and certificate.counters[5] > 1
+    assert certificate.counters[8] == 1
+    assert certificate.distance <= tolerance
+    assert certificate.reverse_distance <= tolerance
+    assert certificate.triangles.shape[0] > remeshed.triangles.shape[0]
 
 
 def _widened_boxes(

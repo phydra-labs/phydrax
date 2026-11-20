@@ -981,14 +981,17 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
 // within the cover's bound: reverse = the smaller. Cover: when the tube
 // refuses or leaves a leaf outside rho, the cover within the tolerance
 // alone, reverse = its bound. Proof 1 stands only within the tolerance (else
-// the cover alone is tried). counters receives (tube triangles refused in
-// its last round; cover leaves left outside by the last cover run, -1 or -2
-// as cover_within, -3 when a surface vertex lies outside the domain; the
-// proof, 1 tube or 2 cover; boxes evaluated).
+// the cover alone is tried). With `wants_room`, a tube proof that holds but
+// bounds the zero set beyond the tolerance stops there instead (UNRESOLVED,
+// *wants_room set): the surface needs room, not the cover alone. counters
+// receives (tube triangles refused in its last round; cover leaves left
+// outside by the last cover run, -1 or -2 as cover_within, -3 when a surface
+// vertex lies outside the domain; the proof, 1 tube or 2 cover; boxes
+// evaluated).
 int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
                          const std::vector<Point>& points, const std::vector<Triangle>& triangles,
                          const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
-                         double& reverse, int64_t* counters) {
+                         double& reverse, int64_t* counters, bool* wants_room) {
   // The cover proves every zero in the domain near the surface; a surface
   // that leaves the domain is not what that proves.
   const double* lower = request.domain;
@@ -1014,6 +1017,10 @@ int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
       reverse = std::min(tube.reverse, bound);
       counters[2] = 1;
       return PHX_MC_OK;
+    }
+    if (wants_room != nullptr && counters[1] == 0) {
+      *wants_room = true;
+      return PHX_MC_UNRESOLVED;
     }
   }
   status = cover_within(request, surface, request.tolerance, counters[1], bound, counters[3]);
@@ -1128,22 +1135,37 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
                                               request.orientation, &repair_memo);
   const ZeroSetCertifier repair_certifier(repair_admission);
   CertifyCounters certified;
-  status = certify_surface(points, triangles, oracle,
-                           AdaptTargets{request.edge_length, request.tolerance,
-                                        request.minimum_angle_degrees},
-                           certifier, carrier, &repair_certifier, certified);
-  const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
-  request.counters[0] = refusals.transversality;
-  request.counters[1] = refusals.distance;
-  request.counters[2] = certified.refused_embedding;
-  request.counters[3] = certified.carrier;
-  request.counters[4] = certified.repair_splits;
-  request.counters[5] = certified.rounds;
+  const auto forward = [&](bool margin_from_start) {
+    const int32_t outcome = certify_surface(
+        points, triangles, oracle,
+        AdaptTargets{request.edge_length, request.tolerance, request.minimum_angle_degrees},
+        certifier, carrier, &repair_certifier, margin_from_start, certified);
+    const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
+    request.counters[0] = refusals.transversality;
+    request.counters[1] = refusals.distance;
+    request.counters[2] = certified.refused_embedding;
+    request.counters[3] = certified.carrier;
+    request.counters[4] = certified.repair_splits;
+    request.counters[5] = certified.rounds;
+    return outcome;
+  };
+  status = forward(false);
   if (status != PHX_MC_OK) return status;
   // Zero set -> surface over the domain (phx_mc_zero_set_certify).
   double reverse = 0;
+  // A surface that needed no repair was held to the tolerance alone; when its
+  // tube proof holds but bounds the zero set beyond the tolerance, it is
+  // repaired into the tighter band once (before any cover-alone run) and
+  // both directions are decided again.
+  bool wants_room = false;
   status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
-                            request.counters + 6);
+                            request.counters + 6, certified.rounds == 1 ? &wants_room : nullptr);
+  if (wants_room) {
+    status = forward(true);
+    if (status != PHX_MC_OK) return status;
+    status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
+                              request.counters + 6, nullptr);
+  }
   if (status != PHX_MC_OK) return status;
   // Proved triangles are within the tolerance; carried triangles keep their
   // witness bound, which the caller weighs against its request.

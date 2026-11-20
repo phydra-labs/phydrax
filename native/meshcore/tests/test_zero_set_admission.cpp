@@ -761,8 +761,10 @@ void certify_refusals() {
   // proof and is accepted from the carrier, witnessed by boxes widened by 0.1
   // (they reach inside the sphere), flagged as carried. But the sphere under
   // the lifted star lies farther than 0.02 from the surface, and both
-  // directions must hold within the tolerance: the zero set -> surface
-  // direction refuses (no proof), with the carried triangles counted.
+  // directions must hold within the tolerance: the tube bounds the zero set
+  // beyond it, the one repair into the tighter band cannot bring the lifted
+  // star closer (its triangles are carried, not split), and the zero set ->
+  // surface direction refuses (no proof), with the carried triangles counted.
   constexpr double tight = 0.02, widen = 0.1;
   auto nudged = remeshed.vertices;
   for (size_t d = 0; d < 3; ++d) nudged[d] *= 1.03;
@@ -772,7 +774,7 @@ void certify_refusals() {
   for (size_t f = 0; f < rotated.size(); f += 3) std::rotate(&rotated[f], &rotated[f + 1], &rotated[f + 3]);
   PHX_CHECK(certify(nudged, rotated, value, gradient, tight, 1, distance, failures,
                     &nudged_carrier, widen) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(failures[1] > 0 && failures[3] > 0 && failures[4] == 0 && failures[8] == 0);
+  PHX_CHECK(failures[1] > 0 && failures[3] > 0 && failures[8] == 0);
   // The whole surface scaled three times out of the sphere as its own
   // carrier: every witness box lies outside it (its nearest corner is more
   // than 1 from the origin, so f > 0 at every corner), nothing is carried

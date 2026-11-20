@@ -2008,7 +2008,10 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * proved within 0.8 `tolerance`: one proved only within `tolerance` is
  * repaired as well, not refused, so the zero set near repaired triangles
  * leaves the reverse direction room (when only such triangles remain after
- * the last round, the last surface without a refusal stands).
+ * the last round, the last surface without a refusal stands). A surface
+ * that needed no repair but whose tube proof holds with a reverse bound
+ * beyond `tolerance` is repaired into that band once, from its first round,
+ * and both directions are decided again.
  * `value` has one output, `gradient` three. Every enclosure of f or grad f
  * that a triangle, tube or witness proof reads is over a box on which
  * value's branch evidence reports f continuous (else that proof refuses),
