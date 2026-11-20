@@ -699,7 +699,9 @@ def compose(
         raise ValueError("compose.dimension must be nonnegative.")
     if any(isinstance(argument, RationalPolynomial) for argument in arguments):
         return _compose_over_common_denominator(expression, arguments, dimension_)
-    result: Expression = constant(0, dimension_)
+    # `add` term by term, accumulated in place rather than copying the
+    # partial sum once per monomial; key order and cancellation are the same.
+    result: Polynomial = {}
     # Each argument power is formed once per call, not once per monomial.
     powers: dict[tuple[int, int], Expression] = {}
     for exponent, coefficient in expression.items():
@@ -713,7 +715,14 @@ def compose(
                     factor = power(arguments[axis], degree, dimension=dimension_)
                     powers[axis, degree] = factor
                 term = multiply(term, factor)
-        result = add(result, term)
+        if isinstance(term, RationalPolynomial):
+            raise RuntimeError("A polynomial composition term must remain polynomial.")
+        for index, value in term.items():
+            updated = result.get(index, Fraction(0)) + value
+            if updated:
+                result[index] = updated
+            else:
+                result.pop(index, None)
     return result
 
 
