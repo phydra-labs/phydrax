@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -124,7 +125,27 @@ struct BadOrder {
 // they are popped back to back, the non-matching one is discarded and the
 // matching one processed either way. The pop sequence, and so the mesh, is
 // therefore independent of the heap layout, and a 4-ary heap is used.
-using BadQueue = SpatialRefinementQueue<BadTriangle, BadOrder, 4>;
+//
+// Without spatial buckets the entries are ranked by badness: a queued entry
+// is bad, so its badness is above one (possibly +inf; never NaN, as
+// std::max keeps the area ratio over a NaN angle ratio), and the bits of a
+// double above one increase with its value. Rank 0 holds badness >= 16,
+// then 256 ranks per octave down to
+// one; equal badness shares a rank, so BadOrder never puts a worse entry in
+// a later rank and the pop sequence is that of one heap (see
+// SpatialRefinementQueue). Measured on the ring at 1e4 (badness median 2.2,
+// 99th percentile 52): the single heap's pops were 20 % of the refinement
+// under libc++; the ranks keep each heap at about 30 entries.
+struct BadRank {
+  static constexpr int kBuckets = 1024;
+  int operator()(const BadTriangle& entry) const {
+    const uint64_t bits = std::bit_cast<uint64_t>(entry.badness);
+    constexpr uint64_t kOne = std::bit_cast<uint64_t>(1.0);
+    const uint64_t rank = bits > kOne ? (bits - kOne) >> 44 : 0;
+    return kBuckets - 1 - static_cast<int>(std::min<uint64_t>(rank, kBuckets - 1));
+  }
+};
+using BadQueue = SpatialRefinementQueue<BadTriangle, BadOrder, 4, BadRank>;
 
 // Bounding box of the input points and the element count max_area implies
 // for it (zero when the area bound is infinite).
@@ -677,6 +698,25 @@ class ConstrainedMesher {
                     (a[1] + b[1] + c[1]) / 3.0);
   }
 
+  // An entry is current when its slot is live and holds its cyclic triple.
+  // During refine() a vertex triple never recurs, so this is the same as "the
+  // triangle it was pushed for is still alive": every refinement step that
+  // creates triangles (split_triangle, split_edge, attach_to_hull and the
+  // legalize flips of new_vertex's insertion) creates only triangles holding
+  // the vertex m being inserted, which is newer than every vertex of an
+  // earlier triangle; within one insertion legalize only removes edges not
+  // incident to m and only adds edges incident to m, so a triangle (m, u, x)
+  // it destroys (by flipping u - x) cannot come back either. The sliver
+  // branch of split_subsegment frees p - q and sets constraints and a region
+  // on triangles it has just created, before after_insertion enqueues them.
+  // Consequences: a per-slot generation stamp would accept exactly the same
+  // entries; each live triangle has at most one entry (after_insertion visits
+  // the new star once, and the re-push in process_bad_triangle follows the
+  // pop of the only one); and an entry could be dropped as soon as its
+  // triangle is released. Dropping early is not done: stale entries (two
+  // thirds of the pops on the ring) mostly die 64 or more insertions after
+  // their push, so an early discard is a heap removal costing as much as the
+  // lazy pop it replaces.
   [[gnu::always_inline]] bool matches(const BadTriangle& entry) const {
     if (tri_.live[static_cast<std::size_t>(entry.slot)] == 0 || tri_.is_ghost(entry.slot)) {
       return false;
