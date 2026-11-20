@@ -78,6 +78,7 @@ set(PHX_MC_SOURCES
   src/quadratic_bounds.cpp
   src/restricted_delaunay.cpp
   src/surface_adapt.cpp
+  src/mesh_source.cpp
   src/surface_certify.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
@@ -149,6 +150,7 @@ set(PHX_MC_HEADERS
   src/zero_set_admission.hpp
   src/surface_adapt.hpp
   src/surface_certify.hpp
+  src/mesh_source.hpp
   src/elementary.hpp
   src/directed_norm.hpp
   src/directed_interval.hpp
@@ -284,6 +286,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_surface_envelope)
   phx_mc_add_test(test_surface_mesh)
   phx_mc_add_test(test_surface_certify)
+  phx_mc_add_test(test_mesh_source)
   phx_mc_add_test(test_zero_set_admission)
   phx_mc_add_test(test_elementary)
   phx_mc_add_test(test_planar_partition)

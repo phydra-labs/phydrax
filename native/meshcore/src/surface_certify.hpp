@@ -66,8 +66,11 @@ struct CarrierEvidence {
 
 // Whether the triangles form a closed, consistently oriented 2-manifold over
 // vertices [0, vertex_count): every directed edge held once and reversed
-// once, and the triangles around every used vertex one fan.
-bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count);
+// once, and the triangles around every used vertex one fan. When it does and
+// `twins` is given, (*twins)[3 t + k] is the corner whose edge reverses edge
+// (f[k], f[k + 1]) of triangle t.
+bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count,
+                     std::vector<int64_t>* twins = nullptr);
 
 // Resets `refused` to one flag per triangle and sets it for every triangle
 // that is degenerate (collinear or nonfinite corners) or in an illegal
