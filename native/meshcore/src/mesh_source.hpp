@@ -76,6 +76,12 @@ class MeshSource {
   // The closest point of the source to `position`; triangle -1 when the
   // source is empty.
   Nearest nearest(const Point& position) const;
+  // The nearest point of the source to its own vertex v, without a search:
+  // the vertex itself, as a corner (unit weight) of one of its triangles,
+  // which is what nearest() finds there unless another triangle touches the
+  // vertex. False when v is in no triangle or its normal is degenerate
+  // (nearest() then decides by its triangle).
+  bool at_vertex(int64_t v, Nearest& out) const;
   // Interpolated unit normal, and the (largest, smallest) principal
   // curvature estimates, at a nearest point.
   Point normal(const Nearest& at) const;
@@ -89,6 +95,9 @@ class MeshSource {
 
   const std::vector<Point>& points() const noexcept { return points_; }
   const std::vector<Triangle>& triangles() const noexcept { return triangles_; }
+  // The twin of every corner (closed_manifold's, corner 3 t + k is the edge
+  // (f[k], f[k + 1]) of triangle t), for consumers of the same triangles.
+  const std::vector<int64_t>& corner_twins() const noexcept { return twins_; }
 
  private:
   std::array<int64_t, 3> cell_of(const Point& p) const;
@@ -97,7 +106,8 @@ class MeshSource {
   }
   std::vector<Point> points_;
   std::vector<Triangle> triangles_;
-  std::vector<std::array<int64_t, 3>> neighbors_;  // across edge (f[k], f[k + 1])
+  std::vector<int64_t> twins_;  // twin corner of every corner; its triangle is twin / 3
+  std::vector<int64_t> vertex_corners_;  // a corner whose tail is the vertex, -1 when none
   std::vector<Point> face_normals_, vertex_normals_;
   std::vector<std::array<double, 4>> balls_;  // per triangle: centroid, radius
   std::vector<std::array<double, 2>> vertex_curvatures_;  // (largest, smallest)

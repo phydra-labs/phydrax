@@ -127,6 +127,36 @@ void nearest_matches_brute_force() {
   }
 }
 
+// Four small spheres at the corners of a cube of side 1000: cells of the
+// triangles' size over that box would number about 2^30 (the grid's per-axis
+// cap); the grid coarsens to a bounded size instead, and nearest() stays
+// exact.
+void spread_source_binds_a_bounded_grid() {
+  std::vector<Point> points;
+  std::vector<Triangle> triangles;
+  for (const Point& center : {Point{0, 0, 0}, Point{1000, 0, 0}, Point{0, 1000, 0},
+                              Point{0, 0, 1000}}) {
+    std::vector<Point> sphere_points;
+    std::vector<Triangle> sphere_triangles;
+    icosphere(2, 1.0, sphere_points, sphere_triangles);
+    const auto offset = static_cast<int64_t>(points.size());
+    for (const Point& p : sphere_points)
+      points.push_back({p[0] + center[0], p[1] + center[1], p[2] + center[2]});
+    for (const Triangle& f : sphere_triangles)
+      triangles.push_back({f[0] + offset, f[1] + offset, f[2] + offset});
+  }
+  MeshSource source;
+  PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
+  std::mt19937_64 generator(31);
+  std::uniform_real_distribution<double> coordinate(-1.5, 1.5);
+  for (int sample = 0; sample < 100; ++sample) {
+    const Point p{1000 * (sample % 2) + coordinate(generator), coordinate(generator),
+                  1000 * (sample % 3 == 0) + coordinate(generator)};
+    PHX_CHECK(std::abs(source.nearest(p).distance - mesh_distance(p, points, triangles)) <=
+              1e-9);
+  }
+}
+
 // Bound of triangle (a, b, c) and its largest sampled distance to the mesh.
 std::pair<double, double> bound_and_sample(const MeshSource& source, const Point& a,
                                            const Point& b, const Point& c,
@@ -470,6 +500,7 @@ void remesh_then_certify_round_trip() {
 
 int main() {
   nearest_matches_brute_force();
+  spread_source_binds_a_bounded_grid();
   triangle_bound_is_sound_and_tight();
   triangle_bound_refuses_without_coverage();
   triangle_bound_refuses_a_partly_uncovered_triangle();

@@ -5474,7 +5474,9 @@ def zero_set_certify(
     needed, every triangle decided in a round must also be proved within
     ``0.8 * tolerance``; one proved only within ``tolerance`` is repaired as
     well (not refused), so the zero set near repaired triangles leaves the
-    reverse direction room. Every enclosure of
+    reverse direction room. A surface that needed no repair but whose tube
+    proof bounds the zero set beyond ``tolerance`` is repaired into that band
+    once and both directions are decided again. Every enclosure of
     ``f`` or ``grad f`` that a triangle, tube or witness proof reads is over a
     box on which ``value``'s branch evidence reports ``f`` continuous (else
     that proof refuses), and transversality also requires ``f`` smooth there;

@@ -896,12 +896,12 @@ int32_t remesh_envelope(EnvelopeData& data, std::array<int64_t, 5>& counters) {
   std::vector<V> points = data.surface_points;
   std::vector<F> triangles = data.triangles;
   phx::mc::remesh::AdaptCounters adapted;
-  status = phx::mc::remesh::adapt_surface(points, triangles, oracle, targets, adapted);
+  status = phx::mc::remesh::adapt_surface(points, triangles, oracle, targets, nullptr, adapted);
   if (status != PHX_MC_OK) return status;
   const EnvelopeBandCertifier certifier(data, cloud);
   phx::mc::remesh::CertifyCounters certified;
   status = phx::mc::remesh::certify_surface(points, triangles, oracle, targets, certifier, {},
-                                            nullptr, certified);
+                                            nullptr, false, certified);
   if (status != PHX_MC_OK) return status;
   counters = {adapted.splits + certified.repair_splits, adapted.collapses, adapted.flips,
               adapted.relocations, adapted.below_angle};
