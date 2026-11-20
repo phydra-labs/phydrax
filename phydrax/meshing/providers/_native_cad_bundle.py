@@ -33,7 +33,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import final
+from typing import final, SupportsFloat
 
 import numpy as np
 
@@ -1039,7 +1039,7 @@ def cad_geometry_bundle(domain: MeshingDomain, /) -> CadGeometryBundle:
 _ExactInterval = tuple[ExactScalar, ExactScalar]
 
 
-def _float_interval(lower: object, upper: object, /) -> tuple[Fraction, Fraction]:
+def _float_interval(lower: SupportsFloat, upper: SupportsFloat, /) -> tuple[Fraction, Fraction]:
     """Exact endpoints of an already outward binary64 enclosure."""
     return Fraction.from_float(float(lower)), Fraction.from_float(float(upper))
 
@@ -1093,6 +1093,7 @@ def _computed_coefficient_intervals(
     The result can bound child nodes that the bundle synthesized.
     """
     from ...geometry._interval_enclosure import interval_cos, interval_sin
+    from ...geometry.brep._intersection import RootEndpoint
     from ...geometry.brep._patches import _conic_root_phase_enclosure
     from ...geometry.brep._trim_helpers import period_offset, period_scalar_bounds
 
@@ -1110,11 +1111,11 @@ def _computed_coefficient_intervals(
     ):
         # A root endpoint is the source root, enclosed by its owner; the
         # stored binary64 representative lies inside that enclosure.
-        def endpoint(root: object, value: float, /) -> _ExactInterval:
+        def endpoint(root: RootEndpoint | None, value: float, /) -> _ExactInterval:
             if root is None:
                 exact = Fraction.from_float(value)
                 return exact, exact
-            return _float_interval(*root.parameter_enclosure())  # type: ignore[attr-defined]
+            return _float_interval(*root.parameter_enclosure())
 
         return {index: (endpoint(entity.first_root, entity.first),
                         endpoint(entity.last_root, entity.last))}
@@ -1152,14 +1153,20 @@ def _computed_coefficient_intervals(
             layers.append(line)
             line = line.base
         if isinstance(line, ExactLineCurve):
-            origin, last = tuple(line.first_exact), tuple(line.last_exact)
-            tangent = tuple(b - a for a, b in zip(origin, last, strict=True))
+            origin_source, last_source = tuple(line.first_exact), tuple(line.last_exact)
+            tangent_source = tuple(b - a for a, b in zip(origin_source, last_source, strict=True))
         elif type(line) is LineCurve:
-            origin, tangent = tuple(line.origin_exact), tuple(line.direction_exact)
-            last = origin
+            origin_source = tuple(line.origin_exact)
+            tangent_source = tuple(line.direction_exact)
+            last_source = origin_source
         else:
             return None
-        if not all(isinstance(value, Fraction) for value in (*origin, *tangent)):
+        origin = tuple(value for value in origin_source if isinstance(value, Fraction))
+        tangent = tuple(value for value in tangent_source if isinstance(value, Fraction))
+        last = tuple(value for value in last_source if isinstance(value, Fraction))
+        if (len(origin), len(tangent), len(last)) != (
+            len(origin_source), len(tangent_source), len(last_source)
+        ):
             return None
         shift = [(Fraction(0), Fraction(0)) for _ in origin]
         for layer in layers:

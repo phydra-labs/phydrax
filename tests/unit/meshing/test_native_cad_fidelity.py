@@ -32,6 +32,7 @@ from phydrax.geometry._meshing_domain import (
 )
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_interpolation import certify_domain_surface_charts
+from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
     BSplineSurfacePatch,
@@ -484,8 +485,8 @@ def test_rational_spline_verdict_and_dense_bounds() -> None:
     assert spans is not None
     for position, row in enumerate(rows):
         chart = tuple(
-            tuple(Fraction.from_float(float(value)) for value in vertex)
-            for vertex in mesh.uv[row]
+            (Fraction.from_float(float(a)), Fraction.from_float(float(b)))
+            for a, b in mesh.uv[row]
         )
         enclosure = _span_enclosures_for_chart(spans, chart)[0]
         pairs = (
@@ -622,7 +623,7 @@ def _dense_distance(mesh: CadFidelityMesh, row: int, u_height: float, v_height: 
                 s = (0.5 - p[axis]) / (q[axis] - p[axis])
                 weight = [0.0, 0.0, 0.0]
                 weight[a], weight[(a + 1) % 3] = 1 - s, s
-                weights.append(tuple(weight))
+                weights.append((weight[0], weight[1], weight[2]))
     barycentric = np.asarray(weights, dtype=np.float64)
     exact = _tent_values(barycentric @ uv, u_height, v_height)
     linear = barycentric @ mesh.points[mesh.triangles[row]]
@@ -649,8 +650,8 @@ def test_folded_degree_one_spline_uses_clipped_pieces() -> None:
         assert _dense_distance(mesh, row, height, 0.0) == pytest.approx(height, rel=1e-12)
         assert height <= result.upper[row] <= height * (1 + 1e-9)
         chart = tuple(
-            tuple(Fraction.from_float(float(value)) for value in vertex)
-            for vertex in mesh.uv[row]
+            (Fraction.from_float(float(a)), Fraction.from_float(float(b)))
+            for a, b in mesh.uv[row]
         )
         python = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 10),))[0]
         assert python is not None
@@ -1064,7 +1065,7 @@ def _brep_sphere_grid(
             for local in ((0, 1, 2), (0, 2, 3)):
                 cell = tuple(corners[k] for k in local)
                 uv = np.asarray([(u[a], v[b]) for a, b in cell], dtype=np.float64)
-                ids = tuple(physical(a, b) for a, b in cell)
+                ids = (physical(*cell[0]), physical(*cell[1]), physical(*cell[2]))
                 chords = [-1, -1, -1]
                 for edge in range(3):
                     (a0, b0), (a1, b1) = cell[edge], cell[(edge + 1) % 3]
@@ -1206,7 +1207,9 @@ def test_offset_line_and_rooted_pcurve_enclosures() -> None:
     """Line offsets enclose irrational unit normals; rooted phases enclose 2π turns."""
     from decimal import Decimal
 
+    from phydrax.geometry.brep._boolean_core import AffinePCurve
     from phydrax.geometry.brep._patches import (
+        ConicRootLinePCurve,
         ExactLineCurve,
         OffsetCurve,
         TorusRootedCirclePCurve,
@@ -1221,9 +1224,12 @@ def test_offset_line_and_rooted_pcurve_enclosures() -> None:
         index = bank.node(entity)
         computed = _computed_coefficient_intervals(bank, entity, index)
         assert computed is not None
-        return tuple(
-            (Fraction(lo), Fraction(hi)) for lo, hi in computed[index]  # type: ignore[arg-type]
-        )
+        pairs = [
+            (lo, hi) for lo, hi in computed[index]
+            if isinstance(lo, Fraction) and isinstance(hi, Fraction)
+        ]
+        assert len(pairs) == len(computed[index])
+        return tuple(pairs)
 
     with localcontext() as context:
         context.prec = 60
@@ -1243,7 +1249,9 @@ def test_offset_line_and_rooted_pcurve_enclosures() -> None:
             assert exact <= Decimal(hi.numerator) / hi.denominator
     domain, _, _ = _brep_sphere_grid(4, 4)
     pole = domain.patches[0].loops[0][2].pcurve
-    root = pole.curve.root  # type: ignore[attr-defined]
+    if not (isinstance(pole, AffinePCurve) and isinstance(pole.curve, ConicRootLinePCurve)):
+        pytest.fail("A BRep sphere pole p-curve is an affine conic-root line.")
+    root = pole.curve.root
     rooted = interval(TorusRootedCirclePCurve(root, Fraction(3, 4), -1))
     pi = Fraction("3.14159265358979323846264338327950288")
     assert rooted[0][0] < Fraction(3, 2) * pi < rooted[0][1]
@@ -1285,6 +1293,10 @@ def _tspline_surface() -> AbstractSurfacePatch:
 
 def test_tspline_exact_coefficients_and_fidelity() -> None:
     """Exact non-dyadic extraction data; native bound >= dense distance; Python parity."""
+    import jax.numpy as jnp
+
+    from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
     surface = _tspline_surface()
     domain = _surface_domain(surface)
     bundle = cad_geometry_bundle(domain)
@@ -1292,7 +1304,9 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
     node = bundle.model.surface_nodes[0]
     start, stop = bundle.model.node_real_offsets[node], bundle.model.node_real_offsets[node + 1]
     assert np.all(np.isfinite(lower[start:stop])) and np.all(np.isfinite(upper[start:stop]))
-    realization = surface.realization  # type: ignore[attr-defined]
+    if not isinstance(surface, TSplineSurfacePatch):
+        pytest.fail("The fixture is a T-spline surface.")
+    realization = surface.realization
     exact_bounds = [value for piece in realization.extractions for value in piece.parameter_bounds]
     assert any(value.denominator == 3 for value in exact_bounds)
     for offset, value in enumerate(exact_bounds):
@@ -1308,7 +1322,7 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
     mesh, chords = _cylinder_mesh(domain)
     uv_points = np.zeros((mesh.points.shape[0], 2))
     uv_points[mesh.triangles.reshape(-1)] = mesh.uv.reshape((-1, 2))
-    candidate = mesh._replace(points=np.asarray(surface.evaluate(uv_points)))
+    candidate = mesh._replace(points=np.asarray(surface.evaluate(jnp.asarray(uv_points))))
     result = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords, 0.5, 4)
     assert result.status == MeshcoreStatus.OK
     assert result.findings.size == 0
@@ -1321,7 +1335,7 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
         weights = np.asarray(
             [(1 - (i + j) / 20, i / 20, j / 20) for i in range(21) for j in range(21 - i)]
         )
-        exact = np.asarray(surface.evaluate(weights @ candidate.uv[row]))
+        exact = np.asarray(surface.evaluate(jnp.asarray(weights @ candidate.uv[row])))
         distance = np.linalg.norm(exact - weights @ vertices, axis=1)
         assert np.all(distance <= result.upper[row])
     for row in rows:
@@ -1414,7 +1428,7 @@ def test_intersection_pcurve_trimmed_face() -> None:
         assert np.all(np.linalg.norm(arc - straight, axis=1) <= result.upper[row])
 
 
-def _crossing_cylinders_model() -> object:
+def _crossing_cylinders_model() -> BRepModel:
     """Intersection of a vertical and a transverse cylinder (traced p-curves)."""
     import phydrax as phx
 
