@@ -1,17 +1,18 @@
-"""Native CAD solid route: one ``cad_mesh_solid`` call to an unproved candidate.
+"""Native CAD solid route: one ``cad_mesh_solid`` call to the candidate.
 
-``prove=False`` CAD volume plans construct here: curves, faces and the
+CAD volume plans construct here at every proof level: curves, faces and the
 fixed-boundary volume (geometry order 1 or 2) come from one native call and
-become the candidate mesh as exported. ``prove=True`` still runs the Python
-construction route and its certification.
+become the candidate mesh as exported. ``prove()`` certifies that candidate
+with the native verifiers (:mod:`phydrax.meshing._native_cad_certificate`)
+on the boundary chart realization the call exported.
 
 The native stage already adopts its PLC recovery as a tetrahedral mesh,
 refines and improves it, so the exported final arrays become a
 :class:`CellMesh` directly (as the PLC route's ``_make_construction`` does)
 rather than through ``TetMesh3D.from_recovery``.
 
-The candidate reports no achieved source deviation: the native construction
-carries no deviation bound, and none is invented.
+The candidate's compliance reports no achieved source deviation: the bound is
+V3's, in the certificate.
 """
 
 from __future__ import annotations
@@ -27,18 +28,10 @@ from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._reference import lagrange_element
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
+from .._native_cad_certificate import NativeCadSurfaceWitness
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
-
-
-NATIVE_CAD_SOLID_UNCERTIFIABLE = (
-    "This CAD solid was constructed by the native cad_mesh_solid route, whose "
-    "certification needs the native verifiers (V4 chart partition, V2 surface "
-    "embedding, V3 CAD fidelity) that are not yet accepted; no witness of this "
-    "mesh exists. execute(prove=True) constructs and proves the Python CAD "
-    "volume instead."
-)
 
 
 if TYPE_CHECKING:
@@ -53,10 +46,14 @@ _BLOCK = "native-cad-tetrahedra"
 def cad_solid_support_issues(
     prepared: _PreparedDirectBRepCadVolume, /
 ) -> tuple[str, ...]:
-    """Why a prepared CAD volume cannot take the native unproved route."""
+    """Why a prepared CAD volume cannot take the native route."""
     issues: list[str] = []
-    if prepared.specification.layer_controls:
+    specification = prepared.specification
+    if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
+    # The native candidate carries no organization or occurrence records yet.
+    if specification.patch_controls or specification.region_controls:
+        issues.append("patch and region controls need source organization records")
     if prepared.boundary_request.selected_patches != tuple(
         range(len(prepared.domain.patches))
     ):
@@ -94,10 +91,8 @@ def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometr
     return CellGeometrySpec({_BLOCK: element}, {_BLOCK: route}, coordinates)
 
 
-def execute_cad_solid(
-    prepared: _PreparedDirectBRepCadVolume, /
-) -> NativeMeshConstruction:
-    """Construct the CAD solid natively; the result carries no proof.
+def construct_cad_solid(prepared: _PreparedDirectBRepCadVolume, /) -> CadSolidResult:
+    """One native ``cad_mesh_solid`` call for the prepared CAD volume.
 
     Face sizes are the boundary preparation's per-face sizes, the source
     tolerance is the request's ``maximum_deviation`` on every face and curve,
@@ -116,7 +111,7 @@ def execute_cad_solid(
     sizes = np.asarray(boundary.size_values, dtype=np.float64)
     model = cad_geometry_bundle(domain).model
     order = specification.target.geometry_order
-    solid = cad_mesh_solid(
+    return cad_mesh_solid(
         model,
         sizes,
         np.full(sizes.shape, deviation, dtype=np.float64),
@@ -128,6 +123,20 @@ def execute_cad_solid(
         min_relative_determinant=schedule.minimum_relative_determinant,
         geometry_order=order,
     )
+
+
+def execute_cad_solid(
+    prepared: _PreparedDirectBRepCadVolume, /
+) -> NativeMeshConstruction:
+    """Construct the CAD solid natively; ``prove()`` certifies the candidate."""
+    domain = prepared.domain
+    specification = prepared.specification
+    schedule = prepared.options.volume_schedule
+    deviation = specification.maximum_deviation
+    boundary = prepared.boundary_request
+    assert schedule is not None and deviation is not None
+    order = specification.target.geometry_order
+    solid = construct_cad_solid(prepared)
     volume = solid.volume
     stats = volume.stats[0]
     if volume.tetrahedra.shape[0] == 0:
@@ -176,6 +185,9 @@ def execute_cad_solid(
         fidelity_tolerance=float(deviation),
         protected_features=specification.protected_features,
         feature_source=domain,
+        native_cad_surface=NativeCadSurfaceWitness(
+            mesh, solid.surface, len(cad_geometry_bundle(domain).model.loop_surfaces)
+        ),
     )
     return NativeMeshConstruction(
         mesh,
@@ -183,12 +195,11 @@ def execute_cad_solid(
         compliance,
         certification,
         geometry=geometry,
-        uncertifiable=NATIVE_CAD_SOLID_UNCERTIFIABLE,
     )
 
 
 __all__ = [
-    "NATIVE_CAD_SOLID_UNCERTIFIABLE",
     "cad_solid_support_issues",
+    "construct_cad_solid",
     "execute_cad_solid",
 ]

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
     from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
     from ._layer_curving_records import LayerCurvingSourceEvidence
+    from ._native_cad_certificate import NativeCadSurfaceWitness
     from ._organization import (
         MeshAttribute,
         MeshLabel,
@@ -77,6 +78,8 @@ class NativeCertificationRequest:
     # Validity certificates the route already proved (e.g. its layer cells);
     # acceptance reuses their proofs of identical exact cell maps.
     validity_parent: tuple[CellValidityCertificate, ...] = ()
+    # The native CAD solid's boundary chart realization (native verifiers).
+    native_cad_surface: NativeCadSurfaceWitness | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +129,6 @@ class NativeMeshConstruction:
         default=None, kw_only=True
     )
     planar_embedding: PlanarEmbedding | None = field(default=None, kw_only=True)
-    # Why acceptance has no certifier for this construction; acceptance
-    # refuses it with this reason instead of certifying a mesh without witness.
-    uncertifiable: str | None = field(default=None, kw_only=True)
     layer_curving_evidence: LayerCurvingSourceEvidence | None = field(
         default=None, kw_only=True
     )

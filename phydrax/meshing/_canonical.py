@@ -757,12 +757,6 @@ def _accept_native_construction(
     computed_surface_out: list[_ComputedSurfaceAcceptance] | None = None,
 ) -> CellMeshingResult:
     """Publish only a candidate satisfying its actual source and target obligations."""
-    if construction.uncertifiable is not None:
-        raise MeshingFailure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            construction.uncertifiable,
-            stage=MeshingStageKind.GEOMETRY_AUDIT.value,
-        )
     _require_native_target(construction, specification)
     event = construction.surface_quad_field_event
     requested_field = (
@@ -890,6 +884,7 @@ def _accept_native_construction(
         scoped_fidelity=request.scoped_fidelity,
         fidelity_witness=request.fidelity_witness,
         source_coverage_witness=request.source_coverage_witness,
+        native_cad_surface=request.native_cad_surface,
         validated=validated,
     )
     organization = construction.organization

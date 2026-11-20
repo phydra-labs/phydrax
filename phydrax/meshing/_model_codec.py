@@ -819,6 +819,10 @@ def _register_model_archive_types() -> None:
         TransfiniteSurfaceControl,
     )
     from ..meshing._metric import MeshMetricField
+    from ..meshing._native_cad_certificate import (
+        NativeCadCertificate,
+        NativeCadSurfaceWitness,
+    )
     from ..meshing._organization import (
         MeshAttribute,
         MeshAttributeRole,
@@ -1488,6 +1492,8 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MeshCertificationInputs),
         ("phydrax.meshing", MeshCertificationSchedule),
         ("phydrax.meshing", MeshCertificationReport),
+        ("phydrax.meshing", NativeCadSurfaceWitness),
+        ("phydrax.meshing", NativeCadCertificate),
         ("phydrax.meshing", BlockInterfaceControl),
         ("phydrax.meshing", TransfiniteCurveControl),
         ("phydrax.meshing", TransfiniteSurfaceControl),

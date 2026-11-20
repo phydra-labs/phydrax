@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Proved CAD solids (`cad_tetrahedral`, every source face sized, no layer
+  controls) are the native `cad_mesh_solid` candidate certified by the native
+  verifiers in order: chart partition (V4), surface embedding (V2), CAD
+  fidelity at the request's `maximum_deviation` (V3), then global tetrahedral
+  embedding and exact tiling of the solid the certified surface bounds. The
+  report's `native_cad` certificate carries the findings, V3's maximum bound
+  and the obligations it does not prove (`unproved_premises`: source shell
+  embedding, source occurrence records). `execute(prove=True)` equals
+  `execute(prove=False).prove()`. Geometry order 2 CAD solids are refused at
+  proof. Bindings `verify_surface_embedding` and `verify_chart_partition`.
+  The quadric proof at h 0.2293 / 0.1061 takes 0.05 / 0.11 s of native
+  verification instead of 14 / 29 s for the Python route.
 - Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
   per-triangle distance bounds between a finished CAD surface mesh and its
   exact source (interior, trim lens, pole and knot-line terms), with lazily

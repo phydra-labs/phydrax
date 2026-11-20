@@ -1480,9 +1480,9 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                 raise TypeError("An owner-local native route must return MeshAssembly.")
             return assembly
         construction: object
-        if not prove and isinstance(self.prepared, _PreparedDirectBRepCadVolume):
-            # Unproved CAD solids are constructed by the one native call;
-            # prove=True keeps the Python construction and its certification.
+        if isinstance(self.prepared, _PreparedDirectBRepCadVolume):
+            # CAD solids are constructed by the one native call at every proof
+            # level; acceptance certifies them with the native verifiers.
             from ._native_cad_mesh import cad_solid_support_issues, execute_cad_solid
 
             construction = (

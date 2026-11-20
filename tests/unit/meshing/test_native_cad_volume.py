@@ -2053,6 +2053,22 @@ def test_rooted_plane_partition_rejects_overlap_across_blocks() -> None:
     assert failure.value.status == "violated"
 
 
+def _python_cad_route(plan: phx.meshing.NativeMeshingPlan) -> CellMeshingResult:
+    # The Python CAD volume construction and its certification, which these
+    # tests pin; CAD plans now execute natively.
+    from phydrax._meshcore import meshcore_identity
+    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
+
+    return _accept_native_construction(
+        plan.prepared.execute(),
+        plan.specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        plan.plan_id,
+        plan.route,
+    )
+
+
 def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> None:
     # The sphere's chart has two collapsed pole sides and a seam whose u = 2*pi
     # use is a native-period gauge of the u = 0 line. Pole fans leave chart
@@ -2068,7 +2084,7 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
         size_controls=(UniformSizeControl(boundary, 0.3),),
         maximum_deviation=0.05,
     )
-    result = (
+    result = _python_cad_route(
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2076,9 +2092,7 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        )
-        .plan(model, specification)
-        .execute()
+        ).plan(model, specification)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -2124,7 +2138,7 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
         size_controls=(UniformSizeControl(boundary, 0.3),),
         maximum_deviation=0.05,
     )
-    result = (
+    result = _python_cad_route(
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2132,9 +2146,7 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        )
-        .plan(model, specification)
-        .execute()
+        ).plan(model, specification)
     )
 
     assert result.certification is not None and result.certification.passed
@@ -2265,7 +2277,7 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
         size_controls=(UniformSizeControl(boundary, 0.3),),
         maximum_deviation=0.05,
     )
-    result = (
+    result = _python_cad_route(
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2273,9 +2285,7 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        )
-        .plan(model, specification)
-        .execute()
+        ).plan(model, specification)
     )
     vertex_set = result.mesh.entity_set(0).entity_set_id
     (recorded,) = (

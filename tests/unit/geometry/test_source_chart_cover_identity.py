@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_identity
 from phydrax.geometry._domain_boundary import (
     _enclosure_center,
     _source_point_box,
@@ -35,6 +36,7 @@ from phydrax.geometry.brep._constructors import (
 )
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import CylinderPatch, SpherePatch, TorusPatch
+from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
@@ -199,17 +201,23 @@ def _cad_cylinder_volume() -> CellMeshingResult:
         size_controls=(UniformSizeControl(boundary, 0.3),),
         maximum_deviation=0.05,
     )
-    return (
-        phx.meshing.NativeMeshingProvider(
-            NativeMeshingOptions(
-                "cad_tetrahedral",
-                volume_schedule=NativeVolumeSchedule(
-                    radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
-                ),
-            )
+    # The Python CAD construction and its stored chart cover, which these
+    # tests pin; CAD plans now execute natively.
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
         )
-        .plan(model, specification)
-        .execute()
+    ).plan(model, specification)
+    return _accept_native_construction(
+        plan.prepared.execute(),
+        plan.specification,
+        _NATIVE_PROVIDER,
+        meshcore_identity(),
+        plan.plan_id,
+        plan.route,
     )
 
 

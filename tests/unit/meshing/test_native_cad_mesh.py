@@ -19,12 +19,14 @@ from phydrax._meshcore import (
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
+    CadSolidResult,
     CadSurfaceResult,
     load_meshcore,
     MeshcoreStatus,
     verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
     coefficient_bounds,
@@ -640,109 +642,130 @@ def test_unproved_cad_solid_takes_the_native_route(
     assert "maximum_deviation" not in dict(report.achieved)
 
 
-def test_proved_cad_solid_keeps_the_python_route() -> None:
-    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+_CERTIFIED_FIXTURES = {
+    "quadric": (_quadric_model, 0.2293),
+    "sphere": (_sphere_model, 0.2),
+    "cone": (
+        lambda: phx.geometry.brep.brep_cone(
+            0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+    "torus": (
+        lambda: phx.geometry.brep.brep_torus(
+            1.0, 0.25, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_CERTIFIED_FIXTURES))
+def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
+    from phydrax.meshing._native_cad_certificate import UNPROVED_PREMISES
     from phydrax.meshing._result import CellMeshingResult
 
-    result = _cad_volume_plan(
-        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
-    ).execute()
+    factory, size = _CERTIFIED_FIXTURES[name]
+    plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
+    result = plan.execute()
     assert isinstance(result, CellMeshingResult)
-    assert result.certification is not None and result.certification.passed
-    witness = result.certification.inputs.fidelity_witness
-    # The Python construction's CAD ancestry, absent from the native route.
-    assert isinstance(witness, SourceBoundaryChartWitness)
-    assert witness.cad_plc is not None
-    assert result.mesh.blocks[0].name != "native-cad-tetrahedra"
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
+    certification = result.certification
+    assert certification is not None and certification.passed
+    native = certification.native_cad
+    assert native is not None and native.status == "certified"
+    # V3's certified bound reaches the report against the request tolerance.
+    assert native.tolerance == 0.05
+    assert native.maximum_deviation is not None
+    assert 0.0 <= native.maximum_deviation <= 0.05
+    # The obligations no native verifier proves are stated, not claimed.
+    assert native.unproved_premises == UNPROVED_PREMISES
+    assert "source_shell_embedding" in native.unproved_premises
+    # One construction, then certification: the same candidate and report.
+    again = plan.execute(prove=False).prove()
+    assert again.mesh.mesh_id == result.mesh.mesh_id
+    assert again.certification is not None
+    assert again.certification.report_id == certification.report_id
 
 
 def test_proved_quadratic_cad_solid_is_refused() -> None:
     from phydrax.meshing._contracts import MeshingFailure
 
     plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
-    with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
+    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
         plan.execute()
+    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
+        plan.execute(prove=False).prove()
 
 
-@pytest.mark.parametrize("order", [1, 2])
-def test_native_cad_candidate_prove_is_refused(order: int) -> None:
-    # Until the native verifiers are accepted, a native candidate has no
-    # witness: prove() refuses it rather than certify it or rebuild the
-    # Python mesh.
-    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
-    from phydrax.meshing.providers._native_cad_mesh import (
-        NATIVE_CAD_SOLID_UNCERTIFIABLE,
-    )
+@pytest.mark.parametrize("prove_later", [False, True])
+def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
+    monkeypatch: pytest.MonkeyPatch, prove_later: bool
+) -> None:
+    # One boundary triangle reversed in its face chart (as a construction
+    # defect would emit it): V4 refuses its orientation and prove() reports it.
+    import phydrax.meshing.providers._native_cad_mesh as route
+    from phydrax.meshing._contracts import MeshingFailure
 
-    candidate = _cad_volume_plan(_sphere_model(), 0.3, order).execute(prove=False)
+    construct = route.construct_cad_solid
+
+    def flipped(prepared: _PreparedDirectBRepCadVolume) -> CadSolidResult:
+        solid = construct(prepared)
+        chart = solid.surface.chart
+        row = int(np.flatnonzero(chart.chart_to_mesh >= 0)[0])
+        triangles, uv = chart.triangles.copy(), chart.uv.copy()
+        triangles[row, [1, 2]] = triangles[row, [2, 1]]
+        uv[row, [1, 2]] = uv[row, [2, 1]]
+        surface = solid.surface._replace(chart=chart._replace(triangles=triangles, uv=uv))
+        return solid._replace(surface=surface)
+
+    monkeypatch.setattr(route, "construct_cad_solid", flipped)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
     with pytest.raises(MeshingFailure) as failure:
-        candidate.prove()
-    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
-    assert str(failure.value) == NATIVE_CAD_SOLID_UNCERTIFIABLE
-    assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
+        plan.execute(prove=False).prove() if prove_later else plan.execute()
+    assert "cad_chart_partition: violated" in str(failure.value)
+    assert "ORIENTATION" in str(failure.value)
 
 
-def test_invalid_trim_cad_solid_is_refused_at_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A p-curve without a chart enclosure is invalid source for every proof
-    # level: planning refuses it before any construction.
-    from phydrax.geometry._meshing_domain import SourcePreparation
-    from phydrax.meshing._contracts import MeshingFailure
+def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
+    import subprocess
+    import sys
 
-    def no_enclosure(*_: object) -> np.ndarray:
-        raise ValueError("p-curve enclosure diverges")
-
-    monkeypatch.setattr(SourcePreparation, "curve_box", no_enclosure)
-    with pytest.raises(MeshingFailure, match="requires a continuous p-curve enclosure"):
-        _cad_volume_plan(_sphere_model(), 0.3, 1)
-
-
-def test_incomplete_trim_cover_is_refused_at_proof_not_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Trim cover coverage is proof preparation: the plan and the unproved
-    # native candidate do not consume it; the proved execution refuses.
-    from types import SimpleNamespace
-
-    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
-    from phydrax.meshing import CellMeshingCandidate
-    from phydrax.meshing._contracts import MeshingFailure
-
-    monkeypatch.setattr(
-        MeshingDomainBoundarySource,
-        "boundary_chart_cover",
-        lambda *_, **__: SimpleNamespace(complete=False),
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        write_model_artifact,
     )
-    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
-    with pytest.raises(
-        MeshingFailure,
-        match="does not provide complete selected-patch coverage",
-    ):
-        plan.execute()
 
-
-def test_cad_volume_proof_preparation_runs_once_on_first_proof(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import phydrax.meshing.providers._native_surface as native_surface
-
-    calls: list[native_surface.NativeSurfaceRequest] = []
-    prepare = native_surface.prepare_native_surface_proof
-
-    def counted(
-        request: native_surface.NativeSurfaceRequest,
-    ) -> native_surface._PreparedNativeSurface:
-        calls.append(request)
-        return prepare(request)
-
-    monkeypatch.setattr(native_surface, "prepare_native_surface_proof", counted)
-    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    plan.execute(prove=False)
-    assert not calls
-    first = plan.execute()
-    second = plan.execute()
-    assert len(calls) == 1
-    assert first.certification is not None and first.certification.passed
-    assert second.mesh.mesh_id == first.mesh.mesh_id
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    path = tmp_path / "native-cad-result.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    content_id = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    assert result.certification is not None
+    native = result.certification.native_cad
+    assert native is not None
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value
+from phydrax.meshing._result import CellMeshingResult
+r = read_model_artifact(sys.argv[1], expected_type=CellMeshingResult,
+    restore=restore_model_archive_value, expected_content_id=sys.argv[2], limits=MODEL_ARCHIVE_LIMITS)
+assert r.certification.report_id == sys.argv[3]
+assert r.certification.native_cad.certificate_id == sys.argv[4]
+""",
+            str(path),
+            content_id,
+            result.certification.report_id,
+            native.certificate_id,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
