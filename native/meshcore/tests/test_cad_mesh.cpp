@@ -857,7 +857,9 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
                static_cast<long long>(result.stats.nonstar_refusals));
   }
   if (probe) {
-    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(status == PHX_MC_OK);
+    PHX_CHECK(result.stats.unresolved_triangles == 0);
+    PHX_CHECK(result.stats.encroachment_refusals == 0);
   } else if (trim) {
     PHX_CHECK(status == PHX_MC_OK);
     PHX_CHECK(result.stats.unresolved_triangles == 0);
