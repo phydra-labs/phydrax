@@ -18,9 +18,9 @@ import pytest
 from jax import Array
 from scipy.spatial import ConvexHull
 
+from benchmarks._meshing_surfaces import icosphere
 from benchmarks.native_meshing import (
     _facets,
-    _icosphere,
     _point_triangle_distances,
     _recover,
     _restricted_torus_surface,
@@ -2534,7 +2534,7 @@ _CERTIFIED_DOMAIN = np.array([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=np.flo
 
 def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
     value, gradient, branches = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(3)
+    vertices, faces = icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     assert remeshed.orientation == 1
     assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
@@ -2647,7 +2647,7 @@ def _widened_boxes(
 
 
 def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
-    vertices, faces = _icosphere(4)
+    vertices, faces = icosphere(4)
     remeshed = mesh_remesh(vertices, faces, 0.01, 0.2, 30.0)
     assert remeshed.triangles.shape[0] < faces.shape[0]
     certificate = mesh_certify(
@@ -2671,7 +2671,7 @@ def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
 
 def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
     value, gradient, branches = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(3)
+    vertices, faces = icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     controls = (
         branches,
@@ -3149,8 +3149,8 @@ def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None
 
 # The native meshing benchmark's surfaces (benchmarks/native_meshing.py).
 _BENCHMARK_SURFACES = {
-    "sphere-5": lambda: _icosphere(5),
-    "sphere-6": lambda: _icosphere(6),
+    "sphere-5": lambda: icosphere(5),
+    "sphere-6": lambda: icosphere(6),
     # The restricted Delaunay torus surfaces of facet edge 0.072 and 0.025
     # (14,010 and 123,098 triangles).
     "restricted-torus-72": lambda: _restricted_torus_surface(0.072),
