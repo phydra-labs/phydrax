@@ -1003,11 +1003,14 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
         0, exact_sliver
     )
     assert (python_cap <= Fraction(1, 2)) == (result.item_status[1] == MeshcoreStatus.OK)
+    # The sliver bound is the interpolation bound on the chart triangle: it
+    # covers |S(x) - I_T(x)|, and I_T(x) lies on the mesh edge from the pole.
+    sliver_points = points[chart_indices[1]]
     for i in range(21):
         for j in range(21 - i):
             weights = np.asarray((1 - (i + j) / 20, i / 20, j / 20), dtype=np.float64)
             source = _analytic_values("sphere", weights @ chart_uv[1])
-            assert np.linalg.norm(source - points[2]) <= result.upper[1]
+            assert np.linalg.norm(source - weights @ sliver_points) <= result.upper[1]
     bad_mapping = mesh.chart_to_mesh.copy()
     bad_mapping[1] = 0
     broken = verify_cad_fidelity(
@@ -1136,18 +1139,15 @@ def test_brep_sphere_rooted_pole_pcurves() -> None:
         return np.asarray((-np.sin(uv[0]) * np.cos(uv[1]), np.cos(uv[0]) * np.cos(uv[1]),
                            np.sin(uv[1])))
 
+    # Pole slivers too: I_T interpolates the collapsed corners, so it lies on
+    # the mesh edge from the pole.
     for row in range(mesh.triangles.shape[0]):
         vertices = mesh.points[mesh.triangles[row]]
         for i in range(11):
             for j in range(11 - i):
                 weights = np.asarray((1 - (i + j) / 10, i / 10, j / 10))
                 exact = sphere(weights @ mesh.uv[row])
-                if mesh.chart_to_mesh[row] < 0:
-                    reference = vertices[0] if np.all(vertices[0] == vertices[1]) else vertices[2]
-                    distance = np.linalg.norm(exact - reference)
-                else:
-                    distance = np.linalg.norm(exact - weights @ vertices)
-                assert distance <= result.upper[row]
+                assert np.linalg.norm(exact - weights @ vertices) <= result.upper[row]
     interior = np.flatnonzero(np.all(mesh.edge_chord < 0, axis=1))
     assert _python_chart_decisions(domain, mesh, interior, 0.5) == tuple(
         status == MeshcoreStatus.OK for status in result.item_status[interior]
@@ -1444,3 +1444,56 @@ def _crossing_cylinders_model() -> BRepModel:
     return phx.geometry.brep.boolean_brep(
         vertical, transverse, "intersection", policy=phx.geometry.brep.BRepBooleanPolicy()
     ).model
+
+
+@pytest.mark.parametrize("kind", ["sphere", "cone", "cylinder"])
+def test_pole_sliver_bound_is_tight(kind: str) -> None:
+    """Collapsed pole slivers of real face output certify within 1.5x of sampling.
+
+    A sliver bound below the sampled |S - I_T| would be unsound; above 1.5x it
+    is the old first-order cap (6-8x on the h = 0.2 sphere). Fault caught:
+    the first-order radial cap or a missing tight refinement.
+    """
+    from phydrax._meshcore import cad_mesh
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry.brep._constructors import brep_cone, brep_cylinder, brep_sphere
+
+    contract = SpatialCoordinateContract.si()
+    brep, h = {
+        "sphere": (brep_sphere(1.0, coordinate_contract=contract), 0.2),
+        "cone": (brep_cone(1.0, 0.0, 1.0, coordinate_contract=contract), 0.15),
+        "cylinder": (brep_cylinder(1.0, 1.0, coordinate_contract=contract), 0.2),
+    }[kind]
+    domain = MeshingDomain.from_brep(brep)
+    bundle = cad_geometry_bundle(domain)
+    model = bundle.model
+    faces = model.surface_nodes.size
+    meshed = cad_mesh(model, np.full(faces, h), np.full(faces, 1e6),
+                      np.full(model.curve_nodes.size, np.inf))
+    assert meshed.status == MeshcoreStatus.OK
+    chart = meshed.chart
+    slivers = np.flatnonzero(chart.chart_to_mesh < 0)
+    assert slivers.size > 0
+    n = 24
+    weights = np.asarray(
+        [(1 - (i + j) / n, i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)],
+        dtype=np.float64,
+    )
+    sampled = np.zeros(slivers.size, dtype=np.float64)
+    for position, row in enumerate(slivers):
+        surface = domain.patches[int(chart.patches[row])].surface
+        source = np.asarray(surface.evaluate(weights @ chart.uv[row]), dtype=np.float64)
+        linear = weights @ meshed.points[chart.triangles[row]]
+        sampled[position] = np.max(np.linalg.norm(source - linear, axis=1))
+    lower, upper = coefficient_bounds(bundle, domain)
+    mesh = CadFidelityMesh(meshed.points, chart.triangles, chart.patches, chart.uv,
+                           meshed.triangles.astype(np.int64), chart.chart_to_mesh,
+                           chart.edge_chord)
+    chords = CadFidelityChords(chart.use_patch, chart.use_range, len(model.loop_surfaces),
+                               chart.chord_use, chart.chord_loop, chart.chord_uv,
+                               chart.chord_range)
+    result = verify_cad_fidelity(model, lower, upper, mesh, chords, 1.0, 8)
+    assert result.status == MeshcoreStatus.OK
+    ratio = result.upper[slivers] / sampled
+    assert np.all(ratio >= 1.0)
+    assert np.all(ratio <= 1.5), ratio

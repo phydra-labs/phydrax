@@ -19,4 +19,16 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
                                          double tolerance, int32_t max_depth,
                                          IntervalEvaluationWorkspace& workspace);
 
+// The per-face kernels fidelity_triangle uses, for tests. Closed-form jets
+// (terms 0..5 of the point-jet layout, 18 values) over a parameter box;
+// PHX_MC_UNRESOLVED when the face is not a closed form.
+int32_t fidelity_closed_jets(const CadGeometry& geometry, int32_t face,
+                             IntervalEvaluationWorkspace& workspace, const double* lower,
+                             const double* upper, double* jet_lower, double* jet_upper);
+// Restricted numerator-net enclosure of S_uu, S_uv, S_vv (9 values) of a
+// B-spline face; PHX_MC_UNRESOLVED when no nets apply to the box.
+int32_t fidelity_net_hessian(const CadGeometry& geometry, int32_t face,
+                             IntervalEvaluationWorkspace& workspace, const double* lower,
+                             const double* upper, double* hessian_lower, double* hessian_upper);
+
 }  // namespace phx::mc::cad

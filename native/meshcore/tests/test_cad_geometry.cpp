@@ -754,7 +754,134 @@ void spline_bernstein_enclosure_reference() {
       PHX_CHECK(lower[9 + i] <= reference[row][2 + 2 * i]);
       PHX_CHECK(upper[9 + i] >= reference[row][3 + 2 * i]);
     }
+    // The restricted numerator nets contain Python's exact enclosure (to the
+    // fixture's outward rounding, at most a few ulp) and lie within the
+    // generic interval Cox--de Boor enclosure. Fault caught: a missing or
+    // mis-signed quotient-rule term, or a wrong restriction.
+    double net_lower[9], net_upper[9];
+    PHX_CHECK(phx::mc::cad::fidelity_net_hessian(geometry, 0, workspace, box_lower[row],
+                                                 box_upper[row], net_lower, net_upper) ==
+              PHX_MC_OK);
+    const auto ulps = [](double x, int n, double direction) {
+      for (int k = 0; k < n; ++k) x = std::nextafter(x, direction);
+      return x;
+    };
+    const double inf = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < 9; ++i) {
+      PHX_CHECK(net_lower[i] <= ulps(reference[row][2 + 2 * i], 4, inf));
+      PHX_CHECK(net_upper[i] >= ulps(reference[row][3 + 2 * i], 4, -inf));
+      PHX_CHECK(lower[9 + i] <= net_lower[i] && net_upper[i] <= upper[9 + i]);
+    }
   }
+}
+
+// A placed rational biquadratic spline with two u spans: the net Hessian
+// encloses dense point Hessians on boxes inside one span and across the
+// knot. Fault caught: a span selection, local scaling or placement error.
+void spline_numerator_nets_placed() {
+  Builder b;
+  std::vector<double> values{0, 0, 0, 0.5, 1, 1, 1, 0, 0, 0, 1, 1, 1};
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 3; ++j)
+      values.insert(values.end(), {0.3 * i, 0.5 * j + 0.1 * i * i, 0.2 * ((i + j) % 3)});
+  for (int k = 0; k < 12; ++k) values.push_back(0.5 + 0.25 * ((3 * k) % 5));
+  const int32_t spline = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {2, 2, 4, 3}, values);
+  const int32_t placed = b.add(PHX_MC_CAD_NODE_AFFINE, {spline, 3},
+                               {0.6, -0.8, 0, 0.8, 0.6, 0, 0, 0, 2, 1, 2, 3});
+  b.surfaces = {placed};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double boxes[3][4] = {{0.1, 0.3, 0.2, 0.45}, {0.4, 0.6, 0.5, 0.7}, {0.7, 0.75, 0.0, 1.0}};
+  for (const auto& box : boxes) {
+    const double lo[2] = {box[0], box[2]}, hi[2] = {box[1], box[3]};
+    double net_lower[9], net_upper[9];
+    PHX_CHECK(phx::mc::cad::fidelity_net_hessian(geometry, 0, workspace, lo, hi, net_lower,
+                                                 net_upper) == PHX_MC_OK);
+    for (int i = 0; i <= 20; ++i)
+      for (int j = 0; j <= 20; ++j) {
+        const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 20, lo[1] + (hi[1] - lo[1]) * j / 20};
+        double jet[18];
+        PHX_CHECK(geometry.jets(placed, uv, 2, jet, point_workspace));
+        for (int k = 0; k < 9; ++k) {
+          const double slack = 1e-12 * (1.0 + std::fabs(jet[9 + k]));
+          PHX_CHECK(net_lower[k] - slack <= jet[9 + k] && jet[9 + k] <= net_upper[k] + slack);
+        }
+      }
+  }
+}
+
+// Interval closed forms against the template programs' rigorous enclosures
+// at points of each box (they must intersect), and their point-box width.
+// Covers the anchored sin/cos (small boxes, far arguments) and its elementary
+// fallback (wide boxes). Fault caught: a wrong derivative formula, sign or
+// frame transformation, or an unsound trigonometric remainder.
+void interval_closed_forms() {
+  Builder b;
+  const double radius = 1.5, minor = 0.4, r0 = 0.7, angle = 0.3;
+  const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t cylinder =
+      b.add_template("cylinder", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t cone = b.add_template(
+      "cone", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {r0}, {angle}}));
+  const int32_t sphere =
+      b.add_template("sphere", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t torus = b.add_template(
+      "torus", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}, {minor}}));
+  const int32_t line = b.add_template(
+      "line3", concat({v3(add(kOrigin, scaled(radius, kE1))), v3(add(kAxis, scaled(0.3, kE2)))}));
+  const int32_t exact = b.add_template(
+      "exact_line3", concat({v3(add(kOrigin, scaled(radius, kE1))),
+                             v3(add(kOrigin, add(scaled(0.5, kE1), scaled(2.0, kAxis))))}));
+  const int32_t revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {line}, concat({v3(kOrigin), v3(kAxis)}));
+  const int32_t exact_revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {exact}, concat({v3(kOrigin), v3(kAxis)}));
+  const std::vector<double> placement{0, -1, 0, 1, 0, 0, 0, 0, 1, 1.0, 2.0, 3.0};
+  const int32_t placed_revolution = b.add(PHX_MC_CAD_NODE_AFFINE, {revolution, 3}, placement);
+  const int32_t placed_torus = b.add(PHX_MC_CAD_NODE_AFFINE, {torus, 3}, placement);
+  const std::vector<int32_t> nodes{plane, cylinder, cone, sphere, torus, revolution,
+                                   exact_revolution, placed_revolution, placed_torus};
+  b.surfaces = nodes;
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  std::mt19937_64 random(91);
+  std::uniform_real_distribution<double> uu(-7.0, 7.0), vv(-1.4, 1.4), unit(0.0, 1.0);
+  const double widths[] = {0.0, 1e-3, 0.03, 0.5};
+  for (std::size_t face = 0; face < nodes.size(); ++face)
+    for (int sample = 0; sample < 40; ++sample)
+      for (double width : widths) {
+        const double shift = sample == 0 ? 200.0 : 0.0;
+        const double lo[2] = {uu(random) + shift, vv(random)};
+        const double hi[2] = {lo[0] + width, lo[1] + width};
+        double closed_lower[18], closed_upper[18];
+        PHX_CHECK(phx::mc::cad::fidelity_closed_jets(geometry, static_cast<int32_t>(face),
+                                                     workspace, lo, hi, closed_lower,
+                                                     closed_upper) == PHX_MC_OK);
+        for (int k = 0; k < 4; ++k) {
+          const double x[2] = {lo[0] + (hi[0] - lo[0]) * unit(random),
+                               lo[1] + (hi[1] - lo[1]) * unit(random)};
+          double lower[18], upper[18];
+          PHX_CHECK(geometry.interval_jets(nodes[face], x, x, 2, lower, upper, workspace) ==
+                    PHX_MC_OK);
+          for (int i = 0; i < 18; ++i) {
+            PHX_CHECK(closed_lower[i] <= upper[i] && lower[i] <= closed_upper[i]);
+            if (width == 0.0)
+              PHX_CHECK(closed_upper[i] - closed_lower[i] <=
+                        1e-13 * (1.0 + std::fabs(closed_upper[i]) + std::fabs(lo[0])));
+          }
+        }
+      }
 }
 
 void spline_kink_fidelity() {
@@ -875,6 +1002,8 @@ int main() {
   spline_nodes();
   spline_interval_nodes();
   spline_bernstein_enclosure_reference();
+  spline_numerator_nets_placed();
+  interval_closed_forms();
   spline_kink_fidelity();
   intersection_chart();
   entry_point();
