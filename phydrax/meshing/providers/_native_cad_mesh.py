@@ -25,7 +25,6 @@ from ...discretization._cell_geometry import CellGeometrySpec
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._reference import lagrange_element
-from ...geometry._domain_boundary import MeshingDomainBoundarySource
 from .._certification_schedule import MeshCertificationSchedule
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
@@ -161,9 +160,8 @@ def execute_cad_solid(
         domain.source_revision,
         domain=domain,
         cell_regions=np.asarray(volume.tetrahedron_regions, dtype=np.int64),
-        fidelity_source=MeshingDomainBoundarySource(
-            domain, tuple(range(len(domain.patches)))
-        ),
+        # The boundary preparation's query selects every source face (support).
+        fidelity_source=boundary.boundary_source,
         fidelity_tolerance=float(deviation),
         protected_features=specification.protected_features,
         feature_source=domain,
