@@ -131,18 +131,23 @@ def _sphere_cube_cover(
     center: np.ndarray,
     radius: float,
     subdivisions: int,
+    first_rows: np.ndarray,
+    second_rows: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Enclose the radial images of every cube-face parameter cell."""
+    """Enclose the radial images of the selected cube-face parameter cells.
+
+    Cell ``(first_rows[k], second_rows[k])`` of the ``subdivisions``-square grid
+    on each of the six faces; every value is computed per cell, so a cell's
+    enclosure does not depend on which other cells are selected.
+    """
     edges = np.linspace(-1.0, 1.0, subdivisions + 1, dtype=np.float64)
     if np.any(np.diff(edges) <= 0.0):
         raise ValueError("The requested cube-sphere cover reaches binary64 resolution.")
-    first_lower, second_lower = np.meshgrid(edges[:-1], edges[:-1], indexing="ij")
-    first_upper, second_upper = np.meshgrid(edges[1:], edges[1:], indexing="ij")
-    first_lower = first_lower.reshape((-1,))
-    first_upper = first_upper.reshape((-1,))
-    second_lower = second_lower.reshape((-1,))
-    second_upper = second_upper.reshape((-1,))
+    first_lower = edges[first_rows]
+    first_upper = edges[first_rows + 1]
+    second_lower = edges[second_rows]
+    second_upper = edges[second_rows + 1]
     first_interval = (first_lower, first_upper)
     second_interval = (second_lower, second_upper)
     one = (np.ones_like(first_lower), np.ones_like(first_upper))
@@ -1107,11 +1112,24 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             )
         return first, second
 
-    def _sample_grid(self, first_count: int, second_count: int) -> SourceBoundarySamples:
+    def _cell_radii(
+        self,
+        first_count: int,
+        second_count: int,
+        first_rows: np.ndarray,
+        second_rows: np.ndarray,
+        /,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Sample points and covering radii of the selected parameter cells.
+
+        Every value is computed per cell from the count's parameter edges, so a
+        selected cell has the radius it has in the complete grid.
+        """
         if self.family == "sphere":
             points, image_lower, image_upper = _sphere_cube_cover(
-                self.center, self.radius, first_count
+                self.center, self.radius, first_count, first_rows, second_rows
             )
+            period_slack = 0.0
         else:
             first_edges = np.linspace(
                 0.0, 2.0 * math.pi, first_count + 1, dtype=np.float64
@@ -1125,11 +1143,16 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 raise ValueError(
                     "The requested analytic parameter cover reaches binary64 resolution."
                 )
-            first = first_edges[:-1] + 0.5 * np.diff(first_edges)
-            second = second_edges[:-1] + 0.5 * np.diff(second_edges)
-            first_grid, second_grid = np.meshgrid(first, second, indexing="ij")
-            first_cosine, first_sine = _decided_trigonometric(first_grid)
-            second_cosine, second_sine = _decided_trigonometric(second_grid)
+            first_lower = first_edges[first_rows]
+            first_upper = first_edges[first_rows + 1]
+            second_lower = second_edges[second_rows]
+            second_upper = second_edges[second_rows + 1]
+            first_cosine, first_sine = _decided_trigonometric(
+                first_lower + 0.5 * (first_upper - first_lower)
+            )
+            second_cosine, second_sine = _decided_trigonometric(
+                second_lower + 0.5 * (second_upper - second_lower)
+            )
             radial = self.major_radius + self.radius * second_cosine
             points = np.stack(
                 (
@@ -1138,48 +1161,35 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                     self.center[2] + self.radius * second_sine,
                 ),
                 axis=-1,
-            ).reshape((-1, 3))
-            first_lower, second_lower = np.meshgrid(
-                first_edges[:-1], second_edges[:-1], indexing="ij"
             )
-            first_upper, second_upper = np.meshgrid(
-                first_edges[1:], second_edges[1:], indexing="ij"
-            )
-            parameter_lower = np.stack((first_lower, second_lower), axis=-1).reshape(
-                (-1, 2)
-            )
-            parameter_upper = np.stack((first_upper, second_upper), axis=-1).reshape(
-                (-1, 2)
-            )
-        if self.family == "ring-torus":
             image_lower, image_upper = _evaluate_interval_boxes(
-                self._map_program, parameter_lower, parameter_upper, (3,)
+                self._map_program,
+                np.stack((first_lower, second_lower), axis=-1),
+                np.stack((first_upper, second_upper), axis=-1),
+                (3,),
             )
+            pi_lower = Fraction(float(np.nextafter(math.pi, -np.inf)))
+            pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
+            scale = Fraction(self.major_radius) + 2 * Fraction(self.radius)
+            period_slack = _upper_fraction(4 * (pi_upper - pi_lower) * scale)
         image_lower = np.asarray(image_lower, dtype=np.float64)
         image_upper = np.asarray(image_upper, dtype=np.float64)
         displacement = np.maximum(
             np.nextafter(np.abs(points - image_lower), np.inf),
             np.nextafter(np.abs(image_upper - points), np.inf),
         )
-        if self.family == "sphere":
-            period_slack = 0.0
-        else:
-            pi_lower = Fraction(float(np.nextafter(math.pi, -np.inf)))
-            pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
-            scale = Fraction(self.major_radius) + 2 * Fraction(self.radius)
-            period_slack = _upper_fraction(4 * (pi_upper - pi_lower) * scale)
         radii = binary64_norm_upper(displacement)
-        radii = np.nextafter(radii + period_slack, np.inf)
-        errors = self.boundary_distance(points).upper
-        return SourceBoundarySamples(
-            points,
-            radii,
-            errors,
-            "certified",
-            complete=True,
-        )
+        return points, np.nextafter(radii + period_slack, np.inf)
 
     def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
+        """The certified sample cover of the first admissible count at the radius.
+
+        Counts grow from the arc-length estimate until every cell's covering
+        radius is within ``maximum_radius``. A count is first tried on the
+        cells of its two parameter diagonals: one of them above the radius
+        refutes the count without the complete grid, and cell radii do not
+        depend on the selection, so the returned count is unchanged.
+        """
         if isinstance(maximum_radius, (bool, np.bool_)):
             raise TypeError(
                 "maximum_radius must be a physical real distance, not a boolean."
@@ -1196,12 +1206,31 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             second_length = 2 * pi_upper * Fraction(self.radius)
         index_maximum = int(np.iinfo(np.intp).max)
         while True:
-            samples = self._sample_grid(first, second)
-            if (
-                not samples.covering_radius.size
-                or np.max(samples.covering_radius) <= requested
-            ):
-                return samples
+            steps = np.arange(max(first, second), dtype=np.int64)
+            diagonal = steps * second // steps.size
+            _, probe_radii = self._cell_radii(
+                first,
+                second,
+                np.concatenate((steps * first // steps.size,) * 2),
+                np.concatenate((diagonal, second - 1 - diagonal)),
+            )
+            if np.max(probe_radii) <= requested:
+                first_rows, second_rows = np.meshgrid(
+                    np.arange(first, dtype=np.int64),
+                    np.arange(second, dtype=np.int64),
+                    indexing="ij",
+                )
+                points, radii = self._cell_radii(
+                    first, second, first_rows.reshape((-1,)), second_rows.reshape((-1,))
+                )
+                if np.max(radii) <= requested:
+                    return SourceBoundarySamples(
+                        points,
+                        radii,
+                        self.boundary_distance(points).upper,
+                        "certified",
+                        complete=True,
+                    )
             if self.family == "sphere":
                 first += 1
                 second = first
