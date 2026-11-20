@@ -287,6 +287,25 @@ void overlap_bound_covers_a_case_floating_clipping_missed() {
             0.46764967849764);
 }
 
+// A planar triangle the exact orient2d proves nondegenerate (determinant
+// e^2, e = 2^-52) whose binary64 determinant is 0 ((1 + e)(1 - e) rounds to
+// 1): its affine map cannot be formed, and the bound must not drop it. Its
+// third corner is 2 above the containing triangle at z = 0, so the exact
+// gap reaches 2, in both roles.
+void overlap_bound_refuses_an_uncertified_determinant() {
+  using phx::mc::remesh::Planar;
+  constexpr double e = 0x1p-52;
+  const std::array<Planar, 3> thin{Planar{0.0, 0.0}, Planar{1.0, 1.0 - e},
+                                   Planar{1.0 + e, 1.0}};
+  const std::array<Point, 3> thin_space{Point{0.0, 0.0, 1.0}, Point{1.0, 1.0 - e, 1.0},
+                                        Point{1.0 + e, 1.0, 2.0}};
+  const std::array<Planar, 3> wide{Planar{-1.0, -1.0}, Planar{3.0, -1.0}, Planar{-1.0, 3.0}};
+  const std::array<Point, 3> wide_space{Point{-1.0, -1.0, 0.0}, Point{3.0, -1.0, 0.0},
+                                        Point{-1.0, 3.0, 0.0}};
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(wide, wide_space, thin, thin_space) >= 2.0);
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(thin, thin_space, wide, wide_space) >= 2.0);
+}
+
 // An open source or a nonfinite coordinate is refused at bind.
 void bind_refuses_invalid_sources() {
   std::vector<Point> points;
@@ -409,6 +428,7 @@ int main() {
   triangle_bound_refuses_a_partly_uncovered_triangle();
   overlap_bound_encloses_a_near_parallel_crossing();
   overlap_bound_covers_a_case_floating_clipping_missed();
+  overlap_bound_refuses_an_uncertified_determinant();
   bind_refuses_invalid_sources();
   remesh_then_certify_round_trip();
   return phx::mc::test::finish("test_mesh_source");

@@ -73,10 +73,11 @@ bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count
                      std::vector<int64_t>* twins = nullptr);
 
 // Resets `refused` to one flag per triangle and sets it for every triangle
-// that is degenerate (collinear or nonfinite corners) or in an illegal
-// contact with another triangle whose box meets its own; with `changed`
-// given, only pairs with at least one changed triangle are classified.
-// Returns the number of flagged triangles.
+// that is degenerate (collinear corners, or a corner coordinate outside the
+// exact predicates' domain, coordinate_in_domain, nonfinite included) or in
+// an illegal contact with another triangle whose box meets its own; with
+// `changed` given, only pairs with at least one changed triangle are
+// classified. Returns the number of flagged triangles.
 int64_t refuse_illegal_contacts(const std::vector<Point>& points,
                                 const std::vector<Triangle>& triangles,
                                 const std::vector<uint8_t>* changed,

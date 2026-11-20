@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -333,27 +334,39 @@ bool separated(const std::array<Planar, 3>& from, const std::array<Planar, 3>& o
 }
 
 // The affine map sending planar corners p to spatial corners P,
-// X(x) = P[0] + J (x - p[0]), with |J|_F and the planar conditioning
-// |M|_F^2 / |det M| of M = [p1 - p0, p2 - p0].
+// X(x) = P[0] + J (x - p[0]), with |J|_F, the planar conditioning
+// |M|_F^2 / |det M| of M = [p1 - p0, p2 - p0] (outward, from the
+// determinant's certified lower bound), and the relative error of the
+// computed determinant (by which every computed column may be off). Nothing
+// when Shewchuk's stage-A bound does not keep the determinant at least twice
+// its error away from 0, or a coefficient is not finite.
 struct Affine {
   Planar origin;
   Point base;
   std::array<Point, 2> columns;
   double norm;
   double condition;
+  double relative;
 };
-Affine affine(const std::array<Planar, 3>& p, const std::array<Point, 3>& space) {
+std::optional<Affine> affine(const std::array<Planar, 3>& p, const std::array<Point, 3>& space) {
   const double m00 = p[1][0] - p[0][0], m01 = p[2][0] - p[0][0];
   const double m10 = p[1][1] - p[0][1], m11 = p[2][1] - p[0][1];
-  const double det = m00 * m11 - m01 * m10;
+  // det[p1 - p0, p2 - p0], with the rounding of the differences included.
+  const Orientation determinant = orientation(p[1], p[2], p[0]);
+  const double det = determinant.det;
+  if (!(std::abs(det) > 2 * determinant.error)) return std::nullopt;
+  const double lower = std::abs(det) - determinant.error;
   const Point first = sub(space[1], space[0]), second = sub(space[2], space[0]);
-  Affine map{p[0], space[0], {}, 0, 0};
+  Affine map{p[0], space[0], {}, 0, 0, 0};
   for (size_t d = 0; d < 3; ++d) {
     map.columns[0][d] = (first[d] * m11 - second[d] * m10) / det;
     map.columns[1][d] = (second[d] * m00 - first[d] * m01) / det;
   }
   map.norm = std::sqrt(dot(map.columns[0], map.columns[0]) + dot(map.columns[1], map.columns[1]));
-  map.condition = (m00 * m00 + m01 * m01 + m10 * m10 + m11 * m11) / std::abs(det);
+  map.condition = (m00 * m00 + m01 * m01 + m10 * m10 + m11 * m11) / lower * (1 + 8 * kUnit);
+  map.relative = determinant.error / lower * (1 + 8 * kUnit);
+  if (!std::isfinite(map.norm) || !std::isfinite(map.condition) || !std::isfinite(map.relative))
+    return std::nullopt;
   return map;
 }
 Point evaluate(const Affine& map, const Planar& x) {
@@ -378,7 +391,15 @@ double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Poin
       if (exact_orient(corners[k], corners[(k + 1) % 3], x) * side < 0) return false;
     return true;
   };
-  const Affine own_map = affine(own, own_space), other_map = affine(other, other_space);
+  const std::optional<Affine> own_affine = affine(own, own_space);
+  const std::optional<Affine> other_affine = affine(other, other_space);
+  if (!own_affine || !other_affine) return std::numeric_limits<double>::infinity();
+  const Affine& own_map = *own_affine;
+  const Affine& other_map = *other_affine;
+  // The rounding pad below is first order in u * condition; past 2^-10 its
+  // neglected terms are no longer small, so the caller's height bound decides.
+  if (kUnit * own_map.condition > 0x1p-10 || kUnit * other_map.condition > 0x1p-10)
+    return std::numeric_limits<double>::infinity();
   double planar_scale = 0, space_scale = 0;
   for (size_t k = 0; k < 3; ++k)
     for (size_t d = 0; d < 3; ++d) {
@@ -389,18 +410,25 @@ double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Poin
           std::max(space_scale, std::max(std::abs(own_space[k][d]), std::abs(other_space[k][d])));
     }
   // First-order rounding of the two maps at a point of both triangles (the
-  // planar differences, the 2 x 2 inverse, the products), constants doubled.
+  // planar differences, the 2 x 2 inverse, the products), constants doubled,
+  // plus each map's columns off by its determinant's relative error over
+  // planar offsets up to twice the planar scale.
   const double slope = own_map.norm + other_map.norm;
   const double evaluation =
       8 * kUnit *
           (own_map.condition * (own_map.norm * planar_scale + space_scale) +
            other_map.condition * (other_map.norm * planar_scale + space_scale)) +
-      4 * kUnit * space_scale;
+      4 * kUnit * space_scale +
+      2 * (own_map.relative * own_map.norm + other_map.relative * other_map.norm) *
+          planar_scale;
   double bound = 0;
-  // The gap at an exact overlap vertex within `offset` of x.
+  // The gap at an exact overlap vertex within `offset` of x; a nonfinite
+  // value refuses (+inf), never drops out of the maximum.
   const auto visit = [&](const Planar& x, double offset) {
-    bound = std::max(bound, norm(sub(evaluate(own_map, x), evaluate(other_map, x))) +
-                                slope * offset + evaluation);
+    const double value = norm(sub(evaluate(own_map, x), evaluate(other_map, x))) +
+                         slope * offset + evaluation;
+    bound = std::isfinite(value) ? std::max(bound, value)
+                                 : std::numeric_limits<double>::infinity();
   };
   for (size_t k = 0; k < 3; ++k) {
     if (inside(own[k], other, other_side)) visit(own[k], 0);
