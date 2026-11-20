@@ -207,6 +207,14 @@ class ConstrainedMesher {
       }
       process_bad_triangle(entry);
     }
+    // Every bad region triangle is enqueued when created (initial scan and
+    // after_insertion) and its entry still matches when popped; the only
+    // triangles that can stay bad are flagged where processing gave up, where
+    // a circumcenter insertion kept the popped triangle, or where a hull or
+    // sliver insertion freed an edge of an older neighbor.
+    if (!may_be_unresolved_) {
+      return PHX_MC_OK;
+    }
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0 &&
@@ -235,6 +243,7 @@ class ConstrainedMesher {
   std::vector<std::pair<int32_t, int32_t>> encroached_segments_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
+  bool may_be_unresolved_ = false;
   std::vector<int32_t> constraint_sources_;
   std::vector<int32_t> constraint_parents_;
   std::vector<double> constraint_ratios_;
@@ -1003,10 +1012,13 @@ class ConstrainedMesher {
     const int32_t near_side = side > 0 ? t : across;
     const int32_t far_side = side > 0 ? across : t;
     if (tri_.is_ghost(near_side)) {
+      // The ghost's interior neighbor loses its constraint on p - q.
+      const int32_t inner = tri_.triangles[static_cast<std::size_t>(near_side)].n[2];
       const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       attach_to_hull(near_side, p, q, v, id);
       legalize(v);
       after_insertion(v);
+      flag_if_bad(inner);
       return true;
     }
     const uint8_t far_region = tri_.region[static_cast<std::size_t>(far_side)];
@@ -1019,7 +1031,16 @@ class ConstrainedMesher {
     tri_.region[static_cast<std::size_t>(sliver)] = far_region;
     legalize(v);
     after_insertion(v);
+    flag_if_bad(far_side);
     return true;
+  }
+
+  // Conservative: a reused slot holds a new star triangle, already enqueued.
+  void flag_if_bad(int32_t t) {
+    if (tri_.live[static_cast<std::size_t>(t)] != 0 && !tri_.is_ghost(t) &&
+        tri_.region[static_cast<std::size_t>(t)] != 0 && quality(t).bad) {
+      may_be_unresolved_ = true;
+    }
   }
 
   // Splits the constrained edge a - b if it still exists; true on insertion.
@@ -1052,6 +1073,7 @@ class ConstrainedMesher {
     double center[2] = {p0[0] + (cy * b2 - by * c2) / denominator,
                         p0[1] + (bx * c2 - cx * b2) / denominator};
     if (!snap_to_domain(center)) {
+      may_be_unresolved_ = true;
       return;
     }
     auto& to_split = encroached_segments_;
@@ -1063,6 +1085,7 @@ class ConstrainedMesher {
       to_split.emplace_back(b.v[next3(blocked.second)], b.v[prev3(blocked.second)]);
     } else {
       if (tri_.is_ghost(located)) {
+        may_be_unresolved_ = true;
         return;
       }
       const Triangle2D& host = tri_.triangles[static_cast<std::size_t>(located)];
@@ -1075,6 +1098,7 @@ class ConstrainedMesher {
         }
       }
       if (zero_count >= 2) {
+        may_be_unresolved_ = true;
         return;
       }
       if (zero_count == 1 && tri_.constraint(located, zero_edge) != kFree) {
@@ -1096,6 +1120,7 @@ class ConstrainedMesher {
         }
         legalize(v, true);
         after_insertion(v);
+        may_be_unresolved_ = may_be_unresolved_ || matches(entry);
         return;
       }
     }
@@ -1107,6 +1132,8 @@ class ConstrainedMesher {
     }
     if (progress && matches(entry)) {
       enqueue_bad(entry);
+    } else if (!progress) {
+      may_be_unresolved_ = true;
     }
   }
 
