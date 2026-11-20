@@ -34,6 +34,7 @@ constexpr int64_t kSelect = 14;
 constexpr int64_t kMaximum = 15;
 constexpr double kGamma = 1.0e-15;  // >= 3u / (1 - 3u) for the short reductions
 constexpr double kPi = 3.141592653589793;
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
 // A hand-lowered program in the native layout: box at [0, 3), seeds after it.
 struct Program {
@@ -448,14 +449,32 @@ Remeshed construct(const Surface& input, const Program& value, double tolerance,
 // triangles, repair splits, rounds)
 using Failures = std::array<int64_t, 6>;
 
-// phx_mc_zero_set_certify, accepting the triangles of `carrier` (if any) at
-// carrier_distance; the certified surface is copied into `certified` when
-// given.
+// phx_mc_zero_set_certify with the triangles of `carrier` (if any) witnessed
+// by their bounding boxes widened by `widen` on every side; the certified
+// surface is copied into `certified` and its carried flags into `carried`
+// when given.
 int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>& triangles,
                 const Program& value, const Program& gradient, double tolerance,
                 int32_t orientation, double& distance, Failures& failures,
-                const Surface* carrier = nullptr, double carrier_distance = 0,
-                Surface* certified = nullptr) {
+                const Surface* carrier = nullptr, double widen = 0,
+                Surface* certified = nullptr, std::vector<uint8_t>* carried = nullptr) {
+  std::vector<double> boxes;
+  if (carrier != nullptr)
+    for (size_t f = 0; f < carrier->triangles.size(); f += 3) {
+      std::array<double, 6> box{kInfinity, kInfinity, kInfinity, -kInfinity, -kInfinity,
+                                -kInfinity};
+      for (size_t k = 0; k < 3; ++k) {
+        const int64_t v = carrier->triangles[f + k];
+        // An index outside the carrier is the caller's malformed input.
+        if (v < 0 || 3 * static_cast<size_t>(v) >= carrier->vertices.size()) continue;
+        for (size_t d = 0; d < 3; ++d) {
+          const double x = carrier->vertices[3 * static_cast<size_t>(v) + d];
+          box[d] = std::min(box[d], x - widen);
+          box[3 + d] = std::max(box[3 + d], x + widen);
+        }
+      }
+      boxes.insert(boxes.end(), box.begin(), box.end());
+    }
   void* handle = nullptr;
   const phx_mc_zero_set_certify_request request{
       vertices.data(),
@@ -470,7 +489,7 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
       carrier == nullptr ? 0 : static_cast<int64_t>(carrier->vertices.size() / 3),
       carrier == nullptr ? nullptr : carrier->triangles.data(),
       carrier == nullptr ? 0 : static_cast<int64_t>(carrier->triangles.size() / 3),
-      carrier_distance,
+      carrier == nullptr ? nullptr : boxes.data(),
       0.3,
       30.0,
       &handle,
@@ -487,6 +506,10 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
     PHX_CHECK(phx_mc_surface_result_arrays(handle, sizes[0], sizes[1],
                                            certified->vertices.data(),
                                            certified->triangles.data()) == PHX_MC_OK);
+  }
+  if (carried != nullptr) {
+    carried->resize(static_cast<size_t>(sizes[1]));
+    PHX_CHECK(phx_mc_surface_result_carried(handle, sizes[1], carried->data()) == PHX_MC_OK);
   }
   phx_mc_surface_result_free(handle);
   return status;
@@ -586,7 +609,8 @@ void remesh_sphere_carrier() {
 // of the band (distance), the opposite orientation (transversality), and
 // malformed requests. A triangle whose proof fails is accepted from the
 // carrier only when identical to one of its triangles (any starting corner,
-// same orientation), at the carrier's distance even beyond the tolerance.
+// same orientation) and proved by its witness box, at the box diagonal even
+// beyond the tolerance; a box without a sign change proves nothing.
 void certify_refusals() {
   const Surface input = uv_sphere(8, 40);
   const Program value = sphere_value(), gradient = sphere_gradient();
@@ -617,15 +641,49 @@ void certify_refusals() {
                     distance, failures, &own, 0.01) == PHX_MC_OK);
   PHX_CHECK(failures[3] == 0 && distance <= tolerance);
   // The lifted surface as its own carrier, listed from other corners: the
-  // lifted vertex's star fails its proof and is accepted from the carrier at
-  // the carrier's distance, here twice the tolerance.
+  // lifted vertex's star fails its proof and is accepted from the carrier,
+  // witnessed by boxes widened by twice the tolerance (they reach inside the
+  // sphere), at its box diagonals, flagged as carried.
   const Surface lifted_carrier{lifted, remeshed.triangles};
   auto rotated = remeshed.triangles;
   for (size_t f = 0; f < rotated.size(); f += 3) std::rotate(&rotated[f], &rotated[f + 1], &rotated[f + 3]);
+  Surface carried_surface;
+  std::vector<uint8_t> carried;
   PHX_CHECK(certify(lifted, rotated, value, gradient, tolerance, 1, distance, failures,
-                    &lifted_carrier, 2 * tolerance) == PHX_MC_OK);
+                    &lifted_carrier, 2 * tolerance, &carried_surface, &carried) == PHX_MC_OK);
   PHX_CHECK(failures[1] > 0 && failures[3] > 0 && failures[4] == 0);
-  PHX_CHECK(distance == 2 * tolerance);
+  int64_t flagged = 0;
+  double widest = 0;
+  for (size_t t = 0; t < carried.size(); ++t) {
+    flagged += carried[t];
+    if (carried[t] == 0) continue;
+    double low[3], high[3];
+    for (size_t d = 0; d < 3; ++d) {
+      low[d] = kInfinity;
+      high[d] = -kInfinity;
+      for (size_t k = 0; k < 3; ++k) {
+        const double x =
+            carried_surface.vertices[3 * static_cast<size_t>(carried_surface.triangles[3 * t + k]) + d];
+        low[d] = std::min(low[d], x - 2 * tolerance);
+        high[d] = std::max(high[d], x + 2 * tolerance);
+      }
+    }
+    widest = std::max(widest, std::hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2]));
+  }
+  PHX_CHECK(flagged == failures[3]);
+  // The native diagonal is rounded up; hypot is within an ulp of exact.
+  PHX_CHECK(distance > tolerance && distance >= widest * (1 - 1e-12) &&
+            distance <= widest * (1 + 1e-12));
+  // The whole surface scaled three times out of the sphere as its own
+  // carrier: every witness box lies outside it (its nearest corner is more
+  // than 1 from the origin, so f > 0 at every corner), nothing is carried
+  // and the refusals stand.
+  auto outward = remeshed.vertices;
+  for (double& x : outward) x *= 3.0;
+  const Surface outward_carrier{outward, remeshed.triangles};
+  PHX_CHECK(certify(outward, remeshed.triangles, value, gradient, tolerance, 1, distance,
+                    failures, &outward_carrier, 0.01) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[3] == 0);
   // The unlifted carrier does not hold the lifted triangles.
   PHX_CHECK(certify(lifted, remeshed.triangles, value, gradient, tolerance, 1, distance, failures,
                     &own, 0.01) == PHX_MC_UNRESOLVED);
@@ -634,8 +692,10 @@ void certify_refusals() {
                     distance, failures) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, value, tolerance, 1, distance,
                     failures) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
-                    failures, &own, -1) == PHX_MC_INVALID_ARGUMENT);
+  // A carrier triangle whose box misses its corners proves nothing.
+  PHX_CHECK(certify(lifted, rotated, value, gradient, tolerance, 1, distance, failures,
+                    &lifted_carrier, -2 * tolerance) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[3] == 0);
   auto outside = remeshed.triangles;
   outside[0] = static_cast<int64_t>(remeshed.vertices.size() / 3);
   PHX_CHECK(certify(remeshed.vertices, outside, value, gradient, tolerance, 1, distance,
@@ -997,7 +1057,10 @@ void remesh_coarsening_absorbs_rosette() {
 // The crease of a CSG lens (input dihedral above 45 degrees) is a feature:
 // its vertices stay on it and its edges are neither split nor flipped, so the
 // sharp turn survives, while the rest of the lens is remeshed and certified
-// within the tolerance.
+// within the tolerance. The kept crease triangles are accepted from the
+// carrier by witness boxes (their boxes widened by the tolerance, which
+// straddle the zero set), at those boxes' diagonals: beyond the tolerance,
+// and flagged.
 void remesh_lens_crease() {
   const Surface input = lens_surface(4, 24);
   PHX_CHECK(signed_volume(input.vertices, input.triangles) > 0);
@@ -1010,11 +1073,11 @@ void remesh_lens_crease() {
   const double turn = maximum_turn(remeshed.vertices, remeshed.triangles);
   double distance = -1;
   Failures failures{};
-  constexpr double carrier_distance = 0.01;
+  std::vector<uint8_t> carried;
   const int32_t status =
       certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance,
-              static_cast<int32_t>(remeshed.counters[5]), distance, failures, &input,
-              carrier_distance);
+              static_cast<int32_t>(remeshed.counters[5]), distance, failures, &input, tolerance,
+              nullptr, &carried);
   std::printf("lens crease: %lld -> %lld triangles, max turn %.1f deg, below %lld, above %lld, "
               "certify %d distance %.3g refusals %lld %lld %lld kept %lld splits %lld\n",
               static_cast<long long>(input.triangles.size() / 3),
@@ -1027,7 +1090,10 @@ void remesh_lens_crease() {
   PHX_CHECK(failures[3] > 0);
   PHX_CHECK(closed_oriented(remeshed.triangles));
   PHX_CHECK(status == PHX_MC_OK);
-  PHX_CHECK(distance >= 0 && distance <= tolerance);
+  int64_t flagged = 0;
+  for (const uint8_t flag : carried) flagged += flag;
+  PHX_CHECK(flagged == failures[3]);
+  PHX_CHECK(distance > tolerance);
   PHX_CHECK(turn > 100);
 }
 

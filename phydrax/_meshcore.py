@@ -570,7 +570,7 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("carrier_vertex_count", _I64),
         ("carrier_triangles", _P),
         ("carrier_triangle_count", _I64),
-        ("carrier_distance", _F64),
+        ("carrier_boxes", _P),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
         ("result", _P),
@@ -1300,6 +1300,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_mesh_certify": (_I32, (ctypes.POINTER(_MeshCertifyRequest),)),
     "phx_mc_surface_result_sizes": (_I32, (_P, _P)),
     "phx_mc_surface_result_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
+    "phx_mc_surface_result_carried": (_I32, (_P, _I64, _P)),
     "phx_mc_surface_result_free": (None, (_P,)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_implicit_contours": (
@@ -4851,7 +4852,9 @@ def zero_set_remesh(
     status = library[entry](ctypes.byref(request))
     del value_arrays  # kept alive through the native call
     _raise_for_call(status, "zero_set_remesh")
-    out_vertices, out_triangles = _take_surface_result(library, handle, "zero_set_remesh")
+    out_vertices, out_triangles, _ = _take_surface_result(
+        library, handle, "zero_set_remesh"
+    )
     orientation = int(counters[5])
     if orientation not in (-1, 1):
         raise MeshcoreError(
@@ -4864,8 +4867,13 @@ def zero_set_remesh(
 
 def _take_surface_result(
     library: MeshcoreLibrary, handle: ctypes.c_void_p, call: str, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Copy out and free an owned surface result (read-only arrays)."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Copy out and free an owned surface result (read-only arrays).
+
+    Returns the vertices, the triangles and the per-triangle carried flags
+    (bool; all false except for triangles a zero-set certificate accepted from
+    its carrier by their witness boxes).
+    """
     if not handle.value:
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"{call} returned no owned result handle."
@@ -4883,6 +4891,7 @@ def _take_surface_result(
             )
         vertices = np.empty((vertex_count, 3), dtype=np.float64)
         triangles = np.empty((triangle_count, 3), dtype=np.int64)
+        carried = np.empty((triangle_count,), dtype=np.uint8)
         _raise_for_call(
             library["phx_mc_surface_result_arrays"](
                 handle,
@@ -4893,19 +4902,28 @@ def _take_surface_result(
             ),
             "surface_result_arrays",
         )
+        _raise_for_call(
+            library["phx_mc_surface_result_carried"](
+                handle, triangle_count, carried.ctypes.data
+            ),
+            "surface_result_carried",
+        )
     finally:
         library["phx_mc_surface_result_free"](handle)
     if (
         not np.all(np.isfinite(vertices))
         or np.any(triangles < 0)
         or np.any(triangles >= vertex_count)
+        or np.any(carried > 1)
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"{call} returned invalid geometry."
         )
+    flags = carried.astype(np.bool_)
     vertices.setflags(write=False)
     triangles.setflags(write=False)
-    return vertices, triangles
+    flags.setflags(write=False)
+    return vertices, triangles, flags
 
 
 class ZeroSetCertificate(NamedTuple):
@@ -4914,18 +4932,20 @@ class ZeroSetCertificate(NamedTuple):
     ``vertices`` and ``triangles`` are the certified surface: the input unless
     a refused triangle was repaired. ``distance`` is the maximum over the
     proved triangles (each within the tolerance) and, for triangles accepted
-    from the carrier, the carrier distance, which may exceed the tolerance.
-    ``counters`` (read-only int64) are the certifications refused for
-    transversality and for distance and the triangles refused for embedding,
-    all over every round and carrier triangles included, the triangles
-    accepted from the carrier, the repair splits and the certification rounds
-    run.
+    from the carrier, their witness box diagonals, which may exceed the
+    tolerance. ``counters`` (read-only int64) are the certifications refused
+    for transversality and for distance and the triangles refused for
+    embedding, all over every round and carrier triangles included, the
+    triangles accepted from the carrier, the repair splits and the
+    certification rounds run. ``carried`` (read-only bool, one per triangle)
+    flags the triangles accepted from the carrier.
     """
 
     vertices: np.ndarray
     triangles: np.ndarray
     distance: float
     counters: np.ndarray
+    carried: np.ndarray
 
 
 def zero_set_certify(
@@ -4937,7 +4957,7 @@ def zero_set_certify(
     orientation: int,
     carrier_vertices: object,
     carrier_triangles: object,
-    carrier_distance: float,
+    carrier_boxes: object,
     edge_length: float,
     minimum_angle_degrees: float,
     /,
@@ -4948,30 +4968,29 @@ def zero_set_certify(
     lower bound of ``|grad f|`` bound its distance by ``tolerance``
     (subdividing where needed) and its normal is certified transversal to
     ``grad f`` with ``orientation`` (+1 or -1), or, when that proof fails,
-    when it has the corner coordinates, in the same cyclic order, of a
-    triangle of the carrier (the surface remeshed, within
-    ``carrier_distance`` of the zero set by its producer's evidence;
-    ``zero_set_remesh`` keeps the carrier's triangles around creases, where
-    transversality is not decidable); and when it is nondegenerate with only
-    legal exact contacts with nearby triangles.
-    Refused triangles are repaired: the longest edge of each is split at its
-    midpoint projected onto ``{f = 0}`` and only what changed is certified
-    again, for at most four rounds. A surface that is not a closed oriented
-    2-manifold raises ``ValueError``; a triangle left refused raises
+    when it has the corner coordinates, in the same cyclic order, of a carrier
+    triangle (``zero_set_remesh`` keeps the carrier's triangles around
+    creases, where transversality is not decidable) proved by its witness
+    box: ``carrier_boxes`` (one ``(2, 3)`` lower/upper box per carrier
+    triangle) must contain the triangle's corners and have two corners where
+    the interval enclosures of ``f`` have strictly opposite signs, so the box
+    holds a zero of ``f``; the triangle is then accepted at the box diagonal,
+    and a box failing either check accepts nothing. Every certified triangle
+    is also nondegenerate with only legal exact contacts with nearby
+    triangles. Refused triangles are repaired: the longest edge of each is
+    split at its midpoint projected onto ``{f = 0}`` and only what changed is
+    certified again, for at most four rounds. A surface that is not a closed
+    oriented 2-manifold raises ``ValueError``; a triangle left refused raises
     ``MeshcoreError`` (``UNRESOLVED``) naming the refusals.
     """
     if orientation not in (-1, 1):
         raise ValueError("orientation must be 1 or -1.")
-    controls = (tolerance, carrier_distance, edge_length, minimum_angle_degrees)
+    controls = (tolerance, edge_length, minimum_angle_degrees)
     if any(not np.isfinite(value_) for value_ in controls) or not (
-        tolerance > 0.0
-        and carrier_distance >= 0.0
-        and edge_length > 0.0
-        and 0.0 < minimum_angle_degrees < 60.0
+        tolerance > 0.0 and edge_length > 0.0 and 0.0 < minimum_angle_degrees < 60.0
     ):
         raise ValueError(
-            "tolerance and edge_length must be positive, carrier_distance nonnegative, "
-            "and minimum_angle_degrees in (0, 60)."
+            "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
         )
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = _native_integer_array(
@@ -4989,6 +5008,9 @@ def zero_set_certify(
     )
     if carrier_faces.ndim != 2 or carrier_faces.shape[1] != 3:
         raise ValueError("carrier_triangles must be an (N, 3) integer array.")
+    boxes = np.ascontiguousarray(np.asarray(carrier_boxes, dtype=np.float64))
+    if boxes.shape != (carrier_faces.shape[0], 2, 3):
+        raise ValueError("carrier_boxes must hold one (2, 3) box per carrier triangle.")
     value_view, value_arrays = _interval_box_program(value, 1, "value")
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
@@ -5007,7 +5029,7 @@ def zero_set_certify(
         carrier_points.shape[0],
         carrier_faces.ctypes.data,
         carrier_faces.shape[0],
-        float(carrier_distance),
+        boxes.ctypes.data,
         float(edge_length),
         float(minimum_angle_degrees),
         ctypes.addressof(handle),
@@ -5026,22 +5048,22 @@ def zero_set_certify(
             "embedding).",
         )
     _raise_for_call(status, "zero_set_certify")
-    out_vertices, out_triangles = _take_surface_result(
+    out_vertices, out_triangles, carried = _take_surface_result(
         library, handle, "zero_set_certify"
     )
     certified = float(distance[0])
     if (
         not np.isfinite(certified)
         or certified < 0.0
-        or certified > max(tolerance, carrier_distance)
-        or not 0 <= counters[3] <= out_triangles.shape[0]
+        or (int(counters[3]) == 0 and certified > tolerance)
+        or int(counters[3]) != int(np.count_nonzero(carried))
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
             "zero_set_certify returned invalid distance evidence.",
         )
     counters.setflags(write=False)
-    return ZeroSetCertificate(out_vertices, out_triangles, certified, counters)
+    return ZeroSetCertificate(out_vertices, out_triangles, certified, counters, carried)
 
 
 _MESH_SOURCE_CONTRACTS = {
@@ -5105,7 +5127,7 @@ def mesh_remesh(
         "mesh_remesh",
         contracts=_MESH_SOURCE_CONTRACTS,
     )
-    out_vertices, out_triangles = _take_surface_result(library, handle, "mesh_remesh")
+    out_vertices, out_triangles, _ = _take_surface_result(library, handle, "mesh_remesh")
     counters.setflags(write=False)
     return MeshRemeshResult(out_vertices, out_triangles, counters)
 
@@ -5219,7 +5241,7 @@ def mesh_certify(
             f"within {tolerance:g}; bounds {distances[0]:.3e} / {distances[1]:.3e}).",
         )
     _raise_for_call(status, "mesh_certify", contracts=_MESH_SOURCE_CONTRACTS)
-    out_vertices, out_triangles = _take_surface_result(library, handle, "mesh_certify")
+    out_vertices, out_triangles, _ = _take_surface_result(library, handle, "mesh_certify")
     if not (
         np.all(np.isfinite(distances))
         and np.all(distances >= 0.0)
