@@ -33,5 +33,10 @@ int32_t fidelity_closed_jets(const CadGeometry& geometry, int32_t face,
 int32_t fidelity_net_hessian(const CadGeometry& geometry, int32_t face,
                              IntervalEvaluationWorkspace& workspace, const double* lower,
                              const double* upper, double* hessian_lower, double* hessian_upper);
+// The trim lens cap of one chord of `use` on `face` and its padded UV box
+// (u lower, v lower, u upper, v upper).
+int32_t fidelity_trim_lens(const CadGeometry& geometry, int32_t face, int64_t use,
+                           const double* chord_uv, const double* parameters,
+                           IntervalEvaluationWorkspace& workspace, double* cap, double* padded);
 
 }  // namespace phx::mc::cad

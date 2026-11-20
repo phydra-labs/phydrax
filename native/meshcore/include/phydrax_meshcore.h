@@ -3024,6 +3024,21 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+/* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
+ * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
+ * use_patch is the model's loop surface of each use; use_range is the
+ * model's use range bitwise, in either order; chord_loop is the model loop
+ * of the chord's use; V4's use-coverage and loop-closure checks hold on these
+ * rows (every use covered by chords chaining bitwise from its first to its
+ * last range value; every loop one closed bitwise UV cycle). A sliver
+ * (chart_to_mesh -1) needs a mesh triangle with the edge from its pole vertex
+ * to its third vertex (else a CHART_MESH_LINK finding). V4's orientation,
+ * edge pairing and overlap checks remain a separate precondition.
+ * Trusted, not re-established natively: T-spline C2 continuity and partition
+ * of unity (Python's ASTS certificate of the exported pieces); continuity of
+ * an intersection root across chart seams and the terminal threshold (the
+ * chart constructor; V3 treats each break as a C0 line); the source model's
+ * 3D edge / face consistency. Rows are written only when the call completes. */
 
 /* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
  * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the
@@ -3088,6 +3103,69 @@ typedef struct phx_mc_cad_quadratic_request {
   phx_mc_cad_quadratic_stats* stats;
 } phx_mc_cad_quadratic_request;
 PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
+
+/* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
+ * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
+ * triangle, curve segments as protected edges; refinement to the request h
+ * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * inside); improvement to the quality targets) and, with geometry_order 2,
+ * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
+ * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has
+ * its surface edge (the refused PLC edge, else the facet triangle's longest
+ * edge) split on the source in both incident faces (curve parameter or UV
+ * midpoint) and is retried once; each split is reported, and the surface
+ * export of the same handle shows the split surface. Returns the handle on
+ * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
+ * recovery still refused: zero cells, stats name the refusal). */
+typedef struct phx_mc_cad_volume_controls {
+  double radius_edge_bound;        /* 2 */
+  double min_dihedral_degrees;     /* 15.5 */
+  double min_relative_determinant; /* 0; also the P2 relative floor */
+  int32_t geometry_order;          /* 1 or 2 */
+} phx_mc_cad_volume_controls;
+typedef struct phx_mc_cad_volume_stats {
+  /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
+  int64_t curve_ns, face_ns, assembly_ns, volume_ns, quadratic_ns;
+  int64_t recovery_attempts, boundary_splits;
+  int64_t refine_inserted, refine_unmet;
+  int64_t improve_inserted, improve_collapsed, improve_relocated, unmet_cells;
+  /* Last recovery: status and phx_mc_plc3d_failure fields. */
+  int32_t recovery_status, recovery_reason, failure_kind;
+  int64_t failure_entity;
+  phx_mc_cad_quadratic_stats quadratic;
+} phx_mc_cad_volume_stats;
+typedef struct phx_mc_cad_boundary_split {
+  int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
+  int64_t entity;
+  int32_t vertices[2];         /* the split surface edge */
+  int32_t vertex;              /* the new surface vertex */
+  int32_t dimension, carrier;  /* 1: curve row, 2: face row */
+  double parameters[2];        /* curve parameter (t, NaN) or face (u, v) */
+} phx_mc_cad_boundary_split;
+typedef struct phx_mc_cad_volume_arrays {
+  int64_t point_capacity, tetrahedron_capacity, triangle_capacity;
+  int64_t edge_capacity, record_capacity, split_capacity;
+  double* points;               /* (P, 3), surface points first */
+  int32_t* tetrahedra;          /* (M, 4), det[b-a, c-a, d-a] > 0 */
+  int32_t* tetrahedron_regions; /* (M,) */
+  int32_t* boundary_faces;      /* (T, 2): cell and local face (opposite vertex) per surface triangle */
+  /* geometry_order 2 (else N = R = 0): as phx_mc_cad_quadratic_nodes. */
+  int32_t* edges; double* nodes; int8_t* edge_kinds; int32_t* edge_entities;
+  int64_t* cell_edges;          /* (M, 6), null when N = 0 */
+  int32_t* cell_decisions;      /* (M,), null when N = 0 */
+  int64_t* records;             /* (R, 2) */
+  phx_mc_cad_boundary_split* splits;
+  phx_mc_cad_volume_stats* stats;
+} phx_mc_cad_volume_arrays;
+PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
+                                         const phx_mc_cad_surface_controls* controls,
+                                         const phx_mc_cad_volume_controls* volume,
+                                         phx_mc_cad_surface_result** result);
+/* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits. */
+PHX_MC_API int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
+                                           int64_t sizes[6]);
+PHX_MC_API int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
+                                            const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }
