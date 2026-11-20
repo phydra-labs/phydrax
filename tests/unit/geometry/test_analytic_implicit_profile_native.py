@@ -32,6 +32,32 @@ def test_sphere_profile_binds_reach_and_whole_boundary_cover() -> None:
     assert np.all(measured.lower <= measured.upper)
 
 
+def test_sphere_boundary_cover_is_the_first_count_whose_every_cell_is_covered() -> None:
+    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.4).compile()
+    profile = AnalyticImplicitProfile(geometry, SpatialCoordinateContract(METER))
+    radius = 0.02
+    cover = profile.boundary_cover(radius)
+    count = round(np.sqrt(cover.points.shape[0] // 6))
+    assert 6 * count * count == cover.points.shape[0]
+    initial, _ = profile._cover_counts(radius)
+    # The diagonal probe refutes counts; it must not move the admissible one.
+    assert initial < count
+    for candidate in range(initial, count + 1):
+        first, second = np.meshgrid(
+            np.arange(candidate, dtype=np.int64),
+            np.arange(candidate, dtype=np.int64),
+            indexing="ij",
+        )
+        points, radii = profile._cell_radii(
+            candidate, candidate, first.reshape((-1,)), second.reshape((-1,))
+        )
+        if candidate < count:
+            assert np.max(radii) > radius
+        else:
+            np.testing.assert_array_equal(points, cover.points)
+            np.testing.assert_array_equal(radii, cover.covering_radius)
+
+
 def test_full_ring_torus_profile_establishes_positive_reach_and_certified_queries() -> (
     None
 ):
