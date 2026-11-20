@@ -2356,12 +2356,15 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // V3's mixed atlas at a sphere pole. The pole vertex is exact topology: a
 // mesh vertex at a corner of a pole chord (use_kinds 1) whose chart latitude
 // is bitwise sigma kHalfPiLower. Its region R is the rows of the face that
-// touch it (fan rows and slivers) or whose corners all lie in the closed cap
+// touch it (fan rows and slivers) or that have a corner in the closed cap
 // sigma v >= kCapLatitude (pi/4 rounded down: an exact predicate on the
-// input chart points, not on any bound). There the uv chart's straight edge
-// of surface length l sags l^2 / (8 r sin rho), at least sqrt 2 times the
-// sphere's own l^2 / (8 r); R is associated in the pole chart, the rest of
-// the face in uv.
+// input chart points, not on any bound). R holds every row meeting the cap,
+// so an edge R shares with a uv row joins two corners below the cap (the uv
+// row has none in it), where the uv chart's straight edge of surface length
+// l sags l^2 / (8 r sin rho) < sqrt 2 times the sphere's own l^2 / (8 r),
+// and a mesh ring at the threshold cannot split rows between the charts. R
+// is associated in the pole chart (regular for rho <= 2), the rest of the
+// face in uv.
 //
 // Contract (MAC bc1b665 option (i), seam lens charge). For R's rows the
 // linear map is taken on the pole-chart corners (pole_corners), Phi on each
@@ -2449,14 +2452,14 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     for (int64_t i = 0; i < triangle_count && valid; ++i) {
       if (face_rows[i] != face) continue;
       int32_t mask = 0;
-      bool cap = true;
+      bool cap = false;
       for (int j = 0; j < 3; ++j) {
         const double v = uv[6 * i + 2 * j + 1];
         if (triangles[3 * i + j] == vertex) {
           if (!at_pole(v, sigma)) valid = false;
           mask |= 1 << j;
         }
-        cap = cap && sigma * v >= kCapLatitude;
+        cap = cap || sigma * v >= kCapLatitude;
       }
       if (mask == 0 && !cap) continue;
       std::array<double, 6> xy{};
