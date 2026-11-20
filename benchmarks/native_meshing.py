@@ -221,6 +221,7 @@ def _rows(
     names: frozenset[str] | None,
     improve_inputs: Path | None,
     query_inputs: Path | None,
+    overset_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -267,6 +268,10 @@ def _rows(
         ),
         (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
         (frozenset({"improve-sphere"}), lambda: _improve_rows(improve_inputs)),
+        (
+            frozenset({"overset-hex", "overset-tet"}),
+            lambda: _overset_rows(sizes, overset_inputs),
+        ),
     )
     queries = frozenset(
         {"query-closest", "query-signed", "query-winding", "query-locate"}
@@ -1488,6 +1493,382 @@ def _query_rows(sizes: tuple[int, ...], inputs: Path, /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+# F13 (ledger providers.md): a background on [-3, 3]^3 and a shell r in
+# [0.5, 1.5] around a wall at r = 0.5 with its receptor boundary at r = 1.5.
+# Hexahedra: the ledger driver's N^3 grid and equi-angular cubed-sphere shell
+# (N, n, layers); tetrahedra: the ledger's Kuhn background and Gmsh shell,
+# cells sorted by centroid z (f13_tet_setup.py --sorted).
+_F13_HEX = {10_000: (17, 9, 9), 100_000: (37, 20, 20), 1_000_000: (79, 44, 44)}
+_F13_TET = {10_000: "tet1e4", 100_000: "tet1e5", 1_000_000: "tet1e6"}
+_HEX_FACES = (
+    (0, 3, 2, 1),
+    (4, 5, 6, 7),
+    (0, 1, 5, 4),
+    (1, 2, 6, 5),
+    (2, 3, 7, 6),
+    (3, 0, 4, 7),
+)
+_TET_FACES = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
+
+
+class _OversetCase(NamedTuple):
+    vertex_offsets: np.ndarray
+    vertices: np.ndarray
+    cell_offsets: np.ndarray
+    cells: np.ndarray
+    face_offsets: np.ndarray
+    faces: np.ndarray
+    roles: np.ndarray
+
+
+def _f13_grid(count: int, /) -> tuple[np.ndarray, np.ndarray]:
+    side = count + 1
+    axis = -3.0 + 6.0 * np.arange(side, dtype=np.float64) / count
+    k, j, i = np.meshgrid(*(np.arange(side, dtype=np.int64),) * 3, indexing="ij")
+    points = np.stack((axis[i.ravel()], axis[j.ravel()], axis[k.ravel()]), axis=1)
+    k, j, i = (
+        value.ravel() for value in np.meshgrid(*(np.arange(count),) * 3, indexing="ij")
+    )
+
+    def vertex(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+        return (c * side + b) * side + a
+
+    cells = np.stack(
+        (
+            vertex(i, j, k),
+            vertex(i + 1, j, k),
+            vertex(i + 1, j + 1, k),
+            vertex(i, j + 1, k),
+            vertex(i, j, k + 1),
+            vertex(i + 1, j, k + 1),
+            vertex(i + 1, j + 1, k + 1),
+            vertex(i, j + 1, k + 1),
+        ),
+        axis=1,
+    )
+    return points, cells
+
+
+def _f13_shell(count: int, layers: int, /) -> tuple[np.ndarray, np.ndarray]:
+    # The ledger driver's cubed-sphere shell: node keys rounded at 1e-9
+    # de-duplicate face seams, and each hexahedron is turned positive.
+    angles = np.tan(np.pi / 4 * (-1 + 2.0 * np.arange(count + 1) / count))
+    face, layer, j, i = np.meshgrid(
+        np.arange(6),
+        np.arange(layers + 1),
+        np.arange(count + 1),
+        np.arange(count + 1),
+        indexing="ij",
+    )
+    a, b, one = angles[i], angles[j], np.ones(i.shape)
+    directions = np.select(
+        [face[..., None] == side for side in range(6)],
+        [
+            np.stack(rows, axis=-1)
+            for rows in (
+                (one, a, b),
+                (-one, -a, b),
+                (-a, one, b),
+                (a, -one, b),
+                (-b, a, one),
+                (b, a, -one),
+            )
+        ],
+    )
+    scale = 1.0 / np.sqrt(np.sum(directions * directions, axis=-1))
+    radius = 0.5 + layer / layers
+    points = (directions * scale[..., None] * radius[..., None]).reshape((-1, 3))
+    keys = np.rint(points * 1e9).astype(np.int64)
+    _, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first)
+    rank = np.empty_like(order)
+    rank[order] = np.arange(order.size)
+    ids = rank[inverse.reshape((-1,))].reshape(face.shape)
+    vertices = points[first[order]]
+    f, l, jj, ii = (
+        value.ravel()
+        for value in np.meshgrid(
+            np.arange(6),
+            np.arange(layers),
+            np.arange(count),
+            np.arange(count),
+            indexing="ij",
+        )
+    )
+    cells = np.stack(
+        (
+            ids[f, l, jj, ii],
+            ids[f, l, jj, ii + 1],
+            ids[f, l, jj + 1, ii + 1],
+            ids[f, l, jj + 1, ii],
+            ids[f, l + 1, jj, ii],
+            ids[f, l + 1, jj, ii + 1],
+            ids[f, l + 1, jj + 1, ii + 1],
+            ids[f, l + 1, jj + 1, ii],
+        ),
+        axis=1,
+    )
+    corners = vertices[cells]
+    turn = (
+        np.einsum(
+            "ij,ij->i",
+            np.cross(corners[:, 1] - corners[:, 0], corners[:, 3] - corners[:, 0]),
+            corners[:, 4] - corners[:, 0],
+        )
+        < 0
+    )
+    cells[turn] = cells[turn][:, [0, 3, 2, 1, 4, 7, 6, 5]]
+    return vertices, cells
+
+
+def _exterior_faces(cells: np.ndarray, /) -> np.ndarray:
+    # Faces used by one cell, as corner cycles padded to four.
+    local = _HEX_FACES if cells.shape[1] == 8 else _TET_FACES
+    rows = np.concatenate([cells[:, list(face)] for face in local])
+    keys = np.sort(rows, axis=1)
+    _, first, counts = np.unique(keys, axis=0, return_index=True, return_counts=True)
+    exterior = rows[np.sort(first[counts == 1])]
+    if exterior.shape[1] == 3:
+        exterior = np.concatenate(
+            (exterior, np.full((exterior.shape[0], 1), -1, dtype=exterior.dtype)), axis=1
+        )
+    return exterior
+
+
+def _overset_case(
+    background: tuple[np.ndarray, np.ndarray], shell: tuple[np.ndarray, np.ndarray], /
+) -> _OversetCase:
+    vertex_rows, cell_rows, face_rows, role_rows = [], [], [], []
+    base = 0
+    for index, (points, cells) in enumerate((background, shell)):
+        faces = _exterior_faces(cells)
+        radius = np.linalg.norm(points, axis=1)
+        roles = np.zeros((faces.shape[0],), dtype=np.uint8)
+        if index == 1:
+            corner_radius = np.where(faces >= 0, radius[np.maximum(faces, 0)], np.nan)
+            on = np.abs(corner_radius - 0.5) < 1e-6
+            roles[np.all(on | (faces < 0), axis=1)] = 1
+            on = np.abs(corner_radius - 1.5) < 1e-6
+            roles[np.all(on | (faces < 0), axis=1)] = 2
+        padded = np.full((cells.shape[0], 8), -1, dtype=np.int32)
+        padded[:, : cells.shape[1]] = cells + base
+        vertex_rows.append(points)
+        cell_rows.append(padded)
+        face_rows.append(np.where(faces >= 0, faces + base, -1).astype(np.int32))
+        role_rows.append(roles)
+        base += points.shape[0]
+
+    def offsets(rows: list[np.ndarray]) -> np.ndarray:
+        return np.concatenate(([0], np.cumsum([row.shape[0] for row in rows]))).astype(
+            np.int64
+        )
+
+    return _OversetCase(
+        offsets(vertex_rows),
+        np.ascontiguousarray(np.concatenate(vertex_rows), dtype=np.float64),
+        offsets(cell_rows),
+        np.concatenate(cell_rows),
+        offsets(face_rows),
+        np.concatenate(face_rows),
+        np.concatenate(role_rows),
+    )
+
+
+def _overset_run(case: _OversetCase, /) -> _meshcore.OversetAssembly:
+    cell_count = case.cells.shape[0]
+    return _meshcore.overset_assemble(
+        case.vertex_offsets,
+        case.vertices,
+        case.cell_offsets,
+        case.cells,
+        np.arange(cell_count, dtype=np.int64),
+        np.zeros((cell_count,), dtype=np.uint8),
+        case.face_offsets,
+        case.faces,
+        case.roles,
+        np.zeros((2,), dtype=np.int32),
+        np.arange(2, dtype=np.int32),
+        fringe_layers=1,
+        donor_priority=0,
+        # TIOGA's donors may hold fringe vertices; ours take a fringe donor
+        # only where no active cell contains the receptor.
+        fringe_donors=True,
+        prove=True,
+    )
+
+
+def _overset_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.OversetAssembly):
+        raise TypeError("Overset rows return OversetAssembly records.")
+    return result.cell_status.shape[0]
+
+
+def _overset_unmet(result: object, /) -> int:
+    # Orphan receptors and unproved ambiguous cells.
+    if not isinstance(result, _meshcore.OversetAssembly):
+        raise TypeError("Overset rows return OversetAssembly records.")
+    return round(float(result.stats[10] + result.stats[13]))
+
+
+def _trilinear_shapes(xi: np.ndarray, /) -> np.ndarray:
+    a, b, c = xi[:, 0], xi[:, 1], xi[:, 2]
+    return np.stack(
+        (
+            (1 - a) * (1 - b) * (1 - c),
+            a * (1 - b) * (1 - c),
+            a * b * (1 - c),
+            (1 - a) * b * (1 - c),
+            (1 - a) * (1 - b) * c,
+            a * (1 - b) * c,
+            a * b * c,
+            (1 - a) * b * c,
+        ),
+        axis=1,
+    )
+
+
+def _independent_reference(corners: np.ndarray, points: np.ndarray, /) -> np.ndarray:
+    # Barycentric weights of tetrahedra or Newton trilinear weights of
+    # hexahedra, as the ledger's f13_check.py computes them.
+    if corners.shape[1] == 4:
+        matrix = np.transpose(corners[:, 1:] - corners[:, :1], (0, 2, 1))
+        reference = np.linalg.solve(matrix, (points - corners[:, 0])[..., None])[..., 0]
+        return np.concatenate(
+            (1 - reference.sum(axis=1, keepdims=True), reference), axis=1
+        )
+    xi = np.full((points.shape[0], 3), 0.5)
+    for _ in range(30):
+        a, b, c = 1 - xi[:, 0], 1 - xi[:, 1], 1 - xi[:, 2]
+        x, y, z = xi[:, 0], xi[:, 1], xi[:, 2]
+        derivatives = (
+            np.stack(
+                (-b * c, b * c, y * c, -y * c, -b * z, b * z, y * z, -y * z), axis=1
+            ),
+            np.stack(
+                (-a * c, -x * c, x * c, a * c, -a * z, -x * z, x * z, a * z), axis=1
+            ),
+            np.stack(
+                (-a * b, -x * b, -x * y, -a * y, a * b, x * b, x * y, a * y), axis=1
+            ),
+        )
+        jacobian = np.stack(
+            [np.einsum("ij,ijk->ik", d, corners) for d in derivatives], axis=2
+        )
+        residual = np.einsum("ij,ijk->ik", _trilinear_shapes(xi), corners) - points
+        xi = xi - np.linalg.solve(jacobian, residual[..., None])[..., 0]
+    return _trilinear_shapes(xi)
+
+
+def _linear_field(x: np.ndarray, /) -> np.ndarray:
+    return 1 + x[..., 0] + 2 * x[..., 1] + 3 * x[..., 2]
+
+
+def _overset_quality(
+    case: _OversetCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    # Independent of the kernel, as the ledger's f13_check.py: every donor
+    # recomputed in NumPy (containment within 1e-9 and a mapping residual
+    # under 1e-9), linear reproduction, mandatory receptors left active, and
+    # background holes against the wall radius (inside r < 0.45, none beyond
+    # r = 0.5: the walls are inscribed in the sphere).
+    if not isinstance(result, _meshcore.OversetAssembly):
+        raise TypeError("Overset rows return OversetAssembly records.")
+    found = np.flatnonzero(result.donor_status == 0)
+    cells = case.cells[result.donor_cell[found]]
+    failures = 0
+    linear_error = 0.0
+    hexes = cells[:, 4] >= 0
+    for selection, width in ((hexes, 8), (~hexes, 4)):
+        if not np.any(selection):
+            continue
+        corners = case.vertices[cells[selection][:, :width]]
+        points = case.vertices[found[selection]]
+        weights = _independent_reference(corners, points)
+        mapped = np.einsum("ij,ijk->ik", weights, corners)
+        outside = np.maximum(-weights.min(axis=1), weights.max(axis=1) - 1)
+        residual = np.linalg.norm(mapped - points, axis=1)
+        failures += int(np.count_nonzero((outside > 1e-9) | (residual > 1e-9)))
+        reproduced = np.sum(weights * _linear_field(corners), axis=1)
+        linear_error = max(
+            linear_error, float(np.max(np.abs(reproduced - _linear_field(points))))
+        )
+    background = slice(int(case.vertex_offsets[0]), int(case.vertex_offsets[1]))
+    status = result.vertex_status
+    radius = np.linalg.norm(case.vertices[background], axis=1)
+    # Background vertices of cells touching a hole must not stay active.
+    rows = case.cells[int(case.cell_offsets[0]) : int(case.cell_offsets[1])]
+    corner_status = np.where(rows >= 0, status[np.maximum(rows, 0)], -1)
+    touching = np.any(corner_status == 2, axis=1)
+    left_active = np.unique(rows[touching][corner_status[touching] == 0]).size
+    shell_faces = case.faces[int(case.face_offsets[1]) :]
+    boundary_vertices = np.unique(
+        shell_faces[case.roles[int(case.face_offsets[1]) :] == 2]
+    )
+    boundary_vertices = boundary_vertices[boundary_vertices >= 0]
+    missing_receptors = int(np.count_nonzero(status[boundary_vertices] != 1))
+    inside_not_hole = int(np.count_nonzero((radius < 0.45) & (status[background] != 2)))
+    holes_beyond = int(np.count_nonzero((radius > 0.5) & (status[background] == 2)))
+    measured = {
+        "donor_contains_receptor_failures": float(failures),
+        "linear_reproduction_max_abs_error": linear_error,
+        "orphans": float(result.stats[10]),
+        "ambiguous_cells": float(result.stats[13]),
+        "receptors": float(result.stats[9]),
+        "background_holes": float(np.count_nonzero(status[background] == 2)),
+        "background_receptors": float(np.count_nonzero(status[background] == 1)),
+        "shell_receptors": float(
+            np.count_nonzero(status[int(case.vertex_offsets[1]) :] == 1)
+        ),
+        "hole_adjacent_left_active": float(left_active),
+        "boundary_not_receptor": float(missing_receptors),
+        "background_inside_0.45_not_hole": float(inside_not_hole),
+        "background_holes_beyond_0.5": float(holes_beyond),
+        "certification_rejections": float(result.stats[11]),
+        "fringe_donors": float(result.stats[14]),
+        "shared_face_donors": float(result.stats[15]),
+        "kernel_seconds": float(result.stats[7]),
+    }
+    missed = failures + left_active + missing_receptors + inside_not_hole + holes_beyond
+    return missed, measured
+
+
+def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
+    rows: list[_Row] = []
+    for size in sizes:
+        if size not in _F13_HEX:
+            continue
+        grid, count, layers = _F13_HEX[size]
+        case = _overset_case(_f13_grid(grid), _f13_shell(count, layers))
+        rows.append(
+            _Row(
+                "overset-hex",
+                size,
+                partial(_overset_run, case),
+                _overset_cells,
+                unmet=_overset_unmet,
+                quality=partial(_overset_quality, case),
+            )
+        )
+        if inputs is None:
+            continue
+        stored = np.load(inputs / f"f13-{_F13_TET[size]}s.npz")
+        case = _overset_case(
+            (np.asarray(stored["xb"], dtype=np.float64), np.asarray(stored["tb"])),
+            (np.asarray(stored["xs"], dtype=np.float64), np.asarray(stored["ts"])),
+        )
+        rows.append(
+            _Row(
+                "overset-tet",
+                size,
+                partial(_overset_run, case),
+                _overset_cells,
+                unmet=_overset_unmet,
+                quality=partial(_overset_quality, case),
+            )
+        )
+    return tuple(rows)
+
+
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -1548,6 +1929,13 @@ def main(argv: list[str] | None = None) -> int:
         help="directory of the ledger's F10 inputs (torus-1e5.npz, tet1e6.npz, "
         "q-1eN.npy, qloc-1eN.npy); the query rows run only with it",
     )
+    parser.add_argument(
+        "--overset-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F13 tetrahedral inputs (f13-tet1eNs.npz); "
+        "the overset-tet rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -1556,7 +1944,11 @@ def main(argv: list[str] | None = None) -> int:
     failed = False
     names = None if arguments.rows is None else frozenset(arguments.rows)
     for row in _rows(
-        tuple(arguments.sizes), names, arguments.improve_inputs, arguments.query_inputs
+        tuple(arguments.sizes),
+        names,
+        arguments.improve_inputs,
+        arguments.query_inputs,
+        arguments.overset_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}

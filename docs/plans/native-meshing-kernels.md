@@ -217,6 +217,31 @@ tetrahedra, then implicit volumes, then the CAD solid.
     adjacency, donor search on the packed BVH with exact barycentric containment for tets and a
     Krawczyk-certified inverse for trilinear hexes, the finest valid non-fringe donor, orphans reported
     as evidence (TIOGA's tet runs leave 14 and 5 silently).
+    Design (Nov 20). One call, `phx_mc_overset_assemble`, on flat blocks: world-frame vertices and
+    cells (rows of 8, tets use 4) per part, each part's exterior faces with a role (other, wall,
+    receptor boundary), excluded cells, cell IDs and priorities. Stages: (1) hole map: each part's
+    vertices against every other part's wall by +x ray parity with exact orient2d/orient3d and
+    symbolic tie-breaking (the rule of the Python owner); wall quads count as their two triangles
+    and a vertex in the closed corner tetrahedron of a nonplanar quad (which holds the bilinear patch
+    and both triangulations) is wall contact, hence hole; (2) cut cells: a cell is cut unless an
+    exact separating plane (a planar cell face or a face of the wall element's corner hull) or
+    disjoint bounds prove it misses every wall element (conservative); excluded cells are cut;
+    (3) fringe layers by cell adjacency and receptor-boundary vertices, wall vertices protected;
+    (4) donor search through a transient per-part cell-bin index, float barycentric (tets) or
+    Newton (trilinear hexes) location, candidates ordered by the policy key (finest valid ACTIVE
+    donor, priority, name, ID), non-ACTIVE containing cells recorded as exclusions; (5)
+    certification after construction walks each receptor's ordered candidates and accepts the
+    first exactly contained one (orient3d signs for tets; for hexes a Krawczyk interval enclosure
+    of the trilinear inverse inside the closed unit cube), so a float candidate that fails the
+    exact check is repaired by the next; receptors without a certified donor are orphans with
+    their status; (6) a cut cell with no hole vertex is ambiguous unless coverage is proved: a
+    vertex of it lies (certified) in the wall part and its bounds miss all non-wall exterior faces
+    of that part. `prove=False` stops after construction (donor coverage then reads unproved).
+    `prepare_overset_connectivity` uses the call for serial 3D affine-tet / trilinear-hex parts
+    without a source solid query when meshcore loads; the Python owner stays the documented path
+    for 2D, polyhedral, curved and solid-query parts and for a missing library. The packed BVH is
+    Python-built; building one per call costs more than the reference's whole call, so the kernel
+    keeps its own transient bin index.
   - S6-C prism layers on a tetrahedral mesh (F9; 5 layers, first 0.01, growth 1.2; Gmsh 0.309 s on the
     sphere at h 0.1, cfMesh 1.77 s at h 0.05; on the quadric Gmsh fails inward, Netgen thins to 17 % at
     edges, cfMesh 0.456 / 1.09 s). Native growth directions and heights with certified non-intersection,

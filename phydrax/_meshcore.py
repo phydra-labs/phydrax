@@ -250,6 +250,45 @@ class _RestrictedPowerCellsRequest(ctypes.Structure):
     )
 
 
+class _OversetParts(ctypes.Structure):
+    _fields_ = (
+        ("part_count", _I32),
+        ("vertex_offsets", _P),
+        ("vertices", _P),
+        ("cell_offsets", _P),
+        ("cells", _P),
+        ("cell_ids", _P),
+        ("cell_excluded", _P),
+        ("face_offsets", _P),
+        ("faces", _P),
+        ("face_roles", _P),
+        ("priorities", _P),
+        ("name_ranks", _P),
+        ("fringe_layers", _I32),
+        ("donor_priority", _I32),
+        ("fringe_donors", _I32),
+        ("prove", _I32),
+    )
+
+
+class _OversetResult(ctypes.Structure):
+    _fields_ = (
+        ("vertex_status", _P),
+        ("fringe_layer", _P),
+        ("wall_contact", _P),
+        ("protected_conflict", _P),
+        ("cell_status", _P),
+        ("ambiguous", _P),
+        ("donor_status", _P),
+        ("donor_cell", _P),
+        ("donor_reference", _P),
+        ("donor_residual", _P),
+        ("donor_measure", _P),
+        ("candidate_parts", _P),
+        ("stats", _P),
+    )
+
+
 class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     _fields_ = (
         ("original_site_count", _I64),
@@ -1234,6 +1273,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_bvh_tetrahedron_locate": (
         _I32,
         (_P, _I64, _P, _P, _P, _F64, _I64, _P, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_overset_assemble": (
+        _I32,
+        (ctypes.POINTER(_OversetParts), ctypes.POINTER(_OversetResult)),
     ),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
@@ -2469,6 +2512,140 @@ def graph_partition(
     )
     _raise_for_call(status, "graph_partition")
     return parts
+
+
+class OversetAssembly(NamedTuple):
+    """Per-vertex and per-cell records of ``overset_assemble`` (global rows)."""
+
+    vertex_status: np.ndarray
+    fringe_layer: np.ndarray
+    wall_contact: np.ndarray
+    protected_conflict: np.ndarray
+    cell_status: np.ndarray
+    ambiguous: np.ndarray
+    donor_status: np.ndarray
+    donor_cell: np.ndarray
+    donor_reference: np.ndarray
+    donor_residual: np.ndarray
+    donor_measure: np.ndarray
+    candidate_parts: np.ndarray
+    # Seconds of hole map, cut cells, fringe, donor index, coverage, donor
+    # construction, certification and total; then hole vertices, receptors,
+    # orphans, rejected candidates, located candidates, ambiguous cells,
+    # fringe donors and shared-face donors.
+    stats: np.ndarray
+
+
+def overset_assemble(
+    vertex_offsets: object,
+    vertices: object,
+    cell_offsets: object,
+    cells: object,
+    cell_ids: object,
+    cell_excluded: object,
+    face_offsets: object,
+    faces: object,
+    face_roles: object,
+    priorities: object,
+    name_ranks: object,
+    /,
+    *,
+    fringe_layers: int,
+    donor_priority: int,
+    fringe_donors: bool,
+    prove: bool,
+) -> OversetAssembly:
+    """Assemble overset blanking and certified donors of 3D tet/hex parts.
+
+    Rows follow ``phx_mc_overset_assemble``: world-frame vertices, cells as
+    rows of eight global vertex indices (tetrahedra padded with -1), exterior
+    faces as rows of four (triangles padded with -1) with roles 0 other,
+    1 wall, 2 receptor boundary.
+    """
+
+    vertex_bounds = _native_integer_array(
+        vertex_offsets, "vertex_offsets", np.dtype(np.int64)
+    )
+    points = _points(vertices, "vertices", 3)
+    cell_bounds = _native_integer_array(cell_offsets, "cell_offsets", np.dtype(np.int64))
+    cell_rows = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    identifiers = _native_integer_array(cell_ids, "cell_ids", np.dtype(np.int64))
+    excluded = np.ascontiguousarray(cell_excluded, dtype=np.uint8)
+    face_bounds = _native_integer_array(face_offsets, "face_offsets", np.dtype(np.int64))
+    face_rows = _native_integer_array(faces, "faces", np.dtype(np.int32))
+    roles = np.ascontiguousarray(face_roles, dtype=np.uint8)
+    part_priorities = _native_integer_array(priorities, "priorities", np.dtype(np.int32))
+    ranks = _native_integer_array(name_ranks, "name_ranks", np.dtype(np.int32))
+    part_count = part_priorities.shape[0]
+    vertex_count, cell_count, face_count = (
+        points.shape[0],
+        cell_rows.shape[0],
+        face_rows.shape[0],
+    )
+    if (
+        part_priorities.ndim != 1
+        or ranks.shape != part_priorities.shape
+        or any(
+            bounds.shape != (part_count + 1,)
+            for bounds in (vertex_bounds, cell_bounds, face_bounds)
+        )
+        or cell_rows.shape != (cell_count, 8)
+        or face_rows.shape != (face_count, 4)
+        or identifiers.shape != (cell_count,)
+        or excluded.shape != (cell_count,)
+        or roles.shape != (face_count,)
+        or int(vertex_bounds[-1]) != vertex_count
+        or int(cell_bounds[-1]) != cell_count
+        or int(face_bounds[-1]) != face_count
+    ):
+        raise ValueError("Overset part arrays have inconsistent shapes or offsets.")
+    for name, value in (
+        ("fringe_layers", fringe_layers),
+        ("donor_priority", donor_priority),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise TypeError(f"{name} must be an integer.")
+    if not isinstance(prove, bool) or not isinstance(fringe_donors, bool):
+        raise TypeError("prove and fringe_donors must be bools.")
+    result = OversetAssembly(
+        np.empty((vertex_count,), dtype=np.int8),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((cell_count,), dtype=np.int8),
+        np.empty((cell_count,), dtype=np.uint8),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((vertex_count,), dtype=np.int64),
+        np.empty((vertex_count, 3), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((16,), dtype=np.float64),
+    )
+    parts = _OversetParts(
+        part_count=part_count,
+        vertex_offsets=vertex_bounds.ctypes.data,
+        vertices=points.ctypes.data,
+        cell_offsets=cell_bounds.ctypes.data,
+        cells=cell_rows.ctypes.data,
+        cell_ids=identifiers.ctypes.data,
+        cell_excluded=excluded.ctypes.data,
+        face_offsets=face_bounds.ctypes.data,
+        faces=face_rows.ctypes.data,
+        face_roles=roles.ctypes.data,
+        priorities=part_priorities.ctypes.data,
+        name_ranks=ranks.ctypes.data,
+        fringe_layers=_int32_argument(fringe_layers, "fringe_layers"),
+        donor_priority=_int32_argument(donor_priority, "donor_priority"),
+        fringe_donors=1 if fringe_donors else 0,
+        prove=1 if prove else 0,
+    )
+    outputs = _OversetResult(*(array.ctypes.data for array in result))
+    status = load_meshcore()["phx_mc_overset_assemble"](
+        ctypes.byref(parts), ctypes.byref(outputs)
+    )
+    _raise_for_call(status, "overset_assemble")
+    return result
 
 
 def _int32_argument(value: object, name: str, /) -> int:
@@ -9071,7 +9248,14 @@ def _source_group_labels(
 _TET_SNAPSHOT_BANKS: tuple[
     tuple[str, np.dtype[Any], tuple[int, ...], int, int, int], ...
 ] = tuple(
-    (name, np.dtype(dtype), shape, count, extra, np.dtype(dtype).itemsize * int(np.prod(shape)))
+    (
+        name,
+        np.dtype(dtype),
+        shape,
+        count,
+        extra,
+        np.dtype(dtype).itemsize * int(np.prod(shape)),
+    )
     for name, dtype, shape, count, extra in (
         ("vertex_ids", np.uint64, (), 0, 0),
         ("points", np.float64, (3,), 0, 0),

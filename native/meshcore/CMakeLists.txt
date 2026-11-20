@@ -64,6 +64,8 @@ set(PHX_MC_SOURCES
   src/feature_protection.cpp
   src/graph_partition.cpp
   src/hex_topology.cpp
+  src/overset.cpp
+  src/overset_capi.cpp
   src/implicit_polygon.cpp
   src/implicit_face_proposals.cpp
   src/quad_topology.cpp
@@ -124,6 +126,7 @@ set(PHX_MC_HEADERS
   src/cavity.hpp
   src/clip3d.hpp
   src/clip_common.hpp
+  src/overset.hpp
   src/dyadic.hpp
   src/exact_line.hpp
   src/exact_scalar.hpp
@@ -269,6 +272,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_bvh_query)
+  phx_mc_add_test(test_overset)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)

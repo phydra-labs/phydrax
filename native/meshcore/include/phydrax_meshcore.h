@@ -1715,6 +1715,90 @@ PHX_MC_API int32_t phx_mc_bvh_tetrahedron_locate(
     double* residual, double* condition, int32_t* status, int32_t* containing,
     int32_t* candidates, double* candidate_reference);
 
+/* ------------------------------------------------------ overset assembly */
+/* Overset assembly of P three-dimensional parts in one call. Vertices are
+ * world-frame rows (V, 3); part p owns vertices [vertex_offsets[p],
+ * vertex_offsets[p + 1]), cells [cell_offsets[p], ...) and exterior faces
+ * [face_offsets[p], ...). Cell rows (C, 8) index global vertices of their
+ * own part: an affine tetrahedron is four corners then four -1, a trilinear
+ * hexahedron eight corners in reference order (0,0,0) (1,0,0) (1,1,0)
+ * (0,1,0) then the same at z = 1. Face rows (F, 4) are corner cycles
+ * (triangles end with -1) with face_roles 0 (other exterior face), 1 (wall:
+ * a closed surface whose enclosed region blanks the other parts; its
+ * vertices are never receptors) or 2 (receptor boundary). cell_excluded
+ * marks hole cells by declaration; cell_ids, priorities and name_ranks
+ * order equal donors. donor_priority 0 prefers the finest donor (measure,
+ * then higher priority), 1 the higher priority (then measure); ties go to
+ * the lower name rank, then the lower cell ID.
+ *
+ * Vertex status 0 active, 1 receptor, 2 hole (inside or touching another
+ * part's wall by exact +x ray parity; a vertex in the corner tetrahedron of a
+ * nonplanar wall quad touches it). A cell is a hole when declared, when a
+ * vertex is a hole, or when it is cut: no exact separating plane proves it
+ * misses a wall element (conservative). Fringe layer 1 holds the non-hole
+ * vertices of hole cells and receptor-boundary vertices; layer k + 1 the new
+ * vertices of non-hole cells touching layer k, up to fringe_layers; wall
+ * vertices are never receptors (protected_conflict marks a wall vertex that
+ * is not active). Cell status 0 active, 1 fringe (a receptor vertex), 2 hole.
+ * A cut cell with no hole vertex is ambiguous unless a vertex lies
+ * (certified) in the cutting part and its bounds miss that part's non-wall
+ * exterior faces.
+ *
+ * Every receptor gets donor_status FOUND 0, OUTSIDE 1, EXCLUDED_DONOR 2 (only
+ * excluded cells contain it) or UNRESOLVED 5; other vertices -1. Donors are
+ * unambiguous active cells of other parts, then (with fringe_donors != 0)
+ * fringe cells, never hole cells; with prove != 0 the chosen donor contains
+ * the receptor exactly (tetrahedron orientation signs; hexahedron Krawczyk
+ * enclosure of the trilinear inverse in the closed unit cube, a straddled
+ * face bound decided by the exact side of its bilinear surface), and a
+ * candidate that fails is replaced by the next in order. When every
+ * candidate leaves only face sides open and each open face is open in
+ * another candidate sharing it, the receptor lies in their closed union and
+ * the first takes it with its root clamped onto the face (a shared-face
+ * donor). donor_reference is the barycentric (l1, l2, l3) of a tetrahedron
+ * (l0 = 1 - sum) or the trilinear (xi, eta, zeta); donor_residual the float
+ * mapping residual, donor_measure the donor's volume, candidate_parts the
+ * number of parts with a valid candidate. stats (16): seconds of hole map,
+ * cut cells, fringe, donor index, coverage, donor construction,
+ * certification and total; then hole vertices, receptors, orphans, rejected
+ * candidates, located candidates, ambiguous cells, fringe donors and
+ * shared-face donors. */
+typedef struct phx_mc_overset_parts {
+  int32_t part_count;
+  const int64_t* vertex_offsets;
+  const double* vertices;
+  const int64_t* cell_offsets;
+  const int32_t* cells;
+  const int64_t* cell_ids;
+  const uint8_t* cell_excluded;
+  const int64_t* face_offsets;
+  const int32_t* faces;
+  const uint8_t* face_roles;
+  const int32_t* priorities;
+  const int32_t* name_ranks;
+  int32_t fringe_layers;
+  int32_t donor_priority;
+  int32_t fringe_donors;
+  int32_t prove;
+} phx_mc_overset_parts;
+typedef struct phx_mc_overset_result {
+  int8_t* vertex_status;
+  int32_t* fringe_layer;
+  uint8_t* wall_contact;
+  uint8_t* protected_conflict;
+  int8_t* cell_status;
+  uint8_t* ambiguous;
+  int32_t* donor_status;
+  int64_t* donor_cell;
+  double* donor_reference;
+  double* donor_residual;
+  double* donor_measure;
+  int32_t* candidate_parts;
+  double* stats;
+} phx_mc_overset_result;
+PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
+                                           const phx_mc_overset_result* result);
+
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
 enum phx_mc_power_failure_reason {
