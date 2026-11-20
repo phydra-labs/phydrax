@@ -591,6 +591,18 @@ class PreparedLinearCombinationBasis:
                 for function in polynomials
             )
 
+    def integer_terms(
+        self, /
+    ) -> tuple[tuple[tuple[tuple[tuple[int, ...], int], ...], ...], int] | None:
+        """``combine``'s integer basis and common denominator, or ``None``.
+
+        Each basis function is ``numerator / denominator * xi**exponent``
+        summed over its nonzero terms in stored order.
+        """
+        if self._integer_basis is None:
+            return None
+        return self._integer_basis, self._denominator
+
     def combine(
         self, coefficients: Sequence[Sequence[ExactScalar]], /
     ) -> tuple[Expression, ...]:

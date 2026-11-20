@@ -1170,6 +1170,31 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _I64, _P, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
     ),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
+    "phx_mc_cell_map_validity": (
+        _I32,
+        (
+            _I32,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I32,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            ctypes.c_int16,
+            _I64,
+            _P,
+            _F64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+        ),
+    ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
@@ -3748,6 +3773,81 @@ def tetrahedra_validity(
     )
     _raise_for_call(status, "tetrahedra_validity")
     return valid.astype(np.bool_), lower, upper
+
+
+def cell_map_validity(
+    domain: str,
+    basis: Sequence[Sequence[tuple[tuple[int, int, int], int]]],
+    denominator_log2: int,
+    kind: str,
+    significands: object,
+    exponents: object,
+    sparse_exponent: int,
+    routes: object,
+    floor: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact root validity proof of dof-linear polynomial cell maps in 3D.
+
+    ``basis`` lists each dof's integer terms ``(exponent, numerator)`` of the
+    basis ``numerator / 2**denominator_log2 * xi**exponent``; the coordinate
+    bank is the exact dyadic ``significands * 2**exponents`` of shape
+    ``(rows, 3)`` (``sparse_exponent`` marks non-dyadic entries). Returns
+    ``(decided, status, lower, upper, digests)``: a decided cell's
+    ``CellValidityStatus`` value (0 certified, 1 invalid), directed
+    determinant endpoints and exact-map digest equal those of the rational
+    per-cell proof; undecided cells are left to it.
+    """
+    significand_array = np.ascontiguousarray(significands, dtype=np.int64)
+    exponent_array = np.ascontiguousarray(exponents, dtype=np.int16)
+    route_array = np.ascontiguousarray(routes, dtype=np.int64)
+    if (
+        significand_array.ndim != 2
+        or significand_array.shape[1] != 3
+        or exponent_array.shape != significand_array.shape
+        or route_array.ndim != 2
+        or route_array.shape[1] != len(basis)
+    ):
+        raise ValueError("Cell map validity requires (rows, 3) banks and dof routes.")
+    starts = np.zeros((len(basis) + 1,), dtype=np.int64)
+    starts[1:] = np.cumsum([len(terms) for terms in basis])
+    term_exponents = np.asarray(
+        [exponent for terms in basis for exponent, _ in terms], dtype=np.int32
+    ).reshape(-1, 3)
+    term_numerators = np.asarray(
+        [numerator for terms in basis for _, numerator in terms], dtype=np.int64
+    )
+    encoded_kind = kind.encode("ascii")
+    count = route_array.shape[0]
+    decided = np.zeros((count,), dtype=np.int8)
+    status = np.zeros((count,), dtype=np.int32)
+    lower = np.zeros((count,), dtype=np.float64)
+    upper = np.zeros((count,), dtype=np.float64)
+    digests = np.zeros((count, 16), dtype=np.uint8)
+    result = load_meshcore()["phx_mc_cell_map_validity"](
+        {"simplex": 0, "box": 1}[domain],
+        len(basis),
+        starts.ctypes.data,
+        term_exponents.ctypes.data,
+        term_numerators.ctypes.data,
+        int(denominator_log2),
+        encoded_kind,
+        len(encoded_kind),
+        significand_array.shape[0],
+        significand_array.ctypes.data,
+        exponent_array.ctypes.data,
+        int(sparse_exponent),
+        count,
+        route_array.ctypes.data,
+        float(floor),
+        decided.ctypes.data,
+        status.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        digests.ctypes.data,
+    )
+    _raise_for_call(result, "cell_map_validity")
+    return decided.astype(np.bool_), status, lower, upper, digests
 
 
 class CadEntityKind(IntEnum):
