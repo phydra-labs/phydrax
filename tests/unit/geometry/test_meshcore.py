@@ -1512,7 +1512,7 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         np.empty(0, dtype=np.int64),
     )
     source = TetMeshImplicitSource(
-        value,
+        IntervalBranchProgram(value, np.empty((0, 6), dtype=np.int64)),
         gradient,
         np.asarray([3], dtype=np.int32),
         0.01,
@@ -1541,7 +1541,8 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         value.instructions[0, 0] = 99
         arrays = state.arrays()
         assert arrays.implicit_source is not None
-        assert arrays.implicit_source.source.value.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.program.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.events.shape == (0, 6)
         assert arrays.implicit_source.source.orientation == 1
     with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
         restored_source = restored.arrays().implicit_source
@@ -1560,17 +1561,58 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
     )
     with pytest.raises(ValueError, match="identity and frame"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
-    program = arrays.implicit_source.source.value
+    branches = arrays.implicit_source.source.value
+    program = branches.program
     low, high = program.workspace_lower.copy(), program.workspace_upper.copy()
     low[3] = high[3] = 1.0
     off_band = arrays.implicit_source.source._replace(
-        value=program._replace(workspace_lower=low, workspace_upper=high)
+        value=branches._replace(
+            program=program._replace(workspace_lower=low, workspace_upper=high)
+        )
     )
     tampered = arrays._replace(
         implicit_source=arrays.implicit_source._replace(source=off_band)
     )
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
+    # A jump field on the implicit facet: f = z + select(z > 0, c, -c) has no
+    # zero, yet over the facet z = 0 its enclosure is [-c, c] with grad f =
+    # (0, 0, 1). Without branch evidence the facet is admitted; with f's jump
+    # event (the comparison undecided on the facet) the source refuses.
+    c = 0.004
+    jump_workspace = np.asarray([0.0, 0.0, 0.0, 0.0, -c, c, 0.0, 0.0, 0.0])
+    jump = IntervalBoxProgram(
+        np.asarray(
+            [
+                [13, 6, 1, 2, -1, 3, -1, 0],
+                [14, 7, 1, 6, -1, 4, -1, 1],
+                [2, 8, 1, 2, -1, 7, -1, 0],
+            ],
+            dtype=np.int64,
+        ),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        jump_workspace,
+        jump_workspace.copy(),
+        np.asarray([8]),
+        np.empty(0, dtype=np.int64),
+    )
+    for events, refused in (
+        (np.empty((0, 6), dtype=np.int64), False),
+        (np.asarray([[1, 3, 1, 6, -1, -1]], dtype=np.int64), True),
+    ):
+        jumped = arrays.implicit_source.source._replace(
+            value=IntervalBranchProgram(jump, events)
+        )
+        tampered = arrays._replace(
+            implicit_source=arrays.implicit_source._replace(source=jumped)
+        )
+        if refused:
+            with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+                _restored_tet_mesh(tampered, tampered.witness_parameters)
+        else:
+            with _restored_tet_mesh(tampered, tampered.witness_parameters):
+                pass
 
 
 def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:

@@ -1913,10 +1913,18 @@ typedef struct phx_mc_interval_box_program {
  * bind. Zero orientation asks the owner to derive the common certified sign;
  * a nonzero sign must agree. A view returned by `implicit_source` borrows
  * immutable banks until the mesh is freed. Refusal counts are diagnostic and
- * restart at zero on a new binding. */
+ * restart at zero on a new binding. `value_events` (rows of kind, test, size,
+ * a, a_index, boxes over value's own workspace; see
+ * phx_mc_interval_program_branches) are f's complete branch evidence, checked
+ * for validity only (no events means continuous everywhere): every enclosure
+ * of f or grad f that a facet admission reads is over a box on which they
+ * report f continuous (else the facet is refused), and the transversality
+ * step also requires f smooth there, as in phx_mc_zero_set_certify. */
 typedef struct phx_mc_tet_implicit_source {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   const int32_t* groups;
   int64_t group_count;
   double tolerance;
