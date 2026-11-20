@@ -1916,6 +1916,16 @@
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.
+- Restricted Delaunay meshing keeps every seed box on which a domain guard
+  may fail (`phx_mc_implicit_restricted_delaunay` and
+  `implicit_restricted_delaunay` take the value program's guards), so a
+  real-power field no longer loses surface components; interval absolute value
+  keeps an exact 0 lower end, so real powers of |x| no longer fail their base
+  guard on boxes meeting a coordinate plane.
+- Tetrahedral implicit sources gate every facet admission on the field's
+  branch evidence: `phx_mc_tet_implicit_source` carries `value_events` and
+  `TetMeshImplicitSource.value` is an `IntervalBranchProgram`, so an implicit
+  facet whose box may hold a jump of f is refused instead of certified.
 - Zero-set certification (`zero_set_certify`): every interval enclosure a
   triangle, tube or witness proof reads requires the value program's branch
   evidence to report f continuous on the box, and transversality requires f
@@ -1941,14 +1951,17 @@
   Jacobian-spread bound (`binary64_first_order_interpolation_upper`) where it
   is only continuous, and refuse across possible jumps.
 - Source-fidelity restore ships the outward hull of the stored and recomputed
-  global and per-cell enclosures and refuses an adopted decision the hull does
-  not support, so a stale stored distance bound no longer survives
-  re-certification (per-chart rows and cover deviation bounds are still
-  adopted as stored).
-  Declared identity change: coverage certificate, bounded-homotopy witness
-  and witnessed-boundary ids no longer hash platform-rounded distance bounds
-  (the bounds stay validated evidence); report and result ids that include
-  them change.
+  evidence (global and per-cell enclosures, implicit chart rows, and the chart
+  cover, which carries its recomputed simplices with the larger bound) and
+  refuses an adopted decision the hull does not support, so a stale
+  certificate with an undersized stored bound is no longer re-certified.
+  Implicit sign coverage is recomputed on restore from the hulled
+  mesh-to-source bound; a bound that changes the leaf structure or reaches the
+  tolerance is refused. Declared identity change: coverage certificate,
+  bounded-homotopy witness, witnessed-boundary and implicit sign-coverage ids
+  no longer hash platform-rounded distance bounds (they carry decisions,
+  counts and exact leaf structure; the bounds stay validated evidence); degree,
+  report and result ids that include them change.
 - The surface certifiers refuse coordinates outside the exact predicates'
   domain before contact classification, and the surface-remesh benchmark rows
   run `zero_set_certify` in their untimed quality stage (a refusal or an
