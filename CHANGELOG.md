@@ -334,6 +334,20 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native meshing: `NativeMeshingPlan.execute(prove=False)` on B-Rep CAD
+  volumes (no layer controls, bundle-supported geometry) constructs curves,
+  faces and the fixed-boundary tetrahedra (geometry order 1 or 2) in one native
+  `cad_mesh_solid` call and returns the unproved candidate built from the
+  exported arrays (no achieved source deviation reported); `prove=True` still
+  uses the Python CAD construction and certification. Until the native CAD
+  verifiers are accepted, `prove()` on such a candidate refuses with
+  `UNSUPPORTED_COMBINATION`. CAD volume plans prepare the proof-only boundary
+  data (trim cover, chart roots) on the first proved execution; those refusals
+  now surface there.
+- Planar Ruppert refinement uses a pooled 4-ary spatial queue, an inlined
+  binary64 diametral filter with exact fallback, direct adjacency updates in
+  splits and flips, inlined per-star helpers and storage sized up front from
+  the area bound; output unchanged.
 - Benchmarks: an `improve-sphere` row times state creation plus improvement
   (radius-edge 2) on TetGen icosphere meshes of 17,274 / 142,911 / 1,163,771
   tetrahedra against MMG3D `-optim -nosurf`, with each size's minimum-dihedral
