@@ -1916,6 +1916,21 @@
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.
+- Zero-set certification (`zero_set_certify`): every interval enclosure a
+  triangle, tube or witness proof reads requires the value program's branch
+  evidence to report f continuous on the box, and transversality requires f
+  smooth there; the possible-zero cover keeps boxes where a guard (real-power
+  domain flag) fails; the reverse proof refuses a domain that does not hold the
+  surface, the tube proof stands only within the tolerance, and the implicit
+  remesh route and layer wall gate on and report the reverse distance;
+  `box_reach` no longer refuses boxes at mesh vertices; the cover refuses
+  before its children exceed the box budget.
+- Mapped cell location discharges an undecided inverse-root box beside an
+  isolated root only when a Krawczyk check over the box and the root's
+  enclosure isolates a single root; rootless boxes are bisected and each
+  sub-box must be excluded or isolated, so a second tolerance root keeps the
+  refusal. Points whose reference roots lie on dyadic bisection planes now
+  locate instead of being refused as "inverse-root search is incomplete".
 - Certified derivative bounds no longer miss kinks. Nested-JVP acceleration
   and Hessian enclosures differentiate `abs`, min/max and selections
   piecewise, so c(t) = (t, |t - 1/2|) was certified at about 1e-16 chord
@@ -1926,8 +1941,10 @@
   Jacobian-spread bound (`binary64_first_order_interpolation_upper`) where it
   is only continuous, and refuse across possible jumps.
 - Source-fidelity restore ships the outward hull of the stored and recomputed
-  enclosures and refuses an adopted decision the hull does not support, so a
-  stale certificate with an unsound stored bound is no longer re-certified.
+  global and per-cell enclosures and refuses an adopted decision the hull does
+  not support, so a stale stored distance bound no longer survives
+  re-certification (per-chart rows and cover deviation bounds are still
+  adopted as stored).
   Declared identity change: coverage certificate, bounded-homotopy witness
   and witnessed-boundary ids no longer hash platform-rounded distance bounds
   (the bounds stay validated evidence); report and result ids that include
