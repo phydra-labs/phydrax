@@ -3317,6 +3317,90 @@ def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
     _assert_same_arrays(*meshes)
 
 
+def _improvement_residual(
+    mesh: TetMesh3D, radius_edge_bound: float, dihedral_degrees: float
+) -> tuple[int, float]:
+    # Independent measure of improvement's residual: cells whose relative
+    # determinant (|det| over the largest edge product at a corner) is at
+    # most 2^-22, and the summed score deficit 1 - min(1, dihedral / target,
+    # bound / radius-edge) of the others.
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    edges = corners[:, 1:] - corners[:, :1]
+    determinant = np.einsum("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
+    pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    length = {
+        (i, j): np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in pairs
+    }
+    length.update({(j, i): value for (i, j), value in tuple(length.items())})
+    products = np.max(
+        [
+            np.prod([length[(k, other)] for other in range(4) if other != k], axis=0)
+            for k in range(4)
+        ],
+        axis=0,
+    )
+    below = np.abs(determinant) / products <= 2.0**-22
+    normals = [
+        np.cross(corners[:, b] - corners[:, a], corners[:, c] - corners[:, a])
+        for a, b, c in ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
+    ]
+    normals = [normal / np.linalg.norm(normal, axis=1)[:, None] for normal in normals]
+    cosines = [
+        -np.einsum("ij,ij->i", normals[i], normals[j])
+        for i in range(4)
+        for j in range(i + 1, 4)
+    ]
+    dihedral = np.degrees(np.arccos(np.clip(np.max(cosines, axis=0), -1.0, 1.0)))
+    squared = [np.einsum("ij,ij->i", edge, edge) for edge in edges.transpose(1, 0, 2)]
+    numerator = (
+        squared[0][:, None] * np.cross(edges[:, 1], edges[:, 2])
+        + squared[1][:, None] * np.cross(edges[:, 2], edges[:, 0])
+        + squared[2][:, None] * np.cross(edges[:, 0], edges[:, 1])
+    )
+    circumradius = np.linalg.norm(numerator, axis=1) / (2.0 * np.abs(determinant))
+    shortest = np.min([length[pair] for pair in pairs], axis=0)
+    radius_edge = circumradius / shortest
+    score = np.minimum(
+        np.minimum(dihedral / dihedral_degrees, radius_edge_bound / radius_edge), 1.0
+    )
+    return int(below.sum()), float(np.sum(1.0 - score[~below]))
+
+
+def test_improvement_ends_on_a_fixed_boundary_flat_to_rounding() -> None:
+    # The recovered sphere surface of a solid whose equator ring is doubled 2
+    # ulps apart (22 seam triangles flat to rounding; recovery now refuses
+    # it, so the fixture holds the mesh recovered before that check). Cells on
+    # the seam stay below the determinant floor whatever improvement does.
+    # Accepting every edit that improved its cells' worst-first scores let
+    # insertions trade one poor cell for many slightly better ones and
+    # collapses trade them back (tens of thousands of edits, minutes);
+    # every accepted edit now lowers the residual (below-floor cells, then the
+    # mesh's worst score and its multiplicity, then total score deficit, then
+    # cell count), and the run ends UNRESOLVED with the seam's cells reported
+    # below the floor.
+    with np.load(Path(__file__).with_name("flat_seam_sphere_recovery.npz")) as fixture:
+        mesh = TetMesh3D(
+            fixture["points"],
+            fixture["tetrahedra"],
+            fixture["tetrahedron_regions"],
+            fixture["faces"],
+            fixture["face_sources"],
+            fixture["segments"],
+            fixture["segment_sources"],
+            boundary_policy=PlcBoundaryPolicy.FIXED,
+            protection_radii=fixture["protection_radii"],
+        )
+    points = mesh.arrays().points.shape[0]
+    mesh.refine(radius_edge_bound=2.0, sizes=np.full((points,), 0.3))
+    below, deficit = _improvement_residual(mesh, 2.0, 15.5)
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.5)
+    assert run.status is MeshcoreStatus.UNRESOLVED
+    assert np.any(mesh.unmet().criteria == 4)  # PHX_MC_TET_UNMET_VALIDITY
+    after_below, after_deficit = _improvement_residual(mesh, 2.0, 15.5)
+    assert after_below < below or (after_below == below and after_deficit < deficit)
+
+
 def test_fixed_boundary_refinement_packs_the_interior_as_the_bounding_lattice() -> None:
     # A uniform circumradius bound h on a fixed boundary: every cell meets it,
     # and refinement inserts about as many vertices as the body-centered cubic
