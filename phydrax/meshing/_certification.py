@@ -852,6 +852,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.domain,
                 inputs.native_cad_surface,
                 inputs.fidelity_tolerance,
+                inputs.protected_features,
+                inputs.maximum_normal_deviation,
             )
             findings.extend(native_cad.findings)
         elif inputs.source is not None:

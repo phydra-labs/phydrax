@@ -5,16 +5,24 @@
 ### Added
 - Proved CAD solids (`cad_tetrahedral`, every source face sized, no layer
   controls) are the native `cad_mesh_solid` candidate certified by the native
-  verifiers in order: chart partition (V4), surface embedding (V2), CAD
-  fidelity at the request's `maximum_deviation` (V3), then global tetrahedral
-  embedding and exact tiling of the solid the certified surface bounds. The
-  report's `native_cad` certificate carries the findings, V3's maximum bound
-  and the obligations it does not prove (`unproved_premises`: source shell
-  embedding, source occurrence records). `execute(prove=True)` equals
-  `execute(prove=False).prove()`. Geometry order 2 CAD solids are refused at
-  proof. Bindings `verify_surface_embedding` and `verify_chart_partition`.
-  The quadric proof at h 0.2293 / 0.1061 takes 0.05 / 0.11 s of native
-  verification instead of 14 / 29 s for the Python route.
+  verifiers in order: chart partition (V4), surface embedding (V2), the source
+  shell, CAD fidelity at the request's `maximum_deviation` (V3), then global
+  tetrahedral embedding and exact tiling of the solid the certified surface
+  bounds. The source shell (one embedded shell, outward material side) is
+  proved from the model once per domain (single-shell topology, native trim
+  sheets, face-pair separation including a new exact plane/plane family, shell
+  volume sign) and, per mesh, on the native chart export (chord loops bound to
+  their source uses, trim-to-chord homotopy, reference trim sheets); cone and
+  torus solids are refused there as on the Python route. The report's
+  `native_cad` certificate carries the findings, V3's maximum bound, the shell
+  proof and the obligation it does not prove (`unproved_premises`: source
+  occurrence records). Protected features or a normal-deviation bound given to
+  the native certificate are refused as unresolved. `execute(prove=True)`
+  equals `execute(prove=False).prove()`. Geometry order 2 CAD solids are
+  refused at proof. Bindings `verify_surface_embedding` and
+  `verify_chart_partition`. The quadric proof at h 0.2293 / 0.1061 takes 0.05
+  / 0.11 s of native verification instead of 14 / 29 s for the Python route
+  (before the shell proof).
 - Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
   per-triangle distance bounds between a finished CAD surface mesh and its
   exact source (interior, trim lens, pole and knot-line terms), with lazily

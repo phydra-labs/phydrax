@@ -646,6 +646,24 @@ def test_unproved_cad_solid_takes_the_native_route(
 _CERTIFIED_FIXTURES = {
     "quadric": (_quadric_model, 0.2293),
     "sphere": (_sphere_model, 0.2),
+    "cylinder": (
+        lambda: phx.geometry.brep.brep_cylinder(
+            0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+    "box": (
+        lambda: phx.geometry.brep.brep_box(
+            np.zeros(3),
+            np.asarray((1.0, 0.5, 0.25)),
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        ),
+        0.3,
+    ),
+}
+
+# Their native trim sheets are unproved, as on the Python route.
+_UNPROVED_SHELL_FIXTURES = {
     "cone": (
         lambda: phx.geometry.brep.brep_cone(
             0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
@@ -679,14 +697,114 @@ def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
     assert native.tolerance == 0.05
     assert native.maximum_deviation is not None
     assert 0.0 <= native.maximum_deviation <= 0.05
-    # The obligations no native verifier proves are stated, not claimed.
+    # The source shell is proved, not stated as a premise.
+    assert native.source_shell is not None
     assert native.unproved_premises == UNPROVED_PREMISES
-    assert "source_shell_embedding" in native.unproved_premises
+    assert "source_shell_embedding" not in native.unproved_premises
     # One construction, then certification: the same candidate and report.
     again = plan.execute(prove=False).prove()
     assert again.mesh.mesh_id == result.mesh.mesh_id
     assert again.certification is not None
     assert again.certification.report_id == certification.report_id
+
+
+@pytest.mark.parametrize("name", sorted(_UNPROVED_SHELL_FIXTURES))
+def test_unproved_source_shell_refuses_the_cad_solid(name: str) -> None:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    factory, size = _UNPROVED_SHELL_FIXTURES[name]
+    plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
+    with pytest.raises(
+        MeshingFailure,
+        match="Rooted CAD source shell embedding or material orientation remains "
+        r"unresolved \(refused at: trim sheet of source patch",
+    ):
+        plan.execute()
+
+
+def test_source_shell_is_proved_once_per_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._native_cad_shell as native_shell
+
+    calls: list[MeshingDomain] = []
+    prove = native_shell.prove_source_shell
+
+    def counted(domain: MeshingDomain, /) -> native_shell.NativeSourceShell:
+        calls.append(domain)
+        return prove(domain)
+
+    monkeypatch.setattr(native_shell, "prove_source_shell", counted)
+    domain = MeshingDomain.from_brep(_sphere_model())
+    first = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    # Another mesh of the same domain reuses the model part of the proof.
+    second = _cad_volume_plan(domain, 0.2, 1, radius_edge=8.0, dihedral=0.0).execute()
+    assert calls == [domain]
+    shells = []
+    for result in (first, second):
+        assert result.certification is not None and result.certification.passed
+        native = result.certification.native_cad
+        assert native is not None and native.source_shell is not None
+        shells.append(native.source_shell)
+    # The chart part is per mesh.
+    assert first.mesh.mesh_id != second.mesh.mesh_id
+    assert shells[0] != shells[1]
+
+
+def test_reversed_source_shell_is_refused() -> None:
+    from phydrax.meshing._native_cad_shell import prove_source_shell
+
+    box = _CERTIFIED_FIXTURES["box"][0]()
+    assert prove_source_shell(MeshingDomain.from_brep(box)).refusal is None
+    # The same faces with every orientation flipped bound an inward shell.
+    reversed_box = phx.geometry.brep.BRepModel(
+        geometry=box.geometry,
+        patches=box.patches,
+        parameter_bounds=np.asarray(box.parameter_bounds),
+        orientation=-np.asarray(box.orientation),
+        physical_tags=box.physical_tags,
+        coordinate_contract=box.coordinate_contract,
+        report=box.report,
+        trim_domains=box.trim_domains,
+    )
+    shell = prove_source_shell(MeshingDomain.from_brep(reversed_box))
+    assert shell.refusal == "shell volume sign"
+
+
+@pytest.mark.parametrize("request_field", ["protected features", "normal deviation"])
+def test_native_cad_certificate_refuses_requests_without_native_owner(
+    request_field: str,
+) -> None:
+    # Neither request reaches the native route today (protected features keep
+    # the existing construction; volume specifications have no normal bound);
+    # given one, the native certificate refuses it rather than dropping it.
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._native_cad_certificate import NativeCadCertificate
+    from phydrax.meshing._scope import MeshingScope
+
+    candidate = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute(prove=False)
+    request = candidate._construction.certification
+    witness = request.native_cad_surface
+    domain = request.domain
+    assert witness is not None and isinstance(domain, MeshingDomain)
+    features = (
+        (ProtectedFeature(MeshingScope.whole(domain, 2), FeatureKind.SURFACE),)
+        if request_field == "protected features"
+        else ()
+    )
+    normal = 0.5 if request_field == "normal deviation" else None
+    certificate = NativeCadCertificate(
+        candidate.mesh, candidate.geometry, domain, witness, 0.05, features, normal
+    )
+    assert certificate.status == "unresolved"
+    assert certificate.source_shell is None
+    (finding,) = certificate.findings
+    assert finding.check == "cad_native_unsupported_request"
+    assert (
+        "protected features" if features else "maximum_normal_deviation"
+    ) in finding.detail
 
 
 def test_proved_quadratic_cad_solid_is_refused() -> None:
