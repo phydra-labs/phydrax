@@ -1843,6 +1843,16 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Fixed spline source interpolation certificates at interior C0 knot lines:
+  a chart triangle crossing a knot line of multiplicity at least the degree
+  (rational: decided from knots and weights) is clipped exactly into smooth
+  pieces whose vertex residuals are enclosed, instead of using one Hessian
+  bound across the crease (which could certify 0 for a distance of 1).
+  Possible discontinuities, non-triangular cells across such a line and
+  T-spline Hessian bounds without a C1 certificate are refused. Declared
+  identity change: fidelity certificate ids and cover ids can change where
+  decisions change, and stored deformation records or certificates of charts
+  crossing such knots must be regenerated.
 - The native volume verifier, the PLC recovery contact grid and the surface
   certifier range-check grid quotients before converting them to integers: an
   accepted coordinate range near the exact-predicate limits previously made
