@@ -1731,7 +1731,10 @@ def _overset_part(name: str, points: np.ndarray, cells: np.ndarray, /) -> MeshPa
 
 
 def _overset_api_case(
-    background: tuple[np.ndarray, np.ndarray], shell: tuple[np.ndarray, np.ndarray], /
+    background: tuple[np.ndarray, np.ndarray],
+    shell: tuple[np.ndarray, np.ndarray],
+    policy: OversetPolicy,
+    /,
 ) -> _OversetApiCase:
     parts = (
         _overset_part("background", *background),
@@ -1770,9 +1773,6 @@ def _overset_api_case(
             boundary=parts[1].scope(2, identifiers[boundary & (radius > 1.0)]),
         ),
     )
-    # TIOGA's donors may hold fringe vertices; ours take a fringe donor only
-    # where no active cell contains the receptor.
-    policy = OversetPolicy(fringe_layers=1, fringe_donors=True)
     return _OversetApiCase(flat, MeshAssembly(parts), specs, policy)
 
 
@@ -1874,20 +1874,11 @@ def _linear_field(x: np.ndarray, /) -> np.ndarray:
     return 1 + x[..., 0] + 2 * x[..., 1] + 3 * x[..., 2]
 
 
-def _overset_quality(
-    api: _OversetApiCase, result: object, /
-) -> tuple[int, dict[str, float]]:
-    # Independent of the implementation, as the ledger's f13_check.py: every
-    # donor of the public records recomputed in NumPy (containment within
-    # 1e-9 and a mapping residual under 1e-9), linear reproduction, mandatory
-    # receptors left active, and background holes against the wall radius
-    # (inside r < 0.45, none beyond r = 0.5: the walls are inscribed in the
-    # sphere). Untimed: the certified call (prove=True), which must be
-    # complete, and the bare kernel's own clock as a sub-field.
-    if not isinstance(result, OversetConnectivity):
-        raise TypeError("Overset rows return OversetConnectivity records.")
-    case = api.flat
-    status, donor_status, donor_cell = _overset_outcome(case, result)
+def _overset_donor_check(
+    case: _OversetCase, donor_status: np.ndarray, donor_cell: np.ndarray, /
+) -> tuple[int, float]:
+    # Donors recomputed in NumPy: containment within 1e-9, a mapping residual
+    # under 1e-9, and the linear-reproduction error.
     found = np.flatnonzero(donor_status == 0)
     cells = case.cells[donor_cell[found]]
     failures = 0
@@ -1907,6 +1898,26 @@ def _overset_quality(
         linear_error = max(
             linear_error, float(np.max(np.abs(reproduced - _linear_field(points))))
         )
+    return failures, linear_error
+
+
+def _overset_quality(
+    api: _OversetApiCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    # Independent of the implementation, as the ledger's f13_check.py: every
+    # donor of the public records recomputed in NumPy, mandatory receptors
+    # left active, and background holes against the wall radius (inside
+    # r < 0.45, none beyond r = 0.5: the walls are inscribed in the sphere).
+    # Untimed: the certified call (prove=True), which must be complete with
+    # the same blanking and donors that pass the same check (certification
+    # may pick another containing cell on a shared face), and the bare
+    # kernel's own clock as a sub-field.
+    if not isinstance(result, OversetConnectivity):
+        raise TypeError("Overset rows return OversetConnectivity records.")
+    case = api.flat
+    status, donor_status, donor_cell = _overset_outcome(case, result)
+    found = np.flatnonzero(donor_status == 0)
+    failures, linear_error = _overset_donor_check(case, donor_status, donor_cell)
     background = slice(int(case.vertex_offsets[0]), int(case.vertex_offsets[1]))
     radius = np.linalg.norm(case.vertices[background], axis=1)
     # Background vertices of cells touching a hole must not stay active.
@@ -1923,14 +1934,25 @@ def _overset_quality(
     inside_not_hole = int(np.count_nonzero((radius < 0.45) & (status[background] != 2)))
     holes_beyond = int(np.count_nonzero((radius > 0.5) & (status[background] == 2)))
     certified, certified_seconds = measure_host(partial(_overset_run, api, prove=True))
-    uncertified = 0
+    certified_status, certified_donor_status, certified_cell = _overset_outcome(
+        case, certified
+    )
+    certified_failures = _overset_donor_check(
+        case, certified_donor_status, certified_cell
+    )[0]
     try:
         certified.require_complete()
+        incomplete = 0
     except OversetConnectivityError:
-        uncertified = 1
-    if not np.array_equal(_overset_outcome(case, certified)[2][found], donor_cell[found]):
-        uncertified = 1
+        incomplete = 1
+    if not np.array_equal(certified_status, status) or not np.array_equal(
+        certified_donor_status, donor_status
+    ):
+        incomplete = 1
     kernel = _overset_kernel(case)
+    # Evidence for the row's explicit policy: the default policy (active
+    # donors only) on the same parts, untimed.
+    default = _overset_run(api._replace(policy=OversetPolicy()), prove=True)
     measured = {
         "donor_contains_receptor_failures": float(failures),
         "linear_reproduction_max_abs_error": linear_error,
@@ -1946,9 +1968,17 @@ def _overset_quality(
         "boundary_not_receptor": float(missing_receptors),
         "background_inside_0.45_not_hole": float(inside_not_hole),
         "background_holes_beyond_0.5": float(holes_beyond),
-        # prove=True: the same donors, every one certified, outside the ceiling.
+        # prove=True, outside the ceiling: every donor certified.
         "certified_seconds": certified_seconds,
-        "certified_incomplete_or_different": float(uncertified),
+        "certified_incomplete_or_blanking_differs": float(incomplete),
+        "certified_donor_failures": float(certified_failures),
+        "certified_donors_changed": float(
+            np.count_nonzero(certified_cell[found] != donor_cell[found])
+        ),
+        "policy_fringe_layers": float(api.policy.fringe_layers),
+        "policy_fringe_donors": float(api.policy.fringe_donors),
+        "default_policy_orphans": float(default.orphan_count),
+        "default_policy_ambiguous_cells": float(default.ambiguous_count),
         "kernel_seconds": float(kernel.stats[7]),
         "fringe_donors": float(kernel.stats[14]),
         "shared_face_donors": float(kernel.stats[15]),
@@ -1959,14 +1989,18 @@ def _overset_quality(
         + missing_receptors
         + inside_not_hole
         + holes_beyond
-        + uncertified
+        + incomplete
+        + certified_failures
     )
     return missed, measured
 
 
 def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
     # The rows time the public prepare_overset_connectivity(prove=False) on
-    # parts built before timing.
+    # parts built before timing, under this explicit policy: TIOGA's donors
+    # may hold fringe vertices; ours take a fringe donor only where no active
+    # cell contains the receptor. The default policy's orphans are reported.
+    policy = OversetPolicy(fringe_layers=1, fringe_donors=True)
     rows: list[_Row] = []
     for size in sizes:
         if size not in _F13_HEX:
@@ -1989,7 +2023,7 @@ def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row,
                 )
             )
         for name, background, shell in cases:
-            case = _overset_api_case(background, shell)
+            case = _overset_api_case(background, shell, policy)
             rows.append(
                 _Row(
                     name,

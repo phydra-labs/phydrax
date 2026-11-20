@@ -215,6 +215,13 @@ def _polyhedral_cell_measures(locator: PreparedPolyhedralCellLocator, /) -> np.n
     return volumes
 
 
+def _id_rows(identifiers: np.ndarray, wanted: np.ndarray, /) -> np.ndarray:
+    """Rows of ``wanted`` in ``identifiers``, sorting only the matching rows."""
+    candidates = np.flatnonzero(np.isin(identifiers, wanted))
+    order = candidates[np.argsort(identifiers[candidates], kind="stable")]
+    return order[np.searchsorted(identifiers[order], wanted)]
+
+
 def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
     part.require_scope(scope)
     mesh = _cell_result(part).mesh
@@ -225,8 +232,7 @@ def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
     if isinstance(connectivity, PolyhedralConnectivity):
         identifiers = np.asarray(connectivity.face_global_ids, dtype=np.int64)
         boundary = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-        order = np.argsort(identifiers, kind="stable")
-        rows = order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
+        rows = _id_rows(identifiers, np.asarray(scope.entity_ids, dtype=np.int64))
         if np.any(~boundary[rows]):
             raise ValueError(
                 "Overset wall and receptor scopes must identify exterior facets."
@@ -274,8 +280,7 @@ def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
         or identifiers.shape != boundary.shape
     ):
         raise ValueError("Overset facet connectivity lacks complete canonical incidence.")
-    order = np.argsort(identifiers, kind="stable")
-    rows = order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
+    rows = _id_rows(identifiers, np.asarray(scope.entity_ids, dtype=np.int64))
     if np.any(~boundary[rows]):
         raise ValueError(
             "Overset wall and receptor scopes must identify exterior facets."
@@ -1058,16 +1063,23 @@ class _PartGeometry(StrictModule, NonTrainableState):
     cell_vertices: Array
     cell_vertex_valid: Array
     cell_ids: Array
-    # None on native parts: the native assembly measures its donor cells.
+    # None on native parts: the native assembly measures and bounds its own
+    # cells; the Python owner and owner-local views carry both.
     cell_measures: Array | None
-    cell_lower: Array
-    cell_upper: Array
+    cell_lower: Array | None
+    cell_upper: Array | None
     cell_locators: tuple[AbstractCellLocator, ...]
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     block_names: tuple[str, ...] = eqx.field(static=True)
     wall_facets: Array | None
     wall_lower: Array | None
     wall_upper: Array | None
+
+
+def _cell_bounds(geometry: _PartGeometry, /) -> tuple[Array, Array]:
+    if geometry.cell_lower is None or geometry.cell_upper is None:
+        raise ValueError("Overset cell bounds are not prepared on native parts.")
+    return geometry.cell_lower, geometry.cell_upper
 
 
 def _owner_local_carrier(part: MeshPart, /) -> OwnerLocalCellGeometry:
@@ -2031,10 +2043,11 @@ def _owner_local_cut_cells(
                 if owner_by_id[identifier_] != local_rank:
                     continue
                 key = (part.name, identifier_)
+                lower, upper = _cell_bounds(geometry)
                 box = np.stack(
                     (
-                        np.asarray(geometry.cell_lower[row], dtype=np.float64),
-                        np.asarray(geometry.cell_upper[row], dtype=np.float64),
+                        np.asarray(lower[row], dtype=np.float64),
+                        np.asarray(upper[row], dtype=np.float64),
                     )
                 )
                 if box.shape != (2, dimension) or np.any(~np.isfinite(box)):
@@ -2722,28 +2735,21 @@ def _owner_local_prepare_blanking(
 def _native_geometry(part: MeshPart, /) -> _PartGeometry:
     """Cell banks of a part the native assembly owns, built in bulk.
 
-    The native call classifies walls, locates donors and measures donor cells
-    itself, so the mapped-cell locators, measures and wall banks of the Python
-    owner are not built (the certified carrier already proved its cells
-    valid): cell rows come from the blocks, and bounds are corner boxes,
-    exact for P1/Q1 maps, whose cells lie in their corners' convex hull.
+    The native call classifies walls, bounds, locates and measures cells
+    itself, so the mapped-cell locators, bounds, measures and wall banks of
+    the Python owner are not built (the certified carrier already proved its
+    cells valid): cell rows come from the blocks.
     """
     mesh = _cell_result(part).mesh
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
     blocks = tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
     width = max(rows.shape[1] for rows in blocks)
     cell_vertices = np.zeros((sum(rows.shape[0] for rows in blocks), width), np.int64)
     cell_vertex_valid = np.zeros(cell_vertices.shape, dtype=np.bool_)
-    cell_lower = np.empty((cell_vertices.shape[0], 3), dtype=np.float64)
-    cell_upper = np.empty_like(cell_lower)
     block_offsets = [0]
     for rows in blocks:
         cells = slice(block_offsets[-1], block_offsets[-1] + rows.shape[0])
-        corners = points[rows]
         cell_vertices[cells, : rows.shape[1]] = rows
         cell_vertex_valid[cells, : rows.shape[1]] = True
-        cell_lower[cells] = corners.min(axis=1)
-        cell_upper[cells] = corners.max(axis=1)
         block_offsets.append(cells.stop)
     return _PartGeometry(
         part_id=part.part_id,
@@ -2755,8 +2761,8 @@ def _native_geometry(part: MeshPart, /) -> _PartGeometry:
             )
         ),
         cell_measures=None,
-        cell_lower=jnp.asarray(cell_lower),
-        cell_upper=jnp.asarray(cell_upper),
+        cell_lower=None,
+        cell_upper=None,
         cell_locators=(),
         block_offsets=tuple(block_offsets),
         block_names=tuple(block.name for block in mesh.blocks),
@@ -2998,7 +3004,7 @@ def _cut_cell_candidates(
 ) -> np.ndarray:
     if facets_in_part_frame.size == 0:
         return np.zeros(geometry.cell_ids.shape, dtype=np.bool_)
-    cells = prepare_bvh(geometry.cell_lower, geometry.cell_upper, dtype=jnp.float64)
+    cells = prepare_bvh(*_cell_bounds(geometry), dtype=jnp.float64)
     facets = prepare_bvh(
         np.min(facets_in_part_frame, axis=1),
         np.max(facets_in_part_frame, axis=1),
@@ -3020,7 +3026,7 @@ def _cut_cell_candidates(
 def _cut_cell_bounds(
     geometry: _PartGeometry, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    cells = prepare_bvh(geometry.cell_lower, geometry.cell_upper, dtype=jnp.float64)
+    cells = prepare_bvh(*_cell_bounds(geometry), dtype=jnp.float64)
     wall = prepare_bvh(lower[None, :], upper[None, :], dtype=jnp.float64)
     cut = np.zeros(np.asarray(geometry.cell_ids).shape, dtype=np.bool_)
     for rows, _ in bvh_overlap_pair_blocks(cells, wall, include_touching=True):
