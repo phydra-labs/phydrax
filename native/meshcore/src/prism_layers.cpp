@@ -611,6 +611,7 @@ int32_t grow(const Input& in, const Output& out) {
     return any;
   };
   int64_t float_invalid = 0;
+  int64_t detected = 0;  // failures over every construction and certification round
   double minimum_ratio = std::numeric_limits<double>::infinity();
   while (true) {
     float_invalid = 0;
@@ -624,6 +625,7 @@ int32_t grow(const Input& in, const Output& out) {
       const int64_t t = prism % m;
       for (int c = 0; c < 3; ++c) marked[static_cast<size_t>(w.f[3 * t + c])] = 1;
     }
+    detected += float_invalid;
     if (float_invalid == 0 || !thin()) break;
     ++rounds;
   }
@@ -747,6 +749,7 @@ int32_t grow(const Input& in, const Output& out) {
         }
         s = e;
       }
+      detected += invalid + crossings;
       if ((invalid == 0 && crossings == 0) || !thin()) break;
       ++rounds;
       // Thinning may invert a prism in float again; the exact pass decides.
@@ -783,6 +786,7 @@ int32_t grow(const Input& in, const Output& out) {
   stats[15] = static_cast<double>(crossings);
   stats[16] = certified ? 1.0 : 0.0;
   stats[17] = minimum_ratio;
+  stats[20] = static_cast<double>(detected);
   stats[6] = seconds(start);
   if (invalid != 0 || crossings > 0) return PHX_MC_UNRESOLVED;
   return PHX_MC_OK;

@@ -124,7 +124,7 @@ Layers grow(const Surface& s, const std::vector<double>& heights, int prove,
   r.displacement.assign(static_cast<size_t>(3 * n), 0.0);
   r.scale.assign(static_cast<size_t>(n), 0.0);
   r.kind.assign(static_cast<size_t>(n), 9);
-  r.stats.assign(20, 0.0);
+  r.stats.assign(21, 0.0);
   const phx_mc_prism_layers_request request{n,       s.x.data(), m,  s.f.data(), layers,
                                             heights.data(), 30.0,       minimum_scale, prove};
   const phx_mc_prism_layers_result result{r.points.data(), r.prisms.data(), r.displacement.data(),

@@ -1,6 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 // phx_mc_cell_map_validity: the exact validity proof of dof-linear polynomial
-// cell maps (affine simplices and multilinear boxes in three dimensions),
+// cell maps (affine simplices, multilinear boxes and P1 prisms in three dimensions),
 // reproducing bit for bit the decisions, directed determinant endpoints and
 // exact-map digests of the rational per-cell proof
 // (phydrax.discretization._cell_geometry_validity._certify_source_block).
@@ -16,7 +16,11 @@
 //     det J(xi) on [0,1]^3; a corner value <= 0 is invalid, a positive least
 //     control is valid when the relative Hadamard margin follows from the
 //     directed corner bounds of every Jacobian entry; endpoints the directed
-//     roundings of the least and greatest control, depth 0.
+//     roundings of the least and greatest control, depth 0;
+//   P1 prism maps (triangle-linear times interval-linear): the same root
+//     proof on det J's support projection (prism, triangle or box over the
+//     active axes, least degree), the entry bounds being each entry's values
+//     at the six prism vertices.
 // Everything else (subdivision, the expanded Hadamard margin, values outside
 // the fixed-width integer range or binary64) is left undecided for the
 // rational proof. The digest is BLAKE2b-128 of the ASCII Python repr of the
@@ -374,13 +378,19 @@ class Blake2b128 {
   }
 
   void update(const std::string& data) {
-    for (const char character : data) {
+    const char* next = data.data();
+    std::size_t left = data.size();
+    while (left > 0) {
       if (filled_ == 128) {
         counter_ += 128;
         compress(false);
         filled_ = 0;
       }
-      block_[filled_++] = static_cast<std::uint8_t>(character);
+      const std::size_t take = std::min<std::size_t>(left, 128 - filled_);
+      std::memcpy(block_.data() + filled_, next, take);
+      filled_ += static_cast<int>(take);
+      next += take;
+      left -= take;
     }
   }
 
@@ -442,6 +452,7 @@ class Blake2b128 {
     }
     v[12] ^= counter_;
     if (last) v[14] = ~v[14];
+#pragma clang loop unroll(full)
     for (const auto& s : kSigma) {
       mix(v, 0, 4, 8, 12, message[s[0]], message[s[1]]);
       mix(v, 1, 5, 9, 13, message[s[2]], message[s[3]]);
@@ -487,7 +498,13 @@ void combine(const Basis& basis, const std::vector<Big>& values, Expression& out
     for (std::int64_t term = basis.starts[dof]; term < basis.starts[dof + 1]; ++term) {
       const auto& exponent = basis.exponents[static_cast<std::size_t>(term)];
       const int key = 64 * exponent[0] + 8 * exponent[1] + exponent[2];
-      const Big product = multiplier * from_int64(basis.numerators[static_cast<std::size_t>(term)]);
+      const std::int64_t numerator = basis.numerators[static_cast<std::size_t>(term)];
+      Big product = multiplier;
+      if (numerator == -1) {
+        product.negative = !product.negative;
+      } else if (numerator != 1) {
+        product = multiplier * from_int64(numerator);
+      }
       auto found = std::find_if(out.begin(), out.end(),
                                 [key](const Term& entry) { return entry.key == key; });
       if (found == out.end()) {
@@ -507,8 +524,16 @@ void combine(const Basis& basis, const std::vector<Big>& values, Expression& out
 // Exact rational T 2^shift in lowest terms, as Python's Fraction repr parts.
 void append_fraction(const Big& total, std::int64_t shift, std::string& out) {
   const std::int64_t zeros = trailing_zeros(total);
-  const Big odd = shift_right_magnitude(total, zeros);
   const std::int64_t power = shift + zeros;
+  if (total.size == 1 && power < 0 && power > -64) {
+    // One-limb odd numerator over a one-limb power of two.
+    if (total.negative) out += '-';
+    append_unsigned(total.limb[0] >> zeros, out);
+    out += ", ";
+    append_unsigned(std::uint64_t{1} << -power, out);
+    return;
+  }
+  const Big odd = shift_right_magnitude(total, zeros);
   if (power >= 0) {
     append_decimal(shift_left(odd, power), out);
     out += ", 1";
@@ -687,6 +712,61 @@ bool prove_affine(const std::array<Expression, 3>& axes, std::int64_t scale, dou
   return true;
 }
 
+// Least and greatest control of one Jacobian entry (on the 2^scale grid).
+struct Range {
+  Big low;
+  Big high;
+  void include(const Big& value, bool first) {
+    if (first || compare(value, low) < 0) low = value;
+    if (first || compare(value, high) > 0) high = value;
+  }
+};
+using EntryBounds = std::array<std::array<Range, 3>, 3>;  // [row][column]
+
+// The relative Hadamard margin of _hadamard_margin_from_bounds: lower^2 >
+// floor^2 prod_k sum_a max(|low|, |high|)^2 over the directed binary64
+// endpoints of every entry's controls; false leaves the expanded margin.
+bool bounded_margin(double determinant_lower, const EntryBounds& bounds, std::int64_t scale,
+                    double floor) {
+  if (!(determinant_lower > 0.0)) return false;
+  std::int64_t lower_exponent = 0;
+  const Big lower = from_double(determinant_lower, lower_exponent);
+  Big norms_product = from_int64(1);
+  std::int64_t product_exponent = 0;
+  for (int column = 0; column < 3; ++column) {
+    Big norm;
+    std::int64_t norm_exponent = 0;
+    bool started = false;
+    for (int row = 0; row < 3; ++row) {
+      const Range& range = bounds[row][column];
+      const double bound = std::max(std::fabs(round_down(range.low, scale)),
+                                    std::fabs(round_up(range.high, scale)));
+      std::int64_t exponent = 0;
+      const Big magnitude = from_double(bound, exponent);
+      const Big square = magnitude * magnitude;
+      if (square.zero()) continue;
+      const std::int64_t square_exponent = 2 * exponent;
+      if (!started) {
+        norm = square;
+        norm_exponent = square_exponent;
+        started = true;
+      } else {
+        const std::int64_t base = std::min(norm_exponent, square_exponent);
+        norm = shift_left(norm, norm_exponent - base) +
+               shift_left(square, square_exponent - base);
+        norm_exponent = base;
+      }
+    }
+    norms_product = norms_product * norm;
+    product_exponent += norm_exponent;
+  }
+  std::int64_t floor_exponent = 0;
+  const Big floor_integer = from_double(floor, floor_exponent);
+  const Big right = floor_integer * floor_integer * norms_product;
+  return compare_scaled(lower * lower, 2 * lower_exponent, right,
+                        2 * floor_exponent + product_exponent) > 0;
+}
+
 // Root Bernstein proof of a multilinear box map; false leaves it undecided.
 bool prove_multilinear(const std::array<Expression, 3>& axes, std::int64_t scale,
                        double floor, Proof& proof) {
@@ -752,55 +832,105 @@ bool prove_multilinear(const std::array<Expression, 3>& axes, std::int64_t scale
   }
   if (least.sign() <= 0) return false;  // subdivision
   // Relative Hadamard margin from directed corner bounds of every entry.
-  if (!(proof.lower > 0.0)) return false;
-  std::int64_t lower_exponent = 0;
-  const Big lower = from_double(proof.lower, lower_exponent);
-  Big norms_product = from_int64(1);
-  std::int64_t product_exponent = 0;
   static constexpr std::array<int, 3> kMultilinear{1, 1, 1};
-  for (int column = 0; column < 3; ++column) {
-    Big norm;
-    std::int64_t norm_exponent = 0;
-    bool started = false;
-    for (int row = 0; row < 3; ++row) {
+  EntryBounds bounds;
+  for (int row = 0; row < 3; ++row) {
+    for (int column = 0; column < 3; ++column) {
       // Corner values of the multilinear entry (its degree-one controls).
       Dense& entry = jacobian[row][column];
       for (int axis = 0; axis < 3; ++axis) bernstein_axis(entry, kMultilinear, axis, false);
-      Big low;
-      Big high;
       for (int corner = 0; corner < 8; ++corner) {
         const Big& value = entry.c[9 * (corner & 1) + 3 * ((corner >> 1) & 1) + (corner >> 2)];
-        if (corner == 0 || compare(value, low) < 0) low = value;
-        if (corner == 0 || compare(value, high) > 0) high = value;
-      }
-      const double bound =
-          std::max(std::fabs(round_down(low, scale)), std::fabs(round_up(high, scale)));
-      std::int64_t exponent = 0;
-      const Big magnitude = from_double(bound, exponent);
-      const Big square = magnitude * magnitude;
-      if (square.zero()) continue;
-      const std::int64_t square_exponent = 2 * exponent;
-      if (!started) {
-        norm = square;
-        norm_exponent = square_exponent;
-        started = true;
-      } else {
-        const std::int64_t base = std::min(norm_exponent, square_exponent);
-        norm = shift_left(norm, norm_exponent - base) +
-               shift_left(square, square_exponent - base);
-        norm_exponent = base;
+        bounds[row][column].include(value, corner == 0);
       }
     }
-    norms_product = norms_product * norm;
-    product_exponent += norm_exponent;
   }
-  std::int64_t floor_exponent = 0;
-  const Big floor_integer = from_double(floor, floor_exponent);
-  const Big right = floor_integer * floor_integer * norms_product;
-  if (compare_scaled(lower * lower, 2 * lower_exponent, right,
-                     2 * floor_exponent + product_exponent) <= 0) {
-    return false;  // the expanded margin decides
+  if (!bounded_margin(proof.lower, bounds, scale, floor)) return false;
+  proof.status = 0;
+  return true;
+}
+
+using Vector = std::array<Big, 3>;
+
+Vector cross(const Vector& a, const Vector& b) {
+  return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+
+Big dot(const Vector& a, const Vector& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+// Root Bernstein proof of a P1 prism (wedge) map, every term of degree <= 1
+// in (xi, eta) and in zeta: J = [A0 + zeta A1, B0 + zeta B1, C0 + xi C1 +
+// eta C2], so det J = sum_k zeta^k (X_k . V(xi, eta)) with X_0 = A0 x B0,
+// X_1 = A1 x B0 + A0 x B1, X_2 = A1 x B1 and V affine. The rational proof
+// projects det J to its active axes (prism, the (xi, eta) triangle, or a box
+// over the active axes) at least degree; on every projection the controls
+// are, as a set, the zeta controls of least degree l = max_k {X_k . V != 0}
+// at the three triangle vertices (V linear there; an inactive axis repeats
+// values), and its corners are their zeta ends. The Hadamard entry bounds
+// are each entry's least-degree prism controls: its vertex values.
+bool prove_prism(const std::array<Expression, 3>& axes, std::int64_t scale, double floor,
+                 Proof& proof) {
+  Vector a0, a1, b0, b1, c0, c1, c2;
+  for (int row = 0; row < 3; ++row) {
+    for (const Term& term : axes[row]) {
+      const auto& e = term.exponent;
+      if (e[0] + e[1] > 1 || e[2] > 1) return false;
+      if (e[0] == 1) (e[2] == 0 ? a0 : a1)[row] = term.total;
+      if (e[1] == 1) (e[2] == 0 ? b0 : b1)[row] = term.total;
+      if (e[2] == 1) (e[0] == 1 ? c1 : e[1] == 1 ? c2 : c0)[row] = term.total;
+    }
   }
+  const std::array<Vector, 3> vertex{
+      c0, Vector{c0[0] + c1[0], c0[1] + c1[1], c0[2] + c1[2]},
+      Vector{c0[0] + c2[0], c0[1] + c2[1], c0[2] + c2[2]}};
+  const Vector x0 = cross(a0, b0);
+  const Vector x2 = cross(a1, b1);
+  const Vector p = cross(a1, b0);
+  const Vector q = cross(a0, b1);
+  const Vector x1{p[0] + q[0], p[1] + q[1], p[2] + q[2]};
+  std::array<std::array<Big, 3>, 3> power;  // [vertex][k]: zeta^k coefficient
+  int line = 0;
+  for (int v = 0; v < 3; ++v) {
+    power[v] = {dot(x0, vertex[v]), dot(x1, vertex[v]), dot(x2, vertex[v])};
+    if (!power[v][2].zero()) line = 2;
+    if (line == 0 && !power[v][1].zero()) line = 1;
+  }
+  // Twice the controls: 2 b0 = 2 c0; degree 1: 2 b1 = 2 (c0 + c1); degree 2:
+  // 2 b1 = 2 c0 + c1, 2 b2 = 2 (c0 + c1 + c2).
+  Big least;
+  Big greatest;
+  bool corner_nonpositive = false;
+  for (int v = 0; v < 3; ++v) {
+    const auto& c = power[v];
+    std::array<Big, 3> controls;
+    controls[0] = shift_left(c[0], 1);
+    if (line == 1) controls[1] = shift_left(c[0] + c[1], 1);
+    if (line == 2) {
+      controls[1] = controls[0] + c[1];
+      controls[2] = shift_left(c[0] + c[1] + c[2], 1);
+    }
+    for (int k = 0; k <= line; ++k) {
+      if ((v == 0 && k == 0) || compare(controls[k], least) < 0) least = controls[k];
+      if ((v == 0 && k == 0) || compare(controls[k], greatest) > 0) greatest = controls[k];
+      if ((k == 0 || k == line) && controls[k].sign() <= 0) corner_nonpositive = true;
+    }
+  }
+  proof.lower = round_down(least, 3 * scale - 1);
+  proof.upper = round_up(greatest, 3 * scale - 1);
+  if (corner_nonpositive) {
+    proof.status = 1;
+    return true;
+  }
+  if (least.sign() <= 0) return false;  // subdivision
+  EntryBounds bounds;
+  for (int row = 0; row < 3; ++row) {
+    bounds[row][0].include(a0[row], true);
+    bounds[row][0].include(a0[row] + a1[row], false);
+    bounds[row][1].include(b0[row], true);
+    bounds[row][1].include(b0[row] + b1[row], false);
+    for (int v = 0; v < 3; ++v) bounds[row][2].include(vertex[v][row], v == 0);
+  }
+  if (!bounded_margin(proof.lower, bounds, scale, floor)) return false;
   proof.status = 0;
   return true;
 }
@@ -815,7 +945,7 @@ extern "C" int32_t phx_mc_cell_map_validity(
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests) {
   return phx::mc::guarded([&]() -> int32_t {
-    if ((domain != 0 && domain != 1) || dof_count < 1 || term_starts == nullptr ||
+    if (domain < 0 || domain > 2 || dof_count < 1 || term_starts == nullptr ||
         kind == nullptr || kind_length < 1 || kind_length > 64 || row_count < 0 ||
         cell_count < 0 || basis_denominator_log2 < 0 || basis_denominator_log2 > 64 ||
         !(floor >= 0.0) || !(floor < 1.0) ||
@@ -899,6 +1029,8 @@ extern "C" int32_t phx_mc_cell_map_validity(
           done = prove_affine(axes, scale, floor, proof);
         } else if (domain == 1) {
           done = prove_multilinear(axes, scale, floor, proof);
+        } else if (domain == 2) {
+          done = prove_prism(axes, scale, floor, proof);
         }
         if (!done) continue;
         status[cell] = proof.status;

@@ -36,7 +36,18 @@ from phydrax.discretization._cell_complex import TetrahedralConnectivity
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
 from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.geometry._interval_enclosure import prepare_interval_function
-from phydrax.meshing import certify_cell_mesh
+from phydrax.meshing import (
+    BoundaryLayerCollisionPolicy,
+    BoundaryLayerControl,
+    BoundaryLayerCornerPolicy,
+    BoundaryLayerMesh,
+    BoundaryLayerRoute,
+    certify_cell_mesh,
+    LayerSchedule,
+    MeshingEntityKind,
+    MeshingScope,
+    prepare_boundary_layers,
+)
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 from phydrax.meshing._overset import (
     _cell_result,
@@ -2059,7 +2070,8 @@ def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row,
 # Ledger F9: five prism layers, first height 0.01, growth 1.2 (total 0.074416),
 # grown inward from the Gmsh surface meshes the reference tools layer (h 0.1
 # and 0.05; the ledger's gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl).
-_F9_HEIGHTS = np.cumsum(0.01 * 1.2 ** np.arange(5, dtype=np.float64))
+_F9_THICKNESSES = 0.01 * 1.2 ** np.arange(5, dtype=np.float64)
+_F9_HEIGHTS = np.cumsum(_F9_THICKNESSES)
 # The best reference depth band (Netgen on the sphere: 0.0740-0.0744 by true
 # distance) bounds the depth error of every unthinned column top.
 _F9_DEPTH_TOLERANCE = 4e-4
@@ -2077,11 +2089,15 @@ class _LayerCase(NamedTuple):
     faces: np.ndarray
     # The core's size target: the mean wall edge.
     size: float
+    # The public call's inputs, built before the timer (the references get
+    # their surface mesh): the inward-oriented wall and its control.
+    wall: CellMesh
+    control: BoundaryLayerControl
 
 
 class _LayerResult(NamedTuple):
-    layers: _meshcore.PrismLayers
-    # Layer levels (rows of PrismLayers.points), then the core's own vertices.
+    layers: BoundaryLayerMesh
+    # Layer mesh vertices, then the core's own vertices.
     points: np.ndarray
     prisms: np.ndarray
     tetrahedra: np.ndarray
@@ -2104,26 +2120,22 @@ def _read_ascii_stl(path: Path, /) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _layered_mesh(case: _LayerCase, /) -> _LayerResult:
-    # The whole task of Gmsh's timed call (classify, extrude, 3D): the wall
-    # surface in; certified prism layers grown inward, the core meshed by S3
-    # with the top level as fixed boundary; one conforming mixed mesh out.
+    # The whole task of Gmsh's timed call (classify, extrude, 3D): the public
+    # prepare_boundary_layers on the wall surface (certified prism layers
+    # with their certificates and ancestry), then the core meshed by S3 with
+    # the layers' cap as fixed boundary; one conforming mixed mesh out.
     start = time.perf_counter()
-    layers = _meshcore.prism_layers(
-        case.vertices,
-        case.faces[:, ::-1],
-        _F9_HEIGHTS,
-        feature_angle_degrees=_F9_FEATURE_ANGLE,
-        minimum_scale=_F9_MINIMUM_SCALE,
-        prove=True,
-    )
+    layers = prepare_boundary_layers(case.wall, case.control)
     layered = time.perf_counter()
-    if layers.status is not _meshcore.MeshcoreStatus.OK:
-        raise RuntimeError(f"Prism layers ended with {layers.status!r}.")
-    count = case.vertices.shape[0]
-    levels = layers.points.shape[0]
-    top = layers.points[levels - count :]
+    if layers.cap is None:
+        raise RuntimeError("Closed-wall layers must leave a cap.")
+    cap_points = np.asarray(layers.cap.coordinates, dtype=np.float64)
+    # The cap faces away from the layers (into the core); the core's
+    # boundary is oriented outward.
+    cap_faces = np.asarray(layers.cap.blocks[0].vertices, dtype=np.int64)[:, ::-1]
+    count = cap_points.shape[0]
     recovered = _recover(
-        top, case.faces, np.zeros((case.faces.shape[0],), dtype=np.int32)
+        cap_points, cap_faces, np.zeros((cap_faces.shape[0],), dtype=np.int32)
     )
     if recovered.status is not _meshcore.MeshcoreStatus.OK:
         raise RuntimeError(f"Core recovery ended with {recovered.status!r}.")
@@ -2139,14 +2151,20 @@ def _layered_mesh(case: _LayerCase, /) -> _LayerResult:
         raise RuntimeError(f"Core refinement failed with status {refined.status!r}.")
     improved = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
     core = mesh.arrays()
-    if not np.array_equal(core.points[:count], top):
-        raise RuntimeError("The core must keep the top level's vertices first.")
+    if not np.array_equal(core.points[:count], cap_points):
+        raise RuntimeError("The core must keep the cap's vertices first.")
+    layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
+    cap_vertices = np.asarray(layers.cap_vertices, dtype=np.int64)
     cells = core.tetrahedra.astype(np.int64)
-    tetrahedra = np.where(cells < count, cells + (levels - count), cells - count + levels)
+    tetrahedra = np.where(
+        cells < count,
+        cap_vertices[np.minimum(cells, count - 1)],
+        cells - count + layer_points.shape[0],
+    )
     return _LayerResult(
         layers,
-        np.concatenate((layers.points, core.points[count:])),
-        layers.prisms.astype(np.int64),
+        np.concatenate((layer_points, core.points[count:])),
+        np.asarray(layers.mesh.blocks[0].vertices, dtype=np.int64),
         tetrahedra,
         improved.unmet_cells,
         layered - start,
@@ -2214,8 +2232,20 @@ def _prism_corner_jacobians(points: np.ndarray, prisms: np.ndarray, /) -> np.nda
 def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, float]]:
     layered = _layer_result(result)
     layers = layered.layers
+    # The kernel the public call runs, once more outside the timing: its own
+    # seconds and vertex kinds; the public layers must be its levels.
+    kernel = _meshcore.prism_layers(
+        case.vertices,
+        case.faces[:, ::-1],
+        _F9_HEIGHTS,
+        feature_angle_degrees=_F9_FEATURE_ANGLE,
+        minimum_scale=_F9_MINIMUM_SCALE,
+        prove=True,
+    )
     count = case.vertices.shape[0]
-    levels = layers.points.shape[0]
+    layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
+    levels = layer_points.shape[0]
+    scale = np.asarray(layers.column_scale, dtype=np.float64)
     jacobians = _prism_corner_jacobians(layered.points, layered.prisms)
     largest = np.max(np.abs(jacobians), axis=1)
     lowest = np.min(jacobians, axis=1)
@@ -2233,14 +2263,14 @@ def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, 
         )
     )
     inverted_tets = int(np.count_nonzero(volumes <= 0.0))
-    top_depth = _solid_depth(case.model, layers.points[levels - count :])
-    full = layers.scale == 1.0
+    top_depth = _solid_depth(case.model, layer_points[levels - count :])
+    full = scale == 1.0
     total = float(_F9_HEIGHTS[-1])
     depth_error = float(np.max(np.abs(top_depth[full] - total))) if np.any(full) else 0.0
     generated = _solid_depth(case.model, layered.points[count:])
     outside = int(np.count_nonzero(generated < -1e-9))
-    ridge = layers.vertex_kind != 0
-    thinned = layers.scale < 1.0
+    ridge = kernel.vertex_kind != 0
+    thinned = scale < 1.0
     # Prisms whose wall triangle lies within 1.5 h of a sharp edge (meas_bl).
     bottom = layered.points[layered.prisms[:, :3]].mean(axis=1)
     edge = float(
@@ -2256,8 +2286,16 @@ def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, 
         if case.model == "quadric"
         else np.zeros((bottom.shape[0],), dtype=np.bool_)
     )
+    cell_count = sum(block.cell_count for block in layers.mesh.blocks)
+    certified = layers.validity.certified_valid_count == cell_count
+    matches_kernel = bool(np.array_equal(layer_points, kernel.points))
     missed = (
-        inverted_prisms + inverted_tets + outside + int(depth_error > _F9_DEPTH_TOLERANCE)
+        inverted_prisms
+        + inverted_tets
+        + outside
+        + int(depth_error > _F9_DEPTH_TOLERANCE)
+        + int(not certified)
+        + int(not matches_kernel)
     )
     return missed, {
         "prisms": float(layered.prisms.shape[0]),
@@ -2272,7 +2310,7 @@ def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, 
         "top_depth_minimum": float(np.min(top_depth)),
         "top_depth_maximum": float(np.max(top_depth)),
         "unthinned_top_depth_error": depth_error,
-        "layer_depth_maximum": float(np.max(_solid_depth(case.model, layers.points))),
+        "layer_depth_maximum": float(np.max(_solid_depth(case.model, layer_points))),
         "intended_depth": total,
         "generated_nodes_outside": float(outside),
         "wall_nodes_outside_given": float(
@@ -2282,11 +2320,13 @@ def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, 
         "thinned_vertices": float(np.count_nonzero(thinned)),
         "ridge_thinning_fraction": float(np.count_nonzero(thinned & ridge))
         / max(float(np.count_nonzero(ridge)), 1.0),
-        "minimum_scale": float(np.min(layers.scale)),
-        "certified": float(layers.stats[16]),
+        "minimum_scale": float(np.min(scale)),
+        "certified": float(certified),
+        "certified_cells": float(layers.validity.certified_valid_count),
+        "public_matches_kernel": float(matches_kernel),
         "layer_step_seconds": layered.layer_seconds,
-        "layer_kernel_seconds": float(layers.stats[6]),
-        "layer_certification_seconds": float(layers.stats[5]),
+        "layer_kernel_seconds": float(kernel.stats[6]),
+        "layer_certification_seconds": float(kernel.stats[5]),
         "core_seconds": layered.core_seconds,
     }
 
@@ -2305,7 +2345,35 @@ def _layer_rows(inputs: Path, /) -> tuple[_Row, ...]:
                     np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
                 )
             )
-            case = _LayerCase(model, vertices, faces, spacing)
+            wall = CellMesh(
+                vertices,
+                (
+                    CellBlock(
+                        "wall",
+                        "triangle",
+                        faces[:, ::-1].copy(),
+                        global_ids=np.arange(faces.shape[0], dtype=np.int64),
+                    ),
+                ),
+            )
+            cells = wall.entity_set(2)
+            control = BoundaryLayerControl(
+                MeshingScope(
+                    wall.mesh_id,
+                    wall.numeric_version,
+                    MeshingEntityKind.MESH,
+                    2,
+                    cells.entity_set_id,
+                    cells.entity_ids,
+                ),
+                LayerSchedule(_F9_THICKNESSES),
+                route=BoundaryLayerRoute.ADVANCING,
+                collision=BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+                corner=BoundaryLayerCornerPolicy.SMOOTH,
+                feature_angle=math.radians(_F9_FEATURE_ANGLE),
+                minimum_thickness_fraction=_F9_MINIMUM_SCALE,
+            )
+            case = _LayerCase(model, vertices, faces, spacing, wall, control)
             rows.append(
                 _Row(
                     name,

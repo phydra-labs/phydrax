@@ -1834,13 +1834,14 @@ PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
  * corner Jacobians); displacement (vertex_count, 3): the full-depth column
  * vector at scale 1; scale (vertex_count): the thinning factor;
  * vertex_kind (vertex_count): 0 smooth, 1 ridge, 2 corner.
- * stats (20): seconds of topology, jets, directions, relaxation,
+ * stats (21): seconds of topology, jets, directions, relaxation,
  * construction, certification and total; then ridge vertices, corner
  * vertices, relaxed vertices, thinned vertices, thinned ridge/corner
  * vertices, minimum scale, repair rounds, invalid prisms (exact with prove,
  * else float), top-level contacts (-1 without prove), certified (1/0),
  * minimum float corner ratio (min / max |corner Jacobian| per prism),
- * feature edges and relaxation updates.
+ * feature edges, relaxation updates and the failures (invalid prisms and
+ * top-level contacts) detected over every repair round.
  * Returns PHX_MC_OK, PHX_MC_UNRESOLVED when a failure remains at the minimum
  * scale (outputs hold the last construction), PHX_MC_INVALID_INPUT for a
  * wall that is not a closed oriented manifold, PHX_MC_DEGENERATE_INPUT for a
@@ -2509,6 +2510,14 @@ PHX_MC_API int32_t phx_mc_point_triangle_locations(
  * these observations are not a bound. */
 PHX_MC_API int32_t phx_mc_point_triangle_distances(
     int64_t count, const double* points, const double* triangles, double* distances);
+/* distances[k] = the least phx_mc_point_triangle_distances value of point k
+ * over every triangle (triangle_count >= 1 rows of nine coordinates), found
+ * by a box tree that skips only subtrees whose ordered box distance exceeds
+ * the best value, so the result equals the exhaustive minimum. Nonfinite
+ * input returns PHX_MC_NONFINITE_INPUT, a nonfinite value PHX_MC_RANGE_ERROR. */
+PHX_MC_API int32_t phx_mc_point_triangle_nearest_distances(
+    int64_t count, const double* points, int64_t triangle_count, const double* triangles,
+    double* distances);
 PHX_MC_API int32_t phx_mc_arrange_triangles(
     int64_t vertex_count, const double* vertices, int64_t triangle_count,
     const int64_t* triangles, const int32_t* surfaces, int64_t pair_count,
@@ -2915,7 +2924,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double* upper);
 
 /* Exact validity proof of dof-linear polynomial cell maps in three dimensions
- * (domain 0: affine simplices; 1: affine or multilinear boxes), identical to
+ * (domain 0: affine simplices; 1: affine or multilinear boxes; 2: affine or
+ * P1 prisms, triangle-linear times interval-linear), identical to
  * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
  * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
  * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
@@ -2926,7 +2936,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * three). decided[k] = 1 when the root proof decides the cell: status[k] 0
  * (certified) or 1 (invalid) and lower[k], upper[k] the directed binary64
  * endpoints of the determinant (affine) or of the least and greatest
- * least-degree Bernstein control of det J (multilinear). digests[k] (16
+ * least-degree Bernstein control of det J on its support (multilinear,
+ * prism). digests[k] (16
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
  * ASCII without quote or backslash). Undecided cells (subdivision, the
  * expanded Hadamard margin, values beyond the exact range) are left to the

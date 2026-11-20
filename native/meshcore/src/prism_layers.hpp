@@ -11,7 +11,7 @@
 
 namespace phx::mc::prism_layers {
 
-inline constexpr int kStatCount = 20;
+inline constexpr int kStatCount = 21;
 
 struct Input {
   int64_t vertex_count;

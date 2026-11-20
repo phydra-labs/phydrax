@@ -1366,6 +1366,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_point_triangle_locations": (_I32, (_I64, _P, _P, _P, _P, _P)),
     "phx_mc_point_triangle_distances": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_point_triangle_nearest_distances": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_arrange_triangles": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
     "phx_mc_arrangement_sizes": (_I32, (_P, _P)),
     "phx_mc_arrangement_export": (
@@ -2725,7 +2726,7 @@ class PrismLayers(NamedTuple):
     # vertices, thinned vertices, thinned ridge/corner vertices, minimum
     # scale, repair rounds, invalid prisms, top-level contacts (-1 without
     # prove), certified, minimum float corner ratio, feature edges and
-    # relaxation updates.
+    # relaxation updates and the failures detected over every repair round.
     stats: np.ndarray
 
 
@@ -2767,7 +2768,7 @@ def prism_layers(
         np.empty((vertex_count, 3), dtype=np.float64),
         np.empty((vertex_count,), dtype=np.float64),
         np.empty((vertex_count,), dtype=np.uint8),
-        np.empty((20,), dtype=np.float64),
+        np.empty((21,), dtype=np.float64),
     )
     request = _PrismLayersRequest(
         vertex_count=vertex_count,
@@ -3927,7 +3928,7 @@ def cell_map_validity(
     upper = np.zeros((count,), dtype=np.float64)
     digests = np.zeros((count, 16), dtype=np.uint8)
     result = load_meshcore()["phx_mc_cell_map_validity"](
-        {"simplex": 0, "box": 1}[domain],
+        {"simplex": 0, "box": 1, "prism": 2}[domain],
         len(basis),
         starts.ctypes.data,
         term_exponents.ctypes.data,
@@ -7307,6 +7308,32 @@ def point_triangle_distances(points: object, triangles: object, /) -> np.ndarray
     _raise_for_call(
         call,
         "point_triangle_distances",
+        contracts={MeshcoreStatus.RANGE_ERROR: "computed distance is nonfinite"},
+    )
+    return distances
+
+
+def point_triangle_nearest_distances(points: object, triangles: object, /) -> np.ndarray:
+    """Least ``point_triangle_distances`` value of every point over all triangles.
+
+    Equal to the exhaustive minimum (a box tree skips only subtrees whose box
+    distance exceeds the best value found).
+    """
+    point_array = _points(points, "points", 3)
+    triangle_array = _contact_simplices(triangles, "triangles", 3)
+    if triangle_array.shape[0] < 1:
+        raise ValueError("triangles must be nonempty.")
+    distances = np.empty((point_array.shape[0],), dtype=np.float64)
+    call = load_meshcore()["phx_mc_point_triangle_nearest_distances"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        triangle_array.shape[0],
+        triangle_array.ctypes.data,
+        distances.ctypes.data,
+    )
+    _raise_for_call(
+        call,
+        "point_triangle_nearest_distances",
         contracts={MeshcoreStatus.RANGE_ERROR: "computed distance is nonfinite"},
     )
     return distances

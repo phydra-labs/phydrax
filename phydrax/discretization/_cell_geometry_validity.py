@@ -2445,15 +2445,16 @@ def _native_cell_map_proofs(
     NDArray[np.float64],
     NDArray[np.uint8],
 ]:
-    """Native root proofs of P1 tetrahedra and Q1-type hexahedra, where decided.
+    """Native root proofs of P1 tetrahedra, Q1-type hexahedra and P1 prisms.
 
     ``phx_mc_cell_map_validity`` reproduces exactly what the per-cell proof
     of ``_certify_source_block`` records (status, directed determinant
     endpoints, depth zero and the exact-map digest) for a 3D integer
-    polynomial basis on exact dyadic coordinates: affine simplex and box
-    maps, and multilinear box maps the root Bernstein controls and the
-    bounded Hadamard margin decide. Every other cell, and every cell without
-    the native library, is undecided and keeps the rational proof.
+    polynomial basis on exact dyadic coordinates: affine simplex, box and
+    prism maps, and multilinear box and P1 prism maps the root Bernstein
+    controls and the bounded Hadamard margin decide. Every other cell, and
+    every cell without the native library, is undecided and keeps the
+    rational proof.
     """
     count = routes.shape[0]
     undecided = (
@@ -2464,7 +2465,9 @@ def _native_cell_map_proofs(
         np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8),
     )
     family = reference_cell_topology(cell_kind).family
-    domain = {"tetrahedron": "simplex", "hexahedron": "box"}.get(family)
+    domain = {"tetrahedron": "simplex", "hexahedron": "box", "prism": "prism"}.get(
+        family
+    )
     if (
         not count
         or domain is None
@@ -3508,8 +3511,8 @@ def certify_cell_geometry_validity(
     identity); it requires ``geometry`` to be the affine vertex map of a
     nonperiodic tetrahedral mesh. Otherwise every cell takes the rational proof
     and the native library is never required: where it is available,
-    ``phx_mc_cell_map_validity`` decides the root proof of P1 tetrahedra and
-    affine or multilinear hexahedra on exact dyadic coordinates with the
+    ``phx_mc_cell_map_validity`` decides the root proof of P1 tetrahedra,
+    affine or multilinear hexahedra and P1 prisms on exact dyadic coordinates with the
     rational proof's exact statuses, endpoints, depths and map digests, and
     the Python proof (the only fallback) takes every other cell.
     """
