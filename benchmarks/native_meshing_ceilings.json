@@ -53,8 +53,8 @@
       "81920": {"tool": "gmsh-hxt", "seconds": 5.304, "allowed_ratio": 1.0}
     },
     "surface-to-tets-torus": {
-      "67": {"tool": "gmsh-hxt", "seconds": 0.306, "allowed_ratio": 1.0},
-      "22": {"tool": "gmsh-hxt", "seconds": 5.2707, "allowed_ratio": 1.0}
+      "72": {"tool": "gmsh-hxt", "seconds": 0.1845, "allowed_ratio": 1.0},
+      "25": {"tool": "gmsh-hxt", "seconds": 4.2623, "allowed_ratio": 1.0}
     },
     "surface-to-tets-grid-torus": {
       "10000": {"tool": "gmsh-hxt", "seconds": 0.7027, "allowed_ratio": 1.0},

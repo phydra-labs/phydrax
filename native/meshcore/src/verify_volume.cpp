@@ -613,6 +613,7 @@ extern "C" int32_t phx_mc_verify_tetrahedra(int64_t point_count, const double* p
     }
     if (!indices_valid(point_count, cell_count, 4, cells)) return PHX_MC_INVALID_INPUT;
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx_mc_tetrahedra_verdict result{};
     result.first_outside_domain_point = kNone;
     result.first_nonpositive_cell = kNone;
@@ -697,6 +698,7 @@ extern "C" int32_t phx_mc_verify_volume(int64_t point_count, const double* point
       if (pair[0] < -1 || pair[1] < -1 || pair[0] == pair[1]) return PHX_MC_INVALID_INPUT;
     }
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx_mc_volume_verdict result{};
     result.first_outside_domain_point = kNone;
     result.first_nonpositive_cell = kNone;
@@ -808,6 +810,7 @@ extern "C" int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
       }
     }
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const auto approx_difference = [](double x, double y) {
       return Approx::exact(x) - Approx::exact(y);
     };

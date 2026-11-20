@@ -156,7 +156,7 @@ def test_analytic_profile_volume_restores_its_shared_profile_owner(
     original = (
         NativeMeshingProvider(
             NativeMeshingOptions(
-                "implicit_stuffing", volume_schedule=NativeVolumeSchedule()
+                "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
             )
         )
         .plan(

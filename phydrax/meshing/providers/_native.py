@@ -397,13 +397,13 @@ def _resolve_route(
                 return "implicit_adaptive_tetrahedral"
             if options.implicit_policy is not None:
                 _unsupported(
-                    "implicit_stuffing",
+                    "implicit_restricted_delaunay",
                     source,
                     specification,
                     "the established-reach restricted route does not consume an "
                     "adaptive implicit policy",
                 )
-            return "implicit_stuffing"
+            return "implicit_restricted_delaunay"
     if isinstance(source, NativeImplicitSource):
         return (
             "implicit_surface"
@@ -505,7 +505,7 @@ def _options_for_route(
                 options.volume_schedule
                 if route
                 in {
-                    "implicit_stuffing",
+                    "implicit_restricted_delaunay",
                     "implicit_adaptive_tetrahedral",
                     "plc_tetrahedral",
                     "cad_tetrahedral",
@@ -929,13 +929,13 @@ def _prepare_route(
             return prepare_native_implicit(
                 source, specification, options, coordinate_contract
             )
-        case "implicit_stuffing":
+        case "implicit_restricted_delaunay":
             if not isinstance(source, AnalyticImplicitProfile):
                 _unsupported(
                     route,
                     source,
                     specification,
-                    "isosurface stuffing requires an analytic implicit profile with established reach",
+                    "restricted Delaunay meshing requires an analytic implicit profile with established reach",
                 )
             if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(
