@@ -1847,11 +1847,16 @@
   certifier range-check grid quotients before converting them to integers: an
   accepted coordinate range near the exact-predicate limits previously made
   the cast undefined and could drop contact pairs from the embedding proof.
-- Native code builds without GCC 13 flow-analysis warnings
-  (`Expansion::inline_`, `metric_goal`, `implicit_polygon`,
-  `interval_simplex_restrict`): the invariants are local and visible.
+- Native code builds without GCC 13 flow-analysis warnings (confirmed with GCC
+  13.3) and without GCC 16 `-Wall -Wextra` warnings: expansion copies, hull
+  projection, implicit contour templates, interval simplex compositions,
+  revolution jets and triangle clipping keep their invariants local; behavior
+  unchanged.
 - `test_predicates` places inputs just below and just above every filter and
-  adaptive-stage error bound of the orientation and in-circle predicates.
+  adaptive-stage error bound of the orientation and in-circle predicates, and
+  a perturbed sliver sheet exercises fixed-boundary Steiner suppression, the
+  search budget's accounting and peeling after an inconclusive search end to
+  end (native and through `generate_plc_volume`).
 - Fixed welded mesh audits reporting certain self-intersections for disjoint
   coplanar triangles when the floating-point normal cancels.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
