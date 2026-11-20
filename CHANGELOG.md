@@ -334,6 +334,25 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Benchmarks: an `improve-sphere` row times state creation plus improvement
+  (radius-edge 2) on TetGen icosphere meshes of 17,274 / 142,911 / 1,163,771
+  tetrahedra against MMG3D `-optim -nosurf`, with each size's minimum-dihedral
+  target set to MMG3D's achieved minimum rounded up to 0.1 degrees (22.0 /
+  19.3 / 19.8), and checks the result's quality itself (kept closed boundary,
+  no inverted cells). `benchmarks/native_meshing_mmg3d.py` prepares the inputs
+  and times MMG3D for interleaved comparison; the icosphere generator moves to
+  `benchmarks/_meshing_surfaces.py`.
+- Native PLC volumes build their tetrahedral topology from the native
+  `phx_mc_tet_mesh_entities` (sorted unique edges and faces, cell routes, face
+  edges, incidence orders); the tables are checked against the cells in linear
+  time, so topology and all ids are unchanged, and generic `CellMesh`
+  construction still needs no native library. `OrientedIncidence` accepts a
+  checked `canonical_order`; lexicographic incidence sorting, duplicate-row
+  checks, canonical entity ids, mesh-zone disjointness and per-row association
+  identity serialization are faster with identical results. Certified
+  icosphere `execute` (one-facet driver): level 6 10.7 s -> 8.0-8.4 s, level 5
+  1.9 -> 1.5-1.7 s. PLC recovery lists the convex hull's triangles per vertex
+  with a counting sort.
 - Native fixed-boundary volume meshing has lower fixed costs with unchanged
   output: `TetMesh3D.from_recovery` adopts the recovered adjacency, segments
   and (for a Delaunay, self-covered recovery) cell orientation without proving

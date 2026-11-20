@@ -26,6 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 from phydrax.geometry._interval_enclosure import prepare_interval_function
@@ -216,7 +217,11 @@ def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
 
 
 def _rows(
-    sizes: tuple[int, ...], names: frozenset[str] | None, query_inputs: Path | None, /
+    sizes: tuple[int, ...],
+    names: frozenset[str] | None,
+    improve_inputs: Path | None,
+    query_inputs: Path | None,
+    /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
@@ -261,6 +266,7 @@ def _rows(
             _volume_rows,
         ),
         (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
+        (frozenset({"improve-sphere"}), lambda: _improve_rows(improve_inputs)),
     )
     queries = frozenset(
         {"query-closest", "query-signed", "query-winding", "query-locate"}
@@ -276,49 +282,6 @@ def _rows(
         if names is None or family & names:
             rows.extend(row for row in build() if names is None or row.name in names)
     return tuple(rows)
-
-
-def _icosphere(level: int, /) -> tuple[np.ndarray, np.ndarray]:
-    # The ledger's unit icosphere: 20 * 4**level outward triangles.
-    golden = (1.0 + 5.0**0.5) / 2.0
-    vertices = np.asarray(
-        [
-            [-1, golden, 0], [1, golden, 0], [-1, -golden, 0], [1, -golden, 0],
-            [0, -1, golden], [0, 1, golden], [0, -1, -golden], [0, 1, -golden],
-            [golden, 0, -1], [golden, 0, 1], [-golden, 0, -1], [-golden, 0, 1],
-        ],
-        dtype=np.float64,
-    )  # fmt: skip
-    faces = np.asarray(
-        [
-            [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9],
-            [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2],
-            [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10],
-            [8, 6, 7], [9, 8, 1],
-        ],
-        dtype=np.int64,
-    )  # fmt: skip
-    vertices /= np.linalg.norm(vertices, axis=1, keepdims=True)
-    for _ in range(level):
-        edges = np.sort(
-            np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]])), axis=1
-        )
-        unique, inverse = np.unique(edges, axis=0, return_inverse=True)
-        middle = vertices[unique[:, 0]] + vertices[unique[:, 1]]
-        middle /= np.linalg.norm(middle, axis=1, keepdims=True)
-        count = faces.shape[0]
-        inverse = inverse.reshape((-1,)) + vertices.shape[0]
-        a, b, c = inverse[:count], inverse[count : 2 * count], inverse[2 * count :]
-        vertices = np.concatenate((vertices, middle))
-        faces = np.concatenate(
-            (
-                np.stack((faces[:, 0], a, c), axis=1),
-                np.stack((faces[:, 1], b, a), axis=1),
-                np.stack((faces[:, 2], c, b), axis=1),
-                np.stack((a, b, c), axis=1),
-            )
-        )
-    return vertices, faces
 
 
 def _uv_torus(
@@ -390,7 +353,7 @@ def _recovery_rows() -> tuple[_Row, ...]:
     # fixed; the row size is the triangle count.
     rows: list[_Row] = []
     for level in (4, 5, 6, 7):
-        vertices, faces = _icosphere(level)
+        vertices, faces = icosphere(level)
         facets = _facets(vertices, faces)
         rows.append(
             _Row(
@@ -488,7 +451,7 @@ def _volume_rows() -> tuple[_Row, ...]:
     rows: list[_Row] = []
     shapes = (
         ("surface-to-tets-sphere", faces.shape[0], (vertices, faces))
-        for vertices, faces in (_icosphere(5), _icosphere(6))
+        for vertices, faces in (icosphere(5), icosphere(6))
     )
     tori = (
         (
@@ -704,6 +667,150 @@ def _cad_quality(result: object, reference_tets: int, /) -> tuple[int, dict[str,
     return missed, measured
 
 
+class _ImproveResult(NamedTuple):
+    mesh: _meshcore.TetMesh3D
+    unmet: int
+
+
+def _improve(
+    points: np.ndarray, cells: np.ndarray, faces: np.ndarray, dihedral: float, /
+) -> _ImproveResult:
+    # State creation on the given mesh with its boundary fixed, then
+    # improvement to radius-edge 2 and the given minimum dihedral.
+    empty = np.empty((0,), dtype=np.int32)
+    mesh = _meshcore.TetMesh3D(
+        points,
+        cells,
+        np.zeros((cells.shape[0],), dtype=np.int32),
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int32),
+        np.empty((0, 2), dtype=np.int32),
+        empty,
+        boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
+    )
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=dihedral)
+    if run.status not in (
+        _meshcore.MeshcoreStatus.OK,
+        _meshcore.MeshcoreStatus.UNRESOLVED,
+    ):
+        raise RuntimeError(f"Improvement failed with status {run.status!r}.")
+    return _ImproveResult(mesh, run.unmet_cells)
+
+
+def _boundary_faces(cells: np.ndarray, /) -> np.ndarray:
+    # Faces used by one cell, oriented outward as in that cell.
+    faces = np.concatenate(
+        (
+            cells[:, [1, 2, 3]],
+            cells[:, [0, 3, 2]],
+            cells[:, [0, 1, 3]],
+            cells[:, [0, 2, 1]],
+        )
+    )
+    _, first, count = np.unique(
+        np.sort(faces, axis=1), axis=0, return_index=True, return_counts=True
+    )
+    return faces[first[count == 1]]
+
+
+def _improve_rows(directory: Path | None, /) -> tuple[_Row, ...]:
+    # Improvement passes on a given mesh: the TetGen tetrahedra of the
+    # icosphere at levels 3, 4 and 5 (minimum dihedral about 1.5 degrees),
+    # prepared by `benchmarks/native_meshing_mmg3d.py prepare DIR`, which also
+    # times the reference (MMG3D -optim -nosurf, library time) on the same
+    # input. Timed: state creation plus improvement; the row size is the
+    # input tetrahedron count. The dihedral target of each size is the
+    # minimum dihedral MMG3D achieves on it (rounded up to 0.1 degree, kept
+    # with the ceiling), so the row is at equal or better quality.
+    if directory is None:
+        raise RuntimeError(
+            "The improve-sphere rows need --improve-inputs DIR from "
+            "`benchmarks/native_meshing_mmg3d.py prepare DIR`."
+        )
+    targets = json.loads(_CEILINGS.read_text(encoding="utf-8"))["rows"]["improve-sphere"]
+    rows: list[_Row] = []
+    for level in (3, 4, 5):
+        given = np.load(directory / f"improve-sphere-{level}.npz")
+        points = np.ascontiguousarray(given["points"], dtype=np.float64)
+        cells = np.ascontiguousarray(given["cells"], dtype=np.int32)
+        faces = _boundary_faces(cells)
+        dihedral = float(targets[str(cells.shape[0])]["minimum_dihedral_degrees"])
+        rows.append(
+            _Row(
+                "improve-sphere",
+                cells.shape[0],
+                lambda points=points, cells=cells, faces=faces, dihedral=dihedral: (
+                    _improve(points, cells, faces, dihedral)
+                ),
+                _improved_cells,
+                _improved_unmet,
+                quality=lambda result, points=points, faces=faces, dihedral=dihedral: (
+                    _improved_quality(result, points, faces, dihedral)
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _improved_result(result: object, /) -> _ImproveResult:
+    if not isinstance(result, _ImproveResult):
+        raise TypeError("The improve row returns an _ImproveResult.")
+    return result
+
+
+def _improved_cells(result: object, /) -> int:
+    return _improved_result(result).mesh.arrays().tetrahedra.shape[0]
+
+
+def _improved_unmet(result: object, /) -> int:
+    return _improved_result(result).unmet
+
+
+def _improved_quality(
+    result: object, given_points: np.ndarray, given_faces: np.ndarray, target: float, /
+) -> tuple[int, dict[str, float]]:
+    # Targets: the minimum dihedral `target`, radius-edge 2, the given closed
+    # boundary kept exactly (FIXED: its triangles, by vertex coordinates), no
+    # inverted cell (the input's positive orientation).
+    arrays = _improved_result(result).mesh.arrays()
+    points = np.asarray(arrays.points)
+    cells = np.asarray(arrays.tetrahedra, dtype=np.int64)
+    dihedral = _dihedral_degrees(points, cells)
+    radius_edge = _radius_edge(points, cells)
+    corners = points[cells]
+    edges = corners[:, 1:] - corners[:, :1]
+    volume = np.einsum("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
+    given = {tuple(point): row for row, point in enumerate(given_points.tolist())}
+    boundary = _boundary_faces(cells)
+    rows = np.asarray(
+        [
+            given.get(tuple(point), -1)
+            for point in points[boundary.reshape((-1,))].tolist()
+        ],
+        dtype=np.int64,
+    ).reshape(boundary.shape)
+    closed = bool(np.all(rows >= 0)) and np.array_equal(
+        np.unique(np.sort(rows, axis=1), axis=0),
+        np.unique(np.sort(given_faces, axis=1), axis=0),
+    )
+    inverted = int(np.sum(volume <= 0.0))
+    measured = {
+        "target_dihedral_degrees": target,
+        "minimum_dihedral_degrees": float(dihedral.min()),
+        "maximum_dihedral_degrees": float(dihedral.max()),
+        "maximum_radius_edge": float(radius_edge.max()),
+        "closed_boundary": float(closed),
+        "inverted": float(inverted),
+    }
+    missed = (
+        int(np.sum(np.min(dihedral, axis=1) < target))
+        + int(np.sum(radius_edge > 2.0))
+        + inverted
+        + int(not closed)
+    )
+    return missed, measured
+
+
 def _implicit_rows() -> tuple[_Row, ...]:
     # The external comparison's sphere (radius 0.371) and torus (major 0.742,
     # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
@@ -813,7 +920,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
         (sphere_value, sphere_gradient, sphere_certified),
         (torus_value, torus_gradient, torus_certified),
     ) = programs
-    spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
+    spheres = {level: icosphere(level) for level in (5, 6, 7, 8)}
     sphere_rows = (
         ("surface-remesh-sphere-1e3", 5, 1e3),
         ("surface-remesh-sphere-1e3", 6, 1e3),
@@ -1429,6 +1536,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
+        "--improve-inputs",
+        type=Path,
+        default=None,
+        help="directory from `benchmarks/native_meshing_mmg3d.py prepare` (improve-sphere rows)",
+    )
+    parser.add_argument(
         "--query-inputs",
         type=Path,
         default=None,
@@ -1442,7 +1555,9 @@ def main(argv: list[str] | None = None) -> int:
     records: list[dict[str, Any]] = []
     failed = False
     names = None if arguments.rows is None else frozenset(arguments.rows)
-    for row in _rows(tuple(arguments.sizes), names, arguments.query_inputs):
+    for row in _rows(
+        tuple(arguments.sizes), names, arguments.improve_inputs, arguments.query_inputs
+    ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
         if row.domain is not None:

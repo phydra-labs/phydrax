@@ -2191,8 +2191,8 @@ class PlcRecoveryBuilder {
   }
 
   // Nondegenerate hull triangles of the source triangulation by vertex (CSR
-  // over source points): those incident to it and those whose plane holds
-  // it as the apex of the cell below.
+  // over source points, each vertex's in cell order): those incident to it
+  // and those whose plane holds it as the apex of the cell below.
   void hull_triangles_by_vertex(std::vector<int64_t>& offsets,
                                 std::vector<std::array<int32_t, 3>>& hull) const {
     offsets.clear();
@@ -2201,6 +2201,7 @@ class PlcRecoveryBuilder {
     const Triangulation3D& triangulation = *triangulation_;
     std::vector<std::pair<int32_t, std::array<int32_t, 3>>> uses;
     const TetrahedralComplex& complex = triangulation.complex();
+    offsets.assign(count + 1, 0);
     for (std::size_t cell = 0; cell < complex.tets.size(); ++cell) {
       const Tetrahedron& ghost = complex.tets[cell];
       if (!complex.live(static_cast<int32_t>(cell))) continue;
@@ -2216,14 +2217,13 @@ class PlcRecoveryBuilder {
       const int32_t apex = below.v[neighbor_slot(below, static_cast<int32_t>(cell))];
       if (orient(h[0], h[1], h[2], apex) == 0) uses.push_back({apex, h});
     }
-    std::sort(uses.begin(), uses.end());
-    offsets.assign(count + 1, 0);
-    hull.reserve(uses.size());
-    for (const auto& [vertex, h] : uses) {
-      ++offsets[static_cast<std::size_t>(vertex) + 1];
-      hull.push_back(h);
-    }
+    for (const auto& use : uses) ++offsets[static_cast<std::size_t>(use.first) + 1];
     for (std::size_t vertex = 0; vertex < count; ++vertex) offsets[vertex + 1] += offsets[vertex];
+    hull.resize(uses.size());
+    std::vector<int64_t> cursor(offsets.begin(), offsets.end() - 1);
+    for (const auto& [vertex, h] : uses) {
+      hull[static_cast<std::size_t>(cursor[static_cast<std::size_t>(vertex)]++)] = h;
+    }
   }
 
   // A polygon's triangulation diagonal is not a PLC constraint when the

@@ -498,6 +498,9 @@ replace-imports-with-any = [
   "sklearn.**",
   "sksparse.**",
   "sparseqr.**",
+  # TetGen runs only in the benchmark reference environment
+  # (benchmarks/native_meshing_mmg3d.py prepare), never in the package.
+  "tetgen.**",
   "torch.**",
   "uproot.**",
   "win32api.**",
