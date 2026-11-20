@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import ctypes
-import os
 import re
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from phydrax._meshcore import (
     cad_mesh,
     CadModel,
     CadSurfaceResult,
+    load_meshcore,
     MeshcoreStatus,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
@@ -45,27 +45,7 @@ def _assert_surface_verifiers(model: CadModel, result: CadSurfaceResult) -> None
     )
     assert np.count_nonzero(~mesh_rows) == len(result.sliver_uv)
     assert _surface_verdict(result.points, result.triangles.astype(np.int64))
-    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
-    function = library.phx_mc_verify_chart_partition
-    function.restype = ctypes.c_int32
-    function.argtypes = [
-        ctypes.c_int64,
-        ctypes.c_int64,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_int64,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_int64,
-        ctypes.c_int64,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_int64,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_int64),
-    ]
+    function = load_meshcore()["phx_mc_verify_chart_partition"]
     evidence = (_ChartFailure * (3 * len(chart.triangles) + len(chart.chord_use) + 10))()
     count = ctypes.c_int64()
     status = function(
@@ -83,8 +63,8 @@ def _assert_surface_verifiers(model: CadModel, result: CadSurfaceResult) -> None
         chart.chord_uv.ctypes.data,
         chart.chord_range.ctypes.data,
         len(evidence),
-        evidence,
-        ctypes.byref(count),
+        ctypes.addressof(evidence),
+        ctypes.addressof(count),
     )
     assert status == 0
     assert count.value == 0
