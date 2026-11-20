@@ -2,8 +2,8 @@
   "provenance": {
     "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
     "measured": "2026-11-19",
-    "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions); recovery rows: CGAL CDT_3 on the ledger's icosphere and grid torus surfaces (the generators of this benchmark); refinement rows: Gmsh HXT generate(3) wall time, minimum of three, on the same generated surface given as a discrete surface with MeshSizeMin = MeshSizeMax = the mean surface edge (element counts within 1% of this benchmark's); surface remesh rows: the ledger's surface remeshing table, MMGS library time (MMGS_mmgslib) on the same generated surfaces with -hsiz h -hausd h^2/4",
-    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, optimizer off", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4"}
+    "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions); recovery rows: CGAL CDT_3 on the ledger's icosphere and grid torus surfaces (the generators of this benchmark); refinement rows: Gmsh HXT generate(3) wall time, minimum of three, on the same generated surface given as a discrete surface with MeshSizeMin = MeshSizeMax = the mean surface edge (element counts within 1% of this benchmark's); surface remesh rows: the ledger's surface remeshing table, MMGS library time (MMGS_mmgslib) on the same generated surfaces with -hsiz h -hausd h^2/4; metric rows: the ledger's F6b table, MMG3D library time (MMG3DLIB elapsed, minimum of three) on the same Gmsh cube and sampled targets",
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, optimizer off", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4", "mmg3d": "5.8.0 mmg3d_O3 with -sol (scalar size or tensor), defaults (-hgrad 1.3, -hausd 0.01), -m 3800"}
   },
   "rows": {
     "delaunay-2d": {
@@ -92,6 +92,21 @@
     },
     "mesh-remesh-noisy-torus-1e5": {
       "1000000": {"tool": "cgal", "seconds": 6.89, "allowed_ratio": 1.0}
+    },
+    "metric-3d-iso": {
+      "10000": {"tool": "mmg3d", "seconds": 2.45, "allowed_ratio": 1.0},
+      "100000": {"tool": "mmg3d", "seconds": 3.84, "allowed_ratio": 1.0},
+      "1000000": {"tool": "mmg3d", "seconds": 15.26, "allowed_ratio": 1.0}
+    },
+    "metric-3d-aniso": {
+      "10000": {"tool": "mmg3d", "seconds": 1.32, "allowed_ratio": 1.0},
+      "100000": {"tool": "mmg3d", "seconds": 3.98, "allowed_ratio": 1.0},
+      "1000000": {"tool": "mmg3d", "seconds": 23.59, "allowed_ratio": 1.0}
+    },
+    "metric-3d-coarsen": {
+      "10000": {"tool": "mmg3d", "seconds": 0.377, "allowed_ratio": 1.0},
+      "100000": {"tool": "mmg3d", "seconds": 1.355, "allowed_ratio": 1.0},
+      "1000000": {"tool": "mmg3d", "seconds": 15.27, "allowed_ratio": 1.0}
     }
   }
 }

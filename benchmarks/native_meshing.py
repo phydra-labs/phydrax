@@ -250,6 +250,10 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
             ),
             _volume_rows,
         ),
+        (
+            frozenset({"metric-3d-iso", "metric-3d-aniso", "metric-3d-coarsen"}),
+            lambda: _f6_rows(sizes),
+        ),
     )
     rows: list[_Row] = []
     for family, build in families:
@@ -1013,6 +1017,270 @@ def _constructed_cells(result: object, /) -> int:
     if not isinstance(result, RestrictedImplicitConstruction):
         raise TypeError("The restricted construction returns its constructed arrays.")
     return result.tetrahedra.shape[0]
+
+
+# The ledger's F6 / F6b metric rows: the Gmsh OpenCASCADE unit cube meshed with
+# MeshSizeMin = MeshSizeMax = h (about 1e4 / 1e5 / 1e6 tetrahedra; the row
+# size is that nominal count), adapted toward targets sampled at its
+# vertices: (iso) h = min(0.01 + 0.3 d, 0.1), d the distance to the sphere of
+# radius 0.3 about the center; (aniso) normal size min(0.01 + 0.3 |z - 0.5|,
+# 0.1) to the plane z = 0.5 and tangential size 0.1; (coarsen) twice the mean
+# length of the edges at each vertex. Each row grades its target first (in
+# the timed run), as MMG3D does by default (hgrad 1.3: h_q <= h_p + ln(1.3)
+# |pq|), anisotropically for the anisotropic target. The references are
+# MMG3D's, whose share of metric lengths in [0.7, 1.4] and mean quality a row
+# may not fall below.
+_F6_SIZES = {10_000: 0.0782, 100_000: 0.0363, 1_000_000: 0.01685}
+_F6_REFERENCE = {
+    ("iso", 10_000): (0.774, 0.845),
+    ("iso", 100_000): (0.870, 0.845),
+    ("iso", 1_000_000): (0.918, 0.843),
+    ("aniso", 10_000): (0.935, 0.847),
+    ("aniso", 100_000): (0.906, 0.838),
+    ("aniso", 1_000_000): (0.912, 0.839),
+    ("coarsen", 10_000): (0.794, 0.827),
+    ("coarsen", 100_000): (0.862, 0.839),
+    ("coarsen", 1_000_000): (0.893, 0.842),
+}
+
+
+def _gmsh_cube(h: float, /) -> tuple[np.ndarray, np.ndarray]:
+    from importlib import import_module
+
+    gmsh = import_module("gmsh")
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.option.setNumber("General.NumThreads", 1)
+    gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+    gmsh.model.occ.synchronize()
+    gmsh.option.setNumber("Mesh.MeshSizeMin", h)
+    gmsh.option.setNumber("Mesh.MeshSizeMax", h)
+    gmsh.model.mesh.generate(3)
+    tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    types, _, nodes = gmsh.model.mesh.getElements(3)
+    gmsh.finalize()
+    order = np.argsort(tags)
+    tags = np.asarray(tags)[order]
+    points = np.asarray(coordinates, dtype=np.float64).reshape((-1, 3))[order]
+    cells = np.searchsorted(
+        tags,
+        np.concatenate(
+            [np.asarray(n).reshape((-1, 4)) for t, n in zip(types, nodes) if t == 4]
+        ),
+    ).astype(np.int32)
+    corners = points[cells]
+    volume = np.einsum(
+        "ij,ij->i",
+        corners[:, 1] - corners[:, 0],
+        np.cross(corners[:, 2] - corners[:, 0], corners[:, 3] - corners[:, 0]),
+    )
+    cells[volume < 0.0] = cells[volume < 0.0][:, [0, 2, 1, 3]]
+    return points, cells
+
+
+def _tet_edges(cells: np.ndarray, /) -> np.ndarray:
+    pairs = np.concatenate([cells[:, [i, j]] for i in range(4) for j in range(i + 1, 4)])
+    return np.unique(np.sort(pairs, axis=1), axis=0)
+
+
+def _f6_metric(field: str, points: np.ndarray, sizes: np.ndarray | None, /) -> np.ndarray:
+    # Tensors 1 / h^2 (iso, coarsen) or diag(1/0.1^2, 1/0.1^2, 1/h_n^2) at points.
+    match field:
+        case "iso":
+            d = np.abs(np.linalg.norm(points - 0.5, axis=1) - 0.3)
+            h = np.minimum(0.01 + 0.3 * d, 0.1)
+            return np.eye(3)[None] / (h * h)[:, None, None]
+        case "aniso":
+            normal = np.minimum(0.01 + 0.3 * np.abs(points[:, 2] - 0.5), 0.1)
+            metric = np.zeros((points.shape[0], 3, 3), dtype=np.float64)
+            metric[:, 0, 0] = metric[:, 1, 1] = 1.0 / 0.01
+            metric[:, 2, 2] = 1.0 / (normal * normal)
+            return metric
+        case "coarsen":
+            if sizes is None:
+                raise ValueError(
+                    "The coarsening target is sampled at the input vertices."
+                )
+            return np.eye(3)[None] / (sizes * sizes)[:, None, None]
+        case _:
+            raise ValueError(f"Unknown F6 field {field!r}.")
+
+
+def _coarsen_sizes(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    edges = _tet_edges(cells)
+    length = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    total = np.zeros(points.shape[0], dtype=np.float64)
+    count = np.zeros(points.shape[0], dtype=np.float64)
+    for end in range(2):
+        np.add.at(total, edges[:, end], length)
+        np.add.at(count, edges[:, end], 1.0)
+    return 2.0 * total / count
+
+
+def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+    from phydrax.meshing import (
+        execute_mesh_adaptation,
+        grade_mesh_metric,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        MeshingEntityKind,
+        MeshingScope,
+        MeshMetricField,
+        MetricGradationPolicy,
+        MetricMeshAdaptation,
+        prepare_mesh_adaptation,
+    )
+    from phydrax.meshing._canonical import certify_cell_mesh
+
+    rows: list[_Row] = []
+    for size, h in _F6_SIZES.items():
+        if size not in sizes:
+            continue
+        points, cells = _gmsh_cube(h)
+        block = CellBlock(
+            "tetrahedra",
+            "tetrahedron",
+            cells,
+            global_ids=np.arange(cells.shape[0], dtype=np.int64),
+        )
+        source = certify_cell_mesh(
+            CellMesh(
+                points,
+                (block,),
+                vertex_global_ids=np.arange(points.shape[0], dtype=np.int64),
+            ),
+            SpatialCoordinateContract.si(),
+        )
+        vertices = source.mesh.entity_set(0)
+        scope = MeshingScope(
+            source.mesh.mesh_id,
+            source.mesh.numeric_version,
+            MeshingEntityKind.MESH,
+            0,
+            vertices.entity_set_id,
+            np.asarray(vertices.entity_ids, dtype=np.int64),
+        )
+        coarse = _coarsen_sizes(points, cells)
+        edges = _tet_edges(cells)
+        policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_METRIC_3D)
+        for field in ("iso", "aniso", "coarsen"):
+            target = MeshMetricField(
+                scope,
+                _f6_metric(field, points, coarse),
+                minimum_size=1.0e-3,
+                maximum_size=10.0,
+                maximum_anisotropy=100.0,
+            )
+            gradation = MetricGradationPolicy(
+                1.0 + math.log(1.3), anisotropic=field == "aniso"
+            )
+
+            def run(
+                source: Any = source,
+                target: Any = target,
+                gradation: Any = gradation,
+                edges: np.ndarray = edges,
+                points: np.ndarray = points,
+            ) -> object:
+                graded, _ = grade_mesh_metric(
+                    target, policy=gradation, adjacency=edges, coordinates=points
+                )
+                return execute_mesh_adaptation(
+                    prepare_mesh_adaptation(
+                        source, MetricMeshAdaptation(graded), policy=policy
+                    )
+                )
+
+            rows.append(
+                _Row(
+                    f"metric-3d-{field}",
+                    size,
+                    run,
+                    _adapted_cells,
+                    quality=lambda result, field=field, size=size: _f6_quality(
+                        result, field, _F6_REFERENCE[field, size]
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def _adapted_arrays(result: object, /) -> tuple[np.ndarray, np.ndarray]:
+    from phydrax.meshing import MeshAdaptationResult
+
+    if not isinstance(result, MeshAdaptationResult):
+        raise TypeError("The metric row returns a MeshAdaptationResult.")
+    mesh = result.target.mesh
+    cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    return np.asarray(mesh.coordinates, dtype=np.float64), cells
+
+
+def _adapted_cells(result: object, /) -> int:
+    return _adapted_arrays(result)[1].shape[0]
+
+
+def _f6_quality(
+    result: object, field: str, reference: tuple[float, float], /
+) -> tuple[int, dict[str, float]]:
+    # As the ledger's f6_ana: metric edge lengths against the target at the
+    # edge midpoint (the coarsening target as the adapted metric's
+    # log-Euclidean edge mean), the mean-ratio quality of every cell in the
+    # metric of its centroid, and the inverted cells. A miss: any inverted
+    # cell, a share or a mean quality below MMG3D's, a status that is not
+    # COMPLETE.
+    from phydrax.meshing import MeshAdaptationResult, MeshAdaptationStatus
+
+    if not isinstance(result, MeshAdaptationResult):
+        raise TypeError("The metric row returns a MeshAdaptationResult.")
+    points, cells = _adapted_arrays(result)
+    edges = _tet_edges(cells)
+    vector = points[edges[:, 1]] - points[edges[:, 0]]
+    if field == "coarsen":
+        if result.metric is None:
+            raise ValueError("A metric route publishes its target metric.")
+        tensors = np.asarray(result.metric.values, dtype=np.float64)
+        midpoint = 0.5 * (tensors[edges[:, 0]] + tensors[edges[:, 1]])
+        centroid = tensors[cells].mean(axis=1)
+    else:
+        midpoint = _f6_metric(
+            field, 0.5 * (points[edges[:, 0]] + points[edges[:, 1]]), None
+        )
+        centroid = _f6_metric(field, points[cells].mean(axis=1), None)
+    length = np.sqrt(np.einsum("ni,nij,nj->n", vector, midpoint, vector))
+    corners = points[cells]
+    volume = (
+        np.einsum(
+            "ij,ij->i",
+            corners[:, 1] - corners[:, 0],
+            np.cross(corners[:, 2] - corners[:, 0], corners[:, 3] - corners[:, 0]),
+        )
+        / 6.0
+    )
+    squares = np.zeros(cells.shape[0], dtype=np.float64)
+    for i in range(4):
+        for j in range(i + 1, 4):
+            side = corners[:, j] - corners[:, i]
+            squares += np.einsum("ni,nij,nj->n", side, centroid, side)
+    metric_volume = np.abs(volume) * np.sqrt(np.linalg.det(centroid))
+    quality = 12.0 * (3.0 * metric_volume) ** (2.0 / 3.0) / squares
+    share = float(np.mean((length >= 0.7) & (length <= 1.4)))
+    inverted = int(np.count_nonzero(volume <= 0.0))
+    missed = (
+        inverted
+        + int(share < reference[0])
+        + int(float(quality.mean()) < reference[1])
+        + int(result.status is not MeshAdaptationStatus.COMPLETE)
+    )
+    return missed, {
+        "share_0_7_1_4": share,
+        "quality_min": float(quality.min()),
+        "quality_mean": float(quality.mean()),
+        "inverted": float(inverted),
+        "reference_share": reference[0],
+        "reference_quality_mean": reference[1],
+    }
 
 
 def _ceiling(
