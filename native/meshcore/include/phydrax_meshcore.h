@@ -1808,6 +1808,65 @@ typedef struct phx_mc_overset_result {
 PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
                                            const phx_mc_overset_result* result);
 
+/* ---------------------------------------------------------- prism layers */
+/* Prism layers grown from a closed, consistently oriented triangle wall
+ * (every edge shared by exactly two triangles with opposite directions, every
+ * vertex used and manifold); triangles are oriented so their right-hand
+ * normals point into the layer domain. heights are the cumulative heights of
+ * the layer_count levels (strictly increasing, positive); D = heights[last].
+ * One straight column per wall vertex: smooth vertices grow along the fitted
+ * surface normal, vertices where two or more feature edges meet (adjacent
+ * normals differ by more than feature_angle_degrees) along the medial
+ * direction of their smooth sectors with curvature-corrected heights, and
+ * smooth columns near features carry the ridge offsets by a screened
+ * relaxation. Construction is floating point; columns of prisms with a
+ * nonpositive float Bernstein control are thinned (scale x 0.8, not below
+ * minimum_scale in (0, 1]). With prove, every prism is certified valid by the
+ * exact signs of its nine Bernstein Jacobian controls (degree one on the
+ * triangle, two along the column: the six corner Jacobians by orient3d and
+ * three mixed controls), and the top level is certified embedded and
+ * disjoint from the wall by exact triangle contacts; a failure thins the
+ * columns involved and the certificate reruns.
+ * Outputs: points ((layer_count + 1) * vertex_count, 3): level k of vertex v
+ * at row k * vertex_count + v, level 0 the wall bitwise; prisms
+ * (layer_count * triangle_count, 6): layer k of triangle t at row
+ * k * triangle_count + t, bottom (a, b, c) then top over them (positive
+ * corner Jacobians); displacement (vertex_count, 3): the full-depth column
+ * vector at scale 1; scale (vertex_count): the thinning factor;
+ * vertex_kind (vertex_count): 0 smooth, 1 ridge, 2 corner.
+ * stats (20): seconds of topology, jets, directions, relaxation,
+ * construction, certification and total; then ridge vertices, corner
+ * vertices, relaxed vertices, thinned vertices, thinned ridge/corner
+ * vertices, minimum scale, repair rounds, invalid prisms (exact with prove,
+ * else float), top-level contacts (-1 without prove), certified (1/0),
+ * minimum float corner ratio (min / max |corner Jacobian| per prism),
+ * feature edges and relaxation updates.
+ * Returns PHX_MC_OK, PHX_MC_UNRESOLVED when a failure remains at the minimum
+ * scale (outputs hold the last construction), PHX_MC_INVALID_INPUT for a
+ * wall that is not a closed oriented manifold, PHX_MC_DEGENERATE_INPUT for a
+ * zero-area triangle, or the argument and domain errors. */
+typedef struct phx_mc_prism_layers_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  int32_t layer_count;
+  const double* heights;
+  double feature_angle_degrees;
+  double minimum_scale;
+  int32_t prove;
+} phx_mc_prism_layers_request;
+typedef struct phx_mc_prism_layers_result {
+  double* points;
+  int32_t* prisms;
+  double* displacement;
+  double* scale;
+  uint8_t* vertex_kind;
+  double* stats;
+} phx_mc_prism_layers_result;
+PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* request,
+                                       const phx_mc_prism_layers_result* result);
+
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
 enum phx_mc_power_failure_reason {

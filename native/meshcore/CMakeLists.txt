@@ -67,6 +67,8 @@ set(PHX_MC_SOURCES
   src/hex_topology.cpp
   src/overset.cpp
   src/overset_capi.cpp
+  src/prism_layers.cpp
+  src/prism_layers_capi.cpp
   src/implicit_polygon.cpp
   src/implicit_face_proposals.cpp
   src/quad_topology.cpp
@@ -129,6 +131,7 @@ set(PHX_MC_HEADERS
   src/clip3d.hpp
   src/clip_common.hpp
   src/overset.hpp
+  src/prism_layers.hpp
   src/dyadic.hpp
   src/exact_line.hpp
   src/exact_scalar.hpp
@@ -276,6 +279,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_bvh_query)
   phx_mc_add_test(test_overset)
+  phx_mc_add_test(test_prism_layers)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)

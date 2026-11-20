@@ -289,6 +289,31 @@ class _OversetResult(ctypes.Structure):
     )
 
 
+class _PrismLayersRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("layer_count", _I32),
+        ("heights", _P),
+        ("feature_angle_degrees", _F64),
+        ("minimum_scale", _F64),
+        ("prove", _I32),
+    )
+
+
+class _PrismLayersResult(ctypes.Structure):
+    _fields_ = (
+        ("points", _P),
+        ("prisms", _P),
+        ("displacement", _P),
+        ("scale", _P),
+        ("vertex_kind", _P),
+        ("stats", _P),
+    )
+
+
 class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     _fields_ = (
         ("original_site_count", _I64),
@@ -1302,6 +1327,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_overset_assemble": (
         _I32,
         (ctypes.POINTER(_OversetParts), ctypes.POINTER(_OversetResult)),
+    ),
+    "phx_mc_prism_layers": (
+        _I32,
+        (ctypes.POINTER(_PrismLayersRequest), ctypes.POINTER(_PrismLayersResult)),
     ),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
@@ -2673,6 +2702,99 @@ def overset_assemble(
     )
     _raise_for_call(status, "overset_assemble")
     return result
+
+
+class PrismLayers(NamedTuple):
+    """Levels, prisms and evidence of ``prism_layers``.
+
+    ``points`` holds level ``k`` of wall vertex ``v`` at row ``k * n + v``
+    (level 0 is the wall bitwise); ``prisms`` holds layer ``k`` of triangle
+    ``t`` at row ``k * m + t`` as bottom ``(a, b, c)`` then the tops over them.
+    ``status`` is OK, or UNRESOLVED when a failure remained at the minimum
+    scale (the arrays then hold the last construction).
+    """
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    prisms: np.ndarray
+    displacement: np.ndarray
+    scale: np.ndarray
+    vertex_kind: np.ndarray
+    # Seconds of topology, jets, directions, relaxation, construction,
+    # certification and total; then ridge vertices, corner vertices, relaxed
+    # vertices, thinned vertices, thinned ridge/corner vertices, minimum
+    # scale, repair rounds, invalid prisms, top-level contacts (-1 without
+    # prove), certified, minimum float corner ratio, feature edges and
+    # relaxation updates.
+    stats: np.ndarray
+
+
+def prism_layers(
+    vertices: object,
+    triangles: object,
+    heights: object,
+    /,
+    *,
+    feature_angle_degrees: float,
+    minimum_scale: float,
+    prove: bool,
+) -> PrismLayers:
+    """Grow prism layers from a closed oriented triangle wall.
+
+    Rows follow ``phx_mc_prism_layers``: triangles oriented so their normals
+    point into the layer domain, ``heights`` the increasing cumulative level
+    heights.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    levels = np.ascontiguousarray(heights, dtype=np.float64)
+    if rows.ndim != 2 or rows.shape[1] != 3 or levels.ndim != 1 or levels.size < 1:
+        raise ValueError("prism_layers takes (m, 3) triangles and a heights vector.")
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    for name, value in (
+        ("feature_angle_degrees", feature_angle_degrees),
+        ("minimum_scale", minimum_scale),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
+            raise TypeError(f"{name} must be a real number.")
+    vertex_count, triangle_count = points.shape[0], rows.shape[0]
+    layer_count = levels.shape[0]
+    arrays = (
+        np.empty(((layer_count + 1) * vertex_count, 3), dtype=np.float64),
+        np.empty((layer_count * triangle_count, 6), dtype=np.int32),
+        np.empty((vertex_count, 3), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((20,), dtype=np.float64),
+    )
+    request = _PrismLayersRequest(
+        vertex_count=vertex_count,
+        vertices=points.ctypes.data,
+        triangle_count=triangle_count,
+        triangles=rows.ctypes.data,
+        layer_count=_int32_argument(layer_count, "layer_count"),
+        heights=levels.ctypes.data,
+        feature_angle_degrees=float(feature_angle_degrees),
+        minimum_scale=float(minimum_scale),
+        prove=1 if prove else 0,
+    )
+    outputs = _PrismLayersResult(*(array.ctypes.data for array in arrays))
+    status = load_meshcore()["phx_mc_prism_layers"](
+        ctypes.byref(request), ctypes.byref(outputs)
+    )
+    if status != MeshcoreStatus.UNRESOLVED:
+        _raise_for_call(
+            status,
+            "prism_layers",
+            contracts={
+                MeshcoreStatus.INVALID_INPUT: "the wall must be a closed, "
+                "consistently oriented triangle manifold using every vertex.",
+                MeshcoreStatus.DEGENERATE_INPUT: "a wall triangle has zero area.",
+            },
+        )
+    return PrismLayers(MeshcoreStatus(status), *arrays)
 
 
 def _int32_argument(value: object, name: str, /) -> int:
