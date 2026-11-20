@@ -169,7 +169,9 @@ inline std::uint32_t brio_round(int32_t index, int rounds) {
 // Stable least-significant-digit radix sort by the key (`by_key`) and then
 // by the round (`by_round`, most significant). Six 11-bit digits cover the
 // key (at most 63 bits); rounds are below 62. Digits constant over all
-// entries are skipped. `scratch` is working storage.
+// entries are skipped. `scratch` is working storage. Few entries are sorted
+// by std::stable_sort on the same fields instead (the same stable order):
+// the radix passes would clear and scan a 2048-bucket histogram per digit.
 inline void radix_sort_keys(std::vector<SpatialKey>& keys, std::vector<SpatialKey>& scratch,
                             bool by_key, bool by_round) {
   constexpr int kDigitBits = 11;
@@ -180,6 +182,16 @@ inline void radix_sort_keys(std::vector<SpatialKey>& keys, std::vector<SpatialKe
   const int first = by_key ? 0 : kKeyDigits;
   const int last = by_round ? kKeyDigits : kKeyDigits - 1;
   if (first > last) return;
+  if (count <= 256) {
+    std::stable_sort(keys.begin(), keys.end(),
+                     [by_key, by_round](const SpatialKey& left, const SpatialKey& right) {
+                       if (by_round && left.round != right.round) {
+                         return left.round < right.round;
+                       }
+                       return by_key && left.key < right.key;
+                     });
+    return;
+  }
   const auto digit = [](const SpatialKey& entry, int d) -> std::size_t {
     return d == kKeyDigits ? entry.round
                            : static_cast<std::size_t>(entry.key >> (kDigitBits * d)) &
