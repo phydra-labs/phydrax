@@ -1,6 +1,7 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -528,6 +529,148 @@ void test_power3d_stage_agrees() {
               decided, zeros, mismatches);
 }
 
+// The exact incircle sign by full expansion arithmetic on the exact
+// coordinate differences, without any filter: the reference for the stages.
+int incircle_reference(const double* a, const double* b, const double* c, const double* d) {
+  const double* p[3] = {a, b, c};
+  Expansion x[3], y[3], lift[3];
+  for (int k = 0; k < 3; ++k) {
+    x[k] = Expansion::difference(p[k][0], d[0]);
+    y[k] = Expansion::difference(p[k][1], d[1]);
+    lift[k] = x[k] * x[k] + y[k] * y[k];
+  }
+  return (lift[0] * (x[1] * y[2] - x[2] * y[1]) + lift[1] * (x[2] * y[0] - x[0] * y[2]) +
+          lift[2] * (x[0] * y[1] - x[1] * y[0]))
+      .sign();
+}
+
+// d moved by `ulps` units in the last place of one coordinate (negative
+// counts move down).
+void nudge(double (&d)[2], int axis, int ulps) {
+  for (int step = 0; step < (ulps < 0 ? -ulps : ulps); ++step) {
+    d[axis] = std::nextafter(d[axis], ulps < 0 ? -INFINITY : INFINITY);
+  }
+}
+
+// The staged incircle (stage A, compensated and expansion stage B, C, D) and
+// the inlined floating stage the triangulations call first decide only the
+// sign of the unfiltered full expansion, on exactly cocircular integer and
+// dyadic lattice points (exact differences), exactly cocircular octagonal
+// images of a real point (inexact differences), regular n-gons for
+// n = 3..400 at several radii and centers, those configurations with the
+// query moved by 1-4 ulps or by a relative 1e-12, and random points.
+void test_incircle_stages_agree() {
+  std::uint64_t seed = 2027;
+  int checked = 0, zeros = 0, mismatches = 0;
+  int stage_count[5] = {0, 0, 0, 0, 0};
+  const auto compare = [&](const double* a, const double* b, const double* c, const double* d) {
+    const int exact = incircle_reference(a, b, c, d);
+    const IncircleDecision decision = incircle_decision(a, b, c, d);
+    const int filter = incircle_stage(a, b, c, d);
+    mismatches += decision.sign != exact || (filter != 0 && filter != exact) ? 1 : 0;
+    mismatches += (filter != 0) != (decision.stage == IncircleStage::kA) ? 1 : 0;
+    ++stage_count[static_cast<int>(decision.stage)];
+    zeros += exact == 0 ? 1 : 0;
+    ++checked;
+  };
+  // The query moved by 1-4 ulps either way along either axis, and by a
+  // relative 1e-12 inward and outward.
+  const auto compare_perturbed = [&](const double* a, const double* b, const double* c,
+                                     const double* d) {
+    compare(a, b, c, d);
+    for (int ulps = 1; ulps <= 4; ++ulps) {
+      for (const int direction : {-1, 1}) {
+        double moved[2] = {d[0], d[1]};
+        nudge(moved, ulps % 2, direction * ulps);
+        compare(a, b, c, moved);
+      }
+    }
+    for (const double relative : {-1e-12, 1e-12}) {
+      const double moved[2] = {d[0] * (1.0 + relative), d[1] * (1.0 - relative)};
+      compare(a, b, c, moved);
+    }
+  };
+  const auto pick = [&](std::size_t count) {
+    return static_cast<std::size_t>(splitmix64(seed++) % count);
+  };
+
+  // The 48 lattice points on x^2 + y^2 = 5525 = 5^2 13 17, scaled by powers
+  // of two and translated by dyadic (exactly cocircular) or decimal
+  // (rounded) centers.
+  std::vector<std::array<double, 2>> lattice;
+  for (int x = -74; x <= 74; ++x) {
+    for (int y = -74; y <= 74; ++y) {
+      if (x * x + y * y == 5525) {
+        lattice.push_back({static_cast<double>(x), static_cast<double>(y)});
+      }
+    }
+  }
+  PHX_CHECK(lattice.size() == 48);
+  for (const double scale : {1.0, 0x1p-30, 0x1p20}) {
+    for (const std::array<double, 2> center :
+         {std::array<double, 2>{0.0, 0.0}, std::array<double, 2>{0x1p30, -0x1p-10},
+          std::array<double, 2>{0.1, 1.0 / 3.0}, std::array<double, 2>{1e3 / 7.0, -2e3}}) {
+      for (int trial = 0; trial < 1500; ++trial) {
+        double q[4][2];
+        for (auto& point : q) {
+          const std::array<double, 2>& lattice_point = lattice[pick(lattice.size())];
+          point[0] = center[0] + scale * lattice_point[0];
+          point[1] = center[1] + scale * lattice_point[1];
+        }
+        compare_perturbed(q[0], q[1], q[2], q[3]);
+      }
+    }
+  }
+  // Octagonal images (+-u, +-v), (+-v, +-u) of a real point lie exactly on
+  // the circle of radius |(u, v)| about the origin.
+  for (int trial = 0; trial < 3000; ++trial) {
+    const double u = 2.0 * uniform(seed) - 1.0, v = 2.0 * uniform(seed) - 1.0;
+    const double images[8][2] = {{u, v}, {-v, u}, {-u, -v}, {v, -u},
+                                 {v, u}, {-u, v}, {-v, -u}, {u, -v}};
+    const double* q[4];
+    for (auto& point : q) point = images[pick(8)];
+    compare_perturbed(q[0], q[1], q[2], q[3]);
+  }
+  // Regular n-gons: consecutive vertices, quarter turns and random choices.
+  constexpr double kPi = 3.14159265358979323846;
+  for (int n = 3; n <= 400; ++n) {
+    for (const std::array<double, 3> circle :
+         {std::array<double, 3>{0.0, 0.0, 1.0}, std::array<double, 3>{0.5, 0.5, 0.3},
+          std::array<double, 3>{-1e3, 2e3, 1e-2}, std::array<double, 3>{1e5, 1e5, 37.0}}) {
+      std::vector<double> polygon(2 * static_cast<std::size_t>(n));
+      for (int k = 0; k < n; ++k) {
+        const double angle = 2.0 * kPi * k / n;
+        polygon[2 * k] = circle[0] + circle[2] * std::cos(angle);
+        polygon[2 * k + 1] = circle[1] + circle[2] * std::sin(angle);
+      }
+      const auto vertex = [&](std::size_t k) { return polygon.data() + 2 * (k % n); };
+      for (int start = 0; start < 4; ++start) {
+        const std::size_t first = pick(n);
+        compare_perturbed(vertex(first), vertex(first + 1), vertex(first + 2), vertex(first + 3));
+        compare_perturbed(vertex(first), vertex(first + n / 4), vertex(first + n / 2),
+                          vertex(first + 3 * n / 4));
+        compare_perturbed(vertex(pick(n)), vertex(pick(n)), vertex(pick(n)), vertex(pick(n)));
+      }
+    }
+  }
+  for (int trial = 0; trial < 20000; ++trial) {
+    double q[4][2];
+    for (auto& point : q) {
+      point[0] = uniform(seed);
+      point[1] = uniform(seed);
+    }
+    compare(q[0], q[1], q[2], q[3]);
+  }
+  PHX_CHECK(mismatches == 0);
+  PHX_CHECK(zeros > 1000);
+  for (const int count : stage_count) PHX_CHECK(count > 0);
+  std::printf(
+      "incircle stages: %d checked, decided A %d, B compensated %d, B expansion %d, C %d, D %d, "
+      "%d exact zeros, %d mismatches\n",
+      checked, stage_count[0], stage_count[1], stage_count[2], stage_count[3], stage_count[4],
+      zeros, mismatches);
+}
+
 }  // namespace
 
 int main() {
@@ -537,6 +680,7 @@ int main() {
   test_incircle_insphere_exact_zero_and_ulp();
   test_insphere_exact_paths();
   test_power3d_stage_agrees();
+  test_incircle_stages_agree();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();

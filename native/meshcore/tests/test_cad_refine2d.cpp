@@ -79,6 +79,7 @@ CadRefine2DResult run(const Fixture& f,CadMetric2DFunction metric,void* context,
   in.metric=metric; in.metric_context=context; in.point_cap=cap;
   CadRefine2DResult result;
   status=cad_refine2d(in,result);
+  PHX_CHECK(result.stats.relocations_tried==result.stats.relocations_accepted+result.stats.relocations_failed);
   // Fault caught: retaining transient refusal evidence after successful refinement.
   if(status==PHX_MC_OK) PHX_CHECK(result.unresolved.empty());
   if(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED) {
@@ -470,6 +471,7 @@ void blocked_boundary_evidence() {
     ++observed;
     // Fault caught: returning a BVH position instead of the input segment index.
     PHX_CHECK(e.segment==1);
+    PHX_CHECK(e.relocation_failed);
     // Independent Euclidean diametral-lens test for the blocked bottom segment.
     PHX_CHECK((e.candidate[0]-points[0])*(e.candidate[0]-points[2])+
               (e.candidate[1]-points[1])*(e.candidate[1]-points[3])<0);
@@ -501,11 +503,13 @@ int main() {
   check_topology(f,r);
   r=run(f,gradient,nullptr,status);
   report_refusals("gradient",status,r);
-  // Fault caught: a silently resolved or differently refused long boundary.
+  // Fault caught: failing to relocate any candidate blocked by a fixed segment,
+  // or dropping the remaining failed-relocation evidence.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
-  PHX_CHECK(r.stats.encroachment_refusals==21);
-  PHX_CHECK(r.stats.outside_refusals==0 && r.stats.proximity_refusals==0 &&
-            r.stats.nonstar_refusals==0 && r.stats.unresolved_triangles>0);
+  PHX_CHECK(r.stats.encroachment_refusals==9 && r.stats.outside_refusals==1);
+  PHX_CHECK(r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
+            r.stats.unresolved_triangles>0 && r.stats.relocations_accepted>0 &&
+            r.stats.relocations_failed>0);
   check_topology(f,r);
   Fixture fine=rectangle(6,6,24,24);
   r=run(fine,graded_identity,&fine,status);

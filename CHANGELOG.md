@@ -324,6 +324,67 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native periodic Delaunay triangulates directly on the flat torus: each point
+  is one vertex, cells carry lattice offsets, walks and cavities run through
+  the covering space, bootstrapped from the certified image triangulation of a
+  BRIO sample and falling back to it whenever the quotient is not a valid
+  triangulation of the torus. Filters run on rounded translates with a bound
+  for their rounding; signs and the tie-breaking stay exact, so cells, keys and
+  support bounds are unchanged. Declared identity change: `certified_margin`
+  is now the least `initial_margin * 2^k` holding every published cell's
+  circumball (same `required_margin` formula, facet closure), never larger
+  than before, so `certified_periodic_margin`, periodic shell certificates and
+  owner-local view ids can change, and stored archives with a larger margin
+  must be regenerated. New `periodic-3d` benchmark row (CGAL Periodic_3).
+- Native in-circle tests the floating filter cannot decide go through
+  Shewchuk's adaptive stages (B, C, D) with a double-double estimate of the
+  stage-B determinant in front; signs remain exact and every 2D Delaunay,
+  regular, CDT and Ruppert output is byte-identical. Near-cocircular input is
+  much faster (the published 206-point ring's undecided tests 583 ns -> 18 ns
+  each); `test_predicates` checks every stage against the unfiltered
+  expansion on 461,144 near-degenerate cases.
+- Native zero-set remeshing collapses edges far below the collapse threshold
+  onto an endpoint instead of a projected midpoint (no point jet per collapse
+  when coarsening a fine input); new `surface-remesh-sphere-1e3` and
+  `surface-remesh-sphere-1e5` benchmark rows (the MMGS sphere ladder).
+- Native surface-to-tetrahedra is faster with identical output: a PLC
+  recovery that needed no local edits, Steiner points or metric marks its
+  cells as Delaunay, and refinement of the adopted mesh skips its initial flip
+  pass while the mesh is unedited; interior insertions link cone cells across
+  a dense table of local boundary-vertex indices; the segment index and
+  improvement's source-edge set are hash containers and improvement's
+  insertion cavities use the segment index instead of scanning the segment
+  bank; recovery inserts its bounding corners into the untouched Delaunay
+  triangulation without per-cell validation; first-round refinement proposals
+  get batched Hilbert keys and a radix sort.
+- Planar quality refinement processes bad triangles through a deterministic
+  spatial bucket queue (`refine_queue.hpp`, one bucket where buckets do not
+  pay) and constructs inserted points from a canonical vertex order. Declared
+  identity change: refined planar meshes (points, triangles, segment and
+  constraint ids, parents) and their triangulation fingerprints change,
+  including the periodic-box cap triangulation; non-refining constrained
+  Delaunay output is unchanged. Refined meshes are permutation-invariant on
+  generic input; 1e6-point refinement runs about 2.2x faster, with minimum
+  angles above Triangle's at equal input.
+- CAD chart refinement uses the same queue (2x faster at 1e6 triangles; chart
+  meshes change, no fingerprinted consumer yet), and curve discretization
+  gives every representation span at least the ceiling of its metric length,
+  keeping boundary segments within unit length in every adjacent face metric.
+- Native zero-set surface remeshing constructs without per-edit proofs (a
+  floating-point adapter with curvature sizing, projection on point jets and
+  quality repair) and certifies afterwards: `zero_set_certify` proves the
+  distance and transversality of every triangle where it can, keeps the
+  carrier's own triangles at the carrier's bound where the proof fails next to
+  a crease, certifies the surface embedded and closed, repairs refused
+  triangles locally and returns the certified surface; the surface envelope
+  remesh uses the same construction and band certification. The per-edit
+  certified remesher is removed. New benchmark rows `surface-remesh-sphere`
+  and `surface-remesh-torus` (MMGS) with independently measured angles and
+  two-way distance.
+- The native library builds with MSVC again: the exact integer insphere rows
+  use the `wide_integer.hpp` helpers (native 128-bit arithmetic where the
+  compiler has it, portable limbs otherwise, identical results), popcount is
+  `std::popcount` and prefetch a portable hint.
 - The PLC tetrahedral route adopts the native recovery through
   `TetMesh3D.from_recovery`; a kept conforming carrier is still constructed
   from its arrays. Identities unchanged.

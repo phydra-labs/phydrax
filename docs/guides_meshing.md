@@ -930,9 +930,10 @@ An adaptive implicit layer wall comes from the implicit volume carrier path:
 (`phydrax.meshing.providers._native_layer`) returns the discovery scaffold
 triangles when each is within the radius-edge bound of the core fill schedule
 (a layer column and its cap triangle inherit the wall triangle's shape), else
-the native zero-set band remesh toward `edge_length` with every created
-triangle certified within the scaffold distance bound and transversal to the
-field gradient. Layer thickness is never adjusted to accommodate sliver
+the native zero-set remesh toward `edge_length`, constructed by floating point
+and then certified: every triangle within the scaffold distance bound,
+transversal to the field gradient and embedded, refused triangles repaired
+locally. Layer thickness is never adjusted to accommodate sliver
 triangles. The zero set is oriented out of its solid, so the default `inward`
 wall is reversed and layers grow into the solid. Each remeshed wall cell names
 its nearest scaffold triangle as chart seed; repeated seeds are legitimate and
@@ -1091,24 +1092,34 @@ scaffold, whose triangles can be slivers. Because a tetrahedron on a `FIXED`
 face has a radius-edge ratio at least the face's, a carrier with any face above
 `NativeVolumeSchedule.radius_edge_bound` is first remeshed natively toward the
 requested uniform target size (else its mean edge length) and a 30° minimum
-angle. Every created triangle is admitted by the zero-set band predicate using
-the smallest explicitly declared whole-surface `maximum_deviation` and hard
+angle. Construction is floating point (splits, collapses, flips and
+relocations, vertices projected onto the zero set by Newton steps on point
+jets, sizes lowered where the zero set curves) and proves nothing; the result
+is then certified with the zero-set band predicate using the smallest
+explicitly declared whole-surface `maximum_deviation` and hard
 protected-feature deviation, further limited by the analytic profile's
 established tube when a profile is present. Soft protected features do not
 tighten this admission bound. Foreign or partial implicit feature scopes are
 refused. If remeshing is required, an absent positive declared bound or a zero
 exact bound is refused rather than replaced with an invented tolerance.
 
-Native interval enclosures certify each created face's distance to the zero set
-within that selected bound and its normal transversal to the field gradient with
-the carrier's orientation. Untouched scaffold faces retain the independently
-established original scaffold distance bound; that bound is not substituted for
-the requested admission tolerance. Vertex proposals come from interval Newton
-along the gradient line. The native result reports the maximum certified
-distance over both created and untouched faces, and the volume fidelity bound
-adds the fill's boundary-witness deviation outward before checking the original
-request and hard features. The remeshed carrier identity binds both distance
-bounds, and achieved evidence includes `carrier_remesh_admission_tolerance`.
+Native interval enclosures certify each face's distance to the zero set within
+that selected bound and its normal transversal to the field gradient with the
+carrier's orientation, and exact contact classification certifies the surface
+embedded. Triangles touching an input crease (adjacent input triangles turning
+more than 45°) are kept bitwise from the scaffold. A scaffold face whose proof
+fails (next to a crease transversality is not decidable) retains the
+independently established original scaffold distance bound; that bound is not
+substituted for the requested admission tolerance. Any other refused triangle
+is repaired locally by splitting its longest edge at a projected midpoint and
+certified again, for at most four rounds; a triangle still refused is a typed
+refusal. The native result reports the maximum distance over proved and kept
+faces, and the volume fidelity bound adds the fill's boundary-witness
+deviation outward before checking the original request and hard features.
+The remeshed carrier identity
+binds both distance bounds, and achieved evidence includes
+`carrier_remesh_admission_tolerance`, the certification refusals, the kept
+scaffold triangles and the repair splits.
 
 Each face's chart witness names the nearest scaffold triangle, and coverage
 proves degree one without a one-to-one scaffold correspondence: the certified

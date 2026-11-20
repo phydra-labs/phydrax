@@ -21,6 +21,7 @@
 #include "expansion.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "refine3d.hpp"
 
 namespace phx::mc {
@@ -332,7 +333,7 @@ TetEditStatus TetMesh::export_snapshot(const phx_mc_tet_mesh_snapshot_request& r
       for (std::size_t item = 0; item < slots.size(); ++item) {
         if (item + kAhead < slots.size()) {
           const std::size_t ahead = static_cast<std::size_t>(slots[item + kAhead]);
-          if (ahead < tets.size()) __builtin_prefetch(tets.data() + ahead);
+          if (ahead < tets.size()) prefetch(tets.data() + ahead);
         }
         const std::size_t slot = static_cast<std::size_t>(slots[item]);
         if (slot >= tets.size()) {

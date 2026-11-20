@@ -359,6 +359,86 @@ class Refinement {
     evidence.refusal=kind;
     evidence.candidate[0]=p[0]; evidence.candidate[1]=p[1];
     evidence.segment=segment;
+    evidence.relocation_failed=kind==CadRefine2DRefusal::encroachment;
+  }
+  bool relocate_ray(int32_t t,const double* p,const CadMetric2D& m,int32_t segment) {
+    const double* a=segment_endpoint(segment,0);
+    const double* b=segment_endpoint(segment,1);
+    const double mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+    const double dx=p[0]-mx,dy=p[1]-my;
+    const double ex=b[0]-a[0],ey=b[1]-a[1];
+    const double d2=dot(m,dx,dy,dx,dy);
+    if (!(d2>0)) return false;
+    auto sample=[&](double scale,double* q,CadMetric2D& mq,int32_t& host,double& lens) {
+      q[0]=mx+scale*dx; q[1]=my+scale*dy;
+      if (input_.admit_point && !input_.admit_point(input_.admit_context,q)) return false;
+      std::pair<int32_t,int> blocked{-1,-1};
+      host=tri_.walk(t,q,&blocked);
+      if (!inside(host)) return false;
+      mq=metric(q);
+      if (status_!=PHX_MC_OK) return false;
+      lens=dot(mq,q[0]-a[0],q[1]-a[1],q[0]-b[0],q[1]-b[1]);
+      return true;
+    };
+    double low=1, high=std::nextafter(std::sqrt(dot(m,ex,ey,ex,ey)/(4*d2)),
+                                      std::numeric_limits<double>::infinity());
+    double q[2], lens=0; CadMetric2D mq; int32_t host=-1;
+    if (!(high>low)) high=std::nextafter(low,std::numeric_limits<double>::infinity());
+    if (!sample(high,q,mq,host,lens)) return false;
+    for(int i=0;lens<0 && i<20;++i) {
+      high=1+2*(high-1);
+      if (!sample(high,q,mq,host,lens)) return false;
+    }
+    if (lens<0) return false;
+    for(int i=0;i<52;++i) {
+      const double mid=(low+high)/2;
+      if (!(mid>low && mid<high)) break;
+      double trial[2], value; CadMetric2D trial_metric; int32_t trial_host;
+      if (!sample(mid,trial,trial_metric,trial_host,value)) return false;
+      if (value<0) low=mid;
+      else { high=mid; q[0]=trial[0]; q[1]=trial[1]; mq=trial_metric; host=trial_host; }
+    }
+    if (encroaches(q,mq)>=0 || too_close(q,mq)) return false;
+    return insert(host,q,mq,t,true);
+  }
+  bool relocate_offcenter(int32_t t,const CadMetric2D& m,int32_t segment) {
+    const auto& cell=tri_.triangles[t];
+    const double* sa=segment_endpoint(segment,0); const double* sb=segment_endpoint(segment,1);
+    const double sx=(sa[0]+sb[0])/2,sy=(sa[1]+sb[1])/2;
+    int edge=-1; double best=-1;
+    std::array<double,4> bestkey{};
+    for(int k=0;k<3;++k) {
+      const double* a=tri_.point(cell.v[next3(k)]);
+      const double* b=tri_.point(cell.v[prev3(k)]);
+      if ((a==sa && b==sb) || (a==sb && b==sa)) continue;
+      const double x=(a[0]+b[0])/2-sx,y=(a[1]+b[1])/2-sy;
+      const double distance=dot(m,x,y,x,y);
+      std::array<double,2> u{a[0],a[1]},v{b[0],b[1]};
+      if(v<u) std::swap(u,v);
+      const std::array<double,4> key{u[0],u[1],v[0],v[1]};
+      if(edge<0 || distance>best || (distance==best && key<bestkey)) {
+        edge=k; best=distance; bestkey=key;
+      }
+    }
+    if(edge<0) return false;
+    const double* a=tri_.point(cell.v[next3(edge)]);
+    const double* b=tri_.point(cell.v[prev3(edge)]);
+    const double ex=b[0]-a[0],ey=b[1]-a[1];
+    const double nx=-(m.uv*ex+m.vv*ey),ny=m.uu*ex+m.uv*ey;
+    const double nlen=std::sqrt(dot(m,nx,ny,nx,ny));
+    if (!(nlen>0)) return false;
+    // With no angle target, use the equilateral offcenter.
+    const double angle=input_.min_angle_degrees>0 ? input_.min_angle_degrees : 30;
+    const double height=0.5*std::sqrt(dot(m,ex,ey,ex,ey))/
+        std::tan(angle*(3.14159265358979323846/180));
+    const double q[2]={(a[0]+b[0])/2+height*nx/nlen,(a[1]+b[1])/2+height*ny/nlen};
+    if (input_.admit_point && !input_.admit_point(input_.admit_context,q)) return false;
+    std::pair<int32_t,int> blocked{-1,-1};
+    const int32_t host=tri_.walk(t,q,&blocked);
+    if (!inside(host)) return false;
+    const auto mq=metric(q);
+    if (status_!=PHX_MC_OK || encroaches(q,mq)>=0 || too_close(q,mq)) return false;
+    return insert(host,q,mq,t,true);
   }
   void process(int32_t t) {
     double radius, p[2];
@@ -374,7 +454,18 @@ class Refinement {
     const CadMetric2D m=metric(p);
     if (status_ != PHX_MC_OK) return;
     const int32_t segment=encroaches(p,m);
-    if (segment>=0) { refuse(result_.stats.encroachment_refusals,CadRefine2DRefusal::encroachment,t,p,segment); return; }
+    if (segment>=0) {
+      ++result_.stats.relocations_tried;
+      if (relocate_ray(t,p,m,segment) ||
+          (status_==PHX_MC_OK && relocate_offcenter(t,m,segment))) {
+        ++result_.stats.relocations_accepted;
+        return;
+      }
+      ++result_.stats.relocations_failed;
+      if (status_!=PHX_MC_OK) return;
+      refuse(result_.stats.encroachment_refusals,CadRefine2DRefusal::encroachment,t,p,segment);
+      return;
+    }
     if (too_close(p,m)) { refuse(result_.stats.proximity_refusals,CadRefine2DRefusal::proximity,t,p); return; }
     insert(host,p,m,t);
   }
@@ -427,7 +518,7 @@ class Refinement {
       }),cavity_.end());
     }
   }
-  void insert(int32_t host, const double* p,const CadMetric2D& m,int32_t source) {
+  bool insert(int32_t host, const double* p,const CadMetric2D& m,int32_t source,bool speculative=false) {
     if (marks_.size() < tri_.triangles.size()) marks_.resize(tri_.triangles.size());
     epoch_+=2; stack_.clear(); cavity_.clear(); boundary_.clear();
     stack_.push_back(host); marks_[host]=epoch_;
@@ -443,7 +534,11 @@ class Refinement {
         }
       }
     }
-    if (!star_boundary(host,p)) { refuse(result_.stats.nonstar_refusals,CadRefine2DRefusal::nonstar,source,p); return; }
+    if (!star_boundary(host,p)) {
+      if (!speculative) refuse(result_.stats.nonstar_refusals,CadRefine2DRefusal::nonstar,source,p);
+      return false;
+    }
+    if (speculative && std::find(cavity_.begin(),cavity_.end(),source)==cavity_.end()) return false;
     // A varying metric can produce a cavity enclosing an existing vertex.
     // Insertion may not silently remove a vertex or its classification.
     if (boundary_vertex_marks_.size()<static_cast<std::size_t>(id))
@@ -454,8 +549,8 @@ class Refinement {
     }
     for (int32_t t : cavity_) for (int32_t vertex : tri_.triangles[t].v) {
       if (boundary_vertex_marks_[vertex]!=epoch_) {
-        refuse(result_.stats.nonstar_refusals,CadRefine2DRefusal::nonstar,source,p);
-        return;
+        if (!speculative) refuse(result_.stats.nonstar_refusals,CadRefine2DRefusal::nonstar,source,p);
+        return false;
       }
     }
     tri_.add_vertex(p);
@@ -481,7 +576,8 @@ class Refinement {
       tri_.link_edge(t,cell.v[1],id,next);
     }
     ++result_.stats.insertions;
-    for (int32_t t : created_) { enqueue(t); if (status_ != PHX_MC_OK) return; }
+    for (int32_t t : created_) { enqueue(t); if (status_ != PHX_MC_OK) return true; }
+    return true;
   }
 };
 

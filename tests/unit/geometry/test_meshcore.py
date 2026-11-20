@@ -11,8 +11,11 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 from scipy.spatial import ConvexHull
 
 from benchmarks.native_meshing import (
@@ -63,6 +66,8 @@ from phydrax._meshcore import (
     tetrahedron_intersection_moments,
     tetrahedron_intersection_simplices,
     triangle_dual_quads,
+    zero_set_certify,
+    zero_set_remesh,
 )
 from phydrax.geometry import (
     ConstrainedDelaunayTriangulation,
@@ -75,6 +80,7 @@ from phydrax.geometry import (
     PredicateMode,
     VoronoiDiagram,
 )
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 
 
 pytestmark = [
@@ -2447,6 +2453,189 @@ def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
     again = surface_envelope(UNIT_TET, triangles, 0.8, 0.1, 0.1, remesh=True)
     np.testing.assert_array_equal(again.surface_vertices, remeshed.surface_vertices)
     np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
+
+
+def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+    def sphere(x: Array) -> Array:
+        return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
+
+    value = prepare_interval_function(
+        sphere, 3, batch_capacity=1, execution="native"
+    ).native_program
+    gradient = prepare_interval_function(
+        jax.grad(sphere), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if value is None or gradient is None:
+        raise RuntimeError(
+            "The unit sphere field must lower to native interval programs."
+        )
+    return value.box_program(), gradient.box_program()
+
+
+def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
+    value, gradient = _unit_sphere_box_programs()
+    vertices, faces = _icosphere(3)
+    remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
+    assert remeshed.orientation == 1
+    assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
+    assert np.min(_minimum_triangle_angles(remeshed.vertices, remeshed.triangles)) >= 30.0
+    controls = (0.005, 0.15, 30.0)
+    certificate = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        value,
+        gradient,
+        0.01,
+        1,
+        vertices,
+        faces,
+        *controls,
+    )
+    assert 0.0 <= certificate.distance <= 0.01
+    # Input triangles the remesh left untouched are proved, not carried.
+    assert certificate.counters[3] == 0
+    # Nothing needed repair: the certified surface is the constructed one.
+    assert certificate.counters[4] == 0
+    np.testing.assert_array_equal(certificate.vertices, remeshed.vertices)
+    np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
+    # A vertex lifted off the sphere: its star fails the proof and splitting
+    # cannot repair it, unless the carrier holds those very triangles, which
+    # are then accepted at the carrier's distance, here above the tolerance.
+    lifted = np.array(remeshed.vertices)
+    lifted[0] *= 1.05
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            value,
+            gradient,
+            0.01,
+            1,
+            vertices,
+            faces,
+            *controls,
+        )
+    carried = zero_set_certify(
+        lifted,
+        remeshed.triangles,
+        value,
+        gradient,
+        0.01,
+        1,
+        lifted,
+        remeshed.triangles[:, (1, 2, 0)],
+        0.02,
+        0.15,
+        30.0,
+    )
+    assert carried.distance == 0.02
+    assert carried.counters[3] > 0 and carried.counters[4] == 0
+
+
+_LENS_SHIFT = 0.8
+
+
+def _oblique_lens_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The lens of two unit balls 1.6 apart, its axis turned to (0, 1, 1)/sqrt(2).
+
+    Rings of the two caps meet on the crease circle (a 106 degree turn); the
+    rotation about x makes the crease plane oblique to every coordinate axis.
+    Returns the carrier vertices, triangles and the unit axis.
+    """
+    crease = np.arccos(_LENS_SHIFT)
+    rings, segments = 4, 24
+    points = [[0.0, 0.0, 1.0 - _LENS_SHIFT]]
+    ring_ids = []
+    for k in range(1, 2 * rings):
+        upper = k <= rings
+        theta = crease * (k if upper else 2 * rings - k) / rings
+        height = np.cos(theta) - _LENS_SHIFT
+        row = []
+        for j in range(segments):
+            phi = 2.0 * np.pi * j / segments
+            row.append(len(points))
+            points.append(
+                [
+                    np.sin(theta) * np.cos(phi),
+                    np.sin(theta) * np.sin(phi),
+                    height if upper else -height,
+                ]
+            )
+        ring_ids.append(row)
+    south = len(points)
+    points.append([0.0, 0.0, _LENS_SHIFT - 1.0])
+    triangles = []
+    for j in range(segments):
+        n, m = (j + 1) % segments, j
+        triangles.append([0, ring_ids[0][m], ring_ids[0][n]])
+        for k in range(len(ring_ids) - 1):
+            triangles.append([ring_ids[k][m], ring_ids[k + 1][m], ring_ids[k + 1][n]])
+            triangles.append([ring_ids[k][m], ring_ids[k + 1][n], ring_ids[k][n]])
+        triangles.append([south, ring_ids[-1][n], ring_ids[-1][m]])
+    angle = -np.pi / 4.0
+    rotation = np.asarray(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, np.cos(angle), -np.sin(angle)],
+            [0.0, np.sin(angle), np.cos(angle)],
+        ],
+        dtype=np.float64,
+    )
+    vertices = np.asarray(points, dtype=np.float64) @ rotation.T
+    return vertices, np.asarray(triangles, dtype=np.int64), rotation[:, 2]
+
+
+def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
+    vertices, faces, axis = _oblique_lens_carrier()
+    first, second = -_LENS_SHIFT * axis, _LENS_SHIFT * axis
+
+    def lens(x: Array) -> Array:
+        to_first = (
+            (x[0] - first[0]) ** 2 + (x[1] - first[1]) ** 2 + (x[2] - first[2]) ** 2
+        )
+        to_second = (
+            (x[0] - second[0]) ** 2 + (x[1] - second[1]) ** 2 + (x[2] - second[2]) ** 2
+        )
+        return jnp.maximum(to_first - 1.0, to_second - 1.0)
+
+    value = prepare_interval_function(
+        lens, 3, batch_capacity=1, execution="native"
+    ).native_program
+    gradient = prepare_interval_function(
+        jax.grad(lens), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if value is None or gradient is None:
+        raise RuntimeError("The lens field must lower to native interval programs.")
+    remeshed = zero_set_remesh(
+        vertices, faces, value.box_program(), 0.02, 0.02, 0.2, 30.0
+    )
+    certified = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        value.box_program(),
+        gradient.box_program(),
+        0.02,
+        remeshed.orientation,
+        vertices,
+        faces,
+        0.01,
+        0.2,
+        30.0,
+    )
+    # Triangles next to the crease rest on the carrier; boxes of nearby
+    # remeshed triangles straddle the slanted branch switch, fail
+    # transversality and are repaired by splits within the round budget.
+    assert certified.distance <= 0.02
+    assert certified.counters[3] > 0
+    assert certified.counters[0] > certified.counters[3]
+    assert certified.counters[4] > 0 and certified.counters[5] <= 4
+    directed = {
+        (int(face[k]), int(face[(k + 1) % 3]))
+        for face in certified.triangles
+        for k in range(3)
+    }
+    assert len(directed) == 3 * certified.triangles.shape[0]
+    assert all((head, tail) in directed for tail, head in directed)
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:
