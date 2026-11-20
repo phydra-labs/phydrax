@@ -235,15 +235,25 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
   return boundary.loops.empty() ? PHX_MC_INVALID_INPUT : PHX_MC_OK;
 }
 
+// Size grows at most this much per unit distance away from the boundary.
+constexpr double kBoundaryGrading = 0.3;
+
 struct BoundarySample {
   std::array<double, 3> xyz;
   double spacing;
 };
 
+// A fixed boundary chord between consecutive loop samples.
+struct BoundaryChord {
+  std::array<double, 3> a;
+  std::array<double, 3> b;
+  double length;
+};
+
 struct BoundaryNode {
   std::array<double, 3> low;
   std::array<double, 3> high;
-  double spacing;
+  double spacing;  // Sample tree: minimum spacing; chord tree: maximum length.
   int32_t begin;
   int32_t end;
   int32_t left;
@@ -271,6 +281,9 @@ struct FaceMetric {
   std::vector<BoundarySample> boundary;
   std::vector<int32_t> boundary_order;
   std::vector<BoundaryNode> boundary_tree;
+  std::vector<BoundaryChord> chords;
+  std::vector<int32_t> chord_order;
+  std::vector<BoundaryNode> chord_tree;
   std::vector<PoleZone> poles;
   std::vector<std::array<double, 2>>* metric_points;
   // Input boundary charts with their classified corner/curve positions, sorted
@@ -323,7 +336,7 @@ void grade_boundary(const FaceMetric& context, int32_t index, const double* poin
     const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
     box_distance2 += delta * delta;
   }
-  if (node.spacing + 0.3 * std::sqrt(box_distance2) >= h) return;
+  if (node.spacing + kBoundaryGrading * std::sqrt(box_distance2) >= h) return;
   if (node.left >= 0) {
     grade_boundary(context, node.left, point, h);
     grade_boundary(context, node.right, point, h);
@@ -333,7 +346,75 @@ void grade_boundary(const FaceMetric& context, int32_t index, const double* poin
     const BoundarySample& sample = context.boundary[context.boundary_order[i]];
     const double dx = point[0] - sample.xyz[0], dy = point[1] - sample.xyz[1];
     const double dz = point[2] - sample.xyz[2];
-    h = std::min(h, sample.spacing + 0.3 * std::sqrt(dx * dx + dy * dy + dz * dz));
+    h = std::min(h, sample.spacing +
+                        kBoundaryGrading * std::sqrt(dx * dx + dy * dy + dz * dz));
+  }
+}
+
+int32_t build_chord_tree(FaceMetric& context, int32_t begin, int32_t end) {
+  const int32_t index = static_cast<int32_t>(context.chord_tree.size());
+  const double inf = std::numeric_limits<double>::infinity();
+  BoundaryNode node{{inf, inf, inf}, {-inf, -inf, -inf}, 0.0, begin, end, -1, -1};
+  for (int32_t i = begin; i < end; ++i) {
+    const auto& chord = context.chords[context.chord_order[i]];
+    node.spacing = std::max(node.spacing, chord.length);
+    for (int k = 0; k < 3; ++k) {
+      node.low[k] = std::min({node.low[k], chord.a[k], chord.b[k]});
+      node.high[k] = std::max({node.high[k], chord.a[k], chord.b[k]});
+    }
+  }
+  context.chord_tree.push_back(node);
+  if (end - begin > 8) {
+    int axis = 0;
+    for (int k = 1; k < 3; ++k)
+      if (node.high[k] - node.low[k] > node.high[axis] - node.low[axis]) axis = k;
+    const int32_t middle = begin + (end - begin) / 2;
+    std::nth_element(context.chord_order.begin() + begin, context.chord_order.begin() + middle,
+                     context.chord_order.begin() + end, [&](int32_t a, int32_t b) {
+      const auto& p = context.chords[a];
+      const auto& q = context.chords[b];
+      const double x = p.a[axis] + p.b[axis], y = q.a[axis] + q.b[axis];
+      return x != y ? x < y : a < b;
+    });
+    const int32_t left = build_chord_tree(context, begin, middle);
+    const int32_t right = build_chord_tree(context, middle, end);
+    context.chord_tree[index].left = left;
+    context.chord_tree[index].right = right;
+  }
+  return index;
+}
+
+// Raises h toward the chord floor max_s(L_s - g d(x, s)), capped by cap.
+void floor_chords(const FaceMetric& context, int32_t index, const double* point, double cap,
+                  double& h) {
+  const BoundaryNode& node = context.chord_tree[index];
+  double box_distance2 = 0.0;
+  for (int k = 0; k < 3; ++k) {
+    const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
+    box_distance2 += delta * delta;
+  }
+  if (std::min(cap, node.spacing - kBoundaryGrading * std::sqrt(box_distance2)) <= h) return;
+  if (node.left >= 0) {
+    floor_chords(context, node.left, point, cap, h);
+    floor_chords(context, node.right, point, cap, h);
+    return;
+  }
+  for (int32_t i = node.begin; i < node.end; ++i) {
+    const BoundaryChord& chord = context.chords[context.chord_order[i]];
+    double t = 0.0, norm = 0.0, ab[3], ap[3];
+    for (int k = 0; k < 3; ++k) {
+      ab[k] = chord.b[k] - chord.a[k];
+      ap[k] = point[k] - chord.a[k];
+      t += ab[k] * ap[k];
+      norm += ab[k] * ab[k];
+    }
+    t = std::clamp(t / norm, 0.0, 1.0);
+    double distance2 = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      const double e = ap[k] - t * ab[k];
+      distance2 += e * e;
+    }
+    h = std::max(h, std::min(cap, chord.length - kBoundaryGrading * std::sqrt(distance2)));
   }
 }
 
@@ -352,7 +433,15 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
                                     std::abs(differential.curvatures[1]));
   if (curvature > 0.0)
     h = std::min(h, std::sqrt(6.0 * context.theta * context.tolerance / curvature));
+  // Grading from the nearby sample spacing asks for small triangles around a
+  // short boundary segment, but a neighbouring long chord is fixed: every
+  // triangle on it has circumradius >= L/2 and no vertex may enter its
+  // diametral disk, so a size below L there cannot be met. The chord floor is
+  // the smallest g-Lipschitz field that is >= L on every chord; it overrides
+  // the grading, never the request or curvature size.
+  const double ungraded = h;
   if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
+  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
   const double inverse = 1.0 / (h * h);
   return {differential.first_form[0] * inverse / (context.scale_u * context.scale_u),
           differential.first_form[1] * inverse / (context.scale_u * context.scale_v),
@@ -488,6 +577,7 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
       }
       metric.boundary[a].spacing = std::min(metric.boundary[a].spacing, length);
       metric.boundary[b].spacing = std::min(metric.boundary[b].spacing, length);
+      metric.chords.push_back({metric.boundary[a].xyz, metric.boundary[b].xyz, length});
     }
   }
   metric.boundary_order.reserve(metric.boundary.size());
@@ -496,6 +586,11 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
       metric.boundary_order.push_back(static_cast<int32_t>(i));
   if (!metric.boundary_order.empty())
     build_boundary_tree(metric, 0, static_cast<int32_t>(metric.boundary_order.size()));
+  metric.chord_order.resize(metric.chords.size());
+  for (std::size_t i = 0; i < metric.chords.size(); ++i)
+    metric.chord_order[i] = static_cast<int32_t>(i);
+  if (!metric.chords.empty())
+    build_chord_tree(metric, 0, static_cast<int32_t>(metric.chord_order.size()));
   const double center[2] = {low[0] + 0.5 * (high[0] - low[0]),
                             low[1] + 0.5 * (high[1] - low[1])};
   double jet[18];
@@ -923,8 +1018,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   result = CadFaceMesh{};
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
-  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {},
-                    metric_points, {}, position_calls};
+  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, {},
+                    {}, {}, metric_points, {}, position_calls};
   if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);

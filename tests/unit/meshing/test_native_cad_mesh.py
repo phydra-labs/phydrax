@@ -293,11 +293,16 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
 
 def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None:
     model = cad_geometry_bundle(domain).model
+    # A 1e-5 tolerance on curve 0 alone samples it far finer than the curves
+    # meeting it at its corners; the fixed short/long chord corners leave
+    # refusal records on the faces through it.
+    curve_tolerances = np.full((model.curve_nodes.size,), np.inf, dtype=np.float64)
+    curve_tolerances[0] = 1e-5
     result = cad_mesh(
         model,
-        np.full((model.surface_nodes.size,), 0.08, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.12, dtype=np.float64),
         np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
-        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+        curve_tolerances,
     )
     assert result.status is MeshcoreStatus.UNRESOLVED
     failures = result.face_failures

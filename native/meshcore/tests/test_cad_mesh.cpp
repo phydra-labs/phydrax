@@ -172,6 +172,52 @@ void plane_with_hole() {
   // A missing carve would leave triangle centroids inside the square hole.
 }
 
+// A .02 boundary chord at the corner (-1,-1) meets a .25 chord (curve 0) and a
+// .23 chord (curve 3); every chord is a fixed shared sample. Grading from the
+// .02 spacing alone asks for triangles below .25 along both long chords, which
+// the kernel cannot create without entering their diametral disks: nine
+// records, eight of them bad_size. The chord floor removes every size record
+// at the corner. The triangle on the .02 chord stays a bad-angle record for
+// any size field: its apex must lie outside both long chords' diametral disks,
+// and the best such apex gives a smallest angle of about 5 degrees (grid
+// search over [-1,-.6]^2) against the 25-degree target.
+void short_long_corner() {
+  PlaneWithHole fixture;
+  fixture.samples.clear();
+  fixture.sample_offsets = {0};
+  for (int curve = 0; curve < 8; ++curve) {
+    for (int k = 0; k <= 8; ++k) fixture.samples.push_back(k / 8.0);
+    if (curve == 3) fixture.samples.insert(fixture.samples.end() - 1, 0.99);
+    fixture.sample_offsets.push_back(static_cast<int64_t>(fixture.samples.size()));
+  }
+  const phx_mc_cad_model model = fixture.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  const CadCurveDiscretization curves{fixture.sample_offsets.data(), fixture.samples.data()};
+  CadFaceMesh result;
+  const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, 0.4, 0.1, 0.5, result);
+  PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(result.boundary_edges.size() == 65);
+  if (result.boundary_edges.size() == 65) {
+    check_loop(result, 0, 33);
+    check_loop(result, 33, 32);
+  }
+  int corner_records = 0;
+  for (const auto& failure : result.refinement_failures) {
+    bool corner = false, short_a = false, short_b = false;
+    for (int k = 0; k < 3; ++k) {
+      const double u = failure.triangle_uv[2 * k], v = failure.triangle_uv[2 * k + 1];
+      corner = corner || std::hypot(u + 1.0, v + 1.0) < 0.8;
+      short_a = short_a || (u == -1.0 && v == -1.0);
+      short_b = short_b || (u == -1.0 && std::abs(v + 0.98) < 1e-12);
+    }
+    if (!corner) continue;
+    ++corner_records;
+    PHX_CHECK(!failure.bad_size && failure.bad_angle && short_a && short_b);
+  }
+  PHX_CHECK(corner_records <= 1);
+}
+
 // A noninteger one-ulp closure gap on a periodic axis is rounding, not a wrap.
 void periodic_rounding_gap() {
   PlaneWithHole fixture;
@@ -1335,6 +1381,7 @@ void pole_chord_contacts() {
 int main() {
   pole_chord_contacts();
   plane_with_hole();
+  short_long_corner();
   periodic_rounding_gap();
   cancelling_sheet_jump();
   cancelling_sheet_jump(true);
