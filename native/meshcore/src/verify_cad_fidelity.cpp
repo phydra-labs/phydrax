@@ -2376,9 +2376,13 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // than the uv chart where (rho - sin rho cos rho) / sin^2 rho <= cot rho,
 // i.e. rho <= sin 2 rho: rho <= rho* = 0.947747133516990... (the positive
 // root of rho = sin 2 rho), latitude pi/2 - rho* = 0.623049193277906...,
-// rounded down to kCapLatitude (the cap only grows). Rows reach at most one
-// edge below it, so their corners stay far inside the series domain rho <= 2
-// (q <= 4); a corner beyond it makes pole::jets fail and the row refuses.
+// rounded down to kCapLatitude (the cap only grows). A row's extent below
+// the cap is not bounded and no argument needs it: a corner past rho = 2
+// makes pole::series / pole::jets fail and the row refuses; nothing else
+// depends on the row's extent. The seam charge is computed for every region
+// boundary edge at its endpoints' colatitudes (extent affects only its
+// size). The coverage argument uses rho_strip = the largest colatitude over
+// the region's corners, and P is injective on the strip for every 0 < rho.
 //
 // Contract (MAC bc1b665 option (i), seam lens charge). For R's rows the
 // linear map is taken on the pole-chart corners (pole_corners), Phi on each
