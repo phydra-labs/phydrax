@@ -424,6 +424,79 @@ void fixed_pole_zone() {
   check_topology(f,result);
 }
 
+int32_t cylinder_position(void* context,const double p[2],double xyz[3]) {
+  ++*static_cast<int*>(context);
+  xyz[0]=std::cos(p[0]); xyz[1]=std::sin(p[0]); xyz[2]=p[1];
+  return 1;
+}
+
+void worst_angle_star() {
+  const double points[]={-1,-1, 1,-1, 1,1, -1,1, 0.3,0.2};
+  const int32_t segments[]={0,1,1,2,2,3,3,0};
+  CadMetric2D m{0.09,0,0.09};
+  CadRefine2DInput in;
+  in.points=points; in.point_count=5; in.segments=segments; in.segment_count=4;
+  in.metric=constant; in.metric_context=&m; in.point_cap=5;
+  CadRefine2DResult metric_result;
+  PHX_CHECK(cad_refine2d(in,metric_result)==PHX_MC_OK);
+  // The constant isotropic metric makes metric angles Euclidean.
+  auto fan_worst=[](const double* p) {
+    const double corners[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};
+    double worst=-1;
+    for(int i=0;i<4;++i) {
+      const double* q[3]={corners[i],corners[(i+1)%4],p};
+      for(int k=0;k<3;++k) {
+        const double ax=q[(k+1)%3][0]-q[k][0],ay=q[(k+1)%3][1]-q[k][1];
+        const double bx=q[(k+2)%3][0]-q[k][0],by=q[(k+2)%3][1]-q[k][1];
+        worst=std::max(worst,(ax*bx+ay*by)/std::sqrt((ax*ax+ay*ay)*(bx*bx+by*by)));
+      }
+    }
+    return worst;
+  };
+  const double* moved=metric_result.triangulation.point(metric_result.vertex_map[4]);
+  // Fault caught: omitting the worst-star optimization.
+  PHX_CHECK(fan_worst(moved)<fan_worst(points+8));
+  const uint8_t fixed[]={0,0,0,0,1};
+  int evaluations=0;
+  in.fixed_vertices=fixed; in.surface_position=cylinder_position; in.surface_context=&evaluations;
+  CadRefine2DResult baseline;
+  PHX_CHECK(cad_refine2d(in,baseline)==PHX_MC_OK);
+  const double* protected_point=baseline.triangulation.point(baseline.vertex_map[4]);
+  // Fault caught: moving a fixed interior point.
+  PHX_CHECK(protected_point[0]==points[8] && protected_point[1]==points[9]);
+  in.fixed_vertices=nullptr;
+  CadRefine2DResult physical;
+  PHX_CHECK(cad_refine2d(in,physical)==PHX_MC_OK);
+  PHX_CHECK(evaluations>0);
+  auto quality=[](const CadRefine2DResult& result) {
+    double worst=-1, longest=0;
+    const auto& tr=result.triangulation;
+    for(std::size_t t=0;t<tr.triangles.size();++t) {
+      if(!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+      double xyz[3][3]; int ignored=0;
+      for(int k=0;k<3;++k) cylinder_position(&ignored,tr.point(tr.triangles[t].v[k]),xyz[k]);
+      for(int k=0;k<3;++k) {
+        double aa=0,bb=0,ab=0;
+        for(int j=0;j<3;++j) {
+          const double a=xyz[next3(k)][j]-xyz[k][j], b=xyz[prev3(k)][j]-xyz[k][j];
+          aa+=a*a; bb+=b*b; ab+=a*b;
+        }
+        longest=std::max({longest,aa,bb});
+        worst=std::max(worst,ab/std::sqrt(aa*bb));
+      }
+    }
+    return std::array<double,2>{worst,longest};
+  };
+  const auto before=quality(baseline),after=quality(physical);
+  // Fault caught: accepting a move that worsens a 3D angle or lengthens an
+  // edge, or the position hook disabling the pass.
+  PHX_CHECK(after[0]<before[0] && after[1]<=before[1]);
+  for(int i=0;i<4;++i) {
+    const double* p=physical.triangulation.point(physical.vertex_map[i]);
+    PHX_CHECK(p[0]==points[2*i] && p[1]==points[2*i+1]);
+  }
+}
+
 void permutation_invariance() {
   Fixture first, second;
   constexpr int n=12;
@@ -509,6 +582,7 @@ int main() {
   varying_metric();
   adversarial_metrics();
   fixed_pole_zone();
+  worst_angle_star();
   permutation_invariance();
   blocked_boundary_evidence();
   const Fixture f=rectangle(6,6,6,6);

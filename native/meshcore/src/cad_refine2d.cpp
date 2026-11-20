@@ -121,7 +121,13 @@ class Refinement {
       process(entry.slot);
       if (status_ != PHX_MC_OK) return status_;
     }
-    return summarize();
+    const int32_t initial=summarize();
+    if (initial!=PHX_MC_OK) return initial;
+    improve_worst_angles();
+    if (status_!=PHX_MC_OK) return status_;
+    // Moves recheck every triangle of the moved vertex's star and leave
+    // fixed triangles alone, so the successful census remains valid.
+    return PHX_MC_OK;
   }
 
   int32_t classify(int32_t t, bool& bad_size, bool& bad_angle) {
@@ -138,16 +144,21 @@ class Refinement {
     result_.stats.unresolved_angle=0;
     result_.stats.fixed_triangles_skipped=0;
     result_.unresolved.clear();
+    angle_scores_.assign(tri_.triangles.size(),INFINITY);
+    triangle_metrics_.assign(tri_.triangles.size(),CadMetric2D{});
     for (std::size_t t=0;t<tri_.triangles.size();++t) {
       if (!inside(static_cast<int32_t>(t))) continue;
       if (fixed_triangle(static_cast<int32_t>(t))) {
         ++result_.stats.fixed_triangles_skipped;
         continue;
       }
-      double radius=0.0;
+      double radius=0.0, score=INFINITY;
       bool bad_size=false, bad_angle=false;
-      const bool bad=geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle);
+      CadMetric2D m;
+      const bool bad=geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle,&m,&score);
       if (status_!=PHX_MC_OK) return status_;
+      angle_scores_[t]=score;
+      triangle_metrics_[t]=m;
       if (bad) {
         ++result_.stats.unresolved_triangles;
         CadRefine2DUnresolved evidence;
@@ -170,6 +181,13 @@ class Refinement {
   double sine_;
   int32_t status_ = PHX_MC_OK;
   std::vector<uint8_t> fixed_;
+  std::vector<std::array<double,3>> physical_;
+  std::vector<uint8_t> physical_valid_;
+  // Metric worst-angle cosine and centroid metric per live non-fixed
+  // triangle, from the census and kept current by the angle pass.
+  std::vector<double> angle_scores_;
+  std::vector<CadMetric2D> triangle_metrics_;
+  struct StarCell { double score; CadMetric2D metric; };
   std::optional<Queue> queue_;
   std::vector<uint64_t> generations_;
   std::vector<uint8_t> states_;
@@ -253,8 +271,326 @@ class Refinement {
   static double dot(const CadMetric2D& m, double x, double y, double u, double v) {
     return x * (m.uu * u + m.uv * v) + y * (m.uv * u + m.vv * v);
   }
+  struct PhysicalQuality { double worst=-1; double max_edge2=0; };
+  const std::array<double,3>& physical_position(int32_t vertex) {
+    if(!physical_valid_[vertex]) {
+      auto& xyz=physical_[vertex];
+      if(!input_.surface_position(input_.surface_context,tri_.point(vertex),xyz.data()) ||
+         !std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2]))
+        status_=PHX_MC_INVALID_INPUT;
+      physical_valid_[vertex]=1;
+    }
+    return physical_[vertex];
+  }
+  void physical_cell(const int32_t* vertices,PhysicalQuality& quality,
+                     int32_t candidate=-1,const std::array<double,3>* proposed=nullptr) {
+    const std::array<double,3>* p[3];
+    for(int i=0;i<3;++i)
+      p[i]=(vertices[i]==candidate) ? proposed : &physical_position(vertices[i]);
+    if(status_!=PHX_MC_OK) return;
+    // Squared edge lengths opposite each corner; the smallest angle faces
+    // the shortest edge.
+    double lengths[3];
+    int shortest=0;
+    for(int k=0;k<3;++k) {
+      double sum=0;
+      for(int j=0;j<3;++j) {const double d=(*p[prev3(k)])[j]-(*p[next3(k)])[j]; sum+=d*d;}
+      lengths[k]=sum;
+      if(sum<lengths[shortest]) shortest=k;
+    }
+    if(!(lengths[shortest]>0)) {quality.worst=INFINITY; return;}
+    const double a=lengths[next3(shortest)],b=lengths[prev3(shortest)];
+    quality.worst=std::max(quality.worst,(a+b-lengths[shortest])/(2*std::sqrt(a*b)));
+    quality.max_edge2=std::max({quality.max_edge2,lengths[0],lengths[1],lengths[2]});
+  }
+  PhysicalQuality physical_star(const std::vector<int32_t>& star,int32_t candidate=-1,
+                                const std::array<double,3>* proposed=nullptr) {
+    PhysicalQuality quality;
+    for(int32_t t:star) physical_cell(tri_.triangles[t].v,quality,candidate,proposed);
+    return quality;
+  }
+  bool physical_edges_fit(int32_t vertex,const std::vector<int32_t>& star,
+                          const std::array<double,3>& proposed,double limit) {
+    for(int32_t t:star) for(int32_t u:tri_.triangles[t].v) {
+      if(u==vertex) continue;
+      const auto& q=physical_position(u);
+      double length2=0;
+      for(int k=0;k<3;++k) {const double d=proposed[k]-q[k]; length2+=d*d;}
+      if(length2>limit) return false;
+    }
+    return true;
+  }
+  // True when no unconstrained neighbor's opposite vertex lies inside the
+  // metric circumcircle of t (m: t's centroid metric).
+  bool locally_delaunay(int32_t t,const CadMetric2D& m) const {
+    const auto& cell=tri_.triangles[t];
+    for(int k=0;k<3;++k) {
+      const int32_t nb=cell.n[k];
+      if(tri_.constraint(t,k)!=-1 || !inside(nb)) continue;
+      const int j=tri_.edge_index(nb,cell.v[prev3(k)],cell.v[next3(k)]);
+      if(j<0) continue;
+      const double* q=tri_.point(tri_.triangles[nb].v[j]);
+      double x[3],y[3],lift[3];
+      for(int i=0;i<3;++i) {
+        const double* a=tri_.point(cell.v[i]);
+        x[i]=a[0]-q[0]; y[i]=a[1]-q[1]; lift[i]=dot(m,x[i],y[i],x[i],y[i]);
+      }
+      if(lift[0]*(x[1]*y[2]-y[1]*x[2])+lift[1]*(x[2]*y[0]-y[2]*x[0])+
+         lift[2]*(x[0]*y[1]-y[0]*x[1])>0) return false;
+    }
+    return true;
+  }
+  // Writes each star triangle's metric smallest-angle cosine; INFINITY when
+  // the star is inverted or contains a triangle that fails the refinement
+  // test, and, without surface positions (whose 3D guards then decide),
+  // when it loses the local metric Delaunay property.
+  double star_score(const std::vector<int32_t>& star,std::vector<StarCell>& cells) {
+    cells.clear();
+    double worst=-1;
+    for(int32_t t:star) {
+      const auto& cell=tri_.triangles[t];
+      if (orient2d(tri_.point(cell.v[0]),tri_.point(cell.v[1]),tri_.point(cell.v[2]))<=0)
+        return INFINITY;
+      double radius=0, score=0;
+      CadMetric2D m;
+      if (geometry(t,radius,nullptr,nullptr,nullptr,&m,&score)) return INFINITY;
+      if (status_!=PHX_MC_OK) return INFINITY;
+      if (!input_.surface_position && !locally_delaunay(t,m)) return INFINITY;
+      cells.push_back({score,m});
+      worst=std::max(worst,cells.back().score);
+    }
+    return worst;
+  }
+  void improve_worst_angles() {
+    const auto vertex_count=static_cast<std::size_t>(tri_.vertex_count());
+    if(input_.surface_position) {
+      physical_.resize(vertex_count);
+      physical_valid_.assign(vertex_count,0);
+    }
+    std::vector<int32_t> offsets(vertex_count+1,0);
+    std::vector<uint8_t> immovable(vertex_count,0);
+    std::vector<uint8_t> selected(vertex_count,0);
+    // Halfway between the requested minimum and the equilateral ideal.
+    const double target_cos=std::cos((input_.min_angle_degrees+60.0)*
+                                     3.14159265358979323846/360.0);
+    for(std::size_t t=0;t<tri_.triangles.size();++t) {
+      if(!inside(static_cast<int32_t>(t))) continue;
+      const auto& cell=tri_.triangles[t];
+      for(int k=0;k<3;++k) {
+        ++offsets[cell.v[k]+1];
+        if (tri_.constraint(static_cast<int32_t>(t),k)!=-1) {
+          immovable[cell.v[next3(k)]]=1; immovable[cell.v[prev3(k)]]=1;
+        }
+      }
+      // Scores come from the final census; fixed triangles have none.
+      if(!fixed_triangle(static_cast<int32_t>(t)) && angle_scores_[t]>target_cos)
+        for(int32_t v:cell.v) selected[v]=1;
+    }
+    for(std::size_t v=0;v<vertex_count;++v) offsets[v+1]+=offsets[v];
+    std::vector<int32_t> incident(static_cast<std::size_t>(offsets[vertex_count]));
+    {
+      std::vector<int32_t> fill(offsets.begin(),offsets.end()-1);
+      for(std::size_t t=0;t<tri_.triangles.size();++t) {
+        if(!inside(static_cast<int32_t>(t))) continue;
+        for(int32_t v:tri_.triangles[t].v) incident[fill[v]++]=static_cast<int32_t>(t);
+      }
+    }
+    for(std::size_t v=0;v<fixed_.size();++v) if(fixed_[v]) immovable[v]=1;
+    // Worst star first, so the vertices around the worst triangles move
+    // before their neighbors' moves can block them; geometric tie-break.
+    struct Queued { double worst; double x, y; int32_t vertex; };
+    std::vector<Queued> vertices;
+    for(std::size_t v=0;v<selected.size();++v) {
+      if(!selected[v] || immovable[v]) continue;
+      double worst=-1;
+      for(int32_t k=offsets[v];k<offsets[v+1];++k) worst=std::max(worst,angle_scores_[incident[k]]);
+      const double* p=tri_.point(static_cast<int32_t>(v));
+      vertices.push_back({worst,p[0],p[1],static_cast<int32_t>(v)});
+    }
+    std::sort(vertices.begin(),vertices.end(),[](const Queued& a,const Queued& b) {
+      if(a.worst!=b.worst) return a.worst>b.worst;
+      return a.x!=b.x ? a.x<b.x : a.y<b.y;
+    });
+    std::vector<int32_t> star,neighbors;
+    std::vector<StarCell> scores,best_scores;
+    struct Candidate {
+      double physical;
+      std::array<double,2> point;
+      std::array<double,3> xyz;
+      int target, fraction;
+    };
+    std::vector<Candidate> candidates;
+    for(const auto& queued:vertices) {
+      const int32_t v=queued.vertex;
+      star.assign(incident.begin()+offsets[v],incident.begin()+offsets[v+1]);
+      // The current star passed the census or an accepted move, so its stored
+      // scores are its exact star_score. A star an earlier move already
+      // repaired is left alone.
+      double best=-1;
+      for(int32_t t:star) best=std::max(best,angle_scores_[t]);
+      if(star.empty() || best<=target_cos) continue;
+      double* p=tri_.coordinates.data()+2*static_cast<std::size_t>(v);
+      const double old[2]={p[0],p[1]};
+      // The worst star triangle (geometric tie-break) supplies the metric,
+      // already evaluated at its centroid, and the edge opposite v.
+      int32_t worst_triangle=-1;
+      double worst=-1;
+      std::array<double,4> worst_key{};
+      for(int32_t t:star) {
+        const auto& cell=tri_.triangles[t]; const int k=tri_.index_of(t,v);
+        const double* a=tri_.point(cell.v[next3(k)]); const double* b=tri_.point(cell.v[prev3(k)]);
+        if(a[0]==b[0] && a[1]==b[1]) continue;
+        std::array<double,2> x{a[0],a[1]},y{b[0],b[1]};
+        if(y<x) std::swap(x,y);
+        const std::array<double,4> key{x[0],x[1],y[0],y[1]};
+        const double score=angle_scores_[t];
+        if(score<worst || (score==worst && !(key<worst_key))) continue;
+        worst=score; worst_key=key; worst_triangle=t;
+      }
+      if(worst_triangle<0) continue;
+      const CadMetric2D m=triangle_metrics_[worst_triangle];
+      neighbors.clear();
+      for(int32_t t:star) for(int32_t u:tri_.triangles[t].v)
+        if(u!=v) neighbors.push_back(u);
+      std::sort(neighbors.begin(),neighbors.end(),[&](int32_t a,int32_t b) {
+        const double* x=tri_.point(a); const double* y=tri_.point(b);
+        return x[0]!=y[0] ? x[0]<y[0] : x[1]<y[1];
+      });
+      neighbors.erase(std::unique(neighbors.begin(),neighbors.end()),neighbors.end());
+      double weighted[2]={0,0},sum=0,step=INFINITY;
+      for(int32_t u:neighbors) {
+        const double* q=tri_.point(u);
+        const double dx=q[0]-old[0],dy=q[1]-old[1];
+        const double length=std::sqrt(dot(m,dx,dy,dx,dy));
+        step=std::min(step,std::hypot(dx,dy));
+        if(!(length>0)) continue;
+        const double weight=1/length;
+        weighted[0]+=weight*q[0]; weighted[1]+=weight*q[1]; sum+=weight;
+      }
+      if(!(sum>0)) continue;
+      // Targets: the metric-weighted neighbor centroid and the apex of the
+      // metric-equilateral triangle on the worst triangle's opposite edge;
+      // then, as a fallback, eight chart directions at a quarter of the
+      // shortest incident chart edge.
+      double targets[10][2]={{weighted[0]/sum,weighted[1]/sum},{}};
+      {
+        const auto& cell=tri_.triangles[worst_triangle]; const int k=tri_.index_of(worst_triangle,v);
+        const double* a=tri_.point(cell.v[next3(k)]); const double* b=tri_.point(cell.v[prev3(k)]);
+        const double ex=b[0]-a[0],ey=b[1]-a[1];
+        double nx=-(m.uv*ex+m.vv*ey),ny=m.uu*ex+m.uv*ey;
+        const double norm=std::sqrt(dot(m,nx,ny,nx,ny));
+        const double mx=(a[0]+b[0])*0.5,my=(a[1]+b[1])*0.5;
+        if((old[0]-mx)*nx+(old[1]-my)*ny<0) {nx=-nx;ny=-ny;}
+        const double height=std::sqrt(0.75*dot(m,ex,ey,ex,ey))/norm;
+        targets[1][0]=mx+height*nx; targets[1][1]=my+height*ny;
+      }
+      step*=0.25;
+      int target_count=2;
+      for(int dx=-1;dx<=1;++dx) for(int dy=-1;dy<=1;++dy) {
+        if(dx==0 && dy==0) continue;
+        targets[target_count][0]=old[0]+dx*step;
+        targets[target_count][1]=old[1]+dy*step;
+        ++target_count;
+      }
+      PhysicalQuality current_physical;
+      if(input_.surface_position) current_physical=physical_star(star);
+      if(status_!=PHX_MC_OK) return;
+      double best_point[2]={old[0],old[1]};
+      std::array<double,3> best_xyz{};
+      // Steps 1, 1/2, 1/4 toward a target. With positions, the first step
+      // from `fraction` on that passes the 3D guards (which need no metric
+      // evaluation) becomes the candidate; returns false on none or error.
+      constexpr double fractions[3]={1.0,0.5,0.25};
+      auto physical_candidate=[&](Candidate& candidate) {
+        const auto& target=targets[candidate.target];
+        for(;candidate.fraction<3;++candidate.fraction) {
+          const double fraction=fractions[candidate.fraction];
+          candidate.point={old[0]+fraction*(target[0]-old[0]),old[1]+fraction*(target[1]-old[1])};
+          if(input_.admit_point && !input_.admit_point(input_.admit_context,candidate.point.data()))
+            continue;
+          auto& xyz=candidate.xyz;
+          if(!input_.surface_position(input_.surface_context,candidate.point.data(),xyz.data()) ||
+             !std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2])) {
+            status_=PHX_MC_INVALID_INPUT; return false;
+          }
+          // Edges not incident to v keep their length.
+          if(!physical_edges_fit(v,star,xyz,current_physical.max_edge2)) continue;
+          const auto quality=physical_star(star,v,&xyz);
+          if(status_!=PHX_MC_OK) return false;
+          if(quality.worst>current_physical.worst) continue;
+          candidate.physical=quality.worst;
+          return true;
+        }
+        return false;
+      };
+      for(int phase=0;phase<2;++phase) {
+        if(phase==1 &&
+           (best<=target_cos || best_point[0]!=old[0] || best_point[1]!=old[1])) break;
+        const int first=phase ? 2 : 0, last=phase ? target_count : 2;
+        if(!input_.surface_position) {
+          // Without positions, each target's longest improving step competes.
+          for(int target_index=first;target_index<last;++target_index) {
+            const auto& target=targets[target_index];
+            for(double fraction:fractions) {
+              p[0]=old[0]+fraction*(target[0]-old[0]); p[1]=old[1]+fraction*(target[1]-old[1]);
+              if(input_.admit_point && !input_.admit_point(input_.admit_context,p)) continue;
+              const double score=star_score(star,scores);
+              if(status_!=PHX_MC_OK) return;
+              if(!(score<best)) continue;
+              best=score; best_point[0]=p[0]; best_point[1]=p[1];
+              best_scores.swap(scores);
+              break;
+            }
+          }
+          continue;
+        }
+        candidates.clear();
+        for(int target_index=first;target_index<last;++target_index) {
+          // The fallback directions are probed at their shortest step only.
+          Candidate candidate{-1,{},{},target_index,phase ? 2 : 0};
+          const bool found=physical_candidate(candidate);
+          if(status_!=PHX_MC_OK) return;
+          if(!found) continue;
+          candidates.push_back(candidate);
+          // A candidate whose 3D star passes the selection test ends probing.
+          if(candidate.physical<=target_cos) break;
+        }
+        // The better 3D star goes first; the move needs metric improvement
+        // too, and a rejected candidate falls back to its target's next step.
+        std::stable_sort(candidates.begin(),candidates.end(),
+                         [](const Candidate& a,const Candidate& b){return a.physical<b.physical;});
+        bool moved=false;
+        for(auto candidate:candidates) {
+          do {
+            p[0]=candidate.point[0]; p[1]=candidate.point[1];
+            const double score=star_score(star,scores);
+            if(status_!=PHX_MC_OK) return;
+            if(score<best) {
+              best=score; best_point[0]=p[0]; best_point[1]=p[1]; best_xyz=candidate.xyz;
+              best_scores.swap(scores);
+              moved=true;
+              break;
+            }
+            ++candidate.fraction;
+          } while(physical_candidate(candidate));
+          if(status_!=PHX_MC_OK) return;
+          if(moved) break;
+        }
+      }
+      p[0]=best_point[0]; p[1]=best_point[1];
+      if(p[0]==old[0] && p[1]==old[1]) continue;
+      for(std::size_t k=0;k<star.size();++k) {
+        angle_scores_[star[k]]=best_scores[k].score;
+        triangle_metrics_[star[k]]=best_scores[k].metric;
+      }
+      if(input_.surface_position) {physical_[v]=best_xyz; physical_valid_[v]=1;}
+    }
+  }
+  // angle_cosine, when given, receives the metric cosine of the smallest
+  // angle (not written on the early oversized exit).
   bool geometry(int32_t t, double& radius, double* center,
-                bool* size_reason=nullptr, bool* angle_reason=nullptr, CadMetric2D* center_metric=nullptr) {
+                bool* size_reason=nullptr, bool* angle_reason=nullptr, CadMetric2D* center_metric=nullptr,
+                double* angle_cosine=nullptr) {
     const Triangle2D& cell = tri_.triangles[static_cast<std::size_t>(t)];
     // Canonical geometric rotation keeps floating-point construction independent
     // of the triangle's cyclic vertex numbering.
@@ -298,8 +634,11 @@ class Refinement {
     const int original_shortest=(first+shortest)%3;
     const bool protected_angle = cell.v[original_shortest] < input_.point_count &&
         tri_.constraint(t,next3(original_shortest)) != -1 && tri_.constraint(t,prev3(original_shortest)) != -1;
-    const bool bad_angle = !protected_angle && sine_ * std::sqrt(lengths[next3(shortest)] *
-        lengths[prev3(shortest)]) > area2;
+    const double side_product=std::sqrt(lengths[next3(shortest)]*lengths[prev3(shortest)]);
+    if (angle_cosine)
+      *angle_cosine=(lengths[next3(shortest)]+lengths[prev3(shortest)]-lengths[shortest])/
+                    (2*side_product);
+    const bool bad_angle = !protected_angle && sine_ * side_product > area2;
     const bool bad_size=radius > 0.70710678118654752440;
     if (size_reason) *size_reason=bad_size;
     if (angle_reason) *angle_reason=bad_angle;
