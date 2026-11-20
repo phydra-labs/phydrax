@@ -21,7 +21,6 @@ from phydrax._meshcore import (
     CadModel,
     CadSurfaceResult,
     load_meshcore,
-    MeshcoreError,
     MeshcoreStatus,
     verify_cad_fidelity,
 )
@@ -972,7 +971,7 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
         return candidate
 
     if outcome not in {"native", "existing"}:
-        with pytest.raises((MeshingFailure, MeshcoreError), match=re.escape(outcome)):
+        with pytest.raises(MeshingFailure, match=re.escape(outcome)):
             execute()
         return
     candidate = execute()
@@ -1012,3 +1011,72 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
         key = f"size:{control.control_id}:{name}"
         assert requested[key] == target
         assert (key in report.issues) == (achieved[key] > allowed)
+
+
+@pytest.mark.parametrize(
+    ("shape", "deviation"),
+    [("sphere", 0.0), ("sphere", 1e-12), ("box", 1e-12)],
+    ids=["curved-zero", "curved-tiny", "planar-tiny"],
+)
+def test_unattainable_protected_surface_deviation_is_refused_promptly(
+    shape: str, deviation: float
+) -> None:
+    # A curved feature never meets a zero (or near-zero) chord deviation: its
+    # curve sampling stops at the surface schedule's sample budget with the
+    # unmet deviation and the feature that set it. The same tiny bound on a
+    # planar feature is met (straight chords certify at rounding level), so
+    # the refusal is the budget, not the requested value.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingFailure,
+        MeshingFailureCategory,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = (
+        _sphere_model()
+        if shape == "sphere"
+        else phx.geometry.brep.brep_box(
+            (0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0),
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+    )
+    boundary = MeshingScope.whole(model, 2)
+    feature = ProtectedFeature(boundary, FeatureKind.SURFACE, maximum_deviation=deviation)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.5),),
+        protected_features=(feature,),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
+        )
+    ).plan(model, specification)
+    if shape == "box":
+        assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
+        return
+    with pytest.raises(
+        MeshingFailure, match="did not meet its chord deviation"
+    ) as raised:
+        plan.execute(prove=False)
+    failure = raised.value
+    assert failure.category is MeshingFailureCategory.COMPLIANCE_FAILED
+    evidence = failure.evidence
+    assert dict(evidence.requested_quantities)["maximum_deviation"] == deviation
+    assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > deviation
+    assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)

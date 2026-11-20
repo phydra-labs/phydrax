@@ -4423,6 +4423,7 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 spacing_fraction=source_boundary_schedule.spacing_fraction,
                 minimum_edge_samples=source_boundary_schedule.minimum_edge_samples,
                 normal_deviation_aim=source_boundary_schedule.normal_deviation_aim,
+                maximum_curve_samples=source_boundary_schedule.maximum_curve_samples,
                 curve_schedule=curve_schedule,
             )
             if (

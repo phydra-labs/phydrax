@@ -60,6 +60,7 @@ from phydrax.meshing._contracts import (
     CellMeshingTarget,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingFailureEvidence,
     SurfaceMeshingSpec,
 )
 from phydrax.meshing._controls import FeatureKind
@@ -3529,6 +3530,7 @@ def _curve_parameters(
                     if bound > lens_limit
                 )
                 candidates = [interval for interval in candidates if interval in accepted]
+            rejected = [interval for interval in intervals if interval not in accepted]
             following = []
             for lower, upper in intervals:
                 if (lower, upper) in accepted:
@@ -3546,8 +3548,69 @@ def _curve_parameters(
                 expanded.add(midpoint)
                 following.extend(((lower, midpoint), (midpoint, upper)))
             intervals = following
+            if len(expanded) > schedule.maximum_curve_samples:
+                raise _curve_budget_failure(
+                    domain,
+                    specification,
+                    curve,
+                    tuple(patch for patch, _ in selected_uses),
+                    fidelity_limit,
+                    max(chords.interval(curve, *interval)[0] for interval in rejected),
+                    schedule.maximum_curve_samples,
+                )
         parameters[curve] = expanded
     return parameters
+
+
+def _curve_budget_failure(
+    domain: domain_owner.MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    curve: int,
+    patches: tuple[int, ...],
+    fidelity_limit: float,
+    achieved_deviation: float,
+    budget: int,
+    /,
+) -> MeshingFailure:
+    """Unresolved curve fidelity, naming the hard features that set its limit."""
+    scopes, _ = _scope_banks(domain)
+    binding: list[str] = []
+    for feature in specification.protected_features:
+        if (
+            not feature.hard
+            or feature.feature_kind not in (FeatureKind.CURVE, FeatureKind.SURFACE)
+            or feature.maximum_deviation != fidelity_limit
+        ):
+            continue
+        rows = _scope_rows(scopes, _feature_dimension(feature.feature_kind))
+        selected = {
+            rows[identifier]
+            for identifier in np.asarray(
+                feature.scope.entity_ids, dtype=np.int64
+            ).tolist()
+        }
+        owners = {curve} if feature.feature_kind is FeatureKind.CURVE else set(patches)
+        if selected & owners:
+            binding.append(f"protected_feature:{feature.feature_id}")
+    return MeshingFailure(
+        MeshingFailureCategory.COMPLIANCE_FAILED,
+        f"source curve {curve} did not meet its chord deviation limit "
+        f"{fidelity_limit!r} within {budget} samples (largest certified bound "
+        f"of an unmet chord: {achieved_deviation!r})"
+        + (f"; the limit is set by {', '.join(binding)}" if binding else ""),
+        provider_code="native_surface_unresolved",
+        stage="surface_meshing",
+        entity_ids=(int(curve),),
+        evidence=MeshingFailureEvidence(
+            requested_quantities=(
+                ("maximum_deviation", fidelity_limit),
+                ("maximum_curve_samples", float(budget)),
+            ),
+            achieved_quantities=(("unmet_chord_deviation", achieved_deviation),),
+            checkpoint="source_curve_sampling",
+            logical_findings=tuple(binding),
+        ),
+    )
 
 
 def _surface_fidelity_tolerance(
