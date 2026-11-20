@@ -71,6 +71,7 @@ from phydrax._meshcore import (
     TetMeshPlaneRefusal,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
+    TetMeshUnmetReason,
     tetrahedron_dual_hexes,
     tetrahedron_intersection_moments,
     tetrahedron_intersection_simplices,
@@ -3315,6 +3316,120 @@ def test_fixed_boundary_lattice_reaches_a_non_convex_interior() -> None:
     angle = np.arctan2(deep[:, 1], deep[:, 0]) + np.pi
     sectors = np.bincount(np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8)
     assert sectors.max() <= 1.1 * sectors.min()
+
+
+def _box_surface(
+    nodes: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # The box spanned by the per-axis node rows, each side a grid of
+    # outward-oriented triangle pairs and one facet. Nodes inside a side or
+    # an edge are moved within it (by up to a fifth of their spacing,
+    # seeded), so the sides stay planar but no four grid nodes are
+    # cocircular (a degenerate boundary skips lattice seeding).
+    counts = [len(row) - 1 for row in nodes]
+    rng = np.random.default_rng(7)
+    index: dict[tuple[int, int, int], int] = {}
+    points: list[list[float]] = []
+
+    def node(at: tuple[int, int, int]) -> int:
+        if at not in index:
+            point = []
+            for axis, row in enumerate(nodes):
+                step = at[axis]
+                value = float(row[step])
+                if 0 < step < counts[axis]:
+                    spacing = min(row[step] - row[step - 1], row[step + 1] - row[step])
+                    value += 0.2 * float(spacing) * (2.0 * rng.random() - 1.0)
+                point.append(value)
+            index[at] = len(points)
+            points.append(point)
+        return index[at]
+
+    faces: list[list[int]] = []
+    facets: list[int] = []
+    for axis in range(3):
+        u, v = (axis + 1) % 3, (axis + 2) % 3
+        for side in (0, 1):
+            for a in range(counts[u]):
+                for b in range(counts[v]):
+                    quad = []
+                    for da, db in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                        at = [0, 0, 0]
+                        at[axis] = side * counts[axis]
+                        at[u], at[v] = a + da, b + db
+                        quad.append(node((at[0], at[1], at[2])))
+                    if side == 0:
+                        quad.reverse()
+                    faces += [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]]
+                    facets += [2 * axis + side] * 2
+    return (
+        np.asarray(points, dtype=np.float64),
+        np.asarray(faces, dtype=np.int32),
+        np.asarray(facets, dtype=np.int32),
+    )
+
+
+def _peak_resident_bytes() -> int:
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else 1024 * peak
+
+
+def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume() -> None:
+    # A 100:1:1 bar at h = 0.2: the lattice sites are listed sparsely (the
+    # box's rows, or per recovered cell), so seeding costs the bar's box or
+    # volume, not its bounding box's diagonal cubed (a dense site table over
+    # that cube held 4.7e7 entries, 190 MB, for
+    # 1,951 seeds). Every lattice site at least half a spacing inside is
+    # seeded (the lattice count in the volume), evenly along the bar.
+    size = 0.2
+    vertices, faces, facets = _box_surface(
+        (np.linspace(0.0, 100.0, 501), np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6))
+    )
+    recovery = _recover(vertices, faces, facets)
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    peak = _peak_resident_bytes()
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    assert _peak_resident_bytes() - peak < 64 * 2**20
+    # Refinement leaves a few slivers on the bar's fixed sides unmet (their
+    # circumcenters lie beyond a fixed face), as it did with the dense site
+    # table: the same seeds, in the same order.
+    assert run.edit_status is TetMeshEditStatus.APPLIED
+    assert np.all(mesh.unmet().reasons == TetMeshUnmetReason.FIXED_BOUNDARY)
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * 100.0 / lattice**3
+    inserted = np.asarray(mesh.arrays().points)[recovery.points.shape[0] :]
+    depth = np.min(np.minimum(inserted, [100.0, 1.0, 1.0] - inserted), axis=1)
+    deep = inserted[depth > lattice]
+    stretches = np.bincount(np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10)
+    assert stretches.max() <= 1.15 * stretches.min()
+
+
+def test_fixed_boundary_lattice_seeds_only_where_a_graded_target_qualifies() -> None:
+    # A unit cube whose target grows tenfold from the face x = 0 to x = 1: no
+    # recovered cell has a target within the margin of the smallest, so no
+    # lattice site is generated (seeding the box at the smallest target
+    # walked 4.6e4 seeds to refuse them all, 2.7 times the rest of the
+    # refinement), and refinement meets the graded bound but at slivers on
+    # the fixed sides whose circumcenters lie beyond them.
+    vertices, faces, facets = _box_surface((np.linspace(0.0, 1.0, 51),) * 3)
+    recovery = _recover(vertices, faces, facets)
+    sizes = 0.02 * (1.0 + 9.0 * np.asarray(recovery.points)[:, 0])
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    peak = _peak_resident_bytes()
+    run = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+    assert _peak_resident_bytes() - peak < 64 * 2**20
+    assert run.edit_status is TetMeshEditStatus.APPLIED
+    assert np.all(mesh.unmet().reasons == TetMeshUnmetReason.FIXED_BOUNDARY)
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    spans = corners[:, 1:] - corners[:, :1]
+    centers = np.linalg.solve(spans, 0.5 * np.sum(spans * spans, axis=2)[..., None])
+    radii = np.linalg.norm(centers[..., 0], axis=1)
+    assert np.count_nonzero(radii > 0.2 * (1.0 + 1e-9)) <= run.unmet_cells
 
 
 def test_mesh_adoption_refuses_a_recovery_without_its_native_result() -> None:
