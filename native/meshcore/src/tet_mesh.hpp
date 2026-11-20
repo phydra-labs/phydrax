@@ -482,7 +482,9 @@ class TetIdIndex {
 // one the arrays alone build.
 struct RecoveredTopology {
   // Per cell and face slot: the cell across, -1 on the boundary (empty: the
-  // adjacency is paired from the cells).
+  // adjacency is paired from the cells). Nonempty, the recovered segments
+  // are also adopted as distinct cell edges (recovery published them as
+  // intervals of its recovered edge chains).
   std::span<const std::int32_t> neighbors;
   // The mesh is its own source bank (no explicit source or witnesses): every
   // constrained face and segment is one of its own source rows, which covers
@@ -490,7 +492,9 @@ struct RecoveredTopology {
   // of a group overlaps one), so the coverage proofs are not repeated.
   bool self_covered = false;
   // The recovery published cells of a Delaunay triangulation of its points
-  // (PlcRecovery::delaunay), so every unconstrained face is locally Delaunay.
+  // (PlcRecovery::delaunay), so every unconstrained face is locally Delaunay
+  // and, the points being the ones its exact predicates read, every cell is
+  // positively oriented.
   bool delaunay = false;
 };
 

@@ -731,6 +731,9 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
   source_face_plane_tolerances_.assign(face_count, 0.0);
   std::copy(planes.begin(), planes.end(), source_face_planes_.begin());
   std::copy(tolerances.begin(), tolerances.end(), source_face_plane_tolerances_.begin());
+  // No declaration: every row is undeclared with a zero tolerance, which
+  // every group agrees on.
+  if (planes.empty() && tolerances.empty()) return PHX_MC_OK;
   std::unordered_map<std::int32_t, std::int32_t> first_rows;
   for (std::size_t row = 0; row < face_count; ++row) {
     const double* plane = source_face_planes_.data() + 9 * row;
