@@ -348,6 +348,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Surface remeshing coarsens a much finer input in stages before its size
+  sweeps: stage sizes double from twice the input's mean edge while below 3/4
+  of the target, each pass collapses short edges into an endpoint under the
+  usual link, orientation, longest-edge and angle-floor checks, and valence
+  flips restore the stars. It is faster and avoids the skinny stars of
+  one-sweep coarsening; outputs change where the input is much finer than the
+  target (the F7 rows now 0.48-0.95x MMGS with no quality miss; the zero-set
+  remesh rows keep minimum angle at least 30.75 degrees and certify both ways).
 - Surface remeshing against a mesh source is 17-40 % faster with identical
   output on the dense rows: own source vertices project onto themselves, the
   collapse link test walks one ring, valences are kept by every edit, the
