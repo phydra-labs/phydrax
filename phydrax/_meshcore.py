@@ -1683,9 +1683,40 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
 _SIGNATURES["phx_mc_verify_cad_fidelity"] = (
     _I32,
     (
-        _P, _I64, _P, _P, _I64, _P, _I64, _P, _P, _P, _I64, _P, _P,
-        _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _P, _F64, _I32, _I64,
-        _P, _P, _P, _P, _P, _I64, _P, _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _P,
+        _P,
+        _F64,
+        _I32,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
     ),
 )
 
@@ -3593,6 +3624,7 @@ def cad_geometry_evaluate(
     _raise_for_call(status, "cad_geometry_evaluate")
     return result
 
+
 # CAD fidelity verifier.
 class CadFidelityMesh(NamedTuple):
     """Finished surface arrays; edge_chord names the V4 chord table or -1."""
@@ -3696,8 +3728,11 @@ def verify_cad_fidelity(
     if chord_use.ndim != 1:
         raise ValueError("chord_use must be one-dimensional.")
     chord_count = chord_use.size
-    if (chord_loop.shape != (chord_count,) or chord_uv.shape != (chord_count, 2, 2)
-            or chord_range.shape != (chord_count, 2)):
+    if (
+        chord_loop.shape != (chord_count,)
+        or chord_uv.shape != (chord_count, 2, 2)
+        or chord_range.shape != (chord_count, 2)
+    ):
         raise ValueError("Chord rows, UV and ranges must align.")
     structure, arrays = _cad_model_structure(model)
     bounds = np.empty(count, dtype=np.float64)
@@ -3706,27 +3741,57 @@ def verify_cad_fidelity(
     subdivisions = np.empty(count, dtype=np.int32)
     maximum = ctypes.c_double()
     evidence_count = ctypes.c_int64()
-    findings = np.empty(7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE)
+    findings = np.empty(
+        7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE
+    )
     status = load_meshcore()["phx_mc_verify_cad_fidelity"](
-        ctypes.addressof(structure), lower.size, lower.ctypes.data, upper.ctypes.data,
-        points.shape[0], points.ctypes.data, count, triangles.ctypes.data, faces.ctypes.data,
-        uv.ctypes.data, len(mesh_triangles), mesh_triangles.ctypes.data, chart_to_mesh.ctypes.data,
-        use_patch.size, use_patch.ctypes.data, use_range.ctypes.data,
-        chords.loop_count, chord_count, chord_use.ctypes.data, chord_loop.ctypes.data,
-        chord_uv.ctypes.data, chord_range.ctypes.data, edges.ctypes.data, tolerance,
-        max_depth, count, bounds.ctypes.data, statuses.ctypes.data, reasons.ctypes.data,
-        subdivisions.ctypes.data, ctypes.addressof(maximum), findings.size,
-        findings.ctypes.data, ctypes.addressof(evidence_count),
+        ctypes.addressof(structure),
+        lower.size,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        points.shape[0],
+        points.ctypes.data,
+        count,
+        triangles.ctypes.data,
+        faces.ctypes.data,
+        uv.ctypes.data,
+        len(mesh_triangles),
+        mesh_triangles.ctypes.data,
+        chart_to_mesh.ctypes.data,
+        use_patch.size,
+        use_patch.ctypes.data,
+        use_range.ctypes.data,
+        chords.loop_count,
+        chord_count,
+        chord_use.ctypes.data,
+        chord_loop.ctypes.data,
+        chord_uv.ctypes.data,
+        chord_range.ctypes.data,
+        edges.ctypes.data,
+        tolerance,
+        max_depth,
+        count,
+        bounds.ctypes.data,
+        statuses.ctypes.data,
+        reasons.ctypes.data,
+        subdivisions.ctypes.data,
+        ctypes.addressof(maximum),
+        findings.size,
+        findings.ctypes.data,
+        ctypes.addressof(evidence_count),
     )
     del arrays
     if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
         _raise_for_call(status, "verify_cad_fidelity")
     return CadFidelityResult(
-        MeshcoreStatus(status), bounds, statuses, reasons, subdivisions, maximum.value,
-        findings[:evidence_count.value],
+        MeshcoreStatus(status),
+        bounds,
+        statuses,
+        reasons,
+        subdivisions,
+        maximum.value,
+        findings[: evidence_count.value],
     )
-
-
 
 
 class RestrictedDelaunayCriteria(NamedTuple):
@@ -12534,6 +12599,7 @@ __all__ += [
     "CadFidelityResult",
     "verify_cad_fidelity",
 ]
+
 
 class _CadSurfaceControls(ctypes.Structure):
     _fields_ = (
