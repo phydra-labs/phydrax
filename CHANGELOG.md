@@ -17,7 +17,11 @@
   `native_cad` certificate carries the findings, V3's maximum bound, the shell
   proof and the obligation it does not prove (`unproved_premises`: source
   occurrence records). Protected features or a normal-deviation bound given to
-  the native certificate are refused as unresolved. `execute(prove=True)`
+  the native certificate are refused as unresolved. A soft
+  `NativeVolumeSchedule.shape_strength` publishes unmet radius-edge/dihedral
+  rows as `soft_shape_target_unmet_count` (prove and unproved; validity,
+  determinant and P2 rows stay issues), from the new `cad_mesh_solid` stats
+  `unmet_shape_rows` / `unmet_hard_cells`. `execute(prove=True)`
   equals `execute(prove=False).prove()`. Geometry order 2 CAD solids are
   refused at proof. Bindings `verify_surface_embedding` and
   `verify_chart_partition`. The quadric proof at h 0.2293 / 0.1061 takes 0.05

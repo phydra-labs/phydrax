@@ -198,3 +198,91 @@ def test_revolution_rims_bind_exact_full_turn_circle_edges() -> None:
         model.geometry.edge_ranges.at[edge, 1].set(1.0),
     )
     assert certify_revolution_rim_pair(shortened, 0, 1) is None
+
+
+def _square(
+    corners: tuple[tuple[float, float, float], ...], /
+) -> tuple[dict[int, tuple[Fraction, ...]], dict[int, tuple[int, int]]]:
+    vertices = {
+        index: tuple(Fraction(value) for value in corner)
+        for index, corner in enumerate(corners)
+    }
+    edges = {index: (index, (index + 1) % len(corners)) for index in range(len(corners))}
+    return vertices, edges
+
+
+def _plane_of(
+    polygon: tuple[dict[int, tuple[Fraction, ...]], dict[int, tuple[int, int]]], /
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]]:
+    from phydrax.geometry._rational import rational_cross
+
+    points = polygon[0]
+    first = tuple(b - a for a, b in zip(points[0], points[1], strict=True))
+    second = tuple(b - a for a, b in zip(points[0], points[2], strict=True))
+    return points[0], rational_cross(first, second)
+
+
+def test_plane_pair_rule_refuses_crossing_and_coplanar_faces() -> None:
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        _plane_faces_meet_only_shared,
+    )
+
+    floor = _square(((0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)))
+
+    def meet_only_shared(
+        other: tuple[dict[int, tuple[Fraction, ...]], dict[int, tuple[int, int]]], /
+    ) -> bool:
+        return _plane_faces_meet_only_shared(
+            (_plane_of(floor), _plane_of(other)), (floor, other), set(), set()
+        )
+
+    # A wall pushed through the floor's interior crosses it off any shared edge.
+    through = _square(((1, 0.5, -1), (1, 1.5, -1), (1, 1.5, 1), (1, 0.5, 1)))
+    assert not meet_only_shared(through)
+    # The same wall standing beside the floor, and one above it, are disjoint.
+    beside = _square(((3, 0.5, -1), (3, 1.5, -1), (3, 1.5, 1), (3, 0.5, 1)))
+    above = _square(((1, 0.5, 1), (1, 1.5, 1), (1, 1.5, 2), (1, 0.5, 2)))
+    assert meet_only_shared(beside) and meet_only_shared(above)
+    # A wall touching the floor in a segment it does not share meets it there.
+    standing = _square(((1, 0.5, 0), (1, 1.5, 0), (1, 1.5, 1), (1, 0.5, 1)))
+    assert not meet_only_shared(standing)
+    # Coplanar faces are refused, even when disjoint; parallel ones are not.
+    coplanar = _square(((5, 0, 0), (6, 0, 0), (6, 1, 0), (5, 1, 0)))
+    parallel = _square(((0, 0, 1), (2, 0, 1), (2, 2, 1), (0, 2, 1)))
+    assert not meet_only_shared(coplanar)
+    assert meet_only_shared(parallel)
+
+
+def test_concave_plane_pairs_of_an_l_prism_certify() -> None:
+    # The L-shaped caps lie on both sides of the inner walls' planes and touch
+    # them only on the shared edges: the line test certifies those pairs.
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.geometry.brep._constructors import (
+        brep_extrusion,
+        PlanarProfile,
+        ProfileLoop,
+        ProfilePlane,
+    )
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        certify_plane_plane_pair,
+    )
+    from phydrax.meshing._native_cad_shell import prove_source_shell
+
+    model = brep_extrusion(
+        PlanarProfile(
+            ProfilePlane((0.0, 0.0, 0.0)),
+            ProfileLoop.polygon(
+                ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 2.0), (0.0, 2.0))
+            ),
+        ),
+        (0.0, 0.0, 1.0),
+        coordinate_contract=SpatialCoordinateContract.si(),
+    )
+    topology = model.geometry.topology
+    adjacent = {
+        tuple(sorted(faces)) for faces in topology.edge_faces if len(set(faces)) == 2
+    }
+    assert len(adjacent) == 18
+    for first, second in sorted(adjacent):
+        assert certify_plane_plane_pair(model, first, second) is not None
+    assert prove_source_shell(MeshingDomain.from_brep(model)).refusal is None

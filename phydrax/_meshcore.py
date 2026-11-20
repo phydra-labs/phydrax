@@ -12984,6 +12984,8 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
                 [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
             ),
         ),
+        ("unmet_shape_rows", np.int64),
+        ("unmet_hard_cells", np.int64),
     ],
     align=True,
 )

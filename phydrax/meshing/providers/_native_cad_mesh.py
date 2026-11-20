@@ -33,6 +33,7 @@ from .._native_cad_certificate import NativeCadSurfaceWitness
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
 from .._sizing import SizeControlStrength, UniformSizeControl
+from .._volume_generation import _shape_targets_gated
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
 
 
@@ -223,8 +224,6 @@ def execute_cad_solid(
         CellGeometrySpec.affine(mesh) if order == 1 else _quadratic_geometry(mesh, solid)
     )
     issues: list[str] = []
-    if solid.status is MeshcoreStatus.UNRESOLVED:
-        issues.append(f"native_unmet_quality_cells:{int(stats['unmet_cells'])}")
     requested: list[tuple[str, float]] = [
         ("maximum_deviation", float(deviation)),
         ("minimum_dihedral_degrees", float(schedule.minimum_dihedral_degrees)),
@@ -234,6 +233,22 @@ def execute_cad_solid(
     achieved: list[tuple[str, float]] = [
         ("unmet_quality_cells", float(stats["unmet_cells"]))
     ]
+    if _shape_targets_gated(schedule):
+        if solid.status is MeshcoreStatus.UNRESOLVED:
+            issues.append(f"native_unmet_quality_cells:{int(stats['unmet_cells'])}")
+    else:
+        # A soft schedule publishes unmet shape rows; validity, determinant,
+        # construction and P2 rows stay hard (as the Python route).
+        hard = int(stats["unmet_hard_cells"])
+        quadratic = stats["quadratic"]
+        curved = int(quadratic["final_invalid"]) + int(quadratic["final_unresolved"])
+        if hard:
+            issues.append(f"native_unmet_quality_cells:{hard}")
+        if curved:
+            issues.append(f"native_unresolved_quadratic_cells:{curved}")
+        achieved.append(
+            ("soft_shape_target_unmet_count", float(stats["unmet_shape_rows"]))
+        )
     _size_compliance(prepared, solid, issues, requested, achieved)
     compliance = MeshingComplianceReport(
         specification.specification_id,

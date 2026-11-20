@@ -617,6 +617,23 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                                         stats.improve_collapsed, stats.improve_relocated,
                                         stats.unmet_cells);
   if (improved != PHX_MC_OK && improved != PHX_MC_UNRESOLVED) return improved;
+  {
+    // Split the final rows for a soft shape schedule (see the stats doc).
+    std::vector<uint64_t> hard;
+    for (const TetUnmetRecord& record : state.unmet_records()) {
+      if (record.criterion == PHX_MC_TET_UNMET_SIZE) continue;
+      const bool shape = (record.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE ||
+                          record.criterion == PHX_MC_TET_UNMET_DIHEDRAL) &&
+                         record.reason != PHX_MC_TET_UNMET_NONREPRESENTABLE;
+      if (shape)
+        ++stats.unmet_shape_rows;
+      else
+        hard.push_back(record.cell_id);
+    }
+    std::sort(hard.begin(), hard.end());
+    stats.unmet_hard_cells =
+        static_cast<int64_t>(std::unique(hard.begin(), hard.end()) - hard.begin());
+  }
   // Live vertex slots in order; the surface keeps its rows.
   std::vector<int32_t> rows(state.vertex_slot_count(), -1);
   for (std::size_t slot = 0; slot < rows.size(); ++slot) {

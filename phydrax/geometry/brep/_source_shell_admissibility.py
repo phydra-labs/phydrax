@@ -1397,38 +1397,135 @@ def _exact_line_polygon(
     return vertices, edges
 
 
-def _plane_side_meets_only_shared(
-    plane: tuple[_Vector, _Vector],
+def _dot(first: _Vector, second: _Vector, /) -> Fraction:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _on_segment(point: _Vector, start: _Vector, stop: _Vector, /) -> bool:
+    """Whether ``point`` lies on the closed segment (exact)."""
+    from .._rational import rational_cross
+
+    offset = tuple(p - s for p, s in zip(point, start, strict=True))
+    direction = tuple(e - s for e, s in zip(stop, start, strict=True))
+    if any(value != 0 for value in rational_cross(offset, direction)):
+        return False
+    along = _dot(offset, direction)
+    return 0 <= along <= _dot(direction, direction)
+
+
+def _in_closed_polygon(
+    point: _Vector,
+    normal: _Vector,
     polygon: tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+    /,
+) -> bool:
+    """Whether a point of the polygon's plane lies in the closed polygon.
+
+    On an edge counts as inside; otherwise the even-odd crossing rule over all
+    loops, in the coordinate projection dropping the normal's largest axis.
+    """
+    vertices, edges = polygon
+    segments = tuple((vertices[a], vertices[b]) for a, b in edges.values())
+    if any(_on_segment(point, start, stop) for start, stop in segments):
+        return True
+    drop = max(range(3), key=lambda axis: abs(normal[axis]))
+    u, v = (axis for axis in range(3) if axis != drop)
+    inside = False
+    for start, stop in segments:
+        if (start[v] > point[v]) != (stop[v] > point[v]):
+            crossing = start[u] + (point[v] - start[v]) * (stop[u] - start[u]) / (
+                stop[v] - start[v]
+            )
+            if crossing > point[u]:
+                inside = not inside
+    return inside
+
+
+def _plane_faces_meet_only_shared(
+    planes: tuple[tuple[_Vector, _Vector], tuple[_Vector, _Vector]],
+    polygons: tuple[
+        tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+        tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+    ],
     shared_edges: set[int],
     shared_vertices: set[int],
     /,
 ) -> bool:
-    """Whether a polygon lies on one closed side of ``plane`` touching it only on shared topology.
+    """Whether two plane polygons meet only on their shared edges and vertices.
 
-    The polygon then meets the plane only on its boundary: an edge with both
-    ends on the plane (it must be shared) or a vertex on the plane (it must be
-    shared or end a shared edge). A segment whose ends lie on one closed side
-    meets the plane in an end unless it lies in it.
+    Parallel distinct planes are disjoint; coplanar faces are refused. Else
+    both polygons meet only on the line L of the two planes. Every point where
+    an edge of either polygon meets the other plane is a breakpoint on L;
+    membership in each closed polygon is constant between breakpoints, so
+    checking every breakpoint and every gap midpoint decides exactly whether a
+    common point lies off the shared topology.
     """
-    origin, normal = plane
-    vertices, edges = polygon
-    signs: dict[int, int] = {}
-    for vertex, point in vertices.items():
-        value = sum(
-            ((p - o) * n for p, o, n in zip(point, origin, normal, strict=True)),
-            Fraction(0),
+    from .._rational import rational_cross
+
+    (origin_a, normal_a), (origin_b, normal_b) = planes
+    direction = rational_cross(normal_a, normal_b)
+    if all(value == 0 for value in direction):
+        offset = tuple(b - a for a, b in zip(origin_a, origin_b, strict=True))
+        return _dot(offset, normal_a) != 0
+    height_a, height_b = _dot(normal_a, origin_a), _dot(normal_b, origin_b)
+    scale = _dot(direction, direction)
+    base = tuple(
+        (height_a * x + height_b * y) / scale
+        for x, y in zip(
+            rational_cross(normal_b, direction),
+            rational_cross(direction, normal_a),
+            strict=True,
         )
-        signs[vertex] = (value > 0) - (value < 0)
-    if {1, -1} <= set(signs.values()) or all(sign == 0 for sign in signs.values()):
-        return False
-    covered = set(shared_vertices)
-    for edge in shared_edges:
-        covered.update(edges.get(edge, ()))
-    for edge, (first, second) in edges.items():
-        if signs[first] == 0 and signs[second] == 0 and edge not in shared_edges:
+    )
+
+    def at(parameter: Fraction, /) -> _Vector:
+        return tuple(b + parameter * d for b, d in zip(base, direction, strict=True))
+
+    breakpoints: set[Fraction] = set()
+    for polygon, (origin, normal) in (
+        (polygons[0], planes[1]),
+        (polygons[1], planes[0]),
+    ):
+        vertices, edges = polygon
+        for a, b in edges.values():
+            start, stop = vertices[a], vertices[b]
+            first = _dot(tuple(p - o for p, o in zip(start, origin, strict=True)), normal)
+            last = _dot(tuple(p - o for p, o in zip(stop, origin, strict=True)), normal)
+            if (first > 0 and last > 0) or (first < 0 and last < 0):
+                continue
+            points = (
+                (start, stop)
+                if first == last == 0
+                else (
+                    tuple(
+                        s + first / (first - last) * (e - s)
+                        for s, e in zip(start, stop, strict=True)
+                    ),
+                )
+            )
+            breakpoints.update(
+                _dot(tuple(p - b for p, b in zip(point, base, strict=True)), direction)
+                / scale
+                for point in points
+            )
+    ordered = sorted(breakpoints)
+    samples = (*ordered, *((x + y) / 2 for x, y in zip(ordered, ordered[1:])))
+    shared = tuple(
+        (polygons[0][0][a], polygons[0][0][b])
+        for edge, (a, b) in polygons[0][1].items()
+        if edge in shared_edges
+    )
+    corners = tuple(polygons[0][0][vertex] for vertex in shared_vertices)
+    for parameter in samples:
+        point = at(parameter)
+        if (
+            _in_closed_polygon(point, normal_a, polygons[0])
+            and _in_closed_polygon(point, normal_b, polygons[1])
+            and point not in corners
+            and not any(_on_segment(point, start, stop) for start, stop in shared)
+        ):
             return False
-    return all(sign != 0 or vertex in covered for vertex, sign in signs.items())
+    return True
 
 
 def certify_plane_plane_pair(
@@ -1436,10 +1533,9 @@ def certify_plane_plane_pair(
 ) -> SourcePlanePlanePair | None:
     """Prove two straight-edged plane faces meet only on their shared edges and vertices.
 
-    Decided exactly from the binary64 plane carriers and the exact line edges:
-    each face lies on one closed side of the other's plane and touches it only
-    on shared topology (``_plane_side_meets_only_shared``), so the faces meet
-    only there. Coplanar faces are refused (another family decides them).
+    Decided exactly from the binary64 plane carriers and the exact line edges
+    on the line common to both planes (``_plane_faces_meet_only_shared``).
+    Coplanar faces are refused (another family decides them).
     """
     if (
         not isinstance(model, BRepModel)
@@ -1449,21 +1545,23 @@ def certify_plane_plane_pair(
     ):
         return None
     model.require_current()
-    planes = (_exact_plane(model, first), _exact_plane(model, second))
-    polygons = (_exact_line_polygon(model, first), _exact_line_polygon(model, second))
+    first_plane, second_plane = _exact_plane(model, first), _exact_plane(model, second)
+    first_polygon = _exact_line_polygon(model, first)
+    second_polygon = _exact_line_polygon(model, second)
     if (
-        planes[0] is None
-        or planes[1] is None
-        or polygons[0] is None
-        or polygons[1] is None
+        first_plane is None
+        or second_plane is None
+        or first_polygon is None
+        or second_polygon is None
     ):
         return None
-    shared_edges = set(polygons[0][1]) & set(polygons[1][1])
-    shared_vertices = set(polygons[0][0]) & set(polygons[1][0])
-    if not _plane_side_meets_only_shared(
-        planes[1], polygons[0], shared_edges, shared_vertices
-    ) or not _plane_side_meets_only_shared(
-        planes[0], polygons[1], shared_edges, shared_vertices
+    shared_edges = set(first_polygon[1]) & set(second_polygon[1])
+    shared_vertices = set(first_polygon[0]) & set(second_polygon[0])
+    if not _plane_faces_meet_only_shared(
+        (first_plane, second_plane),
+        (first_polygon, second_polygon),
+        shared_edges,
+        shared_vertices,
     ):
         return None
     edges, vertices = tuple(sorted(shared_edges)), tuple(sorted(shared_vertices))

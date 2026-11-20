@@ -3138,6 +3138,13 @@ typedef struct phx_mc_cad_volume_stats {
   int32_t recovery_status, recovery_reason, failure_kind;
   int64_t failure_entity;
   phx_mc_cad_quadratic_stats quadratic;
+  /* The final unmet quality rows (phx_mc_tet_mesh_unmet criteria) after
+   * improvement, split for a soft shape schedule: shape rows are RADIUS_EDGE
+   * or DIHEDRAL rows whose reason is not NONREPRESENTABLE (the schedule's
+   * shape targets); hard cells have any other non-SIZE row (validity,
+   * relative determinant, construction or a nonrepresentable shape).
+   * unmet_cells counts cells with any row. */
+  int64_t unmet_shape_rows, unmet_hard_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */

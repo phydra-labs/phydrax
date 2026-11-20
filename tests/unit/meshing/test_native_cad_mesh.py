@@ -553,6 +553,7 @@ def _cad_volume_plan(
     *,
     radius_edge: float = 2.0,
     dihedral: float = 15.5,
+    soft_shape: bool = False,
 ) -> phx.meshing.NativeMeshingPlan:
     from phydrax.meshing._contracts import (
         CellFamilyPolicy,
@@ -561,7 +562,7 @@ def _cad_volume_plan(
         VolumeMeshingSpec,
     )
     from phydrax.meshing._scope import MeshingScope
-    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
@@ -579,10 +580,84 @@ def _cad_volume_plan(
         NativeMeshingOptions(
             "cad_tetrahedral",
             volume_schedule=NativeVolumeSchedule(
-                radius_edge_bound=radius_edge, minimum_dihedral_degrees=dihedral
+                radius_edge_bound=radius_edge,
+                minimum_dihedral_degrees=dihedral,
+                shape_strength=SizeControlStrength.SOFT
+                if soft_shape
+                else SizeControlStrength.HARD,
             ),
         )
     ).plan(model, specification)
+
+
+def test_shape_strength_decides_whether_unmet_shape_cells_are_issues() -> None:
+    # A dihedral aim the box cannot reach leaves unmet shape cells: a hard
+    # schedule makes them an issue, a soft one publishes their count.
+    box = phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    for soft in (False, True):
+        candidate = _cad_volume_plan(
+            box, 0.5, 1, radius_edge=1.0, dihedral=60.0, soft_shape=soft
+        ).execute(prove=False)
+        report = candidate._construction.compliance
+        achieved = dict(report.achieved)
+        assert achieved["unmet_quality_cells"] > 0
+        unmet = [issue for issue in report.issues if issue.startswith("native_unmet")]
+        if soft:
+            assert not unmet
+            assert achieved["soft_shape_target_unmet_count"] > 0
+        else:
+            assert unmet
+            assert "soft_shape_target_unmet_count" not in achieved
+
+
+def test_soft_shape_keeps_a_determinant_failure_hard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The schedule's determinant floor is fixed; raising it in the native call
+    # makes validity rows, which a soft shape schedule must still gate.
+    import phydrax.meshing.providers._native_cad_mesh as native_cad_mesh
+
+    construct = native_cad_mesh.cad_mesh_solid
+
+    def strict(
+        model: CadModel,
+        face_sizes: object,
+        face_tolerances: object,
+        curve_tolerances: object,
+        /,
+        *,
+        radius_edge_bound: float,
+        min_dihedral_degrees: float,
+        min_relative_determinant: float,
+        geometry_order: int,
+    ) -> CadSolidResult:
+        assert min_relative_determinant < 0.9
+        return construct(
+            model,
+            face_sizes,
+            face_tolerances,
+            curve_tolerances,
+            radius_edge_bound=radius_edge_bound,
+            min_dihedral_degrees=min_dihedral_degrees,
+            min_relative_determinant=0.9,
+            geometry_order=geometry_order,
+        )
+
+    monkeypatch.setattr(native_cad_mesh, "cad_mesh_solid", strict)
+    box = phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    candidate = _cad_volume_plan(
+        box, 0.5, 1, radius_edge=8.0, dihedral=0.0, soft_shape=True
+    ).execute(prove=False)
+    report = candidate._construction.compliance
+    assert any(issue.startswith("native_unmet_quality_cells:") for issue in report.issues)
 
 
 def _sphere_model() -> phx.geometry.brep.BRepModel:
