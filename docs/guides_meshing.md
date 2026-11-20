@@ -451,6 +451,34 @@ canonical `spacing_fraction=0.9` default. The fraction scales resolved physical
 size controls; it is not a source-fidelity tolerance. Explicit caller schedules,
 size controls, and deviation bounds remain unchanged.
 
+### Size compliance
+
+A hard `UniformSizeControl` of target size h is judged on the quantity its
+producing kernel bounds. The route takes the p50 and/or p95 of a per-entity
+statistic (`SizeCompliancePolicy.target_statistics`) and compares it with
+`bound_factor * h`. The tolerance is `relative_tolerance` times the bound plus
+`absolute_tolerance`, in length units. The declarations live in one table,
+`SIZE_COMPLIANCE_DECLARATIONS` in `phydrax/meshing/_sizing.py`:
+
+| Route | Statistic | Comparison | Bound | Guarantee |
+| --- | --- | --- | --- | --- |
+| native CAD solid boundary triangles | triangle circumradius | at most | h/sqrt(2) | chart kernel: metric circumradius <= sqrt(1/2) under I/h^2 |
+| S3/PLC volume boundary faces | edge length | at most | h | S3 splits boundary edges above 4/sqrt(6) of the stored sqrt(6)/4 h |
+| implicit volume carrier, implicit surface | edge length | two-sided | h | octree cell diagonal <= h(1+rel)+abs |
+| restricted implicit volume facets | edge length | at most | h | facet longest edge <= min(h, reach diameter) |
+| point-cloud reconstruction | edge length | two-sided | h | red refinement until the statistic is met |
+| planar triangles | edge length | two-sided | h | free edges <= local size |
+| curves | arc length | two-sided | h | ceil(length / h) equidistributed intervals |
+| Gmsh | edge length | report only | h | Gmsh size fields are target edge lengths |
+| structured and mapped surface quads | edge length | two-sided | h | none; the user's divisions are checked |
+| dual quads, balanced/frame/mapped grid hexes | edge length | two-sided | h | scaffold edges <= h, grid spacing h, ceil(length / h) divisions |
+| polyhedral cells | edge length | two-sided | h | cell diameter <= maximum_size or h(1+rel)+abs |
+| periodic quotient edges (serial and owner-local) | edge length | two-sided | h | periodic metric I/h^2, exact at zero tolerance |
+| periodic algebraic carrier | edge length | construction objective | h | the edge search targets the quantile |
+
+The native CAD route reports `size:<control>:p50_circumradius` and
+`size:<control>:p95_circumradius` with the requested bound h/sqrt(2).
+
 ### Native trimmed-chart surfaces
 
 The native `parametric_surface` route accepts affine as well as rational and

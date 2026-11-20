@@ -3113,7 +3113,7 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
 /* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
  * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
  * triangle, curve segments as protected edges; refinement to the request h
- * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * (h passed unchanged as the circumradius target at every surface point, S3's graded field
  * inside); improvement to the quality targets) and, with geometry_order 2,
  * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
  * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has

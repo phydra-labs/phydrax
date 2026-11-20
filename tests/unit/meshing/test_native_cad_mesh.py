@@ -639,6 +639,41 @@ def test_unproved_cad_solid_takes_the_native_route(
     assert geometry.elements[0].local_dof_count == (4 if order == 1 else 10)
     report = candidate._construction.compliance
     assert "maximum_deviation" not in dict(report.achieved)
+    # Size compliance judges the boundary circumradius the chart kernel
+    # bounds, R <= h / sqrt(2): the native mesh at h passes at zero tolerance,
+    # and the same mesh judged at h / 2 (a mesh ignoring the size, built for
+    # twice the request) fails.
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        size_statistic,
+        SizeCompliancePolicy,
+        triangle_circumradii,
+    )
+
+    assert not [issue for issue in report.issues if issue.startswith("size:")]
+    policy = SizeCompliancePolicy()
+    radii = triangle_circumradii(points, unique[counts == 1])
+    for statistic in ("p50", "p95"):
+        value = size_statistic(radii, statistic)
+        assert not CAD_CHART_SURFACE_SIZE.exceeds(value, size, policy)
+        assert CAD_CHART_SURFACE_SIZE.exceeds(value, 0.5 * size, policy)
+
+
+def test_triangle_circumradii_are_exact_and_refuse_degenerate_rows() -> None:
+    from phydrax.meshing._sizing import triangle_circumradii
+
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, np.sqrt(3.0) / 2.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ]
+    )
+    radii = triangle_circumradii(points, np.asarray([[0, 1, 2], [0, 1, 3], [0, 1, 4]]))
+    np.testing.assert_allclose(radii[:2], [1.0 / np.sqrt(3.0), np.sqrt(2.0) / 2.0])
+    assert np.isinf(radii[2])
 
 
 def test_proved_cad_solid_keeps_the_python_route() -> None:
@@ -947,7 +982,7 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
     # construction, or planning/execution refuses it with a stated reason.
     from phydrax.meshing import CellMeshingCandidate
     from phydrax.meshing._contracts import MeshingFailure
-    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._sizing import CAD_CHART_SURFACE_SIZE, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
@@ -994,15 +1029,17 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
     assert isinstance(control, UniformSizeControl)
     policy = specification.size_compliance
     requested, achieved = dict(report.requested), dict(report.achieved)
-    # Requested value and the bound its row is an issue above.
+    # Requested bound h / sqrt(2) on the boundary circumradius, and the bound
+    # its row is an issue above.
+    bound = CAD_CHART_SURFACE_SIZE.bound_factor * control.target_size
     bounds = {
-        name: (
-            control.target_size,
-            control.target_size * (1.0 + policy.relative_tolerance)
-            + policy.absolute_tolerance,
+        f"{name}_circumradius": (
+            bound,
+            bound * (1.0 + policy.relative_tolerance) + policy.absolute_tolerance,
         )
         for name in policy.target_statistics
     }
+    assert np.isclose(bound, control.target_size / np.sqrt(2.0), rtol=1e-15)
     if control.maximum_size is not None:
         bounds["maximum"] = (control.maximum_size, control.maximum_size)
     rows = {key for key in achieved if key.startswith("size:")}
