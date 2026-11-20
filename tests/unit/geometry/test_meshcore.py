@@ -21,6 +21,7 @@ from scipy.spatial import ConvexHull
 from benchmarks.native_meshing import (
     _facets,
     _icosphere,
+    _point_triangle_distances,
     _recover,
     _restricted_torus_surface,
     _sphere_distance,
@@ -34,6 +35,7 @@ from phydrax._meshcore import (
     clip_reference_tetrahedron_exact,
     implicit_face_proposals,
     IntervalBoxProgram,
+    IntervalBranchProgram,
     mesh_certify,
     mesh_remesh,
     meshcore_available,
@@ -1510,7 +1512,7 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         np.empty(0, dtype=np.int64),
     )
     source = TetMeshImplicitSource(
-        value,
+        IntervalBranchProgram(value, np.empty((0, 6), dtype=np.int64)),
         gradient,
         np.asarray([3], dtype=np.int32),
         0.01,
@@ -1539,7 +1541,8 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         value.instructions[0, 0] = 99
         arrays = state.arrays()
         assert arrays.implicit_source is not None
-        assert arrays.implicit_source.source.value.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.program.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.events.shape == (0, 6)
         assert arrays.implicit_source.source.orientation == 1
     with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
         restored_source = restored.arrays().implicit_source
@@ -1558,17 +1561,58 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
     )
     with pytest.raises(ValueError, match="identity and frame"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
-    program = arrays.implicit_source.source.value
+    branches = arrays.implicit_source.source.value
+    program = branches.program
     low, high = program.workspace_lower.copy(), program.workspace_upper.copy()
     low[3] = high[3] = 1.0
     off_band = arrays.implicit_source.source._replace(
-        value=program._replace(workspace_lower=low, workspace_upper=high)
+        value=branches._replace(
+            program=program._replace(workspace_lower=low, workspace_upper=high)
+        )
     )
     tampered = arrays._replace(
         implicit_source=arrays.implicit_source._replace(source=off_band)
     )
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
+    # A jump field on the implicit facet: f = z + select(z > 0, c, -c) has no
+    # zero, yet over the facet z = 0 its enclosure is [-c, c] with grad f =
+    # (0, 0, 1). Without branch evidence the facet is admitted; with f's jump
+    # event (the comparison undecided on the facet) the source refuses.
+    c = 0.004
+    jump_workspace = np.asarray([0.0, 0.0, 0.0, 0.0, -c, c, 0.0, 0.0, 0.0])
+    jump = IntervalBoxProgram(
+        np.asarray(
+            [
+                [13, 6, 1, 2, -1, 3, -1, 0],
+                [14, 7, 1, 6, -1, 4, -1, 1],
+                [2, 8, 1, 2, -1, 7, -1, 0],
+            ],
+            dtype=np.int64,
+        ),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        jump_workspace,
+        jump_workspace.copy(),
+        np.asarray([8]),
+        np.empty(0, dtype=np.int64),
+    )
+    for events, refused in (
+        (np.empty((0, 6), dtype=np.int64), False),
+        (np.asarray([[1, 3, 1, 6, -1, -1]], dtype=np.int64), True),
+    ):
+        jumped = arrays.implicit_source.source._replace(
+            value=IntervalBranchProgram(jump, events)
+        )
+        tampered = arrays._replace(
+            implicit_source=arrays.implicit_source._replace(source=jumped)
+        )
+        if refused:
+            with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+                _restored_tet_mesh(tampered, tampered.witness_parameters)
+        else:
+            with _restored_tet_mesh(tampered, tampered.witness_parameters):
+                pass
 
 
 def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
@@ -2461,13 +2505,14 @@ def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
     np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
 
 
-def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+def _unit_sphere_box_programs() -> tuple[
+    IntervalBoxProgram, IntervalBoxProgram, IntervalBranchProgram
+]:
     def sphere(x: Array) -> Array:
         return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
-    value = prepare_interval_function(
-        sphere, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(sphere, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
     gradient = prepare_interval_function(
         jax.grad(sphere), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2475,11 +2520,20 @@ def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]
         raise RuntimeError(
             "The unit sphere field must lower to native interval programs."
         )
-    return value.box_program(), gradient.box_program()
+    return (
+        value.box_program(),
+        gradient.box_program(),
+        prepared.native_branches().branch_box_program(),
+    )
+
+
+# A box holding the unit sphere and the lenses below, for the two-way
+# certificates.
+_CERTIFIED_DOMAIN = np.array([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=np.float64)
 
 
 def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
-    value, gradient = _unit_sphere_box_programs()
+    value, gradient, branches = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     assert remeshed.orientation == 1
@@ -2493,17 +2547,34 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     certificate = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value,
+        branches,
         gradient,
         0.01,
         1,
         vertices,
         faces,
         _widened_boxes(vertices, faces, 0.005),
+        _CERTIFIED_DOMAIN,
         0.15,
         30.0,
     )
     assert 0.0 <= certificate.distance <= 0.01
+    # Both ways: every point of the unit sphere (sampled) lies within the
+    # certified reverse distance of the surface, which the tube refines toward
+    # the tolerance.
+    sphere_points = _sphere_samples(2000)
+    nearest = np.min(
+        np.stack(
+            [
+                _point_triangle_distances(
+                    point, certificate.vertices[certificate.triangles]
+                )
+                for point in sphere_points
+            ]
+        ),
+        axis=1,
+    )
+    assert np.max(nearest) <= certificate.reverse_distance <= 0.01
     # Input triangles the remesh left untouched are proved, not carried.
     assert certificate.counters[3] == 0 and not np.any(certificate.carried)
     # Nothing needed repair: the certified surface is the constructed one.
@@ -2512,45 +2583,57 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
     # A vertex lifted off the sphere: its star fails the proof and splitting
     # cannot repair it, unless the carrier holds those very triangles with
-    # witness boxes that straddle the sphere; they are then accepted at their
-    # box diagonals (above the tolerance) and flagged as carried.
+    # witness boxes that straddle the sphere; they are then accepted from the
+    # carrier. The sphere under the lifted star lies farther than the
+    # tolerance from the surface, so the two-way certificate (both directions
+    # within the tolerance) still refuses, naming the carried triangles.
     lifted = np.array(remeshed.vertices)
-    lifted[0] *= 1.05
-    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
-        zero_set_certify(
-            lifted, remeshed.triangles, value, gradient, 0.01, 1, *no_carrier, 0.15, 30.0
-        )
-    carrier_faces = remeshed.triangles[:, (1, 2, 0)]
-    boxes = _widened_boxes(lifted, carrier_faces, 0.02)
-    carried = zero_set_certify(
-        lifted,
-        remeshed.triangles,
-        value,
-        gradient,
-        0.01,
-        1,
-        lifted,
-        carrier_faces,
-        boxes,
-        0.15,
-        30.0,
-    )
-    assert carried.counters[3] > 0 and carried.counters[4] == 0
-    assert np.count_nonzero(carried.carried) == carried.counters[3]
-    diagonals = np.linalg.norm(boxes[:, 1] - boxes[:, 0], axis=1)
-    assert 0.01 < carried.distance <= np.max(diagonals) * (1 + 1e-12)
-    # Boxes entirely outside the sphere prove no zero: nothing is carried.
+    lifted[0] *= 1.02
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         zero_set_certify(
             lifted,
             remeshed.triangles,
-            value,
+            branches,
+            gradient,
+            0.01,
+            1,
+            *no_carrier,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
+        )
+    carrier_faces = remeshed.triangles[:, (1, 2, 0)]
+    boxes = _widened_boxes(lifted, carrier_faces, 0.02)
+    with pytest.raises(
+        MeshcoreError, match=r"; [1-9][0-9]* triangles accepted from the carrier"
+    ):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            branches,
+            gradient,
+            0.01,
+            1,
+            lifted,
+            carrier_faces,
+            boxes,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
+        )
+    # Boxes entirely outside the sphere prove no zero: nothing is carried.
+    with pytest.raises(MeshcoreError, match="; 0 triangles accepted from the carrier"):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            branches,
             gradient,
             0.01,
             1,
             lifted,
             carrier_faces,
             boxes + 10.0,
+            _CERTIFIED_DOMAIN,
             0.15,
             30.0,
         )
@@ -2587,10 +2670,18 @@ def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
 
 
 def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
-    value, gradient = _unit_sphere_box_programs()
+    value, gradient, branches = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
-    controls = (value, gradient, 0.01, 0.15, _sphere_distance, _sphere_samples)
+    controls = (
+        branches,
+        gradient,
+        _CERTIFIED_DOMAIN,
+        0.01,
+        0.15,
+        _sphere_distance,
+        _sphere_samples,
+    )
     missed, measured = _zero_set_quality(remeshed, *controls)
     assert missed == 0 and measured["certified"] == 1.0
     # A vertex lifted off the sphere: the certificate refuses it, which counts
@@ -2657,7 +2748,7 @@ def _oblique_lens_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return vertices, np.asarray(triangles, dtype=np.int64), rotation[:, 2]
 
 
-def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
+def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
     vertices, faces, axis = _oblique_lens_carrier()
     first, second = -_LENS_SHIFT * axis, _LENS_SHIFT * axis
 
@@ -2670,9 +2761,9 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
         )
         return jnp.maximum(to_first - 1.0, to_second - 1.0)
 
-    value = prepare_interval_function(
-        lens, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(lens, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
+    branches = prepared.native_branches().branch_box_program()
     gradient = prepare_interval_function(
         jax.grad(lens), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2681,35 +2772,89 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
     remeshed = zero_set_remesh(
         vertices, faces, value.box_program(), 0.02, 0.02, 0.2, 30.0
     )
+    # Triangles next to the crease rest on the carrier (witness boxes) and the
+    # tube cannot cross the crease; the possible-zero cover alone, within the
+    # tolerance, proves the zero set -> surface direction (proof 2).
     certified = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value.box_program(),
+        branches,
         gradient.box_program(),
         0.02,
         remeshed.orientation,
         vertices,
         faces,
         _widened_boxes(vertices, faces, 0.02),
+        _CERTIFIED_DOMAIN,
         0.2,
         30.0,
     )
-    # Triangles next to the crease rest on the carrier, accepted at their
-    # witness boxes' diagonals; boxes of nearby remeshed triangles straddle
-    # the slanted branch switch, fail transversality and are repaired by
-    # splits within the round budget.
     assert certified.counters[3] > 0
     assert np.count_nonzero(certified.carried) == certified.counters[3]
-    assert certified.distance > 0.02
-    assert certified.counters[0] > certified.counters[3]
-    assert certified.counters[4] > 0 and certified.counters[5] <= 4
-    directed = {
-        (int(face[k]), int(face[(k + 1) % 3]))
-        for face in certified.triangles
-        for k in range(3)
-    }
-    assert len(directed) == 3 * certified.triangles.shape[0]
-    assert all((head, tail) in directed for tail, head in directed)
+    # Carried triangles are accepted at their witness boxes' diagonals (above
+    # the tolerance), at most the widest carrier box.
+    diagonals = np.linalg.norm(
+        np.diff(_widened_boxes(vertices, faces, 0.02), axis=1)[:, 0], axis=1
+    )
+    assert 0.02 < certified.distance <= np.max(diagonals) * (1 + 1e-12)
+    assert certified.counters[6] > 0 and certified.counters[8] == 2
+    assert 0.0 <= certified.reverse_distance < 0.02
+    # The same cover under half the boxes it evaluated: refused, naming the
+    # budget, rather than run unbounded.
+    with pytest.raises(MeshcoreError, match="exceeded its budget"):
+        zero_set_certify(
+            remeshed.vertices,
+            remeshed.triangles,
+            branches,
+            gradient.box_program(),
+            0.02,
+            remeshed.orientation,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.02),
+            _CERTIFIED_DOMAIN,
+            0.2,
+            30.0,
+            cover_budget=int(certified.counters[9]) // 2,
+        )
+
+
+def test_zero_set_certify_carries_nothing_across_a_jump() -> None:
+    # where(x > 0, 1, -1) has corner values -1 and +1 on every witness box
+    # around the plane x = 0 and a finite (zero) gradient program, but no zero:
+    # its branch evidence reports those boxes discontinuous, so a tetrahedron
+    # around the origin as its own carrier has no triangle accepted from it.
+    def step(x: Array) -> Array:
+        return jnp.where(x[0] > 0.0, 1.0, -1.0)
+
+    prepared = prepare_interval_function(step, 3, batch_capacity=1, execution="native")
+    if prepared.native_program is None:
+        raise RuntimeError("The step field must lower to a native interval program.")
+    gradient = prepare_interval_function(
+        jax.grad(step), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if gradient is None:
+        raise RuntimeError("The step gradient must lower to a native interval program.")
+    vertices = np.array(
+        ((0.5, 0.5, 0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (-0.5, -0.5, 0.5)),
+        dtype=np.float64,
+    )
+    faces = np.array(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64)
+    with pytest.raises(MeshcoreError, match=r"; 0 triangles accepted from the carrier"):
+        zero_set_certify(
+            vertices,
+            faces,
+            prepared.native_branches().branch_box_program(),
+            gradient.box_program(),
+            0.05,
+            1,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.5),
+            _CERTIFIED_DOMAIN,
+            0.3,
+            30.0,
+        )
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:

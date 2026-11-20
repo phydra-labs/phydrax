@@ -24,6 +24,7 @@ from .._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from .._meshcore import (
     interval_program_execute,
     IntervalBoxProgram,
+    IntervalBranchProgram,
     metric_band_quanta,
     metric_collapse_positions,
     metric_congruence_defects,
@@ -335,7 +336,7 @@ class TetraMetricOutcome(NamedTuple):
 
 
 class _ImplicitMetricSource(NamedTuple):
-    value: IntervalBoxProgram
+    value: IntervalBranchProgram
     gradient: IntervalBoxProgram
     tolerance: float
     source_id: str
@@ -1570,7 +1571,7 @@ def _validate_periodic_metric_values(
 def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSource | None:
     """Lower the actual accepted implicit authority when its source tube applies."""
     from ..geometry._source_boundary_records import SourceBoundaryChartWitness
-    from .providers._native_implicit import _implicit_field_box_programs
+    from .providers._native_implicit import _implicit_field_programs
     from .providers._native_sources import NativeImplicitSource
 
     report = source.certification
@@ -1601,7 +1602,7 @@ def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSour
             tolerance = min(tolerance, float(scoped_tolerance))
     if tolerance <= 0.0 or tolerance >= profile.tube_radius:
         return None
-    value, gradient = _implicit_field_box_programs(authority.geometry)
+    value, gradient = _implicit_field_programs(authority.geometry)
     return _ImplicitMetricSource(
         value,
         gradient,

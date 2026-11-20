@@ -523,6 +523,8 @@ class _TetImplicitSource(ctypes.Structure):
     _fields_ = (
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("groups", _P),
         ("group_count", _I64),
         ("tolerance", _F64),
@@ -564,6 +566,8 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("triangle_count", _I64),
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("tolerance", _F64),
         ("orientation", _I32),
         ("carrier_vertices", _P),
@@ -571,10 +575,12 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("carrier_triangles", _P),
         ("carrier_triangle_count", _I64),
         ("carrier_boxes", _P),
+        ("domain", _P),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
+        ("cover_budget", _I64),
         ("result", _P),
-        ("distance", _P),
+        ("distances", _P),
         ("counters", _P),
     )
 
@@ -1130,7 +1136,27 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
+        (
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+        ),
     ),
     "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
     "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
@@ -3852,6 +3878,7 @@ def implicit_restricted_delaunay(
     seed_lower: np.ndarray,
     seed_upper: np.ndarray,
     output_entry: int,
+    guards: np.ndarray,
     lower: object,
     upper: object,
     criteria: RestrictedDelaunayCriteria,
@@ -3864,8 +3891,10 @@ def implicit_restricted_delaunay(
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
     interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
-    interval workspace templates and ``output_entry`` the workspace entry of
-    f. The box ``[lower, upper]`` contains the zero set, whose restricted
+    interval workspace templates, ``output_entry`` the workspace entry of f
+    and ``guards`` the workspace entries whose lower bound must be ``>= 0``
+    (the program's domain guards: a box on which one may fail is kept by the
+    seed cover). The box ``[lower, upper]`` contains the zero set, whose restricted
     surface should have ``components`` edge-connected components and Euler
     characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
     points near the zero set added to the box-tree seeds. The result is a
@@ -3875,6 +3904,11 @@ def implicit_restricted_delaunay(
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
+    guard_array = np.ascontiguousarray(
+        _native_integer_array(guards, "guards", np.dtype(np.int64))
+    )
+    if guard_array.ndim != 1:
+        raise ValueError("guards must be one-dimensional.")
     seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
     if seeds.ndim != 2 or seeds.shape[1] != 3:
         raise ValueError("extra_seeds must have shape (n, 3).")
@@ -3906,6 +3940,8 @@ def implicit_restricted_delaunay(
             seed_upper.ctypes.data,
             seed_lower.size,
             output_entry,
+            guard_array.ctypes.data,
+            guard_array.size,
             lower_array.ctypes.data,
             upper_array.ctypes.data,
             values.ctypes.data,
@@ -4903,10 +4939,28 @@ class IntervalBoxProgram(NamedTuple):
     """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
-class TetMeshImplicitSource(NamedTuple):
-    """Source-bound native interval programs and exterior facet group rows."""
+class IntervalBranchProgram(NamedTuple):
+    """A one-box native interval program with its branch-evidence events.
 
-    value: IntervalBoxProgram
+    ``events`` (``(rows, 6)`` int64: kind, test, size, a, a_index, boxes; see
+    ``phx_mc_interval_program_branches``) clear the box's ``continuous`` flag
+    where a jump (a select that may switch, a pole, a domain edge) may lie in
+    it; ``program`` is the field lowered together with those events.
+    """
+
+    program: IntervalBoxProgram
+    events: np.ndarray
+
+
+class TetMeshImplicitSource(NamedTuple):
+    """Source-bound native interval programs and exterior facet group rows.
+
+    ``value`` carries f's branch-evidence events: every enclosure a facet
+    admission reads is over a box on which they report f continuous (else the
+    facet is refused), and transversality also requires f smooth there.
+    """
+
+    value: IntervalBranchProgram
     gradient: IntervalBoxProgram
     group_rows: np.ndarray
     tolerance: float
@@ -4986,7 +5040,18 @@ def _tet_implicit_source_payload(
 ) -> tuple[_TetImplicitSource, tuple[object, ...]]:
     if not isinstance(source, TetMeshImplicitSource):
         raise TypeError("implicit_source must be TetMeshImplicitSource.")
-    value, value_banks = _interval_box_program(source.value, 1, "implicit_source.value")
+    if not isinstance(source.value, IntervalBranchProgram):
+        raise TypeError("implicit_source.value must be IntervalBranchProgram.")
+    value, value_banks = _interval_box_program(
+        source.value.program, 1, "implicit_source.value.program"
+    )
+    events = np.ascontiguousarray(
+        _native_integer_array(
+            source.value.events, "implicit_source.value.events", np.dtype(np.int64)
+        )
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("implicit_source.value.events must have shape (rows, 6).")
     gradient, gradient_banks = _interval_box_program(
         source.gradient, 3, "implicit_source.gradient"
     )
@@ -5014,6 +5079,8 @@ def _tet_implicit_source_payload(
     view = _TetImplicitSource(
         value,
         gradient,
+        events.ctypes.data,
+        events.shape[0],
         _tet_mesh_pointer(groups),
         groups.size,
         tolerance,
@@ -5029,7 +5096,7 @@ def _tet_implicit_source_payload(
         0,
         0,
     )
-    return view, (*value_banks, *gradient_banks, groups, *buffers)
+    return view, (*value_banks, *gradient_banks, events, groups, *buffers)
 
 
 def _tet_implicit_source_snapshot(
@@ -5084,7 +5151,11 @@ def _tet_implicit_source_snapshot(
         return ctypes.string_at(pointer, length).decode("utf-8", "strict")
 
     source = TetMeshImplicitSource(
-        copy_program(view.value),
+        IntervalBranchProgram(
+            copy_program(view.value),
+            copy_bank(view.value_events, 6 * view.value_event_count, np.dtype(np.int64))
+            .reshape(-1, 6),
+        ),
         copy_program(view.gradient),
         copy_bank(view.groups, view.group_count, np.dtype(np.int32)),
         float(view.tolerance),
@@ -5240,23 +5311,31 @@ def _take_surface_result(
 
 
 class ZeroSetCertificate(NamedTuple):
-    """A surface certified against ``{f = 0}``, repaired locally where needed.
+    """A surface certified against ``{f = 0}`` both ways, repaired locally.
 
     ``vertices`` and ``triangles`` are the certified surface: the input unless
-    a refused triangle was repaired. ``distance`` is the maximum over the
-    proved triangles (each within the tolerance) and, for triangles accepted
-    from the carrier, their witness box diagonals, which may exceed the
-    tolerance. ``counters`` (read-only int64) are the certifications refused
-    for transversality and for distance and the triangles refused for
-    embedding, all over every round and carrier triangles included, the
-    triangles accepted from the carrier, the repair splits and the
-    certification rounds run. ``carried`` (read-only bool, one per triangle)
-    flags the triangles accepted from the carrier.
+    a refused triangle was repaired. ``distance`` bounds the distance from the
+    surface to the zero set: the maximum over the proved triangles (each
+    within the tolerance) and, for triangles accepted from the carrier, their
+    witness box diagonals, which may exceed the tolerance.
+    ``reverse_distance`` bounds the distance from every zero of ``f`` in the
+    domain to the surface. ``counters`` (read-only int64) are the
+    certifications refused for transversality and for distance and the
+    triangles refused for embedding, all over every round and carrier
+    triangles included, the triangles accepted from the carrier, the repair
+    splits, the certification rounds run, the tube triangles refused in its
+    last round, the cover leaves left outside by the last cover run (-1 past
+    the box tree's level limit, -2 past ``cover_budget``, -3 for a surface
+    vertex outside ``domain``), the proof of ``reverse_distance`` (1 tube, 2
+    cover; either within ``tolerance``) and the boxes the covers evaluated.
+    ``carried`` (read-only
+    bool, one per triangle) flags the triangles accepted from the carrier.
     """
 
     vertices: np.ndarray
     triangles: np.ndarray
     distance: float
+    reverse_distance: float
     counters: np.ndarray
     carried: np.ndarray
 
@@ -5264,16 +5343,19 @@ class ZeroSetCertificate(NamedTuple):
 def zero_set_certify(
     vertices: object,
     triangles: object,
-    value: IntervalBoxProgram,
+    value: IntervalBranchProgram,
     gradient: IntervalBoxProgram,
     tolerance: float,
     orientation: int,
     carrier_vertices: object,
     carrier_triangles: object,
     carrier_boxes: object,
+    domain: object,
     edge_length: float,
     minimum_angle_degrees: float,
     /,
+    *,
+    cover_budget: int = 1 << 23,
 ) -> ZeroSetCertificate:
     """Certify a ``zero_set_remesh`` result against ``{f = 0}``, repairing it locally.
 
@@ -5285,16 +5367,37 @@ def zero_set_certify(
     triangle (``zero_set_remesh`` keeps the carrier's triangles around
     creases, where transversality is not decidable) proved by its witness
     box: ``carrier_boxes`` (one ``(2, 3)`` lower/upper box per carrier
-    triangle) must contain the triangle's corners and have two corners where
-    the interval enclosures of ``f`` have strictly opposite signs, so the box
-    holds a zero of ``f``; the triangle is then accepted at the box diagonal,
-    and a box failing either check accepts nothing. Every certified triangle
-    is also nondegenerate with only legal exact contacts with nearby
-    triangles. Refused triangles are repaired: the longest edge of each is
-    split at its midpoint projected onto ``{f = 0}`` and only what changed is
-    certified again, for at most four rounds. A surface that is not a closed
-    oriented 2-manifold raises ``ValueError``; a triangle left refused raises
-    ``MeshcoreError`` (``UNRESOLVED``) naming the refusals.
+    triangle) must contain the triangle's corners, be proved free of jumps
+    by the branch-evidence events of ``value`` (``f`` lowered with them: the
+    same program gives the corner signs and every other proof) and have two
+    corners where the interval enclosures of ``f`` have strictly opposite
+    signs, so the box holds a zero of ``f``; the triangle is then accepted at
+    the box diagonal, and a box failing a check accepts nothing. Every
+    certified triangle is also nondegenerate with only legal exact contacts
+    with nearby triangles. Refused triangles are repaired: the longest edge
+    of each is split at its midpoint projected onto ``{f = 0}`` and only what
+    changed is certified again, for at most four rounds. Every enclosure of
+    ``f`` or ``grad f`` that a triangle, tube or witness proof reads is over a
+    box on which ``value``'s branch evidence reports ``f`` continuous (else
+    that proof refuses), and transversality also requires ``f`` smooth there;
+    ``gradient`` is still trusted to enclose ``grad f`` (its Clarke gradient
+    at kinks) wherever its enclosure is finite.
+
+    The zero set is then bounded against the surface over ``domain`` (a
+    ``(2, 3)`` lower/upper box) through the native possible-zero cover of the
+    domain, which holds every zero of ``f`` in it: each kept box is accepted
+    once an outward bound of its distance to the surface is below a radius
+    ``D``. Proof 1 (tube): along segments ``y +- w(y)`` through the surface
+    (interpolated vertex normals of length ``edge_length``, adapted) ``f`` is
+    proved strictly monotone with one zero and caps clear of the surface by
+    ``rho``; the cover at ``D = rho`` puts every zero on such a segment, and
+    ``reverse_distance`` is the smaller of the tube's and the cover's bound.
+    Proof 2 (cover): when the tube refuses or a leaf is left outside ``rho``,
+    the cover alone at ``D = tolerance``. Each cover run evaluates at most
+    ``cover_budget`` boxes or is refused. A surface that is not a closed
+    oriented 2-manifold raises ``ValueError``; a triangle left refused, or a
+    zero set neither proof holds, raises ``MeshcoreError`` (``UNRESOLVED``)
+    naming the refusals.
     """
     if orientation not in (-1, 1):
         raise ValueError("orientation must be 1 or -1.")
@@ -5305,6 +5408,10 @@ def zero_set_certify(
         raise ValueError(
             "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
         )
+    if isinstance(cover_budget, bool) or not isinstance(cover_budget, int):
+        raise TypeError("cover_budget must be an int.")
+    if cover_budget < 1:
+        raise ValueError("cover_budget must be positive.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = _native_integer_array(
         _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
@@ -5324,11 +5431,23 @@ def zero_set_certify(
     boxes = np.ascontiguousarray(np.asarray(carrier_boxes, dtype=np.float64))
     if boxes.shape != (carrier_faces.shape[0], 2, 3):
         raise ValueError("carrier_boxes must hold one (2, 3) box per carrier triangle.")
-    value_view, value_arrays = _interval_box_program(value, 1, "value")
+    bounds = np.ascontiguousarray(np.asarray(domain, dtype=np.float64))
+    if (
+        bounds.shape != (2, 3)
+        or not np.all(np.isfinite(bounds))
+        or not np.all(bounds[0] < bounds[1])
+    ):
+        raise ValueError("domain must be a finite (2, 3) box with lower < upper.")
+    value_view, value_arrays = _interval_box_program(value.program, 1, "value.program")
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
+    events = np.ascontiguousarray(
+        _native_integer_array(value.events, "value.events", np.dtype(np.int64))
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("value.events must have shape (rows, 6).")
     handle = ctypes.c_void_p()
-    distance = np.zeros((1,), dtype=np.float64)
-    counters = np.zeros((6,), dtype=np.int64)
+    distances = np.zeros((2,), dtype=np.float64)
+    counters = np.zeros((10,), dtype=np.int64)
     request = _ZeroSetCertifyRequest(
         points.ctypes.data,
         points.shape[0],
@@ -5336,6 +5455,8 @@ def zero_set_certify(
         faces.shape[0],
         value_view,
         gradient_view,
+        events.ctypes.data,
+        events.shape[0],
         float(tolerance),
         int(orientation),
         carrier_points.ctypes.data,
@@ -5343,40 +5464,60 @@ def zero_set_certify(
         carrier_faces.ctypes.data,
         carrier_faces.shape[0],
         boxes.ctypes.data,
+        bounds.ctypes.data,
         float(edge_length),
         float(minimum_angle_degrees),
+        int(cover_budget),
         ctypes.addressof(handle),
-        distance.ctypes.data,
+        distances.ctypes.data,
         counters.ctypes.data,
     )
     library = load_meshcore()
     status = library["phx_mc_zero_set_certify"](ctypes.byref(request))
     del value_arrays, gradient_arrays  # kept alive through the native call
     if status == MeshcoreStatus.UNRESOLVED:
+        outside = int(counters[7])
+        cover = (
+            f"the zero-set cover exceeded its budget of {int(cover_budget)} boxes"
+            if outside == -2
+            else "the zero-set cover exceeded the box tree's level limit"
+            if outside == -1
+            else "a surface vertex lies outside the domain"
+            if outside == -3
+            else f"{outside} zero-set cover leaves left outside"
+        )
         raise MeshcoreError(
             MeshcoreStatus.UNRESOLVED,
             f"zero_set_certify left triangles refused after {int(counters[5])} rounds "
             f"and {int(counters[4])} repair splits ({int(counters[0])} refusals for "
             f"transversality, {int(counters[1])} for distance, {int(counters[2])} for "
-            "embedding).",
+            f"embedding; {int(counters[3])} triangles accepted from the carrier; "
+            f"{int(counters[6])} tube triangles refused, {cover}).",
         )
     _raise_for_call(status, "zero_set_certify")
     out_vertices, out_triangles, carried = _take_surface_result(
         library, handle, "zero_set_certify"
     )
-    certified = float(distance[0])
+    certified, reverse = float(distances[0]), float(distances[1])
     if (
         not np.isfinite(certified)
         or certified < 0.0
         or (int(counters[3]) == 0 and certified > tolerance)
         or int(counters[3]) != int(np.count_nonzero(carried))
+        or not np.isfinite(reverse)
+        or reverse < 0.0
+        or int(counters[8]) not in (1, 2)
+        or reverse > tolerance
+        or (int(counters[8]) == 2 and not reverse < tolerance)
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
             "zero_set_certify returned invalid distance evidence.",
         )
     counters.setflags(write=False)
-    return ZeroSetCertificate(out_vertices, out_triangles, certified, counters, carried)
+    return ZeroSetCertificate(
+        out_vertices, out_triangles, certified, reverse, counters, carried
+    )
 
 
 _MESH_SOURCE_CONTRACTS = {

@@ -1913,10 +1913,18 @@ typedef struct phx_mc_interval_box_program {
  * bind. Zero orientation asks the owner to derive the common certified sign;
  * a nonzero sign must agree. A view returned by `implicit_source` borrows
  * immutable banks until the mesh is freed. Refusal counts are diagnostic and
- * restart at zero on a new binding. */
+ * restart at zero on a new binding. `value_events` (rows of kind, test, size,
+ * a, a_index, boxes over value's own workspace; see
+ * phx_mc_interval_program_branches) are f's complete branch evidence, checked
+ * for validity only (no events means continuous everywhere): every enclosure
+ * of f or grad f that a facet admission reads is over a box on which they
+ * report f continuous (else the facet is refused), and the transversality
+ * step also requires f smooth there, as in phx_mc_zero_set_certify. */
 typedef struct phx_mc_tet_implicit_source {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   const int32_t* groups;
   int64_t group_count;
   double tolerance;
@@ -1985,12 +1993,15 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * surface remeshed; a NULL carrier with zero counts accepts none) whose
  * witness box proves it: carrier_boxes holds, per carrier triangle, a box
  * (lower xyz, upper xyz) that contains the triangle's three corners (exact
- * comparisons) and has two corners at which the interval enclosures of f
- * have strictly opposite signs, so the box holds a zero of f on the segment
- * between them; such a triangle is accepted at the box diagonal (rounded
- * up). A carrier triangle whose box fails either check is never accepted
- * from the carrier. And a triangle is certified only when it is nondegenerate
- * with
+ * comparisons), on which f is proved continuous (`value`'s branch-evidence
+ * events, value_events rows over value's own workspace, leave the box
+ * `continuous`; phx_mc_interval_program_branches), and that has two corners
+ * at which the interval enclosures of f have strictly opposite signs, so the
+ * box holds a zero of f on the segment between them; such a triangle is
+ * accepted at the box diagonal (rounded up). A carrier triangle whose box
+ * fails a check is never accepted from the carrier; invalid events are
+ * refused (PHX_MC_INVALID_INPUT).
+ * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
  * consistently oriented 2-manifold (else PHX_MC_INVALID_INPUT). Refused
@@ -2000,16 +2011,52 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
- * `value` has one output, `gradient` three. On PHX_MC_OK `result` owns the
- * certified surface (phx_mc_surface_result_*, with per-triangle carried
- * flags) and `distance` is the maximum over the proved triangles (each at
- * most `tolerance`) and, for triangles accepted from the carrier, their
- * witness diagonals, which may exceed `tolerance`; a
- * triangle left refused is PHX_MC_UNRESOLVED. counters receives (triangle
- * certifications refused for transversality, refused for distance,
- * triangles refused for embedding, all over every round, carrier triangles
- * included; triangles accepted from the carrier; repair splits;
- * certification rounds run) on PHX_MC_OK and PHX_MC_UNRESOLVED. */
+ * `value` has one output, `gradient` three. Every enclosure of f or grad f
+ * that a triangle, tube or witness proof reads is over a box on which
+ * value's branch evidence reports f continuous (else that proof refuses),
+ * and the transversality step also requires f smooth there; the caller
+ * still asserts that `gradient` encloses grad f (its Clarke gradient where
+ * f has a kink) wherever its enclosure is finite and f is continuous, and
+ * that value_events are f's complete branch evidence (the entry checks them
+ * for validity only: no events means continuous everywhere; Phydrax's native
+ * lowering records comparisons, selects, poles and domain edges; fields with
+ * stop_gradient or custom derivative rules are outside this contract). Once
+ * every triangle is certified, the zero set ->
+ * surface direction is decided over the domain box (lower xyz, upper xyz;
+ * finite, lower < upper, holding every surface vertex) through the
+ * possible-zero cover of the domain
+ * (box_tree.hpp, guards included: a box where a guard fails is kept): every
+ * zero of f in the domain lies in a leaf, each kept box
+ * is accepted at the first level where an outward bound of its distance to
+ * the surface (box_reach, zero_set_tube.hpp) is below a radius D, and boxes
+ * are subdivided otherwise down to a target diameter of D / 2; with no leaf
+ * left outside, every zero lies within the largest accepted bound (< D).
+ * Two proofs: (1, tube) the tube of the surface (zero_set_tube.hpp: segments
+ * y +- w(y) along interpolated vertex normals of length edge_length, adapted
+ * by doubling or halving, on which f is strictly monotone with one zero, and
+ * whose caps are at least rho from the surface) holds every zero within its
+ * own bound, and the cover at D = rho puts every zero in the tube: `reverse`
+ * is the smaller of the two bounds, and stands only within `tolerance`;
+ * (2, cover) when the tube refuses, a leaf is left outside rho or proof 1
+ * exceeds the tolerance, the cover alone at D = `tolerance`, `reverse` its
+ * bound. On PHX_MC_OK `result` owns the certified surface
+ * (phx_mc_surface_result_*, with per-triangle carried flags) and distances =
+ * (the maximum over the proved triangles, each at most `tolerance`, and,
+ * for triangles accepted from the carrier, their witness diagonals, which
+ * may exceed `tolerance`; `reverse`). A triangle left refused, or a cover
+ * leaf outside the tolerance after both proofs, is PHX_MC_UNRESOLVED (no
+ * result). Each cover run evaluates at most `cover_budget` (>= 1) boxes over
+ * all its levels; a run that would exceed it is refused (no leaf is
+ * accepted from it). counters receives ten entries (triangle certifications
+ * refused for transversality, refused for distance, triangles refused for
+ * embedding, all over every round, carrier triangles included; triangles
+ * accepted from the carrier; repair splits; certification rounds run; tube
+ * triangles refused in its last round; cover leaves left outside by the last
+ * cover run, -1 when its level would exceed the box tree's limit, -2 when it
+ * would exceed `cover_budget`, -3 when a surface vertex lies outside the
+ * domain; the proof used, 1 tube or 2 cover, 0 when
+ * none; the boxes evaluated by every cover run) on PHX_MC_OK and
+ * PHX_MC_UNRESOLVED. */
 typedef struct phx_mc_zero_set_certify_request {
   const double* vertices;
   int64_t vertex_count;
@@ -2017,6 +2064,8 @@ typedef struct phx_mc_zero_set_certify_request {
   int64_t triangle_count;
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   double tolerance;
   int32_t orientation;
   const double* carrier_vertices;
@@ -2024,10 +2073,12 @@ typedef struct phx_mc_zero_set_certify_request {
   const int64_t* carrier_triangles;
   int64_t carrier_triangle_count;
   const double* carrier_boxes;
+  const double* domain;
   double edge_length;
   double minimum_angle_degrees;
+  int64_t cover_budget;
   void** result;
-  double* distance;
+  double* distances;
   int64_t* counters;
 } phx_mc_zero_set_certify_request;
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);
@@ -2583,7 +2634,10 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its
- * interval workspace templates (the point executor uses their midpoints).
+ * interval workspace templates (the point executor uses their midpoints) and
+ * guards its entries whose lower bound must be >= 0 (domain guards such as
+ * real-power bases): a box on which a guard may fail is kept by the seed
+ * cover, since f may be undefined there and its enclosure is no evidence.
  * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
  * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
  * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
@@ -2620,7 +2674,8 @@ PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
     const double* seed_lower, const double* seed_upper, int64_t workspace_size,
-    int64_t output_entry, const double* lower, const double* upper, const double* criteria,
+    int64_t output_entry, const int64_t* guards, int64_t guard_count, const double* lower,
+    const double* upper, const double* criteria,
     const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
     phx_mc_restricted_volume** volume);
 /* sizes receives the point, cell and boundary face counts; report receives

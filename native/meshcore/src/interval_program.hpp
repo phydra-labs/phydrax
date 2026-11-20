@@ -19,16 +19,33 @@ class PreparedIntervalProgram {
                const int64_t* indices, int64_t index_count,
                const double* parameters, int64_t parameter_count, int64_t workspace_size);
   int32_t execute(double* lower, double* upper, int64_t workspace_size) const;
+  // Branch-evidence events (rows of kind, test, size, a, a_index, boxes; see
+  // phx_mc_interval_program_branches) for one box, validated once against
+  // the bound program; the bytecode must be bound first.
+  int32_t bind_events(const int64_t* events, int64_t event_count);
+  // execute, then the box's flags from the bound events: `continuous` false
+  // where a jump may lie in the box, `smooth` false where a kink or jump may.
+  int32_t execute_branches(double* lower, double* upper, int64_t workspace_size, bool& smooth,
+                           bool& continuous) const;
   const std::vector<int64_t>& instructions() const noexcept { return instructions_; }
   const std::vector<int64_t>& indices() const noexcept { return indices_; }
   const std::vector<double>& parameters() const noexcept { return parameters_; }
-  void reset() noexcept { workspace_size_ = -1; }
+  // The bound branch-evidence events, flat (six entries per row).
+  const std::vector<int64_t>& events() const noexcept { return events_; }
+  void reset() noexcept {
+    workspace_size_ = -1;
+    events_.clear();
+  }
 
  private:
-  std::vector<int64_t> instructions_, indices_;
+  std::vector<int64_t> instructions_, indices_, events_;
   std::vector<double> parameters_;
   int64_t workspace_size_ = -1;
 };
+
+// Whether phx_mc_interval_program_batch executes every opcode of a program
+// (valid bytecode assumed): the elementwise subset, without the reciprocal.
+bool batch_admissible(const int64_t* instructions, int64_t instruction_count) noexcept;
 
 // Straight-line program executed at points in binary64 (no rounding control):
 // floating-point proposals that bound nothing. `seeds` is the complete
