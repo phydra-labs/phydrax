@@ -3157,24 +3157,27 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // Seeds within half a lattice spacing of a boundary facet are dropped; the
   // layer between boundary and lattice is circumcenter refinement's, as is
   // everything after. A size field that is not uniform is seeded from its
-  // smallest value h, and a seed is inserted only where the cell holding it
-  // has a target of at most h / kLatticeMargin (uniform within the margin);
-  // the rest of the domain refines as before. Seeds are inserted in BRIO
-  // order (Bowyer-Watson into the recovered complex, each through the
-  // spacing guard), so the result is the Delaunay refinement of the
-  // boundary and the accepted seeds. Seeding needs Bowyer-Watson cavities
-  // without shrinking: it is skipped for a splittable boundary (boundary
-  // splits follow encroachment), a metric, embedded segments, a vertex
-  // without a target, or a complex holding a cell whose orientation is not
-  // measurably positive (a degenerate boundary such as cocircular grid rows,
-  // where cavities into flat cells shrink and leave non-Delaunay cells).
+  // smallest value h, and only inside the recovered cells whose target is at
+  // most h / kLatticeMargin (uniform within the margin), a seed again only
+  // where the cell holding it at its insertion still has such a target; the
+  // rest of the domain refines as before. The sites are enumerated per
+  // qualifying recovered cell (the lattice rows meeting it, along its axis
+  // of least shadow), so seeding costs those cells and their sites, never
+  // the bounding box. Seeds are inserted in BRIO order (Bowyer-Watson into
+  // the recovered complex, each through the spacing guard), so the result is
+  // the Delaunay refinement of the boundary and the accepted seeds. Seeding
+  // needs Bowyer-Watson cavities without shrinking: it is skipped for a
+  // splittable boundary (boundary splits follow encroachment), a metric,
+  // embedded segments, a vertex without a target, or a complex holding a
+  // cell whose orientation is not measurably positive (a degenerate boundary
+  // such as cocircular grid rows, where cavities into flat cells shrink and
+  // leave non-Delaunay cells).
   constexpr double kLatticeMargin = 0.98;
   const auto seed_lattice = [&]() -> std::int32_t {
     if (boundary_splittable || mesh.metric_active() || !embedded_segments.empty()) {
       return PHX_MC_OK;
     }
     double smallest = std::numeric_limits<double>::infinity();
-    std::int32_t start = -1;
     double lower[3]{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
                     std::numeric_limits<double>::infinity()};
     double upper[3]{-lower[0], -lower[1], -lower[2]};
@@ -3197,353 +3200,769 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                                mesh.point(tet.v[2]), mesh.point(tet.v[3]))) {
         return PHX_MC_OK;
       }
-      if (start < 0) start = cell;
     }
-    if (start < 0 || !std::isfinite(smallest)) return PHX_MC_OK;
+    if (!std::isfinite(smallest)) return PHX_MC_OK;
+    const double a = 4.0 * kLatticeMargin * smallest / std::sqrt(5.0);
+    const double band = 0.5 * a;
+    // The lattice is turned and shifted off the coordinate axes so that it
+    // shares no symmetry plane or axis with an input built along them (a
+    // lattice aligned with a surface of revolution puts seeds on its
+    // cocircular rows' spheres). Site (shift, i, j, k) has lattice
+    // coordinates (i, j, k) + kShift + shift / 2 and lies at
+    // middle + a rotation (lattice coordinates).
+    double rotation[3][3];
     {
-      const double a = 4.0 * kLatticeMargin * smallest / std::sqrt(5.0);
-      const double band = 0.5 * a;
-      // Boundary facets binned by their boxes grown by the band, in cells of
-      // twice the band: a point reads its own cell.
-      std::vector<std::array<std::int32_t, 3>> triangles;
-      triangles.reserve(mesh.facets_.size());
-      for (const TetSnapshotFacet& facet : mesh.facets_) {
-        triangles.push_back({mesh.vertex_slot(facet.vertices[0]), mesh.vertex_slot(facet.vertices[1]),
-                             mesh.vertex_slot(facet.vertices[2])});
-      }
-      const double cell_size = 2.0 * band;
-      std::size_t dims[3];
+      double q[4]{0.9, 0.3, 0.2, 0.25};
+      const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+      for (double& value : q) value /= norm;
+      const double w = q[0], x = q[1], y = q[2], z = q[3];
+      const double m[3][3]{{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+                           {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+                           {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+      std::copy(&m[0][0], &m[0][0] + 9, &rotation[0][0]);
+    }
+    double middle[3];
+    for (int axis = 0; axis < 3; ++axis) middle[axis] = 0.5 * (lower[axis] + upper[axis]);
+    constexpr double kShift[3]{0.31, 0.47, 0.13};
+    const auto site_point = [&](std::int64_t shift, std::int64_t i, std::int64_t j, std::int64_t k,
+                                double* point) {
+      const double half = 0.5 * static_cast<double>(shift);
+      const double local[3]{(static_cast<double>(i) + kShift[0] + half) * a,
+                            (static_cast<double>(j) + kShift[1] + half) * a,
+                            (static_cast<double>(k) + kShift[2] + half) * a};
       for (int axis = 0; axis < 3; ++axis) {
-        dims[axis] = static_cast<std::size_t>((upper[axis] - lower[axis]) / cell_size) + 1;
+        point[axis] = middle[axis] + rotation[axis][0] * local[0] + rotation[axis][1] * local[1] +
+                      rotation[axis][2] * local[2];
       }
-      const auto cell_of = [&](double value, int axis) {
-        const double s = (value - lower[axis]) / cell_size;
-        return s <= 0.0 ? std::size_t{0}
-                        : std::min(dims[axis] - 1, static_cast<std::size_t>(s));
-      };
-      const auto index = [&](std::size_t x, std::size_t y, std::size_t z) {
-        return (z * dims[1] + y) * dims[0] + x;
-      };
-      std::vector<std::uint32_t> starts(dims[0] * dims[1] * dims[2] + 1, 0U);
-      std::vector<std::int32_t> binned;
-      for (int fill = 0; fill < 2; ++fill) {
-        std::vector<std::uint32_t> cursor;
-        if (fill == 1) {
-          for (std::size_t at = 1; at < starts.size(); ++at) starts[at] += starts[at - 1];
-          cursor.assign(starts.begin(), starts.end() - 1);
-          binned.resize(starts.back());
+    };
+    // Whether `p` lies in the live cell `tet` perturbed to p + (e, e^2, e^3)
+    // for an infinitesimal e. orient3d is affine in its last point with
+    // gradient the facet normal n = (b - a) x (c - a), so on a facet's plane
+    // the side is the sign of the first nonzero component of n (each an exact
+    // orient2d of the facet projected along its axis). The two cells of a
+    // facet see opposite normals, and the perturbed point lies in no cell
+    // face, so every point of the union of the cells has exactly one owner.
+    const auto owns = [&](const Tetrahedron& tet, const double* p) {
+      for (int face = 0; face < 4; ++face) {
+        std::int32_t facet[3];
+        oriented_facet(tet.v, face, facet);
+        const double* x = mesh.point(facet[0]);
+        const double* y = mesh.point(facet[1]);
+        const double* z = mesh.point(facet[2]);
+        int side = orient3d_filtered(x, y, z, p);
+        for (int axis = 0; axis < 3 && side == 0; ++axis) {
+          const int u = (axis + 1) % 3, w = (axis + 2) % 3;
+          const double xu[2]{x[u], x[w]}, yu[2]{y[u], y[w]}, zu[2]{z[u], z[w]};
+          side = orient2d_filtered(xu, yu, zu);
         }
-        for (std::size_t row = 0; row < triangles.size(); ++row) {
-          std::size_t first[3];
-          std::size_t last[3];
-          for (int axis = 0; axis < 3; ++axis) {
-            double low = std::numeric_limits<double>::infinity();
-            double high = -low;
-            for (std::int32_t v : triangles[row]) {
-              low = std::min(low, mesh.point(v)[axis]);
-              high = std::max(high, mesh.point(v)[axis]);
+        if (side <= 0) return false;
+      }
+      return true;
+    };
+    // The kept sites: (shift, k, j, i) and the site's point.
+    struct Site {
+      std::array<std::int64_t, 4> at;
+      double point[3];
+    };
+    std::vector<Site> sites;
+    // Lattice coordinates of the live vertices: rotation^T (p - middle) / a.
+    std::vector<std::array<double, 3>> lattice(mesh.vertex_ids_.size());
+    for (std::size_t vertex = 0; vertex < lattice.size(); ++vertex) {
+      if (mesh.vertex_live_[vertex] == 0) continue;
+      const double* p = mesh.point(static_cast<std::int32_t>(vertex));
+      const double d[3]{p[0] - middle[0], p[1] - middle[1], p[2] - middle[2]};
+      for (int q = 0; q < 3; ++q) {
+        lattice[vertex][q] = (rotation[0][q] * d[0] + rotation[1][q] * d[1] + rotation[2][q] * d[2]) / a;
+      }
+    }
+    // Indices run over [-reach, reach], which holds every site in the box;
+    // a site within one index of that range is packed in (shift, k, j, i)
+    // order.
+    double half_diagonal = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      half_diagonal += 0.25 * (upper[axis] - lower[axis]) * (upper[axis] - lower[axis]);
+    }
+    const auto reach = static_cast<std::int64_t>(std::sqrt(half_diagonal) / a) + 1;
+    const std::int64_t pack_reach = reach + 1;
+    const std::int64_t side = 2 * pack_reach + 1;
+    const auto pack = [&](std::int64_t shift, std::int64_t k, std::int64_t j, std::int64_t i) {
+      return static_cast<std::uint64_t>(
+          ((shift * side + k + pack_reach) * side + j + pack_reach) * side + i + pack_reach);
+    };
+    // Whether site (shift, i, j, k) lies strictly inside the vertices' box.
+    const auto in_box = [&](std::int64_t shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+      double p[3];
+      site_point(shift, i, j, k, p);
+      for (int axis = 0; axis < 3; ++axis) {
+        if (!(p[axis] > lower[axis] && p[axis] < upper[axis])) return false;
+      }
+      return true;
+    };
+    // The band sites: packed sites within the band of a boundary or
+    // interface facet, sorted. A point within the band of a
+    // facet lies, in lattice coordinates (an isometry scaled by 1 / a), in
+    // the box of the facet's corners grown by band / a = 1/2 and in the slab
+    // of the facet's plane of half width 1/2; each facet lists the sites of
+    // the rows of that box clipped to that slab, both grown by a margin far
+    // above the rounding of lattice coordinates, that are within the band.
+    std::vector<std::uint64_t> band_sites;
+    for (const TetSnapshotFacet& facet : mesh.facets_) {
+      const std::int32_t t[3]{mesh.vertex_slot(facet.vertices[0]), mesh.vertex_slot(facet.vertices[1]),
+                              mesh.vertex_slot(facet.vertices[2])};
+      const auto& u0 = lattice[static_cast<std::size_t>(t[0])];
+      const auto& u1 = lattice[static_cast<std::size_t>(t[1])];
+      const auto& u2 = lattice[static_cast<std::size_t>(t[2])];
+      double magnitude = 0.0;
+      double low[3], high[3];
+      for (int q = 0; q < 3; ++q) {
+        low[q] = std::min({u0[q], u1[q], u2[q]});
+        high[q] = std::max({u0[q], u1[q], u2[q]});
+        magnitude = std::max({magnitude, std::abs(low[q]), std::abs(high[q])});
+      }
+      const double margin = 1e-9 * (1.0 + magnitude);
+      const double reach_band = 0.5 + margin;
+      for (int q = 0; q < 3; ++q) {
+        low[q] -= reach_band;
+        high[q] += reach_band;
+      }
+      const double e[3]{u1[0] - u0[0], u1[1] - u0[1], u1[2] - u0[2]};
+      const double g[3]{u2[0] - u0[0], u2[1] - u0[1], u2[2] - u0[2]};
+      double n[3]{e[1] * g[2] - e[2] * g[1], e[2] * g[0] - e[0] * g[2], e[0] * g[1] - e[1] * g[0]};
+      const double length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      if (length > 0.0) {
+        for (double& value : n) value /= length;
+      }
+      const double* p0 = mesh.point(t[0]);
+      const double* p1 = mesh.point(t[1]);
+      const double* p2 = mesh.point(t[2]);
+      for (std::int64_t shift = 0; shift < 2; ++shift) {
+        const double half = 0.5 * static_cast<double>(shift);
+        const auto first = [&](int q) {
+          return std::max(-pack_reach, static_cast<std::int64_t>(std::ceil(low[q] - kShift[q] - half)));
+        };
+        const auto last = [&](int q) {
+          return std::min(pack_reach, static_cast<std::int64_t>(std::floor(high[q] - kShift[q] - half)));
+        };
+        for (std::int64_t k = first(2); k <= last(2); ++k)
+          for (std::int64_t j = first(1); j <= last(1); ++j) {
+            double x_low = low[0];
+            double x_high = high[0];
+            if (length > 0.0) {
+              // Plane distance at x along the row: n0 (x - u0) + rest.
+              const double rest = n[1] * (static_cast<double>(j) + kShift[1] + half - u0[1]) +
+                                  n[2] * (static_cast<double>(k) + kShift[2] + half - u0[2]);
+              if (n[0] != 0.0) {
+                const double x0 = u0[0] + (-reach_band - rest) / n[0];
+                const double x1 = u0[0] + (reach_band - rest) / n[0];
+                x_low = std::max(x_low, std::min(x0, x1) - margin);
+                x_high = std::min(x_high, std::max(x0, x1) + margin);
+              } else if (std::abs(rest) > reach_band) {
+                continue;
+              }
             }
-            first[axis] = cell_of(low - band, axis);
-            last[axis] = cell_of(high + band, axis);
+            const std::int64_t i_first =
+                std::max(-reach, static_cast<std::int64_t>(std::ceil(x_low - kShift[0] - half)));
+            const std::int64_t i_last =
+                std::min(reach, static_cast<std::int64_t>(std::floor(x_high - kShift[0] - half)));
+            for (std::int64_t i = i_first; i <= i_last; ++i) {
+              double p[3];
+              site_point(shift, i, j, k, p);
+              if (geometry::point_triangle_distance(p, p0, p1, p2) < band) {
+                band_sites.push_back(pack(shift, k, j, i));
+              }
+            }
           }
-          for (std::size_t z = first[2]; z <= last[2]; ++z)
-            for (std::size_t y = first[1]; y <= last[1]; ++y)
-              for (std::size_t x = first[0]; x <= last[0]; ++x) {
-                if (fill == 0) {
-                  ++starts[index(x, y, z) + 1];
-                } else {
-                  binned[cursor[index(x, y, z)]++] = static_cast<std::int32_t>(row);
+      }
+    }
+    std::sort(band_sites.begin(), band_sites.end());
+    band_sites.erase(std::unique(band_sites.begin(), band_sites.end()), band_sites.end());
+    // Whether a packed site is clear of the band.
+    const auto clear = [&](std::int64_t shift, std::int64_t k, std::int64_t j, std::int64_t i) {
+      return !std::binary_search(band_sites.begin(), band_sites.end(), pack(shift, k, j, i));
+    };
+    // The row's world point at lattice coordinate 0 along i.
+    const auto row_base = [&](std::int64_t shift, std::int64_t j, std::int64_t k, double* base) {
+      const double half = 0.5 * static_cast<double>(shift);
+      const double y = (static_cast<double>(j) + kShift[1] + half) * a;
+      const double z = (static_cast<double>(k) + kShift[2] + half) * a;
+      for (int axis = 0; axis < 3; ++axis) {
+        base[axis] = middle[axis] + rotation[axis][1] * y + rotation[axis][2] * z;
+      }
+    };
+    // Calls `visit(shift, k, j, i_first, i_last)` for each row of sites
+    // meeting the box, in (shift, k, j) order, with the row's sites in the
+    // box: an interval estimated from the row's line, then decided by
+    // `in_box` at both ends (one site beyond each).
+    const auto for_box_rows = [&](auto&& visit) {
+      for (std::int64_t shift = 0; shift < 2; ++shift)
+        for (std::int64_t k = -reach; k <= reach; ++k)
+          for (std::int64_t j = -reach; j <= reach; ++j) {
+            double base[3];
+            row_base(shift, j, k, base);
+            const double half = 0.5 * static_cast<double>(shift);
+            double x_low = -std::numeric_limits<double>::infinity();
+            double x_high = std::numeric_limits<double>::infinity();
+            for (int axis = 0; axis < 3; ++axis) {
+              const double step = rotation[axis][0] * a;
+              const double x0 = (lower[axis] - base[axis]) / step;
+              const double x1 = (upper[axis] - base[axis]) / step;
+              x_low = std::max(x_low, std::min(x0, x1));
+              x_high = std::min(x_high, std::max(x0, x1));
+            }
+            if (!(x_low - 2.0 <= x_high)) continue;
+            std::int64_t i_first = std::max(
+                -reach, static_cast<std::int64_t>(std::ceil(x_low - kShift[0] - half)) - 1);
+            std::int64_t i_last = std::min(
+                reach, static_cast<std::int64_t>(std::floor(x_high - kShift[0] - half)) + 1);
+            while (i_first <= i_last && !in_box(shift, i_first, j, k)) ++i_first;
+            while (i_last >= i_first && !in_box(shift, i_last, j, k)) --i_last;
+            if (i_first <= i_last) visit(shift, k, j, i_first, i_last);
+          }
+    };
+    // The cell's corners in lattice coordinates, their largest magnitude,
+    // and per shift the index box of the sites in the cell's box (grown by
+    // `slack`); returns the number of sites in those boxes.
+    const auto cell_box = [&](const Tetrahedron& tet, double (&corner)[4][3], double& magnitude,
+                              double& slack, std::int64_t (&box_first)[2][3],
+                              std::int64_t (&box_last)[2][3]) {
+      magnitude = 0.0;
+      for (int c = 0; c < 4; ++c) {
+        const auto& u = lattice[static_cast<std::size_t>(tet.v[c])];
+        for (int axis = 0; axis < 3; ++axis) {
+          corner[c][axis] = u[axis];
+          magnitude = std::max(magnitude, std::abs(u[axis]));
+        }
+      }
+      slack = 1e-9 * (1.0 + magnitude);
+      std::int64_t total = 0;
+      for (std::int64_t shift = 0; shift < 2; ++shift) {
+        std::int64_t count = 1;
+        for (int axis = 0; axis < 3; ++axis) {
+          double low = corner[0][axis], high = corner[0][axis];
+          for (int c = 1; c < 4; ++c) {
+            low = std::min(low, corner[c][axis]);
+            high = std::max(high, corner[c][axis]);
+          }
+          const double offset = kShift[axis] + 0.5 * static_cast<double>(shift);
+          box_first[shift][axis] = static_cast<std::int64_t>(std::ceil(low - slack - offset));
+          box_last[shift][axis] = static_cast<std::int64_t>(std::floor(high + slack - offset));
+          count *= std::max<std::int64_t>(0, box_last[shift][axis] - box_first[shift][axis] + 1);
+        }
+        total += count;
+      }
+      return total;
+    };
+    // The sites are listed one of two ways, whichever has less work. By
+    // box: every site in the box clear of the band, in lattice order (the
+    // sites outside the domain, or in cells too coarse, are dropped while
+    // seeding). By cell: each recovered cell fine enough (its size target
+    // within the lattice's) whose box holds a site scan-converts the sites
+    // it owns, clear of the band. The work by box is a row interval per row
+    // and a step per site; by cell, a few rows per row of the cell's box
+    // across its longest axis, at a few times a site's step. The cells are
+    // passed over once the work by cell exceeds the work by box.
+    constexpr std::uint64_t kRowWork = 4;
+    std::uint64_t box_work = 0;
+    for_box_rows([&](std::int64_t, std::int64_t, std::int64_t, std::int64_t i_first, std::int64_t i_last) {
+      box_work += 1 + static_cast<std::uint64_t>(i_last - i_first + 1);
+    });
+    std::vector<std::int32_t> fine_cells;
+    std::uint64_t cell_work = 0;
+    for (std::size_t row = 0; row < mesh.complex_.tets.size() && cell_work < box_work; ++row) {
+      const auto cell = static_cast<std::int32_t>(row);
+      if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
+      const Tetrahedron& tet = mesh.tet(cell);
+      double corner[4][3];
+      double magnitude = 0.0;
+      double slack = 0.0;
+      std::int64_t box_first[2][3];
+      std::int64_t box_last[2][3];
+      if (cell_box(tet, corner, magnitude, slack, box_first, box_last) == 0) continue;
+      double target = 0.0;
+      if (!cell_target(mesh, tet.v, target) || !(target * kLatticeMargin <= smallest)) continue;
+      fine_cells.push_back(cell);
+      for (std::int64_t shift = 0; shift < 2; ++shift) {
+        std::int64_t n[3];
+        for (int axis = 0; axis < 3; ++axis) {
+          n[axis] = std::max<std::int64_t>(0, box_last[shift][axis] - box_first[shift][axis] + 1);
+        }
+        cell_work += kRowWork * static_cast<std::uint64_t>(std::min({n[0] * n[1], n[1] * n[2], n[0] * n[2]}));
+      }
+    }
+    const bool by_box = box_work <= cell_work;
+    if (by_box) {
+      fine_cells = {};
+      std::size_t cursor = 0;
+      for_box_rows([&](std::int64_t shift, std::int64_t k, std::int64_t j, std::int64_t i_first,
+                       std::int64_t i_last) {
+        for (std::int64_t i = i_first; i <= i_last; ++i) {
+          const std::uint64_t key = pack(shift, k, j, i);
+          while (cursor < band_sites.size() && band_sites[cursor] < key) ++cursor;
+          if (cursor < band_sites.size() && band_sites[cursor] == key) continue;
+          Site site{{shift, k, j, i}, {}};
+          site_point(shift, i, j, k, site.point);
+          sites.push_back(site);
+        }
+      });
+    }
+    for (const std::int32_t cell : fine_cells) {
+      const Tetrahedron& tet = mesh.tet(cell);
+      // Candidate sites: those in the cell's box; a box of few sites tests
+      // each against the cell's inward face planes, a larger one, per row of
+      // sites, takes the interval inside them; each plane is moved out by a
+      // slack far above the rounding of these coordinates. The candidates
+      // are then decided exactly by `owns`, and kept when clear of the band.
+      double corner[4][3];
+      double magnitude = 0.0;
+      double slack = 0.0;
+      std::int64_t box_first[2][3];
+      std::int64_t box_last[2][3];
+      const std::int64_t box_sites = cell_box(tet, corner, magnitude, slack, box_first, box_last);
+      const auto consider = [&](std::int64_t shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+        Site site{{shift, k, j, i}, {}};
+        site_point(shift, i, j, k, site.point);
+        if (owns(tet, site.point) && clear(shift, k, j, i)) sites.push_back(site);
+      };
+      constexpr std::int64_t kFewSites = 8;
+      if (box_sites <= kFewSites) {
+        // Plane f (opposite corner f): normal . u + offset >= -slack |normal|.
+        double plane[4][4];
+        for (int f = 0; f < 4; ++f) {
+          const double* o = corner[(f + 1) % 4];
+          const double* p = corner[(f + 2) % 4];
+          const double* q = corner[(f + 3) % 4];
+          const double e[3]{p[0] - o[0], p[1] - o[1], p[2] - o[2]};
+          const double g[3]{q[0] - o[0], q[1] - o[1], q[2] - o[2]};
+          double n[3]{e[1] * g[2] - e[2] * g[1], e[2] * g[0] - e[0] * g[2], e[0] * g[1] - e[1] * g[0]};
+          double offset = -(n[0] * o[0] + n[1] * o[1] + n[2] * o[2]);
+          const double* opposite = corner[f];
+          if (n[0] * opposite[0] + n[1] * opposite[1] + n[2] * opposite[2] + offset < 0.0) {
+            for (double& value : n) value = -value;
+            offset = -offset;
+          }
+          plane[f][0] = n[0];
+          plane[f][1] = n[1];
+          plane[f][2] = n[2];
+          plane[f][3] = offset + slack * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        }
+        for (std::int64_t shift = 0; shift < 2; ++shift) {
+          const double half = 0.5 * static_cast<double>(shift);
+          for (std::int64_t k = box_first[shift][2]; k <= box_last[shift][2]; ++k)
+            for (std::int64_t j = box_first[shift][1]; j <= box_last[shift][1]; ++j)
+              for (std::int64_t i = box_first[shift][0]; i <= box_last[shift][0]; ++i) {
+                const double u[3]{static_cast<double>(i) + kShift[0] + half,
+                                  static_cast<double>(j) + kShift[1] + half,
+                                  static_cast<double>(k) + kShift[2] + half};
+                bool inside = true;
+                for (int f = 0; f < 4 && inside; ++f) {
+                  inside = plane[f][0] * u[0] + plane[f][1] * u[1] + plane[f][2] * u[2] + plane[f][3] >= 0.0;
                 }
+                if (inside) consider(shift, i, j, k);
               }
         }
+        continue;
       }
-      const auto near_boundary = [&](const double* p) {
-        const std::size_t at = index(cell_of(p[0], 0), cell_of(p[1], 1), cell_of(p[2], 2));
-        for (std::uint32_t k = starts[at]; k < starts[at + 1]; ++k) {
-          const auto& t = triangles[static_cast<std::size_t>(binned[k])];
-          if (geometry::point_triangle_distance(p, mesh.point(t[0]), mesh.point(t[1]),
-                                                mesh.point(t[2])) < band) {
-            return true;
-          }
-        }
-        return false;
-      };
-      struct Seed {
-        std::uint64_t key;
-        std::uint64_t cell_id;
-        double point[3];
-      };
-      std::vector<Seed> seeds;
-      std::vector<std::array<std::uint32_t, 3>> seed_grids;
-      // The lattice is turned and shifted off the coordinate axes so that it
-      // shares no symmetry plane or axis with an input built along them (a
-      // lattice aligned with a surface of revolution puts seeds on its
-      // cocircular rows' spheres).
-      double rotation[3][3];
+      // Rows run along the axis onto whose normal plane the cell projects
+      // smallest (fewest rows meet it: twice the projected area is the sum
+      // over faces of |area normal . axis|), slabs across the shorter box
+      // extent of the other two: corner[c][q] is lattice axis order[q].
+      int order[3]{0, 1, 2};
       {
-        double q[4]{0.9, 0.3, 0.2, 0.25};
-        const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        for (double& value : q) value /= norm;
-        const double w = q[0], x = q[1], y = q[2], z = q[3];
-        const double m[3][3]{{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
-                             {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
-                             {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
-        std::copy(&m[0][0], &m[0][0] + 9, &rotation[0][0]);
-      }
-      double middle[3];
-      double half_diagonal = 0.0;
-      for (int axis = 0; axis < 3; ++axis) {
-        middle[axis] = 0.5 * (lower[axis] + upper[axis]);
-        half_diagonal += 0.25 * (upper[axis] - lower[axis]) * (upper[axis] - lower[axis]);
-      }
-      const auto reach = static_cast<std::int64_t>(std::sqrt(half_diagonal) / a) + 1;
-      constexpr double kShift[3]{0.31, 0.47, 0.13};
-      // Lattice site (i, j, k, shift) of each seed, by seed id, and the seed id
-      // of each kept site (-1 where none was kept).
-      const std::int64_t side = 2 * reach + 1;
-      const auto site_of = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
-        return static_cast<std::size_t>(((shift * side + k + reach) * side + j + reach) * side + i +
-                                        reach);
-      };
-      std::vector<std::int32_t> site_seed(static_cast<std::size_t>(2 * side * side * side), -1);
-      std::vector<std::array<std::int64_t, 4>> seed_sites;
-      // The point of a lattice site; true when it is strictly inside the box.
-      const auto site_point = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k,
-                                  double* point) {
-        const double local[3]{(static_cast<double>(i) + kShift[0] + 0.5 * shift) * a,
-                              (static_cast<double>(j) + kShift[1] + 0.5 * shift) * a,
-                              (static_cast<double>(k) + kShift[2] + 0.5 * shift) * a};
-        bool in_box = true;
+        double shadow[3]{0.0, 0.0, 0.0};
+        for (int f = 0; f < 4; ++f) {
+          const double* o = corner[(f + 1) % 4];
+          const double* p = corner[(f + 2) % 4];
+          const double* q = corner[(f + 3) % 4];
+          const double e[3]{p[0] - o[0], p[1] - o[1], p[2] - o[2]};
+          const double g[3]{q[0] - o[0], q[1] - o[1], q[2] - o[2]};
+          shadow[0] += std::abs(e[1] * g[2] - e[2] * g[1]);
+          shadow[1] += std::abs(e[2] * g[0] - e[0] * g[2]);
+          shadow[2] += std::abs(e[0] * g[1] - e[1] * g[0]);
+        }
+        double extent[3];
         for (int axis = 0; axis < 3; ++axis) {
-          point[axis] = middle[axis] + rotation[axis][0] * local[0] +
-                        rotation[axis][1] * local[1] + rotation[axis][2] * local[2];
-          in_box = in_box && point[axis] > lower[axis] && point[axis] < upper[axis];
-        }
-        return in_box;
-      };
-      for (int shift = 0; shift < 2; ++shift) {
-        for (std::int64_t k = -reach; k <= reach; ++k)
-          for (std::int64_t j = -reach; j <= reach; ++j)
-            for (std::int64_t i = -reach; i <= reach; ++i) {
-              Seed seed{0, seeds.size(), {}};
-              if (!site_point(shift, i, j, k, seed.point) || near_boundary(seed.point)) continue;
-              site_seed[site_of(shift, i, j, k)] = static_cast<std::int32_t>(seeds.size());
-              seed_sites.push_back({i, j, k, shift});
-              seeds.push_back(seed);
-              seed_grids.push_back(frame.grid(seed.point));
-            }
-      }
-      assign_hilbert_keys(seeds, std::span<const std::array<std::uint32_t, 3>>(seed_grids));
-      {
-        const int brio_rounds = brio_round_count(seeds.size());
-        for (Seed& seed : seeds) {
-          const auto brio = brio_round(static_cast<std::int32_t>(seed.cell_id), brio_rounds);
-          seed.key |= static_cast<std::uint64_t>(brio) << (3 * kHilbertBits);
-        }
-      }
-      std::vector<Seed> seed_scratch;
-      sort_by_key_then_id(seeds, seed_scratch);
-      const double radius = a * std::sqrt(5.0) / 4.0;
-      // Seeds are located from their lattice neighbours. A seed's nearest
-      // neighbours are the eight sites of the other shift at the cube's
-      // corners, at distance |PQ| = (sqrt(3) / 2) a. Every kept seed is at
-      // least the band 0.5 a from every boundary facet (near_boundary bins
-      // each facet into every cell its band-grown box meets, clamping points
-      // off the grid to its edge cells, so no facet within the band is
-      // missed), so when Q is a kept seed too or another site clear of the
-      // band, for a point X on PQ, min(|XP|, |XQ|) <= (sqrt(3) / 4) a <
-      // 0.434 a and dist(X, facet) >= 0.5 a - 0.434 a > 0.066 a: PQ meets
-      // no boundary or interface facet, and P and Q lie in the same region
-      // or are both outside the domain. The kept seeds joined by these
-      // segments (union-find below) are therefore wholly inside one region
-      // or wholly outside. A site clear of the band that is not strictly
-      // inside the bounding box of the vertices is outside the domain (the
-      // domain's interior lies inside the box), so a group joined to one is
-      // outside without a walk; that is every group of the box's exterior.
-      // Any other group is decided outside by the first of its seeds found
-      // in no cell. A seed is walked to from a cell incident to an inserted
-      // neighbour when there is one (a few cells away), else from the last
-      // located cell. The walk is a visibility walk across every facet
-      // between live cells (interfaces too; the proof keeps the seed in its
-      // group's region) that never re-enters a cell, so it ends within the
-      // number of cells: in the cell holding the seed, or where every facet
-      // facing the seed leads off the domain or to a visited cell. A walk
-      // that ends that way decides nothing (a concave boundary or a
-      // non-Delaunay cycle can stop it); the seed is then located by testing
-      // every live cell.
-      // Groups by seed id; the last entry stands for the box's exterior.
-      const auto exterior = static_cast<std::int32_t>(seeds.size());
-      std::vector<std::int32_t> group(seeds.size() + 1);
-      std::iota(group.begin(), group.end(), 0);
-      const auto root_of = [&](std::int32_t id) {
-        while (group[static_cast<std::size_t>(id)] != id) {
-          const std::int32_t up = group[static_cast<std::size_t>(group[static_cast<std::size_t>(id)])];
-          group[static_cast<std::size_t>(id)] = up;
-          id = up;
-        }
-        return id;
-      };
-      const auto join = [&](std::int32_t first, std::int32_t second) {
-        const std::int32_t x = root_of(first), y = root_of(second);
-        if (x != y) group[static_cast<std::size_t>(std::max(x, y))] = std::min(x, y);
-      };
-      // Calls `visit(shift, i, j, k)` for the eight nearest sites of seed `id`.
-      const auto for_sites = [&](std::int32_t id, auto&& visit) {
-        const auto& at = seed_sites[static_cast<std::size_t>(id)];
-        const int shift = 1 - static_cast<int>(at[3]);
-        const std::int64_t first = shift == 1 ? -1 : 0;
-        for (std::int64_t dk = first; dk <= first + 1; ++dk)
-          for (std::int64_t dj = first; dj <= first + 1; ++dj)
-            for (std::int64_t di = first; di <= first + 1; ++di) {
-              visit(shift, at[0] + di, at[1] + dj, at[2] + dk);
-            }
-      };
-      const auto kept = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
-        if (i < -reach || i > reach || j < -reach || j > reach || k < -reach || k > reach) {
-          return -1;
-        }
-        return site_seed[site_of(shift, i, j, k)];
-      };
-      for (std::int32_t id = 0; id < exterior; ++id) {
-        for_sites(id, [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
-          const std::int32_t other = kept(shift, i, j, k);
-          if (other >= 0) {
-            join(id, other);
-            return;
+          double low = corner[0][axis], high = corner[0][axis];
+          for (int c = 1; c < 4; ++c) {
+            low = std::min(low, corner[c][axis]);
+            high = std::max(high, corner[c][axis]);
           }
-          double point[3];
-          if (!site_point(shift, i, j, k, point) && !near_boundary(point)) join(id, exterior);
-        });
+          extent[axis] = high - low;
+        }
+        order[0] = static_cast<int>(std::min_element(shadow, shadow + 3) - shadow);
+        order[1] = (order[0] + 1) % 3;
+        order[2] = (order[0] + 2) % 3;
+        if (extent[order[1]] < extent[order[2]]) std::swap(order[1], order[2]);
+        for (auto& point : corner) {
+          const double unordered[3]{point[0], point[1], point[2]};
+          for (int q = 0; q < 3; ++q) point[q] = unordered[order[q]];
+        }
       }
-      // Per group root: 1 when the group is outside the domain.
-      std::vector<std::uint8_t> outside(group.size(), 0U);
-      outside[static_cast<std::size_t>(root_of(exterior))] = 1U;
-      // The vertex inserted for each seed and one cell of its star; the cell
-      // while it is live and still holds the vertex.
-      std::vector<std::array<std::int32_t, 2>> placed(seeds.size(), {-1, -1});
-      const auto star_cell = [&](std::int32_t id) {
-        const auto [vertex, cell] = placed[static_cast<std::size_t>(id)];
-        if (cell < 0 || !mesh.complex_.live(cell)) return -1;
-        const Tetrahedron& tet = mesh.tet(cell);
-        return std::find(tet.v, tet.v + 4, vertex) != tet.v + 4 ? cell : -1;
-      };
-      // The last seed placed in each block of 4 x 4 x 4 lattice cubes: a seed
-      // none of whose neighbours is placed yet (the first BRIO rounds) starts
-      // from the nearest placed block, not from the last located cell, which
-      // can lie across a concavity.
-      constexpr std::int64_t kBlock = 4;
-      const std::int64_t blocks = (side + kBlock - 1) / kBlock;
-      std::vector<std::int32_t> block_seed(static_cast<std::size_t>(blocks * blocks * blocks), -1);
-      const auto block_of = [&](std::int64_t i, std::int64_t j, std::int64_t k) {
-        return std::array<std::int64_t, 3>{(i + reach) / kBlock, (j + reach) / kBlock,
-                                           (k + reach) / kBlock};
-      };
-      const auto block_index = [&](const std::array<std::int64_t, 3>& block) {
-        return static_cast<std::size_t>((block[2] * blocks + block[1]) * blocks + block[0]);
-      };
-      std::vector<std::uint32_t> visited;
-      std::uint32_t walk_stamp = 0;
-      const auto holds = [&](std::int32_t cell, const double* p) {
-        const Tetrahedron& tet = mesh.tet(cell);
-        for (int face = 0; face < 4; ++face) {
+      // Plane f (opposite corner f): normal . u + offset >= -slack |normal|.
+      double plane[4][4];
+      for (int f = 0; f < 4; ++f) {
+        const double* o = corner[(f + 1) % 4];
+        const double* p = corner[(f + 2) % 4];
+        const double* q = corner[(f + 3) % 4];
+        const double e[3]{p[0] - o[0], p[1] - o[1], p[2] - o[2]};
+        const double g[3]{q[0] - o[0], q[1] - o[1], q[2] - o[2]};
+        double n[3]{e[1] * g[2] - e[2] * g[1], e[2] * g[0] - e[0] * g[2],
+                    e[0] * g[1] - e[1] * g[0]};
+        double offset = -(n[0] * o[0] + n[1] * o[1] + n[2] * o[2]);
+        const double* opposite = corner[f];
+        if (n[0] * opposite[0] + n[1] * opposite[1] + n[2] * opposite[2] + offset < 0.0) {
+          for (double& value : n) value = -value;
+          offset = -offset;
+        }
+        plane[f][0] = n[0];
+        plane[f][1] = n[1];
+        plane[f][2] = n[2];
+        plane[f][3] = offset + slack * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      }
+      double reciprocal[4];
+      for (int f = 0; f < 4; ++f) reciprocal[f] = plane[f][0] != 0.0 ? -1.0 / plane[f][0] : 0.0;
+      for (std::int64_t shift = 0; shift < 2; ++shift) {
+        double offset[3];
+        std::int64_t first_index[3];
+        std::int64_t last_index[3];
+        for (int axis = 0; axis < 3; ++axis) {
+          offset[axis] = kShift[order[axis]] + 0.5 * static_cast<double>(shift);
+          double low = corner[0][axis], high = corner[0][axis];
+          for (int c = 1; c < 4; ++c) {
+            low = std::min(low, corner[c][axis]);
+            high = std::max(high, corner[c][axis]);
+          }
+          first_index[axis] = static_cast<std::int64_t>(std::ceil(low - slack - offset[axis]));
+          last_index[axis] = static_cast<std::int64_t>(std::floor(high + slack - offset[axis]));
+        }
+        // Rounding of a slab's edge crossings: below 32 eps (1 + magnitude)^2.
+        const double pad = slack + 32.0 * std::numeric_limits<double>::epsilon() *
+                                       (1.0 + magnitude) * (1.0 + magnitude);
+        for (std::int64_t k = first_index[2]; k <= last_index[2]; ++k) {
+          const double z = static_cast<double>(k) + offset[2];
+          std::int64_t j_first = first_index[1];
+          std::int64_t j_last = last_index[1];
+          // Past two rows of the box, the rows are narrowed to the y extent
+          // of the cell within slack of the plane at z: each edge meeting
+          // that slab at its crossings of the slab's two planes, clamped to
+          // the edge (an endpoint inside the slab); an edge shorter than a
+          // lattice unit in z counts whole, so no crossing divides by less
+          // than a unit.
+          if (j_last - j_first >= 2) {
+            double y_low = std::numeric_limits<double>::infinity();
+            double y_high = -y_low;
+            for (int from = 0; from < 3; ++from)
+              for (int to = from + 1; to < 4; ++to) {
+                const double* p = corner[from];
+                const double* q = corner[to];
+                if (std::min(p[2], q[2]) > z + slack || std::max(p[2], q[2]) < z - slack) {
+                  continue;
+                }
+                const double dz = q[2] - p[2];
+                if (std::abs(dz) < 1.0) {
+                  y_low = std::min({y_low, p[1], q[1]});
+                  y_high = std::max({y_high, p[1], q[1]});
+                  continue;
+                }
+                for (const double level : {z - slack, z + slack}) {
+                  const double t = std::clamp((level - p[2]) / dz, 0.0, 1.0);
+                  const double y = p[1] + t * (q[1] - p[1]);
+                  y_low = std::min(y_low, y);
+                  y_high = std::max(y_high, y);
+                }
+              }
+            if (!(y_low <= y_high)) continue;
+            j_first = static_cast<std::int64_t>(
+                std::max(std::ceil(y_low - pad - offset[1]), static_cast<double>(j_first)));
+            j_last = static_cast<std::int64_t>(
+                std::min(std::floor(y_high + pad - offset[1]), static_cast<double>(j_last)));
+          }
+          // Per plane, its value at (0, 0, z); a row's bound on x is the
+          // value at (0, y, z) times -1 / normal_x.
+          double at_z[4];
+          for (int f = 0; f < 4; ++f) at_z[f] = plane[f][2] * z + plane[f][3];
+          for (std::int64_t j = j_first; j <= j_last; ++j) {
+            const double y = static_cast<double>(j) + offset[1];
+            double low = -std::numeric_limits<double>::infinity();
+            double high = std::numeric_limits<double>::infinity();
+            for (int f = 0; f < 4; ++f) {
+              const double value = plane[f][1] * y + at_z[f];
+              if (plane[f][0] > 0.0) {
+                low = std::max(low, value * reciprocal[f]);
+              } else if (plane[f][0] < 0.0) {
+                high = std::min(high, value * reciprocal[f]);
+              } else if (value < 0.0) {
+                high = -std::numeric_limits<double>::infinity();
+              }
+            }
+            if (!(low <= high)) continue;
+            // Clamped to the box's index range, in which the planes' slack
+            // keeps every candidate (an unbounded end stays at the box).
+            const auto i_first = static_cast<std::int64_t>(
+                std::max(std::ceil(low - offset[0]), static_cast<double>(first_index[0])));
+            const auto i_last = static_cast<std::int64_t>(
+                std::min(std::floor(high - offset[0]), static_cast<double>(last_index[0])));
+            for (std::int64_t i = i_first; i <= i_last; ++i) {
+              std::int64_t index[3];
+              index[order[0]] = i;
+              index[order[1]] = j;
+              index[order[2]] = k;
+              consider(shift, index[0], index[1], index[2]);
+            }
+          }
+        }
+      }
+    }
+    // Seed ids in canonical lattice order (listed by box, the sites are).
+    if (!by_box) {
+      std::sort(sites.begin(), sites.end(), [](const Site& x, const Site& y) { return x.at < y.at; });
+    }
+    // BRIO rounds are drawn from each seed's rank among the sites of the
+    // whole lattice over the vertices' box that are strictly inside the box
+    // and clear of the band, in (shift, k, j, i) order, so the insertion
+    // order does not depend on which cells hold sites. Rank = box sites
+    // before the seed less band sites in the box before it, both counted
+    // per row (an interval of i; the band sites of a row outside it are
+    // passed over uncounted).
+    std::vector<std::int32_t> ranks(sites.size());
+    std::uint64_t box_sites = 0;
+    std::uint64_t box_band = 0;
+    {
+      std::size_t next = 0;
+      std::size_t cursor = 0;
+      for_box_rows([&](std::int64_t shift, std::int64_t k, std::int64_t j, std::int64_t i_first,
+                       std::int64_t i_last) {
+        while (cursor < band_sites.size() && band_sites[cursor] < pack(shift, k, j, i_first)) ++cursor;
+        for (; next < sites.size() && sites[next].at[0] == shift && sites[next].at[1] == k &&
+               sites[next].at[2] == j;
+             ++next) {
+          const std::uint64_t key = pack(shift, k, j, sites[next].at[3]);
+          for (; cursor < band_sites.size() && band_sites[cursor] < key; ++cursor) ++box_band;
+          ranks[next] = static_cast<std::int32_t>(
+              box_sites + static_cast<std::uint64_t>(sites[next].at[3] - i_first) - box_band);
+        }
+        for (; cursor < band_sites.size() && band_sites[cursor] <= pack(shift, k, j, i_last); ++cursor) {
+          ++box_band;
+        }
+        box_sites += static_cast<std::uint64_t>(i_last - i_first + 1);
+      });
+    }
+    struct Seed {
+      std::uint64_t key;
+      std::uint64_t cell_id;
+    };
+    std::vector<Seed> seeds;
+    std::vector<std::array<std::uint32_t, 3>> seed_grids;
+    seeds.reserve(sites.size());
+    seed_grids.reserve(sites.size());
+    for (const Site& site : sites) {
+      seeds.push_back({0, seeds.size()});
+      seed_grids.push_back(frame.grid(site.point));
+    }
+    assign_hilbert_keys(seeds, std::span<const std::array<std::uint32_t, 3>>(seed_grids));
+    {
+      const int brio_rounds = brio_round_count(static_cast<std::size_t>(box_sites - box_band));
+      for (Seed& seed : seeds) {
+        const auto brio =
+            brio_round(ranks[static_cast<std::size_t>(seed.cell_id)], brio_rounds);
+        seed.key |= static_cast<std::uint64_t>(brio) << (3 * kHilbertBits);
+      }
+    }
+    std::vector<Seed> seed_scratch;
+    sort_by_key_then_id(seeds, seed_scratch);
+    const double radius = a * std::sqrt(5.0) / 4.0;
+    // Seeds are located from their lattice neighbours. A seed's nearest
+    // neighbours are the eight sites of the other shift at the cube's
+    // corners, at distance |PQ| = (sqrt(3) / 2) a; both kept seeds are at
+    // least the band 0.5 a from every boundary facet, so for a point X on
+    // PQ, min(|XP|, |XQ|) <= (sqrt(3) / 4) a < 0.434 a and dist(X, facet) >
+    // 0.066 a: PQ meets no boundary or interface facet, and P and Q lie in
+    // the same region. A seed is walked to from a cell incident to an
+    // inserted neighbour when there is one (a few cells away), else from
+    // the nearest block of 4 x 4 x 4 lattice cubes holding an inserted seed
+    // (blocks kept sparse, by index), else from the last located cell. The
+    // walk is a visibility walk across every facet between live cells that
+    // never re-enters a cell, so it ends within the number of cells: in the
+    // cell holding the seed, or where every facet facing the seed leads off
+    // the domain or to a visited cell. A walk that ends that way decides
+    // nothing (a concave boundary or a non-Delaunay cycle can stop it); the
+    // seed is then located by testing every live cell. The seeds joined by
+    // these segments (union-find below) are therefore wholly inside one
+    // region or wholly outside. A site clear of the band that is not
+    // strictly inside the box is outside the domain, so a group joined to
+    // one is outside without a walk; any other group is decided outside by
+    // the first of its seeds found in no cell. (Sites listed by cell are in
+    // the domain.)
+    // The vertex inserted for each seed and one cell of its star; the cell
+    // while it is live and still holds the vertex.
+    std::vector<std::array<std::int32_t, 2>> placed(sites.size(), {-1, -1});
+    const auto star_cell = [&](std::int32_t id) {
+      const auto [vertex, cell] = placed[static_cast<std::size_t>(id)];
+      if (cell < 0 || !mesh.complex_.live(cell)) return -1;
+      const Tetrahedron& tet = mesh.tet(cell);
+      return std::find(tet.v, tet.v + 4, vertex) != tet.v + 4 ? cell : -1;
+    };
+    // The eight nearest sites of each seed (the sites of the other shift at
+    // its lattice cube's corners) in (dk, dj, di) order, as seed ids, or -1
+    // where no seed is kept: for one offset the neighbours of one shift's
+    // seeds, taken in lattice order, come in lattice order, so a cursor per
+    // offset finds them in one pass.
+    const auto neighbour_site = [&](const std::array<std::int64_t, 4>& at, int n) {
+      const std::int64_t near = at[0] == 0 ? -1 : 0;
+      return std::array<std::int64_t, 4>{1 - at[0], at[1] + near + (n >> 2),
+                                         at[2] + near + ((n >> 1) & 1), at[3] + near + (n & 1)};
+    };
+    std::vector<std::array<std::int32_t, 8>> neighbours(sites.size());
+    {
+      std::array<std::size_t, 8> cursor{};
+      for (std::size_t id = 0; id < sites.size(); ++id) {
+        if (id > 0 && sites[id - 1].at[0] != sites[id].at[0]) cursor.fill(0);
+        for (int n = 0; n < 8; ++n) {
+          const auto key = neighbour_site(sites[id].at, n);
+          std::size_t& at = cursor[static_cast<std::size_t>(n)];
+          while (at < sites.size() && sites[at].at < key) ++at;
+          neighbours[id][static_cast<std::size_t>(n)] =
+              at < sites.size() && sites[at].at == key ? static_cast<std::int32_t>(at) : -1;
+        }
+      }
+    }
+    constexpr std::int64_t kBlock = 4;
+    const std::int64_t blocks = (2 * reach + 1 + kBlock - 1) / kBlock;
+    // The last seed inserted in each block holding one, by block index.
+    std::unordered_map<std::uint64_t, std::int32_t> block_seed;
+    const auto block_index = [&](std::int64_t x, std::int64_t y, std::int64_t z) {
+      return static_cast<std::uint64_t>((z * blocks + y) * blocks + x);
+    };
+    // Groups by seed id; the last entry stands for the box's exterior, and
+    // per group root, 1 when the group is outside the domain.
+    const auto exterior = static_cast<std::int32_t>(sites.size());
+    std::vector<std::int32_t> group(sites.size() + 1);
+    std::iota(group.begin(), group.end(), 0);
+    const auto root_of = [&](std::int32_t id) {
+      while (group[static_cast<std::size_t>(id)] != id) {
+        const std::int32_t up = group[static_cast<std::size_t>(group[static_cast<std::size_t>(id)])];
+        group[static_cast<std::size_t>(id)] = up;
+        id = up;
+      }
+      return id;
+    };
+    for (std::int32_t id = 0; id < exterior; ++id) {
+      for (int n = 0; n < 8; ++n) {
+        std::int32_t other = neighbours[static_cast<std::size_t>(id)][static_cast<std::size_t>(n)];
+        if (other < 0) {
+          const auto at = neighbour_site(sites[static_cast<std::size_t>(id)].at, n);
+          if (in_box(at[0], at[3], at[2], at[1]) || !clear(at[0], at[1], at[2], at[3])) continue;
+          other = exterior;
+        }
+        const std::int32_t x = root_of(id), y = root_of(other);
+        if (x != y) group[static_cast<std::size_t>(std::max(x, y))] = std::min(x, y);
+      }
+    }
+    std::vector<std::uint8_t> outside(group.size(), 0U);
+    outside[static_cast<std::size_t>(root_of(exterior))] = 1U;
+    std::int32_t start = 0;
+    std::vector<std::uint32_t> visited;
+    std::uint32_t walk_stamp = 0;
+    const auto holds = [&](std::int32_t cell, const double* p) {
+      const Tetrahedron& tet = mesh.tet(cell);
+      for (int face = 0; face < 4; ++face) {
+        std::int32_t facet[3];
+        oriented_facet(tet.v, face, facet);
+        if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
+                              p) < 0) {
+          return false;
+        }
+      }
+      return true;
+    };
+    // The live cell holding `p`, or -1 when no cell holds it.
+    const auto locate = [&](std::int32_t from, const double* p) -> std::int32_t {
+      if (visited.size() < mesh.complex_.tets.size()) visited.resize(mesh.complex_.tets.size(), 0U);
+      if (++walk_stamp == 0) {
+        std::fill(visited.begin(), visited.end(), 0U);
+        walk_stamp = 1;
+      }
+      std::int32_t current = from;
+      while (current >= 0) {
+        visited[static_cast<std::size_t>(current)] = walk_stamp;
+        const Tetrahedron& tet = mesh.tet(current);
+        std::int32_t next = -1;
+        bool facing = false;
+        for (int face = 0; face < 4 && next < 0; ++face) {
           std::int32_t facet[3];
           oriented_facet(tet.v, face, facet);
           if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
-                                p) < 0) {
-            return false;
+                                p) >= 0) {
+            continue;
+          }
+          facing = true;
+          const std::int32_t across = tet.n[face];
+          if (mesh.complex_.live(across) && !is_ghost(mesh.tet(across)) &&
+              visited[static_cast<std::size_t>(across)] != walk_stamp) {
+            next = across;
           }
         }
-        return true;
-      };
-      // The live cell holding `p`, or -1 when no cell holds it.
-      const auto locate = [&](std::int32_t from, const double* p) -> std::int32_t {
-        if (visited.size() < mesh.complex_.tets.size()) visited.resize(mesh.complex_.tets.size(), 0U);
-        if (++walk_stamp == 0) {
-          std::fill(visited.begin(), visited.end(), 0U);
-          walk_stamp = 1;
-        }
-        std::int32_t current = from;
-        while (current >= 0) {
-          visited[static_cast<std::size_t>(current)] = walk_stamp;
-          const Tetrahedron& tet = mesh.tet(current);
-          std::int32_t next = -1;
-          bool facing = false;
-          for (int face = 0; face < 4 && next < 0; ++face) {
-            std::int32_t facet[3];
-            oriented_facet(tet.v, face, facet);
-            if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
-                                  p) >= 0) {
-              continue;
-            }
-            facing = true;
-            const std::int32_t across = tet.n[face];
-            if (mesh.complex_.live(across) && !is_ghost(mesh.tet(across)) &&
-                visited[static_cast<std::size_t>(across)] != walk_stamp) {
-              next = across;
+        if (!facing) return current;
+        current = next;
+      }
+      for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
+        const auto cell = static_cast<std::int32_t>(row);
+        if (mesh.complex_.live(cell) && !is_ghost(mesh.tet(cell)) && holds(cell, p)) return cell;
+      }
+      return -1;
+    };
+    for (const Seed& seed : seeds) {
+      const auto id = static_cast<std::int32_t>(seed.cell_id);
+      const std::int32_t root = root_of(id);
+      if (outside[static_cast<std::size_t>(root)] != 0U) continue;
+      const Site& site = sites[static_cast<std::size_t>(id)];
+      std::int32_t from = -1;
+      for (const std::int32_t other : neighbours[static_cast<std::size_t>(id)]) {
+        if (other >= 0) from = star_cell(other);
+        if (from >= 0) break;
+      }
+      const std::array<std::int64_t, 3> block{(site.at[3] + reach) / kBlock,
+                                              (site.at[2] + reach) / kBlock,
+                                              (site.at[1] + reach) / kBlock};
+      // Shells of blocks around the seed's own, outward to the farthest.
+      for (std::int64_t shell = 0; from < 0 && !block_seed.empty() && shell < blocks; ++shell) {
+        for (std::int64_t z = block[2] - shell; z <= block[2] + shell && from < 0; ++z)
+          for (std::int64_t y = block[1] - shell; y <= block[1] + shell && from < 0; ++y) {
+            // Inside the shell's faces in z and y, only its two x faces.
+            const bool face = std::abs(z - block[2]) == shell || std::abs(y - block[1]) == shell;
+            const std::int64_t stride = face || shell == 0 ? 1 : 2 * shell;
+            for (std::int64_t x = block[0] - shell; x <= block[0] + shell && from < 0; x += stride) {
+              if (x < 0 || y < 0 || z < 0 || x >= blocks || y >= blocks || z >= blocks) continue;
+              const auto other = block_seed.find(block_index(x, y, z));
+              if (other != block_seed.end()) from = star_cell(other->second);
             }
           }
-          if (!facing) return current;
-          current = next;
+      }
+      if (from < 0) {
+        if (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) {
+          start = 0;
+          while (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) ++start;
         }
-        for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
-          const auto cell = static_cast<std::int32_t>(row);
-          if (mesh.complex_.live(cell) && !is_ghost(mesh.tet(cell)) && holds(cell, p)) return cell;
-        }
-        return -1;
-      };
-      for (const Seed& seed : seeds) {
-        const auto id = static_cast<std::int32_t>(seed.cell_id);
-        const std::int32_t root = root_of(id);
-        if (outside[static_cast<std::size_t>(root)] != 0U) continue;
-        std::int32_t from = -1;
-        for_sites(id, [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
-          const std::int32_t other = kept(shift, i, j, k);
-          if (from < 0 && other >= 0) from = star_cell(other);
-        });
-        const auto& site = seed_sites[static_cast<std::size_t>(id)];
-        const auto block = block_of(site[0], site[1], site[2]);
-        // Shells of blocks around the seed's own, outward to the farthest.
-        for (std::int64_t shell = 0; from < 0 && shell < blocks; ++shell) {
-          for (std::int64_t z = block[2] - shell; z <= block[2] + shell && from < 0; ++z)
-            for (std::int64_t y = block[1] - shell; y <= block[1] + shell && from < 0; ++y) {
-              // Inside the shell's faces in z and y, only its two x faces.
-              const bool face = std::abs(z - block[2]) == shell || std::abs(y - block[1]) == shell;
-              const std::int64_t stride = face || shell == 0 ? 1 : 2 * shell;
-              for (std::int64_t x = block[0] - shell; x <= block[0] + shell && from < 0;
-                   x += stride) {
-                if (x < 0 || y < 0 || z < 0 || x >= blocks || y >= blocks || z >= blocks) continue;
-                const std::int32_t other = block_seed[block_index({x, y, z})];
-                if (other >= 0) from = star_cell(other);
-              }
-            }
-        }
-        if (from < 0) {
-          if (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) {
-            start = 0;
-            while (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) ++start;
-          }
-          from = start;
-        }
-        const std::int32_t current = locate(from, seed.point);
-        if (current < 0) {
-          outside[static_cast<std::size_t>(root)] = 1U;
-          continue;
-        }
-        start = current;
-        double target = 0.0;
-        if (!cell_target(mesh, mesh.tet(current).v, target) ||
-            !(target * kLatticeMargin <= smallest)) {
-          continue;
-        }
-        int outcome = 2;
-        const std::int32_t error = insert_interior(current, seed.point, radius, target, outcome);
-        if (error != PHX_MC_OK) return error;
-        if (outcome == 0 && !created_slots.empty()) {
-          start = created_slots.front();
-          placed[static_cast<std::size_t>(id)] = {
-              static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1, start};
-          block_seed[block_index(block)] = id;
-        }
+        from = start;
+      }
+      const std::int32_t current = locate(from, site.point);
+      if (current < 0) {
+        outside[static_cast<std::size_t>(root)] = 1U;
+        continue;
+      }
+      start = current;
+      double target = 0.0;
+      if (!cell_target(mesh, mesh.tet(current).v, target) ||
+          !(target * kLatticeMargin <= smallest)) {
+        continue;
+      }
+      int outcome = 2;
+      const std::int32_t error = insert_interior(current, site.point, radius, target, outcome);
+      if (error != PHX_MC_OK) return error;
+      if (outcome == 0 && !created_slots.empty()) {
+        start = created_slots.front();
+        placed[static_cast<std::size_t>(id)] = {static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1,
+                                                start};
+        block_seed[block_index(block[0], block[1], block[2])] = id;
       }
     }
     return PHX_MC_OK;
