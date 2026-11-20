@@ -818,6 +818,9 @@ void carrier_inside_domain_leaf() {
                   result.subdivisions, truth);
       PHX_CHECK(result.status != PHX_MC_OK || result.upper >= truth);
       if (factor >= 2.0) PHX_CHECK(result.status == PHX_MC_OK && result.subdivisions <= 16);
+      // S is quadratic in t with a constant Hessian here: the remainder about
+      // the box centre (half_extent) is sharp (2x truth with box extents).
+      if (kind > 0) PHX_CHECK(result.status == PHX_MC_OK && result.upper <= 1.0625 * truth);
     }
   }
 }
@@ -906,8 +909,10 @@ void carrier_inside_domain_trim() {
     std::printf("A trim (%s): status %d row %d reason %d upper %.6e splits %d; arc %.6e\n",
                 name[kind], verdict.status, verdict.item_status[0], verdict.reasons[0],
                 verdict.upper[0], verdict.subdivisions[0], worst);
+    // Lens cap from per-axis p-curve remainders and |S_u|, |S_v| (1.35x / 1.82x
+    // the sampled arc distance; 2.32x / 3.30x with one Frobenius |DS|).
     PHX_CHECK(verdict.status == PHX_MC_OK && verdict.upper[0] >= worst &&
-              verdict.upper[0] < 0.125 && verdict.subdivisions[0] <= 4);
+              verdict.upper[0] <= 2.0 * worst && verdict.subdivisions[0] <= 4);
   }
 }
 
