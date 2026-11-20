@@ -334,6 +334,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native planar Delaunay is faster with byte-identical output: the
+  constrained triangulation's initial Delaunay build runs on insertion-ordered
+  point copies and relabels to input indices (cache-local walks), the BRIO key
+  sort radix-sorts only the significant top bits, 2D canonical cell ordering
+  is a counting sort of cell ids, and the insertion loop presizes its scratch
+  and drops prefetches that measured as overhead.
 - Native restricted implicit meshing has a lower fixed per-call cost with
   unchanged output: each lattice coordinate of the box tree is computed once
   for all levels, the box tree's interval evaluation runs in reused batches,
