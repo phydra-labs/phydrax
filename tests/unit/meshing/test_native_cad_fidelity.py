@@ -521,7 +521,6 @@ def test_rational_spline_verdict_and_dense_bounds() -> None:
                     assert np.linalg.norm(sample - barycentric @ vertices) <= result.upper[row]
 
 
-@pytest.mark.xfail(strict=True, reason="Python spline interpolation omits non-C1 knot jumps")
 def test_python_spline_kink_requires_nonzero_interpolation_bound() -> None:
     """A continuous piecewise-linear tent is one unit above its corner plane."""
     controls = np.asarray(
