@@ -1429,7 +1429,15 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
 //   |w_a| <= mismatch_a + M_a dt^2 / 2 max lambda (1 - lambda)   (C2 p),
 //   |w_a| <= mismatch_a + M_a dt min(1, 2 max min(lambda, 1 - lambda)) (C1 p),
 // with M_a the p-curve's |p_a''| (|p_a'|) over the whole interval: the lens
-// is thin near the chord ends. Piece k's lens points (on the segments from
+// is thin near the chord ends. A finer bound uses the kernel form: with
+// s in [0, 1] and the chord parameter lambda in the piece,
+//   C2: w = -dt^2 int G(lambda, s) p''(s) ds, |G| = min(s (1 - lambda), lambda (1 - s))
+//       <= min(s (1 - lambda_0), lambda_1 (1 - s)),
+//   C1: w = dt int K(lambda, s) p'(s) ds, |K| = 1 - lambda (s < lambda), lambda (s > lambda),
+// so |w_a| <= mismatch_a + dt^2 (dt) sum_j M_a,j int_{s_j}^{s_j+1} |G| (|K|) bound ds,
+// M_a,j the enclosure over the parameters of sub-interval j (kSubintervals
+// equal parts of lambda, outward to t, clamped to the chord's interval). Per
+// axis the smaller of the two bounds is used. Piece k's lens points (on the segments from
 // l(lambda) to p(lambda), lambda in the piece) lie in its padded box: the box
 // of l over the piece padded per axis by those bounds; caps[k] is the
 // mean-value bound over that box. `boxes` holds (u lower, v lower, u upper,
@@ -1472,11 +1480,36 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
         ? di::multiply(bound, dt)
         : di::multiply(di::point(0.5), di::multiply(bound, di::multiply(dt, dt)));
   }
+  // Finer enclosures: |p_a''| (|p_a'|) per sub-interval [s_j, s_j+1] of
+  // lambda, weighted below by the remainder kernel's integral over it.
+  constexpr int kSubintervals = 8;
+  double sub_bound[kSubintervals][2];
+  const auto lambda_t = [&](double lambda) {
+    return di::add(di::point(parameters[0]),
+                   di::multiply(di::point(lambda),
+                                di::subtract(di::point(parameters[1]), di::point(parameters[0]))));
+  };
+  const auto clip = [](double a, double b, double lo, double hi) {
+    const double from = std::max(a, lo), to = std::min(b, hi);
+    return to > from ? di::subtract(di::point(to), di::point(from)) : di::point(0.0);
+  };
   const auto chord_point = [&](double lambda, int axis) {
     return di::add(di::point(chord_uv[axis]),
                    di::multiply(di::point(lambda), di::subtract(di::point(chord_uv[2 + axis]),
                                                                 di::point(chord_uv[axis]))));
   };
+  for (int sub = 0; sub < kSubintervals; ++sub) {
+    const auto ta = lambda_t(double(sub) / kSubintervals);
+    const auto tb = lambda_t(double(sub + 1) / kSubintervals);
+    const double sub_low = std::max(low, std::min(ta.lower, tb.lower));
+    const double sub_high = std::min(high, std::max(ta.upper, tb.upper));
+    double lo[6], hi[6];
+    status = geometry.interval_jets(geometry.pcurve_node(use), &sub_low, &sub_high,
+                                    regularity == 1 ? 1 : 2, lo, hi, workspace);
+    if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+    for (int axis = 0; axis < 2; ++axis)
+      sub_bound[sub][axis] = di::magnitude({lo[derivative + axis], hi[derivative + axis]});
+  }
   for (int piece = 0; piece < pieces; ++piece) {
     const double first = double(piece) / pieces, last = double(piece + 1) / pieces;
     // The lambda of the piece nearest 1/2: where the remainder weight peaks.
@@ -1484,9 +1517,41 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
     const auto weight = regularity == 1
         ? di::point(std::min(1.0, 2.0 * std::min(peak, 1.0 - peak)))
         : di::multiply(di::point(peak), di::subtract(di::point(1.0), di::point(peak)));
+    // Kernel weights of the sub-intervals for lambda in [first, last].
+    const auto alpha = di::subtract(di::point(1.0), di::point(first));
+    const auto beta = di::point(last);
+    const double crossing = last / (1.0 - first + last);
+    di::Interval kernel[kSubintervals];
+    for (int sub = 0; sub < kSubintervals; ++sub) {
+      const double a = double(sub) / kSubintervals, b = double(sub + 1) / kSubintervals;
+      if (regularity == 1) {
+        const double middle = std::max(alpha.upper, beta.upper);
+        kernel[sub] = di::add(di::multiply(alpha, clip(a, b, 0.0, first)),
+                              di::add(di::multiply(di::point(middle), clip(a, b, first, last)),
+                                      di::multiply(beta, clip(a, b, last, 1.0))));
+      } else {
+        // min(alpha s, beta (1 - s)) <= alpha s on [a, c], beta (1 - s) on
+        // [c, b], for any c in [a, b].
+        const double c = std::min(b, std::max(a, crossing));
+        const auto pa = di::point(a), pc = di::point(c);
+        const auto qc = di::subtract(di::point(1.0), pc);
+        const auto qb = di::subtract(di::point(1.0), di::point(b));
+        kernel[sub] = di::multiply(
+            di::point(0.5),
+            di::add(di::multiply(alpha, di::subtract(di::multiply(pc, pc), di::multiply(pa, pa))),
+                    di::multiply(beta, di::subtract(di::multiply(qc, qc), di::multiply(qb, qb)))));
+      }
+    }
     double error[2], box_lower[2], box_upper[2];
     for (int axis = 0; axis < 2; ++axis) {
-      const auto sum = di::add(di::point(endpoint_error[axis]), di::multiply(scale[axis], weight));
+      const auto coarse = di::multiply(scale[axis], weight);
+      auto integral = di::point(0.0);
+      for (int sub = 0; sub < kSubintervals; ++sub)
+        integral = di::add(integral, di::multiply(di::point(sub_bound[sub][axis]), kernel[sub]));
+      const auto fine = di::multiply(integral, regularity == 1 ? dt : di::multiply(dt, dt));
+      if (!di::finite(coarse) || !di::finite(fine)) return PHX_MC_UNRESOLVED;
+      const auto sum = di::add(di::point(endpoint_error[axis]),
+                               di::point(std::min(coarse.upper, fine.upper)));
       if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
       error[axis] = sum.upper;
       const auto a = chord_point(first, axis), b = chord_point(last, axis);
