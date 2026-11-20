@@ -1359,14 +1359,35 @@ struct SplitPlan {
   bool two_groups = false;
 };
 
+// A split of a random facet edge (with `segment_ends`, of one whose ends
+// both lie on segments or corners but which is no segment).
 std::optional<SplitPlan> plan_split(const TetMesh& mesh, const Banks& banks, Generator& generator,
-                                    bool valid_only) {
-  auto chosen = banks.facets.begin();
-  std::advance(chosen, static_cast<std::ptrdiff_t>(generator.pick(banks.facets.size())));
-  const TetSnapshotFacet& facet = chosen->second;
-  const std::size_t corner = generator.pick(3);
-  const std::uint64_t a_id = facet.vertices[corner];
-  const std::uint64_t b_id = facet.vertices[(corner + 1) % 3];
+                                    bool valid_only, bool segment_ends = false) {
+  std::uint64_t a_id = 0;
+  std::uint64_t b_id = 0;
+  if (segment_ends) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> edges;
+    for (const auto& [key, facet] : banks.facets) {
+      for (std::size_t corner = 0; corner < 3; ++corner) {
+        const std::uint64_t first = facet.vertices[corner];
+        const std::uint64_t second = facet.vertices[(corner + 1) % 3];
+        if (mesh.vertex_dimension(mesh.vertex_slot(first)) <= 1 &&
+            mesh.vertex_dimension(mesh.vertex_slot(second)) <= 1 &&
+            !banks.segments.contains(sorted_edge(first, second))) {
+          edges.emplace_back(first, second);
+        }
+      }
+    }
+    if (edges.empty()) return std::nullopt;
+    std::tie(a_id, b_id) = edges[generator.pick(edges.size())];
+  } else {
+    auto chosen = banks.facets.begin();
+    std::advance(chosen, static_cast<std::ptrdiff_t>(generator.pick(banks.facets.size())));
+    const TetSnapshotFacet& facet = chosen->second;
+    const std::size_t corner = generator.pick(3);
+    a_id = facet.vertices[corner];
+    b_id = facet.vertices[(corner + 1) % 3];
+  }
   if (banks.segments.contains(sorted_edge(a_id, b_id))) return std::nullopt;
   std::vector<std::int32_t> apexes;
   std::set<std::int32_t> groups;
@@ -1585,13 +1606,18 @@ using EditTally = std::map<std::pair<int, TetEditStatus>, int>;
 int inexact_splits = 0;
 // Refused splits of an edge between facets of two groups.
 int two_group_refusals = 0;
+// Splits of an edge whose ends lie on segments or corners, by verdict.
+int segment_end_splits_applied = 0;
+int segment_end_splits_refused = 0;
 
 // One random split through split_boundary_edge on `local` and its contract
 // edit through apply_edit_batch on `batch`: false when they disagree.
 bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
                    LocalIncidence& incidence, Banks& banks, Generator& generator, EditTally& tally,
                    bool valid_only) {
-  const std::optional<SplitPlan> plan = plan_split(local, banks, generator, valid_only);
+  const bool segment_ends = generator.chance(0.25);
+  const std::optional<SplitPlan> plan =
+      plan_split(local, banks, generator, valid_only, segment_ends);
   if (!plan) return true;
   TetEdit operation = contract_split(local, incidence, banks, *plan, generator);
   const double* endpoints[3] = {local.point(plan->a), local.point(plan->b), nullptr};
@@ -1630,6 +1656,10 @@ bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
   if (plan->two_groups) {
     PHX_CHECK(local_status != TetEditStatus::kApplied || exact);
     two_group_refusals += local_status != TetEditStatus::kApplied ? 1 : 0;
+  }
+  if (segment_ends) {
+    (local_status == TetEditStatus::kApplied ? segment_end_splits_applied
+                                             : segment_end_splits_refused) += 1;
   }
   if (local_status == TetEditStatus::kApplied) {
     banks.apply(operation);
@@ -1737,6 +1767,9 @@ void splits_and_relocations_match_the_batch() {
   PHX_CHECK(count(3, geometry) > 0);
   std::printf("  two-group splits refused: %d\n", two_group_refusals);
   PHX_CHECK(two_group_refusals > 0);
+  std::printf("  splits between segment vertices: %d applied, %d refused\n",
+              segment_end_splits_applied, segment_end_splits_refused);
+  PHX_CHECK(segment_end_splits_applied > 0 && segment_end_splits_refused > 0);
   // Relocations within the carrier apply; past the link they invert a star
   // cell or leave the carrier, and toward the interior they leave it.
   for (const int dimension : {10, 20}) {
@@ -1914,7 +1947,7 @@ double seconds_per_edit(std::array<int, 3> n, std::uint32_t seed) {
 
 // Time per local split and per relocation on Gmsh-like cubes of about 1e4
 // and 1e5 cells: declared-pair midpoint splits and moves within the carrier.
-std::array<double, 2> seconds_per_split_and_move(std::array<int, 3> n, std::uint32_t seed) {
+std::array<double, 3> seconds_per_split_and_move(std::array<int, 3> n, std::uint32_t seed) {
   const Box box = make_cube(n, false, seed);
   TetMesh mesh(BoundaryPolicy::kConforming);
   if (!build(mesh, box, {})) return {};
@@ -1923,15 +1956,17 @@ std::array<double, 2> seconds_per_split_and_move(std::array<int, 3> n, std::uint
   Banks banks(mesh);
   Generator generator(box, seed);
   using Clock = std::chrono::steady_clock;
-  std::array<Clock::duration, 2> spent{};
-  std::array<int, 2> timed{};
+  // Splits, relocations, and splits of edges between segment vertices.
+  std::array<Clock::duration, 3> spent{};
+  std::array<int, 3> timed{};
   int splits = 0;
   int moves = 0;
   bool warmed = false;
-  for (int attempt = 0; attempt < 20000 && timed[0] + timed[1] < 600; ++attempt) {
+  for (int attempt = 0; attempt < 30000 && timed[0] + timed[1] + timed[2] < 900; ++attempt) {
     Clock::duration elapsed{};
-    if (attempt % 2 == 0) {
-      const std::optional<SplitPlan> plan = plan_split(mesh, banks, generator, true);
+    if (attempt % 3 != 1) {
+      const std::optional<SplitPlan> plan =
+          plan_split(mesh, banks, generator, true, attempt % 3 == 2);
       if (!plan) continue;
       const TetEdit operation = contract_split(mesh, incidence, banks, *plan, generator);
       std::vector<std::uint64_t> created;
@@ -1960,12 +1995,12 @@ std::array<double, 2> seconds_per_split_and_move(std::array<int, 3> n, std::uint
       warmed = true;
       continue;
     }
-    spent[attempt % 2] += elapsed;
-    ++timed[attempt % 2];
+    spent[attempt % 3] += elapsed;
+    ++timed[attempt % 3];
   }
   PHX_CHECK(splits > 50 && moves > 50);
-  std::array<double, 2> seconds{};
-  for (std::size_t kind = 0; kind < 2; ++kind) {
+  std::array<double, 3> seconds{};
+  for (std::size_t kind = 0; kind < 3; ++kind) {
     seconds[kind] = timed[kind] == 0 ? 0.0
                                      : std::chrono::duration<double>(spent[kind]).count() / timed[kind];
   }
@@ -2020,13 +2055,16 @@ void boundary_edits_are_star_local() {
   std::printf("boundary edit: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
               1e6 * small, 1e6 * large);
   PHX_CHECK(small > 0.0 && large < 3.0 * small);
-  const std::array<double, 2> small_cd = seconds_per_split_and_move({16, 16, 8}, 22);
-  const std::array<double, 2> large_cd = seconds_per_split_and_move({32, 32, 16}, 22);
+  const std::array<double, 3> small_cd = seconds_per_split_and_move({16, 16, 8}, 22);
+  const std::array<double, 3> large_cd = seconds_per_split_and_move({32, 32, 16}, 22);
   std::printf("boundary split: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
               1e6 * small_cd[0], 1e6 * large_cd[0]);
   std::printf("boundary relocation: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
               1e6 * small_cd[1], 1e6 * large_cd[1]);
-  for (std::size_t kind = 0; kind < 2; ++kind) {
+  std::printf("split between segment vertices: %.2f us per edit at 1.2e4 cells, %.2f us at "
+              "9.8e4 cells\n",
+              1e6 * small_cd[2], 1e6 * large_cd[2]);
+  for (std::size_t kind = 0; kind < 3; ++kind) {
     PHX_CHECK(small_cd[kind] > 0.0 && large_cd[kind] < 3.0 * small_cd[kind]);
   }
   for (const std::array<int, 3> n : {std::array<int, 3>{16, 16, 8}, std::array<int, 3>{32, 32, 16}}) {

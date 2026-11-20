@@ -808,9 +808,12 @@ class TetMesh {
   // constrained faces covered by their halves pairwise when (a, b) is no
   // constrained segment and lies in exactly two constrained faces of those
   // cells, both cavity boundary faces (their other side kept) of one
-  // declared-plane group: that group, else kNoConstraint.
+  // declared-plane group: that group, else kNoConstraint. `segment_index`
+  // (segment vertex IDs -> segments_ row), when given, decides whether
+  // (a, b) is a segment without a scan of the bank.
   std::int32_t declared_split_pair(std::int32_t a, std::int32_t b,
-                                   std::span<const std::int32_t> cells) const;
+                                   std::span<const std::int32_t> cells,
+                                   const TetSegmentIndex* segment_index = nullptr) const;
   // The halves (start, m, third) and (m, end, third) of a constrained face
   // of declared group `source` keep its projected orientation on the
   // group's plane, with m's exact position exactly on the plane. For both
@@ -826,14 +829,16 @@ class TetMesh {
   bool split_face_covered(const std::int32_t* parent_face, std::int32_t source,
                           const std::array<std::int32_t, 3>& first_child,
                           const std::array<std::int32_t, 3>& second_child,
-                          std::span<const std::int32_t> cells) const;
+                          std::span<const std::int32_t> cells,
+                          const TetSegmentIndex* segment_index = nullptr) const;
   // apply_edit_batch's checks of the vertex `inserted` splitting the edge
   // (a, b), which is no constrained segment, of the removed cells `cells`:
   // kApplied, or the refusal.
   TetEditStatus unconstrained_split_point_status(std::int32_t a, std::int32_t b,
                                                  const std::array<std::uint64_t, 2>& edge,
                                                  const TetEditVertex& inserted,
-                                                 std::span<const std::int32_t> cells) const;
+                                                 std::span<const std::int32_t> cells,
+                                                 const TetSegmentIndex* segment_index = nullptr) const;
   // Called by refinement and improvement: cones a star-shaped cavity to one
   // new interior vertex; created cell IDs are returned in cone order. The
   // cone buries exactly the cavity vertices `removed_vertices` (sorted
