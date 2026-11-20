@@ -415,67 +415,76 @@ void unite(std::vector<int32_t>& parent, int32_t a, int32_t b) {
 SurfaceTopology surface_topology(std::span<const int32_t> faces) {
   SurfaceTopology result;
   const std::size_t face_count = faces.size() / 3;
-  struct Directed {
-    std::uint64_t key;
-    int32_t corner;  // 3 * face + position of the tail
-  };
-  std::vector<Directed> edges(faces.size());
-  for (std::size_t f = 0; f < face_count; ++f)
-    for (std::size_t r = 0; r < 3; ++r) {
-      const auto tail = static_cast<std::uint32_t>(faces[3 * f + r]);
-      const auto head = static_cast<std::uint32_t>(faces[3 * f + (r + 1) % 3]);
-      edges[3 * f + r] = {(std::uint64_t{tail} << 32) | head, static_cast<int32_t>(3 * f + r)};
-    }
-  std::sort(edges.begin(), edges.end(),
-            [](const Directed& a, const Directed& b) { return a.key < b.key; });
+  const auto head_of = [&](std::size_t corner) { return faces[corner - corner % 3 + (corner % 3 + 1) % 3]; };
+  // The corners (directed edges by their tail corner) of each tail vertex,
+  // in corner order.
+  std::size_t vertex_count = 0;
+  for (int32_t v : faces) vertex_count = std::max(vertex_count, static_cast<std::size_t>(v) + 1);
+  std::vector<int32_t> offsets(vertex_count + 1, 0), cursor(vertex_count), tails(faces.size());
+  for (int32_t v : faces) ++offsets[static_cast<std::size_t>(v) + 1];
+  for (std::size_t v = 0; v < vertex_count; ++v) {
+    offsets[v + 1] += offsets[v];
+    cursor[v] = offsets[v];
+  }
+  for (std::size_t c = 0; c < faces.size(); ++c)
+    tails[static_cast<std::size_t>(cursor[static_cast<std::size_t>(faces[c])]++)] = static_cast<int32_t>(c);
   std::vector<int32_t> face_parent(face_count), corner_parent(faces.size());
   std::iota(face_parent.begin(), face_parent.end(), 0);
   std::iota(corner_parent.begin(), corner_parent.end(), 0);
-  const auto mark_singular = [&](std::uint64_t key) {
+  const auto mark_singular = [&](int32_t tail, int32_t head) {
     result.manifold = false;
-    result.singular.push_back(static_cast<int32_t>(key >> 32));
-    result.singular.push_back(static_cast<int32_t>(key & 0xFFFFFFFFULL));
+    result.singular.push_back(tail);
+    result.singular.push_back(head);
   };
-  for (std::size_t e = 0; e < edges.size(); ++e) {
-    const std::uint64_t key = edges[e].key;
-    if ((e > 0 && edges[e - 1].key == key) || (e + 1 < edges.size() && edges[e + 1].key == key)) {
-      mark_singular(key);
+  for (std::size_t corner = 0; corner < faces.size(); ++corner) {
+    const int32_t tail = faces[corner], head = head_of(corner);
+    const auto first = static_cast<std::size_t>(offsets[static_cast<std::size_t>(tail)]);
+    const auto last = static_cast<std::size_t>(offsets[static_cast<std::size_t>(tail) + 1]);
+    bool repeated = false;
+    for (std::size_t k = first; k < last && !repeated; ++k) {
+      const auto other = static_cast<std::size_t>(tails[k]);
+      repeated = other != corner && head_of(other) == head;
+    }
+    if (repeated) {
+      mark_singular(tail, head);
       continue;
     }
-    const std::uint64_t reverse = (key << 32) | (key >> 32);
-    const auto found = std::lower_bound(edges.begin(), edges.end(), reverse,
-                                        [](const Directed& a, std::uint64_t k) { return a.key < k; });
-    if (found == edges.end() || found->key != reverse) {
-      mark_singular(key);
+    // The reverse edge's first corner; when the reverse repeats, its own
+    // corners mark both vertices singular, so the choice changes nothing
+    // the repair or the topology match reads.
+    int32_t other = -1;
+    const auto reverse_first = static_cast<std::size_t>(offsets[static_cast<std::size_t>(head)]);
+    const auto reverse_last = static_cast<std::size_t>(offsets[static_cast<std::size_t>(head) + 1]);
+    for (std::size_t k = reverse_first; k < reverse_last; ++k)
+      if (head_of(static_cast<std::size_t>(tails[k])) == tail) {
+        other = tails[k];
+        break;
+      }
+    if (other < 0) {
+      mark_singular(tail, head);
       continue;
     }
     // Around the tail a, the corner of this face at a follows the corner at
     // a of the reverse edge's face, where a is the reverse edge's head.
-    const int32_t corner = edges[e].corner;
-    const int32_t other = found->corner;
-    unite(face_parent, corner / 3, other / 3);
+    unite(face_parent, static_cast<int32_t>(corner / 3), other / 3);
     const int32_t other_head = 3 * (other / 3) + (other % 3 + 1) % 3;
-    unite(corner_parent, corner, other_head);
+    unite(corner_parent, static_cast<int32_t>(corner), other_head);
   }
   for (std::size_t f = 0; f < face_count; ++f)
     result.components += find_root(face_parent, static_cast<int32_t>(f)) == static_cast<int32_t>(f);
   // Fans per vertex: one corner component each on a manifold surface.
-  std::vector<std::array<int32_t, 2>> fans;
-  fans.reserve(faces.size());
-  for (std::size_t c = 0; c < faces.size(); ++c)
-    if (find_root(corner_parent, static_cast<int32_t>(c)) == static_cast<int32_t>(c))
-      fans.push_back({faces[c], static_cast<int32_t>(c)});
-  std::sort(fans.begin(), fans.end());
+  std::vector<int32_t> fans(vertex_count, 0);
   int64_t vertices = 0;
-  for (std::size_t k = 0; k < fans.size(); ++k) {
-    if (k > 0 && fans[k][0] == fans[k - 1][0]) {
-      result.manifold = false;
-      result.singular.push_back(fans[k][0]);
-    } else {
+  for (std::size_t c = 0; c < faces.size(); ++c) {
+    if (find_root(corner_parent, static_cast<int32_t>(c)) != static_cast<int32_t>(c)) continue;
+    if (fans[static_cast<std::size_t>(faces[c])]++ == 0) {
       ++vertices;
+    } else {
+      result.manifold = false;
+      result.singular.push_back(faces[c]);
     }
   }
-  result.euler = vertices - static_cast<int64_t>(edges.size() / 2) + static_cast<int64_t>(face_count);
+  result.euler = vertices - static_cast<int64_t>(faces.size() / 2) + static_cast<int64_t>(face_count);
   std::sort(result.singular.begin(), result.singular.end());
   result.singular.erase(std::unique(result.singular.begin(), result.singular.end()),
                         result.singular.end());
@@ -1017,9 +1026,11 @@ void project(Field& field, std::vector<Point>& points, int steps) {
 // without positive orientation.
 void polish_boundary(Field& field, std::vector<double>& points, std::span<const int32_t> cells,
                      std::span<const int32_t> faces) {
-  std::vector<int32_t> boundary(faces.begin(), faces.end());
-  std::sort(boundary.begin(), boundary.end());
-  boundary.erase(std::unique(boundary.begin(), boundary.end()), boundary.end());
+  std::vector<char> on_boundary(points.size() / 3, 0);
+  for (int32_t v : faces) on_boundary[static_cast<std::size_t>(v)] = 1;
+  std::vector<int32_t> boundary;
+  for (std::size_t v = 0; v < on_boundary.size(); ++v)
+    if (on_boundary[v]) boundary.push_back(static_cast<int32_t>(v));
   std::vector<Point> moved;
   moved.reserve(boundary.size());
   for (int32_t v : boundary) {
@@ -1061,7 +1072,15 @@ class SliverRemover {
       : points_(points), target_(std::cos(dihedral * (std::numbers::pi / 180.0))), ratio_(ratio),
         determinant_(determinant), fixed_(points.size() / 3, 0), stars_(points.size() / 3) {
     for (int32_t v : faces) fixed_[static_cast<std::size_t>(v)] = 1;
-    for (std::size_t c = 0; c < cells.size() / 4; ++c)
+    // Each star with room for its cells and a few the flips add.
+    std::vector<int32_t> degree(stars_.size(), 0);
+    for (int32_t v : cells) ++degree[static_cast<std::size_t>(v)];
+    for (std::size_t v = 0; v < stars_.size(); ++v) stars_[v].reserve(static_cast<std::size_t>(degree[v]) + 8);
+    const std::size_t count = cells.size() / 4;
+    cells_.reserve(2 * count);
+    alive_.reserve(2 * count);
+    cosine_.reserve(2 * count);
+    for (std::size_t c = 0; c < count; ++c)
       add({cells[4 * c], cells[4 * c + 1], cells[4 * c + 2], cells[4 * c + 3]});
   }
 
@@ -1169,12 +1188,19 @@ class SliverRemover {
 
   // The ring of cells around edge (a, b) and its vertices, ordered so that
   // (a, b, r[i], r[i + 1]) is positive; false unless the ring is closed.
-  bool ring(int32_t a, int32_t b, std::vector<int32_t>& around, std::vector<int32_t>& vertices) const {
-    around.clear();
-    for (int32_t c : stars_[static_cast<std::size_t>(a)])
-      if (has(cells_[static_cast<std::size_t>(c)], b)) around.push_back(c);
-    const std::size_t n = around.size();
-    if (n < 3 || n > 7) return false;
+  struct Ring {
+    std::array<int32_t, 7> cells, vertices;
+    std::size_t size = 0;
+  };
+  bool ring(int32_t a, int32_t b, Ring& result) const {
+    std::array<int32_t, 7> around;
+    std::size_t n = 0;
+    for (int32_t c : stars_[static_cast<std::size_t>(a)]) {
+      if (!has(cells_[static_cast<std::size_t>(c)], b)) continue;
+      if (n == around.size()) return false;
+      around[n++] = c;
+    }
+    if (n < 3) return false;
     std::array<std::array<int32_t, 2>, 7> links{};
     for (std::size_t k = 0; k < n; ++k) {
       const Cell& cell = cells_[static_cast<std::size_t>(around[k])];
@@ -1185,10 +1211,10 @@ class SliverRemover {
                      ? std::array<int32_t, 2>{other[0], other[1]}
                      : std::array<int32_t, 2>{other[1], other[0]};
     }
-    vertices.assign(1, links[0][0]);
-    std::vector<int32_t> ordered{around[0]};
+    result.vertices[0] = links[0][0];
+    result.cells[0] = around[0];
     // Follow the directed link edges from the first one.
-    std::vector<char> used(n, 0);
+    std::array<char, 7> used{};
     used[0] = 1;
     int32_t head = links[0][1];
     for (std::size_t step = 1; step < n; ++step) {
@@ -1197,12 +1223,12 @@ class SliverRemover {
         if (!used[k] && links[k][0] == head) next = k;
       if (next == n) return false;
       used[next] = 1;
-      vertices.push_back(head);
-      ordered.push_back(around[next]);
+      result.vertices[step] = head;
+      result.cells[step] = around[next];
       head = links[next][1];
     }
-    if (head != vertices.front()) return false;
-    around.swap(ordered);
+    if (head != result.vertices[0]) return false;
+    result.size = n;
     return true;
   }
 
@@ -1215,12 +1241,13 @@ class SliverRemover {
   // Retriangulates the ring of the best of c's interior edges.
   bool remove_edge(std::size_t c) {
     const Cell cell = cells_[c];
-    std::vector<int32_t> around, vertices;
+    Ring around;
     for (const auto& e : kEdges) {
       const int32_t a = cell[static_cast<std::size_t>(e[0])], b = cell[static_cast<std::size_t>(e[1])];
-      if (!ring(a, b, around, vertices)) continue;
-      const double before = worst(around);
-      const int n = static_cast<int>(vertices.size());
+      if (!ring(a, b, around)) continue;
+      const std::span<const int32_t> vertices(around.vertices.data(), around.size);
+      const double before = worst(std::span<const int32_t>(around.cells.data(), around.size));
+      const int n = static_cast<int>(around.size);
       // best[i][j]: the smallest largest cosine over triangulations of the
       // polygon vertices i..j; split[i][j] its apex.
       double best[7][7];
@@ -1244,19 +1271,21 @@ class SliverRemover {
           }
         }
       if (!(best[0][n - 1] < before)) continue;
-      for (int32_t old : around) kill(static_cast<std::size_t>(old));
-      std::vector<std::array<int, 2>> stack{{0, n - 1}};
-      while (!stack.empty()) {
-        const auto [i, j] = stack.back();
-        stack.pop_back();
+      for (std::size_t k = 0; k < around.size; ++k) kill(static_cast<std::size_t>(around.cells[k]));
+      // Depth-first over the split tree, at most n intervals pending.
+      std::array<std::array<int, 2>, 8> stack{};
+      std::size_t pending = 0;
+      stack[pending++] = {0, n - 1};
+      while (pending > 0) {
+        const auto [i, j] = stack[--pending];
         if (j - i < 2) continue;
         const int k = split[i][j];
         const int32_t ri = vertices[static_cast<std::size_t>(i)], rk = vertices[static_cast<std::size_t>(k)],
                       rj = vertices[static_cast<std::size_t>(j)];
         add({a, ri, rk, rj});
         add({b, rj, rk, ri});
-        stack.push_back({i, k});
-        stack.push_back({k, j});
+        stack[pending++] = {i, k};
+        stack[pending++] = {k, j};
       }
       return true;
     }
@@ -1518,8 +1547,15 @@ int32_t refine_surface(RestrictedMesher& mesher, Field& field, const PossibleZer
     if (status != PHX_MC_OK) return status;
     mesher.surface(state.cells, state.faces, state.facets);
     const SurfaceTopology surface = surface_topology(state.faces);
-    PointGrid vertices(width, state.faces.size() / 2);
-    for (int32_t v : state.faces) vertices.add({mesher.point(v)[0], mesher.point(v)[1], mesher.point(v)[2]});
+    // The surface's vertices, each once (a closed surface has about one per
+    // two faces).
+    PointGrid vertices(width, state.faces.size() / 6);
+    std::vector<char> added(static_cast<std::size_t>(mesher.vertex_count()), 0);
+    for (int32_t v : state.faces) {
+      if (added[static_cast<std::size_t>(v)]) continue;
+      added[static_cast<std::size_t>(v)] = 1;
+      vertices.add({mesher.point(v)[0], mesher.point(v)[1], mesher.point(v)[2]});
+    }
     std::vector<char> box_missed(roots.leaf_offsets.size() - 1, 0);
     state.uncovered = 0;
     for (std::size_t r = 0; r < roots.roots.size(); ++r) {

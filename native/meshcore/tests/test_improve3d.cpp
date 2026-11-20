@@ -1534,19 +1534,16 @@ void hexagonal_ring_reconnects_and_is_slot_invariant() {
   PHX_CHECK(first_after.cells.size() == 8 && first_after.vertices.size() == 8);
   PHX_CHECK(first_after.constrained_facets.size() == 12);
   PHX_CHECK(same_source_banks(first_before, first_after));
-  std::size_t six_ring_replacements = 0;
+  // The ring's axis (6, 7) is removed; flips over the cells' faces and
+  // valence-3/4 edges are tried before the closed-ring removal, so the
+  // reconnection may take several edits.
   for (const TetSnapshotCell& cell : first_after.cells) {
     PHX_CHECK(cell.region == 7);
-    if (cell.edit_kind == static_cast<std::int32_t>(TetEditKind::kRingReconnect) &&
-        cell.ancestor_cell_ids.size() == 6) {
-      ++six_ring_replacements;
-    }
     PHX_CHECK(std::find(cell.vertices.begin(), cell.vertices.end(), 6) ==
                   cell.vertices.end() ||
               std::find(cell.vertices.begin(), cell.vertices.end(), 7) ==
                   cell.vertices.end());
   }
-  PHX_CHECK(six_ring_replacements == 8);
   double minimum_angle = 0.0;
   double minimum_determinant = 0.0;
   double maximum_radius_edge = 0.0;

@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
+  per-triangle distance bounds between a finished CAD surface mesh and its
+  exact source (interior, trim lens, pole and knot-line terms), with lazily
+  built exact coefficient enclosures and interval jets for every CAD node kind.
+  Its rows count once an independent review of the proof is complete.
+- Native quadratic CAD node placement `phx_mc_cad_quadratic_nodes`: one P2
+  node per tetrahedral edge on its curve or face (curve midpoint parameters,
+  face midpoint UV), interior edges at midpoints, validity by the exact
+  quadratic tetrahedron check, harmonic repair then straightening of failing
+  cells with records.
 - `TetMesh3D.from_recovery` adopts a PLC recovery's native mesh
   (`PlcRecovery3D.native`, C API `phx_mc_tet_mesh_create_from_plc`): it takes
   the recovery's cell adjacency and, for a mesh that is its own source bank,
@@ -194,7 +204,7 @@
   implicit-face edges are collapsed onto existing vertices before the fill.
   The implicit-face fidelity bound is certified per triangle and is now
   always finite. The gradient-flow bound takes the better of the
-  componentwise interval and a centred form about the triangle centroid as
+  componentwise interval and a centered form about the triangle centroid as
   its gradient-norm lower bound; the componentwise interval alone contains
   zero wherever the normal turns across the box, which had left the bound
   infinite. A triangle it does not prove is split at its edge midpoints,
@@ -324,10 +334,23 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native restricted implicit meshing has a lower fixed per-call cost with
+  unchanged output: each lattice coordinate of the box tree is computed once
+  for all levels, the box tree's interval evaluation runs in reused batches,
+  the surface topology check groups edges instead of sorting them, and the
+  boundary polish and sliver pass allocate less (about 13% fewer cycles on
+  the implicit sphere and torus rows).
+- Native CAD surface meshing: every CAD face is meshed in its parameter chart
+  by a frontal metric refinement kernel with a guarded worst-angle pass and
+  assembled into one surface with shared curve discretizations, pole fans and
+  explicit refusal records; chart refinement falls back to the midpoint of
+  the longest unconstrained edge when both the frontal point and the
+  circumcenter are refused as too close to a vertex. Chart meshes and face
+  outputs change (no fingerprinted consumer yet).
 - Native surface-to-tetrahedra is faster with identical output: insphere
   evaluates Shewchuk's stages B and C on stack expansions before the full
   expansion (`insphere_decision` reports the deciding stage and tests pin the
-  stage B and C bounds); PLC recovery recognises a source that conforms to the
+  stage B and C bounds); PLC recovery recognizes a source that conforms to the
   Delaunay triangulation of its points (every triangle a face, every edge row an
   edge, every cell positive) and only labels its faces, without bounding
   corners, reuses the preparation's sorted edge index, finds subfaces in a
@@ -335,7 +358,7 @@
   full classification, in order, on any conflict); the Delaunay build commits
   each cone in one pass; refinement looks up facet edges in a slot table,
   deduplicates feature lines by counting sort and queries feature sizes cell
-  by cell; subface legalisation keeps its edge map across flips and rechecks
+  by cell; subface legalization keeps its edge map across flips and rechecks
   only edges a flip or split can have changed (two small fixed-boundary
   inputs: 422 s -> 4.7 s and more than 600 s -> 12.4 s).
 - Analytic implicit certification is faster with identical identities:
@@ -1842,7 +1865,7 @@
   once: the saved torus carrier fills with 1766 instead of 5956 cells, and the
   first metric epoch refines.
 - The implicit qualification fidelity ladder no longer requires the exact
-  volume error to fall strictly. The sagitta-centred carrier's error is a
+  volume error to fall strictly. The sagitta-centered carrier's error is a
   near-cancellation of outward and inward caps and is not monotone in the
   tolerance. Every level must instead hold the exact volume inside the certified
   enclosure V(r ± ε) at its certified mesh-to-source bound ε. Both ε and the
@@ -1884,6 +1907,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The CUDA native loader no longer rewraps its own missing-dependency refusal
+  as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
+  re-raised as is.
 - Certified derivative bounds no longer miss kinks. Nested-JVP acceleration
   and Hessian enclosures differentiate `abs`, min/max and selections
   piecewise, so c(t) = (t, |t - 1/2|) was certified at about 1e-16 chord

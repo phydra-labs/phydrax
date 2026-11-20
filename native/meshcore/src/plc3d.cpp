@@ -744,15 +744,37 @@ class SourcePreparer {
   }
 
   void build_groups() {
-    std::vector<std::pair<uint64_t, int32_t>> uses;
-    uses.reserve(3 * triangles_.size());
-    for (int32_t triangle = 0; triangle < static_cast<int32_t>(triangles_.size()); ++triangle) {
-      const Triple& face = triangles_[static_cast<std::size_t>(triangle)];
-      for (int k = 0; k < 3; ++k) {
-        uses.push_back({topology::undirected_edge(face[k], face[(k + 1) % 3]), triangle});
+    // The uses sorted by (edge key, triangle): a stable counting sort on the
+    // lower endpoint of the uses listed in triangle order, then each lower
+    // endpoint's few uses by key, stably.
+    std::size_t vertex_bound = 0;
+    for (const Triple& face : triangles_) {
+      for (const int32_t vertex : face) {
+        vertex_bound = std::max(vertex_bound, static_cast<std::size_t>(vertex) + 1);
       }
     }
-    std::sort(uses.begin(), uses.end());
+    std::vector<uint32_t> starts(vertex_bound + 1, 0U);
+    for (const Triple& face : triangles_) {
+      for (int k = 0; k < 3; ++k) {
+        ++starts[static_cast<std::size_t>(std::min(face[k], face[(k + 1) % 3])) + 1];
+      }
+    }
+    std::partial_sum(starts.begin(), starts.end(), starts.begin());
+    std::vector<std::pair<uint64_t, int32_t>> uses(3 * triangles_.size());
+    {
+      std::vector<uint32_t> cursor(starts.begin(), starts.end() - 1);
+      for (int32_t triangle = 0; triangle < static_cast<int32_t>(triangles_.size()); ++triangle) {
+        const Triple& face = triangles_[static_cast<std::size_t>(triangle)];
+        for (int k = 0; k < 3; ++k) {
+          const uint64_t key = topology::undirected_edge(face[k], face[(k + 1) % 3]);
+          uses[cursor[static_cast<std::size_t>(key >> 32)]++] = {key, triangle};
+        }
+      }
+    }
+    for (std::size_t low = 0; low < vertex_bound; ++low) {
+      std::stable_sort(uses.begin() + starts[low], uses.begin() + starts[low + 1],
+                       [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
     std::vector<int32_t> parent(triangles_.size());
     std::iota(parent.begin(), parent.end(), 0);
     edge_runs_.clear();
