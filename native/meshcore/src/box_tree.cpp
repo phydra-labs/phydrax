@@ -186,6 +186,11 @@ int32_t possible_leaves(const IntervalProgramView& interval, Axes& axes, int32_t
           leaves.push_back({level, index, frontier_boxes[b], true});
           continue;
         }
+        // The next level evaluates every child: refuse before holding more
+        // children than the budget can evaluate (the same refusal the next
+        // level's check makes, without allocating past the budget).
+        if (static_cast<int64_t>(children.size()) + 8 > budget - evaluated_boxes)
+          return PHX_MC_CAPACITY_EXCEEDED;
         for (int64_t octant = 0; octant < 8; ++octant)
           children.push_back({2 * index[0] + (octant & 1), 2 * index[1] + ((octant >> 1) & 1),
                               2 * index[2] + ((octant >> 2) & 1)});
