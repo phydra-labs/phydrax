@@ -306,6 +306,51 @@ void overlap_bound_refuses_an_uncertified_determinant() {
   PHX_CHECK(phx::mc::remesh::overlap_gap_bound(thin, thin_space, wide, wide_space) >= 2.0);
 }
 
+// A sliver whose determinant is certified (2^-43, exact in binary64) but
+// whose u * condition is about 5 * 2^-10: inside a wide triangle its map is
+// refused (+inf, the first-order pad no longer bounds the rounding); moved
+// exactly clear of the wide triangle the overlap is empty and bounds nothing.
+void overlap_bound_refuses_an_ill_conditioned_map() {
+  using phx::mc::remesh::Planar;
+  constexpr double delta = 0x1p-44;
+  const std::array<Planar, 3> sliver{Planar{-1.0, 0.0}, Planar{1.0, 0.0}, Planar{0.0, delta}};
+  const std::array<Point, 3> sliver_space{Point{-1.0, 0.0, 0.0}, Point{1.0, 0.0, 0.0},
+                                          Point{0.0, delta, 0.0}};
+  const std::array<Planar, 3> wide{Planar{-3.0, -1.0}, Planar{3.0, -1.0}, Planar{0.0, 3.0}};
+  const std::array<Point, 3> wide_space{Point{-3.0, -1.0, 0.0}, Point{3.0, -1.0, 0.0},
+                                        Point{0.0, 3.0, 0.0}};
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(wide, wide_space, sliver, sliver_space) ==
+            std::numeric_limits<double>::infinity());
+  std::array<Planar, 3> clear = sliver;
+  for (Planar& p : clear) p[0] += 10.0;
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(wide, wide_space, clear, sliver_space) == 0.0);
+}
+
+// A slab (|x|, |y| <= 1, |z| <= 0.01) whose top face holds such a sliver
+// along y = 0. A flat triangle 0.01 above the top face crosses it: the
+// sliver's map is refused, and triangle_bound still returns the finite
+// height-gap bound for it, so the triangle is bounded by about 0.01, at
+// least its exact distance.
+void triangle_bound_falls_back_to_the_height_gap() {
+  using phx::mc::remesh::Projection;
+  constexpr double t = 0.01, delta = 0x1p-44;
+  const std::vector<Point> points{
+      {-1, -1, t}, {1, -1, t},  {1, 1, t},   {-1, 1, t},  {-1, 0, t},  {1, 0, t},  {0, delta, t},
+      {-1, -1, -t}, {1, -1, -t}, {1, 1, -t}, {-1, 1, -t}, {-1, 0, -t}, {1, 0, -t}};
+  const std::vector<Triangle> triangles{
+      {0, 1, 5},  {0, 5, 4},   {4, 5, 6},  {6, 5, 2},  {6, 2, 3},   {4, 6, 3},     // top
+      {7, 12, 8}, {7, 11, 12}, {11, 9, 12}, {11, 10, 9},                          // bottom
+      {0, 7, 8},  {0, 8, 1},                                                      // y = -1
+      {1, 8, 12}, {1, 12, 5},  {5, 12, 9}, {5, 9, 2},                             // x = 1
+      {2, 9, 10}, {2, 10, 3},                                                     // y = 1
+      {3, 10, 11}, {3, 11, 4}, {4, 11, 7}, {4, 7, 0}};                            // x = -1
+  MeshSource source;
+  PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
+  const double bound = source.triangle_bound({-0.5, -0.3, 2 * t}, {0.5, -0.3, 2 * t},
+                                             {0.0, 0.4, 2 * t}, Projection::kOwnNormal);
+  PHX_CHECK(bound >= t && bound <= 1.001 * t);
+}
+
 // An open source or a nonfinite coordinate is refused at bind.
 void bind_refuses_invalid_sources() {
   std::vector<Point> points;
@@ -429,6 +474,8 @@ int main() {
   overlap_bound_encloses_a_near_parallel_crossing();
   overlap_bound_covers_a_case_floating_clipping_missed();
   overlap_bound_refuses_an_uncertified_determinant();
+  overlap_bound_refuses_an_ill_conditioned_map();
+  triangle_bound_falls_back_to_the_height_gap();
   bind_refuses_invalid_sources();
   remesh_then_certify_round_trip();
   return phx::mc::test::finish("test_mesh_source");

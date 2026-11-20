@@ -8,7 +8,6 @@ that reference uses absolute per-triangle area and accepts a single flipped row.
 from __future__ import annotations
 
 import ctypes
-import os
 from collections import defaultdict
 from fractions import Fraction
 from itertools import combinations
@@ -16,6 +15,7 @@ from itertools import combinations
 import numpy as np
 from numpy.typing import NDArray
 
+from phydrax._meshcore import load_meshcore
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.geometry._exact_polyhedral_geometry import triangle_contact_points3
@@ -29,33 +29,46 @@ type _Point3 = tuple[Fraction, Fraction, Fraction]
 
 
 class _ChartFailure(ctypes.Structure):
-    _fields_ = [("kind", ctypes.c_int32), ("patch", ctypes.c_int64),
-                ("row", ctypes.c_int64), ("other", ctypes.c_int64)]
+    _fields_ = [
+        ("kind", ctypes.c_int32),
+        ("patch", ctypes.c_int64),
+        ("row", ctypes.c_int64),
+        ("other", ctypes.c_int64),
+    ]
 
 
 def _chart_verdict(uv: NDArray[np.float64]) -> bool:
-    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
-    function = library.phx_mc_verify_chart_partition
-    function.restype = ctypes.c_int32
-    function.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64,
-                         ctypes.c_void_p, ctypes.POINTER(ctypes.c_int64)]
+    function = load_meshcore()["phx_mc_verify_chart_partition"]
     uv = np.ascontiguousarray(uv, dtype=np.float64)
     triangle_patch = np.zeros(len(uv), dtype=np.int32)
     use_patch = np.zeros(4, dtype=np.int64)
     use_range = np.tile(np.asarray((0.0, 1.0), dtype=np.float64), (4, 1))
     chord_use = np.arange(4, dtype=np.int64)
     chord_loop = np.zeros(4, dtype=np.int64)
-    chord_uv = np.asarray((((0, 0), (1, 0)), ((1, 0), (1, 1)),
-                           ((1, 1), (0, 1)), ((0, 1), (0, 0))), dtype=np.float64)
+    chord_uv = np.asarray(
+        (((0, 0), (1, 0)), ((1, 0), (1, 1)), ((1, 1), (0, 1)), ((0, 1), (0, 0))),
+        dtype=np.float64,
+    )
     evidence = (_ChartFailure * 128)()
     count = ctypes.c_int64()
-    status = function(1, len(uv), triangle_patch.ctypes.data, uv.ctypes.data,
-                      4, use_patch.ctypes.data, use_range.ctypes.data, 1, 4,
-                      chord_use.ctypes.data, chord_loop.ctypes.data, chord_uv.ctypes.data,
-                      use_range.ctypes.data, 128, evidence, ctypes.byref(count))
+    status = function(
+        1,
+        len(uv),
+        triangle_patch.ctypes.data,
+        uv.ctypes.data,
+        4,
+        use_patch.ctypes.data,
+        use_range.ctypes.data,
+        1,
+        4,
+        chord_use.ctypes.data,
+        chord_loop.ctypes.data,
+        chord_uv.ctypes.data,
+        use_range.ctypes.data,
+        128,
+        ctypes.addressof(evidence),
+        ctypes.addressof(count),
+    )
     if status != 0:
         raise RuntimeError(f"chart verifier refused input: {status}")
     return count.value == 0
@@ -82,14 +95,19 @@ def _signed_area(triangle: NDArray[np.float64]) -> Fraction:
 
 
 def test_chart_partition_differential() -> None:
-    good = np.asarray((((0, 0), (1, 0), (1, 1)),
-                       ((0, 0), (1, 1), (0, 1))), dtype=np.float64)
+    good = np.asarray(
+        (((0, 0), (1, 0), (1, 1)), ((0, 0), (1, 1), (0, 1))), dtype=np.float64
+    )
     missing = good[:1].copy()
     perturbed = good.copy()
     perturbed[1, 1, 0] = 0.75
     folded = np.asarray((good[0], good[0, ::-1]), dtype=np.float64)
-    for candidate, expected in ((good, True), (missing, False),
-                                (perturbed, False), (folded, False)):
+    for candidate, expected in (
+        (good, True),
+        (missing, False),
+        (perturbed, False),
+        (folded, False),
+    ):
         assert _python_chart_verdict(candidate, good) is expected
         assert _chart_verdict(candidate) is expected
 
@@ -101,8 +119,12 @@ def test_chart_partition_differential() -> None:
 
 
 class _SurfaceFinding(ctypes.Structure):
-    _fields_ = [("kind", ctypes.c_int32), ("first", ctypes.c_int64),
-                ("second", ctypes.c_int64), ("classification", ctypes.c_int32)]
+    _fields_ = [
+        ("kind", ctypes.c_int32),
+        ("first", ctypes.c_int64),
+        ("second", ctypes.c_int64),
+        ("classification", ctypes.c_int32),
+    ]
 
 
 class _SurfaceVerdict(ctypes.Structure):
@@ -110,17 +132,20 @@ class _SurfaceVerdict(ctypes.Structure):
 
 
 def _surface_verdict(points: NDArray[np.float64], triangles: NDArray[np.int64]) -> bool:
-    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
-    function = library.phx_mc_verify_surface_embedding
-    function.restype = ctypes.c_int32
-    function.argtypes = [ctypes.c_int64, ctypes.c_void_p, ctypes.c_int64, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_void_p, ctypes.POINTER(_SurfaceVerdict)]
+    function = load_meshcore()["phx_mc_verify_surface_embedding"]
     points = np.ascontiguousarray(points, dtype=np.float64)
     triangles = np.ascontiguousarray(triangles, dtype=np.int64)
     evidence = (_SurfaceFinding * 512)()
     verdict = _SurfaceVerdict()
-    status = function(len(points), points.ctypes.data, len(triangles), triangles.ctypes.data,
-                      512, evidence, ctypes.byref(verdict))
+    status = function(
+        len(points),
+        points.ctypes.data,
+        len(triangles),
+        triangles.ctypes.data,
+        512,
+        ctypes.addressof(evidence),
+        ctypes.addressof(verdict),
+    )
     if status != 0:
         raise RuntimeError(f"surface verifier refused input: {status}")
     return verdict.finding_count == 0
@@ -128,8 +153,12 @@ def _surface_verdict(points: NDArray[np.float64], triangles: NDArray[np.int64]) 
 
 def _reference_surface(points: NDArray[np.float64], triangles: NDArray[np.int64]) -> bool:
     exact: tuple[_Point3, ...] = tuple(
-        (Fraction.from_float(float(p[0])), Fraction.from_float(float(p[1])),
-         Fraction.from_float(float(p[2]))) for p in points
+        (
+            Fraction.from_float(float(p[0])),
+            Fraction.from_float(float(p[1])),
+            Fraction.from_float(float(p[2])),
+        )
+        for p in points
     )
     edges: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
     for row in triangles:
@@ -139,8 +168,16 @@ def _reference_surface(points: NDArray[np.float64], triangles: NDArray[np.int64]
     if any(len(rows) != 2 or rows[0] != rows[1][::-1] for rows in edges.values()):
         return False
     for first, second in combinations(range(len(triangles)), 2):
-        ids1 = (int(triangles[first, 0]), int(triangles[first, 1]), int(triangles[first, 2]))
-        ids2 = (int(triangles[second, 0]), int(triangles[second, 1]), int(triangles[second, 2]))
+        ids1 = (
+            int(triangles[first, 0]),
+            int(triangles[first, 1]),
+            int(triangles[first, 2]),
+        )
+        ids2 = (
+            int(triangles[second, 0]),
+            int(triangles[second, 1]),
+            int(triangles[second, 2]),
+        )
         common = set(ids1) & set(ids2)
         contacts = triangle_contact_points3(
             (exact[ids1[0]], exact[ids1[1]], exact[ids1[2]]),
@@ -152,15 +189,17 @@ def _reference_surface(points: NDArray[np.float64], triangles: NDArray[np.int64]
 
 
 def test_surface_embedding_differential() -> None:
-    points = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
-                        dtype=np.float64)
-    triangles = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)),
-                           dtype=np.int64)
+    points = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    triangles = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)), dtype=np.int64)
     flipped = triangles.copy()
     flipped[0] = flipped[0, ::-1]
     nonmanifold = np.concatenate((triangles, triangles[:1]))
-    for rows, expected in ((triangles, True), (triangles[:-1], False),
-                           (flipped, False), (nonmanifold, False)):
+    for rows, expected in (
+        (triangles, True),
+        (triangles[:-1], False),
+        (flipped, False),
+        (nonmanifold, False),
+    ):
         assert _reference_surface(points, rows) is expected
         assert _surface_verdict(points, rows) is expected
 
@@ -171,18 +210,32 @@ def test_surface_embedding_differential() -> None:
 
 
 def _python_embedding(points: NDArray[np.float64], triangles: NDArray[np.int64]) -> bool:
-    mesh = CellMesh(points, (CellBlock("triangles", "triangle", triangles.astype(np.int32)),))
+    mesh = CellMesh(
+        points, (CellBlock("triangles", "triangle", triangles.astype(np.int32)),)
+    )
     geometry = CellGeometrySpec.affine(mesh)
     validity = certify_cell_geometry_validity(geometry, mesh=mesh)
     return certify_global_embedding(mesh, geometry, validity).status == "certified"
 
 
 def test_sphere_and_crossing_python_embedding() -> None:
-    points = np.asarray(((1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0),
-                         (0, 0, 1), (0, 0, -1)), dtype=np.float64)
-    triangles = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4),
-                            (1, 0, 5), (2, 1, 5), (3, 2, 5), (0, 3, 5)),
-                           dtype=np.int64)
+    points = np.asarray(
+        ((1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(
+        (
+            (0, 1, 4),
+            (1, 2, 4),
+            (2, 3, 4),
+            (3, 0, 4),
+            (1, 0, 5),
+            (2, 1, 5),
+            (3, 2, 5),
+            (0, 3, 5),
+        ),
+        dtype=np.int64,
+    )
     assert _python_embedding(points, triangles)
     assert _surface_verdict(points, triangles)
     crossing_points = np.concatenate((points, points + np.asarray((0.5, 0.25, 0.125))))

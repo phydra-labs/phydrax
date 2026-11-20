@@ -983,6 +983,7 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
     const size_t m = triangles.size();
     refused.assign(m, 0);
     changed.assign(m, 0);
+    counters.carried.assign(m, 0);
     next.clear();
     next.reserve(m);
     double maximum = 0;
@@ -996,14 +997,19 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
       const bool known = found != decided.end() && found->key == key;
       changed[t] = known && !found->refused ? 0 : 1;
       // The proof first (decided once per triangle); a refused triangle of
-      // the carrier's own is accepted at the carrier's distance.
+      // the carrier's own is accepted at the bound its producer proved.
       const double proved = known ? found->bound : certifier.bound(a, b, c);
       if (!known && !(proved < kInfinity)) ++counters.refused_fidelity;
       double bound = proved;
-      if (!(proved < kInfinity) &&
-          std::binary_search(carrier.keys.begin(), carrier.keys.end(), key)) {
-        bound = carrier.distance;
-        ++carried;
+      if (!(proved < kInfinity)) {
+        const auto entry = std::lower_bound(
+            carrier.entries.begin(), carrier.entries.end(), key,
+            [](const std::pair<TriangleKey, double>& x, const TriangleKey& k) { return x.first < k; });
+        if (entry != carrier.entries.end() && entry->first == key) {
+          bound = entry->second;
+          counters.carried[t] = 1;
+          ++carried;
+        }
       }
       if (bound < kInfinity)
         maximum = std::max(maximum, bound);
@@ -1060,6 +1066,17 @@ PHX_MC_API int32_t phx_mc_surface_result_arrays(void* result, int64_t vertex_cap
     for (size_t d = 0; d < 3; ++d) vertices[3 * v + d] = data.points[v][d];
   for (size_t t = 0; t < data.triangles.size(); ++t)
     for (size_t k = 0; k < 3; ++k) triangles[3 * t + k] = data.triangles[t][k];
+  return PHX_MC_OK;
+}
+
+PHX_MC_API int32_t phx_mc_surface_result_carried(const void* result, int64_t triangle_capacity,
+                                                 uint8_t* carried) {
+  if (result == nullptr || carried == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  const auto& data = *static_cast<const phx::mc::remesh::SurfaceResult*>(result);
+  if (triangle_capacity < static_cast<int64_t>(data.triangles.size()))
+    return PHX_MC_CAPACITY_EXCEEDED;
+  for (size_t t = 0; t < data.triangles.size(); ++t)
+    carried[t] = data.carried.empty() ? 0 : data.carried[t];
   return PHX_MC_OK;
 }
 

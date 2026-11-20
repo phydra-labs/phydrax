@@ -2485,7 +2485,11 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     assert remeshed.orientation == 1
     assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
     assert np.min(_minimum_triangle_angles(remeshed.vertices, remeshed.triangles)) >= 30.0
-    controls = (0.005, 0.15, 30.0)
+    no_carrier = (
+        np.empty((0, 3), dtype=np.float64),
+        np.empty((0, 3), dtype=np.int64),
+        np.empty((0, 2, 3), dtype=np.float64),
+    )
     certificate = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
@@ -2495,32 +2499,29 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         1,
         vertices,
         faces,
-        *controls,
+        _widened_boxes(vertices, faces, 0.005),
+        0.15,
+        30.0,
     )
     assert 0.0 <= certificate.distance <= 0.01
     # Input triangles the remesh left untouched are proved, not carried.
-    assert certificate.counters[3] == 0
+    assert certificate.counters[3] == 0 and not np.any(certificate.carried)
     # Nothing needed repair: the certified surface is the constructed one.
     assert certificate.counters[4] == 0
     np.testing.assert_array_equal(certificate.vertices, remeshed.vertices)
     np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
     # A vertex lifted off the sphere: its star fails the proof and splitting
-    # cannot repair it, unless the carrier holds those very triangles, which
-    # are then accepted at the carrier's distance, here above the tolerance.
+    # cannot repair it, unless the carrier holds those very triangles with
+    # witness boxes that straddle the sphere; they are then accepted at their
+    # box diagonals (above the tolerance) and flagged as carried.
     lifted = np.array(remeshed.vertices)
     lifted[0] *= 1.05
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         zero_set_certify(
-            lifted,
-            remeshed.triangles,
-            value,
-            gradient,
-            0.01,
-            1,
-            vertices,
-            faces,
-            *controls,
+            lifted, remeshed.triangles, value, gradient, 0.01, 1, *no_carrier, 0.15, 30.0
         )
+    carrier_faces = remeshed.triangles[:, (1, 2, 0)]
+    boxes = _widened_boxes(lifted, carrier_faces, 0.02)
     carried = zero_set_certify(
         lifted,
         remeshed.triangles,
@@ -2529,13 +2530,37 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         0.01,
         1,
         lifted,
-        remeshed.triangles[:, (1, 2, 0)],
-        0.02,
+        carrier_faces,
+        boxes,
         0.15,
         30.0,
     )
-    assert carried.distance == 0.02
     assert carried.counters[3] > 0 and carried.counters[4] == 0
+    assert np.count_nonzero(carried.carried) == carried.counters[3]
+    diagonals = np.linalg.norm(boxes[:, 1] - boxes[:, 0], axis=1)
+    assert 0.01 < carried.distance <= np.max(diagonals) * (1 + 1e-12)
+    # Boxes entirely outside the sphere prove no zero: nothing is carried.
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            value,
+            gradient,
+            0.01,
+            1,
+            lifted,
+            carrier_faces,
+            boxes + 10.0,
+            0.15,
+            30.0,
+        )
+
+
+def _widened_boxes(
+    vertices: np.ndarray, faces: np.ndarray, widen: float, /
+) -> np.ndarray:
+    corners = np.asarray(vertices, dtype=np.float64)[np.asarray(faces)]
+    return np.stack((corners.min(axis=1) - widen, corners.max(axis=1) + widen), axis=1)
 
 
 def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
@@ -2566,15 +2591,13 @@ def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     controls = (value, gradient, 0.01, 0.15, _sphere_distance, _sphere_samples)
-    missed, measured = _zero_set_quality(remeshed, vertices, faces, *controls)
+    missed, measured = _zero_set_quality(remeshed, *controls)
     assert missed == 0 and measured["certified"] == 1.0
     # A vertex lifted off the sphere: the certificate refuses it, which counts
     # one miss beyond those of the sampled quality.
     lifted = np.array(remeshed.vertices)
     lifted[0] *= 1.05
-    missed, measured = _zero_set_quality(
-        remeshed._replace(vertices=lifted), vertices, faces, *controls
-    )
+    missed, measured = _zero_set_quality(remeshed._replace(vertices=lifted), *controls)
     sampled, _ = _surface_quality(
         lifted, remeshed.triangles, _sphere_distance, _sphere_samples, 0.01
     )
@@ -2667,15 +2690,17 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
         remeshed.orientation,
         vertices,
         faces,
-        0.01,
+        _widened_boxes(vertices, faces, 0.02),
         0.2,
         30.0,
     )
-    # Triangles next to the crease rest on the carrier; boxes of nearby
-    # remeshed triangles straddle the slanted branch switch, fail
-    # transversality and are repaired by splits within the round budget.
-    assert certified.distance <= 0.02
+    # Triangles next to the crease rest on the carrier, accepted at their
+    # witness boxes' diagonals; boxes of nearby remeshed triangles straddle
+    # the slanted branch switch, fail transversality and are repaired by
+    # splits within the round budget.
     assert certified.counters[3] > 0
+    assert np.count_nonzero(certified.carried) == certified.counters[3]
+    assert certified.distance > 0.02
     assert certified.counters[0] > certified.counters[3]
     assert certified.counters[4] > 0 and certified.counters[5] <= 4
     directed = {
