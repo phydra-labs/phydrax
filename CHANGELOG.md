@@ -400,6 +400,18 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Fixed-boundary PLC recovery refuses a source triangle whose smallest-angle
+  sine is below the 2^-22 relative-determinant floor before meshing
+  (`UNRESOLVED` / `INVALID_FACET`, naming the triangle and its polygon, with
+  the sine and the floor as failure evidence), since no cell on such a face can
+  clear the floor. Tetrahedral improvement accepts an edit only if it lowers a
+  stated residual (cells below the floor, then the mesh's lowest score and how
+  many cells have it, then the total score deficit, then the cell count),
+  which bounds the insertion/collapse churn on hostile fixed boundaries (a
+  flat-seam sphere: 164 s -> about 18 s for refinement and improvement).
+  Declared output change: improved meshes on several reference surfaces differ
+  by at most a few tenths of a percent in cell count, with unchanged quality
+  and unmet counts.
 - Process-lifetime host caches keyed by open element degrees, orders,
   polygon arities, kinematic topologies, quadrature orders and trigonometric
   tables are bounded (the trigonometric table store is least-recently-used),
