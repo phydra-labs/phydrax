@@ -2744,6 +2744,62 @@ PHX_MC_API int32_t phx_mc_cad_curves_test(
     int64_t split_capacity, int64_t* sag_splits,
     phx_mc_cad_curve_statistics* statistics);
 
+/* Surface embedding verifier. Findings are deterministic; edge findings carry
+ * vertex indices, contact findings triangle indices and their exact intersection
+ * classification. Outside-domain and degenerate findings identify the point
+ * or triangle, respectively. Insufficient capacity leaves outputs unchanged. */
+enum phx_mc_surface_finding_kind {
+  PHX_MC_SURFACE_OUTSIDE_DOMAIN = 1,
+  PHX_MC_SURFACE_DEGENERATE = 2,
+  PHX_MC_SURFACE_EDGE = 3,
+  PHX_MC_SURFACE_VERTEX_LINK = 4,
+  PHX_MC_SURFACE_CONTACT = 5,
+  PHX_MC_SURFACE_EMPTY = 6
+};
+typedef struct phx_mc_surface_finding {
+  int32_t kind;
+  int64_t first;
+  int64_t second;
+  int32_t classification;
+} phx_mc_surface_finding;
+typedef struct phx_mc_surface_embedding_verdict {
+  int32_t status;
+  int64_t finding_count;
+} phx_mc_surface_embedding_verdict;
+PHX_MC_API int32_t phx_mc_verify_surface_embedding(
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, int64_t finding_capacity,
+    phx_mc_surface_finding* findings, phx_mc_surface_embedding_verdict* verdict);
+
+/* Chart partition verifier. UV triangles and trim chords are already in one
+ * lifted chart per patch; the producer refuses non-closing lifts. No periodic
+ * identification is performed. Each use belongs to a patch and has a directed
+ * nonempty range; each directed chord belongs to one use and numbered loop.
+ * Triangle UV is (triangle_count,3,2), chord UV (chord_count,2,2), and ranges
+ * are (count,2). The source must establish that its oriented trim cycles bound
+ * the patch. Endpoint and range joins compare bitwise, including signed zero.
+ * On OK evidence_count gives the failures (zero certifies). Insufficient
+ * capacity reports the required count without writing evidence. */
+enum phx_mc_chart_failure_kind {
+  PHX_MC_CHART_ORIENTATION = 1,
+  PHX_MC_CHART_EDGE = 2,
+  PHX_MC_CHART_USE_COVERAGE = 3,
+  PHX_MC_CHART_LOOP = 4
+};
+typedef struct phx_mc_chart_failure {
+  int32_t kind;
+  int64_t patch;
+  int64_t row;
+  int64_t other;
+} phx_mc_chart_failure;
+PHX_MC_API int32_t phx_mc_verify_chart_partition(
+    int64_t patch_count, int64_t triangle_count, const int32_t* triangle_patch,
+    const double* triangle_uv, int64_t use_count, const int64_t* use_patch,
+    const double* use_range, int64_t loop_count, int64_t chord_count,
+    const int64_t* chord_use, const int64_t* chord_loop, const double* chord_uv,
+    const double* chord_range, int64_t evidence_capacity,
+    phx_mc_chart_failure* evidence, int64_t* evidence_count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -63,7 +63,7 @@ from ._source_boundary_records import SourceBoundaryChartWitness
 
 if TYPE_CHECKING:
     from ._meshing_domain import _PlacedSurfacePatch
-    from .brep._patches import RevolutionSurface
+    from .brep._patches import AbstractSurfacePatch, RevolutionSurface
 
 
 def _has_analytic_source_program(surface: object, /) -> bool:
@@ -373,12 +373,13 @@ def _prepare_analytic_source_program(
 def _exact_rational_span_interpolation_bounds(
     spans: PreparedSourceSpans[RationalBSplineSurfaceSpan],
     charts: tuple[tuple[tuple[Fraction, Fraction], ...], ...],
+    surface: AbstractSurfacePatch,
     /,
 ) -> np.ndarray:
     from ._meshing_domain import _exact_spline_interpolation_bounds
 
     return _exact_spline_interpolation_bounds(
-        np.asarray(charts, dtype=np.object_), spans, charts
+        np.asarray(charts, dtype=np.object_), spans, charts, surface
     )
 
 
@@ -1945,7 +1946,7 @@ def certify_domain_surface_charts(
             try:
                 if spans is not None:
                     interpolation = _exact_rational_span_interpolation_bounds(
-                        spans, tuple(charts[row] for row in rows)
+                        spans, tuple(charts[row] for row in rows), surface
                     )
                     if (
                         interpolation.shape != (len(rows),)
