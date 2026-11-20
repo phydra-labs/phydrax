@@ -18,6 +18,7 @@
 #include "cad_geometry.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
+#include "verify_cad_fidelity.hpp"
 
 namespace {
 
@@ -589,6 +590,126 @@ void intersection_chart() {
   PHX_CHECK(!geometry.jets(point, &outside, 0, jet, workspace));
 }
 
+void spline_interval_nodes() {
+  Builder b;
+  const std::vector<double> knots{0, 0, 0, 0.5, 1, 1, 1};
+  const int32_t curve = b.add(PHX_MC_CAD_NODE_BSPLINE_CURVE, {2, 4, 3},
+      concat({knots, {0, 0, 0, 0.2, 0.7, 0.1, 0.8, 0.4, 0.3, 1, 1, 0},
+              {1, 0.7, 1.2, 1}}));
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1,
+       0, 0, 0, 0, 1, 0.2, 1, 0, 0.3, 1, 1, 0.5, 1, 0.7, 1.2, 1});
+  b.surfaces = {surface};
+  b.curves = {curve};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double lo[2] = {0.2, 0.25}, hi[2] = {0.8, 0.75};
+  for (int node : {curve, surface}) {
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(node, lo, hi, order, lower, upper, workspace) ==
+                PHX_MC_OK);
+      const int count = 3 * (node == curve ? order + 1 : (order + 1) * (order + 2) / 2);
+      for (int i = 0; i <= 20; ++i)
+        for (int j = 0; j <= (node == curve ? 0 : 20); ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 20,
+                                lo[1] + (hi[1] - lo[1]) * j / 20};
+          PHX_CHECK(geometry.jets(node, uv, order, jet, point_workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
+}
+
+void spline_bernstein_enclosure_reference() {
+  static constexpr double reference[2][20] = {
+#include "spline_hessian_fixture.inc"
+  };
+  const double third = 1.0 / 3.0;
+  Builder b;
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1, 0, 0, third, 0, 1, third,
+       1, 0, third, 1, 1, third, 1, third, 2 * third, 1});
+  b.surfaces = {surface};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  std::vector<double> lower_coefficients = b.reals, upper_coefficients = b.reals;
+  for (int i : {10, 13, 16, 19, 21, 22})
+    upper_coefficients[i] = std::nextafter(upper_coefficients[i],
+                                           std::numeric_limits<double>::infinity());
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = lower_coefficients.data();
+  workspace.coefficient_upper = upper_coefficients.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double box_lower[2][2] = {{0.5, 0}, {0, 0.5}};
+  const double box_upper[2][2] = {{1, 0.5}, {0.5, 1}};
+  for (int row = 0; row < 2; ++row) {
+    double lower[18], upper[18];
+    PHX_CHECK(geometry.interval_jets(surface, box_lower[row], box_upper[row], 2,
+                                     lower, upper, workspace) == PHX_MC_OK);
+    // The native denominator uses the positive-weight convex hull.
+    PHX_CHECK(lower_coefficients[21] <= reference[row][0]);
+    PHX_CHECK(upper_coefficients[20] >= reference[row][1]);
+    for (int i = 0; i < 9; ++i) {
+      PHX_CHECK(lower[9 + i] <= reference[row][2 + 2 * i]);
+      PHX_CHECK(upper[9 + i] >= reference[row][3 + 2 * i]);
+    }
+  }
+}
+
+void spline_kink_fidelity() {
+  for (int degree : {1, 2}) {
+    Builder b;
+    const std::vector<double> knots = degree == 1
+        ? std::vector<double>{0, 0, 0.5, 1, 1}
+        : std::vector<double>{0, 0, 0, 0.5, 0.5, 1, 1, 1};
+    const std::vector<double> x = degree == 1
+        ? std::vector<double>{0, 0.5, 1} : std::vector<double>{0, 0.25, 0.5, 0.75, 1};
+    const std::vector<double> z = degree == 1
+        ? std::vector<double>{0, 1, 0} : std::vector<double>{0, 0, 1, 0, 0};
+    std::vector<double> values = knots;
+    values.insert(values.end(), {0, 0, 1, 1});
+    for (std::size_t i = 0; i < x.size(); ++i)
+      for (double v : {0.0, 1.0})
+        values.insert(values.end(), {x[i], v, z[i]});
+    values.insert(values.end(), 2 * x.size(), 1.0);
+    const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE,
+                                  {degree, 1, static_cast<int64_t>(x.size()), 2}, values);
+    b.surfaces = {surface};
+    const phx_mc_cad_model model = b.model();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+    phx::mc::cad::IntervalEvaluationWorkspace workspace;
+    workspace.coefficient_lower = b.reals.data();
+    workspace.coefficient_upper = b.reals.data();
+    workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+    const double uv[] = {0, 0, 1, 0, 0, 1};
+    const double vertices[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const auto bound = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 1000.0, 0, workspace);
+    PHX_CHECK(bound.status == PHX_MC_OK);
+    for (int i = 0; i <= 100; ++i) {
+      const double u = i / 100.0;
+      const double hat = 2 * std::min(u, 1 - u);
+      const double exact_distance = degree == 1 ? hat : hat * hat;
+      PHX_CHECK(bound.upper >= exact_distance);
+    }
+    const auto failed = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 0.1, 4, workspace);
+    PHX_CHECK(failed.status == PHX_MC_UNRESOLVED);
+  }
+}
+
 void entry_point() {
   Builder b;
   const double radius = 2.0, minor = 0.5;
@@ -662,6 +783,9 @@ int main() {
   curve_templates();
   composite_nodes();
   spline_nodes();
+  spline_interval_nodes();
+  spline_bernstein_enclosure_reference();
+  spline_kink_fidelity();
   intersection_chart();
   entry_point();
   return phx::mc::test::finish("test_cad_geometry");

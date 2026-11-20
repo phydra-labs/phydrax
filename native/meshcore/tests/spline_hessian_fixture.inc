@@ -1,0 +1,4 @@
+// Outward binary64 bounds of Python's exact Bernstein enclosures, rows 3 and 4.
+// Each row: denominator, then Huu, Huv, Hvv in component order; lower, upper.
+{0x1.5555555555555p-1, 0x1.aaaaaaaaaaab3p-1, -0x1.4000000000023p-1, 0x1.8000000000009p+0, -0x1.c00000000004dp-3, 0x1.2aaaaaaaaaab8p-2, 0x0.0p+0, 0x0.0p+0, -0x1.180000000000dp+1, 0x1.c00000000002dp-2, -0x1.c00000000002dp-2, 0x1.180000000000dp+1, 0x0.0p+0, 0x0.0p+0, -0x1.2aaaaaaaaaab8p-2, 0x1.c00000000003bp-3, -0x1.8000000000009p+0, 0x1.4000000000020p-1, 0x0.0p+0, 0x0.0p+0},
+{0x1.5555555555555p-2, 0x1.800000000000fp-1, -0x1.8aaaaaaaaaab9p+3, -0x1.c17e118eeca94p-2, -0x1.2aaaaaaaaaab8p+2, 0x0.0000000000036p-1022, 0x0.0p+0, 0x0.0p+0, -0x1.c000000000016p+2, 0x1.c000000000011p+3, -0x1.c000000000011p+3, 0x1.c000000000016p+2, 0x0.0p+0, 0x0.0p+0, -0x0.0000000000036p-1022, 0x1.2aaaaaaaaaab8p+2, 0x1.c17e118eeca99p-2, 0x1.8aaaaaaaaaab9p+3, 0x0.0p+0, 0x0.0p+0},

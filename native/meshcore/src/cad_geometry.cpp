@@ -143,6 +143,177 @@ int knot_span(const double* knots, int degree, int count, double u) noexcept {
   return std::clamp(span, degree, count - 1);
 }
 
+using SplineInterval = phx::mc::remesh::Interval;
+
+// All denominators here are strictly positive knot differences or weights.
+bool spline_divide(const SplineInterval& numerator, const SplineInterval& denominator,
+                   SplineInterval& result) {
+  using namespace phx::mc::remesh;
+  if (!(denominator.lower > 0.0) || !finite(denominator)) return false;
+  const SplineInterval inverse{geometry::next_down(1.0 / denominator.upper),
+                               geometry::next_up(1.0 / denominator.lower)};
+  result = multiply(numerator, inverse);
+  return finite(result);
+}
+
+// Cox--de Boor recursion on the closure of one nonempty span.  The arrays
+// contain derivatives, not Taylor coefficients. Only active terms are
+// evaluated, so a repeated knot never causes division by zero.
+bool spline_basis(const double* knot_lower, const double* knot_upper, int span, int degree,
+                  const SplineInterval& parameter, SplineInterval basis[3][kMaxDegree + 1]) {
+  using namespace phx::mc::remesh;
+  const auto knot = [&](int i) { return SplineInterval{knot_lower[i], knot_upper[i]}; };
+  SplineInterval previous[3][kMaxDegree + 1]{};
+  previous[0][degree] = point(1.0);
+  for (int d = 1; d <= degree; ++d) {
+    SplineInterval next[3][kMaxDegree + 1]{};
+    for (int j = degree - d; j <= degree; ++j) {
+      const int i = span - degree + j;
+      for (int side = 0; side < 2; ++side) {
+        const int old = j + side;
+        if (old < degree - d + 1 || old > degree) continue;
+        const SplineInterval denominator = side == 0
+            ? subtract(knot(i + d), knot(i))
+            : subtract(knot(i + d + 1), knot(i + 1));
+        SplineInterval factor, slope;
+        const SplineInterval numerator = side == 0
+            ? subtract(parameter, knot(i)) : subtract(knot(i + d + 1), parameter);
+        if (!spline_divide(numerator, denominator, factor) ||
+            !spline_divide(point(side == 0 ? 1.0 : -1.0), denominator, slope))
+          return false;
+        next[0][j] = add(next[0][j], multiply(factor, previous[0][old]));
+        next[1][j] = add(next[1][j], add(multiply(factor, previous[1][old]),
+                                           multiply(slope, previous[0][old])));
+        next[2][j] = add(next[2][j], add(multiply(factor, previous[2][old]),
+            multiply(point(2.0), multiply(slope, previous[1][old]))));
+      }
+    }
+    for (int n = 0; n < 3; ++n)
+      for (int j = 0; j <= degree; ++j) previous[n][j] = next[n][j];
+  }
+  for (int n = 0; n < 3; ++n)
+    for (int j = 0; j <= degree; ++j) basis[n][j] = previous[n][j];
+  return true;
+}
+
+int32_t spline_interval_jets(bool surface, const int64_t* ints, const double* lower,
+                             const double* upper, const double* input_lower,
+                             const double* input_upper, int order, double* output_lower,
+                             double* output_upper) {
+  using namespace phx::mc::remesh;
+  const int p = static_cast<int>(ints[0]);
+  const int q = surface ? static_cast<int>(ints[1]) : 0;
+  const int nu = static_cast<int>(ints[surface ? 2 : 1]);
+  const int nv = surface ? static_cast<int>(ints[3]) : 1;
+  const int dim = surface ? 3 : static_cast<int>(ints[2]);
+  const int uk = nu + p + 1, vk = surface ? nv + q + 1 : 0;
+  const int64_t controls = static_cast<int64_t>(nu) * nv;
+  const int64_t points = uk + vk, weights = points + controls * dim;
+  const int64_t length = weights + controls;
+  for (int64_t i = 0; i < length; ++i)
+    if (!phx::mc::remesh::finite({lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  if (!surface && (input_lower[0] < upper[p] || input_upper[0] > lower[nu]))
+    return PHX_MC_UNRESOLVED;
+  double box_lower[2] = {input_lower[0], surface ? input_lower[1] : 0.0};
+  double box_upper[2] = {input_upper[0], surface ? input_upper[1] : 0.0};
+  bool clamped[2] = {false, false};
+  if (surface) {
+    const int first[2] = {p, uk + q}, last[2] = {nu, uk + nv};
+    for (int axis = 0; axis < 2; ++axis) {
+      clamped[axis] = input_lower[axis] < upper[first[axis]] ||
+                      input_upper[axis] > lower[last[axis]];
+      box_lower[axis] = std::max(lower[first[axis]],
+                                 std::min(input_lower[axis], lower[last[axis]]));
+      box_upper[axis] = std::min(upper[last[axis]],
+                                 std::max(input_upper[axis], upper[first[axis]]));
+    }
+  }
+  const int terms = surface ? (order + 1) * (order + 2) / 2 : order + 1;
+  const int du[6] = {0, 1, surface ? 0 : 2, 2, 1, 0};
+  const int dv[6] = {0, 0, surface ? 1 : 0, 0, 1, 2};
+  bool found = false;
+  for (int us = p; us < nu; ++us) {
+    if (box_upper[0] < lower[us] || box_lower[0] > upper[us + 1]) continue;
+    if (lower[us] == upper[us] && lower[us + 1] == upper[us + 1] &&
+        lower[us] == lower[us + 1]) continue;
+    const SplineInterval u{std::max(box_lower[0], lower[us]),
+                           std::min(box_upper[0], upper[us + 1])};
+    SplineInterval ub[3][kMaxDegree + 1];
+    if (!spline_basis(lower, upper, us, p, u, ub)) return PHX_MC_UNRESOLVED;
+    for (int vs = q; vs < (surface ? nv : 1); ++vs) {
+      if (surface && (box_upper[1] < lower[uk + vs] ||
+                      box_lower[1] > upper[uk + vs + 1])) continue;
+      if (surface && lower[uk + vs] == upper[uk + vs] &&
+          lower[uk + vs + 1] == upper[uk + vs + 1] &&
+          lower[uk + vs] == lower[uk + vs + 1]) continue;
+      SplineInterval vb[3][kMaxDegree + 1]{};
+      if (surface) {
+        const SplineInterval v{std::max(box_lower[1], lower[uk + vs]),
+                               std::min(box_upper[1], upper[uk + vs + 1])};
+        if (!spline_basis(lower + uk, upper + uk, vs, q, v, vb))
+          return PHX_MC_UNRESOLVED;
+      } else {
+        vb[0][0] = point(1.0);
+      }
+      SplineInterval numerator[6][3]{}, denominator[6]{};
+      double min_weight = std::numeric_limits<double>::infinity(), max_weight = 0.0;
+      for (int a = 0; a <= p; ++a)
+        for (int b = 0; b <= q; ++b) {
+          const int64_t row = static_cast<int64_t>(us - p + a) * nv + vs - q + b;
+          const SplineInterval weight{lower[weights + row], upper[weights + row]};
+          if (!(weight.lower > 0.0)) return PHX_MC_UNRESOLVED;
+          min_weight = std::min(min_weight, weight.lower);
+          max_weight = std::max(max_weight, weight.upper);
+          for (int t = 0; t < terms; ++t) {
+            const SplineInterval basis = multiply(ub[du[t]][a], vb[dv[t]][b]);
+            const SplineInterval weighted = multiply(basis, weight);
+            denominator[t] = add(denominator[t], weighted);
+            for (int c = 0; c < dim; ++c)
+              numerator[t][c] = add(numerator[t][c], multiply(weighted,
+                  {lower[points + row * dim + c], upper[points + row * dim + c]}));
+          }
+        }
+      // Positive B-spline basis functions form a partition of unity.
+      denominator[0].lower = std::max(denominator[0].lower, min_weight);
+      denominator[0].upper = std::min(denominator[0].upper, max_weight);
+      SplineInterval result[6][3]{};
+      for (int c = 0; c < dim; ++c) {
+        if (!spline_divide(numerator[0][c], denominator[0], result[0][c]))
+          return PHX_MC_UNRESOLVED;
+        for (int t = 1; t < terms; ++t) {
+          SplineInterval rhs = subtract(numerator[t][c], multiply(denominator[t], result[0][c]));
+          if (du[t] == 2)
+            rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[1], result[1][c])));
+          if (dv[t] == 2)
+            rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[2], result[2][c])));
+          if (du[t] == 1 && dv[t] == 1) {
+            rhs = subtract(rhs, multiply(denominator[1], result[2][c]));
+            rhs = subtract(rhs, multiply(denominator[2], result[1][c]));
+          }
+          if (!spline_divide(rhs, denominator[0], result[t][c])) return PHX_MC_UNRESOLVED;
+        }
+      }
+      for (int t = 0; t < terms; ++t)
+        for (int c = 0; c < dim; ++c) {
+          if ((du[t] > 0 && clamped[0]) || (dv[t] > 0 && clamped[1])) {
+            result[t][c].lower = std::min(result[t][c].lower, 0.0);
+            result[t][c].upper = std::max(result[t][c].upper, 0.0);
+          }
+          const int slot = t * dim + c;
+          if (!found) {
+            output_lower[slot] = result[t][c].lower;
+            output_upper[slot] = result[t][c].upper;
+          } else {
+            output_lower[slot] = std::min(output_lower[slot], result[t][c].lower);
+            output_upper[slot] = std::max(output_upper[slot], result[t][c].upper);
+          }
+        }
+      found = true;
+    }
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
 // Bernstein cubic and its derivatives at t, as the T-spline realization.
 void bernstein_cubic(double t, int derivative, double* out) noexcept {
   const double s = 1.0 - t;
@@ -229,6 +400,16 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
         input_lower[i] > input_upper[i])
       return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_BSPLINE_CURVE ||
+      current.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return spline_interval_jets(current.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE,
+                                current.integers, workspace.coefficient_lower + offset,
+                                workspace.coefficient_upper + offset, input_lower, input_upper,
+                                order, output_lower, output_upper);
+  }
   if (current.kind == PHX_MC_CAD_NODE_REVOLUTION) {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;

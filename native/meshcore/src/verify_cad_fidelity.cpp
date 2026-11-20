@@ -36,11 +36,80 @@ void chart_point(const Vertex& vertex, const double* uv, di::Interval* point) {
   }
 }
 
+// 0: C1, 1: continuous but possibly kinked, 2: possibly discontinuous.
+int spline_knot_regularity(const double* lower, const double* upper, int degree, int count,
+                           double box_lower, double box_upper) {
+  int result = 0;
+  for (int k = degree + 1; k < count; ++k) {
+    if (box_upper < lower[k] || box_lower > upper[k]) continue;
+    int multiplicity = 1;
+    for (int j = k - 1; j >= 0 && upper[j] >= lower[k]; --j) ++multiplicity;
+    for (int j = k + 1; j < count + degree + 1 && lower[j] <= upper[k]; ++j)
+      ++multiplicity;
+    if (multiplicity > degree) return 2;
+    if (multiplicity >= degree) result = 1;
+  }
+  return result;
+}
+
+int spline_regularity(const CadGeometry& geometry, int32_t index, const double* box_lower,
+                      const double* box_upper, const IntervalEvaluationWorkspace& workspace) {
+  const Node& node = geometry.node(index);
+  const int64_t offset = geometry.model().node_real_offsets[index];
+  const auto child = [&](int slot, const double* lo, const double* hi) {
+    return spline_regularity(geometry, static_cast<int32_t>(node.integers[slot]),
+                             lo, hi, workspace);
+  };
+  const double all_lower[2] = {-std::numeric_limits<double>::infinity(),
+                               -std::numeric_limits<double>::infinity()};
+  const double all_upper[2] = {std::numeric_limits<double>::infinity(),
+                               std::numeric_limits<double>::infinity()};
+  switch (node.kind) {
+    case PHX_MC_CAD_NODE_BSPLINE_CURVE:
+    case PHX_MC_CAD_NODE_BSPLINE_SURFACE: {
+      const bool surface = node.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE;
+      const int p = static_cast<int>(node.integers[0]);
+      const int nu = static_cast<int>(node.integers[surface ? 2 : 1]);
+      const double* lo = workspace.coefficient_lower + offset;
+      const double* hi = workspace.coefficient_upper + offset;
+      int result = spline_knot_regularity(lo, hi, p, nu, box_lower[0], box_upper[0]);
+      if (surface) {
+        const int q = static_cast<int>(node.integers[1]), nv = static_cast<int>(node.integers[3]);
+        const int uk = nu + p + 1;
+        result = std::max(result, spline_knot_regularity(lo + uk, hi + uk, q, nv,
+                                                         box_lower[1], box_upper[1]));
+      }
+      return result;
+    }
+    case PHX_MC_CAD_NODE_AFFINE:
+    case PHX_MC_CAD_NODE_OFFSET_SURFACE:
+      return child(0, box_lower, box_upper);
+    case PHX_MC_CAD_NODE_EXTRUSION:
+      return child(0, box_lower, box_upper);
+    case PHX_MC_CAD_NODE_REVOLUTION:
+      return child(0, box_lower + 1, box_upper + 1);
+    case PHX_MC_CAD_NODE_RULED:
+      return std::max(child(0, box_lower, box_upper), child(1, box_lower, box_upper));
+    case PHX_MC_CAD_NODE_REPARAMETERIZED:
+    case PHX_MC_CAD_NODE_OFFSET_CURVE:
+    case PHX_MC_CAD_NODE_ISOPARAMETRIC:
+      return child(0, all_lower, all_upper);
+    case PHX_MC_CAD_NODE_SURFACE_MAPPED:
+    case PHX_MC_CAD_NODE_INTERSECTION:
+      return std::max(child(0, all_lower, all_upper), child(1, all_lower, all_upper));
+    default:
+      return 0;
+  }
+}
+
 // For each subdivision leaf L of the original triangle T,
-// S - I_T = (S - I_L) + (I_L - I_T). The first term has the leaf
-// Hessian bound; the second is affine on L and its norm is maximized at
-// a leaf vertex. Its interval value compares S there directly with the
-// original stored triangle, so endpoint mismatch is included exactly once.
+// S - I_T = (S - I_L) + (I_L - I_T). On a C1 piece, the first term
+// uses the leaf Hessian. Across a continuous spline knot with a possible
+// tangent jump, use |S(x)-I_L S(x)| <= sum_i lambda_i |S(x)-S(v_i)|
+// and bound each difference by the interval Jacobian over the leaf box.
+// The second term is affine and maximized at a leaf vertex, including the
+// mismatch against the stored original triangle. A possible discontinuity
+// is refused: neither the Hessian nor the Jacobian implies a Lipschitz bound.
 int32_t leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
                    const double* vertices, const double* uv,
                    IntervalEvaluationWorkspace& workspace, double& upper) {
@@ -75,14 +144,23 @@ int32_t leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
     }
     mismatch = std::max(mismatch, phx::mc::geometry::norm_upper(magnitude));
   }
+  const int regularity = spline_regularity(geometry, node, box_lower, box_upper, workspace);
+  if (regularity == 2) return PHX_MC_UNRESOLVED;
   double lower[18], higher[18];
-  const int32_t status = geometry.interval_jets(node, box_lower, box_upper, 2,
+  const int32_t status = geometry.interval_jets(node, box_lower, box_upper,
+                                                 regularity == 1 ? 1 : 2,
                                                  lower, higher, workspace);
   if (status != PHX_MC_OK) return status;
   const auto du = di::subtract(di::point(box_upper[0]), di::point(box_lower[0]));
   const auto dv = di::subtract(di::point(box_upper[1]), di::point(box_lower[1]));
   double magnitude[3];
   for (int axis = 0; axis < 3; ++axis) {
+    if (regularity == 1) {
+      const auto su = di::point(di::magnitude({lower[3 + axis], higher[3 + axis]}));
+      const auto sv = di::point(di::magnitude({lower[6 + axis], higher[6 + axis]}));
+      magnitude[axis] = di::add(di::multiply(su, du), di::multiply(sv, dv)).upper;
+      continue;
+    }
     const auto huu = di::point(di::magnitude({lower[9 + axis], higher[9 + axis]}));
     const auto huv = di::point(di::magnitude({lower[12 + axis], higher[12 + axis]}));
     const auto hvv = di::point(di::magnitude({lower[15 + axis], higher[15 + axis]}));
@@ -110,15 +188,20 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                         IntervalEvaluationWorkspace& workspace, double& cap) {
   const double low = std::min(parameters[0], parameters[1]);
   const double high = std::max(parameters[0], parameters[1]);
+  const int regularity = spline_regularity(geometry, geometry.pcurve_node(use), &low, &high,
+                                            workspace);
+  if (regularity == 2) return PHX_MC_UNRESOLVED;
   double pc_lower[6], pc_upper[6];
-  int32_t status = geometry.interval_jets(geometry.pcurve_node(use), &low, &high, 2,
+  int32_t status = geometry.interval_jets(geometry.pcurve_node(use), &low, &high,
+                                           regularity == 1 ? 1 : 2,
                                            pc_lower, pc_upper, workspace);
   if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
   const auto dt = di::subtract(di::point(high), di::point(low));
-  double second_magnitude[3] = {
-      di::magnitude({pc_lower[4], pc_upper[4]}),
-      di::magnitude({pc_lower[5], pc_upper[5]}), 0.0};
-  const double curvature = phx::mc::geometry::norm_upper(second_magnitude);
+  const int derivative = regularity == 1 ? 2 : 4;
+  double derivative_magnitude[3] = {
+      di::magnitude({pc_lower[derivative], pc_upper[derivative]}),
+      di::magnitude({pc_lower[derivative + 1], pc_upper[derivative + 1]}), 0.0};
+  const double derivative_bound = phx::mc::geometry::norm_upper(derivative_magnitude);
   double endpoint_error = 0.0;
   for (int endpoint = 0; endpoint < 2; ++endpoint) {
     double lo[2], hi[2];
@@ -134,9 +217,11 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
     }
     endpoint_error = std::max(endpoint_error, phx::mc::geometry::norm_upper(magnitude));
   }
-  const auto error = di::add(
-      di::point(endpoint_error),
-      di::multiply(di::point(0.125), di::multiply(di::point(curvature), di::multiply(dt, dt))));
+  const auto remainder = regularity == 1
+      ? di::multiply(di::point(derivative_bound), dt)
+      : di::multiply(di::point(0.125),
+                     di::multiply(di::point(derivative_bound), di::multiply(dt, dt)));
+  const auto error = di::add(di::point(endpoint_error), remainder);
   if (!di::finite(error)) return PHX_MC_UNRESOLVED;
   double box_lower[2], box_upper[2];
   for (int axis = 0; axis < 2; ++axis) {

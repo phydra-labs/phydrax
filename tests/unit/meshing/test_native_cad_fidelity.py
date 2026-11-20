@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import re
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -19,11 +21,13 @@ from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
 from phydrax.geometry._meshing_domain import (
+    _span_enclosures_for_chart,
     MeshingDomain,
     MeshingDomainCurve,
     MeshingSurfacePatch,
     PatchCurveUse,
     PatchPoleUse,
+    SourcePreparation,
 )
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_interpolation import certify_domain_surface_charts
@@ -112,8 +116,7 @@ def test_lazy_cylinder_coefficient_bounds() -> None:
             assert value <= Fraction.from_float(upper[offset + index])
     assert cylinders > 0
 
-def test_lazy_bspline_coefficient_bounds() -> None:
-    """The flat bank encloses exact knots, controls and rational weights."""
+def _rational_spline_surface() -> BSplineSurfacePatch:
     third = Fraction(1, 3)
     controls = (
         ((Fraction(0), Fraction(0), third), (Fraction(0), Fraction(1), third)),
@@ -121,7 +124,7 @@ def test_lazy_bspline_coefficient_bounds() -> None:
     )
     weights = ((Fraction(1), third), (Fraction(2, 3), Fraction(1)))
     knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
-    surface = BSplineSurfacePatch(
+    return BSplineSurfacePatch(
         np.asarray(controls, dtype=np.float64),
         np.asarray(weights, dtype=np.float64),
         np.asarray(knots, dtype=np.float64),
@@ -133,6 +136,14 @@ def test_lazy_bspline_coefficient_bounds() -> None:
         exact_u_knots=knots,
         exact_v_knots=knots,
     )
+
+
+def test_lazy_bspline_coefficient_bounds() -> None:
+    """The flat bank encloses exact knots, controls and rational weights."""
+    surface = _rational_spline_surface()
+    controls = surface.exact_control_points
+    weights = surface.exact_weights
+    knots = surface.exact_u_knots
     domain = _surface_domain(surface)
     bundle = cad_geometry_bundle(domain)
     lower, upper = coefficient_bounds(bundle, domain)
@@ -300,6 +311,103 @@ def _python_chart_decisions(
     }
     assert all(finding.check == "source_fidelity_tolerance" for finding in evidence.findings)
     return tuple(int(value) not in failed for value in ids)
+
+
+def _rational_spline_values(uv: np.ndarray) -> np.ndarray:
+    u, v = uv[..., 0], uv[..., 1]
+    weights = (
+        (1 - u) * (1 - v),
+        (1 - u) * v / 3,
+        2 * u * (1 - v) / 3,
+        u * v,
+    )
+    denominator = sum(weights)
+    return np.stack(
+        ((weights[2] + weights[3]) / denominator,
+         (weights[1] + weights[3]) / denominator,
+         np.full_like(u, 1 / 3)),
+        axis=-1,
+    )
+
+
+def test_rational_spline_verdict_and_dense_bounds() -> None:
+    """Adaptive native bounds are tighter than Python's unsubdivided spline bounds.
+
+    Rows 3/4: native 0.123267/0.264703, Python 1.090123/7.954951,
+    sampled-and-locally-maximized distance 0.042045/0.020825. Python bounds
+    exact homogeneous Bernstein derivative numerator nets on the original box,
+    whereas native interval Cox--de Boor/quotient bounds lose dependencies
+    but subdivide. See _bspline_extraction.py:1723-1740,1778-1814 and
+    _meshing_domain.py:4092,4128.
+    """
+    domain = _surface_domain(_rational_spline_surface())
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    mesh, chords = _cylinder_mesh(domain)
+    uv = np.asarray([(0.5 * i, 0.5 * j) for j in range(3) for i in range(3)])
+    mesh = mesh._replace(points=_rational_spline_values(uv))
+    rows = np.flatnonzero(np.all(mesh.edge_chord < 0, axis=1))
+    fixture_path = Path(__file__).parents[3] / "native/meshcore/tests/spline_hessian_fixture.inc"
+    numbers = re.findall(r"-?0x[0-9a-f.]+p[+-][0-9]+", fixture_path.read_text())
+    fixture = np.asarray([float.fromhex(value) for value in numbers]).reshape((2, 20))
+    spans = SourcePreparation(domain).surface_spans(domain.patches[0].surface)
+    assert spans is not None
+    for position, row in enumerate(rows):
+        chart = tuple(
+            tuple(Fraction.from_float(float(value)) for value in vertex)
+            for vertex in mesh.uv[row]
+        )
+        enclosure = _span_enclosures_for_chart(spans, chart)[0]
+        pairs = (
+            enclosure.denominator_bounds,
+            *enclosure.duu_bounds,
+            *enclosure.duv_bounds,
+            *enclosure.dvv_bounds,
+        )
+        for index, (lo, hi) in enumerate(pairs):
+            assert Fraction.from_float(fixture[position, 2 * index]) <= lo
+            assert hi <= Fraction.from_float(fixture[position, 2 * index + 1])
+    tolerance = 0.5
+    for broken in (False, True):
+        points = mesh.points.copy()
+        if broken:
+            points[4, 2] += 10.0
+        candidate = mesh._replace(points=points)
+        result = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords, tolerance, 4)
+        decisions = _python_chart_decisions(domain, candidate, rows, tolerance)
+        if broken:
+            assert decisions == tuple(status == MeshcoreStatus.OK for status in result.item_status[rows])
+        else:
+            assert decisions == (False, False)
+            assert np.all(result.item_status[rows] == MeshcoreStatus.OK)
+            assert np.all(result.upper[rows] <= np.asarray((1.0901229543292632, 7.954951288348677)))
+            assert np.all(result.upper[rows] >= np.asarray((0.04204418698947044, 0.020824323571858087)))
+        for row in rows:
+            vertices = points[candidate.triangles[row]]
+            for i in range(21):
+                for j in range(21 - i):
+                    barycentric = np.asarray((1 - (i + j) / 20, i / 20, j / 20))
+                    sample = _rational_spline_values(barycentric @ candidate.uv[row])
+                    assert np.linalg.norm(sample - barycentric @ vertices) <= result.upper[row]
+
+
+@pytest.mark.xfail(strict=True, reason="Python spline interpolation omits non-C1 knot jumps")
+def test_python_spline_kink_requires_nonzero_interpolation_bound() -> None:
+    """A continuous piecewise-linear tent is one unit above its corner plane."""
+    controls = np.asarray(
+        [[[0, 0, 0], [0, 1, 0]], [[0.5, 0, 1], [0.5, 1, 1]], [[1, 0, 0], [1, 1, 0]]],
+        dtype=np.float64,
+    )
+    surface = BSplineSurfacePatch(
+        controls, np.ones((3, 2), dtype=np.float64),
+        np.asarray((0, 0, 0.5, 1, 1), dtype=np.float64),
+        np.asarray((0, 0, 1, 1), dtype=np.float64), 1, 1,
+    )
+    domain = _surface_domain(surface)
+    chart = ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0)),
+             (Fraction(0), Fraction(1)))
+    bound = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[0]
+    assert bound is not None and bound >= 1
 
 
 @pytest.mark.parametrize("kind", ("plane", "cylinder", "cone", "sphere", "torus"))
