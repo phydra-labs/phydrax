@@ -203,8 +203,35 @@ tetrahedra, then implicit volumes, then the CAD solid.
   Gmsh HXT per size (0.0215 / 0.0653 / 0.303 / 2.00 s); curving at or below Netgen's 0.0125 / 0.075 s
   with certified validity.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
-- S5 STEP import and remaining exchange formats. S6 layers, hex-dominant, overset, Voronoi. S7 threads
-  and devices at scale.
+- S5 STEP import and remaining exchange formats. S7 threads and devices at scale.
+- S6 layers, hex-dominant, overset, Voronoi (MAC, planned Nov 20; ledger `cad.md` F8/F9 and
+  `providers.md` F13/F14, all run on this Mac; references installed: TIOGA `tioga_drv`, VoroCrust
+  `vc_mesh`, OpenFOAM v2606 with snappyHexMesh and cfMesh, Gmsh, Netgen, NekMesh). Today none of the
+  four has a meshcore kernel for its main algorithm and `native_meshing.py` has no rows. Each sub-slice
+  is one native call on flat arrays, construction in floating point with exact predicates,
+  certification after construction with local repair, `prove=True/False` through the candidate, and a
+  clean cutover of the existing Python route. Order:
+  - S6-A overset assembly (F13; TIOGA one rank: hex 0.265 / 0.430 / 1.377 s, tets 0.053 / 0.496 /
+    0.871 s at 1e4 / 1e5 / 1e6 cells; Phydrax today 72.9 s at 1e4 tets with 116 orphans and no hex).
+    Hole cutting against the wall by a classified hole map (exact winding/orientation), fringe layers by
+    adjacency, donor search on the packed BVH with exact barycentric containment for tets and a
+    Krawczyk-certified inverse for trilinear hexes, the finest valid non-fringe donor, orphans reported
+    as evidence (TIOGA's tet runs leave 14 and 5 silently).
+  - S6-C prism layers on a tetrahedral mesh (F9; 5 layers, first 0.01, growth 1.2; Gmsh 0.309 s on the
+    sphere at h 0.1, cfMesh 1.77 s at h 0.05; on the quadric Gmsh fails inward, Netgen thins to 17 % at
+    edges, cfMesh 0.456 / 1.09 s). Native growth directions and heights with certified non-intersection,
+    thinning only where the certificate requires it, the core by S3 with the top layer fixed; full depth
+    measured by true distance.
+  - S6-B conforming Voronoi (F14; VoroCrust 5.2-40.5 s, 95 % surface sampling; its explicit-mesh step
+    0.04-0.67 s, our restricted power cells 26-56x slower). Native conforming seeds (surface ball
+    pairs, interior seeds by the size field) and restricted cells taken from the Delaunay dual, clipping
+    only boundary cells.
+  - S6-D hex-dominant with snapping (F8; cfMesh 5.77-8.59 s at ~1e5 cells, hex fraction 0.91-0.96,
+    Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
+    optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than
+    cfMesh's. The tet-to-hex split route stays only if a row needs it.
+  - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
+    every step runs on the original, refined and restored mesh and the archive is written twice).
 
 ## Row ownership (every ledger row; `.tmp/ledger/`)
 
