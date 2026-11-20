@@ -329,10 +329,7 @@ def _require_closed_wall(facets: np.ndarray, dimension: int, /) -> None:
         ridges = facets.reshape((-1,))
     else:
         ridges = np.sort(
-            np.concatenate(
-                [np.stack((row, np.roll(row, -1)), axis=1) for row in facets],
-                axis=0,
-            ),
+            np.stack((facets, np.roll(facets, -1, axis=1)), axis=2).reshape((-1, 2)),
             axis=1,
         )
     _, counts = np.unique(ridges, axis=0, return_counts=True)
@@ -1061,7 +1058,8 @@ class _PartGeometry(StrictModule, NonTrainableState):
     cell_vertices: Array
     cell_vertex_valid: Array
     cell_ids: Array
-    cell_measures: Array
+    # None on native parts: the native assembly measures its donor cells.
+    cell_measures: Array | None
     cell_lower: Array
     cell_upper: Array
     cell_locators: tuple[AbstractCellLocator, ...]
@@ -2721,11 +2719,54 @@ def _owner_local_prepare_blanking(
     )
 
 
-def _geometry(
-    part: MeshPart, spec: OversetPartSpec, /, *, wall_map: bool
-) -> _PartGeometry:
-    # wall_map=False leaves the wall banks empty: the native assembly
-    # classifies walls itself.
+def _native_geometry(part: MeshPart, /) -> _PartGeometry:
+    """Cell banks of a part the native assembly owns, built in bulk.
+
+    The native call classifies walls, locates donors and measures donor cells
+    itself, so the mapped-cell locators, measures and wall banks of the Python
+    owner are not built (the certified carrier already proved its cells
+    valid): cell rows come from the blocks, and bounds are corner boxes,
+    exact for P1/Q1 maps, whose cells lie in their corners' convex hull.
+    """
+    mesh = _cell_result(part).mesh
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    blocks = tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
+    width = max(rows.shape[1] for rows in blocks)
+    cell_vertices = np.zeros((sum(rows.shape[0] for rows in blocks), width), np.int64)
+    cell_vertex_valid = np.zeros(cell_vertices.shape, dtype=np.bool_)
+    cell_lower = np.empty((cell_vertices.shape[0], 3), dtype=np.float64)
+    cell_upper = np.empty_like(cell_lower)
+    block_offsets = [0]
+    for rows in blocks:
+        cells = slice(block_offsets[-1], block_offsets[-1] + rows.shape[0])
+        corners = points[rows]
+        cell_vertices[cells, : rows.shape[1]] = rows
+        cell_vertex_valid[cells, : rows.shape[1]] = True
+        cell_lower[cells] = corners.min(axis=1)
+        cell_upper[cells] = corners.max(axis=1)
+        block_offsets.append(cells.stop)
+    return _PartGeometry(
+        part_id=part.part_id,
+        cell_vertices=jnp.asarray(cell_vertices),
+        cell_vertex_valid=jnp.asarray(cell_vertex_valid),
+        cell_ids=jnp.asarray(
+            np.concatenate(
+                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+            )
+        ),
+        cell_measures=None,
+        cell_lower=jnp.asarray(cell_lower),
+        cell_upper=jnp.asarray(cell_upper),
+        cell_locators=(),
+        block_offsets=tuple(block_offsets),
+        block_names=tuple(block.name for block in mesh.blocks),
+        wall_facets=None,
+        wall_lower=None,
+        wall_upper=None,
+    )
+
+
+def _geometry(part: MeshPart, spec: OversetPartSpec, /) -> _PartGeometry:
     result = _cell_result(part)
     mesh = result.mesh
     if (
@@ -2819,7 +2860,7 @@ def _geometry(
             "Overset cell geometry banks do not align with source identities."
         )
     wall_facets = wall_lower = wall_upper = None
-    if spec.wall is not None and wall_map:
+    if spec.wall is not None:
         if isinstance(connectivity, PolyhedralConnectivity):
             wall_rows = _facet_rows(part, spec.wall)
             wall_simplex_rows = _facet_triangles(
@@ -3198,6 +3239,9 @@ def _resolve_donors(
         if donor == receptor_index:
             continue
         geometry = geometries[donor]
+        if geometry.cell_measures is None:
+            raise ValueError("Python overset donors require prepared cell measures.")
+        donor_measures = np.asarray(geometry.cell_measures, dtype=np.float64)
         donor_points = _to_source(sites, specs[receptor_index], spec)
         cell_status = np.asarray(blanking[donor].cell_status)
         ambiguous = np.asarray(blanking[donor].ambiguous_cells, dtype=np.bool_)
@@ -3248,7 +3292,7 @@ def _resolve_donors(
                         continue
                     candidate_parts[receptor].add(donor)
                     identifier = int(np.asarray(geometry.cell_ids)[cell])
-                    measure = float(np.asarray(geometry.cell_measures)[cell])
+                    measure = float(donor_measures[cell])
                     reference = candidate_references[receptor, slot]
                     has_stencil = explicit_blocks[donor][block]
                     ids = np.full((dimension + 1,), -1, dtype=np.int64)
@@ -3440,13 +3484,11 @@ def _receptor_records(
         target_points = np.asarray(mesh.coordinates, dtype=np.float64)[rows]
         choices = donor_choices[target_index]
         donor_cell_ids = np.full(rows.size, -1, dtype=np.int64)
-        for slot, (donor_index, row) in enumerate(
-            zip(choices.parts, choices.cells, strict=True)
-        ):
-            if donor_index >= 0:
-                donor_cell_ids[slot] = int(
-                    np.asarray(geometries[donor_index].cell_ids)[row]
-                )
+        for donor_index, geometry in enumerate(geometries):
+            slots = np.asarray(choices.parts) == donor_index
+            donor_cell_ids[slots] = np.asarray(geometry.cell_ids, dtype=np.int64)[
+                np.asarray(choices.cells)[slots]
+            ]
         receptor_owner_ranks = np.full(
             rows.size, specs[target_index].owner_rank, dtype=np.int32
         )
@@ -4894,25 +4936,35 @@ def _native_records(
         ids = np.full((count, 4), -1, dtype=np.int64)
         weights = np.zeros((count, 4), dtype=np.float64)
         explicit = np.zeros((count,), dtype=np.bool_)
-        measures = np.full((count,), np.inf, dtype=np.float64)
+        measures = np.where(found, result.donor_measure[rows], np.inf)
         references = result.donor_reference[rows]
-        for slot in np.flatnonzero(found):
-            donor, cell = int(donor_parts[slot]), int(local[slot])
-            geometry = geometries[donor]
-            blocks[slot] = np.searchsorted(geometry.block_offsets, cell, side="right") - 1
-            measures[slot] = float(np.asarray(geometry.cell_measures)[cell])
-            vertices = np.asarray(geometry.cell_vertices[cell])[
-                np.asarray(geometry.cell_vertex_valid[cell], dtype=np.bool_)
-            ]
-            if vertices.size != 4:
+        for donor, geometry in enumerate(geometries):
+            slots = np.flatnonzero(found & (donor_parts == donor))
+            if not slots.size:
                 continue
-            # Affine tetrahedron: the clamped, renormalized barycentric stencil.
-            stencil = np.maximum(
-                np.concatenate(([1.0 - np.sum(references[slot])], references[slot])), 0.0
+            cells = local[slots]
+            blocks[slots] = (
+                np.searchsorted(np.asarray(geometry.block_offsets), cells, side="right")
+                - 1
             )
-            weights[slot] = stencil / np.sum(stencil)
-            ids[slot] = vertex_ids[donor][vertices]
-            explicit[slot] = True
+            valid = np.asarray(geometry.cell_vertex_valid, dtype=np.bool_)[cells]
+            # Affine tetrahedra: the clamped, renormalized barycentric stencil.
+            tets = np.sum(valid, axis=1) == 4
+            slots, cells = slots[tets], cells[tets]
+            if not slots.size:
+                continue
+            reference = references[slots]
+            stencil = np.maximum(
+                np.concatenate(
+                    (1.0 - np.sum(reference, axis=1, keepdims=True), reference), axis=1
+                ),
+                0.0,
+            )
+            weights[slots] = stencil / np.sum(stencil, axis=1, keepdims=True)
+            ids[slots] = vertex_ids[donor][
+                np.asarray(geometry.cell_vertices, dtype=np.int64)[cells, :4]
+            ]
+            explicit[slots] = True
         choices.append(
             _DonorChoice(
                 donor_parts,
@@ -4946,7 +4998,7 @@ def _prepare_connectivity(
 ) -> OversetConnectivity:
     native = partition_priority is None and _native_assembly_supported(parts, specs)
     geometries = tuple(
-        _geometry(part, spec, wall_map=not native)
+        _native_geometry(part) if native else _geometry(part, spec)
         for part, spec in zip(parts, specs, strict=True)
     )
     if native:

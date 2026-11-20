@@ -29,7 +29,22 @@ from jax import Array
 from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
+from phydrax._physical import SpatialCoordinateContract
+from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization._cell_complex import TetrahedralConnectivity
+from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.geometry._interval_enclosure import prepare_interval_function
+from phydrax.meshing import certify_cell_mesh
+from phydrax.meshing._assembly import MeshAssembly, MeshPart
+from phydrax.meshing._overset import (
+    _cell_result,
+    OversetConnectivity,
+    OversetConnectivityError,
+    OversetPartSpec,
+    OversetPolicy,
+    prepare_overset_connectivity,
+)
 
 
 if TYPE_CHECKING:
@@ -1674,7 +1689,8 @@ def _overset_case(
     )
 
 
-def _overset_run(case: _OversetCase, /) -> _meshcore.OversetAssembly:
+def _overset_kernel(case: _OversetCase, /) -> _meshcore.OversetAssembly:
+    # The bare native assembly on the same flat blocks (untimed sub-field).
     cell_count = case.cells.shape[0]
     return _meshcore.overset_assemble(
         case.vertex_offsets,
@@ -1690,24 +1706,119 @@ def _overset_run(case: _OversetCase, /) -> _meshcore.OversetAssembly:
         np.arange(2, dtype=np.int32),
         fringe_layers=1,
         donor_priority=0,
-        # TIOGA's donors may hold fringe vertices; ours take a fringe donor
-        # only where no active cell contains the receptor.
         fringe_donors=True,
-        prove=True,
+        prove=False,
+    )
+
+
+class _OversetApiCase(NamedTuple):
+    # The consumer's inputs to prepare_overset_connectivity, built untimed
+    # (as TIOGA's grids are registered before its timed call), and the same
+    # meshes as flat blocks for the independent check.
+    flat: _OversetCase
+    assembly: MeshAssembly
+    specs: tuple[OversetPartSpec, OversetPartSpec]
+    policy: OversetPolicy
+
+
+def _overset_part(name: str, points: np.ndarray, cells: np.ndarray, /) -> MeshPart:
+    kind = "hexahedron" if cells.shape[1] == 8 else "tetrahedron"
+    mesh = CellMesh(
+        jnp.asarray(points, dtype=jnp.float64),
+        (CellBlock(name, kind, jnp.asarray(cells, dtype=jnp.int32)),),
+    )
+    return MeshPart(name, certify_cell_mesh(mesh, SpatialCoordinateContract.si()))
+
+
+def _overset_api_case(
+    background: tuple[np.ndarray, np.ndarray], shell: tuple[np.ndarray, np.ndarray], /
+) -> _OversetApiCase:
+    parts = (
+        _overset_part("background", *background),
+        _overset_part("shell", *shell),
+    )
+    background_mesh, shell_mesh = (_cell_result(part).mesh for part in parts)
+    flat = _overset_case(
+        (
+            np.asarray(background_mesh.coordinates, dtype=np.float64),
+            np.asarray(background_mesh.blocks[0].vertices, dtype=np.int64),
+        ),
+        (
+            np.asarray(shell_mesh.coordinates, dtype=np.float64),
+            np.asarray(shell_mesh.blocks[0].vertices, dtype=np.int64),
+        ),
+    )
+    # Shell exterior faces: the wall at r = 0.5, the receptor boundary at 1.5.
+    entity_set = shell_mesh.entity_set(2)
+    identifiers = np.asarray(entity_set.entity_ids, dtype=np.int64)
+    boundary = np.asarray(entity_set.subset("boundary").mask, dtype=np.bool_)
+    connectivity = shell_mesh.connectivity
+    if isinstance(connectivity, (HexahedralConnectivity, TetrahedralConnectivity)):
+        faces = np.asarray(connectivity.faces, dtype=np.int64)
+    elif isinstance(connectivity, SimplicialConnectivity):
+        faces = np.asarray(connectivity.entities[2], dtype=np.int64)
+    else:
+        raise TypeError("F13 shells are tetrahedral or hexahedral.")
+    radius = np.linalg.norm(
+        np.asarray(shell_mesh.coordinates, dtype=np.float64)[faces], axis=2
+    ).mean(axis=1)
+    specs = (
+        OversetPartSpec("background"),
+        OversetPartSpec(
+            "shell",
+            wall=parts[1].scope(2, identifiers[boundary & (radius < 1.0)]),
+            boundary=parts[1].scope(2, identifiers[boundary & (radius > 1.0)]),
+        ),
+    )
+    # TIOGA's donors may hold fringe vertices; ours take a fringe donor only
+    # where no active cell contains the receptor.
+    policy = OversetPolicy(fringe_layers=1, fringe_donors=True)
+    return _OversetApiCase(flat, MeshAssembly(parts), specs, policy)
+
+
+def _overset_run(case: _OversetApiCase, /, *, prove: bool) -> OversetConnectivity:
+    return prepare_overset_connectivity(
+        case.assembly, case.specs, policy=case.policy, prove=prove
     )
 
 
 def _overset_cells(result: object, /) -> int:
-    if not isinstance(result, _meshcore.OversetAssembly):
-        raise TypeError("Overset rows return OversetAssembly records.")
-    return result.cell_status.shape[0]
+    if not isinstance(result, OversetConnectivity):
+        raise TypeError("Overset rows return OversetConnectivity records.")
+    return sum(int(item.cell_status.shape[0]) for item in result.blanking)
 
 
 def _overset_unmet(result: object, /) -> int:
     # Orphan receptors and unproved ambiguous cells.
-    if not isinstance(result, _meshcore.OversetAssembly):
-        raise TypeError("Overset rows return OversetAssembly records.")
-    return round(float(result.stats[10] + result.stats[13]))
+    if not isinstance(result, OversetConnectivity):
+        raise TypeError("Overset rows return OversetConnectivity records.")
+    return result.orphan_count + result.ambiguous_count
+
+
+def _overset_outcome(
+    case: _OversetCase, result: OversetConnectivity, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Vertex status, donor status and flat donor cell per flat vertex, read
+    # from the public records (receptor evidence names donors by cell ID).
+    vertex_status = np.concatenate(
+        [np.asarray(item.vertex_status, dtype=np.int64) for item in result.blanking]
+    )
+    donor_status = np.full(vertex_status.shape, -1, dtype=np.int64)
+    donor_cell = np.full(vertex_status.shape, -1, dtype=np.int64)
+    cell_ids = [np.asarray(item.cell_ids, dtype=np.int64) for item in result.geometries]
+    for index, evidence in enumerate(result.receptors):
+        rows = int(case.vertex_offsets[index]) + np.asarray(
+            evidence.receptor_rows, dtype=np.int64
+        )
+        donor_status[rows] = np.asarray(evidence.status)
+        parts = np.asarray(evidence.donor_parts, dtype=np.int64)
+        cells = np.asarray(evidence.donor_cells, dtype=np.int64)
+        for donor, ids in enumerate(cell_ids):
+            selected = parts == donor
+            order = np.argsort(ids, kind="stable")
+            local = order[np.searchsorted(ids[order], cells[selected])]
+            donor_cell[rows[selected]] = int(case.cell_offsets[donor]) + local
+    return vertex_status, donor_status, donor_cell
 
 
 def _trilinear_shapes(xi: np.ndarray, /) -> np.ndarray:
@@ -1764,17 +1875,21 @@ def _linear_field(x: np.ndarray, /) -> np.ndarray:
 
 
 def _overset_quality(
-    case: _OversetCase, result: object, /
+    api: _OversetApiCase, result: object, /
 ) -> tuple[int, dict[str, float]]:
-    # Independent of the kernel, as the ledger's f13_check.py: every donor
-    # recomputed in NumPy (containment within 1e-9 and a mapping residual
-    # under 1e-9), linear reproduction, mandatory receptors left active, and
-    # background holes against the wall radius (inside r < 0.45, none beyond
-    # r = 0.5: the walls are inscribed in the sphere).
-    if not isinstance(result, _meshcore.OversetAssembly):
-        raise TypeError("Overset rows return OversetAssembly records.")
-    found = np.flatnonzero(result.donor_status == 0)
-    cells = case.cells[result.donor_cell[found]]
+    # Independent of the implementation, as the ledger's f13_check.py: every
+    # donor of the public records recomputed in NumPy (containment within
+    # 1e-9 and a mapping residual under 1e-9), linear reproduction, mandatory
+    # receptors left active, and background holes against the wall radius
+    # (inside r < 0.45, none beyond r = 0.5: the walls are inscribed in the
+    # sphere). Untimed: the certified call (prove=True), which must be
+    # complete, and the bare kernel's own clock as a sub-field.
+    if not isinstance(result, OversetConnectivity):
+        raise TypeError("Overset rows return OversetConnectivity records.")
+    case = api.flat
+    status, donor_status, donor_cell = _overset_outcome(case, result)
+    found = np.flatnonzero(donor_status == 0)
+    cells = case.cells[donor_cell[found]]
     failures = 0
     linear_error = 0.0
     hexes = cells[:, 4] >= 0
@@ -1793,7 +1908,6 @@ def _overset_quality(
             linear_error, float(np.max(np.abs(reproduced - _linear_field(points))))
         )
     background = slice(int(case.vertex_offsets[0]), int(case.vertex_offsets[1]))
-    status = result.vertex_status
     radius = np.linalg.norm(case.vertices[background], axis=1)
     # Background vertices of cells touching a hole must not stay active.
     rows = case.cells[int(case.cell_offsets[0]) : int(case.cell_offsets[1])]
@@ -1808,12 +1922,21 @@ def _overset_quality(
     missing_receptors = int(np.count_nonzero(status[boundary_vertices] != 1))
     inside_not_hole = int(np.count_nonzero((radius < 0.45) & (status[background] != 2)))
     holes_beyond = int(np.count_nonzero((radius > 0.5) & (status[background] == 2)))
+    certified, certified_seconds = measure_host(partial(_overset_run, api, prove=True))
+    uncertified = 0
+    try:
+        certified.require_complete()
+    except OversetConnectivityError:
+        uncertified = 1
+    if not np.array_equal(_overset_outcome(case, certified)[2][found], donor_cell[found]):
+        uncertified = 1
+    kernel = _overset_kernel(case)
     measured = {
         "donor_contains_receptor_failures": float(failures),
         "linear_reproduction_max_abs_error": linear_error,
-        "orphans": float(result.stats[10]),
-        "ambiguous_cells": float(result.stats[13]),
-        "receptors": float(result.stats[9]),
+        "orphans": float(result.orphan_count),
+        "ambiguous_cells": float(result.ambiguous_count),
+        "receptors": float(found.size + result.orphan_count),
         "background_holes": float(np.count_nonzero(status[background] == 2)),
         "background_receptors": float(np.count_nonzero(status[background] == 1)),
         "shell_receptors": float(
@@ -1823,49 +1946,60 @@ def _overset_quality(
         "boundary_not_receptor": float(missing_receptors),
         "background_inside_0.45_not_hole": float(inside_not_hole),
         "background_holes_beyond_0.5": float(holes_beyond),
-        "certification_rejections": float(result.stats[11]),
-        "fringe_donors": float(result.stats[14]),
-        "shared_face_donors": float(result.stats[15]),
-        "kernel_seconds": float(result.stats[7]),
+        # prove=True: the same donors, every one certified, outside the ceiling.
+        "certified_seconds": certified_seconds,
+        "certified_incomplete_or_different": float(uncertified),
+        "kernel_seconds": float(kernel.stats[7]),
+        "fringe_donors": float(kernel.stats[14]),
+        "shared_face_donors": float(kernel.stats[15]),
     }
-    missed = failures + left_active + missing_receptors + inside_not_hole + holes_beyond
+    missed = (
+        failures
+        + left_active
+        + missing_receptors
+        + inside_not_hole
+        + holes_beyond
+        + uncertified
+    )
     return missed, measured
 
 
 def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
+    # The rows time the public prepare_overset_connectivity(prove=False) on
+    # parts built before timing.
     rows: list[_Row] = []
     for size in sizes:
         if size not in _F13_HEX:
             continue
         grid, count, layers = _F13_HEX[size]
-        case = _overset_case(_f13_grid(grid), _f13_shell(count, layers))
-        rows.append(
-            _Row(
-                "overset-hex",
-                size,
-                partial(_overset_run, case),
-                _overset_cells,
-                unmet=_overset_unmet,
-                quality=partial(_overset_quality, case),
+        cases = [("overset-hex", _f13_grid(grid), _f13_shell(count, layers))]
+        if inputs is not None:
+            stored = np.load(inputs / f"f13-{_F13_TET[size]}s.npz")
+            cases.append(
+                (
+                    "overset-tet",
+                    (
+                        np.asarray(stored["xb"], dtype=np.float64),
+                        np.asarray(stored["tb"], dtype=np.int64),
+                    ),
+                    (
+                        np.asarray(stored["xs"], dtype=np.float64),
+                        np.asarray(stored["ts"], dtype=np.int64),
+                    ),
+                )
             )
-        )
-        if inputs is None:
-            continue
-        stored = np.load(inputs / f"f13-{_F13_TET[size]}s.npz")
-        case = _overset_case(
-            (np.asarray(stored["xb"], dtype=np.float64), np.asarray(stored["tb"])),
-            (np.asarray(stored["xs"], dtype=np.float64), np.asarray(stored["ts"])),
-        )
-        rows.append(
-            _Row(
-                "overset-tet",
-                size,
-                partial(_overset_run, case),
-                _overset_cells,
-                unmet=_overset_unmet,
-                quality=partial(_overset_quality, case),
+        for name, background, shell in cases:
+            case = _overset_api_case(background, shell)
+            rows.append(
+                _Row(
+                    name,
+                    size,
+                    partial(_overset_run, case, prove=False),
+                    _overset_cells,
+                    unmet=_overset_unmet,
+                    quality=partial(_overset_quality, case),
+                )
             )
-        )
     return tuple(rows)
 
 
