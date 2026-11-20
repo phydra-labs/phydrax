@@ -870,6 +870,37 @@ class Refinement {
     return status_==PHX_MC_OK && encroaches(circumcenter,m)<0 && !too_close(circumcenter,m) &&
            insert(host,circumcenter,m,t,true);
   }
+  // Inserts the midpoint of t's longest unconstrained edge (metric m) under
+  // the same checks. A varying metric can leave a vertex inside t's metric
+  // circumdisk near its circumcenter; the edge midpoint then still splits t.
+  bool insert_edge_midpoint(int32_t t,const CadMetric2D& m) {
+    const auto& cell=tri_.triangles[t];
+    int edge=-1; double best=-1;
+    std::array<double,4> bestkey{};
+    for(int k=0;k<3;++k) {
+      if (tri_.constraint(t,k)!=-1) continue;
+      const double* a=tri_.point(cell.v[next3(k)]);
+      const double* b=tri_.point(cell.v[prev3(k)]);
+      const double length=dot(m,b[0]-a[0],b[1]-a[1],b[0]-a[0],b[1]-a[1]);
+      std::array<double,2> u{a[0],a[1]},v{b[0],b[1]};
+      if(v<u) std::swap(u,v);
+      const std::array<double,4> key{u[0],u[1],v[0],v[1]};
+      if(edge<0 || length>best || (length==best && key<bestkey)) {
+        edge=k; best=length; bestkey=key;
+      }
+    }
+    if(edge<0) return false;
+    const double* a=tri_.point(cell.v[next3(edge)]);
+    const double* b=tri_.point(cell.v[prev3(edge)]);
+    const double q[2]={(a[0]+b[0])/2,(a[1]+b[1])/2};
+    if (input_.admit_point && !input_.admit_point(input_.admit_context,q)) return false;
+    std::pair<int32_t,int> blocked{-1,-1};
+    const int32_t host=tri_.walk(t,q,&blocked);
+    if (!inside(host)) return false;
+    const CadMetric2D mq=metric(q);
+    return status_==PHX_MC_OK && encroaches(q,mq)<0 && !too_close(q,mq) &&
+           insert(host,q,mq,t,true);
+  }
   void process(int32_t t) {
     double radius, p[2];
     CadMetric2D center_metric;
@@ -905,9 +936,11 @@ class Refinement {
       return;
     }
     if (too_close(p,m)) {
-      // A frontal point too close to a vertex falls back to the circumcenter.
+      // A frontal point too close to a vertex falls back to the circumcenter,
+      // then to the midpoint of the longest unconstrained edge.
       ++result_.stats.relocations_tried;
-      if (insert_circumcenter(t,circumcenter)) {
+      if (insert_circumcenter(t,circumcenter) ||
+          (status_==PHX_MC_OK && insert_edge_midpoint(t,center_metric))) {
         ++result_.stats.relocations_accepted;
         return;
       }

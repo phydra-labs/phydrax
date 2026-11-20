@@ -92,7 +92,8 @@ struct CadRefine2DResult {
 // An encroachment segment is an index into the caller's input segment array.
 // Encroachment and proximity refusals record that relocation was attempted
 // and failed (encroachment: ray, offcenter, circumcenter; proximity: the
-// circumcenter); each outcome is also counted in the relocation statistics.
+// circumcenter, then the midpoint of the longest unconstrained edge); each
+// outcome is also counted in the relocation statistics.
 // Triangles with three fixed input vertices are neither refined nor scanned;
 // fixed_triangles_skipped counts them in the final mesh. The optional admission
 // callback rejects candidate points before their metric is evaluated.
