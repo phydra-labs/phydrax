@@ -11,19 +11,20 @@
 // to the adapter (surface_adapt.hpp): construction only, nothing proved.
 //
 // triangle_bound states an upper bound on the distance from every point of a
-// closed triangle T to the source, projecting along a unit direction d (T's
-// own normal, or the face normal of the source triangle nearest T, for a T
-// rougher than the source). The patch is the source triangles reached from
-// the nearest one across edges whose projections along d meet T's; its
-// boundary therefore projects outside T's. When that boundary winds once
-// around T's projection, the patch's projection covers it (degree one), so
-// every x in T lies along d from some patch triangle tau, and d(x, source)
-// is at most the gap between tau's and T's heights along d there. The gap is
-// affine over the piece proj(T) ∩ proj(tau), so its largest magnitude is at
-// the piece's vertices. The bound is the largest such magnitude over the
-// patch, plus a rounding margin; it is O(h^2) for a triangle of size h over
-// a smooth source. MeshSourceCertifier presents it to the certify driver
-// (surface_certify.hpp).
+// closed triangle T to the source. Points are given planar coordinates along
+// a unit direction d (T's own normal, or the source's interpolated normal
+// nearest T, for a T rougher than the source); each triangle then maps
+// affinely onto the planar triangle of its corners' coordinates (exact
+// binary64 values). The patch is the source triangles reached from the
+// nearest one across edges whose planar triangles meet T's; its boundary
+// therefore misses T's planar triangle, and when it winds once around it
+// (exact orient2d) every planar point y of T's triangle is the image of a
+// patch point: x = X(y) in T and Y(y) in a patch triangle t give
+// d(x, source) <= |X(y) - Y(y)|, convex over the overlap of the two planar
+// triangles, hence at most its value at the overlap's vertices
+// (overlap_gap_bound, with certified rounding pads). The bound is O(h^2) for
+// a triangle of size h over a smooth source. MeshSourceCertifier presents
+// it to the certify driver (surface_certify.hpp).
 #pragma once
 
 #include <array>
@@ -37,6 +38,22 @@
 namespace phx::mc::remesh {
 
 enum class Projection : uint8_t { kOwnNormal, kSourceNormal };
+
+using Planar = std::array<double, 2>;
+
+// An upper bound on |X(y) - Y(y)| over the overlap of two planar triangles,
+// X and Y the affine maps sending each planar triangle's corners to its
+// spatial corners: the largest value at the overlap's vertices (corners
+// inside the other triangle and proper edge crossings, decided by the exact
+// orient2d), each crossing evaluated at a point within a certified offset of
+// the exact one (its parameter enclosed from the orientation error bounds),
+// plus the maps' slopes times that offset and a first-order bound on the
+// rounding of the evaluation, rounded up by a relative 2^-40. 0 when `other`
+// is degenerate (it overlaps no area) or the overlap is empty; +inf when
+// `own` is degenerate. Coordinates must satisfy coordinate_in_domain.
+double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Point, 3>& own_space,
+                         const std::array<Planar, 3>& other,
+                         const std::array<Point, 3>& other_space);
 
 class MeshSource {
  public:

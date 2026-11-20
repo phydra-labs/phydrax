@@ -126,7 +126,8 @@ int32_t repair_surface(std::vector<Point>& points, std::vector<Triangle>& triang
 // Restores angles after a repair: Delaunay flips, and the corners of every
 // triangle below the minimum angle relocated (tangentially, then projected)
 // while that lifts their stars; no collapses or splits. `relocations` counts
-// the moves. The surface is compacted when anything changed.
+// the moves. With any, the surface is stored (compacted, flips included);
+// with none it is left unchanged.
 int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                       const SurfaceOracle& oracle, const AdaptTargets& targets,
                       int64_t& relocations);

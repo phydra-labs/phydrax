@@ -5145,7 +5145,7 @@ class MeshCertificate(NamedTuple):
     are the certifications refused for distance and the triangles refused for
     embedding, the repair splits and the rounds run, all summed over every
     pass, the source triangles not proved within the tolerance (0 here), and
-    the relocations restoring angles after source -> surface repairs.
+    the relocations restoring angles after repairs.
     """
 
     vertices: np.ndarray
@@ -5168,19 +5168,21 @@ def mesh_certify(
 
     Every surface triangle gets an upper bound on the distance from each of
     its points to the source: the source triangles over it (reached across
-    edges whose projections onto its plane meet it) must cover it, proved by
-    the winding of their boundary, and the bound is their largest height over
-    it, taken at the vertices of the pieces they cut from it, plus a stated
-    rounding margin. Refused triangles are repaired (longest edge split at its
-    nearest source point, flips, at most four rounds) with embedding checked
-    exactly; then every source triangle is bounded the same way against the
-    certified surface, projecting along the surface's normals; the surface
-    triangles nearest a refused one are split, angles are restored by flips
-    and relocations, and both directions are decided again, at most three
-    times. Sources that are not closed oriented
-    2-manifolds with nondegenerate triangles raise ``ValueError``; a refused
-    triangle in either direction raises ``MeshcoreError`` (``UNRESOLVED``)
-    naming the refusals.
+    edges whose planar images along its normal meet its own) must cover it,
+    proved by the winding of their boundary with exact orientation
+    predicates, and the bound is the largest gap between the two surfaces
+    over the same planar point, taken at the vertices of the overlaps (edge
+    crossings within certified offsets, with rounding pads). Refused
+    triangles are repaired (longest edge split at its nearest source point,
+    flips, at most four rounds) with embedding checked exactly; then every
+    source triangle is bounded the same way against the certified surface,
+    along the surface's normals, and the surface triangles nearest a refused
+    one are split. After any repair, angles are restored by flips and
+    relocations and both directions are decided again, for at most three
+    further passes. Sources that are not closed oriented 2-manifolds with
+    nondegenerate triangles raise ``ValueError``; a refused triangle in
+    either direction raises ``MeshcoreError`` (``UNRESOLVED``) naming the
+    refusals.
     """
     source_points, source_faces = _surface_arrays(
         source_vertices, source_triangles, "source_vertices", "source_triangles"
