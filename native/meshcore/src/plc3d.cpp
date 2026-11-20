@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <numeric>
 #include <unordered_map>
@@ -1785,13 +1786,28 @@ class PlcRecoveryBuilder {
   // (empty: it ran there). It runs before the first recovery edit unless the
   // source conforms to the first triangulation (conforming_faces), which
   // proves every contact legal; contacts_settled() tells whether that point
-  // was reached.
+  // was reached. A source that conforms to the Delaunay triangulation of its
+  // own points is recovered by it, without the bounding corners; one that
+  // can never conform is not checked again with them.
   int32_t run(PlcRecovery& output, const std::function<int32_t()>& check_contacts) {
     if (!initialize_points()) return status_;
+    std::vector<ConformingFace> conforming;
+    std::optional<Conformity> conformity;
+    if (source_triangulation_ready_ && corner_count_ != 0) {
+      const int32_t corners = corner_count_;
+      corner_count_ = 0;
+      conformity = conforming_faces(conforming);
+      if (conformity == Conformity::kConforms) {
+        corner_points_.clear();
+      } else {
+        corner_count_ = corners;
+        if (conformity == Conformity::kRefused) conformity.reset();
+      }
+    }
     status_ = build_triangulation();
     if (status_ != PHX_MC_OK) return status_;
-    std::vector<ConformingFace> conforming;
-    const bool conforms = conforming_faces(conforming);
+    if (!conformity) conformity = conforming_faces(conforming);
+    const bool conforms = conformity == Conformity::kConforms;
     contacts_settled_ = true;
     if (!conforms && check_contacts) {
       status_ = check_contacts();
@@ -8116,6 +8132,11 @@ class PlcRecoveryBuilder {
     int32_t triangle;
     std::array<int32_t, 2> sides;
   };
+  // conforming_faces' answer. kNever: a precondition fails or a subface is
+  // no face of the complex, which no further points can change (a face of
+  // the Delaunay triangulation of more points, under the same perturbation,
+  // is one of the triangulation of the fewer points it joins).
+  enum class Conformity : std::uint8_t { kConforms, kNever, kRefused };
 
   // classify_regions for a conforming source without seeds, read from its
   // subfaces instead of the source face table: the labels, when no two
@@ -8185,16 +8206,16 @@ class PlcRecoveryBuilder {
   // in cell order) and every chain row an edge of a subface. The subfaces,
   // chain rows and points then meet only in shared vertices and edges, so
   // every source contact is legal, and recovery has nothing to edit.
-  bool conforming_faces(std::vector<ConformingFace>& faces) const {
+  Conformity conforming_faces(std::vector<ConformingFace>& faces) const {
     faces.clear();
     if (!planar_polygons_.empty() || planar_source_faces_.size() != 0 ||
         !exact_points_.empty() || input_.affine_metric != nullptr) {
-      return false;
+      return Conformity::kNever;
     }
     for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
       if (edge_chains_[row].size() > 1 &&
           edge_triangle_offsets_[row] == edge_triangle_offsets_[row + 1]) {
-        return false;
+        return Conformity::kNever;
       }
     }
     // Without planar polygons the subfaces are the input triangles. They are
@@ -8238,7 +8259,7 @@ class PlcRecoveryBuilder {
       const bool ghost = is_ghost(tet);
       if (!ghost && orient3d_filtered(point(tet.v[0]), point(tet.v[1]), point(tet.v[2]),
                                       point(tet.v[3])) <= 0) {
-        return false;
+        return Conformity::kRefused;
       }
       for (int slot = 0; slot < 4; ++slot) {
         // Each face once, from its lower cell.
@@ -8261,10 +8282,10 @@ class PlcRecoveryBuilder {
           int32_t opposite[3];
           oriented_facet(beyond.v, back, opposite);
           if ((FacetKey::of(face) == oriented) == (FacetKey::of(opposite) == oriented)) {
-            return false;
+            return Conformity::kRefused;
           }
         } else if (corner_count_ != 0) {
-          return false;
+          return Conformity::kRefused;
         } else if (ghost) {
           conforming.cell = other;
           conforming.slot = back;
@@ -8272,7 +8293,7 @@ class PlcRecoveryBuilder {
         faces.push_back(conforming);
       }
     }
-    return faces.size() == source_faces_.size();
+    return faces.size() == source_faces_.size() ? Conformity::kConforms : Conformity::kNever;
   }
 
   // check_embedded_entities for a conforming source, true when it passes:
