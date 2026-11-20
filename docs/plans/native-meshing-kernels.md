@@ -19,9 +19,17 @@ tetrahedra, then implicit volumes, then the CAD solid.
   arithmetic only inside filtered predicates.
 - Certification is a separate verifier over (mesh, source, tolerances) and reports pass, fail with
   findings, or unresolved.
-- A certifier counts only after an independent read-only review of its proof (Nov 20: the first three
-  reviewed, `mesh_certify`, `zero_set_certify` and `verify_volume`, each had a soundness defect, all
-  fixed). Rows certified by an unreviewed certifier are construction rows with sampled quality.
+- A certifier counts only after an independent read-only review of its proof. Every certifier reviewed
+  so far had a soundness defect on first read, all fixed and re-read: `mesh_certify`,
+  `zero_set_certify` (two-way, tube plus possible-zero cover), `verify_volume`, the native surface
+  verifiers `verify_surface_embedding` and `verify_chart_partition`, the quadratic validity screen
+  (correct on first read), the mapped-locator root discharge; `verify_cad_fidelity` (V3) is under
+  re-read. Rows certified by an unreviewed certifier are construction rows with sampled quality.
+- References are re-measured on the macOS machine with each reference and our row interleaved
+  (reference, ours, repeated; minimum each), because machine state alone moves identical code by
+  about 15 % between minutes. Gmsh HXT runs with its default optimizer (`Mesh.Optimize 1`): with 0 its
+  meshes keep dihedral angles down to 0.1 degrees, far below our bar. Stored ceilings are a guide, not
+  the acceptance.
 - Every replaced route is a clean cutover: callers, tests, docs, changelog, generated data in the same
   change; no compatibility path.
 - Determinism: the output depends on the input only (not on thread count or timing).
@@ -97,10 +105,11 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: refinement plus improvement at or above Gmsh HXT single thread (0.34 / 0.63 / 0.77 M tets/s
   on sphere / torus / two cylinders at about 0.8 M tets) with minimum dihedral at least 15 degrees and
   radius-edge at most 2.
-- Status (Nov 20, quiet macOS acceptance against Gmsh HXT on the same surfaces): ACCEPTED. Sphere
-  0.54 / 0.65x, stuffed torus 0.95 / 0.91x, grid torus 0.64 / 0.62x; recovery 0.35-0.61x CGAL CDT_3.
-  The stuffed-torus rows reopen when S1 replaces stuffing (their inputs are regenerated from the
-  restricted-Delaunay surface) and are re-measured in the next quiet window.
+- Status (Nov 20, quiet acceptance 3 on `04ebe132d`, HXT with its default optimizer, torus inputs
+  exported from the measured tree): sphere 0.46 / 0.56x, restricted torus 25 0.87x, grid torus 0.39 /
+  0.32x; recovery 0.21-0.37x CGAL CDT_3. Restricted torus 72 (14k triangles) 1.031x block-timed and
+  1.004x interleaved: open, decided in the next quiet interleaved window. The torus inputs are the
+  restricted-Delaunay surfaces of facet edge 0.072 and 0.025 (stuffing removed).
 
 ### S3-C One-call pipeline and certification
 - Pipeline (decided Nov 19, superseding a separate `surface_to_tets.cpp` / `phx_mc_surface_to_tets`
@@ -155,8 +164,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   covered end to end: wedge merging (`merges > 0`); about 15k FIXED variants (twisted n-prisms
   and towers of them, jittered sliver/cone/lobed patches, single and paired coordinate
   perturbations of the sliver sheet, each under default and starved budgets) found none, and no
-  unreachability proof exists, so the path and its evidence fields stay. The same sweep found
-  FIXED recoveries of small twisted prisms and towers (16-30 points) running past 60 s.
+  unreachability proof exists, so the path and its evidence fields stay. The same sweep found two
+  FIXED recoveries (a 6-vertex twisted prism and a 20-point tower) taking 427 s and over 600 s; the
+  cause was subface legalization rescanning every subface after each flip, fixed by an edge-map
+  worklist (4.65 s and 12.4 s, identical output; pinned as native regressions).
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by restricted Delaunay refinement, surface first

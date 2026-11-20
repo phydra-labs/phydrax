@@ -3,7 +3,7 @@
     "machine": "Apple M1 Max, 64 GB, macOS 15, one thread",
     "measured": "2026-11-19",
     "source": "native kernel throughput ledger (independent drivers through each tool's API; minimum of three runs; uniform random points in the unit square and cube); implicit rows: external implicit comparison (meshing-call CPU of the fastest tool whose sampled distances meet the tolerance in both directions); recovery rows: CGAL CDT_3 on the ledger's icosphere and grid torus surfaces (the generators of this benchmark); refinement rows: Gmsh HXT generate(3) wall time, minimum of three, on the same generated surface given as a discrete surface with MeshSizeMin = MeshSizeMax = the mean surface edge (element counts within 1% of this benchmark's); surface remesh rows: the ledger's surface remeshing table, MMGS library time (MMGS_mmgslib) on the same generated surfaces with -hsiz h -hausd h^2/4",
-    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, optimizer off", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4"}
+    "tools": {"cgal": "6.2.1 Delaunay_triangulation_2/3 range constructor with spatial sort; make_mesh_3 on the implicit function", "cgal-regular": "6.2.1 Regular_triangulation_3 range constructor (spatially sorted) on weights uniform in [0, (0.5 n^-1/3)^2)", "cgal-periodic": "6.2.1 Periodic_3_Delaunay_triangulation_3 on the unit cube, range insert with large_point_set", "cgal-cdt3": "6.2.1 Conforming constrained Delaunay triangulation 3", "gmsh": "4.15.2 OpenCASCADE sphere and torus, Delaunay 3D, default optimizer", "gmsh-hxt": "4.15.2 Mesh.Algorithm3D=10 with one thread, default optimizer (Mesh.Optimize 1)", "mmgs": "5.8.0 surface remesher, -hsiz h -hausd h^2/4"}
   },
   "rows": {
     "delaunay-2d": {
@@ -49,16 +49,16 @@
       "90000": {"tool": "cgal-cdt3", "seconds": 2.74, "allowed_ratio": 1.0}
     },
     "surface-to-tets-sphere": {
-      "20480": {"tool": "gmsh-hxt", "seconds": 0.9329, "allowed_ratio": 1.0},
-      "81920": {"tool": "gmsh-hxt", "seconds": 5.304, "allowed_ratio": 1.0}
+      "20480": {"tool": "gmsh-hxt", "seconds": 0.9382, "allowed_ratio": 1.0},
+      "81920": {"tool": "gmsh-hxt", "seconds": 5.5248, "allowed_ratio": 1.0}
     },
     "surface-to-tets-torus": {
-      "72": {"tool": "gmsh-hxt", "seconds": 0.1845, "allowed_ratio": 1.0},
-      "25": {"tool": "gmsh-hxt", "seconds": 4.2623, "allowed_ratio": 1.0}
+      "72": {"tool": "gmsh-hxt", "seconds": 0.1997, "allowed_ratio": 1.0},
+      "25": {"tool": "gmsh-hxt", "seconds": 4.584, "allowed_ratio": 1.0}
     },
     "surface-to-tets-grid-torus": {
-      "10000": {"tool": "gmsh-hxt", "seconds": 0.7027, "allowed_ratio": 1.0},
-      "90000": {"tool": "gmsh-hxt", "seconds": 9.7429, "allowed_ratio": 1.0}
+      "10000": {"tool": "gmsh-hxt", "seconds": 0.722, "allowed_ratio": 1.0},
+      "90000": {"tool": "gmsh-hxt", "seconds": 11.4079, "allowed_ratio": 1.0}
     },
     "surface-remesh-sphere-1e3": {
       "20480": {"tool": "mmgs", "seconds": 0.037, "allowed_ratio": 1.0},
