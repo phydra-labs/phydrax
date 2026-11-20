@@ -2082,9 +2082,12 @@ PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request)
  * further passes. Both sources must be closed oriented 2-manifolds with
  * nondegenerate triangles. On PHX_MC_OK `result` owns the certified surface
  * (phx_mc_surface_result_*) and distances = (largest surface -> source
- * bound, largest source -> surface bound), each at most `tolerance`.
- * PHX_MC_UNRESOLVED when a surface triangle stays refused or a source
- * triangle is not proved within `tolerance` (no result). counters receives
+ * bound, largest source -> surface bound), each at most `tolerance`; when a
+ * pass after one that certified both ways fails (angle relaxation is a
+ * target, not part of the certificate), that certified surface is returned.
+ * PHX_MC_UNRESOLVED when no pass certifies both ways: a surface triangle
+ * stays refused or a source triangle is not proved within `tolerance` (no
+ * result). counters receives
  * (triangle certifications refused for distance, triangles refused for
  * embedding, repair splits, rounds run, all summed over every pass; source
  * triangles not proved within `tolerance` in the last pass; relocations

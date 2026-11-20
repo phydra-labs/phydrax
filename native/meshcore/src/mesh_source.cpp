@@ -866,6 +866,32 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
                                request->minimum_angle_degrees, false};
     std::fill(request->counters, request->counters + 6, 0);
     std::vector<uint8_t> flagged;
+    // The last surface certified both ways, with its distances: relaxation
+    // after it only restores angles (a target, not part of the certificate),
+    // so when a later pass fails, this surface is returned.
+    struct Certified {
+      std::vector<Point> points;
+      std::vector<Triangle> triangles;
+      std::array<double, 2> distances;
+    };
+    std::optional<Certified> certified;
+    const auto finish = [&](std::vector<Point>& out_points,
+                            std::vector<Triangle>& out_triangles) -> int32_t {
+      auto owned = std::make_unique<SurfaceResult>();
+      owned->points = std::move(out_points);
+      owned->triangles = std::move(out_triangles);
+      *request->result = owned.release();
+      return PHX_MC_OK;
+    };
+    // A failed pass after a certified surface: report that surface (its
+    // distances, no source triangles refused); counters keep every pass.
+    const auto fallback = [&](int32_t status) -> int32_t {
+      if (!certified) return status;
+      request->distances[0] = certified->distances[0];
+      request->distances[1] = certified->distances[1];
+      request->counters[4] = 0;
+      return finish(certified->points, certified->triangles);
+    };
     for (int pass = 0;; ++pass) {
       CertifyCounters counters;
       const int32_t status =
@@ -877,7 +903,7 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
       request->counters[1] += counters.refused_embedding;
       request->counters[2] += counters.repair_splits;
       request->counters[3] += counters.rounds;
-      if (status != PHX_MC_OK) return status;
+      if (status != PHX_MC_OK) return fallback(status);
       int64_t refused = 0;
       const int32_t reverse = reverse_bound(source, points, triangles, request->tolerance,
                                             request->distances[1], refused, flagged);
@@ -889,13 +915,14 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
         // have left angles below the minimum: relax them and decide again,
         // unless no pass is left (the surface stays certified as it is).
         if (counters.repair_splits == 0 || pass == kRepairPasses) break;
+        certified = Certified{points, triangles, {request->distances[0], request->distances[1]}};
         const int32_t relaxed = relax_surface(points, triangles, oracle, targets, relocations);
         if (relaxed != PHX_MC_OK) return relaxed;
         request->counters[5] += relocations;
         if (relocations == 0) break;
         continue;
       }
-      if (pass == kRepairPasses) return PHX_MC_UNRESOLVED;
+      if (pass == kRepairPasses) return fallback(PHX_MC_UNRESOLVED);
       // Split the surface triangles nearest the refused source triangles,
       // then restore angles (every triangle below the minimum angle); both
       // directions are decided again.
@@ -903,15 +930,11 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
       int32_t repaired = repair_surface(points, triangles, oracle, targets, flagged, splits);
       if (repaired != PHX_MC_OK) return repaired;
       request->counters[2] += splits;
-      if (splits == 0) return PHX_MC_UNRESOLVED;
+      if (splits == 0) return fallback(PHX_MC_UNRESOLVED);
       repaired = relax_surface(points, triangles, oracle, targets, relocations);
       if (repaired != PHX_MC_OK) return repaired;
       request->counters[5] += relocations;
     }
-    auto owned = std::make_unique<SurfaceResult>();
-    owned->points = std::move(points);
-    owned->triangles = std::move(triangles);
-    *request->result = owned.release();
-    return PHX_MC_OK;
+    return finish(points, triangles);
   });
 }
