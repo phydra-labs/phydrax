@@ -1916,6 +1916,11 @@
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.
+- Zero-set certification repairs to 0.8 of the tolerance once a surface needs
+  a repair, so the reverse proof has room (surfaces that need no repair are
+  unchanged); a carrier witness box must pass the value program's guarded
+  evaluation; interval box programs are not copyable and rebinding clears
+  their continuity requirement.
 - Restricted Delaunay meshing keeps every seed box on which a domain guard
   may fail (`phx_mc_implicit_restricted_delaunay` and
   `implicit_restricted_delaunay` take the value program's guards), so a
