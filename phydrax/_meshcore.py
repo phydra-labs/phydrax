@@ -1128,6 +1128,9 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
+    "phx_mc_cad_mesh_solid": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_cad_volume_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_volume_export": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
@@ -12797,6 +12800,135 @@ class CadSurfaceResult(NamedTuple):
     chart: CadChartResult
 
 
+class _CadVolumeControls(ctypes.Structure):
+    _fields_ = (
+        ("radius_edge_bound", ctypes.c_double),
+        ("min_dihedral_degrees", ctypes.c_double),
+        ("min_relative_determinant", ctypes.c_double),
+        ("geometry_order", _I32),
+    )
+
+
+_CAD_QUADRATIC_STATS_FIELDS = (
+    "curve_edges",
+    "surface_edges",
+    "interior_edges",
+    "initial_invalid",
+    "initial_unresolved",
+    "harmonic_nodes",
+    "harmonic_repaired_cells",
+    "straightened_edges",
+    "final_invalid",
+    "final_unresolved",
+)
+_CAD_VOLUME_STATS_DTYPE = np.dtype(
+    [
+        (name, np.int64)
+        for name in (
+            "curve_ns",
+            "face_ns",
+            "assembly_ns",
+            "volume_ns",
+            "quadratic_ns",
+            "recovery_attempts",
+            "boundary_splits",
+            "refine_inserted",
+            "refine_unmet",
+            "improve_inserted",
+            "improve_collapsed",
+            "improve_relocated",
+            "unmet_cells",
+        )
+    ]
+    + [
+        ("recovery_status", np.int32),
+        ("recovery_reason", np.int32),
+        ("failure_kind", np.int32),
+        ("failure_entity", np.int64),
+        (
+            "quadratic",
+            np.dtype(
+                [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
+            ),
+        ),
+    ],
+    align=True,
+)
+_CAD_BOUNDARY_SPLIT_DTYPE = np.dtype(
+    [
+        ("reason", np.int32),
+        ("entity_kind", np.int32),
+        ("entity", np.int64),
+        ("vertices", np.int32, (2,)),
+        ("vertex", np.int32),
+        ("dimension", np.int32),
+        ("carrier", np.int32),
+        ("parameters", np.float64, (2,)),
+    ],
+    align=True,
+)
+
+
+class _CadVolumeArrays(ctypes.Structure):
+    _fields_ = (
+        ("point_capacity", _I64),
+        ("tetrahedron_capacity", _I64),
+        ("triangle_capacity", _I64),
+        ("edge_capacity", _I64),
+        ("record_capacity", _I64),
+        ("split_capacity", _I64),
+        *(
+            (name, _P)
+            for name in (
+                "points",
+                "tetrahedra",
+                "tetrahedron_regions",
+                "boundary_faces",
+                "edges",
+                "nodes",
+                "edge_kinds",
+                "edge_entities",
+                "cell_edges",
+                "cell_decisions",
+                "records",
+                "splits",
+                "stats",
+            )
+        ),
+    )
+
+
+class CadVolumeResult(NamedTuple):
+    """Fixed-boundary tetrahedra of a CAD surface candidate and its P2 nodes.
+
+    Points begin with the surface points; cells are right-handed;
+    ``boundary_faces[t]`` is the (cell, local face opposite that vertex) of
+    surface triangle ``t``. P2 arrays are empty for geometry order 1.
+    """
+
+    points: np.ndarray
+    tetrahedra: np.ndarray
+    tetrahedron_regions: np.ndarray
+    boundary_faces: np.ndarray
+    edges: np.ndarray
+    nodes: np.ndarray
+    edge_kinds: np.ndarray
+    edge_entities: np.ndarray
+    cell_edges: np.ndarray
+    cell_decisions: np.ndarray
+    records: np.ndarray
+    splits: np.ndarray
+    stats: np.ndarray
+
+
+class CadSolidResult(NamedTuple):
+    """The surface (after any boundary split) and the volume of a CAD solid."""
+
+    status: MeshcoreStatus
+    surface: CadSurfaceResult
+    volume: CadVolumeResult
+
+
 def cad_mesh(
     model: CadModel,
     face_sizes: object,
@@ -12809,6 +12941,103 @@ def cad_mesh(
     minimum_size: float = 1e-12,
 ) -> CadSurfaceResult:
     """Discretize the curves and assemble a native CAD surface candidate."""
+    return _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        None,
+    )[0]
+
+
+def cad_mesh_solid(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    /,
+    *,
+    tolerance_fraction: float = 0.5,
+    grading: float = 1.3,
+    minimum_size: float = 1e-12,
+    radius_edge_bound: float = 2.0,
+    min_dihedral_degrees: float = 15.5,
+    min_relative_determinant: float = 0.0,
+    geometry_order: int = 1,
+) -> CadSolidResult:
+    """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
+
+    ``face_sizes`` are the requested edge lengths h; the volume is sized from
+    them. UNRESOLVED returns the result with unmet quality targets, unresolved
+    P2 cells, or no cells when recovery still refused after the one boundary
+    split (``volume.stats``).
+    """
+    controls = _CadVolumeControls(
+        radius_edge_bound,
+        min_dihedral_degrees,
+        min_relative_determinant,
+        geometry_order,
+    )
+    surface, volume = _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        controls,
+    )
+    if volume is None:
+        raise MeshcoreError(surface.status, "cad_mesh_solid: no volume")
+    return CadSolidResult(surface.status, surface, volume)
+
+
+def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeResult:
+    counts = np.empty((6,), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
+        "cad_volume_sizes",
+    )
+    p, m, t, n, r, s = (int(c) for c in counts)
+    cells = m if n else 0
+    banks = (
+        np.empty((p, 3), dtype=np.float64),
+        np.empty((m, 4), dtype=np.int32),
+        np.empty((m,), dtype=np.int32),
+        np.empty((t, 2), dtype=np.int32),
+        np.empty((n, 2), dtype=np.int32),
+        np.empty((n, 3), dtype=np.float64),
+        np.empty((n,), dtype=np.int8),
+        np.empty((n,), dtype=np.int32),
+        np.empty((cells, 6), dtype=np.int64),
+        np.empty((cells,), dtype=np.int32),
+        np.empty((r, 2), dtype=np.int64),
+        np.empty((s,), dtype=_CAD_BOUNDARY_SPLIT_DTYPE),
+        np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
+    )
+    outputs = _CadVolumeArrays(p, m, t, n, r, s, *(a.ctypes.data for a in banks))
+    _raise_for_call(
+        library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
+        "cad_volume_export",
+    )
+    return CadVolumeResult(*banks)
+
+
+def _cad_mesh(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    tolerance_fraction: float,
+    grading: float,
+    minimum_size: float,
+    volume: _CadVolumeControls | None,
+    /,
+) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
     sizes = _real_array(face_sizes, "face_sizes")
     tolerances = _real_array(face_tolerances, "face_tolerances")
     curve_tols = _real_array(curve_tolerances, "curve_tolerances")
@@ -12831,6 +13060,13 @@ def cad_mesh(
         library["phx_mc_cad_mesh"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
+            ctypes.addressof(handle),
+        )
+        if volume is None
+        else library["phx_mc_cad_mesh_solid"](
+            ctypes.addressof(structure),
+            ctypes.addressof(controls),
+            ctypes.addressof(volume),
             ctypes.addressof(handle),
         )
     )
@@ -12948,8 +13184,9 @@ def cad_mesh(
             library["phx_mc_cad_chart_export"](handle, ctypes.addressof(chart_outputs)),
             "cad_chart_export",
         )
-        return CadSurfaceResult(
+        surface = CadSurfaceResult(
             status, *banks, pole_sectors, CadChartResult(*chart_banks)
         )
+        return surface, None if volume is None else _cad_volume_export(library, handle)
     finally:
         library["phx_mc_cad_surface_result_free"](handle)

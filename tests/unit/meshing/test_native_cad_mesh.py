@@ -15,6 +15,7 @@ import phydrax as phx
 from phydrax._meshcore import (
     _CAD_FACE_FAILURE_DTYPE,
     cad_mesh,
+    cad_mesh_solid,
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
@@ -484,3 +485,58 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
             np.sort(failure["segment_parameters"]),
             result.curve_parameters[start : start + 2],
         )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
+    model = cad_geometry_bundle(domain).model
+    arguments = (
+        model,
+        np.full((model.surface_nodes.size,), 0.3, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    result = cad_mesh_solid(*arguments, geometry_order=order)
+    assert result.status is MeshcoreStatus.OK
+    surface, volume = result.surface, result.volume
+    stats = volume.stats[0]
+    assert stats["recovery_status"] == 0 and stats["boundary_splits"] == 0
+    assert stats["unmet_cells"] == 0
+    assert all(stats[f"{s}_ns"] > 0 for s in ("curve", "face", "volume"))
+    count = surface.points.shape[0]
+    np.testing.assert_array_equal(volume.points[:count], surface.points)
+    cells = volume.tetrahedra
+    corners = volume.points[cells]
+    determinant = np.linalg.det(corners[:, 1:] - corners[:, :1])
+    assert np.all(determinant > 0.0)
+    assert np.all(volume.tetrahedron_regions == 0)
+    # Each surface triangle is the face its boundary row names.
+    cell, local = volume.boundary_faces[:, 0], volume.boundary_faces[:, 1]
+    faces = np.stack([cells[cell, (local + k) % 4] for k in (1, 2, 3)], axis=1)
+    np.testing.assert_array_equal(
+        np.sort(faces, axis=1), np.sort(surface.triangles, axis=1)
+    )
+    if order == 1:
+        assert volume.edges.shape[0] == 0 and volume.cell_edges.shape[0] == 0
+        assert stats["quadratic_ns"] == 0
+    else:
+        assert np.all(volume.cell_decisions == 0)
+        curved = volume.edge_kinds != 0
+        nodes = volume.nodes[curved]
+        # On the z cylinder (r 1), the x cylinder (r 0.6) or a planar cap.
+        residual = np.min(
+            np.stack(
+                [
+                    np.abs(np.hypot(nodes[:, 0], nodes[:, 1]) - 1.0),
+                    np.abs(np.hypot(nodes[:, 1], nodes[:, 2]) - 0.6),
+                    np.abs(np.abs(nodes[:, 2]) - 1.2),
+                    np.abs(np.abs(nodes[:, 0]) - 1.5),
+                ]
+            ),
+            axis=0,
+        )
+        assert curved.any() and np.max(residual) < 1e-12
+    again = cad_mesh_solid(*arguments, geometry_order=order)
+    np.testing.assert_array_equal(again.volume.points, volume.points)
+    np.testing.assert_array_equal(again.volume.tetrahedra, cells)
+    np.testing.assert_array_equal(again.volume.nodes, volume.nodes)
