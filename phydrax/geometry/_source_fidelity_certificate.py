@@ -225,6 +225,84 @@ def _require_decided(
         )
 
 
+def _adopted_chart_rows(
+    stored: ImplicitChartRows,
+    fresh: ImplicitChartRows,
+    tolerance: float,
+    maximum_normal_deviation: float | None,
+    /,
+) -> ImplicitChartRows:
+    """The outward hull of a row evidence and its reproof, its decisions re-checked.
+
+    In ``CHART_ROW_COLUMNS`` order the field residual is an upper bound (hull by
+    maximum), target-to-root and source-normal deviation are ``[lower, upper]``
+    pairs, and the chart Jacobian, injectivity margin and source gradient are
+    lower bounds (hull by minimum). A reusable row is reused by a child proof
+    as certified, so every decision it carries must hold on the hull: its
+    tolerance and normal-limit passes and violations, and the strict
+    positivity of its three lower bounds that admits it as a chart.
+    """
+    rows = np.flatnonzero(np.asarray(stored.reusable))
+    values = np.array(stored.values, dtype=np.float64, copy=True)
+    kept = values[rows]
+    reproved = np.asarray(fresh.values, dtype=np.float64)[rows]
+    hull = np.empty_like(kept)
+    hull[:, 0] = np.maximum(kept[:, 0], reproved[:, 0])
+    for pair in ((1, 2), (3, 4)):
+        hull[:, pair] = _hull(kept[:, pair], reproved[:, pair])
+    hull[:, 5:] = np.minimum(kept[:, 5:], reproved[:, 5:])
+    _require_decided(
+        kept[:, (1, 2)], hull[:, (1, 2)], tolerance, None, "chart_rows.target_to_root"
+    )
+    if maximum_normal_deviation is not None:
+        _require_decided(
+            kept[:, (3, 4)],
+            hull[:, (3, 4)],
+            maximum_normal_deviation,
+            None,
+            "chart_rows.source_normal_deviation",
+        )
+    unbounded = np.full((rows.size,), math.inf, dtype=np.float64)
+    for column, name in (
+        (5, "chart_rows.chart_jacobian_lower"),
+        (6, "chart_rows.chart_injectivity_margin"),
+        (7, "chart_rows.source_gradient_lower"),
+    ):
+        _require_decided(
+            np.stack((kept[:, column], unbounded), axis=1),
+            np.stack((hull[:, column], unbounded), axis=1),
+            0.0,
+            None,
+            name,
+        )
+    values[rows] = hull
+    return ImplicitChartRows(stored.keys, stored.reusable, values)
+
+
+def _adopted_cover(
+    stored: SourceBoundaryChartCover, fresh: SourceBoundaryChartCover, /
+) -> SourceBoundaryChartCover:
+    """The reproved simplices, each with the larger of its two deviation bounds.
+
+    Each fresh bound is sound for its fresh simplex, so the maximum is too,
+    whether or not the stored bound was; the exact content (and identity) is
+    the stored cover's, which ``require_reproduced_by`` proved equal.
+    """
+    return SourceBoundaryChartCover(
+        fresh.simplices,
+        np.maximum(
+            np.asarray(stored.deviation_bounds, dtype=np.float64),
+            np.asarray(fresh.deviation_bounds, dtype=np.float64),
+        ),
+        stored.semantics,
+        stored.complete,
+        stored.source_id,
+        stored.source_revision,
+        findings=stored.findings,
+        restriction_ids=stored.restriction_ids,
+    )
+
+
 @final
 class SourceFidelityCertificate(StrictModule, NonTrainableState):
     """Continuous two-directed bounds and optional oriented-normal evidence."""
@@ -583,10 +661,15 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         Every adopted decision must hold on the hull: a bound whose stored
         upper end met its limit must still meet it, a bound whose stored lower
         end exceeded its limit must still exceed it, and a stored ``certified``
-        status must hold on the hull uppers. The result carries the hull
-        evidence with the stored decisions and identity on the fresh restored
-        owners. A mismatch raises :class:`SourceFidelityReproofError` naming
-        the bound and cell.
+        status must hold on the hull uppers. Implicit chart rows, which child
+        proofs reuse as certified, take the same hull and re-check their own
+        decisions (`_adopted_chart_rows`); the chart cover ships its reproved
+        simplices with the larger of the two one-sided bounds
+        (`_adopted_cover`). Domain coverage downstream is recomputed from the
+        adopted bounds, so its distance follows the hull. The result carries
+        the hull evidence with the stored decisions and identity on the fresh
+        restored owners. A mismatch raises :class:`SourceFidelityReproofError`
+        naming the bound and cell.
         """
         if type(fresh) is not SourceFidelityCertificate:
             raise TypeError("A fidelity reproof must be a SourceFidelityCertificate.")
@@ -636,6 +719,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         if coverage is not None:
             assert fresh.coverage is not None
             coverage.require_reproduced_by(fresh.coverage)
+            coverage = _adopted_cover(coverage, fresh.coverage)
         if {
             finding.finding_id
             for finding in self.findings
@@ -729,9 +813,9 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             )
         if stored_rows is not None and fresh_rows is not None:
             stored_rows.require_current()
-            # Two-sided row evidence must intersect its reproof; the one-sided
-            # lower/upper columns are evidence whose gate (``reusable``) was
-            # re-decided exactly above.
+            # Two-sided row evidence must intersect its reproof; the adopted
+            # rows are the hull of both (`_adopted_chart_rows`), with the gate
+            # (``reusable``) re-decided exactly above.
             rows = np.flatnonzero(np.asarray(stored_rows.reusable))
             stored_values = np.asarray(stored_rows.values, dtype=np.float64)[rows]
             fresh_values = np.asarray(fresh_rows.values, dtype=np.float64)[rows]
@@ -819,7 +903,13 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             coverage=coverage,
             findings=self.findings,
             status=self.status,
-            chart_rows=stored_rows,
+            chart_rows=(
+                None
+                if stored_rows is None or fresh_rows is None
+                else _adopted_chart_rows(
+                    stored_rows, fresh_rows, self.tolerance, self.maximum_normal_deviation
+                )
+            ),
             certificate_id=self.certificate_id,
         )
         adopted = reconstruct_strict(SourceFidelityCertificate, attributes)
