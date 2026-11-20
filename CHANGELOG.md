@@ -334,6 +334,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native restricted implicit meshing has a lower fixed per-call cost with
+  unchanged output: each lattice coordinate of the box tree is computed once
+  for all levels, the box tree's interval evaluation runs in reused batches,
+  the surface topology check groups edges instead of sorting them, and the
+  boundary polish and sliver pass allocate less (about 13% fewer cycles on
+  the implicit sphere and torus rows).
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and
