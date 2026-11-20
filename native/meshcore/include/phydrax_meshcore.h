@@ -2841,6 +2841,31 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double floor, int8_t* valid, double* lower,
                                               double* upper);
 
+/* Exact validity proof of dof-linear polynomial cell maps in three dimensions
+ * (domain 0: affine simplices; 1: affine or multilinear boxes), identical to
+ * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
+ * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
+ * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
+ * (significands, exponents: (row_count, 3); an exponent equal to
+ * sparse_exponent marks a non-dyadic entry) and the integer basis phi_dof =
+ * sum over terms [term_starts[dof], term_starts[dof + 1]) of
+ * term_numerators / 2^basis_denominator_log2 times xi^term_exponents (rows of
+ * three). decided[k] = 1 when the root proof decides the cell: status[k] 0
+ * (certified) or 1 (invalid) and lower[k], upper[k] the directed binary64
+ * endpoints of the determinant (affine) or of the least and greatest
+ * least-degree Bernstein control of det J (multilinear). digests[k] (16
+ * bytes) is the cell's exact-map digest for cell kind `kind` (printable
+ * ASCII without quote or backslash). Undecided cells (subdivision, the
+ * expanded Hadamard margin, values beyond the exact range) are left to the
+ * rational proof with their other outputs unspecified. floor in [0, 1). */
+PHX_MC_API int32_t phx_mc_cell_map_validity(
+    int32_t domain, int64_t dof_count, const int64_t* term_starts,
+    const int32_t* term_exponents, const int64_t* term_numerators,
+    int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
+    const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
+    int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
+    int32_t* status, double* lower, double* upper, uint8_t* digests);
+
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its
