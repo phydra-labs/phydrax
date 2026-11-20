@@ -163,6 +163,59 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
   return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
+// A collapsed source pole side maps to a single source point. Along a chart
+// axis-aligned pole chord, moving radially from that chord to the sliver costs
+// at most sup|S_r| times its radial extent. Two lens caps bridge the binary64
+// chord to the exact source pole and back at the owner corner; the remaining
+// interval endpoint mismatch reaches the stored mesh pole vertex. If the pole
+// chord is oblique, the full two-coordinate derivative bound is used instead.
+int32_t pole_sliver_bound(const CadGeometry& geometry, int32_t face, const double* uv,
+                          int pole_edge, const double* pole_vertex, double lens,
+                          IntervalEvaluationWorkspace& workspace, double& cap) {
+  const int first = pole_edge, second = (pole_edge + 1) % 3;
+  double box_lower[2], box_upper[2];
+  for (int axis = 0; axis < 2; ++axis) {
+    box_lower[axis] = std::min({uv[axis], uv[2 + axis], uv[4 + axis]});
+    box_upper[axis] = std::max({uv[axis], uv[2 + axis], uv[4 + axis]});
+  }
+  double lower[9], upper[9];
+  int32_t status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper,
+                                           1, lower, upper, workspace);
+  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+  double endpoint_lower[3], endpoint_upper[3];
+  status = geometry.interval_jets(geometry.surface_node(face), uv + 2 * first, uv + 2 * first,
+                                  0, endpoint_lower, endpoint_upper, workspace);
+  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+  double mismatch[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto difference = di::subtract({endpoint_lower[axis], endpoint_upper[axis]},
+                                         di::point(pole_vertex[axis]));
+    if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
+    mismatch[axis] = di::magnitude(difference);
+  }
+  auto total = di::add(di::point(phx::mc::geometry::norm_upper(mismatch)),
+                       di::add(di::point(lens), di::point(lens)));
+  const bool same_u = uv[2 * first] == uv[2 * second];
+  const bool same_v = uv[2 * first + 1] == uv[2 * second + 1];
+  for (int axis = 0; axis < 2; ++axis) {
+    // On a coordinate-aligned pole chord the tangential direction collapses.
+    if ((axis == 0 && same_v && !same_u) || (axis == 1 && same_u && !same_v)) continue;
+    const double origin = uv[2 * first + axis];
+    const auto low = di::subtract(di::point(box_lower[axis]), di::point(origin));
+    const auto high = di::subtract(di::point(box_upper[axis]), di::point(origin));
+    const double extent = std::max(di::magnitude(low), di::magnitude(high));
+    double derivative[3];
+    for (int component = 0; component < 3; ++component) {
+      const int index = 3 * (axis + 1) + component;
+      derivative[component] = di::magnitude({lower[index], upper[index]});
+    }
+    total = di::add(total, di::multiply(di::point(extent),
+                                       di::point(phx::mc::geometry::norm_upper(derivative))));
+  }
+  cap = total.upper;
+  return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
 struct EdgeSlot {
   std::array<uint64_t, 4> endpoints{};
   int32_t patch = -1;
@@ -237,6 +290,53 @@ std::vector<phx_mc_fidelity_finding> association_findings(
       findings.push_back({PHX_MC_FIDELITY_MISSING_CHORD, -1, -1, -1, -1, chord});
   return findings;
 }
+
+void chart_mesh_findings(
+    const phx_mc_cad_model& model, int64_t point_count, int64_t chart_count,
+    const int64_t* chart_triangles, int64_t mesh_count, const int64_t* mesh_triangles,
+    const int64_t* chart_to_mesh, const int64_t* edge_chord, const int64_t* chord_use,
+    std::vector<int32_t>& pole_edges, std::vector<phx_mc_fidelity_finding>& findings) {
+  std::vector<int64_t> owners(static_cast<std::size_t>(mesh_count), -1);
+  std::vector<uint8_t> mesh_vertices(static_cast<std::size_t>(point_count), 0);
+  for (int64_t i = 0; i < mesh_count * 3; ++i)
+    mesh_vertices[static_cast<std::size_t>(mesh_triangles[i])] = 1;
+  for (int64_t row = 0; row < chart_count; ++row) {
+    int32_t pole_edge = -1;
+    bool bad = false;
+    for (int edge = 0; edge < 3; ++edge) {
+      const int64_t chord = edge_chord[3 * row + edge];
+      if (chord < 0 || model.use_kinds[chord_use[chord]] != 1) continue;
+      if (pole_edge >= 0 ||
+          chart_triangles[3 * row + edge] != chart_triangles[3 * row + (edge + 1) % 3])
+        bad = true;
+      pole_edge = edge;
+    }
+    pole_edges[static_cast<std::size_t>(row)] = pole_edge;
+    const int64_t mapped = chart_to_mesh[row];
+    if (mapped == -1) {
+      if (pole_edge < 0 ||
+          !mesh_vertices[static_cast<std::size_t>(chart_triangles[3 * row + pole_edge])])
+        bad = true;
+    } else if (mapped < 0 || mapped >= mesh_count || pole_edge >= 0) {
+      bad = true;
+    } else {
+      const int64_t* chart = chart_triangles + 3 * row;
+      const int64_t* mesh = mesh_triangles + 3 * mapped;
+      bool same = false;
+      for (int rotation = 0; rotation < 3; ++rotation)
+        same |= chart[0] == mesh[rotation] && chart[1] == mesh[(rotation + 1) % 3] &&
+                chart[2] == mesh[(rotation + 2) % 3];
+      int64_t& owner = owners[static_cast<std::size_t>(mapped)];
+      if (!same || owner >= 0) bad = true;
+      if (owner < 0) owner = row;
+    }
+    if (bad)
+      findings.push_back({PHX_MC_FIDELITY_CHART_MESH_LINK, row, pole_edge, mapped, -1, -1});
+  }
+  for (int64_t row = 0; row < mesh_count; ++row)
+    if (owners[static_cast<std::size_t>(row)] < 0)
+      findings.push_back({PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE, -1, -1, row, -1, -1});
+}
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -293,6 +393,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     const double* coefficient_lower, const double* coefficient_upper,
     int64_t point_count, const double* points, int64_t triangle_count,
     const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
     int64_t use_count, const int64_t* use_patch, const double* use_range,
     int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
     const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
@@ -304,6 +405,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     if (model == nullptr || !phx::mc::addressable(point_count, 3, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 6, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 3, sizeof(int64_t)) ||
+        !phx::mc::addressable(mesh_triangle_count, 3, sizeof(int64_t)) ||
         !phx::mc::addressable(use_count, 2, sizeof(double)) ||
         !phx::mc::addressable(chord_count, 4, sizeof(double)) || loop_count < 0 ||
         coefficient_count < 0 || output_capacity < 0 || evidence_capacity < 0 ||
@@ -315,8 +417,9 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         (coefficient_count && (!coefficient_lower || !coefficient_upper)) ||
         (use_count && (!use_patch || !use_range)) ||
         (chord_count && (!chord_use || !chord_loop || !chord_uv || !chord_range)) ||
+        (mesh_triangle_count && !mesh_triangles) ||
         (evidence_capacity && !evidence) ||
-        (triangle_count && (!triangles || !face_rows || !uv || !edge_chord ||
+        (triangle_count && (!triangles || !face_rows || !uv || !edge_chord || !chart_to_mesh ||
                             !upper || !item_status || !reasons || !subdivisions)))
       return PHX_MC_INVALID_ARGUMENT;
     phx::mc::cad::CadGeometry geometry;
@@ -345,6 +448,9 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         return PHX_MC_INVALID_ARGUMENT;
     for (int64_t i = 0; i < point_count * 3; ++i)
       if (!std::isfinite(points[i])) return PHX_MC_NONFINITE_INPUT;
+    for (int64_t i = 0; i < mesh_triangle_count * 3; ++i)
+      if (mesh_triangles[i] < 0 || mesh_triangles[i] >= point_count)
+        return PHX_MC_INVALID_ARGUMENT;
     for (int64_t i = 0; i < triangle_count; ++i) {
       if (face_rows[i] < 0 || face_rows[i] >= model->surface_count)
         return PHX_MC_INVALID_ARGUMENT;
@@ -357,8 +463,12 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
       for (int j = 0; j < 6; ++j)
         if (!std::isfinite(uv[6 * i + j])) return PHX_MC_NONFINITE_INPUT;
     }
-    const auto findings = phx::mc::cad::association_findings(
+    auto findings = phx::mc::cad::association_findings(
         triangle_count, face_rows, uv, chord_count, chord_use, use_patch, chord_uv, edge_chord);
+    std::vector<int32_t> pole_edges(static_cast<std::size_t>(triangle_count), -1);
+    phx::mc::cad::chart_mesh_findings(*model, point_count, triangle_count, triangles,
+                                     mesh_triangle_count, mesh_triangles, chart_to_mesh,
+                                     edge_chord, chord_use, pole_edges, findings);
     *evidence_count = static_cast<int64_t>(findings.size());
     if (*evidence_count > evidence_capacity) return PHX_MC_CAPACITY_EXCEEDED;
     if (!findings.empty()) {
@@ -389,8 +499,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         if (chord >= 0) {
           const int64_t use = chord_use[chord];
           double cap = 0.0;
-          if (model->use_kinds[use] != 0 ||
-              phx::mc::cad::trim_lens_bound(geometry, face_rows[i], use, chord_uv + 4 * chord,
+          if (phx::mc::cad::trim_lens_bound(geometry, face_rows[i], use, chord_uv + 4 * chord,
                                             chord_range + 2 * chord, workspace, cap) != PHX_MC_OK) {
             trim_refused = true;
           } else {
@@ -408,6 +517,28 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         reasons[i] = trim_refused ? PHX_MC_FIDELITY_TRIM_REFUSAL : PHX_MC_FIDELITY_RESOLUTION;
         subdivisions[i] = 0;
         aggregate = PHX_MC_UNRESOLVED;
+        continue;
+      }
+      const int pole_edge = pole_edges[static_cast<std::size_t>(i)];
+      if (pole_edge >= 0) {
+        double cap = 0.0;
+        const int32_t status = phx::mc::cad::pole_sliver_bound(
+            geometry, face_rows[i], uv + 6 * i, pole_edge, vertices + 3 * pole_edge,
+            lens, workspace, cap);
+        if (status != PHX_MC_OK || cap > tolerance) {
+          upper[i] = std::numeric_limits<double>::infinity();
+          item_status[i] = PHX_MC_UNRESOLVED;
+          reasons[i] = status == PHX_MC_OK ? PHX_MC_FIDELITY_RESOLUTION
+                                           : PHX_MC_FIDELITY_INTERVAL_REFUSAL;
+          subdivisions[i] = 0;
+          aggregate = PHX_MC_UNRESOLVED;
+        } else {
+          upper[i] = cap;
+          item_status[i] = PHX_MC_OK;
+          reasons[i] = PHX_MC_FIDELITY_CERTIFIED;
+          subdivisions[i] = 0;
+          maximum = std::max(maximum, cap);
+        }
         continue;
       }
       const double budget = phx::mc::remesh::subtract(phx::mc::remesh::point(tolerance),

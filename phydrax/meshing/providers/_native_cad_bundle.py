@@ -44,6 +44,7 @@ from ...geometry._meshing_domain import (
     _PlacedSurfacePatch,
     MeshingDomain,
     PatchCurveUse,
+    PatchPoleUse,
 )
 from ...geometry.brep._boolean_core import AffinePCurve, PeriodicPCurve
 from ...geometry.brep._intersection_curve import (
@@ -1080,6 +1081,51 @@ def _coefficient_sources(
     return None
 
 
+def _bound_symbolic_sphere_poles(
+    bank: _NodeBank,
+    domain: MeshingDomain,
+    offsets: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> None:
+    """Enclose pole tokens according to the source's sphere-pole authority."""
+    from ...geometry.brep._correspondence import exact_sphere_pole
+    from ...geometry.brep._trim_helpers import period_offset, period_scalar_bounds
+
+    for patch in domain.patches:
+        surface = patch.surface
+        while isinstance(surface, (_PlacedSurfacePatch, PlacedSurface)):
+            surface = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface.definition
+        for loop in patch.loops:
+            for use in loop:
+                if not isinstance(use, PatchPoleUse):
+                    continue
+                if not isinstance(surface, SpherePatch):
+                    continue
+                curve = use.pcurve
+                index = bank._memo[id(curve)]
+                if type(curve) is LineCurve and curve.direction_exact[1] == 0:
+                    latitude = curve.origin_exact[1]
+                    if exact_sphere_pole(surface, latitude) is not None:
+                        turns = Fraction(1 if latitude > 0 else -1, 4)
+                        lo, hi = period_scalar_bounds(period_offset(Fraction(0), turns))
+                        position = offsets[index] + 1
+                        lower[position] = min(lower[position], float(lo))
+                        upper[position] = max(upper[position], float(hi))
+                    continue
+                # A pole p-curve whose source semantics are not represented by
+                # this path cannot safely inherit point-shadow coefficients.
+                pending = [index]
+                while pending:
+                    node = pending.pop()
+                    first, last = offsets[node], offsets[node + 1]
+                    if first != last:
+                        lower[first:last], upper[first:last] = -np.inf, np.inf
+                        break
+                    pending.extend(bank.children[node])
+
+
 def coefficient_bounds(
     bundle: CadGeometryBundle, domain: MeshingDomain, /
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1124,6 +1170,7 @@ def coefficient_bounds(
         for offset, value in enumerate(exact):
             lower[first + offset] = coefficient_endpoint(value, upper=False, saturate=True)
             upper[first + offset] = coefficient_endpoint(value, upper=True, saturate=True)
+    _bound_symbolic_sphere_poles(bank, domain, real_offsets, lower, upper)
     lower.setflags(write=False)
     upper.setflags(write=False)
     return lower, upper

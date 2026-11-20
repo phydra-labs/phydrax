@@ -23,6 +23,7 @@ from phydrax.geometry._meshing_domain import (
     MeshingDomainCurve,
     MeshingSurfacePatch,
     PatchCurveUse,
+    PatchPoleUse,
 )
 from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_interpolation import certify_domain_surface_charts
@@ -194,7 +195,10 @@ def _cylinder_mesh(
         chord_use.append(use)
         chord_uv.append(np.stack((start, end)))
         chord_range.append((float(first), float(first + 0.5)))
-    mesh = CadFidelityMesh(points, cells, rows, uv_points[cells], edge_rows)
+    mesh = CadFidelityMesh(
+        points, cells, rows, uv_points[cells], cells, np.arange(len(cells), dtype=np.int64),
+        edge_rows,
+    )
     bundle = cad_geometry_bundle(domain)
     use_patch = np.repeat(
         np.arange(bundle.model.surface_nodes.size, dtype=np.int64),
@@ -401,6 +405,8 @@ def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
         indices,
         np.zeros(len(indices), dtype=np.int32),
         chart_points[indices],
+        indices,
+        np.arange(len(indices), dtype=np.int64),
         edges,
     )
     chord_range = np.asarray(
@@ -436,3 +442,132 @@ def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
             first, last = mesh.points[indices[row, 1:3]]
             chord = (1.0 - fraction) * first + fraction * last
             assert np.linalg.norm(source - chord) <= result.upper[row]
+
+
+def _sphere_pole_domain(*, pole: bool) -> MeshingDomain:
+    latitude = float(np.pi / 2)
+    corners = np.asarray(
+        ((0.0, latitude - 0.125), (1.0, latitude - 0.125),
+         (1.0, latitude), (0.0, latitude)),
+        dtype=np.float64,
+    )
+    pcurves = tuple(
+        LineCurve(corners[i], corners[(i + 1) % 4] - corners[i]) for i in range(4)
+    )
+    surface = _analytic_surface("sphere")
+
+    def loop(sense: int) -> tuple[PatchCurveUse | PatchPoleUse, ...]:
+        uses: tuple[PatchCurveUse | PatchPoleUse, ...]
+        if pole:
+            uses = (
+                PatchCurveUse(0, pcurves[0], 0.0, 1.0, sense=sense),
+                PatchCurveUse(1, pcurves[1], 0.0, 1.0, sense=sense),
+                PatchPoleUse(2, pcurves[2], 0.0, 1.0, sense=sense),
+                PatchCurveUse(2, pcurves[3], 0.0, 1.0, sense=sense),
+            )
+        else:
+            uses = tuple(
+                PatchCurveUse(i, curve, 0.0, 1.0, sense=sense)
+                for i, curve in enumerate(pcurves)
+            )
+        return uses if sense > 0 else tuple(reversed(uses))
+
+    curves = (
+        (MeshingDomainCurve(0, 1), MeshingDomainCurve(1, 2), MeshingDomainCurve(2, 0))
+        if pole
+        else tuple(MeshingDomainCurve(i, (i + 1) % 4) for i in range(4))
+    )
+    return MeshingDomain(
+        (MeshingSurfacePatch(surface, (loop(1),)),
+         MeshingSurfacePatch(surface, (loop(-1),), orientation=-1)),
+        curves,
+        3 if pole else 4,
+        source_id=f"qualification:native-sphere-pole-{pole}",
+        source_revision="r1",
+        tolerance=1e-12,
+    )
+
+
+def test_symbolic_pole_token_is_widened_only_for_pole_use() -> None:
+    """The sphere pole owner, not a coincidental float token, controls widening."""
+    shadow = float(np.pi / 2)
+    for pole in (True, False):
+        domain = _sphere_pole_domain(pole=pole)
+        bundle = cad_geometry_bundle(domain)
+        lower, upper = coefficient_bounds(bundle, domain)
+        node = bundle.model.use_pcurve_nodes[2]
+        latitude = bundle.model.node_real_offsets[node] + 1
+        if pole:
+            from phydrax.geometry.brep._trim_helpers import (
+                period_offset,
+                period_scalar_bounds,
+            )
+
+            lo, hi = period_scalar_bounds(period_offset(Fraction(0), Fraction(1, 4)))
+            assert lower[latitude] <= float(lo)
+            assert upper[latitude] >= float(hi)
+            assert lower[latitude] < shadow < upper[latitude]
+        else:
+            assert lower[latitude] == shadow == upper[latitude]
+
+
+def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
+    """The chart has a pole sliver; the physical mesh omits it."""
+    domain = _sphere_pole_domain(pole=True)
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    latitude = float(np.pi / 2)
+    chart = np.asarray(
+        ((0.0, latitude - 0.125), (1.0, latitude - 0.125),
+         (1.0, latitude), (0.0, latitude)),
+        dtype=np.float64,
+    )
+    points = np.vstack((_analytic_values("sphere", chart[:2]), (0.0, 0.0, 1.0 / 3)))
+    chart_indices = np.asarray(((0, 1, 2), (0, 2, 2)), dtype=np.int64)
+    chart_uv = np.asarray((chart[[0, 1, 2]], chart[[0, 2, 3]]), dtype=np.float64)
+    mesh = CadFidelityMesh(
+        points,
+        chart_indices,
+        np.zeros(2, dtype=np.int32),
+        chart_uv,
+        np.asarray(((0, 1, 2),), dtype=np.int64),
+        np.asarray((0, -1), dtype=np.int64),
+        np.asarray(((0, 1, -1), (-1, 2, 3)), dtype=np.int64),
+    )
+    chord_uv = np.asarray(
+        tuple((chart[i], chart[(i + 1) % 4]) for i in range(4)), dtype=np.float64
+    )
+    chords = CadFidelityChords(
+        np.repeat(np.arange(2, dtype=np.int64), np.diff(bundle.model.loop_use_offsets)),
+        bundle.model.use_ranges,
+        bundle.model.loop_surfaces.size,
+        np.arange(4, dtype=np.int64),
+        np.zeros(4, dtype=np.int64),
+        chord_uv,
+        np.tile(np.asarray((0.0, 1.0), dtype=np.float64), (4, 1)),
+    )
+    result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.5, 4)
+    assert result.status == MeshcoreStatus.OK
+    assert result.findings.size == 0
+
+    def exact_uv(index: int) -> tuple[Fraction, Fraction]:
+        vertex = chart_uv[1, index]
+        return Fraction.from_float(float(vertex[0])), Fraction.from_float(float(vertex[1]))
+
+    exact_sliver = (exact_uv(0), exact_uv(1), exact_uv(2))
+    python_cap = MeshingDomainBoundarySource(domain, (0,)).pole_sliver_cap_bound(
+        0, exact_sliver
+    )
+    assert (python_cap <= Fraction(1, 2)) == (result.item_status[1] == MeshcoreStatus.OK)
+    for i in range(21):
+        for j in range(21 - i):
+            weights = np.asarray((1 - (i + j) / 20, i / 20, j / 20), dtype=np.float64)
+            source = _analytic_values("sphere", weights @ chart_uv[1])
+            assert np.linalg.norm(source - points[2]) <= result.upper[1]
+    bad_mapping = mesh.chart_to_mesh.copy()
+    bad_mapping[1] = 0
+    broken = verify_cad_fidelity(
+        bundle.model, lower, upper, mesh._replace(chart_to_mesh=bad_mapping), chords, 0.5, 4
+    )
+    assert broken.status == MeshcoreStatus.UNRESOLVED
+    assert np.any((broken.findings["kind"] == 5) & (broken.findings["triangle"] == 1))

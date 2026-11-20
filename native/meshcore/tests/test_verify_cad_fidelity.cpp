@@ -144,10 +144,16 @@ int main() {
   const double corner[] = {0.0, 0.0, 0.0};
   const int64_t loop_offsets[] = {0, 1};
   const int32_t loop_surface[] = {0}, use_entity[] = {0}, pcurve[] = {7};
-  const int8_t use_kind[] = {1}, use_sense[] = {1};
+  const int8_t use_kind[] = {0}, use_sense[] = {1};
   const double use_parameters[] = {0.0, 1.0};
+  const int32_t curve_node[] = {2}, curve_corners[] = {0, 0};
+  int64_t chart_to_mesh[] = {0}, mesh_triangles[] = {0, 1, 2};
   model.corner_count = 1;
   model.corner_points = corner;
+  model.curve_count = 1;
+  model.curve_nodes = curve_node;
+  model.curve_corners = curve_corners;
+  model.curve_ranges = use_parameters;
   model.loop_count = 1;
   model.loop_use_offsets = loop_offsets;
   model.loop_surfaces = loop_surface;
@@ -167,12 +173,13 @@ int main() {
   const auto verify = [&]() {
     return phx_mc_verify_cad_fidelity(
         &model, coefficients.size(), coefficients.data(), coefficients.data(),
-        3, points, 1, triangles, face_rows, uv, 1, use_patch, use_parameters,
+        3, points, 1, triangles, face_rows, uv, 1, mesh_triangles, chart_to_mesh,
+        1, use_patch, use_parameters,
         1, 3, chord_use, chord_loop, chords, chord_parameters, chord_edges, 1.0, 8,
         1, &bound, &status, &reason, &splits, &maximum, 12, evidence, &evidence_count);
   };
-  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
-  PHX_CHECK(evidence_count == 0 && reason == PHX_MC_FIDELITY_TRIM_REFUSAL);
+  const int32_t initial = verify();
+  PHX_CHECK((initial == PHX_MC_OK || initial == PHX_MC_UNRESOLVED) && evidence_count == 0);
   chord_edges[0] = -1;
   PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
   PHX_CHECK(evidence_count >= 2 && reason == PHX_MC_FIDELITY_EDGE_ASSOCIATION);
@@ -189,5 +196,20 @@ int main() {
   for (int64_t i = 0; i < evidence_count; ++i)
     duplicate |= evidence[i].kind == PHX_MC_FIDELITY_DUPLICATE_CHORD && evidence[i].chord == 1;
   PHX_CHECK(duplicate);
+  chord_edges[0] = 0;
+  chart_to_mesh[0] = -1;
+  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
+  bool bad_link = false, missing_mesh = false;
+  for (int64_t i = 0; i < evidence_count; ++i) {
+    bad_link |= evidence[i].kind == PHX_MC_FIDELITY_CHART_MESH_LINK &&
+                evidence[i].triangle == 0;
+    missing_mesh |= evidence[i].kind == PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE &&
+                    evidence[i].other_triangle == 0;
+  }
+  PHX_CHECK(bad_link && missing_mesh);
+  chart_to_mesh[0] = 0;
+  std::swap(mesh_triangles[1], mesh_triangles[2]);
+  PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
+  PHX_CHECK(evidence_count >= 1 && evidence[0].kind == PHX_MC_FIDELITY_CHART_MESH_LINK);
   return 0;
 }

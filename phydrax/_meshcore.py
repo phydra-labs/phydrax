@@ -1616,8 +1616,8 @@ _SIGNATURES["phx_mc_verify_cad_fidelity"] = (
     _I32,
     (
         _P, _I64, _P, _P, _I64, _P, _I64, _P, _P, _P, _I64, _P, _P,
-        _I64, _I64, _P, _P, _P, _P, _P, _F64, _I32, _I64, _P, _P, _P,
-        _P, _P, _I64, _P, _P,
+        _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _P, _F64, _I32, _I64,
+        _P, _P, _P, _P, _P, _I64, _P, _P,
     ),
 )
 
@@ -3533,6 +3533,8 @@ class CadFidelityMesh(NamedTuple):
     triangles: np.ndarray
     face_rows: np.ndarray
     uv: np.ndarray
+    mesh_triangles: np.ndarray
+    chart_to_mesh: np.ndarray
     edge_chord: np.ndarray
 
 
@@ -3599,6 +3601,8 @@ def verify_cad_fidelity(
     triangles = _cad_fidelity_array(mesh.triangles, np.int64, "triangles")
     faces = _cad_fidelity_array(mesh.face_rows, np.int32, "face_rows")
     uv = _cad_fidelity_array(mesh.uv, np.float64, "uv")
+    mesh_triangles = _cad_fidelity_array(mesh.mesh_triangles, np.int64, "mesh_triangles")
+    chart_to_mesh = _cad_fidelity_array(mesh.chart_to_mesh, np.int64, "chart_to_mesh")
     edges = _cad_fidelity_array(mesh.edge_chord, np.int64, "edge_chord")
     use_patch = _cad_fidelity_array(chords.use_patch, np.int64, "use_patch")
     use_range = _cad_fidelity_array(chords.use_range, np.float64, "use_range")
@@ -3613,6 +3617,10 @@ def verify_cad_fidelity(
     count = triangles.shape[0]
     if faces.shape != (count,) or uv.shape != (count, 3, 2) or edges.shape != (count, 3):
         raise ValueError("face_rows, uv and edge_chord must align with triangles.")
+    if mesh_triangles.ndim != 2 or mesh_triangles.shape[1] != 3:
+        raise ValueError("mesh_triangles must have shape (k, 3).")
+    if chart_to_mesh.shape != (count,):
+        raise ValueError("chart_to_mesh must have one entry per chart triangle.")
     if lower.shape != model.node_reals.shape or upper.shape != lower.shape:
         raise ValueError("Coefficient bounds must match the model real bank.")
     if use_patch.ndim != 1 or use_range.shape != (use_patch.size, 2):
@@ -3630,11 +3638,12 @@ def verify_cad_fidelity(
     subdivisions = np.empty(count, dtype=np.int32)
     maximum = ctypes.c_double()
     evidence_count = ctypes.c_int64()
-    findings = np.empty(6 * count + chord_count, dtype=_CAD_FIDELITY_FINDING_DTYPE)
+    findings = np.empty(7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE)
     status = load_meshcore()["phx_mc_verify_cad_fidelity"](
         ctypes.addressof(structure), lower.size, lower.ctypes.data, upper.ctypes.data,
         points.shape[0], points.ctypes.data, count, triangles.ctypes.data, faces.ctypes.data,
-        uv.ctypes.data, use_patch.size, use_patch.ctypes.data, use_range.ctypes.data,
+        uv.ctypes.data, len(mesh_triangles), mesh_triangles.ctypes.data, chart_to_mesh.ctypes.data,
+        use_patch.size, use_patch.ctypes.data, use_range.ctypes.data,
         chords.loop_count, chord_count, chord_use.ctypes.data, chord_loop.ctypes.data,
         chord_uv.ctypes.data, chord_range.ctypes.data, edges.ctypes.data, tolerance,
         max_depth, count, bounds.ctypes.data, statuses.ctypes.data, reasons.ctypes.data,

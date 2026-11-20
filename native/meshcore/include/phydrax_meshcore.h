@@ -2636,7 +2636,9 @@ enum {
   PHX_MC_FIDELITY_BAD_CHORD_EDGE = 1,
   PHX_MC_FIDELITY_DUPLICATE_CHORD = 2,
   PHX_MC_FIDELITY_MISSING_CHORD = 3,
-  PHX_MC_FIDELITY_UNPAIRED_INTERIOR = 4
+  PHX_MC_FIDELITY_UNPAIRED_INTERIOR = 4,
+  PHX_MC_FIDELITY_CHART_MESH_LINK = 5,
+  PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE = 6
 };
 typedef struct phx_mc_fidelity_finding {
   int32_t kind;
@@ -2650,13 +2652,19 @@ typedef struct phx_mc_fidelity_finding {
  * are (count,2). The source must establish that its oriented trim cycles bound
  * the patch. Endpoint and range joins compare bitwise, including signed zero.
  * edge_chord (triangle_count,3) names the published chord row for each edge,
- * or -1 for an interior edge. Use rows refer to model use rows. The exact-source
- * coefficient bounds have model->node_reals layout. Certification is
- * conditional on a separately verified complete chart partition.
+ * or -1 for an interior edge. Use rows refer to model use rows. Chart
+ * triangles include collapsed pole slivers; mesh_triangles omit them and are
+ * the input of V2. chart_to_mesh maps each chart triangle to its oriented mesh
+ * triangle, or -1 exactly for a sliver with a pole-use chord whose physical
+ * vertex IDs coincide. Every mesh triangle must have exactly one chart image.
+ * Pole chart corners are binary64 and need not equal the exact pole parameter;
+ * the p-curve lens and interval endpoint mismatch enclose that difference.
+ * The exact-source coefficient bounds have model->node_reals layout.
+ * Certification is conditional on a separately verified chart partition.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
- * the face's p-curve; pole uses and unsupported interval nodes report
+ * the face's p-curve; unsupported interval nodes report
  * PHX_MC_UNRESOLVED. Overall OK means all rows certified, UNRESOLVED means at
  * least one row did not certify.
  * Invalid input leaves outputs unchanged. max_depth is between 0 and 24. */
@@ -2669,6 +2677,7 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     const double* coefficient_lower, const double* coefficient_upper,
     int64_t point_count, const double* points, int64_t triangle_count,
     const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
     int64_t use_count, const int64_t* use_patch, const double* use_range,
     int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
     const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
