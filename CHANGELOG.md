@@ -381,6 +381,20 @@
   rows now request the mean surface edge h, the size HXT gets (it was
   1.75 * sqrt(3/8) * h). Declared output changes: the sphere, torus and CAD
   volume meshes and their fingerprints.
+- Lattice seeds are located from their lattice neighbors instead of by one
+  visibility walk from the previous seed, which stopped at the first
+  constrained facet (or after 100,000 steps) and silently dropped interior
+  seeds out of its line of sight. Seeds joined to their nearest BCC neighbors
+  (0.866a apart, each at least 0.5a from every facet) form groups wholly
+  inside one region or wholly outside; each seed walks from an inserted
+  neighbor's star without re-entering a cell, a stuck walk tests every live
+  cell, and a seed is dropped only when no cell holds it. On the restricted
+  torus at facet edge 0.072 the walk had lost 1,959 of 6,503 interior seeds;
+  that row falls from 96,223 to 77,989 cells and about 16 % fewer
+  instructions, the 0.025 torus from 2,180,266 to 1,522,202 cells (26 % fewer
+  instructions). Sphere, grid-torus and CAD counts change by at most 0.004 %
+  (a seed on a cell face may now be located in the other cell holding it);
+  declared output change.
 - Native planar triangulation: `Triangulation2D::edge_index` is written as
   selects with the same result as the scan, so Apple clang compiles it without
   branches; Ruppert refinement cycles drop 5-9 % on Apple clang, GCC is
