@@ -1865,11 +1865,24 @@
   domain before contact classification, and the surface-remesh benchmark rows
   run `zero_set_certify` in their untimed quality stage (a refusal or an
   unresolved result is a miss).
-- The mesh-source distance certificate (`mesh_certify`) decides coverage with
-  exact orientation tests, encloses overlap vertices and crossing parameters
-  with error bounds, forms affine maps only when the stage-A determinant test
-  excludes zero (ill-conditioned maps refuse), and refuses every non-finite
-  value instead of dropping it.
+- The mesh-source distance certificate (`mesh_certify`) is rigorous (three
+  independent reviews): coverage is decided with exact orientation tests,
+  overlap vertices are decided exactly before any map is formed (an exactly
+  empty overlap is 0), crossing parameters carry error enclosures, affine maps
+  are formed only when the determinant's magnitude bound excludes zero and
+  ill-conditioned maps refuse, rounding pads follow a written first-order
+  derivation with a factor-two margin, and every non-finite value refuses. A
+  surface certified both ways is returned when a later angle-only pass fails.
+- `zero_set_certify` proves carried triangles by per-triangle witness boxes:
+  `carrier_boxes` replaces the caller-declared `carrier_distance` (clean
+  cutover); a triangle is carried only when its corners lie in its box and two
+  box corners have value enclosures of opposite sign, at the box diagonal, and
+  per-triangle carried flags are reported.
+- Chart partition certificates refuse overlapping UV triangles (covering
+  multiplicity above one) through the shared surface-contact enumeration,
+  require consecutive chords of a trim use to join bitwise; the surface
+  embedding verifier clears exactly coplanar pairs only on an exact separating
+  line, checks its rounding-mode scope and refuses more than 2^32 points.
 - Fixed spline source interpolation certificates at interior C0 knot lines:
   a chart triangle crossing a knot line of multiplicity at least the degree
   (rational: decided from knots and weights) is clipped exactly into smooth
