@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -248,7 +249,7 @@ void check_shape_and_distance(const Volume& volume, const Solid& solid, double t
       for (std::size_t j = i + 1; j < 4; ++j) {
         const double cosine = -(normals[i][0] * normals[j][0] + normals[i][1] * normals[j][1] +
                                 normals[i][2] * normals[j][2]);
-        smallest = std::min(smallest, std::acos(std::clamp(cosine, -1.0, 1.0)) * (180.0 / M_PI));
+        smallest = std::min(smallest, std::acos(std::clamp(cosine, -1.0, 1.0)) * (180.0 / std::numbers::pi));
       }
   }
   PHX_CHECK(smallest >= dihedral);
@@ -269,7 +270,7 @@ void check_shape_and_distance(const Volume& volume, const Solid& solid, double t
   double uncovered = 0.0;
   for (int i = 0; i < 60; ++i)
     for (int j = 0; j < 60; ++j) {
-      const double u = 2.0 * M_PI * (i + 0.5) / 60.0, w = M_PI * (j + 0.5) / 60.0;
+      const double u = 2.0 * std::numbers::pi * (i + 0.5) / 60.0, w = std::numbers::pi * (j + 0.5) / 60.0;
       double q[3];
       if (torus) {
         const double ring = 0.742 + 0.371 * std::cos(2.0 * w);
