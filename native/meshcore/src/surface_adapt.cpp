@@ -191,6 +191,8 @@ class Adapter {
   // ---- passes
   void split_long();
   void collapse_short();
+  // Staged endpoint collapses of a fine input before the size sweeps.
+  void coarsen();
   void flip_valence();
   void flip_delaunay();
   void smooth();
@@ -931,7 +933,41 @@ int64_t Adapter::relax() {
   return counters_.relocations - before;
 }
 
+// Coarsening a fine input in stages: while the stage size is below three
+// quarters of the target size, every edge shorter than kShort times the
+// stage size (and than its own size) collapses into an endpoint, then
+// valence flips restore the stars. The stage size starts at twice the
+// input's mean edge and doubles each pass, so each pass removes a bounded
+// share of vertices and the stars stay small, instead of one sweep absorbing
+// whole patches into single vertices; the size sweeps then finish at the
+// projected midpoints. It ends after at most log2(target size / mean edge)
+// passes, each one sweep over the corners.
+void Adapter::coarsen() {
+  double total = 0;
+  int64_t edges = 0;
+  for (size_t c = 0; c < corners_.size(); ++c) {
+    const auto h = static_cast<int32_t>(c);
+    if (!alive_triangle(h / 3) || twin(h) < h) continue;
+    total += std::sqrt(norm2(sub(position(tail(h)), position(head(h)))));
+    ++edges;
+  }
+  if (edges == 0 || !(total > 0) || !std::isfinite(total)) return;
+  for (double stage = 2 * total / static_cast<double>(edges);
+       stage < 0.75 * targets_.edge_length; stage *= 2) {
+    const size_t count = corners_.size();
+    for (size_t c = 0; c < count; ++c) {
+      const auto h = static_cast<int32_t>(c);
+      if (!alive_triangle(h / 3)) continue;
+      const int32_t a = tail(h), b = head(h);
+      const double limit = kShort * std::min(stage, edge_size(a, b));
+      if (norm2(sub(position(a), position(b))) < limit * limit) collapse(h, false, true);
+    }
+    flip_valence();
+  }
+}
+
 void Adapter::run() {
+  coarsen();
   for (int sweep = 0; sweep < kSizeSweeps; ++sweep) {
     split_long();
     collapse_short();
