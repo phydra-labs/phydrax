@@ -320,61 +320,61 @@ def test_native_curve_association_transfer_rejects_forgeries(
         transfer.validate_source(stale)
 
 
+def _boundary_triangles(mesh: phx.discretization.CellMesh, /) -> np.ndarray:
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    faces, counts = np.unique(
+        np.sort(
+            cells[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3),
+            axis=1,
+        ),
+        axis=0,
+        return_counts=True,
+    )
+    return faces[counts == 1]
+
+
 def test_native_cad_adaptation_round_trip_keeps_records_and_certificate() -> None:
-    # Two successive refinements of the cells off the boundary: bisection that
-    # keeps the CAD boundary carries the source chart row for row; the native
-    # verifiers re-prove it, and the target is a valid source of the next
-    # adaptation. (Marking every cell may bisect a boundary edge, which the
-    # chart transfer refuses.) Faults caught: a chart left on stale vertex rows
-    # (V2/V4 refuse), seam curve edges reclassified as face edges by projection
-    # (the second transfer refuses), records dropped by the adaptation.
+    # Two successive refinements of every cell. Bisection splits boundary
+    # edges at their physical midpoints (stencil weights 1/2, 1/2); the chart
+    # transfer maps each child to the chart sub-triangle with the same corner
+    # weights (chord and parameter midpoints on curve edges), the records
+    # split curve edges and pole slivers, and the native verifiers re-prove
+    # the refined boundary. Faults caught: a chart child off its row (V4/V3
+    # refuse), a curve child outside its root interval, a sliver left unsplit,
+    # seam curve edges reclassified as face edges (the next transfer refuses).
+    # Then a split whose ancestry leaves its chart row is refused with reason.
+    from phydrax.meshing._lineage import VertexInterpolationStencil
+    from phydrax.meshing._native_cad_records import retarget_native_cad_surface
+
     model = _sphere_model()
-    source = _native(model, 0.2)
+    source = _native(model, 0.3)
     transfer = _transfer(model)
     original = _records(source)
-    assert source.certification is not None
-    assert source.certification.native_cad is not None
-    chart = source.certification.native_cad.witness
-    source_ids = np.asarray(source.mesh.vertex_global_ids)
     current = source
+    split = None
     for _ in range(2):
-        cells = np.asarray(current.mesh.blocks[0].vertices, dtype=np.int64)
-        faces, counts = np.unique(
-            np.sort(
-                cells[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3),
-                axis=1,
-            ),
-            axis=0,
-            return_counts=True,
-        )
-        interior = ~np.isin(cells, faces[counts == 1]).any(axis=1)
-        assert interior.any()
-        target = execute_mesh_adaptation(
+        result = execute_mesh_adaptation(
             prepare_mesh_adaptation(
                 current,
-                MarkedMeshAdaptation(
-                    np.asarray(current.mesh.blocks[0].global_ids)[interior]
-                ),
+                MarkedMeshAdaptation(np.asarray(current.mesh.blocks[0].global_ids)),
                 policy=MeshAdaptationPolicy(
                     MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
                 ),
             )
-        ).target
+        )
+        target = result.target
         assert target.mesh.blocks[0].cell_count > current.mesh.blocks[0].cell_count
         certification = target.certification
         assert certification is not None and certification.passed
         native = certification.native_cad
         assert native is not None and native.status == "certified"
         assert native.maximum_deviation is not None and native.maximum_deviation <= 0.05
-        target_ids = np.asarray(target.mesh.vertex_global_ids)
-        np.testing.assert_array_equal(
-            target_ids[np.asarray(native.witness.chart_triangles)],
-            source_ids[np.asarray(chart.chart_triangles)],
-        )
-        np.testing.assert_array_equal(native.witness.chart_uv, chart.chart_uv)
+        before = _records(current)
         records = _records(target)
         assert records.root_id == original.root_id
-        np.testing.assert_array_equal(records.sliver_vertices, original.sliver_vertices)
+        assert records.curve is not None and before.curve is not None
+        assert len(records.curve.target_global_ids) >= len(before.curve.target_global_ids)
+        assert len(records.sliver_vertices) >= len(before.sliver_vertices)
         curve = _curve(target)
         records.require_curve(curve)
         edges = _table(target, 1)
@@ -386,8 +386,51 @@ def test_native_cad_adaptation_round_trip_keeps_records_and_certificate() -> Non
             int(edges.source_dimensions[rows[int(value)]]) == 1
             for value in np.asarray(curve.target_global_ids)
         )
+        if len(_boundary_triangles(target.mesh)) > len(_boundary_triangles(current.mesh)):
+            split = result
         transfer.validate_source(target)
         current = target
+    assert split is not None, "refining every cell twice must split the boundary"
+    assert len(_boundary_triangles(current.mesh)) > len(_boundary_triangles(source.mesh))
+
+    # Refusal: move one new boundary vertex's ancestry off its chart row.
+    stencil = split.stencil
+    assert stencil is not None
+    parent = split.source
+    assert parent.certification is not None and parent.certification.native_cad
+    witness = parent.certification.native_cad.witness
+    parent_ids = np.asarray(parent.mesh.vertex_global_ids, dtype=np.int64)
+    on_boundary = set(parent_ids[np.unique(_boundary_triangles(parent.mesh))].tolist())
+    sources = np.asarray(stencil.source_global_ids, dtype=np.int64).copy()
+    valid = np.asarray(stencil.valid, dtype=np.bool_)
+    target_boundary = set(
+        np.asarray(split.target.mesh.vertex_global_ids)[
+            np.unique(_boundary_triangles(split.target.mesh))
+        ].tolist()
+    )
+    row = next(
+        index
+        for index, identifier in enumerate(np.asarray(stencil.target_global_ids).tolist())
+        if identifier in target_boundary and int(valid[index].sum()) == 2
+    )
+    slot = int(np.flatnonzero(valid[row])[1])
+    sources[row, slot] = next(
+        int(value)
+        for value in parent_ids.tolist()
+        if value not in on_boundary and value not in sources[row]
+    )
+    forged = VertexInterpolationStencil(
+        stencil.source_entity_set_id,
+        stencil.target_entity_set_id,
+        np.asarray(stencil.target_global_ids),
+        sources,
+        np.asarray(stencil.weights),
+        valid,
+        preserves_constants=stencil.preserves_constants,
+        exact_weights=stencil.exact_weights,
+    )
+    with pytest.raises(ValueError, match="bound no single source chart triangle"):
+        retarget_native_cad_surface(witness, parent.mesh, split.target.mesh, forged)
 
 
 def test_native_cad_records_survive_the_archive(

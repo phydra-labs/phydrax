@@ -5841,7 +5841,7 @@ def _renew_transition_certification_inputs(
             None
             if original.native_cad_surface is None
             else retarget_native_cad_surface(
-                original.native_cad_surface, source.mesh, target
+                original.native_cad_surface, source.mesh, target, vertex_stencil
             )
         ),
         native_cad_records=(

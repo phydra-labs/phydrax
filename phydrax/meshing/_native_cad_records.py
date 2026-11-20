@@ -306,21 +306,51 @@ class NativeCadRecords(StrictModule, NonTrainableState):
     ) -> NativeCadRecords:
         """These records on an adapted ``target`` through its exact lineage.
 
-        The curve association follows the curve-edge lineage; the pole
-        slivers keep their vertex ids (the boundary is unchanged, see
-        :func:`retarget_native_cad_surface`).
+        The curve association follows the curve-edge lineage (a split curve
+        edge's children take the exact halves of its source interval, the
+        source occurrence inherited); a pole sliver ``{P, Q}`` whose segment
+        was split becomes the sliver pairs of consecutive target vertices
+        along it.
         """
         from ._surface_association_transfer import _curve_edges_with_root_ancestry
 
         self.require_mesh(source.mesh)
         curve = self.curve
-        if curve is not None and target.topology_id != source.mesh.topology_id:
-            if stencil is None:
-                raise ValueError(
-                    "Native CAD records require exact target vertex ancestry."
-                )
+        if target.topology_id == source.mesh.topology_id:
+            return NativeCadRecords(
+                target,
+                self.source_id,
+                self.source_revision,
+                self.root_curves,
+                self.root_parameters,
+                curve,
+                self.sliver_vertices,
+            )
+        if stencil is None:
+            raise ValueError("Native CAD records require exact target vertex ancestry.")
+        if curve is not None:
             curve = _curve_edges_with_root_ancestry(
                 source, lineage, target, stencil, curve
+            )
+        weights = _stencil_weights(source.mesh, target, stencil)
+        source_rows = {
+            int(value): row
+            for row, value in enumerate(
+                np.asarray(source.mesh.vertex_global_ids).tolist()
+            )
+        }
+        target_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
+        slivers: list[tuple[int, int]] = []
+        for first, second in self.sliver_vertices.tolist():
+            p, q = source_rows[first], source_rows[second]
+            chain = sorted(
+                (row_weights.get(q, Fraction(0)), int(target_ids[row]))
+                for row, row_weights in enumerate(weights)
+                if set(row_weights) <= {p, q}
+            )
+            slivers.extend(
+                (min(a, b), max(a, b))
+                for (_, a), (_, b) in zip(chain, chain[1:], strict=False)
             )
         return NativeCadRecords(
             target,
@@ -329,7 +359,7 @@ class NativeCadRecords(StrictModule, NonTrainableState):
             self.root_curves,
             self.root_parameters,
             curve,
-            self.sliver_vertices,
+            np.asarray(sorted(slivers), dtype=np.int64).reshape((-1, 2)),
         )
 
 
@@ -583,39 +613,142 @@ def native_cad_associations(
     return associations if curve is None else (*associations, curve)
 
 
+def _stencil_weights(
+    source: CellMesh,
+    target: CellMesh,
+    stencil: VertexInterpolationStencil | None,
+    /,
+) -> list[dict[int, Fraction]]:
+    """Exact source-vertex-row weights of every target vertex row.
+
+    A target vertex without a stencil row keeps its source vertex (same
+    global id, same coordinates).
+    """
+    source_rows = {
+        int(value): row
+        for row, value in enumerate(np.asarray(source.vertex_global_ids).tolist())
+    }
+    rows: dict[int, dict[int, Fraction]] = {}
+    if stencil is not None:
+        for target_id, sources, valid, weights in zip(
+            np.asarray(stencil.target_global_ids, dtype=np.int64).tolist(),
+            np.asarray(stencil.source_global_ids, dtype=np.int64).tolist(),
+            np.asarray(stencil.valid, dtype=np.bool_).tolist(),
+            stencil.exact_weights,
+            strict=True,
+        ):
+            row: dict[int, Fraction] = {}
+            for source_id, is_valid, weight in zip(sources, valid, weights, strict=True):
+                if not is_valid or weight == 0:
+                    continue
+                if not isinstance(weight, Fraction) or source_id not in source_rows:
+                    raise ValueError(
+                        "Native CAD chart transfer refuses a target vertex whose "
+                        "ancestry is not a rational combination of source vertices."
+                    )
+                row[source_rows[source_id]] = weight
+            rows[int(target_id)] = row
+    source_points = np.asarray(source.coordinates, dtype=np.float64)
+    target_points = np.asarray(target.coordinates, dtype=np.float64)
+    output: list[dict[int, Fraction]] = []
+    for target_row, identifier in enumerate(
+        np.asarray(target.vertex_global_ids, dtype=np.int64).tolist()
+    ):
+        stencil_row = rows.get(identifier)
+        if stencil_row is None:
+            source_row = source_rows.get(identifier)
+            if source_row is None or not np.array_equal(
+                target_points[target_row], source_points[source_row]
+            ):
+                raise ValueError(
+                    "Native CAD chart transfer refuses a target vertex without "
+                    "exact source ancestry."
+                )
+            stencil_row = {source_row: Fraction(1)}
+        output.append(stencil_row)
+    return output
+
+
+def _split_point(
+    corners: np.ndarray,
+    weights: tuple[Fraction, Fraction, Fraction],
+    order: list[int],
+    /,
+) -> np.ndarray:
+    """Chart point of exact corner weights, summed in a canonical corner order.
+
+    A point on a chart edge depends only on that edge's two corners (taken in
+    source vertex order), so rows sharing the edge reproduce it bitwise.
+    """
+    active = [k for k in order if weights[k] != 0]
+    if len(active) == 1:
+        return corners[active[0]].copy()
+    if len(active) == 2:
+        first, second = active
+        return corners[first] + float(weights[second]) * (
+            corners[second] - corners[first]
+        )
+    point = float(weights[order[0]]) * corners[order[0]]
+    for k in order[1:]:
+        point = point + float(weights[k]) * corners[k]
+    return point
+
+
 def retarget_native_cad_surface(
-    witness: NativeCadSurfaceWitness, source: CellMesh, target: CellMesh, /
+    witness: NativeCadSurfaceWitness,
+    source: CellMesh,
+    target: CellMesh,
+    stencil: VertexInterpolationStencil | None,
+    /,
 ) -> NativeCadSurfaceWitness:
     """The chart realization of ``witness`` on an adapted ``target``.
 
-    Adaptation keeps a native CAD solid's boundary (its bisection refines
-    interior entities; boundary entities carry source classes): every chart
-    vertex keeps its global id and coordinates, and the target's boundary
-    triangles are the source's. The chart carries over row for row with
-    renumbered vertex rows, and the native verifiers prove it on the target
-    from scratch. A changed boundary is refused.
+    The native chart realizes each boundary triangle as the affine image of
+    its chart triangle (V3 bounds exactly that correspondence). Adaptation
+    inserts a boundary vertex as an exact rational combination of its source
+    triangle's corners (bisection: the physical midpoint of a boundary edge,
+    weights 1/2, 1/2), so each target boundary triangle is the affine image
+    of the chart sub-triangle with the same corner weights: on a face edge
+    the chart midpoint of the row's edge, on a curve edge additionally the
+    chord's parameter midpoint (chords split linearly with their ranges).
+    Pole slivers split along their physical segment. No point is projected;
+    the native verifiers re-prove the target realization from scratch.
+    A target boundary vertex whose ancestry is not rational in one source
+    chart row is refused.
     """
     if witness.mesh_id != source.mesh_id:
         raise ValueError("Native CAD surface witness binds another source mesh.")
+    weights = _stencil_weights(source, target, stencil)
     chart_triangles = np.asarray(witness.chart_triangles, dtype=np.int64)
+    chart_uv = np.asarray(witness.chart_uv, dtype=np.float64)
+    chart_patches = np.asarray(witness.chart_patches, dtype=np.int64)
+    chart_to_mesh = np.asarray(witness.chart_to_mesh, dtype=np.int64)
+    edge_chord = np.asarray(witness.edge_chord, dtype=np.int64)
+    chord_uv = np.asarray(witness.chord_uv, dtype=np.float64)
+    chord_range = np.asarray(witness.chord_range, dtype=np.float64)
     surface_triangles = np.asarray(witness.surface_triangles, dtype=np.int64)
-    source_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
-    target_rows = {
-        int(value): row
-        for row, value in enumerate(np.asarray(target.vertex_global_ids).tolist())
-    }
-    source_points = np.asarray(source.coordinates, dtype=np.float64)
-    target_points = np.asarray(target.coordinates, dtype=np.float64)
-    mapping = np.full((source_ids.size,), -1, dtype=np.int64)
-    for row in np.unique(chart_triangles).tolist():
-        target_row = target_rows.get(int(source_ids[row]))
-        if target_row is None or not np.array_equal(
-            target_points[target_row], source_points[row]
+    for corners, mesh_row in zip(
+        chart_triangles.tolist(), chart_to_mesh.tolist(), strict=True
+    ):
+        if mesh_row < 0:
+            continue
+        triangle = surface_triangles[mesh_row].tolist()
+        if corners not in (
+            triangle,
+            triangle[1:] + triangle[:1],
+            triangle[2:] + triangle[:2],
         ):
             raise ValueError(
-                "Native CAD chart transfer requires an unchanged boundary vertex."
+                "A native CAD chart row does not follow its boundary triangle."
             )
-        mapping[row] = target_row
+    rows_by_corners = {
+        frozenset(corners): row
+        for row, (corners, mesh_row) in enumerate(
+            zip(chart_triangles.tolist(), chart_to_mesh.tolist(), strict=True)
+        )
+        if mesh_row >= 0
+    }
+
     target_cells = np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in target.blocks]
     )
@@ -632,36 +765,163 @@ def retarget_native_cad_surface(
         axis=0,
         return_counts=True,
     )
-    triangles = mapping[surface_triangles]
-    if not np.array_equal(
-        faces[counts == 1], np.unique(np.sort(triangles, axis=1), axis=0)
-    ):
-        raise ValueError(
-            "Native CAD chart transfer requires the source boundary triangles."
+    # Target chart pieces: (source row, target vertex rows, corner weights).
+    pieces: list[tuple[int, list[int], list[tuple[Fraction, Fraction, Fraction]]]] = []
+
+    def corner_weights(row: int, vertex: int, /) -> tuple[Fraction, Fraction, Fraction]:
+        corners = chart_triangles[row].tolist()
+        values = [Fraction(0)] * 3
+        for source_row, weight in weights[vertex].items():
+            values[corners.index(source_row)] = weight
+        return values[0], values[1], values[2]
+
+    for key in faces[counts == 1].tolist():
+        support = frozenset(row for vertex in key for row in weights[vertex])
+        row = rows_by_corners.get(support)
+        if row is None:
+            raise ValueError(
+                "Native CAD chart transfer refuses a target boundary triangle whose "
+                f"vertices descend from source vertices {sorted(support)}, which "
+                "bound no single source chart triangle."
+            )
+        vertices = [int(value) for value in key]
+        barycentric = [corner_weights(row, vertex) for vertex in vertices]
+        (a0, a1, _), (b0, b1, _), (c0, c1, _) = barycentric
+        area = (b0 - a0) * (c1 - a1) - (b1 - a1) * (c0 - a0)
+        if area == 0:
+            raise ValueError("A target boundary triangle is degenerate in its chart.")
+        if area < 0:
+            vertices[1], vertices[2] = vertices[2], vertices[1]
+            barycentric[1], barycentric[2] = barycentric[2], barycentric[1]
+        pieces.append((row, vertices, barycentric))
+    surface_count = len(pieces)
+    for row in np.flatnonzero(chart_to_mesh < 0).tolist():
+        corners = chart_triangles[row].tolist()
+        single = next(k for k in range(3) if corners.count(corners[k]) == 1)
+        x, y, z = (single + 1) % 3, (single + 2) % 3, single
+        p, q = corners[x], corners[z]
+        # Target vertices on the physical segment PQ, ordered from P to Q.
+        chain = sorted(
+            (vertex_weights.get(q, Fraction(0)), vertex)
+            for vertex, vertex_weights in enumerate(weights)
+            if set(vertex_weights) <= {p, q}
         )
+        if chain[0][0] != 0 or chain[-1][0] != 1:
+            raise ValueError("A native CAD pole sliver lost its segment ends.")
+
+        def at(corner: int, s: Fraction, /) -> tuple[Fraction, Fraction, Fraction]:
+            values = [Fraction(0)] * 3
+            values[corner] = 1 - s
+            values[z] += s
+            return values[0], values[1], values[2]
+
+        levels = chain[:-1]
+        q_vertex = chain[-1][1]
+        for (s0, v0), (s1, v1) in zip(levels, levels[1:], strict=False):
+            pieces.append((row, [v0, v0, v1], [at(x, s0), at(y, s0), at(y, s1)]))
+            pieces.append((row, [v0, v1, v1], [at(x, s0), at(y, s1), at(x, s1)]))
+        s_last, v_last = levels[-1]
+        pieces.append(
+            (
+                row,
+                [v_last, v_last, q_vertex],
+                [at(x, s_last), at(y, s_last), at(z, Fraction(0))],
+            )
+        )
+
+    triangles = np.empty((len(pieces), 3), dtype=np.int64)
+    uv = np.empty((len(pieces), 3, 2), dtype=np.float64)
+    patches = np.empty((len(pieces),), dtype=np.int32)
+    to_mesh = np.full((len(pieces),), -1, dtype=np.int64)
+    to_mesh[:surface_count] = np.arange(surface_count, dtype=np.int64)
+    for index, (row, vertices, barycentric) in enumerate(pieces):
+        order = sorted(range(3), key=lambda k: int(chart_triangles[row, k]))
+        triangles[index] = vertices
+        patches[index] = chart_patches[row]
+        for k in range(3):
+            uv[index, k] = _split_point(chart_uv[row], barycentric[k], order)
+
+    # Split points of every chord (fractions along its direction) with the
+    # chart point of each, and the chord of every piece edge on it.
+    chord_points: dict[int, dict[Fraction, np.ndarray]] = {}
+    piece_chords: list[tuple[int, int, int, Fraction]] = []
+    for index, (row, _, barycentric) in enumerate(pieces):
+        corners = chart_uv[row]
+        for piece_edge, (a, b) in enumerate(_CHART_EDGES):
+            for edge, (u, v) in enumerate(_CHART_EDGES):
+                other = 3 - u - v
+                chord = int(edge_chord[row, edge])
+                if chord < 0 or barycentric[a][other] != 0 or barycentric[b][other] != 0:
+                    continue
+                forward = np.linalg.norm(chord_uv[chord, 0] - corners[u]) <= (
+                    np.linalg.norm(chord_uv[chord, 0] - corners[v])
+                )
+                s_a, s_b = barycentric[a][v], barycentric[b][v]
+                if not forward:
+                    s_a, s_b = 1 - s_a, 1 - s_b
+                points = chord_points.setdefault(chord, {})
+                points.setdefault(s_a, uv[index, a])
+                points.setdefault(s_b, uv[index, b])
+                piece_chords.append((index, piece_edge, chord, min(s_a, s_b)))
+    chord_use = np.asarray(witness.chord_use, dtype=np.int64)
+    chord_loop = np.asarray(witness.chord_loop, dtype=np.int64)
+    new_use: list[int] = []
+    new_loop: list[int] = []
+    new_uv: list[np.ndarray] = []
+    new_range: list[np.ndarray] = []
+    chord_rows: dict[tuple[int, Fraction], int] = {}
+    for chord in range(chord_use.size):
+        low, high = chord_range[chord]
+        points = {
+            **chord_points.get(chord, {}),
+            Fraction(0): chord_uv[chord, 0],
+            Fraction(1): chord_uv[chord, 1],
+        }
+        ordered = sorted(points)
+        for left, right in zip(ordered, ordered[1:], strict=False):
+            chord_rows[(chord, left)] = len(new_use)
+            new_use.append(int(chord_use[chord]))
+            new_loop.append(int(chord_loop[chord]))
+            new_uv.append(np.stack((points[left], points[right])))
+            new_range.append(
+                np.asarray(
+                    [
+                        low
+                        if s == 0
+                        else high
+                        if s == 1
+                        else low + float(s) * (high - low)
+                        for s in (left, right)
+                    ],
+                    dtype=np.float64,
+                )
+            )
+    chords = np.full((len(pieces), 3), -1, dtype=np.int64)
+    for index, piece_edge, chord, left in piece_chords:
+        chords[index, piece_edge] = chord_rows[(chord, left)]
     chart = CadChartResult(
-        mapping[chart_triangles],
-        np.asarray(witness.chart_patches),
-        np.asarray(witness.chart_uv),
-        np.asarray(witness.chart_to_mesh),
-        np.asarray(witness.edge_chord),
+        triangles,
+        patches,
+        uv,
+        to_mesh,
+        chords,
         np.asarray(witness.use_patch),
         np.asarray(witness.use_range),
-        np.asarray(witness.chord_use),
-        np.asarray(witness.chord_loop),
-        np.asarray(witness.chord_uv),
-        np.asarray(witness.chord_range),
+        np.asarray(new_use, dtype=np.int64),
+        np.asarray(new_loop, dtype=np.int64),
+        np.asarray(new_uv, dtype=np.float64).reshape((-1, 2, 2)),
+        np.asarray(new_range, dtype=np.float64).reshape((-1, 2)),
     )
     # The witness reads the boundary triangles and the chart; the other
     # construction outputs of a surface result do not exist after adaptation.
     empty = np.empty((0,))
     surface_result = CadSurfaceResult(
         status=MeshcoreStatus.OK,
-        points=target_points,
+        points=np.asarray(target.coordinates, dtype=np.float64),
         vertex_dimensions=empty,
         vertex_entities=empty,
         vertex_parameters=empty,
-        triangles=triangles,
+        triangles=triangles[:surface_count],
         triangle_patches=empty,
         triangle_uv=empty,
         triangle_edge_uses=empty,
