@@ -3114,6 +3114,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     }
     return PHX_MC_OK;
   };
+  constexpr int kMaxRounds = 4096;
   // Whether the live finite cell `slot` misses a criterion; fills the
   // proposal's target and, with `center`, its circumcenter.
   const auto violates = [&](std::int32_t slot, Proposal& proposal, double* center) {
@@ -3141,7 +3142,234 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     proposed_ids.push_back(proposal.cell_id);
     return true;
   };
-  constexpr int kMaxRounds = 4096;
+  // Interior lattice seeding. Circumcenter refinement to a circumradius
+  // bound h packs its vertices at whatever spacing the insertion order leaves
+  // (on the quadric at h = 0.02286, cells end at median circumradius 0.84 h),
+  // which costs vertices and cells against the bound. The coarsest point set
+  // whose Delaunay cells all meet the bound is the body-centered cubic
+  // lattice: its cells are congruent tetrahedra of circumradius a sqrt(5) / 4
+  // for cube edge a, with dihedral angles of 60 and 90 degrees. Before the
+  // rounds, a fixed boundary is seeded with that lattice at
+  // a = 4 kLatticeMargin h / sqrt(5); kLatticeMargin < 1 only keeps lattice
+  // cells (and the cells where lattice and refined layer meet) clear of the
+  // size test after rounding, measured as the largest value without a
+  // refinement cascade (1.0 doubles the insertions; 0.98 and 0.99 do not).
+  // Seeds within half a lattice spacing of a boundary facet are dropped; the
+  // layer between boundary and lattice is circumcenter refinement's, as is
+  // everything after. A size field that is not uniform is seeded from its
+  // smallest value h, and a seed is inserted only where the cell holding it
+  // has a target of at most h / kLatticeMargin (uniform within the margin);
+  // the rest of the domain refines as before. Seeds are inserted in BRIO
+  // order (Bowyer-Watson into the recovered complex, each through the
+  // spacing guard), so the result is the Delaunay refinement of the
+  // boundary and the accepted seeds. Seeding needs Bowyer-Watson cavities
+  // without shrinking: it is skipped for a splittable boundary (boundary
+  // splits follow encroachment), a metric, embedded segments, a vertex
+  // without a target, or a complex holding a cell whose orientation is not
+  // measurably positive (a degenerate boundary such as cocircular grid rows,
+  // where cavities into flat cells shrink and leave non-Delaunay cells).
+  constexpr double kLatticeMargin = 0.98;
+  const auto seed_lattice = [&]() -> std::int32_t {
+    if (boundary_splittable || mesh.metric_active() || !embedded_segments.empty()) {
+      return PHX_MC_OK;
+    }
+    double smallest = std::numeric_limits<double>::infinity();
+    std::int32_t start = -1;
+    double lower[3]{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
+                    std::numeric_limits<double>::infinity()};
+    double upper[3]{-lower[0], -lower[1], -lower[2]};
+    for (std::size_t vertex = 0; vertex < mesh.vertex_ids_.size(); ++vertex) {
+      if (mesh.vertex_live_[vertex] == 0) continue;
+      const double size = mesh.vertex_size(static_cast<std::int32_t>(vertex));
+      if (!(size > 0.0) || !std::isfinite(size)) return PHX_MC_OK;
+      smallest = std::min(smallest, size);
+      const double* p = mesh.point(static_cast<std::int32_t>(vertex));
+      for (int axis = 0; axis < 3; ++axis) {
+        lower[axis] = std::min(lower[axis], p[axis]);
+        upper[axis] = std::max(upper[axis], p[axis]);
+      }
+    }
+    for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
+      const auto cell = static_cast<std::int32_t>(row);
+      if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
+      const Tetrahedron& tet = mesh.tet(cell);
+      if (!measurably_positive(mesh.point(tet.v[0]), mesh.point(tet.v[1]),
+                               mesh.point(tet.v[2]), mesh.point(tet.v[3]))) {
+        return PHX_MC_OK;
+      }
+      if (start < 0) start = cell;
+    }
+    if (start < 0 || !std::isfinite(smallest)) return PHX_MC_OK;
+    {
+      const double a = 4.0 * kLatticeMargin * smallest / std::sqrt(5.0);
+      const double band = 0.5 * a;
+      // Boundary facets binned by their boxes grown by the band, in cells of
+      // twice the band: a point reads its own cell.
+      std::vector<std::array<std::int32_t, 3>> triangles;
+      triangles.reserve(mesh.facets_.size());
+      for (const TetSnapshotFacet& facet : mesh.facets_) {
+        triangles.push_back({mesh.vertex_slot(facet.vertices[0]), mesh.vertex_slot(facet.vertices[1]),
+                             mesh.vertex_slot(facet.vertices[2])});
+      }
+      const double cell_size = 2.0 * band;
+      std::size_t dims[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        dims[axis] = static_cast<std::size_t>((upper[axis] - lower[axis]) / cell_size) + 1;
+      }
+      const auto cell_of = [&](double value, int axis) {
+        const double s = (value - lower[axis]) / cell_size;
+        return s <= 0.0 ? std::size_t{0}
+                        : std::min(dims[axis] - 1, static_cast<std::size_t>(s));
+      };
+      const auto index = [&](std::size_t x, std::size_t y, std::size_t z) {
+        return (z * dims[1] + y) * dims[0] + x;
+      };
+      std::vector<std::uint32_t> starts(dims[0] * dims[1] * dims[2] + 1, 0U);
+      std::vector<std::int32_t> binned;
+      for (int fill = 0; fill < 2; ++fill) {
+        std::vector<std::uint32_t> cursor;
+        if (fill == 1) {
+          for (std::size_t at = 1; at < starts.size(); ++at) starts[at] += starts[at - 1];
+          cursor.assign(starts.begin(), starts.end() - 1);
+          binned.resize(starts.back());
+        }
+        for (std::size_t row = 0; row < triangles.size(); ++row) {
+          std::size_t first[3];
+          std::size_t last[3];
+          for (int axis = 0; axis < 3; ++axis) {
+            double low = std::numeric_limits<double>::infinity();
+            double high = -low;
+            for (std::int32_t v : triangles[row]) {
+              low = std::min(low, mesh.point(v)[axis]);
+              high = std::max(high, mesh.point(v)[axis]);
+            }
+            first[axis] = cell_of(low - band, axis);
+            last[axis] = cell_of(high + band, axis);
+          }
+          for (std::size_t z = first[2]; z <= last[2]; ++z)
+            for (std::size_t y = first[1]; y <= last[1]; ++y)
+              for (std::size_t x = first[0]; x <= last[0]; ++x) {
+                if (fill == 0) {
+                  ++starts[index(x, y, z) + 1];
+                } else {
+                  binned[cursor[index(x, y, z)]++] = static_cast<std::int32_t>(row);
+                }
+              }
+        }
+      }
+      const auto near_boundary = [&](const double* p) {
+        const std::size_t at = index(cell_of(p[0], 0), cell_of(p[1], 1), cell_of(p[2], 2));
+        for (std::uint32_t k = starts[at]; k < starts[at + 1]; ++k) {
+          const auto& t = triangles[static_cast<std::size_t>(binned[k])];
+          if (geometry::point_triangle_distance(p, mesh.point(t[0]), mesh.point(t[1]),
+                                                mesh.point(t[2])) < band) {
+            return true;
+          }
+        }
+        return false;
+      };
+      struct Seed {
+        std::uint64_t key;
+        std::uint64_t cell_id;
+        double point[3];
+      };
+      std::vector<Seed> seeds;
+      std::vector<std::array<std::uint32_t, 3>> seed_grids;
+      // The lattice is turned and shifted off the coordinate axes so that it
+      // shares no symmetry plane or axis with an input built along them (a
+      // lattice aligned with a surface of revolution puts seeds on its
+      // cocircular rows' spheres).
+      double rotation[3][3];
+      {
+        double q[4]{0.9, 0.3, 0.2, 0.25};
+        const double norm = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        for (double& value : q) value /= norm;
+        const double w = q[0], x = q[1], y = q[2], z = q[3];
+        const double m[3][3]{{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+                             {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+                             {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+        std::copy(&m[0][0], &m[0][0] + 9, &rotation[0][0]);
+      }
+      double middle[3];
+      double half_diagonal = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        middle[axis] = 0.5 * (lower[axis] + upper[axis]);
+        half_diagonal += 0.25 * (upper[axis] - lower[axis]) * (upper[axis] - lower[axis]);
+      }
+      const auto reach = static_cast<std::int64_t>(std::sqrt(half_diagonal) / a) + 1;
+      constexpr double kShift[3]{0.31, 0.47, 0.13};
+      for (int shift = 0; shift < 2; ++shift) {
+        for (std::int64_t k = -reach; k <= reach; ++k)
+          for (std::int64_t j = -reach; j <= reach; ++j)
+            for (std::int64_t i = -reach; i <= reach; ++i) {
+              const double local[3]{(static_cast<double>(i) + kShift[0] + 0.5 * shift) * a,
+                                    (static_cast<double>(j) + kShift[1] + 0.5 * shift) * a,
+                                    (static_cast<double>(k) + kShift[2] + 0.5 * shift) * a};
+              Seed seed{0, seeds.size(), {}};
+              bool in_box = true;
+              for (int axis = 0; axis < 3; ++axis) {
+                seed.point[axis] = middle[axis] + rotation[axis][0] * local[0] +
+                                   rotation[axis][1] * local[1] + rotation[axis][2] * local[2];
+                in_box = in_box && seed.point[axis] > lower[axis] && seed.point[axis] < upper[axis];
+              }
+              if (!in_box || near_boundary(seed.point)) continue;
+              seeds.push_back(seed);
+              seed_grids.push_back(frame.grid(seed.point));
+            }
+      }
+      assign_hilbert_keys(seeds, std::span<const std::array<std::uint32_t, 3>>(seed_grids));
+      {
+        const int brio_rounds = brio_round_count(seeds.size());
+        for (Seed& seed : seeds) {
+          const auto brio = brio_round(static_cast<std::int32_t>(seed.cell_id), brio_rounds);
+          seed.key |= static_cast<std::uint64_t>(brio) << (3 * kHilbertBits);
+        }
+      }
+      std::vector<Seed> seed_scratch;
+      sort_by_key_then_id(seeds, seed_scratch);
+      const double radius = a * std::sqrt(5.0) / 4.0;
+      for (const Seed& seed : seeds) {
+        if (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) break;
+        std::int32_t current = start;
+        bool inside = false;
+        for (int step = 0; step < 100000; ++step) {
+          const Tetrahedron& tet = mesh.tet(current);
+          int exit = -1;
+          for (int face = 0; face < 4 && exit < 0; ++face) {
+            std::int32_t facet[3];
+            oriented_facet(tet.v, face, facet);
+            if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
+                                  seed.point) < 0) {
+              exit = face;
+            }
+          }
+          if (exit < 0) {
+            inside = true;
+            break;
+          }
+          const std::int32_t next = tet.n[exit];
+          if (mesh.complex_.constraint(current, exit) != kNoConstraint ||
+              !mesh.complex_.live(next) || is_ghost(mesh.tet(next))) {
+            break;
+          }
+          current = next;
+        }
+        if (!inside) continue;
+        start = current;
+        double target = 0.0;
+        if (!cell_target(mesh, mesh.tet(current).v, target) ||
+            !(target * kLatticeMargin <= smallest)) {
+          continue;
+        }
+        int outcome = 2;
+        const std::int32_t error = insert_interior(current, seed.point, radius, target, outcome);
+        if (error != PHX_MC_OK) return error;
+        if (outcome == 0 && !created_slots.empty()) start = created_slots.front();
+      }
+    }
+    return PHX_MC_OK;
+  };
+  if (const std::int32_t error = seed_lattice(); error != PHX_MC_OK) return error;
   for (int pass = 0; pass < kMaxRounds && !pending.empty(); ++pass) {
     proposals.clear();
     for (std::int32_t slot : pending) {
@@ -3185,7 +3413,6 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       if (const std::int32_t error = refine_cell(proposal); error != PHX_MC_OK) return error;
     }
   }
-
   restore_bank_order();
   // Cells left pending by the round cap were never proposed.
   for (std::int32_t slot : pending) {
