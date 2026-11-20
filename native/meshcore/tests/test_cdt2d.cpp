@@ -391,6 +391,15 @@ void test_spatial_queue_order() {
   };
   PHX_CHECK((sequence(false) == std::vector<int>{1, 0, 3, 2}));
   PHX_CHECK(sequence(false) == sequence(true));
+  SpatialRefinementQueue<Entry, Worse> spatial(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int i = 0; i < 10; ++i) spatial.push({i, i}, 0.1, 0.1);
+    for (int i = 9; i >= 0; --i) {
+      PHX_CHECK(spatial.top().id == i);
+      spatial.pop();
+    }
+    PHX_CHECK(spatial.empty());
+  }
   SpatialRefinementQueue<Entry, Worse> single(0.0, 0.0, 1.0, 1.0, 10.0, 4);
   PHX_CHECK(!single.spatial());
   single.push({2, 0});
