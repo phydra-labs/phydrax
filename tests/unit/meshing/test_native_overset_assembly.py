@@ -421,6 +421,45 @@ def test_unproved_construction_reads_donor_coverage_unproved() -> None:
     assert restored.connectivity_id == proved.connectivity_id
 
 
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        phx.meshing.CellMeshAuditDisposition.RECORD,
+        phx.meshing.CellMeshAuditDisposition.SKIP,
+    ],
+)
+def test_native_assembly_refuses_carriers_without_certified_validity(
+    disposition: phx.meshing.CellMeshAuditDisposition,
+) -> None:
+    # Trilinear background hexahedra with positive volume but negative corner
+    # Jacobians (one interior vertex pushed just past its neighbor), admitted
+    # by an audit that records or skips invalid geometry.
+    points, cells = _grid(9, 1.8, False)
+    points[111, 0] += 0.45
+    mesh = CellMesh(
+        jnp.asarray(points, dtype=jnp.float64),
+        (CellBlock("background", "hexahedron", jnp.asarray(cells, dtype=jnp.int32)),),
+    )
+    lenient = phx.meshing.CellMeshAuditPolicy(
+        inconsistent_orientation=disposition,
+        self_intersection=phx.meshing.CellMeshAuditDisposition.SKIP,
+        invalid_geometry=disposition,
+        unresolved=phx.meshing.CellMeshAuditDisposition.RECORD,
+    )
+    background = MeshPart(
+        "background",
+        phx.meshing.certify_cell_mesh(
+            mesh, phx.SpatialCoordinateContract.si(), audit_policy=lenient
+        ),
+    )
+    assert not _overset._cell_result(background).audit.validity.all_certified
+    _, shell, specs = _assembly(False, "sphere")
+    with pytest.raises(ValueError, match="positive finite physical measures"):
+        prepare_overset_connectivity(
+            MeshAssembly((background, shell)), specs, prove=False
+        )
+
+
 def test_python_owner_prepares_tetrahedra_without_meshcore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
