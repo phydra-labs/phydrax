@@ -348,6 +348,19 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Fixed-boundary tetrahedral refinement with a size field (CAD volumes,
+  surface to tetrahedra) first fills the interior with the body-centred cubic
+  lattice whose cells meet the circumradius bound (cube edge 4 * 0.98 * h /
+  sqrt(5), turned off the axes, half a spacing clear of the boundary, only
+  where the field is within 2 % of its minimum), then runs circumcenter
+  refinement and improvement as before; every cell still has circumradius at
+  most h. Seeding is skipped when the recovered mesh has a cell that is not
+  measurably positive, the precondition of exact insertion. The CAD quadric at
+  h = 0.02286 on Gmsh's surface gives 485,602 tets instead of 885,782 (0.69x
+  Gmsh HXT) with 30 % fewer volume cycles. The surface-to-tetrahedra benchmark
+  rows now request the mean surface edge h, the size HXT gets (it was
+  1.75 * sqrt(3/8) * h). Declared output changes: the sphere, torus and CAD
+  volume meshes and their fingerprints.
 - Native planar triangulation: `Triangulation2D::edge_index` is written as
   selects with the same result as the scan, so Apple clang compiles it without
   branches; Ruppert refinement cycles drop 5-9 % on Apple clang, GCC is
