@@ -1132,6 +1132,73 @@ void pole_chart_rows() {
                                              workspace);
   PHX_CHECK(beyond.status == PHX_MC_UNRESOLVED);
 }
+
+// Seam lens (MAC bc1b665 (i)) of a pole-region boundary edge on the unit
+// sphere: the lens between the uv-straight edge's pole-chart image and the
+// pole-chart-straight edge, sampled densely in (t, s), against the cap: cap
+// >= sup |S(H(t, s)) - L(t)| and >= the exact distance of every sampled lens
+// point to the mesh segment. Fault caught: a seam charged from the pole side
+// only (the pole row's straight-edge deviation B, the "same curve" a broken
+// association would assume) misses lens points (B < their distance).
+void seam_lens_charge() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(sphere);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  struct Edge { double ua, ra, ub, rb; };
+  for (const Edge edge : {Edge{0.0, 0.5, 1.2, 0.5}, Edge{0.0, 0.3, 1.5, 0.6}, Edge{0.25, 0.6, 1.15, 0.3}})
+    for (int sigma : {1, -1}) {
+      const double uv_a[2] = {edge.ua, sigma * (M_PI / 2 - edge.ra)};
+      const double uv_b[2] = {edge.ub, sigma * (M_PI / 2 - edge.rb)};
+      double image[4], c_a[2], c_b[2], x_a[3], x_b[3];
+      for (int end = 0; end < 2; ++end) {
+        const double* point = end == 0 ? uv_a : uv_b;
+        double* c = end == 0 ? c_a : c_b;
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, point, image) == PHX_MC_OK);
+        c[0] = image[0] + 0.5 * (image[1] - image[0]);
+        c[1] = image[2] + 0.5 * (image[3] - image[2]);
+        PHX_CHECK(geometry.jets(sphere, point, 0, end == 0 ? x_a : x_b, point_workspace));
+      }
+      double out[3];
+      PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, sigma, uv_a, uv_b, c_a, c_b, x_a, x_b,
+                                   out) == PHX_MC_OK);
+      double lens = 0.0, distance = 0.0;
+      const int n = 200;
+      double d[3], dd = 0.0;
+      for (int axis = 0; axis < 3; ++axis) d[axis] = x_b[axis] - x_a[axis], dd += d[axis] * d[axis];
+      for (int i = 0; i <= n; ++i) {
+        const double t = static_cast<double>(i) / n;
+        const double u = edge.ua + t * (edge.ub - edge.ua), rho = edge.ra + t * (edge.rb - edge.ra);
+        const double px = rho * std::cos(u), py = rho * std::sin(u);
+        const double fx = c_a[0] + t * (c_b[0] - c_a[0]), fy = c_a[1] + t * (c_b[1] - c_a[1]);
+        for (int k = 0; k <= n; ++k) {
+          const double s = static_cast<double>(k) / n;
+          const double x = (1 - s) * px + s * fx, y = (1 - s) * py + s * fy;
+          const double q = std::hypot(x, y), g = q == 0.0 ? 1.0 : std::sin(q) / q;
+          const double p[3] = {g * x, g * y, sigma * std::cos(q)};
+          double along = 0.0, to_line = 0.0, to_segment = 0.0;
+          for (int axis = 0; axis < 3; ++axis) along += (p[axis] - x_a[axis]) * d[axis];
+          along = std::clamp(along / dd, 0.0, 1.0);
+          for (int axis = 0; axis < 3; ++axis) {
+            const double l = x_a[axis] + t * d[axis], e = x_a[axis] + along * d[axis];
+            to_line += (p[axis] - l) * (p[axis] - l);
+            to_segment += (p[axis] - e) * (p[axis] - e);
+          }
+          lens = std::max(lens, std::sqrt(to_line));
+          distance = std::max(distance, std::sqrt(to_segment));
+        }
+      }
+      std::printf("P seam lens (%.2f %.2f -> %.2f %.2f, sigma %d): cap %.6e uv edge %.6e pole edge "
+                  "%.6e sampled %.6e distance %.6e\n",
+                  edge.ua, edge.ra, edge.ub, edge.rb, sigma, out[0], out[1], out[2], lens, distance);
+      PHX_CHECK(out[0] >= lens && out[0] >= distance && out[1] <= out[0] && out[2] < distance);
+    }
+}
 }  // namespace
 
 int main() {
@@ -1153,6 +1220,7 @@ int main() {
   surface_without_loop_demo();
   lens_index_overflow();
   pole_chart_rows();
+  seam_lens_charge();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,

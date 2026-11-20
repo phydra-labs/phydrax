@@ -3000,6 +3000,14 @@ typedef struct phx_mc_fidelity_finding {
  * the p-curve lens and interval endpoint mismatch enclose that difference.
  * The exact-source coefficient bounds have model->node_reals layout.
  * Certification is conditional on a separately verified chart partition.
+ * Sphere poles (a sphere template, its placement, or a circle revolved about
+ * an axis through its center, certified from the exact coefficients): rows
+ * touching the pole vertex or lying in the cap |v| >= pi/4 are associated in
+ * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
+ * the triangle's linear map taken there; each edge where that region meets a
+ * uv row (or a seam or pole chord) carries a seam lens bound charged to both
+ * adjacent rows. Faces whose pole cap is not free of other trim chords keep
+ * the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from

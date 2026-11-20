@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from decimal import Decimal, localcontext
 from fractions import Fraction
 from pathlib import Path
@@ -1140,6 +1141,50 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
     assert np.any((broken.findings["kind"] == 5) & (broken.findings["triangle"] == 1))
 
 
+_HALF_PI = np.float64(np.pi / 2)
+
+
+def _pole_region(uv: np.ndarray) -> np.ndarray:
+    """V3's pole-region rows: +1 / -1 by pole, 0 elsewhere (the native predicate).
+
+    A row is in a pole's region when a corner lies on the pole line or all its
+    corners lie in the cap sigma v >= pi/4 (pi/4 rounded down, as natively).
+    """
+    region = np.zeros(uv.shape[0], dtype=np.int64)
+    for sigma in (1, -1):
+        on = (uv[:, :, 1] == sigma * _HALF_PI).any(axis=1)
+        cap = (sigma * uv[:, :, 1] >= np.float64(np.pi / 4)).all(axis=1)
+        region[on | cap] = sigma
+    return region
+
+
+def _pole_chart_deviation(
+    surface: Callable[[np.ndarray], np.ndarray],
+    uv: np.ndarray,
+    vertices: np.ndarray,
+    sigma: int,
+    n: int,
+) -> float:
+    """Sampled sup |S - I_T| over the pole-chart triangle of one row.
+
+    Corners map to rho (cos u, sin u), rho = pi/2 - sigma v (a pole corner to
+    the origin); S at a pole-chart point is the surface at its chart point.
+    """
+    rho = _HALF_PI - sigma * uv[:, 1]
+    pole = uv[:, 1] == sigma * _HALF_PI
+    corners = np.where(pole[:, None], 0.0, rho[:, None] * np.stack(
+        (np.cos(uv[:, 0]), np.sin(uv[:, 0])), axis=1))
+    worst = 0.0
+    for i in range(n + 1):
+        for j in range(n + 1 - i):
+            weights = np.asarray((1 - (i + j) / n, i / n, j / n))
+            x, y = weights @ corners
+            chart = np.asarray((np.arctan2(y, x), sigma * (_HALF_PI - np.hypot(x, y))))
+            exact = np.asarray(surface(chart), dtype=np.float64).reshape(3)
+            worst = max(worst, float(np.linalg.norm(exact - weights @ vertices)))
+    return worst
+
+
 def _brep_sphere_grid(
     columns: int, rows: int
 ) -> tuple[MeshingDomain, CadFidelityMesh, CadFidelityChords]:
@@ -1260,9 +1305,15 @@ def test_brep_sphere_rooted_pole_pcurves() -> None:
                            np.sin(uv[1])))
 
     # Pole slivers too: I_T interpolates the collapsed corners, so it lies on
-    # the mesh edge from the pole.
+    # the mesh edge from the pole. Pole-region rows are associated in the pole
+    # chart, so their same-parameter reference is taken there.
+    region = _pole_region(mesh.uv)
     for row in range(mesh.triangles.shape[0]):
         vertices = mesh.points[mesh.triangles[row]]
+        if region[row] != 0:
+            sampled = _pole_chart_deviation(sphere, mesh.uv[row], vertices, int(region[row]), 10)
+            assert sampled <= result.upper[row]
+            continue
         for i in range(11):
             for j in range(11 - i):
                 weights = np.asarray((1 - (i + j) / 10, i / 10, j / 10))
@@ -1587,9 +1638,12 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
     """Collapsed pole slivers of real face output certify within 1.5x of sampling.
 
     A sliver bound below the sampled |S - I_T| would be unsound; above 1.5x it
-    is the old first-order cap (6-8x on the h = 0.2 sphere). Fault caught:
-    the first-order radial cap or a missing tight refinement.
+    is the old first-order cap (6-8x on the h = 0.2 sphere). Sphere slivers lie
+    in V3's pole region, so their reference is sampled in the pole chart.
+    Fault caught: the first-order radial cap or a missing tight refinement.
     """
+    import jax.numpy as jnp
+
     from phydrax._meshcore import cad_mesh
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry.brep._constructors import brep_cone, brep_cylinder, brep_sphere
@@ -1616,10 +1670,19 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
         dtype=np.float64,
     )
     sampled = np.zeros(slivers.size, dtype=np.float64)
+    region = _pole_region(chart.uv)
     for position, row in enumerate(slivers):
         surface = domain.patches[int(chart.patches[row])].surface
+        vertices = meshed.points[chart.triangles[row]]
+        if kind == "sphere":
+            assert region[row] != 0
+            sampled[position] = _pole_chart_deviation(
+                lambda c, s=surface: np.asarray(s.evaluate(jnp.asarray(c))),
+                chart.uv[row], vertices, int(region[row]), n,
+            )
+            continue
         source = np.asarray(surface.evaluate(weights @ chart.uv[row]), dtype=np.float64)
-        linear = weights @ meshed.points[chart.triangles[row]]
+        linear = weights @ vertices
         sampled[position] = np.max(np.linalg.norm(source - linear, axis=1))
     lower, upper = coefficient_bounds(bundle, domain)
     mesh = CadFidelityMesh(meshed.points, chart.triangles, chart.patches, chart.uv,
@@ -1633,3 +1696,85 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
     ratio = result.upper[slivers] / sampled
     assert np.all(ratio >= 1.0)
     assert np.all(ratio <= 1.5), ratio
+
+
+@pytest.mark.parametrize("theta", [1.0, 0.5])
+def test_sphere_pole_chart_rows(theta: float) -> None:
+    """Fan and band rows of the h = 0.2 unit sphere certify in the pole chart.
+
+    At tolerance h^2 / 4 the uv chart refused every fan row (3.85x the
+    tolerance) and the ring band (3.18x). In the pole chart every pole-region
+    row certifies, and its bound covers both the dense same-parameter
+    deviation in the pole chart and the exact distance | |p| - 1 | of its
+    mesh points. A displaced pole vertex and a displaced band vertex refuse
+    their rows. Fault caught: a pole chart that skips rows, uses other
+    corners than the row's own, or certifies a displaced vertex.
+    """
+    import jax.numpy as jnp
+
+    from phydrax._meshcore import cad_mesh
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry.brep._constructors import brep_sphere
+
+    domain = MeshingDomain.from_brep(
+        brep_sphere(1.0, coordinate_contract=SpatialCoordinateContract.si())
+    )
+    bundle = cad_geometry_bundle(domain)
+    model = bundle.model
+    h, tolerance = 0.2, 0.01
+    meshed = cad_mesh(model, np.full(model.surface_nodes.size, h),
+                      np.full(model.surface_nodes.size, tolerance),
+                      np.full(model.curve_nodes.size, tolerance), tolerance_fraction=theta)
+    assert meshed.status == MeshcoreStatus.OK
+    chart = meshed.chart
+    lower, upper = coefficient_bounds(bundle, domain)
+    chords = CadFidelityChords(chart.use_patch, chart.use_range, len(model.loop_surfaces),
+                               chart.chord_use, chart.chord_loop, chart.chord_uv,
+                               chart.chord_range)
+
+    def verify(points: np.ndarray) -> CadFidelityResult:
+        mesh = CadFidelityMesh(points, chart.triangles, chart.patches, chart.uv,
+                               meshed.triangles.astype(np.int64), chart.chart_to_mesh,
+                               chart.edge_chord)
+        return verify_cad_fidelity(model, lower, upper, mesh, chords, tolerance, 8)
+
+    result = verify(meshed.points)
+    region = _pole_region(chart.uv)
+    rows = np.flatnonzero(region != 0)
+    fan = rows[(chart.uv[rows, :, 1] == region[rows, None] * _HALF_PI).any(axis=1)]
+    band = np.setdiff1d(rows, fan)
+    assert fan.size > 0 and band.size > 0
+    assert np.all(result.item_status[rows] == MeshcoreStatus.OK)
+    assert np.all(result.upper[rows] <= tolerance)
+    if theta == 0.5:
+        assert result.status == MeshcoreStatus.OK
+    n = 16
+    weights = np.asarray(
+        [(1 - (i + j) / n, i / n, j / n) for i in range(n + 1) for j in range(n + 1 - i)],
+        dtype=np.float64,
+    )
+    sigma = region[rows].astype(np.float64)
+    uv = chart.uv[rows]
+    rho = _HALF_PI - sigma[:, None] * uv[:, :, 1]
+    pole = uv[:, :, 1] == sigma[:, None] * _HALF_PI
+    x = np.where(pole, 0.0, rho * np.cos(uv[:, :, 0])) @ weights.T
+    y = np.where(pole, 0.0, rho * np.sin(uv[:, :, 0])) @ weights.T
+    points = np.stack((np.arctan2(y, x), sigma[:, None] * (_HALF_PI - np.hypot(x, y))), axis=-1)
+    surface = domain.patches[0].surface
+    exact = np.asarray(surface.evaluate(jnp.asarray(points.reshape(-1, 2))), dtype=np.float64).reshape(
+        rows.size, weights.shape[0], 3)
+    linear = np.einsum("kv,rvd->rkd", weights, meshed.points[chart.triangles[rows]])
+    sampled = np.linalg.norm(exact - linear, axis=-1).max(axis=1)
+    distance = np.abs(np.linalg.norm(linear, axis=-1) - 1.0).max(axis=1)
+    assert np.all(result.upper[rows] >= sampled)
+    assert np.all(result.upper[rows] >= distance)
+    # Displaced vertices: the north pole (fan rows) and a band vertex.
+    north_row = fan[region[fan] == 1][0]
+    north = int(chart.triangles[north_row][np.flatnonzero(chart.uv[north_row, :, 1] == _HALF_PI)[0]])
+    ring = int(np.setdiff1d(chart.triangles[band[region[band] == 1]], chart.triangles[fan])[0])
+    for vertex in (north, ring):
+        shifted = meshed.points.copy()
+        shifted[vertex] *= 1.05
+        moved = verify(shifted)
+        touching = np.flatnonzero((chart.triangles == vertex).any(axis=1))
+        assert np.all(moved.item_status[touching] != MeshcoreStatus.OK)
