@@ -334,6 +334,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Analytic implicit certification takes the profile-to-mesh bound from the
+  native zero-set certificate (normal tube or possible-zero cover over the
+  profile's boundary box, proof kind recorded) instead of a sampled uniform
+  boundary cover, once per acceptance; surfaces it would repair are refused.
+  `AnalyticImplicitProfile.boundary_cover`, the profile's `cover_radius` and
+  `SourceBoundaryDistanceWitness.sample_count`/`cover_radius` are removed; the
+  witness carries `reverse_tolerance`. Declared identity change for analytic
+  profiles, distance witnesses, prepared restricted routes and the
+  projection-degree proof. A tolerance-0.001 sphere certifies in 9 s (was
+  261 s), tolerance 0.002 in 4.7 s (was 66 s).
 - Layer-core column certification runs every column query of a bank through
   one prepared query tree and the shared `_bvh` overlap pair stream against a
   wall tree built once; candidates and certificates are unchanged. Native
