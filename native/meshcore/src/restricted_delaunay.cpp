@@ -46,6 +46,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <queue>
 #include <span>
@@ -1057,7 +1058,7 @@ class SliverRemover {
  public:
   SliverRemover(std::vector<double>& points, std::vector<int32_t>& cells,
                 std::span<const int32_t> faces, double dihedral, double ratio, double determinant)
-      : points_(points), target_(std::cos(dihedral * (M_PI / 180.0))), ratio_(ratio),
+      : points_(points), target_(std::cos(dihedral * (std::numbers::pi / 180.0))), ratio_(ratio),
         determinant_(determinant), fixed_(points.size() / 3, 0), stars_(points.size() / 3) {
     for (int32_t v : faces) fixed_[static_cast<std::size_t>(v)] = 1;
     for (std::size_t c = 0; c < cells.size() / 4; ++c)
@@ -1610,7 +1611,7 @@ int32_t mesh_restricted(const IntervalProgramView& interval, Field& field, const
   if (status != PHX_MC_OK) return status;
   const std::vector<Point> seeds =
       initial_seeds(field, roots, request.extra_seeds, criteria[7] * width, width, separation);
-  const double angle = criteria[2] * (M_PI / 180.0);
+  const double angle = criteria[2] * (std::numbers::pi / 180.0);
   const Criteria refinement{width * width, criteria[1] * criteria[1],
                             std::sin(angle) * std::sin(angle), criteria[3] * criteria[3],
                             criteria[4] > 0.0 ? criteria[4] * criteria[4]

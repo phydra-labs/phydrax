@@ -249,6 +249,9 @@ struct PlcRecovery {
   // are not exactly coplanar (no planar flip can recover them). Published
   // results (prepare_plc_source, recover_plc) hold none.
   int64_t hidden_plc_edges = 0;
+  // In-plane circle tests of the subface legalization (Lawson flips of the
+  // children of split source triangles). Native only.
+  int64_t legalize_tests = 0;
   std::vector<int8_t> vertex_dimension;
   std::vector<int32_t> input_triangles;
   std::vector<int32_t> input_polygons;

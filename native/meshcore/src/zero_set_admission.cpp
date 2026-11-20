@@ -931,20 +931,19 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
     bound = std::max(bound, r);
     return true;
   };
+  // A radius whose target level exceeds the tree's limit cannot be covered.
+  const int32_t target = phx::mc::dyadic_target_level(lower, upper, 0.5 * radius);
+  if (target > phx::mc::kMaximumBoxTreeLevel) {
+    outside = -1;
+    return PHX_MC_OK;
+  }
   std::vector<phx::mc::DyadicLeaf> leaves;
   int64_t evaluated = 0;
-  const int32_t status = phx::mc::possible_zero_leaves(
-      interval, lower, upper, phx::mc::dyadic_target_level(lower, upper, 0.5 * radius), &accept,
-      request.cover_budget, evaluated, leaves);
+  const int32_t status = phx::mc::possible_zero_leaves(interval, lower, upper, target, &accept,
+                                                       request.cover_budget, evaluated, leaves);
   boxes += evaluated;
   if (status == PHX_MC_CAPACITY_EXCEEDED) {
     outside = -2;
-    return PHX_MC_OK;
-  }
-  // The programs and the domain are validated before, so an invalid
-  // argument here is a target level beyond the tree's limit.
-  if (status == PHX_MC_INVALID_ARGUMENT) {
-    outside = -1;
     return PHX_MC_OK;
   }
   if (status != PHX_MC_OK) return status;

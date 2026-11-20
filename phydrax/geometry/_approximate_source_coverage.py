@@ -3858,6 +3858,8 @@ def approximate_source_coverage(
         fidelity.source_to_mesh_upper,
         0.0 if region_distance is None else region_distance,
     )
+    # The distance bound is platform-rounded evidence of the fidelity bounds,
+    # retained beside this identity and never part of it.
     witness_id = canonical_fingerprint(
         {
             "kind": "bounded-source-domain-coverage",
@@ -3870,7 +3872,6 @@ def approximate_source_coverage(
             "region_occurrence_paths": region_occurrence_paths,
             "cell_regions": array_tree_fingerprint(regions),
             "boundary_degrees": degrees,
-            "distance_upper": repr(distance),
         }
     )
     bounded = BoundedSourceCoverage(

@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "capi_guard.hpp"
+#include "directed_interval.hpp"
 #include "floating_point_mode.hpp"
 
 namespace phx::mc::cad {
@@ -142,6 +143,1021 @@ int knot_span(const double* knots, int degree, int count, double u) noexcept {
   return std::clamp(span, degree, count - 1);
 }
 
+using SplineInterval = phx::mc::remesh::Interval;
+
+// All denominators here are strictly positive knot differences or weights.
+bool spline_divide(const SplineInterval& numerator, const SplineInterval& denominator,
+                   SplineInterval& result) {
+  using namespace phx::mc::remesh;
+  if (!(denominator.lower > 0.0) || !finite(denominator)) return false;
+  const SplineInterval inverse{geometry::next_down(1.0 / denominator.upper),
+                               geometry::next_up(1.0 / denominator.lower)};
+  result = multiply(numerator, inverse);
+  return finite(result);
+}
+
+// Cox--de Boor recursion on the closure of one nonempty span.  The arrays
+// contain derivatives, not Taylor coefficients. Only active terms are
+// evaluated, so a repeated knot never causes division by zero.
+bool spline_basis(const double* knot_lower, const double* knot_upper, int span, int degree,
+                  const SplineInterval& parameter, SplineInterval basis[3][kMaxDegree + 1]) {
+  using namespace phx::mc::remesh;
+  const auto knot = [&](int i) { return SplineInterval{knot_lower[i], knot_upper[i]}; };
+  SplineInterval previous[3][kMaxDegree + 1]{};
+  previous[0][degree] = point(1.0);
+  for (int d = 1; d <= degree; ++d) {
+    SplineInterval next[3][kMaxDegree + 1]{};
+    for (int j = degree - d; j <= degree; ++j) {
+      const int i = span - degree + j;
+      for (int side = 0; side < 2; ++side) {
+        const int old = j + side;
+        if (old < degree - d + 1 || old > degree) continue;
+        const SplineInterval denominator = side == 0
+            ? subtract(knot(i + d), knot(i))
+            : subtract(knot(i + d + 1), knot(i + 1));
+        SplineInterval factor, slope;
+        const SplineInterval numerator = side == 0
+            ? subtract(parameter, knot(i)) : subtract(knot(i + d + 1), parameter);
+        if (!spline_divide(numerator, denominator, factor) ||
+            !spline_divide(point(side == 0 ? 1.0 : -1.0), denominator, slope))
+          return false;
+        next[0][j] = add(next[0][j], multiply(factor, previous[0][old]));
+        next[1][j] = add(next[1][j], add(multiply(factor, previous[1][old]),
+                                           multiply(slope, previous[0][old])));
+        next[2][j] = add(next[2][j], add(multiply(factor, previous[2][old]),
+            multiply(point(2.0), multiply(slope, previous[1][old]))));
+      }
+    }
+    for (int n = 0; n < 3; ++n)
+      for (int j = 0; j <= degree; ++j) previous[n][j] = next[n][j];
+  }
+  for (int n = 0; n < 3; ++n)
+    for (int j = 0; j <= degree; ++j) basis[n][j] = previous[n][j];
+  return true;
+}
+
+int32_t spline_interval_jets(bool surface, const int64_t* ints, const double* lower,
+                             const double* upper, const double* input_lower,
+                             const double* input_upper, int order, double* output_lower,
+                             double* output_upper) {
+  using namespace phx::mc::remesh;
+  const int p = static_cast<int>(ints[0]);
+  const int q = surface ? static_cast<int>(ints[1]) : 0;
+  const int nu = static_cast<int>(ints[surface ? 2 : 1]);
+  const int nv = surface ? static_cast<int>(ints[3]) : 1;
+  const int dim = surface ? 3 : static_cast<int>(ints[2]);
+  const int uk = nu + p + 1, vk = surface ? nv + q + 1 : 0;
+  const int64_t controls = static_cast<int64_t>(nu) * nv;
+  const int64_t points = uk + vk, weights = points + controls * dim;
+  const int64_t length = weights + controls;
+  for (int64_t i = 0; i < length; ++i)
+    if (!phx::mc::remesh::finite({lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  if (!surface && (input_lower[0] < upper[p] || input_upper[0] > lower[nu]))
+    return PHX_MC_UNRESOLVED;
+  double box_lower[2] = {input_lower[0], surface ? input_lower[1] : 0.0};
+  double box_upper[2] = {input_upper[0], surface ? input_upper[1] : 0.0};
+  bool clamped[2] = {false, false};
+  if (surface) {
+    const int first[2] = {p, uk + q}, last[2] = {nu, uk + nv};
+    for (int axis = 0; axis < 2; ++axis) {
+      clamped[axis] = input_lower[axis] < upper[first[axis]] ||
+                      input_upper[axis] > lower[last[axis]];
+      box_lower[axis] = std::max(lower[first[axis]],
+                                 std::min(input_lower[axis], lower[last[axis]]));
+      box_upper[axis] = std::min(upper[last[axis]],
+                                 std::max(input_upper[axis], upper[first[axis]]));
+    }
+  }
+  const int terms = surface ? (order + 1) * (order + 2) / 2 : order + 1;
+  const int du[6] = {0, 1, surface ? 0 : 2, 2, 1, 0};
+  const int dv[6] = {0, 0, surface ? 1 : 0, 0, 1, 2};
+  bool found = false;
+  for (int us = p; us < nu; ++us) {
+    if (box_upper[0] < lower[us] || box_lower[0] > upper[us + 1]) continue;
+    if (lower[us] == upper[us] && lower[us + 1] == upper[us + 1] &&
+        lower[us] == lower[us + 1]) continue;
+    const SplineInterval u{std::max(box_lower[0], lower[us]),
+                           std::min(box_upper[0], upper[us + 1])};
+    SplineInterval ub[3][kMaxDegree + 1];
+    if (!spline_basis(lower, upper, us, p, u, ub)) return PHX_MC_UNRESOLVED;
+    for (int vs = q; vs < (surface ? nv : 1); ++vs) {
+      if (surface && (box_upper[1] < lower[uk + vs] ||
+                      box_lower[1] > upper[uk + vs + 1])) continue;
+      if (surface && lower[uk + vs] == upper[uk + vs] &&
+          lower[uk + vs + 1] == upper[uk + vs + 1] &&
+          lower[uk + vs] == lower[uk + vs + 1]) continue;
+      SplineInterval vb[3][kMaxDegree + 1]{};
+      if (surface) {
+        const SplineInterval v{std::max(box_lower[1], lower[uk + vs]),
+                               std::min(box_upper[1], upper[uk + vs + 1])};
+        if (!spline_basis(lower + uk, upper + uk, vs, q, v, vb))
+          return PHX_MC_UNRESOLVED;
+      } else {
+        vb[0][0] = point(1.0);
+      }
+      SplineInterval numerator[6][3]{}, denominator[6]{};
+      double min_weight = std::numeric_limits<double>::infinity(), max_weight = 0.0;
+      for (int a = 0; a <= p; ++a)
+        for (int b = 0; b <= q; ++b) {
+          const int64_t row = static_cast<int64_t>(us - p + a) * nv + vs - q + b;
+          const SplineInterval weight{lower[weights + row], upper[weights + row]};
+          if (!(weight.lower > 0.0)) return PHX_MC_UNRESOLVED;
+          min_weight = std::min(min_weight, weight.lower);
+          max_weight = std::max(max_weight, weight.upper);
+          for (int t = 0; t < terms; ++t) {
+            const SplineInterval basis = multiply(ub[du[t]][a], vb[dv[t]][b]);
+            const SplineInterval weighted = multiply(basis, weight);
+            denominator[t] = add(denominator[t], weighted);
+            for (int c = 0; c < dim; ++c)
+              numerator[t][c] = add(numerator[t][c], multiply(weighted,
+                  {lower[points + row * dim + c], upper[points + row * dim + c]}));
+          }
+        }
+      // Positive B-spline basis functions form a partition of unity.
+      denominator[0].lower = std::max(denominator[0].lower, min_weight);
+      denominator[0].upper = std::min(denominator[0].upper, max_weight);
+      // Equal point weights w on the span: W = w exactly and every derivative
+      // of W vanishes (partition of unity), so S = numerator / w with no
+      // quotient-rule dependency loss.
+      const bool uniform = min_weight == max_weight;
+      SplineInterval result[6][3]{};
+      for (int c = 0; c < dim; ++c) {
+        if (uniform) {
+          for (int t = 0; t < terms; ++t)
+            if (!spline_divide(numerator[t][c], point(min_weight), result[t][c]))
+              return PHX_MC_UNRESOLVED;
+          continue;
+        }
+        if (!spline_divide(numerator[0][c], denominator[0], result[0][c]))
+          return PHX_MC_UNRESOLVED;
+        for (int t = 1; t < terms; ++t) {
+          SplineInterval rhs = subtract(numerator[t][c], multiply(denominator[t], result[0][c]));
+          if (du[t] == 2)
+            rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[1], result[1][c])));
+          if (dv[t] == 2)
+            rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[2], result[2][c])));
+          if (du[t] == 1 && dv[t] == 1) {
+            rhs = subtract(rhs, multiply(denominator[1], result[2][c]));
+            rhs = subtract(rhs, multiply(denominator[2], result[1][c]));
+          }
+          if (!spline_divide(rhs, denominator[0], result[t][c])) return PHX_MC_UNRESOLVED;
+        }
+      }
+      for (int t = 0; t < terms; ++t)
+        for (int c = 0; c < dim; ++c) {
+          if ((du[t] > 0 && clamped[0]) || (dv[t] > 0 && clamped[1])) {
+            result[t][c].lower = std::min(result[t][c].lower, 0.0);
+            result[t][c].upper = std::max(result[t][c].upper, 0.0);
+          }
+          const int slot = t * dim + c;
+          if (!found) {
+            output_lower[slot] = result[t][c].lower;
+            output_upper[slot] = result[t][c].upper;
+          } else {
+            output_lower[slot] = std::min(output_lower[slot], result[t][c].lower);
+            output_upper[slot] = std::max(output_upper[slot], result[t][c].upper);
+          }
+        }
+      found = true;
+    }
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// Enclosure of a univariate Bernstein polynomial's coefficients restricted to
+// [a, b] within [0, 1]: coefficient k is the blossom at (a^(n-k), b^k),
+// evaluated by de Casteljau steps in interval arithmetic.
+void restrict_bernstein(const SplineInterval* in, int degree, double a, double b,
+                        int stride, SplineInterval* out) {
+  using namespace phx::mc::remesh;
+  SplineInterval source[4];
+  for (int i = 0; i <= degree; ++i) source[i] = in[i * stride];
+  for (int k = 0; k <= degree; ++k) {
+    SplineInterval work[4];
+    for (int i = 0; i <= degree; ++i) work[i] = source[i];
+    for (int step = 0; step < degree; ++step) {
+      const double t = step < degree - k ? a : b;
+      const SplineInterval weight = point(t), complement = subtract(point(1.0), point(t));
+      for (int i = 0; i < degree - step; ++i)
+        work[i] = add(multiply(complement, work[i]), multiply(weight, work[i + 1]));
+    }
+    out[k * stride] = work[0];
+  }
+}
+
+// Rational cubic T-spline over the pieces meeting the box. Each piece is the
+// exact Bernstein extraction on its exact parameter rectangle. Per piece the
+// homogeneous Bernstein nets of the requested derivatives are restricted to
+// the box's local rectangle and their hulls bound the polynomial derivatives
+// (convex hull property). The local rectangle is clamped to [0, 1]: box points
+// outside a piece belong to a neighbour, which is visited as well. The
+// source's passing ASTS certificate (required to build the surface) proves C2
+// trace continuity, so the hull of per-piece Hessians bounds the whole box.
+int32_t tspline_interval_jets(const int64_t* ints, const double* lower, const double* upper,
+                              const double* input_lower, const double* input_upper, int order,
+                              double* output_lower, double* output_upper) {
+  using namespace phx::mc::remesh;
+  const int64_t pieces = ints[0], count = ints[1], width = ints[2];
+  const int64_t* rows = ints + 3;
+  const int64_t operators = 4 * pieces, points = operators + 16 * pieces * width;
+  const int64_t weights = points + 3 * count, length = weights + count;
+  for (int64_t i = 0; i < length; ++i)
+    if (!finite(SplineInterval{lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  const auto at = [&](int64_t i) { return SplineInterval{lower[i], upper[i]}; };
+  const int terms = (order + 1) * (order + 2) / 2;
+  const int du[6] = {0, 1, 0, 2, 1, 0}, dv[6] = {0, 0, 1, 0, 1, 2};
+  bool found = false;
+  for (int64_t piece = 0; piece < pieces; ++piece) {
+    const int64_t b = 4 * piece;
+    if (input_upper[0] < lower[b] || input_lower[0] > upper[b + 1] ||
+        input_upper[1] < lower[b + 2] || input_lower[1] > upper[b + 3])
+      continue;
+    SplineInterval local[2], scale[2];
+    bool empty = false;
+    for (int axis = 0; axis < 2; ++axis) {
+      const SplineInterval first = at(b + 2 * axis), last = at(b + 2 * axis + 1);
+      const SplineInterval extent = subtract(last, first);
+      if (!spline_divide(subtract(SplineInterval{input_lower[axis], input_upper[axis]}, first),
+                         extent, local[axis]) ||
+          !spline_divide(point(1.0), extent, scale[axis]))
+        return PHX_MC_UNRESOLVED;
+      local[axis] = {std::max(local[axis].lower, 0.0), std::min(local[axis].upper, 1.0)};
+      empty = empty || local[axis].lower > local[axis].upper;
+    }
+    if (empty) continue;
+    // Homogeneous Bernstein net (w x, w y, w z, w) of this piece.
+    SplineInterval net[4][4][4]{};
+    double min_weight = std::numeric_limits<double>::infinity(), max_weight = 0.0;
+    for (int64_t l = 0; l < width; ++l) {
+      const int64_t row = rows[piece * width + l];
+      if (row < 0) continue;
+      const SplineInterval weight = at(weights + row);
+      if (!(weight.lower > 0.0)) return PHX_MC_UNRESOLVED;
+      min_weight = std::min(min_weight, weight.lower);
+      max_weight = std::max(max_weight, weight.upper);
+      SplineInterval homogeneous[4];
+      for (int c = 0; c < 3; ++c) homogeneous[c] = multiply(weight, at(points + 3 * row + c));
+      homogeneous[3] = weight;
+      const int64_t op = operators + 16 * (piece * width + l);
+      for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+          const SplineInterval entry = at(op + 4 * i + j);
+          if (entry.lower == 0.0 && entry.upper == 0.0) continue;
+          for (int c = 0; c < 4; ++c)
+            net[c][i][j] = add(net[c][i][j], multiply(entry, homogeneous[c]));
+        }
+    }
+    SplineInterval numerator[6][3]{}, denominator[6]{};
+    for (int t = 0; t < terms; ++t) {
+      const int nu = 3 - du[t], nv = 3 - dv[t];
+      // Derivative nets: forward differences times n!/(n-d)!, times the
+      // chain-rule factor of the piece's parameter scaling.
+      SplineInterval factor = point(du[t] == 0 ? 1.0 : du[t] == 1 ? 3.0 : 6.0);
+      factor = multiply(factor, point(dv[t] == 0 ? 1.0 : dv[t] == 1 ? 3.0 : 6.0));
+      for (int k = 0; k < du[t]; ++k) factor = multiply(factor, scale[0]);
+      for (int k = 0; k < dv[t]; ++k) factor = multiply(factor, scale[1]);
+      for (int c = 0; c < 4; ++c) {
+        SplineInterval d[4][4];
+        for (int i = 0; i <= nu; ++i)
+          for (int j = 0; j <= nv; ++j) {
+            SplineInterval value = point(0.0);
+            for (int p = 0; p <= du[t]; ++p)
+              for (int q = 0; q <= dv[t]; ++q) {
+                const double sign = ((du[t] - p + dv[t] - q) % 2 == 0 ? 1.0 : -1.0) *
+                                    (du[t] == 2 && p == 1 ? 2.0 : 1.0) *
+                                    (dv[t] == 2 && q == 1 ? 2.0 : 1.0);
+                value = add(value, multiply(point(sign), net[c][i + p][j + q]));
+              }
+            d[i][j] = value;
+          }
+        SplineInterval restricted[4][4];
+        for (int i = 0; i <= nu; ++i)
+          restrict_bernstein(&d[i][0], nv, local[1].lower, local[1].upper, 1, &restricted[i][0]);
+        for (int j = 0; j <= nv; ++j)
+          restrict_bernstein(&restricted[0][j], nu, local[0].lower, local[0].upper, 4,
+                             &restricted[0][j]);
+        SplineInterval hull = restricted[0][0];
+        for (int i = 0; i <= nu; ++i)
+          for (int j = 0; j <= nv; ++j)
+            hull = {std::min(hull.lower, restricted[i][j].lower),
+                    std::max(hull.upper, restricted[i][j].upper)};
+        hull = multiply(hull, factor);
+        if (c == 3) denominator[t] = hull;
+        else numerator[t][c] = hull;
+      }
+    }
+    // The extracted basis is a nonnegative partition of unity on the piece.
+    denominator[0].lower = std::max(denominator[0].lower, min_weight);
+    denominator[0].upper = std::min(denominator[0].upper, max_weight);
+    SplineInterval result[6][3]{};
+    for (int c = 0; c < 3; ++c) {
+      if (!spline_divide(numerator[0][c], denominator[0], result[0][c]))
+        return PHX_MC_UNRESOLVED;
+      for (int t = 1; t < terms; ++t) {
+        SplineInterval rhs = subtract(numerator[t][c], multiply(denominator[t], result[0][c]));
+        if (du[t] == 2)
+          rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[1], result[1][c])));
+        if (dv[t] == 2)
+          rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[2], result[2][c])));
+        if (du[t] == 1 && dv[t] == 1) {
+          rhs = subtract(rhs, multiply(denominator[1], result[2][c]));
+          rhs = subtract(rhs, multiply(denominator[2], result[1][c]));
+        }
+        if (!spline_divide(rhs, denominator[0], result[t][c])) return PHX_MC_UNRESOLVED;
+      }
+    }
+    for (int t = 0; t < terms; ++t)
+      for (int c = 0; c < 3; ++c) {
+        const int slot = t * 3 + c;
+        output_lower[slot] = found ? std::min(output_lower[slot], result[t][c].lower)
+                                   : result[t][c].lower;
+        output_upper[slot] = found ? std::max(output_upper[slot], result[t][c].upper)
+                                   : result[t][c].upper;
+      }
+    found = true;
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// Encloses the solution of A z = b for every A, b in the intervals, given any
+// preconditioner P: z = P b + (I - P A) z, so with r = ||I - P A||_inf < 1,
+// ||z - P b|| <= r ||P b|| / (1 - r). Also proves every A nonsingular.
+bool enclose_linear(const SplineInterval a[3][3], const SplineInterval* b, const double* p,
+                    SplineInterval* z) {
+  using namespace phx::mc::remesh;
+  double r = 0.0, n = 0.0;
+  SplineInterval z0[3];
+  for (int i = 0; i < 3; ++i) {
+    z0[i] = point(0.0);
+    for (int j = 0; j < 3; ++j) z0[i] = add(z0[i], multiply(point(p[3 * i + j]), b[j]));
+    SplineInterval row = point(0.0);
+    for (int j = 0; j < 3; ++j) {
+      SplineInterval e = point(i == j ? 1.0 : 0.0);
+      for (int k = 0; k < 3; ++k) e = subtract(e, multiply(point(p[3 * i + k]), a[k][j]));
+      row = add(row, point(magnitude(e)));
+    }
+    r = std::max(r, row.upper);
+    n = std::max(n, magnitude(z0[i]));
+  }
+  SplineInterval delta;
+  if (!(r < 1.0) || !spline_divide(multiply(point(n), point(r)),
+                                   subtract(point(1.0), point(r)), delta))
+    return false;
+  for (int i = 0; i < 3; ++i) z[i] = add(z0[i], SplineInterval{-delta.upper, delta.upper});
+  return true;
+}
+
+// One intersection chart over a carrier-fraction interval. The chart axis
+// coordinate moves linearly; the three free coordinates are the root of
+// S1(q0, q1) - S2(q2, q3). The source constructor certifies, for every axis
+// value of the chart, exactly one root g(t) in the stored chart box C (the
+// chart Krawczyk or analytic certificate of IntersectionCurve); C is the
+// hull of the graph, so the graph touches C's faces at its extrema.
+// A trial box X around the chart chord is therefore NOT clipped to C: a
+// Krawczyk image strictly inside X, for every axis value of the interval,
+// proves one root x(t) in X. It is the chart's own point g(t) once roots are
+// unique in the hull H of X and C: for x, y in H with F(x) = F(y) = 0, the
+// row-wise mean value theorem over the convex H gives y - x = (I - P J)(y - x)
+// with every row of J in the interval Jacobian over H, so
+// ||I - P J(H)||_inf < 1 forces y = x. Since g(t) lies in C and x(t) in X,
+// both lie in H and coincide; the certified box is then intersected with C.
+// The whole chart box is the last trial. Implicit differentiation with a
+// preconditioned linear enclosure gives first and second derivatives.
+int32_t intersection_chart_jets(const CadGeometry& geometry, const Node& node,
+                                const double* lower, const double* upper, int64_t chart,
+                                const SplineInterval& fraction, int order,
+                                SplineInterval out[3][3], IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const auto first = static_cast<int32_t>(node.integers[0]);
+  const auto second = static_cast<int32_t>(node.integers[1]);
+  const int axis = static_cast<int>(node.integers[7 + chart]);
+  const int64_t base = 2 + kChartReals * chart;
+  const auto at = [&](int64_t i) { return SplineInterval{lower[base + i], upper[base + i]}; };
+  int free[3];
+  for (int k = 0, f = 0; k < 4; ++k)
+    if (k != axis) free[f++] = k;
+  double precondition[9];
+  for (int i = 0; i < 9; ++i) precondition[i] = lower[base + 16 + i];
+  const SplineInterval delta = subtract(at(4 + axis), at(axis));
+  SplineInterval q[4];
+  q[axis] = add(at(axis), multiply(fraction, delta));
+  SplineInterval chart_box[3];
+  for (int f = 0; f < 3; ++f)
+    chart_box[f] = {lower[base + 8 + free[f]], upper[base + 12 + free[f]]};
+  double one_lower[18], one_upper[18], two_lower[18], two_upper[18];
+  // Template carriers are evaluated through their value program in interval
+  // Taylor arithmetic, which keeps exact constant derivatives tight enough
+  // for the Krawczyk contraction.
+  const auto surfaces = [&](const SplineInterval* box, int jet_order) {
+    const double lo1[2] = {box[0].lower, box[1].lower}, hi1[2] = {box[0].upper, box[1].upper};
+    const double lo2[2] = {box[2].lower, box[3].lower}, hi2[2] = {box[2].upper, box[3].upper};
+    const bool previous = workspace.direct_template;
+    bool ok = false;
+    // Either evaluator is an enclosure; the generated programs back up the
+    // Taylor path where it lacks an operation.
+    for (const bool direct : {true, false}) {
+      workspace.direct_template = direct;
+      ok = geometry.interval_jets(first, lo1, hi1, jet_order, one_lower, one_upper,
+                                  workspace) == PHX_MC_OK &&
+           geometry.interval_jets(second, lo2, hi2, jet_order, two_lower, two_upper,
+                                  workspace) == PHX_MC_OK;
+      if (ok) break;
+    }
+    workspace.direct_template = previous;
+    return ok;
+  };
+  const auto one = [&](int t, int c) { return SplineInterval{one_lower[3 * t + c], one_upper[3 * t + c]}; };
+  const auto two = [&](int t, int c) { return SplineInterval{two_lower[3 * t + c], two_upper[3 * t + c]}; };
+  // Column k of the residual Jacobian: dS1/dq_k or -dS2/dq_(k-2).
+  const auto column = [&](int k, int c) {
+    return k < 2 ? one(1 + k, c) : subtract(point(0.0), two(1 + k - 2, c));
+  };
+  // Numerical inverse of the midpoint free Jacobian; any matrix is valid.
+  const auto refresh_preconditioner = [&]() {
+    double m[9];
+    for (int c = 0; c < 3; ++c)
+      for (int f = 0; f < 3; ++f) {
+        const SplineInterval entry = column(free[f], c);
+        m[3 * c + f] = 0.5 * entry.lower + 0.5 * entry.upper;
+      }
+    const double cof[9] = {m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8],
+                           m[1] * m[5] - m[2] * m[4], m[5] * m[6] - m[3] * m[8],
+                           m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+                           m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7],
+                           m[0] * m[4] - m[1] * m[3]};
+    const double det = m[0] * cof[0] + m[1] * cof[3] + m[2] * cof[6];
+    if (!std::isfinite(det) || det == 0.0) return;
+    for (int i = 0; i < 9; ++i) precondition[i] = cof[i] / det;
+  };
+  // 1: certified (q holds the contracted box), 0: not certified, -1: refusal.
+  const auto krawczyk = [&](const SplineInterval* box) {
+    for (int f = 0; f < 3; ++f) q[free[f]] = box[f];
+    for (int iteration = 0; iteration < 4; ++iteration) {
+      SplineInterval middle[4];
+      for (int k = 0; k < 4; ++k)
+        middle[k] = k == axis ? q[k] : point(0.5 * q[k].lower + 0.5 * q[k].upper);
+      if (!surfaces(middle, 0)) return -1;
+      SplineInterval residual[3];
+      for (int c = 0; c < 3; ++c) residual[c] = subtract(one(0, c), two(0, c));
+      if (!surfaces(q, 1)) return -1;
+      if (iteration == 0) refresh_preconditioner();
+      SplineInterval next[3];
+      for (int i = 0; i < 3; ++i) {
+        SplineInterval value = middle[free[i]];
+        for (int j = 0; j < 3; ++j)
+          value = subtract(value, multiply(point(precondition[3 * i + j]), residual[j]));
+        for (int j = 0; j < 3; ++j) {
+          SplineInterval e = point(i == j ? 1.0 : 0.0);
+          for (int c = 0; c < 3; ++c)
+            e = subtract(e, multiply(point(precondition[3 * i + c]), column(free[j], c)));
+          value = add(value, multiply(e, subtract(q[free[j]], middle[free[j]])));
+        }
+        next[i] = value;
+      }
+      for (int i = 0; i < 3; ++i) {
+        const SplineInterval current = q[free[i]];
+        if (!finite(next[i])) return iteration == 0 ? 0 : -1;
+        // Existence (and uniqueness in the sub-box): strictly inside.
+        if (iteration == 0 && !(next[i].lower > current.lower && next[i].upper < current.upper))
+          return 0;
+        q[free[i]] = {std::max(current.lower, next[i].lower),
+                      std::min(current.upper, next[i].upper)};
+      }
+    }
+    return 1;
+  };
+  // Non-rigorous Newton guesses at both fraction endpoints only centre the
+  // trial boxes; certification is the Krawczyk test above.
+  double guess[2][3];
+  for (int end = 0; end < 2; ++end) {
+    const double f = end == 0 ? fraction.lower : fraction.upper;
+    SplineInterval at_point[4];
+    for (int k = 0; k < 4; ++k) {
+      const double from = lower[base + k], to = lower[base + 4 + k];
+      at_point[k] = point(from + f * (to - from));
+    }
+    for (int step = 0; step < 8; ++step) {
+      if (!surfaces(at_point, 1)) break;
+      refresh_preconditioner();
+      double residual[3], correction[3];
+      for (int c = 0; c < 3; ++c) {
+        const SplineInterval r = subtract(one(0, c), two(0, c));
+        residual[c] = 0.5 * r.lower + 0.5 * r.upper;
+      }
+      for (int i = 0; i < 3; ++i)
+        correction[i] = precondition[3 * i] * residual[0] + precondition[3 * i + 1] * residual[1] +
+                        precondition[3 * i + 2] * residual[2];
+      for (int i = 0; i < 3; ++i) {
+        const double value = std::clamp(at_point[free[i]].lower - correction[i],
+                                        chart_box[i].lower, chart_box[i].upper);
+        if (std::isfinite(value)) at_point[free[i]] = point(value);
+      }
+    }
+    for (int i = 0; i < 3; ++i) guess[end][i] = at_point[free[i]].lower;
+  }
+  // ||I - P J||_inf < 1 over the box with the axis interval of the fraction,
+  // P a numerical inverse of the midpoint Jacobian: at most one root per t.
+  const auto unique_over = [&](const SplineInterval* box) {
+    SplineInterval hull[4];
+    hull[axis] = q[axis];
+    for (int f = 0; f < 3; ++f) hull[free[f]] = box[f];
+    if (!surfaces(hull, 1)) return false;
+    refresh_preconditioner();
+    for (int i = 0; i < 3; ++i) {
+      double row = 0.0;
+      for (int j = 0; j < 3; ++j) {
+        SplineInterval e = point(i == j ? 1.0 : 0.0);
+        for (int c = 0; c < 3; ++c)
+          e = subtract(e, multiply(point(precondition[3 * i + c]), column(free[j], c)));
+        row = add(point(row), point(magnitude(e))).upper;
+      }
+      if (!(row < 1.0)) return false;
+    }
+    return true;
+  };
+  int certified = 0;
+  for (const double scale : {0.015625, 0.0625, 0.125, 0.25, 0.5, 1.0, 8.0}) {
+    SplineInterval trial[3], hull[3];
+    for (int f = 0; f < 3; ++f) {
+      const double low = std::min(guess[0][f], guess[1][f]);
+      const double high = std::max(guess[0][f], guess[1][f]);
+      // The floor leaves room for rounding in the operator on point intervals.
+      const double margin = std::max(
+          (fraction.upper - fraction.lower) * (chart_box[f].upper - chart_box[f].lower) +
+              (high - low),
+          0x1p-30 * (1.0 + std::fabs(high)));
+      trial[f] = subtract(point(low), multiply(point(scale), point(margin)));
+      trial[f] = {trial[f].lower,
+                  add(point(high), multiply(point(scale), point(margin))).upper};
+      hull[f] = {std::min(trial[f].lower, chart_box[f].lower),
+                 std::max(trial[f].upper, chart_box[f].upper)};
+    }
+    // A carrier failing outside C only rejects this trial.
+    if (krawczyk(trial) != 1) continue;
+    SplineInterval root[3];
+    for (int f = 0; f < 3; ++f) root[f] = q[free[f]];
+    if (!unique_over(hull)) continue;
+    certified = 1;
+    for (int f = 0; f < 3; ++f) {
+      q[free[f]] = {std::max(root[f].lower, chart_box[f].lower),
+                    std::min(root[f].upper, chart_box[f].upper)};
+      if (!(q[free[f]].lower <= q[free[f]].upper)) return PHX_MC_INTERNAL_ERROR;
+    }
+    break;
+  }
+  if (certified == 0) certified = krawczyk(chart_box);
+  if (certified != 1) return PHX_MC_UNRESOLVED;
+  const int output = static_cast<int>(node.integers[3]);
+  SplineInterval derivative[4], second_derivative[4];
+  if (order >= 1 || output == 0) {
+    if (!surfaces(q, order)) return PHX_MC_UNRESOLVED;
+  }
+  if (order >= 1) {
+    refresh_preconditioner();
+    SplineInterval jacobian[3][3], rhs[3];
+    for (int c = 0; c < 3; ++c) {
+      for (int f = 0; f < 3; ++f) jacobian[c][f] = column(free[f], c);
+      rhs[c] = subtract(point(0.0), multiply(column(axis, c), delta));
+    }
+    SplineInterval z[3];
+    if (!enclose_linear(jacobian, rhs, precondition, z)) return PHX_MC_UNRESOLVED;
+    derivative[axis] = delta;
+    for (int f = 0; f < 3; ++f) derivative[free[f]] = z[f];
+    second_derivative[axis] = point(0.0);
+    if (order == 2) {
+      for (int c = 0; c < 3; ++c) {
+        // q'^T H q' for S1 and minus that for S2; mixed blocks vanish.
+        SplineInterval curvature = point(0.0);
+        for (int side = 0; side < 2; ++side) {
+          const SplineInterval du = derivative[2 * side], dv = derivative[2 * side + 1];
+          const auto h = [&](int t) { return side == 0 ? one(t, c) : two(t, c); };
+          SplineInterval term = multiply(h(3), multiply(du, du));
+          term = add(term, multiply(point(2.0), multiply(h(4), multiply(du, dv))));
+          term = add(term, multiply(h(5), multiply(dv, dv)));
+          curvature = side == 0 ? add(curvature, term) : subtract(curvature, term);
+        }
+        rhs[c] = subtract(point(0.0), curvature);
+      }
+      if (!enclose_linear(jacobian, rhs, precondition, z)) return PHX_MC_UNRESOLVED;
+      for (int f = 0; f < 3; ++f) second_derivative[free[f]] = z[f];
+    }
+  }
+  if (output != 0) {
+    const int offset = output == 1 ? 0 : 2;
+    for (int c = 0; c < 2; ++c) {
+      out[0][c] = q[offset + c];
+      if (order >= 1) out[1][c] = derivative[offset + c];
+      if (order == 2) out[2][c] = second_derivative[offset + c];
+    }
+    return PHX_MC_OK;
+  }
+  for (int c = 0; c < 3; ++c) {
+    out[0][c] = one(0, c);
+    if (order >= 1)
+      out[1][c] = add(multiply(one(1, c), derivative[0]), multiply(one(2, c), derivative[1]));
+    if (order == 2) {
+      SplineInterval value = add(multiply(one(1, c), second_derivative[0]),
+                                 multiply(one(2, c), second_derivative[1]));
+      value = add(value, multiply(one(3, c), multiply(derivative[0], derivative[0])));
+      value = add(value, multiply(point(2.0),
+                                  multiply(one(4, c), multiply(derivative[0], derivative[1]))));
+      value = add(value, multiply(one(5, c), multiply(derivative[1], derivative[1])));
+      out[2][c] = value;
+    }
+  }
+  return PHX_MC_OK;
+}
+
+// The intersection node over a parameter interval: the hull over every chart
+// the carrier interval can select, including the terminal-chart rule.
+int32_t intersection_interval_jets(const CadGeometry& geometry, const Node& node,
+                                   const double* lower, const double* upper, double t_lower,
+                                   double t_upper, int order, double* output_lower,
+                                   double* output_upper, IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  for (int64_t i = 0; i < node.real_count; ++i)
+    if (!finite(SplineInterval{lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  const int64_t charts = node.integers[2], fixed = node.integers[4];
+  const int64_t terminal = node.integers[5];
+  const bool reversed = node.integers[6] != 0;
+  const int dimension = node.outputs;
+  const SplineInterval carrier = reversed
+      ? subtract(SplineInterval{lower[0], upper[0]}, SplineInterval{t_lower, t_upper})
+      : SplineInterval{t_lower, t_upper};
+  struct Candidate {
+    int64_t chart;
+    SplineInterval fraction;
+    int depth = 0;
+  };
+  std::vector<Candidate> candidates;
+  if (fixed >= 0) {
+    candidates.push_back({fixed, subtract(carrier, point(static_cast<double>(fixed)))});
+  } else {
+    if (!(carrier.lower >= 0.0 && carrier.upper <= static_cast<double>(charts)))
+      return PHX_MC_UNRESOLVED;
+    // Chart k covers the closed carrier interval [k, k + 1]; the carrier end
+    // `charts` is the last chart's fraction 1.
+    const auto last = std::min(static_cast<int64_t>(std::floor(carrier.upper)), charts - 1);
+    const auto start = std::min(static_cast<int64_t>(std::floor(carrier.lower)), charts - 1);
+    for (auto chart = start; chart <= last; ++chart) {
+      const double c = static_cast<double>(chart);
+      const SplineInterval part{std::max(carrier.lower, c), std::min(carrier.upper, c + 1.0)};
+      candidates.push_back({chart, subtract(part, point(c))});
+    }
+    if (terminal >= 0 && carrier.upper >= lower[1]) {
+      const SplineInterval part{std::max(carrier.lower, lower[1]), carrier.upper};
+      candidates.push_back({terminal, subtract(part, point(static_cast<double>(terminal)))});
+    }
+  }
+  bool found = false;
+  // The Krawczyk image over a fraction interval carries the graph's spread
+  // over it, so an interval that does not certify is bisected; the hull of
+  // the halves encloses the same set.
+  constexpr int kMaxBisection = 6;
+  while (!candidates.empty()) {
+    const Candidate candidate = candidates.back();
+    candidates.pop_back();
+    SplineInterval result[3][3]{};
+    const int32_t status = intersection_chart_jets(geometry, node, lower, upper,
+                                                   candidate.chart, candidate.fraction, order,
+                                                   result, workspace);
+    if (status == PHX_MC_UNRESOLVED && candidate.depth < kMaxBisection) {
+      const double middle = 0.5 * candidate.fraction.lower + 0.5 * candidate.fraction.upper;
+      if (candidate.fraction.lower < middle && middle < candidate.fraction.upper) {
+        candidates.push_back({candidate.chart, {candidate.fraction.lower, middle},
+                              candidate.depth + 1});
+        candidates.push_back({candidate.chart, {middle, candidate.fraction.upper},
+                              candidate.depth + 1});
+        continue;
+      }
+    }
+    if (status != PHX_MC_OK) return status;
+    for (int n = 0; n <= order; ++n)
+      for (int c = 0; c < dimension; ++c) {
+        SplineInterval value = result[n][c];
+        if (reversed && n == 1) value = subtract(point(0.0), value);
+        if (!finite(value)) return PHX_MC_UNRESOLVED;
+        const int slot = n * dimension + c;
+        output_lower[slot] = found ? std::min(output_lower[slot], value.lower) : value.lower;
+        output_upper[slot] = found ? std::max(output_upper[slot], value.upper) : value.upper;
+      }
+    found = true;
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// Normalized interval Taylor coefficients through total order three. This
+// evaluates the smooth value program directly, avoiding branch flags in the
+// generated derivative programs when an offset needs a certified normal.
+struct IntervalTaylor {
+  SplineInterval c[10]{};
+};
+
+IntervalTaylor interval_taylor_multiply(const IntervalTaylor& a, const IntervalTaylor& b,
+                                        const Truncation& truncation) {
+  using namespace phx::mc::remesh;
+  IntervalTaylor result;
+  for (int n = 0; n <= truncation.order; ++n)
+    for (int j = 0; j <= truncation.v_limit(n); ++j) {
+      const int i = n - j;
+      for (int u = 0; u <= i; ++u)
+        for (int v = 0; v <= j; ++v)
+          result.c[term(i, j)] = add(result.c[term(i, j)],
+              multiply(a.c[term(u, v)], b.c[term(i - u, j - v)]));
+    }
+  return result;
+}
+
+IntervalTaylor interval_taylor_compose(const IntervalTaylor& input,
+                                       const SplineInterval* derivatives,
+                                       const Truncation& truncation) {
+  using namespace phx::mc::remesh;
+  IntervalTaylor delta = input, result;
+  delta.c[0] = point(0);
+  result.c[0] = derivatives[truncation.order];
+  for (int n = truncation.order - 1; n >= 0; --n) {
+    result = interval_taylor_multiply(result, delta, truncation);
+    result.c[0] = add(result.c[0], derivatives[n]);
+  }
+  return result;
+}
+
+bool interval_taylor_inverse(const IntervalTaylor& input, const Truncation& truncation,
+                             IntervalTaylor& result) {
+  using namespace phx::mc::remesh;
+  const SplineInterval x = input.c[0];
+  if (!finite(x) || (x.lower <= 0 && x.upper >= 0)) return false;
+  const SplineInterval inverse{geometry::next_down(1.0 / x.upper),
+                               geometry::next_up(1.0 / x.lower)};
+  SplineInterval derivatives[4];
+  derivatives[0] = inverse;
+  for (int n = 1; n <= truncation.order; ++n)
+    derivatives[n] = subtract(point(0), multiply(derivatives[n - 1], inverse));
+  result = interval_taylor_compose(input, derivatives, truncation);
+  return true;
+}
+
+bool interval_taylor_unary(int64_t opcode, const IntervalTaylor& input,
+                           const Truncation& truncation, IntervalTaylor& result) {
+  using namespace phx::mc::remesh;
+  const SplineInterval x = input.c[0];
+  if (opcode == 12) {
+    result = interval_taylor_multiply(input, input, truncation);
+    return true;
+  }
+  if (opcode == 28) {
+    IntervalTaylor sine, cosine, inverse;
+    if (!interval_taylor_unary(8, input, truncation, sine) ||
+        !interval_taylor_unary(9, input, truncation, cosine) ||
+        !interval_taylor_inverse(cosine, truncation, inverse)) return false;
+    result = interval_taylor_multiply(sine, inverse, truncation);
+    return true;
+  }
+  SplineInterval sine{}, cosine{}, exponential{};
+  if (opcode == 17) {
+    const auto e = elementary::exp(x.lower, x.upper);
+    exponential = {e.lower, e.upper};
+  } else if (opcode == 8 || opcode == 9) {
+    const auto s = elementary::sin(x.lower, x.upper);
+    const auto c = elementary::cos(x.lower, x.upper);
+    sine = {s.lower, s.upper};
+    cosine = {c.lower, c.upper};
+  } else {
+    return false;
+  }
+  SplineInterval derivatives[4];
+  for (int n = 0; n <= truncation.order; ++n) {
+    SplineInterval value;
+    if (opcode == 17) value = exponential;
+    else if (opcode == 8)
+      value = n % 4 == 0 ? sine : n % 4 == 1 ? cosine
+              : n % 4 == 2 ? subtract(point(0), sine) : subtract(point(0), cosine);
+    else if (opcode == 9)
+      value = n % 4 == 0 ? cosine : n % 4 == 1 ? subtract(point(0), sine)
+              : n % 4 == 2 ? subtract(point(0), cosine) : sine;
+    else return false;
+    if (!spline_divide(value, point(factorial(n)), derivatives[n])) return false;
+  }
+  result = interval_taylor_compose(input, derivatives, truncation);
+  return true;
+}
+
+int32_t interval_template_jets(const CadGeometry& geometry, int32_t index,
+                               const double* input_lower, const double* input_upper, int order,
+                               double* output_lower, double* output_upper,
+                               IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const Node& node = geometry.node(index);
+  const ProgramData& program = node.definition->value;
+  const Truncation truncation{node.inputs, order};
+  const int64_t stride = 10, size = program.workspace_size * stride;
+  workspace.taylor_lower.assign(static_cast<std::size_t>(size), 0.0);
+  workspace.taylor_upper.assign(static_cast<std::size_t>(size), 0.0);
+  const auto store = [&](int64_t slot, const IntervalTaylor& value) {
+    for (int k = 0; k < stride; ++k) {
+      workspace.taylor_lower[static_cast<std::size_t>(slot * stride + k)] = value.c[k].lower;
+      workspace.taylor_upper[static_cast<std::size_t>(slot * stride + k)] = value.c[k].upper;
+    }
+  };
+  const auto load = [&](int64_t slot) {
+    IntervalTaylor value;
+    for (int k = 0; k < stride; ++k)
+      value.c[k] = {workspace.taylor_lower[static_cast<std::size_t>(slot * stride + k)],
+                    workspace.taylor_upper[static_cast<std::size_t>(slot * stride + k)]};
+    return value;
+  };
+  for (int64_t i = 0; i < program.workspace_size; ++i) {
+    IntervalTaylor seed;
+    seed.c[0] = point(program.seeds[i]);
+    store(i, seed);
+  }
+  for (int axis = 0; axis < node.inputs; ++axis) {
+    IntervalTaylor input;
+    input.c[0] = {input_lower[axis], input_upper[axis]};
+    if (order > 0) input.c[axis == 0 ? term(1, 0) : term(0, 1)] = point(1);
+    store(axis, input);
+  }
+  const int64_t offset = geometry.model().node_real_offsets[index];
+  for (int i = 0; i < node.definition->coefficient_count; ++i) {
+    IntervalTaylor coefficient;
+    coefficient.c[0] = {workspace.coefficient_lower[offset + i],
+                        workspace.coefficient_upper[offset + i]};
+    if (!phx::mc::remesh::finite(coefficient.c[0])) return PHX_MC_INVALID_ARGUMENT;
+    store(program.coefficients[i], coefficient);
+  }
+  for (int64_t row = 0; row < program.instruction_count; ++row) {
+    const int64_t* op = program.instructions + 8 * row;
+    for (int64_t lane = 0; lane < op[2]; ++lane) {
+      const auto operand = [&](int64_t base, int64_t indices) {
+        return load(base + (indices < 0 ? lane : program.indices[indices + lane]));
+      };
+      const IntervalTaylor a = operand(op[3], op[4]);
+      IntervalTaylor value;
+      if (op[0] == 2 || op[0] == 3) {
+        const IntervalTaylor b = operand(op[5], op[6]);
+        for (int k = 0; k < stride; ++k)
+          value.c[k] = op[0] == 2 ? add(a.c[k], b.c[k]) : subtract(a.c[k], b.c[k]);
+      } else if (op[0] == 5) {
+        value = interval_taylor_multiply(a, operand(op[5], op[6]), truncation);
+      } else if (op[0] == 6) {
+        for (int k = 0; k < stride; ++k) value.c[k] = subtract(point(0), a.c[k]);
+      } else if (op[0] == 25) {
+        IntervalTaylor inverse;
+        if (!interval_taylor_inverse(operand(op[5], op[6]), truncation, inverse))
+          return PHX_MC_UNRESOLVED;
+        value = interval_taylor_multiply(a, inverse, truncation);
+      } else if (!interval_taylor_unary(op[0], a, truncation, value)) {
+        return PHX_MC_UNRESOLVED;
+      }
+      store(op[1] + lane, value);
+    }
+  }
+  int slot = 0;
+  for (int n = 0; n <= order; ++n)
+    for (int j = 0; j <= truncation.v_limit(n); ++j)
+      for (int component = 0; component < node.outputs; ++component) {
+        const IntervalTaylor value = load(program.outputs[component]);
+        const SplineInterval derivative = multiply(value.c[term(n - j, j)],
+                                                    point(factorial(n - j) * factorial(j)));
+        if (!phx::mc::remesh::finite(derivative)) return PHX_MC_UNRESOLVED;
+        output_lower[slot] = derivative.lower;
+        output_upper[slot++] = derivative.upper;
+      }
+  return PHX_MC_OK;
+}
+
+int32_t offset_interval_jets(const CadGeometry& geometry, const Node& node,
+                             const SplineInterval* coefficients, const double* input_lower,
+                             const double* input_upper, int order, double* output_lower,
+                             double* output_upper, IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const bool surface = node.kind == PHX_MC_CAD_NODE_OFFSET_SURFACE;
+  const int dim = node.outputs, axes = surface ? 2 : 1;
+  for (int64_t i = 0; i < node.real_count; ++i)
+    if (!phx::mc::remesh::finite(coefficients[i])) return PHX_MC_INVALID_ARGUMENT;
+  double base_lower[30], base_upper[30];
+  const int32_t child = static_cast<int32_t>(node.integers[0]);
+  const bool previous_direct_template = workspace.direct_template;
+  workspace.direct_template = true;
+  const int32_t status = geometry.node(child).kind == PHX_MC_CAD_NODE_TEMPLATE
+      ? interval_template_jets(geometry, child, input_lower, input_upper, order + 1,
+                               base_lower, base_upper, workspace)
+      : order == 2 ? PHX_MC_UNRESOLVED
+      : geometry.interval_jets(child, input_lower, input_upper, order + 1,
+                               base_lower, base_upper, workspace);
+  workspace.direct_template = previous_direct_template;
+  if (status != PHX_MC_OK) return status;
+  const auto base = [&](int term, int coordinate) {
+    return SplineInterval{base_lower[term * dim + coordinate], base_upper[term * dim + coordinate]};
+  };
+  SplineInterval normal[3]{}, derivative[2][3]{}, second[3][3]{};
+  if (surface) {
+    for (int c = 0; c < 3; ++c) {
+      const int a = (c + 1) % 3, b = (c + 2) % 3;
+      normal[c] = subtract(multiply(base(1, a), base(2, b)),
+                           multiply(base(1, b), base(2, a)));
+      if (order >= 1) {
+        derivative[0][c] = add(subtract(multiply(base(3, a), base(2, b)),
+                                         multiply(base(3, b), base(2, a))),
+                                subtract(multiply(base(1, a), base(4, b)),
+                                         multiply(base(1, b), base(4, a))));
+        derivative[1][c] = add(subtract(multiply(base(4, a), base(2, b)),
+                                         multiply(base(4, b), base(2, a))),
+                                subtract(multiply(base(1, a), base(5, b)),
+                                         multiply(base(1, b), base(5, a))));
+      }
+      if (order == 2) {
+        const auto cross = [&](int first, int last) {
+          return subtract(multiply(base(first, a), base(last, b)),
+                          multiply(base(first, b), base(last, a)));
+        };
+        second[0][c] = add(add(cross(6, 2), multiply(point(2), cross(3, 4))), cross(1, 7));
+        second[1][c] = add(add(cross(7, 2), cross(3, 5)), cross(1, 8));
+        second[2][c] = add(add(cross(8, 2), multiply(point(2), cross(4, 5))), cross(1, 9));
+      }
+    }
+  } else if (dim == 2) {
+    normal[0] = base(1, 1);
+    normal[1] = subtract(point(0), base(1, 0));
+    if (order >= 1) {
+      derivative[0][0] = base(2, 1);
+      derivative[0][1] = subtract(point(0), base(2, 0));
+    }
+    if (order == 2) {
+      second[0][0] = base(3, 1);
+      second[0][1] = subtract(point(0), base(3, 0));
+    }
+  } else {
+    for (int c = 0; c < 3; ++c) {
+      const int a = (c + 1) % 3, b = (c + 2) % 3;
+      normal[c] = subtract(multiply(base(1, a), coefficients[1 + b]),
+                           multiply(base(1, b), coefficients[1 + a]));
+      if (order >= 1)
+        derivative[0][c] = subtract(multiply(base(2, a), coefficients[1 + b]),
+                                    multiply(base(2, b), coefficients[1 + a]));
+      if (order == 2)
+        second[0][c] = subtract(multiply(base(3, a), coefficients[1 + b]),
+                                multiply(base(3, b), coefficients[1 + a]));
+    }
+  }
+  double least[3]{}, most[3]{};
+  for (int c = 0; c < dim; ++c) {
+    least[c] = mignitude(normal[c]);
+    most[c] = magnitude(normal[c]);
+  }
+  const SplineInterval length{geometry::norm_lower(least), geometry::norm_upper(most)};
+  SplineInterval unit[3];
+  for (int c = 0; c < dim; ++c)
+    if (!spline_divide(normal[c], length, unit[c])) return PHX_MC_UNRESOLVED;
+  SplineInterval unit_derivative[2][3]{}, length_derivative[2]{};
+  if (order >= 1) {
+    for (int axis = 0; axis < axes; ++axis) {
+      for (int c = 0; c < dim; ++c)
+        length_derivative[axis] = add(length_derivative[axis],
+                                       multiply(unit[c], derivative[axis][c]));
+      for (int c = 0; c < dim; ++c) {
+        const SplineInterval tangent = subtract(derivative[axis][c],
+                                               multiply(unit[c], length_derivative[axis]));
+        if (!spline_divide(tangent, length, unit_derivative[axis][c])) return PHX_MC_UNRESOLVED;
+      }
+    }
+  }
+  for (int term = 0; term < 1 + (order >= 1 ? axes : 0); ++term)
+    for (int c = 0; c < dim; ++c) {
+      const SplineInterval direction = term == 0 ? unit[c] : unit_derivative[term - 1][c];
+      const SplineInterval value = add(base(term, c), multiply(coefficients[0], direction));
+      if (!phx::mc::remesh::finite(value)) return PHX_MC_UNRESOLVED;
+      output_lower[term * dim + c] = value.lower;
+      output_upper[term * dim + c] = value.upper;
+    }
+  if (order == 2) {
+    const int second_count = surface ? 3 : 1;
+    const int first_axis[3] = {0, 0, 1}, second_axis[3] = {0, 1, 1};
+    for (int k = 0; k < second_count; ++k) {
+      const int i = first_axis[k], j = second_axis[k];
+      SplineInterval length_second = point(0);
+      for (int c = 0; c < dim; ++c)
+        length_second = add(length_second,
+            add(multiply(unit_derivative[j][c], derivative[i][c]),
+                multiply(unit[c], second[k][c])));
+      for (int c = 0; c < dim; ++c) {
+        SplineInterval numerator = subtract(second[k][c],
+            multiply(unit_derivative[j][c], length_derivative[i]));
+        numerator = subtract(numerator, multiply(unit_derivative[i][c], length_derivative[j]));
+        numerator = subtract(numerator, multiply(unit[c], length_second));
+        SplineInterval direction;
+        if (!spline_divide(numerator, length, direction)) return PHX_MC_UNRESOLVED;
+        const int term = 1 + axes + k;
+        const SplineInterval value = add(base(term, c), multiply(coefficients[0], direction));
+        if (!phx::mc::remesh::finite(value)) return PHX_MC_UNRESOLVED;
+        output_lower[term * dim + c] = value.lower;
+        output_upper[term * dim + c] = value.upper;
+      }
+    }
+  }
+  return PHX_MC_OK;
+}
+
 // Bernstein cubic and its derivatives at t, as the T-spline realization.
 void bernstein_cubic(double t, int derivative, double* out) noexcept {
   const double s = 1.0 - t;
@@ -212,6 +1228,418 @@ void reverse(Taylor* values, int count, int order) noexcept {
 }
 
 }  // namespace
+
+int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
+                                   const double* input_upper, int order, double* output_lower,
+                                   double* output_upper,
+                                   IntervalEvaluationWorkspace& workspace) const {
+  if (index < 0 || index >= model_.node_count || order < 0 || order > 2 ||
+      input_lower == nullptr || input_upper == nullptr || output_lower == nullptr ||
+      output_upper == nullptr || workspace.coefficient_count < model_.node_real_offsets[model_.node_count] ||
+      (workspace.coefficient_count > 0 &&
+       (workspace.coefficient_lower == nullptr || workspace.coefficient_upper == nullptr)))
+    return PHX_MC_INVALID_ARGUMENT;
+  const Node& current = nodes_[static_cast<std::size_t>(index)];
+  for (int i = 0; i < current.inputs; ++i)
+    if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
+        input_lower[i] > input_upper[i])
+      return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_OFFSET_SURFACE ||
+      current.kind == PHX_MC_CAD_NODE_OFFSET_CURVE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    SplineInterval coefficients[4];
+    for (int64_t i = 0; i < current.real_count; ++i)
+      coefficients[i] = {workspace.coefficient_lower[offset + i],
+                         workspace.coefficient_upper[offset + i]};
+    return offset_interval_jets(*this, current, coefficients, input_lower, input_upper, order,
+                                output_lower, output_upper, workspace);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_BSPLINE_CURVE ||
+      current.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return spline_interval_jets(current.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE,
+                                current.integers, workspace.coefficient_lower + offset,
+                                workspace.coefficient_upper + offset, input_lower, input_upper,
+                                order, output_lower, output_upper);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_INTERSECTION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return intersection_interval_jets(*this, current, workspace.coefficient_lower + offset,
+                                      workspace.coefficient_upper + offset, input_lower[0],
+                                      input_upper[0], order, output_lower, output_upper,
+                                      workspace);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_TSPLINE_SURFACE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return tspline_interval_jets(current.integers, workspace.coefficient_lower + offset,
+                                 workspace.coefficient_upper + offset, input_lower, input_upper,
+                                 order, output_lower, output_upper);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_REVOLUTION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double curve_lower[9], curve_upper[9];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         input_lower + 1, input_upper + 1, order, curve_lower,
+                                         curve_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int64_t offset = model_.node_real_offsets[index];
+    interval::Interval origin[3], axis[3];
+    for (int i = 0; i < 3; ++i) {
+      origin[i] = {workspace.coefficient_lower[offset + i], workspace.coefficient_upper[offset + i]};
+      axis[i] = {workspace.coefficient_lower[offset + 3 + i],
+                 workspace.coefficient_upper[offset + 3 + i]};
+      if (!interval::finite(origin[i]) || !interval::finite(axis[i])) return PHX_MC_INVALID_ARGUMENT;
+    }
+    const auto sin_enclosure = phx::mc::elementary::sin(input_lower[0], input_upper[0]);
+    const auto cos_enclosure = phx::mc::elementary::cos(input_lower[0], input_upper[0]);
+    const interval::Interval sine{sin_enclosure.lower, sin_enclosure.upper};
+    const interval::Interval cosine{cos_enclosure.lower, cos_enclosure.upper};
+    const interval::Interval negative_sine{-sine.upper, -sine.lower};
+    const interval::Interval negative_cosine{-cosine.upper, -cosine.lower};
+    double result_lower[18]{}, result_upper[18]{};
+    for (int derivative = 0; derivative <= order; ++derivative) {
+      interval::Interval relative[3], radial[3], axial[3], cross[3];
+      auto dot = interval::point(0.0);
+      for (int i = 0; i < 3; ++i) {
+        const int k = derivative * 3 + i;
+        relative[i] = {curve_lower[k], curve_upper[k]};
+        if (derivative == 0) relative[i] = interval::subtract(relative[i], origin[i]);
+        dot = interval::add(dot, interval::multiply(axis[i], relative[i]));
+      }
+      for (int i = 0; i < 3; ++i) {
+        axial[i] = interval::multiply(axis[i], dot);
+        radial[i] = interval::subtract(relative[i], axial[i]);
+      }
+      for (int i = 0; i < 3; ++i)
+        cross[i] = interval::subtract(interval::multiply(axis[(i + 1) % 3], radial[(i + 2) % 3]),
+                                      interval::multiply(axis[(i + 2) % 3], radial[(i + 1) % 3]));
+      for (int i = 0; i < 3; ++i) {
+        auto value = interval::add(axial[i], interval::multiply(cosine, radial[i]));
+        value = interval::add(value, interval::multiply(sine, cross[i]));
+        if (derivative == 0) value = interval::add(value, origin[i]);
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        const int row = derivative == 0 ? 0 : derivative == 1 ? 6 : 15;
+        result_lower[row + i] = value.lower;
+        result_upper[row + i] = value.upper;
+        if (derivative < order) {
+          value = interval::add(interval::multiply(negative_sine, radial[i]),
+                                interval::multiply(cosine, cross[i]));
+          if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+          const int angle_row = derivative == 0 ? 3 : 12;
+          result_lower[angle_row + i] = value.lower;
+          result_upper[angle_row + i] = value.upper;
+        }
+        if (derivative == 0 && order >= 2) {
+          value = interval::add(interval::multiply(negative_cosine, radial[i]),
+                                interval::multiply(negative_sine, cross[i]));
+          if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+          result_lower[9 + i] = value.lower;
+          result_upper[9 + i] = value.upper;
+        }
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_RULED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double a_lower[9], a_upper[9], b_lower[9], b_upper[9];
+    int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                    input_lower, input_upper, order, a_lower, a_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    status = interval_jets(static_cast<int32_t>(current.integers[1]),
+                           input_lower, input_upper, order, b_lower, b_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const interval::Interval v{input_lower[1], input_upper[1]};
+    const auto complement = interval::subtract(interval::point(1.0), v);
+    double result_lower[18]{}, result_upper[18]{};
+    for (int component = 0; component < 3; ++component) {
+      for (int derivative = 0; derivative <= order; ++derivative) {
+        const int k = derivative * 3 + component;
+        const auto value = interval::add(
+            interval::multiply(complement, {a_lower[k], a_upper[k]}),
+            interval::multiply(v, {b_lower[k], b_upper[k]}));
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        const int out = (derivative == 0 ? 0 : derivative == 1 ? 3 : 9) + component;
+        result_lower[out] = value.lower;
+        result_upper[out] = value.upper;
+      }
+      if (order >= 1) {
+        const auto value = interval::subtract({b_lower[component], b_upper[component]},
+                                              {a_lower[component], a_upper[component]});
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[6 + component] = value.lower;
+        result_upper[6 + component] = value.upper;
+      }
+      if (order >= 2) {
+        const auto value = interval::subtract({b_lower[3 + component], b_upper[3 + component]},
+                                              {a_lower[3 + component], a_upper[3 + component]});
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[12 + component] = value.lower;
+        result_upper[12 + component] = value.upper;
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_EXTRUSION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double curve_lower[9], curve_upper[9], result_lower[18]{}, result_upper[18]{};
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         input_lower, input_upper, order, curve_lower,
+                                         curve_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int64_t offset = model_.node_real_offsets[index];
+    const interval::Interval v{input_lower[1], input_upper[1]};
+    for (int component = 0; component < 3; ++component) {
+      const interval::Interval direction{workspace.coefficient_lower[offset + component],
+                                          workspace.coefficient_upper[offset + component]};
+      if (!interval::finite(direction)) return PHX_MC_INVALID_ARGUMENT;
+      const auto value = interval::add({curve_lower[component], curve_upper[component]},
+                                       interval::multiply(v, direction));
+      if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+      result_lower[component] = value.lower;
+      result_upper[component] = value.upper;
+      if (order >= 1) {
+        result_lower[3 + component] = curve_lower[3 + component];
+        result_upper[3 + component] = curve_upper[3 + component];
+        result_lower[6 + component] = direction.lower;
+        result_upper[6 + component] = direction.upper;
+      }
+      if (order >= 2) {
+        result_lower[9 + component] = curve_lower[6 + component];
+        result_upper[9 + component] = curve_upper[6 + component];
+      }
+    }
+    const int terms = (order + 1) * (order + 2) / 2;
+    for (int i = 0; i < terms * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_SURFACE_MAPPED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    double chart_lower[6], chart_upper[6], surface_lower[18], surface_upper[18];
+    int32_t status = interval_jets(static_cast<int32_t>(current.integers[1]), input_lower,
+                                    input_upper, order, chart_lower, chart_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    status = interval_jets(static_cast<int32_t>(current.integers[0]), chart_lower, chart_upper,
+                           order, surface_lower, surface_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    double result_lower[9], result_upper[9];
+    for (int component = 0; component < 3; ++component) {
+      auto surface = [&](int term) {
+        const int k = term * 3 + component;
+        return interval::Interval{surface_lower[k], surface_upper[k]};
+      };
+      auto chart = [&](int term, int axis) {
+        const int k = term * 2 + axis;
+        return interval::Interval{chart_lower[k], chart_upper[k]};
+      };
+      auto value = surface(0);
+      result_lower[component] = value.lower;
+      result_upper[component] = value.upper;
+      if (order >= 1) {
+        value = interval::add(interval::multiply(surface(1), chart(1, 0)),
+                              interval::multiply(surface(2), chart(1, 1)));
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[3 + component] = value.lower;
+        result_upper[3 + component] = value.upper;
+      }
+      if (order >= 2) {
+        const auto u = chart(1, 0), v = chart(1, 1);
+        auto second = interval::multiply(surface(3), interval::multiply(u, u));
+        auto mixed = interval::multiply(surface(4), interval::multiply(u, v));
+        second = interval::add(second, interval::add(mixed, mixed));
+        second = interval::add(second, interval::multiply(surface(5), interval::multiply(v, v)));
+        second = interval::add(second, interval::multiply(surface(1), chart(2, 0)));
+        second = interval::add(second, interval::multiply(surface(2), chart(2, 1)));
+        if (!interval::finite(second)) return PHX_MC_UNRESOLVED;
+        result_lower[6 + component] = second.lower;
+        result_upper[6 + component] = second.upper;
+      }
+    }
+    for (int i = 0; i < (order + 1) * 3; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_ISOPARAMETRIC) {
+    const int fixed = static_cast<int>(current.integers[1]);
+    const int64_t offset = model_.node_real_offsets[index];
+    double lo[2], hi[2];
+    lo[fixed] = workspace.coefficient_lower[offset];
+    hi[fixed] = workspace.coefficient_upper[offset];
+    lo[1 - fixed] = input_lower[0];
+    hi[1 - fixed] = input_upper[0];
+    double child_lower[18], child_upper[18];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]), lo, hi,
+                                         order, child_lower, child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int positions[] = {0, fixed == 0 ? 2 : 1, fixed == 0 ? 5 : 3};
+    for (int term = 0; term <= order; ++term)
+      for (int component = 0; component < current.outputs; ++component) {
+        const int out = term * current.outputs + component;
+        const int in = positions[term] * current.outputs + component;
+        output_lower[out] = child_lower[in];
+        output_upper[out] = child_upper[in];
+      }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_REPARAMETERIZED) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    namespace interval = phx::mc::remesh;
+    const int64_t offset = model_.node_real_offsets[index];
+    const interval::Interval first{workspace.coefficient_lower[offset],
+                                   workspace.coefficient_upper[offset]};
+    const interval::Interval last{workspace.coefficient_lower[offset + 1],
+                                  workspace.coefficient_upper[offset + 1]};
+    if (!interval::finite(first) || !interval::finite(last)) return PHX_MC_INVALID_ARGUMENT;
+    const auto delta = interval::subtract(last, first);
+    const bool reversed = current.integers[1] != 0;
+    const interval::Interval t{input_lower[0], input_upper[0]};
+    const auto fraction = reversed ? interval::subtract(interval::point(1.0), t) : t;
+    const auto parameter = interval::add(first, interval::multiply(fraction, delta));
+    if (!interval::finite(parameter)) return PHX_MC_UNRESOLVED;
+    double child_lower[9], child_upper[9], result_lower[9], result_upper[9];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]),
+                                         &parameter.lower, &parameter.upper, order, child_lower,
+                                         child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const interval::Interval slope = reversed ? interval::Interval{-delta.upper, -delta.lower}
+                                               : delta;
+    const auto squared = interval::multiply(slope, slope);
+    for (int term = 0; term <= order; ++term) {
+      const auto factor = term == 0 ? interval::point(1.0) : term == 1 ? slope : squared;
+      for (int component = 0; component < current.outputs; ++component) {
+        const int k = term * current.outputs + component;
+        const auto value = interval::multiply({child_lower[k], child_upper[k]}, factor);
+        if (!interval::finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[k] = value.lower;
+        result_upper[k] = value.upper;
+      }
+    }
+    for (int i = 0; i < (order + 1) * current.outputs; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind == PHX_MC_CAD_NODE_AFFINE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    double child_lower[18], child_upper[18], result_lower[18], result_upper[18];
+    const int32_t status = interval_jets(static_cast<int32_t>(current.integers[0]), input_lower,
+                                         input_upper, order, child_lower, child_upper, workspace);
+    if (status != PHX_MC_OK) return status;
+    const int dimensions = current.outputs;
+    const int terms = current.inputs == 2 ? (order + 1) * (order + 2) / 2 : order + 1;
+    const int64_t offset = model_.node_real_offsets[index];
+    for (int64_t i = 0; i < current.real_count; ++i)
+      if (!std::isfinite(workspace.coefficient_lower[offset + i]) ||
+          !std::isfinite(workspace.coefficient_upper[offset + i]) ||
+          workspace.coefficient_lower[offset + i] > workspace.coefficient_upper[offset + i])
+        return PHX_MC_INVALID_ARGUMENT;
+    for (int term = 0; term < terms; ++term) {
+      for (int row = 0; row < dimensions; ++row) {
+        using namespace phx::mc::remesh;
+        Interval value = point(0.0);
+        if (term == 0) {
+          const int64_t k = offset + dimensions * dimensions + row;
+          value = {workspace.coefficient_lower[k], workspace.coefficient_upper[k]};
+        }
+        for (int col = 0; col < dimensions; ++col) {
+          const int64_t k = offset + row * dimensions + col;
+          value = phx::mc::remesh::add(
+              value, phx::mc::remesh::multiply(
+                         {workspace.coefficient_lower[k], workspace.coefficient_upper[k]},
+                         {child_lower[term * dimensions + col],
+                          child_upper[term * dimensions + col]}));
+        }
+        if (!finite(value)) return PHX_MC_UNRESOLVED;
+        result_lower[term * dimensions + row] = value.lower;
+        result_upper[term * dimensions + row] = value.upper;
+      }
+    }
+    for (int i = 0; i < terms * dimensions; ++i) {
+      output_lower[i] = result_lower[i];
+      output_upper[i] = result_upper[i];
+    }
+    return PHX_MC_OK;
+  }
+  if (current.kind != PHX_MC_CAD_NODE_TEMPLATE) return PHX_MC_UNRESOLVED;
+  if (workspace.direct_template)
+    return interval_template_jets(*this, index, input_lower, input_upper, order,
+                                  output_lower, output_upper, workspace);
+  const TemplateDefinition& definition = *current.definition;
+  const ProgramData& data = order == 0 ? definition.value
+                            : order == 1 ? definition.tangent : definition.hessian;
+  if (workspace.bound_program[order] != &data) {
+    workspace.bound_program[order] = nullptr;
+    const int32_t status = workspace.program[order].bind(
+        data.instructions, data.instruction_count, data.indices, data.index_count,
+        data.parameters, data.parameter_count, data.workspace_size);
+    if (status != PHX_MC_OK) return status;
+    workspace.bound_program[order] = &data;
+  }
+  workspace.lower.assign(data.seeds, data.seeds + data.workspace_size);
+  workspace.upper.assign(data.seeds, data.seeds + data.workspace_size);
+  for (int i = 0; i < current.inputs; ++i) {
+    workspace.lower[static_cast<std::size_t>(i)] = input_lower[i];
+    workspace.upper[static_cast<std::size_t>(i)] = input_upper[i];
+  }
+  const int64_t offset = model_.node_real_offsets[index];
+  for (int i = 0; i < definition.coefficient_count; ++i) {
+    const double lo = workspace.coefficient_lower[offset + i];
+    const double hi = workspace.coefficient_upper[offset + i];
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo > hi) return PHX_MC_INVALID_ARGUMENT;
+    const auto slot = static_cast<std::size_t>(data.coefficients[i]);
+    workspace.lower[slot] = lo;
+    workspace.upper[slot] = hi;
+  }
+  const int32_t status = workspace.program[order].execute(workspace.lower.data(), workspace.upper.data(),
+                                                    data.workspace_size);
+  if (status != PHX_MC_OK) return status;
+  for (int64_t i = 0; i < data.output_count; ++i) {
+    const auto slot = static_cast<std::size_t>(data.outputs[i]);
+    if (!std::isfinite(workspace.lower[slot]) || !std::isfinite(workspace.upper[slot]) ||
+        workspace.lower[slot] > workspace.upper[slot])
+      return PHX_MC_UNRESOLVED;
+  }
+  for (int64_t i = 0; i < data.output_count; ++i) {
+    const auto slot = static_cast<std::size_t>(data.outputs[i]);
+    output_lower[i] = workspace.lower[slot];
+    output_upper[i] = workspace.upper[slot];
+  }
+  return PHX_MC_OK;
+}
 
 int32_t CadGeometry::validate_node(int32_t index) {
   const phx_mc_cad_model& m = model_;

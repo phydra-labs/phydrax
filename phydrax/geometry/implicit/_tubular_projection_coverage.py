@@ -1083,6 +1083,7 @@ def validate_tubular_projection_boundary_witness(
         GlobalEmbeddingCertificate as EmbeddingCertificate,
         ValidatedGlobalEmbedding,
     )
+    from .._mesh_certificates import _same_tree_content
     from .._source_fidelity import _analytic_profile_distance_evidence
 
     if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
@@ -1203,9 +1204,15 @@ def validate_tubular_projection_boundary_witness(
             "Distance witness must retain a positive physical source-cover radius.",
             status="violated",
         )
+    # A mesh with exactly its canonical reconstruction's content gives the
+    # same distance evidence; passing it shares the evidence the fidelity
+    # certificate already completed for that live mesh.
+    evidence_mesh = input_mesh if _same_tree_content(input_mesh, mesh) else mesh
     try:
         mesh_to_source_lower, mesh_to_source_upper, source_to_mesh_upper = (
-            _analytic_profile_distance_evidence(mesh, geometry, profile, distance_witness)
+            _analytic_profile_distance_evidence(
+                evidence_mesh, geometry, profile, distance_witness
+            )
         )
     except (TypeError, ValueError, IndexError, ArithmeticError, OverflowError) as error:
         raise _unavailable(

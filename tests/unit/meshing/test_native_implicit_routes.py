@@ -2231,3 +2231,56 @@ def test_triangle_diameter_bound_encloses_negative_differences() -> None:
     )
     bound = Fraction(float(diameter[0]))
     assert exact <= bound * bound <= exact * (1 + Fraction(1, 2**47))
+
+
+def test_restricted_acceptance_replays_analytic_distance_evidence_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.geometry._source_fidelity as source_fidelity
+
+    replays: list[str] = []
+    replay = source_fidelity._replayed_analytic_profile_distance_evidence
+
+    def counted(
+        mesh: CellMesh,
+        geometry: CellGeometrySpec,
+        source: AnalyticImplicitProfile,
+        witness: SourceBoundaryDistanceWitness,
+        /,
+    ) -> tuple[Fraction, Fraction, Fraction]:
+        replays.append(witness.witness_id)
+        return replay(mesh, geometry, source, witness)
+
+    monkeypatch.setattr(
+        source_fidelity, "_replayed_analytic_profile_distance_evidence", counted
+    )
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Sphere((0.0, 0.0, 0.0), 0.371, feature_id="evidence-once-sphere").compile(),
+        contract,
+        source_id="evidence-once-sphere",
+        source_revision="r1",
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        MeshingScope.whole(profile, 2),
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=0.02,
+    )
+    result = (
+        NativeMeshingProvider(
+            NativeMeshingOptions(
+                "implicit_restricted_delaunay",
+                volume_schedule=NativeVolumeSchedule(radius_edge_bound=2.0),
+            )
+        )
+        .plan(profile, specification, coordinate_contract=contract)
+        .execute()
+    )
+    certification = result.certification
+    assert certification is not None and certification.passed
+    assert certification.coverage is not None
+    # Witness validation, the fidelity certificate and the tubular coverage
+    # premise share one replay of the distance evidence.
+    assert len(replays) == 1

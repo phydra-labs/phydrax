@@ -18,6 +18,7 @@
 #include "cad_geometry.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
+#include "verify_cad_fidelity.hpp"
 
 namespace {
 
@@ -368,6 +369,7 @@ void composite_nodes() {
   // Fourth-order template jets: an offset of an offset.
   const int32_t nested = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {offset}, {0.5});
   const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t offset_plane = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {plane}, {0.25});
   const int32_t circle2 = b.add_template("circle2", {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, radius});
   const int32_t mapped = b.add(PHX_MC_CAD_NODE_SURFACE_MAPPED, {plane, circle2}, {});
   const int32_t iso = b.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {sphere, 1}, {0.4});
@@ -381,6 +383,34 @@ void composite_nodes() {
   phx_mc_cad_model model = b.model();
   CadGeometry geometry;
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double box_lo[2] = {0.1, 0.2}, box_hi[2] = {0.2, 0.3};
+  for (int32_t node : {offset, offset_plane, offset_curve}) {
+    const int dimension = node == offset_curve ? 2 : 3;
+    const int variables = node == offset_curve ? 1 : 2;
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      const auto interval_status = geometry.interval_jets(node, box_lo, box_hi, order, lower, upper,
+                                                          interval_workspace);
+      PHX_CHECK(interval_status == PHX_MC_OK);
+      if (interval_status != PHX_MC_OK) continue;
+      for (int i = 0; i <= 10; ++i)
+        for (int j = 0; j <= (variables == 2 ? 10 : 0); ++j) {
+          const double point[2] = {box_lo[0] + (box_hi[0] - box_lo[0]) * i / 10,
+                                   box_lo[1] + (box_hi[1] - box_lo[1]) * j / 10};
+          PHX_CHECK(geometry.jets(node, point, order, jet, point_workspace));
+          const int terms = variables == 2 ? (order + 1) * (order + 2) / 2 : order + 1;
+          for (int k = 0; k < dimension * terms; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
   const auto cylinder = [&](double u, double v) {
     return add(kOrigin, add(scaled(radius, radial(u)), scaled(v, kAxis)));
   };
@@ -529,6 +559,30 @@ void spline_nodes() {
   for (int k = 0; k < 3; ++k) PHX_CHECK_NEAR(value[k], expected[k], 8 * kEpsilon);
   const double beyond[2] = {2.5, 0.5};
   PHX_CHECK(!geometry.jets(tspline, beyond, 0, value, workspace));
+  // Interval jets contain point jets on boxes inside a piece and across the break.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double boxes[3][4] = {{0.1, 0.4, 0.2, 0.6}, {0.7, 1.3, 0.1, 0.9}, {1.5, 1.5, 0.3, 0.3}};
+  for (const auto& box : boxes) {
+    const double lo[2] = {box[0], box[2]}, hi[2] = {box[1], box[3]};
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(tspline, lo, hi, order, lower, upper,
+                                       interval_workspace) == PHX_MC_OK);
+      const int count = 3 * (order + 1) * (order + 2) / 2;
+      for (int i = 0; i <= 12; ++i)
+        for (int j = 0; j <= 12; ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 12, lo[1] + (hi[1] - lo[1]) * j / 12};
+          PHX_CHECK(geometry.jets(tspline, uv, order, jet, workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
 }
 
 // The branch x > 0 of the z cylinder (R = 1) and the x cylinder (r = 0.6),
@@ -587,6 +641,163 @@ void intersection_chart() {
   const double outside = 1.25;
   double jet[9];
   PHX_CHECK(!geometry.jets(point, &outside, 0, jet, workspace));
+  // Interval jets enclose the point jets and the closed form on subintervals.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double ranges[3][2] = {{0.1, 0.3}, {0.45, 0.6}, {0.8, 0.8}};
+  for (int32_t node : {point, first_uv, second_uv}) {
+    const int dimension = node == point ? 3 : 2;
+    for (const auto& range : ranges)
+      for (int order = 0; order <= 2; ++order) {
+        double lower[9], upper[9], value[9];
+        PHX_CHECK(geometry.interval_jets(node, &range[0], &range[1], order, lower, upper,
+                                         interval_workspace) == PHX_MC_OK);
+        for (int i = 0; i <= 16; ++i) {
+          const double t = range[0] + (range[1] - range[0]) * i / 16;
+          PHX_CHECK(geometry.jets(node, &t, order, value, workspace));
+          for (int k = 0; k < dimension * (order + 1); ++k) {
+            PHX_CHECK(lower[k] <= value[k]);
+            PHX_CHECK(value[k] <= upper[k]);
+          }
+        }
+        if (node == point) {
+          const Vector x = closed(theta(range[0]));
+          for (int k = 0; k < 3; ++k) PHX_CHECK(lower[k] <= x[k] && x[k] <= upper[k]);
+        }
+      }
+  }
+  // A collapsed free-coordinate box cannot strictly contain its Krawczyk
+  // image, so no unique root is proved and the node is refused.
+  std::vector<double> narrow = b.reals;
+  const auto chart = static_cast<std::size_t>(model.node_real_offsets[point] + 2);
+  narrow[chart + 12] = narrow[chart + 8];
+  interval_workspace.coefficient_lower = narrow.data();
+  interval_workspace.coefficient_upper = narrow.data();
+  double lower[9], upper[9];
+  PHX_CHECK(geometry.interval_jets(point, &ranges[0][0], &ranges[0][1], 0, lower, upper,
+                                   interval_workspace) == PHX_MC_UNRESOLVED);
+}
+
+void spline_interval_nodes() {
+  Builder b;
+  const std::vector<double> knots{0, 0, 0, 0.5, 1, 1, 1};
+  const int32_t curve = b.add(PHX_MC_CAD_NODE_BSPLINE_CURVE, {2, 4, 3},
+      concat({knots, {0, 0, 0, 0.2, 0.7, 0.1, 0.8, 0.4, 0.3, 1, 1, 0},
+              {1, 0.7, 1.2, 1}}));
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1,
+       0, 0, 0, 0, 1, 0.2, 1, 0, 0.3, 1, 1, 0.5, 1, 0.7, 1.2, 1});
+  b.surfaces = {surface};
+  b.curves = {curve};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double lo[2] = {0.2, 0.25}, hi[2] = {0.8, 0.75};
+  for (int node : {curve, surface}) {
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(node, lo, hi, order, lower, upper, workspace) ==
+                PHX_MC_OK);
+      const int count = 3 * (node == curve ? order + 1 : (order + 1) * (order + 2) / 2);
+      for (int i = 0; i <= 20; ++i)
+        for (int j = 0; j <= (node == curve ? 0 : 20); ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 20,
+                                lo[1] + (hi[1] - lo[1]) * j / 20};
+          PHX_CHECK(geometry.jets(node, uv, order, jet, point_workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
+}
+
+void spline_bernstein_enclosure_reference() {
+  static constexpr double reference[2][20] = {
+#include "spline_hessian_fixture.inc"
+  };
+  const double third = 1.0 / 3.0;
+  Builder b;
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1, 0, 0, third, 0, 1, third,
+       1, 0, third, 1, 1, third, 1, third, 2 * third, 1});
+  b.surfaces = {surface};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  std::vector<double> lower_coefficients = b.reals, upper_coefficients = b.reals;
+  for (int i : {10, 13, 16, 19, 21, 22})
+    upper_coefficients[i] = std::nextafter(upper_coefficients[i],
+                                           std::numeric_limits<double>::infinity());
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = lower_coefficients.data();
+  workspace.coefficient_upper = upper_coefficients.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double box_lower[2][2] = {{0.5, 0}, {0, 0.5}};
+  const double box_upper[2][2] = {{1, 0.5}, {0.5, 1}};
+  for (int row = 0; row < 2; ++row) {
+    double lower[18], upper[18];
+    PHX_CHECK(geometry.interval_jets(surface, box_lower[row], box_upper[row], 2,
+                                     lower, upper, workspace) == PHX_MC_OK);
+    // The native denominator uses the positive-weight convex hull.
+    PHX_CHECK(lower_coefficients[21] <= reference[row][0]);
+    PHX_CHECK(upper_coefficients[20] >= reference[row][1]);
+    for (int i = 0; i < 9; ++i) {
+      PHX_CHECK(lower[9 + i] <= reference[row][2 + 2 * i]);
+      PHX_CHECK(upper[9 + i] >= reference[row][3 + 2 * i]);
+    }
+  }
+}
+
+void spline_kink_fidelity() {
+  for (int degree : {1, 2}) {
+    Builder b;
+    const std::vector<double> knots = degree == 1
+        ? std::vector<double>{0, 0, 0.5, 1, 1}
+        : std::vector<double>{0, 0, 0, 0.5, 0.5, 1, 1, 1};
+    const std::vector<double> x = degree == 1
+        ? std::vector<double>{0, 0.5, 1} : std::vector<double>{0, 0.25, 0.5, 0.75, 1};
+    const std::vector<double> z = degree == 1
+        ? std::vector<double>{0, 1, 0} : std::vector<double>{0, 0, 1, 0, 0};
+    std::vector<double> values = knots;
+    values.insert(values.end(), {0, 0, 1, 1});
+    for (std::size_t i = 0; i < x.size(); ++i)
+      for (double v : {0.0, 1.0})
+        values.insert(values.end(), {x[i], v, z[i]});
+    values.insert(values.end(), 2 * x.size(), 1.0);
+    const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE,
+                                  {degree, 1, static_cast<int64_t>(x.size()), 2}, values);
+    b.surfaces = {surface};
+    const phx_mc_cad_model model = b.model();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+    phx::mc::cad::IntervalEvaluationWorkspace workspace;
+    workspace.coefficient_lower = b.reals.data();
+    workspace.coefficient_upper = b.reals.data();
+    workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+    const double uv[] = {0, 0, 1, 0, 0, 1};
+    const double vertices[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const auto bound = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 1000.0, 0, workspace);
+    PHX_CHECK(bound.status == PHX_MC_OK);
+    for (int i = 0; i <= 100; ++i) {
+      const double u = i / 100.0;
+      const double hat = 2 * std::min(u, 1 - u);
+      const double exact_distance = degree == 1 ? hat : hat * hat;
+      PHX_CHECK(bound.upper >= exact_distance);
+    }
+    const auto failed = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 0.1, 4, workspace);
+    PHX_CHECK(failed.status == PHX_MC_UNRESOLVED);
+  }
 }
 
 void entry_point() {
@@ -662,6 +873,9 @@ int main() {
   curve_templates();
   composite_nodes();
   spline_nodes();
+  spline_interval_nodes();
+  spline_bernstein_enclosure_reference();
+  spline_kink_fidelity();
   intersection_chart();
   entry_point();
   return phx::mc::test::finish("test_cad_geometry");

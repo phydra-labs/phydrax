@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <numeric>
 #include <unordered_map>
@@ -38,9 +39,11 @@ namespace {
 using Triple = std::array<int32_t, 3>;
 
 Triple sorted_triple(const int32_t* vertices) {
-  Triple key{vertices[0], vertices[1], vertices[2]};
-  std::sort(key.begin(), key.end());
-  return key;
+  int32_t a = vertices[0], b = vertices[1], c = vertices[2];
+  if (b < a) std::swap(a, b);
+  if (c < b) std::swap(b, c);
+  if (b < a) std::swap(a, b);
+  return {a, b, c};
 }
 
 // Hash of the vertex ids of a face or cell key.
@@ -426,9 +429,27 @@ int32_t triangulate_planar_loop(
   return PHX_MC_OK;
 }
 
+// The preparer's edge index, read by recovery (PlcRecoveryBuilder): the
+// (edge key, triangle) uses in ascending order, the start of each run of
+// equal keys (and their end), the run of every triangle edge (3 * triangle
+// + k: edge k -> k + 1), and per PLC edge row its run (-1: no triangle has
+// its edge) and whether its edge is an edge of an input polygon loop.
+struct SourceEdgeUses {
+  std::span<const std::pair<uint64_t, int32_t>> uses;
+  std::span<const uint32_t> runs;
+  std::span<const int32_t> triangle_runs;
+  std::span<const int32_t> row_runs;
+  std::span<const char> loop_rows;
+};
+
 class SourcePreparer {
  public:
-  SourcePreparer(const PlcInput& input, PlcRecovery& output) : input_(input), output_(output) {}
+  // `defer_contacts`: check_contacts is left to the caller, which runs it
+  // before acting on any later outcome unless it proves every contact legal
+  // (recover_plc); a closure failure here still reports a contact failure
+  // first, as the undeferred order does.
+  SourcePreparer(const PlcInput& input, PlcRecovery& output, bool defer_contacts = false)
+      : input_(input), output_(output), defer_contacts_(defer_contacts) {}
 
   int32_t run() {
     const int32_t shape = validate_shape();
@@ -450,12 +471,27 @@ class SourcePreparer {
     build_groups();
     const int32_t edges = build_edges();
     if (edges != PHX_MC_OK) return edges;
-    const int32_t contacts = check_contacts();
-    if (contacts != PHX_MC_OK) return contacts;
+    if (!defer_contacts_) {
+      const int32_t contacts = check_contacts();
+      if (contacts != PHX_MC_OK) return contacts;
+    }
     const int32_t closure = check_closure();
-    if (closure != PHX_MC_OK) return closure;
+    if (closure != PHX_MC_OK) {
+      if (defer_contacts_) {
+        const int32_t contacts = check_contacts();
+        if (contacts != PHX_MC_OK) return contacts;
+      }
+      return closure;
+    }
     publish_source();
     return PHX_MC_OK;
+  }
+
+  // The edge index for recovery, after a successful run; it stays valid
+  // while this preparer lives.
+  SourceEdgeUses edge_uses() {
+    if (loop_rows_.size() != row_runs_.size()) index_loop_rows();
+    return {edge_uses_, edge_runs_, triangle_edge_runs_, row_runs_, loop_rows_};
   }
 
  private:
@@ -782,13 +818,16 @@ class SourcePreparer {
                triangle_group_[static_cast<std::size_t>(edge_uses_[begin + 1].second)];
   }
 
-  int32_t add_edge(int32_t first, int32_t second) {
+  // Appends PLC edge row (first, second) of run `run` (-1: no triangle has
+  // the edge).
+  int32_t add_edge(int32_t first, int32_t second, int32_t run) {
     if (edges_.size() / 2 >=
         static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) return -1;
     const int32_t id = static_cast<int32_t>(edges_.size() / 2);
     edges_.push_back(first);
     edges_.push_back(second);
-    edge_ids_.emplace(topology::undirected_edge(first, second), id);
+    row_runs_.push_back(run);
+    if (run >= 0) run_rows_[static_cast<std::size_t>(run)] = id;
     return id;
   }
 
@@ -796,7 +835,10 @@ class SourcePreparer {
     const std::size_t runs = edge_runs_.size() - 1;
     // Runs whose edge already has a row.
     std::vector<char> listed(runs, 0);
-    edge_ids_.reserve(static_cast<std::size_t>(input_.segment_count) + runs);
+    run_rows_.assign(runs, -1);
+    // Rows of the segments, to refuse a repeated one.
+    std::unordered_map<uint64_t, int32_t> segment_rows;
+    segment_rows.reserve(static_cast<std::size_t>(input_.segment_count));
     for (int64_t segment = 0; segment < input_.segment_count; ++segment) {
       const int32_t a = input_.segments[2 * segment];
       const int32_t b = input_.segments[2 * segment + 1];
@@ -804,13 +846,16 @@ class SourcePreparer {
         return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcEdge, segment);
       }
       const uint64_t key = topology::undirected_edge(a, b);
-      const auto existing = edge_ids_.find(key);
-      if (existing != edge_ids_.end()) {
+      const auto existing = segment_rows.find(key);
+      if (existing != segment_rows.end()) {
         return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcEdge,
                     existing->second, kPlcEdge, segment);
       }
-      if (add_edge(a, b) < 0) return PHX_MC_INDEX_RANGE_ERROR;
-      if (const int32_t run = edge_run(key); run >= 0) listed[static_cast<std::size_t>(run)] = 1;
+      const int32_t run = edge_run(key);
+      const int32_t row = add_edge(a, b, run);
+      if (row < 0) return PHX_MC_INDEX_RANGE_ERROR;
+      segment_rows.emplace(key, row);
+      if (run >= 0) listed[static_cast<std::size_t>(run)] = 1;
     }
     for (std::size_t triangle = 0; triangle < triangles_.size(); ++triangle) {
       const Triple& face = triangles_[triangle];
@@ -821,7 +866,9 @@ class SourcePreparer {
         listed[run] = 1;
         const int32_t a = face[static_cast<std::size_t>(k)];
         const int32_t b = face[static_cast<std::size_t>((k + 1) % 3)];
-        if (add_edge(std::min(a, b), std::max(a, b)) < 0) return PHX_MC_INDEX_RANGE_ERROR;
+        if (add_edge(std::min(a, b), std::max(a, b), static_cast<int32_t>(run)) < 0) {
+          return PHX_MC_INDEX_RANGE_ERROR;
+        }
       }
     }
     // Internal edges of declared facets between triangles that are not
@@ -843,7 +890,8 @@ class SourcePreparer {
         if (std::find(second.begin(), second.end(), vertex) != second.end()) ends.push_back(vertex);
       }
       if (ends.size() != 2) return PHX_MC_INTERNAL_ERROR;
-      if (add_edge(std::min(ends[0], ends[1]), std::max(ends[0], ends[1])) < 0) {
+      if (add_edge(std::min(ends[0], ends[1]), std::max(ends[0], ends[1]),
+                   static_cast<int32_t>(run)) < 0) {
         return PHX_MC_INDEX_RANGE_ERROR;
       }
     }
@@ -851,6 +899,51 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
+  // loop_rows_: the rows whose edge is an edge of an input polygon loop. A
+  // loop edge lies on a triangle of its polygon (by run) or on none (by key).
+  void index_loop_rows() {
+    std::vector<char> loop_runs(edge_runs_.size() - 1, 0);
+    std::vector<uint64_t> loose_keys;
+    std::size_t triangle = 0;
+    for (int64_t polygon = 0; polygon < input_.polygon_count; ++polygon) {
+      const int64_t begin = input_.polygon_offsets[polygon];
+      const int64_t end = input_.polygon_offsets[polygon + 1];
+      const std::size_t first = triangle;
+      while (triangle < triangles_.size() && triangle_polygon_[triangle] == polygon) ++triangle;
+      const int32_t* loop = input_.polygon_vertices + begin;
+      // A triangle loop triangulated as itself: its edges are its runs.
+      if (end - begin == 3 && triangle - first == 1 &&
+          std::is_permutation(loop, loop + 3, triangles_[first].begin())) {
+        for (std::size_t k = 0; k < 3; ++k) {
+          loop_runs[static_cast<std::size_t>(triangle_edge_runs_[3 * first + k])] = 1;
+        }
+        continue;
+      }
+      for (int64_t vertex = begin; vertex < end; ++vertex) {
+        const int64_t next = vertex + 1 == end ? begin : vertex + 1;
+        const uint64_t key = topology::undirected_edge(input_.polygon_vertices[vertex],
+                                                       input_.polygon_vertices[next]);
+        const int32_t run = edge_run(key);
+        if (run >= 0) {
+          loop_runs[static_cast<std::size_t>(run)] = 1;
+        } else {
+          loose_keys.push_back(key);
+        }
+      }
+    }
+    std::sort(loose_keys.begin(), loose_keys.end());
+    loop_rows_.resize(row_runs_.size());
+    for (std::size_t row = 0; row < row_runs_.size(); ++row) {
+      const int32_t run = row_runs_[row];
+      loop_rows_[row] =
+          run >= 0 ? loop_runs[static_cast<std::size_t>(run)]
+                   : static_cast<char>(std::binary_search(
+                         loose_keys.begin(), loose_keys.end(),
+                         topology::undirected_edge(edges_[2 * row], edges_[2 * row + 1])));
+    }
+  }
+
+ public:
   // Every pair of items (triangles, segments, and points no triangle or
   // segment uses) whose closed boxes overlap is tested exactly (legal_pair).
   // An illegal input reports its first illegal pair in the order of a sweep
@@ -916,6 +1009,7 @@ class SourcePreparer {
                 first_kind, first_entity, second_kind, second_entity);
   }
 
+ private:
   // Visits every pair (i, j), i < j, of `items` whose closed boxes overlap,
   // once, through a uniform grid of cells of the median item extent: two
   // overlapping boxes both meet the cell of the larger lower corner on each
@@ -1172,6 +1266,7 @@ class SourcePreparer {
     bool open = false;
     int32_t open_region = 0;
     uint64_t open_key = 0;
+    std::size_t open_run = 0;
     std::vector<std::pair<int32_t, int32_t>> sums;  // (region, coefficient) of one edge
     for (std::size_t run = 0; run + 1 < edge_runs_.size(); ++run) {
       const uint64_t key = edge_uses_[edge_runs_[run]].first;
@@ -1209,14 +1304,14 @@ class SourcePreparer {
           open = true;
           open_region = region;
           open_key = key;
+          open_run = run;
         }
         begin = end;
       }
     }
     if (!open) return PHX_MC_OK;
-    const auto edge = edge_ids_.find(open_key);
     return fail(PHX_MC_INVALID_INPUT, kPlcOpenBoundary, kPlcRegion, open_region, kPlcEdge,
-                edge == edge_ids_.end() ? -1 : edge->second);
+                run_rows_[open_run]);
   }
 
   void publish_source() {
@@ -1237,6 +1332,7 @@ class SourcePreparer {
 
   const PlcInput& input_;
   PlcRecovery& output_;
+  const bool defer_contacts_;
   std::vector<Triple> triangles_;
   std::vector<int32_t> triangle_polygon_;
   std::vector<int32_t> triangle_facet_;
@@ -1249,7 +1345,11 @@ class SourcePreparer {
   std::vector<uint32_t> edge_runs_;
   std::vector<int32_t> triangle_edge_runs_;
   std::vector<int32_t> edges_;
-  std::unordered_map<uint64_t, int32_t> edge_ids_;
+  // Per PLC edge row its run (-1: none), per run its row (-1: none), and
+  // per row whether it is an edge of an input polygon loop (edge_uses()).
+  std::vector<int32_t> row_runs_;
+  std::vector<int32_t> run_rows_;
+  std::vector<char> loop_rows_;
 };
 
 }  // namespace
@@ -1391,19 +1491,19 @@ class SourceFaceTable {
   }
 
   bool emplace(const Triple& key, const PlcSourceFace& face) {
-    const auto [inserted, fresh] = faces_.emplace(key, face);
-    if (!fresh) return false;
-    if (2 * faces_.size() > index_.size()) {
-      std::vector<Entry> previous(std::max<std::size_t>(16, 2 * index_.size()));
-      previous.swap(index_);
-      for (const Entry& entry : previous) {
-        if (entry.key[0] >= 0) place(entry);
-      }
-    }
-    place({key, inserted});
-    if (indexed_) add_to_indices(key, face.source_triangle);
+    if (!add(key, face)) return false;
     unverified_.insert(key);
+    fresh_.insert(key);
     return true;
+  }
+  // emplace for the initial faces, before any complex: track_complex marks
+  // every face unverified when it starts tracking one.
+  bool load(const Triple& key, const PlcSourceFace& face) { return add(key, face); }
+  // Room for `count` faces in the key index.
+  void reserve(std::size_t count) {
+    std::size_t size = 16;
+    while (size < 2 * count) size *= 2;
+    if (size > index_.size()) rehash(size);
   }
   bool erase(const Triple& key) {
     const auto found = find(key);
@@ -1414,6 +1514,7 @@ class SourceFaceTable {
       drop(by_triangle_, found->second.source_triangle, key);
     }
     unverified_.erase(key);
+    fresh_.erase(key);
     faces_.erase(found);
     return true;
   }
@@ -1424,6 +1525,7 @@ class SourceFaceTable {
     by_triangle_.clear();
     indexed_ = false;
     unverified_.clear();
+    fresh_.clear();
   }
 
   // Keys through `vertex`, and keys of source triangle `triangle`, in key order.
@@ -1445,7 +1547,15 @@ class SourceFaceTable {
       unverified_.insert(key);
     }
   }
+  // Faces added (or put back) since their source triangle was last
+  // legalized (legalize_source_children), whose edges it rechecks.
+  bool fresh(const Triple& key) const { return fresh_.contains(key); }
+  void mark_fresh(const Triple& key) {
+    if (contains(key)) fresh_.insert(key);
+  }
+  void settle(const Triple& key) { fresh_.erase(key); }
   std::set<Triple>& unverified() { return unverified_; }
+  std::size_t size() const { return faces_.size(); }
 
  private:
   struct Entry {
@@ -1458,6 +1568,23 @@ class SourceFaceTable {
     value = value * 0x9E3779B97F4A7C15ULL + static_cast<std::uint32_t>(key[2]);
     value ^= value >> 29;
     return static_cast<std::size_t>((value * 0xBF58476D1CE4E5B9ULL) >> 16);
+  }
+  bool add(const Triple& key, const PlcSourceFace& face) {
+    const auto [inserted, fresh] = faces_.emplace(key, face);
+    if (!fresh) return false;
+    if (2 * faces_.size() > index_.size()) {
+      rehash(std::max<std::size_t>(16, 2 * index_.size()));
+    }
+    place({key, inserted});
+    if (indexed_) add_to_indices(key, face.source_triangle);
+    return true;
+  }
+  void rehash(std::size_t size) {
+    std::vector<Entry> previous(size);
+    previous.swap(index_);
+    for (const Entry& entry : previous) {
+      if (entry.key[0] >= 0) place(entry);
+    }
   }
   void place(const Entry& entry) {
     const std::size_t mask = index_.size() - 1;
@@ -1516,6 +1643,7 @@ class SourceFaceTable {
   mutable Index by_triangle_;
   mutable bool indexed_ = false;
   std::set<Triple> unverified_;
+  std::set<Triple> fresh_;
 };
 
 // The cube root of a positive finite value by Newton's iteration from a power
@@ -1648,8 +1776,10 @@ struct CarrierKeyHash {
 
 class PlcRecoveryBuilder {
  public:
-  PlcRecoveryBuilder(const PlcInput& input, const PlcRecovery& source)
-      : input_(input), candidate_(source),
+  // `edges`: the preparer's edge index of `source` (SourcePreparer::edge_uses).
+  PlcRecoveryBuilder(const PlcInput& input, const PlcRecovery& source,
+                     const SourceEdgeUses& edges)
+      : input_(input), candidate_(source), source_edges_(edges),
         visible_edges_(source.plc_edges.size() / 2 -
                        static_cast<std::size_t>(source.hidden_plc_edges)) {
     candidate_.suppression_search.node_budget = input_.search_node_budget;
@@ -1663,34 +1793,97 @@ class PlcRecoveryBuilder {
   }
 
 
-  int32_t run(PlcRecovery& output) {
+  // `check_contacts`: the source contact check the preparation deferred
+  // (empty: it ran there). It runs before the first recovery edit unless the
+  // source conforms to the first triangulation (conforming_faces), which
+  // proves every contact legal; contacts_settled() tells whether that point
+  // was reached. A source that conforms to the Delaunay triangulation of its
+  // own points is recovered by it, without the bounding corners; one that
+  // can never conform is not checked again with them.
+  int32_t run(PlcRecovery& output, const std::function<int32_t()>& check_contacts) {
     if (!initialize_points()) return status_;
-    for (;;) {
-      const bool reuse_incremental = incremental_triangulation_ready_;
-      incremental_triangulation_ready_ = false;
-      if (!reuse_incremental) {
-        status_ = build_triangulation();
-        if (status_ != PHX_MC_OK) return status_;
+    std::vector<ConformingFace> conforming;
+    std::optional<Conformity> conformity;
+    if (source_triangulation_ready_ && corner_count_ != 0) {
+      const int32_t corners = corner_count_;
+      corner_count_ = 0;
+      conformity = conforming_faces(conforming);
+      if (conformity == Conformity::kConforms) {
+        corner_points_.clear();
+      } else {
+        corner_count_ = corners;
+        if (conformity == Conformity::kRefused) conformity.reset();
       }
-      bool restart = false;
-      status_ = recover_source_edges(restart);
-      if (status_ != PHX_MC_OK) return status_;
-      if (restart) continue;
-      status_ = recover_source_faces(restart);
-      if (status_ != PHX_MC_OK) return status_;
-      if (!restart) break;
+    }
+    status_ = build_triangulation();
+    if (status_ != PHX_MC_OK) return status_;
+    if (!conformity) conformity = conforming_faces(conforming);
+    const bool conforms = conformity == Conformity::kConforms;
+    contacts_settled_ = true;
+    if (!conforms && check_contacts) {
+      status_ = check_contacts();
+      if (status_ != PHX_MC_OK) {
+        contact_failure_ = true;
+        return status_;
+      }
+    }
+    if (conforms) {
+      // Every subface is a face of the complex and every chain row an edge
+      // of one, so recovery would only label them (mark_source_faces).
+      TetrahedralComplex& complex = triangulation_->complex();
+      for (const ConformingFace& face : conforming) {
+        complex.set_facet_constraint(face.cell, face.slot, face.facet);
+      }
+    } else {
+      index_candidate_points();
+      track_complex();
+      incremental_triangulation_ready_ = true;
+      for (;;) {
+        const bool reuse_incremental = incremental_triangulation_ready_;
+        incremental_triangulation_ready_ = false;
+        if (!reuse_incremental) {
+          status_ = build_triangulation();
+          if (status_ != PHX_MC_OK) return status_;
+          track_complex();
+        }
+        bool restart = false;
+        status_ = recover_source_edges(restart);
+        if (status_ != PHX_MC_OK) return status_;
+        if (restart) continue;
+        status_ = recover_source_faces(restart);
+        if (status_ != PHX_MC_OK) return status_;
+        if (!restart) break;
+      }
     }
     status_ = suppress_witnessed_vertices();
     if (status_ != PHX_MC_OK) return status_;
-    status_ = classify_regions();
+    // Seeds on a face, edge or vertex read the cells around it (seed_tet).
+    bool tracked = !conforms;
+    if (!tracked && input_.seed_count > 0) {
+      track_complex();
+      tracked = true;
+    }
+    // A conforming source without seeds is classified from its subfaces;
+    // any failure is reported by classify_regions, in its order.
+    if (!conforms || input_.seed_count > 0 || !classify_conforming(conforming)) {
+      status_ = classify_regions();
+    }
     if (status_ != PHX_MC_OK) return status_;
-    status_ = check_embedded_entities();
-    if (status_ != PHX_MC_OK) return status_;
+    if (!conforms || !conforming_embedded(conforming)) {
+      if (!tracked) track_complex();
+      status_ = check_embedded_entities();
+      if (status_ != PHX_MC_OK) return status_;
+    }
     publish();
     if (status_ != PHX_MC_OK) return status_;
     output = std::move(candidate_);
     return PHX_MC_OK;
   }
+
+  bool contacts_settled() const { return contacts_settled_; }
+  // Whether run failed on the deferred contact check (the failure is the
+  // preparation's).
+  bool contact_failure() const { return contact_failure_; }
 
   const PlcSourceRefusal& source_refusal() const { return candidate_.source_refusal; }
   // The failure, with a hidden internal edge (never published) named by its
@@ -1733,7 +1926,7 @@ class PlcRecoveryBuilder {
     };
     PlcInput empty_input;
     PlcRecovery empty_source;
-    PlcRecoveryBuilder builder(empty_input, empty_source);
+    PlcRecoveryBuilder builder(empty_input, empty_source, {});
     builder.work_points_.assign(input.points.begin(), input.points.end());
     for (std::size_t row = 0; row < witnesses; ++row) {
       if (!valid_vertex(input.witnessed[row])) return PHX_MC_INVALID_INPUT;
@@ -2019,29 +2212,29 @@ class PlcRecoveryBuilder {
     planar_polygon_index_.assign(polygon_count, -1);
     if (triangle_count < 2) return;
 
-    struct EdgeUse {
-      std::int32_t triangle;
-      std::int32_t first;
-      std::int32_t second;
-    };
     std::vector<std::int32_t> facets(triangle_count);
-    // Edge uses grouped by undirected edge in key order, each group in
-    // triangle order (a stable sort of the uses in triangle order).
-    std::vector<std::pair<std::uint64_t, EdgeUse>> edge_uses;
-    edge_uses.reserve(3 * triangle_count);
     for (std::size_t row = 0; row < triangle_count; ++row) {
-      const std::int32_t polygon = candidate_.input_polygons[row];
-      facets[row] = input_.polygon_facets[polygon];
-      const std::int32_t* triangle = candidate_.input_triangles.data() + 3 * row;
-      for (int side = 0; side < 3; ++side) {
-        const std::int32_t first = triangle[side];
-        const std::int32_t second = triangle[(side + 1) % 3];
-        edge_uses.push_back({topology::undirected_edge(first, second),
-                             {static_cast<std::int32_t>(row), first, second}});
-      }
+      facets[row] = input_.polygon_facets[candidate_.input_polygons[row]];
     }
-    std::stable_sort(edge_uses.begin(), edge_uses.end(),
-                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    // The edge uses grouped by undirected edge in key order, each group in
+    // triangle order (the runs of source_edges_), and the directed edge of
+    // use `at` of run `run`: the side of its triangle in that run (the
+    // second such side for a triangle's second use).
+    const SourceEdgeUses& index = source_edges_;
+    const auto directed = [&](std::size_t run, uint32_t at) {
+      const auto triangle = static_cast<std::size_t>(index.uses[at].second);
+      int skip = at > index.runs[run] && index.uses[at - 1].second == index.uses[at].second ? 1 : 0;
+      const std::int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
+      for (int side = 0; side < 3; ++side) {
+        if (index.triangle_runs[3 * triangle + static_cast<std::size_t>(side)] !=
+                static_cast<std::int32_t>(run) ||
+            skip-- > 0) {
+          continue;
+        }
+        return std::pair{face[side], face[(side + 1) % 3]};
+      }
+      return std::pair{-1, -1};
+    };
 
     std::vector<std::int32_t> parent(triangle_count);
     std::iota(parent.begin(), parent.end(), 0);
@@ -2061,21 +2254,20 @@ class PlcRecoveryBuilder {
              orient(a[0], a[1], a[2], b[1]) == 0 &&
              orient(a[0], a[1], a[2], b[2]) == 0;
     };
-    for (std::size_t begin = 0; begin < edge_uses.size();) {
-      std::size_t end = begin + 1;
-      while (end < edge_uses.size() && edge_uses[end].first == edge_uses[begin].first) ++end;
-      const std::size_t count = end - begin;
-      const EdgeUse& use = edge_uses[begin].second;
-      const EdgeUse& other = edge_uses[end - 1].second;
-      begin = end;
-      if (count != 2 || use.first != other.second || use.second != other.first ||
-          facets[static_cast<std::size_t>(use.triangle)] !=
-              facets[static_cast<std::size_t>(other.triangle)] ||
-          !coplanar(use.triangle, other.triangle)) {
+    for (std::size_t run = 0; run + 1 < index.runs.size(); ++run) {
+      const uint32_t begin = index.runs[run];
+      if (index.runs[run + 1] - begin != 2) continue;
+      const std::int32_t first = index.uses[begin].second;
+      const std::int32_t second = index.uses[begin + 1].second;
+      const auto use = directed(run, begin);
+      const auto other = directed(run, begin + 1);
+      if (use.first != other.second || use.second != other.first ||
+          facets[static_cast<std::size_t>(first)] != facets[static_cast<std::size_t>(second)] ||
+          !coplanar(first, second)) {
         continue;
       }
-      const std::int32_t first_root = root(use.triangle);
-      const std::int32_t second_root = root(other.triangle);
+      const std::int32_t first_root = root(first);
+      const std::int32_t second_root = root(second);
       if (first_root != second_root) {
         parent[static_cast<std::size_t>(first_root)] = second_root;
       }
@@ -2612,6 +2804,7 @@ class PlcRecoveryBuilder {
     }
     source_point_count_ = static_cast<int32_t>(input_count);
     work_points_ = candidate_.points;
+    source_faces_.reserve(candidate_.input_triangles.size() / 3);
     for (std::size_t triangle = 0; triangle < candidate_.input_triangles.size() / 3; ++triangle) {
       const int32_t polygon = candidate_.input_polygons[triangle];
       const int32_t facet = input_.polygon_facets[polygon];
@@ -2619,7 +2812,7 @@ class PlcRecoveryBuilder {
       const Triple face{candidate_.input_triangles[offset],
                         candidate_.input_triangles[offset + 1],
                         candidate_.input_triangles[offset + 2]};
-      if (!source_faces_.emplace(sorted_triple(face.data()),
+      if (!source_faces_.load(sorted_triple(face.data()),
                                  PlcSourceFace{face, facet, static_cast<int32_t>(triangle)})) {
         status_ = fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
                        kPlcPolygon, polygon);
@@ -2665,61 +2858,28 @@ class PlcRecoveryBuilder {
         return false;
       }
     }
+    // The preparer lists the segments first, as given, then the rows its
+    // edge index (source_edges_) runs through.
     const std::size_t edge_count = candidate_.plc_edges.size() / 2;
     source_segment_rows_.assign(edge_count, -1);
-    polygon_loop_edges_.clear();
-    for (int64_t polygon = 0; polygon < input_.polygon_count; ++polygon) {
-      const int64_t begin = input_.polygon_offsets[polygon];
-      const int64_t end = input_.polygon_offsets[polygon + 1];
-      for (int64_t vertex = begin; vertex < end; ++vertex) {
-        const int64_t next = vertex + 1 == end ? begin : vertex + 1;
-        polygon_loop_edges_.insert(topology::undirected_edge(
-            input_.polygon_vertices[vertex], input_.polygon_vertices[next]));
-      }
-    }
-    std::unordered_map<uint64_t, int32_t> source_segment_rows;
-    source_segment_rows.reserve(static_cast<std::size_t>(input_.segment_count));
     for (int32_t row = 0; row < input_.segment_count; ++row) {
-      const uint64_t key = topology::undirected_edge(input_.segments[2 * row],
-                                                     input_.segments[2 * row + 1]);
-      if (!source_segment_rows.emplace(key, row).second) {
-        status_ = fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting,
-                       kPlcEdge, row);
-        return false;
-      }
+      source_segment_rows_[static_cast<std::size_t>(row)] = row;
     }
-    std::vector<std::pair<uint64_t, int32_t>> triangle_edges;
-    triangle_edges.reserve(candidate_.input_triangles.size());
-    for (std::size_t triangle = 0;
-         triangle < candidate_.input_triangles.size() / 3; ++triangle) {
-      const int32_t* face = candidate_.input_triangles.data() + 3 * triangle;
-      for (int side = 0; side < 3; ++side) {
-        triangle_edges.emplace_back(
-            topology::undirected_edge(face[side], face[(side + 1) % 3]),
-            static_cast<int32_t>(triangle));
-      }
-    }
-    std::sort(triangle_edges.begin(), triangle_edges.end());
     edge_triangle_offsets_.clear();
     edge_triangle_offsets_.reserve(edge_count + 1);
     edge_triangle_rows_.clear();
+    edge_triangle_rows_.reserve(source_edges_.uses.size());
     edge_triangle_offsets_.push_back(0);
     for (std::size_t edge = 0; edge < edge_count; ++edge) {
-      const int32_t first = candidate_.plc_edges[2 * edge];
-      const int32_t second = candidate_.plc_edges[2 * edge + 1];
-      const uint64_t key = topology::undirected_edge(first, second);
-      const auto source = source_segment_rows.find(key);
-      if (source != source_segment_rows.end()) source_segment_rows_[edge] = source->second;
-      const auto begin = std::lower_bound(
-          triangle_edges.begin(), triangle_edges.end(), key,
-          [](const auto& use, uint64_t wanted) { return use.first < wanted; });
-      const auto end = std::upper_bound(
-          begin, triangle_edges.end(), key,
-          [](uint64_t wanted, const auto& use) { return wanted < use.first; });
-      for (auto use = begin; use != end; ++use) edge_triangle_rows_.push_back(use->second);
+      const int32_t run = source_edges_.row_runs[edge];
+      if (run >= 0) {
+        const auto row = static_cast<std::size_t>(run);
+        for (uint32_t use = source_edges_.runs[row]; use < source_edges_.runs[row + 1]; ++use) {
+          edge_triangle_rows_.push_back(source_edges_.uses[use].second);
+        }
+      }
       edge_triangle_offsets_.push_back(edge_triangle_rows_.size());
-      if (source_segment_rows_[edge] < 0 && !polygon_loop_edges_.contains(key) &&
-          begin == end) {
+      if (source_segment_rows_[edge] < 0 && source_edges_.loop_rows[edge] == 0 && run < 0) {
         status_ = fail(PHX_MC_INVALID_INPUT, kPlcNonrepresentable, kPlcEdge, edge);
         return false;
       }
@@ -2746,7 +2906,6 @@ class PlcRecoveryBuilder {
     }
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
-    index_candidate_points();
     return true;
   }
 
@@ -2841,9 +3000,16 @@ class PlcRecoveryBuilder {
       const int32_t status = triangulation_->build(order, alive_);
       if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     }
+    triangulation_->complex().enable_labels();
+    return PHX_MC_OK;
+  }
+
+  // Starts tracking the complex build_triangulation built for local edits:
+  // incidence lists, vertex hints and the edit journal, with every subface
+  // and chain row unverified.
+  void track_complex() {
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
     TetrahedralComplex& complex = triangulation_->complex();
-    complex.enable_labels();
     vertex_tet_.assign(static_cast<std::size_t>(count), -1);
     incidence_.assign(static_cast<std::size_t>(count), {});
     {
@@ -2883,7 +3049,6 @@ class PlcRecoveryBuilder {
       polygon.cover_current = false;
       polygon.verified_cover.clear();
     }
-    return PHX_MC_OK;
   }
 
   // Applies the journaled cell replacements to the incidence lists, and
@@ -3313,10 +3478,7 @@ class PlcRecoveryBuilder {
   // Only canonical segment rows and original polygon-loop edges are 1D source
   // entities; a non-loop triangulation diagonal is facet-supported instead.
   bool is_source_edge(std::size_t edge) const {
-    if (source_segment_rows_[edge] >= 0) return true;
-    const uint64_t key = topology::undirected_edge(candidate_.plc_edges[2 * edge],
-                                                   candidate_.plc_edges[2 * edge + 1]);
-    return polygon_loop_edges_.contains(key);
+    return source_segment_rows_[edge] >= 0 || source_edges_.loop_rows[edge] != 0;
   }
 
   // Concentric-shell split rule (Ruppert; Shewchuk, "Constrained Delaunay
@@ -3579,6 +3741,13 @@ class PlcRecoveryBuilder {
         edge_chains_[edge].begin() + static_cast<std::ptrdiff_t>(interval + 1),
         {parameter, vertex});
     chain_intervals_.erase(topology::undirected_edge(first.vertex, second.vertex));
+    // The old interval is no chain interval any more: a subface edge along
+    // it (a segment inside a facet) is legalized again.
+    for (const Triple& key : source_faces_.keys_through(first.vertex)) {
+      if (std::find(key.begin(), key.end(), second.vertex) != key.end()) {
+        source_faces_.mark_fresh(key);
+      }
+    }
     chain_intervals_.emplace(topology::undirected_edge(first.vertex, vertex), edge);
     chain_intervals_.emplace(topology::undirected_edge(vertex, second.vertex), edge);
     vertex_rows_[static_cast<std::size_t>(vertex)].push_back(edge);
@@ -5215,40 +5384,58 @@ class PlcRecoveryBuilder {
       pe[2] = pa[2] + (u[0] * v[1] - u[1] * v[0]);
       return insphere_sign(pa, pb, pc, pe, pd) > 0;
     };
-    for (;;) {
-      // Directed child edge -> (child key, opposite vertex).
-      std::map<std::pair<int32_t, int32_t>, std::pair<Triple, int32_t>> edges;
-      for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
-        const PlcSourceFace& child = source_faces_.at(key);
-        for (int side = 0; side < 3; ++side) {
-          edges.emplace(std::pair{child.oriented[static_cast<std::size_t>(side)],
-                                  child.oriented[static_cast<std::size_t>((side + 1) % 3)]},
-                        std::pair{key, child.oriented[static_cast<std::size_t>((side + 2) % 3)]});
-        }
+    // Directed child edge -> (child key, opposite vertex), kept current
+    // across flips. Only edges that can have become illegal are checked: the
+    // edges of the children added since the last legalization of this
+    // source triangle (fresh), then the four outer edges of each flipped
+    // quadrilateral. Every other edge joins two children unchanged since
+    // that legalization left it legal (a split that frees a chain interval
+    // marks its children fresh, split_source_edge).
+    std::map<std::pair<int32_t, int32_t>, std::pair<Triple, int32_t>> edges;
+    std::set<std::pair<int32_t, int32_t>> work;
+    const auto add_child = [&](const Triple& key, const Triple& oriented, bool check) {
+      for (int side = 0; side < 3; ++side) {
+        const int32_t p = oriented[static_cast<std::size_t>(side)];
+        const int32_t q = oriented[static_cast<std::size_t>((side + 1) % 3)];
+        edges[{p, q}] = {key, oriented[static_cast<std::size_t>((side + 2) % 3)]};
+        if (check) work.insert({std::min(p, q), std::max(p, q)});
       }
-      bool flipped = false;
-      for (const auto& [edge, use] : edges) {
-        const auto [a, b] = edge;
-        if (a > b) continue;
-        const auto other = edges.find({b, a});
-        if (other == edges.end()) continue;
-        if (chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
-        const int32_t c = use.second;
-        const int32_t d = other->second.second;
-        if (!inside(a, b, c, d)) continue;
-        const PlcSourceFace template_face = source_faces_.at(use.first);
-        source_faces_.erase(use.first);
-        source_faces_.erase(other->second.first);
-        const Triple first{a, d, c};
-        const Triple second{d, b, c};
-        source_faces_.emplace(sorted_triple(first.data()),
-                              PlcSourceFace{first, template_face.facet, source_triangle});
-        source_faces_.emplace(sorted_triple(second.data()),
-                              PlcSourceFace{second, template_face.facet, source_triangle});
-        flipped = true;
-        break;
+    };
+    for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
+      add_child(key, source_faces_.at(key).oriented, source_faces_.fresh(key));
+    }
+    while (!work.empty()) {
+      const auto [a, b] = *work.begin();
+      work.erase(work.begin());
+      const auto use = edges.find({a, b});
+      const auto other = edges.find({b, a});
+      if (use == edges.end() || other == edges.end()) continue;
+      if (chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
+      const int32_t c = use->second.second;
+      const int32_t d = other->second.second;
+      ++candidate_.legalize_tests;
+      if (!inside(a, b, c, d)) continue;
+      const Triple use_key = use->second.first;
+      const Triple other_key = other->second.first;
+      const int32_t facet = source_faces_.at(use_key).facet;
+      source_faces_.erase(use_key);
+      source_faces_.erase(other_key);
+      for (const auto& [p, q] : {std::pair{a, b}, std::pair{b, c}, std::pair{c, a},
+                                 std::pair{b, a}, std::pair{a, d}, std::pair{d, b}}) {
+        edges.erase({p, q});
       }
-      if (!flipped) return;
+      const Triple first{a, d, c};
+      const Triple second{d, b, c};
+      source_faces_.emplace(sorted_triple(first.data()),
+                            PlcSourceFace{first, facet, source_triangle});
+      source_faces_.emplace(sorted_triple(second.data()),
+                            PlcSourceFace{second, facet, source_triangle});
+      add_child(sorted_triple(first.data()), first, true);
+      add_child(sorted_triple(second.data()), second, true);
+      work.erase({std::min(c, d), std::max(c, d)});
+    }
+    for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
+      source_faces_.settle(key);
     }
   }
 
@@ -7971,6 +8158,216 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
+  // A subface of a conforming source: the lower-numbered finite cell through
+  // it and its slot there (where mark_source_faces labels it), its facet,
+  // its source triangle and the cells on both sides.
+  struct ConformingFace {
+    int32_t cell;
+    int slot;
+    int32_t facet;
+    int32_t triangle;
+    std::array<int32_t, 2> sides;
+  };
+  // conforming_faces' answer. kNever: a precondition fails or a subface is
+  // no face of the complex, which no further points can change (a face of
+  // the Delaunay triangulation of more points, under the same perturbation,
+  // is one of the triangulation of the fewer points it joins).
+  enum class Conformity : std::uint8_t { kConforms, kNever, kRefused };
+
+  // classify_regions for a conforming source without seeds, read from its
+  // subfaces instead of the source face table: the labels, when no two
+  // meet and none is missing, are the ones classify_regions gives (each
+  // region of cells the subfaces enclose takes the one label its seeds
+  // agree on). False, with the labels to be redone, when classify_regions
+  // must report a failure in its order.
+  bool classify_conforming(const std::vector<ConformingFace>& faces) {
+    TetrahedralComplex& complex = triangulation_->complex();
+    complex.clear_regions();
+    std::vector<int32_t> queue;
+    queue.reserve(static_cast<std::size_t>(complex.finite_count));
+    const auto assign = [&](int32_t tet, int32_t region) {
+      const int32_t current = complex.region(tet);
+      if (current != kNoRegion) return current == region;
+      complex.set_region(tet, region);
+      queue.push_back(tet);
+      return true;
+    };
+    for (const ConformingFace& face : faces) {
+      const int32_t* source =
+          candidate_.input_triangles.data() + 3 * static_cast<std::size_t>(face.triangle);
+      const FacetKey oriented = FacetKey::of(source);
+      for (int side = 0; side < 2; ++side) {
+        const int32_t cell = face.sides[static_cast<std::size_t>(side)];
+        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(cell)];
+        if (is_ghost(tet)) continue;
+        int32_t facet[3];
+        oriented_facet(tet.v, neighbor_slot(tet, face.sides[static_cast<std::size_t>(1 - side)]),
+                       facet);
+        const int32_t region =
+            input_.facet_regions[2 * face.facet + (FacetKey::of(facet) == oriented ? 0 : 1)];
+        if (!assign(cell, region < 0 ? kPlcVoidRegion : region)) return false;
+      }
+    }
+    if (corner_count_ != 0) {
+      for (std::size_t t = 0; t < complex.tets.size(); ++t) {
+        const Tetrahedron& tet = complex.tets[t];
+        if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+        if (std::any_of(tet.v, tet.v + 4, [&](int32_t vertex) {
+              return artificial_corner_vertex(vertex);
+            }) &&
+            !assign(static_cast<int32_t>(t), kPlcVoidRegion)) {
+          return false;
+        }
+      }
+    }
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+      const int32_t t = queue[head];
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
+      for (int slot = 0; slot < 4; ++slot) {
+        if (complex.constraint(t, slot) != kNoConstraint) continue;
+        const int32_t next = tet.n[slot];
+        const Tetrahedron& neighbor = complex.tets[static_cast<std::size_t>(next)];
+        if (neighbor.v[0] == kDeadVertex || is_ghost(neighbor)) continue;
+        if (!assign(next, tet.region)) return false;
+      }
+    }
+    return static_cast<int64_t>(queue.size()) == complex.finite_count;
+  }
+
+  // Whether the source conforms to the triangulation build_triangulation
+  // built first: without planar polygons, exact positions or a metric, with
+  // every finite cell exactly positive (so the complex triangulates its
+  // points and two of its faces meet in a shared face or not at all), every
+  // subface a face of it that mark_source_faces would label (into `faces`,
+  // in cell order) and every chain row an edge of a subface. The subfaces,
+  // chain rows and points then meet only in shared vertices and edges, so
+  // every source contact is legal, and recovery has nothing to edit.
+  Conformity conforming_faces(std::vector<ConformingFace>& faces) const {
+    faces.clear();
+    if (!planar_polygons_.empty() || planar_source_faces_.size() != 0 ||
+        !exact_points_.empty() || input_.affine_metric != nullptr) {
+      return Conformity::kNever;
+    }
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      if (edge_chains_[row].size() > 1 &&
+          edge_triangle_offsets_[row] == edge_triangle_offsets_[row + 1]) {
+        return Conformity::kNever;
+      }
+    }
+    // Without planar polygons the subfaces are the input triangles. They are
+    // listed by lowest vertex: per source point (offsets), the other two
+    // vertices of each, ascending, and its triangle.
+    struct LowestRow {
+      int32_t second;
+      int32_t third;
+      int32_t triangle;
+    };
+    const std::size_t triangles = candidate_.input_triangles.size() / 3;
+    const auto points = static_cast<std::size_t>(source_point_count_);
+    std::vector<uint32_t> offsets(points + 2, 0);
+    for (std::size_t t = 0; t < triangles; ++t) {
+      const Triple key = sorted_triple(candidate_.input_triangles.data() + 3 * t);
+      ++offsets[static_cast<std::size_t>(key[0]) + 2];
+    }
+    std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+    std::vector<LowestRow> lowest(triangles);
+    for (std::size_t t = 0; t < triangles; ++t) {
+      const Triple key = sorted_triple(candidate_.input_triangles.data() + 3 * t);
+      lowest[offsets[static_cast<std::size_t>(key[0]) + 1]++] = {key[1], key[2],
+                                                                  static_cast<int32_t>(t)};
+    }
+    // offsets[v] .. offsets[v + 1] are now the rows of v.
+    const auto subface = [&](const int32_t* face) {
+      const Triple key = sorted_triple(face);
+      if (key[0] < 0 || key[0] >= source_point_count_) return -1;
+      const auto vertex = static_cast<std::size_t>(key[0]);
+      for (uint32_t at = offsets[vertex]; at < offsets[vertex + 1]; ++at) {
+        if (lowest[at].second == key[1] && lowest[at].third == key[2]) return lowest[at].triangle;
+      }
+      return -1;
+    };
+    const TetrahedralComplex& complex = triangulation_->complex();
+    faces.reserve(triangles);
+    for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+      const auto cell = static_cast<int32_t>(row);
+      if (!complex.live(cell)) continue;
+      const Tetrahedron& tet = complex.tets[row];
+      const bool ghost = is_ghost(tet);
+      if (!ghost && orient3d_filtered(point(tet.v[0]), point(tet.v[1]), point(tet.v[2]),
+                                      point(tet.v[3])) <= 0) {
+        return Conformity::kRefused;
+      }
+      for (int slot = 0; slot < 4; ++slot) {
+        // Each face once, from its lower cell.
+        const int32_t other = tet.n[slot];
+        if (other < cell) continue;
+        int32_t face[3];
+        oriented_facet(tet.v, slot, face);
+        const int32_t triangle = subface(face);
+        if (triangle < 0) continue;
+        const Tetrahedron& beyond = complex.tets[static_cast<std::size_t>(other)];
+        const int back = neighbor_slot(beyond, cell);
+        const int32_t* source =
+            candidate_.input_triangles.data() + 3 * static_cast<std::size_t>(triangle);
+        const FacetKey oriented = FacetKey::of(source);
+        ConformingFace conforming{
+            cell, slot,
+            input_.polygon_facets[candidate_.input_polygons[static_cast<std::size_t>(triangle)]],
+            triangle, {cell, other}};
+        if (!ghost && !is_ghost(beyond)) {
+          int32_t opposite[3];
+          oriented_facet(beyond.v, back, opposite);
+          if ((FacetKey::of(face) == oriented) == (FacetKey::of(opposite) == oriented)) {
+            return Conformity::kRefused;
+          }
+        } else if (corner_count_ != 0) {
+          return Conformity::kRefused;
+        } else if (ghost) {
+          conforming.cell = other;
+          conforming.slot = back;
+        }
+        faces.push_back(conforming);
+      }
+    }
+    return faces.size() == source_faces_.size() ? Conformity::kConforms : Conformity::kNever;
+  }
+
+  // check_embedded_entities for a conforming source, true when it passes:
+  // every chain row is an edge of a subface with a finite domain cell on one
+  // side, and every source point is used by a triangle or segment. False
+  // leaves the decision to check_embedded_entities.
+  bool conforming_embedded(const std::vector<ConformingFace>& faces) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<char> referenced(static_cast<std::size_t>(source_point_count_), 0);
+    for (int32_t vertex : candidate_.input_triangles) referenced[static_cast<std::size_t>(vertex)] = 1;
+    for (int64_t row = 0; row < input_.segment_count; ++row) {
+      referenced[static_cast<std::size_t>(input_.segments[2 * row])] = 1;
+      referenced[static_cast<std::size_t>(input_.segments[2 * row + 1])] = 1;
+    }
+    if (std::find(referenced.begin(), referenced.end(), 0) != referenced.end()) return false;
+    std::vector<char> in_domain(candidate_.input_triangles.size() / 3, 0);
+    for (const ConformingFace& face : faces) {
+      for (int32_t side : face.sides) {
+        if (!is_ghost(complex.tets[static_cast<std::size_t>(side)]) && complex.region(side) >= 0) {
+          in_domain[static_cast<std::size_t>(face.triangle)] = 1;
+        }
+      }
+    }
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      if (edge_chains_[row].size() < 2) continue;
+      const auto begin = edge_triangle_rows_.begin() +
+                         static_cast<std::ptrdiff_t>(edge_triangle_offsets_[row]);
+      const auto end = edge_triangle_rows_.begin() +
+                       static_cast<std::ptrdiff_t>(edge_triangle_offsets_[row + 1]);
+      if (std::none_of(begin, end, [&](int32_t triangle) {
+            return in_domain[static_cast<std::size_t>(triangle)] != 0;
+          })) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   int32_t check_embedded_entities() {
     const TetrahedralComplex& complex = triangulation_->complex();
     sync_complex();
@@ -8142,6 +8539,8 @@ class PlcRecoveryBuilder {
 
   const PlcInput& input_;
   PlcRecovery candidate_;
+  // The preparer's edge index (empty in run_cavity_fixture).
+  SourceEdgeUses source_edges_;
   // PLC edge rows published (the rest are hidden internal edges), and the
   // exact normals of the declared facet planes (empty without any).
   std::size_t visible_edges_ = 0;
@@ -8193,7 +8592,6 @@ class PlcRecoveryBuilder {
   std::vector<double> corner_points_;
   std::vector<std::vector<PlcEdgePoint>> edge_chains_;
   std::vector<int32_t> source_segment_rows_;
-  std::unordered_set<uint64_t> polygon_loop_edges_;
   std::vector<std::size_t> edge_triangle_offsets_;
   std::vector<int32_t> edge_triangle_rows_;
   // Acute input vertices: apices of the concentric split shells.
@@ -8210,6 +8608,9 @@ class PlcRecoveryBuilder {
   std::vector<int32_t> volume_output_;
   // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
+  // Whether run reached the deferred contact check, and whether it failed.
+  bool contacts_settled_ = false;
+  bool contact_failure_ = false;
   // Point count at the last rebuild requested for a strongly Delaunay subface.
   std::size_t subface_rebuild_points_ = 0;
   // Candidate points moved off the boundary by Steiner suppression.
@@ -8244,19 +8645,28 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
       if (status != PHX_MC_OK) return status;
     }
     PlcRecovery prepared;
-    const int32_t source_status = prepare_recovery_source(input, prepared);
+    SourcePreparer preparer(input, prepared, true);
+    const int32_t source_status = preparer.run();
     if (source_status != PHX_MC_OK) {
       result.failure = prepared.failure;
       result.source_refusal = prepared.source_refusal;
       return source_status;
     }
-    PlcRecoveryBuilder builder(input, prepared);
-    const int32_t status = builder.run(result);
-    if (status != PHX_MC_OK) {
-      result.failure = builder.failure();
-      result.source_refusal = builder.source_refusal();
-      result.suppression_search = builder.suppression_search();
+    PlcRecoveryBuilder builder(input, prepared, preparer.edge_uses());
+    const int32_t status = builder.run(result, [&] { return preparer.check_contacts(); });
+    if (status == PHX_MC_OK) return PHX_MC_OK;
+    // An illegal source contact is reported before any later failure.
+    const int32_t contacts = builder.contact_failure()    ? status
+                             : builder.contacts_settled() ? PHX_MC_OK
+                                                          : preparer.check_contacts();
+    if (contacts != PHX_MC_OK) {
+      result.failure = prepared.failure;
+      result.source_refusal = prepared.source_refusal;
+      return contacts;
     }
+    result.failure = builder.failure();
+    result.source_refusal = builder.source_refusal();
+    result.suppression_search = builder.suppression_search();
     return status;
   } catch (const std::bad_alloc&) {
     result.failure = {};

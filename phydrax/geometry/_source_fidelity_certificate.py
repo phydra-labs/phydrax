@@ -182,6 +182,49 @@ def _require_intersecting(
         )
 
 
+def _hull(stored: np.ndarray, fresh: np.ndarray, /) -> np.ndarray:
+    """The outward hull of aligned ``[lower, upper]`` enclosures, as ``(n, 2)``."""
+    stored_ = np.asarray(stored, dtype=np.float64).reshape((-1, 2))
+    fresh_ = np.asarray(fresh, dtype=np.float64).reshape((-1, 2))
+    return np.stack(
+        (
+            np.minimum(stored_[:, 0], fresh_[:, 0]),
+            np.maximum(stored_[:, 1], fresh_[:, 1]),
+        ),
+        axis=1,
+    )
+
+
+def _require_decided(
+    stored: np.ndarray,
+    hull: np.ndarray,
+    limit: float,
+    cells: tuple[int, ...] | None,
+    bound: str,
+    /,
+) -> None:
+    """Each stored bound-limit decision still holds on the hull of its enclosures.
+
+    A bound passes its limit when its upper end is at most the limit and
+    violates it when its lower end exceeds the limit. The hull contains the
+    fresh, sound enclosure, so a pass or violation it does not keep was never
+    proved by sound evidence.
+    """
+    stored_ = np.asarray(stored, dtype=np.float64).reshape((-1, 2))
+    hull_ = np.asarray(hull, dtype=np.float64).reshape((-1, 2))
+    broken = np.flatnonzero(
+        ((stored_[:, 1] <= limit) & ~(hull_[:, 1] <= limit))
+        | ((stored_[:, 0] > limit) & ~(hull_[:, 0] > limit))
+    )
+    if broken.size:
+        row = int(broken[0])
+        raise SourceFidelityReproofError(
+            "A stored bound-limit decision does not hold on the recomputed enclosure",
+            bound=bound,
+            cell=None if cells is None else int(cells[row]),
+        )
+
+
 @final
 class SourceFidelityCertificate(StrictModule, NonTrainableState):
     """Continuous two-directed bounds and optional oriented-normal evidence."""
@@ -530,12 +573,20 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
           and must intersect.
 
         Bound-limit decisions (findings of ``_BOUND_DECISION_CHECKS``) were taken
-        on the generating platform's enclosure and are not re-decided on this
-        platform's floats: the stored decisions are adopted, and a stored
-        ``certified`` status must hold exactly on the stored bounds. The result
-        carries the stored evidence, decisions and identity on the fresh
-        restored owners. A mismatch raises :class:`SourceFidelityReproofError`
-        naming the bound and cell.
+        on the generating platform's enclosure and are adopted, not re-decided,
+        but the adopted certificate never ships stored evidence alone: each
+        bound becomes the outward hull of its stored and fresh enclosures
+        (lowers by minimum, uppers by maximum; the one-sided normal bounds by
+        maximum). The hull contains the fresh enclosure, sound on this
+        platform, so the shipped evidence is sound even when the stored one
+        was not; a faithful restore across platforms only widens by rounding.
+        Every adopted decision must hold on the hull: a bound whose stored
+        upper end met its limit must still meet it, a bound whose stored lower
+        end exceeded its limit must still exceed it, and a stored ``certified``
+        status must hold on the hull uppers. The result carries the hull
+        evidence with the stored decisions and identity on the fresh restored
+        owners. A mismatch raises :class:`SourceFidelityReproofError` naming
+        the bound and cell.
         """
         if type(fresh) is not SourceFidelityCertificate:
             raise TypeError("A fidelity reproof must be a SourceFidelityCertificate.")
@@ -664,8 +715,6 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Stored normal-deviation claim differs from its stored bounds",
                 bound="maximum_normal_deviation_bound",
             )
-        if self.status == "certified":
-            self._require_certified_bounds()
         stored_rows, fresh_rows = self.chart_rows, fresh.chart_rows
         if (stored_rows is None) != (fresh_rows is None) or (
             stored_rows is not None
@@ -696,16 +745,77 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                     None,
                     name,
                 )
+        deviation = _hull(self.deviation_bounds, fresh.deviation_bounds)
+        _require_decided(
+            self.deviation_bounds, deviation, self.tolerance, cells, "deviation_bounds"
+        )
+        directed: dict[str, np.ndarray] = {}
+        for name in ("mesh_to_source", "source_to_mesh"):
+            stored_pair = np.asarray(
+                (getattr(self, f"{name}_lower"), getattr(self, f"{name}_upper")),
+                dtype=np.float64,
+            )
+            directed[name] = _hull(
+                stored_pair,
+                np.asarray(
+                    (getattr(fresh, f"{name}_lower"), getattr(fresh, f"{name}_upper")),
+                    dtype=np.float64,
+                ),
+            )[0]
+            _require_decided(stored_pair, directed[name], self.tolerance, None, name)
+        normal = (
+            None
+            if stored_normal is None or fresh_normal is None
+            else np.maximum(
+                np.asarray(stored_normal, dtype=np.float64),
+                np.asarray(fresh_normal, dtype=np.float64),
+            )
+        )
+        normal_lower = (
+            None
+            if self.maximum_normal_deviation_lower is None
+            or fresh.maximum_normal_deviation_lower is None
+            else min(
+                float(self.maximum_normal_deviation_lower),
+                float(fresh.maximum_normal_deviation_lower),
+            )
+        )
+        limit = self.maximum_normal_deviation
+        if limit is not None and stored_normal is not None and normal is not None:
+            stored_upper = np.asarray(stored_normal, dtype=np.float64)
+            _require_decided(
+                np.stack((np.zeros_like(stored_upper), stored_upper), axis=1),
+                np.stack((np.zeros_like(normal), normal), axis=1),
+                limit,
+                cells,
+                "normal_deviation_bounds",
+            )
+            if (
+                self.maximum_normal_deviation_lower is not None
+                and normal_lower is not None
+            ):
+                _require_decided(
+                    np.asarray((self.maximum_normal_deviation_lower, math.inf)),
+                    np.asarray((normal_lower, math.inf)),
+                    limit,
+                    None,
+                    "maximum_normal_deviation_lower",
+                )
+        if normal is not None:
+            normal.setflags(write=False)
+        deviation.setflags(write=False)
         attributes = {item.name: getattr(fresh, item.name) for item in fields(fresh)}
         attributes.update(
-            deviation_bounds=self.deviation_bounds,
-            mesh_to_source_lower=self.mesh_to_source_lower,
-            mesh_to_source_upper=self.mesh_to_source_upper,
-            source_to_mesh_lower=self.source_to_mesh_lower,
-            source_to_mesh_upper=self.source_to_mesh_upper,
-            normal_deviation_bounds=self.normal_deviation_bounds,
-            maximum_normal_deviation_lower=self.maximum_normal_deviation_lower,
-            maximum_normal_deviation_bound=self.maximum_normal_deviation_bound,
+            deviation_bounds=deviation,
+            mesh_to_source_lower=float(directed["mesh_to_source"][0]),
+            mesh_to_source_upper=float(directed["mesh_to_source"][1]),
+            source_to_mesh_lower=float(directed["source_to_mesh"][0]),
+            source_to_mesh_upper=float(directed["source_to_mesh"][1]),
+            normal_deviation_bounds=normal,
+            maximum_normal_deviation_lower=normal_lower,
+            maximum_normal_deviation_bound=(
+                None if normal is None or normal.size == 0 else float(np.max(normal))
+            ),
             coverage=coverage,
             findings=self.findings,
             status=self.status,
@@ -718,6 +828,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Adopted source fidelity evidence differs from its identity",
                 bound="certificate_id",
             )
+        if adopted.status == "certified":
+            adopted._require_certified_bounds()
         return adopted
 
     def _require_certified_bounds(self) -> None:

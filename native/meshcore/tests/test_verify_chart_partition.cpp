@@ -102,6 +102,73 @@ int main() {
         ranges, 1, 3, chord_uses, loops, chords, ranges, 16, failures, &n) == PHX_MC_OK);
     CHECK(n == 0);
   }
+  // Overlap (MAC review): two CCW squares [0,1]^2 and [.5,1.5]x[0,1] in one patch pass the
+  // orientation and boundary-chain checks, yet [.5,1]x[0,1] is covered twice.
+  {
+    const int32_t patches[] = {0,0,0,0};
+    const double triangles[] = {0,0, 1,0, 1,1,  0,0, 1,1, 0,1,
+                                .5,0, 1.5,0, 1.5,1,  .5,0, 1.5,1, .5,1};
+    const int64_t uses[] = {0,0,0,0,0,0,0,0}, chord_uses[] = {0,1,2,3,4,5,6,7};
+    const int64_t loops[] = {0,0,0,0,1,1,1,1};
+    const double ranges[] = {0,1, 0,1, 0,1, 0,1, 0,1, 0,1, 0,1, 0,1};
+    const double chords[] = {0,0,1,0, 1,0,1,1, 1,1,0,1, 0,1,0,0,
+                             .5,0,1.5,0, 1.5,0,1.5,1, 1.5,1,.5,1, .5,1,.5,0};
+    int64_t n = -1;
+    phx_mc_chart_failure failures[32];
+    CHECK(phx_mc_verify_chart_partition(1, 4, patches, triangles, 8, uses, ranges, 2, 8,
+          chord_uses, loops, chords, ranges, 32, failures, &n) == PHX_MC_OK);
+    CHECK(n > 0);
+    CHECK(std::all_of(failures, failures + n,
+                      [](const auto& e) { return e.kind == PHX_MC_CHART_OVERLAP; }));
+    CHECK(std::any_of(failures, failures + n, [](const auto& e) {
+      return e.patch == 0 && e.row < e.other && e.row < 2 && e.other >= 2;
+    }));
+  }
+  // A single vertex-simple pentagram loop fanned from its centre winds twice.
+  {
+    constexpr double pi = 3.14159265358979323846;
+    double star[10];
+    for (int k = 0; k < 5; ++k) {
+      star[2*k] = std::cos(pi/2 + 4*pi*k/5);
+      star[2*k+1] = std::sin(pi/2 + 4*pi*k/5);
+    }
+    int32_t patches[5] = {};
+    double triangles[30], chords[20], ranges[10];
+    int64_t uses[5] = {}, chord_uses[5], loops[5] = {};
+    for (int k = 0; k < 5; ++k) {
+      const int j = (k + 1) % 5;
+      const double row[6] = {0, 0, star[2*k], star[2*k+1], star[2*j], star[2*j+1]};
+      std::copy(row, row + 6, triangles + 6*k);
+      const double chord[4] = {star[2*k], star[2*k+1], star[2*j], star[2*j+1]};
+      std::copy(chord, chord + 4, chords + 4*k);
+      ranges[2*k] = 0; ranges[2*k+1] = 1;
+      chord_uses[k] = k;
+    }
+    int64_t n = -1;
+    phx_mc_chart_failure failures[32];
+    CHECK(phx_mc_verify_chart_partition(1, 5, patches, triangles, 5, uses, ranges, 1, 5,
+          chord_uses, loops, chords, ranges, 32, failures, &n) == PHX_MC_OK);
+    CHECK(n > 0);
+    CHECK(std::all_of(failures, failures + n,
+                      [](const auto& e) { return e.kind == PHX_MC_CHART_OVERLAP; }));
+  }
+  // Consecutive chords of one use must join bitwise in UV even when their ranges join.
+  {
+    const int32_t patches[] = {0,0,0};
+    const double triangles[] = {0,0, .5,0, 0,1, .5,0, 1,0, 1,1, .5,0, 1,1, 0,1};
+    const int64_t uses[] = {0,0,0,0}, chord_uses[] = {0,0,1,2,3}, loops[] = {0,0,0,0,0};
+    const double ranges[] = {0,1, 1,0, 0,1, 0,1};
+    double chords[] = {0,0,.5,0, .5,0,1,0, 1,0,1,1, 1,1,0,1, 0,1,0,0};
+    const double intervals[] = {0,.5, .5,1, 1,0, 0,1, 0,1};
+    chords[4] = std::nextafter(.5, 1.0);
+    int64_t n = -1;
+    phx_mc_chart_failure failures[32];
+    CHECK(phx_mc_verify_chart_partition(1, 3, patches, triangles, 4, uses, ranges, 1, 5,
+          chord_uses, loops, chords, intervals, 32, failures, &n) == PHX_MC_OK);
+    CHECK(std::any_of(failures, failures + n, [](const auto& e) {
+      return e.kind == PHX_MC_CHART_USE_COVERAGE && e.row == 0;
+    }));
+  }
   CHECK(f.run() == PHX_MC_INVALID_INPUT && f.count == 123);
   return phx::mc::test::finish("verify_chart_partition");
 }

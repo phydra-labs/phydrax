@@ -18,9 +18,6 @@
 namespace phx::mc {
 namespace {
 
-// 21 bits of lattice index per axis keep a vertex key in 64 bits.
-constexpr int32_t kMaximumLevel = 20;
-
 // The lattice coordinates of one axis at one level, computed once per index:
 // outward lower, outward upper and nearest binary64 of the exact coordinate
 // (1 - n / 2^level) lower + (n / 2^level) upper.
@@ -196,14 +193,14 @@ int32_t dyadic_target_level(const double* lower, const double* upper, double dia
   }
   const double diagonal = geometry::next_up(std::sqrt(squares));
   int32_t level = 0;
-  while (level < kMaximumLevel + 1 && geometry::next_up(std::ldexp(diagonal, -level)) > diameter) ++level;
+  while (level < kMaximumBoxTreeLevel + 1 && geometry::next_up(std::ldexp(diagonal, -level)) > diameter) ++level;
   return level;
 }
 
 int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramView& point,
                             const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out) {
-  if (target_level < 0 || target_level > kMaximumLevel) return PHX_MC_INVALID_ARGUMENT;
+  if (target_level < 0 || target_level > kMaximumBoxTreeLevel) return PHX_MC_INVALID_ARGUMENT;
   int64_t evaluated_boxes = 0;
   int32_t status = possible_leaves(interval, lower, upper, target_level, nullptr,
                                    std::numeric_limits<int64_t>::max(), evaluated_boxes,
@@ -284,7 +281,7 @@ int32_t possible_zero_leaves(const IntervalProgramView& interval, const double* 
                              const BoxAcceptance* accept, int64_t budget,
                              int64_t& evaluated_boxes, std::vector<DyadicLeaf>& leaves) {
   evaluated_boxes = 0;
-  if (target_level < 0 || target_level > kMaximumLevel || budget < 1)
+  if (target_level < 0 || target_level > kMaximumBoxTreeLevel || budget < 1)
     return PHX_MC_INVALID_ARGUMENT;
   return possible_leaves(interval, lower, upper, target_level, accept, budget, evaluated_boxes,
                          leaves);

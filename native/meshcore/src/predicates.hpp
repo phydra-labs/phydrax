@@ -21,13 +21,18 @@
 // orient2d/orient3d are evaluated with Shewchuk's adaptive scheme: stage A
 // static filter, stage B exact evaluation on the rounded differences with the
 // published stage-B bound (and exactness when all difference tails vanish),
-// then full expansion arithmetic.  insphere uses the same stages.  incircle
-// runs Shewchuk's incircleadapt: stage B first on a double-double estimate
-// of the rounded-difference determinant (against the stage-B bound with a
-// larger second-order term, or a second-order bound when every difference
-// is exact), then on its exact expansion, stage C (the stage-B estimate
-// corrected by the first-order difference tails, against his stage-C bound),
-// then the full expansion.
+// then full expansion arithmetic.  insphere runs stage A, then exact integer
+// arithmetic when the coordinates (or the exact differences) are integers
+// times one power of two, then Shewchuk's insphereadapt: stage B on the
+// exact expansion of the rounded differences (against his stage-B bound, or
+// exact when every difference is), stage C (the stage-B estimate corrected
+// by the first-order difference tails, against his stage-C bound), then the
+// full expansion.  incircle runs Shewchuk's incircleadapt: stage B first on
+// a double-double estimate of the rounded-difference determinant (against
+// the stage-B bound with a larger second-order term, or a second-order bound
+// when every difference is exact), then on its exact expansion, stage C (the
+// stage-B estimate corrected by the first-order difference tails, against
+// his stage-C bound), then the full expansion.
 // Weighted power tests use the dynamic forward-error filter then expansions.
 //
 // *_sos variants apply index-ordered Simulation of Simplicity:
@@ -83,6 +88,20 @@ struct IncircleDecision {
 // incircle with the stage that decided it (incircle returns its sign).
 IncircleDecision incircle_decision(const double* a, const double* b, const double* c,
                                    const double* d);
+
+// The stage of insphere that decides its sign: the floating filter (stage
+// A), the exact integer evaluation, stage B on the exact expansion of the
+// rounded differences (its estimate against the stage-B bound, or its sign
+// when every difference is exact), stage C (first-order difference tails)
+// or stage D (the full expansion).
+enum class InsphereStage : std::uint8_t { kA, kInteger, kB, kBExact, kC, kD };
+struct InsphereDecision {
+  int sign;
+  InsphereStage stage;
+};
+// insphere with the stage that decided it (insphere returns its sign).
+InsphereDecision insphere_decision(const double* a, const double* b, const double* c,
+                                   const double* d, const double* e);
 
 // orient2d through its first, floating stage inlined. Shewchuk's bound on
 // |detleft| + |detright| holds for either sign pattern (opposite signs make

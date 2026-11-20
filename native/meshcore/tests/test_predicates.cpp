@@ -1,12 +1,15 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -471,6 +474,123 @@ void test_insphere_exact_paths() {
   PHX_CHECK(zeros > 100);
   std::printf("insphere exact paths: %d checked, %d exact zeros, %d mismatches\n", checked, zeros,
               mismatches);
+}
+
+// insphere's expansion stages (stage B on stack expansions of the rounded
+// differences, its exact sign when every difference is exact, and stage C
+// with the first-order difference tails) decide the sign of the unfiltered
+// exact expansion insphere_sign on near-cospherical inputs whose
+// coordinates span too many bits for the integer stage (a z coordinate
+// below 1e-9 with a full significand): rounded points of spheres about
+// non-dyadic centers in the plane z = 0 (inexact differences), small patches
+// of a unit sphere at its equator (five nearly coplanar and nearly
+// cospherical surface points, as a surface sample's Delaunay triangulation
+// tests them), each with the query moved by 1-4 ulps and by a relative 4e-15
+// to 4e-14 along its first axis (determinants just above the stage-A and
+// stage-B bounds), and spheres through the origin queried at the origin
+// (exact differences). Every one of these stages decides some input; stage C
+// decides all that reach it, far from its bound, so stage D is left to
+// test_insphere_stage_c_threshold.
+void test_insphere_expansion_stages_agree() {
+  std::uint64_t seed = 4242;
+  int checked = 0, zeros = 0, mismatches = 0;
+  int stages[6] = {};
+  const auto compare = [&](const double (&points)[5][3]) {
+    Expansion e[5][3];
+    for (int k = 0; k < 5; ++k) {
+      for (int axis = 0; axis < 3; ++axis) e[k][axis] = Expansion(points[k][axis]);
+    }
+    const int expected = insphere_sign(e[0], e[1], e[2], e[3], e[4]);
+    const InsphereDecision decision =
+        insphere_decision(points[0], points[1], points[2], points[3], points[4]);
+    const int actual = insphere(points[0], points[1], points[2], points[3], points[4]);
+    mismatches += expected == actual && expected == decision.sign ? 0 : 1;
+    ++stages[static_cast<int>(decision.stage)];
+    zeros += expected == 0 ? 1 : 0;
+    ++checked;
+  };
+  const auto compare_moved = [&](const double (&points)[5][3]) {
+    compare(points);
+    double moved[5][3];
+    for (int ulps = 1; ulps <= 4; ++ulps) {
+      for (const double direction : {-1.0, 1.0}) {
+        std::copy(&points[0][0], &points[0][0] + 15, &moved[0][0]);
+        double& value = moved[4][ulps % 2];
+        for (int step = 0; step < ulps; ++step) {
+          value = std::nextafter(value, direction * std::numeric_limits<double>::infinity());
+        }
+        compare(moved);
+      }
+    }
+    for (const double relative : {4e-15, -1e-14, 4e-14}) {
+      std::copy(&points[0][0], &points[0][0] + 15, &moved[0][0]);
+      moved[4][0] *= 1.0 + relative;
+      compare(moved);
+    }
+  };
+  // A unit vector near (x, y, 0) with a z component below 1e-9.
+  const auto unit = [&](double x, double y, double* v) {
+    v[0] = x;
+    v[1] = y;
+    v[2] = 1e-9 * (2.0 * uniform(seed) - 1.0);
+    const double norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (int axis = 0; axis < 3; ++axis) v[axis] /= norm;
+  };
+  for (const double radius : {1.0, 1e-3, 37.3}) {
+    for (const std::array<double, 2> center :
+         {std::array<double, 2>{0.1, 1.0 / 3.0}, std::array<double, 2>{1e3 / 7.0, -2.0}}) {
+      for (int trial = 0; trial < 1000; ++trial) {
+        double points[5][3];
+        for (auto& point : points) {
+          double v[3];
+          unit(2.0 * uniform(seed) - 1.0, 2.0 * uniform(seed) - 1.0, v);
+          point[0] = center[0] + radius * v[0];
+          point[1] = center[1] + radius * v[1];
+          point[2] = radius * v[2];
+        }
+        compare_moved(points);
+      }
+    }
+  }
+  for (const double patch : {0.05, 0.002}) {
+    for (int trial = 0; trial < 3000; ++trial) {
+      const double angle = 6.283185307179586 * uniform(seed);
+      double points[5][3];
+      for (auto& point : points) {
+        double v[3];
+        unit(std::cos(angle) + patch * (2.0 * uniform(seed) - 1.0),
+             std::sin(angle) + patch * (2.0 * uniform(seed) - 1.0), v);
+        point[0] = 0.25 + v[0];
+        point[1] = 0.25 + v[1];
+        point[2] = v[2];
+      }
+      compare_moved(points);
+    }
+  }
+  for (int trial = 0; trial < 20000; ++trial) {
+    double points[5][3];
+    for (int k = 0; k < 4; ++k) {
+      // Points of the unit sphere about (1, 0, 0) within about 1e-3 of the
+      // origin.
+      double v[3];
+      unit(-1.0, 1e-3 * (2.0 * uniform(seed) - 1.0), v);
+      points[k][0] = 1.0 + v[0];
+      points[k][1] = v[1];
+      points[k][2] = v[2];
+    }
+    for (double& c : points[4]) c = 0.0;
+    compare(points);
+  }
+  PHX_CHECK(checked >= 100000);
+  PHX_CHECK(mismatches == 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kInteger)] == 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kB)] > 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kBExact)] > 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kC)] > 0);
+  std::printf(
+      "insphere expansion stages: %d checked, %d exact zeros, %d mismatches; decided by A %d, "
+      "integer %d, B %d, B exact %d, C %d, D %d\n",
+      checked, zeros, mismatches, stages[0], stages[1], stages[2], stages[3], stages[4], stages[5]);
 }
 
 // power3d_stage decides only what power3d decides, with its sign: rounded
@@ -971,12 +1091,15 @@ std::array<double, 2> insphere_stage_a(const double* const* p) {
 // stage B (the estimate of D~ against his stage-B bound, decided with a
 // 2^-40 margin, as that estimate is good to a few u) cross 1 return the exact
 // sign; the public floating stages (orientation_stage, insphere_stage) decide
-// just above their own bounds and defer just below. These predicates do not
-// report their deciding stage, and being linear in the varied coordinate,
-// orient2d and orient3d move by up to a tenth of their bound between
-// neighbors. insphere uses e = (45, s, 0) beside the sphere of radius 45
-// through lattice points, where D = orient s^2 and its expansion stages run
-// (s spans more bits than its integer stages take).
+// just above their own bounds and defer just below. orient2d and orient3d do
+// not report their deciding stage, and being linear in the varied
+// coordinate, they move by up to a tenth of their bound between neighbors.
+// insphere (insphere_decision) uses e = (45, s, 0) beside the sphere of
+// radius 45 through lattice points, where D = orient s^2: the stage-A value
+// below its bound and the last value below the stage-B bound carry few
+// enough significand bits for the integer stage, so stage B is checked
+// below its bound at that value's lower neighbor, whose full significand
+// leaves it to stage C.
 void test_orientation_stage_thresholds() {
   int checked = 0;
   // orient2d: a = (0.5, y) beside the line through b and c; a - c rounds.
@@ -1047,11 +1170,13 @@ void test_orientation_stage_thresholds() {
   // with the y coordinates round.
   const double pa[3] = {36.0, 27.0, 0.0}, pb[3] = {0.0, 27.0, 36.0};
   const double pc[3] = {-20.0, 5.0, 40.0}, pd[3] = {5.0, -40.0, -20.0};
-  const auto insphere_at = [&](double s) {
+  const auto insphere_at = [&](double s, InsphereStage expected) {
     const double e[3] = {45.0, s, 0.0};
     const double* p[5] = {pa, pb, pc, pd, e};
     const int exact = -insphere_value(p, true).sign();
-    PHX_CHECK(exact != 0 && insphere(pa, pb, pc, pd, e) == exact);
+    const InsphereDecision decision = insphere_decision(pa, pb, pc, pd, e);
+    PHX_CHECK(exact != 0 && decision.sign == exact && insphere(pa, pb, pc, pd, e) == exact);
+    PHX_CHECK(decision.stage == expected);
     ++checked;
     return insphere_stage(pa, pb, pc, pd, e);
   };
@@ -1064,25 +1189,79 @@ void test_orientation_stage_thresholds() {
         std::fabs(insphere_value(p, false).estimate()) /
             ((5.0 + 72.0 * kUnit) * kUnit * permanent)};
   };
-  for (const double s : straddle(0x1p-30, 1.0, [&](double value) {
-         return insphere_ratios(value)[0] > 1.0;
-       })) {
-    insphere_at(s);
-  }
+  const auto [a_below, a_above] = straddle(0x1p-30, 1.0, [&](double value) {
+    return insphere_ratios(value)[0] > 1.0;
+  });
+  insphere_at(a_below, InsphereStage::kInteger);
+  insphere_at(a_above, InsphereStage::kA);
   const auto [public_below, public_above] = straddle(0x1p-30, 1.0, [&](double s) {
     const double e[3] = {45.0, s, 0.0};
     return insphere_stage(pa, pb, pc, pd, e) != 0;
   });
-  PHX_CHECK(insphere_at(public_below) == 0);
-  PHX_CHECK(insphere_at(public_above) != 0);
+  PHX_CHECK(insphere_at(public_below, InsphereStage::kA) == 0);
+  PHX_CHECK(insphere_at(public_above, InsphereStage::kA) != 0);
   const double insphere_b_above =
       straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] >= 1.0 + 0x1p-40; })[1];
-  const double insphere_b_below =
-      straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] > 1.0 - 0x1p-40; })[0];
-  insphere_at(insphere_b_above);
-  insphere_at(insphere_b_below);
+  const double insphere_b_below = std::nextafter(
+      straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] > 1.0 - 0x1p-40; })[0],
+      0.0);
+  PHX_CHECK(insphere_ratios(insphere_b_below)[1] <= 1.0 - 0x1p-40);
+  insphere_at(insphere_b_above, InsphereStage::kB);
+  insphere_at(insphere_b_below, InsphereStage::kC);
   std::printf("orientation thresholds: %d checked; insphere B %.17g | %.17g\n", checked,
               insphere_ratios(insphere_b_below)[1], insphere_ratios(insphere_b_above)[1]);
+}
+
+// Shewchuk's insphere stage-C bound (and the bound on the rounding of its
+// result).
+constexpr double kInsphereBoundC = (71.0 + 1408.0 * kUnit) * kUnit * kUnit;
+constexpr double kInsphereResultBound = (3.0 + 8.0 * kUnit) * kUnit;
+
+// insphere's stage C just above and just below its bound decides with the
+// exact sign, and stage D decides below it (with a nonzero sign). a..d are
+// integer points of the sphere about (3, 4, 12) through the origin and e a
+// tiny multiple t of (1, phi, sqrt 2 - 1): the rounded differences are
+// a..d, so D~ = 0 and stage C's value is the first-order correction alone,
+// which matches D to far better than 2^-30; the straddle of |D| / errbound_C
+// at 1 +- 2^-30 (as for incircle) lands on t = 0x1.188f706df4dc4p-90
+// (stage C) and t = 0x1.188f70653060cp-90 (stage D).
+void test_insphere_stage_c_threshold() {
+  const double a[3] = {7.0, 16.0, 15.0}, b[3] = {15.0, 7.0, 16.0};
+  const double c[3] = {-1.0, 7.0, 24.0}, d[3] = {15.0, 8.0, 9.0};
+  const auto query = [](double t) {
+    return std::array<double, 3>{t, 0.6180339887498949 * t, 0.41421356237309503 * t};
+  };
+  // |D| / errbound_C, D~ and whether stage A decides.
+  const auto quantities = [&](double t) {
+    const std::array<double, 3> e = query(t);
+    const double* p[5] = {a, b, c, d, e.data()};
+    const auto [det, permanent] = insphere_stage_a(p);
+    const double rounded = insphere_value(p, false).estimate();
+    const double ratio = std::fabs(insphere_value(p, true).estimate()) /
+                         (kInsphereBoundC * permanent + kInsphereResultBound * std::fabs(rounded));
+    return std::tuple{ratio, rounded,
+                      std::fabs(det) > (16.0 + 224.0 * kUnit) * kUnit * permanent};
+  };
+  const double c_above = straddle(0x1p-110, 0x1p-60, [&](double t) {
+    return std::get<0>(quantities(t)) >= 1.0 + 0x1p-30;
+  })[1];
+  const double c_below = straddle(0x1p-110, 0x1p-60, [&](double t) {
+    return std::get<0>(quantities(t)) > 1.0 - 0x1p-30;
+  })[0];
+  PHX_CHECK(c_above == 0x1.188f706df4dc4p-90 && c_below == 0x1.188f70653060cp-90);
+  for (const auto& [t, expected] : {std::pair{c_above, InsphereStage::kC},
+                                    std::pair{c_below, InsphereStage::kD}}) {
+    const auto [ratio, rounded, stage_a] = quantities(t);
+    PHX_CHECK(rounded == 0.0 && !stage_a);
+    const std::array<double, 3> e = query(t);
+    const double* p[5] = {a, b, c, d, e.data()};
+    const int exact = -insphere_value(p, true).sign();
+    const InsphereDecision decision = insphere_decision(a, b, c, d, e.data());
+    PHX_CHECK(exact != 0 && decision.sign == exact && insphere(a, b, c, d, e.data()) == exact);
+    PHX_CHECK(decision.stage == expected);
+  }
+  std::printf("insphere stage C threshold: C %.17g | %.17g\n", std::get<0>(quantities(c_below)),
+              std::get<0>(quantities(c_above)));
 }
 
 }  // namespace
@@ -1093,10 +1272,12 @@ int main() {
   test_orientation_conventions();
   test_incircle_insphere_exact_zero_and_ulp();
   test_insphere_exact_paths();
+  test_insphere_expansion_stages_agree();
   test_power3d_stage_agrees();
   test_incircle_stages_agree();
   test_incircle_stage_thresholds();
   test_orientation_stage_thresholds();
+  test_insphere_stage_c_threshold();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();
