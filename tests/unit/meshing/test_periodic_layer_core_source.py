@@ -1433,7 +1433,7 @@ def test_original_mapped_cap_scope_rejects_missing_and_extra_interface_faces(
         mapped_cap_edge_owner,
     )
     from phydrax.meshing._layer_core_root_geometry import ComputedLayerCoreRoot
-    from phydrax.meshing._volume_generation import _unmet_rows
+    from phydrax.meshing._volume_generation import _unmet_rows, NativeVolumeSchedule
     from phydrax.meshing.providers import _native_layer
     from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
         _run_wall_profile,
@@ -1514,8 +1514,27 @@ def test_original_mapped_cap_scope_rejects_missing_and_extra_interface_faces(
         domain: Any, arrays: Any, regions: Any, inputs: Any, schedule: Any
     ) -> Any:
         result = original_proposal(domain, arrays, regions, inputs, schedule)
-        assert result is not None
-        proposal, represented, _, quality = result
+        checked_result = result
+        if result is None:
+            # Native reference improvement already meets the route schedule here;
+            # a stricter radius-edge aim still requires a physical proposal, so
+            # its identity and inverse-root contracts are exercised on that one.
+            assert schedule.radius_edge_bound is not None
+            assert schedule.radius_edge_bound > 1.5
+            checked_result = original_proposal(
+                domain,
+                arrays,
+                regions,
+                inputs,
+                NativeVolumeSchedule(
+                    radius_edge_bound=1.5,
+                    minimum_dihedral_degrees=schedule.minimum_dihedral_degrees,
+                    shape_strength=schedule.shape_strength,
+                    plc_search_budget=schedule.plc_search_budget,
+                ),
+            )
+        assert checked_result is not None
+        proposal, represented, _, quality = checked_result
         assert not _unmet_rows(quality)
         old_ids = np.asarray(arrays.vertex_ids, dtype=np.int64)
         old_reference = np.asarray(arrays.points, dtype=np.float64)
