@@ -55,9 +55,13 @@ class AxisCoordinates {
 };
 
 // keep[b] = 1 when f's interval enclosure over box b (lower then upper
-// corner) has value_lower <= 0 <= value_upper or is not a number.
-int32_t straddling(const IntervalProgramView& program, std::span<const double> boxes,
-                   std::vector<char>& keep) {
+// corner) has value_lower <= 0 <= value_upper or is not a number. The batch
+// kernel (elementwise arithmetic) evaluates when `general` is null (every
+// opcode batch-admissible), else the general executor `general`, box by box,
+// for every advertised opcode. Both are enclosures, not the same arithmetic:
+// leaves may differ between them where an enclosure decides a sign narrowly.
+int32_t straddling(const IntervalProgramView& program, const PreparedIntervalProgram* general,
+                   std::span<const double> boxes, std::vector<char>& keep) {
   const std::size_t count = boxes.size() / 6;
   keep.assign(count, 0);
   if (count == 0) return PHX_MC_OK;
@@ -71,11 +75,19 @@ int32_t straddling(const IntervalProgramView& program, std::span<const double> b
       upper[b * width + d] = boxes[6 * b + 3 + d];
     }
   }
-  const int32_t status = phx_mc_interval_program_batch(
-      program.instructions, program.instruction_count, program.indices, program.index_count,
-      program.parameters, program.parameter_count, lower.data(), upper.data(),
-      program.workspace_size, static_cast<int64_t>(count), 1);
-  if (status != PHX_MC_OK) return status;
+  if (general == nullptr) {
+    const int32_t status = phx_mc_interval_program_batch(
+        program.instructions, program.instruction_count, program.indices, program.index_count,
+        program.parameters, program.parameter_count, lower.data(), upper.data(),
+        program.workspace_size, static_cast<int64_t>(count), 1);
+    if (status != PHX_MC_OK) return status;
+  } else {
+    for (std::size_t b = 0; b < count; ++b) {
+      const int32_t status = general->execute(lower.data() + b * width, upper.data() + b * width,
+                                              program.workspace_size);
+      if (status != PHX_MC_OK) return status;
+    }
+  }
   const auto output = static_cast<std::size_t>(program.output);
   for (std::size_t b = 0; b < count; ++b)
     keep[b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
@@ -89,6 +101,17 @@ using Index = std::array<int64_t, 3>;
 int32_t possible_leaves(const IntervalProgramView& interval, const double* lower, const double* upper,
                         int32_t target_level, const BoxAcceptance* accept,
                         std::vector<DyadicLeaf>& leaves) {
+  // One dispatch per program: the batch kernel when it admits every opcode
+  // (as before), else the general executor (reciprocal fields).
+  PreparedIntervalProgram general;
+  const bool batch = batch_admissible(interval.instructions, interval.instruction_count);
+  if (!batch) {
+    const int32_t status =
+        general.bind(interval.instructions, interval.instruction_count, interval.indices,
+                     interval.index_count, interval.parameters, interval.parameter_count,
+                     interval.workspace_size);
+    if (status != PHX_MC_OK) return status;
+  }
   std::vector<Index> frontier{{0, 0, 0}}, children;
   std::vector<double> boxes;
   std::vector<char> valid, keep;
@@ -110,7 +133,7 @@ int32_t possible_leaves(const IntervalProgramView& interval, const double* lower
       }
       if (valid[b]) boxes.insert(boxes.end(), frontier_boxes[b].begin(), frontier_boxes[b].end());
     }
-    const int32_t status = straddling(interval, boxes, keep);
+    const int32_t status = straddling(interval, batch ? nullptr : &general, boxes, keep);
     if (status != PHX_MC_OK) return status;
     children.clear();
     std::size_t evaluated = 0;

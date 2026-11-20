@@ -30,6 +30,10 @@ class PreparedIntervalProgram {
   int64_t workspace_size_ = -1;
 };
 
+// Whether phx_mc_interval_program_batch executes every opcode of a program
+// (valid bytecode assumed): the elementwise subset, without the reciprocal.
+bool batch_admissible(const int64_t* instructions, int64_t instruction_count) noexcept;
+
 // Straight-line program executed at points in binary64 (no rounding control):
 // floating-point proposals that bound nothing. `seeds` is the complete
 // workspace template (seed values at their entries); the first

@@ -112,10 +112,50 @@ void level_limit_refused() {
   PHX_CHECK(leaves.empty());
 }
 
+// A reciprocal row the batch kernel refuses sends the box tree to the
+// general executor: the unit sphere with a dead reciprocal (1 / 1 into an
+// unused entry) gets an enclosure from it. The two executors' arithmetic
+// differs, but on this program and lattice they decide every sign alike, so
+// the leaves and roots equal the plain sphere's from the batch kernel.
+void general_executor_matches_batch() {
+  constexpr int64_t kReciprocal = 11;
+  const Sphere plain;
+  Sphere dead;
+  dead.rows.insert(dead.rows.end(), {kReciprocal, 9, 1, 3, -1, -1, -1, 0});
+  dead.seeds.push_back(0);
+  std::vector<double> low = dead.seeds, high = dead.seeds;
+  PHX_CHECK(phx_mc_interval_program_batch(dead.rows.data(),
+                                           static_cast<int64_t>(dead.rows.size() / 8), nullptr, 0,
+                                           dead.parameters.data(), 1, low.data(), high.data(),
+                                           static_cast<int64_t>(dead.seeds.size()), 1,
+                                           1) == PHX_MC_INVALID_INPUT);
+  const double lower[3]{-1.3, -1.1, -0.9}, upper[3]{1.7, 1.2, 1.4};
+  for (const int32_t level : {3, 6}) {
+    phx::mc::PossibleZeroBoxes batch, general;
+    PHX_CHECK(phx::mc::possible_zero_boxes(plain.interval(), plain.point(), lower, upper, level,
+                                           batch) == PHX_MC_OK);
+    PHX_CHECK(phx::mc::possible_zero_boxes(dead.interval(), dead.point(), lower, upper, level,
+                                           general) == PHX_MC_OK);
+    PHX_CHECK(!batch.leaves.empty() && batch.leaves.size() == general.leaves.size() &&
+              batch.roots.size() == general.roots.size());
+    for (size_t b = 0; b < std::min(batch.leaves.size(), general.leaves.size()); ++b)
+      PHX_CHECK(batch.leaves[b].level == general.leaves[b].level &&
+                batch.leaves[b].index == general.leaves[b].index &&
+                batch.leaves[b].box == general.leaves[b].box &&
+                batch.leaves[b].representability == general.leaves[b].representability);
+    for (size_t r = 0; r < std::min(batch.roots.size(), general.roots.size()); ++r)
+      PHX_CHECK(batch.roots[r].negative == general.roots[r].negative &&
+                batch.roots[r].positive == general.roots[r].positive &&
+                batch.roots[r].root == general.roots[r].root);
+    PHX_CHECK(batch.leaf_roots == general.leaf_roots && batch.leaf_offsets == general.leaf_offsets);
+  }
+}
+
 }  // namespace
 
 int main() {
   acceptance_stops_subdivision();
   level_limit_refused();
+  general_executor_matches_batch();
   return phx::mc::test::finish("test_box_tree");
 }

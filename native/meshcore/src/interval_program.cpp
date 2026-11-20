@@ -99,6 +99,25 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
     (std::uint64_t{1} << kPowerElementwise) | (std::uint64_t{1} << kTan);
 
+// The opcodes phx_mc_interval_program_batch executes (the elementwise kernels'
+// subset; it refuses the reciprocal, opcode 11, by contract).
+constexpr std::uint64_t kBatchOpcodes =
+    (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
+    (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kSubtractSame) |
+    (std::uint64_t{1} << kMultiply) |
+    (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
+    (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
+    (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
+    (std::uint64_t{1} << kAbsolute) | (std::uint64_t{1} << kCompare) |
+    (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kSelect) |
+    (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
+    (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
+    (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
+    (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
+    (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+    (std::uint64_t{1} << kTan) |
+    (std::uint64_t{1} << kPowerElementwise);
+
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
 // the test holds, the event clears the flags of box indices[boxes + k], or of
@@ -1319,6 +1338,15 @@ void execute_jet(const int64_t* instructions, int64_t instruction_count, const i
 
 }  // namespace
 
+bool phx::mc::batch_admissible(const int64_t* instructions, int64_t instruction_count) noexcept {
+  for (int64_t row = 0; row < instruction_count; ++row) {
+    const std::int64_t opcode = row_at(instructions, row).opcode;
+    if (opcode < 0 || opcode >= 64 || !(kBatchOpcodes & (std::uint64_t{1} << opcode)))
+      return false;
+  }
+  return true;
+}
+
 int32_t phx::mc::PreparedIntervalProgram::bind(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
@@ -1415,25 +1443,8 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
     if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
                        parameter_count, workspace_size))
       return PHX_MC_INVALID_INPUT;
-    constexpr std::uint64_t supported =
-        (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
-        (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kSubtractSame) |
-        (std::uint64_t{1} << kMultiply) |
-        (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
-        (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
-        (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
-        (std::uint64_t{1} << kAbsolute) | (std::uint64_t{1} << kCompare) |
-        (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kSelect) |
-        (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
-        (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
-        (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-        (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
-        (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
-        (std::uint64_t{1} << kTan) |
-        (std::uint64_t{1} << kPowerElementwise);
-    for (int64_t row = 0; row < instruction_count; ++row)
-      if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))
-        return PHX_MC_INVALID_INPUT;
+    if (!phx::mc::batch_admissible(instructions, instruction_count))
+      return PHX_MC_INVALID_INPUT;
     if (count == 0 || workspace_size == 0) return PHX_MC_OK;
     return phx::mc::parallel_for(
         static_cast<std::size_t>(count), {64, static_cast<uint32_t>(parallelism)},
