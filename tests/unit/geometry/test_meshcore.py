@@ -4,7 +4,6 @@
 
 
 import importlib.metadata
-import math
 import os
 import subprocess
 import sys
@@ -2599,23 +2598,25 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
 
 
 def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> None:
-    # Built toward 500 triangles at h^2 / 4 and certified at 2/3 of that:
-    # every triangle is proved forward without a refusal, but the tube bounds
-    # the zero set beyond the tolerance. One repair into 0.8 of the tolerance
-    # gives the reverse proof room, so both directions certify.
+    # A fixed surface (an icosphere scaled by 0.996, no construction): at
+    # this tolerance every triangle is proved forward without a refusal, but
+    # the tube bounds the zero set beyond the tolerance. One repair into 0.8
+    # of the tolerance gives the reverse proof room, so both directions
+    # certify.
     value, gradient, branches = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(5)
-    edge = math.sqrt(16.0 * math.pi / (math.sqrt(3.0) * 500.0))
-    built = edge * edge / 4.0
-    remeshed = zero_set_remesh(vertices, faces, value, built, built, edge, 30.0)
-    tolerance = built / 1.5
+    vertices, faces = _icosphere(3)
+    vertices = vertices * 0.996
+    edge = float(
+        np.mean(np.linalg.norm(vertices[faces[:, 1]] - vertices[faces[:, 0]], axis=1))
+    )
+    tolerance = 0.0088
     certificate = zero_set_certify(
-        remeshed.vertices,
-        remeshed.triangles,
+        vertices,
+        faces,
         branches,
         gradient,
         tolerance,
-        remeshed.orientation,
+        1,
         np.empty((0, 3), dtype=np.float64),
         np.empty((0, 3), dtype=np.int64),
         np.empty((0, 2, 3), dtype=np.float64),
@@ -2623,12 +2624,12 @@ def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> No
         edge,
         30.0,
     )
-    assert certificate.counters[1] == 0
+    assert certificate.counters[1] == 0 and certificate.counters[2] == 0
     assert certificate.counters[4] > 0 and certificate.counters[5] > 1
     assert certificate.counters[8] == 1
     assert certificate.distance <= tolerance
     assert certificate.reverse_distance <= tolerance
-    assert certificate.triangles.shape[0] > remeshed.triangles.shape[0]
+    assert certificate.triangles.shape[0] > faces.shape[0]
 
 
 def _widened_boxes(
