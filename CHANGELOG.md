@@ -400,6 +400,13 @@
   instructions). Sphere, grid-torus and CAD counts change by at most 0.004 %
   (a seed on a cell face may now be located in the other cell holding it);
   declared output change.
+- Lattice seeding lists its sites sparsely, cell by cell of the recovered
+  mesh where the target qualifies, instead of in a dense table over the
+  bounding box at the field's smallest size, so its memory and time follow
+  the seeded volume: on a 100:1:1 bar the refine call's memory growth drops
+  from about 190 MB to 9 MB, seeding on a graded cube from 0.51 s to 0.016 s,
+  and a cube graded 0.002-0.02 no longer exhausts memory. Seed order is
+  unchanged, so every output is byte-identical.
 - Native planar triangulation: `Triangulation2D::edge_index` is written as
   selects with the same result as the scan, so Apple clang compiles it without
   branches; Ruppert refinement cycles drop 5-9 % on Apple clang, GCC is
