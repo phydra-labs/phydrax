@@ -77,9 +77,10 @@ set(PHX_MC_SOURCES
   src/predicates.cpp
   src/quadratic_bounds.cpp
   src/restricted_delaunay.cpp
+  src/surface_adapt.cpp
+  src/surface_certify.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
-  src/surface_remesh.cpp
   src/tet_mesh.cpp
   src/tet_mesh_collapse.cpp
   src/tet_mesh_export.cpp
@@ -103,6 +104,8 @@ set(PHX_MC_SOURCES
   src/cad_refine2d.cpp
   src/cad_curves.cpp
   src/cad_curves_capi.cpp
+  src/verify_chart_partition.cpp
+  src/verify_surface_embedding.cpp
   src/verify_cad_fidelity.cpp
 )
 set(PHX_MC_HEADERS
@@ -136,7 +139,6 @@ set(PHX_MC_HEADERS
   src/predicates.hpp
   src/restricted_delaunay.hpp
   src/rounding.hpp
-  src/scratch_faces.hpp
   src/source_construction.hpp
   src/tet_mesh.hpp
   src/tet_mesh_handle.hpp
@@ -148,6 +150,8 @@ set(PHX_MC_HEADERS
   src/triangulation2d.hpp
   src/triangulation3d.hpp
   src/zero_set_admission.hpp
+  src/surface_adapt.hpp
+  src/surface_certify.hpp
   src/elementary.hpp
   src/directed_norm.hpp
   src/directed_interval.hpp
@@ -162,6 +166,8 @@ set(PHX_MC_HEADERS
   src/cad_curves.hpp
   src/cad_curve_discretization.hpp
   src/refine_queue.hpp
+  src/verify_chart_partition.hpp
+  src/verify_surface_embedding.hpp
   src/verify_cad_fidelity.hpp
 )
 
@@ -284,7 +290,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_hex_topology)
   phx_mc_add_test(test_surface_envelope)
   phx_mc_add_test(test_surface_mesh)
-  phx_mc_add_test(test_surface_remesh)
+  phx_mc_add_test(test_surface_certify)
   phx_mc_add_test(test_zero_set_admission)
   phx_mc_add_test(test_elementary)
   phx_mc_add_test(test_planar_partition)
@@ -292,5 +298,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_cad_geometry)
   phx_mc_add_test(test_cad_refine2d)
   phx_mc_add_test(test_cad_curves)
+  phx_mc_add_test(test_verify_chart_partition)
+  phx_mc_add_test(test_verify_surface_embedding)
   phx_mc_add_test(test_verify_cad_fidelity)
 endif()

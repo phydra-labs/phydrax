@@ -30,7 +30,7 @@ import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing.providers._native_options as options_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
-from ..._meshcore import MeshcoreError, zero_set_remesh
+from ..._meshcore import MeshcoreError, zero_set_certify, zero_set_remesh
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1863,16 +1863,31 @@ def implicit_layer_wall(
                 )
             )
         try:
+            value_box, gradient_box = (
+                value_program.box_program(),
+                gradient_program.box_program(),
+            )
             remeshed = zero_set_remesh(
                 vertices,
                 faces,
-                value_program.box_program(),
-                gradient_program.box_program(),
+                value_box,
                 scaffold_distance,
                 scaffold_distance,
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
-                admission_limited_coarsening=False,
+            )
+            certified = zero_set_certify(
+                remeshed.vertices,
+                remeshed.triangles,
+                value_box,
+                gradient_box,
+                scaffold_distance,
+                remeshed.orientation,
+                vertices,
+                faces,
+                scaffold_distance,
+                edge_length,
+                _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
         except (MeshcoreError, ValueError, OverflowError) as error:
             raise MeshingFailure(
@@ -1881,8 +1896,9 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             ) from error
-        vertices = np.array(remeshed.vertices, dtype=np.float64, copy=True)
-        faces = np.array(remeshed.triangles, dtype=np.int64, copy=True)
+        distance = certified.distance
+        vertices = np.array(certified.vertices, dtype=np.float64, copy=True)
+        faces = np.array(certified.triangles, dtype=np.int64, copy=True)
         worst = float(np.max(_face_radius_edge_ratios(vertices, faces)))
         if not worst <= radius_edge_bound:
             raise MeshingFailure(
@@ -1893,13 +1909,19 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             )
-        distance = float(remeshed.distance)
+        # `distance` bounds the remeshed wall: the certified bound of proved
+        # faces and the scaffold distance of faces kept from the scaffold.
         evidence = (
             ("carrier_remeshed", 1.0),
             *before,
             *_carrier_quality(vertices, faces, "after"),
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_unmet_count", float(remeshed.counters[4])),
+            ("carrier_remesh_transversality_refusals", float(certified.counters[0])),
+            ("carrier_remesh_distance_refusals", float(certified.counters[1])),
+            ("carrier_remesh_embedding_refusals", float(certified.counters[2])),
+            ("carrier_remesh_kept_carrier_triangles", float(certified.counters[3])),
+            ("carrier_remesh_repair_splits", float(certified.counters[4])),
         )
     wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)
     return ImplicitLayerWall(

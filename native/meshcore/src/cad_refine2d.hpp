@@ -46,12 +46,30 @@ struct CadRefine2DStats {
   double invalid_metric_point[2] = {0.0, 0.0};
   int64_t excluded_refusals = 0;
   int64_t fixed_triangles_skipped = 0;
+  int64_t relocations_tried = 0;
+  int64_t relocations_accepted = 0;
+  int64_t relocations_failed = 0;
+};
+
+enum class CadRefine2DRefusal : uint8_t {
+  none, encroachment, outside, proximity, nonstar, excluded
+};
+
+struct CadRefine2DUnresolved {
+  int32_t triangle = -1;
+  bool bad_size = false;
+  bool bad_angle = false;
+  CadRefine2DRefusal refusal = CadRefine2DRefusal::none;
+  double candidate[2] = {0.0, 0.0};
+  int32_t segment = -1;
+  bool relocation_failed = false;
 };
 
 struct CadRefine2DResult {
   Triangulation2D triangulation;
   std::vector<int32_t> vertex_map;
   CadRefine2DStats stats;
+  std::vector<CadRefine2DUnresolved> unresolved;
 };
 
 // The caller owns the callback context and supplies a metric graded to boundary
@@ -62,6 +80,11 @@ struct CadRefine2DResult {
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
 // Invalid metrics return PHX_MC_INVALID_INPUT and record the evaluation point.
+// On normal and point-cap exits, unresolved lists failing live triangles in
+// slot order with their last refusal, if any; a none refusal has no candidate.
+// An encroachment segment is an index into the caller's input segment array.
+// Encroachment refusals record whether relocation was attempted and failed;
+// its outcome is also counted in the relocation statistics.
 // Triangles with three fixed input vertices are neither refined nor scanned;
 // fixed_triangles_skipped counts them in the final mesh. The optional admission
 // callback rejects candidate points before their metric is evaluated.

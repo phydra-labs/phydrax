@@ -953,12 +953,14 @@ static int32_t create_tet_mesh(
         source_face_planes, source_face_plane_tolerances};
     // Unless `validate`, the recovery's adjacency is adopted and, without an
     // explicit source complex or witnesses, the mesh is its own source bank
-    // (RecoveredTopology).
+    // (RecoveredTopology). The recovery's Delaunay proof is geometric, so it
+    // holds either way.
     phx::mc::RecoveredTopology recovered;
     if (recovery != nullptr && !validate) {
       recovered.neighbors = recovery->tet_neighbors;
       recovered.self_covered = !explicit_source && witnesses.empty();
     }
+    recovered.delaunay = recovery != nullptr && recovery->delaunay;
     const int32_t status = handle->state.build(
         input_span(request->points, request->point_count * 3),
         input_span(request->tetrahedra, request->tetrahedron_count * 4),

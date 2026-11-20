@@ -398,6 +398,55 @@ void graph_breakpoints() {
   }
 }
 
+// A repeated linear knot can change sheets. Evaluating the ordinary right
+// span for both endpoints loses the exact left limit, including for NURBS.
+void one_sided_spline_jets() {
+  for (bool rational : {false,true}) {
+    Fixture f;
+    const double w=rational ? 2 : 1;
+    const auto spline=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE,{1,4,2},
+        {0,0,0.5,0.5,1,1, -1,0, 0,0, 2*pi,0, 2*pi+1,0, 1,w,w,1});
+    const auto affine=f.node(PHX_MC_CAD_NODE_AFFINE,{spline,2},{1,0,0,1,0,0});
+    const auto reversed=f.node(PHX_MC_CAD_NODE_REPARAMETERIZED,{spline,1},{0,1});
+    const auto offset=f.node(PHX_MC_CAD_NODE_OFFSET_CURVE,{spline,0},{0.2});
+    CadGeometry geometry; PHX_CHECK(geometry.bind(f.model())==PHX_MC_OK);
+    EvaluationWorkspace workspace;
+    for (int32_t node : {spline,affine,reversed,offset}) {
+      double left[2]{}, right[2]{}, ordinary[2]{}, repeated[2]{};
+      const bool reverse=node==reversed;
+      PHX_CHECK(geometry.jets_in_span(node,0.5,reverse ? 0.75 : 0.25,0,left,workspace));
+      PHX_CHECK(geometry.jets_in_span(node,0.5,reverse ? 0.25 : 0.75,0,right,workspace));
+      PHX_CHECK(left[0]==0 && right[0]==2*pi);
+      PHX_CHECK_NEAR(left[1],right[1],1e-14);
+      const double knot=0.5;
+      PHX_CHECK(geometry.jets(node,&knot,0,ordinary,workspace));
+      PHX_CHECK(geometry.jets(node,&knot,0,repeated,workspace));
+      PHX_CHECK(std::memcmp(ordinary,repeated,sizeof ordinary)==0);
+      PHX_CHECK(!geometry.jets_in_span(node,0.9,0.25,0,repeated,workspace));
+    }
+  }
+}
+
+// At a simple interior knot of a cubic, both one-sided jets through order two
+// agree with ordinary evaluation; this catches an incorrect span override.
+void one_sided_cubic_jets() {
+  Fixture f;
+  const auto spline=f.node(PHX_MC_CAD_NODE_BSPLINE_CURVE,{3,5,2},
+      {0,0,0,0,0.5,1,1,1,1, 0,0, 0.1,0.3, 0.5,-0.2, 0.8,0.4, 1,0, 1,1,1,1,1});
+  CadGeometry geometry; PHX_CHECK(geometry.bind(f.model())==PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  double left[6]{}, right[6]{}, ordinary[6]{};
+  const double knot=0.5;
+  PHX_CHECK(geometry.jets_in_span(spline,knot,0.25,2,left,workspace));
+  PHX_CHECK(geometry.jets_in_span(spline,knot,0.75,2,right,workspace));
+  PHX_CHECK(geometry.jets(spline,&knot,2,ordinary,workspace));
+  for (int i=0;i<6;++i) {
+    PHX_CHECK_NEAR(left[i],ordinary[i],1e-12);
+    PHX_CHECK_NEAR(right[i],ordinary[i],1e-12);
+  }
+  PHX_CHECK(std::memcmp(right,ordinary,sizeof right)==0);
+}
+
 // A face-curvature kink at a surface knot is not a curve breakpoint. Dense
 // independent sag sampling catches relying on a smooth size integrand there.
 void surface_knot_crossing() {
@@ -647,6 +696,7 @@ void intersection_chart_shift() {
 int main() {
   line_integral(); circle_integral(); ellipse_integral(); shared_nurbs_and_seam(); cylindrical_seam();
   cubic_inflection(); knot_breakpoint(); span_allocation(); graph_breakpoints(); degree_fifteen_alias(); intersection_integral();
+  one_sided_spline_jets(); one_sided_cubic_jets();
   surface_knot_crossing(); degree_thirty_one_composite(); intersection_chart_shift(); quadric_closed_integral();
   anisotropic_small_features(); same_curve_small_feature(); gradation(); c_entry();
   return phx::mc::test::finish("test_cad_curves");

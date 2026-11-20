@@ -1134,7 +1134,7 @@ bool CadGeometry::expand_template(const Node& node, const double* point, int ord
 }
 
 bool CadGeometry::expand_bspline_curve(const Node& node, double t, int order,
-                                       Taylor* out) const {
+                                       int span_override, Taylor* out) const {
   const int degree = static_cast<int>(node.integers[0]);
   const int count = static_cast<int>(node.integers[1]);
   const int dimension = static_cast<int>(node.integers[2]);
@@ -1142,7 +1142,8 @@ bool CadGeometry::expand_bspline_curve(const Node& node, double t, int order,
   const double* points = knots + count + degree + 1;
   const double* weights = points + count * dimension;
   if (!(t >= knots[degree] && t <= knots[count])) return false;
-  const int span = knot_span(knots, degree, count, t);
+  const int span = span_override >= 0 ? span_override : knot_span(knots, degree, count, t);
+  if (span_override >= 0 && !(t >= knots[span] && t <= knots[span + 1])) return false;
   double ders[kMaxOrder + 1][kMaxDegree + 1];
   basis_derivatives(knots, span, degree, t, order, ders);
   const Truncation local{1, order};
@@ -1468,7 +1469,9 @@ bool CadGeometry::expand(int32_t index, const double* point, int order, Taylor* 
     case PHX_MC_CAD_NODE_TEMPLATE:
       return expand_template(node, point, order, out, workspace);
     case PHX_MC_CAD_NODE_BSPLINE_CURVE:
-      return expand_bspline_curve(node, point[0], order, out);
+      return expand_bspline_curve(node, point[0], order,
+                                  workspace.span_node == &node
+                                      ? static_cast<int>(workspace.span_chart) : -1, out);
     case PHX_MC_CAD_NODE_BSPLINE_SURFACE:
       return expand_bspline_surface(node, point, order, out);
     case PHX_MC_CAD_NODE_TSPLINE_SURFACE:
@@ -1660,6 +1663,9 @@ bool CadGeometry::jets_in_span(int32_t index, double parameter, double span_inte
         return false;
       const int64_t knot_count=n.integers[0]+n.integers[1]+1;
       for (int64_t i=0;i<knot_count;++i) if (interior==n.reals[i]) return false;
+      selected=&n;
+      chart=knot_span(n.reals,static_cast<int>(n.integers[0]),
+                      static_cast<int>(n.integers[1]),interior);
       break;
     }
     if (n.kind==PHX_MC_CAD_NODE_REPARAMETERIZED) {
