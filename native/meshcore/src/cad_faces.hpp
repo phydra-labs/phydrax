@@ -61,23 +61,21 @@ struct CadFaceMesh {
 // needs the curvature size).
 inline double pole_ring_width(double spacing) { return 3.0 * spacing; }
 
-// Share alpha of a face's theta * tol taken by a curve chord's lens (the
-// chart arc vs the chart chord, mapped); the face triangles that touch a
-// curve (one layer) keep their own interpolation error within the rest,
-// (1 - alpha) theta tol, so a fidelity check that adds the two per point
-// (V3) holds there; the rest of the face keeps theta tol. Derivation: per
-// unit curve length the boundary layer holds n = 1/L_c + 1/e vertices, with
-// chords L_c = sqrt(8 alpha theta tol / kappa_l) (lens ~ kappa_l L^2 / 8,
-// kappa_l the curvature of the mapped chart arc off its chord) and layer
-// edges e = sqrt(3) R, R = sqrt(2 (1 - alpha) theta tol / kappa) (own error
-// ~ kappa R^2 / 2). n ~ a / sqrt(alpha) + b / sqrt(1 - alpha) with
-// a / b = sqrt(3 kappa_l / (4 kappa)) is smallest at alpha / (1 - alpha) =
-// (a / b)^(2/3), and n(1/2) / n_min = sqrt(2) (a + b) / (a^(2/3) +
-// b^(2/3))^(3/2) <= 1.03 for a / b in [0.41, 2.4]. Measured on the quadric
-// fixture's chords: kappa_l / kappa_max in [1.4, 2.1] on the radius-1
-// cylinder's faces and in [0, 0.75] (median 0.22) on the radius-0.6 one,
-// i.e. a / b up to 1.26 (median 0.41 on the latter; below it the lens
-// is small and its share idle): the minimum is flat, so alpha = 1/2.
+// Largest share alpha of a face's theta * tol taken by a curve chord's lens
+// (the chart arc vs the chart chord, mapped). The share is per chord: the
+// face triangles next to a chord (one layer) keep their own interpolation
+// error within theta tol minus that chord's lens, so a fidelity check that
+// adds the two per point (V3) holds there; the rest of the face keeps theta
+// tol. The curve stage sizes a chord so that layer edges of its own length
+// fit: kappa L^2 / 4 + kappa_l L^2 / 8 <= theta tol (kappa_l the curvature
+// of the mapped chart arc off its chord), i.e. the chord's share is
+// kappa_l / (2 kappa + kappa_l): none on a chart-straight seam, 1/2 at
+// kappa_l = 2 kappa. Beyond that (a nearly flat face under a curved trim)
+// the lens is capped at alpha theta tol, L <= sqrt(8 alpha theta tol /
+// kappa_l), so the layer never drops below (1 - alpha) theta tol.
+// Measured on the quadric fixture's chords: kappa_l / kappa_max in
+// [1.4, 2.1] on the radius-1 cylinder's faces and in [0, 0.75] (median
+// 0.22) on the radius-0.6 one.
 inline constexpr double kLensShare = 0.5;
 
 // Exact chart segment contact under the shared-vertex/chord rule above.

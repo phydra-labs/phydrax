@@ -28,6 +28,9 @@ struct Context {
   double feature_size = std::numeric_limits<double>::infinity();
   bool failed = false;
   int32_t failure_status = PHX_MC_UNRESOLVED;
+  // Per corner: the smallest end size of the curves meeting there (null
+  // while those are measured).
+  const std::vector<double>* corner_sizes = nullptr;
 
   double parameter(double s) const {
     const double* r = geometry.model().curve_ranges + 2 * curve;
@@ -79,15 +82,17 @@ struct Context {
     const double ct = controls.curve_tolerances[curve];
     if (curvature > 0 && std::isfinite(ct)) h = std::min(h, std::sqrt(8 * theta * ct / curvature));
     for (const Use& use : uses) {
-      // The curve takes each face's smallest boundary-layer size, min(h,
-      // sqrt(4 (1 - alpha) theta tol / |k|max)) (cad::fidelity_metric at the
-      // layer's share, kLensShare): its segments are fixed, and a segment
-      // longer than the face's unit across the curvature leaves the kernel
-      // triangles it can neither split nor meet (measured on the quadric
-      // with the tangent's size instead: proximity refusals where the
-      // intersection curve runs along the cylinder axis). Its chords also
-      // keep their lens (the face's chart arc vs the chart chord, mapped)
-      // within alpha theta tol: L <= sqrt(8 alpha theta tol / kappa_l).
+      // The curve takes each face's boundary-layer size: its segments are
+      // fixed, and a segment longer than the face's unit across the
+      // curvature leaves the kernel triangles it can neither split nor meet
+      // (measured on the quadric with the tangent's size instead: proximity
+      // refusals where the intersection curve runs along the cylinder axis).
+      // A chord of length L has the lens kappa_l L^2 / 8 (the face's chart
+      // arc vs the chart chord, mapped), and the layer triangles on it keep
+      // their own error within the rest of theta tol (cad_faces.hpp); with
+      // layer edges L as well, kappa L^2 / 4 + kappa_l L^2 / 8 <= theta tol:
+      // L <= sqrt(4 theta tol / (kappa + kappa_l / 2)). The lens share stays
+      // at most kLensShare: L <= sqrt(8 alpha theta tol / kappa_l).
       double face_size=0;
       bool resolved=false, evaluated=false;
       for (int attempt=0; attempt<9 && !resolved; ++attempt) {
@@ -107,9 +112,6 @@ struct Context {
         const double kappa=std::max(std::abs(differential.curvatures[0]),
                                     std::abs(differential.curvatures[1]));
         const double tolerance=controls.face_tolerances[use.face];
-        const double layer=(1-kLensShare)*theta*tolerance;
-        if (kappa>0 && 4*layer<kappa*face_size*face_size)
-          face_size=std::sqrt(4*layer/kappa);
         // kappa_l: the mapped chart arc's acceleration |DS p''| over
         // |DS p'|^2. The chord point is taken at the same parameter, so the
         // arc's deviation p - chord ~ p'' (t - a)(b - t) / 2 counts whole.
@@ -118,10 +120,13 @@ struct Context {
           tangent[k]=sj[3+k]*pc[2]+sj[6+k]*pc[3];
           acceleration[k]=sj[3+k]*pc[4]+sj[6+k]*pc[5];
         }
-        const double kappa_l=std::hypot(acceleration[0],acceleration[1],acceleration[2])/
+        double kappa_l=std::hypot(acceleration[0],acceleration[1],acceleration[2])/
             (tangent[0]*tangent[0]+tangent[1]*tangent[1]+tangent[2]*tangent[2]);
-        if (kappa_l>0 && std::isfinite(kappa_l) &&
-            8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
+        if (!std::isfinite(kappa_l)) kappa_l=0;
+        const double share=kappa+0.5*kappa_l;
+        if (share>0 && 4*theta*tolerance<share*face_size*face_size)
+          face_size=std::sqrt(4*theta*tolerance/share);
+        if (kappa_l>0 && 8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
           face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
         // Within the pole ring zone of the face (pole_ring_width, the face
@@ -206,6 +211,11 @@ bool discretize(Context& c, std::vector<double>& points) {
       if (c.failed) return false;
     }
     borders.push_back(table.size()-1);
+  }
+  if (c.corner_sizes) {
+    const auto& corners=*c.corner_sizes;
+    table.front().h=std::min(table.front().h,corners[static_cast<std::size_t>(m.curve_corners[2*c.curve])]);
+    table.back().h=std::min(table.back().h,corners[static_cast<std::size_t>(m.curve_corners[2*c.curve+1])]);
   }
   // Equal-integral steps in a linearly graded field can differ by exp(slope);
   // use log(g), which is also no larger than the requested Lipschitz g-1.
@@ -587,8 +597,25 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
   CurveDiscretization output; output.offsets.push_back(0);
   output.statistics.sag_splits_per_curve.resize(static_cast<std::size_t>(m.curve_count),0);
   std::vector<std::vector<double>> all_points(static_cast<std::size_t>(m.curve_count));
+  // A corner's first segments share one size: the smallest end size of the
+  // curves meeting there, graded into each curve. Unequal first segments
+  // leave a corner triangle on two fixed chords that no kernel point can
+  // improve (measured: 0.99 h and 0.73 h chords at an 89 deg corner of the
+  // quadric, a 36.3 deg triangle at h = 0.02286).
+  std::vector<double> corner_sizes(static_cast<std::size_t>(m.corner_count),
+                                   std::numeric_limits<double>::infinity());
   for (int32_t e=0;e<m.curve_count;++e) {
     Context c{geometry,controls,output.statistics,e,uses[e]};
+    for (int k=0;k<2;++k) {
+      const Sample end=c.sample(k);
+      if (c.failed) return c.failure_status;
+      double& size=corner_sizes[static_cast<std::size_t>(m.curve_corners[2*e+k])];
+      size=std::min(size,end.h);
+    }
+  }
+  for (int32_t e=0;e<m.curve_count;++e) {
+    Context c{geometry,controls,output.statistics,e,uses[e]};
+    c.corner_sizes=&corner_sizes;
     if (!discretize(c,all_points[e])) return c.failure_status;
   }
   std::vector<double> limits(static_cast<std::size_t>(m.curve_count),std::numeric_limits<double>::infinity());
@@ -596,6 +623,7 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
     return PHX_MC_INVALID_INPUT;
   for (int32_t e=0;e<m.curve_count;++e) {
     Context c{geometry,controls,output.statistics,e,uses[e]};
+    c.corner_sizes=&corner_sizes;
     auto& points=all_points[e];
     if (std::isfinite(limits[e])) {
       c.feature_size=limits[e];
