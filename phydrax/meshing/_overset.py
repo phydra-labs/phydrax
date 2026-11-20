@@ -4771,54 +4771,62 @@ class OversetConnectivity(StrictModule, NonTrainableState):
 _NATIVE_CELL_KINDS = frozenset({"tetrahedron", "hexahedron"})
 
 
-def _native_assembly_supported(
+def _p1q1_part(part: MeshPart, spec: OversetPartSpec, /) -> bool:
+    """A 3D part of affine tetrahedra or trilinear hexahedra (P1/Q1 maps on
+    the mesh vertices) without a source solid query."""
+    if spec.solid_query is not None or not isinstance(part.carrier, CellMeshingResult):
+        return False
+    result = part.carrier
+    mesh = result.mesh
+    if (
+        mesh.ambient_dimension != 3
+        or mesh.topological_dimension != 3
+        or isinstance(mesh.connectivity, PolyhedralConnectivity)
+        or result.geometry.source_map is not None
+    ):
+        return False
+    elements, routes, points = result.geometry.resolve(mesh)
+    if not np.array_equal(np.asarray(points), np.asarray(mesh.coordinates)):
+        return False
+    return all(
+        block.cell_kind in _NATIVE_CELL_KINDS
+        and isinstance(element, FiniteElementSpec)
+        and element.degree == 1
+        and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+        for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+    )
+
+
+def _require_certified_validity(
     parts: tuple[MeshPart, ...], specs: tuple[OversetPartSpec, ...], /
-) -> bool:
-    """Whether ``phx_mc_overset_assemble`` owns these parts.
+) -> None:
+    """Refuse P1/Q1 parts whose audit did not certify every cell valid.
 
-    It does for 3D parts of affine tetrahedra and trilinear hexahedra (P1/Q1
-    maps on the mesh vertices) without a source solid query, when meshcore
-    loads. The Python owner stays the path for 2D, polyhedral, curved and
-    solid-query parts and for a missing library. Such P1/Q1 parts require
-    certified validity of every cell under either owner.
+    Applies before any owner dispatch: skipped or policy-dispositioned
+    validity findings are refused, since positive measure alone does not
+    exclude negative corner Jacobians.
     """
-    from .._meshcore import meshcore_available
-
     for part, spec in zip(parts, specs, strict=True):
-        if spec.solid_query is not None or not isinstance(
-            part.carrier, CellMeshingResult
+        if _p1q1_part(part, spec) and not (
+            _cell_result(part).audit.validity.all_certified
         ):
-            return False
-        result = part.carrier
-        mesh = result.mesh
-        if (
-            mesh.ambient_dimension != 3
-            or mesh.topological_dimension != 3
-            or isinstance(mesh.connectivity, PolyhedralConnectivity)
-            or result.geometry.source_map is not None
-        ):
-            return False
-        elements, routes, points = result.geometry.resolve(mesh)
-        if not np.array_equal(np.asarray(points), np.asarray(mesh.coordinates)):
-            return False
-        if not all(
-            block.cell_kind in _NATIVE_CELL_KINDS
-            and isinstance(element, FiniteElementSpec)
-            and element.degree == 1
-            and np.array_equal(np.asarray(route), np.asarray(block.vertices))
-            for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
-        ):
-            return False
-    # Every cell must be proved valid by the carrier's audit (not skipped or
-    # dispositioned by policy), whichever owner assembles: positive measure
-    # alone does not exclude negative corner Jacobians.
-    for part in parts:
-        if not _cell_result(part).audit.validity.all_certified:
             raise ValueError(
                 "Overset parts require certified cell validity: part "
                 f"{part.name!r} has cells whose validity is not certified."
             )
-    return meshcore_available()
+
+
+def _native_assembly_supported(
+    parts: tuple[MeshPart, ...], specs: tuple[OversetPartSpec, ...], /
+) -> bool:
+    """Whether ``phx_mc_overset_assemble`` owns these parts: every part is
+    P1/Q1 and meshcore loads. The Python owner stays the path for 2D,
+    polyhedral, curved and solid-query parts and for a missing library."""
+    from .._meshcore import meshcore_available
+
+    return meshcore_available() and all(
+        _p1q1_part(part, spec) for part, spec in zip(parts, specs, strict=True)
+    )
 
 
 def _native_faces(
@@ -5010,6 +5018,7 @@ def _prepare_connectivity(
     *,
     prove: bool,
 ) -> OversetConnectivity:
+    _require_certified_validity(parts, specs)
     native = partition_priority is None and _native_assembly_supported(parts, specs)
     geometries = tuple(
         _native_geometry(part) if native else _geometry(part, spec)
