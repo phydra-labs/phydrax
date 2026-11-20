@@ -3006,6 +3006,70 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
 
+/* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
+ * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the
+ * closed-curve unwrap; a surface edge (an edge of a surface triangle) takes
+ * S_f(uv_mid) from the lowest such triangle's UV record, a pole corner taking
+ * the free p-curve coordinate of the other corner; every other edge takes
+ * the straight midpoint. Surface triangles and curve edges index the first
+ * surface_point_count points (the face stage's exported vertices, with their
+ * dimensions and entities); later points are volume points. Tetrahedra are
+ * positively oriented (det[p1-p0, p2-p0, p3-p0] > 0); every surface triangle
+ * edge and curve edge must be a tet edge. Edges are the sorted (min, max)
+ * vertex pairs; cell_edges (T, 6) lists each cell's edges in the order
+ * 01 02 03 12 13 23, the quadratic node order of
+ * phx_mc_quadratic_tetrahedron_validity. Every cell is decided by that
+ * function at relative_floor; a cell that is not VALID is repaired in cell
+ * order: one Jacobi pass of harmonic extension moves the interior nodes of the
+ * failing cells and their edge neighbours, then every curved node of a cell
+ * still not VALID returns to its chord midpoint, each curved boundary edge
+ * so straightened recorded as one (edge, cell) row, until no cell with a
+ * curved node fails. cell_decisions are the final decisions. Counts are
+ * always written; a capacity below them is PHX_MC_CAPACITY_EXCEEDED before
+ * any other output is written. Output is independent of thread count. */
+enum {
+  PHX_MC_CAD_EDGE_INTERIOR = 0,
+  PHX_MC_CAD_EDGE_SURFACE = 1,
+  PHX_MC_CAD_EDGE_CURVE = 2
+};
+typedef struct phx_mc_cad_quadratic_stats {
+  int64_t curve_edges, surface_edges, interior_edges;
+  int64_t initial_invalid, initial_unresolved;
+  int64_t harmonic_nodes, harmonic_repaired_cells;
+  int64_t straightened_edges, final_invalid, final_unresolved;
+} phx_mc_cad_quadratic_stats;
+typedef struct phx_mc_cad_quadratic_request {
+  const phx_mc_cad_model* model;
+  int64_t point_count;
+  const double* points; /* (P, 3) */
+  int64_t surface_point_count;
+  const int8_t* vertex_dimensions; /* (surface_point_count,) */
+  const int32_t* vertex_entities;  /* (surface_point_count,) */
+  int64_t tetrahedron_count;
+  const int32_t* tetrahedra; /* (T, 4) */
+  int64_t triangle_count;
+  const int32_t* triangles;        /* (S, 3) */
+  const int32_t* triangle_patches; /* (S,) */
+  const double* triangle_uv;       /* (S, 3, 2) */
+  int64_t curve_edge_count;
+  const int32_t* curve_edges;            /* (E, 2) */
+  const int32_t* curve_edge_curves;      /* (E,) */
+  const double* curve_edge_parameters;   /* (E, 2) native curve parameters */
+  double relative_floor;
+  int64_t edge_capacity, record_capacity;
+  int32_t* edges;         /* (N, 2) */
+  double* nodes;          /* (N, 3) */
+  int8_t* edge_kinds;     /* (N,) PHX_MC_CAD_EDGE_* */
+  int32_t* edge_entities; /* (N,) face, curve, or -1 */
+  int64_t* cell_edges;    /* (T, 6) */
+  int32_t* cell_decisions; /* (T,) PHX_MC_QUADRATIC_VALIDITY_* */
+  int64_t* records;       /* (R, 2) straightened edge, cell */
+  int64_t* edge_count;
+  int64_t* record_count;
+  phx_mc_cad_quadratic_stats* stats;
+} phx_mc_cad_quadratic_request;
+PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
+
 #ifdef __cplusplus
 }
 #endif
