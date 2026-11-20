@@ -443,8 +443,8 @@ def _volume_rows() -> tuple[_Row, ...]:
     # Surface to tetrahedra end to end (recovery, state creation, refinement to
     # radius-edge 2, improvement to radius-edge 2 and dihedral 15 degrees,
     # export) with the boundary fixed, against Gmsh HXT generate(3) on the same
-    # surface. The circumradius target 1.75 sqrt(3/8) h, h the mean surface
-    # edge, matches HXT's element counts. The sphere and grid torus row sizes
+    # surface. Both tools get the same request h, the mean surface edge (HXT's
+    # MeshSize; ours the circumradius bound). The sphere and grid torus row sizes
     # are the triangle counts, the restricted torus row size its facet edge
     # bound in thousandths. The grid torus (cocircular rows, every edge
     # constrained) is a hard input for both tools.
@@ -470,7 +470,7 @@ def _volume_rows() -> tuple[_Row, ...]:
         spacing = float(
             np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
         )
-        target = 1.75 * math.sqrt(3.0 / 8.0) * spacing
+        target = spacing
         facets = _facets(vertices, faces)
         rows.append(
             _Row(

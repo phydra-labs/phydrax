@@ -11159,7 +11159,11 @@ class TetMesh3D:
         ``radius_edge_bound=None`` requests no radius-edge target.
 
         ``sizes`` (one circumradius target per current vertex, 0 for none) becomes
-        the mesh's retained size field; ``None`` keeps the retained field.
+        the mesh's retained size field; ``None`` keeps the retained field. On a
+        fixed boundary with a target at every vertex, the interior is first
+        seeded with the body-centered cubic lattice whose cells meet the
+        smallest target (where the target is within 2 % of it, at least half a
+        lattice spacing from the boundary), then refined as above.
         """
         radius_edge = _tet_radius_target(radius_edge_bound)
         with self._lock:

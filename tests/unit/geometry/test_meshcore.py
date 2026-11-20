@@ -3258,6 +3258,33 @@ def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
     _assert_same_arrays(*meshes)
 
 
+def test_fixed_boundary_refinement_packs_the_interior_as_the_bounding_lattice() -> None:
+    # A uniform circumradius bound h on a fixed boundary: every cell meets it,
+    # and refinement inserts about as many vertices as the body-centered cubic
+    # lattice whose cells meet h (cube edge 4 * 0.98 h / sqrt(5), two vertices
+    # per cube) holds in the volume: the lattice plus the boundary layer, within
+    # a quarter of it (circumcenter refinement alone inserts 1.8 times as many).
+    vertices, faces = icosphere(4)
+    recovery = _recover(vertices, faces, _facets(vertices, faces))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    size = float(
+        np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
+    )
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    assert run.status is MeshcoreStatus.OK and run.unmet_cells == 0
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    spans = corners[:, 1:] - corners[:, :1]
+    centers = np.linalg.solve(spans, 0.5 * np.sum(spans * spans, axis=2)[..., None])
+    assert np.max(np.linalg.norm(centers[..., 0], axis=1)) <= size * (1.0 + 1e-9)
+    volume = float(np.sum(np.abs(np.linalg.det(spans)))) / 6.0
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * volume / lattice**3
+
+
 def test_mesh_adoption_refuses_a_recovery_without_its_native_result() -> None:
     recovery = _benchmark_recovery("grid-torus-100")
     with pytest.raises(ValueError, match="no native result"):

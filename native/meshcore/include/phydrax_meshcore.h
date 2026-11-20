@@ -819,7 +819,11 @@ PHX_MC_API int32_t phx_mc_tet_mesh_clear_implicit_facet_refusal(phx_mc_tet_mesh*
  * snapshot order, 0 = unconstrained; empty keeps the mesh's retained field)
  * becomes the mesh's retained size field; inserted vertices receive
  * interpolated targets. radius_edge_bound == 0 omits the radius-edge target;
- * retained size and validity obligations remain active. */
+ * retained size and validity obligations remain active. A fixed boundary
+ * whose vertices all carry targets (no metric, no embedded segments, every
+ * cell measurably positive) is first seeded with the body-centered cubic
+ * lattice whose cells meet the smallest target, where the target is that
+ * smallest value within 2 % and at least half a lattice spacing inside. */
 PHX_MC_API int32_t phx_mc_tet_mesh_refine(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
