@@ -953,10 +953,9 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     }
     const double layer = metric.theta - std::min(lens / metric.tolerance,
                                                  kLensShare * metric.theta);
-    cad::SurfaceDifferential differential;
-    if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
-    const double curvature = std::max(std::abs(differential.curvatures[0]),
-                                      std::abs(differential.curvatures[1]));
+    double curvature = 0.0;
+    if (!pole_zone_curvature(geometry, metric.face, metric.workspace, curvature))
+      return PHX_MC_INVALID_INPUT;
     double size = metric.size;
     if (curvature > 0.0)
       size = std::min(size, std::sqrt(4.0 * layer * metric.tolerance / curvature));
@@ -1381,6 +1380,32 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
 }
 
 }  // namespace
+
+bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
+                         cad::EvaluationWorkspace& workspace, double& kappa) {
+  const auto& model = geometry.model();
+  const double inf = std::numeric_limits<double>::infinity();
+  double low[2] = {inf, inf}, high[2] = {-inf, -inf};
+  for (int64_t loop = 0; loop < model.loop_count; ++loop) {
+    if (model.loop_surfaces[loop] != face) continue;
+    for (int64_t use = model.loop_use_offsets[loop]; use < model.loop_use_offsets[loop + 1]; ++use)
+      for (int k = 0; k < 2; ++k) {
+        std::array<double, 2> uv;
+        if (!chart_point(geometry, use, model.use_ranges[2 * use + k], workspace, uv)) return false;
+        for (int axis = 0; axis < 2; ++axis) {
+          low[axis] = std::min(low[axis], uv[axis]);
+          high[axis] = std::max(high[axis], uv[axis]);
+        }
+      }
+  }
+  const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!geometry.jets(geometry.surface_node(face), middle, 2, jet, workspace) ||
+      !cad::surface_differential(jet, differential)) return false;
+  kappa = std::max(std::abs(differential.curvatures[0]), std::abs(differential.curvatures[1]));
+  return std::isfinite(kappa);
+}
 
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,

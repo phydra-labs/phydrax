@@ -87,6 +87,14 @@ bool cad_face_segments_conflict(int32_t a, int32_t b, const std::array<double, 2
 int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
                                           const CadCurveDiscretization& curves);
 
+// |k|max of `face` at the middle of its chart box (the end points of its
+// boundary uses' p-curves): the curvature with which the face stage spaces
+// its pole rings and the curve stage sizes curves inside a pole zone, so
+// both take the same theta * tol budget there. False on a failed
+// evaluation or a degenerate jet.
+bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
+                         cad::EvaluationWorkspace& workspace, double& kappa);
+
 // Meshes one native chart, preserving curve samples and collapsed-pole records.
 // The chart kernel's angle pass receives the face position hook, which yields
 // the classified corner/curve point at an input boundary chart and the face's

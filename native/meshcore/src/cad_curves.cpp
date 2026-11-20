@@ -130,13 +130,25 @@ struct Context {
           face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
         // Within the pole ring zone of the face (pole_ring_width, the face
-        // stage's owner of it) the face stage seeds fixed rings (spacing <=
-        // the request) and the kernel inserts no point, so no kernel triangle
-        // needs the curvature size; at a cone apex |k|max ~ 1/r would
-        // otherwise drive the size to zero.
-        if (resolved && face_size<controls.face_sizes[use.face] &&
-            pole_distance(use.face, jet)<pole_ring_width(face_size))
-          face_size=controls.face_sizes[use.face];
+        // stage's owner of it) the face stage seeds fixed rings and the
+        // kernel inserts no point, so no kernel triangle needs the local
+        // curvature size (at a cone apex |k|max ~ 1/r would drive it to
+        // zero): the curve takes the rings' size there, the request or
+        // sqrt(4 theta tol / |k|max) at the face's chart middle
+        // (pole_zone_curvature). The request alone left a step of 1/sqrt(theta)
+        // at the zone's edge that the size table cannot resolve (measured:
+        // radius-1.7 sphere, theta 0.5, h 0.02) and a seam segment longer
+        // than the ring spacing beside the first ring.
+        if (resolved && pole_distance(use.face, jet)<pole_ring_width(face_size)) {
+          double ring=controls.face_sizes[use.face], zone_kappa=0;
+          if (!pole_zone_curvature(geometry, use.face, workspace, zone_kappa)) {
+            failure_status=PHX_MC_INVALID_INPUT;
+            failed=true; return {s,0,0};
+          }
+          if (zone_kappa>0 && 4*theta*tolerance<zone_kappa*ring*ring)
+            ring=std::sqrt(4*theta*tolerance/zone_kappa);
+          face_size=std::max(face_size,ring);
+        }
       }
       if (!resolved) {
         if (!evaluated) failure_status=PHX_MC_INVALID_INPUT;
