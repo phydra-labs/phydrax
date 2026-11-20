@@ -51,6 +51,7 @@ from ._topology import (
     CellComplexTopology,
     EntitySet,
     EntitySubset,
+    has_repeated_values,
     OrientedIncidence,
     row_positions,
     sorted_unique_rows,
@@ -135,7 +136,7 @@ def _admit_cell_global_ids(
     )
     if ids.shape != (cell_count,):
         raise ValueError("Cell global_ids must have shape (cell_count,).")
-    if np.any(ids < 0) or np.unique(ids).size != ids.size:
+    if np.any(ids < 0) or has_repeated_values(ids):
         raise ValueError("Cell global_ids must be unique non-negative integers.")
     return ids
 
@@ -732,12 +733,12 @@ def _resolved_mesh_identities(
     )
     if global_ids.shape != (coordinate_count,):
         raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
-    if np.any(global_ids < 0) or np.unique(global_ids).size != global_ids.size:
+    if np.any(global_ids < 0) or has_repeated_values(global_ids):
         raise ValueError("vertex_global_ids must be unique non-negative integers.")
     cell_global_ids = np.concatenate(
         tuple(np.asarray(block.global_ids, dtype=np.int64) for block in blocks)
     )
-    if np.unique(cell_global_ids).size != cell_global_ids.size:
+    if has_repeated_values(cell_global_ids):
         raise ValueError("Cell global IDs must be unique across mesh blocks.")
     supplied_cells = entity_ids.get(topological_dimension)
     if supplied_cells is not None and not np.array_equal(supplied_cells, cell_global_ids):
@@ -756,10 +757,12 @@ def _simplex_orientation(vertices: np.ndarray, /) -> np.ndarray:
 
 
 def _simplex_mesh_levels(
-    cells: np.ndarray, dimension: int, vertex_count: int, /
+    cells: np.ndarray, dimension: int, vertex_count: int, block_count: int, /
 ) -> tuple[np.ndarray, ...]:
     top = np.sort(cells, axis=1)
-    if _has_duplicate_rows(top):
+    # Every cell block refused its own duplicate cells; only several blocks can
+    # still share a cell.
+    if block_count > 1 and _has_duplicate_rows(top):
         raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
     levels: list[np.ndarray] = [np.arange(vertex_count, dtype=np.int32)[:, None]]
     for degree in range(1, dimension):
@@ -917,7 +920,12 @@ def _simplex_mesh_topology(
     cells = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks)
     )
-    levels = _simplex_mesh_levels(cells, dimension, vertex_count)
+    levels = _simplex_mesh_levels(cells, dimension, vertex_count, len(blocks))
+    routes, route_signs = _simplex_cell_routes(cells, levels)
+    # The face opposite sorted vertex r of a cell omits its local vertex
+    # order[r]; in combination order that face is number dimension - order[r].
+    order = np.argsort(cells, axis=1, kind="stable")
+    top_faces = np.take_along_axis(routes[dimension - 1], dimension - order, axis=1)
     # The levels are increasing, distinct and face closed by construction, so
     # the topology is assembled once from their incidence routes.
     relations = tuple(
@@ -931,7 +939,7 @@ def _simplex_mesh_topology(
             signs,
         )
         for degree, (source, target, signs) in enumerate(
-            _simplicial_incidence_routes(levels), start=1
+            _simplicial_incidence_routes(levels, top_faces=top_faces), start=1
         )
     )
     masks = _simplex_mesh_boundary(levels, relations[-1][0])
@@ -968,13 +976,12 @@ def _simplex_mesh_topology(
             )
         )
     topology = CellComplexTopology(sets, incidences)
-    routes, signs = _simplex_cell_routes(cells, levels)
     return SimplicialConnectivity(
         topology,
         cells,
         entities=levels,
         cell_entities=routes,
-        cell_entity_signs=signs,
+        cell_entity_signs=route_signs,
         boundary_masks=masks,
     ), topology
 
