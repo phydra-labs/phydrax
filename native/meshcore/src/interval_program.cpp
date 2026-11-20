@@ -1352,6 +1352,7 @@ int32_t phx::mc::PreparedIntervalProgram::bind(
     int64_t index_count, const double* parameters, int64_t parameter_count,
     int64_t workspace_size) {
   workspace_size_ = -1;
+  events_.clear();
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -1390,6 +1391,41 @@ int32_t phx::mc::PreparedIntervalProgram::execute(
       return PHX_MC_INVALID_ARGUMENT;
     execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
                       indices_.data(), parameters_.data(), lower, upper);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx::mc::PreparedIntervalProgram::bind_events(const int64_t* events,
+                                                      int64_t event_count) {
+  events_.clear();
+  return phx::mc::guarded([&]() -> int32_t {
+    if (workspace_size_ < 0 || !phx::mc::addressable(event_count, kEventFields, sizeof(int64_t)) ||
+        (event_count > 0 && events == nullptr))
+      return PHX_MC_INVALID_ARGUMENT;
+    if (!events_valid(events, event_count, indices_.data(),
+                      static_cast<int64_t>(indices_.size()), workspace_size_, 1))
+      return PHX_MC_INVALID_INPUT;
+    if (event_count) events_.assign(events, events + event_count * kEventFields);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx::mc::PreparedIntervalProgram::execute_branches(double* lower, double* upper,
+                                                           int64_t workspace_size, bool& smooth,
+                                                           bool& continuous) const {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (workspace_size_ < 0 || workspace_size != workspace_size_ ||
+        (workspace_size > 0 && (lower == nullptr || upper == nullptr)))
+      return PHX_MC_INVALID_ARGUMENT;
+    execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
+                      indices_.data(), parameters_.data(), lower, upper);
+    std::uint8_t box_smooth = 1, box_continuous = 1;
+    record_events(events_.data(), static_cast<int64_t>(events_.size()) / kEventFields,
+                  indices_.data(), lower, upper, 1, &box_smooth, &box_continuous);
+    smooth = box_smooth == 1;
+    continuous = box_continuous == 1;
     return PHX_MC_OK;
   });
 }

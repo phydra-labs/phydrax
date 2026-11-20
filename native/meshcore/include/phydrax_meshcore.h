@@ -1992,7 +1992,7 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * box holds a zero of f on the segment between them; such a triangle is
  * accepted at the box diagonal (rounded up). A carrier triangle whose box
  * fails a check is never accepted from the carrier; invalid events are
- * refused (PHX_MC_INVALID_INPUT) when a carrier triangle is decided.
+ * refused (PHX_MC_INVALID_INPUT).
  * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
@@ -2003,11 +2003,17 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
- * `value` has one output, `gradient` three; for the triangle and tube proofs
- * the caller asserts that over any box where the gradient enclosure is
- * finite, f is Lipschitz with its (Clarke) gradient in that enclosure (those
- * proofs do not consult branch evidence). Once every triangle is certified,
- * the zero set ->
+ * `value` has one output, `gradient` three. Every enclosure of f or grad f
+ * that a triangle, tube or witness proof reads is over a box on which
+ * value's branch evidence reports f continuous (else that proof refuses),
+ * and the transversality step also requires f smooth there; the caller
+ * still asserts that `gradient` encloses grad f (its Clarke gradient where
+ * f has a kink) wherever its enclosure is finite and f is continuous, and
+ * that value_events are f's complete branch evidence (the entry checks them
+ * for validity only: no events means continuous everywhere; Phydrax's native
+ * lowering records comparisons, selects, poles and domain edges; fields with
+ * stop_gradient or custom derivative rules are outside this contract). Once
+ * every triangle is certified, the zero set ->
  * surface direction is decided over the domain box (lower xyz, upper xyz;
  * finite, lower < upper) through the possible-zero cover of the domain
  * (box_tree.hpp): every zero of f in the domain lies in a leaf, each kept box

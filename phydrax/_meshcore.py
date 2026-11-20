@@ -5318,11 +5318,15 @@ def zero_set_certify(
     corners where the interval enclosures of ``f`` have strictly opposite
     signs, so the box holds a zero of ``f``; the triangle is then accepted at
     the box diagonal, and a box failing a check accepts nothing. Every
-    certified triangle
-    is also nondegenerate with only legal exact contacts with nearby
-    triangles. Refused triangles are repaired: the longest edge of each is
-    split at its midpoint projected onto ``{f = 0}`` and only what changed is
-    certified again, for at most four rounds.
+    certified triangle is also nondegenerate with only legal exact contacts
+    with nearby triangles. Refused triangles are repaired: the longest edge
+    of each is split at its midpoint projected onto ``{f = 0}`` and only what
+    changed is certified again, for at most four rounds. Every enclosure of
+    ``f`` or ``grad f`` that a triangle, tube or witness proof reads is over a
+    box on which ``value``'s branch evidence reports ``f`` continuous (else
+    that proof refuses), and transversality also requires ``f`` smooth there;
+    ``gradient`` is still trusted to enclose ``grad f`` (its Clarke gradient
+    at kinks) wherever its enclosure is finite.
 
     The zero set is then bounded against the surface over ``domain`` (a
     ``(2, 3)`` lower/upper box) through the native possible-zero cover of the

@@ -1344,6 +1344,101 @@ void tube_cases() {
   PHX_CHECK(reversed.refused == static_cast<int64_t>(triangles.size()));
 }
 
+// Branch evidence gates the triangle proofs. f = x + select(x > 0, c, -c)
+// (c = 0.05) has no zero at all, but its enclosure over a triangle in the
+// plane x = 0 is [-c, c] with |grad f| = 1, so without evidence the distance
+// proof bounds that triangle by about c; with f's events (a jump where the
+// comparison is undecided) required continuous, it refuses. f = x + 0.1 |y|
+// is continuous with a kink at y = 0: its gradient enclosure still gives a
+// transversal sign over a triangle crossing the kink, which smoothness (its
+// kink event) withholds once required.
+void branch_evidence_gates_admission() {
+  constexpr int64_t kCompareRow = 13, kSelectRow = 14, kAbsoluteRow = 20, kJump = 1,
+                    kKink = 0, kMeetsZero = 0, kUndecided = 3;
+  constexpr double c = 0.05;
+  Program jump = seeded({0.0, -c, c}, 9);
+  jump.row(kCompareRow, 6, 1, 0, -1, 3, -1, 0);
+  jump.row(kSelectRow, 7, 1, 6, -1, 4, -1, 1);
+  jump.row(kAdd, 8, 1, 0, -1, 7, -1, 0);
+  jump.outputs = {8};
+  jump.events = {kJump, kUndecided, 1, 6, -1, -1};
+  // grad = (1, 0, 0): seeds 1 and 0 copied by adding 0.
+  Program unit_x = seeded({1.0, 0.0}, 7);
+  unit_x.row(kAdd, 5, 1, 3, -1, 4, -1, 0);
+  unit_x.row(kAdd, 6, 1, 4, -1, 4, -1, 0);
+  unit_x.outputs = {5, 6, 6};
+  const Point a{0, 0, 0}, b{0, 1, 0}, d{0, 0, 1};
+  for (const bool required : {false, true}) {
+    IntervalBoxProgram value, gradient;
+    PHX_CHECK(jump.bind(value) && unit_x.bind(gradient));
+    PHX_CHECK(value.bind_events(jump.events.data(), 1) == PHX_MC_OK);
+    if (required) {
+      value.require_continuity(&value);
+      gradient.require_continuity(&value);
+    }
+    const ZeroSetBandAdmission admission(value, gradient, 0.1, 1);
+    const double bound = admission.distance_bound(a, b, d, evidence_of(admission, a, b, d));
+    PHX_CHECK(required ? bound == kInfinity : bound <= 2 * c);
+  }
+  Program kink = seeded({0.1}, 7);
+  kink.row(kAbsoluteRow, 4, 1, 1, -1, -1, -1, 0);
+  kink.row(kMultiply, 5, 1, 4, -1, 3, -1, 0);
+  kink.row(kAdd, 6, 1, 0, -1, 5, -1, 0);
+  kink.outputs = {6};
+  kink.events = {kKink, kMeetsZero, 1, 1, -1, -1};
+  // grad = (1, [-0.1, 0.1], 0): the hull of both sides of the kink.
+  Program hull = seeded({1.0, 0.0, 0.0}, 9);
+  hull.lower[4] = -0.1;
+  hull.upper[4] = 0.1;
+  hull.row(kAdd, 6, 1, 3, -1, 5, -1, 0);
+  hull.row(kAdd, 7, 1, 4, -1, 5, -1, 0);
+  hull.row(kAdd, 8, 1, 5, -1, 5, -1, 0);
+  hull.outputs = {6, 7, 8};
+  const Point p{0, -0.5, 0}, q{0, 0.5, 0}, r{0, 0, 1};
+  for (const bool required : {false, true}) {
+    IntervalBoxProgram value, gradient;
+    PHX_CHECK(kink.bind(value) && hull.bind(gradient));
+    PHX_CHECK(value.bind_events(kink.events.data(), 1) == PHX_MC_OK);
+    if (required) {
+      value.require_continuity(&value);
+      gradient.require_continuity(&value);
+    }
+    const ZeroSetBandAdmission admission(value, gradient, 0.1, 1);
+    PHX_CHECK(admission.transversal_sign(p, q, r) == (required ? 0 : 1));
+  }
+}
+
+// MAC's counterexample to tube proofs without branch evidence (review of
+// 1e334aaf0, F2): f = s - 1 for s < 1.05 and s - 1.1 for s >= 1.05 (s =
+// |x|^2) with gradient 2x and its honest jump event. Its zeros are the unit
+// sphere and the sphere of radius sqrt(1.1) ~ 1.0488, at least 0.0488 from an
+// octasphere on the unit sphere; prisms of length 0.3 cross the jump. The
+// certificate must not report a reverse distance below that: it refuses.
+void jump_beyond_the_surface_refuses() {
+  constexpr int64_t kCompareRow = 13, kSelectRow = 14, kJump = 1, kUndecided = 3;
+  Program step = seeded({1.0, 1.05, 1.1}, 14);
+  step.row(kSquare, 6, 3, 0, -1, -1, -1, 0);
+  step.row(kReduceSum, 9, 1, 6, -1, -1, 0, 3);
+  step.row(kSubtract, 10, 1, 9, -1, 3, -1, 0);
+  step.row(kSubtract, 11, 1, 9, -1, 5, -1, 0);
+  step.row(kCompareRow, 12, 1, 9, -1, 4, -1, 1);
+  step.row(kSelectRow, 13, 1, 12, -1, 10, -1, 1);
+  step.outputs = {13};
+  step.events = {kJump, kUndecided, 1, 12, -1, -1};
+  const Program gradient = sphere_gradient();
+  const Surface surface = jittered_octasphere(4, 0.0, 1);
+  double distance = -1, reverse = -1;
+  Failures failures{};
+  const int32_t status = certify(surface.vertices, surface.triangles, step, gradient, 0.01, 1,
+                                 distance, failures, nullptr, 0, nullptr, nullptr, &reverse, 0.3);
+  std::printf("jump beyond the surface: certify %d, refusals %lld %lld %lld, tube refused %lld, "
+              "leaves outside %lld\n",
+              status, static_cast<long long>(failures[0]), static_cast<long long>(failures[1]),
+              static_cast<long long>(failures[2]), static_cast<long long>(failures[6]),
+              static_cast<long long>(failures[7]));
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+}
+
 // box_reach is an outward bound of the distance from a box to the mesh. A
 // tetrahedron whose bottom face lies on z = 0 under the boxes: a point at
 // height 0.1 is exactly 0.1 from it, and the box [0.2, 0.3]^2 x [0.1, 0.2]
@@ -1383,5 +1478,7 @@ int main() {
   remesh_lens_crease();
   tube_cases();
   box_reach_bounds_distance();
+  branch_evidence_gates_admission();
+  jump_beyond_the_surface_refuses();
   return phx::mc::test::finish("test_zero_set_admission");
 }

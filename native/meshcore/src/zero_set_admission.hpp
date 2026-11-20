@@ -55,9 +55,23 @@ class IntervalBoxProgram {
                const double* workspace_lower, const double* workspace_upper,
                int64_t workspace_size, const int64_t* outputs, int64_t output_count,
                const int64_t* guards, int64_t guard_count);
-  // Encloses every output over the box; false when execution fails or an
-  // output is NaN. `result` must hold output_count() intervals.
+  // Binds f's branch-evidence events (rows over this program's workspace,
+  // one box) once, validated; PHX_MC_OK or the refusal status.
+  int32_t bind_events(const int64_t* events, int64_t event_count);
+  // From now on, evaluate() refuses (false) every box on which `evidence`
+  // (a program with bound events, possibly this one) does not report f
+  // continuous: the proofs that read this program's enclosures may then
+  // rely on continuity there.
+  void require_continuity(const IntervalBoxProgram* evidence) { evidence_ = evidence; }
+  // Whether evaluate() requires continuity from branch evidence.
+  bool checks_branches() const noexcept { return evidence_ != nullptr; }
+  // Encloses every output over the box; false when execution fails, an
+  // output is NaN, or a required continuity is not reported. `result` must
+  // hold output_count() intervals.
   bool evaluate(const Point& lower, const Point& upper, Interval* result) const;
+  // The box's branch flags from the bound events (one execution); false when
+  // execution fails.
+  bool flags(const Point& lower, const Point& upper, bool& smooth, bool& continuous) const;
   int64_t output_count() const { return static_cast<int64_t>(outputs_.size()); }
   const phx::mc::PreparedIntervalProgram& program() const noexcept { return program_; }
   const std::vector<int64_t>& outputs() const noexcept { return outputs_; }
@@ -70,6 +84,9 @@ class IntervalBoxProgram {
   std::vector<int64_t> outputs_, guards_;
   std::vector<double> template_lower_, template_upper_;
   mutable std::vector<double> lower_, upper_;  // single-threaded scratch workspace
+  const IntervalBoxProgram* evidence_ = nullptr;
+  // Fills the scratch workspace with the template and the box.
+  bool load(const Point& lower, const Point& upper) const;
 };
 
 // Exact results of earlier admissions of one field and tolerance, keyed by

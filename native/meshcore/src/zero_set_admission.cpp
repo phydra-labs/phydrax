@@ -109,8 +109,11 @@ int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instructio
   return program_.execute(lower_.data(), upper_.data(), workspace_size);
 }
 
-bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
-                                  Interval* result) const {
+int32_t IntervalBoxProgram::bind_events(const int64_t* events, int64_t event_count) {
+  return program_.bind_events(events, event_count);
+}
+
+bool IntervalBoxProgram::load(const Point& lower, const Point& upper) const {
   for (int d = 0; d < 3; ++d)
     if (!(lower[d] <= upper[d]) || !std::isfinite(lower[d]) || !std::isfinite(upper[d]))
       return false;
@@ -120,9 +123,32 @@ bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
     lower_[static_cast<size_t>(d)] = lower[d];
     upper_[static_cast<size_t>(d)] = upper[d];
   }
-  const int32_t status = program_.execute(lower_.data(), upper_.data(),
-                                          static_cast<int64_t>(lower_.size()));
-  if (status != PHX_MC_OK) return false;
+  return true;
+}
+
+bool IntervalBoxProgram::flags(const Point& lower, const Point& upper, bool& smooth,
+                               bool& continuous) const {
+  return load(lower, upper) &&
+         program_.execute_branches(lower_.data(), upper_.data(),
+                                   static_cast<int64_t>(lower_.size()), smooth,
+                                   continuous) == PHX_MC_OK;
+}
+
+bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
+                                  Interval* result) const {
+  // A required continuity comes from the same execution when this program
+  // carries the evidence, else from one execution of the evidence program.
+  bool smooth = true, continuous = true;
+  if (evidence_ != nullptr && evidence_ != this &&
+      (!evidence_->flags(lower, upper, smooth, continuous) || !continuous))
+    return false;
+  if (!load(lower, upper)) return false;
+  const auto size = static_cast<int64_t>(lower_.size());
+  const int32_t status = evidence_ == this ? program_.execute_branches(lower_.data(),
+                                                                       upper_.data(), size,
+                                                                       smooth, continuous)
+                                           : program_.execute(lower_.data(), upper_.data(), size);
+  if (status != PHX_MC_OK || !continuous) return false;
   // A real-power base outside its nonnegative domain leaves f undefined there.
   for (int64_t guard : guards_)
     if (lower_[static_cast<size_t>(guard)] < 0.0) return false;
@@ -543,6 +569,12 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
   Point lower{}, upper{};
   bounding_box(a, b, c, lower, upper);
   std::array<Interval, 3> gradient{};
+  // The certificate reads the gradient enclosure as grad f only where the
+  // value program's branch evidence reports f smooth over the box.
+  bool smooth = true, continuous = true;
+  if (value_.checks_branches() &&
+      (!value_.flags(lower, upper, smooth, continuous) || !smooth || !continuous))
+    return 0;
   if (!gradient_over(gradient_, lower, upper, gradient)) return 0;
   std::array<Interval, 3> first{}, second{};
   for (int d = 0; d < 3; ++d) {
@@ -846,48 +878,23 @@ class ZeroSetCertifier final : public TriangleCertifier {
   const ZeroSetBandAdmission& admission_;
 };
 
-// Whether `value` (the very program whose corner signs, proofs and cover the
-// certificate uses) reports f continuous on a box: its branch-evidence
-// events (value_events over its own workspace; phx_mc_interval_program_branches,
-// one box) leave the box's `continuous` flag set. `status` receives a
-// refusal of the program or its events.
-bool continuous_on(const phx_mc_zero_set_certify_request& request, const Point& lower,
-                   const Point& upper, int32_t& status) {
-  const phx_mc_interval_box_program& program = request.value;
-  const auto width = static_cast<size_t>(program.workspace_size);
-  std::vector<double> low(program.workspace_lower, program.workspace_lower + width);
-  std::vector<double> high(program.workspace_upper, program.workspace_upper + width);
-  for (size_t d = 0; d < 3; ++d) {
-    low[d] = lower[d];
-    high[d] = upper[d];
-  }
-  uint8_t smooth = 0, continuous = 0;
-  status = phx_mc_interval_program_branches(
-      program.instructions, program.instruction_count, program.indices, program.index_count,
-      program.parameters, program.parameter_count, low.data(), high.data(),
-      program.workspace_size, request.value_events, request.value_event_count, 1, &smooth,
-      &continuous);
-  return status == PHX_MC_OK && continuous == 1;
-}
-
 // The distance bound a witness box proves for a carrier triangle (see
 // phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
-// f is continuous on the box by its branch evidence (continuous_on), and two
+// f is continuous on the box by the value program's branch evidence, and two
 // box corners have value enclosures of strictly opposite sign, so a zero of
 // f lies on the segment between them, in the box; every point of the
 // triangle is then within the box diagonal (rounded up) of it. +inf when a
-// check fails; `status` receives a refusal of the branch program.
-double witness_bound(const phx_mc_zero_set_certify_request& request, const Point& a,
-                     const Point& b, const Point& c, const Point& lower, const Point& upper,
-                     const IntervalBoxProgram& value, int32_t& status) {
-  status = PHX_MC_OK;
+// check fails.
+double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
+                     const Point& upper, const IntervalBoxProgram& value) {
   for (int d = 0; d < 3; ++d) {
     if (!std::isfinite(lower[d]) || !std::isfinite(upper[d]) || !(lower[d] <= upper[d]))
       return kInfinity;
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
-  if (!continuous_on(request, lower, upper, status)) return kInfinity;
+  bool smooth = false, continuous = false;
+  if (!value.flags(lower, upper, smooth, continuous) || !continuous) return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};
@@ -1040,6 +1047,13 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   if (status != PHX_MC_OK) return status;
   status = bind(gradient, request.gradient, 3);
   if (status != PHX_MC_OK) return status;
+  // Every enclosure the proofs read holds only where f's branch evidence
+  // (the value program's own events) reports f continuous; transversality
+  // also requires smooth (ZeroSetBandAdmission::transversal_sign).
+  status = value.bind_events(request.value_events, request.value_event_count);
+  if (status != PHX_MC_OK) return status;
+  value.require_continuity(&value);
+  gradient.require_continuity(&value);
   ImplicitOracle oracle;
   status = oracle.bind(request.value);
   if (status != PHX_MC_OK) return status;
@@ -1077,10 +1091,8 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
     const Point& b = carrier_points[static_cast<size_t>(carrier_triangles[t][1])];
     const Point& c = carrier_points[static_cast<size_t>(carrier_triangles[t][2])];
     const double* box = request.carrier_boxes + 6 * t;
-    int32_t refusal = PHX_MC_OK;
-    const double bound = witness_bound(request, a, b, c, {box[0], box[1], box[2]},
-                                       {box[3], box[4], box[5]}, value, refusal);
-    if (refusal != PHX_MC_OK) return refusal;
+    const double bound = witness_bound(a, b, c, {box[0], box[1], box[2]},
+                                       {box[3], box[4], box[5]}, value);
     if (!(bound < kInfinity)) continue;
     carrier.entries.push_back({triangle_key(a, b, c), bound});
     reach = std::max(reach, bound);
