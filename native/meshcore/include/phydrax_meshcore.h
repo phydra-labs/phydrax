@@ -2655,9 +2655,10 @@ typedef struct phx_mc_fidelity_finding {
  * conditional on a separately verified complete chart partition.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
- * counts. Unresolved bounds are +infinity. A trim/pole edge currently reports
- * PHX_MC_UNRESOLVED; it must not be treated as a certificate. Overall OK means
- * all rows certified, UNRESOLVED means at least one row did not certify.
+ * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
+ * the face's p-curve; pole uses and unsupported interval nodes report
+ * PHX_MC_UNRESOLVED. Overall OK means all rows certified, UNRESOLVED means at
+ * least one row did not certify.
  * Invalid input leaves outputs unchanged. max_depth is between 0 and 24. */
 /* Edge-association findings identify triangle and local edge; -1 means absent.
  * evidence_count is required and reports the number of findings. Insufficient

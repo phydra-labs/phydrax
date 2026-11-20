@@ -97,6 +97,72 @@ int32_t leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
   return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
+// The source boundary on a face is S(p(t)). The linear p-curve interpolant
+// connects the chord endpoints; its second-derivative remainder plus endpoint
+// mismatch bounds the distance to the chord. The straight homotopy from this
+// chord to the arc fills the enclosed lens, and remains in the padded box.
+// The mean-value bound |DS| times that distance therefore maps the lens to
+// the surface image of the chord. The interior triangle bound already covers
+// that image in both directions, so a separate 3D curve chord sag is not
+// needed. Source 3D edge/face consistency is a source-model obligation.
+int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
+                        const double* chord_uv, const double* parameters,
+                        IntervalEvaluationWorkspace& workspace, double& cap) {
+  const double low = std::min(parameters[0], parameters[1]);
+  const double high = std::max(parameters[0], parameters[1]);
+  double pc_lower[6], pc_upper[6];
+  int32_t status = geometry.interval_jets(geometry.pcurve_node(use), &low, &high, 2,
+                                           pc_lower, pc_upper, workspace);
+  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+  const auto dt = di::subtract(di::point(high), di::point(low));
+  double second_magnitude[3] = {
+      di::magnitude({pc_lower[4], pc_upper[4]}),
+      di::magnitude({pc_lower[5], pc_upper[5]}), 0.0};
+  const double curvature = phx::mc::geometry::norm_upper(second_magnitude);
+  double endpoint_error = 0.0;
+  for (int endpoint = 0; endpoint < 2; ++endpoint) {
+    double lo[2], hi[2];
+    status = geometry.interval_jets(geometry.pcurve_node(use), parameters + endpoint,
+                                    parameters + endpoint, 0, lo, hi, workspace);
+    if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+    double magnitude[3] = {0.0, 0.0, 0.0};
+    for (int axis = 0; axis < 2; ++axis) {
+      const auto difference = di::subtract({lo[axis], hi[axis]},
+                                           di::point(chord_uv[2 * endpoint + axis]));
+      if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
+      magnitude[axis] = di::magnitude(difference);
+    }
+    endpoint_error = std::max(endpoint_error, phx::mc::geometry::norm_upper(magnitude));
+  }
+  const auto error = di::add(
+      di::point(endpoint_error),
+      di::multiply(di::point(0.125), di::multiply(di::point(curvature), di::multiply(dt, dt))));
+  if (!di::finite(error)) return PHX_MC_UNRESOLVED;
+  double box_lower[2], box_upper[2];
+  for (int axis = 0; axis < 2; ++axis) {
+    box_lower[axis] = di::subtract(di::point(std::min(chord_uv[axis], chord_uv[2 + axis])),
+                                  di::point(error.upper)).lower;
+    box_upper[axis] = di::add(di::point(std::max(chord_uv[axis], chord_uv[2 + axis])),
+                              di::point(error.upper)).upper;
+  }
+  double surface_lower[9], surface_upper[9];
+  status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
+                                  surface_lower, surface_upper, workspace);
+  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+  double norms[3] = {};
+  for (int derivative = 0; derivative < 2; ++derivative) {
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const int index = 3 * (derivative + 1) + axis;
+      magnitude[axis] = di::magnitude({surface_lower[index], surface_upper[index]});
+    }
+    norms[derivative] = phx::mc::geometry::norm_upper(magnitude);
+  }
+  cap = di::multiply(di::point(error.upper),
+                     di::point(phx::mc::geometry::norm_upper(norms))).upper;
+  return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
 struct EdgeSlot {
   std::array<uint64_t, 4> endpoints{};
   int32_t patch = -1;
@@ -306,6 +372,8 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
       *maximum_upper = std::numeric_limits<double>::infinity();
       return PHX_MC_UNRESOLVED;
     }
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx::mc::cad::IntervalEvaluationWorkspace workspace;
     workspace.coefficient_lower = coefficient_lower;
     workspace.coefficient_upper = coefficient_upper;
@@ -313,31 +381,49 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     int32_t aggregate = PHX_MC_OK;
     double maximum = 0.0;
     for (int64_t i = 0; i < triangle_count; ++i) {
-      bool trim = false;
+      bool trim_refused = false;
+      double lens = 0.0;
       double vertices[9];
       for (int j = 0; j < 3; ++j) {
-        trim |= edge_chord[3 * i + j] >= 0;
+        const int64_t chord = edge_chord[3 * i + j];
+        if (chord >= 0) {
+          const int64_t use = chord_use[chord];
+          double cap = 0.0;
+          if (model->use_kinds[use] != 0 ||
+              phx::mc::cad::trim_lens_bound(geometry, face_rows[i], use, chord_uv + 4 * chord,
+                                            chord_range + 2 * chord, workspace, cap) != PHX_MC_OK) {
+            trim_refused = true;
+          } else {
+            lens = phx::mc::remesh::add(phx::mc::remesh::point(lens),
+                                         phx::mc::remesh::point(cap)).upper;
+          }
+        }
         const int64_t vertex = triangles[3 * i + j];
         for (int axis = 0; axis < 3; ++axis)
           vertices[3 * j + axis] = points[3 * vertex + axis];
       }
-      if (trim) {
+      if (trim_refused || !std::isfinite(lens) || lens >= tolerance) {
         upper[i] = std::numeric_limits<double>::infinity();
         item_status[i] = PHX_MC_UNRESOLVED;
-        reasons[i] = PHX_MC_FIDELITY_TRIM_REFUSAL;
+        reasons[i] = trim_refused ? PHX_MC_FIDELITY_TRIM_REFUSAL : PHX_MC_FIDELITY_RESOLUTION;
         subdivisions[i] = 0;
         aggregate = PHX_MC_UNRESOLVED;
         continue;
       }
+      const double budget = phx::mc::remesh::subtract(phx::mc::remesh::point(tolerance),
+                                                       phx::mc::remesh::point(lens)).lower;
       const auto result = phx::mc::cad::fidelity_triangle(
-          geometry, face_rows[i], vertices, uv + 6 * i, tolerance, max_depth, workspace);
+          geometry, face_rows[i], vertices, uv + 6 * i, budget, max_depth, workspace);
       if (result.status != PHX_MC_OK && result.status != PHX_MC_UNRESOLVED)
         return result.status;
-      upper[i] = result.upper;
+      upper[i] = result.status == PHX_MC_OK
+                     ? phx::mc::remesh::add(phx::mc::remesh::point(result.upper),
+                                            phx::mc::remesh::point(lens)).upper
+                     : result.upper;
       item_status[i] = result.status;
       reasons[i] = result.reason;
       subdivisions[i] = result.subdivisions;
-      maximum = std::max(maximum, result.upper);
+      maximum = std::max(maximum, upper[i]);
       if (result.status != PHX_MC_OK) aggregate = PHX_MC_UNRESOLVED;
     }
     *maximum_upper = aggregate == PHX_MC_OK ? maximum : std::numeric_limits<double>::infinity();

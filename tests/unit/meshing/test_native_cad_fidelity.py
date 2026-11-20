@@ -28,6 +28,7 @@ from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_interpolation import certify_domain_surface_charts
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
+    CircleCurve,
     ConePatch,
     CylinderPatch,
     LineCurve,
@@ -269,7 +270,7 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
     lower, upper = coefficient_bounds(bundle, domain)
     mesh, chords = _cylinder_mesh(domain, kind)
     result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.5, 4)
-    assert result.status == MeshcoreStatus.UNRESOLVED
+    assert result.status == MeshcoreStatus.OK
     assert result.findings.size == 0
     interior = np.flatnonzero(np.all(mesh.edge_chord < 0, axis=1))
     assert interior.size > 0
@@ -300,7 +301,7 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
                 assert np.linalg.norm(exact - weights @ vertices) <= result.upper[row]
     print(f"{kind} native/Python adaptive bound ratios:", ratios)
     assert all(0.99 <= ratio <= 1.01 for ratio in ratios)
-    assert np.all(result.reasons[np.any(mesh.edge_chord >= 0, axis=1)] == 3)
+    assert np.all(result.item_status == MeshcoreStatus.OK)
 
 
 def test_chord_association_findings_are_returned() -> None:
@@ -352,3 +353,86 @@ def test_perturbed_vertex_and_uv_are_unresolved() -> None:
     assert _python_chart_decisions(domain, mesh._replace(uv=uv), interior, 0.1) == tuple(
         status == MeshcoreStatus.OK for status in perturbed.item_status[interior]
     )
+
+
+@pytest.mark.parametrize("kind", ("cylinder", "cone", "sphere"))
+def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
+    """A curved source p-curve can depart from its target chord."""
+    surface = _analytic_surface(kind)
+    half_pi = float(np.pi / 2)
+    angles = np.asarray((half_pi, half_pi / 2, 0.0), dtype=np.float64)
+    arc = np.stack((1.0 - np.cos(angles), np.sin(angles)), axis=1)
+    polygon = np.vstack((arc, (2.0, 0.0), (2.0, 1.0)))
+    circular = CircleCurve((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), 1.0)
+    straight = tuple(
+        LineCurve(polygon[i], polygon[(i + 1) % len(polygon)] - polygon[i])
+        for i in range(2, 5)
+    )
+
+    def loop(sense: int) -> tuple[PatchCurveUse, ...]:
+        uses = (
+            PatchCurveUse(0, circular, 0.0, half_pi, sense=-sense),
+            *(PatchCurveUse(i + 1, curve, 0.0, 1.0, sense=sense)
+              for i, curve in enumerate(straight)),
+        )
+        return uses if sense > 0 else tuple(reversed(uses))
+
+    domain = MeshingDomain(
+        (MeshingSurfacePatch(surface, (loop(1),)),
+         MeshingSurfacePatch(surface, (loop(-1),), orientation=-1)),
+        (MeshingDomainCurve(0, 1), MeshingDomainCurve(0, 2),
+         MeshingDomainCurve(2, 3), MeshingDomainCurve(3, 1)),
+        4,
+        tolerance=1e-12,
+        source_id=f"qualification:native-curved-trim-{kind}",
+        source_revision="r1",
+    )
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    chart_points = np.vstack(((1.45, 0.5), polygon))
+    indices = np.asarray(
+        [(0, i + 1, (i + 1) % len(polygon) + 1) for i in range(len(polygon))],
+        dtype=np.int64,
+    )
+    edges = np.full((len(indices), 3), -1, dtype=np.int64)
+    edges[:, 1] = np.arange(len(indices), dtype=np.int64)
+    mesh = CadFidelityMesh(
+        _analytic_values(kind, chart_points),
+        indices,
+        np.zeros(len(indices), dtype=np.int32),
+        chart_points[indices],
+        edges,
+    )
+    chord_range = np.asarray(
+        ((half_pi, half_pi / 2), (half_pi / 2, 0.0), (0.0, 1.0),
+         (0.0, 1.0), (0.0, 1.0)),
+        dtype=np.float64,
+    )
+    use_patch = np.repeat(
+        np.arange(bundle.model.surface_nodes.size, dtype=np.int64),
+        np.diff(bundle.model.loop_use_offsets),
+    )
+    chords = CadFidelityChords(
+        use_patch,
+        bundle.model.use_ranges,
+        bundle.model.loop_surfaces.size,
+        np.asarray((0, 0, 1, 2, 3), dtype=np.int64),
+        np.zeros(len(indices), dtype=np.int64),
+        mesh.uv[:, 1:3, :],
+        chord_range,
+    )
+    result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.5, 5)
+    assert result.status == MeshcoreStatus.OK
+    assert result.findings.size == 0
+    rows = np.arange(len(indices), dtype=np.int64)
+    assert _python_chart_decisions(domain, mesh, rows, 0.5) == tuple(
+        status == MeshcoreStatus.OK for status in result.item_status
+    )
+    for row in (0, 1):
+        for fraction in np.linspace(0.0, 1.0, 101):
+            t = (1.0 - fraction) * chord_range[row, 0] + fraction * chord_range[row, 1]
+            uv = np.asarray((1.0 - np.cos(t), np.sin(t)), dtype=np.float64)
+            source = _analytic_values(kind, uv)
+            first, last = mesh.points[indices[row, 1:3]]
+            chord = (1.0 - fraction) * first + fraction * last
+            assert np.linalg.norm(source - chord) <= result.upper[row]
