@@ -232,6 +232,7 @@ class ConstrainedMesher {
   BadQueue bad_queue_;
   std::vector<int32_t> flip_stack_;
   std::vector<int32_t> cavity_stack_;
+  std::vector<std::pair<int32_t, int32_t>> encroached_segments_;
   std::vector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
   std::vector<int32_t> constraint_sources_;
@@ -1032,7 +1033,8 @@ class ConstrainedMesher {
     if (!snap_to_domain(center)) {
       return;
     }
-    std::vector<std::pair<int32_t, int32_t>> to_split;
+    auto& to_split = encroached_segments_;
+    to_split.clear();
     std::pair<int32_t, int> blocked{-1, -1};
     const int32_t located = tri_.walk(t, center, &blocked);
     if (located < 0) {
