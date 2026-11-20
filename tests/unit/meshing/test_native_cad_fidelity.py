@@ -29,6 +29,7 @@ from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
 from phydrax.geometry._source_interpolation import certify_domain_surface_charts
 from phydrax.geometry.brep._patches import (
     AbstractSurfacePatch,
+    BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
     CylinderPatch,
@@ -110,6 +111,41 @@ def test_lazy_cylinder_coefficient_bounds() -> None:
             assert Fraction.from_float(lower[offset + index]) <= value
             assert value <= Fraction.from_float(upper[offset + index])
     assert cylinders > 0
+
+def test_lazy_bspline_coefficient_bounds() -> None:
+    """The flat bank encloses exact knots, controls and rational weights."""
+    third = Fraction(1, 3)
+    controls = (
+        ((Fraction(0), Fraction(0), third), (Fraction(0), Fraction(1), third)),
+        ((Fraction(1), Fraction(0), third), (Fraction(1), Fraction(1), third)),
+    )
+    weights = ((Fraction(1), third), (Fraction(2, 3), Fraction(1)))
+    knots = (Fraction(0), Fraction(0), Fraction(1), Fraction(1))
+    surface = BSplineSurfacePatch(
+        np.asarray(controls, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        np.asarray(knots, dtype=np.float64),
+        1,
+        1,
+        exact_control_points=controls,
+        exact_weights=weights,
+        exact_u_knots=knots,
+        exact_v_knots=knots,
+    )
+    domain = _surface_domain(surface)
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    offset = bundle.model.node_real_offsets[bundle.model.surface_nodes[0]]
+    expected = (
+        *knots,
+        *knots,
+        *(value for row in controls for point in row for value in point),
+        *(value for row in weights for value in row),
+    )
+    for index, value in enumerate(expected):
+        assert Fraction.from_float(lower[offset + index]) <= value
+        assert value <= Fraction.from_float(upper[offset + index])
 
 
 def _analytic_surface(kind: str) -> AbstractSurfacePatch:

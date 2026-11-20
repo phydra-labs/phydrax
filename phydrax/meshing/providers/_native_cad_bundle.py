@@ -1040,6 +1040,19 @@ def _coefficient_sources(
     entity: object, numeric: np.ndarray, /
 ) -> tuple[ExactScalar, ...] | None:
     """Exact real-bank entries for source nodes supported by interval jets."""
+    if isinstance(entity, BSplineCurve):
+        return (
+            *entity.exact_knots,
+            *(value for point in entity.exact_control_points for value in point),
+            *entity.exact_weights,
+        )
+    if isinstance(entity, BSplineSurfacePatch):
+        return (
+            *entity.exact_u_knots,
+            *entity.exact_v_knots,
+            *(value for row in entity.exact_control_points for point in row for value in point),
+            *(value for row in entity.exact_weights for value in row),
+        )
     if isinstance(entity, CylinderPatch):
         return (*entity.origin_exact, *entity.first_axis_exact, *entity.second_axis_exact,
                 *entity.axis_exact, entity.radius_exact)
