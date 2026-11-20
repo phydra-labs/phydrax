@@ -160,6 +160,8 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     if (status == PHX_MC_UNRESOLVED) overall = status;
     mesh.face_stats.push_back(local.stats);
     mesh.omitted_pole_points.push_back(local.omitted_pole_points);
+    for (const auto& pole : local.pole_sectors)
+      mesh.pole_sectors.push_back({face, pole.use, pole.fixed, pole.free});
     mesh.periodic_corner_gaps.push_back(local.periodic_corner_gaps);
     mesh.max_periodic_corner_gap_ulps.push_back(local.max_periodic_corner_gap_ulps);
     std::vector<int32_t> global(local.vertices.size());

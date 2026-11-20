@@ -138,3 +138,19 @@ extern "C" int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_res
 }
 
 extern "C" void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result) { delete result; }
+
+extern "C" int32_t phx_mc_cad_surface_pole_sectors(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    int64_t* rows, int64_t* count) {
+  if (!result || !count || capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+  const auto& sectors = result->mesh.pole_sectors;
+  const int64_t required = static_cast<int64_t>(sectors.size());
+  if (capacity == 0 && !rows) {
+    *count = required;
+    return PHX_MC_OK;
+  }
+  if (capacity < required || !present(rows, sectors.size())) return PHX_MC_INVALID_ARGUMENT;
+  copy_flat(sectors, rows);
+  *count = required;
+  return PHX_MC_OK;
+}

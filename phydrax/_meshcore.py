@@ -1087,6 +1087,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_free": (None, (_P,)),
+    "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_implicit_stuffing": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
@@ -12192,6 +12193,7 @@ class CadSurfaceResult(NamedTuple):
     curve_failures: np.ndarray
     curve_statistics: np.ndarray
     face_failures: np.ndarray
+    pole_sectors: np.ndarray
 
 
 def cad_mesh(
@@ -12300,6 +12302,23 @@ def cad_mesh(
             ),
             "cad_surface_result_export",
         )
-        return CadSurfaceResult(status, *banks)
+        sector_count = ctypes.c_int64()
+        _raise_for_call(
+            library["phx_mc_cad_surface_pole_sectors"](
+                handle, 0, None, ctypes.addressof(sector_count)
+            ),
+            "cad_surface_pole_sectors",
+        )
+        pole_sectors = np.empty((sector_count.value, 4), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_cad_surface_pole_sectors"](
+                handle,
+                sector_count.value,
+                pole_sectors.ctypes.data,
+                ctypes.addressof(sector_count),
+            ),
+            "cad_surface_pole_sectors",
+        )
+        return CadSurfaceResult(status, *banks, pole_sectors)
     finally:
         library["phx_mc_cad_surface_result_free"](handle)

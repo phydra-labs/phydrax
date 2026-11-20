@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax._meshcore import _CAD_FACE_FAILURE_DTYPE, cad_mesh, MeshcoreStatus
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
@@ -199,6 +200,44 @@ def test_quadric_surface_candidate(domain: MeshingDomain) -> None:
     )
     assert mesh_to_source < 0.2
     assert source_to_mesh < 0.2
+
+
+def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
+    sphere = phx.geometry.brep.brep_sphere(
+        1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+    model = cad_geometry_bundle(MeshingDomain.from_brep(sphere)).model
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), 0.2, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 1e6, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    assert result.status is MeshcoreStatus.OK
+    assert result.pole_sectors.shape == (2, 4)
+    np.testing.assert_array_equal(
+        result.pole_sectors[:, 2], np.array([8, 8], dtype=np.int64)
+    )
+    np.testing.assert_array_equal(
+        result.pole_sectors[:, 3], np.array([0, 0], dtype=np.int64)
+    )
+    for curve in range(model.curve_nodes.size):
+        used = result.curve_edges[result.curve_edge_curves == curve]
+        assert len(used) == (
+            result.curve_offsets[curve + 1] - result.curve_offsets[curve] - 1
+        )
+        expected = result.curve_parameters[
+            result.curve_offsets[curve] : result.curve_offsets[curve + 1]
+        ]
+        vertex_rows = np.unique(used)
+        interior = vertex_rows[result.vertex_dimensions[vertex_rows] == 1]
+        assert np.all(result.vertex_entities[interior] == curve)
+        native = model.curve_ranges[curve, 0] + expected[1:-1] * (
+            model.curve_ranges[curve, 1] - model.curve_ranges[curve, 0]
+        )
+        np.testing.assert_array_equal(
+            np.sort(result.vertex_parameters[interior, 0]), np.sort(native)
+        )
 
 
 def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None:

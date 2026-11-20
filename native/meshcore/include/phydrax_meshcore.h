@@ -2801,6 +2801,12 @@ PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_res
                                                      const phx_mc_cad_surface_arrays* arrays);
 PHX_MC_API void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result);
 
+/* Per-pole rows: face, pole use, protected sectors, free sectors. With
+ * capacity zero and rows null, only the required row count is returned. */
+PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    int64_t* rows, int64_t* count);
+
 #ifdef __cplusplus
 }
 #endif

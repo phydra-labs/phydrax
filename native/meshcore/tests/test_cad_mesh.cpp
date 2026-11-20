@@ -838,11 +838,27 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
   if (!cone && !trim) check_sphere_assembly(bank, size);
   if (cone) check_cone_assembly(bank, size);
+  const auto original_samples = bank.samples;
   const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
   std::vector<std::array<double, 2>> metric_points;
   CadFaceMesh result;
   const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, size, 0.4, 0.5,
                                                 result, &metric_points);
+  PHX_CHECK(bank.samples == original_samples);
+  PHX_CHECK(result.pole_sectors.size() == 1);
+  if (!result.pole_sectors.empty()) {
+    const auto& sectors = result.pole_sectors.front();
+    PHX_CHECK(sectors.use == 2);
+    PHX_CHECK(sectors.fixed + sectors.free >= 8);
+    if (!trim) PHX_CHECK(sectors.fixed > 0);
+  }
+  for (const auto& edge : result.boundary_edges) {
+    if (edge.curve < 0) continue;
+    const auto first = bank.samples.begin() + bank.sample_offsets[edge.curve];
+    const auto last = bank.samples.begin() + bank.sample_offsets[edge.curve+1];
+    PHX_CHECK(std::find(first, last, edge.parameters[0]) != last);
+    PHX_CHECK(std::find(first, last, edge.parameters[1]) != last);
+  }
   if (status != PHX_MC_OK) {
     std::fprintf(stderr, "trim probe h=%.17g top=%.17g\n", size, trim_top);
     std::fprintf(stderr, "%s status=%d faces=%zu slivers=%zu omitted=%lld fixed=%lld excluded=%lld unresolved=%lld lens=%lld outside=%lld proximity=%lld nonstar=%lld\n",
@@ -873,13 +889,28 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
   PHX_CHECK(!result.slivers.empty());
   PHX_CHECK(result.stats.fixed_triangles_skipped > 0);
   PHX_CHECK(!metric_points.empty());
-  const double ring_spacing = size * (cone ? std::cos(angle) : 1.0);
+  const double nominal_spacing = size * (cone ? std::cos(angle) : 1.0);
+  const double adjacent = low + (static_cast<double>(counts[1]-1) / counts[1]) * (pole-low);
+  const double adjacent_spacing = std::abs(adjacent-pole);
+  const double ring_spacing = adjacent_spacing >= 0.5*nominal_spacing &&
+                              adjacent_spacing <= nominal_spacing
+                                  ? adjacent_spacing : nominal_spacing;
   for (const auto& uv : metric_points) PHX_CHECK(std::abs(uv[1] - pole) >= ring_spacing);
   int bad_angles = 0;
+  int first_ring_fan_triangles = 0;
+  int protected_triangles = 0, free_triangles = 0;
+  double min_fan_angle[2] = {180.0, 180.0}, max_fan_distance[2] = {0.0, 0.0};
   for (const auto& cell : result.triangles) {
     const auto& a = result.vertices[cell[0]].uv;
     const auto& b = result.vertices[cell[1]].uv;
     const auto& c = result.vertices[cell[2]].uv;
+    int pole_vertices = 0, ring_vertices = 0;
+    for (const int32_t vertex : cell) {
+      const auto& v = result.vertices[vertex];
+      pole_vertices += v.dimension == 0 && v.entity == 1;
+      ring_vertices += std::abs(std::abs(v.uv[1]-pole)-ring_spacing) < 1e-12;
+    }
+    if (pole_vertices == 1 && ring_vertices == 2) ++first_ring_fan_triangles;
     PHX_CHECK(phx::mc::orient2d(a.data(), b.data(), c.data()) > 0);
     const auto position = [cone](const std::array<double, 2>& uv) {
       const double r = cone ? uv[1] : std::cos(uv[1]);
@@ -888,13 +919,61 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
     };
     const auto x = position(a), y = position(b), z = position(c);
     const std::array<std::array<double, 3>, 3> xyz{x,y,z};
-    for (int i = 0; i < 3; ++i)
-      if (!angle_ok(xyz[i], xyz[(i+1)%3], xyz[(i+2)%3])) ++bad_angles;
+    if (pole_vertices == 1) {
+      bool protected_fan = false;
+      for (const auto& edge : result.protected_pole_edges) {
+        const bool first = std::find(cell.begin(), cell.end(), edge[0]) != cell.end();
+        const bool second = std::find(cell.begin(), cell.end(), edge[1]) != cell.end();
+        protected_fan |= first && second;
+      }
+      const int group = protected_fan ? 0 : 1;
+      protected_triangles += protected_fan;
+      free_triangles += !protected_fan;
+      for (int i = 0; i < 3; ++i) {
+        double dot = 0.0, aa = 0.0, bb = 0.0;
+        for (int k = 0; k < 3; ++k) {
+          const double da = xyz[(i+1)%3][k] - xyz[i][k];
+          const double db = xyz[(i+2)%3][k] - xyz[i][k];
+          dot += da*db;
+          aa += da*da;
+          bb += db*db;
+        }
+        min_fan_angle[group] = std::min(min_fan_angle[group],
+            std::acos(std::clamp(dot/std::sqrt(aa*bb), -1.0, 1.0))*180.0/pi);
+      }
+      for (int i = 0; i <= 6; ++i) for (int j = 0; j <= 6-i; ++j) {
+        const double w0 = i/6.0, w1 = j/6.0, w2 = 1.0-w0-w1;
+        const double px = w0*x[0]+w1*y[0]+w2*z[0];
+        const double py = w0*x[1]+w1*y[1]+w2*z[1];
+        const double pz = w0*x[2]+w1*y[2]+w2*z[2];
+        const double error = cone ? std::abs(std::hypot(px,py)-pz)/std::sqrt(2.0)
+                                  : std::abs(std::hypot(std::hypot(px,py),pz)-1.0);
+        max_fan_distance[group] = std::max(max_fan_distance[group], error);
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      if (!angle_ok(xyz[i], xyz[(i+1)%3], xyz[(i+2)%3])) {
+        ++bad_angles;
+        std::fprintf(stderr, "bad polar angle cone=%d trim=%d h=%g uv=(%.17g %.17g) (%.17g %.17g) (%.17g %.17g)\n",
+                     cone, trim, size, a[0], a[1], b[0], b[1], c[0], c[1]);
+      }
+    }
     const double px = (x[0]+y[0]+z[0])/3, py = (x[1]+y[1]+z[1])/3;
     const double pz = (x[2]+y[2]+z[2])/3;
     const double error = cone ? std::abs(std::hypot(px,py)-pz)/std::sqrt(2.0)
                               : std::abs(std::hypot(std::hypot(px,py),pz)-1.0);
     PHX_CHECK(error < 0.2);
+  }
+  if (!result.pole_sectors.empty())
+    PHX_CHECK(first_ring_fan_triangles >= result.pole_sectors.front().fixed);
+  if (!result.pole_sectors.empty()) {
+    const auto& s = result.pole_sectors.front();
+    PHX_CHECK(protected_triangles == s.fixed);
+    std::fprintf(stderr, "polar quality cone=%d trim=%d h=%.3g top=%.3g sectors=%lld/%lld "
+                 "protected=%d angle=%.9g distance=%.9g free=%d angle=%.9g distance=%.9g\n",
+                 cone, trim, size, trim_top, static_cast<long long>(s.fixed),
+                 static_cast<long long>(s.free), protected_triangles, min_fan_angle[0],
+                 max_fan_distance[0], free_triangles, min_fan_angle[1], max_fan_distance[1]);
   }
   if (!trim) PHX_CHECK(bad_angles == 0);
 }
@@ -1052,9 +1131,22 @@ void quadric_assembly() {
   }
 }
 
+void pole_chord_contacts() {
+  using phx::mc::cad_face_segments_conflict;
+  const std::array<double, 2> a{0,0}, b{2,0}, middle{1,0}, above{1,1};
+  const std::array<double, 2> end_above{2,1}, beyond{3,0};
+  // The seam endpoint touches the ring interior, but has a different ID.
+  PHX_CHECK(cad_face_segments_conflict(0, 1, a, b, 2, 3, middle, above));
+  PHX_CHECK(!cad_face_segments_conflict(0, 1, a, b, 1, 3, b, end_above));
+  PHX_CHECK(!cad_face_segments_conflict(0, 1, a, b, 1, 0, b, a));
+  PHX_CHECK(cad_face_segments_conflict(0, 1, a, b, 2, 3, middle, beyond));
+  PHX_CHECK(cad_face_segments_conflict(0, 1, a, b, 1, 3, b, middle));
+}
+
 }  // namespace
 
 int main() {
+  pole_chord_contacts();
   plane_with_hole();
   periodic_rounding_gap();
   cancelling_sheet_jump();

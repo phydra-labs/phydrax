@@ -553,9 +553,114 @@ int near_boundary(const FaceBoundary& boundary, FaceMetric& metric,
   return false;
 }
 
+bool point_on_segment(const std::array<double, 2>& p, const std::array<double, 2>& a,
+                      const std::array<double, 2>& b) {
+  return orient2d(a.data(), b.data(), p.data()) == 0 &&
+         p[0] >= std::min(a[0], b[0]) && p[0] <= std::max(a[0], b[0]) &&
+         p[1] >= std::min(a[1], b[1]) && p[1] <= std::max(a[1], b[1]);
+}
+
+bool segments_meet(const std::array<double, 2>& a, const std::array<double, 2>& b,
+                   const std::array<double, 2>& c, const std::array<double, 2>& d) {
+  const double ab_c = orient2d(a.data(), b.data(), c.data());
+  const double ab_d = orient2d(a.data(), b.data(), d.data());
+  const double cd_a = orient2d(c.data(), d.data(), a.data());
+  const double cd_b = orient2d(c.data(), d.data(), b.data());
+  if (ab_c == 0 && point_on_segment(c, a, b)) return true;
+  if (ab_d == 0 && point_on_segment(d, a, b)) return true;
+  if (cd_a == 0 && point_on_segment(a, c, d)) return true;
+  if (cd_b == 0 && point_on_segment(b, c, d)) return true;
+  return ((ab_c > 0 && ab_d < 0) || (ab_c < 0 && ab_d > 0)) &&
+         ((cd_a > 0 && cd_b < 0) || (cd_a < 0 && cd_b > 0));
+}
+
+bool point_in_triangle(const std::array<double, 2>& p, const std::array<double, 2>& a,
+                       const std::array<double, 2>& b, const std::array<double, 2>& c) {
+  const double x = orient2d(a.data(), b.data(), p.data());
+  const double y = orient2d(b.data(), c.data(), p.data());
+  const double z = orient2d(c.data(), a.data(), p.data());
+  return ((x >= 0 && y >= 0 && z >= 0) || (x <= 0 && y <= 0 && z <= 0)) &&
+         orient2d(a.data(), b.data(), c.data()) != 0;
+}
+
+}  // namespace
+
+bool cad_face_segments_conflict(int32_t ai, int32_t bi, const std::array<double, 2>& a,
+                                const std::array<double, 2>& b, int32_t ci, int32_t di,
+                                const std::array<double, 2>& c, const std::array<double, 2>& d) {
+  if (!segments_meet(a, b, c, d)) return false;
+  if ((ai == ci && bi == di) || (ai == di && bi == ci)) return false;
+  if (ai != ci && ai != di && bi != ci && bi != di) return true;
+  // A shared endpoint is permitted only when it is the entire intersection.
+  // Checking the other endpoints rejects collinear overlap and T-junctions.
+  if (ai != ci && ai != di && point_on_segment(a, c, d)) return true;
+  if (bi != ci && bi != di && point_on_segment(b, c, d)) return true;
+  if (ci != ai && ci != bi && point_on_segment(c, a, b)) return true;
+  if (di != ai && di != bi && point_on_segment(d, a, b)) return true;
+  return false;
+}
+
+namespace {
+
+bool chord_meets_triangle(const FaceBoundary& boundary, const std::array<int32_t, 3>& ids,
+                          const std::array<std::array<double, 2>, 3>& uv) {
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    const int32_t p = edge.vertices[0], q = edge.vertices[1];
+    const auto& puv = boundary.vertices[p].uv;
+    const auto& quv = boundary.vertices[q].uv;
+    for (int i = 0; i < 3; ++i) {
+      const int j = (i + 1) % 3;
+      if (cad_face_segments_conflict(ids[i], ids[j], uv[i], uv[j], p, q, puv, quv)) return true;
+    }
+    if (p != ids[0] && p != ids[1] && p != ids[2] &&
+        point_in_triangle(puv, uv[0], uv[1], uv[2])) return true;
+    if (q != ids[0] && q != ids[1] && q != ids[2] &&
+        point_in_triangle(quv, uv[0], uv[1], uv[2])) return true;
+  }
+  return false;
+}
+
+bool chord_meets_segment(const FaceBoundary& boundary, int32_t a, int32_t b,
+                         const std::array<double, 2>& auv, const std::array<double, 2>& buv) {
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    const int32_t p = edge.vertices[0], q = edge.vertices[1];
+    if (cad_face_segments_conflict(a, b, auv, buv, p, q, boundary.vertices[p].uv,
+                                   boundary.vertices[q].uv)) return true;
+  }
+  return false;
+}
+
+bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, int axis,
+                        double origin, double direction, double spacing, double width,
+                        double& latitude) {
+  const int32_t corner = boundary.vertices[pole.first_vertex].entity;
+  bool found = false;
+  Expansion common;
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    for (int k = 0; k < 2; ++k) {
+      const auto& endpoint = boundary.vertices[edge.vertices[k]];
+      if (endpoint.dimension != 0 || endpoint.entity != corner) continue;
+      const double adjacent = boundary.vertices[edge.vertices[1-k]].uv[axis];
+      const double offset = direction * (adjacent - origin);
+      if (!(offset >= 0.5 * spacing && offset <= spacing && offset <= width)) return false;
+      const Expansion exact = Expansion::difference(adjacent, origin);
+      if (found && !(exact - common).is_zero()) return false;
+      common = exact;
+      latitude = adjacent;
+      found = true;
+    }
+  }
+  return found;
+}
+
 int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundary,
                    std::size_t outer, FaceMetric& metric, std::vector<double>& points,
-                   std::vector<uint8_t>& fixed, int64_t& omitted) {
+                   std::vector<uint8_t>& fixed, std::vector<int32_t>& segments,
+                   std::vector<CadPoleSectors>& sectors,
+                   std::vector<std::array<int32_t, 2>>& protected_edges, int64_t& omitted) {
   std::array<double, 2> low = boundary.vertices.front().uv, high = low;
   for (const CadFaceVertex& vertex : boundary.vertices)
     for (int axis = 0; axis < 2; ++axis) {
@@ -578,7 +683,7 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     const double speed = std::hypot(std::hypot(jet[derivative], jet[derivative + 1]),
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
-    const double spacing = std::min(limit, metric.size / speed);
+    double spacing = std::min(limit, metric.size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
     double width = std::min(limit, 3.0 * spacing);
     while (width < limit) {
@@ -594,6 +699,10 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       if (!(next > width)) return PHX_MC_RANGE_ERROR;
       width = next;
     }
+    double latitude = 0.0;
+    const bool snapped = pole_snap_latitude(boundary, pole, axis, start[axis], direction,
+                                           spacing, width, latitude);
+    if (snapped) spacing = direction * (latitude - start[axis]);
     metric.poles.push_back({axis, start[axis], direction, width, spacing});
     const double first = geometry.model().use_ranges[2 * pole.use];
     const double last = geometry.model().use_ranges[2 * pole.use + 1];
@@ -603,8 +712,8 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                      metric.workspace, end)) return PHX_MC_INVALID_INPUT;
     for (double offset = spacing; offset <= width; offset += spacing) {
       std::array<double, 2> uv = start;
-      uv[axis] = start[axis] + direction * offset;
-      if (offset == spacing && direction * (uv[axis] - start[axis]) < spacing)
+      uv[axis] = snapped && offset == spacing ? latitude : start[axis] + direction * offset;
+      if (!snapped && offset == spacing && direction * (uv[axis] - start[axis]) < spacing)
         uv[axis] = std::nextafter(uv[axis], direction > 0.0
                                   ? std::numeric_limits<double>::infinity()
                                   : -std::numeric_limits<double>::infinity());
@@ -620,9 +729,28 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         length += distance(previous, next);
         previous = next;
       }
-      const int count = std::max(8, static_cast<int>(std::ceil(length / metric.size)));
-      for (int i = 1; i < count; ++i) {
-        uv[free_axis] = start[free_axis] + (end[free_axis] - start[free_axis]) * i / count;
+      const int count = std::max(8, static_cast<int>(std::ceil(length / (spacing * speed))));
+      const bool first_ring = offset == spacing;
+      std::vector<std::array<double, 2>> ring_uv;
+      std::vector<int32_t> ring_rows;
+      if (first_ring) {
+        ring_uv.resize(static_cast<std::size_t>(count + 1));
+        ring_rows.assign(static_cast<std::size_t>(count + 1), -1);
+      }
+      for (int i = 0; i <= count; ++i) {
+        uv[free_axis] = i == count ? end[free_axis] :
+            start[free_axis] + (end[free_axis] - start[free_axis]) * i / count;
+        if (first_ring) ring_uv[static_cast<std::size_t>(i)] = uv;
+        if (i == 0 || i == count) {
+          if (first_ring && snapped) {
+            for (std::size_t j = 0; j < boundary.vertices.size(); ++j)
+              if (boundary.vertices[j].uv == uv) {
+                ring_rows[static_cast<std::size_t>(i)] = static_cast<int32_t>(j);
+                break;
+              }
+          }
+          continue;
+        }
         if (!in_trim(boundary, outer, uv)) continue;
         const int proximity = near_boundary(boundary, metric, uv);
         if (proximity < 0) return PHX_MC_INVALID_INPUT;
@@ -630,9 +758,48 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
           ++omitted;
           continue;
         }
+        if (first_ring) ring_rows[static_cast<std::size_t>(i)] = static_cast<int32_t>(points.size()/2);
         points.push_back(uv[0] * metric.scale_u);
         points.push_back(uv[1] * metric.scale_v);
         fixed.push_back(1);
+      }
+      if (first_ring) {
+        CadPoleSectors counts{static_cast<int32_t>(pole.use), 0, 0};
+        const auto add_segment = [&](int32_t a, int32_t b) {
+          for (std::size_t j = 0; j < segments.size(); j += 2)
+            if ((segments[j] == a && segments[j+1] == b) ||
+                (segments[j] == b && segments[j+1] == a)) return;
+          segments.push_back(a);
+          segments.push_back(b);
+        };
+        const auto pole_row = [&](int i) {
+          if (i == count)
+            return boundary.edges[static_cast<std::size_t>(pole.first_vertex + pole.count - 1)].vertices[1];
+          return pole.first_vertex + i * pole.count / count;
+        };
+        for (int i = 0; i < count; ++i) {
+          const int32_t a = ring_rows[static_cast<std::size_t>(i)];
+          const int32_t b = ring_rows[static_cast<std::size_t>(i+1)];
+          if (a < 0 || b < 0 || chord_meets_segment(boundary, a, b, ring_uv[i], ring_uv[i+1])) {
+            ++counts.free;
+            continue;
+          }
+          add_segment(a, b);
+          const int32_t p = pole_row(i), q = pole_row(i+1);
+          const auto& puv = boundary.vertices[p].uv;
+          const auto& quv = boundary.vertices[q].uv;
+          if (chord_meets_triangle(boundary, {p, a, b}, {puv, ring_uv[i], ring_uv[i+1]}) ||
+              (p != q && chord_meets_triangle(boundary, {p, b, q}, {puv, ring_uv[i+1], quv}))) {
+            ++counts.free;
+            continue;
+          }
+          add_segment(p, a);
+          add_segment(q, b);
+          if (p != q) add_segment(p, b);
+          protected_edges.push_back({a, b});
+          ++counts.fixed;
+        }
+        sectors.push_back(counts);
       }
     }
   }
@@ -776,17 +943,19 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     holes.push_back(seed[1] * metric.scale_v);
   }
   std::vector<uint8_t> fixed(boundary.vertices.size(), 0);
+  std::vector<int32_t> segments = boundary.segments;
   int64_t omitted_pole_points = 0;
-  status = seed_poles(geometry, boundary, outer, metric, points, fixed, omitted_pole_points);
+  status = seed_poles(geometry, boundary, outer, metric, points, fixed, segments,
+                      result.pole_sectors, result.protected_pole_edges, omitted_pole_points);
   if (status != PHX_MC_OK) return status;
   if (points.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
-      boundary.segments.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
+      segments.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
       holes.size()/2 > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_INDEX_RANGE_ERROR;
   CadRefine2DInput input;
   input.points = points.data();
   input.point_count = static_cast<int32_t>(points.size() / 2);
-  input.segments = boundary.segments.data();
-  input.segment_count = static_cast<int32_t>(boundary.segments.size() / 2);
+  input.segments = segments.data();
+  input.segment_count = static_cast<int32_t>(segments.size() / 2);
   input.holes = holes.data();
   input.hole_count = static_cast<int32_t>(holes.size() / 2);
   input.point_cap = static_cast<int32_t>(std::min<int64_t>(
@@ -887,9 +1056,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
       record.triangle_uv[2*k] = point[0] / metric.scale_u;
       record.triangle_uv[2*k+1] = point[1] / metric.scale_v;
     }
-    if (failure.segment >= 0) {
-      if (static_cast<std::size_t>(failure.segment) >= boundary.edges.size())
-        return PHX_MC_INTERNAL_ERROR;
+    if (failure.segment >= 0 &&
+        static_cast<std::size_t>(failure.segment) < boundary.edges.size()) {
       const auto& edge = boundary.edges[static_cast<std::size_t>(failure.segment)];
       record.use = edge.use;
       record.curve = edge.curve;
@@ -917,6 +1085,10 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   for (auto& edge : result.boundary_edges) {
     edge.vertices[0] = refined.vertex_map[edge.vertices[0]];
     edge.vertices[1] = refined.vertex_map[edge.vertices[1]];
+  }
+  for (auto& edge : result.protected_pole_edges) {
+    edge[0] = refined.vertex_map[edge[0]];
+    edge[1] = refined.vertex_map[edge[1]];
   }
   result.stats = refined.stats;
   result.omitted_pole_points = omitted_pole_points;

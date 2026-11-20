@@ -26,6 +26,8 @@ struct CadSurfaceMesh {
   std::vector<std::array<double, 2>> curve_edge_parameters;
   std::vector<CadRefine2DStats> face_stats;
   std::vector<int64_t> omitted_pole_points;
+  // Rows are (face, pole use, protected sectors, free sectors).
+  std::vector<std::array<int64_t, 4>> pole_sectors;
   std::vector<int64_t> periodic_corner_gaps;
   std::vector<uint64_t> max_periodic_corner_gap_ulps;
   std::vector<phx_mc_cad_face_failure> face_failures;
