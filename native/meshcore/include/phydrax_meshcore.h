@@ -2062,19 +2062,24 @@ PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request)
 /* Certifies a remeshed surface (vertices, triangles) against its source mesh
  * in both directions, repairing it locally as phx_mc_zero_set_certify does.
  * Surface -> source: every triangle T gets an upper bound on the distance
- * from each of its points to the source, from the source triangles over T
- * (the patch reached across edges whose projections onto T's plane meet T's,
- * whose boundary must wind once around T's projection: then every x in T
- * lies over a patch triangle t, and d(x, t), convex along T, peaks at the
- * vertices of the piece of T over t; floating point with a stated rounding
- * margin). Refused triangles (bound above `tolerance`, or no winding) are
- * split and flipped for at most four rounds, with embedding checked exactly.
- * Source -> surface: the same bound for every source triangle against the
- * certified surface, projecting along the surface's interpolated normal
- * (a source triangle may be rougher than the surface); the surface triangles
- * nearest the corners of a refused source triangle are split, angles are
- * restored by flips and relocations, and both directions are decided again,
- * at most three times. Both sources must be closed oriented 2-manifolds with
+ * from each of its points to the source. Points take planar coordinates
+ * along T's normal, and each triangle maps affinely onto the planar
+ * triangle of its corners' (binary64) coordinates; the patch (source
+ * triangles reached across edges whose planar triangles meet T's) must wind
+ * once around T's planar triangle (exact orient2d), so every x = X(y) in T
+ * has a patch point Y(y) over the same planar y, and d(x, source) <=
+ * |X(y) - Y(y)|, convex over each overlap of planar triangles: the bound is
+ * its value at the overlap vertices (corners and edge crossings decided
+ * exactly; crossings evaluated within a certified offset, with the maps'
+ * slopes and a first-order rounding pad, rounded up). Refused triangles
+ * (bound above `tolerance`, or no winding) are split and flipped for at
+ * most four rounds, with embedding checked exactly. Source -> surface: the
+ * same bound for every source triangle against the certified surface, along
+ * the surface's interpolated normal (a source triangle may be rougher than
+ * the surface); the surface triangles nearest the corners of a refused
+ * source triangle are split. After any repair, angles are restored by flips
+ * and relocations and both directions are decided again, for at most three
+ * further passes. Both sources must be closed oriented 2-manifolds with
  * nondegenerate triangles. On PHX_MC_OK `result` owns the certified surface
  * (phx_mc_surface_result_*) and distances = (largest surface -> source
  * bound, largest source -> surface bound), each at most `tolerance`.
@@ -2083,9 +2088,9 @@ PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request)
  * (triangle certifications refused for distance, triangles refused for
  * embedding, repair splits, rounds run, all summed over every pass; source
  * triangles not proved within `tolerance` in the last pass; relocations
- * restoring angles after source -> surface repairs) on PHX_MC_OK and
- * PHX_MC_UNRESOLVED, distances on both too (the second +inf when the surface
- * direction failed). */
+ * restoring angles after repairs) on PHX_MC_OK and PHX_MC_UNRESOLVED,
+ * distances on both too (the second +inf when the surface direction
+ * failed). */
 typedef struct phx_mc_mesh_certify_request {
   const double* source_vertices;
   int64_t source_vertex_count;

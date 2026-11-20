@@ -6,10 +6,12 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <tuple>
 #include <utility>
 
 #include "capi_guard.hpp"
 #include "phydrax_meshcore.h"
+#include "predicates.hpp"
 
 namespace phx::mc::remesh {
 namespace {
@@ -286,14 +288,26 @@ std::array<double, 2> MeshSource::curvatures(const Nearest& at) const {
 }
 
 namespace {
-using Planar = std::array<double, 2>;
+constexpr double kUnit = 0x1p-53;  // unit roundoff
 
-double orient(const Planar& p, const Planar& q, const Planar& r) {
-  return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+int exact_orient(const Planar& a, const Planar& b, const Planar& c) {
+  return phx::mc::orient2d(a.data(), b.data(), c.data());
+}
+
+// Shewchuk's floating stage of orient2d(a, b, c), det[a - c, b - c], and a
+// bound on its error.
+struct Orientation {
+  double det;
+  double error;
+};
+Orientation orientation(const Planar& a, const Planar& b, const Planar& c) {
+  const double left = (a[0] - c[0]) * (b[1] - c[1]);
+  const double right = (a[1] - c[1]) * (b[0] - c[0]);
+  return {left - right, (3.0 + 16.0 * kUnit) * kUnit * (std::abs(left) + std::abs(right))};
 }
 
 // Whether an edge direction of `from` separates the two planar triangles by
-// more than `margin`.
+// more than `margin` (far above the rounding of the projections compared).
 bool separated(const std::array<Planar, 3>& from, const std::array<Planar, 3>& other,
                double margin) {
   for (size_t k = 0; k < 3; ++k) {
@@ -317,7 +331,121 @@ bool separated(const std::array<Planar, 3>& from, const std::array<Planar, 3>& o
   }
   return false;
 }
+
+// The affine map sending planar corners p to spatial corners P,
+// X(x) = P[0] + J (x - p[0]), with |J|_F and the planar conditioning
+// |M|_F^2 / |det M| of M = [p1 - p0, p2 - p0].
+struct Affine {
+  Planar origin;
+  Point base;
+  std::array<Point, 2> columns;
+  double norm;
+  double condition;
+};
+Affine affine(const std::array<Planar, 3>& p, const std::array<Point, 3>& space) {
+  const double m00 = p[1][0] - p[0][0], m01 = p[2][0] - p[0][0];
+  const double m10 = p[1][1] - p[0][1], m11 = p[2][1] - p[0][1];
+  const double det = m00 * m11 - m01 * m10;
+  const Point first = sub(space[1], space[0]), second = sub(space[2], space[0]);
+  Affine map{p[0], space[0], {}, 0, 0};
+  for (size_t d = 0; d < 3; ++d) {
+    map.columns[0][d] = (first[d] * m11 - second[d] * m10) / det;
+    map.columns[1][d] = (second[d] * m00 - first[d] * m01) / det;
+  }
+  map.norm = std::sqrt(dot(map.columns[0], map.columns[0]) + dot(map.columns[1], map.columns[1]));
+  map.condition = (m00 * m00 + m01 * m01 + m10 * m10 + m11 * m11) / std::abs(det);
+  return map;
+}
+Point evaluate(const Affine& map, const Planar& x) {
+  const double u = x[0] - map.origin[0], v = x[1] - map.origin[1];
+  return {map.base[0] + map.columns[0][0] * u + map.columns[1][0] * v,
+          map.base[1] + map.columns[0][1] * u + map.columns[1][1] * v,
+          map.base[2] + map.columns[0][2] * u + map.columns[1][2] * v};
+}
 }  // namespace
+
+double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Point, 3>& own_space,
+                         const std::array<Planar, 3>& other,
+                         const std::array<Point, 3>& other_space) {
+  const int own_side = exact_orient(own[0], own[1], own[2]);
+  const int other_side = exact_orient(other[0], other[1], other[2]);
+  if (own_side == 0) return std::numeric_limits<double>::infinity();
+  // A degenerate `other` overlaps no area; its points lie in the closure of
+  // its neighbors' overlaps.
+  if (other_side == 0) return 0;
+  const auto inside = [](const Planar& x, const std::array<Planar, 3>& corners, int side) {
+    for (size_t k = 0; k < 3; ++k)
+      if (exact_orient(corners[k], corners[(k + 1) % 3], x) * side < 0) return false;
+    return true;
+  };
+  const Affine own_map = affine(own, own_space), other_map = affine(other, other_space);
+  double planar_scale = 0, space_scale = 0;
+  for (size_t k = 0; k < 3; ++k)
+    for (size_t d = 0; d < 3; ++d) {
+      if (d < 2)
+        planar_scale =
+            std::max(planar_scale, std::max(std::abs(own[k][d]), std::abs(other[k][d])));
+      space_scale =
+          std::max(space_scale, std::max(std::abs(own_space[k][d]), std::abs(other_space[k][d])));
+    }
+  // First-order rounding of the two maps at a point of both triangles (the
+  // planar differences, the 2 x 2 inverse, the products), constants doubled.
+  const double slope = own_map.norm + other_map.norm;
+  const double evaluation =
+      8 * kUnit *
+          (own_map.condition * (own_map.norm * planar_scale + space_scale) +
+           other_map.condition * (other_map.norm * planar_scale + space_scale)) +
+      4 * kUnit * space_scale;
+  double bound = 0;
+  // The gap at an exact overlap vertex within `offset` of x.
+  const auto visit = [&](const Planar& x, double offset) {
+    bound = std::max(bound, norm(sub(evaluate(own_map, x), evaluate(other_map, x))) +
+                                slope * offset + evaluation);
+  };
+  for (size_t k = 0; k < 3; ++k) {
+    if (inside(own[k], other, other_side)) visit(own[k], 0);
+    if (inside(other[k], own, own_side)) visit(other[k], 0);
+  }
+  // Proper edge crossings (touching ones are corners inside the other): the
+  // crossing's parameter along a segment is a / (a + b) for the two
+  // orientations' magnitudes, enclosed from their error bounds; of the two
+  // segments, the tighter enclosure is kept.
+  for (size_t i = 0; i < 3; ++i)
+    for (size_t j = 0; j < 3; ++j) {
+      const Planar& p = own[i];
+      const Planar& p_next = own[(i + 1) % 3];
+      const Planar& q = other[j];
+      const Planar& q_next = other[(j + 1) % 3];
+      if (exact_orient(q, q_next, p) * exact_orient(q, q_next, p_next) >= 0 ||
+          exact_orient(p, p_next, q) * exact_orient(p, p_next, q_next) >= 0)
+        continue;
+      double offset = std::numeric_limits<double>::infinity();
+      Planar crossing{};
+      for (const auto& [from, to, line, line_next] :
+           {std::tuple{p, p_next, q, q_next}, std::tuple{q, q_next, p, p_next}}) {
+        const Orientation a = orientation(line, line_next, from);
+        const Orientation b = orientation(line, line_next, to);
+        const double a_low = std::max(std::abs(a.det) - a.error, 0.0);
+        const double a_high = std::abs(a.det) + a.error;
+        const double b_low = std::max(std::abs(b.det) - b.error, 0.0);
+        const double b_high = std::abs(b.det) + b.error;
+        const double w_low = std::max(a_low / (a_low + b_high) * (1 - 4 * kUnit), 0.0);
+        const double w_high = std::min(a_high / (a_high + b_low) * (1 + 4 * kUnit), 1.0);
+        const double w = 0.5 * (w_low + w_high);
+        const Planar x{from[0] + w * (to[0] - from[0]), from[1] + w * (to[1] - from[1])};
+        const double length = std::sqrt((to[0] - from[0]) * (to[0] - from[0]) +
+                                        (to[1] - from[1]) * (to[1] - from[1]));
+        const double candidate =
+            0.5 * (w_high - w_low) * length * (1 + 4 * kUnit) + 8 * kUnit * planar_scale;
+        if (candidate < offset) {
+          offset = candidate;
+          crossing = x;
+        }
+      }
+      visit(crossing, offset);
+    }
+  return bound * (1 + 0x1p-40);
+}
 
 double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c,
                                   Projection projection) const {
@@ -349,39 +477,37 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
   double scale = scale_;
   for (const Point* p : {&a, &b, &c})
     for (const double x : *p) scale = std::max(scale, std::abs(x));
-  // Planar coordinates and heights are a few roundings of magnitudes up to
-  // 2 * scale, and the frame is orthonormal up to rounding: 2^-32 * scale
-  // bounds those errors with room, and separates the patch boundary from T
-  // by more than them, so the computed winding is the exact projection's.
+  // Projections are compared with `margin` (far above their rounding): a
+  // patch triangle is excluded only when certainly apart from T's.
   const double margin = 0x1p-32 * scale;
-  // T's projection, positively oriented, and T's heights along `direction`.
-  const std::array<const Point*, 3> corners{&a, &b, &c};
+  // T's projection, positively oriented (exactly), and T's heights along
+  // `direction`.
+  std::array<Point, 3> space{a, b, c};
   std::array<Planar, 3> corner{};
   std::array<double, 3> corner_height{};
   for (size_t k = 0; k < 3; ++k) {
-    const Point d = sub(*corners[k], a);
+    const Point d = sub(space[k], a);
     corner[k] = {dot(d, e1), dot(d, e2)};
     corner_height[k] = dot(d, direction);
   }
-  double corner_area = orient(corner[0], corner[1], corner[2]);
-  if (corner_area < 0) {
+  bool in_domain = true;
+  const auto admit = [&](const Planar& x) {
+    in_domain = in_domain && phx::mc::coordinate_in_domain(x[0]) &&
+                phx::mc::coordinate_in_domain(x[1]);
+  };
+  for (const Planar& x : corner) admit(x);
+  if (!in_domain) return kInfinity;
+  const int corner_side = exact_orient(corner[0], corner[1], corner[2]);
+  if (corner_side == 0) return kInfinity;
+  if (corner_side < 0) {
     std::swap(corner[1], corner[2]);
     std::swap(corner_height[1], corner_height[2]);
-    corner_area = -corner_area;
+    std::swap(space[1], space[2]);
   }
-  if (!(corner_area > 0)) return kInfinity;
-  double corner_low = corner_height[0], corner_high = corner_height[0], corner_longest = 0;
-  for (size_t k = 0; k < 3; ++k) {
-    corner_low = std::min(corner_low, corner_height[k]);
-    corner_high = std::max(corner_high, corner_height[k]);
-    const Planar& p = corner[k];
-    const Planar& r = corner[(k + 1) % 3];
-    corner_longest =
-        std::max(corner_longest, (r[0] - p[0]) * (r[0] - p[0]) + (r[1] - p[1]) * (r[1] - p[1]));
-  }
-  const double corner_interpolation =
-      0x1p-44 * scale * std::sqrt(corner_longest) / corner_area *
-      std::max(std::abs(corner_low), std::abs(corner_high));
+  const double corner_low =
+      std::min(std::min(corner_height[0], corner_height[1]), corner_height[2]);
+  const double corner_high =
+      std::max(std::max(corner_height[0], corner_height[1]), corner_height[2]);
   ++stamp_;
   // (u, v, height) of a source vertex in the frame, once per query.
   const auto lift = [&](int64_t v) -> const std::array<double, 3>& {
@@ -390,6 +516,7 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
       vertex_stamps_[i] = stamp_;
       const Point d = sub(points_[i], a);
       projected_[i] = {dot(d, e1), dot(d, e2), dot(d, direction)};
+      admit({projected_[i][0], projected_[i][1]});
     }
     return projected_[i];
   };
@@ -423,11 +550,15 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
       included_[static_cast<size_t>(u)] = stamp_;
       patch_.push_back(u);
     }
-  // Winding number of the projected patch boundary around T's projected
-  // centroid (the same over all of T's projection); one means the
-  // projection of the patch covers it.
-  const Planar centroid{(corner[0][0] + corner[1][0] + corner[2][0]) / 3,
-                        (corner[0][1] + corner[1][1] + corner[2][1]) / 3};
+  // Exact predicates need every planar coordinate in their domain.
+  if (!in_domain) return kInfinity;
+  // Each triangle maps affinely onto the triangle of its corners' planar
+  // coordinates (exact binary64 values), so the patch is a piecewise-linear
+  // map into the plane. Its boundary misses T's planar triangle, so the
+  // winding number of the boundary is the same at every point of it (taken
+  // at its first corner, with the exact orient2d and half-open crossings);
+  // one means every point of T's triangle is the image of a patch point.
+  const Planar& probe = corner[0];
   int64_t winding = 0;
   for (const int64_t t : patch_) {
     const Triangle& f = triangles_[static_cast<size_t>(t)];
@@ -436,83 +567,40 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
       const auto& p = lift(f[k]);
       const auto& q = lift(f[(k + 1) % 3]);
       const Planar from{p[0], p[1]}, to{q[0], q[1]};
-      if (from[1] <= centroid[1]) {
-        if (to[1] > centroid[1] && orient(from, to, centroid) > 0) ++winding;
-      } else if (to[1] <= centroid[1] && orient(from, to, centroid) < 0) {
+      if (from[1] <= probe[1]) {
+        if (to[1] > probe[1] && exact_orient(from, to, probe) > 0) ++winding;
+      } else if (to[1] <= probe[1] && exact_orient(from, to, probe) < 0) {
         --winding;
       }
     }
   }
   if (winding != 1) return kInfinity;
-  // Every x in T over the piece proj(T) ∩ proj(t) is within d(x, t) of the
-  // source, and d(x, t) is convex along T (x is affine in its projection, and
-  // the distance to a convex set is convex), so over the piece it peaks at
-  // the piece's vertices, lifted onto T. Over all of proj(t) the gap between
-  // t's and T's heights, at least d(x, t), is within the corner heights'
-  // range, which bounds a projection too thin to clip. `interpolation`
-  // bounds the barycentric rounding and the computed piece's offset from the
-  // exact one, times the slopes.
+  // A point x of T is X(y) for y in its planar triangle, and y is the image
+  // Y(y) of a point of some patch triangle t: d(x, source) <= |X(y) - Y(y)|,
+  // an affine vector's norm, convex over the overlap of the two planar
+  // triangles, so it peaks at the overlap's vertices (overlap_gap_bound).
+  // Through the frame, |X - Y| is also at most the gap between the heights,
+  // each a convex combination of its corners' (computed along `direction`,
+  // rounded within 32 units of `scale`): that bounds overlaps too
+  // ill-conditioned to evaluate.
   double bound = 0;
   for (const int64_t t : patch_) {
     const Triangle& f = triangles_[static_cast<size_t>(t)];
-    const auto q = planar(t);
-    std::array<double, 3> height{};
-    double low = kInfinity, high = -kInfinity, longest = 0;
+    double low = kInfinity, high = -kInfinity;
     for (size_t k = 0; k < 3; ++k) {
-      height[k] = lift(f[k])[2];
-      low = std::min(low, height[k]);
-      high = std::max(high, height[k]);
-      const Planar& p = q[k];
-      const Planar& r = q[(k + 1) % 3];
-      longest = std::max(longest, (r[0] - p[0]) * (r[0] - p[0]) + (r[1] - p[1]) * (r[1] - p[1]));
+      low = std::min(low, lift(f[k])[2]);
+      high = std::max(high, lift(f[k])[2]);
     }
-    const double extreme = std::max(high - corner_low, corner_high - low);
+    const double extreme =
+        (std::max(high - corner_low, corner_high - low) + 32 * kUnit * scale) * (1 + 0x1p-40);
     if (extreme <= bound) continue;
-    const double area = orient(q[0], q[1], q[2]);
-    const double interpolation =
-        0x1p-44 * scale * std::sqrt(longest) / std::abs(area) *
-            std::max(std::abs(low), std::abs(high)) +
-        corner_interpolation;
-    if (!(interpolation < extreme)) {
-      bound = extreme;
-      continue;
-    }
-    const double side = area > 0 ? 1.0 : -1.0;
-    std::array<Planar, 9> polygon{corner[0], corner[1], corner[2]}, clipped{};
-    size_t size = 3;
-    for (size_t k = 0; k < 3 && size > 0; ++k) {
-      const Planar& p = q[k];
-      const Planar& r = q[(k + 1) % 3];
-      size_t out = 0;
-      for (size_t i = 0; i < size; ++i) {
-        const Planar& x = polygon[i];
-        const Planar& y = polygon[(i + 1) % size];
-        const double sx = side * orient(p, r, x), sy = side * orient(p, r, y);
-        if (sx >= 0) clipped[out++] = x;
-        if ((sx >= 0) != (sy >= 0)) {
-          const double w = sx / (sx - sy);
-          clipped[out++] = {x[0] + w * (y[0] - x[0]), x[1] + w * (y[1] - x[1])};
-        }
-      }
-      polygon = clipped;
-      size = out;
-    }
-    const Point& p0 = points_[static_cast<size_t>(f[0])];
-    const Point& p1 = points_[static_cast<size_t>(f[1])];
-    const Point& p2 = points_[static_cast<size_t>(f[2])];
-    for (size_t i = 0; i < size; ++i) {
-      double lifted = 0;
-      for (size_t k = 0; k < 3; ++k)
-        lifted += orient(corner[(k + 1) % 3], corner[(k + 2) % 3], polygon[i]) / corner_area *
-                  corner_height[k];
-      const Point x{a[0] + polygon[i][0] * e1[0] + polygon[i][1] * e2[0] + lifted * direction[0],
-                    a[1] + polygon[i][0] * e1[1] + polygon[i][1] * e2[1] + lifted * direction[1],
-                    a[2] + polygon[i][0] * e1[2] + polygon[i][1] * e2[2] + lifted * direction[2]};
-      std::array<double, 3> weights{};
-      bound = std::max(bound, norm(sub(x, closest_point(x, p0, p1, p2, weights))) + interpolation);
-    }
+    const std::array<Point, 3> source_space{points_[static_cast<size_t>(f[0])],
+                                            points_[static_cast<size_t>(f[1])],
+                                            points_[static_cast<size_t>(f[2])]};
+    bound = std::max(bound, std::min(extreme, overlap_gap_bound(corner, space, planar(t),
+                                                                source_space)));
   }
-  return bound + margin;
+  return bound;
 }
 
 bool MeshSourceOracle::project(const Point& position, SurfacePoint& out) const {
@@ -643,9 +731,10 @@ std::vector<Point> denoised(const std::vector<Point>& points,
   return x;
 }
 
-// Local repairs for source triangles left farther than the tolerance from a
-// certified surface (such as a noise outlier the surface smooths over).
-constexpr int kReverseRepairs = 3;
+// Passes after the first: local repairs for source triangles left farther
+// than the tolerance from a certified surface (such as a noise outlier the
+// surface smooths over), and angle relaxation after any repair.
+constexpr int kRepairPasses = 3;
 
 // Source -> surface: bounds every source triangle against the surface
 // (closed, embedded and nondegenerate, as certified), projecting along the
@@ -766,12 +855,23 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
                                             request->distances[1], refused, flagged);
       if (reverse != PHX_MC_OK) return reverse;
       request->counters[4] = refused;
-      if (refused == 0) break;
-      if (pass == kReverseRepairs) return PHX_MC_UNRESOLVED;
+      int64_t relocations = 0;
+      if (refused == 0) {
+        // Certified both ways. Splits that repaired surface refusals may
+        // have left angles below the minimum: relax them and decide again,
+        // unless no pass is left (the surface stays certified as it is).
+        if (counters.repair_splits == 0 || pass == kRepairPasses) break;
+        const int32_t relaxed = relax_surface(points, triangles, oracle, targets, relocations);
+        if (relaxed != PHX_MC_OK) return relaxed;
+        request->counters[5] += relocations;
+        if (relocations == 0) break;
+        continue;
+      }
+      if (pass == kRepairPasses) return PHX_MC_UNRESOLVED;
       // Split the surface triangles nearest the refused source triangles,
       // then restore angles (every triangle below the minimum angle); both
       // directions are decided again.
-      int64_t splits = 0, relocations = 0;
+      int64_t splits = 0;
       int32_t repaired = repair_surface(points, triangles, oracle, targets, flagged, splits);
       if (repaired != PHX_MC_OK) return repaired;
       request->counters[2] += splits;

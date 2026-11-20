@@ -953,7 +953,9 @@ int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
   const int32_t status = adapter.load(points, triangles, false);
   if (status != PHX_MC_OK) return status;
   relocations = adapter.relax();
-  if (relocations > 0 || counters.flips > 0) adapter.store(points, triangles);
+  // Flips alone are kept only with relocations, so an unchanged surface
+  // (relocations == 0) needs no new decision.
+  if (relocations > 0) adapter.store(points, triangles);
   return PHX_MC_OK;
 }
 

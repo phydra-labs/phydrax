@@ -220,6 +220,73 @@ void triangle_bound_refuses_without_coverage() {
   PHX_CHECK(std::isfinite(bound) && bound >= sampled);
 }
 
+// A triangle hanging over the rim of a thin slab: half of it lies over no
+// source at all (0.5 from the slab at its far corner) while the top face is
+// 0.01 below its near half. The projected patch reaches the whole closed slab
+// (top, sides, bottom), so its boundary is empty and the winding is 0: the
+// triangle is refused. A coverage test that trusted the top face alone
+// would state about 0.01 for points half a unit away.
+void triangle_bound_refuses_a_partly_uncovered_triangle() {
+  using phx::mc::remesh::Projection;
+  const std::vector<Point> points{{-1, -1, -0.01}, {1, -1, -0.01}, {1, 1, -0.01}, {-1, 1, -0.01},
+                                  {-1, -1, 0.01},  {1, -1, 0.01},  {1, 1, 0.01},  {-1, 1, 0.01}};
+  const std::vector<Triangle> triangles{{0, 2, 1}, {0, 3, 2}, {4, 5, 6}, {4, 6, 7},
+                                        {0, 1, 5}, {0, 5, 4}, {1, 2, 6}, {1, 6, 5},
+                                        {2, 3, 7}, {2, 7, 6}, {3, 0, 4}, {3, 4, 7}};
+  MeshSource source;
+  PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
+  const Point a{0.5, -0.2, 0.02}, b{1.5, 0.0, 0.02}, c{0.5, 0.2, 0.02};
+  for (const auto projection : {Projection::kOwnNormal, Projection::kSourceNormal}) {
+    const auto [bound, sampled] = bound_and_sample(source, a, b, c, points, triangles, projection);
+    PHX_CHECK(sampled > 0.4);
+    PHX_CHECK(bound == std::numeric_limits<double>::infinity());
+  }
+}
+
+// An overlap vertex where two edges cross at an angle near 2^-53: own's edge
+// runs along y = x / 2 from (0, 0) to (1, 1/2); other's edge from
+// q0 = (0.1, 0.05 - 2^-56) to q1 = (0.7, 0.35 + 2^-54), exactly 2^-56 below
+// and 2^-54 above that line, so it crosses it at parameter 1/5 (x = 0.22),
+// where other's height (1 at q0, 0 at q1) is 0.8; every other overlap vertex
+// has a gap near 0. Floating orientations of these points are dominated by
+// rounding, so a crossing placed from them can land anywhere on the edge;
+// the bound must still reach the true 0.8.
+void overlap_bound_encloses_a_near_parallel_crossing() {
+  using phx::mc::remesh::Planar;
+  const std::array<Planar, 3> own{Planar{0.0, 0.0}, Planar{1.0, 0.5}, Planar{0.0, 1.0}};
+  const std::array<Point, 3> own_space{Point{0.0, 0.0, 0.0}, Point{1.0, 0.5, 0.0},
+                                       Point{0.0, 1.0, 0.0}};
+  const double low = 0.1, high = 0.7;
+  const std::array<Planar, 3> other{Planar{low, low / 2 - 0x1p-56},
+                                    Planar{high, high / 2 + 0x1p-54}, Planar{0.4, -1.0}};
+  PHX_CHECK(other[0][1] < low / 2 && other[1][1] > high / 2);
+  const std::array<Point, 3> other_space{Point{other[0][0], other[0][1], 1.0},
+                                         Point{other[1][0], other[1][1], 0.0},
+                                         Point{other[2][0], other[2][1], 0.0}};
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(own, own_space, other, other_space) >= 0.8);
+}
+
+// A rotated configuration found by a randomized search against exact
+// rational clipping: the overlap's exact largest height gap is 0.467649...,
+// while clipping with floating orientations and crossing parameters
+// (s_x / (s_x - s_y)) gave 0.460594. The bound must reach the exact value.
+void overlap_bound_covers_a_case_floating_clipping_missed() {
+  using phx::mc::remesh::Planar;
+  const std::array<Planar, 3> own{Planar{0x1.3d70a3d70a3d7p-2, 0x1.5c28f5c28f5c3p-3},
+                                  Planar{-0x1.54d4016f73236p-1, 0x1.8e8a69d5e08f8p-2},
+                                  Planar{0x1.73ead389c5704p-4, -0x1.9c8215ea546b1p-1}};
+  const std::array<Planar, 3> other{Planar{-0x1.b3f79e1f14be0p-4, 0x1.0de23d9780fa3p-2},
+                                    Planar{-0x1.71b0f267ee483p-2, 0x1.487414d076ef8p-2},
+                                    Planar{-0x1.eb7079d8cbb4cp-4, 0x1.4aa186dbe8648p+0}};
+  std::array<Point, 3> own_space{}, other_space{};
+  for (size_t k = 0; k < 3; ++k) {
+    own_space[k] = {own[k][0], own[k][1], 0.0};
+    other_space[k] = {other[k][0], other[k][1], k == 0 ? 1.0 : 0.0};
+  }
+  PHX_CHECK(phx::mc::remesh::overlap_gap_bound(own, own_space, other, other_space) >=
+            0.46764967849764);
+}
+
 // An open source or a nonfinite coordinate is refused at bind.
 void bind_refuses_invalid_sources() {
   std::vector<Point> points;
@@ -339,6 +406,9 @@ int main() {
   nearest_matches_brute_force();
   triangle_bound_is_sound_and_tight();
   triangle_bound_refuses_without_coverage();
+  triangle_bound_refuses_a_partly_uncovered_triangle();
+  overlap_bound_encloses_a_near_parallel_crossing();
+  overlap_bound_covers_a_case_floating_clipping_missed();
   bind_refuses_invalid_sources();
   remesh_then_certify_round_trip();
   return phx::mc::test::finish("test_mesh_source");
