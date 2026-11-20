@@ -1055,35 +1055,40 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       std::cos((min_angle_degrees + 60.0) * 3.14159265358979323846 / 360.0);
   // Moves v to `chart` when the guards pass and the star's worst cosine is at
   // most `limit`; returns the new worst cosine, or infinity (v unchanged).
-  // `previous_radius` < 0 is computed on first use; infinity skips the size
-  // guard (a return to a position the star already had).
+  // `previous_radius` (the star's radius at the visit's start) < 0 is
+  // computed on first use; infinity (a degenerate star) skips the size guard.
   const auto attempt = [&](std::size_t v, const double chart[2], double limit,
                            double& previous_radius) {
-    std::array<double, 3> xyz;
-    if (!face_position(&metric, chart, xyz.data())) return std::numeric_limits<double>::infinity();
-    if (previous_radius < 0.0) previous_radius = maximum_metric_radius(metric, surface, incident[v]);
     const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
     const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
                                           surface.points[3 * v + 2]};
-    std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
-    std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
-    bool legal = true;
-    for (const int32_t cell : incident[v]) {
-      const auto& t = surface.cells[cell];
-      if (orient2d(surface.chart(t[0]), surface.chart(t[1]), surface.chart(t[2])) <= 0) {
-        legal = false;
-        break;
-      }
-    }
-    const double quality = legal ? maximum_cosine(surface, incident[v])
-                                 : std::numeric_limits<double>::infinity();
-    if (!(quality <= limit) ||
-        (std::isfinite(previous_radius) &&
-         maximum_metric_radius(metric, surface, incident[v]) >
-             std::max(0.70710678118654752440, previous_radius))) {
+    const auto reject = [&] {
       std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
       std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
       return std::numeric_limits<double>::infinity();
+    };
+    // The chart orientation needs no surface evaluation: checked first.
+    std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
+    for (const int32_t cell : incident[v]) {
+      const auto& t = surface.cells[cell];
+      if (orient2d(surface.chart(t[0]), surface.chart(t[1]), surface.chart(t[2])) <= 0)
+        return reject();
+    }
+    std::array<double, 3> xyz;
+    if (!face_position(&metric, chart, xyz.data())) return reject();
+    std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
+    const double quality = maximum_cosine(surface, incident[v]);
+    if (!(quality <= limit)) return reject();
+    if (std::isfinite(previous_radius)) {
+      if (previous_radius < 0.0) {
+        // The star's radius before the first move of this visit.
+        std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
+        previous_radius = maximum_metric_radius(metric, surface, incident[v]);
+        std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
+      }
+      if (maximum_metric_radius(metric, surface, incident[v]) >
+          std::max(0.70710678118654752440, previous_radius))
+        return reject();
     }
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
@@ -1132,50 +1137,78 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       chart[0] /= sum;
       chart[1] /= sum;
       double quality = maximum_cosine(surface, incident[v]);
-      double previous_radius = -1.0, unguarded = std::numeric_limits<double>::infinity();
+      double previous_radius = -1.0;
       // The first two passes smooth every vertex; later passes only search.
       if (pass < 2) {
         const double after = attempt(v, chart, quality, previous_radius);
         if (after <= quality) quality = after;
       }
-      // Compass search from a quarter of the shortest incident chart edge,
-      // halved four times, minimizing `evaluate` over moves whose star worst
-      // cosine stays <= `limit`.
+      // Compass search on the star's worst cosine from a quarter of the
+      // shortest incident chart edge, halved four times, over moves whose
+      // worst cosine stays <= `limit`; v returns to its saved state between
+      // probes.
       const double initial_step = 0.25 * step;
       double limit = std::numeric_limits<double>::infinity();
-      const auto search = [&](const auto& evaluate) {
-        double current = evaluate();
+      std::array<double, 2> saved_chart{}, saved_uv{};
+      std::array<double, 3> saved_point{};
+      const auto save = [&] {
+        saved_chart = {surface.charts[2 * v], surface.charts[2 * v + 1]};
+        saved_point = {surface.points[3 * v], surface.points[3 * v + 1], surface.points[3 * v + 2]};
+        saved_uv = vertices[v].uv;
+      };
+      const auto restore = [&] {
+        std::copy(saved_chart.begin(), saved_chart.end(), surface.charts.begin() + 2 * v);
+        std::copy(saved_point.begin(), saved_point.end(), surface.points.begin() + 3 * v);
+        vertices[v].uv = saved_uv;
+      };
+      const auto search = [&] {
+        double current = quality;
         double width = initial_step;
         for (int level = 0; level < 5; ++level, width *= 0.5) {
+          // The move just made at this width: probing back along it returns
+          // to the worse previous position.
+          int back_x = 0, back_y = 0;
           for (;;) {
-            const std::array<double, 2> origin{surface.charts[2 * v], surface.charts[2 * v + 1]};
-            double best = current, best_chart[2] = {origin[0], origin[1]};
+            save();
+            double best = current;
+            std::array<double, 2> best_chart{}, best_uv{};
+            std::array<double, 3> best_point{};
+            int best_x = 0, best_y = 0;
             for (int dx = -1; dx <= 1; ++dx)
               for (int dy = -1; dy <= 1; ++dy) {
-                if (dx == 0 && dy == 0) continue;
-                const double probe[2] = {origin[0] + dx * width, origin[1] + dy * width};
-                if (!std::isfinite(attempt(v, probe, limit, previous_radius)))
+                if ((dx == 0 && dy == 0) || (dx == back_x && dy == back_y && (dx || dy)))
                   continue;
-                const double after = evaluate();
-                if (after < best) {
-                  best = after;
-                  best_chart[0] = probe[0];
-                  best_chart[1] = probe[1];
-                }
-                attempt(v, origin.data(), unguarded, unguarded);
+                const double probe[2] = {saved_chart[0] + dx * width, saved_chart[1] + dy * width};
+                // Only a strictly better probe can be kept, so the costlier
+                // size guard runs only for those.
+                const double after = attempt(
+                    v, probe,
+                    std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity())),
+                    previous_radius);
+                if (!std::isfinite(after)) continue;
+                best = after;
+                best_chart = {probe[0], probe[1]};
+                best_point = {surface.points[3 * v], surface.points[3 * v + 1],
+                              surface.points[3 * v + 2]};
+                best_uv = vertices[v].uv;
+                best_x = dx;
+                best_y = dy;
+                restore();
               }
             if (!(best < current)) break;
-            attempt(v, best_chart, unguarded, unguarded);
+            std::copy(best_chart.begin(), best_chart.end(), surface.charts.begin() + 2 * v);
+            std::copy(best_point.begin(), best_point.end(), surface.points.begin() + 3 * v);
+            vertices[v].uv = best_uv;
             current = best;
+            back_x = -best_x;
+            back_y = -best_y;
           }
         }
+        return current;
       };
       if (!(step > 0.0) || !std::isfinite(step)) return;
       // First the worst 3D angle, while it is below the target.
-      if (quality > target_cos) {
-        search([&] { return maximum_cosine(surface, incident[v]); });
-        quality = maximum_cosine(surface, incident[v]);
-      }
+      if (quality > target_cos) quality = search();
       // Then the longest incident edge in the face metric while it exceeds
       // one (the size h): its sag is what the distance row measures. The
       // worst angle may not drop below the target or its current value.
@@ -1201,14 +1234,14 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       const double current = longest();
       if (!(current > 1.0) || far < 0) return;
       limit = std::max(quality, target_cos);
-      const std::array<double, 2> origin{surface.charts[2 * v], surface.charts[2 * v + 1]};
+      save();
       const double* target = surface.chart(far);
       for (double fraction = 0.25; fraction >= 0.0625; fraction *= 0.5) {
-        const double probe[2] = {origin[0] + fraction * (target[0] - origin[0]),
-                                 origin[1] + fraction * (target[1] - origin[1])};
+        const double probe[2] = {saved_chart[0] + fraction * (target[0] - saved_chart[0]),
+                                 saved_chart[1] + fraction * (target[1] - saved_chart[1])};
         if (!std::isfinite(attempt(v, probe, limit, previous_radius))) continue;
         if (longest() < current) break;
-        attempt(v, origin.data(), unguarded, unguarded);
+        restore();
       }
       }();
       if (surface.charts[2 * v] == start[0] && surface.charts[2 * v + 1] == start[1]) continue;
