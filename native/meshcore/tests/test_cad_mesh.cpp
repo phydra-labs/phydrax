@@ -308,6 +308,7 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
   const std::size_t vertex_count = mesh.points.size()/3;
   std::vector<std::vector<double>> spacing(static_cast<std::size_t>(model.surface_count),
       std::vector<double>(vertex_count, std::numeric_limits<double>::infinity()));
+  std::vector<std::vector<std::array<int, 2>>> chords(static_cast<std::size_t>(model.surface_count));
   for (std::size_t t = 0; t < mesh.patches.size(); ++t) {
     for (int k = 0; k < 3; ++k) {
       if (mesh.uses[3*t+k] < 0) continue;
@@ -319,6 +320,7 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
       auto& row = spacing[mesh.patches[t]];
       row[a] = std::min(row[a],length);
       row[b] = std::min(row[b],length);
+      chords[mesh.patches[t]].push_back({a, b});
     }
   }
   for (std::size_t t = 0; t < mesh.patches.size(); ++t) {
@@ -387,12 +389,27 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
       }
       double local_size = size;
       if (curvature > 0.0) local_size = std::min(local_size,std::sqrt(1.2/curvature));
+      const double ungraded = local_size;
       for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
         if (!std::isfinite(spacing[face][vertex])) continue;
         const double* p = mesh.points.data()+3*vertex;
         const double distance = std::hypot(std::hypot(midpoint[0]-p[0],midpoint[1]-p[1]),
                                            midpoint[2]-p[2]);
         local_size = std::min(local_size,spacing[face][vertex]+0.3*distance);
+      }
+      // Chord floor: max over the face's chords of L - .3 d(midpoint, chord).
+      for (const auto& chord : chords[face]) {
+        const double* a = mesh.points.data()+3*chord[0];
+        const double* b = mesh.points.data()+3*chord[1];
+        double ab[3], am[3], dot = 0.0, norm = 0.0;
+        for (int j = 0; j < 3; ++j) {
+          ab[j] = b[j]-a[j]; am[j] = midpoint[j]-a[j]; dot += ab[j]*am[j]; norm += ab[j]*ab[j];
+        }
+        const double s = std::clamp(dot/norm, 0.0, 1.0);
+        double d2 = 0.0;
+        for (int j = 0; j < 3; ++j) d2 += (am[j]-s*ab[j])*(am[j]-s*ab[j]);
+        local_size = std::max(local_size,
+                              std::min(ungraded, std::sqrt(norm) - 0.3*std::sqrt(d2)));
       }
       maximum[face] = std::max(maximum[face], metric_length/local_size);
     }
@@ -452,6 +469,10 @@ void check_chart(const phx_mc_cad_model& model, const phx::mc::CadSurfaceMesh& m
 
 SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
+  // The C entry meshes curves and faces at h_t = h/sqrt(2).
+  const double internal_size = size * 0.70710678118654752440;
+  const std::vector<double> internal_sizes(static_cast<std::size_t>(model.surface_count),
+                                           internal_size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
   const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count),
                                              std::numeric_limits<double>::infinity());
@@ -499,7 +520,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(chart_geometry.bind(model) == PHX_MC_OK);
   const CadCurveDiscretization chart_curves{result.curve_offsets.data(), result.curve_parameters.data()};
   phx::mc::CadSurfaceMesh chart_mesh;
-  PHX_CHECK(phx::mc::cad_mesh_surface(chart_geometry, chart_curves, sizes.data(),
+  PHX_CHECK(phx::mc::cad_mesh_surface(chart_geometry, chart_curves, internal_sizes.data(),
                                       tolerances.data(), 0.5, chart_mesh) == PHX_MC_OK);
   check_chart(model, chart_mesh);
   int64_t chart_sizes[3]{};
@@ -535,7 +556,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(exported.chord_loop == chart_mesh.chart.chord_loop);
   PHX_CHECK(exported.chord_uv == chart_mesh.chart.chord_uv);
   PHX_CHECK(exported.chord_range == chart_mesh.chart.chord_range);
-  check_boundary_lengths(model, result, size);
+  check_boundary_lengths(model, result, internal_size);
   for (const auto& failure : result.face_failures)
     std::fprintf(stderr, "failure face=%d loop=%d use=%d axis=%d reason=%d turns=%lld parameter=%.17g\n",
                  failure.face, failure.loop, failure.use, failure.axis, failure.reason,

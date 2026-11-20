@@ -2839,7 +2839,10 @@ PHX_MC_API int32_t phx_mc_verify_chart_partition(
     const int64_t* chord_use, const int64_t* chord_loop, const double* chord_uv,
     const double* chord_range, int64_t evidence_capacity,
     phx_mc_chart_failure* evidence, int64_t* evidence_count);
-/* One-call curve and surface construction; controls have physical units. */
+/* One-call curve and surface construction; controls have physical units.
+   face_sizes are requested edge lengths h. Curves and faces use the internal
+   size h_t = h/sqrt(2): the chart size test R <= h_t/sqrt(2) gives every
+   edge <= 2R <= h. */
 typedef struct phx_mc_cad_surface_controls {
   const double* face_sizes;
   const double* face_tolerances;

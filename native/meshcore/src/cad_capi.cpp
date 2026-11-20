@@ -41,8 +41,16 @@ extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
+    // The chart size test R <= h_t/sqrt(2) bounds every edge by 2R; with
+    // h_t = h/sqrt(2) each edge is <= h, the requested size.
+    std::vector<double> internal_sizes;
+    if (controls->face_sizes && model->surface_count > 0) {
+      internal_sizes.assign(controls->face_sizes, controls->face_sizes + model->surface_count);
+      for (double& size : internal_sizes) size *= 0.70710678118654752440;
+    }
+    const double* face_sizes = controls->face_sizes ? internal_sizes.data() : nullptr;
     const phx::mc::cad::CurveControls curve_controls{
-        controls->face_sizes, controls->face_tolerances, controls->curve_tolerances,
+        face_sizes, controls->face_tolerances, controls->curve_tolerances,
         controls->tolerance_fraction, controls->grading, controls->minimum_size};
     const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
                                                                  candidate->curves);
@@ -50,7 +58,7 @@ extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
     if (candidate->curves.offsets.size() != static_cast<std::size_t>(model->curve_count) + 1)
       return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
     const int32_t surface_status = phx::mc::cad_mesh_surface(
-        geometry, candidate->curves.view(), controls->face_sizes, controls->face_tolerances,
+        geometry, candidate->curves.view(), face_sizes, controls->face_tolerances,
         controls->tolerance_fraction, candidate->mesh);
     if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
     *result = candidate.release();
