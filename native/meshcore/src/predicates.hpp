@@ -21,10 +21,7 @@
 // orient2d/orient3d are evaluated with Shewchuk's adaptive scheme: stage A
 // static filter, stage B exact evaluation on the rounded differences with the
 // published stage-B bound (and exactness when all difference tails vanish),
-// then full expansion arithmetic.  insphere runs stage A, then a
-// double-double estimate of the rounded-difference determinant (against
-// Shewchuk's stage-B bound with a larger second-order term, or a
-// second-order bound when every difference is exact), then exact integer
+// then full expansion arithmetic.  insphere runs stage A, then exact integer
 // arithmetic when the coordinates (or the exact differences) are integers
 // times one power of two, then Shewchuk's insphereadapt: stage B on the
 // exact expansion of the rounded differences (against his stage-B bound, or
@@ -93,12 +90,11 @@ IncircleDecision incircle_decision(const double* a, const double* b, const doubl
                                    const double* d);
 
 // The stage of insphere that decides its sign: the floating filter (stage
-// A), the compensated (double-double) stage B, the exact integer
-// evaluation, stage B on the exact expansion of the rounded differences (its
-// estimate against the stage-B bound, or its sign when every difference is
-// exact), stage C (first-order difference tails) or stage D (the full
-// expansion).
-enum class InsphereStage : std::uint8_t { kA, kBCompensated, kInteger, kB, kBExact, kC, kD };
+// A), the exact integer evaluation, stage B on the exact expansion of the
+// rounded differences (its estimate against the stage-B bound, or its sign
+// when every difference is exact), stage C (first-order difference tails)
+// or stage D (the full expansion).
+enum class InsphereStage : std::uint8_t { kA, kInteger, kB, kBExact, kC, kD };
 struct InsphereDecision {
   int sign;
   InsphereStage stage;

@@ -494,7 +494,7 @@ void test_insphere_exact_paths() {
 void test_insphere_expansion_stages_agree() {
   std::uint64_t seed = 4242;
   int checked = 0, zeros = 0, mismatches = 0;
-  int stages[7] = {};
+  int stages[6] = {};
   const auto compare = [&](const double (&points)[5][3]) {
     Expansion e[5][3];
     for (int k = 0; k < 5; ++k) {
@@ -584,15 +584,13 @@ void test_insphere_expansion_stages_agree() {
   PHX_CHECK(checked >= 100000);
   PHX_CHECK(mismatches == 0);
   PHX_CHECK(stages[static_cast<int>(InsphereStage::kInteger)] == 0);
-  // Every input here that the expansion's stage B (or its exact sign) would
-  // decide is decided first by the compensated stage B.
-  PHX_CHECK(stages[static_cast<int>(InsphereStage::kBCompensated)] > 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kB)] > 0);
+  PHX_CHECK(stages[static_cast<int>(InsphereStage::kBExact)] > 0);
   PHX_CHECK(stages[static_cast<int>(InsphereStage::kC)] > 0);
   std::printf(
       "insphere expansion stages: %d checked, %d exact zeros, %d mismatches; decided by A %d, "
-      "B compensated %d, integer %d, B %d, B exact %d, C %d, D %d\n",
-      checked, zeros, mismatches, stages[0], stages[1], stages[2], stages[3], stages[4], stages[5],
-      stages[6]);
+      "integer %d, B %d, B exact %d, C %d, D %d\n",
+      checked, zeros, mismatches, stages[0], stages[1], stages[2], stages[3], stages[4], stages[5]);
 }
 
 // power3d_stage decides only what power3d decides, with its sign: rounded
@@ -1090,23 +1088,18 @@ std::array<double, 2> insphere_stage_a(const double* const* p) {
 
 // orient2d, orient3d and insphere at the binary64 neighbors where their
 // stage A (Shewchuk's floating value against his bound, as evaluated) and
-// stage B (the estimate of D~ against the stage-B bound, decided with a
+// stage B (the estimate of D~ against his stage-B bound, decided with a
 // 2^-40 margin, as that estimate is good to a few u) cross 1 return the exact
 // sign; the public floating stages (orientation_stage, insphere_stage) decide
 // just above their own bounds and defer just below. orient2d and orient3d do
 // not report their deciding stage, and being linear in the varied
 // coordinate, they move by up to a tenth of their bound between neighbors.
 // insphere (insphere_decision) uses e = (45, s, 0) beside the sphere of
-// radius 45 through lattice points, where D = orient s^2. Its stage B is the
-// compensated one: |D~ - E| <= 111.6u^2 P + u |E| (predicates.cpp), a
-// relative 23u at its bound (5 + 256u)u P, so it decides above 1 + 2^-40 and
-// cannot below 1 - 2^-40; the last value below carries few enough
-// significand bits for the integer stage, so the bound is checked below at
-// that value's lower neighbor, whose full significand leaves it to stage C.
-// With s = k 2^-48 every difference is exact and the bound is 128u^2 P: E
-// clears it when |D| >= 1.9 * 128u^2 P (243.2 - 111.7 > 128) and cannot when
-// |D| <= 0.12 * 128u^2 P (15.4 + 111.7 < 128), where the integer stage
-// decides (every coordinate is a multiple of 2^-48 below 2^6).
+// radius 45 through lattice points, where D = orient s^2: the stage-A value
+// below its bound and the last value below the stage-B bound carry few
+// enough significand bits for the integer stage, so stage B is checked
+// below its bound at that value's lower neighbor, whose full significand
+// leaves it to stage C.
 void test_orientation_stage_thresholds() {
   int checked = 0;
   // orient2d: a = (0.5, y) beside the line through b and c; a - c rounds.
@@ -1194,12 +1187,12 @@ void test_orientation_stage_thresholds() {
     return std::array<double, 2>{
         std::fabs(det) / ((16.0 + 224.0 * kUnit) * kUnit * permanent),
         std::fabs(insphere_value(p, false).estimate()) /
-            ((5.0 + 256.0 * kUnit) * kUnit * permanent)};
+            ((5.0 + 72.0 * kUnit) * kUnit * permanent)};
   };
   const auto [a_below, a_above] = straddle(0x1p-30, 1.0, [&](double value) {
     return insphere_ratios(value)[0] > 1.0;
   });
-  insphere_at(a_below, InsphereStage::kBCompensated);
+  insphere_at(a_below, InsphereStage::kInteger);
   insphere_at(a_above, InsphereStage::kA);
   const auto [public_below, public_above] = straddle(0x1p-30, 1.0, [&](double s) {
     const double e[3] = {45.0, s, 0.0};
@@ -1213,27 +1206,10 @@ void test_orientation_stage_thresholds() {
       straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] > 1.0 - 0x1p-40; })[0],
       0.0);
   PHX_CHECK(insphere_ratios(insphere_b_below)[1] <= 1.0 - 0x1p-40);
-  insphere_at(insphere_b_above, InsphereStage::kBCompensated);
+  insphere_at(insphere_b_above, InsphereStage::kB);
   insphere_at(insphere_b_below, InsphereStage::kC);
-  // Exact differences: s = k 2^-48, |D| / (128u^2 P) rises with k.
-  const auto exact_ratio = [&](int k) {
-    const double e[3] = {45.0, k * 0x1p-48, 0.0};
-    const double* p[5] = {pa, pb, pc, pd, e};
-    const double permanent = insphere_stage_a(p)[1];
-    return std::fabs(insphere_value(p, true).estimate()) / (128.0 * kUnit * kUnit * permanent);
-  };
-  int exact_below = 1;
-  while (exact_ratio(exact_below + 1) <= 0.12) ++exact_below;
-  int exact_above = exact_below;
-  while (exact_ratio(exact_above) < 1.9) ++exact_above;
-  PHX_CHECK(exact_ratio(1) <= 0.12);
-  insphere_at(exact_above * 0x1p-48, InsphereStage::kBCompensated);
-  insphere_at(exact_below * 0x1p-48, InsphereStage::kInteger);
-  std::printf(
-      "orientation thresholds: %d checked; insphere B %.17g | %.17g; B exact %.6g (k %d) | %.6g "
-      "(k %d)\n",
-      checked, insphere_ratios(insphere_b_below)[1], insphere_ratios(insphere_b_above)[1],
-      exact_ratio(exact_below), exact_below, exact_ratio(exact_above), exact_above);
+  std::printf("orientation thresholds: %d checked; insphere B %.17g | %.17g\n", checked,
+              insphere_ratios(insphere_b_below)[1], insphere_ratios(insphere_b_above)[1]);
 }
 
 // Shewchuk's insphere stage-C bound (and the bound on the rounding of its
