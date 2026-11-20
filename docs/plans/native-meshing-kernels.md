@@ -242,6 +242,11 @@ tetrahedra, then implicit volumes, then the CAD solid.
     for 2D, polyhedral, curved and solid-query parts and for a missing library. The packed BVH is
     Python-built; building one per call costs more than the reference's whole call, so the kernel
     keeps its own transient bin index.
+    The `overset-hex` / `overset-tet` rows time the public `prepare_overset_connectivity(prove=False)`
+    on certified parts built before timing (as TIOGA registers its grids before its timed call);
+    the certified (`prove=True`) call and the kernel's own clock are reported untimed. On the
+    native path the call builds no mapped-cell locators or finite-element measures: cell rows and
+    corner boxes come from the blocks in bulk and donor measures from the kernel.
   - S6-C prism layers on a tetrahedral mesh (F9; 5 layers, first 0.01, growth 1.2; Gmsh 0.309 s on the
     sphere at h 0.1, cfMesh 1.77 s at h 0.05; on the quadric Gmsh fails inward, Netgen thins to 17 % at
     edges, cfMesh 0.456 / 1.09 s). Native growth directions and heights with certified non-intersection,
