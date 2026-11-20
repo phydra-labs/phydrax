@@ -1406,24 +1406,29 @@ def _tetrahedral_complex(
 
 
 def _simplicial_incidence_routes(
-    levels: tuple[np.ndarray, ...], /
+    levels: tuple[np.ndarray, ...], /, *, top_faces: np.ndarray | None = None
 ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
     """Face-to-simplex ``(face row, simplex row, sign)`` routes of each degree.
 
     ``levels`` are the increasing vertex rows of every degree; simplex row ``r``
     of degree ``k`` routes its faces opposite each vertex in turn, with sign
     ``(-1)^i`` for the face opposite local vertex ``i``. A face absent from the
-    level below is refused.
+    level below is refused. ``top_faces`` may supply the top degree's face rows
+    (one row per top simplex, opposite each local vertex) when the caller
+    already located them.
     """
     routes: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     for degree, upper in enumerate(levels[1:], start=1):
         lower = levels[degree - 1]
         positions = np.arange(degree + 1, dtype=np.int32)
-        face_columns = np.stack(
-            [positions[positions != removed] for removed in range(degree + 1)]
-        )
-        faces = upper[:, face_columns].reshape((-1, degree))
-        source = row_positions(lower, faces).astype(np.int32)
+        if top_faces is not None and degree == len(levels) - 1:
+            source = np.asarray(top_faces, dtype=np.int32).reshape((-1,))
+        else:
+            face_columns = np.stack(
+                [positions[positions != removed] for removed in range(degree + 1)]
+            )
+            faces = upper[:, face_columns].reshape((-1, degree))
+            source = row_positions(lower, faces).astype(np.int32)
         if np.any(source < 0):
             raise ValueError("Simplex family must be face closed.")
         target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)

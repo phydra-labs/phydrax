@@ -2,8 +2,11 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 // Delaunay triangulation and refinement of translationally periodic point sets
-// on the flat torus R^d / L. Image neighborhoods grow until their quotient
-// topology is certified by circum-ball sufficiency and facet closure.
+// on the flat torus R^d / L. The quotient triangulation is closed (every facet
+// bounds two cells); each cell is published as the translate whose least
+// vertex is its base translate, and the certified margin is the least
+// initial_margin 2^k whose box [-margin, 1 + margin]^d (lattice coordinates)
+// holds the circumball of every published cell.
 #pragma once
 
 #include <array>

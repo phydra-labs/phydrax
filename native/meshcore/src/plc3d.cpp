@@ -943,8 +943,12 @@ class SourcePreparer {
     std::nth_element(extents.begin(), middle, extents.end());
     const double size = *middle;
     if (!(size > 0.0) || !std::isfinite(size)) return false;
+    // kAxisCells for a quotient not below it (or not finite), checked as a
+    // double: a cast of an out-of-range quotient is undefined.
     const auto cell = [&](double value, int axis) {
-      return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
+      const double quotient = std::floor((value - origin[axis]) / size);
+      return quotient < static_cast<double>(kAxisCells) ? static_cast<int64_t>(quotient)
+                                                         : kAxisCells;
     };
     // Lower and upper cells of every box (all below kAxisCells).
     std::vector<std::array<int64_t, 6>> spans(items.size());
@@ -2817,10 +2821,11 @@ class PlcRecoveryBuilder {
       triangulation_->rebind(work_points_.data(), count);
       triangulation_->reserve_vertices(count);
       alive_.resize(static_cast<std::size_t>(count), 1);
-      for (int32_t corner = source_point_count_; corner < count; ++corner) {
-        const int32_t status = triangulation_->insert(corner, alive_);
-        if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
-      }
+      // The source triangulation is as built (convex_boundary only read it).
+      std::vector<int32_t> corners(static_cast<std::size_t>(count - source_point_count_));
+      std::iota(corners.begin(), corners.end(), source_point_count_);
+      const int32_t status = triangulation_->extend(corners, alive_);
+      if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     } else {
       triangulation_.reset();
       work_points_ = candidate_.points;
@@ -8060,6 +8065,11 @@ class PlcRecoveryBuilder {
             across < 0 ? -1 : published_row[static_cast<std::size_t>(across)]);
       }
     }
+    // Recovery found every source face and edge in the Delaunay
+    // triangulation of the source points (and the corners) as built.
+    candidate_.delaunay = !local_edits_ && volume_count_ == 0 && exact_points_.empty() &&
+                          candidate_points == static_cast<std::size_t>(source_point_count_) &&
+                          input_.affine_metric == nullptr;
     const auto publish_face = [&](const PlcSourceFace& source) {
       for (int32_t vertex : source.oriented) {
         candidate_.faces.push_back(point_output_[static_cast<std::size_t>(vertex)]);

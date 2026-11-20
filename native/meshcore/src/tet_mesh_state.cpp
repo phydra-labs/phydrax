@@ -457,6 +457,12 @@ int32_t TetMesh::build(std::span<const double> points,
       return status;
     }
     staged.generation_ = 0;
+    // The flip test reads the mesh metric; the recovery's proof holds under
+    // the identity metric only.
+    staged.delaunay_generation_ = recovered != nullptr && recovered->delaunay &&
+                                          !staged.metric_active_
+                                      ? 0
+                                      : std::numeric_limits<std::uint64_t>::max();
     staged.swap_state(*this);
     unmet_records_.clear();
     return PHX_MC_OK;
@@ -1048,6 +1054,7 @@ void TetMesh::copy_state_to(TetMesh& destination) const {
   destination.facet_index_ = facet_index_;
   destination.segment_index_ = segment_index_;
   destination.generation_ = generation_;
+  destination.delaunay_generation_ = delaunay_generation_;
   destination.next_vertex_id_ = next_vertex_id_;
   destination.next_cell_id_ = next_cell_id_;
   destination.next_facet_id_ = next_facet_id_;
@@ -1109,6 +1116,7 @@ void TetMesh::swap_state(TetMesh& other) noexcept {
   swap(facet_index_, other.facet_index_);
   swap(segment_index_, other.segment_index_);
   swap(generation_, other.generation_);
+  swap(delaunay_generation_, other.delaunay_generation_);
   swap(next_vertex_id_, other.next_vertex_id_);
   swap(next_cell_id_, other.next_cell_id_);
   swap(next_facet_id_, other.next_facet_id_);

@@ -5,26 +5,29 @@
 #include <array>
 #include <cmath>
 #include <limits>
-#include <queue>
+#include <optional>
 #include <utility>
 
 #include "cdt2d.hpp"
 #include "predicates.hpp"
+#include "refine_queue.hpp"
 
 namespace phx::mc {
 namespace {
 
 struct Entry {
   double radius;
-  std::array<int32_t, 3> vertices;
   int32_t slot;
+  uint64_t generation;
+  std::array<double,6> geometric_key;
 };
 struct Worse {
   bool operator()(const Entry& a, const Entry& b) const {
     if (a.radius != b.radius) return a.radius < b.radius;
-    return a.vertices > b.vertices;
+    return a.geometric_key > b.geometric_key;
   }
 };
+using Queue = SpatialRefinementQueue<Entry, Worse>;
 struct Boundary {
   int32_t u;
   int32_t v;
@@ -56,6 +59,7 @@ class Refinement {
       const double* p=tri_.point(i);
       for (int k=0;k<2;++k) { low_[k]=std::min(low_[k],p[k]); high_[k]=std::max(high_[k],p[k]); }
     }
+    queue_.emplace(low_[0],low_[1],high_[0],high_[1],input_.point_cap,input_.point_count);
     grid_size_=std::max(1,std::min(2048,static_cast<int>(std::sqrt(input_.point_cap))));
     heads_.assign(static_cast<std::size_t>(grid_size_)*grid_size_,-1);
     next_vertex_.reserve(static_cast<std::size_t>(input_.point_cap));
@@ -101,10 +105,10 @@ class Refinement {
       if (inside(static_cast<int32_t>(t))) enqueue(static_cast<int32_t>(t));
       if (status_ != PHX_MC_OK) return status_;
     }
-    while (!heap_.empty()) {
-      const Entry entry = heap_[0];
-      heap_remove(entry.slot);
-      if (!inside(entry.slot) || vertices(entry.slot) != entry.vertices) continue;
+    Entry entry;
+    while (queue_->pop_current(entry,[&](const Entry& e) {
+      return e.generation==generations_[e.slot] && inside(e.slot);
+    })) {
       if (tri_.vertex_count() >= input_.point_cap) break;
       process(entry.slot);
       if (status_ != PHX_MC_OK) return status_;
@@ -149,8 +153,8 @@ class Refinement {
   double sine_;
   int32_t status_ = PHX_MC_OK;
   std::vector<uint8_t> fixed_;
-  std::vector<Entry> heap_;
-  std::vector<int32_t> heap_positions_;
+  std::optional<Queue> queue_;
+  std::vector<uint64_t> generations_;
   std::vector<uint64_t> marks_;
   uint64_t epoch_ = 0;
   std::vector<int32_t> stack_;
@@ -167,49 +171,6 @@ class Refinement {
   std::vector<SegmentNode> segment_nodes_;
   std::vector<int32_t> segment_stack_;
 
-  void heap_swap(int a,int b) {
-    std::swap(heap_[a],heap_[b]);
-    heap_positions_[heap_[a].slot]=a;
-    heap_positions_[heap_[b].slot]=b;
-  }
-  void heap_repair(int pos) {
-    while (pos>0) {
-      const int parent=(pos-1)/2;
-      if (!Worse{}(heap_[parent],heap_[pos])) break;
-      heap_swap(parent,pos); pos=parent;
-    }
-    for (;;) {
-      const int left=2*pos+1;
-      if (left>=static_cast<int>(heap_.size())) break;
-      const int right=left+1;
-      const int best=right<static_cast<int>(heap_.size()) && Worse{}(heap_[left],heap_[right]) ? right : left;
-      if (!Worse{}(heap_[pos],heap_[best])) break;
-      heap_swap(pos,best); pos=best;
-    }
-  }
-  void heap_remove(int32_t slot) {
-    if (static_cast<std::size_t>(slot)>=heap_positions_.size()) return;
-    const int pos=heap_positions_[slot];
-    if (pos<0) return;
-    const int last=static_cast<int>(heap_.size())-1;
-    if (pos!=last) heap_swap(pos,last);
-    heap_.pop_back();
-    heap_positions_[slot]=-1;
-    if (pos<static_cast<int>(heap_.size())) heap_repair(pos);
-  }
-  void heap_add(const Entry& entry) {
-    if (heap_positions_.size()<=static_cast<std::size_t>(entry.slot))
-      heap_positions_.resize(static_cast<std::size_t>(entry.slot)+1,-1);
-    int pos=heap_positions_[entry.slot];
-    if (pos<0) {
-      pos=static_cast<int>(heap_.size());
-      heap_.push_back(entry);
-      heap_positions_[entry.slot]=pos;
-    } else {
-      heap_[pos]=entry;
-    }
-    heap_repair(pos);
-  }
 
   const double* segment_endpoint(int segment,int endpoint) const {
     return tri_.point(result_.vertex_map[input_.segments[2*segment+endpoint]]);
@@ -257,12 +218,6 @@ class Refinement {
     return t >= 0 && tri_.live[static_cast<std::size_t>(t)] &&
            tri_.region[static_cast<std::size_t>(t)] && !tri_.is_ghost(t);
   }
-  std::array<int32_t, 3> vertices(int32_t t) const {
-    const Triangle2D& x = tri_.triangles[static_cast<std::size_t>(t)];
-    std::array<int32_t, 3> v{x.v[0], x.v[1], x.v[2]};
-    std::sort(v.begin(), v.end());
-    return v;
-  }
   CadMetric2D metric(const double* p) {
     ++result_.stats.metric_evaluations;
     const CadMetric2D m = input_.metric(p, input_.metric_context);
@@ -280,9 +235,17 @@ class Refinement {
   bool geometry(int32_t t, double& radius, double* center,
                 bool* size_reason=nullptr, bool* angle_reason=nullptr) {
     const Triangle2D& cell = tri_.triangles[static_cast<std::size_t>(t)];
-    const double* a = tri_.point(cell.v[0]);
-    const double* b = tri_.point(cell.v[1]);
-    const double* c = tri_.point(cell.v[2]);
+    // Canonical geometric rotation keeps floating-point construction independent
+    // of the triangle's cyclic vertex numbering.
+    int first=0;
+    for (int i=1;i<3;++i) {
+      const double* candidate=tri_.point(cell.v[i]);
+      const double* best=tri_.point(cell.v[first]);
+      if (candidate[0]<best[0] || (candidate[0]==best[0] && candidate[1]<best[1])) first=i;
+    }
+    const double* a = tri_.point(cell.v[first]);
+    const double* b = tri_.point(cell.v[next3(first)]);
+    const double* c = tri_.point(cell.v[prev3(first)]);
     const double centroid[2] = {(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
     const CadMetric2D m = metric(centroid);
     if (status_ != PHX_MC_OK) return false;
@@ -306,8 +269,9 @@ class Refinement {
       if (lengths[k] < lengths[shortest]) shortest=k;
     }
     const double area2 = std::abs(x*v-y*u)*std::sqrt(m.uu*m.vv-m.uv*m.uv);
-    const bool protected_angle = cell.v[shortest] < input_.point_count &&
-        tri_.constraint(t,next3(shortest)) != -1 && tri_.constraint(t,prev3(shortest)) != -1;
+    const int original_shortest=(first+shortest)%3;
+    const bool protected_angle = cell.v[original_shortest] < input_.point_count &&
+        tri_.constraint(t,next3(original_shortest)) != -1 && tri_.constraint(t,prev3(original_shortest)) != -1;
     const bool bad_angle = !protected_angle && sine_ * std::sqrt(lengths[next3(shortest)] *
         lengths[prev3(shortest)]) > area2;
     const bool bad_size=radius > 0.70710678118654752440;
@@ -337,7 +301,20 @@ class Refinement {
   void enqueue(int32_t t) {
     if (fixed_triangle(t)) return;
     double radius=0;
-    if (geometry(t,radius,nullptr)) heap_add({radius,vertices(t),t});
+    if (!geometry(t,radius,nullptr)) return;
+    if (generations_.size()<=static_cast<std::size_t>(t)) generations_.resize(static_cast<std::size_t>(t)+1,0);
+    const auto& cell=tri_.triangles[t];
+    std::array<std::array<double,2>,3> points;
+    for (int k=0;k<3;++k) {
+      const double* p=tri_.point(cell.v[k]);
+      points[k]={p[0],p[1]};
+    }
+    // Geometric ties remain stable when input vertex numbering changes.
+    std::sort(points.begin(),points.end());
+    const std::array<double,6> key={points[0][0],points[0][1],points[1][0],points[1][1],points[2][0],points[2][1]};
+    queue_->push({radius,t,++generations_[t],key},
+                 (points[0][0]+points[1][0]+points[2][0])/3,
+                 (points[0][1]+points[1][1]+points[2][1])/3);
   }
   bool encroaches(const double* p, const CadMetric2D& m) {
     if (segment_nodes_.empty()) return false;
@@ -463,7 +440,7 @@ class Refinement {
     }
     tri_.add_vertex(p);
     add_to_grid(id);
-    for (int32_t t : cavity_) { heap_remove(t); tri_.release(t); }
+    for (int32_t t : cavity_) { if (static_cast<std::size_t>(t)<generations_.size()) ++generations_[t]; tri_.release(t); }
     created_.clear();
     vertex_slots_.resize(static_cast<std::size_t>(id)+1,-1);
     for (const Boundary& e : boundary_) {

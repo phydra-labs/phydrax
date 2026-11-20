@@ -2,8 +2,10 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <limits>
 #include <map>
@@ -15,6 +17,7 @@
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "refine_queue.hpp"
 #include "spatial_sort.hpp"
 #include "triangulation2d.hpp"
 
@@ -349,6 +352,115 @@ void test_ghost_layout() {
   }
 }
 
+void test_spatial_queue_order() {
+  struct Entry { int priority; int id; };
+  struct Worse {
+    bool operator()(const Entry& a, const Entry& b) const {
+      return a.priority != b.priority ? a.priority < b.priority : a.id > b.id;
+    }
+  };
+  auto sequence = [](bool reverse) {
+    SpatialRefinementQueue<Entry, Worse> queue(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+    PHX_CHECK(queue.spatial());
+    for (int i = 0; i < 4; ++i) {
+      const int id = reverse ? 3 - i : i;
+      queue.push({id % 2, id}, id < 2 ? 0.1 : 0.9, 0.1);
+    }
+    std::vector<int> result;
+    while (!queue.empty()) {
+      result.push_back(queue.top().id);
+      queue.pop();
+    }
+    return result;
+  };
+  PHX_CHECK((sequence(false) == std::vector<int>{1, 0, 3, 2}));
+  PHX_CHECK(sequence(false) == sequence(true));
+  SpatialRefinementQueue<Entry, Worse> single(0.0, 0.0, 1.0, 1.0, 10.0, 4);
+  PHX_CHECK(!single.spatial());
+  single.push({2, 0});
+  single.push({1, 1});
+  Entry current{};
+  PHX_CHECK(single.pop_current(current, [](const Entry& e) { return e.id != 0; }));
+  PHX_CHECK(current.id == 1);
+  PHX_CHECK(!single.pop_current(current, [](const Entry&) { return true; }));
+}
+
+void test_refinement_determinism() {
+  Input in;
+  // Generic-position points from a fixed seed; unlike a square, these avoid
+  // index-dependent simulation-of-simplicity choices on cocircular vertices.
+  in.points = {
+      0.77395604855596334, 0.43887843975205232, 0.85859791991138246, 0.6973680290593639,
+      0.094177347887649532, 0.97562235163675592, 0.76113970199035297, 0.78606430527695381,
+      0.12811363267554587, 0.45038593789556713, 0.37079802423258124, 0.92676498884860181,
+      0.64386512008066454, 0.82276161327082997, 0.44341419882733113, 0.22723872178477689,
+      0.5545847870158348, 0.063817256104175324, 0.82763117199258207, 0.63166439912206485,
+      0.75808774008537383, 0.35452596812986836, 0.97069802439490327, 0.89312112132219768,
+      0.77838349707376187, 0.19463870785196757, 0.46672100372703418, 0.043803765787228777,
+      0.15428949206754783, 0.68304895324245463, 0.74476215590781714, 0.96750973243421001,
+      0.32582535813815194, 0.37045970603486889, 0.46955581127580792, 0.1894713590842857,
+      0.12992150533547164, 0.47570492622593374, 0.22690934905088411, 0.66981399468251035};
+  in.segments = {0, 1, 2, 3};
+  in.keep_hull = 1;
+  in.max_area = 0.0003;
+  const Result a = run(in), again = run(in);
+  PHX_CHECK(a.status == PHX_MC_OK && again.status == PHX_MC_OK);
+  auto same_bytes = [](const auto& x, const auto& y) {
+    return x.size() == y.size() &&
+           (x.empty() || std::memcmp(x.data(), y.data(), x.size() * sizeof(x[0])) == 0);
+  };
+  PHX_CHECK(same_bytes(a.points, again.points));
+  PHX_CHECK(same_bytes(a.cells, again.cells));
+  PHX_CHECK(same_bytes(a.segments, again.segments));
+  PHX_CHECK(same_bytes(a.vertex_map, again.vertex_map));
+  PHX_CHECK(same_bytes(a.constraint_sources, again.constraint_sources));
+  PHX_CHECK(same_bytes(a.constraint_parents, again.constraint_parents));
+  PHX_CHECK(same_bytes(a.constraint_ratios, again.constraint_ratios));
+
+  Input permuted = in;
+  for (int i = 0; i < 20; ++i) {
+    permuted.points[2 * i] = in.points[2 * (19 - i)];
+    permuted.points[2 * i + 1] = in.points[2 * (19 - i) + 1];
+  }
+  permuted.segments = {17, 16, 19, 18};
+  const Result b = run(permuted);
+  PHX_CHECK(b.status == PHX_MC_OK);
+  using Point = std::array<double, 2>;
+  using Triangle = std::array<Point, 3>;
+  using Edge = std::array<Point, 2>;
+  auto point = [](const double* p) { return Point{p[0], p[1]}; };
+  auto triangles = [&](const Result& r) {
+    std::set<Triangle> result;
+    for (std::size_t i = 0; i < r.cells.size(); i += 3) {
+      Triangle t{point(at(r, r.cells[i])), point(at(r, r.cells[i + 1])),
+                 point(at(r, r.cells[i + 2]))};
+      std::sort(t.begin(), t.end());
+      result.insert(t);
+    }
+    return result;
+  };
+  auto labeled_edges = [&](const Result& r, const Input& input) {
+    std::set<std::pair<Edge, Edge>> result;
+    for (std::size_t i = 0; i < r.cells.size(); i += 3) {
+      for (int k = 0; k < 3; ++k) {
+        const int32_t source = r.segments[i + k];
+        if (source < 0) continue;
+        Edge edge{point(at(r, r.cells[i + (k + 1) % 3])),
+                  point(at(r, r.cells[i + (k + 2) % 3]))};
+        Edge original{point(input.points.data() + 2 * input.segments[2 * source]),
+                      point(input.points.data() + 2 * input.segments[2 * source + 1])};
+        std::sort(edge.begin(), edge.end());
+        std::sort(original.begin(), original.end());
+        result.emplace(edge, original);
+      }
+    }
+    return result;
+  };
+  PHX_CHECK(triangles(a) == triangles(b));
+  PHX_CHECK(labeled_edges(a, in) == labeled_edges(b, permuted));
+}
+
+
 void test_ruppert_square() {
   Input in;
   in.points = {0, 0, 1, 0, 1, 1, 0, 1};
@@ -619,6 +731,8 @@ int main() {
   test_lattice_segments();
   test_hole_carving();
   test_ghost_layout();
+  test_refinement_determinism();
+  test_spatial_queue_order();
   test_ruppert_square();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();

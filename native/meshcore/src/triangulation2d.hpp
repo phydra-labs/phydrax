@@ -31,6 +31,7 @@
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "spatial_sort.hpp"
 
 namespace phx::mc {
@@ -278,7 +279,7 @@ class Triangulation2D {
       }
       previous = t;
       t = tri.n[crossed];
-      prefetch_read(&triangles[static_cast<std::size_t>(t)]);
+      prefetch(&triangles[static_cast<std::size_t>(t)]);
       if (is_ghost(t)) {
         return t;
       }
@@ -384,8 +385,8 @@ class Triangulation2D {
           // Its neighbors are read when it leaves the stack.
           for (int32_t next : triangles[nb].n) {
             if (static_cast<std::size_t>(next) < triangles.size()) {
-              prefetch_read(&triangles[static_cast<std::size_t>(next)]);
-              prefetch_read(&marks_[static_cast<std::size_t>(next)]);
+              prefetch(&triangles[static_cast<std::size_t>(next)]);
+              prefetch(&marks_[static_cast<std::size_t>(next)]);
             }
           }
           stack[top++] = nb;

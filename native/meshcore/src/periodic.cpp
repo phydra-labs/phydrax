@@ -1,8 +1,9 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Periodic Delaunay triangulation on successively enlarged certified image
-// neighborhoods; see periodic.hpp for quotient sufficiency and closure.
+// Periodic Delaunay triangulation as a simplicial complex on the flat torus,
+// bootstrapped from the certified image triangulation of a sample; see
+// periodic.hpp for the certified margin and closure.
 #include "periodic.hpp"
 
 #include <algorithm>
@@ -12,7 +13,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
-#include <unordered_map>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,7 @@
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "spatial_sort.hpp"
 #include "cavity.hpp"
 #include <map>
@@ -186,172 +188,214 @@ class ExactLatticeTransform final {
   std::array<Dyadic, D> inverse_norm_numerator_{};
 };
 
+// Floating stages of the image predicates, in the engine's sign conventions
+// (orientation det[v1 - v0, ..., vD - v0]; insphere positive inside the
+// circumsphere of a positively oriented cell). Image positions are binary64
+// roundings of exact lattice translates, each coordinate within `uncertainty`
+// of its exact value, so a difference of two positions lies within h = 2
+// uncertainty of the exact difference. Shewchuk's stage-A bound covers the
+// rounding of the determinant of the rounded positions. The determinant
+// expands into N unit-coefficient monomials of degree k in the differences;
+// when every difference, of magnitude at most m, moves by at most h, it moves
+// by at most N ((m + h)^k - m^k) <= N k h (m + h)^(k - 1), which is added.
+// A stage returns the certified sign, or 0 when the exact predicate decides.
+namespace image_stage {
+
+constexpr double kEpsilon = 0x1p-53;
+
+// N k h (m + h)^(k - 1) for the largest rounded difference `largest`: the
+// exact difference of two rounded positions is within a relative 2^-52 of
+// the rounded one, and the final factor dominates the rounding of the bound.
+inline double perturbation(double largest, double h, double weight, int degree) {
+  if (h == 0.0) return 0.0;
+  const double m = largest * (1.0 + 0x1p-50) + h;
+  double power = 1.0;
+  for (int k = 1; k < degree; ++k) power *= m;
+  return weight * h * power * (1.0 + 0x1p-40);
+}
+
+inline int orient(const double* const* p, double h, std::integral_constant<int, 2>) {
+  const double ax = p[1][0] - p[0][0], ay = p[1][1] - p[0][1];
+  const double bx = p[2][0] - p[0][0], by = p[2][1] - p[0][1];
+  const double left = ax * by;
+  const double right = ay * bx;
+  const double det = left - right;
+  const double largest =
+      std::fmax(std::fmax(std::fabs(ax), std::fabs(ay)), std::fmax(std::fabs(bx), std::fabs(by)));
+  // Two monomials of degree 2.
+  const double bound = (3.0 + 16.0 * kEpsilon) * kEpsilon * (std::fabs(left) + std::fabs(right)) +
+                       perturbation(largest, h, 4.0, 2);
+  if (det > bound) return 1;
+  if (-det > bound) return -1;
+  return 0;
+}
+
+inline int orient(const double* const* p, double h, std::integral_constant<int, 3>) {
+  const double* d = p[0];
+  const double adx = p[1][0] - d[0], bdx = p[2][0] - d[0], cdx = p[3][0] - d[0];
+  const double ady = p[1][1] - d[1], bdy = p[2][1] - d[1], cdy = p[3][1] - d[1];
+  const double adz = p[1][2] - d[2], bdz = p[2][2] - d[2], cdz = p[3][2] - d[2];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double det = adz * (bdxcdy - cdxbdy) + bdz * (cdxady - adxcdy) + cdz * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz) +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz) +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
+  const double x = std::fmax(std::fmax(std::fabs(adx), std::fabs(bdx)), std::fabs(cdx));
+  const double y = std::fmax(std::fmax(std::fabs(ady), std::fabs(bdy)), std::fabs(cdy));
+  const double z = std::fmax(std::fmax(std::fabs(adz), std::fabs(bdz)), std::fabs(cdz));
+  // Six monomials of degree 3.
+  const double bound = (7.0 + 56.0 * kEpsilon) * kEpsilon * permanent +
+                       perturbation(std::fmax(std::fmax(x, y), z), h, 18.0, 3);
+  if (det > bound) return 1;
+  if (-det > bound) return -1;
+  return 0;
+}
+
+inline int insphere(const double* const* p, const double* e, double h,
+                    std::integral_constant<int, 2>) {
+  const double adx = p[0][0] - e[0], bdx = p[1][0] - e[0], cdx = p[2][0] - e[0];
+  const double ady = p[0][1] - e[1], bdy = p[1][1] - e[1], cdy = p[2][1] - e[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double alift = adx * adx + ady * ady;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double clift = cdx * cdx + cdy * cdy;
+  const double det =
+      alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
+  const double x = std::fmax(std::fmax(std::fabs(adx), std::fabs(bdx)), std::fabs(cdx));
+  const double y = std::fmax(std::fmax(std::fabs(ady), std::fabs(bdy)), std::fabs(cdy));
+  // Twelve monomials of degree 4.
+  const double bound = (10.0 + 96.0 * kEpsilon) * kEpsilon * permanent +
+                       perturbation(std::fmax(x, y), h, 48.0, 4);
+  if (det > bound) return 1;
+  if (-det > bound) return -1;
+  return 0;
+}
+
+// Shewchuk's stage A with the permanent replaced by 25 L X Y Z, as in
+// insphere_stage; the engine's insphere is the negated Shewchuk determinant.
+inline int insphere(const double* const* p, const double* e, double h,
+                    std::integral_constant<int, 3>) {
+  const double aex = p[0][0] - e[0], bex = p[1][0] - e[0], cex = p[2][0] - e[0],
+               dex = p[3][0] - e[0];
+  const double aey = p[0][1] - e[1], bey = p[1][1] - e[1], cey = p[2][1] - e[1],
+               dey = p[3][1] - e[1];
+  const double aez = p[0][2] - e[2], bez = p[1][2] - e[2], cez = p[2][2] - e[2],
+               dez = p[3][2] - e[2];
+  const double ab = aex * bey - bex * aey;
+  const double bc = bex * cey - cex * bey;
+  const double cd = cex * dey - dex * cey;
+  const double da = dex * aey - aex * dey;
+  const double ac = aex * cey - cex * aey;
+  const double bd = bex * dey - dex * bey;
+  const double abc = aez * bc - bez * ac + cez * ab;
+  const double bcd = bez * cd - cez * bd + dez * bc;
+  const double cda = cez * da + dez * ac + aez * cd;
+  const double dab = dez * ab + aez * bd + bez * da;
+  const double alift = aex * aex + aey * aey + aez * aez;
+  const double blift = bex * bex + bey * bey + bez * bez;
+  const double clift = cex * cex + cey * cey + cez * cez;
+  const double dlift = dex * dex + dey * dey + dez * dez;
+  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
+  const double x = std::fmax(std::fmax(std::fabs(aex), std::fabs(bex)),
+                             std::fmax(std::fabs(cex), std::fabs(dex)));
+  const double y = std::fmax(std::fmax(std::fabs(aey), std::fabs(bey)),
+                             std::fmax(std::fabs(cey), std::fabs(dey)));
+  const double z = std::fmax(std::fmax(std::fabs(aez), std::fabs(bez)),
+                             std::fmax(std::fabs(cez), std::fabs(dez)));
+  const double lift = std::fmax(std::fmax(alift, blift), std::fmax(clift, dlift));
+  // Seventy-two monomials of degree 5.
+  const double bound = (16.0 + 224.0 * kEpsilon) * kEpsilon * (25.0 * lift * (x * y * z)) +
+                       perturbation(std::fmax(std::fmax(x, y), z), h, 360.0, 5);
+  if (det > bound) return -1;
+  if (-det > bound) return 1;
+  return 0;
+}
+
+}  // namespace image_stage
+
+// A lattice translate of an input point, or (representative -1 - k) the
+// bounding vertex k of an image triangulation.
 template <int D>
-class PeriodicEngine {
+struct Image {
+  int32_t representative;
+  std::array<int32_t, D> shift;
+};
+
+template <int D>
+bool image_precedes(const Image<D>& a, const Image<D>& b) {
+  if (a.representative != b.representative) return a.representative < b.representative;
+  return a.shift < b.shift;
+}
+
+// The binary64 position of a translate, accumulated by fused multiply-adds,
+// and a bound on its distance from the exact position per coordinate: each
+// nonzero shift term rounds once, by at most 2^-53 of the running magnitude,
+// itself at most the sum of the magnitudes of the terms.
+template <int D>
+double rounded_translate(const PeriodicDelaunayInput& input, const Image<D>& image,
+                         double* position) {
+  double error = 0.0;
+  for (int c = 0; c < D; ++c) {
+    double value = input.points[static_cast<int64_t>(image.representative) * D + c];
+    double scale = std::fabs(value);
+    int roundings = 0;
+    for (int j = 0; j < D; ++j) {
+      const int32_t shift = image.shift[static_cast<std::size_t>(j)];
+      if (shift == 0) continue;
+      const double lattice = input.lattice[j * D + c];
+      value = std::fma(static_cast<double>(shift), lattice, value);
+      scale += std::fabs(static_cast<double>(shift) * lattice);
+      ++roundings;
+    }
+    position[c] = value;
+    error = std::max(error, roundings * 0x1p-53 * scale * (1.0 + 0x1p-40));
+  }
+  return error;
+}
+
+// Orbit key of a finite cell: its vertices as (representative, shift
+// relative to the anchor, the least vertex) rows in increasing order. The
+// published order is the key order, with the last two entries swapped when
+// that permutation of the positively oriented cell is odd.
+template <int D>
+struct Canonical {
+  std::array<int32_t, (D + 1) * (D + 1)> key;
+  std::array<int32_t, D + 1> ordered;
+  std::array<std::array<int32_t, D>, D + 1> shifts;
+};
+
+// Exact predicates on lattice translates. Every sign is the exact sign on
+// the exact translates; ties are broken by the translation-invariant
+// Devillers-Teillaud perturbation, so the Delaunay triangulation of a set of
+// translates is unique, periodic wherever it is complete, and independent of
+// the insertion order and of the frame a predicate is evaluated in.
+template <int D>
+class PeriodicGeometry {
  public:
-  using Cell = std::array<int32_t, D + 1>;
-  struct Vertex {
-    int32_t representative;  // -1 for a bounding vertex
-    std::array<int32_t, D> shift;
-  };
-  struct Candidate {
-    std::vector<int32_t> key;  // sorted (representative, relative shift) rows
-    Cell ordered;              // positively oriented, anchor-relative order
-    std::array<std::array<int32_t, D>, D + 1> shifts;
-    double required_margin;
-  };
+  using Point = Image<D>;
+  using Cell = std::array<Point, D + 1>;
 
-  PeriodicEngine(const PeriodicDelaunayInput& input, std::vector<Vertex> images)
-      : input_(input), vertices_(std::move(images)) {}
+  explicit PeriodicGeometry(const PeriodicDelaunayInput& input) : input_(input) {}
+  void set_bound(const std::array<double, (D + 1) * D>& bound) { bound_ = bound; }
 
-  int64_t slots() const { return static_cast<int64_t>(cells_.size()); }
-
-  void build() {
-    const int32_t image_count = static_cast<int32_t>(vertices_.size());
-    std::vector<double> approximate(static_cast<std::size_t>(image_count) * D);
-    for (int32_t index = 0; index < image_count; ++index) {
-      for (int c = 0; c < D; ++c) {
-        approximate[static_cast<std::size_t>(index) * D + c] = position(index, c);
-      }
-    }
-    add_bounding_simplex(approximate);
-    std::vector<int32_t> candidates(static_cast<std::size_t>(image_count));
-    for (int32_t index = 0; index < image_count; ++index) {
-      candidates[static_cast<std::size_t>(index)] = index;
-    }
-    for (const int32_t index : brio_hilbert_order(approximate.data(), D, candidates)) {
-      insert(index);
-    }
+  double base(const Point& v, int c) const {
+    return v.representative >= 0
+               ? input_.points[static_cast<int64_t>(v.representative) * D + c]
+               : bound_[static_cast<std::size_t>((-1 - v.representative) * D + c)];
   }
 
-  // Anchor-extracted cells with their certificates, sorted by orbit key, and
-  // the number of extracted cells that are uncertified or not closed.
-  int64_t extract(double margin, std::vector<Candidate>& extracted, double& required) {
-    extracted.clear();
-    required = 0.0;
-    std::unordered_map<std::size_t, std::vector<int32_t>> index;
-    int64_t uncertified = 0;
-    for (int32_t cell = 0; cell < slots(); ++cell) {
-      if (!alive_[static_cast<std::size_t>(cell)] || touches_bound(cell)) {
-        continue;
-      }
-      const int32_t anchor = anchor_of(cells_[static_cast<std::size_t>(cell)]);
-      if (!is_base(anchor)) {
-        continue;
-      }
-      Candidate candidate = canonical(cell);
-      candidate.required_margin = required_margin(cells_[static_cast<std::size_t>(cell)]);
-      required = std::max(required, candidate.required_margin);
-      if (!(candidate.required_margin <= margin)) {
-        ++uncertified;
-      }
-      index[hash(candidate.key)].push_back(static_cast<int32_t>(extracted.size()));
-      extracted.push_back(std::move(candidate));
-    }
-    if (uncertified == 0) {
-      uncertified = closure_misses(extracted, index);
-    }
-    std::sort(extracted.begin(), extracted.end(),
-              [](const Candidate& left, const Candidate& right) { return left.key < right.key; });
-    return uncertified;
-  }
-
-  int support_orientation_sign(const Cell& cell) const {
-    const Approx approx = orientation<Approx>(
-        cell, [this](int32_t a, int32_t b, int c) { return approx_difference(a, b, c); });
-    const int sign = approx.certified_sign();
-    if (sign != 2) return sign;
-    return orientation<Expansion>(
-               cell, [this](int32_t a, int32_t b, int c) {
-                 return exact_difference(a, b, c);
-               })
-        .sign();
-  }
-
-  int support_insphere_sign(const Cell& cell, int32_t query_representative,
-                            const std::array<int32_t, D>& query_shift) {
-    Vertex query = vertices_[static_cast<std::size_t>(query_representative)];
-    query.shift = query_shift;
-    vertices_.push_back(query);
-    const int32_t query_vertex = static_cast<int32_t>(vertices_.size() - 1);
-    try {
-      const int sign = insphere_sign(cell, query_vertex);
-      vertices_.pop_back();
-      return sign;
-    } catch (...) {
-      vertices_.pop_back();
-      throw;
-    }
-  }
-
-
-  double support_fractional_bounds(
-      const Cell& cell, const ExactLatticeTransform<D>& transform,
-      std::array<double, D>& lower, std::array<double, D>& upper) const {
-    return support_bounds_exact(cell, transform, lower, upper);
-  }
-
- private:
-  const PeriodicDelaunayInput& input_;
-  std::vector<Vertex> vertices_;
-  int32_t bound_base_ = 0;
-  std::array<double, (D + 1) * D> bound_ = {};
-  std::vector<Cell> cells_;
-  std::vector<Cell> neighbors_;
-  std::vector<uint8_t> alive_;
-  std::vector<int32_t> free_;
-  std::vector<uint64_t> cavity_mark_;
-  std::vector<uint64_t> outside_mark_;
-  uint64_t stamp_ = 0;
-  int32_t last_ = 0;
-
-  // Whether a vertex is its representative's base image: the one whose
-  // fractional coordinates are wrapped into [0, 1) by -floor(fractional).
-  bool is_base(int32_t vertex) const {
-    const Vertex& item = vertices_[static_cast<std::size_t>(vertex)];
-    for (int j = 0; j < D; ++j) {
-      const double fractional =
-          input_.fractional[static_cast<int64_t>(item.representative) * D + j];
-      if (item.shift[static_cast<std::size_t>(j)] !=
-          -static_cast<int32_t>(std::floor(fractional))) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  static std::size_t hash(const std::vector<int32_t>& key) {
-    uint64_t value = 0x243F6A8885A308D3ULL;
-    for (const int32_t item : key) {
-      value = splitmix64(value ^ static_cast<uint32_t>(item));
-    }
-    return static_cast<std::size_t>(value);
-  }
-
-  double base(int32_t vertex, int c) const {
-    const Vertex& item = vertices_[static_cast<std::size_t>(vertex)];
-    return item.representative >= 0
-               ? input_.points[static_cast<int64_t>(item.representative) * D + c]
-               : bound_[static_cast<std::size_t>((vertex - bound_base_) * D + c)];
-  }
-
-  double position(int32_t vertex, int c) const {
-    double value = base(vertex, c);
-    const Vertex& item = vertices_[static_cast<std::size_t>(vertex)];
-    for (int j = 0; j < D; ++j) {
-      value += static_cast<double>(item.shift[static_cast<std::size_t>(j)]) *
-               input_.lattice[j * D + c];
-    }
-    return value;
-  }
-
-  Approx approx_difference(int32_t a, int32_t b, int c) const {
+  Approx approx_difference(const Point& a, const Point& b, int c) const {
     Approx value = Approx::exact(base(a, c)) - Approx::exact(base(b, c));
-    const Vertex& va = vertices_[static_cast<std::size_t>(a)];
-    const Vertex& vb = vertices_[static_cast<std::size_t>(b)];
     for (int j = 0; j < D; ++j) {
-      const int64_t delta = static_cast<int64_t>(va.shift[static_cast<std::size_t>(j)]) -
-                            vb.shift[static_cast<std::size_t>(j)];
+      const int64_t delta = static_cast<int64_t>(a.shift[static_cast<std::size_t>(j)]) -
+                            b.shift[static_cast<std::size_t>(j)];
       if (delta != 0) {
         value = value + Approx::exact(static_cast<double>(delta)) *
                             Approx::exact(input_.lattice[j * D + c]);
@@ -360,13 +404,11 @@ class PeriodicEngine {
     return value;
   }
 
-  Expansion exact_difference(int32_t a, int32_t b, int c) const {
+  Expansion exact_difference(const Point& a, const Point& b, int c) const {
     Expansion value = Expansion::difference(base(a, c), base(b, c));
-    const Vertex& va = vertices_[static_cast<std::size_t>(a)];
-    const Vertex& vb = vertices_[static_cast<std::size_t>(b)];
     for (int j = 0; j < D; ++j) {
-      const int64_t delta = static_cast<int64_t>(va.shift[static_cast<std::size_t>(j)]) -
-                            vb.shift[static_cast<std::size_t>(j)];
+      const int64_t delta = static_cast<int64_t>(a.shift[static_cast<std::size_t>(j)]) -
+                            b.shift[static_cast<std::size_t>(j)];
       if (delta != 0) {
         value = value + Expansion::product(static_cast<double>(delta), input_.lattice[j * D + c]);
       }
@@ -374,163 +416,69 @@ class PeriodicEngine {
     return value;
   }
 
-  // det[v1 - v0, ..., vD - v0]; positive for a positively oriented simplex.
-  template <class T, class Difference>
-  static T orientation(const Cell& v, const Difference& difference) {
-    T rows[D][D];
-    for (int i = 0; i < D; ++i) {
-      for (int c = 0; c < D; ++c) {
-        rows[i][c] = difference(v[static_cast<std::size_t>(i + 1)], v[0], c);
-      }
-    }
-    if constexpr (D == 2) {
-      return rows[0][0] * rows[1][1] - rows[0][1] * rows[1][0];
-    } else {
-      return det3(rows[0], rows[1], rows[2]);
-    }
+  // Sign of det[v1 - v0, ..., vD - v0]; positive for a positively oriented simplex.
+  int orient_sign(const Cell& v) const {
+    const Approx approx = orientation<Approx>(
+        v, [this](const Point& a, const Point& b, int c) { return approx_difference(a, b, c); });
+    const int sign = approx.certified_sign();
+    if (sign != 2) return sign;
+    return orientation<Expansion>(v, [this](const Point& a, const Point& b, int c) {
+             return exact_difference(a, b, c);
+           }).sign();
   }
 
   // Positive iff q lies inside the circumsphere of the positively oriented v.
-  template <class T, class Difference>
-  static T insphere(const Cell& v, int32_t q, const Difference& difference) {
-    T rows[D + 1][D + 1];
-    for (int i = 0; i <= D; ++i) {
-      for (int c = 0; c < D; ++c) {
-        rows[i][c] = difference(v[static_cast<std::size_t>(i)], q, c);
-      }
-      T lifted = rows[i][0] * rows[i][0];
-      for (int c = 1; c < D; ++c) {
-        lifted = lifted + rows[i][c] * rows[i][c];
-      }
-      rows[i][D] = lifted;
-    }
-    if constexpr (D == 2) {
-      return det3(rows[0], rows[1], rows[2]);
-    } else {
-      // Negated 4x4 lifted determinant, expanded along the lifted column.
-      return rows[0][3] * det3(rows[1], rows[2], rows[3]) -
-             rows[1][3] * det3(rows[0], rows[2], rows[3]) +
-             rows[2][3] * det3(rows[0], rows[1], rows[3]) -
-             rows[3][3] * det3(rows[0], rows[1], rows[2]);
-    }
-  }
-
-  int orient_sign(const Cell& v) {
-    const Approx approx = orientation<Approx>(
-        v, [this](int32_t a, int32_t b, int c) { return approx_difference(a, b, c); });
-    const int sign = approx.certified_sign();
-    if (sign != 2) {
-      return sign;
-    }
-    return orientation<Expansion>(
-               v, [this](int32_t a, int32_t b, int c) { return exact_difference(a, b, c); })
-        .sign();
-  }
-
-  int insphere_sign(const Cell& v, int32_t q) {
+  int insphere_sign(const Cell& v, const Point& q) const {
     const Approx approx = insphere<Approx>(
-        v, q, [this](int32_t a, int32_t b, int c) { return approx_difference(a, b, c); });
+        v, q,
+        [this](const Point& a, const Point& b, int c) { return approx_difference(a, b, c); });
     const int sign = approx.certified_sign();
-    if (sign != 2) {
-      return sign;
-    }
-    return insphere<Expansion>(
-               v, q, [this](int32_t a, int32_t b, int c) { return exact_difference(a, b, c); })
-        .sign();
+    if (sign != 2) return sign;
+    return insphere<Expansion>(v, q, [this](const Point& a, const Point& b, int c) {
+             return exact_difference(a, b, c);
+           }).sign();
   }
 
   // Exact lexicographic order of positions: translation invariant.
-  int lexicographic(int32_t a, int32_t b) {
+  int lexicographic(const Point& a, const Point& b) const {
     for (int c = 0; c < D; ++c) {
       int sign = approx_difference(a, b, c).certified_sign();
-      if (sign == 2) {
-        sign = exact_difference(a, b, c).sign();
-      }
-      if (sign != 0) {
-        return sign;
-      }
+      if (sign == 2) sign = exact_difference(a, b, c).sign();
+      if (sign != 0) return sign;
     }
     return 0;
   }
 
-  bool same_point(int32_t a, int32_t b) { return lexicographic(a, b) == 0; }
-
-  // Perturbed conflict test (Devillers-Teillaud): positive iff q conflicts
-  // with the cell.  On an exact tie the lexicographically largest point of the
-  // cell plus q decides through one or two orientation tests.
-  int conflict(int32_t cell, int32_t q) {
-    const Cell& v = cells_[static_cast<std::size_t>(cell)];
+  // Perturbed conflict test (Devillers-Teillaud): true iff q conflicts with
+  // the cell. On an exact tie the lexicographically largest point of the cell
+  // plus q decides through one or two orientation tests.
+  bool perturbed_conflict(const Cell& v, const Point& q) const {
     const int sign = insphere_sign(v, q);
-    if (sign != 0) {
-      return sign;
-    }
-    std::array<int32_t, D + 2> order;
-    for (int i = 0; i <= D; ++i) {
-      order[static_cast<std::size_t>(i)] = v[static_cast<std::size_t>(i)];
-    }
-    order[D + 1] = q;
+    if (sign != 0) return sign > 0;
+    std::array<int, D + 2> order;
+    for (int i = 0; i <= D + 1; ++i) order[static_cast<std::size_t>(i)] = i;
+    const auto point = [&](int i) -> const Point& {
+      return i <= D ? v[static_cast<std::size_t>(i)] : q;
+    };
     std::sort(order.begin(), order.end(),
-              [this](int32_t a, int32_t b) { return lexicographic(a, b) < 0; });
+              [&](int a, int b) { return lexicographic(point(a), point(b)) < 0; });
     for (int rank = D + 1; rank > D - 1; --rank) {
-      const int32_t largest = order[static_cast<std::size_t>(rank)];
-      if (largest == q) {
-        return -1;
-      }
-      for (int k = 0; k <= D; ++k) {
-        if (v[static_cast<std::size_t>(k)] == largest) {
-          Cell replaced = v;
-          replaced[static_cast<std::size_t>(k)] = q;
-          const int orientation_sign = orient_sign(replaced);
-          if (orientation_sign != 0) {
-            return orientation_sign;
-          }
-        }
-      }
+      const int largest = order[static_cast<std::size_t>(rank)];
+      if (largest == D + 1) return false;
+      Cell replaced = v;
+      replaced[static_cast<std::size_t>(largest)] = q;
+      const int orientation_sign = orient_sign(replaced);
+      if (orientation_sign != 0) return orientation_sign > 0;
     }
     throw std::logic_error("periodic perturbation left a tie");
   }
 
-  bool touches_bound(int32_t cell) const {
-    for (const int32_t vertex : cells_[static_cast<std::size_t>(cell)]) {
-      if (vertices_[static_cast<std::size_t>(vertex)].representative < 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool precedes(int32_t a, int32_t b) const {
-    const Vertex& va = vertices_[static_cast<std::size_t>(a)];
-    const Vertex& vb = vertices_[static_cast<std::size_t>(b)];
-    if (va.representative != vb.representative) {
-      return va.representative < vb.representative;
-    }
-    return va.shift < vb.shift;
-  }
-
-  int32_t anchor_of(const Cell& cell) const {
-    int32_t anchor = cell[0];
-    for (int i = 1; i <= D; ++i) {
-      if (precedes(cell[static_cast<std::size_t>(i)], anchor)) {
-        anchor = cell[static_cast<std::size_t>(i)];
-      }
-    }
-    return anchor;
-  }
-
-  // Orbit key of a finite cell: its vertices as (representative, shift
-  // relative to the anchor) rows in increasing order.  The published order is
-  // the key order, with the last two entries swapped when that permutation of
-  // the positively oriented cell is odd.
-  Candidate canonical(int32_t cell) const {
-    const Cell& v = cells_[static_cast<std::size_t>(cell)];
-    const Vertex& anchor = vertices_[static_cast<std::size_t>(anchor_of(v))];
+  // The orbit key and published rows of the positively oriented cell v.
+  Canonical<D> canonical(const Cell& v) const {
     std::array<int, D + 1> order;
-    for (int i = 0; i <= D; ++i) {
-      order[static_cast<std::size_t>(i)] = i;
-    }
+    for (int i = 0; i <= D; ++i) order[static_cast<std::size_t>(i)] = i;
     std::sort(order.begin(), order.end(), [&](int left, int right) {
-      return precedes(v[static_cast<std::size_t>(left)], v[static_cast<std::size_t>(right)]);
+      return image_precedes(v[static_cast<std::size_t>(left)], v[static_cast<std::size_t>(right)]);
     });
     int inversions = 0;
     for (int i = 0; i <= D; ++i) {
@@ -538,28 +486,28 @@ class PeriodicEngine {
         inversions += order[static_cast<std::size_t>(i)] > order[static_cast<std::size_t>(j)];
       }
     }
-    Candidate candidate;
-    candidate.key.reserve(static_cast<std::size_t>((D + 1) * (D + 1)));
+    const Point& anchor = v[static_cast<std::size_t>(order[0])];
+    Canonical<D> result;
+    std::size_t position = 0;
     for (int i = 0; i <= D; ++i) {
-      const int32_t vertex = v[static_cast<std::size_t>(order[static_cast<std::size_t>(i)])];
-      const Vertex& item = vertices_[static_cast<std::size_t>(vertex)];
-      candidate.key.push_back(item.representative);
-      candidate.ordered[static_cast<std::size_t>(i)] = item.representative;
+      const Point& item = v[static_cast<std::size_t>(order[static_cast<std::size_t>(i)])];
+      result.key[position++] = item.representative;
+      result.ordered[static_cast<std::size_t>(i)] = item.representative;
       for (int j = 0; j < D; ++j) {
-        const int32_t relative = checked_shift(
+        result.key[position++] = checked_shift(
             static_cast<int64_t>(item.shift[static_cast<std::size_t>(j)]) -
             anchor.shift[static_cast<std::size_t>(j)]);
-        candidate.key.push_back(relative);
-        candidate.shifts[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
+        result.shifts[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
             item.shift[static_cast<std::size_t>(j)];
       }
     }
     if (inversions % 2 == 1) {
-      std::swap(candidate.ordered[D - 1], candidate.ordered[D]);
-      std::swap(candidate.shifts[D - 1], candidate.shifts[D]);
+      std::swap(result.ordered[D - 1], result.ordered[D]);
+      std::swap(result.shifts[D - 1], result.shifts[D]);
     }
-    return candidate;
+    return result;
   }
+
 
   // Fractional margin that certifies the circumball of the cell, including
   // the construction slack; +inf when the circumcenter is not constructible.
@@ -600,7 +548,7 @@ class PeriodicEngine {
       radius += center[c] * center[c];
     }
     radius = std::sqrt(radius);
-    const Vertex& origin = vertices_[static_cast<std::size_t>(v[0])];
+    const Point& origin = v[0];
     double required = 0.0;
     double scale = 1.0;
     for (int j = 0; j < D; ++j) {
@@ -690,7 +638,7 @@ class PeriodicEngine {
     }
     const Dyadic radius_denominator =
         center_denominator * center_denominator;
-    const Vertex& origin = vertices_[static_cast<std::size_t>(v[0])];
+    const Point& origin = v[0];
     double required = -std::numeric_limits<double>::infinity();
     double scale = 1.0;
     for (int axis = 0; axis < D; ++axis) {
@@ -741,241 +689,1219 @@ class PeriodicEngine {
     return std::isfinite(margin) ? margin : std::numeric_limits<double>::infinity();
   }
 
-  int64_t closure_misses(const std::vector<Candidate>& extracted,
-                         const std::unordered_map<std::size_t, std::vector<int32_t>>& index) {
-    // Map every extracted slot to its orbit, then check each finite neighbor.
-    std::vector<int32_t> orbit_of(static_cast<std::size_t>(slots()), -1);
-    for (int32_t cell = 0; cell < slots(); ++cell) {
-      if (!alive_[static_cast<std::size_t>(cell)] || touches_bound(cell)) {
-        continue;
-      }
-      const std::vector<int32_t> key = canonical(cell).key;
-      const auto found = index.find(hash(key));
-      if (found == index.end()) {
-        continue;
-      }
-      for (const int32_t candidate : found->second) {
-        if (extracted[static_cast<std::size_t>(candidate)].key == key) {
-          orbit_of[static_cast<std::size_t>(cell)] = candidate;
-        }
+ private:
+  // det[v1 - v0, ..., vD - v0].
+  template <class T, class Difference>
+  static T orientation(const Cell& v, const Difference& difference) {
+    T rows[D][D];
+    for (int i = 0; i < D; ++i) {
+      for (int c = 0; c < D; ++c) {
+        rows[i][c] = difference(v[static_cast<std::size_t>(i + 1)], v[0], c);
       }
     }
-    int64_t misses = 0;
-    for (int32_t cell = 0; cell < slots(); ++cell) {
-      if (!alive_[static_cast<std::size_t>(cell)] || touches_bound(cell)) {
-        continue;
-      }
-      const int32_t anchor = anchor_of(cells_[static_cast<std::size_t>(cell)]);
-      if (!is_base(anchor)) {
-        continue;
-      }
-      for (const int32_t neighbor : neighbors_[static_cast<std::size_t>(cell)]) {
-        if (neighbor < 0 || orbit_of[static_cast<std::size_t>(neighbor)] < 0) {
-          ++misses;
-        }
-      }
+    if constexpr (D == 2) {
+      return rows[0][0] * rows[1][1] - rows[0][1] * rows[1][0];
+    } else {
+      return det3(rows[0], rows[1], rows[2]);
     }
-    return misses;
   }
 
-  void add_bounding_simplex(const std::vector<double>& approximate) {
-    std::array<double, D> lower;
-    std::array<double, D> upper;
-    lower.fill(std::numeric_limits<double>::infinity());
-    upper.fill(-std::numeric_limits<double>::infinity());
-    for (std::size_t index = 0; index < approximate.size() / D; ++index) {
+  // Positive iff q lies inside the circumsphere of the positively oriented v.
+  template <class T, class Difference>
+  static T insphere(const Cell& v, const Point& q, const Difference& difference) {
+    T rows[D + 1][D + 1];
+    for (int i = 0; i <= D; ++i) {
       for (int c = 0; c < D; ++c) {
-        lower[static_cast<std::size_t>(c)] =
-            std::min(lower[static_cast<std::size_t>(c)], approximate[index * D + c]);
-        upper[static_cast<std::size_t>(c)] =
-            std::max(upper[static_cast<std::size_t>(c)], approximate[index * D + c]);
+        rows[i][c] = difference(v[static_cast<std::size_t>(i)], q, c);
       }
+      T lifted = rows[i][0] * rows[i][0];
+      for (int c = 1; c < D; ++c) lifted = lifted + rows[i][c] * rows[i][c];
+      rows[i][D] = lifted;
     }
-    double extent = 0.0;
-    for (int c = 0; c < D; ++c) {
-      extent = std::max(extent, upper[static_cast<std::size_t>(c)] - lower[static_cast<std::size_t>(c)]);
+    if constexpr (D == 2) {
+      return det3(rows[0], rows[1], rows[2]);
+    } else {
+      // Negated 4x4 lifted determinant, expanded along the lifted column.
+      return rows[0][3] * det3(rows[1], rows[2], rows[3]) -
+             rows[1][3] * det3(rows[0], rows[2], rows[3]) +
+             rows[2][3] * det3(rows[0], rows[1], rows[3]) -
+             rows[3][3] * det3(rows[0], rows[1], rows[2]);
     }
-    extent = extent > 0.0 ? extent : 1.0;
-    // The simplex {x_c >= center_c - 32 R, sum_c (x_c - center_c) <= 32 R}
-    // contains the box of half-width R, and it lies 30 R beyond every image.
-    bound_base_ = static_cast<int32_t>(vertices_.size());
+  }
+
+  const PeriodicDelaunayInput& input_;
+  std::array<double, (D + 1) * D> bound_ = {};
+};
+
+// Predicates over a bank of translates addressed by index (support queries).
+template <int D>
+class PeriodicSupport {
+ public:
+  using Cell = std::array<int32_t, D + 1>;
+  using Vertex = Image<D>;
+
+  PeriodicSupport(const PeriodicDelaunayInput& input, std::vector<Vertex> images)
+      : geometry_(input), images_(std::move(images)) {}
+
+  int support_orientation_sign(const Cell& cell) const {
+    return geometry_.orient_sign(points(cell));
+  }
+
+  int support_insphere_sign(const Cell& cell, int32_t query_representative,
+                            const std::array<int32_t, D>& query_shift) const {
+    Vertex query = images_[static_cast<std::size_t>(query_representative)];
+    query.shift = query_shift;
+    return geometry_.insphere_sign(points(cell), query);
+  }
+
+  double support_fractional_bounds(const Cell& cell, const ExactLatticeTransform<D>& transform,
+                                   std::array<double, D>& lower,
+                                   std::array<double, D>& upper) const {
+    return geometry_.support_bounds_exact(points(cell), transform, lower, upper);
+  }
+
+ private:
+  typename PeriodicGeometry<D>::Cell points(const Cell& cell) const {
+    typename PeriodicGeometry<D>::Cell result;
+    for (int i = 0; i <= D; ++i) {
+      result[static_cast<std::size_t>(i)] =
+          images_[static_cast<std::size_t>(cell[static_cast<std::size_t>(i)])];
+    }
+    return result;
+  }
+
+  PeriodicGeometry<D> geometry_;
+  std::vector<Vertex> images_;
+};
+
+// Links the cone cells of an insertion across their ridges through the new
+// vertex: a ridge is named by its D - 1 other vertices (their indices), and a
+// closed cavity boundary holds each ridge in exactly two cone cells. False
+// when it does not.
+template <int D, class CellOf, class FaceOf, class Access>
+bool link_ridges(std::size_t count, const CellOf& cell_of, const FaceOf& face_of,
+                 const Access& access, std::vector<uint64_t>& keys,
+                 std::vector<int64_t>& values, std::vector<std::size_t>& used) {
+  constexpr uint64_t kEmpty = std::numeric_limits<uint64_t>::max();
+  constexpr int64_t kConsumed = -1;
+  const std::size_t needed = count * D * 2;
+  if (keys.size() < needed) {
+    std::size_t capacity = 64;
+    while (capacity < needed) capacity <<= 1;
+    keys.assign(capacity, kEmpty);
+    values.resize(capacity);
+  }
+  const std::size_t mask = keys.size() - 1;
+  used.clear();
+  std::size_t links = 0;
+  bool valid = count > 0;
+  for (std::size_t j = 0; j < count && valid; ++j) {
+    const int32_t cell = cell_of(j);
+    const int face = face_of(j);
+    for (int k = 0; k <= D && valid; ++k) {
+      if (k == face) continue;
+      const auto& v = access(cell).v;
+      uint64_t low = std::numeric_limits<uint32_t>::max();
+      uint64_t high = 0;
+      for (int i = 0; i <= D; ++i) {
+        if (i == k || i == face) continue;
+        const uint64_t value = static_cast<uint32_t>(v[static_cast<std::size_t>(i)]);
+        low = std::min(low, value);
+        high = std::max(high, value);
+      }
+      const uint64_t key = D == 2 ? low : (low << 32) | high;
+      std::size_t slot = static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & mask;
+      while (keys[slot] != kEmpty && keys[slot] != key) slot = (slot + 1) & mask;
+      if (keys[slot] != key) {
+        keys[slot] = key;
+        values[slot] = (static_cast<int64_t>(cell) << 8) | k;
+        used.push_back(slot);
+        continue;
+      }
+      const int64_t other = values[slot];
+      if (other == kConsumed) {
+        valid = false;
+        continue;
+      }
+      const int32_t other_cell = static_cast<int32_t>(other >> 8);
+      const int other_face = static_cast<int>(other & 0xFF);
+      access(cell).n[static_cast<std::size_t>(k)] = other_cell;
+      access(other_cell).n[static_cast<std::size_t>(other_face)] = cell;
+      values[slot] = kConsumed;
+      ++links;
+    }
+  }
+  for (const std::size_t slot : used) keys[slot] = kEmpty;
+  return valid && links * 2 == count * D;
+}
+
+// The incremental Delaunay triangulation of the translates of some points
+// that lie in a margin box [-margin, 1 + margin]^D (lattice coordinates),
+// inside a bounding simplex. It bootstraps the quotient triangulation: a
+// cell whose circumball lies in the box is a cell of the periodic Delaunay
+// triangulation of those points.
+template <int D>
+class PeriodicImageTriangulation {
+ public:
+  using Geometry = PeriodicGeometry<D>;
+
+  // Vertices 0..D are reserved for the bounding simplex.
+  PeriodicImageTriangulation(const PeriodicDelaunayInput& input,
+                             std::vector<int32_t> representatives)
+      : input_(input), geometry_(input), representatives_(std::move(representatives)) {
     for (int k = 0; k <= D; ++k) {
-      for (int c = 0; c < D; ++c) {
-        const double center =
-            0.5 * (lower[static_cast<std::size_t>(c)] + upper[static_cast<std::size_t>(c)]);
-        const double offset = (k == c + 1) ? (32.0 * D) * extent : -32.0 * extent;
-        bound_[static_cast<std::size_t>(k * D + c)] = center + offset;
-      }
-      Vertex bound;
-      bound.representative = -1;
+      Image<D> bound;
+      bound.representative = -1 - k;
       bound.shift.fill(0);
       vertices_.push_back(bound);
     }
-    Cell cell;
+    coordinates_.assign(static_cast<std::size_t>(kArity) * D, 0.0);
+  }
+
+  // Adds the translates in the margin box `margin` that lie outside the box
+  // `previous` (negative: every translate) and triangulates them. The
+  // bounding simplex is rebuilt, and every vertex reinserted, only when the
+  // box outgrows the simplex placed for an earlier one.
+  void grow(double previous, double margin) {
+    std::vector<Image<D>> fresh;
+    collect_images(previous, margin, fresh);
+    const std::size_t first = vertices_.size();
+    if (fresh.size() > static_cast<std::size_t>(INT32_MAX) - first) {
+      throw PeriodicIndexRangeExceeded{};
+    }
+    std::vector<double> positions(fresh.size() * D);
+    for (std::size_t index = 0; index < fresh.size(); ++index) {
+      uncertainty_ = std::max(uncertainty_,
+                              rounded_translate(input_, fresh[index], &positions[index * D]));
+      for (int c = 0; c < D; ++c) {
+        lower_[static_cast<std::size_t>(c)] =
+            std::min(lower_[static_cast<std::size_t>(c)], positions[index * D + c]);
+        upper_[static_cast<std::size_t>(c)] =
+            std::max(upper_[static_cast<std::size_t>(c)], positions[index * D + c]);
+      }
+    }
+    std::vector<int32_t> candidates(fresh.size());
+    for (std::size_t index = 0; index < fresh.size(); ++index) {
+      candidates[index] = static_cast<int32_t>(index);
+    }
+    // Stored in insertion order, so walks and cavities touch nearby memory.
+    for (const int32_t index : brio_hilbert_order(positions.data(), D, candidates)) {
+      vertices_.push_back(fresh[static_cast<std::size_t>(index)]);
+      coordinates_.insert(coordinates_.end(), positions.begin() + index * D,
+                          positions.begin() + (index + 1) * D);
+    }
+    double extent = 0.0;
+    for (int c = 0; c < D; ++c) {
+      extent = std::max(extent, upper_[static_cast<std::size_t>(c)] -
+                                    lower_[static_cast<std::size_t>(c)]);
+    }
+    extent = extent > 0.0 ? extent : 1.0;
+    if (cells_.empty() || extent > 4.0 * bound_extent_) {
+      // Every vertex then lies within 4 bound_extent_ of the simplex center
+      // per axis, inside {x_c >= center_c - 32 E, sum_c (x_c - center_c) <= 32 E}
+      // for D <= 3.
+      reset(extent);
+      std::vector<int32_t> all(vertices_.size() - kArity);
+      for (std::size_t index = 0; index < all.size(); ++index) {
+        all[index] = static_cast<int32_t>(index + kArity);
+      }
+      if (first == kArity) {
+        for (const int32_t vertex : all) insert(vertex);
+      } else {
+        for (const int32_t vertex : brio_hilbert_order(coordinates_.data(), D, all)) {
+          insert(vertex);
+        }
+      }
+      return;
+    }
+    for (std::size_t vertex = first; vertex < vertices_.size(); ++vertex) {
+      insert(static_cast<int32_t>(vertex));
+    }
+  }
+
+  // One translate per orbit of the cells whose circumballs lie in the
+  // margin box (with the certificate slack of required_margin).
+  void true_cells(double margin, std::vector<typename Geometry::Cell>& orbits) const {
+    struct Entry {
+      std::array<int32_t, (D + 1) * (D + 1)> key;
+      int32_t cell;
+    };
+    std::vector<Entry> entries;
+    for (int32_t cell = 0; cell < slots(); ++cell) {
+      const Cell& v = cells_[static_cast<std::size_t>(cell)].v;
+      if (v[0] < 0 || touches_bound(v)) continue;
+      const typename Geometry::Cell translate = points(v);
+      if (!(geometry_.required_margin(translate) <= margin)) continue;
+      entries.push_back({geometry_.canonical(translate).key, cell});
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const Entry& left, const Entry& right) { return left.key < right.key; });
+    orbits.clear();
+    for (std::size_t index = 0; index < entries.size(); ++index) {
+      if (index > 0 && entries[index].key == entries[index - 1].key) continue;
+      orbits.push_back(points(cells_[static_cast<std::size_t>(entries[index].cell)].v));
+    }
+  }
+
+ private:
+  static constexpr int kArity = D + 1;
+  using Cell = std::array<int32_t, D + 1>;
+  struct Simplex {
+    Cell v;  // v[0] < 0 marks a free slot
+    Cell n;  // n[i] is opposite v[i]; -1 outside the bounding simplex
+  };
+  struct Facet {
+    int32_t cell;
+    int32_t face;
+    int32_t outside;
+    int32_t back;
+  };
+
+  const PeriodicDelaunayInput& input_;
+  Geometry geometry_;
+  std::vector<int32_t> representatives_;
+  std::vector<Image<D>> vertices_;
+  // Rounded vertex positions, D per vertex.
+  std::vector<double> coordinates_;
+  // Largest distance of a rounded position coordinate from the exact one.
+  double uncertainty_ = 0.0;
+  std::array<double, D> lower_ = filled(std::numeric_limits<double>::infinity());
+  std::array<double, D> upper_ = filled(-std::numeric_limits<double>::infinity());
+  double bound_extent_ = 0.0;
+  std::vector<Simplex> cells_;
+  std::vector<uint32_t> marks_;
+  std::vector<int32_t> free_;
+  uint32_t stamp_ = 0;
+  int32_t last_ = 0;
+  uint64_t walk_state_ = 0x9E3779B97F4A7C15ULL;
+  std::vector<int32_t> stack_;
+  std::vector<int32_t> cavity_;
+  std::vector<Facet> boundary_;
+  std::vector<Simplex> cone_;
+  std::vector<uint64_t> ridge_keys_;
+  std::vector<int64_t> ridge_values_;
+  std::vector<std::size_t> ridge_used_;
+
+  static std::array<double, D> filled(double value) {
+    std::array<double, D> result;
+    result.fill(value);
+    return result;
+  }
+
+  int64_t slots() const { return static_cast<int64_t>(cells_.size()); }
+  const double* coordinate(int32_t vertex) const {
+    return coordinates_.data() + static_cast<std::size_t>(vertex) * D;
+  }
+  typename Geometry::Cell points(const Cell& v) const {
+    typename Geometry::Cell result;
+    for (int i = 0; i <= D; ++i) {
+      result[static_cast<std::size_t>(i)] =
+          vertices_[static_cast<std::size_t>(v[static_cast<std::size_t>(i)])];
+    }
+    return result;
+  }
+
+  // The translates in the box of `margin` outside the box of `previous`
+  // (negative: none), point by point.
+  void collect_images(double previous, double margin, std::vector<Image<D>>& images) const {
+    for (const int32_t point : representatives_) {
+      std::array<int32_t, D> first{}, last{}, old_first{}, old_last{};
+      if (!image_range(point, margin, first, last)) continue;
+      const bool had = previous >= 0.0 && image_range(point, previous, old_first, old_last);
+      Image<D> vertex;
+      vertex.representative = point;
+      vertex.shift = first;
+      while (true) {
+        bool old = had;
+        for (int axis = 0; axis < D && old; ++axis) {
+          const int32_t value = vertex.shift[static_cast<std::size_t>(axis)];
+          old = value >= old_first[static_cast<std::size_t>(axis)] &&
+                value <= old_last[static_cast<std::size_t>(axis)];
+        }
+        if (!old) images.push_back(vertex);
+        int axis = 0;
+        while (axis < D) {
+          int32_t& value = vertex.shift[static_cast<std::size_t>(axis)];
+          if (value < last[static_cast<std::size_t>(axis)]) {
+            ++value;
+            break;
+          }
+          value = first[static_cast<std::size_t>(axis)];
+          ++axis;
+        }
+        if (axis == D) break;
+      }
+    }
+  }
+
+  // The shift range of a point's translates in the margin box (count_images
+  // has validated it); false when the point has none.
+  bool image_range(int64_t point, double margin, std::array<int32_t, D>& first,
+                   std::array<int32_t, D>& last) const {
+    const double lower = -margin - kImageSlack;
+    const double upper = 1.0 + margin + kImageSlack;
+    for (int axis = 0; axis < D; ++axis) {
+      const double fractional = input_.fractional[point * D + axis];
+      const double lo = std::ceil(lower - fractional);
+      const double hi = std::floor(upper - fractional);
+      if (lo > hi) return false;
+      first[static_cast<std::size_t>(axis)] = static_cast<int32_t>(lo);
+      last[static_cast<std::size_t>(axis)] = static_cast<int32_t>(hi);
+    }
+    return true;
+  }
+
+  // The bounding vertices are 0..D.
+  static bool touches_bound(const Cell& v) {
+    int32_t least = v[0];
+    for (int i = 1; i <= D; ++i) least = std::min(least, v[static_cast<std::size_t>(i)]);
+    return least <= D;
+  }
+
+  // The orientation of the cell v with v[slot] replaced by q.
+  int orient_with(const Cell& v, int slot, int32_t q) const {
+    const double* p[D + 1];
     for (int k = 0; k <= D; ++k) {
-      cell[static_cast<std::size_t>(k)] = bound_base_ + k;
+      p[k] = coordinate(k == slot ? q : v[static_cast<std::size_t>(k)]);
     }
-    if (orient_sign(cell) < 0) {
-      std::swap(cell[0], cell[1]);
-    }
-    Cell none;
-    none.fill(-1);
-    last_ = allocate(cell);
-    neighbors_[static_cast<std::size_t>(last_)] = none;
+    const int sign =
+        image_stage::orient(p, 2.0 * uncertainty_, std::integral_constant<int, D>{});
+    if (sign != 0) return sign;
+    typename Geometry::Cell probe = points(v);
+    probe[static_cast<std::size_t>(slot)] = vertices_[static_cast<std::size_t>(q)];
+    return geometry_.orient_sign(probe);
   }
 
-  int32_t allocate(const Cell& cell) {
-    if (!free_.empty()) {
-      const int32_t slot = free_.back();
-      free_.pop_back();
-      cells_[static_cast<std::size_t>(slot)] = cell;
-      alive_[static_cast<std::size_t>(slot)] = 1;
-      return slot;
+  // Whether two vertices are the same point; rounded positions farther apart
+  // than their joint rounding uncertainty are distinct.
+  bool same_point(int32_t a, int32_t b) const {
+    const double* pa = coordinate(a);
+    const double* pb = coordinate(b);
+    for (int c = 0; c < D; ++c) {
+      if (std::fabs(pa[c] - pb[c]) > 4.0 * uncertainty_) return false;
     }
-    if (slots() >= INT32_MAX) throw PeriodicIndexRangeExceeded{};
-    cells_.push_back(cell);
-    Cell none;
-    none.fill(-1);
-    neighbors_.push_back(none);
-    alive_.push_back(1);
-    cavity_mark_.push_back(0);
-    outside_mark_.push_back(0);
-    return static_cast<int32_t>(cells_.size() - 1);
+    return geometry_.lexicographic(vertices_[static_cast<std::size_t>(a)],
+                                   vertices_[static_cast<std::size_t>(b)]) == 0;
   }
 
+  bool conflict(const Cell& v, int32_t q) const {
+    const double* p[D + 1];
+    for (int k = 0; k <= D; ++k) p[k] = coordinate(v[static_cast<std::size_t>(k)]);
+    const int filtered = image_stage::insphere(p, coordinate(q), 2.0 * uncertainty_,
+                                               std::integral_constant<int, D>{});
+    if (filtered != 0) return filtered > 0;
+    return geometry_.perturbed_conflict(points(v), vertices_[static_cast<std::size_t>(q)]);
+  }
+
+  // An empty triangulation of the bounding simplex {x_c >= center_c - 32 E,
+  // sum_c (x_c - center_c) <= 32 E} of the box of extent E.
+  void reset(double extent) {
+    bound_extent_ = extent;
+    std::array<double, (D + 1) * D> bound;
+    for (int k = 0; k <= D; ++k) {
+      for (int c = 0; c < D; ++c) {
+        const double center =
+            0.5 * (lower_[static_cast<std::size_t>(c)] + upper_[static_cast<std::size_t>(c)]);
+        const double offset = (k == c + 1) ? (32.0 * D) * extent : -32.0 * extent;
+        bound[static_cast<std::size_t>(k * D + c)] = center + offset;
+        coordinates_[static_cast<std::size_t>(k * D + c)] = center + offset;
+      }
+    }
+    geometry_.set_bound(bound);
+    cells_.clear();
+    marks_.clear();
+    free_.clear();
+    stamp_ = 0;
+    const std::size_t estimate = vertices_.size() * (D == 3 ? 7 : 2) + 64;
+    cells_.reserve(estimate);
+    marks_.reserve(estimate);
+    Simplex root;
+    for (int k = 0; k <= D; ++k) root.v[static_cast<std::size_t>(k)] = k;
+    if (geometry_.orient_sign(points(root.v)) < 0) std::swap(root.v[0], root.v[1]);
+    root.n.fill(-1);
+    cells_.push_back(root);
+    marks_.push_back(0);
+    last_ = 0;
+  }
+
+  // Remembering stochastic visibility walk from the last created cell.
   int32_t locate(int32_t q) {
     int32_t cell = last_;
+    int32_t previous = -1;
     const int64_t limit = 4 * slots() + 64;
     for (int64_t step = 0; step <= limit; ++step) {
-      const int start =
-          static_cast<int>(splitmix64(static_cast<uint64_t>(q) * 0x9E37ULL + step) % (D + 1));
-      bool moved = false;
+      const Simplex& current = cells_[static_cast<std::size_t>(cell)];
+      walk_state_ ^= walk_state_ << 13;
+      walk_state_ ^= walk_state_ >> 7;
+      walk_state_ ^= walk_state_ << 17;
+      const int first = static_cast<int>(walk_state_ % (D + 1));
+      int32_t next = -1;
       for (int k = 0; k <= D; ++k) {
-        const int i = (start + k) % (D + 1);
-        Cell probe = cells_[static_cast<std::size_t>(cell)];
-        probe[static_cast<std::size_t>(i)] = q;
-        if (orient_sign(probe) < 0) {
-          const int32_t next = neighbors_[static_cast<std::size_t>(cell)][static_cast<std::size_t>(i)];
-          if (next < 0) {
+        const int i = (first + k) % (D + 1);
+        const int32_t neighbor = current.n[static_cast<std::size_t>(i)];
+        if (neighbor == previous && neighbor >= 0) continue;
+        if (orient_with(current.v, i, q) < 0) {
+          if (neighbor < 0) {
             throw std::logic_error("periodic walk left the bounding simplex");
           }
-          cell = next;
-          moved = true;
+          next = neighbor;
           break;
         }
       }
-      if (!moved) {
-        return cell;
-      }
+      if (next < 0) return cell;
+      prefetch(&cells_[static_cast<std::size_t>(next)]);
+      previous = cell;
+      cell = next;
     }
     throw std::logic_error("periodic walk did not terminate");
   }
 
-  static uint64_t ridge_key(const Cell& cell, int skip_first, int skip_second) {
-    uint64_t low = std::numeric_limits<uint64_t>::max();
-    uint64_t high = 0;
-    for (int k = 0; k <= D; ++k) {
-      if (k == skip_first || k == skip_second) {
-        continue;
-      }
-      const uint64_t value = static_cast<uint32_t>(cell[static_cast<std::size_t>(k)]);
-      low = std::min(low, value);
-      high = std::max(high, value);
-    }
-    return D == 2 ? low : (low << 32) | high;
-  }
-
+  // Replaces the conflict cavity of q by the cone from q over its boundary.
   void insert(int32_t q) {
     const int32_t start = locate(q);
-    for (const int32_t vertex : cells_[static_cast<std::size_t>(start)]) {
+    for (const int32_t vertex : cells_[static_cast<std::size_t>(start)].v) {
       if (same_point(vertex, q)) {
         throw DuplicatePoint{vertices_[static_cast<std::size_t>(q)].representative};
       }
     }
-    ++stamp_;
-    std::vector<int32_t> cavity{start};
-    std::vector<std::pair<int32_t, int>> boundary;
-    cavity_mark_[static_cast<std::size_t>(start)] = stamp_;
-    for (std::size_t head = 0; head < cavity.size(); ++head) {
-      const int32_t cell = cavity[head];
+    if (stamp_ >= std::numeric_limits<uint32_t>::max() - 2) {
+      std::fill(marks_.begin(), marks_.end(), 0U);
+      stamp_ = 0;
+    }
+    stamp_ += 2;
+    const uint32_t inside = stamp_;
+    const uint32_t outside = stamp_ + 1;
+    // The located cell holds q, so q lies strictly inside its circumball.
+    cavity_.assign(1, start);
+    stack_.assign(1, start);
+    boundary_.clear();
+    marks_[static_cast<std::size_t>(start)] = inside;
+    while (!stack_.empty()) {
+      const int32_t cell = stack_.back();
+      stack_.pop_back();
       for (int i = 0; i <= D; ++i) {
-        const int32_t neighbor = neighbors_[static_cast<std::size_t>(cell)][static_cast<std::size_t>(i)];
-        if (neighbor >= 0 && cavity_mark_[static_cast<std::size_t>(neighbor)] == stamp_) {
+        const int32_t neighbor =
+            cells_[static_cast<std::size_t>(cell)].n[static_cast<std::size_t>(i)];
+        if (neighbor < 0) {
+          boundary_.push_back({cell, i, -1, -1});
           continue;
         }
-        if (neighbor >= 0 && outside_mark_[static_cast<std::size_t>(neighbor)] != stamp_ &&
-            conflict(neighbor, q) > 0) {
-          cavity_mark_[static_cast<std::size_t>(neighbor)] = stamp_;
-          cavity.push_back(neighbor);
-          continue;
-        }
-        if (neighbor >= 0) {
-          outside_mark_[static_cast<std::size_t>(neighbor)] = stamp_;
-        }
-        boundary.emplace_back(cell, i);
-      }
-    }
-    std::unordered_map<uint64_t, std::pair<int32_t, int>> ridges;
-    ridges.reserve(boundary.size() * D);
-    int32_t created = -1;
-    for (const auto& [cell, face] : boundary) {
-      Cell vertices = cells_[static_cast<std::size_t>(cell)];
-      vertices[static_cast<std::size_t>(face)] = q;
-      if (orient_sign(vertices) <= 0) {
-        throw std::logic_error("periodic cavity is not star-shaped");
-      }
-      const int32_t outside = neighbors_[static_cast<std::size_t>(cell)][static_cast<std::size_t>(face)];
-      created = allocate(vertices);
-      Cell& links = neighbors_[static_cast<std::size_t>(created)];
-      links.fill(-1);
-      links[static_cast<std::size_t>(face)] = outside;
-      if (outside >= 0) {
-        for (int32_t& back : neighbors_[static_cast<std::size_t>(outside)]) {
-          if (back == cell) {
-            back = created;
+        uint32_t& mark = marks_[static_cast<std::size_t>(neighbor)];
+        if (mark == inside) continue;
+        if (mark != outside) {
+          if (conflict(cells_[static_cast<std::size_t>(neighbor)].v, q)) {
+            mark = inside;
+            cavity_.push_back(neighbor);
+            stack_.push_back(neighbor);
+            continue;
           }
+          mark = outside;
         }
-      }
-      for (int j = 0; j <= D; ++j) {
-        if (j == face) {
-          continue;
-        }
-        const uint64_t key = ridge_key(vertices, face, j);
-        const auto found = ridges.find(key);
-        if (found == ridges.end()) {
-          ridges.emplace(key, std::make_pair(created, j));
-          continue;
-        }
-        const auto [other, other_face] = found->second;
-        neighbors_[static_cast<std::size_t>(created)][static_cast<std::size_t>(j)] = other;
-        neighbors_[static_cast<std::size_t>(other)][static_cast<std::size_t>(other_face)] = created;
-        ridges.erase(found);
+        const Cell& around = cells_[static_cast<std::size_t>(neighbor)].n;
+        int back = 0;
+        for (int k = 1; k <= D; ++k) back = around[static_cast<std::size_t>(k)] == cell ? k : back;
+        boundary_.push_back({cell, i, neighbor, back});
       }
     }
-    if (!ridges.empty() || created < 0) {
+    // The cone cells, built before any cavity slot is reused. The cavity of
+    // the perturbed Delaunay triangulation is star-shaped from q, so each
+    // cone cell keeps the orientation of the cavity cell it replaces.
+    cone_.resize(boundary_.size());
+    for (std::size_t j = 0; j < boundary_.size(); ++j) {
+      const Facet& facet = boundary_[j];
+      Simplex& created = cone_[j];
+      created.v = cells_[static_cast<std::size_t>(facet.cell)].v;
+      created.v[static_cast<std::size_t>(facet.face)] = q;
+      created.n.fill(-1);
+      created.n[static_cast<std::size_t>(facet.face)] = facet.outside;
+    }
+    for (std::size_t j = 0; j < cone_.size(); ++j) {
+      int32_t slot;
+      if (j < cavity_.size()) {
+        slot = cavity_[j];
+      } else if (!free_.empty()) {
+        slot = free_.back();
+        free_.pop_back();
+      } else {
+        if (slots() >= INT32_MAX) throw PeriodicIndexRangeExceeded{};
+        slot = static_cast<int32_t>(cells_.size());
+        cells_.emplace_back();
+        marks_.push_back(0);
+      }
+      cells_[static_cast<std::size_t>(slot)] = cone_[j];
+      const Facet& facet = boundary_[j];
+      if (facet.outside >= 0) {
+        cells_[static_cast<std::size_t>(facet.outside)].n[static_cast<std::size_t>(facet.back)] =
+            slot;
+      }
+      boundary_[j].cell = slot;
+    }
+    for (std::size_t j = cone_.size(); j < cavity_.size(); ++j) {
+      cells_[static_cast<std::size_t>(cavity_[j])].v[0] = -1;
+      free_.push_back(cavity_[j]);
+    }
+    if (!link_ridges<D>(boundary_.size(), [this](std::size_t j) { return boundary_[j].cell; },
+                        [this](std::size_t j) { return boundary_[j].face; },
+                        [this](int32_t cell) -> Simplex& {
+                          return cells_[static_cast<std::size_t>(cell)];
+                        },
+                        ridge_keys_, ridge_values_, ridge_used_)) {
       throw std::logic_error("periodic cavity boundary is not closed");
     }
-    for (const int32_t cell : cavity) {
-      alive_[static_cast<std::size_t>(cell)] = 0;
-      free_.push_back(cell);
-    }
-    last_ = created;
+    last_ = boundary_.back().cell;
   }
 };
 
+// The quotient was found not to be a simplicial complex during an insertion
+// (a cavity that wraps around the torus or meets a translate of a ridge).
+struct CoverInvalid {};
+
+// The periodic Delaunay triangulation as a simplicial complex on the flat
+// torus: each input point is one vertex, each cell lists its vertices with
+// lattice offsets, and a predicate evaluates the translates the offsets name.
+// Insertion walks and grows cavities through the covering space, carrying the
+// offset of the new point in each visited cell's frame. It is valid while
+// every circumradius is below a quarter of the shortest lattice vector: then
+// every conflict cavity lies within half that length of the new point, so it
+// meets no translate of itself, and insertion never enlarges a circumradius.
 template <int D>
-int64_t count_images(const PeriodicDelaunayInput& input, double margin,
-                     std::vector<typename PeriodicEngine<D>::Vertex>* images) {
+class PeriodicQuotient {
+ public:
+  using Geometry = PeriodicGeometry<D>;
+
+  explicit PeriodicQuotient(const PeriodicDelaunayInput& input)
+      : input_(input),
+        geometry_(input),
+        positions_(static_cast<std::size_t>(input.point_count) * D),
+        bases_(static_cast<std::size_t>(input.point_count)) {
+    double base_error = 0.0;
+    double largest = 0.0;
+    for (int64_t point = 0; point < input.point_count; ++point) {
+      Image<D>& base = bases_[static_cast<std::size_t>(point)];
+      base.representative = static_cast<int32_t>(point);
+      for (int j = 0; j < D; ++j) {
+        // run has validated the base shifts.
+        base.shift[static_cast<std::size_t>(j)] =
+            -static_cast<int32_t>(std::floor(input.fractional[point * D + j]));
+      }
+      double* position = positions_.data() + point * D;
+      base_error = std::max(base_error, rounded_translate(input, base, position));
+      for (int c = 0; c < D; ++c) largest = std::max(largest, std::fabs(position[c]));
+    }
+    double reach = 0.0;
+    for (int c = 0; c < D; ++c) {
+      double row = 0.0;
+      for (int j = 0; j < D; ++j) row += std::fabs(input.lattice[j * D + c]);
+      reach = std::max(reach, row);
+    }
+    // A translate by offsets of magnitude at most kMaxOffset adds at most D
+    // fused roundings, each within 2^-53 of the running magnitude.
+    uncertainty_ = base_error + D * 0x1p-53 * (largest + kMaxOffset * reach) * (1.0 + 0x1p-40);
+    // Every nonzero lattice vector k L has some |k_j| >= 1, and
+    // k_j = (k L) . column_j(L^-1), so its length is at least 1 / |column_j|.
+    double column = 0.0;
+    for (int j = 0; j < D; ++j) {
+      double norm = 0.0;
+      for (int c = 0; c < D; ++c) norm += input.inverse[c * D + j] * input.inverse[c * D + j];
+      column = std::max(column, norm);
+    }
+    shortest_ = column > 0.0 ? 1.0 / std::sqrt(column) : 0.0;
+  }
+
+  // The input points in BRIO order of their base translates.
+  std::vector<int32_t> insertion_order() const {
+    std::vector<int32_t> candidates(static_cast<std::size_t>(input_.point_count));
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+      candidates[index] = static_cast<int32_t>(index);
+    }
+    return brio_hilbert_order(positions_.data(), D, candidates);
+  }
+
+  // Replaces the triangulation by the given periodic Delaunay cells, one
+  // positively oriented translate per orbit; false unless every facet is
+  // shared by exactly two of them, in which case they are every orbit (the
+  // quotient triangulation is connected through its facets).
+  bool adopt(const std::vector<typename Geometry::Cell>& orbits) {
+    cells_.assign(orbits.size(), QCell{});
+    for (std::size_t index = 0; index < orbits.size(); ++index) {
+      QCell& cell = cells_[index];
+      Raw raw;
+      for (int i = 0; i <= D; ++i) {
+        const Image<D>& corner = orbits[index][static_cast<std::size_t>(i)];
+        cell.v[static_cast<std::size_t>(i)] = corner.representative;
+        for (int j = 0; j < D; ++j) {
+          raw[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] =
+              static_cast<int64_t>(corner.shift[static_cast<std::size_t>(j)]) -
+              base_shift(corner.representative)[static_cast<std::size_t>(j)];
+        }
+      }
+      set_offsets(cell, raw);
+      cell.n.fill(-1);
+    }
+    struct FacetKey {
+      std::array<int64_t, D * (D + 1)> key;
+      int32_t cell;
+      int32_t face;
+    };
+    std::vector<FacetKey> facets;
+    facets.reserve(cells_.size() * (D + 1));
+    for (std::size_t index = 0; index < cells_.size(); ++index) {
+      const QCell& cell = cells_[index];
+      for (int face = 0; face <= D; ++face) {
+        std::array<std::pair<int32_t, std::array<int64_t, D>>, D> rows;
+        std::size_t count = 0;
+        for (int i = 0; i <= D; ++i) {
+          if (i == face) continue;
+          rows[count].first = cell.v[static_cast<std::size_t>(i)];
+          for (int j = 0; j < D; ++j) {
+            rows[count].second[static_cast<std::size_t>(j)] =
+                cell.o[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)];
+          }
+          ++count;
+        }
+        std::sort(rows.begin(), rows.end());
+        FacetKey entry;
+        std::size_t position = 0;
+        for (const auto& row : rows) {
+          entry.key[position++] = row.first;
+          for (int j = 0; j < D; ++j) {
+            entry.key[position++] = row.second[static_cast<std::size_t>(j)] -
+                                    rows[0].second[static_cast<std::size_t>(j)];
+          }
+        }
+        entry.cell = static_cast<int32_t>(index);
+        entry.face = face;
+        facets.push_back(entry);
+      }
+    }
+    std::sort(facets.begin(), facets.end(), [](const FacetKey& left, const FacetKey& right) {
+      return left.key < right.key;
+    });
+    for (std::size_t index = 0; index < facets.size(); index += 2) {
+      if (index + 1 >= facets.size() || facets[index].key != facets[index + 1].key ||
+          (index + 2 < facets.size() && facets[index + 2].key == facets[index].key)) {
+        return false;
+      }
+      const FacetKey& first = facets[index];
+      const FacetKey& second = facets[index + 1];
+      cells_[static_cast<std::size_t>(first.cell)].n[static_cast<std::size_t>(first.face)] =
+          second.cell;
+      cells_[static_cast<std::size_t>(second.cell)].n[static_cast<std::size_t>(second.face)] =
+          first.cell;
+    }
+    marks_.assign(cells_.size(), 0U);
+    cavity_index_.assign(cells_.size(), 0);
+    free_.clear();
+    stamp_ = 0;
+    last_ = 0;
+    return !cells_.empty();
+  }
+
+  // Whether the triangulation is a simplicial complex on the torus that
+  // insertion keeps one: distinct vertices per cell, offsets within the
+  // filtered range, and every circumradius below a quarter of the shortest
+  // lattice vector (with a relative safety of 2^-20 over the rounding).
+  bool valid_cover() const {
+    const double limit = 0.25 * shortest_ * (1.0 - 0x1p-20);
+    for (const QCell& cell : cells_) {
+      for (int i = 0; i <= D; ++i) {
+        for (int k = i + 1; k <= D; ++k) {
+          if (cell.v[static_cast<std::size_t>(i)] == cell.v[static_cast<std::size_t>(k)]) {
+            return false;
+          }
+        }
+      }
+      double corners[D + 1][D];
+      for (int i = 0; i <= D; ++i) {
+        if (!place(cell.v[static_cast<std::size_t>(i)], cell.o[static_cast<std::size_t>(i)],
+                   corners[i])) {
+          return false;
+        }
+      }
+      if (!(circumradius(corners) < limit)) return false;
+    }
+    return true;
+  }
+
+  void reserve(int64_t point_count) {
+    const std::size_t estimate = static_cast<std::size_t>(point_count) * (D == 3 ? 7 : 2) + 64;
+    cells_.reserve(estimate);
+    marks_.reserve(estimate);
+    cavity_index_.reserve(estimate);
+  }
+
+  // Inserts point q (absent so far); throws CoverInvalid when the quotient
+  // turns out not to be a simplicial complex.
+  void insert(int32_t q) {
+    std::array<int32_t, D> offset{};
+    const int32_t start = locate(q, offset);
+    {
+      const QCell& cell = cells_[static_cast<std::size_t>(start)];
+      for (int i = 0; i <= D; ++i) {
+        if (same_point(cell.v[static_cast<std::size_t>(i)], cell.o[static_cast<std::size_t>(i)],
+                       q, offset)) {
+          throw DuplicatePoint{q};
+        }
+      }
+    }
+    if (stamp_ >= std::numeric_limits<uint32_t>::max() - 2) {
+      std::fill(marks_.begin(), marks_.end(), 0U);
+      stamp_ = 0;
+    }
+    stamp_ += 2;
+    const uint32_t inside = stamp_;
+    const uint32_t outside = stamp_ + 1;
+    // The located cell holds q, so q lies strictly inside its circumball.
+    cavity_.assign(1, start);
+    cavity_offset_.assign(1, offset);
+    stack_.assign(1, 0);
+    boundary_.clear();
+    marks_[static_cast<std::size_t>(start)] = inside;
+    cavity_index_[static_cast<std::size_t>(start)] = 0;
+    while (!stack_.empty()) {
+      const int32_t index = stack_.back();
+      stack_.pop_back();
+      const int32_t cell = cavity_[static_cast<std::size_t>(index)];
+      for (int i = 0; i <= D; ++i) {
+        const int32_t neighbor =
+            cells_[static_cast<std::size_t>(cell)].n[static_cast<std::size_t>(i)];
+        std::array<int32_t, D> moved = cavity_offset_[static_cast<std::size_t>(index)];
+        translate(cell, i, neighbor, moved);
+        uint32_t& mark = marks_[static_cast<std::size_t>(neighbor)];
+        if (mark == inside) {
+          // A cavity cell reached in two frames: the cavity wraps the torus.
+          if (cavity_offset_[static_cast<std::size_t>(
+                  cavity_index_[static_cast<std::size_t>(neighbor)])] != moved) {
+            throw CoverInvalid{};
+          }
+          continue;
+        }
+        if (mark != outside) {
+          if (conflict(neighbor, q, moved)) {
+            mark = inside;
+            cavity_index_[static_cast<std::size_t>(neighbor)] =
+                static_cast<int32_t>(cavity_.size());
+            stack_.push_back(static_cast<int32_t>(cavity_.size()));
+            cavity_.push_back(neighbor);
+            cavity_offset_.push_back(moved);
+            continue;
+          }
+          mark = outside;
+        }
+        const auto& around = cells_[static_cast<std::size_t>(neighbor)].n;
+        int back = 0;
+        for (int k = 1; k <= D; ++k) back = around[static_cast<std::size_t>(k)] == cell ? k : back;
+        boundary_.push_back({cell, i, neighbor, back, index});
+      }
+    }
+    // The cone cells, built before any cavity slot is reused; each keeps the
+    // orientation of the cavity cell it replaces (the cavity is star-shaped
+    // from q).
+    cone_.resize(boundary_.size());
+    for (std::size_t j = 0; j < boundary_.size(); ++j) {
+      const Facet& facet = boundary_[j];
+      const QCell& replaced = cells_[static_cast<std::size_t>(facet.cell)];
+      QCell& created = cone_[j];
+      created.v = replaced.v;
+      created.v[static_cast<std::size_t>(facet.face)] = q;
+      Raw raw;
+      for (int i = 0; i <= D; ++i) {
+        for (int k = 0; k < D; ++k) {
+          raw[static_cast<std::size_t>(i)][static_cast<std::size_t>(k)] =
+              i == facet.face
+                  ? cavity_offset_[static_cast<std::size_t>(facet.query)][static_cast<std::size_t>(k)]
+                  : replaced.o[static_cast<std::size_t>(i)][static_cast<std::size_t>(k)];
+        }
+      }
+      set_offsets(created, raw);
+      created.n.fill(-1);
+      created.n[static_cast<std::size_t>(facet.face)] = facet.outside;
+    }
+    for (std::size_t j = 0; j < cone_.size(); ++j) {
+      int32_t slot;
+      if (j < cavity_.size()) {
+        slot = cavity_[j];
+      } else if (!free_.empty()) {
+        slot = free_.back();
+        free_.pop_back();
+      } else {
+        if (cells_.size() >= static_cast<std::size_t>(INT32_MAX)) {
+          throw PeriodicIndexRangeExceeded{};
+        }
+        slot = static_cast<int32_t>(cells_.size());
+        cells_.emplace_back();
+        marks_.push_back(0);
+        cavity_index_.push_back(0);
+      }
+      cells_[static_cast<std::size_t>(slot)] = cone_[j];
+      const Facet& facet = boundary_[j];
+      cells_[static_cast<std::size_t>(facet.outside)].n[static_cast<std::size_t>(facet.back)] =
+          slot;
+      boundary_[j].cell = slot;
+    }
+    for (std::size_t j = cone_.size(); j < cavity_.size(); ++j) {
+      cells_[static_cast<std::size_t>(cavity_[j])].v[0] = -1;
+      free_.push_back(cavity_[j]);
+    }
+    // The ridges through q are named by their other vertices: within a valid
+    // cover the cavity boundary meets no translate of one of its vertices.
+    if (!link_ridges<D>(boundary_.size(), [this](std::size_t j) { return boundary_[j].cell; },
+                        [this](std::size_t j) { return boundary_[j].face; },
+                        [this](int32_t cell) -> QCell& {
+                          return cells_[static_cast<std::size_t>(cell)];
+                        },
+                        ridge_keys_, ridge_values_, ridge_used_)) {
+      throw CoverInvalid{};
+    }
+    last_ = boundary_.back().cell;
+  }
+
+  // The quotient cells, each as the translate whose anchor (least vertex) is
+  // its base translate, in orbit-key order; the certified margin is the
+  // least initial_margin 2^k that holds the circumball of every such
+  // translate (required_margin on its vertices in key order).
+  int32_t publish(double initial_margin, PeriodicDelaunayResult& result) const {
+    std::vector<int32_t> offsets(static_cast<std::size_t>(input_.point_count) + 1, 0);
+    std::vector<int32_t> live;
+    live.reserve(cells_.size());
+    for (std::size_t index = 0; index < cells_.size(); ++index) {
+      if (cells_[index].v[0] < 0) continue;
+      live.push_back(static_cast<int32_t>(index));
+      ++offsets[static_cast<std::size_t>(anchor_representative(cells_[index])) + 1];
+    }
+    for (std::size_t index = 1; index < offsets.size(); ++index) {
+      offsets[index] += offsets[index - 1];
+    }
+    std::vector<int32_t> bucketed(live.size());
+    {
+      std::vector<int32_t> cursor(offsets.begin(), offsets.end() - 1);
+      for (const int32_t index : live) {
+        const int32_t representative =
+            anchor_representative(cells_[static_cast<std::size_t>(index)]);
+        bucketed[static_cast<std::size_t>(cursor[static_cast<std::size_t>(representative)]++)] =
+            index;
+      }
+    }
+    result.vertices.clear();
+    result.shifts.clear();
+    result.vertices.reserve(live.size() * (D + 1));
+    result.shifts.reserve(live.size() * (D + 1) * D);
+    double required = 0.0;
+    std::vector<Canonical<D>> bucket;
+    for (std::size_t representative = 0; representative + 1 < offsets.size(); ++representative) {
+      bucket.clear();
+      for (int32_t index = offsets[representative]; index < offsets[representative + 1];
+           ++index) {
+        typename Geometry::Cell translate = anchored_translate(
+            cells_[static_cast<std::size_t>(bucketed[static_cast<std::size_t>(index)])]);
+        bucket.push_back(geometry_.canonical(translate));
+        std::sort(translate.begin(), translate.end(), image_precedes<D>);
+        required = std::max(required, geometry_.required_margin(translate));
+      }
+      std::sort(bucket.begin(), bucket.end(),
+                [](const Canonical<D>& left, const Canonical<D>& right) {
+                  return left.key < right.key;
+                });
+      for (const Canonical<D>& item : bucket) {
+        for (int i = 0; i <= D; ++i) {
+          result.vertices.push_back(item.ordered[static_cast<std::size_t>(i)]);
+          for (int j = 0; j < D; ++j) {
+            result.shifts.push_back(
+                item.shifts[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)]);
+          }
+        }
+      }
+    }
+    double margin = initial_margin;
+    while (!(required <= margin)) {
+      if (margin > std::numeric_limits<double>::max() / 2.0) return PHX_MC_UNRESOLVED;
+      margin *= 2.0;
+    }
+    result.dimension = D;
+    result.certified_margin = margin;
+    return PHX_MC_OK;
+  }
+
+ private:
+  static constexpr int32_t kMaxOffset = 4;
+  using Raw = std::array<std::array<int64_t, D>, D + 1>;
+  struct QCell {
+    std::array<int32_t, D + 1> v;                  // v[0] < 0 marks a free slot
+    std::array<int32_t, D + 1> n;                  // n[i] is opposite v[i]
+    std::array<std::array<int8_t, D>, D + 1> o;    // lattice offsets of the corners
+  };
+  struct Facet {
+    int32_t cell;
+    int32_t face;
+    int32_t outside;
+    int32_t back;
+    int32_t query;  // cavity index of `cell`, whose frame holds q's offset
+  };
+
+  const PeriodicDelaunayInput& input_;
+  Geometry geometry_;
+  // Rounded base translates, D per point, and the base translates.
+  std::vector<double> positions_;
+  std::vector<Image<D>> bases_;
+  // Bound on the distance of a rounded translate by offsets of magnitude at
+  // most kMaxOffset from the exact one, per coordinate.
+  double uncertainty_ = 0.0;
+  // A lower bound on the length of the shortest nonzero lattice vector.
+  double shortest_ = 0.0;
+  std::vector<QCell> cells_;
+  std::vector<uint32_t> marks_;
+  std::vector<int32_t> cavity_index_;
+  std::vector<int32_t> free_;
+  uint32_t stamp_ = 0;
+  int32_t last_ = 0;
+  uint64_t walk_state_ = 0x9E3779B97F4A7C15ULL;
+  std::vector<int32_t> stack_;
+  std::vector<int32_t> cavity_;
+  std::vector<std::array<int32_t, D>> cavity_offset_;
+  std::vector<Facet> boundary_;
+  std::vector<QCell> cone_;
+  std::vector<uint64_t> ridge_keys_;
+  std::vector<int64_t> ridge_values_;
+  std::vector<std::size_t> ridge_used_;
+
+  const std::array<int32_t, D>& base_shift(int32_t point) const {
+    return bases_[static_cast<std::size_t>(point)].shift;
+  }
+
+  // Stores offsets shifted so the least per axis is zero; refuses a spread
+  // beyond the int8 range (a quotient that is not a simplicial complex).
+  static void set_offsets(QCell& cell, const Raw& raw) {
+    for (int j = 0; j < D; ++j) {
+      int64_t least = raw[0][static_cast<std::size_t>(j)];
+      int64_t most = least;
+      for (int i = 1; i <= D; ++i) {
+        least = std::min(least, raw[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)]);
+        most = std::max(most, raw[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)]);
+      }
+      if (most - least > std::numeric_limits<int8_t>::max()) throw CoverInvalid{};
+      for (int i = 0; i <= D; ++i) {
+        cell.o[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = static_cast<int8_t>(
+            raw[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] - least);
+      }
+    }
+  }
+
+  template <class Offset>
+  Image<D> image(int32_t point, const Offset& offset) const {
+    Image<D> result = bases_[static_cast<std::size_t>(point)];
+    for (int j = 0; j < D; ++j) {
+      result.shift[static_cast<std::size_t>(j)] =
+          checked_shift(static_cast<int64_t>(result.shift[static_cast<std::size_t>(j)]) +
+                        offset[static_cast<std::size_t>(j)]);
+    }
+    return result;
+  }
+
+  typename Geometry::Cell translate_of(const QCell& cell) const {
+    typename Geometry::Cell result;
+    for (int i = 0; i <= D; ++i) {
+      result[static_cast<std::size_t>(i)] =
+          image(cell.v[static_cast<std::size_t>(i)], cell.o[static_cast<std::size_t>(i)]);
+    }
+    return result;
+  }
+
+  // The corner of the least translate (translation preserves the order).
+  static int anchor_slot(const typename Geometry::Cell& translate) {
+    int anchor = 0;
+    for (int i = 1; i <= D; ++i) {
+      if (image_precedes(translate[static_cast<std::size_t>(i)],
+                         translate[static_cast<std::size_t>(anchor)])) {
+        anchor = i;
+      }
+    }
+    return anchor;
+  }
+
+  int32_t anchor_representative(const QCell& cell) const {
+    return cell.v[static_cast<std::size_t>(anchor_slot(translate_of(cell)))];
+  }
+
+  // The translate of the cell whose anchor is its base translate, in the
+  // cell's (positively oriented) corner order.
+  typename Geometry::Cell anchored_translate(const QCell& cell) const {
+    typename Geometry::Cell result = translate_of(cell);
+    const std::array<int8_t, D> origin = cell.o[static_cast<std::size_t>(anchor_slot(result))];
+    for (Image<D>& corner : result) {
+      for (int j = 0; j < D; ++j) {
+        corner.shift[static_cast<std::size_t>(j)] -= origin[static_cast<std::size_t>(j)];
+      }
+    }
+    return result;
+  }
+
+  // The rounded translate of point by offset into buffer; false when an
+  // offset exceeds the range the uncertainty bound covers.
+  template <class Offset>
+  bool place(int32_t point, const Offset& offset, double* buffer) const {
+    const double* base = positions_.data() + static_cast<std::size_t>(point) * D;
+    for (int c = 0; c < D; ++c) buffer[c] = base[c];
+    for (int j = 0; j < D; ++j) {
+      const int32_t value = offset[static_cast<std::size_t>(j)];
+      if (value == 0) continue;
+      if (value > kMaxOffset || value < -kMaxOffset) return false;
+      for (int c = 0; c < D; ++c) {
+        buffer[c] = std::fma(static_cast<double>(value), input_.lattice[j * D + c], buffer[c]);
+      }
+    }
+    return true;
+  }
+
+  static double circumradius(const double (&corners)[D + 1][D]) {
+    double edges[D][D];
+    for (int i = 0; i < D; ++i) {
+      for (int c = 0; c < D; ++c) edges[i][c] = corners[i + 1][c] - corners[0][c];
+    }
+    double center[D];
+    if constexpr (D == 2) {
+      const double det = edges[0][0] * edges[1][1] - edges[0][1] * edges[1][0];
+      const double b0 = 0.5 * (edges[0][0] * edges[0][0] + edges[0][1] * edges[0][1]);
+      const double b1 = 0.5 * (edges[1][0] * edges[1][0] + edges[1][1] * edges[1][1]);
+      center[0] = (b0 * edges[1][1] - b1 * edges[0][1]) / det;
+      center[1] = (edges[0][0] * b1 - edges[1][0] * b0) / det;
+    } else {
+      const double* a = edges[0];
+      const double* b = edges[1];
+      const double* c = edges[2];
+      const double bc[3] = {b[1] * c[2] - b[2] * c[1], b[2] * c[0] - b[0] * c[2],
+                            b[0] * c[1] - b[1] * c[0]};
+      const double ca[3] = {c[1] * a[2] - c[2] * a[1], c[2] * a[0] - c[0] * a[2],
+                            c[0] * a[1] - c[1] * a[0]};
+      const double ab[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                            a[0] * b[1] - a[1] * b[0]};
+      const double aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+      const double bb = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+      const double cc = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+      const double denominator = 2.0 * (a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2]);
+      for (int axis = 0; axis < 3; ++axis) {
+        center[axis] = (aa * bc[axis] + bb * ca[axis] + cc * ab[axis]) / denominator;
+      }
+    }
+    double radius = 0.0;
+    for (int c = 0; c < D; ++c) radius += center[c] * center[c];
+    return std::sqrt(radius);
+  }
+
+  // Adds to `offset` the offset of the frame of `neighbor` (across face
+  // `face` of `cell`) relative to the frame of `cell`: a vertex of their
+  // common facet appears once in each.
+  void translate(int32_t cell, int face, int32_t neighbor, std::array<int32_t, D>& offset) const {
+    const QCell& from = cells_[static_cast<std::size_t>(cell)];
+    const QCell& to = cells_[static_cast<std::size_t>(neighbor)];
+    const int shared = face == 0 ? 1 : 0;
+    const int32_t vertex = from.v[static_cast<std::size_t>(shared)];
+    int slot = -1;
+    for (int k = 0; k <= D; ++k) slot = to.v[static_cast<std::size_t>(k)] == vertex ? k : slot;
+    if (slot < 0) throw CoverInvalid{};
+    for (int j = 0; j < D; ++j) {
+      offset[static_cast<std::size_t>(j)] +=
+          to.o[static_cast<std::size_t>(slot)][static_cast<std::size_t>(j)] -
+          from.o[static_cast<std::size_t>(shared)][static_cast<std::size_t>(j)];
+    }
+  }
+
+  // The orientation of the cell with corner `slot` replaced by q at offset.
+  int orient_with(const QCell& cell, int slot, int32_t q,
+                  const std::array<int32_t, D>& offset) const {
+    double corners[D + 1][D];
+    const double* p[D + 1];
+    bool placed = true;
+    for (int k = 0; k <= D && placed; ++k) {
+      placed = k == slot ? place(q, offset, corners[k])
+                         : place(cell.v[static_cast<std::size_t>(k)],
+                                 cell.o[static_cast<std::size_t>(k)], corners[k]);
+      p[k] = corners[k];
+    }
+    if (placed) {
+      const int sign =
+          image_stage::orient(p, 2.0 * uncertainty_, std::integral_constant<int, D>{});
+      if (sign != 0) return sign;
+    }
+    typename Geometry::Cell probe = translate_of(cell);
+    probe[static_cast<std::size_t>(slot)] = image(q, offset);
+    return geometry_.orient_sign(probe);
+  }
+
+  bool conflict(int32_t index, int32_t q, const std::array<int32_t, D>& offset) const {
+    const QCell& cell = cells_[static_cast<std::size_t>(index)];
+    double corners[D + 2][D];
+    const double* p[D + 1];
+    bool placed = place(q, offset, corners[D + 1]);
+    for (int k = 0; k <= D && placed; ++k) {
+      placed = place(cell.v[static_cast<std::size_t>(k)], cell.o[static_cast<std::size_t>(k)],
+                     corners[k]);
+      p[k] = corners[k];
+    }
+    if (placed) {
+      const int sign = image_stage::insphere(p, corners[D + 1], 2.0 * uncertainty_,
+                                             std::integral_constant<int, D>{});
+      if (sign != 0) return sign > 0;
+    }
+    return geometry_.perturbed_conflict(translate_of(cell), image(q, offset));
+  }
+
+  bool same_point(int32_t vertex, const std::array<int8_t, D>& vertex_offset, int32_t q,
+                  const std::array<int32_t, D>& offset) const {
+    double a[D];
+    double b[D];
+    if (place(vertex, vertex_offset, a) && place(q, offset, b)) {
+      for (int c = 0; c < D; ++c) {
+        if (std::fabs(a[c] - b[c]) > 4.0 * uncertainty_) return false;
+      }
+    }
+    return geometry_.lexicographic(image(vertex, vertex_offset), image(q, offset)) == 0;
+  }
+
+  // Remembering stochastic visibility walk through the covering space from
+  // the last created cell; `offset` is q's offset in the returned cell's frame.
+  int32_t locate(int32_t q, std::array<int32_t, D>& offset) {
+    int32_t cell = last_;
+    int32_t previous = -1;
+    const int64_t limit = 4 * static_cast<int64_t>(cells_.size()) + 64;
+    for (int64_t step = 0; step <= limit; ++step) {
+      const QCell& current = cells_[static_cast<std::size_t>(cell)];
+      walk_state_ ^= walk_state_ << 13;
+      walk_state_ ^= walk_state_ >> 7;
+      walk_state_ ^= walk_state_ << 17;
+      const int first = static_cast<int>(walk_state_ % (D + 1));
+      int32_t next = -1;
+      for (int k = 0; k <= D; ++k) {
+        const int i = (first + k) % (D + 1);
+        const int32_t neighbor = current.n[static_cast<std::size_t>(i)];
+        if (neighbor == previous) continue;
+        if (orient_with(current, i, q, offset) < 0) {
+          translate(cell, i, neighbor, offset);
+          next = neighbor;
+          break;
+        }
+      }
+      if (next < 0) return cell;
+      prefetch(&cells_[static_cast<std::size_t>(next)]);
+      previous = cell;
+      cell = next;
+    }
+    throw CoverInvalid{};
+  }
+};
+
+// The number of translates of the given points in the margin box, or -1
+// when a shift or the count leaves the int32 range.
+template <int D>
+int64_t count_images(const PeriodicDelaunayInput& input, const std::vector<int32_t>& points,
+                     double margin) {
   const double lower = -margin - kImageSlack;
   const double upper = 1.0 + margin + kImageSlack;
   if (!std::isfinite(lower) || !std::isfinite(upper)) return -1;
   int64_t total = 0;
-  for (int64_t point = 0; point < input.point_count; ++point) {
-    std::array<int32_t, D> first{}, last{};
+  for (const int32_t point : points) {
     int64_t count = 1;
-    bool present = true;
     for (int axis = 0; axis < D; ++axis) {
-      const double fractional = input.fractional[point * D + axis];
+      const double fractional = input.fractional[static_cast<int64_t>(point) * D + axis];
       const double lo = std::ceil(lower - fractional);
       const double hi = std::floor(upper - fractional);
       if (!std::isfinite(lo) || !std::isfinite(hi) ||
@@ -984,86 +1910,84 @@ int64_t count_images(const PeriodicDelaunayInput& input, double margin,
         return -1;
       }
       if (lo > hi) {
-        present = false;
         count = 0;
         break;
       }
-      first[static_cast<std::size_t>(axis)] = static_cast<int32_t>(lo);
-      last[static_cast<std::size_t>(axis)] = static_cast<int32_t>(hi);
-      const int64_t span = static_cast<int64_t>(last[static_cast<std::size_t>(axis)]) -
-                           first[static_cast<std::size_t>(axis)] + 1;
+      const int64_t span = static_cast<int64_t>(hi) - static_cast<int64_t>(lo) + 1;
       if (span <= 0 || count > (INT32_MAX - (D + 1) - total) / span) return -1;
       count *= span;
     }
-    if (!present) continue;
     total += count;
-    if (images == nullptr) continue;
-    typename PeriodicEngine<D>::Vertex vertex;
-    vertex.representative = static_cast<int32_t>(point);
-    vertex.shift = first;
-    while (true) {
-      images->push_back(vertex);
-      int axis = 0;
-      while (axis < D) {
-        int32_t& value = vertex.shift[static_cast<std::size_t>(axis)];
-        if (value < last[static_cast<std::size_t>(axis)]) {
-          ++value;
-          break;
-        }
-        value = first[static_cast<std::size_t>(axis)];
-        ++axis;
-      }
-      if (axis == D) break;
-    }
   }
   return total;
 }
 
+// Triangulates the first `count` points of `order` by translates in margin
+// boxes doubled from about one point spacing until the cells with
+// circumballs in the box close up into the quotient triangulation.
+template <int D>
+int32_t bootstrap(const PeriodicDelaunayInput& input, const std::vector<int32_t>& order,
+                  int64_t count, PeriodicQuotient<D>& quotient) {
+  std::vector<int32_t> points(order.begin(), order.begin() + count);
+  PeriodicImageTriangulation<D> images(input, points);
+  double margin =
+      std::clamp(1.5 * std::pow(static_cast<double>(count), -1.0 / D), 0.0625, 1.0);
+  double previous = -1.0;
+  std::vector<typename PeriodicGeometry<D>::Cell> orbits;
+  for (;;) {
+    if (count_images<D>(input, points, margin) < 0) return PHX_MC_INDEX_RANGE_ERROR;
+    images.grow(previous, margin);
+    images.true_cells(margin, orbits);
+    if (quotient.adopt(orbits)) return PHX_MC_OK;
+    if (margin > std::numeric_limits<double>::max() / 2.0) return PHX_MC_UNRESOLVED;
+    previous = margin;
+    margin *= 2.0;
+  }
+}
+
+// Bootstraps the quotient from a prefix of the BRIO order, doubling the
+// prefix until it is a valid cover (every point when none is), then inserts
+// the remaining points into the quotient; a cover found invalid during an
+// insertion is replaced by the bootstrap of every point.
 template <int D>
 int32_t run(const PeriodicDelaunayInput& input, PeriodicDelaunayResult& result) {
-  double margin = input.initial_margin;
-  for (;;) {
-    const int64_t count = count_images<D>(input, margin, nullptr);
-    if (count < 0) return PHX_MC_INDEX_RANGE_ERROR;
-    std::vector<typename PeriodicEngine<D>::Vertex> images;
-    images.reserve(static_cast<std::size_t>(count));
-    if (count_images<D>(input, margin, &images) != count) return PHX_MC_INTERNAL_ERROR;
-    PeriodicEngine<D> engine(input, std::move(images));
-    try {
-      engine.build();
-    } catch (const DuplicatePoint&) {
-      return PHX_MC_INVALID_INPUT;
-    } catch (const PeriodicIndexRangeExceeded&) {
+  const int64_t point_count = input.point_count;
+  for (int64_t index = 0; index < point_count * D; ++index) {
+    const double shift = -std::floor(input.fractional[index]);
+    if (!(shift >= static_cast<double>(INT32_MIN) && shift <= static_cast<double>(INT32_MAX))) {
       return PHX_MC_INDEX_RANGE_ERROR;
     }
-    std::vector<typename PeriodicEngine<D>::Candidate> extracted;
-    double required = 0.0;
-    int64_t uncertified = 0;
-    try {
-      uncertified = engine.extract(margin, extracted, required);
-    } catch (const PeriodicIndexRangeExceeded&) {
-      return PHX_MC_INDEX_RANGE_ERROR;
-    }
-    if (uncertified == 0 && !extracted.empty()) {
-      result.dimension = D;
-      result.certified_margin = margin;
-      result.vertices.clear();
-      result.shifts.clear();
-      result.vertices.reserve(extracted.size() * (D + 1));
-      result.shifts.reserve(extracted.size() * (D + 1) * D);
-      for (const auto& candidate : extracted) {
-        for (int i = 0; i <= D; ++i) {
-          result.vertices.push_back(candidate.ordered[static_cast<std::size_t>(i)]);
-          for (int j = 0; j < D; ++j) {
-            result.shifts.push_back(
-                candidate.shifts[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)]);
+  }
+  try {
+    PeriodicQuotient<D> quotient(input);
+    const std::vector<int32_t> order = quotient.insertion_order();
+    // About the size from which random points make a valid cover.
+    int64_t prefix = std::min<int64_t>(point_count, D == 3 ? 256 : 64);
+    for (;;) {
+      const int32_t status = bootstrap<D>(input, order, prefix, quotient);
+      if (status != PHX_MC_OK) return status;
+      if (prefix == point_count) break;
+      if (quotient.valid_cover()) {
+        try {
+          quotient.reserve(point_count);
+          for (int64_t index = prefix; index < point_count; ++index) {
+            quotient.insert(order[static_cast<std::size_t>(index)]);
           }
+          break;
+        } catch (const CoverInvalid&) {
+          prefix = point_count;
+          continue;
         }
       }
-      return PHX_MC_OK;
+      prefix = std::min(point_count, 2 * prefix);
     }
-    if (margin > std::numeric_limits<double>::max() / 2.0) return PHX_MC_UNRESOLVED;
-    margin *= 2.0;
+    return quotient.publish(input.initial_margin, result);
+  } catch (const DuplicatePoint&) {
+    return PHX_MC_INVALID_INPUT;
+  } catch (const PeriodicIndexRangeExceeded&) {
+    return PHX_MC_INDEX_RANGE_ERROR;
+  } catch (const CoverInvalid&) {
+    return PHX_MC_INTERNAL_ERROR;
   }
 }
 
@@ -1180,7 +2104,7 @@ int32_t local_delaunay_run(const PeriodicLocalDelaunayInput& input,
       !addressable(cell_count, D, sizeof(double))) {
     return PHX_MC_INDEX_RANGE_ERROR;
   }
-  std::vector<typename PeriodicEngine<D>::Vertex> support_vertices(
+  std::vector<typename PeriodicSupport<D>::Vertex> support_vertices(
       static_cast<std::size_t>(support_vertex_count));
   for (int64_t vertex = 0; vertex < support_vertex_count; ++vertex) {
     auto& image = support_vertices[static_cast<std::size_t>(vertex)];
@@ -1190,13 +2114,13 @@ int32_t local_delaunay_run(const PeriodicLocalDelaunayInput& input,
           triangulation.shifts[static_cast<std::size_t>(vertex) * D + axis];
     }
   }
-  PeriodicEngine<D> support_engine(sorted_input, std::move(support_vertices));
+  PeriodicSupport<D> support_engine(sorted_input, std::move(support_vertices));
   std::vector<double> support_lower;
   std::vector<double> support_upper;
   support_lower.reserve(static_cast<std::size_t>(cell_count * D));
   support_upper.reserve(static_cast<std::size_t>(cell_count * D));
   for (int64_t cell_row = 0; cell_row < cell_count; ++cell_row) {
-    typename PeriodicEngine<D>::Cell cell{};
+    typename PeriodicSupport<D>::Cell cell{};
     for (int vertex = 0; vertex < arity; ++vertex) {
       cell[static_cast<std::size_t>(vertex)] =
           static_cast<int32_t>(cell_row * arity + vertex);
@@ -1352,7 +2276,7 @@ int32_t owner_support_query_run(const PeriodicSupportQueryInput& input,
     return PHX_MC_INDEX_RANGE_ERROR;
   }
   std::vector<double> points(static_cast<std::size_t>(total_points) * D);
-  std::vector<typename PeriodicEngine<D>::Vertex> images(
+  std::vector<typename PeriodicSupport<D>::Vertex> images(
       static_cast<std::size_t>(total_points));
   for (int64_t vertex = 0; vertex < cell_vertex_count; ++vertex) {
     for (int axis = 0; axis < D; ++axis) {
@@ -1385,7 +2309,7 @@ int32_t owner_support_query_run(const PeriodicSupportQueryInput& input,
   predicate_input.lattice = input.lattice;
   predicate_input.inverse = nullptr;
   predicate_input.initial_margin = 1.0;
-  PeriodicEngine<D> engine(predicate_input, std::move(images));
+  PeriodicSupport<D> engine(predicate_input, std::move(images));
 
   struct Hit {
     int64_t cell_row;
@@ -1395,7 +2319,7 @@ int32_t owner_support_query_run(const PeriodicSupportQueryInput& input,
   };
   std::vector<Hit> hits;
   for (int64_t cell_row = 0; cell_row < input.cell_count; ++cell_row) {
-    typename PeriodicEngine<D>::Cell cell{};
+    typename PeriodicSupport<D>::Cell cell{};
     const int64_t first_vertex = cell_row * arity;
     for (int vertex = 0; vertex < arity; ++vertex) {
       cell[static_cast<std::size_t>(vertex)] =

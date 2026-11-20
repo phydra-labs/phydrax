@@ -197,7 +197,8 @@ extern "C" PHX_MC_API int32_t phx_mc_implicit_contours(
     int pattern = 0;
     for (int i = 0; i < 8; ++i) if (signs[row*8+i] > 0) pattern |= 1 << i;
     const Template& t = table[pattern]; const int k = t.count;
-    if (!k) continue;
+    // A template holds no segment or one cycle of three to six (templates()).
+    if (k < 3) continue;
     const int64_t* r = roots + row*12;
     bool valid = true;
     for (int j = 0; j < k; ++j)

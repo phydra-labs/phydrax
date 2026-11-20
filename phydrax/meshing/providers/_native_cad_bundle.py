@@ -749,6 +749,7 @@ class CadGeometryBundle:
 
     bundle_id: str
     model: CadModel
+    edge_curve_rows: np.ndarray
 
 
 def _occurrence_placements(
@@ -771,16 +772,21 @@ def _occurrence_placements(
     return placements
 
 
-def _curve_nodes(bank: _NodeBank, domain: MeshingDomain, /) -> list[int]:
-    """The 3D carrier of every domain curve: the source curve of a BRep edge
-    (placed with its occurrence), else the owning use's surface and p-curve."""
+def _curve_nodes(
+    bank: _NodeBank, domain: MeshingDomain, edge_curve_rows: np.ndarray, /
+) -> list[int]:
+    """Build the carrier node for each regular domain curve."""
     authority = domain.brep_authority
     placements = _occurrence_placements(domain)
     nodes: list[int] = []
-    for curve in range(len(domain.curves)):
+    for curve, row in enumerate(edge_curve_rows):
+        if row < 0:
+            continue
         if authority is not None:
             geometry = authority.geometry
             edge = domain.source_indices[1][curve]
+            if geometry.edge_curves[edge] < 0:
+                raise ValueError("regular domain curve has no BRep curve geometry.")
             source = geometry.curves[geometry.edge_curves[edge]]
             node = bank.node(source)
             path = domain.source_occurrences[1][curve]
@@ -882,9 +888,14 @@ def _issues(bank: _NodeBank, roots: list[int], issues: list[str], /) -> tuple[st
     return tuple(dict.fromkeys(issues))
 
 
-def _build(domain: MeshingDomain, /) -> tuple[CadModel, tuple[str, ...]]:
+def _build(domain: MeshingDomain, /) -> tuple[CadModel, np.ndarray, tuple[str, ...]]:
     bank = _NodeBank()
     issues: list[str] = []
+
+    edge_curve_rows = np.full(len(domain.curves), -1, dtype=np.int32)
+    regular = np.flatnonzero(domain.curve_owners[:, 0] >= 0)
+    edge_curve_rows[regular] = np.arange(regular.size, dtype=np.int32)
+    edge_curve_rows.setflags(write=False)
 
     def guarded(entity: object, /) -> int:
         # Every unsupported entity is reported, not only the first.
@@ -900,10 +911,12 @@ def _build(domain: MeshingDomain, /) -> tuple[CadModel, tuple[str, ...]]:
         tables.surface_nodes.append(guarded(patch.surface))
         tables.surface_orientations.append(patch.orientation)
     try:
-        tables.curve_nodes = _curve_nodes(bank, domain)
+        tables.curve_nodes = _curve_nodes(bank, domain, edge_curve_rows)
     except CadBundleSupportError as error:
         issues.append(str(error))
-    for curve, (patch, loop, use) in zip(domain.curves, domain.curve_owners, strict=True):
+    for curve_index in regular:
+        curve = domain.curves[curve_index]
+        patch, loop, use = domain.curve_owners[curve_index]
         owner = domain.patches[int(patch)].loops[int(loop)][int(use)]
         tables.curve_corners.append((curve.start, curve.end))
         tables.curve_ranges.append((owner.first, owner.last))
@@ -912,7 +925,10 @@ def _build(domain: MeshingDomain, /) -> tuple[CadModel, tuple[str, ...]]:
             for use in loop:
                 is_curve = isinstance(use, PatchCurveUse)
                 tables.use_kinds.append(0 if is_curve else 1)
-                tables.use_entities.append(use.curve if is_curve else use.corner)
+                entity = int(edge_curve_rows[use.curve]) if is_curve else use.corner
+                if entity < 0:
+                    raise ValueError("curve use refers to a pole edge.")
+                tables.use_entities.append(entity)
                 tables.use_senses.append(use.sense)
                 tables.use_ranges.append((use.first, use.last))
                 tables.use_nodes.append(guarded(use.pcurve))
@@ -927,8 +943,12 @@ def _build(domain: MeshingDomain, /) -> tuple[CadModel, tuple[str, ...]]:
         bank, [*tables.surface_nodes, *tables.curve_nodes, *tables.use_nodes], issues
     )
     if found:
-        return _Tables(np.zeros((0, 3), dtype=np.float64)).model(_NodeBank()), found
-    return tables.model(bank), ()
+        return (
+            _Tables(np.zeros((0, 3), dtype=np.float64)).model(_NodeBank()),
+            edge_curve_rows,
+            found,
+        )
+    return tables.model(bank), edge_curve_rows, ()
 
 
 def cad_entity_model(
@@ -977,10 +997,10 @@ def cad_entity_model(
 
 
 _CACHE_CAPACITY = 32
-_CACHE: OrderedDict[str, tuple[CadModel, tuple[str, ...]]] = OrderedDict()
+_CACHE: OrderedDict[str, tuple[CadModel, np.ndarray, tuple[str, ...]]] = OrderedDict()
 
 
-def _cached(domain: MeshingDomain, /) -> tuple[CadModel, tuple[str, ...]]:
+def _cached(domain: MeshingDomain, /) -> tuple[CadModel, np.ndarray, tuple[str, ...]]:
     key = domain.domain_id
     entry = _CACHE.get(key)
     if entry is None:
@@ -997,19 +1017,19 @@ def cad_bundle_support_issues(domain: MeshingDomain, /) -> tuple[str, ...]:
     """Source kinds or compositions of ``domain`` without native geometry."""
     if not isinstance(domain, MeshingDomain):
         raise TypeError("domain must be a MeshingDomain.")
-    return _cached(domain)[1]
+    return _cached(domain)[2]
 
 
 def cad_geometry_bundle(domain: MeshingDomain, /) -> CadGeometryBundle:
     """The native geometry bundle of ``domain``; cached by its content identity."""
     if not isinstance(domain, MeshingDomain):
         raise TypeError("domain must be a MeshingDomain.")
-    model, issues = _cached(domain)
+    model, edge_curve_rows, issues = _cached(domain)
     if issues:
         raise CadBundleSupportError(
             "the domain has source kinds without native geometry: " + "; ".join(issues)
         )
-    return CadGeometryBundle(domain.domain_id, model)
+    return CadGeometryBundle(domain.domain_id, model, edge_curve_rows)
 
 
 __all__ = [

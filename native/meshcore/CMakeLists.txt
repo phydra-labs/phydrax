@@ -164,6 +164,7 @@ set(PHX_MC_HEADERS
   src/cad_refine2d.hpp
   src/cad_curves.hpp
   src/cad_curve_discretization.hpp
+  src/refine_queue.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed

@@ -51,7 +51,8 @@ struct CurveDiscretization {
   CadCurveDiscretization view() const noexcept { return {offsets.data(), parameters.data()}; }
 };
 
-// Place segments + 1 endpoints at equal cumulative-integral intervals.
+// Each representation span receives ceil(F_span) segments, at least one;
+// inverse placement uses the monotone integral table, without point evaluation.
 // Inputs are monotone tables of length table_count; output has segments + 1
 // elements. This allocation-free inversion is also timed independently.
 int32_t inverse_curve_table(const double* parameters, const double* integrals,
