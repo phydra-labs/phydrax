@@ -7,6 +7,7 @@ import ctypes
 import re
 from pathlib import Path
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -14,13 +15,19 @@ import phydrax as phx
 from phydrax._meshcore import (
     _CAD_FACE_FAILURE_DTYPE,
     cad_mesh,
+    CadFidelityChords,
+    CadFidelityMesh,
     CadModel,
     CadSurfaceResult,
     load_meshcore,
     MeshcoreStatus,
+    verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
+from phydrax.meshing.providers._native_cad_bundle import (
+    cad_geometry_bundle,
+    coefficient_bounds,
+)
 from tests.unit.meshing.test_native_cad_bundle import _quadric_model
 from tests.unit.meshing.test_native_surface_verifiers import (
     _ChartFailure,
@@ -33,7 +40,9 @@ def domain() -> MeshingDomain:
     return MeshingDomain.from_brep(_quadric_model())
 
 
-def _assert_surface_verifiers(model: CadModel, result: CadSurfaceResult) -> None:
+def _assert_surface_verifiers(
+    domain: MeshingDomain, model: CadModel, result: CadSurfaceResult
+) -> None:
     chart = result.chart
     mesh_rows = chart.chart_to_mesh >= 0
     np.testing.assert_array_equal(
@@ -68,6 +77,105 @@ def _assert_surface_verifiers(model: CadModel, result: CadSurfaceResult) -> None
     )
     assert status == 0
     assert count.value == 0
+    _assert_cad_fidelity(domain, model, result)
+
+
+def _assert_cad_fidelity(
+    domain: MeshingDomain, model: CadModel, result: CadSurfaceResult
+) -> None:
+    """Run V3 on the exported face stage and compare with dense source samples.
+
+    The reference is the Python source surface at sampled chart points against
+    the linear interpolant of the physical corners, which is the correspondence
+    distance V3 bounds. Its maximum fixes both tolerances: away from poles the
+    adaptive bounds certify at 3x it, while the first-order pole sliver cap
+    (sup|S_r| times the radial extent, never subdivided) measured 6.3x-8.1x it
+    on these models, so the whole mesh is certified at 10x it.
+    """
+    chart = result.chart
+    steps = 12
+    weights = np.asarray(
+        [
+            (1 - (i + j) / steps, i / steps, j / steps)
+            for i in range(steps + 1)
+            for j in range(steps + 1 - i)
+        ],
+        dtype=np.float64,
+    )
+    measured = np.empty((len(chart.triangles),), dtype=np.float64)
+    for patch in np.unique(chart.patches):
+        rows = np.flatnonzero(chart.patches == patch)
+        surface = domain.patches[int(patch)].surface
+        uv = chart.uv[rows]
+        corners = result.points[chart.triangles[rows]]
+        # Pins the chart patch numbering and UV convention to the source.
+        np.testing.assert_allclose(
+            np.asarray(
+                surface.evaluate(jnp.asarray(uv.reshape((-1, 2)), dtype=jnp.float64)),
+                dtype=np.float64,
+            ),
+            corners.reshape((-1, 3)),
+            rtol=0,
+            atol=1e-12,
+        )
+        samples = np.einsum("kv,rvd->rkd", weights, uv)
+        exact = np.asarray(
+            surface.evaluate(jnp.asarray(samples.reshape((-1, 2)), dtype=jnp.float64)),
+            dtype=np.float64,
+        ).reshape((len(rows), len(weights), 3))
+        linear = np.einsum("kv,rvd->rkd", weights, corners)
+        measured[rows] = np.max(np.linalg.norm(exact - linear, axis=2), axis=1)
+    lower, upper = coefficient_bounds(cad_geometry_bundle(domain), domain)
+    mesh = CadFidelityMesh(
+        result.points,
+        chart.triangles,
+        chart.patches,
+        chart.uv,
+        result.triangles.astype(np.int64),
+        chart.chart_to_mesh,
+        chart.edge_chord,
+    )
+    chords = CadFidelityChords(
+        chart.use_patch,
+        chart.use_range,
+        len(model.loop_surfaces),
+        chart.chord_use,
+        chart.chord_loop,
+        chart.chord_uv,
+        chart.chord_range,
+    )
+    slivers = chart.chart_to_mesh < 0
+    pole_free = verify_cad_fidelity(
+        model, lower, upper, mesh, chords, 3 * float(np.max(measured)), 8
+    )
+    assert pole_free.findings.size == 0
+    assert np.all(pole_free.item_status[~slivers] == MeshcoreStatus.OK)
+    tolerance = 10 * float(np.max(measured))
+    verdict = verify_cad_fidelity(model, lower, upper, mesh, chords, tolerance, 8)
+    assert verdict.status is MeshcoreStatus.OK
+    assert verdict.findings.size == 0
+    assert np.all(verdict.item_status == MeshcoreStatus.OK)
+    assert np.all(verdict.reasons == 0)
+    assert verdict.maximum_upper <= tolerance
+    assert np.all(verdict.upper >= measured)
+    # An interior vertex pushed off the surface by twice the tolerance along
+    # its area-weighted normal refuses exactly the chart rows through it.
+    vertex = int(np.flatnonzero(result.vertex_dimensions == 2)[0])
+    incident = result.points[result.triangles[np.any(result.triangles == vertex, axis=1)]]
+    normal = np.sum(
+        np.cross(incident[:, 1] - incident[:, 0], incident[:, 2] - incident[:, 0]), axis=0
+    )
+    points = result.points.copy()
+    points[vertex] += 2 * tolerance * normal / np.linalg.norm(normal)
+    moved = verify_cad_fidelity(
+        model, lower, upper, mesh._replace(points=points), chords, tolerance, 8
+    )
+    touched = np.any(chart.triangles == vertex, axis=1)
+    assert np.any(touched)
+    assert moved.status is MeshcoreStatus.UNRESOLVED
+    assert np.all(moved.item_status[touched] == MeshcoreStatus.UNRESOLVED)
+    assert np.all(moved.item_status[~touched] == MeshcoreStatus.OK)
+    np.testing.assert_array_equal(moved.upper[~touched], verdict.upper[~touched])
 
 
 def test_face_failure_dtype_matches_native_layout() -> None:
@@ -213,7 +321,7 @@ def test_quadric_surface_candidate(domain: MeshingDomain) -> None:
         np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
     )
     assert result.status is MeshcoreStatus.OK
-    _assert_surface_verifiers(model, result)
+    _assert_surface_verifiers(domain, model, result)
     triangles = result.points[result.triangles]
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
     for first, second in ((b - a, c - a), (c - b, a - b), (a - c, b - c)):
@@ -256,7 +364,8 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
     sphere = phx.geometry.brep.brep_sphere(
         1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
     )
-    model = cad_geometry_bundle(MeshingDomain.from_brep(sphere)).model
+    sphere_domain = MeshingDomain.from_brep(sphere)
+    model = cad_geometry_bundle(sphere_domain).model
     result = cad_mesh(
         model,
         np.full((model.surface_nodes.size,), 0.2, dtype=np.float64),
@@ -264,7 +373,7 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
         np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
     )
     assert result.status is MeshcoreStatus.OK
-    _assert_surface_verifiers(model, result)
+    _assert_surface_verifiers(sphere_domain, model, result)
     assert result.pole_sectors.shape == (2, 4)
     np.testing.assert_array_equal(
         result.pole_sectors[:, 2], np.array([8, 8], dtype=np.int64)
@@ -289,6 +398,43 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
         np.testing.assert_array_equal(
             np.sort(result.vertex_parameters[interior, 0]), np.sort(native)
         )
+
+
+def _washer() -> phx.geometry.brep.BRepModel:
+    brep = phx.geometry.brep
+    return brep.brep_revolution(
+        brep.PlanarProfile(
+            brep.ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+            brep.ProfileLoop.polygon([(0.5, 0.0), (1.0, 0.0), (1.0, 0.3), (0.5, 0.3)]),
+        ),
+        (0.0, 0.0),
+        (0.0, 1.0),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "size"), (("cone_apex", 0.15), ("capped_cylinder", 0.2), ("washer", 0.1))
+)
+def test_revolved_surfaces_pass_native_verifiers(name: str, size: float) -> None:
+    si = phx.SpatialCoordinateContract.si()
+    match name:
+        case "cone_apex":
+            source = phx.geometry.brep.brep_cone(1.0, 0.0, 1.0, coordinate_contract=si)
+        case "capped_cylinder":
+            source = phx.geometry.brep.brep_cylinder(1.0, 1.0, coordinate_contract=si)
+        case _:
+            source = _washer()
+    domain = MeshingDomain.from_brep(source)
+    model = cad_geometry_bundle(domain).model
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), size, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 1e6, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    assert result.status is MeshcoreStatus.OK
+    _assert_surface_verifiers(domain, model, result)
 
 
 def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None:
