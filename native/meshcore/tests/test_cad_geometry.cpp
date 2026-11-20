@@ -641,6 +641,43 @@ void intersection_chart() {
   const double outside = 1.25;
   double jet[9];
   PHX_CHECK(!geometry.jets(point, &outside, 0, jet, workspace));
+  // Interval jets enclose the point jets and the closed form on subintervals.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double ranges[3][2] = {{0.1, 0.3}, {0.45, 0.6}, {0.8, 0.8}};
+  for (int32_t node : {point, first_uv, second_uv}) {
+    const int dimension = node == point ? 3 : 2;
+    for (const auto& range : ranges)
+      for (int order = 0; order <= 2; ++order) {
+        double lower[9], upper[9], value[9];
+        PHX_CHECK(geometry.interval_jets(node, &range[0], &range[1], order, lower, upper,
+                                         interval_workspace) == PHX_MC_OK);
+        for (int i = 0; i <= 16; ++i) {
+          const double t = range[0] + (range[1] - range[0]) * i / 16;
+          PHX_CHECK(geometry.jets(node, &t, order, value, workspace));
+          for (int k = 0; k < dimension * (order + 1); ++k) {
+            PHX_CHECK(lower[k] <= value[k]);
+            PHX_CHECK(value[k] <= upper[k]);
+          }
+        }
+        if (node == point) {
+          const Vector x = closed(theta(range[0]));
+          for (int k = 0; k < 3; ++k) PHX_CHECK(lower[k] <= x[k] && x[k] <= upper[k]);
+        }
+      }
+  }
+  // A collapsed free-coordinate box cannot strictly contain its Krawczyk
+  // image, so no unique root is proved and the node is refused.
+  std::vector<double> narrow = b.reals;
+  const auto chart = static_cast<std::size_t>(model.node_real_offsets[point] + 2);
+  narrow[chart + 12] = narrow[chart + 8];
+  interval_workspace.coefficient_lower = narrow.data();
+  interval_workspace.coefficient_upper = narrow.data();
+  double lower[9], upper[9];
+  PHX_CHECK(geometry.interval_jets(point, &ranges[0][0], &ranges[0][1], 0, lower, upper,
+                                   interval_workspace) == PHX_MC_UNRESOLVED);
 }
 
 void spline_interval_nodes() {

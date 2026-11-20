@@ -1118,6 +1118,24 @@ def _computed_coefficient_intervals(
 
         return {index: (endpoint(entity.first_root, entity.first),
                         endpoint(entity.last_root, entity.last))}
+    if type(entity) is PlaneCylinderSectionPCurve:
+        root = entity.angle_offset_root
+        angle: _ExactInterval = (
+            (Fraction(0), Fraction(0))
+            if root is None
+            else _float_interval(root.parameter_lower, root.parameter_upper)
+        )
+        return {index: (*same((*entity.offset_exact, *entity.linear_exact,
+                               *entity.cosine_exact, *entity.sine_exact)), angle)}
+    if isinstance(entity, (IntersectionCurve, IntersectionPCurve)):
+        # Chart rectangles, endpoints and preconditioners are the curve's
+        # stored definition; the native side encloses the root they bound.
+        reals = bank.reals[index]
+        charts = tuple((value, value) for value in _stored(reals[2:]))
+        if isinstance(entity, IntersectionCurve):
+            return {index: (*same((Fraction(0), Fraction(0))), *charts)}
+        first, last = Fraction.from_float(entity.first), Fraction.from_float(entity.last)
+        return {index: (*same((first + last, last)), *charts)}
     if type(entity) is ConicRootLinePCurve:
         return {index: (conic_angle(entity), *same((entity.height_origin_exact,
                                                     entity.height_direction_exact)))}

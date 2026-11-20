@@ -469,6 +469,373 @@ int32_t tspline_interval_jets(const int64_t* ints, const double* lower, const do
   return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
+// Encloses the solution of A z = b for every A, b in the intervals, given any
+// preconditioner P: z = P b + (I - P A) z, so with r = ||I - P A||_inf < 1,
+// ||z - P b|| <= r ||P b|| / (1 - r). Also proves every A nonsingular.
+bool enclose_linear(const SplineInterval a[3][3], const SplineInterval* b, const double* p,
+                    SplineInterval* z) {
+  using namespace phx::mc::remesh;
+  double r = 0.0, n = 0.0;
+  SplineInterval z0[3];
+  for (int i = 0; i < 3; ++i) {
+    z0[i] = point(0.0);
+    for (int j = 0; j < 3; ++j) z0[i] = add(z0[i], multiply(point(p[3 * i + j]), b[j]));
+    SplineInterval row = point(0.0);
+    for (int j = 0; j < 3; ++j) {
+      SplineInterval e = point(i == j ? 1.0 : 0.0);
+      for (int k = 0; k < 3; ++k) e = subtract(e, multiply(point(p[3 * i + k]), a[k][j]));
+      row = add(row, point(magnitude(e)));
+    }
+    r = std::max(r, row.upper);
+    n = std::max(n, magnitude(z0[i]));
+  }
+  SplineInterval delta;
+  if (!(r < 1.0) || !spline_divide(multiply(point(n), point(r)),
+                                   subtract(point(1.0), point(r)), delta))
+    return false;
+  for (int i = 0; i < 3; ++i) z[i] = add(z0[i], SplineInterval{-delta.upper, delta.upper});
+  return true;
+}
+
+// One intersection chart over a carrier-fraction interval. The chart axis
+// coordinate moves linearly; the three free coordinates are the root of
+// S1(q0, q1) - S2(q2, q3). The source constructor certifies, for every axis
+// value of the chart, exactly one root g(t) in the stored chart box C (the
+// chart Krawczyk or analytic certificate of IntersectionCurve); C is the
+// hull of the graph, so the graph touches C's faces at its extrema.
+// A trial box X around the chart chord is therefore NOT clipped to C: a
+// Krawczyk image strictly inside X, for every axis value of the interval,
+// proves one root x(t) in X. It is the chart's own point g(t) once roots are
+// unique in the hull H of X and C: for x, y in H with F(x) = F(y) = 0, the
+// row-wise mean value theorem over the convex H gives y - x = (I - P J)(y - x)
+// with every row of J in the interval Jacobian over H, so
+// ||I - P J(H)||_inf < 1 forces y = x. Since g(t) lies in C and x(t) in X,
+// both lie in H and coincide; the certified box is then intersected with C.
+// The whole chart box is the last trial. Implicit differentiation with a
+// preconditioned linear enclosure gives first and second derivatives.
+int32_t intersection_chart_jets(const CadGeometry& geometry, const Node& node,
+                                const double* lower, const double* upper, int64_t chart,
+                                const SplineInterval& fraction, int order,
+                                SplineInterval out[3][3], IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const auto first = static_cast<int32_t>(node.integers[0]);
+  const auto second = static_cast<int32_t>(node.integers[1]);
+  const int axis = static_cast<int>(node.integers[7 + chart]);
+  const int64_t base = 2 + kChartReals * chart;
+  const auto at = [&](int64_t i) { return SplineInterval{lower[base + i], upper[base + i]}; };
+  int free[3];
+  for (int k = 0, f = 0; k < 4; ++k)
+    if (k != axis) free[f++] = k;
+  double precondition[9];
+  for (int i = 0; i < 9; ++i) precondition[i] = lower[base + 16 + i];
+  const SplineInterval delta = subtract(at(4 + axis), at(axis));
+  SplineInterval q[4];
+  q[axis] = add(at(axis), multiply(fraction, delta));
+  SplineInterval chart_box[3];
+  for (int f = 0; f < 3; ++f)
+    chart_box[f] = {lower[base + 8 + free[f]], upper[base + 12 + free[f]]};
+  double one_lower[18], one_upper[18], two_lower[18], two_upper[18];
+  // Template carriers are evaluated through their value program in interval
+  // Taylor arithmetic, which keeps exact constant derivatives tight enough
+  // for the Krawczyk contraction.
+  const auto surfaces = [&](const SplineInterval* box, int jet_order) {
+    const double lo1[2] = {box[0].lower, box[1].lower}, hi1[2] = {box[0].upper, box[1].upper};
+    const double lo2[2] = {box[2].lower, box[3].lower}, hi2[2] = {box[2].upper, box[3].upper};
+    const bool previous = workspace.direct_template;
+    bool ok = false;
+    // Either evaluator is an enclosure; the generated programs back up the
+    // Taylor path where it lacks an operation.
+    for (const bool direct : {true, false}) {
+      workspace.direct_template = direct;
+      ok = geometry.interval_jets(first, lo1, hi1, jet_order, one_lower, one_upper,
+                                  workspace) == PHX_MC_OK &&
+           geometry.interval_jets(second, lo2, hi2, jet_order, two_lower, two_upper,
+                                  workspace) == PHX_MC_OK;
+      if (ok) break;
+    }
+    workspace.direct_template = previous;
+    return ok;
+  };
+  const auto one = [&](int t, int c) { return SplineInterval{one_lower[3 * t + c], one_upper[3 * t + c]}; };
+  const auto two = [&](int t, int c) { return SplineInterval{two_lower[3 * t + c], two_upper[3 * t + c]}; };
+  // Column k of the residual Jacobian: dS1/dq_k or -dS2/dq_(k-2).
+  const auto column = [&](int k, int c) {
+    return k < 2 ? one(1 + k, c) : subtract(point(0.0), two(1 + k - 2, c));
+  };
+  // Numerical inverse of the midpoint free Jacobian; any matrix is valid.
+  const auto refresh_preconditioner = [&]() {
+    double m[9];
+    for (int c = 0; c < 3; ++c)
+      for (int f = 0; f < 3; ++f) {
+        const SplineInterval entry = column(free[f], c);
+        m[3 * c + f] = 0.5 * entry.lower + 0.5 * entry.upper;
+      }
+    const double cof[9] = {m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8],
+                           m[1] * m[5] - m[2] * m[4], m[5] * m[6] - m[3] * m[8],
+                           m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+                           m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7],
+                           m[0] * m[4] - m[1] * m[3]};
+    const double det = m[0] * cof[0] + m[1] * cof[3] + m[2] * cof[6];
+    if (!std::isfinite(det) || det == 0.0) return;
+    for (int i = 0; i < 9; ++i) precondition[i] = cof[i] / det;
+  };
+  // 1: certified (q holds the contracted box), 0: not certified, -1: refusal.
+  const auto krawczyk = [&](const SplineInterval* box) {
+    for (int f = 0; f < 3; ++f) q[free[f]] = box[f];
+    for (int iteration = 0; iteration < 4; ++iteration) {
+      SplineInterval middle[4];
+      for (int k = 0; k < 4; ++k)
+        middle[k] = k == axis ? q[k] : point(0.5 * q[k].lower + 0.5 * q[k].upper);
+      if (!surfaces(middle, 0)) return -1;
+      SplineInterval residual[3];
+      for (int c = 0; c < 3; ++c) residual[c] = subtract(one(0, c), two(0, c));
+      if (!surfaces(q, 1)) return -1;
+      if (iteration == 0) refresh_preconditioner();
+      SplineInterval next[3];
+      for (int i = 0; i < 3; ++i) {
+        SplineInterval value = middle[free[i]];
+        for (int j = 0; j < 3; ++j)
+          value = subtract(value, multiply(point(precondition[3 * i + j]), residual[j]));
+        for (int j = 0; j < 3; ++j) {
+          SplineInterval e = point(i == j ? 1.0 : 0.0);
+          for (int c = 0; c < 3; ++c)
+            e = subtract(e, multiply(point(precondition[3 * i + c]), column(free[j], c)));
+          value = add(value, multiply(e, subtract(q[free[j]], middle[free[j]])));
+        }
+        next[i] = value;
+      }
+      for (int i = 0; i < 3; ++i) {
+        const SplineInterval current = q[free[i]];
+        if (!finite(next[i])) return iteration == 0 ? 0 : -1;
+        // Existence (and uniqueness in the sub-box): strictly inside.
+        if (iteration == 0 && !(next[i].lower > current.lower && next[i].upper < current.upper))
+          return 0;
+        q[free[i]] = {std::max(current.lower, next[i].lower),
+                      std::min(current.upper, next[i].upper)};
+      }
+    }
+    return 1;
+  };
+  // Non-rigorous Newton guesses at both fraction endpoints only centre the
+  // trial boxes; certification is the Krawczyk test above.
+  double guess[2][3];
+  for (int end = 0; end < 2; ++end) {
+    const double f = end == 0 ? fraction.lower : fraction.upper;
+    SplineInterval at_point[4];
+    for (int k = 0; k < 4; ++k) {
+      const double from = lower[base + k], to = lower[base + 4 + k];
+      at_point[k] = point(from + f * (to - from));
+    }
+    for (int step = 0; step < 8; ++step) {
+      if (!surfaces(at_point, 1)) break;
+      refresh_preconditioner();
+      double residual[3], correction[3];
+      for (int c = 0; c < 3; ++c) {
+        const SplineInterval r = subtract(one(0, c), two(0, c));
+        residual[c] = 0.5 * r.lower + 0.5 * r.upper;
+      }
+      for (int i = 0; i < 3; ++i)
+        correction[i] = precondition[3 * i] * residual[0] + precondition[3 * i + 1] * residual[1] +
+                        precondition[3 * i + 2] * residual[2];
+      for (int i = 0; i < 3; ++i) {
+        const double value = std::clamp(at_point[free[i]].lower - correction[i],
+                                        chart_box[i].lower, chart_box[i].upper);
+        if (std::isfinite(value)) at_point[free[i]] = point(value);
+      }
+    }
+    for (int i = 0; i < 3; ++i) guess[end][i] = at_point[free[i]].lower;
+  }
+  // ||I - P J||_inf < 1 over the box with the axis interval of the fraction,
+  // P a numerical inverse of the midpoint Jacobian: at most one root per t.
+  const auto unique_over = [&](const SplineInterval* box) {
+    SplineInterval hull[4];
+    hull[axis] = q[axis];
+    for (int f = 0; f < 3; ++f) hull[free[f]] = box[f];
+    if (!surfaces(hull, 1)) return false;
+    refresh_preconditioner();
+    for (int i = 0; i < 3; ++i) {
+      double row = 0.0;
+      for (int j = 0; j < 3; ++j) {
+        SplineInterval e = point(i == j ? 1.0 : 0.0);
+        for (int c = 0; c < 3; ++c)
+          e = subtract(e, multiply(point(precondition[3 * i + c]), column(free[j], c)));
+        row = add(point(row), point(magnitude(e))).upper;
+      }
+      if (!(row < 1.0)) return false;
+    }
+    return true;
+  };
+  int certified = 0;
+  for (const double scale : {0.015625, 0.0625, 0.125, 0.25, 0.5, 1.0, 8.0}) {
+    SplineInterval trial[3], hull[3];
+    for (int f = 0; f < 3; ++f) {
+      const double low = std::min(guess[0][f], guess[1][f]);
+      const double high = std::max(guess[0][f], guess[1][f]);
+      // The floor leaves room for rounding in the operator on point intervals.
+      const double margin = std::max(
+          (fraction.upper - fraction.lower) * (chart_box[f].upper - chart_box[f].lower) +
+              (high - low),
+          0x1p-30 * (1.0 + std::fabs(high)));
+      trial[f] = subtract(point(low), multiply(point(scale), point(margin)));
+      trial[f] = {trial[f].lower,
+                  add(point(high), multiply(point(scale), point(margin))).upper};
+      hull[f] = {std::min(trial[f].lower, chart_box[f].lower),
+                 std::max(trial[f].upper, chart_box[f].upper)};
+    }
+    // A carrier failing outside C only rejects this trial.
+    if (krawczyk(trial) != 1) continue;
+    SplineInterval root[3];
+    for (int f = 0; f < 3; ++f) root[f] = q[free[f]];
+    if (!unique_over(hull)) continue;
+    certified = 1;
+    for (int f = 0; f < 3; ++f) {
+      q[free[f]] = {std::max(root[f].lower, chart_box[f].lower),
+                    std::min(root[f].upper, chart_box[f].upper)};
+      if (!(q[free[f]].lower <= q[free[f]].upper)) return PHX_MC_INTERNAL_ERROR;
+    }
+    break;
+  }
+  if (certified == 0) certified = krawczyk(chart_box);
+  if (certified != 1) return PHX_MC_UNRESOLVED;
+  const int output = static_cast<int>(node.integers[3]);
+  SplineInterval derivative[4], second_derivative[4];
+  if (order >= 1 || output == 0) {
+    if (!surfaces(q, order)) return PHX_MC_UNRESOLVED;
+  }
+  if (order >= 1) {
+    refresh_preconditioner();
+    SplineInterval jacobian[3][3], rhs[3];
+    for (int c = 0; c < 3; ++c) {
+      for (int f = 0; f < 3; ++f) jacobian[c][f] = column(free[f], c);
+      rhs[c] = subtract(point(0.0), multiply(column(axis, c), delta));
+    }
+    SplineInterval z[3];
+    if (!enclose_linear(jacobian, rhs, precondition, z)) return PHX_MC_UNRESOLVED;
+    derivative[axis] = delta;
+    for (int f = 0; f < 3; ++f) derivative[free[f]] = z[f];
+    second_derivative[axis] = point(0.0);
+    if (order == 2) {
+      for (int c = 0; c < 3; ++c) {
+        // q'^T H q' for S1 and minus that for S2; mixed blocks vanish.
+        SplineInterval curvature = point(0.0);
+        for (int side = 0; side < 2; ++side) {
+          const SplineInterval du = derivative[2 * side], dv = derivative[2 * side + 1];
+          const auto h = [&](int t) { return side == 0 ? one(t, c) : two(t, c); };
+          SplineInterval term = multiply(h(3), multiply(du, du));
+          term = add(term, multiply(point(2.0), multiply(h(4), multiply(du, dv))));
+          term = add(term, multiply(h(5), multiply(dv, dv)));
+          curvature = side == 0 ? add(curvature, term) : subtract(curvature, term);
+        }
+        rhs[c] = subtract(point(0.0), curvature);
+      }
+      if (!enclose_linear(jacobian, rhs, precondition, z)) return PHX_MC_UNRESOLVED;
+      for (int f = 0; f < 3; ++f) second_derivative[free[f]] = z[f];
+    }
+  }
+  if (output != 0) {
+    const int offset = output == 1 ? 0 : 2;
+    for (int c = 0; c < 2; ++c) {
+      out[0][c] = q[offset + c];
+      if (order >= 1) out[1][c] = derivative[offset + c];
+      if (order == 2) out[2][c] = second_derivative[offset + c];
+    }
+    return PHX_MC_OK;
+  }
+  for (int c = 0; c < 3; ++c) {
+    out[0][c] = one(0, c);
+    if (order >= 1)
+      out[1][c] = add(multiply(one(1, c), derivative[0]), multiply(one(2, c), derivative[1]));
+    if (order == 2) {
+      SplineInterval value = add(multiply(one(1, c), second_derivative[0]),
+                                 multiply(one(2, c), second_derivative[1]));
+      value = add(value, multiply(one(3, c), multiply(derivative[0], derivative[0])));
+      value = add(value, multiply(point(2.0),
+                                  multiply(one(4, c), multiply(derivative[0], derivative[1]))));
+      value = add(value, multiply(one(5, c), multiply(derivative[1], derivative[1])));
+      out[2][c] = value;
+    }
+  }
+  return PHX_MC_OK;
+}
+
+// The intersection node over a parameter interval: the hull over every chart
+// the carrier interval can select, including the terminal-chart rule.
+int32_t intersection_interval_jets(const CadGeometry& geometry, const Node& node,
+                                   const double* lower, const double* upper, double t_lower,
+                                   double t_upper, int order, double* output_lower,
+                                   double* output_upper, IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  for (int64_t i = 0; i < node.real_count; ++i)
+    if (!finite(SplineInterval{lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  const int64_t charts = node.integers[2], fixed = node.integers[4];
+  const int64_t terminal = node.integers[5];
+  const bool reversed = node.integers[6] != 0;
+  const int dimension = node.outputs;
+  const SplineInterval carrier = reversed
+      ? subtract(SplineInterval{lower[0], upper[0]}, SplineInterval{t_lower, t_upper})
+      : SplineInterval{t_lower, t_upper};
+  struct Candidate {
+    int64_t chart;
+    SplineInterval fraction;
+    int depth = 0;
+  };
+  std::vector<Candidate> candidates;
+  if (fixed >= 0) {
+    candidates.push_back({fixed, subtract(carrier, point(static_cast<double>(fixed)))});
+  } else {
+    if (!(carrier.lower >= 0.0 && carrier.upper <= static_cast<double>(charts)))
+      return PHX_MC_UNRESOLVED;
+    // Chart k covers the closed carrier interval [k, k + 1]; the carrier end
+    // `charts` is the last chart's fraction 1.
+    const auto last = std::min(static_cast<int64_t>(std::floor(carrier.upper)), charts - 1);
+    const auto start = std::min(static_cast<int64_t>(std::floor(carrier.lower)), charts - 1);
+    for (auto chart = start; chart <= last; ++chart) {
+      const double c = static_cast<double>(chart);
+      const SplineInterval part{std::max(carrier.lower, c), std::min(carrier.upper, c + 1.0)};
+      candidates.push_back({chart, subtract(part, point(c))});
+    }
+    if (terminal >= 0 && carrier.upper >= lower[1]) {
+      const SplineInterval part{std::max(carrier.lower, lower[1]), carrier.upper};
+      candidates.push_back({terminal, subtract(part, point(static_cast<double>(terminal)))});
+    }
+  }
+  bool found = false;
+  // The Krawczyk image over a fraction interval carries the graph's spread
+  // over it, so an interval that does not certify is bisected; the hull of
+  // the halves encloses the same set.
+  constexpr int kMaxBisection = 6;
+  while (!candidates.empty()) {
+    const Candidate candidate = candidates.back();
+    candidates.pop_back();
+    SplineInterval result[3][3]{};
+    const int32_t status = intersection_chart_jets(geometry, node, lower, upper,
+                                                   candidate.chart, candidate.fraction, order,
+                                                   result, workspace);
+    if (status == PHX_MC_UNRESOLVED && candidate.depth < kMaxBisection) {
+      const double middle = 0.5 * candidate.fraction.lower + 0.5 * candidate.fraction.upper;
+      if (candidate.fraction.lower < middle && middle < candidate.fraction.upper) {
+        candidates.push_back({candidate.chart, {candidate.fraction.lower, middle},
+                              candidate.depth + 1});
+        candidates.push_back({candidate.chart, {middle, candidate.fraction.upper},
+                              candidate.depth + 1});
+        continue;
+      }
+    }
+    if (status != PHX_MC_OK) return status;
+    for (int n = 0; n <= order; ++n)
+      for (int c = 0; c < dimension; ++c) {
+        SplineInterval value = result[n][c];
+        if (reversed && n == 1) value = subtract(point(0.0), value);
+        if (!finite(value)) return PHX_MC_UNRESOLVED;
+        const int slot = n * dimension + c;
+        output_lower[slot] = found ? std::min(output_lower[slot], value.lower) : value.lower;
+        output_upper[slot] = found ? std::max(output_upper[slot], value.upper) : value.upper;
+      }
+    found = true;
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
 // Normalized interval Taylor coefficients through total order three. This
 // evaluates the smooth value program directly, avoiding branch flags in the
 // generated derivative programs when an offset needs a certified normal.
@@ -888,6 +1255,15 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
                                 current.integers, workspace.coefficient_lower + offset,
                                 workspace.coefficient_upper + offset, input_lower, input_upper,
                                 order, output_lower, output_upper);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_INTERSECTION) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return intersection_interval_jets(*this, current, workspace.coefficient_lower + offset,
+                                      workspace.coefficient_upper + offset, input_lower[0],
+                                      input_upper[0], order, output_lower, output_upper,
+                                      workspace);
   }
   if (current.kind == PHX_MC_CAD_NODE_TSPLINE_SURFACE) {
     const phx::mc::GradualNearestScope mode;

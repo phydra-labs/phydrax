@@ -1169,3 +1169,94 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
         print("tspline native/Python depth 0", result.upper[row] / float(reference),
               "within Python bound", tight.upper[row] / float(reference),
               "subdivisions", tight.subdivisions[row])
+
+
+def test_intersection_pcurve_trimmed_face() -> None:
+    """A face bounded by one traced cylinder/cylinder intersection p-curve."""
+    import jax.numpy as jnp
+
+    from phydrax.geometry.brep._intersection_curve import IntersectionPCurve
+
+    domain = MeshingDomain.from_brep(_crossing_cylinders_model())
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    assert np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
+    assert np.all(lower <= bundle.model.node_reals) and np.all(bundle.model.node_reals <= upper)
+    patch = domain.patches[0]
+    (use,) = patch.loops[0]
+    assert isinstance(use.pcurve, IntersectionPCurve) and use.sense == -1
+    samples = 32
+    parameters = np.linspace(use.first, use.last, samples + 1)[:-1]
+    # Loop order: a reversed use runs the p-curve from last to first.
+    parameters = parameters[::-1]
+    boundary = np.asarray(use.pcurve.evaluate(jnp.asarray(parameters)))
+    centre = boundary.mean(axis=0)
+    inner = centre + 0.5 * (boundary - centre)
+    uv_points = np.vstack((centre[None], inner, boundary))
+    points = np.asarray(patch.surface.evaluate(jnp.asarray(uv_points)))
+    triangles: list[tuple[int, int, int]] = []
+    edge_chord: list[list[int]] = []
+    chord_uv: list[np.ndarray] = []
+    chord_range: list[tuple[float, float]] = []
+    for i in range(samples):
+        j = (i + 1) % samples
+        r_i, r_j, p_i, p_j = 1 + i, 1 + j, 1 + samples + i, 1 + samples + j
+        triangles += [(0, r_i, r_j), (r_i, p_i, p_j), (r_i, p_j, r_j)]
+        edge_chord += [[-1, -1, -1], [-1, len(chord_uv), -1], [-1, -1, -1]]
+        # The closing chord wraps from t = first to the same point at t = last.
+        start = use.last if parameters[i] == use.first else parameters[i]
+        chord_uv.append(np.stack((uv_points[p_i], uv_points[p_j])))
+        chord_range.append((float(start), float(parameters[j])))
+    cells = np.asarray(triangles, dtype=np.int64)
+    mesh = CadFidelityMesh(
+        points, cells, np.zeros(len(cells), dtype=np.int32), uv_points[cells], cells,
+        np.arange(len(cells), dtype=np.int64), np.asarray(edge_chord, dtype=np.int64),
+    )
+    loops = bundle.model.loop_surfaces.size
+    use_patch = bundle.model.loop_surfaces[
+        np.repeat(np.arange(loops), np.diff(bundle.model.loop_use_offsets))
+    ].astype(np.int64)
+    chords = CadFidelityChords(
+        use_patch, bundle.model.use_ranges, loops,
+        np.zeros(len(chord_uv), dtype=np.int64), np.zeros(len(chord_uv), dtype=np.int64),
+        np.asarray(chord_uv, dtype=np.float64), np.asarray(chord_range, dtype=np.float64),
+    )
+    result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 6)
+    assert result.findings.size == 0, result.findings
+    assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
+    rows = np.arange(len(cells), dtype=np.int64)
+    assert _python_chart_decisions(domain, mesh, rows, 0.1) == tuple(
+        status == MeshcoreStatus.OK for status in result.item_status
+    )
+    weights = np.asarray(
+        [(1 - (a + b) / 12, a / 12, b / 12) for a in range(13) for b in range(13 - a)]
+    )
+    for row, cell in enumerate(cells):
+        exact = np.asarray(patch.surface.evaluate(jnp.asarray(weights @ mesh.uv[row])))
+        assert np.all(np.linalg.norm(exact - weights @ points[cell], axis=1) <= result.upper[row])
+    for chord, (first, last) in enumerate(chord_range):
+        row = 3 * chord + 1
+        fractions = np.linspace(0.0, 1.0, 33)
+        arc_uv = np.asarray(use.pcurve.evaluate(jnp.asarray(first + fractions * (last - first))))
+        arc = np.asarray(patch.surface.evaluate(jnp.asarray(arc_uv)))
+        a, b = points[cells[row][1]], points[cells[row][2]]
+        straight = a[None] + fractions[:, None] * (b - a)[None]
+        assert np.all(np.linalg.norm(arc - straight, axis=1) <= result.upper[row])
+
+
+def _crossing_cylinders_model() -> object:
+    """Intersection of a vertical and a transverse cylinder (traced p-curves)."""
+    import phydrax as phx
+
+    contract = phx.SpatialCoordinateContract.si()
+    vertical = phx.geometry.brep.brep_cylinder(
+        1.0, 2.4, base_center=(0.0, 0.0, -1.2), axis=(0.0, 0.0, 1.0),
+        coordinate_contract=contract, source_id="qualification:native-fidelity-vertical",
+    )
+    transverse = phx.geometry.brep.brep_cylinder(
+        0.6, 3.0, base_center=(-1.5, 0.0, 0.0), axis=(1.0, 0.0, 0.0),
+        coordinate_contract=contract, source_id="qualification:native-fidelity-transverse",
+    )
+    return phx.geometry.brep.boolean_brep(
+        vertical, transverse, "intersection", policy=phx.geometry.brep.BRepBooleanPolicy()
+    ).model
