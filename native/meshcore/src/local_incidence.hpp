@@ -75,6 +75,14 @@ class LocalIncidence {
   std::int32_t edge_cell_outside(
       const TetMesh& mesh, std::int32_t first, std::int32_t second,
       std::span<const std::int32_t> removed_slots, std::int32_t seed = -1) const;
+  // Moves one vertex (moved_vertices holds its record) whose current star
+  // is `star`. An interior vertex (dimension three, no witness) goes through
+  // TetMesh::relocate_with_complete_star. A facet or segment vertex
+  // (dimension two or one) is decided on its star: the record's checks, the
+  // facets and segments through it revalidated on their sources with the
+  // moved record (in bank order) and exact positivity of the star cells, in
+  // TetMesh::apply_relocation_edit's order, so verdict and state equal it;
+  // a periodic or implicit-bound mesh is refused (kRejectedTopology).
   TetEditStatus relocate(TetMesh& mesh,
                          std::span<const TetEditVertex> moved_vertices,
                          const Star& star);
@@ -127,6 +135,21 @@ class LocalIncidence {
   // apply_edit_batch's exact volume check refuses the swap (kRejectedTopology)
   // unless a, b, c and d are exactly coplanar.
   TetEditStatus swap_boundary_edge(TetMesh& mesh, const TetEdit& operation);
+  // Splits the boundary edge ab at the new vertex `vertex` (a never-used
+  // ID): ab is no constrained segment and lies in exactly two constrained
+  // faces, abc and abd, both on the hull. The kSplit edit replaces each cell
+  // around ab by its halves (b, then a, replaced by the vertex; IDs from the
+  // mesh's next cell ID, each with its parent as ancestor) and abc, abd by
+  // (a, m, c), (m, b, c), (b, m, d), (m, a, d) (vertex order, source and
+  // orientation kept; IDs from the next facet ID), whose finite cell IDs
+  // are returned. Verdict and state equal TetMesh::apply_edit_batch on that
+  // edit (whose coverage proof is exact, or the declared pair's of
+  // TetMesh::declared_split_pair), except that a periodic or implicit-bound
+  // mesh and a split outside this contract are refused (kRejectedTopology)
+  // and the facet bank is not kept in ID order.
+  TetEditStatus split_boundary_edge(TetMesh& mesh, std::int32_t a, std::int32_t b,
+                                    const TetEditVertex& vertex,
+                                    std::vector<std::uint64_t>& created_cells);
 
  private:
   struct FaceIdHash {
@@ -161,6 +184,8 @@ class LocalIncidence {
   // this index and the bank indexes.
   TetEditStatus commit_boundary_edit(TetMesh& mesh, const TetEdit& operation,
                                      BoundaryEdit& edit);
+  // The facet or segment vertex branch of relocate.
+  TetEditStatus relocate_boundary(TetMesh& mesh, const TetEditVertex& moved, const Star& star);
 
   const TetMesh* mesh_ = nullptr;
   // Per vertex slot: one incident cell (a hint, checked before use) and the

@@ -1973,6 +1973,88 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
   return TetCavityStatus::kFound;
 }
 
+std::int32_t TetMesh::declared_split_pair(std::int32_t a, std::int32_t b,
+                                          std::span<const std::int32_t> cells) const {
+  if (vertex_dimension(a) <= 1 && vertex_dimension(b) <= 1) {
+    const std::uint64_t id_a = vertex_id(a);
+    const std::uint64_t id_b = vertex_id(b);
+    for (const TetSnapshotSegment& segment : segments_) {
+      if ((segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
+          (segment.vertices[0] == id_b && segment.vertices[1] == id_a)) {
+        return kNoConstraint;
+      }
+    }
+  }
+  std::array<SortedFace, 2> faces{};
+  std::array<std::int32_t, 2> sources{kNoConstraint, kNoConstraint};
+  std::size_t count = 0;
+  for (std::int32_t cell : cells) {
+    if (!complex_.live(cell) || is_ghost(tet(cell))) return kNoConstraint;
+    const Tetrahedron& parent = tet(cell);
+    for (int face = 0; face < 4; ++face) {
+      const std::int32_t source = complex_.constraint(cell, face);
+      if (parent.v[face] == a || parent.v[face] == b || source == kNoConstraint ||
+          phx::mc::vertex_slot(parent, a) < 0 || phx::mc::vertex_slot(parent, b) < 0) {
+        continue;
+      }
+      // A constrained face through (a, b) between two removed cells has no
+      // halves checked against it.
+      if (std::find(cells.begin(), cells.end(), parent.n[face]) != cells.end()) {
+        return kNoConstraint;
+      }
+      std::int32_t corners[3];
+      oriented_facet(parent.v, face, corners);
+      const SortedFace key = sorted_face(corners);
+      if ((count > 0 && faces[0] == key) || (count > 1 && faces[1] == key)) continue;
+      if (count == 2) return kNoConstraint;
+      faces[count] = key;
+      sources[count++] = source;
+    }
+  }
+  return count == 2 && sources[0] == sources[1] && declared_groups_.contains(sources[0])
+             ? sources[0]
+             : kNoConstraint;
+}
+
+bool TetMesh::split_face_covered(const std::int32_t* parent_face, std::int32_t source,
+                                 const std::array<std::int32_t, 3>& first_child,
+                                 const std::array<std::int32_t, 3>& second_child,
+                                 std::span<const std::int32_t> cells) const {
+  if (exact_split_coverage(*this, parent_face, first_child, second_child)) return true;
+  return source != kNoConstraint &&
+         declared_split_pair(first_child[0], second_child[1], cells) == source &&
+         declared_split_children(source, parent_face, first_child, second_child);
+}
+
+TetEditStatus TetMesh::unconstrained_split_point_status(std::int32_t a, std::int32_t b,
+                                                        const std::array<std::uint64_t, 2>& edge,
+                                                        const TetEditVertex& inserted,
+                                                        std::span<const std::int32_t> cells) const {
+  if (inserted.has_edge_parameter && inserted.edge_endpoints != edge) {
+    return TetEditStatus::kInvalidGeometry;
+  }
+  // A witness-free point is on the open edge, or on a declared pair, whose
+  // coverage split_face_covered proves.
+  if (inserted.witness.stratum == SourceStratum::kNone && !inserted.has_edge_parameter) {
+    const double* endpoints[3] = {point(a), point(b), nullptr};
+    if (!on_source_entity(endpoints, SourceStratum::kSegment, inserted.carrier.data()) &&
+        declared_split_pair(a, b, cells) == kNoConstraint) {
+      return TetEditStatus::kInvalidGeometry;
+    }
+  }
+  int dominant = 0;
+  for (int axis = 1; axis < 3; ++axis) {
+    if (std::abs(point(b)[axis] - point(a)[axis]) >
+        std::abs(point(b)[dominant] - point(a)[dominant])) dominant = axis;
+  }
+  const double lo = std::min(point(a)[dominant], point(b)[dominant]);
+  const double hi = std::max(point(a)[dominant], point(b)[dominant]);
+  if (!(lo < inserted.carrier[dominant] && inserted.carrier[dominant] < hi)) {
+    return TetEditStatus::kInvalidGeometry;
+  }
+  return TetEditStatus::kApplied;
+}
+
 bool TetMesh::validate_regions_and_constraints(
     const TetEdit& operation, std::span<const std::int32_t> removed_slots,
     std::span<const TetSnapshotFacet> candidate_facets) const {
@@ -2020,7 +2102,7 @@ bool TetMesh::validate_regions_and_constraints(
         return found;
       };
   const auto replacement_boundary_face =
-      [&](const Tetrahedron& parent, int face_slot, std::int32_t region) {
+      [&](const Tetrahedron& parent, int face_slot, std::int32_t region, std::int32_t source) {
         std::int32_t face[3];
         oriented_facet(parent.v, face_slot, face);
         std::size_t split_index = operation.split_edges.size();
@@ -2085,7 +2167,8 @@ bool TetMesh::validate_regions_and_constraints(
         }
         // An implicit boundary may move by carrier rounding: both replacement
         // facets are separately admitted by its interval source below.
-        if (!implicit_boundary && !exact_split_coverage(*this, face, first_child, second_child)) {
+        if (!implicit_boundary &&
+            !split_face_covered(face, source, first_child, second_child, removed_slots)) {
           return false;
         }
         return replacement_oriented_face(first_child, region) &&
@@ -2124,7 +2207,8 @@ bool TetMesh::validate_regions_and_constraints(
         oriented_facet(cell.v, face_slot, face);
         if (retired_boundary.contains(sorted_face(face))) continue;
       }
-      if (!replacement_boundary_face(cell, face_slot, complex_.region(slot))) {
+      if (!replacement_boundary_face(cell, face_slot, complex_.region(slot),
+                                     complex_.constraint(slot, face_slot))) {
         return false;
       }
     }
@@ -2411,15 +2495,18 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       if (!mesh.live_vertex(a) || !mesh.live_vertex(b) || a == b) {
         return TetEditStatus::kRejectedTopology;
       }
-      bool edge_exists = false;
+      // The edge is usually one of the removed cells'; else any live cell's.
+      const auto holds_edge = [&](std::int32_t cell) {
+        const Tetrahedron& tet = mesh.tet(cell);
+        return phx::mc::vertex_slot(tet, a) >= 0 && phx::mc::vertex_slot(tet, b) >= 0;
+      };
+      bool edge_exists = std::any_of(removed_slots.begin(), removed_slots.end(), holds_edge);
       bool constrained_segment = false;
       std::int32_t segment_source = kNoConstraint;
-      for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
+      for (std::size_t t = 0; t < mesh.complex_.tets.size() && !edge_exists; ++t) {
         const std::int32_t cell = static_cast<std::int32_t>(t);
         if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
-        const Tetrahedron& tet = mesh.tet(cell);
-        if (phx::mc::vertex_slot(tet, a) >= 0 &&
-            phx::mc::vertex_slot(tet, b) >= 0) edge_exists = true;
+        edge_exists = holds_edge(cell);
       }
       for (const TetSnapshotSegment& segment : mesh.segments_) {
         const std::int32_t segment_a = mesh.vertex_slot(segment.vertices[0]);
@@ -2433,32 +2520,30 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       }
       if (!edge_exists) return TetEditStatus::kRejectedTopology;
       const TetEditVertex& inserted = operation.changed_vertices[index];
+      if (!constrained_segment) {
+        const TetEditStatus status = mesh.unconstrained_split_point_status(
+            a, b, operation.split_edges[index], inserted, removed_slots);
+        if (status != TetEditStatus::kApplied) return status;
+        continue;
+      }
       if (inserted.has_edge_parameter &&
           inserted.edge_endpoints != operation.split_edges[index]) {
         return TetEditStatus::kInvalidGeometry;
       }
-      if (constrained_segment) {
-        const SourceWitness& witness = inserted.witness;
-        if (mesh.policy_ == BoundaryPolicy::kFixed) return TetEditStatus::kRejectedProtected;
-        if (witness.stratum != SourceStratum::kSegment || witness.entity < 0 ||
-            static_cast<std::size_t>(witness.entity) >= mesh.source_segment_groups_.size() ||
-            mesh.source_segment_groups_[static_cast<std::size_t>(witness.entity)] != segment_source) {
-          return TetEditStatus::kInvalidGeometry;
-        }
-        const SourceWitness& wa = mesh.witness(a);
-        const SourceWitness& wb = mesh.witness(b);
-        if (wa.stratum == SourceStratum::kSegment && wb.stratum == SourceStratum::kSegment &&
-            wa.entity == witness.entity && wb.entity == witness.entity) {
-          const double low = std::min(wa.parameters[0], wb.parameters[0]);
-          const double high = std::max(wa.parameters[0], wb.parameters[0]);
-          if (!(low < witness.parameters[0] && witness.parameters[0] < high)) {
-            return TetEditStatus::kInvalidGeometry;
-          }
-        }
-      } else if (inserted.witness.stratum == SourceStratum::kNone &&
-                 !inserted.has_edge_parameter) {
-        const double* endpoints[3] = {mesh.point(a), mesh.point(b), nullptr};
-        if (!on_source_entity(endpoints, SourceStratum::kSegment, inserted.carrier.data())) {
+      const SourceWitness& witness = inserted.witness;
+      if (mesh.policy_ == BoundaryPolicy::kFixed) return TetEditStatus::kRejectedProtected;
+      if (witness.stratum != SourceStratum::kSegment || witness.entity < 0 ||
+          static_cast<std::size_t>(witness.entity) >= mesh.source_segment_groups_.size() ||
+          mesh.source_segment_groups_[static_cast<std::size_t>(witness.entity)] != segment_source) {
+        return TetEditStatus::kInvalidGeometry;
+      }
+      const SourceWitness& wa = mesh.witness(a);
+      const SourceWitness& wb = mesh.witness(b);
+      if (wa.stratum == SourceStratum::kSegment && wb.stratum == SourceStratum::kSegment &&
+          wa.entity == witness.entity && wb.entity == witness.entity) {
+        const double low = std::min(wa.parameters[0], wb.parameters[0]);
+        const double high = std::max(wa.parameters[0], wb.parameters[0]);
+        if (!(low < witness.parameters[0] && witness.parameters[0] < high)) {
           return TetEditStatus::kInvalidGeometry;
         }
       }
@@ -2545,24 +2630,25 @@ TetEditStatus TetMesh::validate_and_commit(TetMesh& staged,
       face[k] = mesh.vertex_slot(found->vertices[k]);
       if (face[k] < 0) return TetEditStatus::kRejectedTopology;
     }
-    std::array<std::pair<std::int32_t, int>, 2> owners{{{-1, -1}, {-1, -1}}};
+    // The facet's finite owners must all be removed cells: found among them,
+    // with no kept finite cell across (a face has at most two cells).
+    const SortedFace key = sorted_face(face);
     std::size_t owner_count = 0;
-    for (std::size_t t = 0; t < mesh.complex_.tets.size(); ++t) {
-      const std::int32_t cell = static_cast<std::int32_t>(t);
-      if (!mesh.complex_.live(cell) || is_ghost(mesh.tet(cell))) continue;
+    for (std::int32_t cell : removed_slots) {
+      const Tetrahedron& owner = mesh.tet(cell);
       for (int slot = 0; slot < 4; ++slot) {
         std::int32_t oriented[3];
-        oriented_facet(mesh.tet(cell).v, slot, oriented);
-        if (sorted_face(oriented) != sorted_face(face)) continue;
-        if (owner_count == owners.size()) return TetEditStatus::kRejectedTopology;
-        owners[owner_count++] = {cell, slot};
+        oriented_facet(owner.v, slot, oriented);
+        if (sorted_face(oriented) != key) continue;
+        const std::int32_t across = owner.n[slot];
+        if (!is_ghost(mesh.tet(across)) && !removed_slot_set.contains(across)) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        ++owner_count;
+        cleared_facet_sides.emplace_back(cell, slot);
       }
     }
     if (owner_count == 0) return TetEditStatus::kRejectedTopology;
-    for (std::size_t owner = 0; owner < owner_count; ++owner) {
-      if (!removed_slot_set.contains(owners[owner].first)) return TetEditStatus::kRejectedTopology;
-      cleared_facet_sides.push_back(owners[owner]);
-    }
   }
 
   std::vector<TetSnapshotFacet> future_facets;

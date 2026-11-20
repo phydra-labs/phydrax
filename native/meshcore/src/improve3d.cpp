@@ -312,6 +312,8 @@ TetEditStatus LocalIncidence::relocate(
     previous_cell_id = cell_id;
     has_previous_cell = true;
   }
+  const std::int8_t dimension = mesh.vertex_dimension(slot);
+  if (dimension == 1 || dimension == 2) return relocate_boundary(mesh, moved, star);
   // Exact positivity of every moved star cell excludes a move onto another
   // vertex, so no position index is kept. A relocation moves a point, not
   // the topology: the star stays current.

@@ -1,17 +1,20 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// LocalIncidence::collapse_boundary and swap_boundary_edge against
-// TetMesh::apply_edit_batch: random single-operation boundary collapses (in
-// place and with a moved survivor) and coplanar boundary edge swaps, valid
-// and perturbed, on small PLC boxes (six side facet groups of two source
-// triangles, twelve source segments, an interior interface, protected
-// vertices, the fixed policy) must give the batch's verdict and, when
-// applied, its state. Their cost is star-local: the time per edit does not
-// grow with the mesh.
+// LocalIncidence::collapse_boundary, swap_boundary_edge, split_boundary_edge
+// and relocate (boundary vertices) against TetMesh::apply_edit_batch and
+// apply_relocation_edit: random single-operation boundary collapses (in
+// place and with a moved survivor), coplanar boundary edge swaps, boundary
+// edge splits and facet or segment vertex relocations, valid and perturbed,
+// on small PLC boxes (six side facet groups of two source triangles, twelve
+// source segments, an interior interface, protected vertices, the fixed
+// policy) and Gmsh-like cubes (arbitrary binary64 coordinates, declared
+// side planes) must give the batch's verdict and, when applied, its state.
+// Their cost is star-local: the time per edit does not grow with the mesh.
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -28,6 +31,7 @@
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
+#include "source_construction.hpp"
 #include "tet_mesh.hpp"
 
 using namespace phx::mc;
@@ -87,6 +91,9 @@ struct Box {
   std::vector<std::int64_t> segment_ids;
   std::vector<double> segment_tolerances;
   std::vector<SourceWitness> witnesses;
+  // Declared exact planes per source face row (empty: none).
+  std::vector<double> face_planes;
+  std::vector<double> face_plane_tolerances;
   // Source points of each face group and segment group, and each face
   // group's plane piece (its x range).
   std::map<std::int32_t, std::set<std::int32_t>> face_group_points;
@@ -144,6 +151,45 @@ std::optional<SourceWitness> segment_witness(const Box& box, std::int32_t row, c
   witness.entity = row;
   witness.parameters[0] = t;
   return witness;
+}
+
+// The point of source segment `row` at the open-segment parameter `t`,
+// rounded into `carrier`, and its witness; both are left unchanged when
+// there is none.
+bool segment_point(const Box& box, std::int32_t row, double t, double* carrier,
+                   SourceWitness& witness) {
+  if (!(t > 0.0 && t < 1.0)) return false;
+  const double* corners[3] = {box.source_points.data() + 3 * box.source_segments[2 * row],
+                              box.source_points.data() + 3 * box.source_segments[2 * row + 1],
+                              nullptr};
+  const double parameters[2] = {t, 0.0};
+  double position[3];
+  double deviation = 0.0;
+  if (!source_carrier(corners, SourceStratum::kSegment, parameters, position, deviation)) {
+    return false;
+  }
+  std::copy_n(position, 3, carrier);
+  witness = SourceWitness{SourceStratum::kSegment, row, {t, 0.0}, deviation};
+  return true;
+}
+
+// The parameter of vertex `x` on source segment `row`: its witness's, or 0
+// or 1 at the segment's ends.
+bool segment_parameter(const Box& box, const TetMesh& mesh, std::int32_t x, std::int32_t row,
+                       double& t) {
+  const SourceWitness& witness = mesh.witness(x);
+  if (witness.stratum == SourceStratum::kSegment && witness.entity == row) {
+    t = witness.parameters[0];
+    return true;
+  }
+  for (const int end : {0, 1}) {
+    const double* corner = box.source_points.data() + 3 * box.source_segments[2 * row + end];
+    if (std::equal(corner, corner + 3, mesh.point(x))) {
+      t = end;
+      return true;
+    }
+  }
+  return false;
 }
 
 Box make_box(std::array<int, 3> n, bool two_regions) {
@@ -339,7 +385,7 @@ bool build(TetMesh& mesh, const Box& box, std::span<const std::int8_t> protected
   const SourceComplexView source{box.source_points,   box.source_faces,     box.face_groups,
                                  box.face_ids,        box.face_tolerances,  box.source_segments,
                                  box.segment_groups,  box.segment_ids,      box.segment_tolerances,
-                                 box.witnesses};
+                                 box.witnesses,       box.face_planes,      box.face_plane_tolerances};
   const std::int32_t status =
       mesh.build(box.points, box.tetrahedra, box.regions, box.faces, box.face_sources,
                  box.orientations, box.segments, box.segment_sources, {}, &source,
@@ -396,6 +442,7 @@ class Generator {
   Generator(const Box& box, std::uint32_t seed) : box_(box), random_(seed) {}
 
   std::uint64_t fresh_id() { return next_id_++; }
+  std::mt19937& random() { return random_; }
   bool chance(double p) { return std::uniform_real_distribution<double>(0.0, 1.0)(random_) < p; }
   std::size_t pick(std::size_t count) {
     return std::uniform_int_distribution<std::size_t>(0, count - 1)(random_);
@@ -1225,6 +1272,480 @@ void boundary_edits_match_apply_edit_batch() {
   PHX_CHECK(inserted_facet_points > 0 && inserted_segment_points > 0);
 }
 
+// A Gmsh-like cube: the box's topology on arbitrary binary64 coordinates
+// (y and z from origin 0.3 by step 0.1; x dyadic, so the seam x = n0 / 2
+// is the exact middle of the x edges; every coordinate off the sides
+// jittered), with witness-free vertices but on the edges, and each side
+// group declaring its exact plane (tolerance 1e-9). With `split_sides`
+// four sides are two groups each, on one region without an interface.
+Box make_cube(std::array<int, 3> n, bool split_sides, std::uint32_t seed) {
+  Box box = make_box(n, split_sides);
+  if (split_sides) {
+    std::fill(box.regions.begin(), box.regions.end(), 0);
+    std::vector<std::int32_t> faces;
+    std::vector<std::int32_t> sources;
+    std::vector<std::int8_t> orientations;
+    for (std::size_t row = 0; row < box.face_sources.size(); ++row) {
+      if (box.face_sources[row] == 6) continue;
+      faces.insert(faces.end(), box.faces.begin() + static_cast<std::ptrdiff_t>(3 * row),
+                   box.faces.begin() + static_cast<std::ptrdiff_t>(3 * row + 3));
+      sources.push_back(box.face_sources[row]);
+      orientations.push_back(box.orientations[row]);
+    }
+    box.faces.swap(faces);
+    box.face_sources.swap(sources);
+    box.orientations.swap(orientations);
+  }
+  std::mt19937 random(seed);
+  std::uniform_real_distribution<double> jitter(-0.012, 0.012);
+  const auto map = [](std::size_t axis, double x) {
+    return axis == 0 ? 0.25 + 0.125 * x : 0.3 + 0.1 * x;
+  };
+  for (std::size_t vertex = 0; vertex < box.points.size() / 3; ++vertex) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      double& x = box.points[3 * vertex + axis];
+      const bool fixed = x == 0.0 || x == n[axis] || (split_sides && axis == 0 && x == 0.5 * n[0]);
+      x = map(axis, x) + (fixed ? 0.0 : jitter(random));
+    }
+  }
+  for (std::size_t row = 0; row < box.source_points.size(); ++row) {
+    box.source_points[row] = map(row % 3, box.source_points[row]);
+  }
+  for (auto& [group, piece] : box.pieces) {
+    piece.value = map(static_cast<std::size_t>(piece.axis), piece.value);
+    piece.low = map(0, piece.low);
+    piece.high = map(0, piece.high);
+  }
+  // Edge vertices keep their dyadic segment parameters, realized by
+  // rounding; the rest are their own exact points.
+  for (std::size_t vertex = 0; vertex < box.witnesses.size(); ++vertex) {
+    SourceWitness& witness = box.witnesses[vertex];
+    if (witness.stratum != SourceStratum::kSegment) {
+      witness = SourceWitness{};
+      continue;
+    }
+    PHX_CHECK(segment_point(box, witness.entity, witness.parameters[0],
+                            box.points.data() + 3 * vertex, witness));
+  }
+  for (std::size_t row = 0; row < box.face_groups.size(); ++row) {
+    const int axis = box.pieces.at(box.face_groups[row]).axis;
+    const double* origin = box.source_points.data() + 3 * box.source_faces[3 * row];
+    std::array<double, 9> plane{origin[0], origin[1], origin[2], 0, 0, 0, 0, 0, 0};
+    plane[3 + static_cast<std::size_t>((axis + 1) % 3)] = 1.0;
+    plane[6 + static_cast<std::size_t>((axis + 2) % 3)] = 1.0;
+    box.face_planes.insert(box.face_planes.end(), plane.begin(), plane.end());
+    box.face_plane_tolerances.push_back(1e-9);
+  }
+  for (std::size_t cell = 0; cell < box.tetrahedra.size() / 4; ++cell) {
+    const std::int32_t* v = box.tetrahedra.data() + 4 * cell;
+    PHX_CHECK(orient3d(box.points.data() + 3 * v[0], box.points.data() + 3 * v[1],
+                       box.points.data() + 3 * v[2], box.points.data() + 3 * v[3]) > 0);
+  }
+  return box;
+}
+
+// How a split point is placed on the boundary edge ab between the facets
+// abc and abd: the rounded midpoint (with or without its exact stencil),
+// that point one ulp off the plane, or a point of the plane inside or
+// outside the quadrilateral acbd.
+enum class SplitKind { kMidpoint, kOffPlane, kInside, kOutside };
+
+struct SplitPlan {
+  std::int32_t a = -1;
+  std::int32_t b = -1;
+  TetEditVertex vertex;
+  SplitKind kind = SplitKind::kMidpoint;
+  // abc and abd belong to two face groups.
+  bool two_groups = false;
+};
+
+std::optional<SplitPlan> plan_split(const TetMesh& mesh, const Banks& banks, Generator& generator,
+                                    bool valid_only) {
+  auto chosen = banks.facets.begin();
+  std::advance(chosen, static_cast<std::ptrdiff_t>(generator.pick(banks.facets.size())));
+  const TetSnapshotFacet& facet = chosen->second;
+  const std::size_t corner = generator.pick(3);
+  const std::uint64_t a_id = facet.vertices[corner];
+  const std::uint64_t b_id = facet.vertices[(corner + 1) % 3];
+  if (banks.segments.contains(sorted_edge(a_id, b_id))) return std::nullopt;
+  std::vector<std::int32_t> apexes;
+  std::set<std::int32_t> groups;
+  for (const auto& [key, other] : banks.facets) {
+    if (std::find(key.begin(), key.end(), a_id) == key.end() ||
+        std::find(key.begin(), key.end(), b_id) == key.end()) {
+      continue;
+    }
+    groups.insert(other.source);
+    for (std::uint64_t id : key) {
+      if (id != a_id && id != b_id) apexes.push_back(mesh.vertex_slot(id));
+    }
+  }
+  if (apexes.size() != 2) return std::nullopt;
+  SplitPlan plan;
+  plan.two_groups = groups.size() == 2;
+  plan.a = mesh.vertex_slot(a_id);
+  plan.b = mesh.vertex_slot(b_id);
+  const double* pa = mesh.point(plan.a);
+  const double* pb = mesh.point(plan.b);
+  // The plane's axis: the coordinate shared by a, b and both apexes.
+  int axis = -1;
+  for (int candidate = 0; candidate < 3; ++candidate) {
+    bool shared = pa[candidate] == pb[candidate];
+    for (std::int32_t apex : apexes) shared = shared && mesh.point(apex)[candidate] == pa[candidate];
+    if (shared) axis = candidate;
+  }
+  if (axis < 0) return std::nullopt;
+  const double draw = std::uniform_real_distribution<double>(0.0, 1.0)(generator.random());
+  plan.kind = valid_only || draw < 0.5 ? SplitKind::kMidpoint
+              : draw < 0.65            ? SplitKind::kOffPlane
+              : draw < 0.85            ? SplitKind::kInside
+                                       : SplitKind::kOutside;
+  TetEditVertex& vertex = plan.vertex;
+  vertex.id = generator.fresh_id();
+  for (std::size_t k = 0; k < 3; ++k) vertex.carrier[k] = 0.5 * (pa[k] + pb[k]);
+  switch (plan.kind) {
+    case SplitKind::kMidpoint:
+      if (generator.chance(0.5)) vertex.ancestry = {{a_id, {}, 0.5}, {b_id, {}, 0.5}};
+      break;
+    case SplitKind::kOffPlane:
+      vertex.carrier[static_cast<std::size_t>(axis)] =
+          std::nextafter(vertex.carrier[static_cast<std::size_t>(axis)], 2.0);
+      break;
+    case SplitKind::kInside:
+    case SplitKind::kOutside: {
+      const double* apex = mesh.point(apexes[generator.pick(2)]);
+      const double s = plan.kind == SplitKind::kInside
+                           ? std::uniform_real_distribution<double>(0.05, 0.9)(generator.random())
+                           : std::uniform_real_distribution<double>(1.1, 1.6)(generator.random());
+      const std::array<double, 3> middle = vertex.carrier;
+      for (std::size_t k = 0; k < 3; ++k) vertex.carrier[k] = middle[k] + s * (apex[k] - middle[k]);
+      vertex.carrier[static_cast<std::size_t>(axis)] = pa[axis];
+      break;
+    }
+  }
+  return plan;
+}
+
+// The kSplit edit of split_boundary_edge's contract for `plan` on `mesh`,
+// with fresh identities.
+TetEdit contract_split(const TetMesh& mesh, const LocalIncidence& incidence, const Banks& banks,
+                       const SplitPlan& plan, Generator& generator) {
+  const std::uint64_t a_id = mesh.vertex_id(plan.a);
+  const std::uint64_t b_id = mesh.vertex_id(plan.b);
+  TetEdit operation;
+  operation.kind = TetEditKind::kSplit;
+  operation.split_edges.push_back({a_id, b_id});
+  operation.changed_vertices.push_back(plan.vertex);
+  const std::vector<std::int32_t> star(incidence.edge_star(plan.a, plan.b).begin(),
+                                       incidence.edge_star(plan.a, plan.b).end());
+  for (std::int32_t cell : star) {
+    const Tetrahedron& tet = mesh.tet(cell);
+    operation.removed_cell_ids.push_back(mesh.cell_id(cell));
+    const int slot_a = vertex_slot(tet, plan.a);
+    const int slot_b = vertex_slot(tet, plan.b);
+    for (const int replaced : {slot_b, slot_a}) {
+      TetEditCell child;
+      child.id = generator.fresh_id();
+      child.region = mesh.complex().region(cell);
+      child.ancestor_cell_ids = {mesh.cell_id(cell)};
+      for (int corner = 0; corner < 4; ++corner) {
+        const auto index = static_cast<std::size_t>(corner);
+        child.vertices[index] = corner == replaced ? plan.vertex.id : mesh.vertex_id(tet.v[corner]);
+        child.facet_sources[index] = corner == (replaced == slot_b ? slot_a : slot_b)
+                                         ? kNoConstraint
+                                         : mesh.complex().constraint(cell, corner);
+      }
+      operation.replacement_cells.push_back(child);
+    }
+  }
+  for (const auto& [key, facet] : banks.facets) {
+    if (std::find(key.begin(), key.end(), a_id) == key.end() ||
+        std::find(key.begin(), key.end(), b_id) == key.end()) {
+      continue;
+    }
+    operation.removed_facet_ids.push_back(facet.id);
+    for (const std::uint64_t replaced : {b_id, a_id}) {
+      TetEditFacet half{generator.fresh_id(), facet.vertices, facet.source, facet.orientation, false};
+      std::replace(half.vertices.begin(), half.vertices.end(), replaced, plan.vertex.id);
+      operation.replacement_facets.push_back(half);
+    }
+  }
+  return operation;
+}
+
+// A relocation of a facet or segment vertex toward (or past) a link vertex
+// on its carrier, or toward an interior link vertex (off the carrier).
+enum class MoveKind { kWithin, kPast, kOff };
+
+struct MovePlan {
+  LocalIncidence::Star star;
+  TetEditVertex vertex;
+  MoveKind kind = MoveKind::kWithin;
+  std::int8_t dimension = 0;
+};
+
+std::optional<MovePlan> plan_move(const Box& box, bool witnessed, const TetMesh& mesh,
+                                  const LocalIncidence& incidence, const Banks& banks,
+                                  Generator& generator) {
+  std::int32_t v = -1;
+  for (int attempt = 0; attempt < 64 && v < 0; ++attempt) {
+    const auto slot = static_cast<std::int32_t>(generator.pick(mesh.vertex_slot_count()));
+    const std::int8_t dimension = mesh.vertex_dimension(slot);
+    if (mesh.live_vertex(slot) && (dimension == 1 || dimension == 2)) v = slot;
+  }
+  if (v < 0) return std::nullopt;
+  const std::uint64_t v_id = mesh.vertex_id(v);
+  const std::int8_t dimension = mesh.vertex_dimension(v);
+  std::set<std::int32_t> v_groups;
+  for (const auto& [key, facet] : banks.facets) {
+    if (std::find(key.begin(), key.end(), v_id) != key.end()) v_groups.insert(facet.source);
+  }
+  const double draw = std::uniform_real_distribution<double>(0.0, 1.0)(generator.random());
+  const MoveKind kind = draw < 0.6 ? MoveKind::kWithin : draw < 0.8 ? MoveKind::kPast : MoveKind::kOff;
+  // Link vertices on the carrier: along a segment through v, or on a facet
+  // of each of v's groups; off it: interior vertices.
+  std::vector<std::int32_t> targets;
+  for (std::int32_t x : generator.link(mesh, incidence, v)) {
+    const std::uint64_t x_id = mesh.vertex_id(x);
+    bool on = true;
+    if (dimension == 1) {
+      on = banks.segments.contains(sorted_edge(v_id, x_id));
+    } else {
+      for (std::int32_t group : v_groups) {
+        bool shares = false;
+        for (const auto& [key, facet] : banks.facets) {
+          shares = shares || (facet.source == group &&
+                              std::find(key.begin(), key.end(), x_id) != key.end());
+        }
+        on = on && shares;
+      }
+    }
+    if (kind == MoveKind::kOff ? mesh.vertex_dimension(x) == 3 : on) targets.push_back(x);
+  }
+  if (targets.empty()) return std::nullopt;
+  const std::int32_t x = targets[generator.pick(targets.size())];
+  MovePlan plan{incidence.vertex_star(v), {}, kind, dimension};
+  TetEditVertex& vertex = plan.vertex;
+  vertex.id = v_id;
+  vertex.protection_radius = mesh.protection_radius(v);
+  vertex.protected_vertex = mesh.protected_vertex(v);
+  vertex.witness = mesh.witness(v);
+  // Witnessed boxes move by dyadic steps, so the witness stays exact.
+  const double t = kind == MoveKind::kPast ? (witnessed ? 2.0 : 2.5)
+                   : witnessed          ? 0.5
+                                        : std::uniform_real_distribution<double>(0.2, 0.7)(generator.random());
+  const double* p = mesh.point(v);
+  const double* q = mesh.point(x);
+  for (std::size_t k = 0; k < 3; ++k) vertex.carrier[k] = p[k] + t * (q[k] - p[k]);
+  const SourceWitness& witness = mesh.witness(v);
+  if (witness.stratum == SourceStratum::kSegment) {
+    // Along the segment by dyadic parameter steps toward (or past) x; off
+    // it, or past its end, the old witness no longer matches the carrier.
+    double end = 0.0;
+    if (kind != MoveKind::kOff && segment_parameter(box, mesh, x, witness.entity, end)) {
+      const double step = kind == MoveKind::kPast ? 2.0 : 0.5;
+      segment_point(box, witness.entity, witness.parameters[0] + step * (end - witness.parameters[0]),
+                    vertex.carrier.data(), vertex.witness);
+    }
+    return plan;
+  }
+  if (!witnessed) {
+    // A cube vertex keeps its sides' coordinates exactly on the carrier.
+    if (kind != MoveKind::kOff) {
+      for (std::size_t k = 0; k < 3; ++k) {
+        if (p[k] == q[k]) vertex.carrier[k] = p[k];
+      }
+    }
+    return plan;
+  }
+  const Point target{vertex.carrier[0], vertex.carrier[1], vertex.carrier[2]};
+  std::optional<SourceWitness> moved;
+  if (witness.stratum == SourceStratum::kFacet) {
+    const std::int32_t group = box.face_groups[static_cast<std::size_t>(witness.entity)];
+    if (on_piece(box, group, target)) moved = facet_witness(box, group, target);
+  }
+  // Off its source the old witness no longer matches the carrier.
+  if (moved) vertex.witness = *moved;
+  return plan;
+}
+
+TetEdit relocation_edit(const TetMesh& mesh, const MovePlan& plan) {
+  TetEdit operation;
+  operation.kind = TetEditKind::kRelocate;
+  for (std::int32_t cell : plan.star) operation.removed_cell_ids.push_back(mesh.cell_id(cell));
+  operation.changed_vertices.push_back(plan.vertex);
+  return operation;
+}
+
+// Verdicts by edit (split kind, or 10 + move kind for a dimension-one and
+// 20 + move kind for a dimension-two relocation) and status.
+using EditTally = std::map<std::pair<int, TetEditStatus>, int>;
+// Applied midpoint splits whose point is off the exact edge (no per-facet
+// exact coverage).
+int inexact_splits = 0;
+// Refused splits of an edge between facets of two groups.
+int two_group_refusals = 0;
+
+// One random split through split_boundary_edge on `local` and its contract
+// edit through apply_edit_batch on `batch`: false when they disagree.
+bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
+                   LocalIncidence& incidence, Banks& banks, Generator& generator, EditTally& tally,
+                   bool valid_only) {
+  const std::optional<SplitPlan> plan = plan_split(local, banks, generator, valid_only);
+  if (!plan) return true;
+  TetEdit operation = contract_split(local, incidence, banks, *plan, generator);
+  const double* endpoints[3] = {local.point(plan->a), local.point(plan->b), nullptr};
+  const bool exact = on_source_entity(endpoints, SourceStratum::kSegment, plan->vertex.carrier.data());
+  std::vector<std::uint64_t> created;
+  const TetEditStatus local_status =
+      incidence.split_boundary_edge(local, plan->a, plan->b, plan->vertex, created);
+  if (local_status == TetEditStatus::kApplied) {
+    // The local edit's identities: its cells in contract order, its facets
+    // by their vertices.
+    PHX_CHECK(created.size() == operation.replacement_cells.size());
+    if (created.size() != operation.replacement_cells.size()) return false;
+    for (std::size_t row = 0; row < created.size(); ++row) {
+      operation.replacement_cells[row].id = created[row];
+    }
+    TetMeshSnapshot after;
+    PHX_CHECK(local.snapshot(after) == TetEditStatus::kApplied);
+    for (TetEditFacet& facet : operation.replacement_facets) {
+      const auto found = std::find_if(
+          after.constrained_facets.begin(), after.constrained_facets.end(),
+          [&](const TetSnapshotFacet& made) { return made.vertices == facet.vertices; });
+      PHX_CHECK(found != after.constrained_facets.end());
+      if (found == after.constrained_facets.end()) return false;
+      facet.id = found->id;
+    }
+  }
+  const TetEditStatus batch_status = apply_batch(batch, operation);
+  ++tally[{static_cast<int>(plan->kind), batch_status}];
+  if (local_status != batch_status) {
+    std::fprintf(stderr, "%s edit %d (split kind %d): local %s, batch %s\n", name, edit,
+                 static_cast<int>(plan->kind), status_name(local_status),
+                 status_name(batch_status));
+    return false;
+  }
+  // Two groups' faces split only at an exact point of their edge.
+  if (plan->two_groups) {
+    PHX_CHECK(local_status != TetEditStatus::kApplied || exact);
+    two_group_refusals += local_status != TetEditStatus::kApplied ? 1 : 0;
+  }
+  if (local_status == TetEditStatus::kApplied) {
+    banks.apply(operation);
+    inexact_splits += plan->kind == SplitKind::kMidpoint && !exact ? 1 : 0;
+  }
+  return true;
+}
+
+// One random boundary relocation through LocalIncidence::relocate on
+// `local` and apply_relocation_edit (odd edits) or apply_edit_batch on
+// `batch`: false when they disagree.
+bool compare_move(const char* name, int edit, const Box& box, bool witnessed, TetMesh& local,
+                  TetMesh& batch, LocalIncidence& incidence, const Banks& banks,
+                  Generator& generator, EditTally& tally) {
+  const std::optional<MovePlan> plan = plan_move(box, witnessed, local, incidence, banks, generator);
+  if (!plan) return true;
+  const TetEdit operation = relocation_edit(local, *plan);
+  const TetEditStatus local_status =
+      incidence.relocate(local, std::span<const TetEditVertex>(&plan->vertex, 1), plan->star);
+  TetEditStatus batch_status = TetEditStatus::kApplied;
+  if (edit % 2 == 1) {
+    PHX_CHECK(batch.apply_relocation_edit(operation, batch_status));
+  } else {
+    batch_status = apply_batch(batch, operation);
+  }
+  ++tally[{10 * plan->dimension + static_cast<int>(plan->kind), batch_status}];
+  if (local_status != batch_status) {
+    std::fprintf(stderr, "%s edit %d (dimension %d move kind %d): local %s, batch %s\n", name,
+                 edit, plan->dimension, static_cast<int>(plan->kind), status_name(local_status),
+                 status_name(batch_status));
+    return false;
+  }
+  return true;
+}
+
+// Random boundary splits and relocations on two copies of one mesh, one
+// edited locally and one by the batch paths, compared after every edit.
+void split_relocate_differential(const char* name, const Box& box, bool witnessed,
+                                 BoundaryPolicy policy, double protected_share,
+                                 double split_share, int edits, std::uint32_t seed,
+                                 EditTally& tally) {
+  std::mt19937 random(seed);
+  std::vector<std::int8_t> protected_vertices(box.points.size() / 3, 0);
+  for (std::int8_t& flag : protected_vertices) {
+    flag = std::uniform_real_distribution<double>(0.0, 1.0)(random) < protected_share ? 1 : 0;
+  }
+  TetMesh local(policy);
+  TetMesh batch(policy);
+  if (!build(local, box, protected_vertices) || !build(batch, box, protected_vertices)) return;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local));
+  Banks banks(local);
+  Generator generator(box, seed);
+  for (int edit = 0; edit < edits; ++edit) {
+    const bool agreed =
+        generator.chance(split_share)
+            ? compare_split(name, edit, local, batch, incidence, banks, generator, tally, false)
+            : compare_move(name, edit, box, witnessed, local, batch, incidence, banks, generator,
+                           tally);
+    if (!agreed || !same_state(local, batch)) {
+      std::fprintf(stderr, "%s edit %d: %s\n", name, edit,
+                   agreed ? "states differ" : "verdicts differ");
+      PHX_CHECK(false);
+      return;
+    }
+    if (local.generation() != batch.generation() || !consistent_complex(local) ||
+        !incidence_current(local, incidence)) {
+      std::fprintf(stderr, "%s edit %d: inconsistent local complex or index\n", name, edit);
+      PHX_CHECK(false);
+      return;
+    }
+  }
+  std::printf("%s: %d edits compared\n", name, edits);
+}
+
+void splits_and_relocations_match_the_batch() {
+  EditTally tally;
+  split_relocate_differential("cube", make_cube({4, 4, 4}, false, 31), false,
+                              BoundaryPolicy::kConforming, 0.0, 0.5, 900, 31, tally);
+  split_relocate_differential("split-side cube", make_cube({4, 4, 2}, true, 32), false,
+                              BoundaryPolicy::kConforming, 0.1, 0.6, 700, 32, tally);
+  split_relocate_differential("fixed cube", make_cube({2, 2, 2}, false, 33), false,
+                              BoundaryPolicy::kFixed, 0.0, 0.5, 150, 33, tally);
+  split_relocate_differential("box", make_box({4, 4, 4}, false), true,
+                              BoundaryPolicy::kConforming, 0.1, 0.0, 700, 34, tally);
+  split_relocate_differential("two-region box", make_box({4, 4, 4}, true), true,
+                              BoundaryPolicy::kConforming, 0.0, 0.0, 700, 35, tally);
+  for (const auto& [key, count] : tally) {
+    std::printf("  edit %d %s: %d\n", key.first, status_name(key.second), count);
+  }
+  const auto count = [&](int edit, TetEditStatus status) {
+    const auto found = tally.find({edit, status});
+    return found == tally.end() ? 0 : found->second;
+  };
+  constexpr auto applied = TetEditStatus::kApplied;
+  constexpr auto geometry = TetEditStatus::kInvalidGeometry;
+  constexpr auto topology = TetEditStatus::kRejectedTopology;
+  // Declared-pair splits apply off the exact edge; off the plane (within
+  // its tolerance) the pair proof refuses them, and inverted halves, points
+  // outside acbd and pairs of two groups are refused.
+  std::printf("  declared splits applied off the exact edge: %d\n", inexact_splits);
+  PHX_CHECK(count(0, applied) > 0 && inexact_splits > 0);
+  PHX_CHECK(count(1, topology) > 0);
+  PHX_CHECK(count(2, applied) > 0 && count(2, geometry) > 0);
+  PHX_CHECK(count(3, geometry) > 0);
+  std::printf("  two-group splits refused: %d\n", two_group_refusals);
+  PHX_CHECK(two_group_refusals > 0);
+  // Relocations within the carrier apply; past the link they invert a star
+  // cell or leave the carrier, and toward the interior they leave it.
+  for (const int dimension : {10, 20}) {
+    PHX_CHECK(count(dimension, applied) > 0);
+    PHX_CHECK(count(dimension + 1, geometry) > 0);
+    PHX_CHECK(count(dimension + 2, geometry) > 0);
+  }
+}
+
 // Periodic and implicit-bound meshes are outside the contract.
 void unsupported_meshes_are_refused() {
   const Box box = make_box({2, 2, 2}, false);
@@ -1391,12 +1912,129 @@ double seconds_per_edit(std::array<int, 3> n, std::uint32_t seed) {
   return timed == 0 ? 0.0 : std::chrono::duration<double>(spent).count() / timed;
 }
 
+// Time per local split and per relocation on Gmsh-like cubes of about 1e4
+// and 1e5 cells: declared-pair midpoint splits and moves within the carrier.
+std::array<double, 2> seconds_per_split_and_move(std::array<int, 3> n, std::uint32_t seed) {
+  const Box box = make_cube(n, false, seed);
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  if (!build(mesh, box, {})) return {};
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(mesh));
+  Banks banks(mesh);
+  Generator generator(box, seed);
+  using Clock = std::chrono::steady_clock;
+  std::array<Clock::duration, 2> spent{};
+  std::array<int, 2> timed{};
+  int splits = 0;
+  int moves = 0;
+  bool warmed = false;
+  for (int attempt = 0; attempt < 20000 && timed[0] + timed[1] < 600; ++attempt) {
+    Clock::duration elapsed{};
+    if (attempt % 2 == 0) {
+      const std::optional<SplitPlan> plan = plan_split(mesh, banks, generator, true);
+      if (!plan) continue;
+      const TetEdit operation = contract_split(mesh, incidence, banks, *plan, generator);
+      std::vector<std::uint64_t> created;
+      const Clock::time_point start = Clock::now();
+      const TetEditStatus status =
+          incidence.split_boundary_edge(mesh, plan->a, plan->b, plan->vertex, created);
+      elapsed = Clock::now() - start;
+      if (status == TetEditStatus::kApplied) {
+        // The banks need only the facets' vertices and sources.
+        banks.apply(operation);
+        ++splits;
+      }
+    } else {
+      const std::optional<MovePlan> plan = plan_move(box, false, mesh, incidence, banks, generator);
+      if (!plan || plan->kind != MoveKind::kWithin) continue;
+      // The caller's star lookup is part of the edit.
+      const Clock::time_point start = Clock::now();
+      const LocalIncidence::Star star = incidence.vertex_star(mesh.vertex_slot(plan->vertex.id));
+      const TetEditStatus status =
+          incidence.relocate(mesh, std::span<const TetEditVertex>(&plan->vertex, 1), star);
+      elapsed = Clock::now() - start;
+      moves += status == TetEditStatus::kApplied ? 1 : 0;
+    }
+    // The first edit builds the bank indexes.
+    if (!warmed) {
+      warmed = true;
+      continue;
+    }
+    spent[attempt % 2] += elapsed;
+    ++timed[attempt % 2];
+  }
+  PHX_CHECK(splits > 50 && moves > 50);
+  std::array<double, 2> seconds{};
+  for (std::size_t kind = 0; kind < 2; ++kind) {
+    seconds[kind] = timed[kind] == 0 ? 0.0
+                                     : std::chrono::duration<double>(spent[kind]).count() / timed[kind];
+  }
+  return seconds;
+}
+
+// apply_edit_batch's time for one batch of `count` disjoint valid boundary
+// swaps on a box (informational: the batch copies the state and rebuilds
+// the candidate complex per edit).
+double batch_seconds(std::array<int, 3> n, int count, std::uint32_t seed) {
+  const Box box = make_box(n, false);
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  // Each swap is checked alone on a scratch copy; disjoint swaps stay valid
+  // in one batch.
+  TetMesh scratch(BoundaryPolicy::kConforming);
+  if (!build(mesh, box, {}) || !build(scratch, box, {})) return 0.0;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(mesh));
+  Banks banks(mesh);
+  Generator generator(box, seed);
+  TetEditBatch batch{mesh.generation(), mesh.source_revision(), mesh.frame_id(),
+                     mesh.identity_bound(), {}, mesh.source_id(),
+                     mesh.source_map_id(), mesh.periodic_identity(), std::nullopt};
+  std::set<std::int32_t> touched;
+  for (int attempt = 0; attempt < 20000 && static_cast<int>(batch.operations.size()) < count;
+       ++attempt) {
+    const std::optional<Planned> plan = generator.swap(mesh, incidence, banks, Perturbation::kNone);
+    if (!plan) continue;
+    std::set<std::int32_t> vertices;
+    for (std::uint64_t id : plan->operation.removed_cell_ids) {
+      for (std::int32_t vertex : mesh.tet(mesh.cell_slot(id)).v) vertices.insert(vertex);
+    }
+    if (std::any_of(vertices.begin(), vertices.end(),
+                    [&](std::int32_t vertex) { return touched.contains(vertex); }) ||
+        apply_batch(scratch, plan->operation) != TetEditStatus::kApplied) {
+      continue;
+    }
+    touched.insert(vertices.begin(), vertices.end());
+    batch.operations.push_back(plan->operation);
+  }
+  std::vector<TetEditResult> results;
+  const auto start = std::chrono::steady_clock::now();
+  const TetEditStatus status = mesh.apply_edit_batch(batch, results);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  PHX_CHECK(status == TetEditStatus::kApplied && static_cast<int>(batch.operations.size()) == count);
+  return std::chrono::duration<double>(elapsed).count();
+}
+
 void boundary_edits_are_star_local() {
   const double small = seconds_per_edit({16, 16, 8}, 21);   // 12288 cells
   const double large = seconds_per_edit({32, 32, 16}, 21);  // 98304 cells
   std::printf("boundary edit: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
               1e6 * small, 1e6 * large);
   PHX_CHECK(small > 0.0 && large < 3.0 * small);
+  const std::array<double, 2> small_cd = seconds_per_split_and_move({16, 16, 8}, 22);
+  const std::array<double, 2> large_cd = seconds_per_split_and_move({32, 32, 16}, 22);
+  std::printf("boundary split: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
+              1e6 * small_cd[0], 1e6 * large_cd[0]);
+  std::printf("boundary relocation: %.2f us per edit at 1.2e4 cells, %.2f us at 9.8e4 cells\n",
+              1e6 * small_cd[1], 1e6 * large_cd[1]);
+  for (std::size_t kind = 0; kind < 2; ++kind) {
+    PHX_CHECK(small_cd[kind] > 0.0 && large_cd[kind] < 3.0 * small_cd[kind]);
+  }
+  for (const std::array<int, 3> n : {std::array<int, 3>{16, 16, 8}, std::array<int, 3>{32, 32, 16}}) {
+    const double one = batch_seconds(n, 1, 23);
+    const double many = batch_seconds(n, 32, 23);
+    std::printf("apply_edit_batch at %d cells: %.2f ms for 1 swap, %.2f ms for 32 swaps\n",
+                6 * n[0] * n[1] * n[2], 1e3 * one, 1e3 * many);
+  }
 }
 
 }  // namespace
@@ -1404,6 +2042,7 @@ void boundary_edits_are_star_local() {
 int main() {
   boundary_edits_match_apply_edit_batch();
   unsupported_meshes_are_refused();
+  splits_and_relocations_match_the_batch();
   boundary_edits_are_star_local();
   return phx::mc::test::finish("test_local_boundary_edits");
 }
