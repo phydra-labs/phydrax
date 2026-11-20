@@ -123,6 +123,16 @@
     "query-locate": {
       "100000": {"tool": "libigl", "elements_per_second": 810258, "allowed_ratio": 1.0},
       "1000000": {"tool": "libigl", "elements_per_second": 793931, "allowed_ratio": 1.0}
+    },
+    "overset-hex": {
+      "10000": {"tool": "TIOGA 6c72637 one rank (ledger F13: profile + performConnectivity, mexclude 3, nfringe 1)", "seconds": 0.265, "allowed_ratio": 1.0},
+      "100000": {"tool": "TIOGA 6c72637 one rank (ledger F13: profile + performConnectivity, mexclude 3, nfringe 1)", "seconds": 0.430, "allowed_ratio": 1.0},
+      "1000000": {"tool": "TIOGA 6c72637 one rank (ledger F13: profile + performConnectivity, mexclude 3, nfringe 1)", "seconds": 1.377, "allowed_ratio": 1.0}
+    },
+    "overset-tet": {
+      "10000": {"tool": "TIOGA 6c72637 one rank (ledger F13 tet variant, z-sorted cells)", "seconds": 0.053, "allowed_ratio": 1.0},
+      "100000": {"tool": "TIOGA 6c72637 one rank (ledger F13 tet variant, z-sorted cells)", "seconds": 0.496, "allowed_ratio": 1.0},
+      "1000000": {"tool": "TIOGA 6c72637 one rank (ledger F13 tet variant, z-sorted cells)", "seconds": 0.871, "allowed_ratio": 1.0}
     }
   }
 }
