@@ -918,8 +918,20 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                              std::abs(start[1] - almost_end[1]) ? 0 : 1;
     const int free_axis = 1 - axis;
     const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
-    const double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
+    double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
     if (!(limit > 0.0)) return PHX_MC_INVALID_INPUT;
+    // Half the distance to the nearest pole ahead on this axis (a sphere's
+    // other pole). Both zones extend toward each other, and without this bound
+    // each could end with a ring at the common midline: on the sphere at
+    // h/r = 0.6 and theta 0.8, two rings 2 ulps apart at the equator, whose
+    // zero-area strip left a boundary that tetrahedral improvement churned
+    // on for minutes.
+    double half_gap = std::numeric_limits<double>::infinity();
+    for (const PoleBoundary& other : boundary.poles) {
+      const double gap = direction * (boundary.vertices[other.first_vertex].uv[axis] - start[axis]);
+      if (gap > 0.0) half_gap = std::min(half_gap, 0.5 * gap);
+    }
+    limit = std::min(limit, half_gap);
     const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
     double jet[18];
     if (!surface_jet(metric, middle, jet)) return PHX_MC_INVALID_INPUT;
@@ -961,6 +973,13 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       size = std::min(size, std::sqrt(4.0 * layer * metric.tolerance / curvature));
     double spacing = std::min(limit, size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
+    // The last ring stays half a spacing short of the midline, so the two
+    // zones' last rings are at least a spacing apart; a spacing of at most
+    // 2/3 of the half gap keeps one ring.
+    if (std::isfinite(half_gap)) {
+      spacing = std::min(spacing, half_gap * (2.0 / 3.0));
+      limit = half_gap - 0.5 * spacing;
+    }
     double width = std::min(limit, pole_ring_width(spacing));
     while (width < limit) {
       double uv[2] = {middle[0], middle[1]};

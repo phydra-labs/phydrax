@@ -423,6 +423,29 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
         )
 
 
+@pytest.mark.parametrize("theta", [0.5, 0.6, 0.7, 0.8, 0.9])
+def test_coarse_sphere_pole_zones_meet_without_coincident_rings(theta: float) -> None:
+    # At h/r = 0.6 the two pole zones reach the equator; each used to end with
+    # a ring there (v = +-2 ulps at theta 0.7 and 0.8), and the zero-area strip
+    # between the rings sent the fixed-boundary volume stage into minutes of
+    # unresolvable improvement. The zones now stop half a spacing short of the
+    # midline: no surface edge is degenerate and the solid is resolved at once.
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_sphere_model())).model
+    sizes = np.full((model.surface_nodes.size,), 0.3, dtype=np.float64)
+    tolerances = np.full((model.surface_nodes.size,), 0.05, dtype=np.float64)
+    curve_tolerances = np.full((model.curve_nodes.size,), 0.05, dtype=np.float64)
+    solid = cad_mesh_solid(
+        model, sizes, tolerances, curve_tolerances, tolerance_fraction=theta
+    )
+    surface = solid.surface
+    corners = surface.points[surface.triangles]
+    edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+    assert edges.min() > 0.1 * 0.3
+    assert solid.status is MeshcoreStatus.OK
+    assert solid.volume.stats["unmet_cells"][0] == 0
+    assert solid.volume.stats["improve_inserted"][0] == 0
+
+
 def _washer() -> phx.geometry.brep.BRepModel:
     brep = phx.geometry.brep
     return brep.brep_revolution(
