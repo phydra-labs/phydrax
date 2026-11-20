@@ -25,6 +25,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from ._exact_kernels import bvh_pair_blocks
+from ._fixed_order import ordered_sum, product
 from ._jax_config import x64_enabled
 from ._meshcore import meshcore_available
 from ._strict import StrictModule
@@ -776,23 +777,22 @@ def reduce_packed_bvh_nodes(
         case "sum":
             identity = jnp.asarray(0.0, dtype=values.dtype)
             combine = jnp.add
-            reduce = jnp.sum
         case "min":
             identity = jnp.asarray(jnp.inf, dtype=values.dtype)
             combine = jnp.minimum
-            reduce = jnp.min
         case "max":
             identity = jnp.asarray(-jnp.inf, dtype=values.dtype)
             combine = jnp.maximum
-            reduce = jnp.max
         case _:
             raise ValueError(f"Unsupported BVH node reduction {reduction!r}.")
     trailing = (1,) * (values.ndim - 1)
     valid = bvh.leaf_items >= 0
     gathered = values[jnp.maximum(bvh.leaf_items, 0)]
-    leaf_values = reduce(
-        jnp.where(valid.reshape(valid.shape + trailing), gathered, identity), axis=1
-    )
+    masked = jnp.where(valid.reshape(valid.shape + trailing), gathered, identity)
+    # Slots combine left to right so every execution mode rounds sums alike.
+    leaf_values = masked[:, 0]
+    for slot in range(1, masked.shape[1]):
+        leaf_values = combine(leaf_values, masked[:, slot])
     nodes = jnp.full((bvh.node_count,) + values.shape[1:], identity, dtype=values.dtype)
     nodes = nodes.at[bvh.leaf_node].set(leaf_values)
     # Children occupy the level after their parent, so one vectorized update per
@@ -841,9 +841,15 @@ def refit_packed_bvh_bounds(
 
 
 def aabb_dist2(p: Array, bmin: Array, bmax: Array, /) -> Array:
+    """Squared point-box distance in the fixed schedule of the native kernels.
+
+    Squares are rounded on their own and summed left to right over the axes, so
+    every execution mode rounds alike; the computed bound never exceeds the
+    computed squared distance of a point inside the box, ties included.
+    """
     z = jnp.asarray(0.0, dtype=p.dtype)
     d = jnp.maximum(z, jnp.maximum(bmin - p, p - bmax))
-    return jnp.sum(d * d, axis=-1)
+    return ordered_sum(product(d, d))
 
 
 def beam_select_nodes(

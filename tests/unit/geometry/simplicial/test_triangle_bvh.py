@@ -190,80 +190,143 @@ def test_nearest_faces_orders_exact_geometric_ties_by_original_index() -> None:
     np.testing.assert_array_equal(nearest.distance_squared, ((4.0, 4.0),))
 
 
-def _native_case() -> tuple[TriangleBVH, Any, Any]:
+def _sphere_case() -> tuple[TriangleBVH, Any]:
     vertices, faces = _sphere(32, 20)
     index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
     points = np.random.default_rng(8).uniform(-1.3, 1.3, (400, 3))
-    # Corners and edge midpoints raised off the surface reach vertex and edge features.
+    # Corners and edge midpoints off the surface are equidistant from the faces
+    # sharing them: ties at the vertex and edge features.
     edge_points = 0.5 * (vertices[faces[:, 0]] + vertices[faces[:, 1]])
-    points = np.concatenate((points, 1.05 * vertices[:40], 0.97 * edge_points[:40]))
-    return index, vertices, points
+    points = np.concatenate(
+        (points, 1.05 * vertices, 0.97 * vertices, 1.03 * edge_points, 0.97 * edge_points)
+    )
+    return index, points
+
+
+def _grid_case() -> tuple[TriangleBVH, Any]:
+    # A structured plane z = 0 with grid-aligned queries: corners, edge
+    # midpoints, and cell centers above, below, and on it tie between faces.
+    n = 8
+    axis = np.arange(n + 1, dtype=np.float64) / n
+    vertices = np.stack(
+        (*np.meshgrid(axis, axis, indexing="ij"), np.zeros((n + 1, n + 1))), axis=-1
+    ).reshape((-1, 3))
+    i, j = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    a = (i * (n + 1) + j).reshape((-1,))
+    faces = np.concatenate(
+        (np.stack((a, a + n + 1, a + n + 2), 1), np.stack((a, a + n + 2, a + 1), 1))
+    )
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=2))
+    planar = np.arange(-1, 2 * n + 2, dtype=np.float64) / (2 * n)
+    x, y, z = np.meshgrid(planar, planar, np.asarray((-0.25, 0.0, 0.5)), indexing="ij")
+    return index, np.stack((x, y, z), axis=-1).reshape((-1, 3))
+
+
+_NATIVE_CASES = pytest.mark.parametrize(
+    "case", (_sphere_case, _grid_case), ids=("sphere-features", "grid-ties")
+)
+
+
+def _assert_identical(native: Any, traced: Any) -> None:
+    """Equal shapes, dtypes, and bits (signed zeros and NaN payloads included)."""
+    first, second = np.asarray(native), np.asarray(traced)
+    assert first.shape == second.shape and first.dtype == second.dtype
+    np.testing.assert_array_equal(
+        first.view(np.uint8).reshape(first.shape + (-1,)),
+        second.view(np.uint8).reshape(second.shape + (-1,)),
+    )
 
 
 @pytest.mark.meshcore
 @_requires_meshcore
-def test_native_nearest_and_query_match_traced_route() -> None:
-    index, _, points = _native_case()
+@_NATIVE_CASES
+def test_native_nearest_and_query_equal_traced_route(case: Any) -> None:
+    index, points = case()
     native = index.nearest_faces(points, k=2)
     traced = jax.jit(lambda values: index.nearest_faces(values, k=2))(points)
-    np.testing.assert_allclose(
-        native.distance_squared, traced.distance_squared, atol=1e-15
-    )
-    # Faces agree wherever the two nearest are not tied to rounding.
-    gap = np.asarray(traced.distance_squared[:, 1] - traced.distance_squared[:, 0])
-    separated = gap > 1.0e-12
-    np.testing.assert_array_equal(
-        np.asarray(native.items[separated, 0]), np.asarray(traced.items[separated, 0])
-    )
+    _assert_identical(native.items, traced.items)
+    _assert_identical(native.distance_squared, traced.distance_squared)
     query = index.query(points)
     traced_query = jax.jit(lambda values: index.query(values))(points)
-    np.testing.assert_array_equal(
-        np.asarray(query.face_index)[separated],
-        np.asarray(traced_query.face_index)[separated],
-    )
-    np.testing.assert_allclose(query.distance, traced_query.distance, atol=1e-15)
-    np.testing.assert_allclose(
-        np.asarray(query.closest_point)[separated],
-        np.asarray(traced_query.closest_point)[separated],
-        atol=1e-14,
-    )
+    for field in ("face_index", "closest_point", "distance", "normal"):
+        _assert_identical(getattr(query, field), getattr(traced_query, field))
 
 
 @pytest.mark.meshcore
 @_requires_meshcore
-def test_native_winding_numbers_match_traced_route() -> None:
-    index, _, points = _native_case()
+@_NATIVE_CASES
+def test_native_winding_numbers_equal_traced_route(case: Any) -> None:
+    index, points = case()
     exact = index.winding_number(points)
-    traced = jax.jit(lambda values: index.winding_number(values).values)(points)
     assert exact.route is WindingNumberRoute.EXACT
-    np.testing.assert_allclose(exact.values, traced, atol=1e-12)
-    np.testing.assert_array_equal(np.abs(exact.values) > 0.5, np.abs(traced) > 0.5)
+    _assert_identical(
+        exact.values, jax.jit(lambda values: index.winding_number(values).values)(points)
+    )
     fast = index.fast_winding_number(points, opening_angle=2.0)
-    traced_fast = jax.jit(lambda values: index.fast_winding_number(values).values)(points)
     assert fast.route is WindingNumberRoute.FAST_DIPOLE and fast.opening_angle == 2.0
-    np.testing.assert_allclose(fast.values, traced_fast, atol=1e-12)
+    _assert_identical(
+        fast.values,
+        jax.jit(lambda values: index.fast_winding_number(values).values)(points),
+    )
 
 
 @pytest.mark.meshcore
 @_requires_meshcore
-def test_native_signed_distance_matches_traced_route_and_sphere() -> None:
-    index, _, points = _native_case()
+@_NATIVE_CASES
+def test_native_signed_distance_equals_traced_route(case: Any) -> None:
+    index, points = case()
+    for sign in ("pseudonormal", "winding_number"):
+        _assert_identical(
+            index.signed_distance(points, sign=sign),
+            jax.jit(lambda values, sign=sign: index.signed_distance(values, sign=sign))(
+                points
+            ),
+        )
+
+
+@_NATIVE_CASES
+def test_queries_without_native_library_equal_traced_route(
+    case: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Builds without the native library answer eagerly through JAX, bit for
+    # bit as under tracing.
+    from phydrax import _bvh_native
+
+    index, points = case()
+    monkeypatch.setattr(_bvh_native, "meshcore_available", lambda: False)
+    calls = {
+        "nearest": lambda values: index.nearest_faces(values, k=2).distance_squared,
+        "distance": lambda values: index.query(values).distance,
+        "signed": lambda values: index.signed_distance(values),
+        "winding": lambda values: index.winding_number(values).values,
+        "fast": lambda values: index.fast_winding_number(values).values,
+    }
+    for call in calls.values():
+        _assert_identical(call(points), jax.jit(call)(points))
+
+
+def test_prepared_tables_are_independent_of_tracing() -> None:
+    vertices, faces = _sphere()
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
+    moved = vertices * np.asarray((1.2, 0.9, 1.1))
+    eager = index.refit(moved)
+    traced = jax.jit(lambda values: index.refit(values))(moved)
+    _assert_identical(eager.dipoles, traced.dipoles)
+    _assert_identical(eager.feature_normals, traced.feature_normals)
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+def test_signed_distance_sign_matches_the_sphere() -> None:
+    index, points = _sphere_case()
     radius = np.linalg.norm(points, axis=-1)
     outside_band = np.abs(radius - 1.0) > 0.02
     for sign in ("pseudonormal", "winding_number"):
-        native = np.asarray(index.signed_distance(points, sign=sign))
-        traced = np.asarray(
-            jax.jit(lambda values, sign=sign: index.signed_distance(values, sign=sign))(
-                points
-            )
-        )
-        np.testing.assert_allclose(native, traced, atol=1e-15)
+        distance = np.asarray(index.signed_distance(points, sign=sign))
         np.testing.assert_array_equal(
-            (native < 0.0)[outside_band], (radius < 1.0)[outside_band]
+            (distance < 0.0)[outside_band], (radius < 1.0)[outside_band]
         )
-        np.testing.assert_allclose(
-            np.abs(native), np.asarray(index.query(points).distance), atol=1e-15
-        )
+        _assert_identical(np.abs(distance), index.query(points).distance)
     with pytest.raises(ValueError, match="sign"):
         index.signed_distance(points, sign="nearest")  # ty: ignore[invalid-argument-type]
 

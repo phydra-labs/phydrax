@@ -24,6 +24,7 @@ from .._bvh import (
 )
 from .._bvh_native import native_point_queries, tetrahedron_locate
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fixed_order import cross3, dot3, norm3, ordered_sum, product, root
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import Bool, checked, ConvertibleToArray, Dim, Float, Int32, Integer
@@ -175,7 +176,9 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
     Candidate cells come from BVH item boxes that enclose each whole mapped
     cell: the Bernstein control net of the polynomial coordinate map (convex-hull
     property), not the coordinate nodes, so curved cells whose images bulge past
-    their nodes are never pruned.
+    their nodes are never pruned. Affine tetrahedra are inverted exactly by
+    signed-volume ratios instead of Newton iterations, in one fixed schedule
+    shared by the JAX and native routes, so both return identical results.
     """
 
     __strict_contract__ = True
@@ -301,16 +304,21 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 candidates = jnp.take_along_axis(candidates, order, axis=1)
                 candidate_valid = jnp.take_along_axis(candidate_valid, order, axis=1)
                 candidate_capacity = width
-        # Newton resolution works on point x candidate x seed rows, so points
-        # are resolved in chunks of at most _RESOLVE_ROW_BUDGET rows: the
-        # working set stays bounded whatever the number of query points.
-        seed_count = min(
-            self.policy.maximum_seeds,
-            1 + self.cell_map.coordinate_element.reference_nodes.shape[0],
-        )
+        # Resolution works on point x candidate (x seed) rows, so points are
+        # resolved in chunks of at most _RESOLVE_ROW_BUDGET rows: the working
+        # set stays bounded whatever the number of query points.
+        if self._affine_tetrahedra:
+            resolve = _compiled_resolve_affine_tetrahedra
+            seed_count = 1
+        else:
+            resolve = _compiled_resolve_candidates
+            seed_count = min(
+                self.policy.maximum_seeds,
+                1 + self.cell_map.coordinate_element.reference_nodes.shape[0],
+            )
         chunk = max(1, _RESOLVE_ROW_BUDGET // (candidate_capacity * seed_count))
         parts = [
-            _compiled_resolve_candidates(
+            resolve(
                 self,
                 values[start : start + chunk],
                 candidates[start : start + chunk],
@@ -323,14 +331,20 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             return parts[0]
         return jax.tree.map(lambda *rows: jnp.concatenate(rows, axis=0), *parts)
 
+    @property
+    def _affine_tetrahedra(self) -> bool:
+        return (
+            self.cell_map.coordinate_element.degree == 1
+            and self.cell_map.reference_dimension == 3
+            and self.cell_map.ambient_dimension == 3
+        )
+
     def _native_affine_tetrahedra(
         self, values: Array, cell_mask: ConvertibleToArray | None, /
     ) -> bool:
         """Whether `locate` runs natively: concrete float64 affine tetrahedra."""
         return (
-            self.cell_map.coordinate_element.degree == 1
-            and self.cell_map.reference_dimension == 3
-            and self.cell_map.ambient_dimension == 3
+            self._affine_tetrahedra
             and values.dtype == jnp.float64
             and self.coordinates.dtype == jnp.float64
             and native_point_queries(
@@ -338,14 +352,133 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             )
         )
 
+    def _resolve_affine_tetrahedra(
+        self,
+        values: Array,
+        candidates: Array,
+        candidate_valid: Array,
+        search_complete: Array,
+        /,
+    ) -> CellLocationResult:
+        """Affine tetrahedra by exact signed-volume ratios, lowest accepting cell.
+
+        The schedule of `phydrax._fixed_order` and the native
+        `phx_mc_bvh_tetrahedron_locate` agree bit for bit: a candidate with a
+        finite positive determinant accepts `r >= -tol`, `sum(r) <= 1 + tol`.
+        Reference coordinates are exact, so located points report zero
+        iterations and no seed fallback.
+        """
+        tolerance = self.policy.reference_tolerance
+        corners = self.coordinates[self.cells[candidates]]
+        origin = corners[:, :, 0]
+        e1 = corners[:, :, 1] - origin
+        e2 = corners[:, :, 2] - origin
+        e3 = corners[:, :, 3] - origin
+        c23 = cross3(e2, e3)
+        c31 = cross3(e3, e1)
+        c12 = cross3(e1, e2)
+        determinant = dot3(e1, c23)
+        geometry_valid = candidate_valid & jnp.isfinite(determinant) & (determinant > 0.0)
+        offset = values[:, None, :] - origin
+        reference = jnp.stack(
+            (
+                dot3(offset, c23) / determinant,
+                dot3(offset, c31) / determinant,
+                dot3(offset, c12) / determinant,
+            ),
+            axis=-1,
+        )
+        accepted = (
+            geometry_valid
+            & jnp.all(reference >= -tolerance, axis=-1)
+            & (ordered_sum(reference) <= 1.0 + tolerance)
+        )
+        sentinel = self.cell_count
+        order = jnp.argsort(
+            jnp.where(accepted, candidates, sentinel), axis=1, stable=True
+        )
+        sorted_accepted = jnp.take_along_axis(accepted, order, axis=1)
+        candidate_cells = jnp.where(
+            sorted_accepted, jnp.take_along_axis(candidates, order, axis=1), -1
+        )
+        candidate_reference = jnp.where(
+            sorted_accepted[..., None],
+            jnp.take_along_axis(reference, order[..., None], axis=1),
+            0.0,
+        )
+        finite = jnp.all(jnp.isfinite(values), axis=-1)
+        has_accepted = sorted_accepted[:, 0] & finite
+        inside = has_accepted & search_complete
+        degenerate = jnp.any(candidate_valid, axis=1) & ~jnp.any(geometry_valid, axis=1)
+        status = jnp.where(
+            ~finite,
+            int(CellLocationStatus.NONFINITE),
+            jnp.where(
+                ~search_complete,
+                int(CellLocationStatus.CANDIDATE_SEARCH_INCOMPLETE),
+                jnp.where(
+                    has_accepted,
+                    int(CellLocationStatus.LOCATED),
+                    jnp.where(
+                        degenerate,
+                        int(CellLocationStatus.DEGENERATE_CELL),
+                        int(CellLocationStatus.OUTSIDE),
+                    ),
+                ),
+            ),
+        ).astype(jnp.int32)
+        chosen = order[:, 0]
+        rows = jnp.arange(values.shape[0])
+        first = e1[rows, chosen]
+        second = e2[rows, chosen]
+        third = e3[rows, chosen]
+        selected = reference[rows, chosen]
+        mapped = (
+            (origin[rows, chosen] + product(first, selected[:, 0, None]))
+            + product(second, selected[:, 1, None])
+        ) + product(third, selected[:, 2, None])
+        residual = norm3(mapped - values)
+        jacobian = root((dot3(first, first) + dot3(second, second)) + dot3(third, third))
+        adjugate_rows = (c23[rows, chosen], c31[rows, chosen], c12[rows, chosen])
+        adjugate = root(
+            (
+                dot3(adjugate_rows[0], adjugate_rows[0])
+                + dot3(adjugate_rows[1], adjugate_rows[1])
+            )
+            + dot3(adjugate_rows[2], adjugate_rows[2])
+        )
+        condition = product(jacobian, adjugate / determinant[rows, chosen])
+        barycentric = jnp.concatenate(
+            ((1.0 - ordered_sum(selected))[:, None], selected), axis=1
+        )
+        point_count = values.shape[0]
+        return CellLocationResult(
+            jnp.where(inside, candidate_cells[:, 0], -1).astype(jnp.int32),
+            jnp.where(inside[:, None], selected, 0.0),
+            jnp.where(inside[:, None], barycentric, 0.0),
+            jnp.where(inside, residual, jnp.inf),
+            jnp.where(inside, 0, self.policy.maximum_iterations).astype(jnp.int32),
+            jnp.where(inside, condition, jnp.inf),
+            inside,
+            jnp.zeros((point_count,), dtype=jnp.bool_),
+            jnp.where(
+                inside, jnp.sum(sorted_accepted, axis=1, dtype=jnp.int32), 0
+            ).astype(jnp.int32),
+            status,
+            inside & finite,
+            jnp.where(inside[:, None], candidate_cells, -1).astype(jnp.int32),
+            jnp.where(inside[:, None, None], candidate_reference, 0.0),
+            search_complete,
+            (),
+            self.locator_id,
+        )
+
     def _locate_affine_tetrahedra(
         self, values: Array, cell_mask: ConvertibleToArray | None, /
     ) -> CellLocationResult:
-        """Native affine location over the same tree, lowest accepting cell on ties.
+        """Native affine location over the same tree: `_resolve_affine_tetrahedra`.
 
-        Reference coordinates are exact signed-volume ratios rather than Newton
-        iterates, so every located point reports zero iterations and no seed
-        fallback; the candidate search is always complete.
+        The native search is always complete and lists every accepting cell.
         """
         located = tetrahedron_locate(
             host_tree_arrays(self.bvh),
@@ -356,10 +489,16 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             tolerance=self.policy.reference_tolerance,
         )
         inside = located.status == int(CellLocationStatus.LOCATED)
+        reference = located.reference
         barycentric = np.where(
             inside[:, None],
             np.concatenate(
-                ((1.0 - np.sum(located.reference, axis=1))[:, None], located.reference),
+                (
+                    (1.0 - ((reference[:, 0] + reference[:, 1]) + reference[:, 2]))[
+                        :, None
+                    ],
+                    reference,
+                ),
                 axis=1,
             ),
             0.0,
@@ -713,6 +852,9 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
 # operands) on every call.
 _compiled_resolve_candidates = eqx.filter_jit(
     PreparedSimplicialCellLocator._resolve_candidates
+)
+_compiled_resolve_affine_tetrahedra = eqx.filter_jit(
+    PreparedSimplicialCellLocator._resolve_affine_tetrahedra
 )
 
 

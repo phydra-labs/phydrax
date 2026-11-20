@@ -90,8 +90,18 @@ def _accepted(cells: Any) -> list[list[int]]:
     return [sorted(int(cell) for cell in row if cell >= 0) for row in np.asarray(cells)]
 
 
+def _assert_identical(native: Any, traced: Any) -> None:
+    """Equal shapes, dtypes, and bits (signed zeros included)."""
+    first, second = np.asarray(native), np.asarray(traced)
+    assert first.shape == second.shape and first.dtype == second.dtype
+    np.testing.assert_array_equal(
+        first.view(np.uint8).reshape(first.shape + (-1,)),
+        second.view(np.uint8).reshape(second.shape + (-1,)),
+    )
+
+
 @pytest.mark.parametrize("masked", (False, True), ids=("all-cells", "cell-mask"))
-def test_native_affine_location_matches_traced_route(masked: bool) -> None:
+def test_native_affine_location_equals_traced_route(masked: bool) -> None:
     locator = _locator()
     points = _points()
     mask = None
@@ -100,25 +110,41 @@ def test_native_affine_location_matches_traced_route(masked: bool) -> None:
     native = locator.locate(points, cell_mask=mask)
     traced = jax.jit(lambda values: locator.locate(values, cell_mask=mask))(points)
 
-    np.testing.assert_array_equal(native.status, traced.status)
-    np.testing.assert_array_equal(native.cell_ids, traced.cell_ids)
-    np.testing.assert_array_equal(native.inside, traced.inside)
-    np.testing.assert_array_equal(native.successful, traced.successful)
-    np.testing.assert_array_equal(native.candidate_count, traced.candidate_count)
+    for field in (
+        "status",
+        "cell_ids",
+        "inside",
+        "successful",
+        "candidate_count",
+        "barycentric",
+        "reference_coordinates",
+        "geometry_residual",
+        "iterations",
+        "jacobian_condition",
+        "used_fallback",
+        "candidates_complete",
+    ):
+        _assert_identical(getattr(native, field), getattr(traced, field))
+    # Both list every accepting cell ascending; only the padding width differs.
     assert _accepted(native.candidate_cells) == _accepted(traced.candidate_cells)
-    np.testing.assert_allclose(native.barycentric, traced.barycentric, atol=1e-9)
-    np.testing.assert_allclose(
-        native.reference_coordinates, traced.reference_coordinates, atol=1e-9
-    )
     inside = np.asarray(native.inside)
     assert np.all(np.asarray(native.geometry_residual)[inside] < 1e-12)
-    np.testing.assert_allclose(
-        np.asarray(native.jacobian_condition)[inside],
-        np.asarray(traced.jacobian_condition)[inside],
-        rtol=1e-12,
-    )
-    assert np.all(np.asarray(native.candidates_complete))
     assert not np.any(np.asarray(native.used_fallback))
+
+
+def test_affine_location_without_native_library_equals_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax import _bvh_native
+
+    locator = _locator()
+    points = _points()
+    native = locator.locate(points)
+    monkeypatch.setattr(_bvh_native, "meshcore_available", lambda: False)
+    eager = locator.locate(points)
+    for field in ("status", "cell_ids", "barycentric", "geometry_residual"):
+        _assert_identical(getattr(native, field), getattr(eager, field))
+    assert _accepted(native.candidate_cells) == _accepted(eager.candidate_cells)
 
 
 def test_native_affine_location_statuses() -> None:

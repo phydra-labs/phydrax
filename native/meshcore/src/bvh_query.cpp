@@ -301,54 +301,10 @@ void nearest_one(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup, con
   }
 }
 
-// Sum of atan2(numerator, denominator) terms by complex multiplication with
-// one atan2 at the end. Half-turn crossings are counted exactly from the
-// signs of the factors and the product, so the sum is not reduced modulo 2 pi:
-// sum = arg(product) + 2 pi turns. Factors are normalized to unit max-norm
-// and the product is rescaled by powers of two, so neither can overflow.
-class AngleSum {
- public:
-  void add(double numerator, double denominator) noexcept {
-    const double scale = std::max(std::fabs(numerator), std::fabs(denominator));
-    if (!(scale > 0.0) || !std::isfinite(scale)) {
-      // Coincident or nonfinite geometry: the term itself, as atan2 defines it.
-      direct_ += std::atan2(numerator, denominator);
-      return;
-    }
-    const double inverse = 1.0 / scale;
-    const double w_re = denominator * inverse;
-    const double w_im = numerator * inverse;
-    const double re = re_ * w_re - im_ * w_im;
-    const double im = re_ * w_im + im_ * w_re;
-    const bool z_upper = !std::signbit(im_);
-    const bool w_upper = !std::signbit(w_im);
-    const bool upper = !std::signbit(im);
-    if (z_upper && w_upper && !upper) ++turns_;
-    if (!z_upper && !w_upper && upper) --turns_;
-    re_ = re;
-    im_ = im;
-    if (std::fabs(re_) + std::fabs(im_) > 0x1p256) {
-      re_ *= 0x1p-256;
-      im_ *= 0x1p-256;
-    }
-  }
-
-  double value() const noexcept {
-    return std::atan2(im_, re_) + 2.0 * kPi * static_cast<double>(turns_) + direct_;
-  }
-
- private:
-  static constexpr double kPi = 3.14159265358979323846;
-  double re_ = 1.0;
-  double im_ = 0.0;
-  int64_t turns_ = 0;
-  double direct_ = 0.0;
-};
-
-// Adds the Van Oosterom-Strackee half solid angle atan2(numerator, denominator)
-// of one triangle seen from a point (_solid_angles is twice this angle).
-inline void add_half_solid_angle(AngleSum& sum, const double* point, const double* first,
-                                 const double* second, const double* third) noexcept {
+// Signed solid angle of one triangle seen from a point (Van Oosterom-Strackee),
+// in the schedule of the JAX _solid_angles.
+inline double solid_angle(const double* point, const double* first, const double* second,
+                          const double* third) noexcept {
   double a[3];
   double b[3];
   double c[3];
@@ -363,22 +319,26 @@ inline void add_half_solid_angle(AngleSum& sum, const double* point, const doubl
   const double numerator = dot3(a, bc);
   const double denominator = length_a * length_b * length_c + dot3(a, b) * length_c +
                              dot3(b, c) * length_a + dot3(c, a) * length_b;
-  sum.add(numerator, denominator);
+  return 2.0 * std::atan2(numerator, denominator);
 }
 
+// Left-to-right sum over every leaf slot, padding contributing zero.
 double leaf_solid_angle(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup, int64_t leaf,
                         const double* point) noexcept {
   const int64_t* items = tree.leaf_items + leaf * tree.leaf_width;
-  AngleSum sum;
+  double total = 0.0;
   for (int64_t slot = 0; slot < tree.leaf_width; ++slot) {
     const int64_t item = items[slot];
-    if (item < 0) continue;
-    const int32_t* face = soup.faces + 3 * item;
-    add_half_solid_angle(sum, point, soup.vertices + 3 * static_cast<int64_t>(face[0]),
-                         soup.vertices + 3 * static_cast<int64_t>(face[1]),
-                         soup.vertices + 3 * static_cast<int64_t>(face[2]));
+    double angle = 0.0;
+    if (item >= 0) {
+      const int32_t* face = soup.faces + 3 * item;
+      angle = solid_angle(point, soup.vertices + 3 * static_cast<int64_t>(face[0]),
+                          soup.vertices + 3 * static_cast<int64_t>(face[1]),
+                          soup.vertices + 3 * static_cast<int64_t>(face[2]));
+    }
+    total = slot == 0 ? angle : total + angle;
   }
-  return 2.0 * sum.value();
+  return total;
 }
 
 // bvh_hierarchical_sum: `open` decides whether a node is replaced by its
@@ -569,13 +529,26 @@ void triangle_winding_exact(const phx_mc_bvh_tree_view& tree, const TriangleSoup
       const double* upper = tree.node_max + 3 * node;
       const double apex[3] = {0.5 * (lower[0] + upper[0]), 0.5 * (lower[1] + upper[1]),
                               0.5 * (lower[2] + upper[2])};
-      AngleSum sum;
-      for (int64_t edge = fans.offsets[node]; edge < fans.offsets[node + 1]; ++edge) {
-        add_half_solid_angle(sum, point, apex,
-                             soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge]),
-                             soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge + 1]));
+      // Fixed-width chunks, each summed left to right with zero padding, then
+      // added to the running total: the JAX closing-fan schedule.
+      const int64_t start = fans.offsets[node];
+      const int64_t stop = fans.offsets[node + 1];
+      double total = 0.0;
+      for (int64_t offset = start; offset < stop; offset += PHX_MC_WINDING_FAN_CHUNK) {
+        double chunk = 0.0;
+        for (int64_t lane = 0; lane < PHX_MC_WINDING_FAN_CHUNK; ++lane) {
+          const int64_t edge = offset + lane;
+          const double angle =
+              edge < stop
+                  ? solid_angle(point, apex,
+                                soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge]),
+                                soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge + 1]))
+                  : 0.0;
+          chunk = lane == 0 ? angle : chunk + angle;
+        }
+        total = total + chunk;
       }
-      return 2.0 * sum.value();
+      return total;
     };
     values[query] = hierarchical_sum(tree, soup, point, stack, open, far) / kFourPi;
   }

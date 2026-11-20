@@ -13,6 +13,7 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 
+from ..._fixed_order import cross3, dot3, product
 from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
 from ...discretization._cell_mesh import CellMesh
@@ -291,10 +292,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
 
 def _segment_parameter(point: Array, start: Array, end: Array) -> Array:
     direction = end - start
-    parameter = jnp.sum((point - start) * direction, axis=-1) / jnp.sum(
-        direction * direction,
-        axis=-1,
-    )
+    parameter = dot3(point - start, direction) / dot3(direction, direction)
     return jnp.clip(parameter, 0.0, 1.0)
 
 
@@ -302,31 +300,29 @@ def _closest_triangle_features(point: Array, triangles: Array) -> tuple[Array, A
     """Closest points of `triangles` to `point` and their closest features.
 
     Features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a), 4/5/6 the
-    corners a/b/c; the first minimum in face/(a,b)/(b,c)/(c,a) order wins.
+    corners a/b/c; the first minimum in face/(a,b)/(b,c)/(c,a) order wins. The
+    arithmetic follows the fixed schedule of `phydrax._fixed_order`, so every
+    execution mode and the native kernels round alike.
     """
     a = triangles[:, 0]
     b = triangles[:, 1]
     c = triangles[:, 2]
     ab = b - a
     ac = c - a
-    normal = jnp.cross(ab, ac)
-    normal_norm_sq = jnp.sum(normal * normal, axis=-1)
-    projection = (
-        point
-        - (jnp.sum((point - a) * normal, axis=-1) / normal_norm_sq)[:, None] * normal
-    )
+    normal = cross3(ab, ac)
+    normal_norm_sq = dot3(normal, normal)
+    height = dot3(point - a, normal) / normal_norm_sq
+    projection = point - product(height[:, None], normal)
 
-    v0 = ab
-    v1 = ac
     v2 = projection - a
-    d00 = jnp.sum(v0 * v0, axis=-1)
-    d01 = jnp.sum(v0 * v1, axis=-1)
-    d11 = jnp.sum(v1 * v1, axis=-1)
-    d20 = jnp.sum(v2 * v0, axis=-1)
-    d21 = jnp.sum(v2 * v1, axis=-1)
-    denominator = d00 * d11 - d01 * d01
-    second = (d11 * d20 - d01 * d21) / denominator
-    third = (d00 * d21 - d01 * d20) / denominator
+    d00 = dot3(ab, ab)
+    d01 = dot3(ab, ac)
+    d11 = dot3(ac, ac)
+    d20 = dot3(v2, ab)
+    d21 = dot3(v2, ac)
+    denominator = product(d00, d11) - product(d01, d01)
+    second = (product(d11, d20) - product(d01, d21)) / denominator
+    third = (product(d00, d21) - product(d01, d20)) / denominator
     first = 1.0 - second - third
     inside = (first >= 0.0) & (second >= 0.0) & (third >= 0.0)
 
@@ -338,11 +334,12 @@ def _closest_triangle_features(point: Array, triangles: Array) -> tuple[Array, A
         ),
         axis=1,
     )
-    on_ab = a + parameters[:, 0, None] * (b - a)
-    on_bc = b + parameters[:, 1, None] * (c - b)
-    on_ca = c + parameters[:, 2, None] * (a - c)
+    on_ab = a + product(parameters[:, 0, None], b - a)
+    on_bc = b + product(parameters[:, 1, None], c - b)
+    on_ca = c + product(parameters[:, 2, None], a - c)
     candidates = jnp.stack((projection, on_ab, on_bc, on_ca), axis=1)
-    distance_sq = jnp.sum((candidates - point) ** 2, axis=-1)
+    offsets = candidates - point
+    distance_sq = dot3(offsets, offsets)
     distance_sq = distance_sq.at[:, 0].set(jnp.where(inside, distance_sq[:, 0], jnp.inf))
     selected = jnp.argmin(distance_sq, axis=1)
     closest = jnp.take_along_axis(candidates, selected[:, None, None], axis=1)[:, 0]

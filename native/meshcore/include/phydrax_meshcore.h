@@ -1637,6 +1637,10 @@ PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
  * items. Every output is caller-owned with one row per query; an invalid view,
  * index or argument returns PHX_MC_INVALID_ARGUMENT before writing.
  *
+ * Arithmetic: every query evaluates the expressions of the JAX owners
+ * (phydrax._fixed_order: products rounded on their own, sums left to right,
+ * no contraction), so each result equals the jitted JAX route bit for bit.
+ *
  * Closest features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a),
  * 4/5/6 the corners a/b/c of the face's vertex order. */
 #define PHX_MC_BVH_FEATURE_COUNT 7
@@ -1669,10 +1673,14 @@ PHX_MC_API int32_t phx_mc_bvh_triangle_signed_distance(
  * angles. FAST_DIPOLE (route 1): a node whose dipole center lies farther than
  * opening_angle times its radius contributes dot(normal, center - point) /
  * |center - point|^3 with dipoles (nodes, 7) = (area normal, center, radius).
- * Solid angles are Van Oosterom-Strackee; values are sums over 4 pi. The
- * arrays of the other route may be null. */
+ * Solid angles are Van Oosterom-Strackee, 2 atan2(numerator, denominator); an
+ * opened leaf sums every slot left to right (padding adds zero), a closing fan
+ * sums chunks of PHX_MC_WINDING_FAN_CHUNK edges the same way and adds each
+ * chunk to its total, and the cut adds contributions in visiting order; values
+ * are sums over 4 pi. The arrays of the other route may be null. */
 #define PHX_MC_WINDING_EXACT 0
 #define PHX_MC_WINDING_FAST_DIPOLE 1
+#define PHX_MC_WINDING_FAN_CHUNK 8
 PHX_MC_API int32_t phx_mc_bvh_triangle_winding(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
     const int32_t* faces, int32_t route, const int64_t* boundary_offsets,
