@@ -478,6 +478,22 @@ void test_ruppert_square() {
   for (int i = 0; i < 8; ++i) PHX_CHECK(r.points[i] == in.points[i]);
 }
 
+void test_refinement_angle_thresholds() {
+  for (const double min_angle : {24.9, 25.0, 25.1}) {
+    for (const double max_area : {0.04, kInf}) {
+      Input in;
+      in.points = {0, 0, 1, 0, 1, 1, 0, 1, 0.51, 0.28};
+      in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+      in.min_angle = min_angle;
+      in.max_area = max_area;
+      const Result r = run(in);
+      PHX_CHECK(r.status == PHX_MC_OK);
+      check_mesh(r);
+      check_quality(r, min_angle, max_area);
+    }
+  }
+}
+
 void test_ruppert_l_shape() {
   Input in;
   in.points = {0, 0, 2, 0, 2, 1, 1, 1, 1, 2, 0, 2};
@@ -734,6 +750,7 @@ int main() {
   test_refinement_determinism();
   test_spatial_queue_order();
   test_ruppert_square();
+  test_refinement_angle_thresholds();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();

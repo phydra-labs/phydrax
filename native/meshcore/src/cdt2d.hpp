@@ -556,6 +556,15 @@ class ConstrainedMesher {
           shortest = k;
         }
       }
+      // The arithmetic mean bounds the product of the two edge lengths.
+      // A margin keeps the shortcut away from rounding and threshold cases.
+      // Below one, the angle cannot make a triangle bad or change the
+      // priority of an area-bad triangle; non-bad priorities are not queued.
+      if (std::isnormal(twice_area) &&
+          sin_min_angle_ * (0.5 * squared[next3(shortest)] +
+                            0.5 * squared[prev3(shortest)]) < 0.99 * twice_area) {
+        return result;
+      }
       const int32_t apex = triangle.v[shortest];
       const bool input_angle = (apex < input_count_ && tri_.constraint(t, next3(shortest)) != kFree &&
                                 tri_.constraint(t, prev3(shortest)) != kFree) ||
