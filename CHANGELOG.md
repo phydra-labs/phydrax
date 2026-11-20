@@ -348,6 +348,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native planar triangulation: `Triangulation2D::edge_index` is written as
+  selects with the same result as the scan, so Apple clang compiles it without
+  branches; Ruppert refinement cycles drop 5-9 % on Apple clang, GCC is
+  unchanged, and all planar and 2D Delaunay outputs are byte-identical.
 - Surface remeshing coarsens a much finer input in stages before its size
   sweeps: stage sizes double from twice the input's mean edge while below 3/4
   of the target, each pass collapses short edges into an endpoint under the
