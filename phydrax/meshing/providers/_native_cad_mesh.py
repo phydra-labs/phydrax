@@ -211,10 +211,12 @@ def execute_cad_solid(
     if volume.tetrahedra.shape[0] == 0:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Native CAD volume recovery refused the surface after its boundary "
-            f"split (status {solid.status.name}, recovery status "
+            "Native CAD volume recovery refused the surface (status "
+            f"{solid.status.name}, recovery status "
             f"{int(stats['recovery_status'])}, reason "
-            f"{int(stats['recovery_reason'])}).",
+            f"{int(stats['recovery_reason'])}, entity kind "
+            f"{int(stats['failure_kind'])} row {int(stats['failure_entity'])}, "
+            f"measure {float(stats['failure_measure'])!r}).",
             provider_code="native_cad_volume_unresolved",
             stage="volume_meshing",
         )

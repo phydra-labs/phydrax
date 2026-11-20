@@ -248,6 +248,9 @@ struct BoundaryChord {
   std::array<double, 3> a;
   std::array<double, 3> b;
   double length;
+  // The chart chord's lens: the face's chart arc at the middle of the curve
+  // segment vs the chart chord's middle, mapped (0 off a curve).
+  double lens;
 };
 
 struct BoundaryNode {
@@ -384,19 +387,51 @@ int32_t build_chord_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
-// Raises h toward the chord floor max_s(L_s - g d(x, s)), capped by cap.
-void floor_chords(const FaceMetric& context, int32_t index, const double* point, double cap,
-                  double& h) {
+void chord_distance(const FaceMetric& context, int32_t index, const double* point,
+                    double& best, const BoundaryChord*& nearest);
+
+// Isotropic base size at a face point: the request h, graded from the
+// boundary samples and floored on the nearest fixed chord. Grading from the
+// nearby sample spacing asks for small triangles around a short boundary
+// segment, but a neighbouring long chord is fixed: every triangle on it has
+// circumradius >= L/2 and no vertex may enter its diametral disk, so a size
+// below L there cannot be met. The floor L - g d comes from the chord nearest
+// the point only (the one a triangle there stands on, at its centroid): a
+// floor taken from every chord lifted the size over a short lens-limited
+// chord beside a longer one, and the kernel accepted the stretched triangle
+// on it (measured: a 35.4 deg apex on a 0.35 h chord at h = 0.02286). It
+// overrides the grading, never the request or the curvature sizes.
+double base_size(const FaceMetric& context, const double* jet) {
+  double h = context.size;
+  const double ungraded = h;
+  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
+  // A chord farther than (L_max - h) / g cannot raise h, so the search for
+  // the nearest chord stops there (none found: no floor).
+  if (!context.chord_tree.empty() && context.chord_tree[0].spacing > h) {
+    double distance = (context.chord_tree[0].spacing - h) / kBoundaryGrading;
+    const BoundaryChord* nearest = nullptr;
+    chord_distance(context, 0, jet, distance, nearest);
+    if (nearest)
+      h = std::max(h, std::min(ungraded, nearest->length - kBoundaryGrading * distance));
+  }
+  return h;
+}
+
+// Lowers `best` to the distance from point to the nearest boundary chord
+// when nearer and sets `nearest` to that chord (the longest among equally
+// near ones).
+void chord_distance(const FaceMetric& context, int32_t index, const double* point,
+                    double& best, const BoundaryChord*& nearest) {
   const BoundaryNode& node = context.chord_tree[index];
   double box_distance2 = 0.0;
   for (int k = 0; k < 3; ++k) {
     const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
     box_distance2 += delta * delta;
   }
-  if (std::min(cap, node.spacing - kBoundaryGrading * std::sqrt(box_distance2)) <= h) return;
+  if (box_distance2 > best * best) return;
   if (node.left >= 0) {
-    floor_chords(context, node.left, point, cap, h);
-    floor_chords(context, node.right, point, cap, h);
+    chord_distance(context, node.left, point, best, nearest);
+    chord_distance(context, node.right, point, best, nearest);
     return;
   }
   for (int32_t i = node.begin; i < node.end; ++i) {
@@ -414,24 +449,38 @@ void floor_chords(const FaceMetric& context, int32_t index, const double* point,
       const double e = ap[k] - t * ab[k];
       distance2 += e * e;
     }
-    h = std::max(h, std::min(cap, chord.length - kBoundaryGrading * std::sqrt(distance2)));
+    const double distance = std::sqrt(distance2);
+    if (distance < best || (distance == best && nearest && chord.length > nearest->length))
+      nearest = &chord;
+    best = std::min(best, distance);
   }
 }
 
-// Isotropic base size at a face point: the request h, graded from the
-// boundary samples and floored on fixed chords. Grading from the nearby
-// sample spacing asks for small triangles around a short boundary segment, but
-// a neighbouring long chord is fixed: every triangle on it has circumradius
-// >= L/2 and no vertex may enter its diametral disk, so a size below L there
-// cannot be met. The chord floor is the smallest g-Lipschitz field that is
-// >= L on every chord; it overrides the grading, never the request or the
-// curvature sizes.
-double base_size(const FaceMetric& context, const double* jet) {
-  double h = context.size;
-  const double ungraded = h;
-  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
-  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
-  return h;
+// The fraction of tol a face point's triangles get: the boundary layer's
+// theta - lens / tol next to a curve chord (the nearest chord's own lens,
+// at most kLensShare theta tol, takes the rest; cad_faces.hpp), theta away
+// from it. The curvature size sqrt(4 theta' tol / |k|max) is the layer's
+// s_l within s_l of a chord (which holds the centroid and circumcentre of a
+// triangle on it) and grows from there at the boundary grading's rate up to
+// theta's s_f: a stepped size left triangles across the step whose split
+// points were all too close (measured: a proximity refusal on the quadric
+// at h = 0.04925). The search stops at the smallest layer's reach.
+double local_theta(const FaceMetric& context, const double* jet,
+                   const cad::SurfaceDifferential& differential) {
+  const double kappa = std::max(std::abs(differential.curvatures[0]),
+                                std::abs(differential.curvatures[1]));
+  if (context.chord_tree.empty() || !(kappa > 0.0)) return context.theta;
+  const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
+  const double smallest = std::sqrt(1.0 - kLensShare) * outer;
+  double distance = smallest + (outer - smallest) / kBoundaryGrading;
+  const BoundaryChord* nearest = nullptr;
+  chord_distance(context, 0, jet, distance, nearest);
+  if (!nearest || !(nearest->lens > 0.0)) return context.theta;
+  const double layer = context.theta -
+      std::min(nearest->lens / context.tolerance, kLensShare * context.theta);
+  const double inner = std::sqrt(4.0 * layer * context.tolerance / kappa);
+  const double size = inner + kBoundaryGrading * std::max(0.0, distance - inner);
+  return size >= outer ? context.theta : context.theta * (size * size) / (outer * outer);
 }
 
 CadMetric2D face_metric(const double chart[2], void* opaque) {
@@ -445,10 +494,12 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
     return {invalid, invalid, invalid};
   }
   // Fidelity: the isotropic size intersected with the request's curvature
-  // tensor (cad::fidelity_metric).
+  // tensor (cad::fidelity_metric), at the boundary layer's share near a
+  // curve.
   double m[3];
-  cad::fidelity_metric(differential, base_size(context, jet), context.theta, context.tolerance, m,
-                       nullptr);
+  const double h = base_size(context, jet);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, nullptr);
   return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
           m[2] / (context.scale_v * context.scale_v)};
 }
@@ -464,7 +515,8 @@ bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9])
   if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
   double m[3], lambda[2];
   const double h = base_size(context, jet);
-  cad::fidelity_metric(differential, h, context.theta, context.tolerance, m, lambda);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, lambda);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
   const double base = 1.0 / (h * h);
@@ -597,6 +649,28 @@ double distance(const std::array<double, 3>& a, const std::array<double, 3>& b) 
   return std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]);
 }
 
+// The lens of boundary edge `edge` (its chart chord vs the face's chart arc
+// at the middle of its curve segment, mapped; the quantity the curve stage
+// bounds by kLensShare theta tol); 0 for a pole edge.
+bool chord_lens(const cad::CadGeometry& geometry, const FaceBoundary& boundary, int32_t face,
+                int32_t edge, cad::EvaluationWorkspace& workspace, double& lens) {
+  const CadFaceEdge& e = boundary.edges[static_cast<std::size_t>(edge)];
+  lens = 0.0;
+  if (e.curve < 0) return true;
+  const auto& a = boundary.vertices[static_cast<std::size_t>(e.vertices[0])].uv;
+  const auto& b = boundary.vertices[static_cast<std::size_t>(e.vertices[1])].uv;
+  std::array<double, 2> arc;
+  const std::array<double, 2> chord{0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])};
+  std::array<double, 3> x, y;
+  if (!chart_point(geometry, e.use,
+                   use_parameter(geometry.model(), e.use, 0.5 * (e.parameters[0] + e.parameters[1])),
+                   workspace, arc) ||
+      !evaluate_position(geometry, face, arc, workspace, x) ||
+      !evaluate_position(geometry, face, chord, workspace, y)) return false;
+  lens = distance(x, y);
+  return std::isfinite(lens);
+}
+
 int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                        int32_t face, const FaceBoundary& boundary, FaceMetric& metric) {
   std::array<double, 2> low = boundary.vertices.front().uv;
@@ -623,7 +697,10 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
       }
       metric.boundary[a].spacing = std::min(metric.boundary[a].spacing, length);
       metric.boundary[b].spacing = std::min(metric.boundary[b].spacing, length);
-      metric.chords.push_back({metric.boundary[a].xyz, metric.boundary[b].xyz, length});
+      double lens = 0.0;
+      if (!chord_lens(geometry, boundary, face, a, metric.workspace, lens))
+        return PHX_MC_INVALID_INPUT;
+      metric.chords.push_back({metric.boundary[a].xyz, metric.boundary[b].xyz, length, lens});
     }
   }
   metric.boundary_order.reserve(metric.boundary.size());
@@ -841,8 +918,20 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                              std::abs(start[1] - almost_end[1]) ? 0 : 1;
     const int free_axis = 1 - axis;
     const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
-    const double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
+    double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
     if (!(limit > 0.0)) return PHX_MC_INVALID_INPUT;
+    // Half the distance to the nearest pole ahead on this axis (a sphere's
+    // other pole). Both zones extend toward each other, and without this bound
+    // each could end with a ring at the common midline: on the sphere at
+    // h/r = 0.6 and theta 0.8, two rings 2 ulps apart at the equator, whose
+    // zero-area strip left a boundary that tetrahedral improvement churned
+    // on for minutes.
+    double half_gap = std::numeric_limits<double>::infinity();
+    for (const PoleBoundary& other : boundary.poles) {
+      const double gap = direction * (boundary.vertices[other.first_vertex].uv[axis] - start[axis]);
+      if (gap > 0.0) half_gap = std::min(half_gap, 0.5 * gap);
+    }
+    limit = std::min(limit, half_gap);
     const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
     double jet[18];
     if (!surface_jet(metric, middle, jet)) return PHX_MC_INVALID_INPUT;
@@ -851,16 +940,46 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
     // The rings are isotropic: their spacing is the face metric's smallest
-    // size, the request h or the fidelity size sqrt(4 theta tol / |k|max).
-    cad::SurfaceDifferential differential;
-    if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
-    const double curvature = std::max(std::abs(differential.curvatures[0]),
-                                      std::abs(differential.curvatures[1]));
+    // size, the request h or the boundary layer's fidelity size
+    // sqrt(4 (theta - lens / tol) tol / |k|max) (local_theta) with the
+    // largest lens of the curve chords at the pole: the curves that end at
+    // the pole converge there, so its zone lies in their layer (measured:
+    // rings at theta's size beside lens-carrying chords left the sphere's
+    // kernel triangles between them unresolved; rings at the layer size
+    // beside a chart-straight seam left a 16 deg fan triangle between the
+    // first ring and the seam's request-sized pole segment).
+    const int32_t corner = boundary.vertices[pole.first_vertex].entity;
+    double lens = 0.0;
+    for (std::size_t e = 0; e < boundary.edges.size(); ++e) {
+      const CadFaceEdge& edge = boundary.edges[e];
+      if (edge.curve < 0) continue;
+      bool at_pole = false;
+      for (const int32_t v : edge.vertices) {
+        const CadFaceVertex& vertex = boundary.vertices[static_cast<std::size_t>(v)];
+        at_pole = at_pole || (vertex.dimension == 0 && vertex.entity == corner);
+      }
+      double edge_lens = 0.0;
+      if (at_pole && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
+                                 metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
+      lens = std::max(lens, edge_lens);
+    }
+    const double layer = metric.theta - std::min(lens / metric.tolerance,
+                                                 kLensShare * metric.theta);
+    double curvature = 0.0;
+    if (!pole_zone_curvature(geometry, metric.face, metric.workspace, curvature))
+      return PHX_MC_INVALID_INPUT;
     double size = metric.size;
     if (curvature > 0.0)
-      size = std::min(size, std::sqrt(4.0 * metric.theta * metric.tolerance / curvature));
+      size = std::min(size, std::sqrt(4.0 * layer * metric.tolerance / curvature));
     double spacing = std::min(limit, size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
+    // The last ring stays half a spacing short of the midline, so the two
+    // zones' last rings are at least a spacing apart; a spacing of at most
+    // 2/3 of the half gap keeps one ring.
+    if (std::isfinite(half_gap)) {
+      spacing = std::min(spacing, half_gap * (2.0 / 3.0));
+      limit = half_gap - 0.5 * spacing;
+    }
     double width = std::min(limit, pole_ring_width(spacing));
     while (width < limit) {
       double uv[2] = {middle[0], middle[1]};
@@ -1280,6 +1399,32 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
 }
 
 }  // namespace
+
+bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
+                         cad::EvaluationWorkspace& workspace, double& kappa) {
+  const auto& model = geometry.model();
+  const double inf = std::numeric_limits<double>::infinity();
+  double low[2] = {inf, inf}, high[2] = {-inf, -inf};
+  for (int64_t loop = 0; loop < model.loop_count; ++loop) {
+    if (model.loop_surfaces[loop] != face) continue;
+    for (int64_t use = model.loop_use_offsets[loop]; use < model.loop_use_offsets[loop + 1]; ++use)
+      for (int k = 0; k < 2; ++k) {
+        std::array<double, 2> uv;
+        if (!chart_point(geometry, use, model.use_ranges[2 * use + k], workspace, uv)) return false;
+        for (int axis = 0; axis < 2; ++axis) {
+          low[axis] = std::min(low[axis], uv[axis]);
+          high[axis] = std::max(high[axis], uv[axis]);
+        }
+      }
+  }
+  const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!geometry.jets(geometry.surface_node(face), middle, 2, jet, workspace) ||
+      !cad::surface_differential(jet, differential)) return false;
+  kappa = std::max(std::abs(differential.curvatures[0]), std::abs(differential.curvatures[1]));
+  return std::isfinite(kappa);
+}
 
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,

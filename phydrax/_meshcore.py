@@ -12851,6 +12851,7 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
                 [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
             ),
         ),
+        ("failure_measure", np.float64),
     ],
     align=True,
 )
@@ -12929,6 +12930,19 @@ class CadSolidResult(NamedTuple):
     volume: CadVolumeResult
 
 
+# Default share theta of each face's tolerance the construction may use (the
+# rest is the fidelity certificate's margin): the largest theta at which every
+# row of every measured mesh certified (V3, pole chart switch at latitude
+# 0.6230). Measured at tol = kappa_max h^2 / 4 on spheres of radius 0.5 and
+# 1.7 and on the quadric fixture, each at the 20 sizes
+# h = 0.02 ... 0.25: 0 refused rows at theta 0.8, 0.75 and 0.7; at 0.85 four
+# rows refused (radius 1.7, h 0.0229 and 0.25), at 0.9 nine, at 1 over 16000.
+# At 0.8 the largest exact sphere sag is 0.8045 tol (the kernel's
+# kappa R^2 / 2 omits the exact sag's relative theta h^2 / (8 R^2) term) and
+# the quadric's largest certified bound is 0.826 tol.
+CAD_TOLERANCE_FRACTION = 0.8
+
+
 def cad_mesh(
     model: CadModel,
     face_sizes: object,
@@ -12936,7 +12950,7 @@ def cad_mesh(
     curve_tolerances: object,
     /,
     *,
-    tolerance_fraction: float = 0.5,
+    tolerance_fraction: float = CAD_TOLERANCE_FRACTION,
     grading: float = 1.3,
     minimum_size: float = 1e-12,
 ) -> CadSurfaceResult:
@@ -12960,7 +12974,7 @@ def cad_mesh_solid(
     curve_tolerances: object,
     /,
     *,
-    tolerance_fraction: float = 0.5,
+    tolerance_fraction: float = CAD_TOLERANCE_FRACTION,
     grading: float = 1.3,
     minimum_size: float = 1e-12,
     radius_edge_bound: float = 2.0,

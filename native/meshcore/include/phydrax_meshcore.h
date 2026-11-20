@@ -3001,6 +3001,16 @@ typedef struct phx_mc_fidelity_finding {
  * the p-curve lens and interval endpoint mismatch enclose that difference.
  * The exact-source coefficient bounds have model->node_reals layout.
  * Certification is conditional on a separately verified chart partition.
+ * Sphere poles (a sphere template, its placement, or a circle revolved about
+ * an axis through its center, certified from the exact coefficients): rows
+ * touching the pole vertex or with a corner in the cap |v| >= 0.6230491932779061
+ * (pi/2 - rho*, rho* = sin 2 rho*: where the pole chart's edge sag stops
+ * being worse than the uv chart's; see verify_cad_fidelity.cpp) are associated in
+ * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
+ * the triangle's linear map taken there; each edge where that region meets a
+ * uv row (or a seam or pole chord) carries a seam lens bound charged to both
+ * adjacent rows. Faces whose pole cap is not free of other trim chords keep
+ * the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
@@ -3122,7 +3132,12 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * midpoint) and is retried once; each split is reported, and the surface
  * export of the same handle shows the split surface. Returns the handle on
  * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
- * recovery still refused: zero cells, stats name the refusal). */
+ * recovery still refused: zero cells, stats name the refusal). A surface
+ * triangle whose relative area 2 A / l_max^2 has a square below the
+ * determinant floor 2^-22 (zero-length edges included) is refused before
+ * recovery: UNRESOLVED, zero cells, recovery_status UNRESOLVED,
+ * recovery_reason INVALID_FACET, failure_kind FACET, failure_entity the
+ * first such triangle row and failure_measure its relative area. */
 typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
@@ -3139,6 +3154,9 @@ typedef struct phx_mc_cad_volume_stats {
   int32_t recovery_status, recovery_reason, failure_kind;
   int64_t failure_entity;
   phx_mc_cad_quadratic_stats quadratic;
+  /* The refused triangle's relative area with recovery_reason INVALID_FACET
+   * before recovery (above), else 0. */
+  double failure_measure;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */

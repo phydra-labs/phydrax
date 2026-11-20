@@ -61,6 +61,23 @@ struct CadFaceMesh {
 // needs the curvature size).
 inline double pole_ring_width(double spacing) { return 3.0 * spacing; }
 
+// Largest share alpha of a face's theta * tol taken by a curve chord's lens
+// (the chart arc vs the chart chord, mapped). The share is per chord: the
+// face triangles next to a chord (one layer) keep their own interpolation
+// error within theta tol minus that chord's lens, so a fidelity check that
+// adds the two per point (V3) holds there; the rest of the face keeps theta
+// tol. The curve stage sizes a chord so that layer edges of its own length
+// fit: kappa L^2 / 4 + kappa_l L^2 / 8 <= theta tol (kappa_l the curvature
+// of the mapped chart arc off its chord), i.e. the chord's share is
+// kappa_l / (2 kappa + kappa_l): none on a chart-straight seam, 1/2 at
+// kappa_l = 2 kappa. Beyond that (a nearly flat face under a curved trim)
+// the lens is capped at alpha theta tol, L <= sqrt(8 alpha theta tol /
+// kappa_l), so the layer never drops below (1 - alpha) theta tol.
+// Measured on the quadric fixture's chords: kappa_l / kappa_max in
+// [1.4, 2.1] on the radius-1 cylinder's faces and in [0, 0.75] (median
+// 0.22) on the radius-0.6 one.
+inline constexpr double kLensShare = 0.5;
+
 // Exact chart segment contact under the shared-vertex/chord rule above.
 bool cad_face_segments_conflict(int32_t a, int32_t b, const std::array<double, 2>& auv,
                                 const std::array<double, 2>& buv, int32_t c, int32_t d,
@@ -69,6 +86,14 @@ bool cad_face_segments_conflict(int32_t a, int32_t b, const std::array<double, 2
 // Validates the shared curve discretization once before any face consumes it.
 int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
                                           const CadCurveDiscretization& curves);
+
+// |k|max of `face` at the middle of its chart box (the end points of its
+// boundary uses' p-curves): the curvature with which the face stage spaces
+// its pole rings and the curve stage sizes curves inside a pole zone, so
+// both take the same theta * tol budget there. False on a failed
+// evaluation or a degenerate jet.
+bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
+                         cad::EvaluationWorkspace& workspace, double& kappa);
 
 // Meshes one native chart, preserving curve samples and collapsed-pole records.
 // The chart kernel's angle pass receives the face position hook, which yields
