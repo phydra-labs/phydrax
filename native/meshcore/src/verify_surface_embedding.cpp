@@ -15,55 +15,12 @@
 namespace {
 using Finding = phx_mc_surface_finding;
 
-struct Edge {
-  int64_t a, b;
-  int64_t triangle;
-  int corner_a, corner_b;
-  bool forward;
-};
-
 int64_t root(std::vector<int64_t>& parent, int64_t x) {
   while (parent[x] != x) {
     parent[x] = parent[parent[x]];
     x = parent[x];
   }
   return x;
-}
-
-void pair_wide_edges(int64_t n, const int64_t* triangles, std::vector<int64_t>& parent,
-                     std::vector<Finding>& out) {
-  std::vector<Edge> edges;
-  edges.reserve(static_cast<size_t>(3 * n));
-  for (int64_t t = 0; t < n; ++t) {
-    for (int k = 0; k < 3; ++k) {
-      const int l = (k + 1) % 3;
-      const int64_t a = triangles[3*t+k], b = triangles[3*t+l];
-      edges.push_back({std::min(a,b), std::max(a,b), t,
-                       a < b ? k : l, a < b ? l : k, a < b});
-    }
-  }
-  std::sort(edges.begin(), edges.end(), [](const Edge& x, const Edge& y) {
-    if (x.a != y.a) return x.a < y.a;
-    if (x.b != y.b) return x.b < y.b;
-    return x.triangle < y.triangle;
-  });
-  for (size_t i = 0; i < edges.size();) {
-    size_t j = i + 1;
-    while (j < edges.size() && edges[i].a == edges[j].a && edges[i].b == edges[j].b) ++j;
-    if (j-i != 2 || edges[i].forward == edges[i+1].forward) {
-      out.push_back({PHX_MC_SURFACE_EDGE, edges[i].a, edges[i].b, 0});
-    }
-    if (j-i == 2) {
-      const Edge& x = edges[i];
-      const Edge& y = edges[i+1];
-      for (int endpoint = 0; endpoint < 2; ++endpoint) {
-        const int64_t a = 3*x.triangle + (endpoint == 0 ? x.corner_a : x.corner_b);
-        const int64_t b = 3*y.triangle + (endpoint == 0 ? y.corner_a : y.corner_b);
-        parent[root(parent, a)] = root(parent, b);
-      }
-    }
-    i = j;
-  }
 }
 
 int64_t next_corner(int64_t corner) {
@@ -120,10 +77,7 @@ void topology(int64_t point_count, int64_t n, const int64_t* triangles,
               std::vector<Finding>& out) {
   std::vector<int64_t> parent(static_cast<size_t>(3 * n));
   std::iota(parent.begin(), parent.end(), int64_t{0});
-  if (static_cast<uint64_t>(point_count) <= uint64_t{1} << 32)
-    pair_packed_edges(point_count, n, triangles, parent, out);
-  else
-    pair_wide_edges(n, triangles, parent, out);
+  pair_packed_edges(point_count, n, triangles, parent, out);
   // Every corner at a vertex must be in one edge-connected component.
   // The point-indexed table avoids sorting a second bank of 3*n corners.
   std::vector<int64_t> first_root(static_cast<size_t>(point_count), -1);
@@ -285,6 +239,82 @@ bool clear_shared_edge(const double* a, const double* b, const double* c, const 
   return false;
 }
 
+// Coplanar pairs (chart partitions lifted to z = 0, flat surface regions) are decided by
+// exact 2D sides in an axis projection where the triangle is nondegenerate; the
+// projection preserves every side relation up to one common sign.
+int projection_axis(const double* const t[3]) {
+  for (int axis = 0; axis < 3; ++axis) {
+    const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+    const double a[2] = {t[0][u], t[0][v]}, b[2] = {t[1][u], t[1][v]}, c[2] = {t[2][u], t[2][v]};
+    if (phx::mc::orient2d_filtered(a, b, c) != 0) return axis;
+  }
+  return -1;
+}
+int side2(int axis, const double* a, const double* b, const double* c) {
+  const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+  const double aa[2] = {a[u], a[v]}, bb[2] = {b[u], b[v]}, cc[2] = {c[u], c[v]};
+  return phx::mc::orient2d_filtered(aa, bb, cc);
+}
+// The line through o and x leaves `keep` on one side and every `other` strictly on the
+// other: the two triangles then meet only on that line, i.e. nowhere or at o.
+bool line_separates(int axis, const double* o, const double* x, const double* keep,
+                    const double* const* other, int count) {
+  const int side = side2(axis, o, x, keep);
+  if (side == 0) return false;
+  for (int k = 0; k < count; ++k)
+    if (side2(axis, o, x, other[k]) != -side) return false;
+  return true;
+}
+bool coplanar(const double* const p[3], const double* const q[3]) {
+  for (int k = 0; k < 3; ++k)
+    if (phx::mc::orient3d_filtered(p[0], p[1], p[2], q[k]) != 0) return false;
+  return true;
+}
+// All six vertices share one coordinate bitwise (charts lifted to z = 0, axis-aligned flat
+// regions): the pair is exactly coplanar and dropping that coordinate is an isometry, so
+// exact 2D sides decide without the (always zero, exact-stage) orient3d calls.
+int common_axis(const double* const p[3], const double* const q[3]) {
+  for (int axis = 0; axis < 3; ++axis) {
+    const double value = p[0][axis];
+    if (p[1][axis] == value && p[2][axis] == value && q[0][axis] == value &&
+        q[1][axis] == value && q[2][axis] == value)
+      return axis;
+  }
+  return -1;
+}
+bool clear_planar(int axis, const double* const p[3], const double* const q[3],
+                  const bool shared_p[3], const bool shared_q[3], int shared) {
+  if (shared == 2) {
+    const double *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+    for (int i = 0; i < 3; ++i) {
+      if (shared_p[i]) { if (!a) a = p[i]; else b = p[i]; } else c = p[i];
+      if (!shared_q[i]) d = q[i];
+    }
+    const int side = side2(axis, a, b, c);
+    return side != 0 && side2(axis, a, b, d) == -side;
+  }
+  if (shared == 1) {
+    const double *common = nullptr, *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
+    for (int i = 0; i < 3; ++i) {
+      if (shared_p[i]) common = p[i]; else if (!a) a = p[i]; else b = p[i];
+      if (!shared_q[i]) { if (!c) c = q[i]; else d = q[i]; }
+    }
+    const double* cd[2] = {c, d};
+    const double* ab[2] = {a, b};
+    return line_separates(axis, common, a, b, cd, 2) ||
+           line_separates(axis, common, b, a, cd, 2) ||
+           line_separates(axis, common, c, d, ab, 2) ||
+           line_separates(axis, common, d, c, ab, 2);
+  }
+  if (shared == 0) {
+    for (int i = 0; i < 3; ++i) {
+      if (line_separates(axis, p[i], p[(i+1)%3], p[(i+2)%3], q, 3)) return true;
+      if (line_separates(axis, q[i], q[(i+1)%3], q[(i+2)%3], p, 3)) return true;
+    }
+  }
+  return false;
+}
+
 bool clear_pair(const double* const p[3], const double* const q[3],
                 const int64_t* pi, const int64_t* qi) {
   bool shared_p[3] = {}, shared_q[3] = {};
@@ -295,6 +325,8 @@ bool clear_pair(const double* const p[3], const double* const q[3],
       ++shared;
     }
   }
+  const int flat = common_axis(p, q);
+  if (flat >= 0) return clear_planar(flat, p, q, shared_p, shared_q, shared);
   if (shared == 2) {
     const double *a = nullptr, *b = nullptr, *c = nullptr, *d = nullptr;
     for (int i = 0; i < 3; ++i) {
@@ -314,24 +346,48 @@ bool clear_pair(const double* const p[3], const double* const q[3],
     }
     const int s0 = phx::mc::orient3d_filtered(common, a, b, c);
     const int s1 = phx::mc::orient3d_filtered(common, a, b, d);
+    if (s0 == 0 && s1 == 0) {
+      // Coplanar: an edge line through the common vertex with the other triangle's two
+      // free vertices strictly beyond it leaves only the common vertex.
+      const int axis = projection_axis(p);
+      if (axis < 0) return false;
+      const double* cd[2] = {c, d};
+      const double* ab[2] = {a, b};
+      return line_separates(axis, common, a, b, cd, 2) ||
+             line_separates(axis, common, b, a, cd, 2) ||
+             line_separates(axis, common, c, d, ab, 2) ||
+             line_separates(axis, common, d, c, ab, 2);
+    }
     if (s0 == 0 || s1 == 0) return false;
     if (s0 == s1) return true;
     const int t0 = phx::mc::orient3d_filtered(common, c, d, a);
     const int t1 = phx::mc::orient3d_filtered(common, c, d, b);
     if (t0 == 0 || t1 == 0) return false;
     if (t0 == t1) return true;
-    // Both opposite edges cross the other plane. Their six line/edge signs
-    // are respectively (s0,h,-s1) and (t0,h,-t1), where
-    // h=orient(a,b,c,d). Thus one extra exact sign decides both edge tests.
-    const int h = phx::mc::orient3d_filtered(a, b, c, d);
-    return h != 0 && h != s0 && h != t0;
+    // Both opposite edges cross the other plane (s1 = -s0, t1 = -t0). Expanding
+    // orient(a,b,c,d) about the common vertex gives a sum of a term of sign -s0 and a
+    // term of sign -t0, so the former test "orient(a,b,c,d) != 0, != s0, != t0" holds
+    // exactly when s0 == t0; that sign agreement is the certificate (cross-checked
+    // against the full classifier by the randomized shared-vertex pair test).
+    return s0 == t0;
   }
-  if (shared == 0) return separate_triangle(p, q) || separate_triangle(q, p);
+  if (shared == 0) {
+    if (separate_triangle(p, q) || separate_triangle(q, p)) return true;
+    if (!coplanar(p, q)) return false;
+    // Coplanar disjoint convex triangles: some edge line strictly separates.
+    const int axis = projection_axis(p);
+    if (axis < 0) return false;
+    for (int i = 0; i < 3; ++i) {
+      if (line_separates(axis, p[i], p[(i+1)%3], p[(i+2)%3], q, 3)) return true;
+      if (line_separates(axis, q[i], q[(i+1)%3], q[(i+2)%3], p, 3)) return true;
+    }
+    return false;
+  }
   return false;
 }
 
 int32_t classify_pair(const double* points, const int64_t* triangles, int64_t a, int64_t b,
-                      std::vector<Finding>& out) {
+                      std::vector<phx::mc::SurfaceContact>& out) {
   if (a > b) std::swap(a, b);
   const double* p[3];
   const double* q[3];
@@ -347,12 +403,14 @@ int32_t classify_pair(const double* points, const int64_t* triangles, int64_t a,
   if (status != PHX_MC_OK) return status;
   if (contact.kind != PHX_MC_DISJOINT && contact.kind != PHX_MC_SHARED_VERTEX &&
       contact.kind != PHX_MC_SHARED_EDGE)
-    out.push_back({PHX_MC_SURFACE_CONTACT, a, b, contact.kind});
+    out.push_back({a, b, contact.kind});
   return PHX_MC_OK;
 }
+}  // namespace
 
-int32_t contacts(const double* points, int64_t n, const int64_t* triangles,
-                 std::vector<Finding>& out) {
+int32_t phx::mc::surface_embedding_contacts(const double* points, int64_t n,
+                                            const int64_t* triangles,
+                                            std::vector<SurfaceContact>& out) {
   if (n == 0) return PHX_MC_OK;
   Tree tree(points, n, triangles);
   std::vector<std::array<int64_t, 2>> stack{{0, 0}};
@@ -386,7 +444,6 @@ int32_t contacts(const double* points, int64_t n, const int64_t* triangles,
   }
   return PHX_MC_OK;
 }
-}  // namespace
 
 bool phx::mc::surface_embedding_pair_clear(const double* const first[3],
                                             const double* const second[3],
@@ -406,9 +463,12 @@ extern "C" int32_t phx_mc_verify_surface_embedding(
         !phx::mc::addressable(point_count, 3, sizeof(double)) ||
         !phx::mc::addressable(triangle_count, 3, sizeof(int64_t)) ||
         !phx::mc::addressable(finding_capacity, 1, sizeof(Finding))) return PHX_MC_INVALID_ARGUMENT;
+    // Edge keys pack two vertex ids into 64 bits.
+    if (static_cast<uint64_t>(point_count) > uint64_t{1} << 32) return PHX_MC_INDEX_RANGE_ERROR;
     for (int64_t k = 0; k < 3*triangle_count; ++k)
       if (triangles[k] < 0 || triangles[k] >= point_count) return PHX_MC_INVALID_INPUT;
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     std::vector<Finding> result;
     if (triangle_count == 0) result.push_back({PHX_MC_SURFACE_EMPTY, -1, -1, 0});
     std::vector<uint8_t> used(static_cast<size_t>(point_count), 0);
@@ -428,8 +488,12 @@ extern "C" int32_t phx_mc_verify_surface_embedding(
       }
       if (result.empty()) {
         topology(point_count, triangle_count, triangles, result);
-        const int32_t status = contacts(points, triangle_count, triangles, result);
+        std::vector<phx::mc::SurfaceContact> contacts;
+        const int32_t status =
+            phx::mc::surface_embedding_contacts(points, triangle_count, triangles, contacts);
         if (status != PHX_MC_OK) return status;
+        for (const phx::mc::SurfaceContact& c : contacts)
+          result.push_back({PHX_MC_SURFACE_CONTACT, c.first, c.second, c.kind});
       }
     }
     std::sort(result.begin(), result.end(), [](const Finding& a, const Finding& b) {

@@ -13,6 +13,7 @@
 #include "expansion.hpp"
 #include "floating_point_mode.hpp"
 #include "predicates.hpp"
+#include "verify_surface_embedding.hpp"
 
 namespace {
 using phx::mc::Expansion;
@@ -75,7 +76,8 @@ void check_edges(std::vector<Edge>& edges, std::vector<phx_mc_chart_failure>& fa
 }
 
 void check_uses(int64_t use_count, const int64_t* use_patch, const double* use_range,
-                int64_t chord_count, const int64_t* chord_use, const double* chord_range,
+                int64_t chord_count, const int64_t* chord_use, const int64_t* chord_loop,
+                const double* chord_uv, const double* chord_range,
                 std::vector<phx_mc_chart_failure>& failures) {
   std::vector<int64_t> order(static_cast<size_t>(chord_count));
   std::iota(order.begin(), order.end(), int64_t{0});
@@ -91,12 +93,16 @@ void check_uses(int64_t use_count, const int64_t* use_patch, const double* use_r
   for (int64_t u = 0; u < use_count; ++u) {
     const bool ascending = use_range[2*u] < use_range[2*u+1];
     double next = use_range[2*u];
-    int64_t bad = -1;
+    int64_t bad = -1, previous = -1;
     bool any = false;
     while (pos < order.size() && chord_use[order[pos]] == u) {
       const int64_t c = order[pos++];
       double a = chord_range[2*c], b = chord_range[2*c+1];
       if (!bits_equal(a, next) || (ascending ? !(a < b) : !(a > b))) bad = c;
+      // Consecutive chords of one use join bitwise in UV and stay in one loop.
+      if (previous != -1 && (!point_equal(point(chord_uv + 4*previous + 2), point(chord_uv + 4*c)) ||
+                             chord_loop[previous] != chord_loop[c])) bad = c;
+      previous = c;
       next = b;
       any = true;
     }
@@ -139,6 +145,66 @@ void check_loops(int64_t loop_count, int64_t chord_count, const int64_t* chord_l
     if (!good) failures.push_back({PHX_MC_CHART_LOOP, patch, loop, -1});
     begin = end;
   }
+}
+
+// Orientation agreement plus boundary = chord chain fixes the covering multiplicity
+// to the winding number of the chord cycles; it does not exclude multiplicity 2.
+// Pairwise interiors must also be disjoint: the patch's correctly oriented triangles are
+// lifted to (u, v, 0) with one id per bitwise-distinct UV point and classified by the
+// surface embedding verifier's exact contact enumeration (one owner of the overlap test).
+int32_t check_overlaps(int64_t triangle_count, const int32_t* triangle_patch,
+                       const double* triangle_uv, const std::vector<uint8_t>& oriented,
+                       std::vector<phx_mc_chart_failure>& failures) {
+  struct Corner {
+    int32_t patch;
+    Point uv;
+    int64_t slot;
+  };
+  std::vector<Corner> corners;
+  for (int64_t t = 0; t < triangle_count; ++t)
+    if (oriented[t])
+      for (int k = 0; k < 3; ++k)
+        corners.push_back({triangle_patch[t], point(triangle_uv + 6*t + 2*k), 3*t + k});
+  std::sort(corners.begin(), corners.end(), [](const Corner& a, const Corner& b) {
+    if (a.patch != b.patch) return a.patch < b.patch;
+    if (!point_equal(a.uv, b.uv)) return point_less(a.uv, b.uv);
+    return a.slot < b.slot;
+  });
+  std::vector<int64_t> by_patch;
+  for (int64_t t = 0; t < triangle_count; ++t) if (oriented[t]) by_patch.push_back(t);
+  std::stable_sort(by_patch.begin(), by_patch.end(),
+                   [&](int64_t a, int64_t b) { return triangle_patch[a] < triangle_patch[b]; });
+  std::vector<int64_t> local_id(static_cast<size_t>(3*triangle_count), -1);
+  size_t next_triangle = 0;
+  for (size_t begin = 0; begin < corners.size();) {
+    const int32_t patch = corners[begin].patch;
+    size_t end = begin;
+    while (end < corners.size() && corners[end].patch == patch) ++end;
+    std::vector<double> points;
+    for (size_t i = begin; i < end; ++i) {
+      if (i == begin || !point_equal(corners[i].uv, corners[i-1].uv)) {
+        points.push_back(corners[i].uv[0]);
+        points.push_back(corners[i].uv[1]);
+        points.push_back(0.0);
+      }
+      local_id[corners[i].slot] = static_cast<int64_t>(points.size() / 3) - 1;
+    }
+    std::vector<int64_t> global, triangles;
+    for (; next_triangle < by_patch.size() && triangle_patch[by_patch[next_triangle]] == patch;
+         ++next_triangle) {
+      const int64_t t = by_patch[next_triangle];
+      global.push_back(t);
+      for (int k = 0; k < 3; ++k) triangles.push_back(local_id[3*t + k]);
+    }
+    std::vector<phx::mc::SurfaceContact> contacts;
+    const int32_t status = phx::mc::surface_embedding_contacts(
+        points.data(), static_cast<int64_t>(global.size()), triangles.data(), contacts);
+    if (status != PHX_MC_OK) return status;
+    for (const phx::mc::SurfaceContact& c : contacts)
+      failures.push_back({PHX_MC_CHART_OVERLAP, patch, global[c.first], global[c.second]});
+    begin = end;
+  }
+  return PHX_MC_OK;
 }
 
 }  // namespace
@@ -190,17 +256,24 @@ extern "C" int32_t phx_mc_verify_chart_partition(
     }
     for (int64_t p = 0; p < patch_count; ++p)
       if (area[p].sign() == 0) failures.push_back({PHX_MC_CHART_ORIENTATION, p, -1, -1});
+    std::vector<uint8_t> oriented(static_cast<size_t>(triangle_count), 0);
     for (int64_t i = 0; i < triangle_count; ++i) {
       const double* uv = triangle_uv + 6*i;
       int64_t patch = triangle_patch[i];
       if (phx::mc::orient2d(uv, uv+2, uv+4) != area[patch].sign() || area[patch].sign() == 0)
         failures.push_back({PHX_MC_CHART_ORIENTATION, patch, i, -1});
+      else
+        oriented[i] = 1;
       for (int k = 0; k < 3; ++k)
         edges.push_back(edge(patch, point(uv+2*k), point(uv+2*((k+1)%3)), i, false));
     }
     check_edges(edges, failures);
-    check_uses(use_count, use_patch, use_range, chord_count, chord_use, chord_range, failures);
+    check_uses(use_count, use_patch, use_range, chord_count, chord_use, chord_loop, chord_uv,
+               chord_range, failures);
     check_loops(loop_count, chord_count, chord_loop, chord_use, use_patch, chord_uv, failures);
+    const int32_t overlap = check_overlaps(triangle_count, triangle_patch, triangle_uv,
+                                           oriented, failures);
+    if (overlap != PHX_MC_OK) return overlap;
     *evidence_count = static_cast<int64_t>(failures.size());
     if (failures.size() > static_cast<size_t>(evidence_capacity)) return PHX_MC_CAPACITY_EXCEEDED;
     if (!failures.empty()) std::copy(failures.begin(), failures.end(), evidence);
