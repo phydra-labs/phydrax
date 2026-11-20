@@ -2488,9 +2488,10 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its
  * interval workspace templates (the point executor uses their midpoints).
- * The box [lower, upper] contains the zero set. Seeds: the box is split into
- * octants while f's interval enclosure contains zero, down to boxes no wider
- * than criteria[0]; every edge of a kept box whose corner values have strictly
+ * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
+ * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
+ * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
+ * diagonal at most sqrt(3) criteria[0]; every edge of a kept cell whose vertex values have strictly
  * opposite signs carries a root, and the roots farther than
  * criteria[7] * criteria[0] from earlier ones (with every extra_seeds point,
  * moved onto the zero set by Newton steps) start the Delaunay triangulation.

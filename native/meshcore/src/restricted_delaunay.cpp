@@ -1519,21 +1519,21 @@ int32_t refine_surface(RestrictedMesher& mesher, Field& field, const PossibleZer
     const SurfaceTopology surface = surface_topology(state.faces);
     PointGrid vertices(width, state.faces.size() / 2);
     for (int32_t v : state.faces) vertices.add({mesher.point(v)[0], mesher.point(v)[1], mesher.point(v)[2]});
-    std::vector<char> box_missed(roots.box_offsets.size() - 1, 0);
+    std::vector<char> box_missed(roots.leaf_offsets.size() - 1, 0);
     state.uncovered = 0;
     for (std::size_t r = 0; r < roots.roots.size(); ++r) {
       if (vertices.near(roots.roots[r].root, width)) continue;
       ++state.uncovered;
-      box_missed[static_cast<std::size_t>(roots.root_box[r])] = 1;
+      box_missed[static_cast<std::size_t>(roots.root_leaf[r])] = 1;
     }
     state.matches = surface.manifold && surface.components == topology[0] && surface.euler == topology[1];
     if ((state.matches && state.uncovered == 0) || round == kRepairRounds) return PHX_MC_OK;
     ++state.rounds;
     std::vector<Bracket> repair;
-    for (std::size_t b = 0; b + 1 < roots.box_offsets.size(); ++b) {
+    for (std::size_t b = 0; b + 1 < roots.leaf_offsets.size(); ++b) {
       if (!box_missed[b]) continue;
-      for (int32_t k = roots.box_offsets[b]; k < roots.box_offsets[b + 1]; ++k)
-        repair.push_back(roots.roots[static_cast<std::size_t>(roots.box_roots[static_cast<std::size_t>(k)])]);
+      for (int32_t k = roots.leaf_offsets[b]; k < roots.leaf_offsets[b + 1]; ++k)
+        repair.push_back(roots.roots[static_cast<std::size_t>(roots.leaf_roots[static_cast<std::size_t>(k)])]);
     }
     solver.solve(field, repair);
     std::vector<Point> points;
@@ -1591,8 +1591,22 @@ int32_t mesh_restricted(const IntervalProgramView& interval, Field& field, const
   // A quarter of the smallest insertion radius the criteria ask for, so
   // that the bound binds only where they cannot be met (RestrictedMesher).
   const double separation = 0.25 * std::min({0.5 * width, criteria[1], criteria[3]});
+  // The anchored domain of the possible-zero cover: the box grown by 1/16 of
+  // its largest extent on every side, which keeps the zero set (tangent to
+  // the box's faces on a sphere) off the domain boundary, where no lattice
+  // edge crosses it; its target-level cells are no wider than the edge bound
+  // (diagonal at most sqrt(3) times it).
+  double largest = 0.0;
+  for (int d = 0; d < 3; ++d) largest = std::max(largest, request.upper[d] - request.lower[d]);
+  double domain_lower[3], domain_upper[3];
+  for (int d = 0; d < 3; ++d) {
+    domain_lower[d] = request.lower[d] - 0.0625 * largest;
+    domain_upper[d] = request.upper[d] + 0.0625 * largest;
+  }
   PossibleZeroBoxes roots;
-  int32_t status = possible_zero_boxes(interval, field.view(), request.lower, request.upper, width, roots);
+  int32_t status = possible_zero_boxes(interval, field.view(), domain_lower, domain_upper,
+                                       dyadic_target_level(domain_lower, domain_upper, std::sqrt(3.0) * width),
+                                       roots);
   if (status != PHX_MC_OK) return status;
   const std::vector<Point> seeds =
       initial_seeds(field, roots, request.extra_seeds, criteria[7] * width, width, separation);

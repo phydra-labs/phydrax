@@ -1,9 +1,18 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Possible-zero box trees of interval programs: the subdivision of a domain
-// box into the boxes where an interval program's enclosure of f contains
-// zero, with the sign-change roots of their edges.
+// Possible-zero covers of interval programs on the anchored dyadic lattice of
+// a domain box, with the sign-change roots of their leaves' edges.
+//
+// The lattice and leaf identity are those of discover_leaves
+// (phydrax/geometry/implicit/_adaptive_packed_frontier.py): at level L the
+// leaf with integer index (i, j, k) spans, per axis, the exact coordinates
+// (1 - n / 2^L) lower + (n / 2^L) upper at n = index and n = index + 1, its
+// box rounded outward; children are 2 index + {0, 1}^3. A box is kept while
+// f's interval enclosure over it has value_lower <= 0 <= value_upper (or is
+// not a number); a kept box whose midpoint coordinate does not round strictly
+// between its ends, or whose rounded box is empty, stops subdividing with
+// the representability issue.
 #pragma once
 
 #include <array>
@@ -37,28 +46,42 @@ struct Bracket {
   std::array<double, 3> root{};
 };
 
-// The kept leaf boxes (lower then upper corner) and their sign-change roots:
-// one bracket per leaf edge whose binary64 corner values have strictly
-// opposite signs, with its linear estimate, each edge once. Box b's roots
-// are roots[box_roots[k]] for k in [box_offsets[b], box_offsets[b + 1]);
-// root_box names the first box of each root.
-struct PossibleZeroBoxes {
-  std::vector<std::array<double, 6>> boxes;
-  std::vector<Bracket> roots;
-  std::vector<int32_t> box_offsets{0};
-  std::vector<int32_t> box_roots;
-  std::vector<int32_t> root_box;
+// A possible-zero leaf: its lattice level and integer index, its outward box
+// (lower then upper corner), and whether it stopped above the target level
+// at the representability limit.
+struct DyadicLeaf {
+  int32_t level = 0;
+  std::array<int64_t, 3> index{};
+  std::array<double, 6> box{};
+  bool representability = false;
 };
 
-// The octree of the cube centered on [lower, upper] with 9/8 of its largest
-// extent (which keeps the zero set off the cube's faces), whose boxes are
-// kept while f's interval enclosure over them contains zero or is not a
-// number, down to boxes no wider than `size` (at most 2^12 per axis). By
-// inclusion of the enclosure, every zero of f in the cube lies in a kept
-// leaf. f at the leaf corners is evaluated by the point program `point`
-// (binary64 proposals). Returns a PHX_MC status.
+// The possible-zero leaves and their sign-change roots: one bracket per leaf
+// edge whose binary64 values at its lattice vertices (the nearest binary64
+// coordinates) have strictly opposite signs, with its linear estimate, each
+// edge once. Leaf b's roots are roots[leaf_roots[k]] for k in
+// [leaf_offsets[b], leaf_offsets[b + 1]); root_leaf names the first leaf of
+// each root.
+struct PossibleZeroBoxes {
+  std::vector<DyadicLeaf> leaves;
+  std::vector<Bracket> roots;
+  std::vector<int32_t> leaf_offsets{0};
+  std::vector<int32_t> leaf_roots;
+  std::vector<int32_t> root_leaf;
+};
+
+// The smallest level whose cell diagonal, an upper bound of the domain's
+// diagonal times 2^-level, is at most `diameter` (_target_level of the
+// adaptive discovery with relative diameter diameter / diagonal).
+int32_t dyadic_target_level(const double* lower, const double* upper, double diameter);
+
+// The possible-zero cover of the anchored lattice of [lower, upper] down to
+// `target_level` (at most 30), f at the lattice vertices of its target-level
+// leaves by the point program `point` (binary64 proposals). By inclusion of
+// the enclosure every zero of f in the domain lies in a leaf. Returns a
+// PHX_MC status.
 int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramView& point,
-                            const double* lower, const double* upper, double size,
+                            const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out);
 
 }  // namespace phx::mc
