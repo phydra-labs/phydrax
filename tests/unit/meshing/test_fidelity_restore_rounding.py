@@ -173,8 +173,16 @@ def test_restore_accepts_other_platform_bound_rounding_with_identical_ids(
         axis=1,
     )
     assert np.array_equal(kept.deviation_bounds, hull)
+    # The cover ships the reproved simplices with the larger of both bounds.
     assert kept.coverage is not None and stored.coverage is not None
-    assert np.array_equal(kept.coverage.simplices, stored.coverage.simplices)
+    other = _other_platform(stored, ulps).coverage
+    assert other is not None
+    assert np.array_equal(kept.coverage.simplices, other.simplices)
+    assert np.array_equal(
+        kept.coverage.deviation_bounds,
+        np.maximum(stored.coverage.deviation_bounds, other.deviation_bounds),
+    )
+    assert kept.coverage.cover_id == stored.coverage.cover_id
 
 
 @pytest.mark.meshcore
@@ -319,6 +327,89 @@ def test_adoption_ships_the_reproved_one_sided_normal_bound(
     assert adopted.normal_deviation_bounds is not None
     assert np.array_equal(adopted.normal_deviation_bounds, reproved)
     assert adopted.maximum_normal_deviation_bound == 0.25
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_cover_bound_over_a_stored_zero_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None and fidelity.coverage is not None
+    cover = fidelity.coverage
+    zero = SourceBoundaryChartCover(
+        cover.simplices,
+        np.zeros_like(np.asarray(cover.deviation_bounds)),
+        cover.semantics,
+        cover.complete,
+        cover.source_id,
+        cover.source_revision,
+        findings=cover.findings,
+        restriction_ids=cover.restriction_ids,
+    )
+    assert np.any(np.asarray(cover.deviation_bounds) > 0.0)
+    adopted = _with_fields(fidelity, coverage=zero).adopt_reproof(fidelity)
+    assert adopted.coverage is not None
+    assert np.array_equal(adopted.coverage.deviation_bounds, cover.deviation_bounds)
+
+
+def _chart_rows(target_to_root: tuple[float, float], jacobian: float) -> Any:
+    """Two reusable rows; row 0 carries the given evidence, row 1 fixed evidence."""
+    from phydrax.geometry.implicit._chart_restriction import ImplicitChartRows
+
+    keys = np.arange(32, dtype=np.uint8).reshape((2, 16))
+    values = np.asarray(
+        (
+            (1e-9, *target_to_root, 0.0, 0.1, jacobian, 0.5, 2.0),
+            (1e-9, 0.0, 1e-3, 0.0, 0.1, 1.0, 0.5, 2.0),
+        ),
+        dtype=np.float64,
+    )
+    return ImplicitChartRows(keys, np.ones((2,), dtype=np.bool_), values)
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_chart_row_over_a_stored_zero_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    half = 0.5 * fidelity.tolerance
+    stored = _with_fields(fidelity, chart_rows=_chart_rows((0.0, 0.0), 1.0))
+    fresh = _with_fields(fidelity, chart_rows=_chart_rows((0.0, half), 0.75))
+    adopted = stored.adopt_reproof(fresh)
+    assert adopted.chart_rows is not None
+    row = np.asarray(adopted.chart_rows.values)[0]
+    assert tuple(row[1:3]) == (0.0, half)
+    assert row[5] == 0.75
+    adopted.chart_rows.require_current()
+
+
+@pytest.mark.meshcore
+@pytest.mark.parametrize(
+    ("target_to_root", "jacobian", "bound"),
+    (
+        ((0.0, 2.0), 1.0, "chart_rows.target_to_root"),
+        ((0.0, 0.0), 0.0, "chart_rows.chart_jacobian_lower"),
+    ),
+    ids=("tolerance", "jacobian"),
+)
+def test_adoption_refuses_a_chart_row_decision_its_reproof_does_not_hold(
+    accepted: CellMeshingResult,
+    target_to_root: tuple[float, float],
+    jacobian: float,
+    bound: str,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    reproved = (target_to_root[0], target_to_root[1] * fidelity.tolerance)
+    stored = _with_fields(fidelity, chart_rows=_chart_rows((0.0, 0.0), 1.0))
+    fresh = _with_fields(fidelity, chart_rows=_chart_rows(reproved, jacobian))
+    with pytest.raises(SourceFidelityReproofError) as refusal:
+        stored.adopt_reproof(fresh)
+    assert refusal.value.bound == bound
 
 
 @pytest.mark.meshcore
