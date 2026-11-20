@@ -1974,14 +1974,21 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
 }
 
 std::int32_t TetMesh::declared_split_pair(std::int32_t a, std::int32_t b,
-                                          std::span<const std::int32_t> cells) const {
+                                          std::span<const std::int32_t> cells,
+                                          const TetSegmentIndex* segment_index) const {
   if (vertex_dimension(a) <= 1 && vertex_dimension(b) <= 1) {
     const std::uint64_t id_a = vertex_id(a);
     const std::uint64_t id_b = vertex_id(b);
-    for (const TetSnapshotSegment& segment : segments_) {
-      if ((segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
-          (segment.vertices[0] == id_b && segment.vertices[1] == id_a)) {
+    if (segment_index != nullptr) {
+      if (segment_index->contains({std::min(id_a, id_b), std::max(id_a, id_b)})) {
         return kNoConstraint;
+      }
+    } else {
+      for (const TetSnapshotSegment& segment : segments_) {
+        if ((segment.vertices[0] == id_a && segment.vertices[1] == id_b) ||
+            (segment.vertices[0] == id_b && segment.vertices[1] == id_a)) {
+          return kNoConstraint;
+        }
       }
     }
   }
@@ -2019,17 +2026,19 @@ std::int32_t TetMesh::declared_split_pair(std::int32_t a, std::int32_t b,
 bool TetMesh::split_face_covered(const std::int32_t* parent_face, std::int32_t source,
                                  const std::array<std::int32_t, 3>& first_child,
                                  const std::array<std::int32_t, 3>& second_child,
-                                 std::span<const std::int32_t> cells) const {
+                                 std::span<const std::int32_t> cells,
+                                 const TetSegmentIndex* segment_index) const {
   if (exact_split_coverage(*this, parent_face, first_child, second_child)) return true;
   return source != kNoConstraint &&
-         declared_split_pair(first_child[0], second_child[1], cells) == source &&
+         declared_split_pair(first_child[0], second_child[1], cells, segment_index) == source &&
          declared_split_children(source, parent_face, first_child, second_child);
 }
 
 TetEditStatus TetMesh::unconstrained_split_point_status(std::int32_t a, std::int32_t b,
                                                         const std::array<std::uint64_t, 2>& edge,
                                                         const TetEditVertex& inserted,
-                                                        std::span<const std::int32_t> cells) const {
+                                                        std::span<const std::int32_t> cells,
+                                                        const TetSegmentIndex* segment_index) const {
   if (inserted.has_edge_parameter && inserted.edge_endpoints != edge) {
     return TetEditStatus::kInvalidGeometry;
   }
@@ -2038,7 +2047,7 @@ TetEditStatus TetMesh::unconstrained_split_point_status(std::int32_t a, std::int
   if (inserted.witness.stratum == SourceStratum::kNone && !inserted.has_edge_parameter) {
     const double* endpoints[3] = {point(a), point(b), nullptr};
     if (!on_source_entity(endpoints, SourceStratum::kSegment, inserted.carrier.data()) &&
-        declared_split_pair(a, b, cells) == kNoConstraint) {
+        declared_split_pair(a, b, cells, segment_index) == kNoConstraint) {
       return TetEditStatus::kInvalidGeometry;
     }
   }

@@ -768,7 +768,8 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
     }
     const std::array<std::uint64_t, 2> edge{a_id, b_id};
     const TetEditStatus point_status =
-        mesh.unconstrained_split_point_status(a, b, edge, vertex, edit.removed);
+        mesh.unconstrained_split_point_status(a, b, edge, vertex, edit.removed,
+                                              &boundary_index_.segments);
     if (point_status != TetEditStatus::kApplied) return point_status;
     if (2 * edit.removed.size() > kMaxId - mesh.next_cell_id_ ||
         4 > kMaxId - mesh.next_facet_id_) {
@@ -1172,7 +1173,7 @@ TetEditStatus LocalIncidence::commit_boundary_edit(TetMesh& mesh, const TetEdit&
         }
         if (!directed ||
             !mesh.split_face_covered(corners, mesh.complex_.constraint(cell, face), first_child,
-                                     second_child, edit.removed)) {
+                                     second_child, edit.removed, &boundary_index_.segments)) {
           return TetEditStatus::kRejectedTopology;
         }
         for (const auto& child : {first_child, second_child}) {
