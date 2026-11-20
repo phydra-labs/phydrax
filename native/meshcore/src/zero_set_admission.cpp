@@ -29,6 +29,12 @@ constexpr double kInfinity = std::numeric_limits<double>::infinity();
 // Midpoint levels of the uncertifiable-point search: the residual maximum of
 // a triangle is located to 2^-6 of its extent before the full subdivision.
 constexpr int kWitnessLevels = 6;
+// Once a repair is needed, every triangle decided in a round must also be
+// proved within this fraction of the tolerance. A repair splits where the
+// zero set strays about the tolerance from the surface, and the reverse bound
+// there is about the forward one plus the tube's slack (0.0089 against 0.008
+// when repaired only to the tolerance; 0.0072 at 0.8 of it).
+constexpr double kRepairFraction = 0.8;
 
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
@@ -79,6 +85,7 @@ int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instructio
                                  int64_t output_count, const int64_t* guards,
                                  int64_t guard_count) {
   program_.reset();
+  evidence_ = nullptr;
   if (instruction_count < 0 || index_count < 0 || parameter_count < 0 || workspace_size < 3 ||
       output_count < 1 || guard_count < 0 || (instruction_count > 0 && instructions == nullptr) ||
       (index_count > 0 && indices == nullptr) || (parameter_count > 0 && parameters == nullptr) ||
@@ -880,11 +887,11 @@ class ZeroSetCertifier final : public TriangleCertifier {
 
 // The distance bound a witness box proves for a carrier triangle (see
 // phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
-// f is continuous on the box by the value program's branch evidence, and two
-// box corners have value enclosures of strictly opposite sign, so a zero of
-// f lies on the segment between them, in the box; every point of the
-// triangle is then within the box diagonal (rounded up) of it. +inf when a
-// check fails.
+// `value`'s gated evaluation over the box succeeds (its branch evidence
+// reports f continuous there and no guard fails), and two box corners have
+// value enclosures of strictly opposite sign, so a zero of f lies on the
+// segment between them, in the box; every point of the triangle is then
+// within the box diagonal (rounded up) of it. +inf when a check fails.
 double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
                      const Point& upper, const IntervalBoxProgram& value) {
   for (int d = 0; d < 3; ++d) {
@@ -893,8 +900,8 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
-  bool smooth = false, continuous = false;
-  if (!value.flags(lower, upper, smooth, continuous) || !continuous) return kInfinity;
+  Interval whole{};
+  if (!value.checks_branches() || !value.evaluate(lower, upper, &whole)) return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};
@@ -1111,15 +1118,20 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   }
   std::sort(carrier.entries.begin(), carrier.entries.end());
   oracle.set_reach(request.edge_length + reach);
-  AdmissionMemo memo;
+  AdmissionMemo memo, repair_memo;
   const ZeroSetBandAdmission admission(value, gradient, request.tolerance, request.orientation,
                                        &memo);
   const ZeroSetCertifier certifier(admission);
+  // Once a repair is needed, triangles are held to the tighter band too.
+  const ZeroSetBandAdmission repair_admission(value, gradient,
+                                              kRepairFraction * request.tolerance,
+                                              request.orientation, &repair_memo);
+  const ZeroSetCertifier repair_certifier(repair_admission);
   CertifyCounters certified;
   status = certify_surface(points, triangles, oracle,
                            AdaptTargets{request.edge_length, request.tolerance,
                                         request.minimum_angle_degrees},
-                           certifier, carrier, certified);
+                           certifier, carrier, &repair_certifier, certified);
   const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
   request.counters[0] = refusals.transversality;
   request.counters[1] = refusals.distance;

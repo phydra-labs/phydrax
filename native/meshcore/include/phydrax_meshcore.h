@@ -1995,12 +1995,13 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * (lower xyz, upper xyz) that contains the triangle's three corners (exact
  * comparisons), on which f is proved continuous (`value`'s branch-evidence
  * events, value_events rows over value's own workspace, leave the box
- * `continuous`; phx_mc_interval_program_branches), and that has two corners
- * at which the interval enclosures of f have strictly opposite signs, so the
- * box holds a zero of f on the segment between them; such a triangle is
- * accepted at the box diagonal (rounded up). A carrier triangle whose box
- * fails a check is never accepted from the carrier; invalid events are
- * refused (PHX_MC_INVALID_INPUT).
+ * `continuous`; phx_mc_interval_program_branches) and no guard of `value`
+ * fails (its interval evaluation over the box succeeds), and that has two
+ * corners at which the interval enclosures of f have strictly opposite
+ * signs, so the box holds a zero of f on the segment between them; such a
+ * triangle is accepted at the box diagonal (rounded up). A carrier triangle
+ * whose box fails a check is never accepted from the carrier; invalid events
+ * are refused (PHX_MC_INVALID_INPUT).
  * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
@@ -2011,6 +2012,11 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
+ * Once a repair is needed, every triangle decided in a round must also be
+ * proved within 0.8 `tolerance`: one proved only within `tolerance` is
+ * repaired as well, not refused, so the zero set near repaired triangles
+ * leaves the reverse direction room (when only such triangles remain after
+ * the last round, the last surface without a refusal stands).
  * `value` has one output, `gradient` three. Every enclosure of f or grad f
  * that a triangle, tube or witness proof reads is over a box on which
  * value's branch evidence reports f continuous (else that proof refuses),
