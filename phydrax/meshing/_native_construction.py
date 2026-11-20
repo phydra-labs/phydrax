@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from ._layer_core_subdivision import OverlapSourceStencils, RefinedColumnCertification
     from ._layer_curving_records import LayerCurvingSourceEvidence
     from ._native_cad_certificate import NativeCadSurfaceWitness
+    from ._native_cad_records import NativeCadRecords
     from ._organization import (
         MeshAttribute,
         MeshLabel,
@@ -80,6 +81,8 @@ class NativeCertificationRequest:
     validity_parent: tuple[CellValidityCertificate, ...] = ()
     # The native CAD solid's boundary chart realization (native verifiers).
     native_cad_surface: NativeCadSurfaceWitness | None = None
+    # The native CAD solid's curve-edge authority and pole slivers.
+    native_cad_records: NativeCadRecords | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1407,6 +1407,11 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 if original.native_cad_surface is None
                 else restore_model_archive_value(original.native_cad_surface)
             ),
+            native_cad_records=(
+                None
+                if original.native_cad_records is None
+                else restore_model_archive_value(original.native_cad_records)
+            ),
         )
         if inputs.request_id != original.request_id:
             raise ValueError("Stored certification request changed.")

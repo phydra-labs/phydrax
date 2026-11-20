@@ -188,6 +188,7 @@ from ._mixed_adaptation import (
     MixedCoarseningMap,
     MixedLayerColumns,
 )
+from ._native_cad_records import retarget_native_cad_surface
 from ._organization import MeshLabel, MeshPatch, MeshZone, RegionBoundaryEvidence
 from ._periodic import (
     periodic_quotient_facet_cell_classes,
@@ -5836,6 +5837,20 @@ def _renew_transition_certification_inputs(
         source_coverage_witness=coverage,
         validated=validated,
         computed_root=computed_root,
+        native_cad_surface=(
+            None
+            if original.native_cad_surface is None
+            else retarget_native_cad_surface(
+                original.native_cad_surface, source.mesh, target
+            )
+        ),
+        native_cad_records=(
+            None
+            if original.native_cad_records is None
+            else original.native_cad_records.retarget(
+                source, lineage, target, vertex_stencil
+            )
+        ),
     )
     return inputs, validated
 
