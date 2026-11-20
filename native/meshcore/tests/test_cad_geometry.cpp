@@ -6,6 +6,7 @@
 // implicit intersection chart against the closed-form cylinder pair, and
 // the differential quantities of the C entry against known curvatures.
 #include <algorithm>
+#include <cfloat>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -821,7 +822,10 @@ void spline_numerator_nets_placed() {
 
 // Second-order jet in (u, v) over binary128 (113-bit) arithmetic: the
 // independent reference for the closed forms. It differentiates the source
-// definitions (Python evaluate formulas), not the hand derivatives.
+// definitions (Python evaluate formulas), not the hand derivatives. Only
+// platforms whose long double is binary128 (e.g. Linux aarch64) run these two
+// tests; elsewhere (x86-64 x87, Apple arm64, MSVC) they report a skip.
+#if LDBL_MANT_DIG >= 113
 using Quad = long double;
 static_assert(std::numeric_limits<Quad>::digits >= 113, "binary128 long double required");
 struct QJet { Quad v = 0, u = 0, w = 0, uu = 0, uw = 0, ww = 0; };  // w: second parameter
@@ -1030,6 +1034,7 @@ void interval_closed_forms() {
         }
       }
 }
+#endif  // LDBL_MANT_DIG >= 113
 
 void spline_kink_fidelity() {
   for (int degree : {1, 2}) {
@@ -1150,8 +1155,13 @@ int main() {
   spline_interval_nodes();
   spline_bernstein_enclosure_reference();
   spline_numerator_nets_placed();
+#if LDBL_MANT_DIG >= 113
   anchored_trigonometry();
   interval_closed_forms();
+#else
+  std::printf("anchored_trigonometry, interval_closed_forms: skipped (long double has %d "
+              "mantissa bits; the reference needs binary128)\n", LDBL_MANT_DIG);
+#endif
   spline_kink_fidelity();
   intersection_chart();
   entry_point();
