@@ -418,6 +418,22 @@ void floor_chords(const FaceMetric& context, int32_t index, const double* point,
   }
 }
 
+// Isotropic base size at a face point: the request h, graded from the
+// boundary samples and floored on fixed chords. Grading from the nearby
+// sample spacing asks for small triangles around a short boundary segment, but
+// a neighbouring long chord is fixed: every triangle on it has circumradius
+// >= L/2 and no vertex may enter its diametral disk, so a size below L there
+// cannot be met. The chord floor is the smallest g-Lipschitz field that is
+// >= L on every chord; it overrides the grading, never the request or the
+// curvature sizes.
+double base_size(const FaceMetric& context, const double* jet) {
+  double h = context.size;
+  const double ungraded = h;
+  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
+  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
+  return h;
+}
+
 CadMetric2D face_metric(const double chart[2], void* opaque) {
   auto& context = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
@@ -428,24 +444,54 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
     const double invalid = std::numeric_limits<double>::quiet_NaN();
     return {invalid, invalid, invalid};
   }
-  double h = context.size;
-  const double curvature = std::max(std::abs(differential.curvatures[0]),
-                                    std::abs(differential.curvatures[1]));
-  if (curvature > 0.0)
-    h = std::min(h, std::sqrt(6.0 * context.theta * context.tolerance / curvature));
-  // Grading from the nearby sample spacing asks for small triangles around a
-  // short boundary segment, but a neighbouring long chord is fixed: every
-  // triangle on it has circumradius >= L/2 and no vertex may enter its
-  // diametral disk, so a size below L there cannot be met. The chord floor is
-  // the smallest g-Lipschitz field that is >= L on every chord; it overrides
-  // the grading, never the request or curvature size.
-  const double ungraded = h;
-  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
-  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
-  const double inverse = 1.0 / (h * h);
-  return {differential.first_form[0] * inverse / (context.scale_u * context.scale_u),
-          differential.first_form[1] * inverse / (context.scale_u * context.scale_v),
-          differential.first_form[2] * inverse / (context.scale_v * context.scale_v)};
+  // Fidelity: the isotropic size intersected with the request's curvature
+  // tensor (cad::fidelity_metric).
+  double m[3];
+  cad::fidelity_metric(differential, base_size(context, jet), context.theta, context.tolerance, m,
+                       nullptr);
+  return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
+          m[2] / (context.scale_v * context.scale_v)};
+}
+
+// The face metric at a vertex as a row-major 3D tensor for the face stage's
+// flips: lambda_2 along the k_2 principal direction, lambda_1 across it
+// (normal included). False where the fidelity term does not bind (the flips
+// then stay the plain 3D Delaunay test) or the jet is degenerate.
+bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9]) {
+  const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
+  double m[3], lambda[2];
+  const double h = base_size(context, jet);
+  cad::fidelity_metric(differential, h, context.theta, context.tolerance, m, lambda);
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
+  const double base = 1.0 / (h * h);
+  if (lambda[0] == lambda[1]) return lambda[0] != base;
+  // Eigenvector of W = I^-1 II for k_2: a column of W - k_1 Id (the range of
+  // the spectral projector), the longer one for conditioning.
+  const double* I = differential.first_form;
+  const double* II = differential.second_form;
+  const double determinant = I[0] * I[2] - I[1] * I[1];
+  const double a = (I[2] * II[0] - I[1] * II[1]) / determinant;
+  const double b = (I[2] * II[1] - I[1] * II[2]) / determinant;
+  const double c = (I[0] * II[1] - I[1] * II[0]) / determinant;
+  const double d = (I[0] * II[2] - I[1] * II[1]) / determinant;
+  const double k1 = differential.curvatures[0];
+  double direction[2] = {a - k1, c};
+  if (std::hypot(b, d - k1) > std::hypot(direction[0], direction[1])) {
+    direction[0] = b;
+    direction[1] = d - k1;
+  }
+  double e[3];
+  for (int i = 0; i < 3; ++i) e[i] = jet[3 + i] * direction[0] + jet[6 + i] * direction[1];
+  const double length = std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+  if (!(length > 0.0) || !std::isfinite(length)) return false;
+  for (double& x : e) x /= length;
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) tensor[3 * i + j] += (lambda[1] - lambda[0]) * e[i] * e[j];
+  return true;
 }
 
 // Chart-to-physical position of a face vertex: the classified position at an
@@ -804,9 +850,18 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     const double speed = std::hypot(std::hypot(jet[derivative], jet[derivative + 1]),
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
-    double spacing = std::min(limit, metric.size / speed);
+    // The rings are isotropic: their spacing is the face metric's smallest
+    // size, the request h or the fidelity size sqrt(4 theta tol / |k|max).
+    cad::SurfaceDifferential differential;
+    if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
+    const double curvature = std::max(std::abs(differential.curvatures[0]),
+                                      std::abs(differential.curvatures[1]));
+    double size = metric.size;
+    if (curvature > 0.0)
+      size = std::min(size, std::sqrt(4.0 * metric.theta * metric.tolerance / curvature));
+    double spacing = std::min(limit, size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
-    double width = std::min(limit, 3.0 * spacing);
+    double width = std::min(limit, pole_ring_width(spacing));
     while (width < limit) {
       double uv[2] = {middle[0], middle[1]};
       uv[axis] = start[axis] + direction * width;
@@ -946,60 +1001,281 @@ double maximum_cosine(const SurfaceTriangulation& surface,
   return maximum;
 }
 
-void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed,
+// Largest metric circumradius over cells (centroid metric, as the chart
+// kernel's size test); infinity on a degenerate or invalid cell. Stops at the
+// first cell past `bound`, returning that cell's radius.
+double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& surface,
+                             const std::vector<int32_t>& cells, double bound) {
+  double maximum = 0.0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    const double* a = surface.chart(t[0]);
+    const double* b = surface.chart(t[1]);
+    const double* c = surface.chart(t[2]);
+    const double centroid[2] = {(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
+    const CadMetric2D m = face_metric(centroid, &metric);
+    const double x = b[0] - a[0], y = b[1] - a[1], u = c[0] - a[0], v = c[1] - a[1];
+    const double bx = m.uu * x + m.uv * y, by = m.uv * x + m.vv * y;
+    const double cx = m.uu * u + m.uv * v, cy = m.uv * u + m.vv * v;
+    const double bb = x * bx + y * by, cc = u * cx + v * cy;
+    const double determinant = bx * cy - by * cx;
+    const double dx = (bb * cy - cc * by) / (2 * determinant);
+    const double dy = (bx * cc - cx * bb) / (2 * determinant);
+    const double radius2 = dx * (m.uu * dx + m.uv * dy) + dy * (m.uv * dx + m.vv * dy);
+    if (!std::isfinite(radius2)) return std::numeric_limits<double>::infinity();
+    maximum = std::max(maximum, radius2);
+    if (std::sqrt(radius2) > bound) break;
+  }
+  return std::sqrt(maximum);
+}
+
+// Moves of free interior vertices, each guarded: the chart star stays
+// positively oriented and keeps the kernel's size bound (metric circumradius
+// <= 1/sqrt(2), on which the fidelity bound rests, or a star already past it).
+// 1. The inverse-distance neighbour centroid (first two passes), kept when
+//    the star's worst 3D angle does not drop.
+// 2. Below the kernel's angle-pass target (halfway between
+//    min_angle_degrees and 60), a compass search on the star's worst 3D
+//    angle: eight chart directions from a quarter of the shortest incident
+//    chart edge, halved four times, best strict improvement per step. This
+//    lifts the fans at fixed curve vertices, which hold the smallest angles
+//    after refinement (measured on the quadric: every triangle below Gmsh's
+//    minimum had its smallest angle at a curve vertex).
+// 3. While the longest incident edge exceeds one in the face metric (the
+//    size h; its sag is the mesh-to-surface distance), a step of 1/4, 1/8 or
+//    1/16 toward its far end, the first that shortens it without the worst
+//    angle dropping below the target or its current value.
+// Passes revisit the vertices that moved or neighbour a move, until none
+// moves (at most eight).
+void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_angle_degrees,
             std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
   std::vector<std::vector<int32_t>> incident(vertices.size());
   for (std::size_t cell = 0; cell < surface.cells.size(); ++cell) {
     for (const int32_t v : surface.cells[cell]) incident[v].push_back(static_cast<int32_t>(cell));
   }
-  for (int pass = 0; pass < 2; ++pass) {
+  const double target_cos =
+      std::cos((min_angle_degrees + 60.0) * 3.14159265358979323846 / 360.0);
+  // The visited vertex's chart at the visit's start.
+  std::array<double, 2> visit_start{};
+  // The size guard for v at its current chart: false when the star's radius
+  // exceeds both the kernel's bound and the star's radius at the visit start.
+  // `previous_radius` (that start radius) < 0 is computed on first need;
+  // infinity (a degenerate star) skips the guard.
+  const auto fits = [&](std::size_t v, double& previous_radius) {
+    if (!std::isfinite(previous_radius)) return true;
+    constexpr double bound = 0.70710678118654752440;
+    // Within the kernel's bound the move passes whatever the start was, so
+    // the start radius is evaluated only past it.
+    double radius = maximum_metric_radius(
+        metric, surface, incident[v],
+        previous_radius < 0.0 ? bound : std::max(bound, previous_radius));
+    if (!(radius > bound)) return true;
+    if (previous_radius < 0.0) {
+      // The star's radius at the visit's start (no move is kept before the
+      // first size check).
+      const std::array<double, 2> chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
+      std::copy(visit_start.begin(), visit_start.end(), surface.charts.begin() + 2 * v);
+      previous_radius = maximum_metric_radius(metric, surface, incident[v],
+                                              std::numeric_limits<double>::infinity());
+      std::copy(chart.begin(), chart.end(), surface.charts.begin() + 2 * v);
+      if (!std::isfinite(previous_radius)) return true;
+      if (previous_radius > bound)
+        radius = maximum_metric_radius(metric, surface, incident[v], previous_radius);
+    }
+    return !(radius > std::max(bound, previous_radius));
+  };
+  // Moves v to `chart` when the orientation holds and the star's worst cosine
+  // is at most `limit` (and, with `sized`, the size guard holds); returns the
+  // new worst cosine, or infinity (v unchanged).
+  const auto attempt = [&](std::size_t v, const double chart[2], double limit,
+                           double& previous_radius, bool sized) {
+    const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
+    const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
+                                          surface.points[3 * v + 2]};
+    const auto reject = [&] {
+      std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
+      std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
+      return std::numeric_limits<double>::infinity();
+    };
+    // The chart orientation needs no surface evaluation: checked first.
+    std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
+    for (const int32_t cell : incident[v]) {
+      const auto& t = surface.cells[cell];
+      if (orient2d(surface.chart(t[0]), surface.chart(t[1]), surface.chart(t[2])) <= 0)
+        return reject();
+    }
+    std::array<double, 3> xyz;
+    if (!face_position(&metric, chart, xyz.data())) return reject();
+    std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
+    const double quality = maximum_cosine(surface, incident[v]);
+    if (!(quality <= limit)) return reject();
+    if (sized && !fits(v, previous_radius)) return reject();
+    vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
+    return quality;
+  };
+  // Face metric at each vertex as a 3D tensor (vertex_metric) for the edge
+  // lengths of the long-edge step; refreshed when the vertex moves.
+  std::vector<double> tensors(9 * vertices.size(), 0.0);
+  const auto refresh = [&](std::size_t v) {
+    double* tensor = tensors.data() + 9 * v;
+    const double isotropic = 1.0 / (metric.size * metric.size);
+    for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
+    vertex_metric(metric, surface.chart(static_cast<int32_t>(v)), tensor);
+  };
+  for (std::size_t v = 0; v < vertices.size(); ++v) refresh(v);
+  std::vector<int32_t> neighbors;
+  // A vertex is visited while it or a neighbour moved in the previous pass.
+  std::vector<uint8_t> active(vertices.size(), 1), next(vertices.size(), 0);
+  for (int pass = 0; pass < 8; ++pass) {
+    bool moved = false;
+    std::fill(next.begin(), next.end(), 0);
     for (std::size_t v = 0; v < vertices.size(); ++v) {
-      if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty()) continue;
-      std::vector<int32_t> neighbors;
+      if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty() || !active[v]) continue;
+      const std::array<double, 2> start{surface.charts[2 * v], surface.charts[2 * v + 1]};
+      visit_start = start;
+      [&] {
+      neighbors.clear();
       for (const int32_t cell : incident[v])
         for (const int32_t u : surface.cells[cell])
           if (u != static_cast<int32_t>(v)) neighbors.push_back(u);
       std::sort(neighbors.begin(), neighbors.end());
       neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
       const auto p = surface.point(static_cast<int32_t>(v));
-      double sum = 0.0, chart[2] = {};
+      double sum = 0.0, chart[2] = {}, step = std::numeric_limits<double>::infinity();
+      const double* own = surface.chart(static_cast<int32_t>(v));
       for (const int32_t u : neighbors) {
         const auto d = surface.point(u) - p;
         const double length = std::sqrt(geometry::dot(d, d));
+        const double* q = surface.chart(u);
+        step = std::min(step, std::hypot(q[0] - own[0], q[1] - own[1]));
         if (!(length > 0.0)) continue;
         const double weight = 1.0 / length;
-        const double* q = surface.chart(u);
         chart[0] += weight * q[0];
         chart[1] += weight * q[1];
         sum += weight;
       }
-      if (!(sum > 0.0)) continue;
+      if (!(sum > 0.0)) return;
       chart[0] /= sum;
       chart[1] /= sum;
-      const std::array<double, 2> uv{chart[0] / metric.scale_u, chart[1] / metric.scale_v};
-      std::array<double, 3> xyz;
-      if (!face_position(&metric, chart, xyz.data())) continue;
-      const double previous_quality = maximum_cosine(surface, incident[v]);
-      const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
-      const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
-                                            surface.points[3 * v + 2]};
-      std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
-      std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
-      bool legal = true;
-      for (const int32_t cell : incident[v]) {
-        const auto& t = surface.cells[cell];
-        if (orient2d(surface.chart(t[0]), surface.chart(t[1]), surface.chart(t[2])) <= 0) {
-          legal = false;
-          break;
+      double quality = maximum_cosine(surface, incident[v]);
+      double previous_radius = -1.0;
+      // The first two passes smooth every vertex; later passes only search.
+      if (pass < 2) {
+        const double after = attempt(v, chart, quality, previous_radius, true);
+        if (after <= quality) quality = after;
+      }
+      // Compass search on the star's worst cosine from a quarter of the
+      // shortest incident chart edge, halved four times, over moves whose
+      // worst cosine stays <= `limit`; v returns to its saved state between
+      // probes.
+      const double initial_step = 0.25 * step;
+      double limit = std::numeric_limits<double>::infinity();
+      std::array<double, 2> saved_chart{}, saved_uv{};
+      std::array<double, 3> saved_point{};
+      const auto save = [&] {
+        saved_chart = {surface.charts[2 * v], surface.charts[2 * v + 1]};
+        saved_point = {surface.points[3 * v], surface.points[3 * v + 1], surface.points[3 * v + 2]};
+        saved_uv = vertices[v].uv;
+      };
+      const auto restore = [&] {
+        std::copy(saved_chart.begin(), saved_chart.end(), surface.charts.begin() + 2 * v);
+        std::copy(saved_point.begin(), saved_point.end(), surface.points.begin() + 3 * v);
+        vertices[v].uv = saved_uv;
+      };
+      const auto search = [&] {
+        double current = quality;
+        double width = initial_step;
+        for (int level = 0; level < 5; ++level, width *= 0.5) {
+          // The move just made at this width: probing back along it returns
+          // to the worse previous position.
+          int back_x = 0, back_y = 0;
+          for (;;) {
+            save();
+            double best = current;
+            std::array<double, 2> best_chart{}, best_uv{};
+            std::array<double, 3> best_point{};
+            int best_x = 0, best_y = 0;
+            for (int dx = -1; dx <= 1; ++dx)
+              for (int dy = -1; dy <= 1; ++dy) {
+                if ((dx == 0 && dy == 0) || (dx == back_x && dy == back_y && (dx || dy)))
+                  continue;
+                const double probe[2] = {saved_chart[0] + dx * width, saved_chart[1] + dy * width};
+                // Only a strictly better probe can be kept, so the costlier
+                // size guard runs only for those.
+                const double after = attempt(
+                    v, probe,
+                    std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity())),
+                    previous_radius, true);
+                if (!std::isfinite(after)) continue;
+                best = after;
+                best_chart = {probe[0], probe[1]};
+                best_point = {surface.points[3 * v], surface.points[3 * v + 1],
+                              surface.points[3 * v + 2]};
+                best_uv = vertices[v].uv;
+                best_x = dx;
+                best_y = dy;
+                restore();
+              }
+            if (!(best < current)) break;
+            std::copy(best_chart.begin(), best_chart.end(), surface.charts.begin() + 2 * v);
+            std::copy(best_point.begin(), best_point.end(), surface.points.begin() + 3 * v);
+            vertices[v].uv = best_uv;
+            current = best;
+            back_x = -best_x;
+            back_y = -best_y;
+          }
         }
+        return current;
+      };
+      if (!(step > 0.0) || !std::isfinite(step)) return;
+      // First the worst 3D angle, while it is below the target.
+      if (quality > target_cos) quality = search();
+      // Then the longest incident edge in the face metric while it exceeds
+      // one (the size h): its sag is what the distance row measures. The
+      // worst angle may not drop below the target or its current value.
+      int32_t far = -1;
+      const auto longest = [&] {
+        double maximum = 0.0;
+        const auto here = surface.point(static_cast<int32_t>(v));
+        const double* s = tensors.data() + 9 * v;
+        for (const int32_t u : neighbors) {
+          const auto e = surface.point(u) - here;
+          const double d[3] = {e.x, e.y, e.z};
+          const double* t = tensors.data() + 9 * static_cast<std::size_t>(u);
+          double length2 = 0.0;
+          for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) length2 += 0.5 * (s[3 * i + j] + t[3 * i + j]) * d[i] * d[j];
+          if (!std::isfinite(length2)) length2 = std::numeric_limits<double>::infinity();
+          if (length2 > maximum) maximum = length2, far = u;
+        }
+        return maximum;
+      };
+      // A step toward the far end of the longest edge (1/4, 1/8, 1/16 of
+      // it), the first that shortens the longest edge (checked before the
+      // costlier size guard).
+      const double current = longest();
+      if (!(current > 1.0) || far < 0) return;
+      limit = std::max(quality, target_cos);
+      save();
+      const double* target = surface.chart(far);
+      for (double fraction = 0.25; fraction >= 0.0625; fraction *= 0.5) {
+        const double probe[2] = {saved_chart[0] + fraction * (target[0] - saved_chart[0]),
+                                 saved_chart[1] + fraction * (target[1] - saved_chart[1])};
+        if (!std::isfinite(attempt(v, probe, limit, previous_radius, false))) continue;
+        if (longest() < current && fits(v, previous_radius)) break;
+        restore();
       }
-      if (!legal || maximum_cosine(surface, incident[v]) > previous_quality) {
-        std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
-        std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
-      } else {
-        vertices[v].uv = uv;
-      }
+      }();
+      if (surface.charts[2 * v] == start[0] && surface.charts[2 * v + 1] == start[1]) continue;
+      moved = true;
+      refresh(v);
+      next[v] = 1;
+      for (const int32_t u : neighbors) next[static_cast<std::size_t>(u)] = 1;
     }
+    if (!moved && pass >= 1) break;
+    // The second pass smooths every vertex again.
+    if (pass == 0) std::fill(active.begin(), active.end(), 1);
+    else active.swap(next);
   }
 }
 
@@ -1137,8 +1413,23 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   }
   const int32_t prepare_status = surface.prepare();
   if (prepare_status != PHX_MC_OK) return prepare_status;
+  // Where the fidelity tensor binds, the flips judge Delaunay in the face
+  // metric (vertex tensors averaged by the sweep), so they keep the metric
+  // shape the kernel built instead of undoing it in 3D (measured: plain 3D
+  // flips left interior triangles past the theta * tol sag bound).
+  {
+    std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
+    bool binding = false;
+    const double isotropic = 1.0 / (metric.size * metric.size);
+    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+      double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
+      for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
+      binding |= vertex_metric(metric, tri.point(i), tensor);
+    }
+    if (binding) surface.metrics = std::move(tensors);
+  }
   surface.sweep();
-  smooth(metric, mapped_fixed, vertices, surface);
+  smooth(metric, mapped_fixed, input.min_angle_degrees, vertices, surface);
   result.slivers.clear();
   result.triangles.clear();
   std::vector<std::pair<int32_t, int32_t>> pole_edges;

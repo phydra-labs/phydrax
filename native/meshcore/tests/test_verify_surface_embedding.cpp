@@ -179,9 +179,10 @@ void check_random_adjacent_pairs() {
 }
 
 // Coplanar pairs (the lifted chart partition case) sharing no vertex, one vertex or one
-// edge, in the plane z = 0 (axis-aligned fast path) and in the tilted plane z = x + y
-// (general coplanar path): the reduced 2D separation must never clear a pair the full
-// classifier flags, and must clear many disjoint ones.
+// edge, in planes that reach every branch of `projection_axis`: z = 0 (axis 2, the
+// axis-aligned fast path), z = x + y (axis 0), y = 0 (axis 1) and y = z (axis 1, tilted):
+// the reduced 2D separation must never clear a pair the full classifier flags, and must
+// clear many disjoint ones.
 void check_random_coplanar_pairs() {
   uint64_t state = 0x9e3779b97f4a7c15ULL;
   const auto coordinate = [&]() {
@@ -190,15 +191,19 @@ void check_random_coplanar_pairs() {
     state ^= state << 17;
     return static_cast<double>(static_cast<int>(state % 9) - 4);
   };
-  for (int tilted = 0; tilted < 2; ++tilted)
+  for (int plane = 0; plane < 4; ++plane)
   for (int shared = 0; shared < 3; ++shared) {
     int tested = 0, cleared = 0, failures = 0;
     while (tested < 50000) {
       std::array<std::array<double, 3>, 6> points{};
       for (int i = 0; i < 6; ++i) {
-        points[i][0] = coordinate();
-        points[i][1] = coordinate();
-        points[i][2] = tilted ? points[i][0] + points[i][1] : 0.0;
+        const double s = coordinate(), t = coordinate();
+        switch (plane) {
+          case 0: points[i] = {s, t, 0.0}; break;
+          case 1: points[i] = {s, t, s + t}; break;
+          case 2: points[i] = {s, 0.0, t}; break;
+          default: points[i] = {s, t, t}; break;
+        }
       }
       const int64_t first_ids[3] = {0, 1, 2};
       const int64_t second_ids[3] = {shared >= 1 ? 0 : 3, shared == 2 ? 1 : 4, 5};

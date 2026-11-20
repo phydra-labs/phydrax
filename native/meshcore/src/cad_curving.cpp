@@ -341,6 +341,7 @@ class Curving {
     for (int64_t t = 0; t < cells; ++t) all[static_cast<std::size_t>(t)] = t;
     int32_t status = decide(all);
     if (status != PHX_MC_OK) return status;
+    result_.initial_decisions = result_.cell_decisions;
     std::vector<int64_t> failing;
     for (int64_t t = 0; t < cells; ++t) {
       const int32_t decision = result_.cell_decisions[static_cast<std::size_t>(t)];

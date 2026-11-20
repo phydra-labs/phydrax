@@ -2791,9 +2791,24 @@ bool surface_differential(const double* jet, SurfaceDifferential& out) noexcept 
   const double spread = std::sqrt(std::max(half_difference * half_difference + b * c, 0.0));
   out.first_form[0] = e, out.first_form[1] = f, out.first_form[2] = g;
   for (int i = 0; i < 3; ++i) out.normal[i] = normal[i];
+  out.second_form[0] = l, out.second_form[1] = m, out.second_form[2] = n;
   out.curvatures[0] = mean - spread;
   out.curvatures[1] = mean + spread;
   return true;
+}
+
+void fidelity_metric(const SurfaceDifferential& differential, double h, double theta,
+                     double tolerance, double metric[3], double* lambdas) noexcept {
+  const double base = 1.0 / (h * h);
+  const double coefficient = 1.0 / (4.0 * theta * tolerance);
+  const double k1 = differential.curvatures[0], k2 = differential.curvatures[1];
+  const double lambda1 = std::max(base, std::abs(k1) * coefficient);
+  const double lambda2 = std::max(base, std::abs(k2) * coefficient);
+  const double s = lambda1 == lambda2 ? 0.0 : (lambda2 - lambda1) / (k2 - k1);
+  for (int i = 0; i < 3; ++i)
+    metric[i] = lambda1 * differential.first_form[i] +
+                s * (differential.second_form[i] - k1 * differential.first_form[i]);
+  if (lambdas) lambdas[0] = lambda1, lambdas[1] = lambda2;
 }
 
 bool curve_differential(const double* jet, double* speed, double* curvature) noexcept {

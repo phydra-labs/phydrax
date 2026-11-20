@@ -41,6 +41,9 @@ struct CadQuadraticMesh {
   std::vector<int32_t> edge_entities;
   std::vector<std::array<int64_t, 6>> cell_edges;
   std::vector<int32_t> cell_decisions;
+  // Decisions of the lifted nodes before any repair (initial_invalid and
+  // initial_unresolved count these).
+  std::vector<int32_t> initial_decisions;
   // Straightened curved boundary edges: (edge, cell whose failure caused it).
   std::vector<std::array<int64_t, 2>> straightened;
   phx_mc_cad_quadratic_stats stats{};

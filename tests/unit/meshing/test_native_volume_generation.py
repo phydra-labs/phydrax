@@ -2398,6 +2398,14 @@ def test_conforming_route_certifies_boundary_splits_on_exact_source_points(
         assert 0.0 < coverage.source_distance_upper < 1e-15
     restored = type(coverage).from_stored_fields(coverage)
     assert restored.certificate_id == coverage.certificate_id
+    # S3 splits every conforming boundary edge above the edge-length
+    # convention's h, so the declared boundary-edge statistics stay <= h.
+    achieved = dict(result.compliance.achieved)
+    rows = [
+        key for key in achieved if key.startswith("size:") and key[-3:] in {"p50", "p95"}
+    ]
+    assert rows and all(achieved[key] <= 0.3 for key in rows)
+    assert not result.compliance.issues
 
 
 def test_unsplit_plc_route_retains_no_source_point_witness() -> None:

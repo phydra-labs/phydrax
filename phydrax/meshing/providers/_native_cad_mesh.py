@@ -30,7 +30,13 @@ from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
-from .._sizing import SizeControlStrength, UniformSizeControl
+from .._sizing import (
+    CAD_CHART_SURFACE_SIZE,
+    size_statistic,
+    SizeControlStrength,
+    triangle_circumradii,
+    UniformSizeControl,
+)
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
 
 
@@ -116,7 +122,12 @@ def _size_compliance(
     achieved: list[tuple[str, float]],
     /,
 ) -> None:
-    """Boundary edge-length statistics of each face size control (PLC route's rows)."""
+    """Size statistics of each face size control on its boundary triangles.
+
+    The target statistics judge the circumradius the chart kernel bounds
+    (``CAD_CHART_SURFACE_SIZE``: R <= h / sqrt(2)); ``maximum_size`` bounds
+    the longest boundary edge.
+    """
     from ._native_cad_volume import _domain_scope_rows
 
     specification = prepared.specification
@@ -125,6 +136,7 @@ def _size_compliance(
     points = np.asarray(solid.volume.points, dtype=np.float64)
     triangles = np.asarray(surface.triangles, dtype=np.int64)
     patches = np.asarray(surface.triangle_patches, dtype=np.int64)
+    declaration = CAD_CHART_SURFACE_SIZE
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             issues.append(f"size_control:{control.control_id}:unsupported")
@@ -134,22 +146,21 @@ def _size_compliance(
         if faces.shape[0] == 0:
             issues.append(f"size_control:{control.control_id}:no_boundary_faces")
             continue
-        edges = sorted_unique_rows(
-            np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
-        )
-        lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        radii = triangle_circumradii(points, faces)
         for statistic in policy.target_statistics:
-            value = float(np.quantile(lengths, 0.5 if statistic == "p50" else 0.95))
-            key = f"size:{control.control_id}:{statistic}"
-            requested.append((key, control.target_size))
+            value = size_statistic(radii, statistic)
+            key = f"size:{control.control_id}:{statistic}_circumradius"
+            requested.append((key, declaration.bound_factor * control.target_size))
             achieved.append((key, value))
-            allowed = (
-                control.target_size * (1.0 + policy.relative_tolerance)
-                + policy.absolute_tolerance
-            )
-            if control.strength is SizeControlStrength.HARD and value > allowed:
+            if control.strength is SizeControlStrength.HARD and declaration.exceeds(
+                value, control.target_size, policy
+            ):
                 issues.append(key)
         if control.maximum_size is not None:
+            edges = sorted_unique_rows(
+                np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
+            )
+            lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
             maximum = float(np.max(lengths))
             key = f"size:{control.control_id}:maximum"
             requested.append((key, control.maximum_size))

@@ -3137,8 +3137,9 @@ PHX_MC_API int32_t phx_mc_verify_surface_embedding(
  * On OK evidence_count gives the failures (zero certifies). Insufficient
  * capacity reports the required count without writing evidence. Consecutive
  * chords of a use must join bitwise in UV and share one loop (USE_COVERAGE).
- * OVERLAP: two correctly oriented triangles of one patch whose UV interiors
- * meet other than along a shared vertex or edge (row/other: triangle rows). */
+ * OVERLAP: two correctly oriented triangles of one patch whose UV closures
+ * touch other than along a bitwise-shared vertex or edge, including a contact
+ * at points equal in value but not bitwise (-0.0 vs 0.0) (row/other: rows). */
 enum phx_mc_chart_failure_kind {
   PHX_MC_CHART_ORIENTATION = 1,
   PHX_MC_CHART_EDGE = 2,
@@ -3413,7 +3414,7 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
 /* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
  * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
  * triangle, curve segments as protected edges; refinement to the request h
- * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * (h passed unchanged as the circumradius target at every surface point, S3's graded field
  * inside); improvement to the quality targets) and, with geometry_order 2,
  * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
  * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has
