@@ -129,6 +129,27 @@ def _assert_cad_fidelity(
         ).reshape((len(rows), len(weights), 3))
         linear = np.einsum("kv,rvd->rkd", weights, corners)
         measured[rows] = np.max(np.linalg.norm(exact - linear, axis=2), axis=1)
+        # V3 associates sphere pole-region rows in the pole chart
+        # (x, y) = rho (cos u, sin u): their reference is sampled there.
+        poles = np.asarray(model.use_kinds)[chart.chord_use[chart.use_patch[chart.chord_use] == patch]]
+        if np.any(poles == 1):
+            half = np.float64(np.pi / 2)
+            for sigma in (1.0, -1.0):
+                local = np.flatnonzero((uv[:, :, 1] == sigma * half).any(axis=1)
+                                       | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(axis=1))
+                if local.size == 0 or not np.any(uv[:, :, 1] == sigma * half):
+                    continue
+                rho = half - sigma * uv[local, :, 1]
+                pole = uv[local, :, 1] == sigma * half
+                x = np.where(pole, 0.0, rho * np.cos(uv[local, :, 0])) @ weights.T
+                y = np.where(pole, 0.0, rho * np.sin(uv[local, :, 0])) @ weights.T
+                chart_points = np.stack((np.arctan2(y, x), sigma * (half - np.hypot(x, y))), axis=-1)
+                pole_exact = np.asarray(
+                    surface.evaluate(jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)),
+                    dtype=np.float64,
+                ).reshape((local.size, len(weights), 3))
+                measured[rows[local]] = np.max(
+                    np.linalg.norm(pole_exact - linear[local], axis=2), axis=1)
     lower, upper = coefficient_bounds(cad_geometry_bundle(domain), domain)
     mesh = CadFidelityMesh(
         result.points,
@@ -402,6 +423,95 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
         np.testing.assert_array_equal(
             np.sort(result.vertex_parameters[interior, 0]), np.sort(native)
         )
+
+
+def _unit_cap(latitude_degrees: float, above: bool) -> phx.geometry.brep.BRepModel:
+    """The unit ball's part above (or below) a plane at the given latitude."""
+    brep = phx.geometry.brep
+    z = float(np.sin(np.radians(latitude_degrees)))
+    r = float(np.sqrt(1.0 - z * z))
+    if above:
+        vertices = ((0.0, z), (r, z), (0.0, 1.0))
+        segments = (brep.ProfileLine(), brep.ProfileArc((0.0, 0.0)), brep.ProfileLine())
+    else:
+        vertices = ((0.0, -1.0), (r, z), (0.0, z))
+        segments = (brep.ProfileArc((0.0, 0.0)), brep.ProfileLine(), brep.ProfileLine())
+    return brep.brep_revolution(
+        brep.PlanarProfile(
+            brep.ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+            brep.ProfileLoop(vertices, segments),
+        ),
+        (0.0, 0.0),
+        (0.0, 1.0),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+
+
+_COARSE_POLE_SHAPES = {
+    "sphere": lambda: phx.geometry.brep.brep_sphere(
+        1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+    ),
+    # Hemispheres, and caps cut near the first and second ring latitudes and
+    # near the pole (a pole zone reaching or nearly reaching the trim).
+    **{
+        f"cap_{side}_{degrees}": (
+            lambda degrees=degrees, above=(side == "above"): _unit_cap(degrees, above)
+        )
+        for side, latitudes in (
+            ("above", (0, 20, 45, 55, 70, 85)),
+            ("below", (0, 20, 40)),
+        )
+        for degrees in latitudes
+    },
+    # Short cones: the apex zone grows to the base circle.
+    **{
+        f"cone_{height}": (
+            lambda height=height: phx.geometry.brep.brep_cone(
+                1.0, 0.0, height, coordinate_contract=phx.SpatialCoordinateContract.si()
+            )
+        )
+        for height in (0.1, 0.3, 1.0)
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(_COARSE_POLE_SHAPES))
+def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None:
+    # A pole zone's seeded rings used to end within ulps of the other pole's
+    # last ring (the sphere at h/r 0.6 and 0.8, theta 0.6-0.9: two equator
+    # rings 2 ulps apart). The zero-area strip between them sent the
+    # fixed-boundary volume stage into minutes of improvement (now refused
+    # before recovery). Zones stop half a spacing short of the midline to
+    # another pole; ring points near a trim are omitted by the boundary
+    # proximity rule. Over h/r 0.4-0.8 and theta 0.5-0.9: no surface edge is
+    # shorter than h / 10, and the volume stage does bounded work (the sphere
+    # resolves without improvement; the thin caps and cones may leave
+    # coarse-quality targets unmet, promptly).
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
+            tolerance = size / 6.0
+            solid = cad_mesh_solid(
+                model,
+                np.full((faces,), size, dtype=np.float64),
+                np.full((faces,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            surface = solid.surface
+            corners = surface.points[surface.triangles]
+            edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+            assert edges.min() > 0.1 * size, (size, theta)
+            stats = solid.volume.stats
+            assert solid.volume.tetrahedra.shape[0] > 0, (size, theta)
+            # Bounded: at most 4 insertions per surface triangle (the hang
+            # made 270 per triangle).
+            work = int(stats["refine_inserted"][0]) + int(stats["improve_inserted"][0])
+            assert work <= 4 * surface.triangles.shape[0], (size, theta, work)
+            if name == "sphere":
+                assert solid.status is MeshcoreStatus.OK, (size, theta)
+                assert stats["improve_inserted"][0] == 0, (size, theta)
 
 
 def _washer() -> phx.geometry.brep.BRepModel:
@@ -716,6 +826,41 @@ def test_unproved_cad_solid_takes_the_native_route(
     assert geometry.elements[0].local_dof_count == (4 if order == 1 else 10)
     report = candidate._construction.compliance
     assert "maximum_deviation" not in dict(report.achieved)
+    # Size compliance judges the boundary circumradius the chart kernel
+    # bounds, R <= h / sqrt(2): the native mesh at h passes at zero tolerance,
+    # and the same mesh judged at h / 2 (a mesh ignoring the size, built for
+    # twice the request) fails.
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        size_statistic,
+        SizeCompliancePolicy,
+        triangle_circumradii,
+    )
+
+    assert not [issue for issue in report.issues if issue.startswith("size:")]
+    policy = SizeCompliancePolicy()
+    radii = triangle_circumradii(points, unique[counts == 1])
+    for statistic in ("p50", "p95"):
+        value = size_statistic(radii, statistic)
+        assert not CAD_CHART_SURFACE_SIZE.exceeds(value, size, policy)
+        assert CAD_CHART_SURFACE_SIZE.exceeds(value, 0.5 * size, policy)
+
+
+def test_triangle_circumradii_are_exact_and_refuse_degenerate_rows() -> None:
+    from phydrax.meshing._sizing import triangle_circumradii
+
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, np.sqrt(3.0) / 2.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ]
+    )
+    radii = triangle_circumradii(points, np.asarray([[0, 1, 2], [0, 1, 3], [0, 1, 4]]))
+    np.testing.assert_allclose(radii[:2], [1.0 / np.sqrt(3.0), np.sqrt(2.0) / 2.0])
+    assert np.isinf(radii[2])
 
 
 _CERTIFIED_FIXTURES = {
@@ -1211,7 +1356,7 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
     # construction, or planning/execution refuses it with a stated reason.
     from phydrax.meshing import CellMeshingCandidate
     from phydrax.meshing._contracts import MeshingFailure
-    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._sizing import CAD_CHART_SURFACE_SIZE, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
@@ -1258,15 +1403,17 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
     assert isinstance(control, UniformSizeControl)
     policy = specification.size_compliance
     requested, achieved = dict(report.requested), dict(report.achieved)
-    # Requested value and the bound its row is an issue above.
+    # Requested bound h / sqrt(2) on the boundary circumradius, and the bound
+    # its row is an issue above.
+    bound = CAD_CHART_SURFACE_SIZE.bound_factor * control.target_size
     bounds = {
-        name: (
-            control.target_size,
-            control.target_size * (1.0 + policy.relative_tolerance)
-            + policy.absolute_tolerance,
+        f"{name}_circumradius": (
+            bound,
+            bound * (1.0 + policy.relative_tolerance) + policy.absolute_tolerance,
         )
         for name in policy.target_statistics
     }
+    assert np.isclose(bound, control.target_size / np.sqrt(2.0), rtol=1e-15)
     if control.maximum_size is not None:
         bounds["maximum"] = (control.maximum_size, control.maximum_size)
     rows = {key for key in achieved if key.startswith("size:")}

@@ -518,6 +518,35 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   if (!sizes || (controls.geometry_order != 1 && controls.geometry_order != 2))
     return PHX_MC_INVALID_ARGUMENT;
   const auto volume_start = std::chrono::steady_clock::now();
+  // A fixed boundary triangle that is flat to rounding (a zero-length edge or
+  // a zero-area sliver) leaves no tetrahedron beside it that can meet the
+  // quality targets, and improvement then churns without end (measured: the
+  // sphere's coincident equator rings, 2 ulps apart, ran 115 s to 30k
+  // improvement insertions). Its relative area r = 2 A / l_max^2 (sqrt(3)/2
+  // for an equilateral triangle) is refused before recovery when r^2 is below
+  // the determinant floor 2^-22, the improvement's floor for cells.
+  for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
+    const auto& tri = surface.triangles[t];
+    const Point& a = surface.points[tri[0]];
+    const Point& b = surface.points[tri[1]];
+    const Point& c = surface.points[tri[2]];
+    const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    const Point n{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+    const double longest =
+        std::max({squared_length(a, b), squared_length(b, c), squared_length(c, a)});
+    const double area2 = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    const double relative = longest > 0.0 ? area2 / longest : 0.0;
+    if (!(relative * relative >= kMetricDeterminantFloor)) {
+      stats.recovery_status = PHX_MC_UNRESOLVED;
+      stats.recovery_reason = PHX_MC_PLC_INVALID_FACET;
+      stats.failure_kind = PHX_MC_PLC_ENTITY_FACET;
+      stats.failure_entity = static_cast<int64_t>(t);
+      stats.failure_measure = relative;
+      stats.volume_ns = elapsed_ns(volume_start);
+      return PHX_MC_UNRESOLVED;
+    }
+  }
   PlcHandle recovery;
   for (int attempt = 0;; ++attempt) {
     phx_mc_cad_boundary_split split{};

@@ -358,6 +358,39 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD meshing splits each face's `theta * tol` at its curves: a curve
+  chord's lens (the face's chart arc vs its chart chord at the same
+  parameter, mapped) gets `alpha theta tol` (curve sizing from
+  `|DS p''| / |DS p'|^2` and a midpoint lens check in the curve sag check),
+  and the face triangles next to a curve get `(1 - alpha) theta tol` (the
+  face metric's curvature size graded from that layer back to `theta` at
+  the boundary grading's rate; pole rings take the layer's size), so the
+  fidelity verifier's per-point sum of lens and own deviation holds there.
+  `alpha = 1/2` minimises the boundary layer's vertex count within 3 % for
+  the measured lens/surface curvature ratios. Curve and face meshes change.
+- Native CAD face smoothing searches for better vertex positions: below the
+  kernel's angle-pass target a compass search raises the star's worst 3D
+  angle (the fans at fixed curve vertices held the smallest angles), and an
+  edge longer than the face metric's unit is shortened by a step toward its
+  far end; every move keeps the chart star oriented and the kernel's metric
+  circumradius bound. On the quadric (tol = kappa_max h^2 / 4, theta = 1) the
+  minimum 3D angle and the mesh-to-surface distance beat Gmsh at the ledger's
+  four sizes with the same triangle count. Face meshes change. The size
+  guard evaluates the star's starting radius only when a move's radius
+  passes `1/sqrt(2)`, stops at the first cell past its bound, and the
+  long-edge step tests the shortening before the guard (identical meshes;
+  the unit sphere at h = 0.2 drops from 16.3 to 7.9 ms).
+- Native CAD face meshing sizes faces with one meaning of `h`: the face
+  metric is `I/h^2` intersected with the request's curvature tensor
+  `|II| / (4 theta tol)` (the kernel accepts metric circumradius
+  `<= 1/sqrt(2)`, so linear interpolation error `<= theta tol`; where the
+  curvature term does not bind the metric is exactly `I/h^2`). The C entry no
+  longer meshes at `h/sqrt(2)`. Curves take each face's smallest size
+  `min(h, sqrt(4 theta tol / |k|max))` (the request `h` within three sizes of
+  a face pole, where fixed rings replace kernel points); pole rings use the
+  same size; face flips judge Delaunay in the face metric where the curvature
+  term binds; smoothing keeps the kernel's metric circumradius bound. Face
+  and solid meshes change.
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and
@@ -1925,6 +1958,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- An AT_MOST size compliance row (CAD chart circumradius, S3 boundary edge)
+  no longer refuses a statistic a few ulps above its bound: a unit box meshed
+  at h = 0.5 meets R = h/sqrt(2) exactly and its recomputed circumradius
+  rounded above it.
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.

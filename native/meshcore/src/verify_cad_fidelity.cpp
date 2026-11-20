@@ -16,6 +16,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "verify_chart_partition.hpp"
+#include "verify_cad_pole_chart.hpp"
 
 namespace phx::mc::cad {
 namespace {
@@ -1420,11 +1421,31 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
 // the surface image of the chord. The interior triangle bound already covers
 // that image in both directions, so a separate 3D curve chord sag is not
 // needed. Source 3D edge/face consistency is a source-model obligation.
-// `padded`: the padded box (u lower, v lower, u upper, v upper) that holds
-// the lens.
+// The chord is cut into `pieces` equal parts in lambda = (t - t_0) /
+// (t_1 - t_0) (the use's parameters[0] at lambda 0). With p and the chord
+// interpolant l at the same lambda, w = p - l is, per chart axis, the
+// interpolation remainder of p plus the interpolated endpoint mismatch, so
+// on a piece [lambda_0, lambda_1]
+//   |w_a| <= mismatch_a + M_a dt^2 / 2 max lambda (1 - lambda)   (C2 p),
+//   |w_a| <= mismatch_a + M_a dt min(1, 2 max min(lambda, 1 - lambda)) (C1 p),
+// with M_a the p-curve's |p_a''| (|p_a'|) over the whole interval: the lens
+// is thin near the chord ends. A finer bound uses the kernel form: with
+// s in [0, 1] and the chord parameter lambda in the piece,
+//   C2: w = -dt^2 int G(lambda, s) p''(s) ds, |G| = min(s (1 - lambda), lambda (1 - s))
+//       <= min(s (1 - lambda_0), lambda_1 (1 - s)),
+//   C1: w = dt int K(lambda, s) p'(s) ds, |K| = 1 - lambda (s < lambda), lambda (s > lambda),
+// so |w_a| <= mismatch_a + dt^2 (dt) sum_j M_a,j int_{s_j}^{s_j+1} |G| (|K|) bound ds,
+// M_a,j the enclosure over the parameters of sub-interval j (kSubintervals
+// equal parts of lambda, outward to t, clamped to the chord's interval). Per
+// axis the smaller of the two bounds is used. Piece k's lens points (on the segments from
+// l(lambda) to p(lambda), lambda in the piece) lie in its padded box: the box
+// of l over the piece padded per axis by those bounds; caps[k] is the
+// mean-value bound over that box. `boxes` holds (u lower, v lower, u upper,
+// v upper) per piece. One piece is the whole chord's lens.
 int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                         const double* chord_uv, const double* parameters,
-                        IntervalEvaluationWorkspace& workspace, double& cap, double* padded) {
+                        IntervalEvaluationWorkspace& workspace, int pieces, double* caps,
+                        double* boxes) {
   const double low = std::min(parameters[0], parameters[1]);
   const double high = std::max(parameters[0], parameters[1]);
   const int regularity = spline_regularity(geometry, geometry.pcurve_node(use), &low, &high,
@@ -1435,10 +1456,6 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                                            regularity == 1 ? 1 : 2,
                                            pc_lower, pc_upper, workspace);
   if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-  // Per chart axis a, w_a(t) = p_a(t) - (the chord's linear interpolant)_a is
-  // the p-curve's interpolation remainder plus the interpolated endpoint
-  // mismatch: |w_a| <= error[a]. The lens point between them is within
-  // error[a] of the chord per axis, so the padded box pads each axis by its own.
   const auto dt = di::subtract(di::point(high), di::point(low));
   const int derivative = regularity == 1 ? 2 : 4;
   double endpoint_error[2] = {0.0, 0.0};
@@ -1454,46 +1471,121 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
       endpoint_error[axis] = std::max(endpoint_error[axis], di::magnitude(difference));
     }
   }
-  double error[2] = {0.0, 0.0};
+  // The whole-chord remainder scale per axis: M dt (C1) or M dt^2 / 2 (C2).
+  di::Interval scale[2];
   for (int axis = 0; axis < 2; ++axis) {
     const auto bound = di::point(
         di::magnitude({pc_lower[derivative + axis], pc_upper[derivative + axis]}));
-    const auto remainder = regularity == 1
+    scale[axis] = regularity == 1
         ? di::multiply(bound, dt)
-        : di::multiply(di::point(0.125), di::multiply(bound, di::multiply(dt, dt)));
-    const auto sum = di::add(di::point(endpoint_error[axis]), remainder);
-    if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
-    error[axis] = sum.upper;
+        : di::multiply(di::point(0.5), di::multiply(bound, di::multiply(dt, dt)));
   }
-  double box_lower[2], box_upper[2];
-  for (int axis = 0; axis < 2; ++axis) {
-    box_lower[axis] = di::subtract(di::point(std::min(chord_uv[axis], chord_uv[2 + axis])),
-                                  di::point(error[axis])).lower;
-    box_upper[axis] = di::add(di::point(std::max(chord_uv[axis], chord_uv[2 + axis])),
-                              di::point(error[axis])).upper;
+  // Finer enclosures: |p_a''| (|p_a'|) per sub-interval [s_j, s_j+1] of
+  // lambda, weighted below by the remainder kernel's integral over it.
+  constexpr int kSubintervals = 8;
+  double sub_bound[kSubintervals][2];
+  const auto lambda_t = [&](double lambda) {
+    return di::add(di::point(parameters[0]),
+                   di::multiply(di::point(lambda),
+                                di::subtract(di::point(parameters[1]), di::point(parameters[0]))));
+  };
+  const auto clip = [](double a, double b, double lo, double hi) {
+    const double from = std::max(a, lo), to = std::min(b, hi);
+    return to > from ? di::subtract(di::point(to), di::point(from)) : di::point(0.0);
+  };
+  const auto chord_point = [&](double lambda, int axis) {
+    return di::add(di::point(chord_uv[axis]),
+                   di::multiply(di::point(lambda), di::subtract(di::point(chord_uv[2 + axis]),
+                                                                di::point(chord_uv[axis]))));
+  };
+  for (int sub = 0; sub < kSubintervals; ++sub) {
+    const auto ta = lambda_t(double(sub) / kSubintervals);
+    const auto tb = lambda_t(double(sub + 1) / kSubintervals);
+    const double sub_low = std::max(low, std::min(ta.lower, tb.lower));
+    const double sub_high = std::min(high, std::max(ta.upper, tb.upper));
+    double lo[6], hi[6];
+    status = geometry.interval_jets(geometry.pcurve_node(use), &sub_low, &sub_high,
+                                    regularity == 1 ? 1 : 2, lo, hi, workspace);
+    if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+    for (int axis = 0; axis < 2; ++axis)
+      sub_bound[sub][axis] = di::magnitude({lo[derivative + axis], hi[derivative + axis]});
   }
-  // The mean-value bound below needs S Lipschitz on the padded box: a
-  // possible discontinuity there is refused, as in leaf_bound.
-  if (spline_regularity(geometry, geometry.surface_node(face), box_lower, box_upper,
-                        workspace) == 2)
-    return PHX_MC_UNRESOLVED;
-  double surface_lower[9], surface_upper[9];
-  status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
-                                  surface_lower, surface_upper, workspace);
-  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-  // S(x) - S(y) = integral of DS w along the segment (in the padded box);
-  // component k is at most |S_u,k| |w_u| + |S_v,k| |w_v| over the box.
-  double magnitude[3];
-  for (int axis = 0; axis < 3; ++axis) {
-    const auto su = di::point(di::magnitude({surface_lower[3 + axis], surface_upper[3 + axis]}));
-    const auto sv = di::point(di::magnitude({surface_lower[6 + axis], surface_upper[6 + axis]}));
-    magnitude[axis] = di::add(di::multiply(su, di::point(error[0])),
-                              di::multiply(sv, di::point(error[1]))).upper;
+  for (int piece = 0; piece < pieces; ++piece) {
+    const double first = double(piece) / pieces, last = double(piece + 1) / pieces;
+    // The lambda of the piece nearest 1/2: where the remainder weight peaks.
+    const double peak = last <= 0.5 ? last : first >= 0.5 ? first : 0.5;
+    const auto weight = regularity == 1
+        ? di::point(std::min(1.0, 2.0 * std::min(peak, 1.0 - peak)))
+        : di::multiply(di::point(peak), di::subtract(di::point(1.0), di::point(peak)));
+    // Kernel weights of the sub-intervals for lambda in [first, last].
+    const auto alpha = di::subtract(di::point(1.0), di::point(first));
+    const auto beta = di::point(last);
+    const double crossing = last / (1.0 - first + last);
+    di::Interval kernel[kSubintervals];
+    for (int sub = 0; sub < kSubintervals; ++sub) {
+      const double a = double(sub) / kSubintervals, b = double(sub + 1) / kSubintervals;
+      if (regularity == 1) {
+        const double middle = std::max(alpha.upper, beta.upper);
+        kernel[sub] = di::add(di::multiply(alpha, clip(a, b, 0.0, first)),
+                              di::add(di::multiply(di::point(middle), clip(a, b, first, last)),
+                                      di::multiply(beta, clip(a, b, last, 1.0))));
+      } else {
+        // min(alpha s, beta (1 - s)) <= alpha s on [a, c], beta (1 - s) on
+        // [c, b], for any c in [a, b].
+        const double c = std::min(b, std::max(a, crossing));
+        const auto pa = di::point(a), pc = di::point(c);
+        const auto qc = di::subtract(di::point(1.0), pc);
+        const auto qb = di::subtract(di::point(1.0), di::point(b));
+        kernel[sub] = di::multiply(
+            di::point(0.5),
+            di::add(di::multiply(alpha, di::subtract(di::multiply(pc, pc), di::multiply(pa, pa))),
+                    di::multiply(beta, di::subtract(di::multiply(qc, qc), di::multiply(qb, qb)))));
+      }
+    }
+    double error[2], box_lower[2], box_upper[2];
+    for (int axis = 0; axis < 2; ++axis) {
+      const auto coarse = di::multiply(scale[axis], weight);
+      auto integral = di::point(0.0);
+      for (int sub = 0; sub < kSubintervals; ++sub)
+        integral = di::add(integral, di::multiply(di::point(sub_bound[sub][axis]), kernel[sub]));
+      const auto fine = di::multiply(integral, regularity == 1 ? dt : di::multiply(dt, dt));
+      if (!di::finite(coarse) || !di::finite(fine)) return PHX_MC_UNRESOLVED;
+      const auto sum = di::add(di::point(endpoint_error[axis]),
+                               di::point(std::min(coarse.upper, fine.upper)));
+      if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
+      error[axis] = sum.upper;
+      const auto a = chord_point(first, axis), b = chord_point(last, axis);
+      box_lower[axis] = di::subtract(di::point(std::min(a.lower, b.lower)),
+                                     di::point(error[axis])).lower;
+      box_upper[axis] = di::add(di::point(std::max(a.upper, b.upper)),
+                                di::point(error[axis])).upper;
+    }
+    // The mean-value bound below needs S Lipschitz on the padded box: a
+    // possible discontinuity there is refused, as in leaf_bound.
+    if (spline_regularity(geometry, geometry.surface_node(face), box_lower, box_upper,
+                          workspace) == 2)
+      return PHX_MC_UNRESOLVED;
+    double surface_lower[9], surface_upper[9];
+    status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
+                                    surface_lower, surface_upper, workspace);
+    if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+    // S(x) - S(y) = integral of DS w along the segment (in the padded box);
+    // component k is at most |S_u,k| |w_u| + |S_v,k| |w_v| over the box.
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto su =
+          di::point(di::magnitude({surface_lower[3 + axis], surface_upper[3 + axis]}));
+      const auto sv =
+          di::point(di::magnitude({surface_lower[6 + axis], surface_upper[6 + axis]}));
+      magnitude[axis] = di::add(di::multiply(su, di::point(error[0])),
+                                di::multiply(sv, di::point(error[1]))).upper;
+    }
+    caps[piece] = phx::mc::geometry::norm_upper(magnitude);
+    if (!std::isfinite(caps[piece])) return PHX_MC_UNRESOLVED;
+    double* box = boxes + 4 * piece;
+    box[0] = box_lower[0], box[1] = box_lower[1], box[2] = box_upper[0], box[3] = box_upper[1];
   }
-  cap = phx::mc::geometry::norm_upper(magnitude);
-  padded[0] = box_lower[0], padded[1] = box_lower[1];
-  padded[2] = box_upper[0], padded[3] = box_upper[1];
-  return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+  return PHX_MC_OK;
 }
 
 // One distinct interior chart edge: its first occurrence (triangle * 3 +
@@ -1658,21 +1750,31 @@ struct CornerCache {
   int32_t face = -1;
 };
 
-// Trim lens charges, per subdivision leaf. A point x where the trimmed face
-// and the chord polygon differ lies in the lens of one chord, inside that
-// chord's padded box (trim_lens_bound), within the cap's chart distance of a
-// point y of the chord and of a point z of the arc: |S(x) - S(y)| and
-// |S(x) - S(z)| are at most the cap. If x is outside the polygon (a face
-// point), the mesh point I_T(y) of the leaf holding y is within that leaf's
-// bound plus the cap; if x is inside it (a mesh point I_T(x)), the face point
-// S(z) is within the bound of the leaf holding x plus the cap. Both leaves'
-// chart boxes meet the padded box (y and x lie in it), so each leaf is
-// charged the largest cap of a chord of its face whose padded box meets the
-// leaf's box; a leaf away from every lens is charged nothing. A refused cap
-// has no box: every row of its face refuses. Chords are
+// Trim lens charges, per subdivision leaf and per chord piece. A point x
+// where the trimmed face and the chord polygon differ lies in the lens of one
+// chord, on the segment from y = l(lambda) to z = p(lambda) for a lambda in
+// some piece of that chord (trim_lens_bound), inside that piece's padded box
+// (both y and the segment are), within the piece's per-axis chart bounds of
+// y and z: |S(x) - S(y)| and |S(x) - S(z)| are at most the piece's cap. If x
+// is outside the polygon (a face point), the mesh point I_T(y) of the leaf
+// holding y is within that leaf's bound plus the cap; if x is inside it (a
+// mesh point I_T(x)), the face point S(z) is within the bound of the leaf
+// holding x plus the cap. Both leaves' chart boxes meet the piece's padded
+// box (y and x lie in it), so each leaf is charged the largest cap of a piece
+// of a chord of its face whose padded box meets the leaf's box; a leaf away
+// from every lens piece is charged nothing. A refused chord has no pieces:
+// every row of its face refuses. Pieces are
 // binned per face on a grid whose cell is the face's largest padded-box
 // extent (a box meets at most 2 x 2 cells); one monotone cell map serves
 // boxes and rows, so meeting boxes share the cell of a common point.
+// API: construct from one Chord entry per lens piece {face (-1: skipped),
+// box = closed chart box (u lower, v lower, u upper, v upper) holding the
+// piece's lens and matching chord points, cap = the distance charge of any
+// point there}; any producer whose entries satisfy that box/cap contract (a
+// trim chord piece, or another lens such as a seam) may add entries. charge
+// (face, box) returns the largest cap of an entry of `face` whose box meets
+// the closed `box` (0 when none); subdivided_bound passes each leaf's
+// outward chart box and adds the result to the leaf bound.
 class LensIndex {
  public:
   struct Chord { int32_t face = -1; double box[4]{}; double cap = 0.0; };
@@ -1859,6 +1961,695 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
   return result;
 }
 
+// Pole chart (verify_cad_pole_chart.hpp): the sphere frame
+//   S = o + r (cos v (cos u e1 + sin u e2) + sin v a)
+// of a node, from the exact-source coefficient enclosures (any vectors
+// e1, e2, a: the pole-chart form needs no orthonormality). Families:
+// - the sphere template;
+// - a placement (affine, integers[1] == 3) of a node with a sphere frame;
+// - the revolution about (O, a) of a circle3 c(v) = center + R (cos v e1 +
+//   sin v e2) whose center and e2 lie on the axis exactly. The evaluator's
+//   O + a (a.w) + cos u w_r + sin u (a x w_r), w = c(v) - O, w_r = w - a (a.w),
+//   is then the form with o = O + a (a.(center - O)), e1 := e1_r,
+//   e2 := a x e1_r, a := (a.e2) a, r = R. "Exactly": point enclosures, a a
+//   signed coordinate unit vector, e1 off the axis (its axis coordinate 0),
+//   the off-axis coordinates of e2 zero and of center and O bitwise equal.
+// False for every other family: a circle off the axis is a spindle or horn
+// torus, a line meeting the axis a cone apex, neither smooth at the pole;
+// splines with a collapsed edge have no enclosure here.
+bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWorkspace& workspace,
+                       int32_t index, pole::SphereFrame& frame) {
+  static const int32_t kSphere = template_index("sphere"), kCircle = template_index("circle3");
+  const Node& node = geometry.node(index);
+  const auto coefficient = [&](int32_t at, int64_t i) {
+    const int64_t k = geometry.model().node_real_offsets[at] + i;
+    return di::Interval{workspace.coefficient_lower[k], workspace.coefficient_upper[k]};
+  };
+  if (node.kind == PHX_MC_CAD_NODE_TEMPLATE) {
+    if (node.integers[0] != kSphere || node.real_count != 13) return false;
+    for (int i = 0; i < 3; ++i) {
+      frame.o[i] = coefficient(index, i);
+      frame.e1[i] = coefficient(index, 3 + i);
+      frame.e2[i] = coefficient(index, 6 + i);
+      frame.a[i] = coefficient(index, 9 + i);
+    }
+    frame.r = coefficient(index, 12);
+  } else if (node.kind == PHX_MC_CAD_NODE_AFFINE && node.integers[1] == 3) {
+    pole::SphereFrame child;
+    if (!pole_sphere_frame(geometry, workspace, static_cast<int32_t>(node.integers[0]), child))
+      return false;
+    const auto apply = [&](const di::Interval* x, int r, bool offset) {
+      di::Interval value = offset ? coefficient(index, 9 + r) : di::point(0.0);
+      for (int c = 0; c < 3; ++c)
+        value = di::add(value, di::multiply(coefficient(index, 3 * r + c), x[c]));
+      return value;
+    };
+    for (int r = 0; r < 3; ++r) {
+      frame.o[r] = apply(child.o, r, true);
+      frame.e1[r] = apply(child.e1, r, false);
+      frame.e2[r] = apply(child.e2, r, false);
+      frame.a[r] = apply(child.a, r, false);
+    }
+    frame.r = child.r;
+  } else if (node.kind == PHX_MC_CAD_NODE_REVOLUTION) {
+    const auto profile = static_cast<int32_t>(node.integers[0]);
+    const Node& curve = geometry.node(profile);
+    if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
+        curve.real_count != 10)
+      return false;
+    double origin[3], axis[3], centre[3], first[3], second[3], radius = 0.0;
+    const auto exact = [&](int32_t at, int64_t i, double& value) {
+      const di::Interval x = coefficient(at, i);
+      value = x.lower;
+      return x.lower == x.upper && std::isfinite(x.lower);
+    };
+    for (int i = 0; i < 3; ++i)
+      if (!exact(index, i, origin[i]) || !exact(index, 3 + i, axis[i]) ||
+          !exact(profile, i, centre[i]) || !exact(profile, 3 + i, first[i]) ||
+          !exact(profile, 6 + i, second[i]))
+        return false;
+    if (!exact(profile, 9, radius)) return false;
+    int k = -1;
+    for (int i = 0; i < 3; ++i)
+      if (std::fabs(axis[i]) == 1.0) k = i;
+    if (k < 0 || first[k] != 0.0) return false;
+    for (int i = 0; i < 3; ++i)
+      if (i != k && (axis[i] != 0.0 || second[i] != 0.0 ||
+                     std::bit_cast<uint64_t>(centre[i]) != std::bit_cast<uint64_t>(origin[i])))
+        return false;
+    for (int i = 0; i < 3; ++i) {
+      frame.o[i] = di::point(i == k ? centre[i] : origin[i]);
+      frame.e1[i] = di::point(i == k ? 0.0 : first[i]);
+      frame.a[i] = di::point(i == k ? second[i] : 0.0);
+    }
+    // e2 = a x e1_r: a has the single entry axis[k].
+    for (int i = 0; i < 3; ++i) frame.e2[i] = di::point(0.0);
+    const int p = (k + 1) % 3, q = (k + 2) % 3;
+    frame.e2[q] = di::point(axis[k] * first[p]);
+    frame.e2[p] = di::point(-axis[k] * first[q]);
+    frame.r = di::point(radius);
+  } else {
+    return false;
+  }
+  for (int i = 0; i < 3; ++i)
+    if (!di::finite(frame.o[i]) || !di::finite(frame.e1[i]) || !di::finite(frame.e2[i]) ||
+        !di::finite(frame.a[i]))
+      return false;
+  return di::finite(frame.r);
+}
+
+// Enclosure of the pole-chart image rho (cos u, sin u) of a chart point.
+bool pole_chart_image(AnchoredTrigonometry& trig, const double* uv, int sigma,
+                      di::Interval* image) {
+  di::Interval rho, c, s;
+  if (!pole::colatitude(uv[1], sigma, rho)) return false;
+  trig.evaluate(di::point(uv[0]), c, s);
+  image[0] = di::multiply(rho, c);
+  image[1] = di::multiply(rho, s);
+  return di::finite(image[0]) && di::finite(image[1]);
+}
+
+// The row's pole-chart corners (x0, y0, x1, y1, x2, y2): a pole corner (bit
+// j of `pole_mask`, decided by the caller from exact topology) is the origin,
+// the pole's own chart point; every other corner the binary64 midpoint of its
+// image enclosure. The triangle's linear map is taken on these corners.
+bool pole_corners(AnchoredTrigonometry& trig, const double* uv, int sigma, int32_t pole_mask,
+                  double* xy) {
+  for (int j = 0; j < 3; ++j) {
+    if ((pole_mask >> j) & 1) {
+      xy[2 * j] = xy[2 * j + 1] = 0.0;
+      continue;
+    }
+    di::Interval image[2];
+    if (!pole_chart_image(trig, uv + 2 * j, sigma, image)) return false;
+    for (int axis = 0; axis < 2; ++axis)
+      xy[2 * j + axis] = image[axis].lower + 0.5 * (image[axis].upper - image[axis].lower);
+  }
+  return true;
+}
+
+// |S(x) - sum_i w_i X_i| at a pole-chart leaf vertex, over its enclosure.
+int32_t pole_vertex_error(const pole::SphereFrame& frame, int sigma, const Vertex& vertex,
+                          const di::Interval* point, const double* vertices, double& error) {
+  di::Interval jets[4][3];
+  if (!pole::jets(frame, sigma, point[0], point[1], 0, 0, jets)) return PHX_MC_UNRESOLVED;
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    auto linear = di::point(0.0);
+    for (int i = 0; i < 3; ++i)
+      if (vertex.weight[i] != 0.0)
+        linear = di::add(linear, di::multiply(di::point(vertex.weight[i]),
+                                              di::point(vertices[3 * i + axis])));
+    const auto difference = di::subtract(jets[0][axis], linear);
+    if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
+    magnitude[axis] = di::magnitude(difference);
+  }
+  error = phx::mc::geometry::norm_upper(magnitude);
+  return std::isfinite(error) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// leaf_bound in the pole chart: S - I_L by the Taylor remainder of the
+// pole-chart Hessian over the leaf box (offsets from the box centre), plus
+// the affine I_L - I_T, maximal at a leaf vertex.
+int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& leaf,
+                        const double* vertices, const double* xy, double& vertex_term,
+                        double& upper) {
+  double box_lower[2] = {std::numeric_limits<double>::infinity(),
+                         std::numeric_limits<double>::infinity()};
+  double box_upper[2] = {-std::numeric_limits<double>::infinity(),
+                         -std::numeric_limits<double>::infinity()};
+  double mismatch = 0.0;
+  for (const Vertex& vertex : leaf.vertices) {
+    di::Interval point[2];
+    exact_chart_point(vertex, xy, point);
+    for (int axis = 0; axis < 2; ++axis) {
+      box_lower[axis] = std::min(box_lower[axis], point[axis].lower);
+      box_upper[axis] = std::max(box_upper[axis], point[axis].upper);
+    }
+    double error = 0.0;
+    const int32_t status = pole_vertex_error(frame, sigma, vertex, point, vertices, error);
+    if (status != PHX_MC_OK) return status;
+    mismatch = std::max(mismatch, error);
+  }
+  vertex_term = mismatch;
+  di::Interval jets[4][3];
+  if (!pole::jets(frame, sigma, {box_lower[0], box_upper[0]}, {box_lower[1], box_upper[1]}, 1, 3,
+                  jets))
+    return PHX_MC_UNRESOLVED;
+  const auto ex = half_extent(box_lower[0], box_upper[0]);
+  const auto ey = half_extent(box_lower[1], box_upper[1]);
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto hxx = di::point(di::magnitude(jets[1][axis]));
+    const auto hxy = di::point(di::magnitude(jets[2][axis]));
+    const auto hyy = di::point(di::magnitude(jets[3][axis]));
+    auto sum = di::multiply(hxx, di::multiply(ex, ex));
+    const auto mixed = di::multiply(hxy, di::multiply(ex, ey));
+    sum = di::add(sum, di::add(mixed, mixed));
+    sum = di::add(sum, di::multiply(hyy, di::multiply(ey, ey)));
+    magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
+  }
+  upper = di::add(di::point(mismatch), di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
+  return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// sup over the pole-chart triangle of |S - I_T| (the same subdivision as
+// subdivided_bound, without lens charges: the seam charge is the caller's).
+// `tight` (a pole sliver, two corners at the origin): subdivided_bound's
+// tight mode, refining toward the sampled maximum.
+FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int sigma,
+                                             const double* vertices, const double* xy,
+                                             double tolerance, int32_t max_depth, bool tight) {
+  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  Leaf stack[73];
+  stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
+  int size = 1;
+  double maximum = 0.0, observed = 0.0;
+  while (size > 0) {
+    const Leaf leaf = stack[--size];
+    double bound = 0.0, vertex_term = 0.0;
+    result.status = pole_leaf_bound(frame, sigma, leaf, vertices, xy, vertex_term, bound);
+    if (result.status != PHX_MC_OK) return result;
+    observed = std::max(observed, vertex_term);
+    const bool fits = bound <= tolerance;
+    if (fits && (!tight || bound <= kTightRatio * observed || leaf.depth >= kTightDepth ||
+                 result.subdivisions >= kTightSplits)) {
+      maximum = std::max(maximum, bound);
+      continue;
+    }
+    if (!fits && (leaf.depth >= max_depth || result.subdivisions >= 1000000)) {
+      result.status = PHX_MC_UNRESOLVED;
+      result.reason = PHX_MC_FIDELITY_RESOLUTION;
+      return result;
+    }
+    ++result.subdivisions;
+    const Vertex ab = midpoint(leaf.vertices[0], leaf.vertices[1]);
+    const Vertex bc = midpoint(leaf.vertices[1], leaf.vertices[2]);
+    const Vertex ca = midpoint(leaf.vertices[2], leaf.vertices[0]);
+    const int32_t depth = leaf.depth + 1;
+    stack[size++] = {{leaf.vertices[0], ab, ca}, depth};
+    stack[size++] = {{ab, leaf.vertices[1], bc}, depth};
+    stack[size++] = {{ca, bc, leaf.vertices[2]}, depth};
+    stack[size++] = {{ab, bc, ca}, depth};
+  }
+  result.upper = maximum;
+  result.reason = PHX_MC_FIDELITY_CERTIFIED;
+  return result;
+}
+
+// Seam lens of one boundary edge e of a pole region (see PoleRegion), from
+// chart corner a to b: gamma(t) = (1 - t) uv_a + t uv_b is the uv-straight
+// edge, P(gamma(t)) its pole-chart image, Phi(t) = (1 - t) c_a + t c_b the
+// pole-chart-straight edge and L(t) = (1 - t) X_a + t X_b the mesh edge. The
+// lens is the straight homotopy H(t, s) = (1 - s) P(gamma(t)) + s Phi(t) in
+// the pole chart, where S is smooth. With f(s) = S(H(t, s)) - L(t):
+// f(0) = S(gamma(t)) - L(t) (S_xy o P = S_uv), f(1) = S_xy(Phi(t)) - L(t)
+// and f'' = D^2 S_xy [Delta, Delta], Delta = Phi(t) - P(gamma(t)), so per
+// component |f(s)| <= max(|f(0)|, |f(1)|) + sup |f''| / 8 and
+//   |S(H(t, s)) - L(t)| <= max(A, B) + |D^2 S_xy| W^2 / 8 =: cap,
+// A = sup_t |S_uv(gamma) - L|, B = sup_t |S_xy(Phi) - L| (each over
+// kSeamPieces equal pieces: the larger endpoint value plus dt^2 / 8 sup
+// |D^2 S [delta, delta]| over the piece's box), W >= sup |Delta|: the
+// endpoint mismatch |c - P(uv)| (image enclosures) plus the chord sag
+// (1/8) sup |(P o gamma)''| with |(P o gamma)''|^2 = rho^2 du^4 +
+// 4 drho^2 du^2 (rho and u affine in t), and |D^2 S_xy [Delta, Delta]| <=
+// (|S_xx| + 2 |S_xy| + |S_yy|) W^2 per component over the box |x|, |y| <=
+// max rho + mismatch, which holds P(gamma), Phi and H. Every lens point is
+// within `cap` of a point of the mesh edge.
+constexpr int kSeamPieces = 16;
+
+bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& workspace,
+                     int32_t node, const pole::SphereFrame& frame, int sigma,
+                     const double* uv_a, const double* uv_b, const double* c_a,
+                     const double* c_b, const double* x_a, const double* x_b, double& cap,
+                     double* edges = nullptr) {
+  AnchoredTrigonometry trig;
+  const di::Interval dt = di::point(1.0 / kSeamPieces);
+  const di::Interval eighth = di::point(0.125);
+  const auto mesh_edge = [&](double t, int axis) {
+    return di::add(di::point(x_a[axis]), di::multiply(di::point(t), di::subtract(
+                                                          di::point(x_b[axis]), di::point(x_a[axis]))));
+  };
+  const auto along = [&](const double* a, const double* b, double t, int axis) {
+    return di::add(di::point(a[axis]),
+                   di::multiply(di::point(t), di::subtract(di::point(b[axis]), di::point(a[axis]))));
+  };
+  // sup over [0, 1] of |S(curve(t)) - L(t)| for the uv (uv = true) or the
+  // pole-chart straight edge.
+  const auto edge_sup = [&](bool uv, double& sup) {
+    const double* a = uv ? uv_a : c_a;
+    const double* b = uv ? uv_b : c_b;
+    di::Interval delta[2], points[kSeamPieces + 1][2];
+    double error[kSeamPieces + 1][3];
+    for (int axis = 0; axis < 2; ++axis)
+      delta[axis] = di::subtract(di::point(b[axis]), di::point(a[axis]));
+    for (int k = 0; k <= kSeamPieces; ++k) {
+      const double t = static_cast<double>(k) / kSeamPieces;
+      for (int axis = 0; axis < 2; ++axis) points[k][axis] = along(a, b, t, axis);
+      di::Interval surface[3];
+      if (uv) {
+        const double lo[2] = {points[k][0].lower, points[k][1].lower};
+        const double hi[2] = {points[k][0].upper, points[k][1].upper};
+        double jet_lower[18], jet_upper[18];
+        if (geometry.interval_jets(node, lo, hi, 0, jet_lower, jet_upper, workspace) != PHX_MC_OK)
+          return false;
+        for (int axis = 0; axis < 3; ++axis) surface[axis] = {jet_lower[axis], jet_upper[axis]};
+      } else {
+        di::Interval jets[4][3];
+        if (!pole::jets(frame, sigma, points[k][0], points[k][1], 0, 0, jets)) return false;
+        for (int axis = 0; axis < 3; ++axis) surface[axis] = jets[0][axis];
+      }
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto difference = di::subtract(surface[axis], mesh_edge(t, axis));
+        if (!di::finite(difference)) return false;
+        error[k][axis] = di::magnitude(difference);
+      }
+    }
+    sup = 0.0;
+    for (int k = 0; k < kSeamPieces; ++k) {
+      di::Interval x{std::min(points[k][0].lower, points[k + 1][0].lower),
+                     std::max(points[k][0].upper, points[k + 1][0].upper)};
+      di::Interval y{std::min(points[k][1].lower, points[k + 1][1].lower),
+                     std::max(points[k][1].upper, points[k + 1][1].upper)};
+      di::Interval second[3][3];  // (uu, uv, vv) or (xx, xy, yy) per component
+      if (uv) {
+        const double lo[2] = {x.lower, y.lower}, hi[2] = {x.upper, y.upper};
+        double jet_lower[18], jet_upper[18];
+        if (geometry.interval_jets(node, lo, hi, 2, jet_lower, jet_upper, workspace) != PHX_MC_OK)
+          return false;
+        for (int term = 0; term < 3; ++term)
+          for (int axis = 0; axis < 3; ++axis)
+            second[term][axis] = {jet_lower[9 + 3 * term + axis], jet_upper[9 + 3 * term + axis]};
+      } else {
+        di::Interval jets[4][3];
+        if (!pole::jets(frame, sigma, x, y, 1, 3, jets)) return false;
+        for (int term = 0; term < 3; ++term)
+          for (int axis = 0; axis < 3; ++axis) second[term][axis] = jets[1 + term][axis];
+      }
+      double magnitude[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto h0 = di::point(di::magnitude(second[0][axis]));
+        const auto h1 = di::point(di::magnitude(second[1][axis]));
+        const auto h2 = di::point(di::magnitude(second[2][axis]));
+        const auto d0 = di::point(di::magnitude(delta[0])), d1 = di::point(di::magnitude(delta[1]));
+        auto curvature = di::multiply(h0, di::multiply(d0, d0));
+        const auto mixed = di::multiply(h1, di::multiply(d0, d1));
+        curvature = di::add(curvature, di::add(mixed, mixed));
+        curvature = di::add(curvature, di::multiply(h2, di::multiply(d1, d1)));
+        const auto remainder = di::multiply(eighth, di::multiply(curvature, di::multiply(dt, dt)));
+        magnitude[axis] =
+            di::add(di::point(std::max(error[k][axis], error[k + 1][axis])), remainder).upper;
+      }
+      sup = std::max(sup, phx::mc::geometry::norm_upper(magnitude));
+    }
+    return std::isfinite(sup);
+  };
+  double a = 0.0, b = 0.0;
+  if (!edge_sup(true, a) || !edge_sup(false, b)) return false;
+  // W: endpoint mismatch plus the sag of P o gamma.
+  di::Interval rho[2];
+  double mismatch = 0.0;
+  for (int end = 0; end < 2; ++end) {
+    const double* point_uv = end == 0 ? uv_a : uv_b;
+    const double* c = end == 0 ? c_a : c_b;
+    di::Interval image[2];
+    if (!pole::colatitude(point_uv[1], sigma, rho[end]) ||
+        !pole_chart_image(trig, point_uv, sigma, image))
+      return false;
+    double offset[3] = {0.0, 0.0, 0.0};
+    for (int axis = 0; axis < 2; ++axis)
+      offset[axis] = std::max(di::subtract(di::point(c[axis]), di::point(image[axis].lower)).upper,
+                              di::subtract(di::point(image[axis].upper), di::point(c[axis])).upper);
+    mismatch = std::max(mismatch, phx::mc::geometry::norm_upper(offset));
+  }
+  const di::Interval du = di::subtract(di::point(uv_b[0]), di::point(uv_a[0]));
+  const di::Interval drho = di::subtract(rho[1], rho[0]);
+  const di::Interval rho_hull{std::min(rho[0].lower, rho[1].lower),
+                              std::max(rho[0].upper, rho[1].upper)};
+  const di::Interval du2 = pole::square(du);
+  const di::Interval acceleration =
+      di::add(pole::square(di::multiply(rho_hull, du2)),
+              di::multiply(di::point(4.0), di::multiply(pole::square(drho), du2)));
+  if (!di::finite(acceleration)) return false;
+  const double sag = di::multiply(eighth, di::point(phx::mc::geometry::next_up(
+                                              std::sqrt(acceleration.upper)))).upper;
+  const double width = di::add(di::point(mismatch), di::point(sag)).upper;
+  const double reach = di::add(di::point(rho_hull.upper), di::point(mismatch)).upper;
+  di::Interval jets[4][3];
+  if (!pole::jets(frame, sigma, {-reach, reach}, {-reach, reach}, 1, 3, jets)) return false;
+  const di::Interval w2 = di::multiply(di::point(width), di::point(width));
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    auto sum = di::add(di::point(di::magnitude(jets[1][axis])),
+                       di::point(di::magnitude(jets[3][axis])));
+    const auto mixed = di::point(di::magnitude(jets[2][axis]));
+    sum = di::add(sum, di::add(mixed, mixed));
+    magnitude[axis] = di::multiply(eighth, di::multiply(sum, w2)).upper;
+  }
+  cap = di::add(di::point(std::max(a, b)),
+                di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
+  if (edges != nullptr) edges[0] = a, edges[1] = b;
+  return std::isfinite(cap);
+}
+
+// V3's mixed atlas at a sphere pole. The pole vertex is exact topology: a
+// mesh vertex at a corner of a pole chord (use_kinds 1) whose chart latitude
+// is bitwise sigma kHalfPiLower. Its region R is the rows of the face that
+// touch it (fan rows and slivers) or that have a corner in the closed cap
+// sigma v >= kCapLatitude (an exact predicate on the input chart points, not
+// on any bound). R holds every row meeting the cap, so an edge R shares with
+// a uv row joins two corners below the cap (the uv row has none in it), and a
+// mesh ring at the threshold cannot split rows between the charts. R is
+// associated in the pole chart, the rest of the face in uv.
+//
+// The threshold. A chart-straight edge of surface length l whose image has
+// total curvature k on the sphere of radius r sags l^2 k / 8; k^2 = 1/r^2 +
+// k_g^2 (normal curvature 1/r for every curve). The worst direction in both
+// charts is the azimuthal one at colatitude rho (radial lines are meridians,
+// k_g = 0, in both). uv chart: a latitude circle, r k_g = cot rho, so the
+// sag factor over the sphere's own l^2 / (8 r) is 1/sin rho. Pole chart, the
+// metric d rho^2 + sin^2 rho d theta^2 in polar coordinates of (x, y): the
+// Cartesian line tangent at rho has rho'' = 1/rho, theta' = 1/rho, speed
+// sin rho / rho, and the geodesic rho'' = sin rho cos rho theta'^2, so
+// r k_g = (rho - sin rho cos rho) / sin^2 rho. The pole chart is no worse
+// than the uv chart where (rho - sin rho cos rho) / sin^2 rho <= cot rho,
+// i.e. rho <= sin 2 rho: rho <= rho* = 0.947747133516990... (the positive
+// root of rho = sin 2 rho), latitude pi/2 - rho* = 0.623049193277906...,
+// rounded down to kCapLatitude (the cap only grows). Rows reach at most one
+// edge below it, so their corners stay far inside the series domain rho <= 2
+// (q <= 4); a corner beyond it makes pole::jets fail and the row refuses.
+//
+// Contract (MAC bc1b665 option (i), seam lens charge). For R's rows the
+// linear map is taken on the pole-chart corners (pole_corners), Phi on each
+// uv triangle the affine map onto its pole-chart triangle; Phi is continuous
+// on R (shared chart corners share their pole-chart points). Each boundary
+// edge of R (an edge no other row of R shares bitwise: edges shared with a
+// uv row, seam and pole chord edges) carries a seam lens with cap c_e
+// (seam_lens_bound), charged to both adjacent rows (row bound := max(bound,
+// c_e)). Surface -> mesh: for x in R, z = P(x); P and Phi restricted to the
+// boundary of R are homotopic through the lenses, so off the lenses
+// deg(Phi, R, z) = deg(P, R, z) != 0 (P is injective with one Jacobian sign
+// on the open strip), so z lies in some row's pole-chart triangle and S(x)
+// is within that row's bound of the mesh; on a lens S(x) is within c_e of
+// the mesh edge. Mesh -> surface: a pole row's mesh point I(z) is within its
+// bound of S_xy(z) with |z| <= rho_strip; the face holds the whole strip
+// {u in [u_min, u_max], rho <= rho_strip} (every chord of the face meeting
+// it is a pole chord or a seam chord at u_min or u_max, checked exactly;
+// the polygon/trim difference is the trim lens, charged over the strip's uv
+// box), and an angle outside [u_min, u_max] is within r rho_strip (2 pi -
+// (u_max - u_min)) of the face (charged). Faces failing a condition keep
+// the uv chart for every row.
+struct PoleRegion {
+  int32_t face = -1;
+  int sigma = 0;
+  int64_t vertex = -1;
+  double strip = 0.0;  // rho_strip
+  double gap = 0.0;    // the angular charge r rho_strip (2 pi - (u_max - u_min))+
+  pole::SphereFrame frame;
+  std::vector<int64_t> rows;
+  std::vector<int32_t> masks;
+  std::vector<std::array<double, 6>> corners;  // pole-chart corners per row
+};
+
+constexpr double kCapLatitude = 0x1.3f004dc9db074p-1;
+
+// The regions of every eligible pole; row_region[i] is the index of the
+// region holding row i, or -1.
+std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
+                                     const phx_mc_cad_model& model,
+                                     std::vector<FaceKernel>& kernels,
+                                     IntervalEvaluationWorkspace& workspace,
+                                     int64_t triangle_count, const int64_t* triangles,
+                                     const int32_t* face_rows, const double* uv,
+                                     int64_t chord_count, const int64_t* chord_use,
+                                     const int64_t* use_patch, const double* chord_uv,
+                                     const int64_t* edge_chord,
+                                     const std::vector<uint8_t>& face_refused,
+                                     std::vector<int32_t>& row_region) {
+  const auto bits = [](double value) { return std::bit_cast<uint64_t>(value); };
+  const auto at_pole = [&](double v, int sigma) {
+    return bits(v) == bits(sigma * pole::kHalfPiLower);
+  };
+  // Candidate poles (face, vertex, sigma), from the corners of pole chords.
+  std::vector<std::array<int64_t, 3>> candidates;
+  for (int64_t i = 0; i < triangle_count; ++i)
+    for (int j = 0; j < 3; ++j) {
+      const int64_t chord = edge_chord[3 * i + j];
+      if (chord < 0 || model.use_kinds[chord_use[chord]] != 1) continue;
+      for (const int corner : {j, (j + 1) % 3}) {
+        const double v = uv[6 * i + 2 * corner + 1];
+        const int sigma = v > 0.0 ? 1 : -1;
+        candidates.push_back({face_rows[i], triangles[3 * i + corner],
+                              at_pole(v, sigma) ? sigma : 0});
+      }
+    }
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+  std::vector<PoleRegion> regions;
+  for (std::size_t c = 0; c < candidates.size(); ++c) {
+    const auto [face64, vertex, sigma64] = candidates[c];
+    const auto face = static_cast<int32_t>(face64);
+    const int sigma = static_cast<int>(sigma64);
+    // One latitude per pole vertex, on the pole line.
+    const bool unique = (c == 0 || candidates[c - 1][0] != face64 || candidates[c - 1][1] != vertex) &&
+                        (c + 1 == candidates.size() || candidates[c + 1][0] != face64 ||
+                         candidates[c + 1][1] != vertex);
+    if (!unique || sigma == 0 || face_refused[static_cast<std::size_t>(face)]) continue;
+    auto& kernel = kernels[static_cast<std::size_t>(face)];
+    if (!kernel.prepared) prepare_face_kernel(geometry, face, workspace, kernel);
+    pole::SphereFrame frame;
+    if (!pole_sphere_frame(geometry, workspace, kernel.node, frame)) continue;
+    PoleRegion region;
+    region.face = face, region.sigma = sigma, region.vertex = vertex, region.frame = frame;
+    bool valid = true;
+    for (int64_t i = 0; i < triangle_count && valid; ++i) {
+      if (face_rows[i] != face) continue;
+      int32_t mask = 0;
+      bool cap = false;
+      for (int j = 0; j < 3; ++j) {
+        const double v = uv[6 * i + 2 * j + 1];
+        if (triangles[3 * i + j] == vertex) {
+          if (!at_pole(v, sigma)) valid = false;
+          mask |= 1 << j;
+        }
+        cap = cap || sigma * v >= kCapLatitude;
+      }
+      if (mask == 0 && !cap) continue;
+      std::array<double, 6> xy{};
+      if (!pole_corners(kernel.trig, uv + 6 * i, sigma, mask, xy.data())) valid = false;
+      for (int j = 0; j < 3 && valid; ++j) {
+        di::Interval rho;
+        if (!pole::colatitude(uv[6 * i + 2 * j + 1], sigma, rho)) {
+          valid = false;
+          break;
+        }
+        const double radius[3] = {std::fabs(xy[2 * j]), std::fabs(xy[2 * j + 1]), 0.0};
+        region.strip = std::max({region.strip, rho.upper, phx::mc::geometry::norm_upper(radius)});
+      }
+      region.rows.push_back(i);
+      region.masks.push_back(mask);
+      region.corners.push_back(xy);
+    }
+    if (!valid || region.rows.empty()) continue;
+    // The strip lies in the face: every chord meeting it is a pole chord on
+    // this pole or a seam chord at the face's u ends.
+    double u_min = std::numeric_limits<double>::infinity(), u_max = -u_min;
+    for (int64_t k = 0; k < chord_count; ++k)
+      if (use_patch[chord_use[k]] == face)
+        for (int end = 0; end < 2; ++end) {
+          u_min = std::min(u_min, chord_uv[4 * k + 2 * end]);
+          u_max = std::max(u_max, chord_uv[4 * k + 2 * end]);
+        }
+    for (int64_t k = 0; k < chord_count && valid; ++k) {
+      if (use_patch[chord_use[k]] != face) continue;
+      const double* p = chord_uv + 4 * k;
+      if (model.use_kinds[chord_use[k]] == 1 && at_pole(p[1], sigma) && at_pole(p[3], sigma))
+        continue;
+      if (bits(p[0]) == bits(p[2]) && (p[0] == u_min || p[0] == u_max)) continue;
+      for (int end = 0; end < 2; ++end) {
+        di::Interval rho;
+        if (!pole::colatitude(p[2 * end + 1], sigma, rho) || !(rho.lower > region.strip))
+          valid = false;
+      }
+    }
+    if (!valid) continue;
+    const di::Interval span = di::subtract(di::point(u_max), di::point(u_min));
+    const di::Interval gap = di::subtract(di::point(2.0 * di::kPiUpper), span);
+    region.gap = gap.upper > 0.0
+                     ? di::multiply(di::point(frame.r.upper),
+                                    di::multiply(di::point(region.strip), di::point(gap.upper)))
+                           .upper
+                     : 0.0;
+    if (!std::isfinite(region.gap)) continue;
+    regions.push_back(std::move(region));
+  }
+  // A row claimed by two regions (two poles' regions meet): both keep uv.
+  std::vector<int32_t> claims(row_region.size(), 0);
+  for (const PoleRegion& region : regions)
+    for (const int64_t row : region.rows) ++claims[static_cast<std::size_t>(row)];
+  for (std::size_t r = 0; r < regions.size(); ++r) {
+    bool shared = false;
+    for (const int64_t row : regions[r].rows) shared |= claims[static_cast<std::size_t>(row)] > 1;
+    if (shared) continue;
+    for (const int64_t row : regions[r].rows)
+      row_region[static_cast<std::size_t>(row)] = static_cast<int32_t>(r);
+  }
+  for (std::size_t r = 0; r < regions.size(); ++r)
+    if (!regions[r].rows.empty() &&
+        row_region[static_cast<std::size_t>(regions[r].rows[0])] != static_cast<int32_t>(r))
+      regions[r].rows.clear();
+  return regions;
+}
+
+// The rows of every pole region in the pole chart, each charged the trim
+// lens over the strip's uv box and the angular gap, then each boundary
+// edge's seam lens charged to both adjacent rows (PoleRegion's contract).
+void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace& workspace,
+                        const std::vector<PoleRegion>& regions, const std::vector<FaceKernel>& kernels,
+                        int64_t triangle_count, const int64_t* triangles,
+                        const int32_t* face_rows, const double* uv, const double* points,
+                        const std::vector<int32_t>& row_region, const LensIndex& lens,
+                        double tolerance, int32_t max_depth, std::vector<double>& row_upper,
+                        std::vector<int32_t>& row_status, std::vector<int32_t>& row_reason,
+                        std::vector<int32_t>& row_splits) {
+  using Key = std::array<uint64_t, 4>;
+  const auto bits = [](double value) { return std::bit_cast<uint64_t>(value); };
+  const auto edge = [&](int64_t row, int j) {
+    const double* a = uv + 6 * row + 2 * j;
+    const double* b = uv + 6 * row + 2 * ((j + 1) % 3);
+    std::array<uint64_t, 2> p{bits(a[0]), bits(a[1])}, q{bits(b[0]), bits(b[1])};
+    if (q < p) std::swap(p, q);
+    return Key{p[0], p[1], q[0], q[1]};
+  };
+  const auto refuse = [&](int64_t row, int32_t reason) {
+    const auto r = static_cast<std::size_t>(row);
+    row_upper[r] = std::numeric_limits<double>::infinity();
+    row_status[r] = PHX_MC_UNRESOLVED;
+    row_reason[r] = reason;
+  };
+  const auto charge = [&](int64_t row, double cap) {
+    const auto r = static_cast<std::size_t>(row);
+    if (row_status[r] != PHX_MC_OK) return;
+    if (!(cap <= tolerance)) {
+      refuse(row, PHX_MC_FIDELITY_RESOLUTION);
+      return;
+    }
+    row_upper[r] = std::max(row_upper[r], cap);
+  };
+  for (std::size_t r = 0; r < regions.size(); ++r) {
+    const PoleRegion& region = regions[r];
+    if (region.rows.empty()) continue;
+    const int32_t node = kernels[static_cast<std::size_t>(region.face)].node;
+    const pole::SphereFrame& frame = region.frame;
+    const double rim = di::subtract(di::point(pole::kHalfPiLower), di::point(region.strip)).lower;
+    const double box[4] = {-std::numeric_limits<double>::max(),
+                           region.sigma > 0 ? rim : -pole::kHalfPiLower,
+                           std::numeric_limits<double>::max(),
+                           region.sigma > 0 ? pole::kHalfPiLower : -rim};
+    const double fixed =
+        di::add(di::point(lens.charge(region.face, box)), di::point(region.gap)).upper;
+    const double budget = di::subtract(di::point(tolerance), di::point(fixed)).lower;
+    for (std::size_t k = 0; k < region.rows.size(); ++k) {
+      const int64_t row = region.rows[k];
+      double vertices[9];
+      for (int j = 0; j < 3; ++j)
+        for (int axis = 0; axis < 3; ++axis)
+          vertices[3 * j + axis] = points[3 * triangles[3 * row + j] + axis];
+      row_splits[static_cast<std::size_t>(row)] = 0;
+      if (!(fixed < tolerance)) {
+        refuse(row, PHX_MC_FIDELITY_RESOLUTION);
+        continue;
+      }
+      const int32_t mask = region.masks[k];
+      const bool sliver = mask == 3 || mask == 5 || mask == 6;
+      const auto result = pole_subdivided_bound(frame, region.sigma, vertices,
+                                                region.corners[k].data(), budget, max_depth,
+                                                sliver);
+      row_splits[static_cast<std::size_t>(row)] = result.subdivisions;
+      if (result.status != PHX_MC_OK) {
+        refuse(row, result.reason);
+        continue;
+      }
+      row_upper[static_cast<std::size_t>(row)] =
+          di::add(di::point(result.upper), di::point(fixed)).upper;
+      row_status[static_cast<std::size_t>(row)] = PHX_MC_OK;
+      row_reason[static_cast<std::size_t>(row)] = PHX_MC_FIDELITY_CERTIFIED;
+    }
+    // Boundary edges: no other row of the region shares them bitwise.
+    std::vector<std::pair<Key, int64_t>> inside, outside;
+    for (std::size_t k = 0; k < region.rows.size(); ++k)
+      for (int j = 0; j < 3; ++j)
+        inside.push_back({edge(region.rows[k], j), static_cast<int64_t>(3 * k + j)});
+    for (int64_t row = 0; row < triangle_count; ++row)
+      if (face_rows[row] == region.face &&
+          row_region[static_cast<std::size_t>(row)] != static_cast<int32_t>(r))
+        for (int j = 0; j < 3; ++j) outside.push_back({edge(row, j), row});
+    std::sort(inside.begin(), inside.end());
+    std::sort(outside.begin(), outside.end());
+    for (std::size_t e = 0; e < inside.size(); ++e) {
+      if ((e > 0 && inside[e - 1].first == inside[e].first) ||
+          (e + 1 < inside.size() && inside[e + 1].first == inside[e].first))
+        continue;
+      const auto k = static_cast<std::size_t>(inside[e].second / 3);
+      const int a = static_cast<int>(inside[e].second % 3), b = (a + 1) % 3;
+      const int64_t row = region.rows[k];
+      const double* corners = region.corners[k].data();
+      double cap = std::numeric_limits<double>::infinity();
+      if (!seam_lens_bound(geometry, workspace, node, frame, region.sigma, uv + 6 * row + 2 * a,
+                           uv + 6 * row + 2 * b, corners + 2 * a, corners + 2 * b,
+                           points + 3 * triangles[3 * row + a],
+                           points + 3 * triangles[3 * row + b], cap))
+        cap = std::numeric_limits<double>::infinity();
+      charge(row, cap);
+      const auto first = std::lower_bound(outside.begin(), outside.end(),
+                                          std::pair<Key, int64_t>{inside[e].first, -1});
+      for (auto it = first; it != outside.end() && it->first == inside[e].first; ++it)
+        charge(it->second, cap);
+    }
+  }
+}
+
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -1878,6 +2669,88 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
   prepare_face_kernel(geometry, face, workspace, kernel);
   return subdivided_bound(geometry, kernel, vertices, uv, nullptr, tolerance, max_depth, false,
                           nullptr, face, workspace);
+}
+
+FidelityTriangleResult fidelity_pole_triangle(const CadGeometry& geometry, int32_t face,
+                                              const double* vertices, const double* uv,
+                                              int32_t pole_side, int32_t pole_mask,
+                                              double tolerance, int32_t max_depth,
+                                              IntervalEvaluationWorkspace& workspace) {
+  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  if (face < 0 || face >= geometry.surface_count() || vertices == nullptr || uv == nullptr ||
+      (pole_side != 1 && pole_side != -1) || pole_mask < 0 || pole_mask > 7 ||
+      !std::isfinite(tolerance) || tolerance < 0.0 || max_depth < 0 || max_depth > 24) {
+    result.status = PHX_MC_INVALID_ARGUMENT;
+    return result;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) { result.status = PHX_MC_INTERNAL_ERROR; return result; }
+  AnchoredTrigonometry trig;
+  pole::SphereFrame frame;
+  double xy[6];
+  if (!pole_sphere_frame(geometry, workspace, geometry.surface_node(face), frame) ||
+      !pole_corners(trig, uv, pole_side, pole_mask, xy))
+    return result;
+  const bool sliver = pole_mask == 3 || pole_mask == 5 || pole_mask == 6;
+  return pole_subdivided_bound(frame, pole_side, vertices, xy, tolerance, max_depth, sliver);
+}
+
+int32_t fidelity_pole_image(const CadGeometry& geometry, int32_t face,
+                            IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                            const double* uv, double* image) {
+  if (face < 0 || face >= geometry.surface_count() || (pole_side != 1 && pole_side != -1))
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  AnchoredTrigonometry trig;
+  pole::SphereFrame frame;
+  di::Interval point[2];
+  if (!pole_sphere_frame(geometry, workspace, geometry.surface_node(face), frame) ||
+      !pole_chart_image(trig, uv, pole_side, point))
+    return PHX_MC_UNRESOLVED;
+  image[0] = point[0].lower, image[1] = point[0].upper;
+  image[2] = point[1].lower, image[3] = point[1].upper;
+  return PHX_MC_OK;
+}
+
+int32_t fidelity_seam_lens(const CadGeometry& geometry, int32_t face,
+                           IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                           const double* uv_a, const double* uv_b, const double* c_a,
+                           const double* c_b, const double* x_a, const double* x_b,
+                           double* out) {
+  if (face < 0 || face >= geometry.surface_count() || (pole_side != 1 && pole_side != -1))
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  const int32_t node = geometry.surface_node(face);
+  pole::SphereFrame frame;
+  if (!pole_sphere_frame(geometry, workspace, node, frame) ||
+      !seam_lens_bound(geometry, workspace, node, frame, pole_side, uv_a, uv_b, c_a, c_b, x_a, x_b,
+                       out[0], out + 1))
+    return PHX_MC_UNRESOLVED;
+  return PHX_MC_OK;
+}
+
+int32_t fidelity_pole_jets(const CadGeometry& geometry, int32_t face,
+                           IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                           const double* lower, const double* upper, double* jet_lower,
+                           double* jet_upper) {
+  if (face < 0 || face >= geometry.surface_count() || (pole_side != 1 && pole_side != -1))
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  pole::SphereFrame frame;
+  di::Interval jets[4][3];
+  if (!pole_sphere_frame(geometry, workspace, geometry.surface_node(face), frame) ||
+      !pole::jets(frame, pole_side, {lower[0], upper[0]}, {lower[1], upper[1]}, 0, 3, jets))
+    return PHX_MC_UNRESOLVED;
+  for (int term = 0; term < 4; ++term)
+    for (int axis = 0; axis < 3; ++axis) {
+      jet_lower[3 * term + axis] = jets[term][axis].lower;
+      jet_upper[3 * term + axis] = jets[term][axis].upper;
+    }
+  return PHX_MC_OK;
 }
 
 int32_t fidelity_anchored_sincos(double lower, double upper, double* out) {
@@ -1919,7 +2792,7 @@ int32_t fidelity_trim_lens(const CadGeometry& geometry, int32_t face, int64_t us
     return PHX_MC_INVALID_ARGUMENT;
   const phx::mc::GradualNearestScope mode;
   if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-  return trim_lens_bound(geometry, face, use, chord_uv, parameters, workspace, *cap, padded);
+  return trim_lens_bound(geometry, face, use, chord_uv, parameters, workspace, 1, cap, padded);
 }
 
 double fidelity_lens_charge(int64_t surface_count, int64_t chord_count, const int32_t* faces,
@@ -2107,35 +2980,52 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     const auto rows = static_cast<std::size_t>(triangle_count);
     std::vector<double> row_upper(rows);
     std::vector<int32_t> row_status(rows), row_reason(rows), row_splits(rows);
-    int32_t aggregate = PHX_MC_OK;
-    double maximum = 0.0;
     std::vector<phx::mc::cad::FaceKernel> kernels(static_cast<std::size_t>(model->surface_count));
     std::vector<phx::mc::cad::CornerCache> corners(static_cast<std::size_t>(point_count));
-    // Every chord's lens cap once, then the charges of phx::mc::cad::LensIndex.
-    std::vector<phx::mc::cad::LensIndex::Chord> lens_chords(static_cast<std::size_t>(chord_count));
+    // Every chord's lens caps once, kLensPieces pieces along the chord
+    // (trim_lens_bound), then the per-leaf charges of phx::mc::cad::LensIndex.
+    constexpr int kLensPieces = 8;
+    std::vector<phx::mc::cad::LensIndex::Chord> lens_pieces(
+        static_cast<std::size_t>(chord_count) * kLensPieces);
+    std::vector<double> chord_cap(static_cast<std::size_t>(chord_count), 0.0);
     std::vector<uint8_t> face_refused(static_cast<std::size_t>(model->surface_count), 0);
     for (int64_t chord = 0; chord < chord_count; ++chord) {
-      auto& entry = lens_chords[static_cast<std::size_t>(chord)];
       const auto face = static_cast<int32_t>(use_patch[chord_use[chord]]);
+      double caps[kLensPieces], boxes[4 * kLensPieces];
       if (phx::mc::cad::trim_lens_bound(geometry, face, chord_use[chord], chord_uv + 4 * chord,
-                                        chord_range + 2 * chord, workspace, entry.cap,
-                                        entry.box) == PHX_MC_OK)
-        entry.face = face;
-      else
+                                        chord_range + 2 * chord, workspace, kLensPieces, caps,
+                                        boxes) != PHX_MC_OK) {
         face_refused[static_cast<std::size_t>(face)] = 1;
+        continue;
+      }
+      for (int piece = 0; piece < kLensPieces; ++piece) {
+        auto& entry = lens_pieces[static_cast<std::size_t>(chord * kLensPieces + piece)];
+        entry.face = face;
+        entry.cap = caps[piece];
+        std::copy(boxes + 4 * piece, boxes + 4 * piece + 4, entry.box);
+        chord_cap[static_cast<std::size_t>(chord)] =
+            std::max(chord_cap[static_cast<std::size_t>(chord)], caps[piece]);
+      }
     }
-    const phx::mc::cad::LensIndex lens_index(model->surface_count, lens_chords);
+    const phx::mc::cad::LensIndex lens_index(model->surface_count, std::move(lens_pieces));
+    // Pole regions take the pole chart (phx::mc::cad::PoleRegion); their
+    // rows are bounded after the uv rows, whose seam neighbours they charge.
+    std::vector<int32_t> row_region(static_cast<std::size_t>(triangle_count), -1);
+    const auto regions = phx::mc::cad::pole_regions(
+        geometry, *model, kernels, workspace, triangle_count, triangles, face_rows, uv,
+        chord_count, chord_use, use_patch, chord_uv, edge_chord, face_refused, row_region);
     for (int64_t i = 0; i < triangle_count; ++i) {
       const auto row = static_cast<std::size_t>(i);
+      if (row_region[row] >= 0) continue;
       bool trim_refused = face_refused[static_cast<std::size_t>(face_rows[i])] != 0;
-      // The leaves along an own chord pay its cap at every depth: a cap at or
-      // above tolerance refuses the row at once. Every other charge is the
-      // per-leaf one of subdivided_bound.
+      // The leaves along the middle of an own chord pay its largest piece cap
+      // at every depth: a cap at or above tolerance refuses the row at once.
+      // Every other charge is the per-leaf one of subdivided_bound.
       double own = 0.0;
       double vertices[9];
       for (int j = 0; j < 3; ++j) {
         const int64_t chord = edge_chord[3 * i + j];
-        if (chord >= 0) own = std::max(own, lens_chords[static_cast<std::size_t>(chord)].cap);
+        if (chord >= 0) own = std::max(own, chord_cap[static_cast<std::size_t>(chord)]);
         const int64_t vertex = triangles[3 * i + j];
         for (int axis = 0; axis < 3; ++axis)
           vertices[3 * j + axis] = points[3 * vertex + axis];
@@ -2145,7 +3035,6 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         row_status[row] = PHX_MC_UNRESOLVED;
         row_reason[row] = trim_refused ? PHX_MC_FIDELITY_TRIM_REFUSAL : PHX_MC_FIDELITY_RESOLUTION;
         row_splits[row] = 0;
-        aggregate = PHX_MC_UNRESOLVED;
         continue;
       }
       // A pole sliver is the chart triangle of a collapsed side: its two pole
@@ -2184,8 +3073,17 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
       row_status[row] = result.status;
       row_reason[row] = result.reason;
       row_splits[row] = result.subdivisions;
+    }
+    phx::mc::cad::pole_region_bounds(geometry, workspace, regions, kernels, triangle_count,
+                                     triangles, face_rows,
+                                     uv, points, row_region, lens_index, tolerance, max_depth,
+                                     row_upper, row_status, row_reason, row_splits);
+    int32_t aggregate = PHX_MC_OK;
+    double maximum = 0.0;
+    for (int64_t i = 0; i < triangle_count; ++i) {
+      const auto row = static_cast<std::size_t>(i);
+      if (row_status[row] != PHX_MC_OK) aggregate = PHX_MC_UNRESOLVED;
       maximum = std::max(maximum, row_upper[row]);
-      if (result.status != PHX_MC_OK) aggregate = PHX_MC_UNRESOLVED;
     }
     std::copy(row_upper.begin(), row_upper.end(), upper);
     std::copy(row_status.begin(), row_status.end(), item_status);

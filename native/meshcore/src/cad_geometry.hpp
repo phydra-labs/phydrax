@@ -185,14 +185,30 @@ class CadGeometry {
 
 // Derived surface quantities from a second-order surface jet (value, Su, Sv,
 // Suu, Suv, Svv): first fundamental form [E F; F G], unit normal Su x Sv
-// normalized, and principal curvatures k1 <= k2 (eigenvalues of I^-1 II for
-// that normal). False when Su x Sv vanishes.
+// normalized, second fundamental form [L M; M N] for that normal, and
+// principal curvatures k1 <= k2 (eigenvalues of I^-1 II). False when Su x Sv
+// vanishes.
 struct SurfaceDifferential {
   double first_form[3];
   double normal[3];
+  double second_form[3];
   double curvatures[2];
 };
 bool surface_differential(const double* jet, SurfaceDifferential& out) noexcept;
+
+// Sizing metric of a face point in parameter coordinates (uu, uv, vv): the
+// isotropic 1/h^2 intersected with the fidelity tensor |II| / (4 theta tol).
+// A chord of length L in direction d sags kappa_n(d) L^2 / 8; the chart
+// kernel accepts circumradius <= 1/sqrt(2) metric units, so edges reach
+// sqrt(2) units, and sizes sqrt(4 theta tol / |k_i|) along the principal
+// directions keep every edge's sag within theta * tol. Eigenvalues relative
+// to I are lambda_i = max(1/h^2, |k_i| / (4 theta tol)), i.e.
+// M = lambda_1 I + s (II - k_1 I) with the spectral projector of k_2 and
+// s = (lambda_2 - lambda_1) / (k_2 - k_1), bounded by the curvature
+// coefficient and so stable as k_1 -> k_2. A non-binding tolerance gives
+// exactly I / h^2. `lambdas` (optional) receives lambda_1, lambda_2.
+void fidelity_metric(const SurfaceDifferential& differential, double h, double theta,
+                     double tolerance, double metric[3], double* lambdas) noexcept;
 
 // Row of the named straight-line kind in the generated template table, or -1.
 int32_t template_index(const char* name) noexcept;

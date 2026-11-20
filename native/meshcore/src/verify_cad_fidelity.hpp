@@ -19,6 +19,36 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
                                          double tolerance, int32_t max_depth,
                                          IntervalEvaluationWorkspace& workspace);
 
+// The row's bound in the regular pole chart (x, y) = rho (cos u, sin u) of
+// a closed-form sphere face (verify_cad_pole_chart.hpp): pole_side +1 north,
+// -1 south; bit j of pole_mask marks corner j as the pole vertex (exact
+// topology, the caller's), placed at the origin. Same result contract as
+// fidelity_triangle, without lens charges; PHX_MC_UNRESOLVED with
+// PHX_MC_FIDELITY_INTERVAL_REFUSAL for any other surface family.
+FidelityTriangleResult fidelity_pole_triangle(const CadGeometry& geometry, int32_t face,
+                                              const double* vertices, const double* uv,
+                                              int32_t pole_side, int32_t pole_mask,
+                                              double tolerance, int32_t max_depth,
+                                              IntervalEvaluationWorkspace& workspace);
+// The pole-chart image enclosure of a chart point: image = {x lower, x upper,
+// y lower, y upper}.
+int32_t fidelity_pole_image(const CadGeometry& geometry, int32_t face,
+                            IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                            const double* uv, double* image);
+// Pole-chart jets over a box: S, S_xx, S_xy, S_yy (12 values).
+int32_t fidelity_pole_jets(const CadGeometry& geometry, int32_t face,
+                           IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                           const double* lower, const double* upper, double* jet_lower,
+                           double* jet_upper);
+// The seam lens cap of one pole-region boundary edge (seam_lens_bound) from
+// chart corner a to b, pole-chart corners c, mesh points x: out = {cap,
+// sup |S_uv(gamma) - L|, sup |S_xy(Phi) - L|}.
+int32_t fidelity_seam_lens(const CadGeometry& geometry, int32_t face,
+                           IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                           const double* uv_a, const double* uv_b, const double* c_a,
+                           const double* c_b, const double* x_a, const double* x_b,
+                           double* out);
+
 // The per-face kernels fidelity_triangle uses, for tests.
 // The anchored cos/sin enclosure over [lower, upper] (fresh anchors):
 // out = {cos lower, cos upper, sin lower, sin upper}.

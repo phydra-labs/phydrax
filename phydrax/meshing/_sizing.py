@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 import equinox as eqx
@@ -117,6 +118,247 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         ):
             raise ValueError("Stored size-compliance policy differs from its fields.")
         return rebuilt
+
+
+class SizeComplianceComparison(StrEnum):
+    """How a route compares its declared size statistic q with the bound b.
+
+    ``AT_MOST``: q <= b (1 + relative_tolerance) + absolute_tolerance.
+    ``TWO_SIDED``: |q - b| <= absolute_tolerance + relative_tolerance * b.
+    ``REPORT_ONLY``: q is reported and never an issue.
+    ``CONSTRUCTION_OBJECTIVE``: the construction searches for q = b exactly.
+    """
+
+    AT_MOST = "at_most"
+    TWO_SIDED = "two_sided"
+    REPORT_ONLY = "report_only"
+    CONSTRUCTION_OBJECTIVE = "construction_objective"
+
+
+@dataclass(frozen=True, slots=True)
+class SizeComplianceDeclaration:
+    """The size quantity one route judges and the kernel guarantee behind it.
+
+    ``bound_factor`` times a hard uniform control's ``target_size`` h is the
+    bound b of :class:`SizeComplianceComparison`; ``statistic`` names the
+    per-entity quantity whose p50/p95 (``SizeCompliancePolicy``) is judged.
+    """
+
+    route: str
+    entity: str
+    statistic: str
+    comparison: SizeComplianceComparison
+    bound_factor: float
+    guarantee: str
+
+    def exceeds(
+        self, value: float, target_size: float, policy: SizeCompliancePolicy, /
+    ) -> bool:
+        """Whether an AT_MOST statistic lies above its tolerated bound.
+
+        The statistic is recomputed in floating point from the kernel's
+        points, so a value the kernel meets exactly (a box face meshed at
+        R = h / sqrt(2)) may land a few ulps above b: that rounding is
+        allowed, any larger excess is not.
+        """
+        if self.comparison is not SizeComplianceComparison.AT_MOST:
+            raise ValueError(f"{self.route} does not declare an AT_MOST size bound.")
+        bound = self.bound_factor * target_size
+        rounding = 16.0 * float(np.finfo(np.float64).eps) * bound
+        return value > bound * (1.0 + policy.relative_tolerance) + (
+            policy.absolute_tolerance + rounding
+        )
+
+
+_AT_MOST = SizeComplianceComparison.AT_MOST
+_TWO_SIDED = SizeComplianceComparison.TWO_SIDED
+
+# One row per route that evaluates a size control's p50/p95 statistic: the
+# quantity the route judges, how, and the producing kernel's guarantee it
+# comes from. Only the CAD chart surface and the S3 boundary rows are consumed
+# in code; the others record what their routes already do.
+CAD_CHART_SURFACE_SIZE = SizeComplianceDeclaration(
+    "providers/_native_cad_mesh.py:_size_compliance",
+    "scoped CAD-solid boundary triangles",
+    "triangle circumradius R",
+    _AT_MOST,
+    1.0 / float(np.sqrt(2.0)),
+    "chart kernel: metric circumradius <= sqrt(1/2) under I/h^2 "
+    "(native/meshcore/src/cad_refine2d.hpp:83, cad_geometry.hpp:199-209), "
+    "so R <= h/sqrt(2)",
+)
+S3_BOUNDARY_EDGE_SIZE = SizeComplianceDeclaration(
+    "providers/_native_volume.py:_volume_compliance",
+    "boundary faces of facet-scoped controls",
+    "edge length",
+    _AT_MOST,
+    1.0,
+    "S3 splits every splittable boundary edge longer than 4/sqrt(6) of its "
+    "stored size (native/meshcore/src/refine3d.cpp:1697-1706, 2655-2690); the "
+    "PLC edge-length convention stores sqrt(6)/4 h "
+    "(phydrax/meshing/_volume_generation.py:79-84), so edge <= h",
+)
+SIZE_COMPLIANCE_DECLARATIONS: tuple[SizeComplianceDeclaration, ...] = (
+    CAD_CHART_SURFACE_SIZE,
+    S3_BOUNDARY_EDGE_SIZE,
+    SizeComplianceDeclaration(
+        "providers/_native_implicit.py:_implicit_volume_compliance",
+        "implicit carrier boundary faces",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "construction stop rule: octree cell diagonal <= h(1+rel)+abs "
+        "(providers/_native_implicit.py:713-729, "
+        "geometry/implicit/_adaptive_discovery.py:2740-2754)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_implicit.py:_compliance",
+        "implicit surface triangles",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "construction stop rule: octree cell diagonal <= h(1+rel)+abs "
+        "(providers/_native_implicit.py:713-729)",
+    ),
+    SizeComplianceDeclaration(
+        "_implicit_volume.py:_compliance",
+        "restricted implicit boundary facets",
+        "edge length",
+        _AT_MOST,
+        1.0,
+        "restricted Delaunay facet longest edge <= min(h, reach diameter) "
+        "(_implicit_volume.py:769, 1060-1072)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_reconstruction.py:_compliance",
+        "reconstructed surface triangles",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "construction stop rule: red refinement until the statistic is met "
+        "(providers/_native_reconstruction.py:340-397, 505)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_planar.py:_compliance",
+        "planar triangle edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "construction stop rule: free edges <= local size, h or h(1+rel)+abs "
+        "(providers/_native_planar.py:198-268, "
+        "_native_planar_construction.py:39-50)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_curve.py:_curve_compliance",
+        "curve intervals",
+        "arc length",
+        _TWO_SIDED,
+        1.0,
+        "equidistribution with ceil(length / h) intervals "
+        "(providers/_native_curve.py:1824)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_gmsh_sizing.py:_edge_size_evidence",
+        "Gmsh mesh edges",
+        "edge length",
+        SizeComplianceComparison.REPORT_ONLY,
+        1.0,
+        "Gmsh size fields are target edge lengths without a bound "
+        "(providers/_gmsh_sizing.py:83-193)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_structured.py:_size_compliance",
+        "structured quad/hex physical edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "none: the user's divisions are checked against h",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_surface_quad.py:_mapped_size_compliance",
+        "mapped quad edge enclosures",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "none: the user's divisions are checked against h",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_quad_compliance",
+        "dual quad edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "pairs or subdivides planar triangles whose free edges are <= h "
+        "(providers/_native_dual.py:2692)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_dual_hex_compliance",
+        "balanced/frame grid hex edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "grid knots at spacing h (_hex_cut_preparation.py:211-224)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_mapped_grid_compliance",
+        "mapped grid hex edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "ceil(Jacobian length bound / h) divisions (_hex_generation.py:1466-1469)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_polyhedral.py:_polyhedral_compliance",
+        "polyhedral cell edge enclosures",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "construction stop rule: cell diameter <= maximum_size or h(1+rel)+abs "
+        "(_polyhedral_generation.py:136-158)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_periodic_size.py:periodic_size_compliance",
+        "periodic quotient edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "periodic metric I/h^2 from uniform controls "
+        "(providers/_native_periodic_size.py:180-238); exact at zero tolerance",
+    ),
+    SizeComplianceDeclaration(
+        "_device_adaptation.py:_owner_local_periodic_size_epoch",
+        "owner-local periodic quotient edges",
+        "edge length",
+        _TWO_SIDED,
+        1.0,
+        "periodic metric I/h^2; exact rational quantile",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_periodic_algebraic.py:construct_exact_algebraic_carrier",
+        "algebraic periodic carrier edges",
+        "edge length",
+        SizeComplianceComparison.CONSTRUCTION_OBJECTIVE,
+        1.0,
+        "the edge-graph search targets the p50/p95 edge quantile exactly "
+        "(providers/_native_periodic_algebraic.py:955-1060, 1721-1725)",
+    ),
+)
+
+
+def size_statistic(values: np.ndarray, statistic: str, /) -> float:
+    """The p50 or p95 (linear interpolation) of per-entity size values."""
+    return float(np.quantile(values, {"p50": 0.5, "p95": 0.95}[statistic]))
+
+
+def triangle_circumradii(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
+    """Circumradius abc / (4 area) of every triangle; inf for a degenerate one."""
+    corners = np.asarray(points, dtype=np.float64)[np.asarray(triangles, dtype=np.int64)]
+    edges = corners[:, (1, 2, 0)] - corners[:, (2, 0, 1)]
+    product = np.prod(np.linalg.norm(edges, axis=2), axis=1)
+    twice_area = np.linalg.norm(np.cross(edges[:, 0], edges[:, 1]), axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        radii = product / (2.0 * twice_area)
+    return np.where(twice_area > 0.0, radii, np.inf)
 
 
 def _size(value: float, name: str, /) -> float:

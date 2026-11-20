@@ -84,7 +84,8 @@ def _transfer(
 @pytest.fixture(scope="module")
 def box() -> tuple[phx.geometry.brep.BRepModel, CellMeshingResult]:
     model = _box()
-    return model, _native(model, 0.5)
+    # Small enough that both routes place interior vertices (stratum 3).
+    return model, _native(model, 0.3)
 
 
 def test_native_box_records_classify_every_entity(
@@ -167,7 +168,7 @@ def test_native_box_occurrences_name_the_existing_route_entities(
     from phydrax.meshing._organization import RegionRole
 
     model, native = box
-    plan = _cad_volume_plan(model, 0.5, 1, radius_edge=8.0, dihedral=0.0)
+    plan = _cad_volume_plan(model, 0.3, 1, radius_edge=8.0, dihedral=0.0)
     specification = eqx.tree_at(
         lambda value: value.region_controls,
         plan.specification,
@@ -320,14 +321,15 @@ def test_native_curve_association_transfer_rejects_forgeries(
 
 
 def test_native_cad_adaptation_round_trip_keeps_records_and_certificate() -> None:
-    # Two successive refinements of every cell: bisection keeps the CAD
-    # boundary, so each target carries the source chart row for row; the
-    # native verifiers re-prove it, and the target is a valid source of the
-    # next adaptation. Faults caught: a chart left on stale vertex rows (V2/V4
-    # refuse), seam curve edges reclassified as face edges by projection (the
-    # second transfer refuses), records dropped by the adaptation.
+    # Two successive refinements of the cells off the boundary: bisection that
+    # keeps the CAD boundary carries the source chart row for row; the native
+    # verifiers re-prove it, and the target is a valid source of the next
+    # adaptation. (Marking every cell may bisect a boundary edge, which the
+    # chart transfer refuses.) Faults caught: a chart left on stale vertex rows
+    # (V2/V4 refuse), seam curve edges reclassified as face edges by projection
+    # (the second transfer refuses), records dropped by the adaptation.
     model = _sphere_model()
-    source = _native(model, 0.3)
+    source = _native(model, 0.2)
     transfer = _transfer(model)
     original = _records(source)
     assert source.certification is not None
@@ -336,10 +338,23 @@ def test_native_cad_adaptation_round_trip_keeps_records_and_certificate() -> Non
     source_ids = np.asarray(source.mesh.vertex_global_ids)
     current = source
     for _ in range(2):
+        cells = np.asarray(current.mesh.blocks[0].vertices, dtype=np.int64)
+        faces, counts = np.unique(
+            np.sort(
+                cells[:, [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]]].reshape(-1, 3),
+                axis=1,
+            ),
+            axis=0,
+            return_counts=True,
+        )
+        interior = ~np.isin(cells, faces[counts == 1]).any(axis=1)
+        assert interior.any()
         target = execute_mesh_adaptation(
             prepare_mesh_adaptation(
                 current,
-                MarkedMeshAdaptation(np.asarray(current.mesh.blocks[0].global_ids)),
+                MarkedMeshAdaptation(
+                    np.asarray(current.mesh.blocks[0].global_ids)[interior]
+                ),
                 policy=MeshAdaptationPolicy(
                     MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
                 ),

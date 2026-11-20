@@ -12,7 +12,9 @@
 #include <utility>
 #include <vector>
 
+#include "cad_curving.hpp"
 #include "cad_geometry.hpp"
+#include "floating_point_mode.hpp"
 #include "improve3d.hpp"
 #include "refine3d.hpp"
 #include "quadratic_validity_screen.hpp"
@@ -339,7 +341,7 @@ bool fill(const Surface& s, TetMesh& mesh, bool quality) {
 
 struct Quadratic {
   int32_t status = -1;
-  std::vector<int32_t> edges, edge_entities, cell_decisions;
+  std::vector<int32_t> edges, edge_entities, cell_decisions, initial_decisions;
   std::vector<double> nodes;
   std::vector<int8_t> edge_kinds;
   std::vector<int64_t> cell_edges, records;
@@ -389,6 +391,19 @@ Quadratic curve(const phx_mc_cad_model& model, const Surface& s, const TetMesh& 
   r.records = q.records.data();
   r.stats = &q.stats;
   q.status = phx_mc_cad_quadratic_nodes(&r);
+  // The per-cell decisions before repair come from the internal entry point
+  // (the C API reports only their counts).
+  const phx::mc::GradualNearestScope mode;
+  phx::mc::cad::CadGeometry geometry;
+  PHX_CHECK(mode.established() && geometry.bind(model) == PHX_MC_OK);
+  const phx::mc::CadQuadraticInput input{
+      r.point_count, r.points, r.surface_point_count, r.vertex_dimensions, r.vertex_entities,
+      r.tetrahedron_count, r.tetrahedra, r.triangle_count, r.triangles, r.triangle_patches,
+      r.triangle_uv, r.curve_edge_count, r.curve_edges, r.curve_edge_curves,
+      r.curve_edge_parameters, r.relative_floor};
+  phx::mc::CadQuadraticMesh internal;
+  PHX_CHECK(phx::mc::cad_quadratic_nodes(geometry, input, internal) == q.status);
+  q.initial_decisions = std::move(internal.initial_decisions);
   return q;
 }
 
@@ -492,7 +507,23 @@ void check_quadratic(const Surface& s, const TetMesh& mesh, const Quadratic& q,
     }
   }
   PHX_CHECK(q.stats.final_invalid + q.stats.final_unresolved == linear_failures);
-  if (quality) PHX_CHECK(q.stats.initial_invalid + q.stats.initial_unresolved == 0);
+  // On the quality mesh the lift may leave initially invalid or unresolved
+  // only cells whose four vertices are all on the boundary: which such cap
+  // cell the fill builds beside a curved surface is the volume's choice
+  // (measured on the torus at h = 0.3: tens of them, all with a small P2
+  // Jacobian margin, with or without a given surface smoothing). Any cell
+  // with a volume vertex must lift valid, and every cell ends valid.
+  int64_t initial_failures = 0;
+  PHX_CHECK(q.initial_decisions.size() == q.cell_decisions.size());
+  for (std::size_t t = 0; t < q.initial_decisions.size(); ++t) {
+    if (q.initial_decisions[t] == PHX_MC_QUADRATIC_VALIDITY_VALID) continue;
+    ++initial_failures;
+    if (!quality) continue;
+    for (int k = 0; k < 4; ++k)
+      PHX_CHECK(static_cast<std::size_t>(mesh.tetrahedra[4 * t + k]) < s.dimensions.size());
+  }
+  PHX_CHECK(initial_failures == q.stats.initial_invalid + q.stats.initial_unresolved);
+  if (quality) PHX_CHECK(q.stats.final_invalid + q.stats.final_unresolved == 0);
   std::printf("%s%s: points=%zu cells=%zu edges=%zu (curve %lld surface %lld interior %lld) "
               "initial invalid=%lld unresolved=%lld harmonic nodes=%lld repaired=%lld "
               "straightened=%lld "
