@@ -92,6 +92,16 @@
     },
     "mesh-remesh-noisy-torus-1e5": {
       "1000000": {"tool": "cgal", "seconds": 6.89, "allowed_ratio": 1.0}
+    },
+    "cad-quadric": {
+      "22930": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 0.0215, "allowed_ratio": 1.0},
+      "10610": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 0.0653, "allowed_ratio": 1.0},
+      "4925": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 0.303, "allowed_ratio": 1.0},
+      "2286": {"tool": "gmsh 4.15.2 OCC quadric, Algorithm 6 / HXT 10, generate(2)+generate(3), MeshSizeMax=h", "seconds": 2.0, "allowed_ratio": 1.0}
+    },
+    "cad-quadric-p2": {
+      "10610": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0125, "allowed_ratio": 1.0},
+      "4925": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0751, "allowed_ratio": 1.0}
     }
   }
 }

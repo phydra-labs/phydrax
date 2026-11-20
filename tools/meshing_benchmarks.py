@@ -1817,7 +1817,7 @@ def _native_brep_plc_refinement_sample(
         raise RuntimeError("The prepared CAD route changed its authored volume request.")
 
     boundary_construction, boundary_execution_seconds = _timed(
-        prepared.boundary_preparation.execute
+        lambda: prepared.boundary_proof.get().execute()
     )
     boundary_result, boundary_acceptance_seconds = _timed(
         lambda: _accept_native_construction(

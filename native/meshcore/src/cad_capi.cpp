@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -14,6 +15,7 @@
 struct phx_mc_cad_surface_result {
   phx::mc::CadSurfaceMesh mesh;
   phx::mc::cad::CurveDiscretization curves;
+  phx::mc::CadVolumeMesh volume;
 };
 
 namespace {
@@ -27,6 +29,40 @@ void copy_flat(const std::vector<std::array<T, N>>& source, T* destination) {
     std::copy(source[i].begin(), source[i].end(), destination + N * i);
 }
 bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
+
+// Curve and face stages into `candidate` (faces at the chart size h/sqrt(2)),
+// with their stage times. Returns OK/UNRESOLVED with a candidate, else the
+// failure.
+int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
+                     const phx_mc_cad_surface_controls& controls,
+                     phx_mc_cad_surface_result& candidate) {
+  // The chart size test R <= h_t/sqrt(2) bounds every edge by 2R; with
+  // h_t = h/sqrt(2) each edge is <= h, the requested size.
+  std::vector<double> internal_sizes;
+  if (controls.face_sizes && model.surface_count > 0) {
+    internal_sizes.assign(controls.face_sizes, controls.face_sizes + model.surface_count);
+    for (double& size : internal_sizes) size *= 0.70710678118654752440;
+  }
+  const double* face_sizes = controls.face_sizes ? internal_sizes.data() : nullptr;
+  const phx::mc::cad::CurveControls curve_controls{
+      face_sizes, controls.face_tolerances, controls.curve_tolerances,
+      controls.tolerance_fraction, controls.grading, controls.minimum_size};
+  const auto start = std::chrono::steady_clock::now();
+  const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
+                                                               candidate.curves);
+  candidate.volume.stats.curve_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now() - start).count();
+  if (curve_status != PHX_MC_OK && curve_status != PHX_MC_UNRESOLVED) return curve_status;
+  if (candidate.curves.offsets.size() != static_cast<std::size_t>(model.curve_count) + 1)
+    return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
+  const int32_t surface_status = phx::mc::cad_mesh_surface(
+      geometry, candidate.curves.view(), face_sizes, controls.face_tolerances,
+      controls.tolerance_fraction, candidate.mesh);
+  candidate.volume.stats.face_ns = candidate.mesh.face_ns;
+  candidate.volume.stats.assembly_ns = candidate.mesh.assembly_ns;
+  if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
+  return curve_status == PHX_MC_UNRESOLVED ? curve_status : surface_status;
+}
 }  // namespace
 
 extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
@@ -41,29 +77,100 @@ extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    // The chart size test R <= h_t/sqrt(2) bounds every edge by 2R; with
-    // h_t = h/sqrt(2) each edge is <= h, the requested size.
-    std::vector<double> internal_sizes;
-    if (controls->face_sizes && model->surface_count > 0) {
-      internal_sizes.assign(controls->face_sizes, controls->face_sizes + model->surface_count);
-      for (double& size : internal_sizes) size *= 0.70710678118654752440;
-    }
-    const double* face_sizes = controls->face_sizes ? internal_sizes.data() : nullptr;
-    const phx::mc::cad::CurveControls curve_controls{
-        face_sizes, controls->face_tolerances, controls->curve_tolerances,
-        controls->tolerance_fraction, controls->grading, controls->minimum_size};
-    const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
-                                                                 candidate->curves);
-    if (curve_status != PHX_MC_OK && curve_status != PHX_MC_UNRESOLVED) return curve_status;
-    if (candidate->curves.offsets.size() != static_cast<std::size_t>(model->curve_count) + 1)
-      return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
-    const int32_t surface_status = phx::mc::cad_mesh_surface(
-        geometry, candidate->curves.view(), face_sizes, controls->face_tolerances,
-        controls->tolerance_fraction, candidate->mesh);
-    if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
+    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     *result = candidate.release();
-    return curve_status == PHX_MC_UNRESOLVED ? curve_status : surface_status;
+    return status;
   });
+}
+
+extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
+                                           const phx_mc_cad_surface_controls* controls,
+                                           const phx_mc_cad_volume_controls* volume,
+                                           phx_mc_cad_surface_result** result) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (!model || !controls || !volume || !result) return PHX_MC_INVALID_ARGUMENT;
+    *result = nullptr;
+    if (volume->geometry_order != 1 && volume->geometry_order != 2)
+      return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::cad::CadGeometry geometry;
+    const int32_t bound = geometry.bind(*model);
+    if (bound != PHX_MC_OK) return bound;
+    auto candidate = std::make_unique<phx_mc_cad_surface_result>();
+    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+    if (status == PHX_MC_OK) {
+      const phx::mc::CadVolumeControls volume_controls{
+          volume->radius_edge_bound, volume->min_dihedral_degrees,
+          volume->min_relative_determinant, volume->geometry_order};
+      const phx_mc_cad_volume_stats timings = candidate->volume.stats;
+      const int32_t solid = phx::mc::cad_mesh_volume(geometry, candidate->curves, candidate->mesh,
+                                                     controls->face_sizes, volume_controls,
+                                                     candidate->volume);
+      auto& stats = candidate->volume.stats;
+      stats.curve_ns = timings.curve_ns;
+      stats.face_ns = timings.face_ns;
+      stats.assembly_ns = timings.assembly_ns;
+      if (solid != PHX_MC_OK && solid != PHX_MC_UNRESOLVED) return solid;
+      *result = candidate.release();
+      return solid;
+    }
+    *result = candidate.release();
+    return status;
+  });
+}
+
+extern "C" int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
+                                             int64_t sizes[6]) {
+  if (!result || !sizes) return PHX_MC_INVALID_ARGUMENT;
+  const auto& v = result->volume;
+  sizes[0] = static_cast<int64_t>(v.points.size());
+  sizes[1] = static_cast<int64_t>(v.tetrahedra.size());
+  sizes[2] = static_cast<int64_t>(v.boundary_faces.size());
+  sizes[3] = static_cast<int64_t>(v.quadratic.edges.size());
+  sizes[4] = static_cast<int64_t>(v.quadratic.straightened.size());
+  sizes[5] = static_cast<int64_t>(v.splits.size());
+  return PHX_MC_OK;
+}
+
+extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
+                                              const phx_mc_cad_volume_arrays* a) {
+  if (!result || !a) return PHX_MC_INVALID_ARGUMENT;
+  const auto& v = result->volume;
+  const auto& q = v.quadratic;
+  const std::size_t np = v.points.size(), nt = v.tetrahedra.size(), nb = v.boundary_faces.size(),
+                    ne = q.edges.size(), nr = q.straightened.size(), ns = v.splits.size();
+  const std::size_t nc = ne ? nt : 0;
+  if (a->point_capacity < 0 || a->tetrahedron_capacity < 0 || a->triangle_capacity < 0 ||
+      a->edge_capacity < 0 || a->record_capacity < 0 || a->split_capacity < 0)
+    return PHX_MC_INVALID_ARGUMENT;
+  if (static_cast<uint64_t>(a->point_capacity) < np ||
+      static_cast<uint64_t>(a->tetrahedron_capacity) < nt ||
+      static_cast<uint64_t>(a->triangle_capacity) < nb ||
+      static_cast<uint64_t>(a->edge_capacity) < ne ||
+      static_cast<uint64_t>(a->record_capacity) < nr ||
+      static_cast<uint64_t>(a->split_capacity) < ns)
+    return PHX_MC_CAPACITY_EXCEEDED;
+  if (!present(a->points, np) || !present(a->tetrahedra, nt) ||
+      !present(a->tetrahedron_regions, nt) || !present(a->boundary_faces, nb) ||
+      !present(a->edges, ne) || !present(a->nodes, ne) || !present(a->edge_kinds, ne) ||
+      !present(a->edge_entities, ne) || !present(a->cell_edges, nc) ||
+      !present(a->cell_decisions, nc) || !present(a->records, nr) || !present(a->splits, ns) ||
+      !a->stats)
+    return PHX_MC_INVALID_ARGUMENT;
+  copy_flat(v.points, a->points); copy_flat(v.tetrahedra, a->tetrahedra);
+  copy_rows(v.regions, a->tetrahedron_regions); copy_flat(v.boundary_faces, a->boundary_faces);
+  copy_flat(q.edges, a->edges); copy_flat(q.nodes, a->nodes);
+  copy_rows(q.edge_kinds, a->edge_kinds); copy_rows(q.edge_entities, a->edge_entities);
+  if (nc) {
+    copy_flat(q.cell_edges, a->cell_edges);
+    copy_rows(q.cell_decisions, a->cell_decisions);
+  }
+  copy_flat(q.straightened, a->records); copy_rows(v.splits, a->splits);
+  *a->stats = v.stats;
+  return PHX_MC_OK;
 }
 
 extern "C" int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,

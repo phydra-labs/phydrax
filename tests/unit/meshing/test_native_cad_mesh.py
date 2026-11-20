@@ -15,6 +15,7 @@ import phydrax as phx
 from phydrax._meshcore import (
     _CAD_FACE_FAILURE_DTYPE,
     cad_mesh,
+    cad_mesh_solid,
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
@@ -484,3 +485,264 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
             np.sort(failure["segment_parameters"]),
             result.curve_parameters[start : start + 2],
         )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
+    model = cad_geometry_bundle(domain).model
+    arguments = (
+        model,
+        np.full((model.surface_nodes.size,), 0.3, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    result = cad_mesh_solid(*arguments, geometry_order=order)
+    assert result.status is MeshcoreStatus.OK
+    surface, volume = result.surface, result.volume
+    stats = volume.stats[0]
+    assert stats["recovery_status"] == 0 and stats["boundary_splits"] == 0
+    assert stats["unmet_cells"] == 0
+    assert all(stats[f"{s}_ns"] > 0 for s in ("curve", "face", "volume"))
+    count = surface.points.shape[0]
+    np.testing.assert_array_equal(volume.points[:count], surface.points)
+    cells = volume.tetrahedra
+    corners = volume.points[cells]
+    determinant = np.linalg.det(corners[:, 1:] - corners[:, :1])
+    assert np.all(determinant > 0.0)
+    assert np.all(volume.tetrahedron_regions == 0)
+    # Each surface triangle is the face its boundary row names.
+    cell, local = volume.boundary_faces[:, 0], volume.boundary_faces[:, 1]
+    faces = np.stack([cells[cell, (local + k) % 4] for k in (1, 2, 3)], axis=1)
+    np.testing.assert_array_equal(
+        np.sort(faces, axis=1), np.sort(surface.triangles, axis=1)
+    )
+    if order == 1:
+        assert volume.edges.shape[0] == 0 and volume.cell_edges.shape[0] == 0
+        assert stats["quadratic_ns"] == 0
+    else:
+        assert np.all(volume.cell_decisions == 0)
+        curved = volume.edge_kinds != 0
+        nodes = volume.nodes[curved]
+        # On the z cylinder (r 1), the x cylinder (r 0.6) or a planar cap.
+        residual = np.min(
+            np.stack(
+                [
+                    np.abs(np.hypot(nodes[:, 0], nodes[:, 1]) - 1.0),
+                    np.abs(np.hypot(nodes[:, 1], nodes[:, 2]) - 0.6),
+                    np.abs(np.abs(nodes[:, 2]) - 1.2),
+                    np.abs(np.abs(nodes[:, 0]) - 1.5),
+                ]
+            ),
+            axis=0,
+        )
+        assert curved.any() and np.max(residual) < 1e-12
+    again = cad_mesh_solid(*arguments, geometry_order=order)
+    np.testing.assert_array_equal(again.volume.points, volume.points)
+    np.testing.assert_array_equal(again.volume.tetrahedra, cells)
+    np.testing.assert_array_equal(again.volume.nodes, volume.nodes)
+
+
+def _cad_volume_plan(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    order: int,
+    /,
+    *,
+    radius_edge: float = 2.0,
+    dihedral: float = 15.5,
+) -> phx.meshing.NativeMeshingPlan:
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(
+            3, 3, CellFamilyPolicy(required=("tetrahedron",)), geometry_order=order
+        ),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, size),),
+        maximum_deviation=0.05,
+    )
+    return phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=radius_edge, minimum_dihedral_degrees=dihedral
+            ),
+        )
+    ).plan(model, specification)
+
+
+def _sphere_model() -> phx.geometry.brep.BRepModel:
+    return phx.geometry.brep.brep_sphere(
+        0.5,
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="native-cad-route-sphere",
+    )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+@pytest.mark.parametrize(
+    ("name", "size", "radius"),
+    [("quadric", 0.3, None), ("sphere", 0.2, 0.5)],
+)
+def test_unproved_cad_solid_takes_the_native_route(
+    name: str, size: float, radius: float | None, order: int
+) -> None:
+    from phydrax.meshing import CellMeshingCandidate
+
+    model = _quadric_model() if name == "quadric" else _sphere_model()
+    candidate = _cad_volume_plan(model, size, order).execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.route == "cad_tetrahedral"
+    mesh = candidate.mesh
+    assert mesh.topological_dimension == 3 and len(mesh.blocks) == 1
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    corners = points[cells]
+    assert np.all(np.linalg.det(corners[:, 1:] - corners[:, :1]) > 0.0)
+    # The boundary is closed: every boundary face occurs once.
+    faces = np.sort(
+        np.concatenate(
+            [
+                cells[:, [1, 2, 3]],
+                cells[:, [0, 2, 3]],
+                cells[:, [0, 1, 3]],
+                cells[:, [0, 1, 2]],
+            ]
+        ),
+        axis=1,
+    )
+    unique, counts = np.unique(faces, axis=0, return_counts=True)
+    assert set(counts.tolist()) == {1, 2}
+    boundary = np.unique(unique[counts == 1])
+    if radius is not None:
+        np.testing.assert_allclose(
+            np.linalg.norm(points[boundary], axis=1), radius, atol=1e-12
+        )
+    # Volume of the native mesh is the solid's within its deviation.
+    volume = float(np.sum(np.linalg.det(corners[:, 1:] - corners[:, :1])) / 6.0)
+    expected = 4.0 / 3.0 * np.pi * radius**3 if radius is not None else None
+    if expected is not None:
+        assert 0.9 * expected < volume < expected
+    geometry = candidate.geometry
+    assert geometry.elements[0].local_dof_count == (4 if order == 1 else 10)
+    report = candidate._construction.compliance
+    assert "maximum_deviation" not in dict(report.achieved)
+
+
+def test_proved_cad_solid_keeps_the_python_route() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+    from phydrax.meshing._result import CellMeshingResult
+
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    assert isinstance(result, CellMeshingResult)
+    assert result.certification is not None and result.certification.passed
+    witness = result.certification.inputs.fidelity_witness
+    # The Python construction's CAD ancestry, absent from the native route.
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert witness.cad_plc is not None
+    assert result.mesh.blocks[0].name != "native-cad-tetrahedra"
+
+
+def test_proved_quadratic_cad_solid_is_refused() -> None:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
+    with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
+        plan.execute()
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_native_cad_candidate_prove_is_refused(order: int) -> None:
+    # Until the native verifiers are accepted, a native candidate has no
+    # witness: prove() refuses it rather than certify it or rebuild the
+    # Python mesh.
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing.providers._native_cad_mesh import (
+        NATIVE_CAD_SOLID_UNCERTIFIABLE,
+    )
+
+    candidate = _cad_volume_plan(_sphere_model(), 0.3, order).execute(prove=False)
+    with pytest.raises(MeshingFailure) as failure:
+        candidate.prove()
+    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
+    assert str(failure.value) == NATIVE_CAD_SOLID_UNCERTIFIABLE
+    assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
+
+
+def test_invalid_trim_cad_solid_is_refused_at_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A p-curve without a chart enclosure is invalid source for every proof
+    # level: planning refuses it before any construction.
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.meshing._contracts import MeshingFailure
+
+    def no_enclosure(*_: object) -> np.ndarray:
+        raise ValueError("p-curve enclosure diverges")
+
+    monkeypatch.setattr(SourcePreparation, "curve_box", no_enclosure)
+    with pytest.raises(MeshingFailure, match="requires a continuous p-curve enclosure"):
+        _cad_volume_plan(_sphere_model(), 0.3, 1)
+
+
+def test_incomplete_trim_cover_is_refused_at_proof_not_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Trim cover coverage is proof preparation: the plan and the unproved
+    # native candidate do not consume it; the proved execution refuses.
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import MeshingFailure
+
+    monkeypatch.setattr(
+        MeshingDomainBoundarySource,
+        "boundary_chart_cover",
+        lambda *_, **__: SimpleNamespace(complete=False),
+    )
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
+    assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
+    with pytest.raises(
+        MeshingFailure,
+        match="does not provide complete selected-patch coverage",
+    ):
+        plan.execute()
+
+
+def test_cad_volume_proof_preparation_runs_once_on_first_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing.providers._native_surface as native_surface
+
+    calls: list[native_surface.NativeSurfaceRequest] = []
+    prepare = native_surface.prepare_native_surface_proof
+
+    def counted(
+        request: native_surface.NativeSurfaceRequest,
+    ) -> native_surface._PreparedNativeSurface:
+        calls.append(request)
+        return prepare(request)
+
+    monkeypatch.setattr(native_surface, "prepare_native_surface_proof", counted)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
+    plan.execute(prove=False)
+    assert not calls
+    first = plan.execute()
+    second = plan.execute()
+    assert len(calls) == 1
+    assert first.certification is not None and first.certification.passed
+    assert second.mesh.mesh_id == first.mesh.mesh_id
