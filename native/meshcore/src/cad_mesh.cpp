@@ -577,10 +577,11 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     result.splits.push_back(split);
     ++stats.boundary_splits;
   }
-  // Circumradius targets of an edge-h regular tetrahedron: h * sqrt(6) / 4
-  // at each surface point (the smallest h of its faces), the smallest
-  // everywhere else; refinement interpolates inside.
-  const double radius = 0.61237243569579452455;
+  // The request h is a target edge length (MAC 4176ab2, option (c)); until S3's
+  // edge-length size lands, S3's circumradius bound is set to h itself (option
+  // (b)): 1.3-1.4x Gmsh's tet count, against 4-5x with the regular-tet value
+  // h * sqrt(6) / 4. Each surface point takes the smallest h of its faces, the
+  // rest the smallest h overall; refinement interpolates inside.
   const auto surface_points = surface.points.size();
   const auto& recovered = recovery->recovery;
   const std::size_t point_count = recovered.points.size() / 3;
@@ -590,7 +591,7 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   for (std::size_t t = 0; t < surface.triangles.size(); ++t)
     for (int32_t v : surface.triangles[t])
       targets[v] = std::min(targets[v], sizes[surface.triangle_patches[t]]);
-  for (double& target : targets) target = radius * (std::isfinite(target) ? target : smallest);
+  for (double& target : targets) target = std::isfinite(target) ? target : smallest;
   phx_mc_tet_mesh_create_request create{};
   create.point_count = static_cast<int64_t>(point_count);
   create.tetrahedron_count = static_cast<int64_t>(recovered.tets.size() / 4);

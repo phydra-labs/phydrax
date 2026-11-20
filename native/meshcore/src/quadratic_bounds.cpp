@@ -745,7 +745,7 @@ namespace {
 //   ctrl_a = sum over <= 20 b of fl(m_ab * coef_b)       (1 product, <= 19 sums)
 // so the computed control expands to sum_t mono_t * prod (1 + d_i) with at
 // most k = 3 * 10 + 5 + 5 + 1 + 19 = 60 factors |d_i| <= u per monomial (the
-// first sum of a running total adds to zero and is exact, counted anyway).
+// first sum of a running total adds to zero and is exact, so it is not counted).
 // Hence |fl(ctrl) - ctrl| <= gamma_60 * A with A = sum_t |mono_t|, the same
 // tree on |w x| with every subtraction replaced by an addition. Computing A in
 // binary64 only multiplies each nonnegative monomial by >= (1 - u)^60, so
