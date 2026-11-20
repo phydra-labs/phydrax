@@ -50,7 +50,11 @@
 
 namespace phx::mc {
 namespace {
-
+// Phase boundary hook for out-of-tree timing drivers that compile this file
+// themselves (native/meshcore/tools/planar_probe.cpp); empty in the library.
+#ifndef PHX_CDT2D_PHASE
+#define PHX_CDT2D_PHASE(name) static_cast<void>(0)
+#endif
 
 int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t segment_count,
                              const int32_t* segments, int64_t hole_count, const double* holes,
@@ -96,6 +100,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   result->dimension = 2;
   result->input_point_count = point_count;
   Triangulation2D triangulation;
+  PHX_CDT2D_PHASE("validate");
   triangulation.reset(points, point_count, nullptr);
   status = build_delaunay_2d(triangulation, points, point_count, nullptr, result->vertex_map);
   if (status != PHX_MC_OK) {
@@ -108,6 +113,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
     }
   }
   const bool refine = min_angle_degrees > 0.0 || std::isfinite(max_area);
+  PHX_CDT2D_PHASE("delaunay");
   ConstrainedMesher mesher(triangulation, static_cast<int32_t>(point_count), min_angle_degrees,
                            max_area);
   try {
@@ -120,7 +126,9 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       mesher.constrain_hull();
     }
     mesher.carve(keep_convex_hull != 0, hole_count, holes);
+    PHX_CDT2D_PHASE("segments_carve");
     status = refine ? mesher.refine() : PHX_MC_OK;
+    PHX_CDT2D_PHASE("refine");
   } catch (const StatusError& error) {
     return error.status;
   }
@@ -140,7 +148,9 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
     }
   }
   mesher.publish_witnesses(*result);
+  PHX_CDT2D_PHASE("export");
   canonicalize_cells(*result);
+  PHX_CDT2D_PHASE("canonical");
   *mesh = result.release();
   return status;
 }
