@@ -17,25 +17,28 @@
 namespace phx::mc {
 namespace {
 
-// The lattice coordinates of one axis at one level, computed once per index:
-// outward lower, outward upper and nearest binary64 of the exact coordinate
-// (1 - n / 2^level) lower + (n / 2^level) upper.
+// The lattice coordinates of one axis down to a finest level, computed once
+// per exact coordinate: outward lower, outward upper and nearest binary64 of
+// (1 - n / 2^level) lower + (n / 2^level) upper. Index n at level L is index
+// n 2^(finest - L) at the finest level, the same exact coordinate, so every
+// level shares one row per coordinate.
 class AxisCoordinates {
  public:
-  AxisCoordinates(double lower, double upper, int32_t level)
-      : lower_(lower), upper_(upper), level_(level), rows_(64) {}
-  const std::array<double, 3>& at(int64_t index) {
-    int64_t& row = rows_.slot(static_cast<std::uint64_t>(index));
+  AxisCoordinates(double lower, double upper, int32_t finest)
+      : lower_(lower), upper_(upper), finest_(finest), rows_(64) {}
+  const std::array<double, 3>& at(int32_t level, int64_t index) {
+    const int64_t finest_index = index << (finest_ - level);
+    int64_t& row = rows_.slot(static_cast<std::uint64_t>(finest_index));
     if (row < 0) {
       row = static_cast<int64_t>(values_.size());
-      values_.push_back(compute(index));
+      values_.push_back(compute(finest_index));
     }
     return values_[static_cast<std::size_t>(row)];
   }
 
  private:
   std::array<double, 3> compute(int64_t index) const {
-    const int64_t denominator = int64_t{1} << level_;
+    const int64_t denominator = int64_t{1} << finest_;
     if (index <= 0) return {lower_, lower_, lower_};
     if (index >= denominator) return {upper_, upper_, upper_};
     const Dyadic numerator =
@@ -46,66 +49,72 @@ class AxisCoordinates {
     return {bounds.lower, bounds.upper, exact::rounded_quotient(numerator, scale)};
   }
   double lower_, upper_;
-  int32_t level_;
+  int32_t finest_;
   KeyMap rows_;
   std::vector<std::array<double, 3>> values_;
 };
 
+using Axes = std::array<AxisCoordinates, 3>;
+
 // keep[b] = 1 when f's interval enclosure over box b (lower then upper
-// corner) has value_lower <= 0 <= value_upper or is not a number.
+// corner) has value_lower <= 0 <= value_upper or is not a number. The boxes
+// run in batches of kStraddlingBatch through the workspaces `lower` and
+// `upper`, which stay cache-sized and are reused across calls.
+constexpr std::size_t kStraddlingBatch = 512;
+
 int32_t straddling(const IntervalProgramView& program, std::span<const double> boxes,
-                   std::vector<char>& keep) {
+                   std::vector<char>& keep, std::vector<double>& lower, std::vector<double>& upper) {
   const std::size_t count = boxes.size() / 6;
   keep.assign(count, 0);
-  if (count == 0) return PHX_MC_OK;
   const auto width = static_cast<std::size_t>(program.workspace_size);
-  std::vector<double> lower(count * width), upper(count * width);
-  for (std::size_t b = 0; b < count; ++b) {
-    std::copy_n(program.seed_lower, width, lower.begin() + static_cast<std::ptrdiff_t>(b * width));
-    std::copy_n(program.seed_upper, width, upper.begin() + static_cast<std::ptrdiff_t>(b * width));
-    for (std::size_t d = 0; d < 3; ++d) {
-      lower[b * width + d] = boxes[6 * b + d];
-      upper[b * width + d] = boxes[6 * b + 3 + d];
-    }
-  }
-  const int32_t status = phx_mc_interval_program_batch(
-      program.instructions, program.instruction_count, program.indices, program.index_count,
-      program.parameters, program.parameter_count, lower.data(), upper.data(),
-      program.workspace_size, static_cast<int64_t>(count), 1);
-  if (status != PHX_MC_OK) return status;
   const auto output = static_cast<std::size_t>(program.output);
-  for (std::size_t b = 0; b < count; ++b)
-    keep[b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+  for (std::size_t first = 0; first < count; first += kStraddlingBatch) {
+    const std::size_t batch = std::min(kStraddlingBatch, count - first);
+    lower.resize(batch * width);
+    upper.resize(batch * width);
+    for (std::size_t b = 0; b < batch; ++b) {
+      std::copy_n(program.seed_lower, width, lower.begin() + static_cast<std::ptrdiff_t>(b * width));
+      std::copy_n(program.seed_upper, width, upper.begin() + static_cast<std::ptrdiff_t>(b * width));
+      for (std::size_t d = 0; d < 3; ++d) {
+        lower[b * width + d] = boxes[6 * (first + b) + d];
+        upper[b * width + d] = boxes[6 * (first + b) + 3 + d];
+      }
+    }
+    const int32_t status = phx_mc_interval_program_batch(
+        program.instructions, program.instruction_count, program.indices, program.index_count,
+        program.parameters, program.parameter_count, lower.data(), upper.data(),
+        program.workspace_size, static_cast<int64_t>(batch), 1);
+    if (status != PHX_MC_OK) return status;
+    for (std::size_t b = 0; b < batch; ++b)
+      keep[first + b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+  }
   return PHX_MC_OK;
 }
 
 using Index = std::array<int64_t, 3>;
 
-// The kept leaves of the anchored lattice, level by level as discover_leaves.
-int32_t possible_leaves(const IntervalProgramView& interval, const double* lower, const double* upper,
-                        int32_t target_level, std::vector<DyadicLeaf>& leaves) {
+// The kept leaves of the anchored lattice, level by level as discover_leaves,
+// on `axes` with finest level target_level.
+int32_t possible_leaves(const IntervalProgramView& interval, Axes& axes, int32_t target_level,
+                        std::vector<DyadicLeaf>& leaves) {
   std::vector<Index> frontier{{0, 0, 0}}, children;
   std::vector<double> boxes;
   std::vector<char> valid, keep;
+  std::vector<double> workspace_lower, workspace_upper;
+  std::vector<std::array<double, 6>> frontier_boxes;
   for (int32_t level = 0; !frontier.empty(); ++level) {
-    std::array<AxisCoordinates, 3> coordinates{AxisCoordinates(lower[0], upper[0], level),
-                                               AxisCoordinates(lower[1], upper[1], level),
-                                               AxisCoordinates(lower[2], upper[2], level)};
-    std::array<AxisCoordinates, 3> middle{AxisCoordinates(lower[0], upper[0], level + 1),
-                                          AxisCoordinates(lower[1], upper[1], level + 1),
-                                          AxisCoordinates(lower[2], upper[2], level + 1)};
     boxes.clear();
     valid.assign(frontier.size(), 1);
-    std::vector<std::array<double, 6>> frontier_boxes(frontier.size());
+    frontier_boxes.resize(frontier.size());
     for (std::size_t b = 0; b < frontier.size(); ++b) {
       for (std::size_t d = 0; d < 3; ++d) {
-        frontier_boxes[b][d] = coordinates[d].at(frontier[b][d])[0];
-        frontier_boxes[b][d + 3] = coordinates[d].at(frontier[b][d] + 1)[1];
+        frontier_boxes[b][d] = axes[d].at(level, frontier[b][d])[0];
+        frontier_boxes[b][d + 3] = axes[d].at(level, frontier[b][d] + 1)[1];
         if (!(frontier_boxes[b][d] < frontier_boxes[b][d + 3])) valid[b] = 0;
       }
       if (valid[b]) boxes.insert(boxes.end(), frontier_boxes[b].begin(), frontier_boxes[b].end());
     }
-    const int32_t status = straddling(interval, boxes, keep);
+    const int32_t status = straddling(interval, boxes, keep, workspace_lower, workspace_upper);
     if (status != PHX_MC_OK) return status;
     children.clear();
     std::size_t evaluated = 0;
@@ -119,8 +128,10 @@ int32_t possible_leaves(const IntervalProgramView& interval, const double* lower
       if (level < target_level) {
         bool stalled = false;
         for (std::size_t d = 0; d < 3; ++d) {
-          const double mid = middle[d].at(2 * index[d] + 1)[2];
-          stalled = stalled || !(mid > coordinates[d].at(index[d])[2] && mid < coordinates[d].at(index[d] + 1)[2]);
+          const double mid = axes[d].at(level + 1, 2 * index[d] + 1)[2];
+          const double low = axes[d].at(level, index[d])[2];
+          const double high = axes[d].at(level, index[d] + 1)[2];
+          stalled = stalled || !(mid > low && mid < high);
         }
         if (stalled) {
           leaves.push_back({level, index, frontier_boxes[b], true});
@@ -156,13 +167,12 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
                             const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out) {
   if (target_level < 0 || target_level > kMaximumBoxTreeLevel) return PHX_MC_INVALID_ARGUMENT;
-  int32_t status = possible_leaves(interval, lower, upper, target_level, out.leaves);
+  Axes axes{AxisCoordinates(lower[0], upper[0], target_level), AxisCoordinates(lower[1], upper[1], target_level),
+            AxisCoordinates(lower[2], upper[2], target_level)};
+  int32_t status = possible_leaves(interval, axes, target_level, out.leaves);
   if (status != PHX_MC_OK) return status;
   // The lattice vertices of the leaves, each once, keyed by their index at
   // the target level, at their nearest binary64 coordinates.
-  std::array<AxisCoordinates, 3> vertex_axes{AxisCoordinates(lower[0], upper[0], target_level),
-                                             AxisCoordinates(lower[1], upper[1], target_level),
-                                             AxisCoordinates(lower[2], upper[2], target_level)};
   const auto key_of = [](const Index& index) {
     return (static_cast<std::uint64_t>(index[0]) << 42) | (static_cast<std::uint64_t>(index[1]) << 21) |
            static_cast<std::uint64_t>(index[2]);
@@ -179,7 +189,7 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
       int64_t& row = vertex_rows.slot(key_of(index));
       if (row < 0) {
         row = static_cast<int64_t>(vertex_points.size() / 3);
-        for (std::size_t d = 0; d < 3; ++d) vertex_points.push_back(vertex_axes[d].at(index[d])[2]);
+        for (std::size_t d = 0; d < 3; ++d) vertex_points.push_back(axes[d].at(target_level, index[d])[2]);
       }
       leaf_vertices[b][static_cast<std::size_t>(c)] = row;
     }
