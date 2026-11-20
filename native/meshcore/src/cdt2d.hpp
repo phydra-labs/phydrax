@@ -105,6 +105,16 @@ inline bool snap_to_domain(double* xy) {
   return true;
 }
 
+// incircle_sos with its floating stage inlined: incircle_sos decides by the
+// same stage first, so the sign is the same.
+[[gnu::always_inline]] inline int incircle_sos_filtered(const double* a, const double* b,
+                                                        const double* c, const double* d,
+                                                        int64_t ia, int64_t ib, int64_t ic,
+                                                        int64_t id) {
+  const int sign = incircle_stage(a, b, c, d);
+  return sign != 0 ? sign : incircle_sos(a, b, c, d, ia, ib, ic, id);
+}
+
 struct BadTriangle {
   double badness;
   int32_t v[3];  // rotated to start at the smallest vertex
@@ -559,8 +569,8 @@ class ConstrainedMesher {
       for (std::size_t j = job.lo + 1; j < job.hi; ++j) {
         const int32_t c = chain[best];
         const int32_t p = chain[j];
-        if (incircle_sos(tri_.point(job.u), tri_.point(job.w), tri_.point(c), tri_.point(p),
-                         job.u, job.w, c, p) > 0) {
+        if (incircle_sos_filtered(tri_.point(job.u), tri_.point(job.w), tri_.point(c),
+                                  tri_.point(p), job.u, job.w, c, p) > 0) {
           best = j;
         }
       }
@@ -997,8 +1007,8 @@ class ConstrainedMesher {
       const int j = tri_.edge_index(o, w, u);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(o)].v[j];
       if (!(cavity_certificates && mark == epoch_) &&
-          incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
-              0) {
+          incircle_sos_filtered(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u,
+                                w, x) <= 0) {
         continue;
       }
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
@@ -1306,8 +1316,9 @@ class ConstrainedMesher {
           continue;
         }
         const Triangle2D& other = tri_.triangles[static_cast<std::size_t>(nb)];
-        if (incircle_sos(tri_.point(other.v[0]), tri_.point(other.v[1]), tri_.point(other.v[2]),
-                         center, other.v[0], other.v[1], other.v[2], id) > 0) {
+        if (incircle_sos_filtered(tri_.point(other.v[0]), tri_.point(other.v[1]),
+                                  tri_.point(other.v[2]), center, other.v[0], other.v[1],
+                                  other.v[2], id) > 0) {
           marks_[static_cast<std::size_t>(nb)] = inside;
           stack.push_back(nb);
         } else {
