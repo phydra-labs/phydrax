@@ -25,19 +25,37 @@ namespace phx::mc {
 // insertions every pop removes one of finitely many entries. No monotone
 // worst-key assumption is needed.
 //
-// One bucket is a std::vector binary heap (std::push_heap/std::pop_heap, as
-// std::priority_queue). The 256 spatial buckets are heaps of the given arity
-// whose arrays come from one queue-owned arena: capacities are 4 * 2^c
-// entries, a grown-out array returns to the free list of its class, and the
-// memory is released with the queue (a few allocations per call instead of
-// several per used bucket). A heap of another shape pops the same maximum,
-// so the pop sequence is the same only when Worse is a strict total order on
-// distinct entries or equivalent entries are interchangeable for the caller;
-// callers choosing Arity != 2 assert that.
-template <class Entry, class Worse, int Arity = 2>
+// Without Rank, one bucket is a std::vector binary heap
+// (std::push_heap/std::pop_heap, as std::priority_queue). The 256 spatial
+// buckets, and the Rank::kBuckets rank buckets that replace the single heap
+// when Rank is given, are heaps of the given arity whose arrays come from one
+// queue-owned arena: capacities are 4 * 2^c entries, a grown-out array
+// returns to the free list of its class, and the memory is released with the
+// queue (a few allocations per call instead of several per used bucket). A
+// heap of another shape pops the same maximum, so the pop sequence is the
+// same only when Worse is a strict total order on distinct entries or
+// equivalent entries are interchangeable for the caller; callers choosing
+// Arity != 2 assert that.
+//
+// Rank (optional) maps an entry to a bucket in [0, Rank::kBuckets) such that
+// Worse(a, b) implies rank(a) >= rank(b): a worse entry never lies in a later
+// bucket. The first nonempty bucket then holds the maximum of the whole
+// queue, and the pop sequence equals that of one heap over all entries; the
+// buckets only keep each heap small.
+template <class Entry, class Worse, int Arity = 2, class Rank = void>
 class SpatialRefinementQueue {
   static_assert(std::is_trivially_copyable_v<Entry>);
   static_assert(Arity >= 2);
+  static constexpr bool kRanked = !std::is_void_v<Rank>;
+  static constexpr int rank_buckets() {
+    if constexpr (kRanked) {
+      return Rank::kBuckets;
+    } else {
+      return 1;
+    }
+  }
+  static constexpr int kSpatialBuckets = 256;
+  static constexpr int kBucketCount = std::max(kSpatialBuckets, rank_buckets());
 
  public:
   SpatialRefinementQueue(double xmin, double ymin, double xmax, double ymax,
@@ -47,17 +65,18 @@ class SpatialRefinementQueue {
                          estimated_elements > 100.0 * static_cast<double>(input_points)
                      ? 16
                      : 1),
-        current_(buckets_ * buckets_) {}
+        end_(buckets_ != 1 ? kSpatialBuckets : rank_buckets()),
+        current_(end_) {}
   SpatialRefinementQueue(const SpatialRefinementQueue&) = delete;
   SpatialRefinementQueue& operator=(const SpatialRefinementQueue&) = delete;
 
-  bool empty() const { return current_ == buckets_ * buckets_; }
+  bool empty() const { return current_ == end_; }
   bool spatial() const { return buckets_ != 1; }
   const Entry& top() const {
-    return spatial() ? entries_[current_].data[0] : single_.front();
+    return kRanked || spatial() ? entries_[current_].data[0] : single_.front();
   }
   void pop() {
-    if (!spatial()) {
+    if (!kRanked && !spatial()) {
       std::pop_heap(single_.begin(), single_.end(), Worse{});
       single_.pop_back();
       if (single_.empty()) current_ = 1;
@@ -71,7 +90,7 @@ class SpatialRefinementQueue {
       --bucket.size;
       if (bucket.size != 0) sift_down(bucket.data, bucket.size, bucket.data[bucket.size]);
     }
-    while (current_ < buckets_ * buckets_ && entries_[current_].size == 0) ++current_;
+    while (current_ < end_ && entries_[current_].size == 0) ++current_;
   }
 
   template <class IsCurrent>
@@ -87,17 +106,21 @@ class SpatialRefinementQueue {
     return false;
   }
   void push(const Entry& entry, double x = 0.0, double y = 0.0) {
-    if (!spatial()) {
+    int index;
+    if (spatial()) {
+      const double u = std::clamp((x - xmin_) / dx_, 0.0, 1.0);
+      const double v = std::clamp((y - ymin_) / dy_, 0.0, 1.0);
+      const int ix = std::min(static_cast<int>(u * buckets_), buckets_ - 1);
+      const int iy = std::min(static_cast<int>(v * buckets_), buckets_ - 1);
+      index = iy * buckets_ + ix;
+    } else if constexpr (kRanked) {
+      index = Rank{}(entry);
+    } else {
       single_.push_back(entry);
       std::push_heap(single_.begin(), single_.end(), Worse{});
       current_ = 0;
       return;
     }
-    const double u = std::clamp((x - xmin_) / dx_, 0.0, 1.0);
-    const double v = std::clamp((y - ymin_) / dy_, 0.0, 1.0);
-    const int ix = std::min(static_cast<int>(u * buckets_), buckets_ - 1);
-    const int iy = std::min(static_cast<int>(v * buckets_), buckets_ - 1);
-    const int index = iy * buckets_ + ix;
     Bucket& bucket = entries_[index];
     if (bucket.size == bucket.capacity) grow(bucket);
     if constexpr (Arity == 2) {
@@ -199,8 +222,9 @@ class SpatialRefinementQueue {
 
   double xmin_, ymin_, dx_, dy_;
   int buckets_;
+  int end_;
   int current_;
-  std::array<Bucket, 256> entries_{};
+  std::array<Bucket, kBucketCount> entries_{};
   std::vector<Entry> single_;
   std::vector<std::unique_ptr<std::byte[]>> chunks_;
   std::vector<void*> free_;
