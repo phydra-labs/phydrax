@@ -617,14 +617,17 @@ def test_bvh_pair_blocks_repeat_the_host_block_sequence(
     for left, right in ((first, second), (first, first)):
         reference = list(
             _bvh._host_pair_blocks(
-                _bvh._host_arrays(left), _bvh._host_arrays(right), test, item_block
+                _bvh.host_tree_arrays(left),
+                _bvh.host_tree_arrays(right),
+                test,
+                item_block,
             )
         )
         for parallelism in (1, 4):
             native = list(
                 bvh_pair_blocks(
-                    _bvh._host_arrays(left),
-                    _bvh._host_arrays(right),
+                    _bvh.host_tree_arrays(left),
+                    _bvh.host_tree_arrays(right),
                     include_touching=touching,
                     absolute_tolerance=tolerance,
                     relative_tolerance=0.0,
@@ -651,7 +654,9 @@ def test_bvh_pair_blocks_reference_constants(monkeypatch: Any) -> None:
     tree = _bvh.prepare_bvh(lower, upper, dtype=np.float64)
     test = _bvh._validate_host_pair_arguments(tree, tree, True, 0.0, 0.0)
     reference = list(
-        _bvh._host_pair_blocks(_bvh._host_arrays(tree), _bvh._host_arrays(tree), test, 64)
+        _bvh._host_pair_blocks(
+            _bvh.host_tree_arrays(tree), _bvh.host_tree_arrays(tree), test, 64
+        )
     )
     blocks = list(_bvh.bvh_overlap_pair_blocks(tree, tree, include_touching=True))
     assert len(blocks) == len(reference) > 1
@@ -884,7 +889,7 @@ def test_bvh_stream_retains_owners_and_frees_on_every_exit(
     finish: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     library = _exact_kernels.load_meshcore()
-    original_view = _exact_kernels._tree_view
+    original_view = _exact_kernels.tree_view
     owners: list[weakref.ReferenceType[np.ndarray]] = []
     freed: list[int] = []
     calls = 0
@@ -908,7 +913,7 @@ def test_bvh_stream_retains_owners_and_frees_on_every_exit(
         freed.append(handle.value)
         library["phx_mc_bvh_pair_stream_free"](handle)
 
-    monkeypatch.setattr(_exact_kernels, "_tree_view", view)
+    monkeypatch.setattr(_exact_kernels, "tree_view", view)
     monkeypatch.setattr(
         _exact_kernels,
         "load_meshcore",
@@ -941,7 +946,7 @@ def test_bvh_stream_retains_owners_and_frees_on_every_exit(
 
 def test_bvh_yielded_blocks_do_not_alias_reused_output_buffers() -> None:
     tree = _bvh.prepare_bvh(np.zeros((80, 2)), np.ones((80, 2)), dtype=np.float64)
-    arrays = _bvh._host_arrays(tree)
+    arrays = _bvh.host_tree_arrays(tree)
     stream = _small_pair_stream(arrays, arrays)
     first = next(stream)
     saved = tuple(value.copy() for value in first)

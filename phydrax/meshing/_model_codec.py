@@ -2187,7 +2187,6 @@ def restore_model_archive_value(
                 geometry,
                 contract,
                 tube_radius=item.tube_radius,
-                cover_radius=item.cover_radius,
                 source_id=item.source_id,
                 source_revision=item.source_revision,
             )

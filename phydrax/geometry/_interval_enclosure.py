@@ -12,6 +12,7 @@ from enum import Enum
 from fractions import Fraction
 from functools import reduce
 from typing import Any, cast, Literal, TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 import jax
 import numpy as np
@@ -502,7 +503,10 @@ def interval_absolute(value: Interval, /) -> Interval:
     crosses = (lower <= 0.0) & (upper >= 0.0)
     low = np.where(crosses, 0.0, _ieee_minimum(np.abs(lower), np.abs(upper)))
     high = _ieee_maximum(np.abs(lower), np.abs(upper))
-    return _round_out(low, high)
+    rounded_lower, rounded_upper = _round_out(low, high)
+    # |x| >= 0 exactly: an exact 0 lower end stays 0, so a real-power base
+    # guard on |x| holds on a box touching the plane x = 0.
+    return np.where(low == 0.0, 0.0, rounded_lower), rounded_upper
 
 
 def interval_maximum(first: Interval, second: Interval, /) -> Interval:
@@ -1493,10 +1497,14 @@ def _bspline_jet_equation(
 
 type CustomIntervalExtension = Callable[[tuple[Interval, ...]], Interval]
 
-# Declared interval extensions of custom-JVP functions, keyed by their declared
-# JVP rule. Each owner registers the sound enclosure of the real function its
-# equation denotes; the interpreter then never walks the staged primal.
-_CUSTOM_EXTENSIONS: dict[object, CustomIntervalExtension] = {}
+# Declared interval extensions of custom-JVP functions, keyed weakly by their
+# declared JVP rule. Each owner registers the sound enclosure of the real function
+# its equation denotes; the interpreter then never walks the staged primal. An
+# extension never references its rule, so a rule (and the custom-JVP function
+# and data it closes over) is released once no owner or staged program holds it.
+_CUSTOM_EXTENSIONS: WeakKeyDictionary[object, CustomIntervalExtension] = (
+    WeakKeyDictionary()
+)
 
 
 def register_custom_jvp_interval_extension(
@@ -2884,10 +2892,7 @@ class PreparedIntervalFunction:
         jaxpr = self.closed_jaxpr.jaxpr
         native = None
         if self.native_program is not None and self.execution != "batched":
-            native = self.native_branch_program
-            if native is None:
-                native = self._lower_native(axes)
-                object.__setattr__(self, "native_branch_program", native)
+            native = self.native_branches()
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             active = stop - start
@@ -2915,6 +2920,18 @@ class PreparedIntervalFunction:
             smooth[start:stop] = chunk_smooth[:active]
             continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
+
+    def native_branches(self, /) -> NativeIntervalProgram:
+        """The native program with branch-evidence events, lowered on first query."""
+        if self.native_program is None or self.execution == "batched":
+            raise IntervalExtensionError(
+                "native branch evidence requires a native, non-batched program."
+            )
+        native = self.native_branch_program
+        if native is None:
+            native = self._lower_native(self.branch_batch_axes())
+            object.__setattr__(self, "native_branch_program", native)
+        return native
 
     def branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
         """The vmapped box axis of every variable of this program's jaxpr."""

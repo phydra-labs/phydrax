@@ -41,7 +41,9 @@ namespace phx::mc {
 // Worse(a, b) implies rank(a) >= rank(b): a worse entry never lies in a later
 // bucket. The first nonempty bucket then holds the maximum of the whole
 // queue, and the pop sequence equals that of one heap over all entries; the
-// buckets only keep each heap small.
+// buckets only keep each heap small. With Rank::kFifo the rank buckets are
+// instead first-in-first-out arrays (O(1) push and pop, deterministic); the
+// pop order is then by rank and push order only, not Worse.
 template <class Entry, class Worse, int Arity = 2, class Rank = void>
 class SpatialRefinementQueue {
   static_assert(std::is_trivially_copyable_v<Entry>);
@@ -52,6 +54,13 @@ class SpatialRefinementQueue {
       return Rank::kBuckets;
     } else {
       return 1;
+    }
+  }
+  static constexpr bool fifo_ranks() {
+    if constexpr (kRanked) {
+      return Rank::kFifo;
+    } else {
+      return false;
     }
   }
   static constexpr int kSpatialBuckets = 256;
@@ -73,6 +82,9 @@ class SpatialRefinementQueue {
   bool empty() const { return current_ == end_; }
   bool spatial() const { return buckets_ != 1; }
   const Entry& top() const {
+    if constexpr (fifo_ranks()) {
+      if (!spatial()) return entries_[current_].data[entries_[current_].head];
+    }
     return kRanked || spatial() ? entries_[current_].data[0] : single_.front();
   }
   void pop() {
@@ -83,6 +95,13 @@ class SpatialRefinementQueue {
       return;
     }
     Bucket& bucket = entries_[current_];
+    if constexpr (fifo_ranks()) {
+      if (!spatial()) {
+        if (++bucket.head == bucket.size) bucket.head = bucket.size = 0;
+        while (current_ < end_ && entries_[current_].size == 0) ++current_;
+        return;
+      }
+    }
     if constexpr (Arity == 2) {
       std::pop_heap(bucket.data, bucket.data + bucket.size, Worse{});
       --bucket.size;
@@ -115,6 +134,22 @@ class SpatialRefinementQueue {
       index = iy * buckets_ + ix;
     } else if constexpr (kRanked) {
       index = Rank{}(entry);
+      if constexpr (fifo_ranks()) {
+        Bucket& bucket = entries_[index];
+        if (bucket.size == bucket.capacity) {
+          if (bucket.head != 0 && 2 * bucket.head >= bucket.size) {
+            std::memmove(static_cast<void*>(bucket.data), bucket.data + bucket.head,
+                         (bucket.size - bucket.head) * sizeof(Entry));
+            bucket.size -= bucket.head;
+            bucket.head = 0;
+          } else {
+            grow(bucket);
+          }
+        }
+        bucket.data[bucket.size++] = entry;
+        current_ = std::min(current_, index);
+        return;
+      }
     } else {
       single_.push_back(entry);
       std::push_heap(single_.begin(), single_.end(), Worse{});
@@ -172,6 +207,7 @@ class SpatialRefinementQueue {
   struct Bucket {
     Entry* data = nullptr;
     std::size_t size = 0;
+    std::size_t head = 0;  // first queued entry of a FIFO rank bucket
     std::size_t capacity = 0;
     int size_class = -1;
   };

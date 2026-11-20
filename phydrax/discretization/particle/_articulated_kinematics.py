@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from functools import cache, partial
+from functools import cache, lru_cache, partial
 from typing import Any, final, NamedTuple, Protocol, TYPE_CHECKING
 
 import equinox as eqx
@@ -796,7 +796,7 @@ class _Stage(NamedTuple):
     codes: tuple[int, ...]
 
 
-@cache
+@lru_cache(maxsize=64)
 def _motion_schedule(
     topology: KinematicTopology, dtype: np.dtype, /
 ) -> tuple[_Stage, _Stage]:

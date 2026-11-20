@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "a0027a80cccb740f8db56d2d4cce6616a7c46b8de41ea637a579aacc7755a931",
+  "manifest_id": "070769f97286b751ccc335578c907b4d9b2bf6ebd56538b4c83af89a35b72302",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -23607,6 +23607,7 @@
       "phydrax.geometry.SharpGeometryStatus",
       "phydrax.geometry.SharpMeasureFidelity",
       "phydrax.geometry.SignReliability",
+      "phydrax.geometry.SignedDistanceSign",
       "phydrax.geometry.SimplexQualityEvidence",
       "phydrax.geometry.SimplexQualitySubcomplex",
       "phydrax.geometry.SimplicialSurfelPlan",
@@ -24327,6 +24328,7 @@
       "phydrax.geometry.simplicial.SegmentQueryExecution",
       "phydrax.geometry.simplicial.SegmentQueryResult",
       "phydrax.geometry.simplicial.SegmentTopology",
+      "phydrax.geometry.simplicial.SignedDistanceSign",
       "phydrax.geometry.simplicial.SimplicialSurfelPlan",
       "phydrax.geometry.simplicial.TriangleBVH",
       "phydrax.geometry.simplicial.TriangleMesh",

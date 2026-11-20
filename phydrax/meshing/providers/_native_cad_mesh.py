@@ -216,7 +216,7 @@ def execute_cad_solid(
             f"{int(stats['recovery_status'])}, reason "
             f"{int(stats['recovery_reason'])}, entity kind "
             f"{int(stats['failure_kind'])} row {int(stats['failure_entity'])}, "
-            f"measure {float(stats['failure_measure'])!r}).",
+            f"smallest-angle sine {float(stats['failure_measure'])!r}).",
             provider_code="native_cad_volume_unresolved",
             stage="volume_meshing",
         )

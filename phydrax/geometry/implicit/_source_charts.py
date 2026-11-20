@@ -9,7 +9,7 @@ import math
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from functools import cache, partial
+from functools import lru_cache, partial
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 from weakref import ref, ReferenceType
 
@@ -20,7 +20,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import implicit_face_proposals
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -827,7 +827,7 @@ class _SimplexControls:
     denominator: int
 
 
-@cache
+@lru_cache(maxsize=64)
 def _control_indices(degree: int, /) -> tuple[_ControlIndex, ...]:
     return tuple(
         (degree - first - second, first, second)
@@ -6453,6 +6453,9 @@ def certify_implicit_sign_coverage(
     cover and its root witnesses, as the donor's possible-zero-box distance
     bounds did, and applies them to regions.
     """
+    # The exact dyadic far leaves fix the leaf structure that the resolution
+    # (and so ``mesh_to_source``) decided; set once they are known.
+    structure = ""
 
     def outcome(
         status: Literal["certified", "violated", "unresolved"],
@@ -6471,6 +6474,11 @@ def certify_implicit_sign_coverage(
             if math.isfinite(extent)
             else math.inf
         )
+        # Identity carries content, the control, the decision and the discrete
+        # leaf structure. ``mesh_to_source`` and every bound derived from it are
+        # platform-rounded evidence returned beside it: a consumer re-derives
+        # them from its own (adopted) bound, and a bound that moves the
+        # resolution enough to change the leaf structure changes this identity.
         evidence = canonical_fingerprint(
             {
                 "kind": "implicit-sign-component-coverage",
@@ -6478,14 +6486,10 @@ def certify_implicit_sign_coverage(
                 "cover": "" if surface.cover is None else surface.cover.cover_id,
                 "status": status,
                 "tolerance": repr(float(tolerance)),
-                "mesh_to_source": repr(float(mesh_to_source)),
-                "band_extent": repr(float(extent)),
-                "possible_zero_distance": repr(float(possible)),
-                "absorbed_distance": repr(float(absorbed)),
-                "distance_upper": repr(float(distance)),
                 "band_leaves": band,
                 "far_leaves": far,
                 "components": components,
+                "structure": structure,
             }
         )
         return ImplicitSignCoverage(
@@ -6685,6 +6689,7 @@ def certify_implicit_sign_coverage(
         directed=False,
     )
     component_count = int(component_count)
+    structure = array_tree_fingerprint((region_lower, region_upper))
     counts = {
         "extent": extent_upper,
         "band": band_count,

@@ -15,6 +15,7 @@ _DEFERRED_EXPORTS = {
     "AffineSimplexMap": "._affine",
     "SegmentBVH": "._bvh",
     "SegmentQueryExecution": "._bvh",
+    "SignedDistanceSign": "._bvh",
     "TriangleBVH": "._bvh",
     "WindingNumberResult": "._bvh",
     "WindingNumberRoute": "._bvh",
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from ._bvh import (
         SegmentBVH,
         SegmentQueryExecution,
+        SignedDistanceSign,
         TriangleBVH,
         WindingNumberResult,
         WindingNumberRoute,
@@ -83,6 +85,7 @@ __all__ = [
     "planar_region_from_triangles",
     "SegmentBVH",
     "SegmentQueryExecution",
+    "SignedDistanceSign",
     "SegmentMesh",
     "discrete_operators",
     "SegmentQueryResult",

@@ -731,6 +731,9 @@ int32_t TetMesh::install_declared_planes(std::span<const double> planes,
   source_face_plane_tolerances_.assign(face_count, 0.0);
   std::copy(planes.begin(), planes.end(), source_face_planes_.begin());
   std::copy(tolerances.begin(), tolerances.end(), source_face_plane_tolerances_.begin());
+  // No declaration: every row is undeclared with a zero tolerance, which
+  // every group agrees on.
+  if (planes.empty() && tolerances.empty()) return PHX_MC_OK;
   std::unordered_map<std::int32_t, std::int32_t> first_rows;
   for (std::size_t row = 0; row < face_count; ++row) {
     const double* plane = source_face_planes_.data() + 9 * row;
@@ -1012,6 +1015,45 @@ bool TetMesh::declared_face_valid(const DeclaredGroup& group, const double* cons
     if (contains_centroid(row)) return true;
   }
   return false;
+}
+
+bool TetMesh::declared_split_children(std::int32_t source, const std::int32_t* parent_face,
+                                      const std::array<std::int32_t, 3>& first_child,
+                                      const std::array<std::int32_t, 3>& second_child) const {
+  const std::int32_t start = first_child[0];
+  const std::int32_t middle = first_child[1];
+  const std::int32_t third = first_child[2];
+  const std::int32_t end = second_child[1];
+  if (second_child[0] != middle || second_child[2] != third) return false;
+  std::array<std::int32_t, 3> parent{parent_face[0], parent_face[1], parent_face[2]};
+  std::array<std::int32_t, 3> expected{start, end, third};
+  std::sort(parent.begin(), parent.end());
+  std::sort(expected.begin(), expected.end());
+  if (parent != expected) return false;
+  const auto group = declared_groups_.find(source);
+  if (group == declared_groups_.end()) return false;
+  const double* plane = face_plane(group->second.rows.front());
+  if (plane == nullptr) return false;
+  Expansion s[3], e[3], m[3], t[3];
+  if (!exact_position(start, s) || !exact_position(end, e) || !exact_position(middle, m) ||
+      !exact_position(third, t)) {
+    return false;
+  }
+  Expansion normal[3];
+  plane_normal(plane, normal);
+  const Expansion height = normal[0] * (m[0] - Expansion(plane[0])) +
+                           normal[1] * (m[1] - Expansion(plane[1])) +
+                           normal[2] * (m[2] - Expansion(plane[2]));
+  if (!height.is_zero()) return false;
+  // Orientations as declared_face_valid projects them.
+  Dyadic physical_normal[3];
+  if (metric_active_) affine_projection_normal(plane, metric_, physical_normal);
+  const auto orientation = [&](const Expansion* p, const Expansion* q, const Expansion* r) {
+    return metric_active_ ? projected_orientation(physical_normal, p, q, r)
+                          : projected_orientation(normal, p, q, r);
+  };
+  const int side = orientation(s, e, t);
+  return side != 0 && orientation(s, m, t) == side && orientation(m, e, t) == side;
 }
 
 bool TetMesh::source_face_valid(const TetEditFacet& facet,
