@@ -448,17 +448,18 @@ def _upward(value: NDArray[np.float64], /) -> NDArray[np.float64]:
 
 
 def binary64_first_order_interpolation_upper(
-    spread: ArrayLike, vertices: ArrayLike, /
+    spread: ArrayLike, vertex_lower: ArrayLike, vertex_upper: ArrayLike, /
 ) -> float:
     """Upper bound of ``|f - I f|`` on a simplex from the width of a Jacobian enclosure.
 
-    ``vertices`` are the ``n + 1`` parameter vertices of an ``n``-simplex,
-    ``I f`` is the affine interpolant of ``f`` at them, and ``spread[i, k]``
-    bounds the width of an enclosure of ``d f_i / d x_k`` over the simplex.
-    ``f`` must be continuous and piecewise smooth there: an interval program
-    of its derivative, evaluated over the simplex, then encloses the
-    derivative along every segment except at finitely many points, so the
-    bound needs no second derivative and holds across kinks.
+    The ``n + 1`` parameter vertices of an ``n``-simplex lie in the boxes
+    ``[vertex_lower[j], vertex_upper[j]]``, ``I f`` is the affine interpolant
+    of ``f`` at them, and ``spread[i, k]`` bounds the width of an enclosure of
+    ``d f_i / d x_k`` over the simplex. ``f`` must be continuous and piecewise
+    smooth there: an interval program of its derivative, evaluated over the
+    simplex, then encloses the derivative along every segment except at
+    finitely many points, so the bound needs no second derivative and holds
+    across kinks.
 
     From a vertex ``v_j``, ``p = v_j + sum_k l_k (v_k - v_j)`` gives
     ``f_i(p) - I f_i(p) = sum_k l_k (G - G_k) . (v_k - v_j)``, where ``G`` and
@@ -469,28 +470,37 @@ def binary64_first_order_interpolation_upper(
     steps toward ``+inf``; a nonfinite spread gives ``inf``.
     """
     spread_ = np.asarray(spread, dtype=np.float64)
-    vertices_ = np.asarray(vertices, dtype=np.float64)
+    lower_ = np.asarray(vertex_lower, dtype=np.float64)
+    upper_ = np.asarray(vertex_upper, dtype=np.float64)
     if (
-        vertices_.ndim != 2
-        or vertices_.shape[0] != vertices_.shape[1] + 1
+        lower_.ndim != 2
+        or lower_.shape[0] != lower_.shape[1] + 1
+        or upper_.shape != lower_.shape
         or spread_.ndim != 2
-        or spread_.shape[1] != vertices_.shape[1]
+        or spread_.shape[1] != lower_.shape[1]
     ):
         raise ValueError(
-            "first-order interpolation bounds need (n + 1, n) vertices and an (m, n) spread."
+            "first-order interpolation bounds need (n + 1, n) vertex boxes and an (m, n) spread."
         )
-    if not np.all(np.isfinite(vertices_)):
-        raise ValueError("first-order interpolation vertices must be finite.")
+    if (
+        not np.all(np.isfinite(lower_))
+        or not np.all(np.isfinite(upper_))
+        or np.any(lower_ > upper_)
+    ):
+        raise ValueError(
+            "first-order interpolation vertex boxes must be finite and ordered."
+        )
     if not np.all(spread_ >= 0.0):
         return math.inf
-    dimension = vertices_.shape[1]
+    dimension = lower_.shape[1]
     terms = np.zeros((spread_.shape[0],), dtype=np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         for first in range(dimension + 1):
             for second in range(first + 1, dimension + 1):
-                edge = binary64_difference_magnitude(vertices_[second], vertices_[first])[
-                    1
-                ]
+                edge = np.maximum(
+                    binary64_difference_magnitude(upper_[second], lower_[first])[1],
+                    binary64_difference_magnitude(lower_[second], upper_[first])[1],
+                )
                 term = np.zeros_like(terms)
                 for axis in range(dimension):
                     term = _upward(term + _upward(spread_[:, axis] * edge[axis]))

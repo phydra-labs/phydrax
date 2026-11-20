@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from numpy.typing import NDArray
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation._bspline_extraction import (
@@ -31,7 +32,12 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..discretization._coordinate_enclosure import ExactScalar
-from ..geometry._rational import fraction_endpoint, rational_vector
+from ..geometry._rational import (
+    binary64_difference_magnitude,
+    binary64_first_order_interpolation_upper,
+    fraction_endpoint,
+    rational_vector,
+)
 from ..linalg._exact import determinant_exact
 from ..linalg._hermitian_spectral import fraction_sqrt_interval
 from ..typing import checked, ConvertibleToArray, parse
@@ -972,6 +978,7 @@ class SourcePreparation:
 
     __slots__ = (
         "_box_programs",
+        "_branch_programs",
         "_curve_box_programs",
         "_intersection_curve_atlases",
         "_curve_spans",
@@ -1010,6 +1017,9 @@ class SourcePreparation:
         ] = {}
         self._host_jacobian_programs: dict[
             int, tuple[AbstractSurfacePatch, PreparedIntervalFunction | None]
+        ] = {}
+        self._branch_programs: dict[
+            int, tuple[AbstractSurfacePatch, PreparedIntervalFunction]
         ] = {}
         self._mapped_hessians: dict[
             tuple[int, int],
@@ -1313,6 +1323,60 @@ class SourcePreparation:
             program = prepare_interval_function(derivative, 2)
         self._programs[key] = (surface, program)
         return program
+
+    def surface_regularity(
+        self, surface: AbstractSurfacePatch, lower: ArrayLike, upper: ArrayLike, /
+    ) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+        """Per parameter box, whether derivative bounds of ``surface`` hold there.
+
+        Returns ``(second_order, first_order)``: whether Hessian enclosures
+        bound Taylor remainders (the map is C1 and piecewise C2 on the box), and
+        whether Jacobian enclosures bound mean-value differences (the map is
+        continuous and piecewise C1). `derivative_program` nests ``jacfwd``
+        through the point map, which differentiates ``abs``, min/max and
+        selections piecewise, so a switch of the map vanishes from its
+        derivative programs. A box the carrier declares C1 (``is_c1_on``, which
+        accounts for knots and never assumes it of custom patches) admits both;
+        on any other box the branch ledger of the point map
+        (`PreparedIntervalFunction.evaluate_branches`) decides: second order
+        where smooth, first order where continuous, neither without evidence.
+        """
+        lower_ = np.asarray(lower, dtype=np.float64).reshape((-1, 2))
+        upper_ = np.asarray(upper, dtype=np.float64).reshape((-1, 2))
+        native = surface.source if isinstance(surface, _PlacedSurfacePatch) else surface
+        declared_lower, declared_upper = lower_, upper_
+        domain = native.parameter_domain
+        if domain is not None:
+            bounds = np.asarray(domain, dtype=np.float64)
+            declared_lower = np.clip(lower_, bounds[0], bounds[1])
+            declared_upper = np.clip(upper_, bounds[0], bounds[1])
+        second_order = np.asarray(
+            [
+                native.is_c1_on(np.stack((low, high)))
+                for low, high in zip(declared_lower, declared_upper, strict=True)
+            ],
+            dtype=np.bool_,
+        ).reshape((-1,))
+        first_order = second_order.copy()
+        undecided = np.flatnonzero(~second_order)
+        if not undecided.size:
+            return second_order, first_order
+        entry = self._branch_programs.get(id(surface))
+        if entry is None or entry[0] is not surface:
+            program = prepare_interval_function(surface.evaluate, 2)
+            self._branch_programs[id(surface)] = (surface, program)
+        else:
+            program = entry[1]
+        try:
+            _, _, smooth, continuous = program.evaluate_branches(
+                lower_[undecided], upper_[undecided]
+            )
+        except IntervalExtensionError:
+            # No enclosure, so no regularity evidence: neither bound holds.
+            return second_order, first_order
+        second_order[undecided] = smooth
+        first_order[undecided] = continuous
+        return second_order, first_order
 
     def host_jacobian_program(
         self, surface: AbstractSurfacePatch, /
@@ -1939,7 +2003,11 @@ def _adaptive_triangle_interpolation_bounds(
     ``I_T S`` is the barycentric combination of the enclosed corner values. A row
     refines its leaves above its budget until its bound meets the budget, a vertex
     lower bound exceeds it, or a leaf above it reaches binary64 enclosure resolution.
-    ``None`` marks a row whose Hessian enclosure is nonfinite.
+    ``None`` marks a row whose Hessian enclosure is nonfinite. On a traced
+    carrier a leaf the branch ledger does not prove smooth
+    (`SourcePreparation.surface_regularity`) takes, where the map is proved
+    continuous, the first-order bound of its Jacobian spread
+    (`binary64_first_order_interpolation_upper`) and otherwise no bound.
     Batched binary64 arithmetic is stepped outward after each operation; exact
     rational accumulation decides comparisons that overlap those enclosures.
     """
@@ -2227,6 +2295,48 @@ def _adaptive_triangle_interpolation_bounds(
             squared += component * component
         return fraction_sqrt_interval(squared)[1]
 
+    def first_order_terms(
+        leaves: Sequence[tuple[int, _BarycentricTriangle]], boxes: np.ndarray, /
+    ) -> tuple[NDArray[np.bool_], list[Fraction | None]]:
+        """Each leaf's admitted Hessian and, without it, its first-order bound.
+
+        The bound is ``None`` where the Jacobian is not admitted either.
+        """
+        second_order, first_order = preparation.surface_regularity(
+            surface, boxes[:, 0], boxes[:, 1]
+        )
+        bounds: list[Fraction | None] = [None] * len(leaves)
+        kinked = np.flatnonzero(first_order & ~second_order)
+        if not kinked.size:
+            return second_order, bounds
+        jacobian_lower, jacobian_upper = preparation.derivative_program(
+            surface, 1
+        ).evaluate(boxes[kinked, 0], boxes[kinked, 1])
+        for position, index in enumerate(kinked.tolist()):
+            row, triangle = leaves[index]
+            points = [chart_point(row, weights) for weights in triangle]
+            bound = binary64_first_order_interpolation_upper(
+                binary64_difference_magnitude(
+                    jacobian_upper[position], jacobian_lower[position]
+                )[1],
+                np.asarray(
+                    [
+                        [fraction_endpoint(value, upper=False) for value in point]
+                        for point in points
+                    ],
+                    dtype=np.float64,
+                ),
+                np.asarray(
+                    [
+                        [fraction_endpoint(value, upper=True) for value in point]
+                        for point in points
+                    ],
+                    dtype=np.float64,
+                ),
+            )
+            bounds[index] = Fraction(bound) if math.isfinite(bound) else None
+        return second_order, bounds
+
     def make_leaves(
         pending: Sequence[tuple[int, _BarycentricTriangle]], /
     ) -> list[tuple[int, _InterpolationLeaf]]:
@@ -2235,6 +2345,7 @@ def _adaptive_triangle_interpolation_bounds(
         )
         result: list[tuple[int, _InterpolationLeaf]] = []
         lower, upper, boxes, hessian_lower, hessian_upper = hessian_terms(pending)
+        second_order, first_order_bounds = first_order_terms(pending, boxes)
         for index, (row, triangle) in enumerate(pending):
             keys = [(row, weights) for weights in triangle]
             terms = [vertex_terms[key] for key in keys]
@@ -2244,7 +2355,22 @@ def _adaptive_triangle_interpolation_bounds(
                 max(term[0] - term[3] for term in terms) + resolution_floors[row]
             )
             resolution = max(term[1] - term[2] for term in terms) + resolution_floors[row]
-            if not np.all(np.isfinite(lower[index])) or not np.all(
+            if not second_order[index]:
+                # Without an admitted Hessian a kink is invisible to it: a leaf
+                # with an admitted Jacobian takes its first-order bound, any
+                # other leaf none.
+                hessian = first_order_bounds[index]
+                if hessian is not None and (
+                    vertex_low <= budgets[row] < hessian + vertex_upper
+                    or hessian > resolution_low
+                ):
+                    exact_terms = [exact_vertex(key) for key in keys]
+                    vertex_upper = max(term[0] for term in exact_terms)
+                    resolution = (
+                        max(term[0] - term[1] for term in exact_terms)
+                        + resolution_floors[row]
+                    )
+            elif not np.all(np.isfinite(lower[index])) or not np.all(
                 np.isfinite(upper[index])
             ):
                 hessian = None
@@ -4198,7 +4324,11 @@ class MeshingDomain(StrictModule, NonTrainableState):
         """Bound surface-to-affine interpolation over complete UV chart cells.
 
         Rows that cannot be bounded, including nontriangular cells meeting a
-        non-C1 knot line, are returned as positive infinity.
+        non-C1 knot line, are returned as positive infinity. On a traced
+        carrier the Hessian bound holds only where
+        `SourcePreparation.surface_regularity` admits it; a triangle on which
+        only the Jacobian is admitted takes the first-order bound of its spread,
+        and any other cell there is unbounded.
 
         ``preparation`` is the caller's `SourcePreparation` of this domain;
         without one the source is prepared for this query alone.
@@ -4230,13 +4360,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             return _exact_spline_interpolation_bounds(cells, spans, exact_charts, surface)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
+        second_order, first_order = preparation.surface_regularity(surface, lower, upper)
         prepared = preparation.derivative_program(surface, 2)
         hessian_lower, hessian_upper = prepared.evaluate(lower, upper)
         result = np.full((cells.shape[0],), np.inf, dtype=np.float64)
         for row in range(cells.shape[0]):
             low = hessian_lower[row]
             high = hessian_upper[row]
-            if not np.all(np.isfinite(low)) or not np.all(np.isfinite(high)):
+            if (
+                not second_order[row]
+                or not np.all(np.isfinite(low))
+                or not np.all(np.isfinite(high))
+            ):
                 continue
             squared = self._dyadic_interpolation_squared(
                 lower[row], upper[row], low, high
@@ -4244,6 +4379,18 @@ class MeshingDomain(StrictModule, NonTrainableState):
             result[row] = fraction_endpoint(
                 fraction_sqrt_interval(squared)[1], upper=True, saturate=True
             )
+        kinked = np.flatnonzero(first_order & ~second_order)
+        if cells.shape[1] == 3 and kinked.size:
+            jacobian_lower, jacobian_upper = preparation.derivative_program(
+                surface, 1
+            ).evaluate(lower[kinked], upper[kinked])
+            for position, row in enumerate(kinked.tolist()):
+                spread = binary64_difference_magnitude(
+                    jacobian_upper[position], jacobian_lower[position]
+                )[1]
+                result[row] = binary64_first_order_interpolation_upper(
+                    spread, cells[row], cells[row]
+                )
         return result
 
     def adaptive_interpolation_bounds(
@@ -4338,6 +4485,8 @@ class MeshingDomain(StrictModule, NonTrainableState):
             return _exact_spline_normal_turn_bounds(cells, spans, exact_charts)
         lower = np.min(cells, axis=1)
         upper = np.max(cells, axis=1)
+        # Normal turn needs the Hessian: across a kink the normal itself jumps.
+        second_order, _ = preparation.surface_regularity(surface, lower, upper)
         first = preparation.derivative_program(surface, 1)
         second = preparation.derivative_program(surface, 2)
         jacobian_lower, jacobian_upper = first.evaluate(lower, upper)
@@ -4354,7 +4503,7 @@ class MeshingDomain(StrictModule, NonTrainableState):
             high_j = jacobian_upper[row]
             low_h = hessian_lower[row]
             high_h = hessian_upper[row]
-            if not all(
+            if not second_order[row] or not all(
                 np.all(np.isfinite(value))
                 for value in (center, low_j, high_j, low_h, high_h)
             ):

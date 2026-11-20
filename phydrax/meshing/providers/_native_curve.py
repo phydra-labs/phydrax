@@ -1736,9 +1736,9 @@ def _chord_bound(
             math.inf,
         )
     else:
+        ends = np.asarray(((lower,), (upper,)), dtype=np.float64)
         interior = binary64_first_order_interpolation_upper(
-            enclosure.velocity_spread(lower, upper)[:, None],
-            np.asarray(((lower,), (upper,)), dtype=np.float64),
+            enclosure.velocity_spread(lower, upper)[:, None], ends, ends
         )
     return math.nextafter(endpoint_error + interior, math.inf)
 
