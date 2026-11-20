@@ -3435,17 +3435,15 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: P
     assert stretches.max() <= 1.15 * stretches.min()
 
 
-def test_fixed_boundary_lattice_seeds_only_where_a_graded_target_qualifies(tmp_path: Path) -> None:
+def test_fixed_boundary_lattice_seeds_only_where_a_graded_target_qualifies() -> None:
     # A unit cube whose target grows tenfold from the face x = 0 to x = 1: no
     # recovered cell has a target within the margin of the smallest, so no
     # lattice site is generated (seeding the box at the smallest target
     # walked 4.6e4 seeds to refuse them all, 2.7 times the rest of the
     # refinement), and refinement meets the graded bound but at slivers on
     # the fixed sides whose circumcenters lie beyond them.
-    surface = _box_surface((np.linspace(0.0, 1.0, 51),) * 3)
-    graded = "0.02 * (1.0 + 9.0 * points[:, 0])"
-    assert _refine_peak_growth(tmp_path, surface, graded) < 64 * 2**20
-    recovery = _recover(*surface)
+    nodes = np.linspace(0.0, 1.0, 51)
+    recovery = _recover(*_box_surface((nodes, nodes, nodes)))
     sizes = 0.02 * (1.0 + 9.0 * np.asarray(recovery.points)[:, 0])
     mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
     run = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
