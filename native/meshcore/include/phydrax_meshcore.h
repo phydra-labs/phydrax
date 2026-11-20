@@ -2836,8 +2836,9 @@ PHX_MC_API int32_t phx_mc_verify_surface_embedding(
  * On OK evidence_count gives the failures (zero certifies). Insufficient
  * capacity reports the required count without writing evidence. Consecutive
  * chords of a use must join bitwise in UV and share one loop (USE_COVERAGE).
- * OVERLAP: two correctly oriented triangles of one patch whose UV interiors
- * meet other than along a shared vertex or edge (row/other: triangle rows). */
+ * OVERLAP: two correctly oriented triangles of one patch whose UV closures
+ * touch other than along a bitwise-shared vertex or edge, including a contact
+ * at points equal in value but not bitwise (-0.0 vs 0.0) (row/other: rows). */
 enum phx_mc_chart_failure_kind {
   PHX_MC_CHART_ORIENTATION = 1,
   PHX_MC_CHART_EDGE = 2,
