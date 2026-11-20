@@ -2170,7 +2170,7 @@ def _remesh_implicit_carrier(
     carrier_distance: float,
     admission_tolerance: float,
     /,
-) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray, np.ndarray, float]:
     """Remesh the scaffold carrier natively and certify every resulting triangle.
 
     Construction is floating point; every triangle of the result is then
@@ -2221,6 +2221,17 @@ def _remesh_implicit_carrier(
             provider_code="native_implicit_carrier_remesh",
             stage="surface_meshing",
         ) from error
+    # Both directions within the admission tolerance: the zero set ->
+    # surface bound is published with the certificate and gated here.
+    if not certified.reverse_distance <= admission_tolerance:
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "The implicit carrier zero-set remesh certified the zero set only within "
+            f"{certified.reverse_distance:.6g} of the surface, above the admission "
+            f"tolerance {admission_tolerance:.6g}.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        )
     worst = _maximum_face_radius_edge_ratio(certified.vertices, certified.triangles)
     if schedule.radius_edge_bound is None and not np.isfinite(worst):
         raise _failure(
@@ -2248,6 +2259,7 @@ def _remesh_implicit_carrier(
         certified.vertices,
         certified.triangles,
         certified.distance,
+        certified.reverse_distance,
         remeshed.counters,
         certified.counters,
         edge_length,
@@ -2433,18 +2445,24 @@ def _implicit_plc_carrier(
         witness_boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[
             np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
         ]
-        vertices, triangles, carrier_distance, counters, certification, edge_length = (
-            _remesh_implicit_carrier(
-                source,
-                specification,
-                schedule,
-                vertices,
-                triangles,
-                witness_boxes,
-                np.asarray(scaffold.domain, dtype=np.float64),
-                scaffold_distance,
-                admission_tolerance,
-            )
+        (
+            vertices,
+            triangles,
+            carrier_distance,
+            reverse_distance,
+            counters,
+            certification,
+            edge_length,
+        ) = _remesh_implicit_carrier(
+            source,
+            specification,
+            schedule,
+            vertices,
+            triangles,
+            witness_boxes,
+            np.asarray(scaffold.domain, dtype=np.float64),
+            scaffold_distance,
+            admission_tolerance,
         )
         face_scaffold_rows = _nearest_scaffold_rows(
             scaffold_vertices, scaffold_triangles, vertices, triangles
@@ -2485,6 +2503,8 @@ def _implicit_plc_carrier(
             ("carrier_remesh_embedding_refusals", float(certification[2])),
             ("carrier_remesh_kept_carrier_triangles", float(certification[3])),
             ("carrier_remesh_repair_splits", float(certification[4])),
+            ("carrier_remesh_reverse_distance", reverse_distance),
+            ("carrier_remesh_reverse_proof", float(certification[8])),
         )
     carrier_revision = canonical_fingerprint(
         {

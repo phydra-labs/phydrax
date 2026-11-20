@@ -5271,8 +5271,9 @@ class ZeroSetCertificate(NamedTuple):
     triangles included, the triangles accepted from the carrier, the repair
     splits, the certification rounds run, the tube triangles refused in its
     last round, the cover leaves left outside by the last cover run (-1 past
-    the box tree's level limit, -2 past ``cover_budget``), the proof of
-    ``reverse_distance`` (1 tube, 2 cover) and the boxes the covers evaluated.
+    the box tree's level limit, -2 past ``cover_budget``, -3 for a surface
+    vertex outside ``domain``), the proof of ``reverse_distance`` (1 tube, 2
+    cover; either within ``tolerance``) and the boxes the covers evaluated.
     ``carried`` (read-only
     bool, one per triangle) flags the triangles accepted from the carrier.
     """
@@ -5452,6 +5453,7 @@ def zero_set_certify(
         or not np.isfinite(reverse)
         or reverse < 0.0
         or int(counters[8]) not in (1, 2)
+        or reverse > tolerance
         or (int(counters[8]) == 2 and not reverse < tolerance)
     ):
         raise MeshcoreError(

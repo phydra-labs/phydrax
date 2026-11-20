@@ -1904,6 +1904,17 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             ) from error
+        # Both directions within the scaffold distance: the zero set ->
+        # surface bound is published with the certificate and gated here.
+        if not certified.reverse_distance <= scaffold_distance:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "The implicit layer wall zero-set remesh certified the zero set only "
+                f"within {certified.reverse_distance:.6g} of the wall, above "
+                f"{scaffold_distance:.6g}.",
+                provider_code="native_layer_implicit_wall",
+                stage="surface_meshing",
+            )
         distance = certified.distance
         vertices = np.array(certified.vertices, dtype=np.float64, copy=True)
         faces = np.array(certified.triangles, dtype=np.int64, copy=True)
@@ -1930,6 +1941,8 @@ def implicit_layer_wall(
             ("carrier_remesh_embedding_refusals", float(certified.counters[2])),
             ("carrier_remesh_kept_carrier_triangles", float(certified.counters[3])),
             ("carrier_remesh_repair_splits", float(certified.counters[4])),
+            ("carrier_remesh_reverse_distance", certified.reverse_distance),
+            ("carrier_remesh_reverse_proof", float(certified.counters[8])),
         )
     wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)
     return ImplicitLayerWall(

@@ -973,7 +973,8 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
 // rho, so every zero lies in the tube, within the tube's reverse bound, and
 // within the cover's bound: reverse = the smaller. Cover: when the tube
 // refuses or leaves a leaf outside rho, the cover within the tolerance
-// alone, reverse = its bound. counters receives (tube triangles refused in
+// alone, reverse = its bound. Proof 1 stands only within the tolerance (else
+// the cover alone is tried). counters receives (tube triangles refused in
 // its last round; cover leaves left outside by the last cover run, -1 or -2
 // as cover_within, -3 when a surface vertex lies outside the domain; the
 // proof, 1 tube or 2 cover; boxes evaluated).
@@ -1002,7 +1003,7 @@ int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
   if (status == PHX_MC_OK) {
     status = cover_within(request, surface, tube.rho, counters[1], bound, counters[3]);
     if (status != PHX_MC_OK) return status;
-    if (counters[1] == 0) {
+    if (counters[1] == 0 && std::min(tube.reverse, bound) <= request.tolerance) {
       reverse = std::min(tube.reverse, bound);
       counters[2] = 1;
       return PHX_MC_OK;

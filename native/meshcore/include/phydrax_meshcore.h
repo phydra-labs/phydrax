@@ -2028,9 +2028,10 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * by doubling or halving, on which f is strictly monotone with one zero, and
  * whose caps are at least rho from the surface) holds every zero within its
  * own bound, and the cover at D = rho puts every zero in the tube: `reverse`
- * is the smaller of the two bounds; (2, cover) when the tube refuses or a
- * leaf is left outside rho, the cover alone at D = `tolerance`, `reverse`
- * its bound. On PHX_MC_OK `result` owns the certified surface
+ * is the smaller of the two bounds, and stands only within `tolerance`;
+ * (2, cover) when the tube refuses, a leaf is left outside rho or proof 1
+ * exceeds the tolerance, the cover alone at D = `tolerance`, `reverse` its
+ * bound. On PHX_MC_OK `result` owns the certified surface
  * (phx_mc_surface_result_*, with per-triangle carried flags) and distances =
  * (the maximum over the proved triangles, each at most `tolerance`, and,
  * for triangles accepted from the carrier, their witness diagonals, which

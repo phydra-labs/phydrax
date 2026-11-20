@@ -2541,9 +2541,10 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
     # A vertex lifted off the sphere: its star fails the proof and splitting
     # cannot repair it, unless the carrier holds those very triangles with
-    # witness boxes that straddle the sphere; they are then accepted at their
-    # box diagonals (above the tolerance) and flagged as carried, and the
-    # zero set is still proved near the surface.
+    # witness boxes that straddle the sphere; they are then accepted from the
+    # carrier. The sphere under the lifted star lies farther than the
+    # tolerance from the surface, so the two-way certificate (both directions
+    # within the tolerance) still refuses, naming the carried triangles.
     lifted = np.array(remeshed.vertices)
     lifted[0] *= 1.02
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
@@ -2561,26 +2562,25 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         )
     carrier_faces = remeshed.triangles[:, (1, 2, 0)]
     boxes = _widened_boxes(lifted, carrier_faces, 0.02)
-    carried = zero_set_certify(
-        lifted,
-        remeshed.triangles,
-        branches,
-        gradient,
-        0.01,
-        1,
-        lifted,
-        carrier_faces,
-        boxes,
-        _CERTIFIED_DOMAIN,
-        0.15,
-        30.0,
-    )
-    assert carried.counters[3] > 0 and carried.counters[4] == 0
-    assert np.count_nonzero(carried.carried) == carried.counters[3]
-    diagonals = np.linalg.norm(boxes[:, 1] - boxes[:, 0], axis=1)
-    assert 0.01 < carried.distance <= np.max(diagonals) * (1 + 1e-12)
+    with pytest.raises(
+        MeshcoreError, match=r"; [1-9][0-9]* triangles accepted from the carrier"
+    ):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            branches,
+            gradient,
+            0.01,
+            1,
+            lifted,
+            carrier_faces,
+            boxes,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
+        )
     # Boxes entirely outside the sphere prove no zero: nothing is carried.
-    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+    with pytest.raises(MeshcoreError, match="; 0 triangles accepted from the carrier"):
         zero_set_certify(
             lifted,
             remeshed.triangles,
@@ -2749,6 +2749,12 @@ def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
     )
     assert certified.counters[3] > 0
     assert np.count_nonzero(certified.carried) == certified.counters[3]
+    # Carried triangles are accepted at their witness boxes' diagonals (above
+    # the tolerance), at most the widest carrier box.
+    diagonals = np.linalg.norm(
+        np.diff(_widened_boxes(vertices, faces, 0.02), axis=1)[:, 0], axis=1
+    )
+    assert 0.02 < certified.distance <= np.max(diagonals) * (1 + 1e-12)
     assert certified.counters[6] > 0 and certified.counters[8] == 2
     assert 0.0 <= certified.reverse_distance < 0.02
     # The same cover under half the boxes it evaluated: refused, naming the
