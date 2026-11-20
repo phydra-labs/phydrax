@@ -428,8 +428,11 @@ def test_unproved_construction_reads_donor_coverage_unproved() -> None:
         phx.meshing.CellMeshAuditDisposition.SKIP,
     ],
 )
-def test_native_assembly_refuses_carriers_without_certified_validity(
+@pytest.mark.parametrize("native", [True, False])
+def test_overset_refuses_carriers_without_certified_validity(
     disposition: phx.meshing.CellMeshAuditDisposition,
+    native: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Trilinear background hexahedra with positive volume but negative corner
     # Jacobians (one interior vertex pushed just past its neighbor), admitted
@@ -454,10 +457,11 @@ def test_native_assembly_refuses_carriers_without_certified_validity(
     )
     assert not _overset._cell_result(background).audit.validity.all_certified
     _, shell, specs = _assembly(False, "sphere")
-    with pytest.raises(ValueError, match="positive finite physical measures"):
-        prepare_overset_connectivity(
-            MeshAssembly((background, shell)), specs, prove=False
-        )
+    if not native:
+        # The Python owner refuses the same carriers.
+        monkeypatch.setattr(_meshcore, "meshcore_available", lambda: False)
+    with pytest.raises(ValueError, match="require certified cell validity"):
+        prepare_overset_connectivity(MeshAssembly((background, shell)), specs)
 
 
 def test_python_owner_prepares_tetrahedra_without_meshcore(

@@ -4779,12 +4779,11 @@ def _native_assembly_supported(
     It does for 3D parts of affine tetrahedra and trilinear hexahedra (P1/Q1
     maps on the mesh vertices) without a source solid query, when meshcore
     loads. The Python owner stays the path for 2D, polyhedral, curved and
-    solid-query parts and for a missing library.
+    solid-query parts and for a missing library. Such P1/Q1 parts require
+    certified validity of every cell under either owner.
     """
     from .._meshcore import meshcore_available
 
-    if not meshcore_available():
-        return False
     for part, spec in zip(parts, specs, strict=True):
         if spec.solid_query is not None or not isinstance(
             part.carrier, CellMeshingResult
@@ -4810,16 +4809,16 @@ def _native_assembly_supported(
             for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
         ):
             return False
-    # The native banks carry no measures: every cell must already be proved
-    # valid (positive orientation) by the carrier's audit, not skipped or
-    # dispositioned by policy.
+    # Every cell must be proved valid by the carrier's audit (not skipped or
+    # dispositioned by policy), whichever owner assembles: positive measure
+    # alone does not exclude negative corner Jacobians.
     for part in parts:
         if not _cell_result(part).audit.validity.all_certified:
             raise ValueError(
-                "Overset mapped cells require positive finite physical measures: "
-                f"part {part.name!r} lacks certified validity for every cell."
+                "Overset parts require certified cell validity: part "
+                f"{part.name!r} has cells whose validity is not certified."
             )
-    return True
+    return meshcore_available()
 
 
 def _native_faces(
