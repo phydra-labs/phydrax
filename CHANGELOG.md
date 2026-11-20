@@ -15,12 +15,14 @@
   `prove=` argument (an unproved connectivity is refused by `registration()`)
   and `OversetPolicy(fringe_donors=...)`, which falls back to a fringe donor
   only when no active cell contains the receptor. New benchmark rows
-  `overset-hex` and `overset-tet` (F13): the kernel takes 0.0017 / 0.011 /
-  0.088 s (hex) and 0.0010 / 0.0059 / 0.055 s (tet) at 1e4 / 1e5 / 1e6 cells
-  with 0 orphans, against TIOGA's whole one-rank call of 0.263 / 0.434 / 1.364
-  and 0.053 / 0.500 / 0.863 s; the public call is still dominated by Python
-  geometry preparation (4.9 s for the 1e4 tetrahedral case, 6.8 s hex), down
-  from 72.9 s with 116 orphans.
+  `overset-hex` and `overset-tet` (F13), run with `fringe_donors=True` (the
+  default policy still leaves 8 hex and 116 tetrahedral receptors without a
+  donor at 1e4, reported as excluded-donor evidence): the kernel takes 0.0017
+  / 0.011 / 0.088 s (hex) and 0.0010 / 0.0059 / 0.055 s (tet) at 1e4 / 1e5 /
+  1e6 cells with 0 orphans, against TIOGA's whole one-rank call of 0.263 /
+  0.434 / 1.364 and 0.053 / 0.500 / 0.863 s; the public call is still
+  dominated by Python geometry preparation (4.9 s for the 1e4 tetrahedral
+  case, 6.8 s hex; it took 72.9 s and left 116 orphans before).
 - Native BVH point queries over the one packed `PackedBVH`
   (`phx_mc_bvh_triangle_nearest`, `phx_mc_bvh_triangle_signed_distance`,
   `phx_mc_bvh_triangle_winding`, `phx_mc_bvh_tetrahedron_locate`), batched and
