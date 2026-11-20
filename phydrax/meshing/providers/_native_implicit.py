@@ -64,6 +64,7 @@ from ...geometry.implicit._adaptive_discovery import (
     AdaptiveImplicitBoundarySource,
 )
 from ...geometry.implicit._policy import _DEFAULT_RELATIVE_CELL_DIAMETER
+from ...geometry.implicit._zero_set_programs import implicit_zero_set_programs
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
 from .._association import (
@@ -1907,20 +1908,8 @@ def _implicit_field_programs(
     corner signs and continuity, and a tetrahedral source's facet admissions,
     are all decided by.
     """
-    kernel, state = geometry.kernel, geometry.state
-
-    def value(point: Array) -> Array:
-        return kernel.boundary_field(state, point[None, :])[0]
-
     try:
-        programs = tuple(
-            prepare_interval_function(function, 3, batch_capacity=1, execution="native")
-            for function in (value, jax.grad(value))
-        )
-        value_program, gradient_program = (program.native_program for program in programs)
-        if value_program is None or gradient_program is None:
-            raise RuntimeError("Native interval preparation returned no native program.")
-        lowered = programs[0].native_branches().branch_box_program()
+        return implicit_zero_set_programs(geometry)
     except IntervalExtensionError as error:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -1929,7 +1918,6 @@ def _implicit_field_programs(
             provider_code="native_implicit_carrier_remesh",
             stage="source_inspection",
         ) from error
-    return lowered, gradient_program.box_program()
 
 
 def _carrier_edge_length(

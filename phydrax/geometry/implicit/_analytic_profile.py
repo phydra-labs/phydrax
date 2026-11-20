@@ -28,11 +28,9 @@ from .._interval_enclosure import (
     interval_add,
     interval_center,
     interval_cos,
-    interval_divide,
     interval_multiply,
     interval_sin,
     interval_sqrt,
-    interval_square,
     IntervalExtensionError,
     prepare_interval_function,
     PreparedIntervalFunction,
@@ -40,7 +38,6 @@ from .._interval_enclosure import (
 from .._rational import binary64_difference_magnitude, binary64_norm_upper
 from .._source_boundary_records import (
     SourceBoundaryDistance,
-    SourceBoundarySamples,
     SourceProjectionStatus,
 )
 from .._source_identity import source_entity_id
@@ -49,6 +46,7 @@ from ..analytic._primitives import _BallKernel
 
 
 AnalyticImplicitFamily: TypeAlias = Literal["sphere", "ring-torus"]
+ZeroSetReverseProof: TypeAlias = Literal["tube", "cover"]
 
 
 def _lower_fraction(value: Fraction) -> float:
@@ -127,109 +125,9 @@ def _decided_atan2(y: float, x: float, /) -> float:
     return math.copysign(angle, y)
 
 
-def _sphere_cube_cover(
-    center: np.ndarray,
-    radius: float,
-    subdivisions: int,
-    first_rows: np.ndarray,
-    second_rows: np.ndarray,
-    /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Enclose the radial images of the selected cube-face parameter cells.
-
-    Cell ``(first_rows[k], second_rows[k])`` of the ``subdivisions``-square grid
-    on each of the six faces; every value is computed per cell, so a cell's
-    enclosure does not depend on which other cells are selected.
-    """
-    edges = np.linspace(-1.0, 1.0, subdivisions + 1, dtype=np.float64)
-    if np.any(np.diff(edges) <= 0.0):
-        raise ValueError("The requested cube-sphere cover reaches binary64 resolution.")
-    first_lower = edges[first_rows]
-    first_upper = edges[first_rows + 1]
-    second_lower = edges[second_rows]
-    second_upper = edges[second_rows + 1]
-    first_interval = (first_lower, first_upper)
-    second_interval = (second_lower, second_upper)
-    one = (np.ones_like(first_lower), np.ones_like(first_upper))
-    norm_squared = interval_add(
-        one,
-        interval_add(interval_square(first_interval), interval_square(second_interval)),
-    )
-    inverse_norm = interval_divide(one, interval_sqrt(norm_squared))
-    first_direction = interval_multiply(first_interval, inverse_norm)
-    second_direction = interval_multiply(second_interval, inverse_norm)
-    first_center = first_lower + 0.5 * (first_upper - first_lower)
-    second_center = second_lower + 0.5 * (second_upper - second_lower)
-    # Correctly rounded IEEE operations only: the same sample on every platform.
-    center_norm = np.sqrt(
-        1.0 + first_center * first_center + second_center * second_center
-    )
-    normalized_first = first_center / center_norm
-    normalized_second = second_center / center_norm
-    center_ = np.asarray(center, dtype=np.float64)
-    radius_value = np.asarray(radius, dtype=np.float64)
-    point_parts: list[np.ndarray] = []
-    lower_parts: list[np.ndarray] = []
-    upper_parts: list[np.ndarray] = []
-    for axis in range(3):
-        for sign in (-1.0, 1.0):
-            fixed = interval_multiply(
-                (np.full_like(first_lower, sign), np.full_like(first_upper, sign)),
-                inverse_norm,
-            )
-            fixed_point = sign / center_norm
-            if axis == 0:
-                direction_interval = (
-                    np.stack(
-                        (fixed[0], first_direction[0], second_direction[0]),
-                        axis=-1,
-                    ),
-                    np.stack(
-                        (fixed[1], first_direction[1], second_direction[1]),
-                        axis=-1,
-                    ),
-                )
-                direction = np.stack(
-                    (fixed_point, normalized_first, normalized_second), axis=-1
-                )
-            elif axis == 1:
-                direction_interval = (
-                    np.stack(
-                        (first_direction[0], fixed[0], second_direction[0]),
-                        axis=-1,
-                    ),
-                    np.stack(
-                        (first_direction[1], fixed[1], second_direction[1]),
-                        axis=-1,
-                    ),
-                )
-                direction = np.stack(
-                    (normalized_first, fixed_point, normalized_second), axis=-1
-                )
-            else:
-                direction_interval = (
-                    np.stack(
-                        (first_direction[0], second_direction[0], fixed[0]),
-                        axis=-1,
-                    ),
-                    np.stack(
-                        (first_direction[1], second_direction[1], fixed[1]),
-                        axis=-1,
-                    ),
-                )
-                direction = np.stack(
-                    (normalized_first, normalized_second, fixed_point), axis=-1
-                )
-            point_parts.append(center_[None, :] + radius * direction)
-            relative = interval_multiply((radius_value, radius_value), direction_interval)
-            image = interval_add((center_[None, :], center_[None, :]), relative)
-            lower_parts.append(np.asarray(image[0], dtype=np.float64))
-            upper_parts.append(np.asarray(image[1], dtype=np.float64))
-    return (
-        np.concatenate(point_parts, axis=0),
-        np.concatenate(lower_parts, axis=0),
-        np.concatenate(upper_parts, axis=0),
-    )
+# Repairs refuse the certificate, so the split angle of a repair never shapes
+# an accepted surface; it only has to be admissible.
+_ZERO_SET_REPAIR_ANGLE_DEGREES = 30.0
 
 
 def _state_identity(geometry: CompiledGeometry) -> str:
@@ -400,7 +298,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
     geometry: CompiledGeometry
     coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
     tube_radius: float = eqx.field(static=True)
-    cover_radius: float = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     family: AnalyticImplicitFamily = eqx.field(static=True)
@@ -428,7 +325,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         eqx.field(static=True)
     )
     scope_entity_set_ids: tuple[str, ...] = eqx.field(static=True)
-    _map_program: PreparedIntervalFunction
 
     @checked
     def __init__(
@@ -436,7 +332,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         geometry: CompiledGeometry,
         coordinate_contract: SpatialCoordinateContract,
         tube_radius: float | None = None,
-        cover_radius: float | None = None,
         source_id: str | None = None,
         source_revision: str | None = None,
     ) -> None:
@@ -504,9 +399,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             raise ValueError(
                 "tube_radius must be finite, positive, and strictly below the established reach."
             )
-        cover = tube / 4.0 if cover_radius is None else float(cover_radius)
-        if not math.isfinite(cover) or cover <= 0.0:
-            raise ValueError("cover_radius must be finite and positive.")
         hessian = _upper_fraction(1 / (reach - Fraction(tube)))
         if not math.isfinite(hessian):
             raise ValueError(
@@ -591,7 +483,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 "major_radius": major,
                 "reach": reach_lower,
                 "tube": tube,
-                "cover_radius": cover,
                 "hessian": hessian,
             }
         )
@@ -607,7 +498,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         self.major_radius = major
         self.reach_lower = reach_lower
         self.tube_radius = tube
-        self.cover_radius = cover
         self.hessian_upper = hessian
         self.normal_lipschitz_upper = hessian
         self.gradient_norm_bounds = (1.0, 1.0)
@@ -625,32 +515,6 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         self.scope_entity_id_banks = tuple(bank[0] for bank in scope_banks)
         self.scope_entity_key_banks = tuple(bank[1] for bank in scope_banks)
         self.scope_entity_set_ids = tuple(bank[2] for bank in scope_banks)
-
-        center_array = jnp.asarray(center, dtype=jnp.float64)
-
-        def parameter_map(parameters: jax.Array) -> jax.Array:
-            first, second = parameters[0], parameters[1]
-            if family == "sphere":
-                radial = radius * jnp.sin(first)
-                return jnp.stack(
-                    (
-                        center_array[0] + radial * jnp.cos(second),
-                        center_array[1] + radial * jnp.sin(second),
-                        center_array[2] + radius * jnp.cos(first),
-                    ),
-                    axis=-1,
-                )
-            radial = major + radius * jnp.cos(second)
-            return jnp.stack(
-                (
-                    center_array[0] + radial * jnp.cos(first),
-                    center_array[1] + radial * jnp.sin(first),
-                    center_array[2] + radius * jnp.sin(second),
-                ),
-                axis=-1,
-            )
-
-        self._map_program = prepare_interval_function(parameter_map, 2)
 
     @property
     def ambient_dimension(self) -> int:
@@ -1080,173 +944,88 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             min(Fraction(2), Fraction(self.normal_lipschitz_upper) * Fraction(value))
         )
 
-    def _cover_counts(self, maximum_radius: float, /) -> tuple[int, int]:
-        precision = Fraction(maximum_radius)
+    def certify_zero_set_cover(
+        self, vertices: ArrayLike, triangles: ArrayLike, tolerance: float, /
+    ) -> tuple[float, ZeroSetReverseProof]:
+        """Bound the distance from every boundary point to a closed surface.
 
-        def ceiling(value: Fraction) -> int:
-            return max(1, (value.numerator + value.denominator - 1) // value.denominator)
+        The closed surface (``vertices`` rows indexed by ``triangles``, oriented
+        outward) is certified by the native zero-set certificate against the
+        boundary field ``f``, which is negative inside, so outward is the
+        orientation of ``grad f``: every triangle within ``tolerance`` of
+        ``{f = 0}`` and transversal, then every zero of ``f`` in the boundary
+        box padded by twice the tolerance (it holds the whole zero set and
+        every surface vertex) within the returned distance of the surface,
+        proved by the normal tube or by the possible-zero cover alone (the
+        returned proof). Every cover leaf must lie near the surface, which is
+        what proves every boundary component is reached. Requires the native
+        meshcore library; a surface the certificate would repair, and every
+        refusal, raise ``ValueError``.
+        """
+        from ..._meshcore import MeshcoreError, MeshcoreUnavailableError, zero_set_certify
+        from ._zero_set_programs import implicit_zero_set_programs
 
-        index_maximum = int(np.iinfo(np.intp).max)
-        if self.family == "sphere":
-            count = ceiling(Fraction(3, 2) * Fraction(self.radius) / precision)
-            if count >= index_maximum or count * count > index_maximum // 18:
-                raise OverflowError(
-                    "The requested analytic boundary cover exceeds array index capacity."
-                )
-            return count, count
-
-        pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
-        first_length = (
-            2 * pi_upper * (Fraction(self.major_radius) + Fraction(self.radius))
-        )
-        second_length = 2 * pi_upper * Fraction(self.radius)
-        first = ceiling(first_length / precision)
-        second = ceiling(second_length / precision)
+        bound = float(tolerance)
+        if not math.isfinite(bound) or not 0.0 < bound < self.reach_lower:
+            raise ValueError(
+                "tolerance must be finite, positive, and below the established reach."
+            )
+        points = np.asarray(vertices, dtype=np.float64)
+        faces = np.asarray(triangles, dtype=np.int64)
         if (
-            first >= index_maximum
-            or second >= index_maximum
-            or first * second > index_maximum // 3
+            points.ndim != 2
+            or points.shape[1] != 3
+            or faces.ndim != 2
+            or faces.shape[1] != 3
+            or faces.shape[0] == 0
         ):
-            raise OverflowError(
-                "The requested analytic boundary cover exceeds array index capacity."
+            raise ValueError("The surface must be (N, 3) vertices and (M, 3) triangles.")
+        edges = points[faces] - points[np.roll(faces, -1, axis=1)]
+        edge_length = float(np.mean(np.sqrt(np.sum(edges * edges, axis=-1))))
+        pad = np.nextafter(2.0 * bound, np.inf)
+        bounds = np.asarray(self.boundary_bounds, dtype=np.float64)
+        domain = np.stack(
+            (
+                np.nextafter(bounds[0] - pad, -np.inf),
+                np.nextafter(bounds[1] + pad, np.inf),
             )
-        return first, second
-
-    def _cell_radii(
-        self,
-        first_count: int,
-        second_count: int,
-        first_rows: np.ndarray,
-        second_rows: np.ndarray,
-        /,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Sample points and covering radii of the selected parameter cells.
-
-        Every value is computed per cell from the count's parameter edges, so a
-        selected cell has the radius it has in the complete grid.
-        """
-        if self.family == "sphere":
-            points, image_lower, image_upper = _sphere_cube_cover(
-                self.center, self.radius, first_count, first_rows, second_rows
-            )
-            period_slack = 0.0
-        else:
-            first_edges = np.linspace(
-                0.0, 2.0 * math.pi, first_count + 1, dtype=np.float64
-            )
-            second_edges = np.linspace(
-                0.0, 2.0 * math.pi, second_count + 1, dtype=np.float64
-            )
-            if np.any(np.diff(first_edges) <= 0.0) or np.any(
-                np.diff(second_edges) <= 0.0
-            ):
-                raise ValueError(
-                    "The requested analytic parameter cover reaches binary64 resolution."
-                )
-            first_lower = first_edges[first_rows]
-            first_upper = first_edges[first_rows + 1]
-            second_lower = second_edges[second_rows]
-            second_upper = second_edges[second_rows + 1]
-            first_cosine, first_sine = _decided_trigonometric(
-                first_lower + 0.5 * (first_upper - first_lower)
-            )
-            second_cosine, second_sine = _decided_trigonometric(
-                second_lower + 0.5 * (second_upper - second_lower)
-            )
-            radial = self.major_radius + self.radius * second_cosine
-            points = np.stack(
-                (
-                    self.center[0] + radial * first_cosine,
-                    self.center[1] + radial * first_sine,
-                    self.center[2] + self.radius * second_sine,
-                ),
-                axis=-1,
-            )
-            image_lower, image_upper = _evaluate_interval_boxes(
-                self._map_program,
-                np.stack((first_lower, second_lower), axis=-1),
-                np.stack((first_upper, second_upper), axis=-1),
-                (3,),
-            )
-            pi_lower = Fraction(float(np.nextafter(math.pi, -np.inf)))
-            pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
-            scale = Fraction(self.major_radius) + 2 * Fraction(self.radius)
-            period_slack = _upper_fraction(4 * (pi_upper - pi_lower) * scale)
-        image_lower = np.asarray(image_lower, dtype=np.float64)
-        image_upper = np.asarray(image_upper, dtype=np.float64)
-        displacement = np.maximum(
-            np.nextafter(np.abs(points - image_lower), np.inf),
-            np.nextafter(np.abs(image_upper - points), np.inf),
         )
-        radii = binary64_norm_upper(displacement)
-        return points, np.nextafter(radii + period_slack, np.inf)
-
-    def boundary_cover(self, maximum_radius: float, /) -> SourceBoundarySamples:
-        """The certified sample cover of the first admissible count at the radius.
-
-        Counts grow from the arc-length estimate until every cell's covering
-        radius is within ``maximum_radius``. A count is first tried on the
-        cells of its two parameter diagonals: one of them above the radius
-        refutes the count without the complete grid, and cell radii do not
-        depend on the selection, so the returned count is unchanged.
-        """
-        if isinstance(maximum_radius, (bool, np.bool_)):
-            raise TypeError(
-                "maximum_radius must be a physical real distance, not a boolean."
+        try:
+            value, gradient = implicit_zero_set_programs(self.geometry)
+            certificate = zero_set_certify(
+                points,
+                faces,
+                value,
+                gradient,
+                bound,
+                1,
+                np.empty((0, 3), dtype=np.float64),
+                np.empty((0, 3), dtype=np.int64),
+                np.empty((0, 2, 3), dtype=np.float64),
+                domain,
+                edge_length,
+                _ZERO_SET_REPAIR_ANGLE_DEGREES,
             )
-        requested = float(maximum_radius)
-        if not math.isfinite(requested) or requested <= 0.0:
-            raise ValueError("maximum_radius must be finite and positive.")
-        first, second = self._cover_counts(requested)
-        if self.family == "ring-torus":
-            pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
-            first_length = (
-                2 * pi_upper * (Fraction(self.major_radius) + Fraction(self.radius))
+        except (
+            IntervalExtensionError,
+            MeshcoreError,
+            MeshcoreUnavailableError,
+            RuntimeError,
+        ) as error:
+            raise ValueError(
+                f"The zero-set certificate does not hold for the surface: {error}"
+            ) from error
+        if int(certificate.counters[4]) != 0 or not (
+            np.array_equal(certificate.vertices, points)
+            and np.array_equal(certificate.triangles, faces)
+        ):
+            raise ValueError(
+                "The zero-set certificate holds only for a repaired surface, not this one."
             )
-            second_length = 2 * pi_upper * Fraction(self.radius)
-        index_maximum = int(np.iinfo(np.intp).max)
-        while True:
-            steps = np.arange(max(first, second), dtype=np.int64)
-            diagonal = steps * second // steps.size
-            _, probe_radii = self._cell_radii(
-                first,
-                second,
-                np.concatenate((steps * first // steps.size,) * 2),
-                np.concatenate((diagonal, second - 1 - diagonal)),
-            )
-            if np.max(probe_radii) <= requested:
-                first_rows, second_rows = np.meshgrid(
-                    np.arange(first, dtype=np.int64),
-                    np.arange(second, dtype=np.int64),
-                    indexing="ij",
-                )
-                points, radii = self._cell_radii(
-                    first, second, first_rows.reshape((-1,)), second_rows.reshape((-1,))
-                )
-                if np.max(radii) <= requested:
-                    return SourceBoundarySamples(
-                        points,
-                        radii,
-                        self.boundary_distance(points).upper,
-                        "certified",
-                        complete=True,
-                    )
-            if self.family == "sphere":
-                first += 1
-                second = first
-            elif first_length / first >= second_length / second:
-                first += 1
-            else:
-                second += 1
-            sample_capacity = 18 if self.family == "sphere" else 3
-            if (
-                first >= index_maximum
-                or second >= index_maximum
-                or first * second > index_maximum // sample_capacity
-            ):
-                raise OverflowError(
-                    "The requested analytic boundary cover exceeds array index capacity."
-                )
+        proof: ZeroSetReverseProof = (
+            "tube" if int(certificate.counters[8]) == 1 else "cover"
+        )
+        return certificate.reverse_distance, proof
 
 
 @final

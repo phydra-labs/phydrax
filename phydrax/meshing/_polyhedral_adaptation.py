@@ -945,8 +945,7 @@ def _renew_restricted_coverage(
         source_id=profile.source_id,
         source_revision=profile.source_revision,
         source_query_id=profile.profile_id,
-        sample_count=source_distance.sample_count,
-        cover_radius=source_distance.cover_radius,
+        reverse_tolerance=source_distance.reverse_tolerance,
         target_facet_global_ids=target_face_ids,
     )
     target_witness = TubularProjectionBoundaryWitness(

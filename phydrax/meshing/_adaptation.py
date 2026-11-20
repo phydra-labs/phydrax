@@ -5490,8 +5490,7 @@ def _retarget_fidelity_witness(
             source_id=witness.source_id,
             source_revision=witness.source_revision,
             source_query_id=witness.source_query_id,
-            sample_count=witness.sample_count,
-            cover_radius=witness.cover_radius,
+            reverse_tolerance=witness.reverse_tolerance,
             target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
         )
     if isinstance(witness, SurfaceEnvelopeDistanceWitness):

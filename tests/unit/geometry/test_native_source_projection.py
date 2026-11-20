@@ -12,6 +12,7 @@ import pytest
 import phydrax as phx
 from phydrax._interpolation._tspline import TMesh2D
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.geometry._source_boundary_records import (
     SourceBoundaryProjectionQuery,
     SourceBoundaryProjectionResult,
@@ -361,7 +362,18 @@ def test_analytic_implicit_projection_binds_frame_source_and_certified_distance(
     source_parameters = np.asarray(result.parameters)
     # Neighboring binary64 angles enclose the exact polar angle π/2 for this
     # axis-aligned query; certify chart reconstruction over that parameter box.
-    source_lower, source_upper = profile._map_program.evaluate(
+    def sphere_chart(parameters: jax.Array) -> jax.Array:
+        polar, azimuth = parameters[0], parameters[1]
+        return 2.0 * jnp.stack(
+            (
+                jnp.sin(polar) * jnp.cos(azimuth),
+                jnp.sin(polar) * jnp.sin(azimuth),
+                jnp.cos(polar),
+            ),
+            axis=-1,
+        )
+
+    source_lower, source_upper = prepare_interval_function(sphere_chart, 2).evaluate(
         np.nextafter(source_parameters, -np.inf),
         np.nextafter(source_parameters, np.inf),
     )

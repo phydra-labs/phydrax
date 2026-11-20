@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from benchmarks._meshing_surfaces import icosphere
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
@@ -51,7 +52,6 @@ from phydrax.geometry._source_fidelity import (
     _normal_deviation_for_cell,
     _partition_findings,
     _require_reference_chart_partition,
-    _reverse_distance_upper,
     _same_triangle_chain_boundary,
     _surface_target_chart_rows,
     _volume_boundary_facet_lookup,
@@ -70,7 +70,6 @@ from phydrax.geometry.brep._patches import (
     SpherePatch,
 )
 from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
-from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
 from phydrax.units import METER, MILLIMETER
 
 
@@ -1680,6 +1679,40 @@ def test_root_bounded_cad_point_requires_explicit_approximation_tolerance() -> N
     assert bounded.status == "certified"
 
 
+def _profile_fan_mesh(
+    surface_points: np.ndarray, surface_faces: np.ndarray, apex: np.ndarray
+) -> CellMesh:
+    # One tetrahedron from the apex to each outward surface triangle.
+    points = np.concatenate((surface_points, apex.reshape((1, 3))), axis=0)
+    apex_row = np.full((surface_faces.shape[0], 1), surface_points.shape[0])
+    cells = np.concatenate((apex_row, surface_faces), axis=1).astype(np.int64)
+    return CellMesh(
+        points,
+        (CellBlock("restricted", "tetrahedron", cells),),
+        vertex_global_ids=np.arange(points.shape[0], dtype=np.int64) + 211,
+    )
+
+
+def _profile_distance_witness(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: AnalyticImplicitProfile,
+    tolerance: float,
+) -> SourceBoundaryDistanceWitness:
+    faces = mesh.entity_set(2)
+    boundary = np.asarray(faces.subset("boundary").mask, dtype=np.bool_)
+    return SourceBoundaryDistanceWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_query_id=source.profile_id,
+        reverse_tolerance=tolerance,
+        target_facet_global_ids=np.asarray(faces.entity_ids, dtype=np.int64)[boundary],
+    )
+
+
 def test_analytic_profile_distance_witness_is_continuous_without_claiming_coverage() -> (
     None
 ):
@@ -1690,56 +1723,65 @@ def test_analytic_profile_distance_witness_is_continuous_without_claiming_covera
         compiled, contract, source_id="distance-only-profile"
     )
     origin = np.asarray(center, dtype=np.float64)
-    points = np.asarray(
-        (
-            origin + (0.4, 0.0, 0.0),
-            origin + (0.0, 0.4, 0.0),
-            origin + (0.0, 0.0, 0.4),
-            origin + (-0.4, -0.4, -0.4),
-        ),
-        dtype=np.float64,
-    )
-    mesh = CellMesh(
-        points,
-        (CellBlock("restricted", "tetrahedron", np.asarray(((0, 1, 2, 3),))),),
-        vertex_global_ids=np.asarray((211, 223, 227, 229), dtype=np.int64),
-    )
+    unit, faces = icosphere(3)
+    mesh = _profile_fan_mesh(origin + 0.4 * unit, faces, origin)
     geometry = CellGeometrySpec.affine(mesh)
-    source_cover = source.boundary_cover(0.02)
-    witness = SourceBoundaryDistanceWitness(
-        mesh_id=mesh.mesh_id,
-        geometry_id=cell_geometry_id(geometry),
-        topology_id=mesh.topology_id,
-        source_id=source.source_id,
-        source_revision=source.source_revision,
-        source_query_id=source.profile_id,
-        sample_count=int(source_cover.points.shape[0]),
-        cover_radius=0.02,
-        target_facet_global_ids=np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64),
-    )
-    assert witness.cover_radius < source.cover_radius
-    wrong_count = SourceBoundaryDistanceWitness(
-        mesh_id=mesh.mesh_id,
-        geometry_id=cell_geometry_id(geometry),
-        topology_id=mesh.topology_id,
-        source_id=source.source_id,
-        source_revision=source.source_revision,
-        source_query_id=source.profile_id,
-        sample_count=witness.sample_count + 1,
-        cover_radius=witness.cover_radius,
-        target_facet_global_ids=witness.target_facet_global_ids,
-    )
-    with pytest.raises(ValueError, match="complete certified boundary cover"):
-        wrong_count.require_current(mesh, geometry, source)
+    witness = _profile_distance_witness(mesh, geometry, source, 0.02)
+    # The reverse direction is the zero-set certificate's: a tolerance below
+    # the facets' distance to the sphere refuses the witness.
+    tight = _profile_distance_witness(mesh, geometry, source, 1.0e-5)
+    with pytest.raises(ValueError, match="zero-set certificate"):
+        tight.require_current(mesh, geometry, source)
 
     certificate = certify_source_fidelity(
-        mesh, geometry, source, tolerance=2.0, witness=witness
+        mesh, geometry, source, tolerance=0.02, witness=witness
     )
 
     assert certificate.status == "certified"
     assert certificate.coverage is None
-    assert certificate.mesh_to_source_upper <= 2.0
-    assert certificate.source_to_mesh_upper <= 2.0
+    assert certificate.mesh_to_source_upper <= 0.02
+    assert certificate.source_to_mesh_upper <= 0.02
+
+
+def test_analytic_profile_witness_refuses_a_doubled_cap_that_passes_forward() -> None:
+    # A thin lens over a small cap of the sphere: its outer sheet lies on the
+    # sphere and its inner sheet 0.01 below, so every facet is within the
+    # 0.02 tolerance of the sphere, but most of the sphere is far from it.
+    center = np.asarray((0.013, -0.021, 0.007), dtype=np.float64)
+    radius, depth, angle, tolerance = 0.4, 0.01, 0.1, 0.02
+    compiled = phx.geometry.Sphere(tuple(center), radius).compile()
+    source = AnalyticImplicitProfile(
+        compiled, SpatialCoordinateContract(METER), source_id="doubled-cap-profile"
+    )
+    turns = np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
+    rim = np.stack(
+        (
+            np.sin(angle) * np.cos(turns),
+            np.sin(angle) * np.sin(turns),
+            np.full_like(turns, np.cos(angle)),
+        ),
+        axis=-1,
+    )
+    pole = np.asarray((0.0, 0.0, 1.0))
+    points = center + np.concatenate(
+        (radius * rim, (radius * pole, (radius - depth) * pole)), axis=0
+    )
+    following = (np.arange(12) + 1) % 12
+    outer = np.stack((np.full(12, 12), np.arange(12), following), axis=-1)
+    inner = np.stack((np.full(12, 13), following, np.arange(12)), axis=-1)
+    mesh = _profile_fan_mesh(
+        points,
+        np.concatenate((outer, inner)),
+        center + (radius - 0.5 * depth) * pole,
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    surface = coordinates[np.concatenate((outer, inner))]
+    assert np.all(source.triangle_distance_upper(surface) <= tolerance)
+    witness = _profile_distance_witness(mesh, geometry, source, tolerance)
+
+    with pytest.raises(ValueError, match="zero-set certificate"):
+        witness.require_current(mesh, geometry, source)
 
 
 @pytest.mark.parametrize(
@@ -1767,50 +1809,6 @@ def test_exact_triangle_distance_degenerate_and_tied() -> None:
     second = ((zero, two, zero), (two, two, zero), (zero, two, zero))
     assert _point_triangle_squared(point, first) == Fraction(1)
     assert _point_triangle_squared(point, second) == Fraction(1)
-
-
-@pytest.mark.parametrize("origin", (0.0, 1.0e6))
-def test_reverse_distance_bound_is_sound_and_tight_at_the_nearest_centroid(
-    origin: float,
-) -> None:
-    generator = np.random.default_rng(7)
-    corners = origin + generator.uniform(-1.0, 1.0, size=(60, 3, 3))
-    # Near ties: translated copies sit a sub-ulp-scale step farther away.
-    corners[30:40] = corners[:10] + 1.0e-12
-    # A degenerate (collinear) triangle stays a valid candidate.
-    corners[50] = (
-        corners[50, 0],
-        corners[50, 1],
-        0.5 * (corners[50, 0] + corners[50, 1]),
-    )
-
-    def exact(value: np.ndarray) -> tuple[Fraction, Fraction, Fraction]:
-        return (
-            Fraction.from_float(float(value[0])),
-            Fraction.from_float(float(value[1])),
-            Fraction.from_float(float(value[2])),
-        )
-
-    triangles = tuple(
-        (exact(triangle[0]), exact(triangle[1]), exact(triangle[2]))
-        for triangle in corners
-    )
-    samples = origin + generator.uniform(-1.5, 1.5, size=(25, 3))
-    bounds = _reverse_distance_upper(
-        samples, corners, np.ones((corners.shape[0],), dtype=np.bool_)
-    )
-    centroids = np.mean(corners, axis=1)
-    for row in range(samples.shape[0]):
-        sample = samples[row : row + 1].reshape((3,))
-        point = exact(sample)
-        distances = [
-            fraction_sqrt_interval(_point_triangle_squared(point, triangle))
-            for triangle in triangles
-        ]
-        bound = Fraction.from_float(float(bounds[row]))
-        assert bound >= min(lower for lower, _ in distances)
-        nearest = int(np.argmin(np.linalg.norm(centroids - sample, axis=1)))
-        assert bound <= distances[nearest][1] + Fraction(1, 2**30) * (1 + abs(origin))
 
 
 def test_missing_fidelity_witness_retains_unbounded_failure_evidence() -> None:
