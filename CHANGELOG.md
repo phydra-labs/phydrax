@@ -3,6 +3,25 @@
 ## Unreleased
 
 ### Added
+- Native `LocalIncidence::split_boundary_edge` splits a boundary edge lying in
+  two hull facets at a new vertex (the edge star's halves and the four facet
+  halves with source and orientation kept), and `LocalIncidence::relocate`
+  moves facet and segment vertices, revalidating only the facets and segments
+  through the vertex and the star's exact positivity; both match
+  `apply_edit_batch` / `apply_relocation_edit` verdicts and states (randomized
+  differential test on cubes with declared planes) at a per-edit cost that
+  does not grow with the mesh. `apply_edit_batch` admits the split of an edge
+  between two facets of one declared-plane group off the exact edge when the
+  point's exact position lies on the plane and the four halves keep their
+  faces' projected orientation, which proves they tile the two facets.
+- Native exact cell validity `phx_mc_cell_map_validity` for P1 tetrahedra and
+  affine or trilinear hexahedra on exact dyadic coordinates, used by
+  `certify_cell_geometry_validity`: it reproduces the rational proof's
+  statuses, directed determinant endpoints, depths and map digests bit for
+  bit, so certificate and audit identities are unchanged; the rational proof
+  remains the only path without meshcore and for subdivision, expanded
+  margins or out-of-range values. `certify_cell_mesh` on a 967k-tetrahedron
+  cube takes 17 s instead of 79 s, on the 1e6-cell F13 hexahedral parts 43 s.
 - Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
   a facet or segment vertex into a vertex on its carrier (in place or with a
   moved survivor) and swap an exactly coplanar boundary edge between two
