@@ -839,7 +839,10 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
                 exact = _analytic_values(kind, sample_uv)
                 assert np.linalg.norm(exact - weights @ vertices) <= result.upper[row]
     print(f"{kind} native/Python adaptive bound ratios:", ratios)
-    assert all(0.99 <= ratio <= 1.01 for ratio in ratios)
+    # Native takes the Taylor remainder about the leaf box centre (one quarter
+    # of Python's box-extent remainder), so it is never looser than Python;
+    # the sampled check above keeps it an enclosure.
+    assert all(ratio <= 1.01 for ratio in ratios)
     assert np.all(result.item_status == MeshcoreStatus.OK)
 
 

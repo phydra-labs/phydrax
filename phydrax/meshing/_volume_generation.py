@@ -23,8 +23,10 @@ from .._meshcore import (
     MeshcoreStatus,
     PLC_SEARCH_BUDGET,
     PlcBoundaryPolicy as NativePlcBoundaryPolicy,
+    PlcFailureReason,
     PlcRecovery3D,
     PlcSearchBudget,
+    PlcSourceFailure,
     PlcSuppressionSearch,
     recover_plc_3d,
     tet_mesh_entities,
@@ -61,7 +63,7 @@ from ..geometry._domain_coverage import PiecewiseLinearDomain
 from ..geometry._mapped_reference_domain import MappedReferenceDomain
 from ..linalg._exact import solve_exact
 from ..typing import parse
-from ._contracts import VolumeMeshingSpec
+from ._contracts import MeshingFailure, MeshingFailureCategory, VolumeMeshingSpec
 from ._plc_source import PiecewiseLinearComplex, PlcBoundaryPolicy
 from ._sizing import (
     resolve_size_controls,
@@ -1956,6 +1958,35 @@ def _kept_carrier_recovery(
     )
 
 
+_PLC_REGION_REASONS = frozenset(
+    (
+        PlcFailureReason.INCONSISTENT_REGIONS,
+        PlcFailureReason.REGION_LEAK,
+        PlcFailureReason.INVALID_SEED,
+        PlcFailureReason.OUTSIDE_DOMAIN,
+    )
+)
+
+
+def _plc_source_failure(error: PlcSourceFailure, /) -> MeshingFailure:
+    """The meshing refusal of a native PLC source-preparation refusal."""
+    reason = error.reason
+    if reason in _PLC_REGION_REASONS:
+        category = MeshingFailureCategory.REGION_RESOLUTION_FAILED
+    elif reason is PlcFailureReason.SOURCE_DEVIATION:
+        category = MeshingFailureCategory.COMPLIANCE_FAILED
+    elif reason is PlcFailureReason.STEINER_SUPPRESSION:
+        category = MeshingFailureCategory.PROVIDER_EXECUTION_FAILED
+    else:
+        category = MeshingFailureCategory.INVALID_SOURCE
+    return MeshingFailure(
+        category,
+        str(error),
+        provider_code=f"plc_source_{reason.name.lower()}",
+        stage="volume_meshing",
+    )
+
+
 def generate_plc_volume(
     complex_: PiecewiseLinearComplex,
     specification: VolumeMeshingSpec,
@@ -2138,24 +2169,27 @@ def generate_plc_volume(
         seeds, seed_regions = _region_seed_points(
             complex_, specification, affine=global_affine, affine_source=affine_source
         )
-        recovery = recover_plc_3d(
-            complex_.vertices,
-            complex_.polygon_offsets,
-            complex_.polygon_vertices,
-            complex_.polygon_facets,
-            complex_.facet_regions,
-            segments=active_segment_vertices,
-            seeds=seeds,
-            seed_regions=seed_regions,
-            facet_tolerances=facet_tolerances,
-            segment_tolerances=active_segment_tolerances,
-            boundary_policy=native_boundary_policy,
-            facet_planes=complex_.facet_planes,
-            affine_metric=None if global_affine is None else global_affine[:3, :3],
-            protected_facets=protected_facets,
-            facet_plane_tolerances=complex_.facet_plane_tolerances,
-            search_budget=schedule.plc_search_budget,
-        )
+        try:
+            recovery = recover_plc_3d(
+                complex_.vertices,
+                complex_.polygon_offsets,
+                complex_.polygon_vertices,
+                complex_.polygon_facets,
+                complex_.facet_regions,
+                segments=active_segment_vertices,
+                seeds=seeds,
+                seed_regions=seed_regions,
+                facet_tolerances=facet_tolerances,
+                segment_tolerances=active_segment_tolerances,
+                boundary_policy=native_boundary_policy,
+                facet_planes=complex_.facet_planes,
+                affine_metric=None if global_affine is None else global_affine[:3, :3],
+                protected_facets=protected_facets,
+                facet_plane_tolerances=complex_.facet_plane_tolerances,
+                search_budget=schedule.plc_search_budget,
+            )
+        except PlcSourceFailure as error:
+            raise _plc_source_failure(error) from error
     else:
         recovery = _kept_carrier_recovery(complex_, carrier, active_segment_vertices)
     tables = _source_tables(complex_, specification, recovery)
