@@ -226,6 +226,7 @@ _P = ctypes.c_void_p
 _I32 = ctypes.c_int32
 _I64 = ctypes.c_int64
 _U64 = ctypes.c_uint64
+_INTP_MAX = int(np.iinfo(np.intp).max)
 _F64 = ctypes.c_double
 _ParallelChunkCallback = ctypes.CFUNCTYPE(_I32, _P, _I64, _I64, _I64)
 PHX_MC_TET_MESH_SNAPSHOT_SIZES = 19
@@ -8944,21 +8945,108 @@ def _source_group_labels(
     ``groups`` and ``labels`` give each source row's group and source ID; a
     group carries one source ID. A value naming no group is kept.
     """
-    unique_groups, first_rows, inverse = np.unique(
-        groups, return_index=True, return_inverse=True
-    )
-    unique_labels = labels[first_rows]
-    if np.any(labels != unique_labels[inverse.reshape((-1,))]):
+    result = values.astype(np.int64)
+    if groups.size == 0 or np.array_equal(groups, labels):
+        # Every group is labelled by its own row: the map is the identity.
+        return result
+    # Groups are source rows (nonnegative and below the row count), so a
+    # dense table maps them; any row whose label differs from its group's
+    # table entry (whichever row wrote it) proves a group with two labels.
+    if groups.min() < 0:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"a {kind} source group row is negative"
+        )
+    span = int(groups.max()) + 1
+    present = np.zeros((span,), dtype=bool)
+    present[groups] = True
+    table = np.empty((span,), dtype=labels.dtype)
+    table[groups] = labels
+    if np.any(labels != table[groups]):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"one {kind} group has multiple source IDs"
         )
-    result = values.astype(np.int64)
-    if unique_groups.size == 0:
-        return result
-    positions = np.minimum(np.searchsorted(unique_groups, values), unique_groups.size - 1)
-    named = unique_groups[positions] == values
-    result[named] = unique_labels[positions[named]]
+    named = (values >= 0) & (values < span)
+    named[named] = present[values[named]]
+    result[named] = table[values[named]]
     return result
+
+
+# The flat banks of a TetMesh snapshot: request field, dtype, row shape, the
+# PHX_MC_TET_MESH_SNAPSHOT_SIZES entry counting its rows, the extra rows (an
+# offsets bank closes its last row) and the bytes per row.
+_TET_SNAPSHOT_BANKS: tuple[
+    tuple[str, np.dtype[Any], tuple[int, ...], int, int, int], ...
+] = tuple(
+    (name, np.dtype(dtype), shape, count, extra, np.dtype(dtype).itemsize * int(np.prod(shape)))
+    for name, dtype, shape, count, extra in (
+        ("vertex_ids", np.uint64, (), 0, 0),
+        ("points", np.float64, (3,), 0, 0),
+        ("vertex_size_targets", np.float64, (), 0, 0),
+        ("witness_strata", np.int8, (), 0, 0),
+        ("witness_entities", np.int32, (), 0, 0),
+        ("witness_parameters", np.float64, (2,), 0, 0),
+        ("witness_deviations", np.float64, (), 0, 0),
+        ("vertex_dimensions", np.int8, (), 0, 0),
+        ("protection_radii", np.float64, (), 0, 0),
+        ("protected_vertices", np.int8, (), 0, 0),
+        ("vertex_edge_witness_present", np.int8, (), 0, 0),
+        ("vertex_edge_witness_endpoints", np.uint64, (2,), 0, 0),
+        ("vertex_edge_parameters", np.float64, (), 0, 0),
+        ("vertex_ancestry_offsets", np.int64, (), 0, 1),
+        ("vertex_ancestor_ids", np.uint64, (), 17, 0),
+        ("vertex_ancestor_winding", np.int64, (3,), 17, 0),
+        ("vertex_ancestry_weights", np.float64, (), 17, 0),
+        ("cell_ancestry_offsets", np.int64, (), 1, 1),
+        ("cell_ancestor_ids", np.uint64, (), 18, 0),
+        ("cell_ancestry_edit_kinds", np.int32, (), 1, 0),
+        ("cell_ids", np.uint64, (), 1, 0),
+        ("cell_vertex_rows", np.int64, (4,), 1, 0),
+        ("cell_regions", np.int32, (), 1, 0),
+        ("cell_size_targets", np.float64, (), 1, 0),
+        ("facet_ids", np.uint64, (), 2, 0),
+        ("facet_vertex_rows", np.int64, (3,), 2, 0),
+        ("facet_sources", np.int32, (), 2, 0),
+        ("facet_orientations", np.int8, (), 2, 0),
+        ("protected_facets", np.int8, (), 2, 0),
+        ("segment_ids", np.uint64, (), 3, 0),
+        ("segment_vertex_rows", np.int64, (2,), 3, 0),
+        ("segment_sources", np.int32, (), 3, 0),
+        ("protected_segments", np.int8, (), 3, 0),
+        ("source_points", np.float64, (3,), 4, 0),
+        ("source_faces", np.int32, (3,), 5, 0),
+        ("source_face_groups", np.int32, (), 5, 0),
+        ("source_face_ids", np.int64, (), 5, 0),
+        ("source_face_tolerances", np.float64, (), 5, 0),
+        ("source_segments", np.int32, (2,), 6, 0),
+        ("source_segment_groups", np.int32, (), 6, 0),
+        ("source_segment_ids", np.int64, (), 6, 0),
+        ("source_segment_tolerances", np.float64, (), 6, 0),
+        ("source_face_planes", np.float64, (3, 3), 5, 0),
+        ("source_face_plane_tolerances", np.float64, (), 5, 0),
+        ("periodic_quotient_lifted_cell_ids", np.uint64, (), 10, 0),
+        ("periodic_entity_lifted_ids", np.uint64, (), 12, 0),
+        ("periodic_entity_quotient_ids", np.uint64, (), 13, 0),
+        ("periodic_entity_lifted_to_quotient", np.int32, (), 12, 0),
+        ("periodic_entity_orientation_signs", np.int32, (), 12, 0),
+        ("periodic_entity_winding_shifts", np.int64, (), 14, 0),
+        ("periodic_entity_corner_permutations", np.int32, (), 15, 0),
+        ("periodic_entity_representative_rows", np.int32, (), 16, 0),
+    )
+)
+
+
+def _source_id_bank(ids: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """The sorted distinct source IDs and each row's index into them (int32)."""
+    if ids.size == 0 or not np.all(ids[1:] >= ids[:-1]):
+        bank, rows = np.unique(ids, return_inverse=True)
+        return bank, rows.astype(np.int32)
+    # Already sorted: a row opens a new ID where it differs from its predecessor.
+    opens = np.empty(ids.shape, dtype=bool)
+    opens[0] = True
+    np.not_equal(ids[1:], ids[:-1], out=opens[1:])
+    rows = np.cumsum(opens, dtype=np.int32)
+    rows -= 1
+    return ids[opens], rows
 
 
 def _tet_radius_target(value: float | None, /) -> float | None:
@@ -9272,7 +9360,7 @@ class TetMesh3D:
         )
         if face_orientation_bank is not None and (
             face_orientation_bank.shape != (face_array.shape[0],)
-            or np.any(~np.isin(face_orientation_bank, (-1, 1)))
+            or np.any(np.abs(face_orientation_bank) != 1)
         ):
             raise ValueError(
                 "face_orientations must contain one signed orientation per face."
@@ -9631,13 +9719,17 @@ class TetMesh3D:
     def _identity(self, /) -> TetMeshIdentity:
         generation = _U64()
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(4))
+        lengths = (_I64 * 4)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_identity_sizes"](
                 self._live(),
                 ctypes.addressof(generation),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                base,
+                base + 8,
+                base + 16,
+                base + 24,
             ),
             "tet_mesh_identity_sizes",
         )
@@ -9645,8 +9737,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity byte length"
             )
@@ -9688,12 +9780,13 @@ class TetMesh3D:
 
     def _periodic_identity_strings(self, /) -> tuple[str, str, str, str, str, str] | None:
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(6))
+        lengths = (_I64 * 6)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_periodic_identity_sizes"](
                 self._live(),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                *range(base, base + 48, 8),
             ),
             "tet_mesh_periodic_identity_sizes",
         )
@@ -9701,8 +9794,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity byte length"
             )
@@ -9845,225 +9938,43 @@ class TetMesh3D:
                 ),
                 "tet_mesh_snapshot_sizes",
             )
-            if np.any(sizes < 0):
+            counts = sizes.tolist()
+            if min(counts) < 0:
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "negative tetrahedral snapshot size"
                 )
-            (
-                vertex_count,
-                cell_count,
-                facet_count,
-                segment_count,
-                source_point_count,
-                source_face_count,
-                source_segment_count,
-                periodic_orbit_count,
-                periodic_member_count,
-                periodic_quotient_cell_count,
-                periodic_quotient_lifted_count,
-                periodic_entity_map_count,
-                periodic_entity_lifted_count,
-                periodic_entity_quotient_count,
-                periodic_entity_winding_count,
-                periodic_entity_corner_count,
-                periodic_entity_representative_count,
-                vertex_ancestry_count,
-                cell_ancestor_count,
-            ) = map(int, sizes.tolist())
-            vertex_ids = np.empty((vertex_count,), dtype=np.uint64)
-            points = np.empty((vertex_count, 3), dtype=np.float64)
-            vertex_size_targets = np.empty((vertex_count,), dtype=np.float64)
-            witness_strata = np.empty((vertex_count,), dtype=np.int8)
-            witness_entities = np.empty((vertex_count,), dtype=np.int32)
-            witness_parameters = np.empty((vertex_count, 2), dtype=np.float64)
-            witness_deviations = np.empty((vertex_count,), dtype=np.float64)
-            dimensions = np.empty((vertex_count,), dtype=np.int8)
-            radii = np.empty((vertex_count,), dtype=np.float64)
-            protected_vertices = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_present = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_endpoints = np.empty((vertex_count, 2), dtype=np.uint64)
-            edge_parameters = np.empty((vertex_count,), dtype=np.float64)
-            vertex_ancestry_offsets = np.empty((vertex_count + 1,), dtype=np.int64)
-            vertex_ancestor_ids = np.empty((vertex_ancestry_count,), dtype=np.uint64)
-            vertex_ancestor_winding = np.empty((vertex_ancestry_count, 3), dtype=np.int64)
-            vertex_ancestry_weights = np.empty((vertex_ancestry_count,), dtype=np.float64)
-            cell_ancestry_offsets = np.empty((cell_count + 1,), dtype=np.int64)
-            cell_ancestor_ids = np.empty((cell_ancestor_count,), dtype=np.uint64)
-            cell_ancestry_edit_kinds = np.empty((cell_count,), dtype=np.int32)
-            cell_ids = np.empty((cell_count,), dtype=np.uint64)
-            cell_vertices = np.empty((cell_count, 4), dtype=np.int64)
-            regions = np.empty((cell_count,), dtype=np.int32)
-            cell_size_targets = np.empty((cell_count,), dtype=np.float64)
-            facet_ids = np.empty((facet_count,), dtype=np.uint64)
-            facet_vertices = np.empty((facet_count, 3), dtype=np.int64)
-            facet_sources = np.empty((facet_count,), dtype=np.int32)
-            facet_orientations = np.empty((facet_count,), dtype=np.int8)
-            protected_facets = np.empty((facet_count,), dtype=np.int8)
-            segment_ids = np.empty((segment_count,), dtype=np.uint64)
-            segment_vertices = np.empty((segment_count, 2), dtype=np.int64)
-            segment_sources = np.empty((segment_count,), dtype=np.int32)
-            protected_segments = np.empty((segment_count,), dtype=np.int8)
-            source_points = np.empty((source_point_count, 3), dtype=np.float64)
-            source_faces = np.empty((source_face_count, 3), dtype=np.int32)
-            source_face_groups = np.empty((source_face_count,), dtype=np.int32)
-            source_face_ids = np.empty((source_face_count,), dtype=np.int64)
-            source_face_tolerances = np.empty((source_face_count,), dtype=np.float64)
-            source_segments = np.empty((source_segment_count, 2), dtype=np.int32)
-            source_segment_groups = np.empty((source_segment_count,), dtype=np.int32)
-            source_segment_ids = np.empty((source_segment_count,), dtype=np.int64)
-            source_segment_tolerances = np.empty(
-                (source_segment_count,), dtype=np.float64
-            )
-            source_face_planes = np.empty((source_face_count, 3, 3), dtype=np.float64)
-            source_face_plane_tolerances = np.empty(
-                (source_face_count,), dtype=np.float64
-            )
-            periodic_orbits = (_TetPeriodicOrbit * periodic_orbit_count)()
-            periodic_members = (_TetPeriodicVertexMember * periodic_member_count)()
-            periodic_quotient_cells = (
-                _TetPeriodicQuotientCell * periodic_quotient_cell_count
-            )()
-            periodic_quotient_lifted_cell_ids = np.empty(
-                (periodic_quotient_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_maps = (
-                _TetPeriodicEntityOrbitMap * periodic_entity_map_count
-            )()
-            periodic_entity_lifted_ids = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_quotient_ids = np.empty(
-                (periodic_entity_quotient_count,), dtype=np.uint64
-            )
-            periodic_entity_lifted_to_quotient = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_orientation_signs = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_winding_shifts = np.empty(
-                (periodic_entity_winding_count,), dtype=np.int64
-            )
-            periodic_entity_corner_permutations = np.empty(
-                (periodic_entity_corner_count,), dtype=np.int32
-            )
-            periodic_entity_representative_rows = np.empty(
-                (periodic_entity_representative_count,), dtype=np.int32
-            )
+            # One buffer holds every flat bank (in 8-byte aligned slices); the
+            # returned banks are views of it.
+            extents = []
+            total = 0
+            for _name, _dtype, _shape, count, extra, row_bytes in _TET_SNAPSHOT_BANKS:
+                rows = counts[count] + extra
+                extents.append((rows, total))
+                total += (rows * row_bytes + 7) & ~7
+            buffer = np.empty((total,), dtype=np.uint8)
+            address = buffer.ctypes.data
+            # The capacity fields lead the request, in snapshot-size order.
+            request = _TetMeshSnapshotRequest(*counts)
+            b: dict[str, np.ndarray] = {}
+            for (name, dtype, shape, _count, _extra, _row_bytes), (rows, offset) in zip(
+                _TET_SNAPSHOT_BANKS, extents, strict=True
+            ):
+                b[name] = np.ndarray((rows, *shape), dtype, buffer, offset)
+                if rows:
+                    setattr(request, name, address + offset)
+            periodic_orbits = (_TetPeriodicOrbit * counts[7])()
+            periodic_members = (_TetPeriodicVertexMember * counts[8])()
+            periodic_quotient_cells = (_TetPeriodicQuotientCell * counts[9])()
+            periodic_entity_maps = (_TetPeriodicEntityOrbitMap * counts[11])()
+            if counts[7]:
+                request.periodic_orbits = ctypes.cast(periodic_orbits, _P)
+            if counts[8]:
+                request.periodic_members = ctypes.cast(periodic_members, _P)
+            if counts[9]:
+                request.periodic_quotient_cells = ctypes.cast(periodic_quotient_cells, _P)
+            if counts[11]:
+                request.periodic_entity_maps = ctypes.cast(periodic_entity_maps, _P)
             generation = _U64()
-            request = _TetMeshSnapshotRequest()
-            for name, value in (
-                ("vertex_capacity", vertex_count),
-                ("cell_capacity", cell_count),
-                ("facet_capacity", facet_count),
-                ("segment_capacity", segment_count),
-                ("source_point_capacity", source_point_count),
-                ("source_face_capacity", source_face_count),
-                ("source_segment_capacity", source_segment_count),
-                ("periodic_orbit_capacity", periodic_orbit_count),
-                ("periodic_member_capacity", periodic_member_count),
-                ("periodic_quotient_cell_capacity", periodic_quotient_cell_count),
-                ("periodic_quotient_lifted_capacity", periodic_quotient_lifted_count),
-                ("periodic_entity_map_capacity", periodic_entity_map_count),
-                ("periodic_entity_lifted_capacity", periodic_entity_lifted_count),
-                ("periodic_entity_quotient_capacity", periodic_entity_quotient_count),
-                ("periodic_entity_winding_capacity", periodic_entity_winding_count),
-                ("periodic_entity_corner_capacity", periodic_entity_corner_count),
-                (
-                    "periodic_entity_representative_capacity",
-                    periodic_entity_representative_count,
-                ),
-                ("vertex_ancestry_capacity", vertex_ancestry_count),
-                ("cell_ancestor_capacity", cell_ancestor_count),
-            ):
-                setattr(request, name, value)
-            for name, array in (
-                ("vertex_ids", vertex_ids),
-                ("points", points),
-                ("vertex_size_targets", vertex_size_targets),
-                ("witness_strata", witness_strata),
-                ("witness_entities", witness_entities),
-                ("witness_parameters", witness_parameters),
-                ("witness_deviations", witness_deviations),
-                ("vertex_dimensions", dimensions),
-                ("protection_radii", radii),
-                ("protected_vertices", protected_vertices),
-                ("cell_ids", cell_ids),
-                ("vertex_edge_witness_present", edge_witness_present),
-                ("vertex_edge_witness_endpoints", edge_witness_endpoints),
-                ("vertex_edge_parameters", edge_parameters),
-                ("vertex_ancestry_offsets", vertex_ancestry_offsets),
-                ("vertex_ancestor_ids", vertex_ancestor_ids),
-                ("vertex_ancestor_winding", vertex_ancestor_winding),
-                ("vertex_ancestry_weights", vertex_ancestry_weights),
-                ("cell_ancestry_offsets", cell_ancestry_offsets),
-                ("cell_ancestor_ids", cell_ancestor_ids),
-                ("cell_ancestry_edit_kinds", cell_ancestry_edit_kinds),
-                ("cell_vertex_rows", cell_vertices),
-                ("cell_regions", regions),
-                ("cell_size_targets", cell_size_targets),
-                ("facet_ids", facet_ids),
-                ("facet_vertex_rows", facet_vertices),
-                ("facet_sources", facet_sources),
-                ("facet_orientations", facet_orientations),
-                ("protected_facets", protected_facets),
-                ("segment_ids", segment_ids),
-                ("segment_vertex_rows", segment_vertices),
-                ("segment_sources", segment_sources),
-                ("protected_segments", protected_segments),
-                ("source_points", source_points),
-                ("source_faces", source_faces),
-                ("source_face_groups", source_face_groups),
-                ("source_face_ids", source_face_ids),
-                ("source_face_tolerances", source_face_tolerances),
-                ("source_segments", source_segments),
-                ("source_segment_groups", source_segment_groups),
-                ("source_segment_ids", source_segment_ids),
-                ("source_segment_tolerances", source_segment_tolerances),
-                ("source_face_planes", source_face_planes),
-                ("source_face_plane_tolerances", source_face_plane_tolerances),
-            ):
-                setattr(request, name, _tet_mesh_pointer(array) if array.size else None)
-            request.periodic_orbits = (
-                ctypes.cast(periodic_orbits, _P) if periodic_orbit_count else None
-            )
-            request.periodic_members = (
-                ctypes.cast(periodic_members, _P) if periodic_member_count else None
-            )
-            request.periodic_quotient_cells = (
-                ctypes.cast(periodic_quotient_cells, _P)
-                if periodic_quotient_cell_count
-                else None
-            )
-            request.periodic_quotient_lifted_cell_ids = _tet_mesh_pointer(
-                periodic_quotient_lifted_cell_ids
-            )
-            request.periodic_entity_maps = (
-                ctypes.cast(periodic_entity_maps, _P)
-                if periodic_entity_map_count
-                else None
-            )
-            request.periodic_entity_lifted_ids = _tet_mesh_pointer(
-                periodic_entity_lifted_ids
-            )
-            request.periodic_entity_quotient_ids = _tet_mesh_pointer(
-                periodic_entity_quotient_ids
-            )
-            request.periodic_entity_lifted_to_quotient = _tet_mesh_pointer(
-                periodic_entity_lifted_to_quotient
-            )
-            request.periodic_entity_orientation_signs = _tet_mesh_pointer(
-                periodic_entity_orientation_signs
-            )
-            request.periodic_entity_winding_shifts = _tet_mesh_pointer(
-                periodic_entity_winding_shifts
-            )
-            request.periodic_entity_corner_permutations = _tet_mesh_pointer(
-                periodic_entity_corner_permutations
-            )
-            request.periodic_entity_representative_rows = _tet_mesh_pointer(
-                periodic_entity_representative_rows
-            )
             request.generation = ctypes.addressof(generation)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_snapshot"](
@@ -10082,29 +9993,31 @@ class TetMesh3D:
                 periodic_orbits,
                 periodic_members,
                 periodic_quotient_cells,
-                periodic_quotient_lifted_cell_ids,
+                b["periodic_quotient_lifted_cell_ids"],
                 periodic_entity_maps,
-                periodic_entity_lifted_ids,
-                periodic_entity_quotient_ids,
-                periodic_entity_lifted_to_quotient,
-                periodic_entity_orientation_signs,
-                periodic_entity_winding_shifts,
-                periodic_entity_corner_permutations,
-                periodic_entity_representative_rows,
+                b["periodic_entity_lifted_ids"],
+                b["periodic_entity_quotient_ids"],
+                b["periodic_entity_lifted_to_quotient"],
+                b["periodic_entity_orientation_signs"],
+                b["periodic_entity_winding_shifts"],
+                b["periodic_entity_corner_permutations"],
+                b["periodic_entity_representative_rows"],
             )
-            if np.any(~np.isfinite(vertex_size_targets)) or np.any(
-                vertex_size_targets < 0.0
-            ):
+            vertex_size_targets = b["vertex_size_targets"]
+            # NaN fails both comparisons.
+            if not np.all((vertex_size_targets >= 0.0) & (vertex_size_targets < np.inf)):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh vertex size targets"
                 )
+            vertex_ancestry_offsets = b["vertex_ancestry_offsets"]
+            cell_ancestry_offsets = b["cell_ancestry_offsets"]
             if (
                 vertex_ancestry_offsets[0] != 0
-                or vertex_ancestry_offsets[-1] != vertex_ancestry_count
-                or np.any(np.diff(vertex_ancestry_offsets) < 0)
-                or np.any(~np.isfinite(vertex_ancestry_weights))
+                or vertex_ancestry_offsets[-1] != counts[17]
+                or np.any(vertex_ancestry_offsets[1:] < vertex_ancestry_offsets[:-1])
+                or not np.all(np.isfinite(b["vertex_ancestry_weights"]))
                 or cell_ancestry_offsets[0] != 0
-                or cell_ancestry_offsets[-1] != cell_ancestor_count
+                or cell_ancestry_offsets[-1] != counts[18]
             ):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR,
@@ -10112,58 +10025,57 @@ class TetMesh3D:
                 )
             # Native writes cells, facets and segments in ID order with their
             # corners as vertex rows, and every cell's size target and lineage.
-            face_id_bank, face_group_rows = np.unique(
-                source_face_ids, return_inverse=True
-            )
-            segment_id_bank, segment_group_rows = np.unique(
-                source_segment_ids, return_inverse=True
-            )
-            face_group_rows = face_group_rows.astype(np.int32)
-            segment_group_rows = segment_group_rows.astype(np.int32)
+            source_face_ids = b["source_face_ids"]
+            source_segment_ids = b["source_segment_ids"]
+            face_id_bank, face_group_rows = _source_id_bank(source_face_ids)
+            segment_id_bank, segment_group_rows = _source_id_bank(source_segment_ids)
             vertex_size_targets.setflags(write=False)
-            cell_size_targets.setflags(write=False)
+            b["cell_size_targets"].setflags(write=False)
             return TetMeshArrays(
-                points,
+                b["points"],
                 vertex_size_targets,
-                cell_vertices,
-                regions,
-                cell_size_targets,
-                facet_vertices,
+                b["cell_vertex_rows"],
+                b["cell_regions"],
+                b["cell_size_targets"],
+                b["facet_vertex_rows"],
                 _source_group_labels(
-                    source_face_groups, source_face_ids, facet_sources, "face"
+                    b["source_face_groups"], source_face_ids, b["facet_sources"], "face"
                 ),
-                segment_vertices,
+                b["segment_vertex_rows"],
                 _source_group_labels(
-                    source_segment_groups, source_segment_ids, segment_sources, "segment"
+                    b["source_segment_groups"],
+                    source_segment_ids,
+                    b["segment_sources"],
+                    "segment",
                 ),
-                dimensions,
-                radii,
-                protected_vertices,
-                edge_witness_present,
-                edge_witness_endpoints,
-                edge_parameters,
-                vertex_ids,
-                cell_ids,
-                facet_ids,
-                facet_orientations,
-                protected_facets,
-                segment_ids,
-                protected_segments,
-                source_points,
-                source_faces,
+                b["vertex_dimensions"],
+                b["protection_radii"],
+                b["protected_vertices"],
+                b["vertex_edge_witness_present"],
+                b["vertex_edge_witness_endpoints"],
+                b["vertex_edge_parameters"],
+                b["vertex_ids"],
+                b["cell_ids"],
+                b["facet_ids"],
+                b["facet_orientations"],
+                b["protected_facets"],
+                b["segment_ids"],
+                b["protected_segments"],
+                b["source_points"],
+                b["source_faces"],
                 face_group_rows,
                 face_id_bank,
-                source_face_tolerances,
-                source_segments,
+                b["source_face_tolerances"],
+                b["source_segments"],
                 segment_group_rows,
                 segment_id_bank,
-                source_segment_tolerances,
-                source_face_planes,
-                source_face_plane_tolerances,
-                witness_strata,
-                witness_entities,
-                witness_parameters,
-                witness_deviations,
+                b["source_segment_tolerances"],
+                b["source_face_planes"],
+                b["source_face_plane_tolerances"],
+                b["witness_strata"],
+                b["witness_entities"],
+                b["witness_parameters"],
+                b["witness_deviations"],
                 identity.generation,
                 identity.identity_bound,
                 identity.source_id,
@@ -10171,12 +10083,12 @@ class TetMesh3D:
                 identity.source_map_id,
                 identity.frame_id,
                 vertex_ancestry_offsets,
-                vertex_ancestor_ids,
-                vertex_ancestor_winding,
-                vertex_ancestry_weights,
+                b["vertex_ancestor_ids"],
+                b["vertex_ancestor_winding"],
+                b["vertex_ancestry_weights"],
                 cell_ancestry_offsets,
-                cell_ancestor_ids,
-                cell_ancestry_edit_kinds,
+                b["cell_ancestor_ids"],
+                b["cell_ancestry_edit_kinds"],
                 periodic_snapshot,
                 _tet_implicit_source_snapshot(self._library, self._live()),
             )
