@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Native prism layers `phx_mc_prism_layers` (`_meshcore.prism_layers`) grow
+  layers from a closed oriented triangle wall, one column per vertex, with
+  fitted normals and curvature-corrected columns at sharp edges; every prism
+  is certified valid by its nine exact Jacobian terms and the top layer is
+  certified not to self-intersect or meet the wall, with local thinning where
+  a certificate fails; the core is meshed by the fixed-boundary tetrahedral
+  pipeline. New benchmark rows `layers-sphere` / `layers-quadric` (ledger F9,
+  surface in, layers plus core out): 0.052 / 0.232 / 0.041 / 0.187 s against
+  Gmsh 0.315 s and cfMesh's layer step 1.85 / 0.463 / 1.14 s, with full
+  true-distance depth, no thinning and no inverted cells. `prepare_boundary_layers`
+  does not use it yet.
 - Native `LocalIncidence::split_boundary_edge` splits a boundary edge lying in
   two hull facets at a new vertex (the edge star's halves and the four facet
   halves with source and orientation kept), and `LocalIncidence::relocate`
