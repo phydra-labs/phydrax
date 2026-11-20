@@ -1950,9 +1950,18 @@ def _overset_quality(
     ):
         incomplete = 1
     kernel = _overset_kernel(case)
-    # Evidence for the row's explicit policy: the default policy (active
-    # donors only) on the same parts, untimed.
+    # Evidence for the row's explicit policy, untimed: the default policy
+    # (two fringe layers, active donors only) on the same parts.
     default = _overset_run(api._replace(policy=OversetPolicy()), prove=True)
+    # The row's fringe depth with the default donor rule (active donors only).
+    active_only = _overset_run(
+        api._replace(
+            policy=OversetPolicy(
+                fringe_layers=api.policy.fringe_layers, fringe_donors=False
+            )
+        ),
+        prove=True,
+    )
     measured = {
         "donor_contains_receptor_failures": float(failures),
         "linear_reproduction_max_abs_error": linear_error,
@@ -1979,6 +1988,7 @@ def _overset_quality(
         "policy_fringe_donors": float(api.policy.fringe_donors),
         "default_policy_orphans": float(default.orphan_count),
         "default_policy_ambiguous_cells": float(default.ambiguous_count),
+        "active_donor_only_orphans": float(active_only.orphan_count),
         "kernel_seconds": float(kernel.stats[7]),
         "fringe_donors": float(kernel.stats[14]),
         "shared_face_donors": float(kernel.stats[15]),
