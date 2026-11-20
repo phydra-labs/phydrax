@@ -47,9 +47,17 @@ namespace phx::mc::remesh {
 // One validated interval program over a single 3-d input box. The workspace
 // template carries the program's constant seeds; entries [0, 3) receive the
 // box and `outputs` name the workspace entries of the result components.
+// Not copyable or movable: require_continuity() keeps a pointer to the
+// evidence program, possibly this one.
 class IntervalBoxProgram {
  public:
-  // PHX_MC_OK, or the refusal status for an invalid program or extent.
+  IntervalBoxProgram() = default;
+  IntervalBoxProgram(const IntervalBoxProgram&) = delete;
+  IntervalBoxProgram& operator=(const IntervalBoxProgram&) = delete;
+  IntervalBoxProgram(IntervalBoxProgram&&) = delete;
+  IntervalBoxProgram& operator=(IntervalBoxProgram&&) = delete;
+  // PHX_MC_OK, or the refusal status for an invalid program or extent; any
+  // bound events and required continuity are cleared.
   int32_t bind(const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
                int64_t index_count, const double* parameters, int64_t parameter_count,
                const double* workspace_lower, const double* workspace_upper,

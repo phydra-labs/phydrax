@@ -85,6 +85,7 @@ int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instructio
                                  int64_t output_count, const int64_t* guards,
                                  int64_t guard_count) {
   program_.reset();
+  evidence_ = nullptr;
   if (instruction_count < 0 || index_count < 0 || parameter_count < 0 || workspace_size < 3 ||
       output_count < 1 || guard_count < 0 || (instruction_count > 0 && instructions == nullptr) ||
       (index_count > 0 && indices == nullptr) || (parameter_count > 0 && parameters == nullptr) ||
@@ -886,11 +887,11 @@ class ZeroSetCertifier final : public TriangleCertifier {
 
 // The distance bound a witness box proves for a carrier triangle (see
 // phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
-// f is continuous on the box by the value program's branch evidence, and two
-// box corners have value enclosures of strictly opposite sign, so a zero of
-// f lies on the segment between them, in the box; every point of the
-// triangle is then within the box diagonal (rounded up) of it. +inf when a
-// check fails.
+// `value`'s gated evaluation over the box succeeds (its branch evidence
+// reports f continuous there and no guard fails), and two box corners have
+// value enclosures of strictly opposite sign, so a zero of f lies on the
+// segment between them, in the box; every point of the triangle is then
+// within the box diagonal (rounded up) of it. +inf when a check fails.
 double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
                      const Point& upper, const IntervalBoxProgram& value) {
   for (int d = 0; d < 3; ++d) {
@@ -899,8 +900,8 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
-  bool smooth = false, continuous = false;
-  if (!value.flags(lower, upper, smooth, continuous) || !continuous) return kInfinity;
+  Interval whole{};
+  if (!value.checks_branches() || !value.evaluate(lower, upper, &whole)) return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};

@@ -1987,12 +1987,13 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * (lower xyz, upper xyz) that contains the triangle's three corners (exact
  * comparisons), on which f is proved continuous (`value`'s branch-evidence
  * events, value_events rows over value's own workspace, leave the box
- * `continuous`; phx_mc_interval_program_branches), and that has two corners
- * at which the interval enclosures of f have strictly opposite signs, so the
- * box holds a zero of f on the segment between them; such a triangle is
- * accepted at the box diagonal (rounded up). A carrier triangle whose box
- * fails a check is never accepted from the carrier; invalid events are
- * refused (PHX_MC_INVALID_INPUT).
+ * `continuous`; phx_mc_interval_program_branches) and no guard of `value`
+ * fails (its interval evaluation over the box succeeds), and that has two
+ * corners at which the interval enclosures of f have strictly opposite
+ * signs, so the box holds a zero of f on the segment between them; such a
+ * triangle is accepted at the box diagonal (rounded up). A carrier triangle
+ * whose box fails a check is never accepted from the carrier; invalid events
+ * are refused (PHX_MC_INVALID_INPUT).
  * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,

@@ -5315,14 +5315,19 @@ def zero_set_certify(
     box: ``carrier_boxes`` (one ``(2, 3)`` lower/upper box per carrier
     triangle) must contain the triangle's corners, be proved free of jumps
     by the branch-evidence events of ``value`` (``f`` lowered with them: the
-    same program gives the corner signs and every other proof) and have two
+    same program gives the corner signs and every other proof), pass the
+    guards of ``value`` over the whole box, and have two
     corners where the interval enclosures of ``f`` have strictly opposite
     signs, so the box holds a zero of ``f``; the triangle is then accepted at
     the box diagonal, and a box failing a check accepts nothing. Every
     certified triangle is also nondegenerate with only legal exact contacts
     with nearby triangles. Refused triangles are repaired: the longest edge
     of each is split at its midpoint projected onto ``{f = 0}`` and only what
-    changed is certified again, for at most four rounds. Every enclosure of
+    changed is certified again, for at most four rounds. Once a repair is
+    needed, every triangle decided in a round must also be proved within
+    ``0.8 * tolerance``; one proved only within ``tolerance`` is repaired as
+    well (not refused), so the zero set near repaired triangles leaves the
+    reverse direction room. Every enclosure of
     ``f`` or ``grad f`` that a triangle, tube or witness proof reads is over a
     box on which ``value``'s branch evidence reports ``f`` continuous (else
     that proof refuses), and transversality also requires ``f`` smooth there;

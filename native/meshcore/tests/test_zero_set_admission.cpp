@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <random>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -950,16 +951,11 @@ void remesh_jittered_carrier() {
   PHX_CHECK(distance <= tolerance);
 }
 
-// MAC's counterexample to a cover without guards (review of 1e334aaf0, F1):
 // f = (p - 1)(2 - p) with p = m^0.5 by the real power (opcode 27) and m = x x
-// + y y + z z by products, guarded on the power's domain flag. A box whose m
-// enclosure reaches below 0 has the flag's lower end at -1 and a placeholder
-// p; ignoring the guard dropped every box straddling a coordinate plane,
-// down to the whole domain. Its zeros include the sphere of radius 2, about 1
-// from an octasphere on the unit sphere: the certificate refuses from the
-// cover (the gradient here is only a direction, which the cover does not
-// read).
-void cover_keeps_guarded_boxes() {
+// + y y + z z by products, guarded on the power's domain flag (no branch
+// events: continuous by the caller's assertion). A box whose m enclosure
+// reaches below 0 has the flag's lower end at -1 and a placeholder p.
+Program guarded_root() {
   constexpr int64_t kPower = 27;
   Program root = seeded({1.0, 2.0, 0.5}, 15);
   root.row(kMultiply, 6, 3, 0, -1, 0, -1, 0);
@@ -970,6 +966,17 @@ void cover_keeps_guarded_boxes() {
   root.row(kMultiply, 14, 1, 12, -1, 13, -1, 0);
   root.outputs = {14};
   root.guards = {11};
+  return root;
+}
+
+// MAC's counterexample to a cover without guards (review of 1e334aaf0, F1):
+// ignoring the guard dropped every box straddling a coordinate plane, down to
+// the whole domain. The zeros of guarded_root include the sphere of radius 2,
+// about 1 from an octasphere on the unit sphere: the certificate refuses from
+// the cover (the gradient here is only a direction, which the cover does not
+// read).
+void cover_keeps_guarded_boxes() {
+  const Program root = guarded_root();
   const Program gradient = sphere_gradient();
   const Surface surface = jittered_octasphere(4, 0.0, 1);
   double distance = -1;
@@ -980,6 +987,44 @@ void cover_keeps_guarded_boxes() {
               static_cast<long long>(failures[7]), static_cast<long long>(failures[8]));
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
   PHX_CHECK(failures[7] != 0 && failures[8] == 0);
+}
+
+// A witness box must pass the gated evaluation (review of c44caf2db): a small
+// sphere of radius 0.3 (far from every zero, so every triangle fails its
+// proof) as its own carrier, with boxes widened by 1.0 so that each holds the
+// origin (the guard fails there) and has corners on both sides of the
+// sphere of radius 2 (opposite signs). Without the guard check each triangle
+// was accepted from the carrier; now none is.
+void witness_respects_guards() {
+  const Program root = guarded_root();
+  const Program gradient = sphere_gradient();
+  Surface small = jittered_octasphere(2, 0.0, 1);
+  for (double& x : small.vertices) x *= 0.3;
+  double distance = -1;
+  Failures failures{};
+  const int32_t status = certify(small.vertices, small.triangles, root, gradient, 0.01, 1,
+                                 distance, failures, &small, 1.0);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[1] > 0 && failures[3] == 0);
+}
+
+// Rebinding a program clears its required continuity (review of c44caf2db):
+// with the pointer left set, a rebind would have read "continuous
+// everywhere" from events it no longer holds. The program is neither copied
+// nor moved, so the pointer cannot dangle or alias a copy.
+static_assert(!std::is_copy_constructible_v<IntervalBoxProgram> &&
+              !std::is_move_constructible_v<IntervalBoxProgram> &&
+              !std::is_copy_assignable_v<IntervalBoxProgram> &&
+              !std::is_move_assignable_v<IntervalBoxProgram>);
+void rebinding_clears_continuity() {
+  const Program value = sphere_value();
+  IntervalBoxProgram program;
+  PHX_CHECK(value.bind(program));
+  PHX_CHECK(program.bind_events(nullptr, 0) == PHX_MC_OK);
+  program.require_continuity(&program);
+  PHX_CHECK(program.checks_branches());
+  PHX_CHECK(value.bind(program));
+  PHX_CHECK(!program.checks_branches());
 }
 
 
@@ -1520,6 +1565,7 @@ void box_reach_bounds_distance() {
 
 int main() {
   sphere_cases();
+  rebinding_clears_continuity();
   torus_cases();
   near_band_distance_cases();
   cover_keeps_guarded_boxes();
@@ -1527,6 +1573,7 @@ int main() {
   remesh_sphere_carrier();
   certify_refusals();
   witness_needs_continuity();
+  witness_respects_guards();
   certify_repairs_locally();
   remesh_jittered_carrier();
   remesh_coarsening_absorbs_rosette();
