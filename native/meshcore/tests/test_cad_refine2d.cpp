@@ -706,6 +706,45 @@ void proximity_circumcenter() {
     PHX_CHECK(corner);
   }
 }
+// A square of side 2.3395222442394368 sampled six times per side with three
+// interior input points under the unit metric (found by a seeded search over
+// such squares): one bad triangle's frontal point lies within half a unit of
+// a vertex and its circumcenter is admissible. A constant metric makes the
+// centroid and side-integrated sizes agree, so the oversize stands.
+void proximity_circumcenter_constant() {
+  const double side=2.3395222442394368;
+  std::vector<double> points;
+  const double corners[4][2]={{0,0},{side,0},{side,side},{0,side}};
+  for(int c=0;c<4;++c) for(int i=0;i<6;++i) {
+    const double s=i/6.0;
+    points.push_back(corners[c][0]+s*(corners[(c+1)%4][0]-corners[c][0]));
+    points.push_back(corners[c][1]+s*(corners[(c+1)%4][1]-corners[c][1]));
+  }
+  std::vector<int32_t> segments;
+  for(int32_t i=0;i<24;++i) { segments.push_back(i); segments.push_back((i+1)%24); }
+  for(const double p : {0.63544211862839461,0.56492764420556585,1.4431496178781262,
+                        1.3772253578299756,1.5771264991118243,1.0188955295188946})
+    points.push_back(p);
+  CadMetric2D unit{1,0,1};
+  CadRefine2DInput in;
+  in.points=points.data(); in.point_count=static_cast<int32_t>(points.size()/2);
+  in.segments=segments.data(); in.segment_count=static_cast<int32_t>(segments.size()/2);
+  in.metric=constant; in.metric_context=&unit; in.point_cap=10000;
+  CadRefine2DResult r;
+  const int32_t status=cad_refine2d(in,r);
+  std::printf("proximity-circumcenter-constant status=%d refusals=%lld/%lld/%lld/%lld relocations=%lld/%lld/%lld insertions=%lld\n",
+      status,static_cast<long long>(r.stats.encroachment_refusals),
+      static_cast<long long>(r.stats.outside_refusals),static_cast<long long>(r.stats.proximity_refusals),
+      static_cast<long long>(r.stats.nonstar_refusals),static_cast<long long>(r.stats.relocations_tried),
+      static_cast<long long>(r.stats.relocations_accepted),static_cast<long long>(r.stats.relocations_failed),
+      static_cast<long long>(r.stats.insertions));
+  // Fault caught: refusing a too-close frontal point without trying the
+  // circumcenter (measured with that fallback removed: relocations 6/0/6,
+  // six proximity refusals).
+  PHX_CHECK(r.stats.encroachment_refusals==0 && r.stats.proximity_refusals==5);
+  PHX_CHECK(r.stats.relocations_tried==6 && r.stats.relocations_accepted==1 &&
+            r.stats.relocations_failed==5);
+}
 
 }  // namespace
 
@@ -716,6 +755,7 @@ int main() {
   metric_errors();
   long_fixed_segment();
   proximity_circumcenter();
+  proximity_circumcenter_constant();
   hole_and_small_angle();
   varying_metric();
   adversarial_metrics();
