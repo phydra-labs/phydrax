@@ -191,6 +191,10 @@ class Triangulation2D {
     region.reserve(reserve);
     live.reserve(reserve);
     marks_.reserve(reserve);
+    // Room for the cavities of typical insertions (grown when exceeded).
+    stack_.resize(std::max<std::size_t>(stack_.size(), 64));
+    cavity_.resize(std::max<std::size_t>(cavity_.size(), 64));
+    boundary_.resize(std::max<std::size_t>(boundary_.size(), 128));
   }
 
   // Appends a vertex (constructed Steiner point); returns its index.

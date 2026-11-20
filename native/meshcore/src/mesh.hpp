@@ -327,20 +327,21 @@ inline void canonicalize_triangles(phx_mc_mesh& mesh) {
   for (std::size_t k = 0; k < 3 * count; ++k) largest = std::max(largest, cells[k]);
   // Group bounds fit 32 bits: there are at most 2 kMaxMeshPoints triangles.
   std::vector<std::uint32_t> offsets(static_cast<std::size_t>(largest) + 2, 0);
+  // The rotation that brings the smallest of three distinct values first,
+  // by selects on loaded values (its place in a cell is unpredictable).
+  const auto rotate = [](int32_t* v, bool second, bool third) {
+    const int32_t a = v[0], b = v[1], c = v[2];
+    v[0] = second ? b : third ? c : a;
+    v[1] = second ? c : third ? a : b;
+    v[2] = second ? a : third ? b : c;
+  };
   for (std::size_t cell = 0; cell < count; ++cell) {
     int32_t* v = cells + 3 * cell;
-    // The position of the smallest of three distinct values, by selects.
-    const int first = v[1] < v[0] ? (v[2] < v[1] ? 2 : 1) : (v[2] < v[0] ? 2 : 0);
-    const int second = first == 2 ? 0 : first + 1;
-    const int third = second == 2 ? 0 : second + 1;
-    const int32_t rotated[3] = {v[first], v[second], v[third]};
-    std::copy_n(rotated, 3, v);
-    if (has_segments) {
-      int32_t* s = segments + 3 * cell;
-      const int32_t moved[3] = {s[first], s[second], s[third]};
-      std::copy_n(moved, 3, s);
-    }
-    ++offsets[static_cast<std::size_t>(rotated[0]) + 1];
+    const bool second = (v[1] < v[0]) & (v[1] < v[2]);
+    const bool third = (v[2] < v[0]) & (v[2] < v[1]);
+    rotate(v, second, third);
+    if (has_segments) rotate(segments + 3 * cell, second, third);
+    ++offsets[static_cast<std::size_t>(v[0]) + 1];
   }
   std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
   std::vector<std::uint32_t> order(count);
@@ -353,11 +354,10 @@ inline void canonicalize_triangles(phx_mc_mesh& mesh) {
            static_cast<std::uint32_t>(v[2]);
   };
   constexpr std::size_t kInsertionGroup = 32;
+  // offsets[v] now ends the group of first vertex v.
   std::size_t begin = 0;
-  while (begin < count) {
-    const int32_t lead = cells[3 * static_cast<std::size_t>(order[begin])];
-    std::size_t end = begin + 1;
-    while (end < count && cells[3 * static_cast<std::size_t>(order[end])] == lead) ++end;
+  for (std::size_t vertex = 0; vertex <= static_cast<std::size_t>(largest); ++vertex) {
+    const std::size_t end = offsets[vertex];
     if (end - begin > kInsertionGroup) {
       std::sort(order.begin() + static_cast<std::ptrdiff_t>(begin),
                 order.begin() + static_cast<std::ptrdiff_t>(end),
