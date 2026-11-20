@@ -2646,7 +2646,7 @@ def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> No
     # the zero set beyond the tolerance. One repair into 0.8 of the tolerance
     # gives the reverse proof room, so both directions certify.
     value, gradient, branches = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(5)
+    vertices, faces = icosphere(5)
     edge = math.sqrt(16.0 * math.pi / (math.sqrt(3.0) * 1000.0))
     built = edge * edge / 4.0
     remeshed = zero_set_remesh(vertices, faces, value, built, built, edge, 30.0)
