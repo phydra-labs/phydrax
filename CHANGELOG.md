@@ -400,6 +400,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Planar Ruppert refinement ranks bad triangles in exact badness buckets with
+  Triangle-style FIFO order inside a bucket, reuses split and flipped slots in
+  place, writes cells directly in canonical order, sorts few spatial keys with
+  a stable comparison sort, and Python reads native meshes through one fused
+  copy (`phx_mc_mesh_shape`, `phx_mc_mesh_copy_all`). Declared output change:
+  the ring 1e3 and 1e4 refinement rows (1,782 -> 1,758 and 10,170 -> 10,168
+  cells, minimum angle 20.079 -> 20.112 and 23.877 degrees; guarantees
+  unchanged); every other planar output is identical.
 - Fixed-boundary tetrahedral refinement with a size field (CAD volumes,
   surface to tetrahedra) first fills the interior with the body-centered cubic
   lattice whose cells meet the circumradius bound (cube edge 4 * 0.98 * h /
