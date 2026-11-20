@@ -13,6 +13,7 @@
 #include "directed_interval.hpp"
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
+#include "predicates.hpp"
 
 namespace phx::mc::cad {
 namespace {
@@ -33,6 +34,27 @@ void chart_point(const Vertex& vertex, const double* uv, di::Interval* point) {
     for (int i = 0; i < 3; ++i)
       point[axis] = di::add(point[axis], di::multiply(di::point(vertex.weight[i]),
                                                      di::point(uv[2 * i + axis])));
+  }
+}
+
+// chart_point, but a point interval when every product and sum is exact in
+// binary64 (checked with error-free transformations), as for the original
+// vertices and most dyadic midpoints.
+void exact_chart_point(const Vertex& vertex, const double* uv, di::Interval* point) {
+  chart_point(vertex, uv, point);
+  for (int axis = 0; axis < 2; ++axis) {
+    double sum = 0.0;
+    bool exact = true;
+    for (int i = 0; i < 3 && exact; ++i) {
+      const double product = vertex.weight[i] * uv[2 * i + axis];
+      const double next = sum + product;
+      // Knuth's TwoSum: the rounding error of sum + product.
+      const double bv = next - sum, av = next - bv;
+      exact = std::fma(vertex.weight[i], uv[2 * i + axis], -product) == 0.0 &&
+              (sum - av) + (product - bv) == 0.0;
+      sum = next;
+    }
+    if (exact && std::isfinite(sum)) point[axis] = di::point(sum);
   }
 }
 
@@ -111,11 +133,263 @@ int spline_regularity(const CadGeometry& geometry, int32_t index, const double* 
   }
 }
 
+// A C0 (not C1) knot line {uv[axis] = knot} of a spline surface chart.
+struct KnotLine { int axis; double knot; };
+constexpr int kMaxKnotLines = 8;
+constexpr int kMaxPieces = 32;
+constexpr int kMaxPieceVertices = 8;
+// A clip point whose enclosure is wider than this fraction of its edge's
+// length (an edge nearly parallel to the knot line) makes the leaf take the
+// first-order bound instead.
+constexpr double kClipConditioning = 0x1p-20;
+
+// Appends the C0 knot lines strictly inside the leaf box, in chart axes.
+// False when the chart's knot lines cannot be located exactly (a knot that is
+// not a point, a child in another parameter, too many lines): the caller then
+// takes the first-order bound.
+bool c0_knot_lines(const CadGeometry& geometry, int32_t index, int curve_axis,
+                   const double* box_lower, const double* box_upper,
+                   const IntervalEvaluationWorkspace& workspace, KnotLine* lines, int& count) {
+  const Node& node = geometry.node(index);
+  const auto child = [&](int slot, int axis) {
+    return c0_knot_lines(geometry, static_cast<int32_t>(node.integers[slot]), axis, box_lower,
+                         box_upper, workspace, lines, count);
+  };
+  const auto knots = [&](const double* lo, const double* hi, int degree, int n, int axis) {
+    for (int k = degree + 1; k < n; ++k) {
+      if (lo[k] == lo[k - 1] && hi[k] == hi[k - 1]) continue;
+      if (box_upper[axis] < lo[k] || box_lower[axis] > hi[k]) continue;
+      int multiplicity = 1;
+      for (int j = k + 1; j < n + degree + 1 && lo[j] <= hi[k]; ++j) ++multiplicity;
+      if (multiplicity < degree) continue;
+      if (multiplicity > degree || lo[k] != hi[k]) return false;
+      // A line on the box boundary leaves the leaf on one side.
+      if (!(box_lower[axis] < lo[k] && lo[k] < box_upper[axis])) continue;
+      if (count == kMaxKnotLines) return false;
+      lines[count++] = {axis, lo[k]};
+    }
+    return true;
+  };
+  const int64_t offset = geometry.model().node_real_offsets[index];
+  const double* lo = workspace.coefficient_lower + offset;
+  const double* hi = workspace.coefficient_upper + offset;
+  switch (node.kind) {
+    case PHX_MC_CAD_NODE_BSPLINE_SURFACE: {
+      const int p = static_cast<int>(node.integers[0]), q = static_cast<int>(node.integers[1]);
+      const int nu = static_cast<int>(node.integers[2]), nv = static_cast<int>(node.integers[3]);
+      return knots(lo, hi, p, nu, 0) && knots(lo + nu + p + 1, hi + nu + p + 1, q, nv, 1);
+    }
+    case PHX_MC_CAD_NODE_BSPLINE_CURVE:
+      return curve_axis >= 0 &&
+             knots(lo, hi, static_cast<int>(node.integers[0]),
+                   static_cast<int>(node.integers[1]), curve_axis);
+    case PHX_MC_CAD_NODE_AFFINE:
+      return child(0, curve_axis);
+    case PHX_MC_CAD_NODE_EXTRUSION:
+      return child(0, 0);
+    case PHX_MC_CAD_NODE_REVOLUTION:
+      return child(0, 1);
+    case PHX_MC_CAD_NODE_RULED:
+      return child(0, 0) && child(1, 0);
+    case PHX_MC_CAD_NODE_OFFSET_SURFACE:
+    case PHX_MC_CAD_NODE_OFFSET_CURVE:
+    case PHX_MC_CAD_NODE_REPARAMETERIZED:
+    case PHX_MC_CAD_NODE_ISOPARAMETRIC:
+    case PHX_MC_CAD_NODE_SURFACE_MAPPED:
+    case PHX_MC_CAD_NODE_INTERSECTION:
+      return false;
+    default:
+      return true;
+  }
+}
+
+// A polygon vertex: outward enclosures of its exact barycentric coordinates
+// in the original triangle T and of its exact chart point.
+struct ClipVertex { di::Interval weight[3]; di::Interval uv[2]; };
+struct Piece { ClipVertex vertex[kMaxPieceVertices]; int size; };
+
+// Directed quotient for a denominator of strict sign.
+di::Interval divide(const di::Interval& a, const di::Interval& b) {
+  const double q[4] = {a.lower / b.lower, a.lower / b.upper, a.upper / b.lower,
+                       a.upper / b.upper};
+  return {geometry::next_down(di::least(q[0], q[1], q[2], q[3])),
+          geometry::next_up(di::greatest(q[0], q[1], q[2], q[3]))};
+}
+
+// -1 / +1: the exact point is strictly below / above the line; 0: it is on
+// the line exactly; 2: undecided.
+int line_side(const ClipVertex& vertex, const KnotLine& line) {
+  const di::Interval& value = vertex.uv[line.axis];
+  if (value.upper < line.knot) return -1;
+  if (value.lower > line.knot) return 1;
+  return value.lower == line.knot && value.upper == line.knot ? 0 : 2;
+}
+
+// Splits a convex polygon by one line into its two closed halves (exact
+// Sutherland-Hodgman with enclosed crossing points). False: undecided side,
+// an edge on the line, an ill-conditioned crossing, or capacity.
+bool split_piece(const Piece& piece, const KnotLine& line, Piece& below, Piece& above) {
+  below.size = above.size = 0;
+  const auto push = [](Piece& target, const ClipVertex& vertex) {
+    if (target.size == kMaxPieceVertices) return false;
+    target.vertex[target.size++] = vertex;
+    return true;
+  };
+  const int other = 1 - line.axis;
+  for (int i = 0; i < piece.size; ++i) {
+    const ClipVertex& p = piece.vertex[i];
+    const ClipVertex& q = piece.vertex[(i + 1) % piece.size];
+    const int sp = line_side(p, line), sq = line_side(q, line);
+    if (sp == 2 || sq == 2 || (sp == 0 && sq == 0)) return false;
+    if ((sp <= 0 && !push(below, p)) || (sp >= 0 && !push(above, p))) return false;
+    if (sp * sq >= 0) continue;
+    // c = p + s (q - p), s = (k - p_a) / (q_a - p_a); the denominator has
+    // the strict sign of sq because the sides are strictly opposite.
+    const auto denominator = di::subtract(q.uv[line.axis], p.uv[line.axis]);
+    if (!(denominator.lower > 0.0 || denominator.upper < 0.0)) return false;
+    const auto s = divide(di::subtract(di::point(line.knot), p.uv[line.axis]), denominator);
+    ClipVertex c{};
+    for (int w = 0; w < 3; ++w)
+      c.weight[w] = di::add(p.weight[w], di::multiply(s, di::subtract(q.weight[w], p.weight[w])));
+    c.uv[line.axis] = di::point(line.knot);
+    c.uv[other] = di::add(p.uv[other], di::multiply(s, di::subtract(q.uv[other], p.uv[other])));
+    // With point endpoints, a rounded crossing that the exact orientation
+    // test puts on the segment's line is the exact crossing (its axis
+    // coordinate is the knot), e.g. where an edge meets two knot lines.
+    if (p.uv[0].lower == p.uv[0].upper && p.uv[1].lower == p.uv[1].upper &&
+        q.uv[0].lower == q.uv[0].upper && q.uv[1].lower == q.uv[1].upper) {
+      const double a[2] = {p.uv[0].lower, p.uv[1].lower}, b[2] = {q.uv[0].lower, q.uv[1].lower};
+      double candidate[2];
+      candidate[line.axis] = line.knot;
+      candidate[other] = a[other] + (line.knot - a[line.axis]) * (b[other] - a[other]) /
+                                        (b[line.axis] - a[line.axis]);
+      if (std::isfinite(candidate[other]) && phx::mc::orient2d(a, b, candidate) == 0)
+        c.uv[other] = di::point(candidate[other]);
+    }
+    const double length =
+        std::hypot(0.5 * (q.uv[0].lower + q.uv[0].upper) - 0.5 * (p.uv[0].lower + p.uv[0].upper),
+                   0.5 * (q.uv[1].lower + q.uv[1].upper) - 0.5 * (p.uv[1].lower + p.uv[1].upper));
+    if (!di::finite(c.uv[other]) ||
+        !(c.uv[other].upper - c.uv[other].lower <= kClipConditioning * length))
+      return false;
+    if (!push(below, c) || !push(above, c)) return false;
+  }
+  return below.size >= 3 && above.size >= 3;
+}
+
+// Piecewise rule at C0 knot lines (Python's _spline_piecewise_interpolation_bound).
+// The exact leaf polygon is split by every C0 line strictly inside its box;
+// clipping a convex polygon by the two closed half-planes of a line gives two
+// convex polygons whose union is the polygon, so the exact pieces cover the
+// leaf, and each lies in one closed knot cell where S is one smooth span
+// piece. A fan triangle t of a piece has exact vertices inside the stored
+// enclosures; on t, S - I_T S = (S - I_t S) + (I_t S - I_T S). The first term
+// is bounded by the Hessian over the hull of t's vertex enclosures (it
+// contains t; any span polynomial the hull touches is enclosed too); the
+// second is affine and maximal at an exact vertex x of t, where it is
+// |S(x) - sum_i w_i(x) X_i| evaluated over the enclosures of x and w(x).
+// Returns false to request the first-order fallback.
+bool clipped_leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
+                        const double* vertices, const double* uv, const double* box_lower,
+                        const double* box_upper, IntervalEvaluationWorkspace& workspace,
+                        int32_t& status, double& upper) {
+  KnotLine lines[kMaxKnotLines];
+  int line_count = 0;
+  if (!c0_knot_lines(geometry, node, -1, box_lower, box_upper, workspace, lines, line_count))
+    return false;
+  Piece pieces[kMaxPieces];
+  int piece_count = 1;
+  pieces[0].size = 3;
+  for (int i = 0; i < 3; ++i) {
+    ClipVertex& vertex = pieces[0].vertex[i];
+    for (int w = 0; w < 3; ++w) vertex.weight[w] = di::point(leaf.vertices[i].weight[w]);
+    exact_chart_point(leaf.vertices[i], uv, vertex.uv);
+  }
+  for (int l = 0; l < line_count; ++l) {
+    const int existing = piece_count;
+    for (int i = 0; i < existing; ++i) {
+      int sides = 0;
+      for (int j = 0; j < pieces[i].size; ++j) {
+        const int side = line_side(pieces[i].vertex[j], lines[l]);
+        if (side == 2) return false;
+        sides |= side < 0 ? 1 : side > 0 ? 2 : 0;
+      }
+      if (sides != 3) continue;
+      if (piece_count == kMaxPieces) return false;
+      Piece below, above;
+      if (!split_piece(pieces[i], lines[l], below, above)) return false;
+      pieces[i] = below;
+      pieces[piece_count++] = above;
+    }
+  }
+  const auto vertex_error = [&](const ClipVertex& vertex, double& error) {
+    const double lo[2] = {vertex.uv[0].lower, vertex.uv[1].lower};
+    const double hi[2] = {vertex.uv[0].upper, vertex.uv[1].upper};
+    double surface_lower[3], surface_upper[3];
+    status = geometry.interval_jets(node, lo, hi, 0, surface_lower, surface_upper, workspace);
+    if (status != PHX_MC_OK) return false;
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      auto linear = di::point(0.0);
+      for (int i = 0; i < 3; ++i)
+        linear = di::add(linear, di::multiply(vertex.weight[i], di::point(vertices[3 * i + axis])));
+      const auto difference = di::subtract({surface_lower[axis], surface_upper[axis]}, linear);
+      if (!di::finite(difference)) { status = PHX_MC_UNRESOLVED; return false; }
+      magnitude[axis] = di::magnitude(difference);
+    }
+    error = phx::mc::geometry::norm_upper(magnitude);
+    return true;
+  };
+  double maximum = 0.0;
+  status = PHX_MC_OK;
+  for (int p = 0; p < piece_count; ++p) {
+    const Piece& piece = pieces[p];
+    double errors[kMaxPieceVertices];
+    for (int j = 0; j < piece.size; ++j)
+      if (!vertex_error(piece.vertex[j], errors[j])) return true;
+    for (int j = 1; j + 1 < piece.size; ++j) {
+      const ClipVertex* fan[3] = {&piece.vertex[0], &piece.vertex[j], &piece.vertex[j + 1]};
+      double lo[2], hi[2];
+      for (int axis = 0; axis < 2; ++axis) {
+        lo[axis] = std::min({fan[0]->uv[axis].lower, fan[1]->uv[axis].lower,
+                             fan[2]->uv[axis].lower});
+        hi[axis] = std::max({fan[0]->uv[axis].upper, fan[1]->uv[axis].upper,
+                             fan[2]->uv[axis].upper});
+      }
+      double jet_lower[18], jet_upper[18];
+      status = geometry.interval_jets(node, lo, hi, 2, jet_lower, jet_upper, workspace);
+      if (status != PHX_MC_OK) return true;
+      const auto du = di::subtract(di::point(hi[0]), di::point(lo[0]));
+      const auto dv = di::subtract(di::point(hi[1]), di::point(lo[1]));
+      double magnitude[3];
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto huu = di::point(di::magnitude({jet_lower[9 + axis], jet_upper[9 + axis]}));
+        const auto huv = di::point(di::magnitude({jet_lower[12 + axis], jet_upper[12 + axis]}));
+        const auto hvv = di::point(di::magnitude({jet_lower[15 + axis], jet_upper[15 + axis]}));
+        auto sum = di::multiply(huu, di::multiply(du, du));
+        const auto mixed = di::multiply(huv, di::multiply(du, dv));
+        sum = di::add(sum, di::add(mixed, mixed));
+        sum = di::add(sum, di::multiply(hvv, di::multiply(dv, dv)));
+        magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
+      }
+      const double vertex_term = std::max({errors[0], errors[j], errors[j + 1]});
+      maximum = std::max(maximum, di::add(di::point(vertex_term),
+                                          di::point(phx::mc::geometry::norm_upper(magnitude)))
+                                      .upper);
+    }
+  }
+  upper = maximum;
+  if (!std::isfinite(upper)) status = PHX_MC_UNRESOLVED;
+  return true;
+}
+
 // For each subdivision leaf L of the original triangle T,
 // S - I_T = (S - I_L) + (I_L - I_T). On a C1 piece, the first term
-// uses the leaf Hessian. Across a continuous spline knot with a possible
-// tangent jump, use |S(x)-I_L S(x)| <= sum_i lambda_i |S(x)-S(v_i)|
-// and bound each difference by the interval Jacobian over the leaf box.
+// uses the leaf Hessian. A leaf meeting a continuous spline knot with a
+// possible tangent jump takes the piecewise rule of clipped_leaf_bound; when
+// that cannot locate or clip its lines soundly, use
+// |S(x)-I_L S(x)| <= sum_i lambda_i |S(x)-S(v_i)| and bound each difference
+// by the interval Jacobian over the leaf box.
 // The second term is affine and maximized at a leaf vertex, including the
 // mismatch against the stored original triangle. A possible discontinuity
 // is refused: neither the Hessian nor the Jacobian implies a Lipschitz bound.
@@ -155,6 +429,12 @@ int32_t leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& leaf,
   }
   const int regularity = spline_regularity(geometry, node, box_lower, box_upper, workspace);
   if (regularity == 2) return PHX_MC_UNRESOLVED;
+  if (regularity == 1) {
+    int32_t status = PHX_MC_OK;
+    if (clipped_leaf_bound(geometry, node, leaf, vertices, uv, box_lower, box_upper, workspace,
+                           status, upper))
+      return status;
+  }
   double lower[18], higher[18];
   const int32_t status = geometry.interval_jets(node, box_lower, box_upper,
                                                  regularity == 1 ? 1 : 2,

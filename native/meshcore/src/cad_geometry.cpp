@@ -276,8 +276,18 @@ int32_t spline_interval_jets(bool surface, const int64_t* ints, const double* lo
       // Positive B-spline basis functions form a partition of unity.
       denominator[0].lower = std::max(denominator[0].lower, min_weight);
       denominator[0].upper = std::min(denominator[0].upper, max_weight);
+      // Equal point weights w on the span: W = w exactly and every derivative
+      // of W vanishes (partition of unity), so S = numerator / w with no
+      // quotient-rule dependency loss.
+      const bool uniform = min_weight == max_weight;
       SplineInterval result[6][3]{};
       for (int c = 0; c < dim; ++c) {
+        if (uniform) {
+          for (int t = 0; t < terms; ++t)
+            if (!spline_divide(numerator[t][c], point(min_weight), result[t][c]))
+              return PHX_MC_UNRESOLVED;
+          continue;
+        }
         if (!spline_divide(numerator[0][c], denominator[0], result[0][c]))
           return PHX_MC_UNRESOLVED;
         for (int t = 1; t < terms; ++t) {

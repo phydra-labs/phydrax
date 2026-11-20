@@ -539,6 +539,176 @@ def test_python_spline_kink_requires_nonzero_interpolation_bound() -> None:
     assert bound is not None and bound >= 1
 
 
+def _degree_one_surface(u_height: float, v_height: float) -> BSplineSurfacePatch:
+    """Degree-1 tents in u and v; u = 1/2 and v = 1/2 are C0 knot lines."""
+    knots = np.asarray((0, 0, 0.5, 1, 1), dtype=np.float64)
+    controls = np.asarray(
+        [[(0.5 * i, 0.5 * j, u_height * (i == 1) + v_height * (j == 1)) for j in range(3)]
+         for i in range(3)],
+        dtype=np.float64,
+    )
+    return BSplineSurfacePatch(controls, np.ones((3, 3), dtype=np.float64), knots, knots, 1, 1)
+
+
+def _tent_values(uv: np.ndarray, u_height: float, v_height: float) -> np.ndarray:
+    """Independent closed form of `_degree_one_surface`."""
+    u, v = uv[..., 0], uv[..., 1]
+    z = u_height * (1 - np.abs(2 * u - 1)) + v_height * (1 - np.abs(2 * v - 1))
+    return np.stack((u, v, z), axis=-1)
+
+
+def _square_mesh(
+    domain: MeshingDomain, uv_points: np.ndarray, triangles: list[tuple[int, int, int]],
+    points: np.ndarray,
+) -> tuple[CadFidelityMesh, CadFidelityChords]:
+    """A triangulation of the unit square chart with its boundary chords."""
+    cells = np.asarray(triangles, dtype=np.int64)
+    owners: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for row, cell in enumerate(triangles):
+        for edge in range(3):
+            a, b = cell[edge], cell[(edge + 1) % 3]
+            owners.setdefault((min(a, b), max(a, b)), []).append((row, edge))
+    edge_rows = np.full((len(triangles), 3), -1, dtype=np.int64)
+    chord_use: list[int] = []
+    chord_uv: list[np.ndarray] = []
+    chord_range: list[tuple[float, float]] = []
+    for occurrences in owners.values():
+        if len(occurrences) != 1:
+            continue
+        row, edge = occurrences[0]
+        start = uv_points[triangles[row][edge]]
+        end = uv_points[triangles[row][(edge + 1) % 3]]
+        if start[1] == end[1] == 0:
+            use, first, last = 0, start[0], end[0]
+        elif start[0] == end[0] == 1:
+            use, first, last = 1, start[1], end[1]
+        elif start[1] == end[1] == 1:
+            use, first, last = 2, 1.0 - start[0], 1.0 - end[0]
+        else:
+            use, first, last = 3, 1.0 - start[1], 1.0 - end[1]
+        edge_rows[row, edge] = len(chord_use)
+        chord_use.append(use)
+        chord_uv.append(np.stack((start, end)))
+        chord_range.append((float(first), float(last)))
+    mesh = CadFidelityMesh(
+        points, cells, np.zeros(len(cells), dtype=np.int32), uv_points[cells], cells,
+        np.arange(len(cells), dtype=np.int64), edge_rows,
+    )
+    bundle = cad_geometry_bundle(domain)
+    use_patch = np.repeat(
+        np.arange(bundle.model.surface_nodes.size, dtype=np.int64),
+        np.diff(bundle.model.loop_use_offsets),
+    )
+    chords = CadFidelityChords(
+        use_patch, bundle.model.use_ranges, bundle.model.loop_surfaces.size,
+        np.asarray(chord_use, dtype=np.int64), np.zeros(len(chord_use), dtype=np.int64),
+        np.asarray(chord_uv, dtype=np.float64), np.asarray(chord_range, dtype=np.float64),
+    )
+    return mesh, chords
+
+
+def _dense_distance(mesh: CadFidelityMesh, row: int, u_height: float, v_height: float) -> float:
+    """Sampled distance, including the triangle's crossings of the knot lines."""
+    steps = 64
+    weights = [
+        (1 - (i + j) / steps, i / steps, j / steps)
+        for i in range(steps + 1) for j in range(steps + 1 - i)
+    ]
+    uv = mesh.uv[row]
+    for a in range(3):
+        p, q = uv[a], uv[(a + 1) % 3]
+        for axis in range(2):
+            if (p[axis] - 0.5) * (q[axis] - 0.5) < 0:
+                s = (0.5 - p[axis]) / (q[axis] - p[axis])
+                weight = [0.0, 0.0, 0.0]
+                weight[a], weight[(a + 1) % 3] = 1 - s, s
+                weights.append(tuple(weight))
+    barycentric = np.asarray(weights, dtype=np.float64)
+    exact = _tent_values(barycentric @ uv, u_height, v_height)
+    linear = barycentric @ mesh.points[mesh.triangles[row]]
+    return float(np.max(np.linalg.norm(exact - linear, axis=1)))
+
+
+def test_folded_degree_one_spline_uses_clipped_pieces() -> None:
+    """The folded degree-1 spline: clipped pieces give the exact distance 0.01.
+
+    Fault caught: bounding the leaf Hessian across the fold (zero) or the
+    first-order fallback (about 0.5 here) instead of the clipped pieces.
+    """
+    height = 0.01
+    domain = _surface_domain(_degree_one_surface(height, 0.0))
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    uv_points = np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64)
+    mesh, chords = _square_mesh(
+        domain, uv_points, [(0, 1, 2), (0, 2, 3)], _tent_values(uv_points, height, 0.0)
+    )
+    result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 0)
+    assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
+    for row in range(2):
+        assert _dense_distance(mesh, row, height, 0.0) == pytest.approx(height, rel=1e-12)
+        assert height <= result.upper[row] <= height * (1 + 1e-9)
+        chart = tuple(
+            tuple(Fraction.from_float(float(value)) for value in vertex)
+            for vertex in mesh.uv[row]
+        )
+        python = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 10),))[0]
+        assert python is not None
+        print("folded native", result.upper[row], "Python", float(python))
+    assert _python_chart_decisions(domain, mesh, np.arange(2), 0.1) == (True, True)
+
+
+def test_knot_edge_on_line_and_near_parallel_edges() -> None:
+    """Edges on a knot line, and near-parallel edges on both sides of the
+    clip-conditioning threshold.
+
+    Faults caught: rounding a clip point instead of enclosing it (a missed
+    crossing underestimates), and clipping an ill-conditioned crossing.
+    """
+    height = 0.01
+    # Edge on the knot line u = 1/2: each triangle lies in one closed cell.
+    domain = _surface_domain(_degree_one_surface(height, 0.0))
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    uv_points = np.asarray(
+        ((0, 0), (0.5, 0), (1, 0), (1, 1), (0.5, 1), (0, 1)), dtype=np.float64
+    )
+    triangles = [(0, 1, 4), (0, 4, 5), (1, 2, 3), (1, 3, 4)]
+    mesh, chords = _square_mesh(domain, uv_points, triangles,
+                                _tent_values(uv_points, height, 0.0))
+    result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 0)
+    assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
+    for row in range(len(triangles)):
+        assert _dense_distance(mesh, row, height, 0.0) <= result.upper[row] <= 1e-12
+    # Near-parallel crossings of u = 1/2 and then v = 1/2 by a thin triangle
+    # C, B, A. With coarse offsets the crossings are exact or narrowly
+    # enclosed and the triangle is clipped at depth 0. With offsets of a few
+    # ulps, the u-crossing of AB, 1/2 + 13 * 2^-55, is not a double: its
+    # enclosure is a few ulps wide, and the v-crossing of the nearly parallel
+    # edge from it to A is enclosed wider than the threshold, so that leaf
+    # takes the first-order bound and subdivides.
+    domain = _surface_domain(_degree_one_surface(height, height))
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    for a_v, b_v, c_v, conditioned in (
+        (0.5 - 2.0**-30, 0.5 + 2.0**-28, 0.5 - 2.0**-26, True),
+        (0.5 - 3 * 2.0**-54, 0.5 + 2.0**-50, 0.5 - 2.0**-48, False),
+    ):
+        uv_points = np.asarray(
+            ((0, 0), (1, 0), (1, b_v), (1, 1), (0, 1), (0, a_v), (0, c_v)), dtype=np.float64
+        )
+        triangles = [(6, 2, 5), (0, 1, 2), (0, 2, 6), (5, 2, 3), (5, 3, 4)]
+        mesh, chords = _square_mesh(domain, uv_points, triangles,
+                                    _tent_values(uv_points, height, height))
+        result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 12)
+        assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
+        for row in range(len(triangles)):
+            assert _dense_distance(mesh, row, height, height) <= result.upper[row]
+        print("near-parallel", conditioned, "bound", result.upper[0],
+              "subdivisions", result.subdivisions[0])
+        assert (result.subdivisions[0] == 0) == conditioned
+
+
 @pytest.mark.parametrize("kind", ("plane", "cylinder", "cone", "sphere", "torus"))
 def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
     """Enclose the original triangle interpolation after subdivision."""
