@@ -3369,14 +3369,41 @@ def _box_surface(
     )
 
 
-def _peak_resident_bytes() -> int:
-    import resource
+def _refine_peak_growth(
+    path: Path, surface: tuple[np.ndarray, np.ndarray, np.ndarray], sizes: str
+) -> int:
+    # Peak resident growth of a fixed-boundary refine of `surface` (sizes
+    # given as an expression of the recovery's `points`), measured in a fresh
+    # process: ru_maxrss is a process-lifetime high-water mark, so in a test
+    # worker an earlier, larger peak would hide the refine's own.
+    np.savez(path / "surface.npz", *surface)
+    script = f"""\
+import resource, sys
+import numpy as np
+from benchmarks.native_meshing import _recover
+from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D
+surface = np.load(sys.argv[1])
+recovery = _recover(*(surface[f"arr_{{index}}"] for index in range(3)))
+points = np.asarray(recovery.points)
+mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+mesh.refine(radius_edge_bound=2.0, sizes={sizes})
+growth = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - peak
+print(growth if sys.platform == "darwin" else 1024 * growth)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(path / "surface.npz")],
+        cwd=Path(__file__).resolve().parents[3],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return int(completed.stdout.split()[-1])
 
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak if sys.platform == "darwin" else 1024 * peak
 
-
-def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume() -> None:
+def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: Path) -> None:
     # A 100:1:1 bar at h = 0.2: the lattice sites are listed sparsely (the
     # box's rows, or per recovered cell), so seeding costs the bar's box or
     # volume, not its bounding box's diagonal cubed (a dense site table over
@@ -3384,16 +3411,16 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume() -> None:
     # 1,951 seeds). Every lattice site at least half a spacing inside is
     # seeded (the lattice count in the volume), evenly along the bar.
     size = 0.2
-    vertices, faces, facets = _box_surface(
+    surface = _box_surface(
         (np.linspace(0.0, 100.0, 501), np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6))
     )
-    recovery = _recover(vertices, faces, facets)
+    growth = _refine_peak_growth(tmp_path, surface, f"np.full((points.shape[0],), {size})")
+    assert growth < 64 * 2**20
+    recovery = _recover(*surface)
     mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
-    peak = _peak_resident_bytes()
     run = mesh.refine(
         radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
     )
-    assert _peak_resident_bytes() - peak < 64 * 2**20
     # Refinement leaves a few slivers on the bar's fixed sides unmet (their
     # circumcenters lie beyond a fixed face), as it did with the dense site
     # table: the same seeds, in the same order.
@@ -3415,13 +3442,11 @@ def test_fixed_boundary_lattice_seeds_only_where_a_graded_target_qualifies() -> 
     # walked 4.6e4 seeds to refuse them all, 2.7 times the rest of the
     # refinement), and refinement meets the graded bound but at slivers on
     # the fixed sides whose circumcenters lie beyond them.
-    vertices, faces, facets = _box_surface((np.linspace(0.0, 1.0, 51),) * 3)
-    recovery = _recover(vertices, faces, facets)
+    nodes = np.linspace(0.0, 1.0, 51)
+    recovery = _recover(*_box_surface((nodes, nodes, nodes)))
     sizes = 0.02 * (1.0 + 9.0 * np.asarray(recovery.points)[:, 0])
     mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
-    peak = _peak_resident_bytes()
     run = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
-    assert _peak_resident_bytes() - peak < 64 * 2**20
     assert run.edit_status is TetMeshEditStatus.APPLIED
     assert np.all(mesh.unmet().reasons == TetMeshUnmetReason.FIXED_BOUNDARY)
     arrays = mesh.arrays()
