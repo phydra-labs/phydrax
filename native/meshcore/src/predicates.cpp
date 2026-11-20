@@ -31,6 +31,8 @@ constexpr double kResultErrBound = (3.0 + 8.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundA = (16.0 + 224.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundB = (5.0 + 72.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundC = (71.0 + 1408.0 * kEpsilon) * kEpsilon * kEpsilon;
+constexpr double kIspErrBoundBCompensated = (5.0 + 256.0 * kEpsilon) * kEpsilon;
+constexpr double kIspErrBoundBCompensatedExact = 128.0 * kEpsilon * kEpsilon;
 
 inline int sign_of(double value) { return (value > 0.0) - (value < 0.0); }
 
@@ -598,6 +600,110 @@ bool insphere_integer(const double* const* p, const double* x, const double* y,
 InsphereDecision insphere_expansion(const double* const* p, const double* x, const double* y,
                                     const double* z, bool exact_differences, double permanent);
 
+// x^2 + y^2 + z^2 as a double-double (squares exact, then two exact sums):
+// the tail sums five terms of total at most 3.01u L (L = x^2 + y^2 + z^2) in
+// four additions, so the value is within 12.1u^2 L, with |lo| <= 3.02u L and
+// |hi| <= (1 + 3.01u) L.
+inline DoubleDouble square_sum3_dd(double x, double y, double z) {
+  double xx, xx_error, yy, yy_error, zz, zz_error, xy, xy_tail, hi, tail;
+  two_product(x, x, xx, xx_error);
+  two_product(y, y, yy, yy_error);
+  two_product(z, z, zz, zz_error);
+  two_sum(xx, yy, xy, xy_tail);
+  two_sum(xy, zz, hi, tail);
+  return {hi, (xy_tail + tail) + ((xx_error + yy_error) + zz_error)};
+}
+
+// z m for a double-double m.
+inline DoubleDouble scale_dd(double z, DoubleDouble m) {
+  double hi, error;
+  two_product(z, m.hi, hi, error);
+  return {hi, error + z * m.lo};
+}
+
+// u + v + w for double-doubles: exact sums of the leading parts, then the
+// tails.
+inline DoubleDouble sum3_dd(DoubleDouble u, DoubleDouble v, DoubleDouble w) {
+  double uv, uv_tail, hi, tail;
+  two_sum(u.hi, v.hi, uv, uv_tail);
+  two_sum(uv, w.hi, hi, tail);
+  return {hi, ((uv_tail + tail) + (u.lo + v.lo)) + w.lo};
+}
+
+inline DoubleDouble negate_dd(DoubleDouble m) { return {-m.hi, -m.lo}; }
+
+// Compensated stage B of insphere, ahead of the integer and expansion
+// stages: E, the double-double evaluation of the determinant D~ of the
+// rounded differences x_k, y_k, z_k (rows a..d minus e) rounded once, as
+// (dlift abc - clift dab) + (blift cda - alift bcd). u = 2^-53; Pi is the
+// exact permanent of D~ (sum of the |monomials| of its expansion, each of
+// degree 5: a lift square times z times a 2x2 product), and P the stage-A
+// permanent, which evaluates Pi along paths of at most 12 roundings, each
+// rounding down by at most (1 - u): Pi <= (1 + 12.01u) P. Error of each
+// double-double value V against its exact value, in units of its own
+// permanent R:
+// - 2x2 minor (product_difference_dd): 3.02u^2 R; |lo| <= 2.01u R and
+//   |hi| <= (1 + 2.01u) R.
+// - z m (scale_dd): the inherited 3.02u^2 R, z m.lo rounds by 2.01u^2 R and
+//   the tail sum (at most 1.0001u R + 2.01u R) by 3.02u^2 R: 8.05u^2 R, with
+//   |lo| <= 3.02u R and |hi| <= (1 + 3.02u) R.
+// - 3x3 minor T (sum3_dd of three scaled minors, R_T the sum of their R):
+//   the two_sum tails total at most 2.01u R_T and the input tails 3.02u R_T;
+//   the three tail additions round by (2.01 + 5.03 + 5.04)u^2 R_T and the
+//   inputs carry 8.05u^2 R_T: 23.3u^2 R_T, with |lo| <= 5.04u R_T and |hi| <=
+//   (1 + 5.03u) R_T.
+// - lift L (square_sum3_dd): 12.1u^2 L, |lo| <= 3.02u L, |hi| <= (1 +
+//   3.01u) L.
+// - lifted term W = L T (product_dd, W its permanent L R_T): the inherited
+//   L 23.3u^2 R_T + (1 + 23.3u^2) R_T 12.1u^2 L <= 35.4u^2 W; the dropped
+//   L.lo T.lo <= 15.23u^2 W; L.hi T.lo (<= 5.06u W) and L.lo T.hi (<= 3.04u W)
+//   round by 8.1u^2 W, their sum by 8.11u^2 W, and adding the product error
+//   (<= 1.0001u W) by 9.12u^2 W: 76.0u^2 W, with |lo| <= 9.13u W and |hi| <=
+//   (1 + 9.06u) W.
+// - D~ (four lifted terms, Pi = sum of their W): the three two_sum tails
+//   total at most 3.0001u Pi and the term tails 9.13u Pi; the six tail
+//   additions round by (2.0 + 3.0 + 9.13 + 9.14 + 12.14)u^2 Pi <= 35.5u^2
+//   Pi, and the terms carry 76.0u^2 Pi: |D~ - (hi + lo)| <= 111.5u^2 Pi, and
+//   E = fl(hi + lo) adds u |E|.
+// So |D~ - E| <= 111.5u^2 (1 + 12.01u) P + u |E| <= 111.6u^2 P + u |E|.
+// When every difference is exact, D = D~ and |E| > fl(128u^2 P) = 128u^2 P
+// gives |D - E| < |E|. Otherwise each true difference is its rounded value
+// times (1 + d), |d| <= u / (1 - u), so each degree-5 monomial of the exact
+// D moves by at most (5u + 15.1u^2) of its rounded value: |D - D~| <= (5u +
+// 15.1u^2) Pi and |D - E| <= (5u + 186.7u^2) P + u |E|, while |E| >
+// fl((5 + 256u)u P) >= (5u + 251u^2) P gives |D - E| < |E|. In-domain
+// coordinates and their rounded differences are multiples of 2^-172, so
+// every nonzero product here is a multiple of 2^-860: none underflows.
+// Returns the certified sign (Shewchuk's: positive when e lies outside), or
+// 0.
+int insphere_compensated(const double* x, const double* y, const double* z,
+                         bool exact_differences, double permanent) {
+  const DoubleDouble ab = product_difference_dd(x[0], y[1], x[1], y[0]);
+  const DoubleDouble bc = product_difference_dd(x[1], y[2], x[2], y[1]);
+  const DoubleDouble cd = product_difference_dd(x[2], y[3], x[3], y[2]);
+  const DoubleDouble da = product_difference_dd(x[3], y[0], x[0], y[3]);
+  const DoubleDouble ac = product_difference_dd(x[0], y[2], x[2], y[0]);
+  const DoubleDouble bd = product_difference_dd(x[1], y[3], x[3], y[1]);
+  const DoubleDouble abc = sum3_dd(scale_dd(z[0], bc), scale_dd(-z[1], ac), scale_dd(z[2], ab));
+  const DoubleDouble bcd = sum3_dd(scale_dd(z[1], cd), scale_dd(-z[2], bd), scale_dd(z[3], bc));
+  const DoubleDouble cda = sum3_dd(scale_dd(z[2], da), scale_dd(z[3], ac), scale_dd(z[0], cd));
+  const DoubleDouble dab = sum3_dd(scale_dd(z[3], ab), scale_dd(z[0], bd), scale_dd(z[1], da));
+  const DoubleDouble w0 = product_dd(square_sum3_dd(x[3], y[3], z[3]), abc);
+  const DoubleDouble w1 = product_dd(square_sum3_dd(x[2], y[2], z[2]), negate_dd(dab));
+  const DoubleDouble w2 = product_dd(square_sum3_dd(x[1], y[1], z[1]), cda);
+  const DoubleDouble w3 = product_dd(square_sum3_dd(x[0], y[0], z[0]), negate_dd(bcd));
+  double s1, t1, s2, t2, hi, t3;
+  two_sum(w0.hi, w1.hi, s1, t1);
+  two_sum(s1, w2.hi, s2, t2);
+  two_sum(s2, w3.hi, hi, t3);
+  const double estimate = hi + (((t1 + t2) + t3) + ((w0.lo + w1.lo) + (w2.lo + w3.lo)));
+  const double errbound =
+      (exact_differences ? kIspErrBoundBCompensatedExact : kIspErrBoundBCompensated) * permanent;
+  if (estimate > errbound) return 1;
+  if (-estimate > errbound) return -1;
+  return 0;
+}
+
 [[gnu::noinline, gnu::cold]]
 InsphereDecision insphere_adapt(const double* const* p, double permanent) {
   const double* e = p[4];
@@ -610,6 +716,9 @@ InsphereDecision insphere_adapt(const double* const* p, double permanent) {
     exact_differences = exact_differences && two_diff_tail(p[k][0], e[0], x[k]) == 0.0 &&
                         two_diff_tail(p[k][1], e[1], y[k]) == 0.0 &&
                         two_diff_tail(p[k][2], e[2], z[k]) == 0.0;
+  }
+  if (const int sign = insphere_compensated(x, y, z, exact_differences, permanent); sign != 0) {
+    return {sign, InsphereStage::kBCompensated};
   }
   int integer_sign = 0;
   if (insphere_integer(p, x, y, z, exact_differences, integer_sign)) {
