@@ -62,6 +62,7 @@ from ...geometry._interval_enclosure import (
 from ...geometry._rational import (
     binary64_difference_magnitude,
     binary64_dot,
+    binary64_first_order_interpolation_upper,
     binary64_matmul,
     binary64_norm_lower,
     binary64_norm_upper,
@@ -458,14 +459,28 @@ class CurveSizing(StrictModule, NonTrainableState):
 
 @final
 class _CurveEnclosure(StrictModule, NonTrainableState):
-    """Outward interval programs for a curve's acceleration and coordinates."""
+    """Outward interval programs for a curve's coordinates and first two derivatives.
+
+    The derivative programs come from nested JVPs, which differentiate
+    ``abs``, min/max and selections piecewise: a switch of the point map
+    vanishes from them. They enclose the true derivatives only on boxes where
+    the branch ledger of the point map decides every switch, so each bound
+    is gated on that ledger (`PreparedIntervalFunction.evaluate_branches`).
+    """
 
     acceleration_jaxpr: jax_core.Jaxpr = eqx.field(static=True)
     acceleration_consts: tuple[Array, ...]
     acceleration_constant_intervals: tuple[tuple[Array, Array], ...]
+    velocity_jaxpr: jax_core.Jaxpr = eqx.field(static=True)
+    velocity_consts: tuple[Array, ...]
+    velocity_constant_intervals: tuple[tuple[Array, Array], ...]
     point_jaxpr: jax_core.Jaxpr = eqx.field(static=True)
     point_consts: tuple[Array, ...]
     point_constant_intervals: tuple[tuple[Array, Array], ...]
+    # The box axis of every point-map variable, so the branch ledger needs no retrace.
+    point_branch_axes: tuple[tuple[jax_core.Var, int | None], ...] = eqx.field(
+        static=True
+    )
     ambient_dimension: int = eqx.field(static=True)
     rigorous: bool = eqx.field(static=True)
 
@@ -476,6 +491,7 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
         constant_intervals: tuple[tuple[Array, Array], ...],
         output_dimension: int,
         /,
+        branch_axes: tuple[tuple[jax_core.Var, int | None], ...] = (),
     ) -> PreparedIntervalFunction:
         closed = jax_core.ClosedJaxpr(
             jaxpr, tuple(np.asarray(value) for value in constants)
@@ -483,35 +499,43 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
         intervals = tuple(
             (np.asarray(lower), np.asarray(upper)) for lower, upper in constant_intervals
         )
-        return PreparedIntervalFunction(closed, 1, (output_dimension,), 1, intervals)
+        return PreparedIntervalFunction(
+            closed, 1, (output_dimension,), 1, intervals, branch_axes=dict(branch_axes)
+        )
+
+    @staticmethod
+    def _device_program(
+        program: PreparedIntervalFunction, /
+    ) -> tuple[tuple[Array, ...], tuple[tuple[Array, Array], ...]]:
+        constants = tuple(
+            jax.device_put(np.asarray(value)) for value in program.closed_jaxpr.consts
+        )
+        intervals = tuple(
+            (jax.device_put(np.asarray(lower)), jax.device_put(np.asarray(upper)))
+            for lower, upper in program.constant_intervals
+        )
+        return constants, intervals
 
     def __init__(self, charts: CurveCharts, row: int, /) -> None:
         acceleration = prepare_interval_function(
             lambda point: charts.jet(row, point[0])[2], 1, batch_capacity=1
+        )
+        velocity = prepare_interval_function(
+            lambda point: charts.jet(row, point[0])[1], 1, batch_capacity=1
         )
         point = prepare_interval_function(
             lambda parameter: charts.point(row, parameter[0]),
             1,
             batch_capacity=1,
         )
-        acceleration_consts = tuple(
-            jax.device_put(np.asarray(value))
-            for value in acceleration.closed_jaxpr.consts
-        )
-        point_consts = tuple(
-            jax.device_put(np.asarray(value)) for value in point.closed_jaxpr.consts
-        )
-        acceleration_intervals = tuple(
-            (jax.device_put(np.asarray(lower)), jax.device_put(np.asarray(upper)))
-            for lower, upper in acceleration.constant_intervals
-        )
-        point_intervals = tuple(
-            (jax.device_put(np.asarray(lower)), jax.device_put(np.asarray(upper)))
-            for lower, upper in point.constant_intervals
-        )
+        acceleration_consts, acceleration_intervals = self._device_program(acceleration)
+        velocity_consts, velocity_intervals = self._device_program(velocity)
+        point_consts, point_intervals = self._device_program(point)
+        branch_axes: tuple[tuple[jax_core.Var, int | None], ...] = ()
         try:
             acceleration.evaluate(np.asarray([[0.0]]), np.asarray([[1.0]]))
             point.evaluate(np.asarray([[0.0]]), np.asarray([[0.0]]))
+            branch_axes = tuple(point.branch_batch_axes().items())
         except IntervalExtensionError:
             supported = False
         else:
@@ -519,13 +543,33 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
         self.acceleration_jaxpr = acceleration.closed_jaxpr.jaxpr
         self.acceleration_consts = acceleration_consts
         self.acceleration_constant_intervals = acceleration_intervals
+        self.velocity_jaxpr = velocity.closed_jaxpr.jaxpr
+        self.velocity_consts = velocity_consts
+        self.velocity_constant_intervals = velocity_intervals
         self.point_jaxpr = point.closed_jaxpr.jaxpr
         self.point_consts = point_consts
         self.point_constant_intervals = point_intervals
+        self.point_branch_axes = branch_axes
         self.ambient_dimension = charts.ambient_dimension
         self.rigorous = supported
 
+    def regularity(self, lower: float, upper: float, /) -> tuple[bool, bool]:
+        """Whether the point map is proved smooth, and continuous, on ``[lower, upper]``."""
+        function = self._function(
+            self.point_jaxpr,
+            self.point_consts,
+            self.point_constant_intervals,
+            self.ambient_dimension,
+            self.point_branch_axes,
+        )
+        _, _, smooth, continuous = function.evaluate_branches(
+            np.asarray([[lower]], dtype=np.float64),
+            np.asarray([[upper]], dtype=np.float64),
+        )
+        return bool(smooth[0]), bool(continuous[0])
+
     def acceleration_upper(self, lower: float, upper: float, /) -> float:
+        """Upper bound of ``|c''|`` on ``[lower, upper]``; sound only where smooth."""
         function = self._function(
             self.acceleration_jaxpr,
             self.acceleration_consts,
@@ -538,6 +582,24 @@ class _CurveEnclosure(StrictModule, NonTrainableState):
         )
         magnitude = np.maximum(np.abs(lower_values[0]), np.abs(upper_values[0]))
         return float(binary64_norm_upper(magnitude))
+
+    def velocity_spread(self, lower: float, upper: float, /) -> np.ndarray:
+        """Upper bounds of the width of each coordinate's ``c'`` enclosure on a box.
+
+        The velocity program encloses every piece's derivative on the box, so
+        where the point map is continuous these widths bound ``c'`` variation.
+        """
+        function = self._function(
+            self.velocity_jaxpr,
+            self.velocity_consts,
+            self.velocity_constant_intervals,
+            self.ambient_dimension,
+        )
+        lower_values, upper_values = function.evaluate(
+            np.asarray([[lower]], dtype=np.float64),
+            np.asarray([[upper]], dtype=np.float64),
+        )
+        return binary64_difference_magnitude(upper_values[0], lower_values[0])[1]
 
     def point_error(self, parameter: float, published: np.ndarray, /) -> float:
         function = self._function(
@@ -1645,23 +1707,40 @@ def _chord_bound(
     last: np.ndarray,
     /,
 ) -> float:
-    """Continuous two-sided curve-to-chord bound, or infinity if unsupported."""
+    """Continuous two-sided curve-to-chord bound, or infinity if unsupported.
+
+    Where the branch ledger proves the chart smooth on ``[lower, upper]`` the
+    bound is second order, ``width**2 / 8 * sup |c''|``. Across a kink of a
+    continuous chart the nested-JVP acceleration misses the jump of ``c'``, so
+    the bound is first order in the spread of the ``c'`` enclosure; across a
+    possible jump of the chart no derivative bounds the chord and the bound is
+    infinite.
+    """
     if isinstance(prepared.source.curves, SegmentMesh):
         return _linear_chord_bound(prepared, row, lower, upper, first, last)
     enclosure = prepared.enclosures[row]
     if not enclosure.rigorous:
         return math.inf
-    acceleration = enclosure.acceleration_upper(lower, upper)
+    smooth, continuous = enclosure.regularity(lower, upper)
+    if not continuous:
+        return math.inf
     endpoint_error = max(
         enclosure.point_error(lower, first), enclosure.point_error(upper, last)
     )
-    width = float(binary64_difference_magnitude(upper, lower)[1])
-    curvature = math.nextafter(
-        math.nextafter(0.125 * math.nextafter(width * width, math.inf), math.inf)
-        * acceleration,
-        math.inf,
-    )
-    return math.nextafter(endpoint_error + curvature, math.inf)
+    if smooth:
+        acceleration = enclosure.acceleration_upper(lower, upper)
+        width = float(binary64_difference_magnitude(upper, lower)[1])
+        interior = math.nextafter(
+            math.nextafter(0.125 * math.nextafter(width * width, math.inf), math.inf)
+            * acceleration,
+            math.inf,
+        )
+    else:
+        interior = binary64_first_order_interpolation_upper(
+            enclosure.velocity_spread(lower, upper)[:, None],
+            np.asarray(((lower,), (upper,)), dtype=np.float64),
+        )
+    return math.nextafter(endpoint_error + interior, math.inf)
 
 
 def _sampled_deviation(

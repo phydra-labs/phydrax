@@ -442,6 +442,66 @@ def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
     return _directed_norm(components, False)
 
 
+def _upward(value: NDArray[np.float64], /) -> NDArray[np.float64]:
+    """One step toward ``+inf`` after a rounded operation, unless exactly zero."""
+    return np.where(value == 0.0, 0.0, np.nextafter(value, np.inf))
+
+
+def binary64_first_order_interpolation_upper(
+    spread: ArrayLike, vertices: ArrayLike, /
+) -> float:
+    """Upper bound of ``|f - I f|`` on a simplex from the width of a Jacobian enclosure.
+
+    ``vertices`` are the ``n + 1`` parameter vertices of an ``n``-simplex,
+    ``I f`` is the affine interpolant of ``f`` at them, and ``spread[i, k]``
+    bounds the width of an enclosure of ``d f_i / d x_k`` over the simplex.
+    ``f`` must be continuous and piecewise smooth there: an interval program
+    of its derivative, evaluated over the simplex, then encloses the
+    derivative along every segment except at finitely many points, so the
+    bound needs no second derivative and holds across kinks.
+
+    From a vertex ``v_j``, ``p = v_j + sum_k l_k (v_k - v_j)`` gives
+    ``f_i(p) - I f_i(p) = sum_k l_k (G - G_k) . (v_k - v_j)``, where ``G`` and
+    ``G_k`` are averages of ``grad f_i`` along segments and so lie in its
+    enclosure. Each term is at most ``spread[i] . |v_k - v_j|``, and with the
+    largest barycentric weight ``l_j >= 1 / (n + 1)`` every component is at
+    most ``n / (n + 1)`` times its largest edge term. Every rounded operation
+    steps toward ``+inf``; a nonfinite spread gives ``inf``.
+    """
+    spread_ = np.asarray(spread, dtype=np.float64)
+    vertices_ = np.asarray(vertices, dtype=np.float64)
+    if (
+        vertices_.ndim != 2
+        or vertices_.shape[0] != vertices_.shape[1] + 1
+        or spread_.ndim != 2
+        or spread_.shape[1] != vertices_.shape[1]
+    ):
+        raise ValueError(
+            "first-order interpolation bounds need (n + 1, n) vertices and an (m, n) spread."
+        )
+    if not np.all(np.isfinite(vertices_)):
+        raise ValueError("first-order interpolation vertices must be finite.")
+    if not np.all(spread_ >= 0.0):
+        return math.inf
+    dimension = vertices_.shape[1]
+    terms = np.zeros((spread_.shape[0],), dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for first in range(dimension + 1):
+            for second in range(first + 1, dimension + 1):
+                edge = binary64_difference_magnitude(vertices_[second], vertices_[first])[
+                    1
+                ]
+                term = np.zeros_like(terms)
+                for axis in range(dimension):
+                    term = _upward(term + _upward(spread_[:, axis] * edge[axis]))
+                terms = np.maximum(terms, term)
+        ratio = dimension / (dimension + 1)
+        if Fraction(ratio) != Fraction(dimension, dimension + 1):
+            ratio = math.nextafter(ratio, math.inf)
+        bound = _upward(binary64_norm_upper(terms) * ratio)
+    return float(bound) if np.isfinite(bound) else math.inf
+
+
 def binary64_spectral_upper(matrix: ArrayLike, /) -> float:
     """Certified spectral norm bound for a finite binary64 matrix.
 
