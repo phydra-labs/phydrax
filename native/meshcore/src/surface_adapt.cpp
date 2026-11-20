@@ -314,16 +314,16 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
       kept_edges_[base + k] = kept_edges_[static_cast<size_t>(opposite_[base + k])] = 1;
     }
   }
+  for (size_t v = 0; v < n; ++v)
+    if (vertex_corner_[v] < 0) free_vertices_.push_back(static_cast<int32_t>(v));
+  // The used vertices in order: the points themselves when all are used.
   std::vector<Point> used;
-  for (size_t v = 0; v < n; ++v) {
-    if (vertex_corner_[v] < 0)
-      free_vertices_.push_back(static_cast<int32_t>(v));
-    else
-      used.push_back(points[v]);
-  }
+  if (!free_vertices_.empty())
+    for (size_t v = 0; v < n; ++v)
+      if (vertex_corner_[v] >= 0) used.push_back(points[v]);
   std::vector<SurfacePoint> projected;
   std::vector<uint8_t> found;
-  oracle_.project_all(used, projected, found);
+  oracle_.project_all(free_vertices_.empty() ? points : used, projected, found);
   size_t at = 0;
   for (size_t v = 0; v < n; ++v) {
     if (vertex_corner_[v] < 0) continue;

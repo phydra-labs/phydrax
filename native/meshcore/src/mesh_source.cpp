@@ -131,19 +131,23 @@ int32_t MeshSource::bind(std::vector<Point> points, std::vector<Triangle> triang
   // Normal curvature along each edge d = x_w - x_v, (n_w - n_v) . d / |d|^2
   // (positive where the surface bends away from its normal); by Euler's
   // theorem the largest and smallest over a vertex's ring estimate its two
-  // principal curvatures.
+  // principal curvatures. The value is the same (bitwise) in either
+  // direction, so each edge is taken once, from its lower corner.
   vertex_curvatures_.assign(n, {-std::numeric_limits<double>::infinity(),
                                 std::numeric_limits<double>::infinity()});
-  for (const Triangle& f : triangles_)
-    for (size_t k = 0; k < 3; ++k) {
-      const auto v = static_cast<size_t>(f[k]), w = static_cast<size_t>(f[(k + 1) % 3]);
-      const Point d = sub(points_[w], points_[v]);
-      const double kappa = dot(sub(vertex_normals_[w], vertex_normals_[v]), d) / dot(d, d);
-      for (const size_t u : {v, w}) {
-        vertex_curvatures_[u][0] = std::max(vertex_curvatures_[u][0], kappa);
-        vertex_curvatures_[u][1] = std::min(vertex_curvatures_[u][1], kappa);
-      }
+  vertex_corners_.assign(n, -1);
+  for (size_t c = 0; c < 3 * m; ++c) {
+    const Triangle& f = triangles_[c / 3];
+    const auto v = static_cast<size_t>(f[c % 3]), w = static_cast<size_t>(f[(c % 3 + 1) % 3]);
+    vertex_corners_[v] = static_cast<int64_t>(c);
+    if (twins_[c] < static_cast<int64_t>(c)) continue;
+    const Point d = sub(points_[w], points_[v]);
+    const double kappa = dot(sub(vertex_normals_[w], vertex_normals_[v]), d) / dot(d, d);
+    for (const size_t u : {v, w}) {
+      vertex_curvatures_[u][0] = std::max(vertex_curvatures_[u][0], kappa);
+      vertex_curvatures_[u][1] = std::min(vertex_curvatures_[u][1], kappa);
     }
+  }
   // Bucket grid of the triangle boxes, cells of the mean box extent.
   Point top{-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
             -std::numeric_limits<double>::infinity()};
@@ -293,6 +297,18 @@ std::array<double, 2> MeshSource::curvatures(const Nearest& at) const {
     for (size_t i = 0; i < 2; ++i)
       kappa[i] += at.barycentric[k] * vertex_curvatures_[static_cast<size_t>(f[k])][i];
   return kappa;
+}
+
+bool MeshSource::at_vertex(int64_t v, Nearest& out) const {
+  if (v < 0 || static_cast<size_t>(v) >= vertex_corners_.size()) return false;
+  const int64_t corner = vertex_corners_[static_cast<size_t>(v)];
+  if (corner < 0 || !(norm(vertex_normals_[static_cast<size_t>(v)]) > 0)) return false;
+  out.triangle = corner / 3;
+  out.point = points_[static_cast<size_t>(v)];
+  out.barycentric = {0, 0, 0};
+  out.barycentric[static_cast<size_t>(corner % 3)] = 1;
+  out.distance = 0;
+  return true;
 }
 
 namespace {
@@ -677,7 +693,23 @@ void MeshSourceOracle::project_all(const std::vector<Point>& positions,
                                    std::vector<uint8_t>& found) const {
   out.assign(positions.size(), SurfacePoint{});
   found.assign(positions.size(), 0);
-  for (size_t i = 0; i < positions.size(); ++i) found[i] = project(positions[i], out[i]) ? 1 : 0;
+  // The source's own vertices (a surface loaded from the source itself)
+  // project onto themselves; anything else is searched.
+  const std::vector<Point>& own = source_.points();
+  const bool aligned = positions.size() == own.size();
+  for (size_t i = 0; i < positions.size(); ++i) {
+    MeshSource::Nearest at;
+    if (aligned && positions[i] == own[i] && source_.at_vertex(static_cast<int64_t>(i), at)) {
+      out[i].on = at.point;
+      out[i].normal = source_.normal(at);
+      const auto [largest, smallest] = source_.curvatures(at);
+      out[i].curvature_first = largest;
+      out[i].curvature_second = smallest;
+      found[i] = 1;
+      continue;
+    }
+    found[i] = project(positions[i], out[i]) ? 1 : 0;
+  }
 }
 
 void MeshSourceOracle::distances(const std::vector<Point>& positions,
