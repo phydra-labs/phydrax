@@ -1147,13 +1147,13 @@ _HALF_PI = np.float64(np.pi / 2)
 def _pole_region(uv: np.ndarray) -> np.ndarray:
     """V3's pole-region rows: +1 / -1 by pole, 0 elsewhere (the native predicate).
 
-    A row is in a pole's region when a corner lies on the pole line or all its
-    corners lie in the cap sigma v >= pi/4 (pi/4 rounded down, as natively).
+    A row is in a pole's region when a corner lies on the pole line or any
+    corner lies in the cap sigma v >= pi/4 (pi/4 rounded down, as natively).
     """
     region = np.zeros(uv.shape[0], dtype=np.int64)
     for sigma in (1, -1):
         on = (uv[:, :, 1] == sigma * _HALF_PI).any(axis=1)
-        cap = (sigma * uv[:, :, 1] >= np.float64(np.pi / 4)).all(axis=1)
+        cap = (sigma * uv[:, :, 1] >= np.float64(np.pi / 4)).any(axis=1)
         region[on | cap] = sigma
     return region
 
