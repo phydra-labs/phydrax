@@ -829,7 +829,7 @@ class ConstrainedMesher {
 
   // Lawson flips of free edges opposite m until every one is locally
   // Delaunay (a non-locally-Delaunay edge always has a strictly convex quad).
-  void legalize(int32_t m) {
+  void legalize(int32_t m, bool cavity_certificates = false) {
     while (!flip_stack_.empty()) {
       const int32_t t = flip_stack_.back();
       flip_stack_.pop_back();
@@ -845,12 +845,21 @@ class ConstrainedMesher {
       if (tri_.is_ghost(o)) {
         continue;
       }
+      // A current cavity mark describes the same oriented in-circle
+      // determinant as this edge test, up to an even permutation. Marks on
+      // replaced triangles are cleared before their slots can be reused.
+      const std::uint64_t mark =
+          cavity_certificates && static_cast<std::size_t>(o) < marks_.size()
+              ? marks_[static_cast<std::size_t>(o)]
+              : 0;
+      if (cavity_certificates && mark == epoch_ + 1) continue;
       const int32_t u = told.v[next3(i)];
       const int32_t w = told.v[prev3(i)];
       const int j = tri_.edge_index(o, w, u);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(o)].v[j];
-      if (incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
-          0) {
+      if (!(cavity_certificates && mark == epoch_) &&
+          incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
+              0) {
         continue;
       }
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
@@ -861,6 +870,9 @@ class ConstrainedMesher {
       const int32_t n_ux = oold.n[jw], c_ux = tri_.constraint(o, jw);
       const int32_t n_xw = oold.n[ju], c_xw = tri_.constraint(o, ju);
       const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
+      if (cavity_certificates && static_cast<std::size_t>(o) < marks_.size()) {
+        marks_[static_cast<std::size_t>(o)] = 0;
+      }
       tri_.release(t);
       tri_.release(o);
       const int32_t first = tri_.allocate();
@@ -1072,12 +1084,17 @@ class ConstrainedMesher {
       }
       if (to_split.empty()) {
         const int32_t v = new_vertex(center);
+        // The cavity marks belong to the old triangles, not their reused slots.
+        marks_[static_cast<std::size_t>(located)] = 0;
+        if (zero_count == 1) {
+          marks_[static_cast<std::size_t>(host.n[zero_edge])] = 0;
+        }
         if (zero_count == 1) {
           split_edge(located, zero_edge, v, kFree);
         } else {
           split_triangle(located, v);
         }
-        legalize(v);
+        legalize(v, true);
         after_insertion(v);
         return;
       }

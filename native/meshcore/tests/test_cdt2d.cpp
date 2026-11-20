@@ -317,6 +317,22 @@ void check_quality(const Result& r, double min_angle, double max_area) {
   }
 }
 
+void test_cavity_legalization_predicate_order() {
+  const double w[2] = {0.0, 0.0}, u[2] = {1.0, 0.0}, x[2] = {0.0, 1.0};
+  const std::array<std::array<double, 2>, 3> candidates = {{
+      {{0.75, 0.75}}, {{1.25, 1.25}}, {{1.0, 1.0}},
+  }};
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const double* m = candidates[i].data();
+    const int cavity = incircle_sos(w, u, x, m, 0, 1, 2, 3);
+    const int legalize = incircle_sos(m, u, w, x, 3, 1, 0, 2);
+    PHX_CHECK(cavity == legalize);
+    PHX_CHECK(cavity != 0);
+    if (i == 0) PHX_CHECK(cavity > 0);
+    if (i == 1) PHX_CHECK(cavity < 0);
+  }
+}
+
 void test_ghost_layout() {
   // Begin with one triangle, then insert outside each side and on hull edges.
   const std::vector<double> points = {
@@ -747,6 +763,7 @@ int main() {
   test_lattice_segments();
   test_hole_carving();
   test_ghost_layout();
+  test_cavity_legalization_predicate_order();
   test_refinement_determinism();
   test_spatial_queue_order();
   test_ruppert_square();
