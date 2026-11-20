@@ -1307,6 +1307,9 @@ PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
     int64_t count, int32_t dimension, int32_t components, const double* q_lower,
     const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,
     double* lower, double* upper);
+/* lower/upper may be null (both or neither); then only verdicts are produced,
+ * and cells may be decided by a rigorous binary64 screen; verdicts are
+ * identical either way. With bounds requested every cell takes the exact path. */
 PHX_MC_API int32_t phx_mc_quadratic_tetrahedron_validity(
     int64_t count, const double* nodes, const int32_t* derivative_weights, double relative_floor,
     int32_t* decisions, double* lower, double* upper);
@@ -1878,11 +1881,14 @@ PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
     int64_t* surface_triangles, double* volume_vertices, int64_t* tetrahedra);
 PHX_MC_API void phx_mc_surface_envelope_free(void* result);
 /* Remeshes a created envelope surface in place toward edge length 2 * spacing and a
- * 30 degree minimum angle; every edit keeps its triangles inside the certified
- * distance band [bounds[2], bounds[1]] and the surface an embedded oriented closed
- * 2-manifold. Writes the updated four bounds and counters (splits, collapses, flips,
- * relocations, triangles still below the angle or size target). The tetrahedral
- * carrier is dropped: the volume vertices become the surface vertices, no cells. */
+ * 30 degree minimum angle: floating-point construction (vertices projected onto the
+ * offset of the covering cloud), then certification of every triangle inside the
+ * certified distance band [bounds[2], bounds[1]] and of the surface as an embedded
+ * oriented closed 2-manifold, refused triangles repaired locally by splits; a
+ * triangle left refused is PHX_MC_UNRESOLVED and leaves the envelope unchanged.
+ * Writes the updated four bounds and counters (splits, collapses, flips,
+ * relocations, triangles below the angle). The tetrahedral carrier is dropped: the
+ * volume vertices become the surface vertices, no cells. */
 PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* result, double* bounds,
                                                   int64_t* counters);
 
@@ -1910,10 +1916,18 @@ typedef struct phx_mc_interval_box_program {
  * bind. Zero orientation asks the owner to derive the common certified sign;
  * a nonzero sign must agree. A view returned by `implicit_source` borrows
  * immutable banks until the mesh is freed. Refusal counts are diagnostic and
- * restart at zero on a new binding. */
+ * restart at zero on a new binding. `value_events` (rows of kind, test, size,
+ * a, a_index, boxes over value's own workspace; see
+ * phx_mc_interval_program_branches) are f's complete branch evidence, checked
+ * for validity only (no events means continuous everywhere): every enclosure
+ * of f or grad f that a facet admission reads is over a box on which they
+ * report f continuous (else the facet is refused), and the transversality
+ * step also requires f smooth there, as in phx_mc_zero_set_certify. */
 typedef struct phx_mc_tet_implicit_source {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   const int32_t* groups;
   int64_t group_count;
   double tolerance;
@@ -1938,57 +1952,238 @@ PHX_MC_API int32_t phx_mc_tet_mesh_create_with_implicit(
     const phx_mc_tet_implicit_source* source);
 PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
     const phx_mc_tet_mesh* mesh, phx_mc_tet_implicit_source* source);
-/* Remeshes a closed, consistently oriented, embedded carrier of the zero set of f
- * toward `edge_length` and `minimum_angle_degrees`. Closed is validated: every
- * edge is held by exactly two triangles, in opposite directions, else
- * PHX_MC_INVALID_INPUT. Every created triangle is
- * admitted by the kZeroSetBand predicate: its certified distance to {f = 0} is at
- * most `tolerance` (interval |f| over the triangle against a certified lower bound
- * of |grad f| over its widened box) and its normal is certified transversal to
- * grad f with the carrier's orientation (declared by the input triangles whose
- * sign is certified; disagreement is PHX_MC_INVALID_INPUT, none PHX_MC_UNRESOLVED).
- * `value` has one output, `gradient` three. Writes counters (splits, collapses,
- * flips, relocations, triangles below the angle or size target, orientation,
- * admissions refused for undecided or wrong transversality, admissions refused
- * for an uncertified distance) and
- * `distance`: the maximum over surviving triangles of the admitted certified
- * distance, or `carrier_distance` (the input carrier's declared bound) for
- * untouched input triangles. `admission_limited_coarsening` (0 or 1) also runs
- * the remesher's admission-limited coarsening pass, which centers vertices in
- * the band off the zero set and collapses edges below 4/5 of `edge_length`
- * until the admission refuses them; 0 keeps the quality/regularization passes
- * only. */
+/* Remeshes a closed, consistently oriented carrier of the zero set of f toward
+ * `edge_length` (lowered where the zero set curves, so that a well-shaped
+ * triangle stays within `tolerance`) and `minimum_angle_degrees`. Closed is
+ * validated: every edge is held by exactly two triangles, in opposite
+ * directions, else PHX_MC_INVALID_INPUT. Construction only, floating point,
+ * proving nothing: edge splits, collapses, flips and tangential relocations
+ * on flat arrays, new and moved vertices projected onto {f = 0} by Newton
+ * steps on second-order point jets of `value` (one output). Input edges
+ * whose triangles turn by more than 45 degrees are creases: every input
+ * triangle touching a crease vertex is kept bitwise (its corners and edges
+ * are never moved, split, flipped or collapsed). A vertex further than
+ * edge_length + carrier_distance from its projection is PHX_MC_UNRESOLVED.
+ * Writes counters
+ * (splits, collapses, flips, relocations, triangles below the minimum angle,
+ * the carrier's orientation relative to grad f by the floating-point majority
+ * of the input triangles, triangles whose sampled distance exceeds
+ * `tolerance`, 0). `result` owns the surface (phx_mc_surface_result_*).
+ * Certify the result with phx_mc_zero_set_certify. */
 typedef struct phx_mc_zero_set_remesh_request {
   const double* vertices;
   int64_t vertex_count;
   const int64_t* triangles;
   int64_t triangle_count;
   phx_mc_interval_box_program value;
-  phx_mc_interval_box_program gradient;
   double tolerance;
   double carrier_distance;
   double edge_length;
   double minimum_angle_degrees;
   void** result;
   int64_t* counters;
-  double* distance;
-  int32_t admission_limited_coarsening;
 } phx_mc_zero_set_remesh_request;
 PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* request);
-/* As above, request->triangles contains int32 indices. Optional read-only
- * vertex-to-face CSR is either absent (both pointers null, both counts zero)
- * or has vertex_count + 1 int32 offsets and 3 * triangle_count int32 rows.
- * Each vertex's rows must be strictly increasing and match its incident
- * triangles exactly. The caller retains both banks until the call returns. */
-PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(
-    const phx_mc_zero_set_remesh_request* request, const int32_t* vertex_face_offsets,
-    int64_t vertex_face_offset_count, const int32_t* vertex_faces,
-    int64_t vertex_face_count);
-PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes);
-PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
-                                                 int64_t triangle_capacity, double* vertices,
-                                                 int64_t* triangles);
-PHX_MC_API void phx_mc_zero_set_remesh_free(void* result);
+/* As above, request->triangles contains int32 indices. */
+PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_request* request);
+/* Certifies a closed triangle surface (a phx_mc_zero_set_remesh result)
+ * against the zero set of f, repairing it locally. A triangle is certified
+ * when its distance to {f = 0} is at most `tolerance` (interval |f| over the
+ * triangle against a certified lower bound of |grad f| over its widened box,
+ * subdividing where needed) and its normal is transversal to grad f with
+ * `orientation` (+1 or -1), or, when that proof fails, when it has the
+ * corner coordinates, in the same cyclic order, of a carrier triangle (the
+ * surface remeshed; a NULL carrier with zero counts accepts none) whose
+ * witness box proves it: carrier_boxes holds, per carrier triangle, a box
+ * (lower xyz, upper xyz) that contains the triangle's three corners (exact
+ * comparisons), on which f is proved continuous (`value`'s branch-evidence
+ * events, value_events rows over value's own workspace, leave the box
+ * `continuous`; phx_mc_interval_program_branches) and no guard of `value`
+ * fails (its interval evaluation over the box succeeds), and that has two
+ * corners at which the interval enclosures of f have strictly opposite
+ * signs, so the box holds a zero of f on the segment between them; such a
+ * triangle is accepted at the box diagonal (rounded up). A carrier triangle
+ * whose box fails a check is never accepted from the carrier; invalid events
+ * are refused (PHX_MC_INVALID_INPUT).
+ * And a triangle is certified only when it is nondegenerate with
+ * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
+ * with every triangle whose box meets its own. The surface must be a closed,
+ * consistently oriented 2-manifold (else PHX_MC_INVALID_INPUT). Refused
+ * triangles are repaired: the longest edge of each, unless kept at a crease
+ * (see phx_mc_zero_set_remesh), is split at its midpoint projected onto
+ * {f = 0} (edge_length, minimum_angle_degrees and the largest witness
+ * diagonal steer the projection as carrier_distance does in
+ * phx_mc_zero_set_remesh), Delaunay flips follow, and only
+ * changed or refused triangles are decided again, for at most four rounds.
+ * Once a repair is needed, every triangle decided in a round must also be
+ * proved within 0.8 `tolerance`: one proved only within `tolerance` is
+ * repaired as well, not refused, so the zero set near repaired triangles
+ * leaves the reverse direction room (when only such triangles remain after
+ * the last round, the last surface without a refusal stands).
+ * `value` has one output, `gradient` three. Every enclosure of f or grad f
+ * that a triangle, tube or witness proof reads is over a box on which
+ * value's branch evidence reports f continuous (else that proof refuses),
+ * and the transversality step also requires f smooth there; the caller
+ * still asserts that `gradient` encloses grad f (its Clarke gradient where
+ * f has a kink) wherever its enclosure is finite and f is continuous, and
+ * that value_events are f's complete branch evidence (the entry checks them
+ * for validity only: no events means continuous everywhere; Phydrax's native
+ * lowering records comparisons, selects, poles and domain edges; fields with
+ * stop_gradient or custom derivative rules are outside this contract). Once
+ * every triangle is certified, the zero set ->
+ * surface direction is decided over the domain box (lower xyz, upper xyz;
+ * finite, lower < upper, holding every surface vertex) through the
+ * possible-zero cover of the domain
+ * (box_tree.hpp, guards included: a box where a guard fails is kept): every
+ * zero of f in the domain lies in a leaf, each kept box
+ * is accepted at the first level where an outward bound of its distance to
+ * the surface (box_reach, zero_set_tube.hpp) is below a radius D, and boxes
+ * are subdivided otherwise down to a target diameter of D / 2; with no leaf
+ * left outside, every zero lies within the largest accepted bound (< D).
+ * Two proofs: (1, tube) the tube of the surface (zero_set_tube.hpp: segments
+ * y +- w(y) along interpolated vertex normals of length edge_length, adapted
+ * by doubling or halving, on which f is strictly monotone with one zero, and
+ * whose caps are at least rho from the surface) holds every zero within its
+ * own bound, and the cover at D = rho puts every zero in the tube: `reverse`
+ * is the smaller of the two bounds, and stands only within `tolerance`;
+ * (2, cover) when the tube refuses, a leaf is left outside rho or proof 1
+ * exceeds the tolerance, the cover alone at D = `tolerance`, `reverse` its
+ * bound. On PHX_MC_OK `result` owns the certified surface
+ * (phx_mc_surface_result_*, with per-triangle carried flags) and distances =
+ * (the maximum over the proved triangles, each at most `tolerance`, and,
+ * for triangles accepted from the carrier, their witness diagonals, which
+ * may exceed `tolerance`; `reverse`). A triangle left refused, or a cover
+ * leaf outside the tolerance after both proofs, is PHX_MC_UNRESOLVED (no
+ * result). Each cover run evaluates at most `cover_budget` (>= 1) boxes over
+ * all its levels; a run that would exceed it is refused (no leaf is
+ * accepted from it). counters receives ten entries (triangle certifications
+ * refused for transversality, refused for distance, triangles refused for
+ * embedding, all over every round, carrier triangles included; triangles
+ * accepted from the carrier; repair splits; certification rounds run; tube
+ * triangles refused in its last round; cover leaves left outside by the last
+ * cover run, -1 when its level would exceed the box tree's limit, -2 when it
+ * would exceed `cover_budget`, -3 when a surface vertex lies outside the
+ * domain; the proof used, 1 tube or 2 cover, 0 when
+ * none; the boxes evaluated by every cover run) on PHX_MC_OK and
+ * PHX_MC_UNRESOLVED. */
+typedef struct phx_mc_zero_set_certify_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  phx_mc_interval_box_program value;
+  phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
+  double tolerance;
+  int32_t orientation;
+  const double* carrier_vertices;
+  int64_t carrier_vertex_count;
+  const int64_t* carrier_triangles;
+  int64_t carrier_triangle_count;
+  const double* carrier_boxes;
+  const double* domain;
+  double edge_length;
+  double minimum_angle_degrees;
+  int64_t cover_budget;
+  void** result;
+  double* distances;
+  int64_t* counters;
+} phx_mc_zero_set_certify_request;
+PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);
+/* An owned surface result: sizes = (vertices, triangles); arrays copies them
+ * (PHX_MC_CAPACITY_EXCEEDED when a capacity is short); carried writes one
+ * flag per triangle, 1 for a triangle accepted from the carrier by its
+ * witness box (phx_mc_zero_set_certify; 0 for every other result); free
+ * releases it. */
+PHX_MC_API int32_t phx_mc_surface_result_sizes(const void* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_surface_result_arrays(void* result, int64_t vertex_capacity,
+                                                int64_t triangle_capacity, double* vertices,
+                                                int64_t* triangles);
+PHX_MC_API int32_t phx_mc_surface_result_carried(const void* result, int64_t triangle_capacity,
+                                                 uint8_t* carried);
+PHX_MC_API void phx_mc_surface_result_free(void* result);
+/* Remeshes a closed, consistently oriented triangle mesh (the source, with
+ * nondegenerate triangles; else PHX_MC_INVALID_INPUT) toward `edge_length`
+ * (lowered where the source curves, so that a well-shaped triangle stays
+ * within `tolerance`) and `minimum_angle_degrees`. Construction only, as
+ * phx_mc_zero_set_remesh, with the source as the surface: new and moved
+ * vertices go to their nearest point of the source (bucket grid), normals
+ * interpolate angle-weighted vertex normals, the two principal curvatures
+ * per-vertex estimates (the largest and smallest normal curvature along the
+ * ring edges). A source rough at this tolerance (mean |L(l)| above 2% of it,
+ * l = L(x) . n the normal part of the uniform Laplacian, as vertex noise
+ * gives) is first
+ * Taubin-smoothed at a radius of about edge_length / 2, every vertex kept
+ * within tolerance / 2 of the input, and construction follows the smoothed
+ * copy. Writes counters (splits, collapses, flips, relocations, triangles
+ * below the minimum angle, triangles whose sampled distance to the
+ * construction source exceeds `tolerance`). `result` owns the surface
+ * (phx_mc_surface_result_*). */
+typedef struct phx_mc_mesh_remesh_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  double tolerance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  int64_t* counters;
+} phx_mc_mesh_remesh_request;
+PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request);
+/* Certifies a remeshed surface (vertices, triangles) against its source mesh
+ * in both directions, repairing it locally as phx_mc_zero_set_certify does.
+ * Surface -> source: every triangle T gets an upper bound on the distance
+ * from each of its points to the source. Points take planar coordinates
+ * along T's normal, and each triangle maps affinely onto the planar
+ * triangle of its corners' (binary64) coordinates; the patch (source
+ * triangles reached across edges whose planar triangles meet T's) must wind
+ * once around T's planar triangle (exact orient2d), so every x = X(y) in T
+ * has a patch point Y(y) over the same planar y, and d(x, source) <=
+ * |X(y) - Y(y)|, convex over each overlap of planar triangles: the bound is
+ * its value at the overlap vertices (corners and edge crossings decided
+ * exactly; crossings evaluated within a certified offset, with the maps'
+ * slopes and a first-order rounding pad, rounded up). Refused triangles
+ * (bound above `tolerance`, or no winding) are split and flipped for at
+ * most four rounds, with embedding checked exactly. Source -> surface: the
+ * same bound for every source triangle against the certified surface, along
+ * the surface's interpolated normal (a source triangle may be rougher than
+ * the surface); the surface triangles nearest the corners of a refused
+ * source triangle are split. After any repair, angles are restored by flips
+ * and relocations and both directions are decided again, for at most three
+ * further passes. Both sources must be closed oriented 2-manifolds with
+ * nondegenerate triangles. On PHX_MC_OK `result` owns the certified surface
+ * (phx_mc_surface_result_*) and distances = (largest surface -> source
+ * bound, largest source -> surface bound), each at most `tolerance`; when a
+ * pass after one that certified both ways fails (angle relaxation is a
+ * target, not part of the certificate), that certified surface is returned.
+ * PHX_MC_UNRESOLVED when no pass certifies both ways: a surface triangle
+ * stays refused or a source triangle is not proved within `tolerance` (no
+ * result). counters receives
+ * (triangle certifications refused for distance, triangles refused for
+ * embedding, repair splits, rounds run, all summed over every pass; source
+ * triangles not proved within `tolerance` in the last pass; relocations
+ * restoring angles after repairs) on PHX_MC_OK and PHX_MC_UNRESOLVED,
+ * distances on both too (the second +inf when the surface direction
+ * failed). */
+typedef struct phx_mc_mesh_certify_request {
+  const double* source_vertices;
+  int64_t source_vertex_count;
+  const int64_t* source_triangles;
+  int64_t source_triangle_count;
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  double tolerance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  double* distances;
+  int64_t* counters;
+} phx_mc_mesh_certify_request;
+PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_request* request);
 
 /* --------------------------------------------------------------- level sets */
 #define PHX_MC_LEVEL_SET_FULL_CARRIERS 0
@@ -2432,6 +2627,29 @@ PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* point
                                         const int32_t* surface, const int32_t* surface_regions,
                                         phx_mc_volume_verdict* verdict);
 
+/* Sorted unique entities of a tetrahedral mesh (src/tet_entities.cpp). Every
+ * entity is the increasing row of its vertex indices; edges (edge_count, 2)
+ * and faces (face_count, 3) are the distinct such rows in lexicographic order.
+ * cell_edges (m, 6) and cell_faces (m, 4) route each cell's local edges
+ * (0,1) (0,2) (0,3) (1,2) (1,3) (2,3) and faces (0,1,2) (0,1,3) (0,2,3)
+ * (1,2,3) to their rows; face_edges (face_count, 3) routes each face's edges
+ * opposite its vertices in turn. The incidence orders sort each degree's
+ * flat face routes (simplex-major, opposite each local vertex in turn; a
+ * cell's faces opposite its stably sorted vertices) stably by face row:
+ * vertex_edge_order (2 edge_count), edge_face_order (3 face_count),
+ * face_cell_order (4m). Capacities: edges, vertex_edge_order and
+ * edge_face_order 12m items, faces and face_edges 4m rows. A vertex index
+ * outside [0, vertex_count) is PHX_MC_INVALID_INPUT; m above INT32_MAX / 12
+ * is PHX_MC_INVALID_ARGUMENT. */
+PHX_MC_API int32_t phx_mc_tet_mesh_entities(int64_t vertex_count, int64_t cell_count,
+                                            const int32_t* cells, int32_t* edges,
+                                            int64_t* edge_count, int32_t* faces,
+                                            int64_t* face_count, int32_t* cell_edges,
+                                            int32_t* cell_faces, int32_t* face_edges,
+                                            int32_t* vertex_edge_order,
+                                            int32_t* edge_face_order,
+                                            int32_t* face_cell_order);
+
 /* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
  * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
  * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive
@@ -2445,26 +2663,65 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double floor, int8_t* valid, double* lower,
                                               double* upper);
 
-/* Tetrahedral mesh of {f <= 0} inside the box [lower, upper] by isosurface
- * stuffing on a graded body-centered cubic lattice. f is entry output_entry
- * of an interval program with three inputs, evaluated in binary64 by
- * phx_mc_program_evaluate (seeds as there), and |f(x) - f(y)| <= lipschitz
- * |x - y| (a signed distance has lipschitz 1). The lattice of the given
- * spacing fills the band within one spacing of the zero set; away from it
- * the lattice coarsens by halving, up to `levels` (0 to 16) times, through
- * conforming red-green transitions (0 levels: the uniform lattice). The
- * lattice pads the box by one coarse cell on each side; a lattice vertex
- * outside the box with f <= 0 (the solid leaves the box) is refused with
- * PHX_MC_INVALID_INPUT. Construction only: the result is certified
- * afterwards (phx_mc_verify_volume and the source fidelity bounds).
- * degenerate_count reports stencil tetrahedra with zero orientation, which
- * are omitted (the volume certificate then fails). */
-PHX_MC_API int32_t phx_mc_implicit_stuffing(
+/* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
+ * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
+ * an interval program with three inputs; seed_lower and seed_upper are its
+ * interval workspace templates (the point executor uses their midpoints) and
+ * guards its entries whose lower bound must be >= 0 (domain guards such as
+ * real-power bases): a box on which a guard may fail is kept by the seed
+ * cover, since f may be undefined there and its enclosure is no evidence.
+ * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
+ * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
+ * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
+ * diagonal at most sqrt(3) criteria[0]; every edge of a kept cell whose vertex values have strictly
+ * opposite signs carries a root, and the roots farther than
+ * criteria[7] * criteria[0] from earlier ones (with every extra_seeds point,
+ * moved onto the zero set by Newton steps) start the Delaunay triangulation.
+ * Restricted facets (dual Voronoi edge crossing the zero set) are refined at
+ * their surface Delaunay ball centers while their longest edge exceeds
+ * criteria[0], the distance from their circumcenter to the ball center
+ * exceeds criteria[1] or their smallest angle is below criteria[2] degrees;
+ * cells whose circumcenter lies in {f < 0} are refined at their circumcenter
+ * while their circumradius exceeds criteria[3] or their radius-edge ratio
+ * exceeds criteria[4], unless the circumcenter would destroy a restricted
+ * facet, which is refined instead. The restricted surface is then checked
+ * against topology[0] edge-connected components and Euler characteristic
+ * topology[1] and against the box roots (every root within criteria[0] of a
+ * surface vertex); a failure is repaired by inserting the roots of uncovered
+ * boxes and the ball centers of facets at singular vertices, or else by
+ * halving the edge bound's square, up to four rounds. The boundary vertices
+ * are moved onto the zero set by Newton steps. Cells below criteria[5]
+ * degrees minimum dihedral angle are removed with the boundary fixed by edge
+ * removal, face removal and relocation of interior vertices (every new cell
+ * within criteria[4] radius-edge ratio and criteria[6] relative
+ * determinant); cells these leave are refined at their circumcenters and
+ * the construction repeated, up to three rounds, then any cell still below
+ * the targets goes through the fixed-boundary quality improvement. On
+ * success *volume owns the points, positive tetrahedra, outward boundary
+ * triangles and the report (phx_mc_restricted_volume_sizes). Construction
+ * only: the result is certified afterwards. */
+#define PHX_MC_RESTRICTED_CRITERIA_SIZE 8
+typedef struct phx_mc_restricted_volume phx_mc_restricted_volume;
+PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
-    int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
-    int64_t workspace_size, int64_t output_entry, const double* lower, const double* upper,
-    double spacing, int32_t levels, double lipschitz, int64_t* degenerate_count,
-    phx_mc_mesh** mesh);
+    int64_t index_count, const double* parameters, int64_t parameter_count,
+    const double* seed_lower, const double* seed_upper, int64_t workspace_size,
+    int64_t output_entry, const int64_t* guards, int64_t guard_count, const double* lower,
+    const double* upper, const double* criteria,
+    const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
+    phx_mc_restricted_volume** volume);
+/* sizes receives the point, cell and boundary face counts; report receives
+ * PHX_MC_RESTRICTED_REPORT_SIZE entries: refinement insertions, surface
+ * repair rounds, whether the restricted surface matched the topology, the box
+ * roots no surface vertex covers, the cells the quality improvement left
+ * below the targets, and whether the refinement budget ran out. */
+#define PHX_MC_RESTRICTED_REPORT_SIZE 6
+PHX_MC_API int32_t phx_mc_restricted_volume_sizes(const phx_mc_restricted_volume* volume,
+                                                  int64_t* sizes, int64_t* report);
+/* points (point count x 3), cells (cell count x 4), faces (face count x 3). */
+PHX_MC_API int32_t phx_mc_restricted_volume_copy(const phx_mc_restricted_volume* volume,
+                                                 double* points, int32_t* cells, int32_t* faces);
+PHX_MC_API void phx_mc_restricted_volume_free(phx_mc_restricted_volume* volume);
 
 /* CAD geometry bundle: every surface, 3D curve and p-curve of a CAD model is a
  * node of one geometry graph; a node's children precede it. Per node kind,
@@ -2590,6 +2847,409 @@ PHX_MC_API int32_t phx_mc_cad_geometry_evaluate(const phx_mc_cad_model* model,
                                                 int32_t entity_kind, int64_t entity,
                                                 int64_t count, const double* parameters,
                                                 int32_t quantity, double* result);
+
+/* Sampled curve construction controls; tolerances and sizes are physical.
+ * A sampled construction is not a chord-sag certificate. */
+typedef struct phx_mc_cad_curve_controls {
+  const double* face_sizes;       /* (surface_count,) */
+  const double* face_tolerances;  /* (surface_count,) */
+  const double* curve_tolerances; /* (curve_count,), infinity means none */
+  double tolerance_fraction;
+  double grading;
+  double minimum_size;
+} phx_mc_cad_curve_controls;
+
+typedef struct phx_mc_cad_curve_failure {
+  int32_t curve;
+  double first, last; /* normalized curve parameters */
+} phx_mc_cad_curve_failure;
+
+typedef struct phx_mc_cad_curve_statistics {
+  int64_t first_order_evaluations, second_order_evaluations, sag_evaluations;
+  int64_t small_feature_resamples, sag_splits, parameter_count, unresolved_count;
+} phx_mc_cad_curve_statistics;
+
+/* Test entry for shared curve discretization. All capacities and pointers are
+ * validated before any output write. offsets contains curve_count + 1 rows;
+ * parameters contains normalized parameters shared by every use; sag_splits
+ * has one count per curve. PHX_MC_UNRESOLVED exports the proposal and its
+ * unresolved intervals if construction reached a complete proposal; if it
+ * could not, outputs are untouched. This stage samples sag; it does not certify it. */
+PHX_MC_API int32_t phx_mc_cad_curves_test(
+    const phx_mc_cad_model* model, const phx_mc_cad_curve_controls* controls,
+    int64_t offset_capacity, int64_t* offsets, int64_t parameter_capacity, double* parameters,
+    int64_t failure_capacity, phx_mc_cad_curve_failure* failures,
+    int64_t split_capacity, int64_t* sag_splits,
+    phx_mc_cad_curve_statistics* statistics);
+
+/* Surface embedding verifier. Findings are deterministic; edge findings carry
+ * vertex indices, contact findings triangle indices and their exact intersection
+ * classification. Outside-domain and degenerate findings identify the point
+ * or triangle, respectively. Insufficient capacity leaves outputs unchanged.
+ * More than 2^32 points are refused with PHX_MC_INDEX_RANGE_ERROR. */
+enum phx_mc_surface_finding_kind {
+  PHX_MC_SURFACE_OUTSIDE_DOMAIN = 1,
+  PHX_MC_SURFACE_DEGENERATE = 2,
+  PHX_MC_SURFACE_EDGE = 3,
+  PHX_MC_SURFACE_VERTEX_LINK = 4,
+  PHX_MC_SURFACE_CONTACT = 5,
+  PHX_MC_SURFACE_EMPTY = 6
+};
+typedef struct phx_mc_surface_finding {
+  int32_t kind;
+  int64_t first;
+  int64_t second;
+  int32_t classification;
+} phx_mc_surface_finding;
+typedef struct phx_mc_surface_embedding_verdict {
+  int32_t status;
+  int64_t finding_count;
+} phx_mc_surface_embedding_verdict;
+PHX_MC_API int32_t phx_mc_verify_surface_embedding(
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, int64_t finding_capacity,
+    phx_mc_surface_finding* findings, phx_mc_surface_embedding_verdict* verdict);
+
+/* Chart partition verifier. UV triangles and trim chords are already in one
+ * lifted chart per patch; the producer refuses non-closing lifts. No periodic
+ * identification is performed. Each use belongs to a patch and has a directed
+ * nonempty range; each directed chord belongs to one use and numbered loop.
+ * Triangle UV is (triangle_count,3,2), chord UV (chord_count,2,2), and ranges
+ * are (count,2). The source must establish that its oriented trim cycles bound
+ * the patch. Endpoint and range joins compare bitwise, including signed zero.
+ * On OK evidence_count gives the failures (zero certifies). Insufficient
+ * capacity reports the required count without writing evidence. Consecutive
+ * chords of a use must join bitwise in UV and share one loop (USE_COVERAGE).
+ * OVERLAP: two correctly oriented triangles of one patch whose UV interiors
+ * meet other than along a shared vertex or edge (row/other: triangle rows). */
+enum phx_mc_chart_failure_kind {
+  PHX_MC_CHART_ORIENTATION = 1,
+  PHX_MC_CHART_EDGE = 2,
+  PHX_MC_CHART_USE_COVERAGE = 3,
+  PHX_MC_CHART_LOOP = 4,
+  PHX_MC_CHART_OVERLAP = 5
+};
+typedef struct phx_mc_chart_failure {
+  int32_t kind;
+  int64_t patch;
+  int64_t row;
+  int64_t other;
+} phx_mc_chart_failure;
+PHX_MC_API int32_t phx_mc_verify_chart_partition(
+    int64_t patch_count, int64_t triangle_count, const int32_t* triangle_patch,
+    const double* triangle_uv, int64_t use_count, const int64_t* use_patch,
+    const double* use_range, int64_t loop_count, int64_t chord_count,
+    const int64_t* chord_use, const int64_t* chord_loop, const double* chord_uv,
+    const double* chord_range, int64_t evidence_capacity,
+    phx_mc_chart_failure* evidence, int64_t* evidence_count);
+/* One-call curve and surface construction; controls have physical units.
+   face_sizes are requested edge lengths h. Curves and faces use the internal
+   size h_t = h/sqrt(2): the chart size test R <= h_t/sqrt(2) gives every
+   edge <= 2R <= h. */
+typedef struct phx_mc_cad_surface_controls {
+  const double* face_sizes;
+  const double* face_tolerances;
+  const double* curve_tolerances;
+  double tolerance_fraction;
+  double grading;
+  double minimum_size;
+} phx_mc_cad_surface_controls;
+
+typedef struct phx_mc_cad_face_stats {
+  int64_t metric_evaluations, insertions, unresolved_size, unresolved_angle;
+  int64_t encroachment_refusals, nonstar_refusals, outside_refusals, proximity_refusals;
+  int64_t unresolved_triangles, excluded_refusals, fixed_triangles_skipped, omitted_pole_points;
+  int64_t periodic_corner_gaps;
+  uint64_t max_periodic_corner_gap_ulps;
+} phx_mc_cad_face_stats;
+
+/* A gap whose quotient by the period exceeds 2^52 in magnitude is refused
+ * as unrepresentable. */
+enum {
+  PHX_MC_CAD_FACE_SHEET_MISMATCH = 1,
+  PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE = 2,
+  PHX_MC_CAD_FACE_PERIODIC_WRAP = 3
+};
+enum {
+  PHX_MC_CAD_FACE_REFINEMENT = 4
+};
+/* Refinement refusal kinds match the chart kernel's deterministic records. */
+enum {
+  PHX_MC_CAD_REFUSAL_NONE = 0,
+  PHX_MC_CAD_REFUSAL_ENCROACHMENT = 1,
+  PHX_MC_CAD_REFUSAL_OUTSIDE = 2,
+  PHX_MC_CAD_REFUSAL_PROXIMITY = 3,
+  PHX_MC_CAD_REFUSAL_NONSTAR = 4,
+  PHX_MC_CAD_REFUSAL_EXCLUDED = 5
+};
+typedef struct phx_mc_cad_face_failure {
+  int32_t face, loop, use, axis, reason;
+  int64_t turns;
+  double parameter;
+  /* Refinement-only fields: triangle is a pre-flip chart slot, not a global
+   * triangle index. Coordinates are in the face's native parameter chart.
+   * curve_segment is the zero-based segment in that curve's shared samples;
+   * curve and curve_segment are -1 when no curve segment is implicated.
+   * segment_parameters are normalized curve parameters, ordered along the use.
+   * candidate_uv is NaN when refusal_kind is NONE. */
+  int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
+  double candidate_uv[2], triangle_uv[6], segment_parameters[2];
+} phx_mc_cad_face_failure;
+
+typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
+typedef struct phx_mc_cad_surface_arrays {
+  int64_t vertex_capacity, triangle_capacity, sliver_capacity, curve_edge_capacity, face_capacity;
+  int64_t curve_capacity, parameter_capacity, failure_capacity, face_failure_capacity;
+  double* points; int8_t* vertex_dimensions; int32_t* vertex_entities; double* vertex_parameters;
+  int32_t* triangles; int32_t* triangle_patches; double* triangle_uv;
+  int32_t* triangle_edge_uses; int32_t* facet_regions;
+  double* sliver_uv; int32_t* sliver_patches;
+  int32_t* curve_edges; int32_t* curve_edge_curves; double* curve_edge_parameters;
+  phx_mc_cad_face_stats* face_stats;
+  int64_t* curve_offsets; double* curve_parameters; int64_t* curve_sag_splits;
+  phx_mc_cad_curve_failure* curve_failures;
+  phx_mc_cad_curve_statistics* curve_statistics;
+  phx_mc_cad_face_failure* face_failures;
+} phx_mc_cad_surface_arrays;
+
+/* OK returns a complete candidate. UNRESOLVED returns a handle with either a
+ * complete candidate or only findings (zero vertices and triangles); a curve
+ * failure without a complete proposal may return a null handle. Sizes are
+ * vertices, triangles, slivers, curve edges, faces, curves, curve parameters,
+ * unresolved curve intervals and face failures, respectively. Export validates
+ * every capacity and required output before writing anything. */
+PHX_MC_API int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
+                                    const phx_mc_cad_surface_controls* controls,
+                                    phx_mc_cad_surface_result** result);
+PHX_MC_API int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,
+                                                    int64_t sizes[9]);
+PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_result* result,
+                                                     const phx_mc_cad_surface_arrays* arrays);
+PHX_MC_API void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result);
+
+/* Per-pole rows: face, pole use, protected sectors, free sectors. With
+ * capacity zero and rows null, only the required row count is returned. */
+PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    int64_t* rows, int64_t* count);
+
+/* Chart rows include collapsed pole slivers; chart_to_mesh is -1 for those
+ * rows, otherwise the index in the exported physical triangle array.
+ * edge_chord is -1 for interior edges. Chord rows include pole uses. */
+typedef struct phx_mc_cad_chart_arrays {
+  int64_t triangle_capacity, use_capacity, chord_capacity;
+  int64_t* triangles; int32_t* patches; double* uv;
+  int64_t* chart_to_mesh; int64_t* edge_chord;
+  int64_t* use_patch; double* use_range;
+  int64_t* chord_use; int64_t* chord_loop; double* chord_uv; double* chord_range;
+} phx_mc_cad_chart_arrays;
+PHX_MC_API int32_t phx_mc_cad_chart_sizes(
+    const phx_mc_cad_surface_result* result, int64_t sizes[3]);
+PHX_MC_API int32_t phx_mc_cad_chart_export(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_chart_arrays* arrays);
+
+enum {
+  PHX_MC_FIDELITY_CERTIFIED = 0,
+  PHX_MC_FIDELITY_RESOLUTION = 1,
+  PHX_MC_FIDELITY_INTERVAL_REFUSAL = 2,
+  PHX_MC_FIDELITY_TRIM_REFUSAL = 3,
+  PHX_MC_FIDELITY_EDGE_ASSOCIATION = 4
+};
+enum {
+  PHX_MC_FIDELITY_BAD_CHORD_EDGE = 1,
+  PHX_MC_FIDELITY_DUPLICATE_CHORD = 2,
+  PHX_MC_FIDELITY_MISSING_CHORD = 3,
+  PHX_MC_FIDELITY_UNPAIRED_INTERIOR = 4,
+  PHX_MC_FIDELITY_CHART_MESH_LINK = 5,
+  PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE = 6
+};
+typedef struct phx_mc_fidelity_finding {
+  int32_t kind;
+  int64_t triangle, edge, other_triangle, other_edge, chord;
+} phx_mc_fidelity_finding;
+/* CAD fidelity verifier. UV triangles and trim chords are already in one
+ * lifted chart per patch; the producer refuses non-closing lifts. No periodic
+ * identification is performed. Each use belongs to a patch and has a directed
+ * nonempty range; each directed chord belongs to one use and numbered loop.
+ * Triangle UV is (triangle_count,3,2), chord UV (chord_count,2,2), and ranges
+ * are (count,2). The source must establish that its oriented trim cycles bound
+ * the patch. Endpoint and range joins compare bitwise, including signed zero.
+ * edge_chord (triangle_count,3) names the published chord row for each edge,
+ * or -1 for an interior edge. Use rows refer to model use rows. Chart
+ * triangles include collapsed pole slivers; mesh_triangles omit them and are
+ * the input of V2. chart_to_mesh maps each chart triangle to its oriented mesh
+ * triangle, or -1 exactly for a sliver with a pole-use chord whose physical
+ * vertex IDs coincide. Every mesh triangle must have exactly one chart image.
+ * Pole chart corners are binary64 and need not equal the exact pole parameter;
+ * the p-curve lens and interval endpoint mismatch enclose that difference.
+ * The exact-source coefficient bounds have model->node_reals layout.
+ * Certification is conditional on a separately verified chart partition.
+ *
+ * Outputs per triangle are upper distance bounds, status, reason and subdivision
+ * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
+ * the face's p-curve; unsupported interval nodes report
+ * PHX_MC_UNRESOLVED. Overall OK means all rows certified, UNRESOLVED means at
+ * least one row did not certify.
+ * Invalid input leaves outputs unchanged. max_depth is between 0 and 24. */
+/* Edge-association findings identify triangle and local edge; -1 means absent.
+ * evidence_count is required and reports the number of findings. Insufficient
+ * evidence_capacity reports PHX_MC_CAPACITY_EXCEEDED before evidence or row
+ * outputs are written. */
+PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
+    const phx_mc_cad_model* model, int64_t coefficient_count,
+    const double* coefficient_lower, const double* coefficient_upper,
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
+    int64_t use_count, const int64_t* use_patch, const double* use_range,
+    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
+    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
+    const int64_t* edge_chord, double tolerance, int32_t max_depth,
+    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
+    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
+    phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+/* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
+ * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
+ * use_patch is the model's loop surface of each use; use_range is the
+ * model's use range bitwise, in either order; chord_loop is the model loop
+ * of the chord's use; V4's use-coverage and loop-closure checks hold on these
+ * rows (every use covered by chords chaining bitwise from its first to its
+ * last range value; every loop one closed bitwise UV cycle). A sliver
+ * (chart_to_mesh -1) needs a mesh triangle with the edge from its pole vertex
+ * to its third vertex (else a CHART_MESH_LINK finding). V4's orientation,
+ * edge pairing and overlap checks remain a separate precondition.
+ * Trusted, not re-established natively: T-spline C2 continuity and partition
+ * of unity (Python's ASTS certificate of the exported pieces); continuity of
+ * an intersection root across chart seams and the terminal threshold (the
+ * chart constructor; V3 treats each break as a C0 line); the source model's
+ * 3D edge / face consistency. Rows are written only when the call completes. */
+
+/* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
+ * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the
+ * closed-curve unwrap; a surface edge (an edge of a surface triangle) takes
+ * S_f(uv_mid) from the lowest such triangle's UV record, a pole corner taking
+ * the free p-curve coordinate of the other corner; every other edge takes
+ * the straight midpoint. Surface triangles and curve edges index the first
+ * surface_point_count points (the face stage's exported vertices, with their
+ * dimensions and entities); later points are volume points. Tetrahedra are
+ * positively oriented (det[p1-p0, p2-p0, p3-p0] > 0); every surface triangle
+ * edge and curve edge must be a tet edge. Edges are the sorted (min, max)
+ * vertex pairs; cell_edges (T, 6) lists each cell's edges in the order
+ * 01 02 03 12 13 23, the quadratic node order of
+ * phx_mc_quadratic_tetrahedron_validity. Every cell is decided by that
+ * function at relative_floor; a cell that is not VALID is repaired in cell
+ * order: one Jacobi pass of harmonic extension moves the interior nodes of the
+ * failing cells and their edge neighbours, then every curved node of a cell
+ * still not VALID returns to its chord midpoint, each curved boundary edge
+ * so straightened recorded as one (edge, cell) row, until no cell with a
+ * curved node fails. cell_decisions are the final decisions. Counts are
+ * always written; a capacity below them is PHX_MC_CAPACITY_EXCEEDED before
+ * any other output is written. Output is independent of thread count. */
+enum {
+  PHX_MC_CAD_EDGE_INTERIOR = 0,
+  PHX_MC_CAD_EDGE_SURFACE = 1,
+  PHX_MC_CAD_EDGE_CURVE = 2
+};
+typedef struct phx_mc_cad_quadratic_stats {
+  int64_t curve_edges, surface_edges, interior_edges;
+  int64_t initial_invalid, initial_unresolved;
+  int64_t harmonic_nodes, harmonic_repaired_cells;
+  int64_t straightened_edges, final_invalid, final_unresolved;
+} phx_mc_cad_quadratic_stats;
+typedef struct phx_mc_cad_quadratic_request {
+  const phx_mc_cad_model* model;
+  int64_t point_count;
+  const double* points; /* (P, 3) */
+  int64_t surface_point_count;
+  const int8_t* vertex_dimensions; /* (surface_point_count,) */
+  const int32_t* vertex_entities;  /* (surface_point_count,) */
+  int64_t tetrahedron_count;
+  const int32_t* tetrahedra; /* (T, 4) */
+  int64_t triangle_count;
+  const int32_t* triangles;        /* (S, 3) */
+  const int32_t* triangle_patches; /* (S,) */
+  const double* triangle_uv;       /* (S, 3, 2) */
+  int64_t curve_edge_count;
+  const int32_t* curve_edges;            /* (E, 2) */
+  const int32_t* curve_edge_curves;      /* (E,) */
+  const double* curve_edge_parameters;   /* (E, 2) native curve parameters */
+  double relative_floor;
+  int64_t edge_capacity, record_capacity;
+  int32_t* edges;         /* (N, 2) */
+  double* nodes;          /* (N, 3) */
+  int8_t* edge_kinds;     /* (N,) PHX_MC_CAD_EDGE_* */
+  int32_t* edge_entities; /* (N,) face, curve, or -1 */
+  int64_t* cell_edges;    /* (T, 6) */
+  int32_t* cell_decisions; /* (T,) PHX_MC_QUADRATIC_VALIDITY_* */
+  int64_t* records;       /* (R, 2) straightened edge, cell */
+  int64_t* edge_count;
+  int64_t* record_count;
+  phx_mc_cad_quadratic_stats* stats;
+} phx_mc_cad_quadratic_request;
+PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
+
+/* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
+ * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
+ * triangle, curve segments as protected edges; refinement to the request h
+ * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * inside); improvement to the quality targets) and, with geometry_order 2,
+ * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
+ * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has
+ * its surface edge (the refused PLC edge, else the facet triangle's longest
+ * edge) split on the source in both incident faces (curve parameter or UV
+ * midpoint) and is retried once; each split is reported, and the surface
+ * export of the same handle shows the split surface. Returns the handle on
+ * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
+ * recovery still refused: zero cells, stats name the refusal). */
+typedef struct phx_mc_cad_volume_controls {
+  double radius_edge_bound;        /* 2 */
+  double min_dihedral_degrees;     /* 15.5 */
+  double min_relative_determinant; /* 0; also the P2 relative floor */
+  int32_t geometry_order;          /* 1 or 2 */
+} phx_mc_cad_volume_controls;
+typedef struct phx_mc_cad_volume_stats {
+  /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
+  int64_t curve_ns, face_ns, assembly_ns, volume_ns, quadratic_ns;
+  int64_t recovery_attempts, boundary_splits;
+  int64_t refine_inserted, refine_unmet;
+  int64_t improve_inserted, improve_collapsed, improve_relocated, unmet_cells;
+  /* Last recovery: status and phx_mc_plc3d_failure fields. */
+  int32_t recovery_status, recovery_reason, failure_kind;
+  int64_t failure_entity;
+  phx_mc_cad_quadratic_stats quadratic;
+} phx_mc_cad_volume_stats;
+typedef struct phx_mc_cad_boundary_split {
+  int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
+  int64_t entity;
+  int32_t vertices[2];         /* the split surface edge */
+  int32_t vertex;              /* the new surface vertex */
+  int32_t dimension, carrier;  /* 1: curve row, 2: face row */
+  double parameters[2];        /* curve parameter (t, NaN) or face (u, v) */
+} phx_mc_cad_boundary_split;
+typedef struct phx_mc_cad_volume_arrays {
+  int64_t point_capacity, tetrahedron_capacity, triangle_capacity;
+  int64_t edge_capacity, record_capacity, split_capacity;
+  double* points;               /* (P, 3), surface points first */
+  int32_t* tetrahedra;          /* (M, 4), det[b-a, c-a, d-a] > 0 */
+  int32_t* tetrahedron_regions; /* (M,) */
+  int32_t* boundary_faces;      /* (T, 2): cell and local face (opposite vertex) per surface triangle */
+  /* geometry_order 2 (else N = R = 0): as phx_mc_cad_quadratic_nodes. */
+  int32_t* edges; double* nodes; int8_t* edge_kinds; int32_t* edge_entities;
+  int64_t* cell_edges;          /* (M, 6), null when N = 0 */
+  int32_t* cell_decisions;      /* (M,), null when N = 0 */
+  int64_t* records;             /* (R, 2) */
+  phx_mc_cad_boundary_split* splits;
+  phx_mc_cad_volume_stats* stats;
+} phx_mc_cad_volume_arrays;
+PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
+                                         const phx_mc_cad_surface_controls* controls,
+                                         const phx_mc_cad_volume_controls* volume,
+                                         phx_mc_cad_surface_result** result);
+/* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits. */
+PHX_MC_API int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
+                                           int64_t sizes[6]);
+PHX_MC_API int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
+                                            const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }

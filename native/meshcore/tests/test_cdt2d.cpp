@@ -2,20 +2,27 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <limits>
 #include <map>
+#include <queue>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include "cdt2d.hpp"
+#include "expansion.hpp"
 #include "check.hpp"
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "refine_queue.hpp"
 #include "spatial_sort.hpp"
+#include "triangulation2d.hpp"
 
 namespace {
 
@@ -313,6 +320,175 @@ void check_quality(const Result& r, double min_angle, double max_area) {
   }
 }
 
+void test_cavity_legalization_predicate_order() {
+  const double w[2] = {0.0, 0.0}, u[2] = {1.0, 0.0}, x[2] = {0.0, 1.0};
+  const std::array<std::array<double, 2>, 3> candidates = {{
+      {{0.75, 0.75}}, {{1.25, 1.25}}, {{1.0, 1.0}},
+  }};
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const double* m = candidates[i].data();
+    const int cavity = incircle_sos(w, u, x, m, 0, 1, 2, 3);
+    const int legalize = incircle_sos(m, u, w, x, 3, 1, 0, 2);
+    PHX_CHECK(cavity == legalize);
+    PHX_CHECK(cavity != 0);
+    if (i == 0) PHX_CHECK(cavity > 0);
+    if (i == 1) PHX_CHECK(cavity < 0);
+  }
+}
+
+void test_ghost_layout() {
+  // Begin with one triangle, then insert outside each side and on hull edges.
+  const std::vector<double> points = {
+      0, 0, 2, 0, 0, 2, 1, -1, 2, 2, -1, 1, 1, 0, 0, 1,
+      3, -1, -1, 3, 3, 3};
+  Triangulation2D tri;
+  tri.reset(points.data(), static_cast<int64_t>(points.size() / 2), nullptr);
+  tri.initialize(0, 1, 2);
+  auto check_ghosts = [&]() {
+    int ghosts = 0;
+    for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
+      if (!tri.live[t] || !tri.is_ghost(static_cast<int32_t>(t))) continue;
+      ++ghosts;
+      const Triangle2D& ghost = tri.triangles[t];
+      PHX_CHECK(ghost.v[0] >= 0 && ghost.v[1] >= 0 && ghost.v[2] == kInfiniteVertex);
+      for (int k = 0; k < 3; ++k) {
+        const int32_t neighbor = ghost.n[k];
+        PHX_CHECK(neighbor >= 0 && static_cast<std::size_t>(neighbor) < tri.triangles.size());
+        if (neighbor < 0 || static_cast<std::size_t>(neighbor) >= tri.triangles.size()) continue;
+        PHX_CHECK(tri.live[static_cast<std::size_t>(neighbor)] != 0);
+        const int opposite = tri.edge_index(neighbor, ghost.v[prev3(k)], ghost.v[next3(k)]);
+        PHX_CHECK(opposite >= 0);
+        if (opposite >= 0) PHX_CHECK(tri.triangles[neighbor].n[opposite] == static_cast<int32_t>(t));
+        PHX_CHECK(tri.is_ghost(neighbor) == (k != 2));
+      }
+    }
+    PHX_CHECK(ghosts >= 3);
+  };
+  check_ghosts();
+  for (int32_t vertex = 3; vertex < tri.vertex_count(); ++vertex) {
+    tri.insert(vertex);
+    check_ghosts();
+  }
+}
+
+void test_spatial_queue_order() {
+  struct Entry { int priority; int id; };
+  struct Worse {
+    bool operator()(const Entry& a, const Entry& b) const {
+      return a.priority != b.priority ? a.priority < b.priority : a.id > b.id;
+    }
+  };
+  auto sequence = [](bool reverse) {
+    SpatialRefinementQueue<Entry, Worse> queue(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+    PHX_CHECK(queue.spatial());
+    for (int i = 0; i < 4; ++i) {
+      const int id = reverse ? 3 - i : i;
+      queue.push({id % 2, id}, id < 2 ? 0.1 : 0.9, 0.1);
+    }
+    std::vector<int> result;
+    while (!queue.empty()) {
+      result.push_back(queue.top().id);
+      queue.pop();
+    }
+    return result;
+  };
+  PHX_CHECK((sequence(false) == std::vector<int>{1, 0, 3, 2}));
+  PHX_CHECK(sequence(false) == sequence(true));
+  SpatialRefinementQueue<Entry, Worse> spatial(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int i = 0; i < 10; ++i) spatial.push({i, i}, 0.1, 0.1);
+    for (int i = 9; i >= 0; --i) {
+      PHX_CHECK(spatial.top().id == i);
+      spatial.pop();
+    }
+    PHX_CHECK(spatial.empty());
+  }
+  SpatialRefinementQueue<Entry, Worse> single(0.0, 0.0, 1.0, 1.0, 10.0, 4);
+  PHX_CHECK(!single.spatial());
+  single.push({2, 0});
+  single.push({1, 1});
+  Entry current{};
+  PHX_CHECK(single.pop_current(current, [](const Entry& e) { return e.id != 0; }));
+  PHX_CHECK(current.id == 1);
+  PHX_CHECK(!single.pop_current(current, [](const Entry&) { return true; }));
+}
+
+void test_refinement_determinism() {
+  Input in;
+  // Generic-position points from a fixed seed; unlike a square, these avoid
+  // index-dependent simulation-of-simplicity choices on cocircular vertices.
+  in.points = {
+      0.77395604855596334, 0.43887843975205232, 0.85859791991138246, 0.6973680290593639,
+      0.094177347887649532, 0.97562235163675592, 0.76113970199035297, 0.78606430527695381,
+      0.12811363267554587, 0.45038593789556713, 0.37079802423258124, 0.92676498884860181,
+      0.64386512008066454, 0.82276161327082997, 0.44341419882733113, 0.22723872178477689,
+      0.5545847870158348, 0.063817256104175324, 0.82763117199258207, 0.63166439912206485,
+      0.75808774008537383, 0.35452596812986836, 0.97069802439490327, 0.89312112132219768,
+      0.77838349707376187, 0.19463870785196757, 0.46672100372703418, 0.043803765787228777,
+      0.15428949206754783, 0.68304895324245463, 0.74476215590781714, 0.96750973243421001,
+      0.32582535813815194, 0.37045970603486889, 0.46955581127580792, 0.1894713590842857,
+      0.12992150533547164, 0.47570492622593374, 0.22690934905088411, 0.66981399468251035};
+  in.segments = {0, 1, 2, 3};
+  in.keep_hull = 1;
+  in.max_area = 0.0003;
+  const Result a = run(in), again = run(in);
+  PHX_CHECK(a.status == PHX_MC_OK && again.status == PHX_MC_OK);
+  auto same_bytes = [](const auto& x, const auto& y) {
+    return x.size() == y.size() &&
+           (x.empty() || std::memcmp(x.data(), y.data(), x.size() * sizeof(x[0])) == 0);
+  };
+  PHX_CHECK(same_bytes(a.points, again.points));
+  PHX_CHECK(same_bytes(a.cells, again.cells));
+  PHX_CHECK(same_bytes(a.segments, again.segments));
+  PHX_CHECK(same_bytes(a.vertex_map, again.vertex_map));
+  PHX_CHECK(same_bytes(a.constraint_sources, again.constraint_sources));
+  PHX_CHECK(same_bytes(a.constraint_parents, again.constraint_parents));
+  PHX_CHECK(same_bytes(a.constraint_ratios, again.constraint_ratios));
+
+  Input permuted = in;
+  for (int i = 0; i < 20; ++i) {
+    permuted.points[2 * i] = in.points[2 * (19 - i)];
+    permuted.points[2 * i + 1] = in.points[2 * (19 - i) + 1];
+  }
+  permuted.segments = {17, 16, 19, 18};
+  const Result b = run(permuted);
+  PHX_CHECK(b.status == PHX_MC_OK);
+  using Point = std::array<double, 2>;
+  using Triangle = std::array<Point, 3>;
+  using Edge = std::array<Point, 2>;
+  auto point = [](const double* p) { return Point{p[0], p[1]}; };
+  auto triangles = [&](const Result& r) {
+    std::set<Triangle> result;
+    for (std::size_t i = 0; i < r.cells.size(); i += 3) {
+      Triangle t{point(at(r, r.cells[i])), point(at(r, r.cells[i + 1])),
+                 point(at(r, r.cells[i + 2]))};
+      std::sort(t.begin(), t.end());
+      result.insert(t);
+    }
+    return result;
+  };
+  auto labeled_edges = [&](const Result& r, const Input& input) {
+    std::set<std::pair<Edge, Edge>> result;
+    for (std::size_t i = 0; i < r.cells.size(); i += 3) {
+      for (int k = 0; k < 3; ++k) {
+        const int32_t source = r.segments[i + k];
+        if (source < 0) continue;
+        Edge edge{point(at(r, r.cells[i + (k + 1) % 3])),
+                  point(at(r, r.cells[i + (k + 2) % 3]))};
+        Edge original{point(input.points.data() + 2 * input.segments[2 * source]),
+                      point(input.points.data() + 2 * input.segments[2 * source + 1])};
+        std::sort(edge.begin(), edge.end());
+        std::sort(original.begin(), original.end());
+        result.emplace(edge, original);
+      }
+    }
+    return result;
+  };
+  PHX_CHECK(triangles(a) == triangles(b));
+  PHX_CHECK(labeled_edges(a, in) == labeled_edges(b, permuted));
+}
+
+
 void test_ruppert_square() {
   Input in;
   in.points = {0, 0, 1, 0, 1, 1, 0, 1};
@@ -328,6 +504,22 @@ void test_ruppert_square() {
   PHX_CHECK_NEAR(total_area(r), 1.0, 1e-12);
   PHX_CHECK(r.points.size() / 2 > 4);
   for (int i = 0; i < 8; ++i) PHX_CHECK(r.points[i] == in.points[i]);
+}
+
+void test_refinement_angle_thresholds() {
+  for (const double min_angle : {24.9, 25.0, 25.1}) {
+    for (const double max_area : {0.04, kInf}) {
+      Input in;
+      in.points = {0, 0, 1, 0, 1, 1, 0, 1, 0.51, 0.28};
+      in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+      in.min_angle = min_angle;
+      in.max_area = max_area;
+      const Result r = run(in);
+      PHX_CHECK(r.status == PHX_MC_OK);
+      check_mesh(r);
+      check_quality(r, min_angle, max_area);
+    }
+  }
 }
 
 void test_ruppert_l_shape() {
@@ -350,6 +542,35 @@ void test_ruppert_l_shape() {
   const Result angle_only = run(in);
   PHX_CHECK(angle_only.status == PHX_MC_OK);
   check_quality(angle_only, 30.0, kInf);
+}
+
+// OK is reported without a final scan unless refinement gave up somewhere,
+// so OK must still certify every cell. Obtuse-cornered domains with interior
+// points and demanding angles exercise both outcomes.
+void test_ok_status_certifies_quality() {
+  std::uint64_t seed = 0x5eedf1a9u;
+  int ok = 0;
+  for (int round = 0; round < 60; ++round) {
+    Input in;
+    const int corners = 5 + round % 7;
+    for (int i = 0; i < corners; ++i) {
+      const double angle = 2.0 * 3.14159265358979323846 * (i + 0.3 * uniform(seed)) / corners;
+      in.points.insert(in.points.end(), {std::cos(angle), std::sin(angle)});
+      in.segments.insert(in.segments.end(), {i, (i + 1) % corners});
+    }
+    for (int i = 0; i < round % 9; ++i) {
+      in.points.insert(in.points.end(), {uniform(seed) - 0.5, uniform(seed) - 0.5});
+    }
+    in.min_angle = round % 2 == 0 ? 33.0 : 28.0;
+    in.max_area = round % 3 == 0 ? kInf : 0.02;
+    const Result r = run(in);
+    PHX_CHECK(r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED);
+    if (r.status == PHX_MC_OK) {
+      ++ok;
+      check_quality(r, in.min_angle, in.max_area);
+    }
+  }
+  PHX_CHECK(ok > 0);
 }
 
 void test_ruppert_slanted_polygon() {
@@ -575,6 +796,87 @@ void test_floating_point_hazards() {
   });
 }
 
+// Fault caught: a wrong child bound or sift step in the 4-ary heap, or a free
+// block of one bucket handed to another while still in use, changes the pop
+// sequence against std::priority_queue under the same strict total order.
+void test_wide_heap_matches_binary_heap() {
+  struct Entry { int priority; int id; };
+  struct Worse {
+    bool operator()(const Entry& a, const Entry& b) const {
+      return a.priority != b.priority ? a.priority < b.priority : a.id > b.id;
+    }
+  };
+  for (const bool spatial : {false, true}) {
+    SpatialRefinementQueue<Entry, Worse, 4> wide(0.0, 0.0, 1.0, 1.0, spatial ? 1e6 : 1.0, 4);
+    PHX_CHECK(wide.spatial() == spatial);
+    std::array<std::priority_queue<Entry, std::vector<Entry>, Worse>, 2> reference;
+    std::uint64_t state = 12345;
+    auto next = [&state]() {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<int>(state >> 33);
+    };
+    // Spatial grid row 0: bucket 0 (x = 0.01) pops before bucket 3 (x = 0.2).
+    int id = 0;
+    for (int round = 0; round < 3000; ++round) {
+      const int bucket = spatial ? next() % 2 : 0;
+      const int pushes = 1 + next() % 3;
+      for (int k = 0; k < pushes; ++k) {
+        const Entry entry{next() % 50, id++};
+        wide.push(entry, bucket == 0 ? 0.01 : 0.2, 0.01);
+        reference[bucket].push(entry);
+      }
+      for (int k = next() % 3; k > 0 && !wide.empty(); --k) {
+        auto& source = !reference[0].empty() ? reference[0] : reference[1];
+        PHX_CHECK(wide.top().id == source.top().id);
+        wide.pop();
+        source.pop();
+      }
+    }
+    while (!wide.empty()) {
+      auto& source = !reference[0].empty() ? reference[0] : reference[1];
+      PHX_CHECK(wide.top().id == source.top().id);
+      wide.pop();
+      source.pop();
+    }
+    PHX_CHECK(reference[0].empty() && reference[1].empty());
+  }
+}
+
+// Fault caught: a binary64 dot-product stage whose error bound is too small
+// (or whose sign is flipped) disagrees with the exact integer sign on
+// near-orthogonal configurations whose products round.
+void test_dot_sign_against_integer_reference() {
+  std::uint64_t state = 99;
+  auto next = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<int64_t>(state >> 24) - (int64_t{1} << 39);
+  };
+  int zeros = 0;
+  for (int trial = 0; trial < 20000; ++trial) {
+    // Integer coordinates below 2^40: differences are exact doubles, the
+    // products (up to 2^82) round, and an exact expansion holds the dot product
+    // (portable: no __int128, which MSVC lacks).
+    int64_t a[2] = {next(), next()}, v[2] = {next(), next()}, b[2];
+    const int64_t ax = a[0] - v[0], ay = a[1] - v[1];
+    // b - v nearly perpendicular to a - v: (-ay, ax) / scale plus an offset.
+    const int64_t scale = 1 + (trial % 7);
+    b[0] = v[0] - ay / scale + (trial % 3) - 1;
+    b[1] = v[1] + ax / scale + (trial % 5) - 2;
+    if (std::llabs(b[0]) >= (int64_t{1} << 40) || std::llabs(b[1]) >= (int64_t{1} << 40)) continue;
+    const phx::mc::Expansion exact =
+        phx::mc::Expansion::product(static_cast<double>(ax), static_cast<double>(b[0] - v[0])) +
+        phx::mc::Expansion::product(static_cast<double>(ay), static_cast<double>(b[1] - v[1]));
+    const int expected = exact.sign();
+    zeros += expected == 0;
+    const double pa[2] = {static_cast<double>(a[0]), static_cast<double>(a[1])};
+    const double pb[2] = {static_cast<double>(b[0]), static_cast<double>(b[1])};
+    const double pv[2] = {static_cast<double>(v[0]), static_cast<double>(v[1])};
+    PHX_CHECK(cdt2d_detail::dot_sign(pa, pb, pv) == expected);
+    PHX_CHECK(cdt2d_detail::dot_sign(pb, pa, pv) == expected);
+  }
+  PHX_CHECK(zeros > 0);
+}
+
 }  // namespace
 
 int main() {
@@ -582,8 +884,16 @@ int main() {
   test_random_segments();
   test_lattice_segments();
   test_hole_carving();
+  test_ghost_layout();
+  test_cavity_legalization_predicate_order();
+  test_refinement_determinism();
+  test_spatial_queue_order();
+  test_wide_heap_matches_binary_heap();
+  test_dot_sign_against_integer_reference();
   test_ruppert_square();
+  test_refinement_angle_thresholds();
   test_ruppert_l_shape();
+  test_ok_status_certifies_quality();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();
   test_refinement_preserves_smooth_samples_and_constraint_junctions();

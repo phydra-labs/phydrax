@@ -502,7 +502,10 @@ def interval_absolute(value: Interval, /) -> Interval:
     crosses = (lower <= 0.0) & (upper >= 0.0)
     low = np.where(crosses, 0.0, _ieee_minimum(np.abs(lower), np.abs(upper)))
     high = _ieee_maximum(np.abs(lower), np.abs(upper))
-    return _round_out(low, high)
+    rounded_lower, rounded_upper = _round_out(low, high)
+    # |x| >= 0 exactly: an exact 0 lower end stays 0, so a real-power base
+    # guard on |x| holds on a box touching the plane x = 0.
+    return np.where(low == 0.0, 0.0, rounded_lower), rounded_upper
 
 
 def interval_maximum(first: Interval, second: Interval, /) -> Interval:
@@ -2698,9 +2701,11 @@ class PreparedIntervalFunction:
     jet_tables: dict[tuple[bytes, int, int, int], _JetTable] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
-    # Vmapped box axis of every traced variable, derived on first branch query.
+    # Vmapped box axis of every traced variable: supplied by a consumer that
+    # retains `branch_batch_axes()` beside this jaxpr, else derived on first
+    # branch query.
     branch_axes: dict[jax_core.Var, int | None] = field(
-        default_factory=dict, init=False, repr=False, compare=False
+        default_factory=dict, repr=False, compare=False
     )
     # The point map traced at `_HOST_BLOCK` boxes with its constants' intervals
     # (``None`` when that trace captures other constants), derived on first use.
@@ -2873,7 +2878,7 @@ class PreparedIntervalFunction:
         ledger events in its program (``phx_mc_interval_program_branches``).
         """
         lower_, upper_ = self._boxes(lower, upper)
-        axes = self._branch_batch_axes()
+        axes = self.branch_batch_axes()
         count = lower_.shape[0]
         low_result = np.empty((count, *self.output_shape), dtype=np.float64)
         high_result = np.empty_like(low_result)
@@ -2882,10 +2887,7 @@ class PreparedIntervalFunction:
         jaxpr = self.closed_jaxpr.jaxpr
         native = None
         if self.native_program is not None and self.execution != "batched":
-            native = self.native_branch_program
-            if native is None:
-                native = self._lower_native(axes)
-                object.__setattr__(self, "native_branch_program", native)
+            native = self.native_branches()
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             active = stop - start
@@ -2914,7 +2916,20 @@ class PreparedIntervalFunction:
             continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
 
-    def _branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
+    def native_branches(self, /) -> NativeIntervalProgram:
+        """The native program with branch-evidence events, lowered on first query."""
+        if self.native_program is None or self.execution == "batched":
+            raise IntervalExtensionError(
+                "native branch evidence requires a native, non-batched program."
+            )
+        native = self.native_branch_program
+        if native is None:
+            native = self._lower_native(self.branch_batch_axes())
+            object.__setattr__(self, "native_branch_program", native)
+        return native
+
+    def branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
+        """The vmapped box axis of every variable of this program's jaxpr."""
         if not self.branch_axes:
             if self.function is None:
                 raise IntervalExtensionError(

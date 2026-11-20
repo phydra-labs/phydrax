@@ -693,37 +693,56 @@ def _hard_growth(
     return growth
 
 
-def _select_control(
+def _select_controls(
     candidates: np.ndarray,
-    active_mask: np.ndarray,
+    masks: np.ndarray,
     hard: np.ndarray,
     priorities: np.ndarray,
-    interval: tuple[float, float],
+    lower: np.ndarray,
+    upper: np.ndarray,
     combination: SizeCombinationPolicy,
     /,
-) -> int:
-    """Winning control of one sample under the explicit combination policy."""
-    active = np.flatnonzero(active_mask)
-    if not active.size:
-        raise ValueError("Size controls do not cover every sample.")
-    active_hard = active[hard[active]]
-    pool = active_hard if active_hard.size else active
+) -> np.ndarray:
+    """Winning control of every sample under the explicit combination policy.
+
+    Per sample, the pool is the active hard controls, else every active control;
+    targets are clipped to the sample's hard interval. The first failing sample
+    decides the refusal, as a sample-ordered evaluation would.
+    """
+    hard_active = masks & hard[:, None]
+    has_hard = np.any(hard_active, axis=0)
+    pool = np.where(has_hard[None, :], hard_active, masks)
+    choices = np.clip(candidates, lower[None, :], upper[None, :])
     match combination:
         case SizeCombinationPolicy.REJECT_HARD_CONFLICTS:
-            choices = np.clip(candidates[pool], *interval)
-            if active_hard.size and np.any(choices != choices[0]):
-                raise ValueError("Overlapping hard size-control targets conflict.")
-            return int(pool[int(np.argmin(choices))])
+            finalists = pool
+            checked = has_hard
+            message = "Overlapping hard size-control targets conflict."
         case SizeCombinationPolicy.EXPLICIT_PRIORITY:
-            finalists = pool[priorities[pool] == np.max(priorities[pool])]
-            choices = np.clip(candidates[finalists], *interval)
-            if np.any(choices != choices[0]):
-                raise ValueError(
-                    "Equal-priority size-control targets conflict on one sample."
-                )
-            return int(finalists[0])
+            ranks = np.where(pool, priorities[:, None], np.iinfo(np.int64).min)
+            finalists = pool & (ranks == np.max(ranks, axis=0)[None, :])
+            checked = np.ones(has_hard.shape, dtype=np.bool_)
+            message = "Equal-priority size-control targets conflict on one sample."
         case _:
             raise ValueError(f"Unsupported size combination policy {combination!r}.")
+    first = np.argmax(finalists, axis=0)
+    leading = np.take_along_axis(choices, first[None, :], axis=0)
+    uncovered = ~np.any(masks, axis=0)
+    failed = uncovered | (checked & np.any(finalists & (choices != leading), axis=0))
+    if np.any(failed):
+        if uncovered[int(np.argmax(failed))]:
+            raise ValueError("Size controls do not cover every sample.")
+        raise ValueError(message)
+    if combination is SizeCombinationPolicy.EXPLICIT_PRIORITY:
+        return first
+    # The first least clipped target wins; a NaN target wins as argmin's would.
+    undefined = finalists & np.isnan(choices)
+    least = np.min(np.where(finalists, choices, np.inf), axis=0)
+    return np.where(
+        np.any(undefined, axis=0),
+        np.argmax(undefined, axis=0),
+        np.argmax(finalists & (choices == least[None, :]), axis=0),
+    )
 
 
 def _apply_hard_growth(
@@ -871,22 +890,21 @@ def resolve_size_controls(
     if np.any(admissible_minimum > admissible_maximum):
         raise ValueError("Active hard size intervals have an empty intersection.")
 
-    preferred = np.empty((points.shape[0],), dtype=np.float64)
-    raw = np.empty((points.shape[0],), dtype=np.float64)
-    winners = []
-    for sample in range(points.shape[0]):
-        interval = (admissible_minimum[sample], admissible_maximum[sample])
-        selected = _select_control(
-            candidate_array[:, sample],
-            mask_array[:, sample],
-            hard_array,
-            priority_array,
-            interval,
-            combination,
-        )
-        preferred[sample] = candidate_array[selected, sample]
-        raw[sample] = np.clip(preferred[sample], *interval)
-        winners.append(controls_[selected].control_id)
+    selected = _select_controls(
+        candidate_array,
+        mask_array,
+        hard_array,
+        priority_array,
+        admissible_minimum,
+        admissible_maximum,
+        combination,
+    )
+    preferred = np.asarray(
+        candidate_array[selected, np.arange(points.shape[0])], dtype=np.float64
+    )
+    raw = np.clip(preferred, admissible_minimum, admissible_maximum)
+    control_ids = tuple(control.control_id for control in controls_)
+    winners = [control_ids[index] for index in selected.tolist()]
     if np.any(~np.isfinite(raw)) or np.any(raw <= 0.0):
         raise ValueError("Resolved size targets must be positive and finite.")
 

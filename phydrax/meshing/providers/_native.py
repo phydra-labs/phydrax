@@ -397,13 +397,13 @@ def _resolve_route(
                 return "implicit_adaptive_tetrahedral"
             if options.implicit_policy is not None:
                 _unsupported(
-                    "implicit_stuffing",
+                    "implicit_restricted_delaunay",
                     source,
                     specification,
                     "the established-reach restricted route does not consume an "
                     "adaptive implicit policy",
                 )
-            return "implicit_stuffing"
+            return "implicit_restricted_delaunay"
     if isinstance(source, NativeImplicitSource):
         return (
             "implicit_surface"
@@ -505,7 +505,7 @@ def _options_for_route(
                 options.volume_schedule
                 if route
                 in {
-                    "implicit_stuffing",
+                    "implicit_restricted_delaunay",
                     "implicit_adaptive_tetrahedral",
                     "plc_tetrahedral",
                     "cad_tetrahedral",
@@ -606,7 +606,9 @@ def _cad_boundary_specification(
     if specification.layer_controls:
         target_issues = _layer_target_support(specification)
     else:
-        target_issues = _target_support(specification)
+        # Order 2 is constructed by the native route; the proved Python route
+        # refuses it at execution.
+        target_issues = _target_support(specification, maximum_geometry_order=2)
     if target_issues:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
@@ -672,7 +674,8 @@ def _cad_boundary_specification(
         2,
         3,
         CellFamilyPolicy(required=("triangle",)),
-        geometry_order=specification.target.geometry_order,
+        # The boundary sizes the native solid; its P2 nodes are the volume's.
+        geometry_order=1,
         require_conforming=specification.target.require_conforming,
     )
     return SurfaceMeshingSpec(
@@ -747,6 +750,15 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         )
 
     def execute(self, /) -> NativeMeshConstruction:
+        if self.specification.target.geometry_order != 1:
+            raise _failure(
+                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "A proved CAD volume is affine; geometry order 2 is constructed "
+                "unproved only (prove=False).",
+            )
+        return self._execute_python()
+
+    def _execute_python(self, /) -> NativeMeshConstruction:
         boundary_construction = self.boundary_preparation.execute()
         surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
@@ -929,13 +941,13 @@ def _prepare_route(
             return prepare_native_implicit(
                 source, specification, options, coordinate_contract
             )
-        case "implicit_stuffing":
+        case "implicit_restricted_delaunay":
             if not isinstance(source, AnalyticImplicitProfile):
                 _unsupported(
                     route,
                     source,
                     specification,
-                    "isosurface stuffing requires an analytic implicit profile with established reach",
+                    "restricted Delaunay meshing requires an analytic implicit profile with established reach",
                 )
             if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(
@@ -1440,7 +1452,19 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
             if not isinstance(assembly, MeshAssembly):
                 raise TypeError("An owner-local native route must return MeshAssembly.")
             return assembly
-        construction = self.prepared.execute()
+        construction: object
+        if not prove and isinstance(self.prepared, _PreparedDirectBRepCadVolume):
+            # Unproved CAD solids are constructed by the one native call;
+            # prove=True keeps the Python construction and its certification.
+            from ._native_cad_mesh import cad_solid_support_issues, execute_cad_solid
+
+            construction = (
+                self.prepared.execute()
+                if cad_solid_support_issues(self.prepared)
+                else execute_cad_solid(self.prepared)
+            )
+        else:
+            construction = self.prepared.execute()
         if not isinstance(construction, NativeMeshConstruction):
             raise TypeError("A native prepared route must return NativeMeshConstruction.")
         if not prove:

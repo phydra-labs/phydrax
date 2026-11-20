@@ -185,6 +185,11 @@ benchmarks/*
 # Native meshing kernels against measured reference ceilings.
 !benchmarks/native_meshing.py
 !benchmarks/native_meshing_ceilings.json
+!benchmarks/native_meshing_mmg3d.py
+!benchmarks/_meshing_surfaces.py
+!benchmarks/native_meshing_inputs/
+!benchmarks/native_meshing_inputs/q2ring_pts.npy
+!benchmarks/native_meshing_inputs/q2ring_seg.npy
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv

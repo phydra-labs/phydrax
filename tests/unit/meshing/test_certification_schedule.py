@@ -247,7 +247,7 @@ def test_certified_planar_curving_preserves_parent_identities() -> None:
     assert curved.cell_result is not None
     assert (
         curved.evidence.evidence_id
-        == "2d5e268e86b71a1390bdfabe6a05266cc172607792ba54fea8096fef6e4c705e"
+        == "6f75392dff554e8c2fbbc31f38b5d534490f0436964872dda78509238a5d2dc2"
     )
     assert (
         curved.evidence.certificate.certificate_id
@@ -259,7 +259,7 @@ def test_certified_planar_curving_preserves_parent_identities() -> None:
     )
     assert (
         curved.cell_result.result_id
-        == "2a5f2a231cfb71afa8c2a733aa6a34ad539708106aeaf7cca2f14bd56374deb3"
+        == "6a2f8068c20261336dabe75bdd31ccf3cec70de396e715fe7c2717517b62cb46"
     )
 
 

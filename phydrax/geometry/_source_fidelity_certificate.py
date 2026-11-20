@@ -182,6 +182,127 @@ def _require_intersecting(
         )
 
 
+def _hull(stored: np.ndarray, fresh: np.ndarray, /) -> np.ndarray:
+    """The outward hull of aligned ``[lower, upper]`` enclosures, as ``(n, 2)``."""
+    stored_ = np.asarray(stored, dtype=np.float64).reshape((-1, 2))
+    fresh_ = np.asarray(fresh, dtype=np.float64).reshape((-1, 2))
+    return np.stack(
+        (
+            np.minimum(stored_[:, 0], fresh_[:, 0]),
+            np.maximum(stored_[:, 1], fresh_[:, 1]),
+        ),
+        axis=1,
+    )
+
+
+def _require_decided(
+    stored: np.ndarray,
+    hull: np.ndarray,
+    limit: float,
+    cells: tuple[int, ...] | None,
+    bound: str,
+    /,
+) -> None:
+    """Each stored bound-limit decision still holds on the hull of its enclosures.
+
+    A bound passes its limit when its upper end is at most the limit and
+    violates it when its lower end exceeds the limit. The hull contains the
+    fresh, sound enclosure, so a pass or violation it does not keep was never
+    proved by sound evidence.
+    """
+    stored_ = np.asarray(stored, dtype=np.float64).reshape((-1, 2))
+    hull_ = np.asarray(hull, dtype=np.float64).reshape((-1, 2))
+    broken = np.flatnonzero(
+        ((stored_[:, 1] <= limit) & ~(hull_[:, 1] <= limit))
+        | ((stored_[:, 0] > limit) & ~(hull_[:, 0] > limit))
+    )
+    if broken.size:
+        row = int(broken[0])
+        raise SourceFidelityReproofError(
+            "A stored bound-limit decision does not hold on the recomputed enclosure",
+            bound=bound,
+            cell=None if cells is None else int(cells[row]),
+        )
+
+
+def _adopted_chart_rows(
+    stored: ImplicitChartRows,
+    fresh: ImplicitChartRows,
+    tolerance: float,
+    maximum_normal_deviation: float | None,
+    /,
+) -> ImplicitChartRows:
+    """The outward hull of a row evidence and its reproof, its decisions re-checked.
+
+    In ``CHART_ROW_COLUMNS`` order the field residual is an upper bound (hull by
+    maximum), target-to-root and source-normal deviation are ``[lower, upper]``
+    pairs, and the chart Jacobian, injectivity margin and source gradient are
+    lower bounds (hull by minimum). A reusable row is reused by a child proof
+    as certified, so every decision it carries must hold on the hull: its
+    tolerance and normal-limit passes and violations, and the strict
+    positivity of its three lower bounds that admits it as a chart.
+    """
+    rows = np.flatnonzero(np.asarray(stored.reusable))
+    values = np.array(stored.values, dtype=np.float64, copy=True)
+    kept = values[rows]
+    reproved = np.asarray(fresh.values, dtype=np.float64)[rows]
+    hull = np.empty_like(kept)
+    hull[:, 0] = np.maximum(kept[:, 0], reproved[:, 0])
+    for pair in ((1, 2), (3, 4)):
+        hull[:, pair] = _hull(kept[:, pair], reproved[:, pair])
+    hull[:, 5:] = np.minimum(kept[:, 5:], reproved[:, 5:])
+    _require_decided(
+        kept[:, (1, 2)], hull[:, (1, 2)], tolerance, None, "chart_rows.target_to_root"
+    )
+    if maximum_normal_deviation is not None:
+        _require_decided(
+            kept[:, (3, 4)],
+            hull[:, (3, 4)],
+            maximum_normal_deviation,
+            None,
+            "chart_rows.source_normal_deviation",
+        )
+    unbounded = np.full((rows.size,), math.inf, dtype=np.float64)
+    for column, name in (
+        (5, "chart_rows.chart_jacobian_lower"),
+        (6, "chart_rows.chart_injectivity_margin"),
+        (7, "chart_rows.source_gradient_lower"),
+    ):
+        _require_decided(
+            np.stack((kept[:, column], unbounded), axis=1),
+            np.stack((hull[:, column], unbounded), axis=1),
+            0.0,
+            None,
+            name,
+        )
+    values[rows] = hull
+    return ImplicitChartRows(stored.keys, stored.reusable, values)
+
+
+def _adopted_cover(
+    stored: SourceBoundaryChartCover, fresh: SourceBoundaryChartCover, /
+) -> SourceBoundaryChartCover:
+    """The reproved simplices, each with the larger of its two deviation bounds.
+
+    Each fresh bound is sound for its fresh simplex, so the maximum is too,
+    whether or not the stored bound was; the exact content (and identity) is
+    the stored cover's, which ``require_reproduced_by`` proved equal.
+    """
+    return SourceBoundaryChartCover(
+        fresh.simplices,
+        np.maximum(
+            np.asarray(stored.deviation_bounds, dtype=np.float64),
+            np.asarray(fresh.deviation_bounds, dtype=np.float64),
+        ),
+        stored.semantics,
+        stored.complete,
+        stored.source_id,
+        stored.source_revision,
+        findings=stored.findings,
+        restriction_ids=stored.restriction_ids,
+    )
+
+
 @final
 class SourceFidelityCertificate(StrictModule, NonTrainableState):
     """Continuous two-directed bounds and optional oriented-normal evidence."""
@@ -530,10 +651,23 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
           and must intersect.
 
         Bound-limit decisions (findings of ``_BOUND_DECISION_CHECKS``) were taken
-        on the generating platform's enclosure and are not re-decided on this
-        platform's floats: the stored decisions are adopted, and a stored
-        ``certified`` status must hold exactly on the stored bounds. The result
-        carries the stored evidence, decisions and identity on the fresh
+        on the generating platform's enclosure and are adopted, not re-decided,
+        but the adopted certificate never ships stored evidence alone: each
+        bound becomes the outward hull of its stored and fresh enclosures
+        (lowers by minimum, uppers by maximum; the one-sided normal bounds by
+        maximum). The hull contains the fresh enclosure, sound on this
+        platform, so the shipped evidence is sound even when the stored one
+        was not; a faithful restore across platforms only widens by rounding.
+        Every adopted decision must hold on the hull: a bound whose stored
+        upper end met its limit must still meet it, a bound whose stored lower
+        end exceeded its limit must still exceed it, and a stored ``certified``
+        status must hold on the hull uppers. Implicit chart rows, which child
+        proofs reuse as certified, take the same hull and re-check their own
+        decisions (`_adopted_chart_rows`); the chart cover ships its reproved
+        simplices with the larger of the two one-sided bounds
+        (`_adopted_cover`). Domain coverage downstream is recomputed from the
+        adopted bounds, so its distance follows the hull. The result carries
+        the hull evidence with the stored decisions and identity on the fresh
         restored owners. A mismatch raises :class:`SourceFidelityReproofError`
         naming the bound and cell.
         """
@@ -585,6 +719,7 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
         if coverage is not None:
             assert fresh.coverage is not None
             coverage.require_reproduced_by(fresh.coverage)
+            coverage = _adopted_cover(coverage, fresh.coverage)
         if {
             finding.finding_id
             for finding in self.findings
@@ -664,8 +799,6 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Stored normal-deviation claim differs from its stored bounds",
                 bound="maximum_normal_deviation_bound",
             )
-        if self.status == "certified":
-            self._require_certified_bounds()
         stored_rows, fresh_rows = self.chart_rows, fresh.chart_rows
         if (stored_rows is None) != (fresh_rows is None) or (
             stored_rows is not None
@@ -680,9 +813,9 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
             )
         if stored_rows is not None and fresh_rows is not None:
             stored_rows.require_current()
-            # Two-sided row evidence must intersect its reproof; the one-sided
-            # lower/upper columns are evidence whose gate (``reusable``) was
-            # re-decided exactly above.
+            # Two-sided row evidence must intersect its reproof; the adopted
+            # rows are the hull of both (`_adopted_chart_rows`), with the gate
+            # (``reusable``) re-decided exactly above.
             rows = np.flatnonzero(np.asarray(stored_rows.reusable))
             stored_values = np.asarray(stored_rows.values, dtype=np.float64)[rows]
             fresh_values = np.asarray(fresh_rows.values, dtype=np.float64)[rows]
@@ -696,20 +829,87 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                     None,
                     name,
                 )
+        deviation = _hull(self.deviation_bounds, fresh.deviation_bounds)
+        _require_decided(
+            self.deviation_bounds, deviation, self.tolerance, cells, "deviation_bounds"
+        )
+        directed: dict[str, np.ndarray] = {}
+        for name in ("mesh_to_source", "source_to_mesh"):
+            stored_pair = np.asarray(
+                (getattr(self, f"{name}_lower"), getattr(self, f"{name}_upper")),
+                dtype=np.float64,
+            )
+            directed[name] = _hull(
+                stored_pair,
+                np.asarray(
+                    (getattr(fresh, f"{name}_lower"), getattr(fresh, f"{name}_upper")),
+                    dtype=np.float64,
+                ),
+            )[0]
+            _require_decided(stored_pair, directed[name], self.tolerance, None, name)
+        normal = (
+            None
+            if stored_normal is None or fresh_normal is None
+            else np.maximum(
+                np.asarray(stored_normal, dtype=np.float64),
+                np.asarray(fresh_normal, dtype=np.float64),
+            )
+        )
+        normal_lower = (
+            None
+            if self.maximum_normal_deviation_lower is None
+            or fresh.maximum_normal_deviation_lower is None
+            else min(
+                float(self.maximum_normal_deviation_lower),
+                float(fresh.maximum_normal_deviation_lower),
+            )
+        )
+        limit = self.maximum_normal_deviation
+        if limit is not None and stored_normal is not None and normal is not None:
+            stored_upper = np.asarray(stored_normal, dtype=np.float64)
+            _require_decided(
+                np.stack((np.zeros_like(stored_upper), stored_upper), axis=1),
+                np.stack((np.zeros_like(normal), normal), axis=1),
+                limit,
+                cells,
+                "normal_deviation_bounds",
+            )
+            if (
+                self.maximum_normal_deviation_lower is not None
+                and normal_lower is not None
+            ):
+                _require_decided(
+                    np.asarray((self.maximum_normal_deviation_lower, math.inf)),
+                    np.asarray((normal_lower, math.inf)),
+                    limit,
+                    None,
+                    "maximum_normal_deviation_lower",
+                )
+        if normal is not None:
+            normal.setflags(write=False)
+        deviation.setflags(write=False)
         attributes = {item.name: getattr(fresh, item.name) for item in fields(fresh)}
         attributes.update(
-            deviation_bounds=self.deviation_bounds,
-            mesh_to_source_lower=self.mesh_to_source_lower,
-            mesh_to_source_upper=self.mesh_to_source_upper,
-            source_to_mesh_lower=self.source_to_mesh_lower,
-            source_to_mesh_upper=self.source_to_mesh_upper,
-            normal_deviation_bounds=self.normal_deviation_bounds,
-            maximum_normal_deviation_lower=self.maximum_normal_deviation_lower,
-            maximum_normal_deviation_bound=self.maximum_normal_deviation_bound,
+            deviation_bounds=deviation,
+            mesh_to_source_lower=float(directed["mesh_to_source"][0]),
+            mesh_to_source_upper=float(directed["mesh_to_source"][1]),
+            source_to_mesh_lower=float(directed["source_to_mesh"][0]),
+            source_to_mesh_upper=float(directed["source_to_mesh"][1]),
+            normal_deviation_bounds=normal,
+            maximum_normal_deviation_lower=normal_lower,
+            maximum_normal_deviation_bound=(
+                None if normal is None or normal.size == 0 else float(np.max(normal))
+            ),
             coverage=coverage,
             findings=self.findings,
             status=self.status,
-            chart_rows=stored_rows,
+            chart_rows=(
+                None
+                if stored_rows is None or fresh_rows is None
+                else _adopted_chart_rows(
+                    stored_rows, fresh_rows, self.tolerance, self.maximum_normal_deviation
+                )
+            ),
             certificate_id=self.certificate_id,
         )
         adopted = reconstruct_strict(SourceFidelityCertificate, attributes)
@@ -718,6 +918,8 @@ class SourceFidelityCertificate(StrictModule, NonTrainableState):
                 "Adopted source fidelity evidence differs from its identity",
                 bound="certificate_id",
             )
+        if adopted.status == "certified":
+            adopted._require_certified_bounds()
         return adopted
 
     def _require_certified_bounds(self) -> None:

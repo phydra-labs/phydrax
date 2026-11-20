@@ -35,6 +35,18 @@ def _bool_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array
     return jnp.asarray(array)
 
 
+def _column_extremes(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Per-column int64 minima and maxima of nonempty rank-2 integer rows.
+
+    One strided reduction per column: an axis-0 reduction of narrow row-major
+    rows runs NumPy's inner loop over only the row width.
+    """
+
+    lows = np.asarray([rows[:, column].min() for column in range(rows.shape[1])])
+    highs = np.asarray([rows[:, column].max() for column in range(rows.shape[1])])
+    return lows.astype(np.int64), highs.astype(np.int64)
+
+
 def _row_value_keys(
     rows: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int] | None:
@@ -44,8 +56,8 @@ def _row_value_keys(
     when the product of the per-column value spans exceeds int64.
     """
 
-    lows = np.min(rows, axis=0).astype(np.int64)
-    spans = np.max(rows, axis=0).astype(np.int64) - lows + 1
+    lows, highs = _column_extremes(rows)
+    spans = highs - lows + 1
     span_product = math.prod(int(span) for span in spans)
     if span_product > np.iinfo(np.int64).max:
         return None
@@ -91,6 +103,19 @@ def _row_run_starts(ordered: np.ndarray, /) -> np.ndarray:
     return starts
 
 
+def has_repeated_values(values: np.ndarray, /) -> bool:
+    """Return whether a one-dimensional integer array repeats any value.
+
+    Strictly increasing arrays (the common identity bank) answer in one pass;
+    otherwise one value sort finds equal neighbors.
+    """
+
+    if values.size < 2 or np.all(values[1:] > values[:-1]):
+        return False
+    ordered = np.sort(values)
+    return bool(np.any(ordered[1:] == ordered[:-1]))
+
+
 def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
     """Return whether any two rows of a rank-2 integer array are equal."""
 
@@ -100,6 +125,15 @@ def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
         key = values[0]
         key.sort()
         return bool(np.any(key[1:] == key[:-1]))
+    # Equal rows have equal wrapped polynomial hashes, so distinct hashes
+    # prove distinct rows; only a hash collision needs the exact row order.
+    hashed = np.zeros((rows.shape[0],), dtype=np.uint64)
+    for column in rows.T:
+        hashed *= np.uint64(0x9E3779B97F4A7C15)
+        hashed += column.astype(np.uint64)
+    hashed.sort()
+    if not np.any(hashed[1:] == hashed[:-1]):
+        return False
     return not np.all(_row_run_starts(rows[_row_order(rows)]))
 
 
@@ -127,6 +161,40 @@ def sorted_unique_rows(rows: np.ndarray, /) -> np.ndarray:
     return result
 
 
+def sorted_rows(rows: np.ndarray, /) -> np.ndarray:
+    """The rows of a rank-2 integer array in lexicographic order, with repeats.
+
+    Equal to ``rows[_row_order(rows)]``: equal rows are indistinguishable, so
+    one value sort of the packed keys decodes to the same array.
+    """
+
+    values = _row_value_keys(rows) if rows.size else None
+    if values is None:
+        return rows[_row_order(rows)]
+    key, lows, spans, _ = values
+    key.sort()
+    result = np.empty(rows.shape, dtype=rows.dtype)
+    for column in range(rows.shape[1] - 1, -1, -1):
+        key, digit = np.divmod(key, spans[column])
+        result[:, column] = digit + lows[column]
+    return result
+
+
+def rows_increase(rows: np.ndarray, /, *, strict: bool) -> bool:
+    """Whether rank-2 integer rows (strictly) increase lexicographically."""
+
+    if rows.shape[0] < 2:
+        return True
+    greater = np.zeros((rows.shape[0] - 1,), dtype=np.bool_)
+    equal = np.ones((rows.shape[0] - 1,), dtype=np.bool_)
+    for column in range(rows.shape[1]):
+        upper = rows[1:, column]
+        lower = rows[:-1, column]
+        greater |= equal & (upper > lower)
+        equal &= upper == lower
+    return bool(np.all(greater if strict else greater | equal))
+
+
 def unique_rows_inverse(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``np.unique(rows, axis=0, return_inverse=True, return_counts=True)``.
 
@@ -150,8 +218,10 @@ def _row_keys(
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Order-preserving int64 keys of two nonempty arrays' rows, if spans fit."""
 
-    lows = np.minimum(table.min(axis=0), query.min(axis=0)).astype(np.int64)
-    highs = np.maximum(table.max(axis=0), query.max(axis=0)).astype(np.int64)
+    table_lows, table_highs = _column_extremes(table)
+    query_lows, query_highs = _column_extremes(query)
+    lows = np.minimum(table_lows, query_lows)
+    highs = np.maximum(table_highs, query_highs)
     spans = highs - lows + 1
     if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
         return None
@@ -182,6 +252,18 @@ def row_positions(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
         owners[inverse[: table.shape[0]]] = np.arange(table.shape[0], dtype=np.int64)
         return owners[inverse[table.shape[0] :]]
     table_keys, query_keys = keys
+    if np.all(table_keys[1:] > table_keys[:-1]):
+        # Lexicographically sorted tables are their own order; a sorted table of
+        # consecutive keys locates each key by its offset.
+        if table_keys[-1] - table_keys[0] == table_keys.size - 1:
+            position = query_keys - table_keys[0]
+            return np.where(
+                (position >= 0) & (position < table_keys.size), position, -1
+            ).astype(np.int64)
+        position = np.minimum(
+            np.searchsorted(table_keys, query_keys), table_keys.size - 1
+        )
+        return np.where(table_keys[position] == query_keys, position, -1).astype(np.int64)
     order = np.argsort(table_keys, kind="stable")
     ordered = table_keys[order]
     position = np.minimum(np.searchsorted(ordered, query_keys), ordered.size - 1)
@@ -435,7 +517,11 @@ def _selection_from_masks(
 
 
 class OrientedIncidence(StrictModule, NonTrainableState):
-    """Sparse signed boundary incidence from lower to upper entities."""
+    """Sparse signed boundary incidence from lower to upper entities.
+
+    ``canonical_order`` may supply the permutation of the active routes that
+    sorts their ``(lower ID, upper ID, sign)`` rows; it is checked.
+    """
 
     degree: int = eqx.field(static=True)
     lower_entity_set_id: str = eqx.field(static=True)
@@ -455,6 +541,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         /,
         *,
         incidence_id: str | None = None,
+        canonical_order: ArrayLike | None = None,
     ) -> None:
         degree_ = int(degree)
         if degree_ <= 0:
@@ -471,21 +558,51 @@ class OrientedIncidence(StrictModule, NonTrainableState):
                 f"Incidence signs must have shape {relation.route_shape}; got {coefficients.shape}."
             )
         valid = np.asarray(relation.valid, dtype=np.bool_)
-        active_coefficients = coefficients[valid]
-        if np.any(~np.isfinite(active_coefficients)):
-            raise ValueError("Active incidence signs must be finite.")
-        if np.any(np.abs(active_coefficients) != 1):
+        source = np.asarray(relation.source_indices)
+        target = np.asarray(relation.target_indices)
+        if np.all(valid):
+            active_coefficients = coefficients.reshape((-1,))
+            source = source.reshape((-1,))
+            target = target.reshape((-1,))
+        else:
+            active_coefficients = coefficients[valid]
+            source = source[valid]
+            target = target[valid]
+        if not np.all((active_coefficients == 1) | (active_coefficients == -1)):
+            if np.any(~np.isfinite(active_coefficients)):
+                raise ValueError("Active incidence signs must be finite.")
             raise ValueError("Active incidence signs must be ±1.")
-        source = np.asarray(relation.source_indices)[valid]
-        target = np.asarray(relation.target_indices)[valid]
-        lower_ids = np.asarray(lower.entity_ids, dtype=np.int64)[source]
-        upper_ids = np.asarray(upper.entity_ids, dtype=np.int64)[target]
+        # Preserve attaching-face multiplicity, including repeated signed routes.
+        if canonical_order is not None:
+            order = np.asarray(canonical_order)
+            count = active_coefficients.shape[0]
+            if (
+                order.shape != (count,)
+                or not np.issubdtype(order.dtype, np.integer)
+                or (count and (order.min() < 0 or order.max() >= count))
+            ):
+                raise ValueError("canonical_order must index the active incidence rows.")
+            seen = np.zeros((count,), dtype=np.bool_)
+            seen[order] = True
+            if not np.all(seen):
+                raise ValueError(
+                    "canonical_order must permute the active incidence rows."
+                )
+            source = source[order]
+            target = target[order]
+            active_coefficients = active_coefficients[order]
         canonical_incidence = np.stack(
-            (lower_ids, upper_ids, active_coefficients.astype(np.int64)),
+            (
+                np.asarray(lower.entity_ids, dtype=np.int64)[source],
+                np.asarray(upper.entity_ids, dtype=np.int64)[target],
+                active_coefficients.astype(np.int64),
+            ),
             axis=1,
         )
-        # Preserve attaching-face multiplicity, including repeated signed routes.
-        canonical_incidence = canonical_incidence[_row_order(canonical_incidence)]
+        if canonical_order is None:
+            canonical_incidence = sorted_rows(canonical_incidence)
+        elif not rows_increase(canonical_incidence, strict=False):
+            raise ValueError("canonical_order must sort the canonical incidence rows.")
         self.degree = degree_
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id

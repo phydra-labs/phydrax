@@ -15,20 +15,21 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "source_construction.hpp"
 #include "spatial_sort.hpp"
 
 namespace phx::mc {
 
 // Outcome of the shared checked cone insertion. Every refusal leaves the
-// complex unchanged except kInternal; callers choose their fallback
-// (refinement reports an unmet cell, Delaunay/PLC construction rebuilds).
+// complex unchanged; callers choose their fallback (refinement reports an
+// unmet cell, Delaunay/PLC construction rebuilds).
 enum class ConeInsertion : std::uint8_t {
   kApplied,
   kInvertedCell,   // a finite cone cell is not exactly positively oriented
   kRemovesVertex,  // a cavity vertex is absent from the cavity boundary
   kSlotLimit,      // the slot bank cannot hold the cone
-  kInternal,       // the star link failed after the topology write
+  kInternal,       // the cavity boundary is not a closed surface the cone can link
 };
 
 // The one incremental insertion commit used by Delaunay/PLC construction and
@@ -105,6 +106,10 @@ class Triangulation3D {
   // Exact positions of witnessed vertices; with a bank, every predicate tuple
   // that contains a witnessed vertex evaluates its exact position.
   void set_exact_points(const ExactVertexBank* bank) noexcept { exact_ = bank; }
+  // Point-set construction stores the coordinates in insertion order, so a
+  // walk and a cavity touch nearby memory; `identities[v]` is the input
+  // index of vertex v, which orders the symbolic perturbation (null: v).
+  void set_identities(const int32_t* identities) noexcept { identities_ = identities; }
   // Delaunay conflicts use physical distances but keep index-space geometry.
   void set_affine_metric(const double* linear) {
     metric_ = linear;
@@ -230,6 +235,19 @@ class Triangulation3D {
     building_ = false;
     return status;
   }
+  // Inserts `points` in order into the triangulation build() returned, which
+  // nothing has edited since (the caller's contract): it is still the
+  // Delaunay triangulation of the inserted points, so as in build() the
+  // cells need no validation.
+  int32_t extend(std::span<const int32_t> points, std::span<char> alive) {
+    building_ = true;
+    int32_t status = PHX_MC_OK;
+    for (std::size_t k = 0; k < points.size() && status == PHX_MC_OK; ++k) {
+      status = insert(points[k], alive);
+    }
+    building_ = false;
+    return status;
+  }
 
   void collect_cells(std::vector<int32_t>& cells) const {
     cells.clear();
@@ -291,6 +309,11 @@ class Triangulation3D {
     return orient_with(tetrahedron, slot, ExactPointRef{p, nullptr});
   }
   int orient_with(const Tetrahedron& tetrahedron, int slot, const ExactPointRef& p) const {
+    if (p.exact == nullptr && carriers_exact()) {
+      const double* q[4];
+      for (int k = 0; k < 4; ++k) q[k] = k == slot ? p.carrier : point(tetrahedron.v[k]);
+      return orient3d_filtered(q[0], q[1], q[2], q[3]);
+    }
     ExactPointRef q[4];
     for (int k = 0; k < 4; ++k) q[k] = k == slot ? p : ref(tetrahedron.v[k]);
     if (carriers_only(q)) {
@@ -339,20 +362,41 @@ class Triangulation3D {
       collect_removed_vertices();
       if (weights_.empty() && !removed_.empty()) return PHX_MC_UNRESOLVED;
     }
-    const ConeInsertion inserted = insert_checked_cone(
-        complex_, edit_,
-        [this](const int32_t* v) {
-          const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
-          if (carriers_only(q)) {
+    // While build() owns the complex, the cavity is the conflict region of p
+    // in the triangulation of the perturbed lifting, star-shaped from p: a
+    // facet whose plane holds p has both cells on one side of the conflict
+    // test, so no cone cell is flat or inverted and the cone is committed
+    // unchecked.
+    ConeInsertion inserted = ConeInsertion::kApplied;
+    if (building_) {
+      switch (edit_.commit_cone(p, cavity_, boundary_)) {
+        case EditStatus::kOk: break;
+        case EditStatus::kSlotLimit: inserted = ConeInsertion::kSlotLimit; break;
+        default: inserted = ConeInsertion::kInternal; break;
+      }
+    } else {
+      inserted = insert_checked_cone(
+          complex_, edit_,
+          [this](const int32_t* v) {
             // A sign the floating stage decides is the unperturbed sign.
-            const OrientationStage stage =
-                orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
-            if (-stage.det > stage.errbound) return true;
-            if (stage.det > stage.errbound) return false;
-          }
-          return orient3d_sos(q[0], q[1], q[2], q[3], v[0], v[1], v[2], v[3]) > 0;
-        },
-        p, cavity_, boundary_, true);
+            if (carriers_exact()) {
+              const OrientationStage stage =
+                  orientation_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]));
+              if (-stage.det > stage.errbound) return true;
+              if (stage.det > stage.errbound) return false;
+            }
+            const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
+            if (carriers_only(q)) {
+              const OrientationStage stage =
+                  orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
+              if (-stage.det > stage.errbound) return true;
+              if (stage.det > stage.errbound) return false;
+            }
+            return orient3d_sos(q[0], q[1], q[2], q[3], identity(v[0]), identity(v[1]),
+                                identity(v[2]), identity(v[3])) > 0;
+          },
+          p, cavity_, boundary_, true);
+    }
     switch (inserted) {
       case ConeInsertion::kApplied: break;
       case ConeInsertion::kInvertedCell:
@@ -481,25 +525,43 @@ class Triangulation3D {
     }
     return true;
   }
+  // Whether every vertex is exact at its carrier (no exact position banked).
+  bool carriers_exact() const noexcept { return exact_ == nullptr || exact_->empty(); }
   bool finite_conflict(const Tetrahedron& current, int32_t p) const {
     const int32_t* v = current.v;
     if (weights_.empty()) {
       if (metric_ == nullptr) {
+        // A sign the floating stage decides is the unperturbed sign.
+        if (carriers_exact()) {
+          const int sign =
+              insphere_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p));
+          if (sign != 0) return sign > 0;
+        }
         const ExactPointRef q[5]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p)};
         if (carriers_only(q)) {
-          // A sign the floating stage decides is the unperturbed sign.
           const int sign = insphere_stage(q[0].carrier, q[1].carrier, q[2].carrier,
                                           q[3].carrier, q[4].carrier);
           if (sign != 0) return sign > 0;
         }
-        return insphere_sos(q[0], q[1], q[2], q[3], q[4], v[0], v[1], v[2], v[3], p) > 0;
+        return insphere_sos(q[0], q[1], q[2], q[3], q[4], identity(v[0]), identity(v[1]),
+                            identity(v[2]), identity(v[3]), identity(p)) > 0;
       }
       return delaunay_insphere(ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3]), ref(p),
-                               v[0], v[1], v[2], v[3], p) > 0;
+                               identity(v[0]), identity(v[1]), identity(v[2]),
+                               identity(v[3]), identity(p)) > 0;
     }
-    return power3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
-                       weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]],
-                       weights_[p], v[0], v[1], v[2], v[3], p) > 0;
+    const double* q[5]{point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p)};
+    const double w[5]{weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]], weights_[p]};
+    // A sign the floating stage decides is the unperturbed sign.
+    const int sign = power3d_stage(q[0], q[1], q[2], q[3], q[4], w[0], w[1], w[2], w[3], w[4]);
+    if (sign != 0) return sign > 0;
+    return power3d_sos(q[0], q[1], q[2], q[3], q[4], w[0], w[1], w[2], w[3], w[4],
+                       identity(v[0]), identity(v[1]), identity(v[2]), identity(v[3]),
+                       identity(p)) > 0;
+  }
+  // The index ordering the symbolic perturbation of vertex v.
+  int64_t identity(int32_t v) const noexcept {
+    return identities_ == nullptr ? v : identities_[static_cast<std::size_t>(v)];
   }
   bool conflict(int32_t t, int32_t p, bool& topology_valid) {
     if (!checked(t)) {
@@ -508,9 +570,13 @@ class Triangulation3D {
     }
     Tetrahedron& current = mutable_tet(t);
     if (current.stamp == stamp_value_) return current.state != kNoConflict;
-    const int slot = vertex_slot(current, kGhostVertex);
+    // Live vertices are kGhostVertex (-1) or indices: a cell is finite iff
+    // the bitwise or of its vertices is nonnegative.
+    const int32_t* v = current.v;
+    const bool finite = (v[0] | v[1] | v[2] | v[3]) >= 0;
+    const int slot = finite ? -1 : vertex_slot(current, kGhostVertex);
     bool result = false;
-    if (slot < 0) {
+    if (finite) {
       result = finite_conflict(current, p);
     } else {
       const int side = orient_with(current, slot, ref(p));
@@ -558,12 +624,23 @@ class Triangulation3D {
             unconstrained && conflict(neighbor, p, topology_valid);
         if (!topology_valid) return PHX_MC_INTERNAL_ERROR;
         if (neighbor_conflict) {
-          mutable_tet(neighbor).state = kInCavity;
+          Tetrahedron& joined = mutable_tet(neighbor);
+          joined.state = kInCavity;
+          // Its neighbors are read when it leaves the stack.
+          for (int32_t next : joined.n) {
+            if (static_cast<std::size_t>(next) < complex_.tets.size()) {
+              prefetch(&complex_.tets[static_cast<std::size_t>(next)]);
+            }
+          }
           cavity_.push_back(neighbor);
           stack_.push_back(neighbor);
         } else {
-          const int back = neighbor_slot(tet(neighbor), t);
-          if (back < 0) return PHX_MC_INTERNAL_ERROR;
+          // The slot of t among the neighbor's neighbors, selected without
+          // branches (a valid complex lists t once).
+          const int32_t* around = tet(neighbor).n;
+          const int back = (around[1] == t ? 1 : 0) | (around[2] == t ? 2 : 0) |
+                           (around[3] == t ? 3 : 0);
+          if (around[back] != t) return PHX_MC_INTERNAL_ERROR;
           boundary_.push_back({t, k, neighbor, back});
         }
       }
@@ -639,6 +716,7 @@ class Triangulation3D {
 
   std::span<const double> points_;
   const ExactVertexBank* exact_ = nullptr;
+  const int32_t* identities_ = nullptr;
   const double* metric_ = nullptr;
   int metric_orientation_ = 1;
   std::span<const double> weights_;

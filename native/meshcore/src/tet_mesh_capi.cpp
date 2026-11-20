@@ -782,6 +782,13 @@ int32_t prepare_implicit_owner(const phx_mc_tet_implicit_source* source,
   if (status != PHX_MC_OK) return status;
   status = bind(owned->gradient, source->gradient);
   if (status != PHX_MC_OK) return status;
+  // Every enclosure a facet admission reads holds only where f's branch
+  // evidence (the value program's own events) reports f continuous;
+  // transversality also requires smooth (ZeroSetBandAdmission::transversal_sign).
+  status = owned->value.bind_events(source->value_events, source->value_event_count);
+  if (status != PHX_MC_OK) return status;
+  owned->value.require_continuity(&owned->value);
+  owned->gradient.require_continuity(&owned->value);
   owned->groups.assign(source->groups, source->groups + source->group_count);
   owned->tolerance = source->tolerance;
   owned->orientation = source->orientation;
@@ -953,12 +960,14 @@ static int32_t create_tet_mesh(
         source_face_planes, source_face_plane_tolerances};
     // Unless `validate`, the recovery's adjacency is adopted and, without an
     // explicit source complex or witnesses, the mesh is its own source bank
-    // (RecoveredTopology).
+    // (RecoveredTopology). The recovery's Delaunay proof is geometric, so it
+    // holds either way.
     phx::mc::RecoveredTopology recovered;
     if (recovery != nullptr && !validate) {
       recovered.neighbors = recovery->tet_neighbors;
       recovered.self_covered = !explicit_source && witnesses.empty();
     }
+    recovered.delaunay = recovery != nullptr && recovery->delaunay;
     const int32_t status = handle->state.build(
         input_span(request->points, request->point_count * 3),
         input_span(request->tetrahedra, request->tetrahedron_count * 4),
@@ -1955,6 +1964,9 @@ int32_t phx_mc_tet_mesh_implicit_source(
   };
   output->value = view(source->value);
   output->gradient = view(source->gradient);
+  const auto& events = source->value.program().events();
+  output->value_events = events.data();
+  output->value_event_count = static_cast<int64_t>(events.size() / 6);
   output->groups = source->groups.data();
   output->group_count = static_cast<int64_t>(source->groups.size());
   output->tolerance = source->tolerance;

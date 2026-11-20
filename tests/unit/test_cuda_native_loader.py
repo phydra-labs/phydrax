@@ -56,6 +56,10 @@ def _compile_library(
     omit_symbol: bool = False,
     omit_handler_symbol: bool = False,
 ) -> Path:
+    if sys.platform != "linux":
+        pytest.skip(
+            "The C ABI fixtures are ELF objects; the loader validates ELF companions on Linux only."
+        )
     compiler = shutil.which("gcc")
     if compiler is None:
         pytest.skip("The C ABI refusal fixtures require gcc.")

@@ -51,8 +51,10 @@ from ._topology import (
     CellComplexTopology,
     EntitySet,
     EntitySubset,
+    has_repeated_values,
     OrientedIncidence,
     row_positions,
+    rows_increase,
     sorted_unique_rows,
 )
 
@@ -135,7 +137,7 @@ def _admit_cell_global_ids(
     )
     if ids.shape != (cell_count,):
         raise ValueError("Cell global_ids must have shape (cell_count,).")
-    if np.any(ids < 0) or np.unique(ids).size != ids.size:
+    if np.any(ids < 0) or has_repeated_values(ids):
         raise ValueError("Cell global_ids must be unique non-negative integers.")
     return ids
 
@@ -732,12 +734,12 @@ def _resolved_mesh_identities(
     )
     if global_ids.shape != (coordinate_count,):
         raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
-    if np.any(global_ids < 0) or np.unique(global_ids).size != global_ids.size:
+    if np.any(global_ids < 0) or has_repeated_values(global_ids):
         raise ValueError("vertex_global_ids must be unique non-negative integers.")
     cell_global_ids = np.concatenate(
         tuple(np.asarray(block.global_ids, dtype=np.int64) for block in blocks)
     )
-    if np.unique(cell_global_ids).size != cell_global_ids.size:
+    if has_repeated_values(cell_global_ids):
         raise ValueError("Cell global IDs must be unique across mesh blocks.")
     supplied_cells = entity_ids.get(topological_dimension)
     if supplied_cells is not None and not np.array_equal(supplied_cells, cell_global_ids):
@@ -756,10 +758,12 @@ def _simplex_orientation(vertices: np.ndarray, /) -> np.ndarray:
 
 
 def _simplex_mesh_levels(
-    cells: np.ndarray, dimension: int, vertex_count: int, /
+    cells: np.ndarray, dimension: int, vertex_count: int, block_count: int, /
 ) -> tuple[np.ndarray, ...]:
     top = np.sort(cells, axis=1)
-    if _has_duplicate_rows(top):
+    # Every cell block refused its own duplicate cells; only several blocks can
+    # still share a cell.
+    if block_count > 1 and _has_duplicate_rows(top):
         raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
     levels: list[np.ndarray] = [np.arange(vertex_count, dtype=np.int32)[:, None]]
     for degree in range(1, dimension):
@@ -819,12 +823,28 @@ def _pack_tetrahedron_entities(rows: np.ndarray, /) -> np.ndarray:
     return packed
 
 
+def _tetrahedron_route_signs(cells: np.ndarray, /) -> tuple[np.ndarray, ...]:
+    """Orientation of every cell's local faces of each degree, combination order."""
+    signs: list[np.ndarray] = []
+    for degree in range(4):
+        local = tuple(combinations(range(4), degree + 1))
+        selected = cells[:, np.asarray(local, dtype=np.int32)]
+        if degree == 3:
+            signs.append(np.ones((cells.shape[0], 1), dtype=np.float64))
+        else:
+            signs.append(
+                _simplex_orientation(selected.reshape((-1, degree + 1))).reshape(
+                    selected.shape[:2]
+                )
+            )
+    return tuple(signs)
+
+
 def _packed_tetrahedron_routes(
     cells: np.ndarray, levels: tuple[np.ndarray, ...], /
 ) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
     """Route validated tetrahedra using lexicographically ordered integer fields."""
     routes: list[np.ndarray] = []
-    signs: list[np.ndarray] = []
     for degree, entities in enumerate(levels):
         local = tuple(combinations(range(4), degree + 1))
         selected = cells[:, np.asarray(local, dtype=np.int32)]
@@ -836,14 +856,134 @@ def _packed_tetrahedron_routes(
             keys = _pack_tetrahedron_entities(entities)
             queries = _pack_tetrahedron_entities(np.sort(selected, axis=-1))
             route = np.searchsorted(keys, queries).astype(np.int32)
-        coefficient = _simplex_orientation(selected.reshape((-1, degree + 1))).reshape(
-            route.shape
-        )
-        if degree == 3:
-            coefficient = np.ones_like(coefficient, dtype=np.float64)
         routes.append(route)
-        signs.append(coefficient)
-    return tuple(routes), tuple(signs)
+    return tuple(routes), _tetrahedron_route_signs(cells)
+
+
+class TetrahedronEntityTables(NamedTuple):
+    """Precomputed tetrahedral entity tables, checked before use.
+
+    ``edges`` and ``faces`` are the distinct increasing vertex rows of the
+    cells' edges and faces in lexicographic order; ``cell_edges`` ``(m, 6)``
+    and ``cell_faces`` ``(m, 4)`` route every cell's local edges and faces in
+    combination order; ``face_edges`` routes each face's edges opposite its
+    vertices in turn; ``incidence_orders`` sort each degree's flat face routes
+    by face row (checked where entity IDs follow row order). The native
+    ``tet_mesh_entities`` produces them.
+    """
+
+    edges: np.ndarray
+    faces: np.ndarray
+    cell_edges: np.ndarray
+    cell_faces: np.ndarray
+    face_edges: np.ndarray
+    incidence_orders: tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+def sorted_tetrahedron_faces(cells: np.ndarray, degree: int, /) -> tuple[np.ndarray, ...]:
+    """Columns of the increasing vertex rows of cells' local edges (1) or faces (2).
+
+    Each column is ``(m, 6)`` or ``(m, 4)`` in combination order, equal to
+    sorting each row: column minima and maxima, the middle of three being
+    their exclusive or.
+    """
+    columns = tuple(
+        cells[:, np.asarray(column, dtype=np.int32)]
+        for column in zip(*combinations(range(4), degree + 1), strict=True)
+    )
+    if degree == 1:
+        first, second = columns
+        return np.minimum(first, second), np.maximum(first, second)
+    if degree != 2:
+        raise ValueError("Sorted tetrahedron faces have degree one or two.")
+    first, second, third = columns
+    low = np.minimum(np.minimum(first, second), third)
+    high = np.maximum(np.maximum(first, second), third)
+    return low, first ^ second ^ third ^ low ^ high, high
+
+
+def _routed_rows(
+    entities: np.ndarray, routes: np.ndarray, expected: tuple[np.ndarray, ...], /
+) -> bool:
+    """Whether in-range ``routes`` select exactly the ``expected`` column values."""
+    flat = routes.reshape((-1,))
+    if flat.size and (flat.min() < 0 or flat.max() >= entities.shape[0]):
+        return False
+    return all(
+        np.array_equal(
+            np.ascontiguousarray(entities[:, column])[flat], values.reshape((-1,))
+        )
+        for column, values in enumerate(expected)
+    )
+
+
+def _supplied_tetrahedron_entities(
+    cells: np.ndarray,
+    vertex_count: int,
+    block_count: int,
+    tables: TetrahedronEntityTables,
+    /,
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...], np.ndarray]:
+    """Levels and cell routes from supplied tables, equal to the generic ones.
+
+    Strictly increasing entity rows that every cell route hits, each route
+    selecting exactly its cell's sorted face, are the sorted distinct faces and
+    their searched rows; the face-edge routes are checked the same way.
+    """
+    top = np.sort(cells, axis=1)
+    if block_count > 1 and _has_duplicate_rows(top):
+        raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
+    edges, faces, cell_edges, cell_faces, face_edges = (
+        np.asarray(value) for value in tables[:5]
+    )
+    if (
+        not all(
+            value.dtype == np.dtype(np.int32)
+            and value.ndim == 2
+            and value.shape[1] == width
+            for value, width in (
+                (edges, 2),
+                (faces, 3),
+                (cell_edges, 6),
+                (cell_faces, 4),
+                (face_edges, 3),
+            )
+        )
+        or cell_edges.shape[0] != cells.shape[0]
+        or cell_faces.shape[0] != cells.shape[0]
+    ):
+        raise ValueError("Tetrahedron entity tables have inconsistent shapes.")
+    sorted_edges = sorted_tetrahedron_faces(cells, 1)
+    sorted_faces = sorted_tetrahedron_faces(cells, 2)
+    for entities, routes, expected in (
+        (edges, cell_edges, sorted_edges),
+        (faces, cell_faces, sorted_faces),
+    ):
+        if not rows_increase(entities, strict=True) or not _routed_rows(
+            entities, routes, expected
+        ):
+            raise ValueError("Tetrahedron entity tables differ from the cells' faces.")
+        covered = np.zeros((entities.shape[0],), dtype=np.bool_)
+        covered[routes.reshape((-1,))] = True
+        if not np.all(covered):
+            raise ValueError("Tetrahedron entity tables list faces of no cell.")
+    if face_edges.shape[0] != faces.shape[0] or not _routed_rows(
+        edges,
+        face_edges,
+        tuple(
+            faces[:, np.asarray(column, dtype=np.int32)]
+            for column in ((1, 0, 0), (2, 2, 1))
+        ),
+    ):
+        raise ValueError("Tetrahedron face-edge routes differ from the faces' edges.")
+    levels = (np.arange(vertex_count, dtype=np.int32)[:, None], edges, faces, top)
+    routes = (
+        cells.copy(),
+        cell_edges,
+        cell_faces,
+        np.arange(cells.shape[0], dtype=np.int32)[:, None],
+    )
+    return levels, routes, face_edges
 
 
 def _simplex_cell_routes(
@@ -906,6 +1046,8 @@ def _simplex_mesh_topology(
     entity_ids: dict[int, np.ndarray],
     cell_ids: np.ndarray,
     /,
+    *,
+    tetrahedron_entities: TetrahedronEntityTables | None = None,
 ) -> tuple[SimplicialConnectivity, CellComplexTopology]:
     dimension = blocks[0].topological_dimension
     if any(
@@ -917,7 +1059,23 @@ def _simplex_mesh_topology(
     cells = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks)
     )
-    levels = _simplex_mesh_levels(cells, dimension, vertex_count)
+    face_routes: dict[int, np.ndarray] = {}
+    if tetrahedron_entities is None:
+        levels = _simplex_mesh_levels(cells, dimension, vertex_count, len(blocks))
+        routes, route_signs = _simplex_cell_routes(cells, levels)
+    elif dimension == 3:
+        levels, routes, face_routes[2] = _supplied_tetrahedron_entities(
+            cells, vertex_count, len(blocks), tetrahedron_entities
+        )
+        route_signs = _tetrahedron_route_signs(cells)
+    else:
+        raise ValueError("Tetrahedron entity tables require a three-dimensional mesh.")
+    # The face opposite sorted vertex r of a cell omits its local vertex
+    # order[r]; in combination order that face is number dimension - order[r].
+    order = np.argsort(cells, axis=1, kind="stable")
+    face_routes[dimension] = np.take_along_axis(
+        routes[dimension - 1], dimension - order, axis=1
+    )
     # The levels are increasing, distinct and face closed by construction, so
     # the topology is assembled once from their incidence routes.
     relations = tuple(
@@ -931,7 +1089,7 @@ def _simplex_mesh_topology(
             signs,
         )
         for degree, (source, target, signs) in enumerate(
-            _simplicial_incidence_routes(levels), start=1
+            _simplicial_incidence_routes(levels, face_routes=face_routes), start=1
         )
     )
     masks = _simplex_mesh_boundary(levels, relations[-1][0])
@@ -957,6 +1115,12 @@ def _simplex_mesh_topology(
             )
         )
     orientation = _simplex_orientation(cells)
+    # Supplied incidence orders sort by face row, then simplex row; that is
+    # the canonical ID order where both entity ID banks increase with rows.
+    increasing = tuple(
+        bool(np.all(ids[1:] > ids[:-1]))
+        for ids in (np.asarray(entity_set.entity_ids) for entity_set in sets)
+    )
     incidences: list[OrientedIncidence] = []
     for degree, (relation, signs) in enumerate(relations, start=1):
         coefficients = signs
@@ -964,17 +1128,31 @@ def _simplex_mesh_topology(
             coefficients = coefficients * orientation[np.asarray(relation.target_indices)]
         incidences.append(
             OrientedIncidence(
-                degree, sets[degree - 1], sets[degree], relation, coefficients
+                degree,
+                sets[degree - 1],
+                sets[degree],
+                relation,
+                coefficients,
+                canonical_order=(
+                    tetrahedron_entities.incidence_orders[degree - 1]
+                    if tetrahedron_entities is not None
+                    and increasing[degree - 1]
+                    and increasing[degree]
+                    else None
+                ),
             )
         )
-    topology = CellComplexTopology(sets, incidences)
-    routes, signs = _simplex_cell_routes(cells, levels)
+    # Checked tables are exactly the cells' faces, and alternating signs on
+    # the faces opposite each vertex make every boundary of a boundary vanish.
+    topology = CellComplexTopology(
+        sets, incidences, validate=tetrahedron_entities is None
+    )
     return SimplicialConnectivity(
         topology,
         cells,
         entities=levels,
         cell_entities=routes,
-        cell_entity_signs=signs,
+        cell_entity_signs=route_signs,
         boundary_masks=masks,
     ), topology
 
@@ -1012,6 +1190,7 @@ def _prepare_cell_mesh_topology(
     entity_global_ids: Mapping[int, ArrayLike] | None,
     polyhedral_connectivity: PolyhedralConnectivity | None,
     multiregion_surface: MultiRegionSurfaceTopology | None = None,
+    tetrahedron_entities: TetrahedronEntityTables | None = None,
 ) -> _PreparedCellMeshTopology:
     """Validate blocks and identities, then build connectivity and topology once."""
 
@@ -1047,11 +1226,18 @@ def _prepare_cell_mesh_topology(
         if general_simplex
         else _named_mesh_route_blocks(normalized_blocks)
     )
+    if tetrahedron_entities is not None and not general_simplex:
+        raise ValueError("Tetrahedron entity tables bind only simplex:3 meshes.")
     if general_simplex:
         if polyhedral_connectivity is not None:
             raise ValueError("Simplicial meshes cannot use polyhedral connectivity.")
         connectivity, topology = _simplex_mesh_topology(
-            normalized_blocks, coordinate_count, global_ids, entity_ids, cell_global_ids
+            normalized_blocks,
+            coordinate_count,
+            global_ids,
+            entity_ids,
+            cell_global_ids,
+            tetrahedron_entities=tetrahedron_entities,
         )
     elif topological_dimension == 1:
         connectivity, topology = _interval_mesh_topology(
@@ -1328,6 +1514,7 @@ class CellMesh(StrictModule, NonTrainableState):
         periodic_topology: PeriodicMeshTopology | None = None,
         empty_local_authority: EmptyLocalCellMeshAuthority | None = None,
         multiregion_surface: MultiRegionSurfaceTopology | None = None,
+        tetrahedron_entities: TetrahedronEntityTables | None = None,
         _prepared_topology: _PreparedCellMeshTopology | None = None,
     ) -> None:
         points = np.asarray(coordinates, dtype=np.float64)
@@ -1375,6 +1562,7 @@ class CellMesh(StrictModule, NonTrainableState):
                 entity_global_ids=entity_global_ids,
                 polyhedral_connectivity=polyhedral_connectivity,
                 multiregion_surface=multiregion_surface,
+                tetrahedron_entities=tetrahedron_entities,
             )
         else:
             prepared = _reused_cell_mesh_topology(
@@ -1386,6 +1574,7 @@ class CellMesh(StrictModule, NonTrainableState):
                     or entity_global_ids is not None
                     or polyhedral_connectivity is not None
                     or multiregion_surface is not None
+                    or tetrahedron_entities is not None
                 ),
             )
         topology_identity = prepared.topology_id
@@ -1669,8 +1858,13 @@ class CellMesh(StrictModule, NonTrainableState):
         vertex_global_ids: ArrayLike | None = None,
         cell_global_ids: ArrayLike | None = None,
         numeric_version: str = "0",
+        tetrahedron_entities: TetrahedronEntityTables | None = None,
     ) -> CellMesh:
-        """Build simplicial mesh geometry with an explicitly declared intrinsic dimension."""
+        """Build simplicial mesh geometry with an explicitly declared intrinsic dimension.
+
+        ``tetrahedron_entities`` may supply a ``simplex:3`` mesh's entity
+        tables (checked against the cells, so the topology is the same).
+        """
         if not isinstance(dimension, int) or isinstance(dimension, bool):
             raise TypeError("Simplex dimension must be an integer.")
         if dimension < 1:
@@ -1687,6 +1881,7 @@ class CellMesh(StrictModule, NonTrainableState):
             ),
             vertex_global_ids=vertex_global_ids,
             numeric_version=numeric_version,
+            tetrahedron_entities=tetrahedron_entities,
         )
 
     @classmethod

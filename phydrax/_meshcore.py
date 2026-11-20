@@ -226,6 +226,7 @@ _P = ctypes.c_void_p
 _I32 = ctypes.c_int32
 _I64 = ctypes.c_int64
 _U64 = ctypes.c_uint64
+_INTP_MAX = int(np.iinfo(np.intp).max)
 _F64 = ctypes.c_double
 _ParallelChunkCallback = ctypes.CFUNCTYPE(_I32, _P, _I64, _I64, _I64)
 PHX_MC_TET_MESH_SNAPSHOT_SIZES = 19
@@ -523,6 +524,8 @@ class _TetImplicitSource(ctypes.Structure):
     _fields_ = (
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("groups", _P),
         ("group_count", _I64),
         ("tolerance", _F64),
@@ -547,15 +550,72 @@ class _ZeroSetRemeshRequest(ctypes.Structure):
         ("triangles", _P),
         ("triangle_count", _I64),
         ("value", _IntervalBoxProgram),
-        ("gradient", _IntervalBoxProgram),
         ("tolerance", _F64),
         ("carrier_distance", _F64),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
         ("result", _P),
         ("counters", _P),
-        ("distance", _P),
-        ("admission_limited_coarsening", _I32),
+    )
+
+
+class _ZeroSetCertifyRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("value", _IntervalBoxProgram),
+        ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
+        ("tolerance", _F64),
+        ("orientation", _I32),
+        ("carrier_vertices", _P),
+        ("carrier_vertex_count", _I64),
+        ("carrier_triangles", _P),
+        ("carrier_triangle_count", _I64),
+        ("carrier_boxes", _P),
+        ("domain", _P),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("cover_budget", _I64),
+        ("result", _P),
+        ("distances", _P),
+        ("counters", _P),
+    )
+
+
+class _MeshRemeshRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("tolerance", _F64),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("result", _P),
+        ("counters", _P),
+    )
+
+
+class _MeshCertifyRequest(ctypes.Structure):
+    _fields_ = (
+        ("source_vertices", _P),
+        ("source_vertex_count", _I64),
+        ("source_triangles", _P),
+        ("source_triangle_count", _I64),
+        ("vertices", _P),
+        ("vertex_count", _I64),
+        ("triangles", _P),
+        ("triangle_count", _I64),
+        ("tolerance", _F64),
+        ("edge_length", _F64),
+        ("minimum_angle_degrees", _F64),
+        ("result", _P),
+        ("distances", _P),
+        ("counters", _P),
     )
 
 
@@ -1061,12 +1121,54 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_verify_tetrahedra": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
+    "phx_mc_tet_mesh_entities": (
+        _I32,
+        (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
+    "phx_mc_verify_chart_partition": (
+        _I32,
+        (_I64, _I64, _P, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
+    ),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
-    "phx_mc_implicit_stuffing": (
+    "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
+    "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
+    "phx_mc_cad_surface_result_free": (None, (_P,)),
+    "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
+    "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_chart_export": (_I32, (_P, _P)),
+    "phx_mc_cad_mesh_solid": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_cad_volume_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_volume_export": (_I32, (_P, _P)),
+    "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
+        (
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+        ),
     ),
+    "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
+    "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_restricted_volume_free": (None, (_P,)),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -1241,13 +1343,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_surface_envelope_free": (None, (_P,)),
     "phx_mc_surface_envelope_remesh": (_I32, (_P, _P, _P)),
     "phx_mc_zero_set_remesh": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
-    "phx_mc_zero_set_remesh_i32": (
-        _I32,
-        (ctypes.POINTER(_ZeroSetRemeshRequest), _P, _I64, _P, _I64),
-    ),
-    "phx_mc_zero_set_remesh_sizes": (_I32, (_P, _P)),
-    "phx_mc_zero_set_remesh_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
-    "phx_mc_zero_set_remesh_free": (None, (_P,)),
+    "phx_mc_zero_set_remesh_i32": (_I32, (ctypes.POINTER(_ZeroSetRemeshRequest),)),
+    "phx_mc_zero_set_certify": (_I32, (ctypes.POINTER(_ZeroSetCertifyRequest),)),
+    "phx_mc_mesh_remesh": (_I32, (ctypes.POINTER(_MeshRemeshRequest),)),
+    "phx_mc_mesh_certify": (_I32, (ctypes.POINTER(_MeshCertifyRequest),)),
+    "phx_mc_surface_result_sizes": (_I32, (_P, _P)),
+    "phx_mc_surface_result_arrays": (_I32, (_P, _I64, _I64, _P, _P)),
+    "phx_mc_surface_result_carried": (_I32, (_P, _I64, _P)),
+    "phx_mc_surface_result_free": (None, (_P,)),
     "phx_mc_level_set_split_3d": (_I32, (ctypes.POINTER(_LevelSetSplit3DRequest),)),
     "phx_mc_implicit_contours": (
         _I32,
@@ -1610,6 +1713,47 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         ),
     ),
 }
+
+# CAD fidelity verifier.
+_SIGNATURES["phx_mc_verify_cad_fidelity"] = (
+    _I32,
+    (
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+        _I64,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _P,
+        _P,
+        _F64,
+        _I32,
+        _I64,
+        _P,
+        _P,
+        _P,
+        _P,
+        _P,
+        _I64,
+        _P,
+        _P,
+    ),
+)
 
 
 def _library_location(configured: str, /) -> Path | str:
@@ -3304,6 +3448,74 @@ def verify_volume(
     )
 
 
+class TetMeshEntities(NamedTuple):
+    """Sorted unique edges and faces of a tetrahedral mesh with their routes.
+
+    ``edges`` ``(e, 2)`` and ``faces`` ``(f, 3)`` are the distinct increasing
+    vertex rows in lexicographic order; ``cell_edges`` ``(m, 6)`` and
+    ``cell_faces`` ``(m, 4)`` route each cell's local edges and faces in
+    combination order; ``face_edges`` ``(f, 3)`` routes each face's edges
+    opposite its vertices in turn. ``incidence_orders`` sort each degree's
+    flat face routes (simplex-major; a cell's faces opposite its stably sorted
+    vertices) stably by face row. All int32.
+    """
+
+    edges: np.ndarray
+    faces: np.ndarray
+    cell_edges: np.ndarray
+    cell_faces: np.ndarray
+    face_edges: np.ndarray
+    incidence_orders: tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+def tet_mesh_entities(cells: object, vertex_count: int, /) -> TetMeshEntities:
+    """Sorted unique edges and faces of ``(m, 4)`` tetrahedra and their routes."""
+    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
+        raise ValueError("cells must have shape (m, 4).")
+    count = cell_array.shape[0]
+    edges = np.empty((6 * count, 2), dtype=np.int32)
+    faces = np.empty((4 * count, 3), dtype=np.int32)
+    face_edges = np.empty((4 * count, 3), dtype=np.int32)
+    cell_edges = np.empty((count, 6), dtype=np.int32)
+    cell_faces = np.empty((count, 4), dtype=np.int32)
+    vertex_edge_order = np.empty((12 * count,), dtype=np.int32)
+    edge_face_order = np.empty((12 * count,), dtype=np.int32)
+    face_cell_order = np.empty((4 * count,), dtype=np.int32)
+    edge_count = ctypes.c_int64()
+    face_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_tet_mesh_entities"](
+        int(vertex_count),
+        count,
+        cell_array.ctypes.data,
+        edges.ctypes.data,
+        ctypes.byref(edge_count),
+        faces.ctypes.data,
+        ctypes.byref(face_count),
+        cell_edges.ctypes.data,
+        cell_faces.ctypes.data,
+        face_edges.ctypes.data,
+        vertex_edge_order.ctypes.data,
+        edge_face_order.ctypes.data,
+        face_cell_order.ctypes.data,
+    )
+    _raise_for_call(status, "tet_mesh_entities")
+    edge_total = edge_count.value
+    face_total = face_count.value
+    return TetMeshEntities(
+        edges[:edge_total].copy(),
+        faces[:face_total].copy(),
+        cell_edges,
+        cell_faces,
+        face_edges[:face_total].copy(),
+        (
+            vertex_edge_order[: 2 * edge_total].copy(),
+            edge_face_order[: 3 * face_total].copy(),
+            face_cell_order,
+        ),
+    )
+
+
 def validity_coordinates(values: object, /) -> np.ndarray:
     """Which values ``tetrahedra_validity`` decides exactly (elementwise mask).
 
@@ -3516,77 +3728,344 @@ def cad_geometry_evaluate(
     return result
 
 
-class StuffedVolume(NamedTuple):
-    """Tetrahedra of ``{f <= 0}`` from isosurface stuffing (construction only)."""
+# CAD fidelity verifier.
+class CadFidelityMesh(NamedTuple):
+    """Finished surface arrays; edge_chord names the V4 chord table or -1."""
+
+    points: np.ndarray
+    triangles: np.ndarray
+    face_rows: np.ndarray
+    uv: np.ndarray
+    mesh_triangles: np.ndarray
+    chart_to_mesh: np.ndarray
+    edge_chord: np.ndarray
+
+
+class CadFidelityChords(NamedTuple):
+    """The same use and chord tables consumed by the chart verifier."""
+
+    use_patch: np.ndarray
+    use_range: np.ndarray
+    loop_count: int
+    chord_use: np.ndarray
+    chord_loop: np.ndarray
+    chord_uv: np.ndarray
+    chord_range: np.ndarray
+
+
+class CadFidelityResult(NamedTuple):
+    """Directed triangle bounds and explicit unresolved/association evidence."""
+
+    status: MeshcoreStatus
+    upper: np.ndarray
+    item_status: np.ndarray
+    reasons: np.ndarray
+    subdivisions: np.ndarray
+    maximum_upper: float
+    findings: np.ndarray
+
+
+_CAD_FIDELITY_FINDING_DTYPE = np.dtype(
+    [
+        ("kind", np.int32),
+        ("triangle", np.int64),
+        ("edge", np.int64),
+        ("other_triangle", np.int64),
+        ("other_edge", np.int64),
+        ("chord", np.int64),
+    ],
+    align=True,
+)
+
+
+def _cad_fidelity_array(
+    value: np.ndarray, dtype: type[np.generic], name: str, /
+) -> np.ndarray:
+    array = np.asarray(value)
+    if array.dtype != np.dtype(dtype):
+        raise TypeError(f"{name} must have dtype {np.dtype(dtype)}.")
+    return np.ascontiguousarray(array)
+
+
+def verify_cad_fidelity(
+    model: CadModel,
+    coefficient_lower: np.ndarray,
+    coefficient_upper: np.ndarray,
+    mesh: CadFidelityMesh,
+    chords: CadFidelityChords,
+    tolerance: float,
+    max_depth: int,
+    /,
+) -> CadFidelityResult:
+    """Verify bounds conditional on an independently checked chart partition."""
+    lower = _cad_fidelity_array(coefficient_lower, np.float64, "coefficient_lower")
+    upper = _cad_fidelity_array(coefficient_upper, np.float64, "coefficient_upper")
+    points = _cad_fidelity_array(mesh.points, np.float64, "points")
+    triangles = _cad_fidelity_array(mesh.triangles, np.int64, "triangles")
+    faces = _cad_fidelity_array(mesh.face_rows, np.int32, "face_rows")
+    uv = _cad_fidelity_array(mesh.uv, np.float64, "uv")
+    mesh_triangles = _cad_fidelity_array(mesh.mesh_triangles, np.int64, "mesh_triangles")
+    chart_to_mesh = _cad_fidelity_array(mesh.chart_to_mesh, np.int64, "chart_to_mesh")
+    edges = _cad_fidelity_array(mesh.edge_chord, np.int64, "edge_chord")
+    use_patch = _cad_fidelity_array(chords.use_patch, np.int64, "use_patch")
+    use_range = _cad_fidelity_array(chords.use_range, np.float64, "use_range")
+    chord_use = _cad_fidelity_array(chords.chord_use, np.int64, "chord_use")
+    chord_loop = _cad_fidelity_array(chords.chord_loop, np.int64, "chord_loop")
+    chord_uv = _cad_fidelity_array(chords.chord_uv, np.float64, "chord_uv")
+    chord_range = _cad_fidelity_array(chords.chord_range, np.float64, "chord_range")
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("points must have shape (n, 3).")
+    if triangles.ndim != 2 or triangles.shape[1] != 3:
+        raise ValueError("triangles must have shape (m, 3).")
+    count = triangles.shape[0]
+    if faces.shape != (count,) or uv.shape != (count, 3, 2) or edges.shape != (count, 3):
+        raise ValueError("face_rows, uv and edge_chord must align with triangles.")
+    if mesh_triangles.ndim != 2 or mesh_triangles.shape[1] != 3:
+        raise ValueError("mesh_triangles must have shape (k, 3).")
+    if chart_to_mesh.shape != (count,):
+        raise ValueError("chart_to_mesh must have one entry per chart triangle.")
+    if lower.shape != model.node_reals.shape or upper.shape != lower.shape:
+        raise ValueError("Coefficient bounds must match the model real bank.")
+    if use_patch.ndim != 1 or use_range.shape != (use_patch.size, 2):
+        raise ValueError("Use rows and ranges must align.")
+    if chord_use.ndim != 1:
+        raise ValueError("chord_use must be one-dimensional.")
+    chord_count = chord_use.size
+    if (
+        chord_loop.shape != (chord_count,)
+        or chord_uv.shape != (chord_count, 2, 2)
+        or chord_range.shape != (chord_count, 2)
+    ):
+        raise ValueError("Chord rows, UV and ranges must align.")
+    structure, arrays = _cad_model_structure(model)
+    bounds = np.empty(count, dtype=np.float64)
+    statuses = np.empty(count, dtype=np.int32)
+    reasons = np.empty(count, dtype=np.int32)
+    subdivisions = np.empty(count, dtype=np.int32)
+    maximum = ctypes.c_double()
+    evidence_count = ctypes.c_int64()
+    findings = np.empty(
+        7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE
+    )
+    status = load_meshcore()["phx_mc_verify_cad_fidelity"](
+        ctypes.addressof(structure),
+        lower.size,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        points.shape[0],
+        points.ctypes.data,
+        count,
+        triangles.ctypes.data,
+        faces.ctypes.data,
+        uv.ctypes.data,
+        len(mesh_triangles),
+        mesh_triangles.ctypes.data,
+        chart_to_mesh.ctypes.data,
+        use_patch.size,
+        use_patch.ctypes.data,
+        use_range.ctypes.data,
+        chords.loop_count,
+        chord_count,
+        chord_use.ctypes.data,
+        chord_loop.ctypes.data,
+        chord_uv.ctypes.data,
+        chord_range.ctypes.data,
+        edges.ctypes.data,
+        tolerance,
+        max_depth,
+        count,
+        bounds.ctypes.data,
+        statuses.ctypes.data,
+        reasons.ctypes.data,
+        subdivisions.ctypes.data,
+        ctypes.addressof(maximum),
+        findings.size,
+        findings.ctypes.data,
+        ctypes.addressof(evidence_count),
+    )
+    del arrays
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "verify_cad_fidelity")
+    return CadFidelityResult(
+        MeshcoreStatus(status),
+        bounds,
+        statuses,
+        reasons,
+        subdivisions,
+        maximum.value,
+        findings[: evidence_count.value],
+    )
+
+
+class RestrictedDelaunayCriteria(NamedTuple):
+    """Refinement targets of `implicit_restricted_delaunay`.
+
+    Restricted facets are refined while their longest edge exceeds
+    ``facet_edge``, their circumcenter lies farther than ``facet_distance``
+    from their surface Delaunay ball center, or their smallest angle is below
+    ``facet_angle_degrees`` (at most 30). Inside cells are refined while their
+    circumradius exceeds ``cell_size`` or their radius-edge ratio exceeds
+    ``radius_edge_bound`` (None: no ratio target); cells then below the ratio,
+    ``minimum_dihedral_degrees`` or ``minimum_relative_determinant`` go through
+    the fixed-boundary quality improvement. Box roots closer than
+    ``seed_spacing * facet_edge`` to an earlier seed are left to refinement.
+    """
+
+    facet_edge: float
+    facet_distance: float
+    facet_angle_degrees: float
+    cell_size: float
+    radius_edge_bound: float | None
+    minimum_dihedral_degrees: float
+    minimum_relative_determinant: float
+    seed_spacing: float
+
+
+class RestrictedImplicitVolume(NamedTuple):
+    """Tetrahedra of ``{f <= 0}`` by restricted Delaunay refinement (construction only).
+
+    ``points`` rows are the vertices, ``cells`` positive tetrahedra and
+    ``boundary_faces`` the outward boundary triangles. The construction report:
+    refinement ``insertions``, surface ``repair_rounds``, whether the
+    restricted surface matched the requested topology, the box roots no
+    surface vertex covers, the facets still violating the criteria because
+    the separation bound refused their refinement point, and the cells the
+    quality improvement left unmet. ``status`` is ``UNRESOLVED`` when the
+    separation bound stopped or refused the refinement, or an inside cell
+    reached the far box; the arrays are then the proposal reached.
+    """
 
     points: np.ndarray
     cells: np.ndarray
-    degenerate_count: int
+    boundary_faces: np.ndarray
+    insertions: int
+    repair_rounds: int
+    topology_matched: bool
+    uncovered_roots: int
+    refused_facets: int
+    unmet_cells: int
+    status: MeshcoreStatus
 
 
-def implicit_stuffing(
+def implicit_restricted_delaunay(
     instructions: np.ndarray,
     indices: np.ndarray,
     parameters: np.ndarray,
-    seeds: np.ndarray,
+    seed_lower: np.ndarray,
+    seed_upper: np.ndarray,
     output_entry: int,
+    guards: np.ndarray,
     lower: object,
     upper: object,
-    spacing: float,
-    levels: int,
-    lipschitz: float,
+    criteria: RestrictedDelaunayCriteria,
+    components: int,
+    euler_characteristic: int,
+    extra_seeds: object,
     /,
-) -> StuffedVolume:
-    """Isosurface stuffing of an interval program's zero set inside a box.
+) -> RestrictedImplicitVolume:
+    """Restricted Delaunay meshing of an interval program's solid ``{f <= 0}``.
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
-    interval program with three inputs; ``seeds`` its workspace template and
-    ``output_entry`` the workspace entry of f. The lattice has ``spacing``
-    near the zero set and coarsens up to ``levels`` times away from it, for f
-    with Lipschitz constant ``lipschitz``. The result is a proposal: it is
-    certified afterwards.
+    interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
+    interval workspace templates, ``output_entry`` the workspace entry of f
+    and ``guards`` the workspace entries whose lower bound must be ``>= 0``
+    (the program's domain guards: a box on which one may fail is kept by the
+    seed cover). The box ``[lower, upper]`` contains the zero set, whose restricted
+    surface should have ``components`` edge-connected components and Euler
+    characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
+    points near the zero set added to the box-tree seeds. The result is a
+    proposal: it is certified afterwards.
     """
     lower_array = _real_array(lower, "lower")
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
-    degenerate = ctypes.c_int64()
-    handle = ctypes.c_void_p()
+    guard_array = np.ascontiguousarray(
+        _native_integer_array(guards, "guards", np.dtype(np.int64))
+    )
+    if guard_array.ndim != 1:
+        raise ValueError("guards must be one-dimensional.")
+    seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
+    if seeds.ndim != 2 or seeds.shape[1] != 3:
+        raise ValueError("extra_seeds must have shape (n, 3).")
+    values = np.asarray(
+        (
+            criteria.facet_edge,
+            criteria.facet_distance,
+            criteria.facet_angle_degrees,
+            criteria.cell_size,
+            0.0 if criteria.radius_edge_bound is None else criteria.radius_edge_bound,
+            criteria.minimum_dihedral_degrees,
+            criteria.minimum_relative_determinant,
+            criteria.seed_spacing,
+        ),
+        dtype=np.float64,
+    )
+    topology = np.asarray((components, euler_characteristic), dtype=np.int64)
     library = load_meshcore()
-    status = library["phx_mc_implicit_stuffing"](
-        instructions.ctypes.data,
-        instructions.shape[0],
-        indices.ctypes.data,
-        indices.size,
-        parameters.ctypes.data,
-        parameters.size,
-        seeds.ctypes.data,
-        seeds.size,
-        output_entry,
-        lower_array.ctypes.data,
-        upper_array.ctypes.data,
-        spacing,
-        levels,
-        lipschitz,
-        ctypes.addressof(degenerate),
-        ctypes.addressof(handle),
+    handle = ctypes.c_void_p()
+    status = MeshcoreStatus(
+        library["phx_mc_implicit_restricted_delaunay"](
+            instructions.ctypes.data,
+            instructions.shape[0],
+            indices.ctypes.data,
+            indices.size,
+            parameters.ctypes.data,
+            parameters.size,
+            seed_lower.ctypes.data,
+            seed_upper.ctypes.data,
+            seed_lower.size,
+            output_entry,
+            guard_array.ctypes.data,
+            guard_array.size,
+            lower_array.ctypes.data,
+            upper_array.ctypes.data,
+            values.ctypes.data,
+            topology.ctypes.data,
+            seeds.shape[0],
+            seeds.ctypes.data,
+            ctypes.addressof(handle),
+        )
     )
-    _raise_for_call(
-        status,
-        "implicit_stuffing",
-        contracts={
-            MeshcoreStatus.INVALID_INPUT: (
-                "f is NaN at a lattice vertex, or the solid {f <= 0} reaches the "
-                "lattice padding outside the box"
-            )
-        },
-    )
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "implicit_restricted_delaunay")
     if not handle.value:
         raise MeshcoreError(
-            MeshcoreStatus.INTERNAL_ERROR, "implicit_stuffing: missing mesh"
+            MeshcoreStatus.INTERNAL_ERROR, "implicit_restricted_delaunay: missing volume"
         )
-    points, cells, _, _, _, _, _ = _read_mesh(library, handle)
-    return StuffedVolume(points, cells, degenerate.value)
+    # The native handle is released even when a copy fails.
+    try:
+        sizes = np.zeros((3,), dtype=np.int64)
+        report = np.zeros((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_sizes"](
+                handle, sizes.ctypes.data, report.ctypes.data
+            ),
+            "restricted_volume_sizes",
+        )
+        points = np.empty((int(sizes[0]), 3), dtype=np.float64)
+        cells = np.empty((int(sizes[1]), 4), dtype=np.int32)
+        faces = np.empty((int(sizes[2]), 3), dtype=np.int32)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_copy"](
+                handle, points.ctypes.data, cells.ctypes.data, faces.ctypes.data
+            ),
+            "restricted_volume_copy",
+        )
+    finally:
+        library["phx_mc_restricted_volume_free"](handle)
+    return RestrictedImplicitVolume(
+        points,
+        cells,
+        faces,
+        int(report[0]),
+        int(report[1]),
+        bool(report[2]),
+        int(report[3]),
+        int(report[4]),
+        int(report[5]),
+        status,
+    )
 
 
 class RestrictedPowerCells(NamedTuple):
@@ -4374,13 +4853,15 @@ def surface_envelope(
     dominate those certified errors. This does not infer an interior from an
     unsigned zero set.
 
-    With ``remesh`` the extracted surface is remeshed in place toward edge length
-    ``2 * spacing`` and a 30 degree minimum angle; every edit keeps its triangles
-    inside the certified band ``[bounds[2], bounds[1]]`` and the surface an
-    embedded oriented closed 2-manifold, and ``bounds[0]`` is recomputed. The
+    With ``remesh`` the extracted surface is remeshed toward edge length
+    ``2 * spacing`` and a 30 degree minimum angle by floating-point
+    construction, then certified: every triangle inside the certified band
+    ``[bounds[2], bounds[1]]`` and the surface an embedded oriented closed
+    2-manifold, refused triangles repaired locally by splits (a triangle left
+    refused raises ``MeshcoreError``), and ``bounds[0]`` is recomputed. The
     tetrahedral carrier is then dropped (no tetrahedra; the volume vertices are
-    the surface vertices), and ``remesh_counters`` reports the splits, collapses,
-    flips, relocations and the triangles still below the angle or size target.
+    the surface vertices), and ``remesh_counters`` reports the splits,
+    collapses, flips, relocations and the triangles below the angle.
     """
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = np.ascontiguousarray(
@@ -4534,10 +5015,28 @@ class IntervalBoxProgram(NamedTuple):
     """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
-class TetMeshImplicitSource(NamedTuple):
-    """Source-bound native interval programs and exterior facet group rows."""
+class IntervalBranchProgram(NamedTuple):
+    """A one-box native interval program with its branch-evidence events.
 
-    value: IntervalBoxProgram
+    ``events`` (``(rows, 6)`` int64: kind, test, size, a, a_index, boxes; see
+    ``phx_mc_interval_program_branches``) clear the box's ``continuous`` flag
+    where a jump (a select that may switch, a pole, a domain edge) may lie in
+    it; ``program`` is the field lowered together with those events.
+    """
+
+    program: IntervalBoxProgram
+    events: np.ndarray
+
+
+class TetMeshImplicitSource(NamedTuple):
+    """Source-bound native interval programs and exterior facet group rows.
+
+    ``value`` carries f's branch-evidence events: every enclosure a facet
+    admission reads is over a box on which they report f continuous (else the
+    facet is refused), and transversality also requires f smooth there.
+    """
+
+    value: IntervalBranchProgram
     gradient: IntervalBoxProgram
     group_rows: np.ndarray
     tolerance: float
@@ -4557,10 +5056,10 @@ class TetMeshImplicitSnapshot(NamedTuple):
 class ZeroSetRemeshResult(NamedTuple):
     vertices: np.ndarray
     triangles: np.ndarray
-    distance: float
+    orientation: int
     counters: np.ndarray
-    """Splits, collapses, flips, relocations, unmet triangles, orientation, and
-    admissions refused for transversality and for distance."""
+    """Splits, collapses, flips, relocations, triangles below the minimum angle,
+    the orientation, triangles sampled above the tolerance, and 0."""
 
 
 def _interval_box_program(
@@ -4617,7 +5116,18 @@ def _tet_implicit_source_payload(
 ) -> tuple[_TetImplicitSource, tuple[object, ...]]:
     if not isinstance(source, TetMeshImplicitSource):
         raise TypeError("implicit_source must be TetMeshImplicitSource.")
-    value, value_banks = _interval_box_program(source.value, 1, "implicit_source.value")
+    if not isinstance(source.value, IntervalBranchProgram):
+        raise TypeError("implicit_source.value must be IntervalBranchProgram.")
+    value, value_banks = _interval_box_program(
+        source.value.program, 1, "implicit_source.value.program"
+    )
+    events = np.ascontiguousarray(
+        _native_integer_array(
+            source.value.events, "implicit_source.value.events", np.dtype(np.int64)
+        )
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("implicit_source.value.events must have shape (rows, 6).")
     gradient, gradient_banks = _interval_box_program(
         source.gradient, 3, "implicit_source.gradient"
     )
@@ -4645,6 +5155,8 @@ def _tet_implicit_source_payload(
     view = _TetImplicitSource(
         value,
         gradient,
+        events.ctypes.data,
+        events.shape[0],
         _tet_mesh_pointer(groups),
         groups.size,
         tolerance,
@@ -4660,7 +5172,7 @@ def _tet_implicit_source_payload(
         0,
         0,
     )
-    return view, (*value_banks, *gradient_banks, groups, *buffers)
+    return view, (*value_banks, *gradient_banks, events, groups, *buffers)
 
 
 def _tet_implicit_source_snapshot(
@@ -4715,7 +5227,12 @@ def _tet_implicit_source_snapshot(
         return ctypes.string_at(pointer, length).decode("utf-8", "strict")
 
     source = TetMeshImplicitSource(
-        copy_program(view.value),
+        IntervalBranchProgram(
+            copy_program(view.value),
+            copy_bank(
+                view.value_events, 6 * view.value_event_count, np.dtype(np.int64)
+            ).reshape(-1, 6),
+        ),
         copy_program(view.gradient),
         copy_bank(view.groups, view.group_count, np.dtype(np.int32)),
         float(view.tolerance),
@@ -4734,30 +5251,26 @@ def zero_set_remesh(
     vertices: object,
     triangles: object,
     value: IntervalBoxProgram,
-    gradient: IntervalBoxProgram,
     tolerance: float,
     carrier_distance: float,
     edge_length: float,
     minimum_angle_degrees: float,
     /,
-    *,
-    incidence: tuple[object, object] | None = None,
-    admission_limited_coarsening: bool,
 ) -> ZeroSetRemeshResult:
-    """Remesh a closed oriented carrier of ``{f = 0}`` under the zero-set band admission.
+    """Remesh a closed oriented carrier of ``{f = 0}`` by floating point.
 
-    Every created triangle has a certified distance to the zero set of at most
-    ``tolerance`` and a normal certified transversal to ``grad f`` with the
-    carrier's orientation. ``carrier_distance`` is the input carrier's declared
-    distance bound, retained by untouched input triangles; ``distance`` is the
-    maximum certified bound over the result. ``admission_limited_coarsening``
-    additionally centers vertices in the band (off the zero set) and collapses
-    edges below 4/5 of ``edge_length`` until the admission refuses them. A
-    carrier that is not closed (an edge not held by exactly two triangles, in
-    opposite directions) raises ``ValueError``.
+    Construction only, proving nothing: splits, collapses, flips and
+    tangential relocations toward ``edge_length``, lowered where the zero set
+    curves so that a well-shaped triangle stays within ``tolerance``; new and
+    moved vertices are projected onto ``{f = 0}``. Input edges turning by more
+    than 45 degrees are creases: every input triangle touching a crease vertex
+    is kept bitwise. ``orientation`` is the carrier's orientation
+    relative to ``grad f``; certify the result with ``zero_set_certify``. A
+    vertex further than ``edge_length + carrier_distance`` from the zero set
+    raises ``MeshcoreError`` (``UNRESOLVED``). A carrier that is not closed (an
+    edge not held by exactly two triangles, in opposite directions) raises
+    ``ValueError``.
     """
-    if not isinstance(admission_limited_coarsening, bool):
-        raise TypeError("admission_limited_coarsening must be a bool.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     input_faces = _index_array(triangles, "triangles")
     compact_faces = input_faces.dtype == np.dtype(np.int32)
@@ -4768,28 +5281,6 @@ def zero_set_remesh(
     )
     if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
         raise ValueError("triangles must be a nonempty (N, 3) integer array.")
-    incidence_arrays: tuple[np.ndarray, np.ndarray] | None = None
-    if incidence is not None:
-        if not compact_faces:
-            raise ValueError("Borrowed incidence requires int32 triangles.")
-        if not isinstance(incidence, tuple) or len(incidence) != 2:
-            raise TypeError("incidence must be an (offsets, face_rows) tuple.")
-        offsets = _index_array(incidence[0], "incidence offsets")
-        face_rows = _index_array(incidence[1], "incidence face rows")
-        if offsets.dtype != np.dtype(np.int32) or face_rows.dtype != np.dtype(np.int32):
-            raise TypeError("Borrowed incidence arrays must be int32.")
-        if offsets.ndim != 1 or offsets.size != points.shape[0] + 1:
-            raise ValueError(
-                "incidence offsets must contain one entry per vertex plus one."
-            )
-        if face_rows.ndim != 1 or face_rows.size != 3 * faces.shape[0]:
-            raise ValueError(
-                "incidence face rows must contain three entries per triangle."
-            )
-        incidence_arrays = (
-            np.ascontiguousarray(offsets),
-            np.ascontiguousarray(face_rows),
-        )
     controls = (tolerance, carrier_distance, edge_length, minimum_angle_degrees)
     if any(not np.isfinite(value_) for value_ in controls) or not (
         tolerance > 0.0
@@ -4802,91 +5293,504 @@ def zero_set_remesh(
             "and minimum_angle_degrees in (0, 60)."
         )
     value_view, value_arrays = _interval_box_program(value, 1, "value")
-    gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
     counters = np.zeros((8,), dtype=np.int64)
-    distance = np.zeros((1,), dtype=np.float64)
     request = _ZeroSetRemeshRequest(
         points.ctypes.data,
         points.shape[0],
         faces.ctypes.data,
         faces.shape[0],
         value_view,
-        gradient_view,
         float(tolerance),
         float(carrier_distance),
         float(edge_length),
         float(minimum_angle_degrees),
         ctypes.addressof(handle),
         counters.ctypes.data,
-        distance.ctypes.data,
-        int(admission_limited_coarsening),
     )
     library = load_meshcore()
-    if compact_faces:
-        if incidence_arrays is None:
-            status = library["phx_mc_zero_set_remesh_i32"](
-                ctypes.byref(request), 0, 0, 0, 0
-            )
-        else:
-            offsets, face_rows = incidence_arrays
-            status = library["phx_mc_zero_set_remesh_i32"](
-                ctypes.byref(request),
-                offsets.ctypes.data,
-                offsets.size,
-                face_rows.ctypes.data,
-                face_rows.size,
-            )
-    else:
-        status = library["phx_mc_zero_set_remesh"](ctypes.byref(request))
-    del value_arrays, gradient_arrays  # kept alive through the native call
+    entry = "phx_mc_zero_set_remesh_i32" if compact_faces else "phx_mc_zero_set_remesh"
+    status = library[entry](ctypes.byref(request))
+    del value_arrays  # kept alive through the native call
     _raise_for_call(status, "zero_set_remesh")
-    if not handle.value:
+    out_vertices, out_triangles, _ = _take_surface_result(
+        library, handle, "zero_set_remesh"
+    )
+    orientation = int(counters[5])
+    if orientation not in (-1, 1):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
-            "zero_set_remesh returned no owned result handle.",
+            "zero_set_remesh returned an invalid orientation.",
+        )
+    counters.setflags(write=False)
+    return ZeroSetRemeshResult(out_vertices, out_triangles, orientation, counters)
+
+
+def _take_surface_result(
+    library: MeshcoreLibrary, handle: ctypes.c_void_p, call: str, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Copy out and free an owned surface result (read-only arrays).
+
+    Returns the vertices, the triangles and the per-triangle carried flags
+    (bool; all false except for triangles a zero-set certificate accepted from
+    its carrier by their witness boxes).
+    """
+    if not handle.value:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"{call} returned no owned result handle."
         )
     try:
         sizes = np.empty((2,), dtype=np.int64)
         _raise_for_call(
-            library["phx_mc_zero_set_remesh_sizes"](handle, sizes.ctypes.data),
-            "zero_set_remesh_sizes",
+            library["phx_mc_surface_result_sizes"](handle, sizes.ctypes.data),
+            "surface_result_sizes",
         )
         vertex_count, triangle_count = (int(size) for size in sizes.tolist())
         if vertex_count < 3 or triangle_count < 1:
             raise MeshcoreError(
-                MeshcoreStatus.INTERNAL_ERROR,
-                "zero_set_remesh returned an empty surface.",
+                MeshcoreStatus.INTERNAL_ERROR, f"{call} returned an empty surface."
             )
-        out_vertices = np.empty((vertex_count, 3), dtype=np.float64)
-        out_triangles = np.empty((triangle_count, 3), dtype=np.int64)
+        vertices = np.empty((vertex_count, 3), dtype=np.float64)
+        triangles = np.empty((triangle_count, 3), dtype=np.int64)
+        carried = np.empty((triangle_count,), dtype=np.uint8)
         _raise_for_call(
-            library["phx_mc_zero_set_remesh_arrays"](
+            library["phx_mc_surface_result_arrays"](
                 handle,
                 vertex_count,
                 triangle_count,
-                out_vertices.ctypes.data,
-                out_triangles.ctypes.data,
+                vertices.ctypes.data,
+                triangles.ctypes.data,
             ),
-            "zero_set_remesh_arrays",
+            "surface_result_arrays",
+        )
+        _raise_for_call(
+            library["phx_mc_surface_result_carried"](
+                handle, triangle_count, carried.ctypes.data
+            ),
+            "surface_result_carried",
         )
     finally:
-        library["phx_mc_zero_set_remesh_free"](handle)
-    certified = float(distance[0])
+        library["phx_mc_surface_result_free"](handle)
     if (
-        not np.all(np.isfinite(out_vertices))
-        or np.any(out_triangles < 0)
-        or np.any(out_triangles >= vertex_count)
-        or not np.isfinite(certified)
+        not np.all(np.isfinite(vertices))
+        or np.any(triangles < 0)
+        or np.any(triangles >= vertex_count)
+        or np.any(carried > 1)
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"{call} returned invalid geometry."
+        )
+    flags = carried.astype(np.bool_)
+    vertices.setflags(write=False)
+    triangles.setflags(write=False)
+    flags.setflags(write=False)
+    return vertices, triangles, flags
+
+
+class ZeroSetCertificate(NamedTuple):
+    """A surface certified against ``{f = 0}`` both ways, repaired locally.
+
+    ``vertices`` and ``triangles`` are the certified surface: the input unless
+    a refused triangle was repaired. ``distance`` bounds the distance from the
+    surface to the zero set: the maximum over the proved triangles (each
+    within the tolerance) and, for triangles accepted from the carrier, their
+    witness box diagonals, which may exceed the tolerance.
+    ``reverse_distance`` bounds the distance from every zero of ``f`` in the
+    domain to the surface. ``counters`` (read-only int64) are the
+    certifications refused for transversality and for distance and the
+    triangles refused for embedding, all over every round and carrier
+    triangles included, the triangles accepted from the carrier, the repair
+    splits, the certification rounds run, the tube triangles refused in its
+    last round, the cover leaves left outside by the last cover run (-1 past
+    the box tree's level limit, -2 past ``cover_budget``, -3 for a surface
+    vertex outside ``domain``), the proof of ``reverse_distance`` (1 tube, 2
+    cover; either within ``tolerance``) and the boxes the covers evaluated.
+    ``carried`` (read-only
+    bool, one per triangle) flags the triangles accepted from the carrier.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    distance: float
+    reverse_distance: float
+    counters: np.ndarray
+    carried: np.ndarray
+
+
+def zero_set_certify(
+    vertices: object,
+    triangles: object,
+    value: IntervalBranchProgram,
+    gradient: IntervalBoxProgram,
+    tolerance: float,
+    orientation: int,
+    carrier_vertices: object,
+    carrier_triangles: object,
+    carrier_boxes: object,
+    domain: object,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+    *,
+    cover_budget: int = 1 << 23,
+) -> ZeroSetCertificate:
+    """Certify a ``zero_set_remesh`` result against ``{f = 0}``, repairing it locally.
+
+    A triangle is certified when interval forms of ``f`` against a certified
+    lower bound of ``|grad f|`` bound its distance by ``tolerance``
+    (subdividing where needed) and its normal is certified transversal to
+    ``grad f`` with ``orientation`` (+1 or -1), or, when that proof fails,
+    when it has the corner coordinates, in the same cyclic order, of a carrier
+    triangle (``zero_set_remesh`` keeps the carrier's triangles around
+    creases, where transversality is not decidable) proved by its witness
+    box: ``carrier_boxes`` (one ``(2, 3)`` lower/upper box per carrier
+    triangle) must contain the triangle's corners, be proved free of jumps
+    by the branch-evidence events of ``value`` (``f`` lowered with them: the
+    same program gives the corner signs and every other proof), pass the
+    guards of ``value`` over the whole box, and have two
+    corners where the interval enclosures of ``f`` have strictly opposite
+    signs, so the box holds a zero of ``f``; the triangle is then accepted at
+    the box diagonal, and a box failing a check accepts nothing. Every
+    certified triangle is also nondegenerate with only legal exact contacts
+    with nearby triangles. Refused triangles are repaired: the longest edge
+    of each is split at its midpoint projected onto ``{f = 0}`` and only what
+    changed is certified again, for at most four rounds. Once a repair is
+    needed, every triangle decided in a round must also be proved within
+    ``0.8 * tolerance``; one proved only within ``tolerance`` is repaired as
+    well (not refused), so the zero set near repaired triangles leaves the
+    reverse direction room. Every enclosure of
+    ``f`` or ``grad f`` that a triangle, tube or witness proof reads is over a
+    box on which ``value``'s branch evidence reports ``f`` continuous (else
+    that proof refuses), and transversality also requires ``f`` smooth there;
+    ``gradient`` is still trusted to enclose ``grad f`` (its Clarke gradient
+    at kinks) wherever its enclosure is finite.
+
+    The zero set is then bounded against the surface over ``domain`` (a
+    ``(2, 3)`` lower/upper box) through the native possible-zero cover of the
+    domain, which holds every zero of ``f`` in it: each kept box is accepted
+    once an outward bound of its distance to the surface is below a radius
+    ``D``. Proof 1 (tube): along segments ``y +- w(y)`` through the surface
+    (interpolated vertex normals of length ``edge_length``, adapted) ``f`` is
+    proved strictly monotone with one zero and caps clear of the surface by
+    ``rho``; the cover at ``D = rho`` puts every zero on such a segment, and
+    ``reverse_distance`` is the smaller of the tube's and the cover's bound.
+    Proof 2 (cover): when the tube refuses or a leaf is left outside ``rho``,
+    the cover alone at ``D = tolerance``. Each cover run evaluates at most
+    ``cover_budget`` boxes or is refused. A surface that is not a closed
+    oriented 2-manifold raises ``ValueError``; a triangle left refused, or a
+    zero set neither proof holds, raises ``MeshcoreError`` (``UNRESOLVED``)
+    naming the refusals.
+    """
+    if orientation not in (-1, 1):
+        raise ValueError("orientation must be 1 or -1.")
+    controls = (tolerance, edge_length, minimum_angle_degrees)
+    if any(not np.isfinite(value_) for value_ in controls) or not (
+        tolerance > 0.0 and edge_length > 0.0 and 0.0 < minimum_angle_degrees < 60.0
+    ):
+        raise ValueError(
+            "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
+        )
+    if isinstance(cover_budget, bool) or not isinstance(cover_budget, int):
+        raise TypeError("cover_budget must be an int.")
+    if cover_budget < 1:
+        raise ValueError("cover_budget must be positive.")
+    points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
+        raise ValueError("triangles must be a nonempty (N, 3) integer array.")
+    carrier_points = np.ascontiguousarray(
+        _points(carrier_vertices, "carrier_vertices", 3), dtype=np.float64
+    )
+    carrier_faces = _native_integer_array(
+        _index_array(carrier_triangles, "carrier_triangles"),
+        "carrier_triangles",
+        np.dtype(np.int64),
+    )
+    if carrier_faces.ndim != 2 or carrier_faces.shape[1] != 3:
+        raise ValueError("carrier_triangles must be an (N, 3) integer array.")
+    boxes = np.ascontiguousarray(np.asarray(carrier_boxes, dtype=np.float64))
+    if boxes.shape != (carrier_faces.shape[0], 2, 3):
+        raise ValueError("carrier_boxes must hold one (2, 3) box per carrier triangle.")
+    bounds = np.ascontiguousarray(np.asarray(domain, dtype=np.float64))
+    if (
+        bounds.shape != (2, 3)
+        or not np.all(np.isfinite(bounds))
+        or not np.all(bounds[0] < bounds[1])
+    ):
+        raise ValueError("domain must be a finite (2, 3) box with lower < upper.")
+    value_view, value_arrays = _interval_box_program(value.program, 1, "value.program")
+    gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
+    events = np.ascontiguousarray(
+        _native_integer_array(value.events, "value.events", np.dtype(np.int64))
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("value.events must have shape (rows, 6).")
+    handle = ctypes.c_void_p()
+    distances = np.zeros((2,), dtype=np.float64)
+    counters = np.zeros((10,), dtype=np.int64)
+    request = _ZeroSetCertifyRequest(
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        value_view,
+        gradient_view,
+        events.ctypes.data,
+        events.shape[0],
+        float(tolerance),
+        int(orientation),
+        carrier_points.ctypes.data,
+        carrier_points.shape[0],
+        carrier_faces.ctypes.data,
+        carrier_faces.shape[0],
+        boxes.ctypes.data,
+        bounds.ctypes.data,
+        float(edge_length),
+        float(minimum_angle_degrees),
+        int(cover_budget),
+        ctypes.addressof(handle),
+        distances.ctypes.data,
+        counters.ctypes.data,
+    )
+    library = load_meshcore()
+    status = library["phx_mc_zero_set_certify"](ctypes.byref(request))
+    del value_arrays, gradient_arrays  # kept alive through the native call
+    if status == MeshcoreStatus.UNRESOLVED:
+        outside = int(counters[7])
+        cover = (
+            f"the zero-set cover exceeded its budget of {int(cover_budget)} boxes"
+            if outside == -2
+            else "the zero-set cover exceeded the box tree's level limit"
+            if outside == -1
+            else "a surface vertex lies outside the domain"
+            if outside == -3
+            else f"{outside} zero-set cover leaves left outside"
+        )
+        raise MeshcoreError(
+            MeshcoreStatus.UNRESOLVED,
+            f"zero_set_certify left triangles refused after {int(counters[5])} rounds "
+            f"and {int(counters[4])} repair splits ({int(counters[0])} refusals for "
+            f"transversality, {int(counters[1])} for distance, {int(counters[2])} for "
+            f"embedding; {int(counters[3])} triangles accepted from the carrier; "
+            f"{int(counters[6])} tube triangles refused, {cover}).",
+        )
+    _raise_for_call(status, "zero_set_certify")
+    out_vertices, out_triangles, carried = _take_surface_result(
+        library, handle, "zero_set_certify"
+    )
+    certified, reverse = float(distances[0]), float(distances[1])
+    if (
+        not np.isfinite(certified)
         or certified < 0.0
+        or (int(counters[3]) == 0 and certified > tolerance)
+        or int(counters[3]) != int(np.count_nonzero(carried))
+        or not np.isfinite(reverse)
+        or reverse < 0.0
+        or int(counters[8]) not in (1, 2)
+        or reverse > tolerance
+        or (int(counters[8]) == 2 and not reverse < tolerance)
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
-            "zero_set_remesh returned invalid geometry or distance evidence.",
+            "zero_set_certify returned invalid distance evidence.",
         )
-    for output in (out_vertices, out_triangles, counters):
-        output.setflags(write=False)
-    return ZeroSetRemeshResult(out_vertices, out_triangles, certified, counters)
+    counters.setflags(write=False)
+    return ZeroSetCertificate(
+        out_vertices, out_triangles, certified, reverse, counters, carried
+    )
+
+
+_MESH_SOURCE_CONTRACTS = {
+    MeshcoreStatus.INVALID_INPUT: (
+        "every surface must be a closed oriented 2-manifold with nondegenerate triangles."
+    )
+}
+
+
+class MeshRemeshResult(NamedTuple):
+    """A surface constructed from a triangle-mesh source (nothing proved).
+
+    ``counters`` (read-only int64): splits, collapses, flips, relocations,
+    triangles below the minimum angle, and triangles whose sampled distance to
+    the source exceeds the tolerance.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    counters: np.ndarray
+
+
+def mesh_remesh(
+    vertices: object,
+    triangles: object,
+    tolerance: float,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+) -> MeshRemeshResult:
+    """Remesh a closed oriented triangle mesh with itself as the source.
+
+    Construction only, proving nothing: as ``zero_set_remesh`` with the input
+    mesh as the surface (vertices projected to their nearest source point,
+    normals and principal curvature estimates interpolated from the source's
+    vertices). A source rough at this tolerance (vertex noise) is first
+    Taubin-smoothed at a radius of about ``edge_length / 2``, each vertex kept
+    within ``tolerance / 2`` of the input, and construction follows that copy;
+    certify against the input with ``mesh_certify``. A source that is not a
+    closed oriented 2-manifold with nondegenerate triangles raises
+    ``ValueError``.
+    """
+    points, faces = _surface_arrays(vertices, triangles, "vertices", "triangles")
+    _check_remesh_controls(tolerance, edge_length, minimum_angle_degrees)
+    handle = ctypes.c_void_p()
+    counters = np.zeros((6,), dtype=np.int64)
+    request = _MeshRemeshRequest(
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        float(tolerance),
+        float(edge_length),
+        float(minimum_angle_degrees),
+        ctypes.addressof(handle),
+        counters.ctypes.data,
+    )
+    library = load_meshcore()
+    _raise_for_call(
+        library["phx_mc_mesh_remesh"](ctypes.byref(request)),
+        "mesh_remesh",
+        contracts=_MESH_SOURCE_CONTRACTS,
+    )
+    out_vertices, out_triangles, _ = _take_surface_result(library, handle, "mesh_remesh")
+    counters.setflags(write=False)
+    return MeshRemeshResult(out_vertices, out_triangles, counters)
+
+
+def _surface_arrays(
+    vertices: object, triangles: object, vertices_name: str, triangles_name: str, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Contiguous float64 (V, 3) vertices and nonempty int64 (T, 3) triangles."""
+    points = np.ascontiguousarray(_points(vertices, vertices_name, 3), dtype=np.float64)
+    faces = _native_integer_array(
+        _index_array(triangles, triangles_name), triangles_name, np.dtype(np.int64)
+    )
+    if faces.ndim != 2 or faces.shape[1] != 3 or faces.shape[0] == 0:
+        raise ValueError(f"{triangles_name} must be a nonempty (N, 3) integer array.")
+    return points, faces
+
+
+def _check_remesh_controls(
+    tolerance: float, edge_length: float, minimum_angle_degrees: float, /
+) -> None:
+    controls = (tolerance, edge_length, minimum_angle_degrees)
+    if any(not np.isfinite(value_) for value_ in controls) or not (
+        tolerance > 0.0 and edge_length > 0.0 and 0.0 < minimum_angle_degrees < 60.0
+    ):
+        raise ValueError(
+            "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
+        )
+
+
+class MeshCertificate(NamedTuple):
+    """A surface certified against its source mesh in both directions.
+
+    ``vertices`` and ``triangles`` are the certified surface: the input unless
+    a refused triangle was repaired. ``distances`` (read-only float64) are the
+    largest certified bound from the surface to the source and from the source
+    to the surface, each within the tolerance. ``counters`` (read-only int64)
+    are the certifications refused for distance and the triangles refused for
+    embedding, the repair splits and the rounds run, all summed over every
+    pass, the source triangles not proved within the tolerance (0 here), and
+    the relocations restoring angles after repairs.
+    """
+
+    vertices: np.ndarray
+    triangles: np.ndarray
+    distances: np.ndarray
+    counters: np.ndarray
+
+
+def mesh_certify(
+    source_vertices: object,
+    source_triangles: object,
+    vertices: object,
+    triangles: object,
+    tolerance: float,
+    edge_length: float,
+    minimum_angle_degrees: float,
+    /,
+) -> MeshCertificate:
+    """Certify a ``mesh_remesh`` result against its source mesh, repairing it locally.
+
+    Every surface triangle gets an upper bound on the distance from each of
+    its points to the source: the source triangles over it (reached across
+    edges whose planar images along its normal meet its own) must cover it,
+    proved by the winding of their boundary with exact orientation
+    predicates, and the bound is the largest gap between the two surfaces
+    over the same planar point, taken at the vertices of the overlaps (edge
+    crossings within certified offsets, with rounding pads). Refused
+    triangles are repaired (longest edge split at its nearest source point,
+    flips, at most four rounds) with embedding checked exactly; then every
+    source triangle is bounded the same way against the certified surface,
+    along the surface's normals, and the surface triangles nearest a refused
+    one are split. After any repair, angles are restored by flips and
+    relocations and both directions are decided again, for at most three
+    further passes. Sources that are not closed oriented 2-manifolds with
+    nondegenerate triangles raise ``ValueError``; a refused triangle in
+    either direction raises ``MeshcoreError`` (``UNRESOLVED``) naming the
+    refusals.
+    """
+    source_points, source_faces = _surface_arrays(
+        source_vertices, source_triangles, "source_vertices", "source_triangles"
+    )
+    points, faces = _surface_arrays(vertices, triangles, "vertices", "triangles")
+    _check_remesh_controls(tolerance, edge_length, minimum_angle_degrees)
+    handle = ctypes.c_void_p()
+    distances = np.zeros((2,), dtype=np.float64)
+    counters = np.zeros((6,), dtype=np.int64)
+    request = _MeshCertifyRequest(
+        source_points.ctypes.data,
+        source_points.shape[0],
+        source_faces.ctypes.data,
+        source_faces.shape[0],
+        points.ctypes.data,
+        points.shape[0],
+        faces.ctypes.data,
+        faces.shape[0],
+        float(tolerance),
+        float(edge_length),
+        float(minimum_angle_degrees),
+        ctypes.addressof(handle),
+        distances.ctypes.data,
+        counters.ctypes.data,
+    )
+    library = load_meshcore()
+    status = library["phx_mc_mesh_certify"](ctypes.byref(request))
+    if status == MeshcoreStatus.UNRESOLVED:
+        raise MeshcoreError(
+            MeshcoreStatus.UNRESOLVED,
+            f"mesh_certify left triangles refused after {int(counters[3])} rounds and "
+            f"{int(counters[2])} repair splits ({int(counters[0])} refusals for distance, "
+            f"{int(counters[1])} for embedding, {int(counters[4])} source triangles not "
+            f"within {tolerance:g}; bounds {distances[0]:.3e} / {distances[1]:.3e}).",
+        )
+    _raise_for_call(status, "mesh_certify", contracts=_MESH_SOURCE_CONTRACTS)
+    out_vertices, out_triangles, _ = _take_surface_result(library, handle, "mesh_certify")
+    if not (
+        np.all(np.isfinite(distances))
+        and np.all(distances >= 0.0)
+        and np.all(distances <= tolerance)
+        and counters[4] == 0
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR,
+            "mesh_certify returned invalid distance evidence.",
+        )
+    distances.setflags(write=False)
+    counters.setflags(write=False)
+    return MeshCertificate(out_vertices, out_triangles, distances, counters)
 
 
 class LevelSetSplitResult(NamedTuple):
@@ -8117,21 +9021,108 @@ def _source_group_labels(
     ``groups`` and ``labels`` give each source row's group and source ID; a
     group carries one source ID. A value naming no group is kept.
     """
-    unique_groups, first_rows, inverse = np.unique(
-        groups, return_index=True, return_inverse=True
-    )
-    unique_labels = labels[first_rows]
-    if np.any(labels != unique_labels[inverse.reshape((-1,))]):
+    result = values.astype(np.int64)
+    if groups.size == 0 or np.array_equal(groups, labels):
+        # Every group is labelled by its own row: the map is the identity.
+        return result
+    # Groups are source rows (nonnegative and below the row count), so a
+    # dense table maps them; any row whose label differs from its group's
+    # table entry (whichever row wrote it) proves a group with two labels.
+    if groups.min() < 0:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"a {kind} source group row is negative"
+        )
+    span = int(groups.max()) + 1
+    present = np.zeros((span,), dtype=bool)
+    present[groups] = True
+    table = np.empty((span,), dtype=labels.dtype)
+    table[groups] = labels
+    if np.any(labels != table[groups]):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"one {kind} group has multiple source IDs"
         )
-    result = values.astype(np.int64)
-    if unique_groups.size == 0:
-        return result
-    positions = np.minimum(np.searchsorted(unique_groups, values), unique_groups.size - 1)
-    named = unique_groups[positions] == values
-    result[named] = unique_labels[positions[named]]
+    named = (values >= 0) & (values < span)
+    named[named] = present[values[named]]
+    result[named] = table[values[named]]
     return result
+
+
+# The flat banks of a TetMesh snapshot: request field, dtype, row shape, the
+# PHX_MC_TET_MESH_SNAPSHOT_SIZES entry counting its rows, the extra rows (an
+# offsets bank closes its last row) and the bytes per row.
+_TET_SNAPSHOT_BANKS: tuple[
+    tuple[str, np.dtype[Any], tuple[int, ...], int, int, int], ...
+] = tuple(
+    (name, np.dtype(dtype), shape, count, extra, np.dtype(dtype).itemsize * int(np.prod(shape)))
+    for name, dtype, shape, count, extra in (
+        ("vertex_ids", np.uint64, (), 0, 0),
+        ("points", np.float64, (3,), 0, 0),
+        ("vertex_size_targets", np.float64, (), 0, 0),
+        ("witness_strata", np.int8, (), 0, 0),
+        ("witness_entities", np.int32, (), 0, 0),
+        ("witness_parameters", np.float64, (2,), 0, 0),
+        ("witness_deviations", np.float64, (), 0, 0),
+        ("vertex_dimensions", np.int8, (), 0, 0),
+        ("protection_radii", np.float64, (), 0, 0),
+        ("protected_vertices", np.int8, (), 0, 0),
+        ("vertex_edge_witness_present", np.int8, (), 0, 0),
+        ("vertex_edge_witness_endpoints", np.uint64, (2,), 0, 0),
+        ("vertex_edge_parameters", np.float64, (), 0, 0),
+        ("vertex_ancestry_offsets", np.int64, (), 0, 1),
+        ("vertex_ancestor_ids", np.uint64, (), 17, 0),
+        ("vertex_ancestor_winding", np.int64, (3,), 17, 0),
+        ("vertex_ancestry_weights", np.float64, (), 17, 0),
+        ("cell_ancestry_offsets", np.int64, (), 1, 1),
+        ("cell_ancestor_ids", np.uint64, (), 18, 0),
+        ("cell_ancestry_edit_kinds", np.int32, (), 1, 0),
+        ("cell_ids", np.uint64, (), 1, 0),
+        ("cell_vertex_rows", np.int64, (4,), 1, 0),
+        ("cell_regions", np.int32, (), 1, 0),
+        ("cell_size_targets", np.float64, (), 1, 0),
+        ("facet_ids", np.uint64, (), 2, 0),
+        ("facet_vertex_rows", np.int64, (3,), 2, 0),
+        ("facet_sources", np.int32, (), 2, 0),
+        ("facet_orientations", np.int8, (), 2, 0),
+        ("protected_facets", np.int8, (), 2, 0),
+        ("segment_ids", np.uint64, (), 3, 0),
+        ("segment_vertex_rows", np.int64, (2,), 3, 0),
+        ("segment_sources", np.int32, (), 3, 0),
+        ("protected_segments", np.int8, (), 3, 0),
+        ("source_points", np.float64, (3,), 4, 0),
+        ("source_faces", np.int32, (3,), 5, 0),
+        ("source_face_groups", np.int32, (), 5, 0),
+        ("source_face_ids", np.int64, (), 5, 0),
+        ("source_face_tolerances", np.float64, (), 5, 0),
+        ("source_segments", np.int32, (2,), 6, 0),
+        ("source_segment_groups", np.int32, (), 6, 0),
+        ("source_segment_ids", np.int64, (), 6, 0),
+        ("source_segment_tolerances", np.float64, (), 6, 0),
+        ("source_face_planes", np.float64, (3, 3), 5, 0),
+        ("source_face_plane_tolerances", np.float64, (), 5, 0),
+        ("periodic_quotient_lifted_cell_ids", np.uint64, (), 10, 0),
+        ("periodic_entity_lifted_ids", np.uint64, (), 12, 0),
+        ("periodic_entity_quotient_ids", np.uint64, (), 13, 0),
+        ("periodic_entity_lifted_to_quotient", np.int32, (), 12, 0),
+        ("periodic_entity_orientation_signs", np.int32, (), 12, 0),
+        ("periodic_entity_winding_shifts", np.int64, (), 14, 0),
+        ("periodic_entity_corner_permutations", np.int32, (), 15, 0),
+        ("periodic_entity_representative_rows", np.int32, (), 16, 0),
+    )
+)
+
+
+def _source_id_bank(ids: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """The sorted distinct source IDs and each row's index into them (int32)."""
+    if ids.size == 0 or not np.all(ids[1:] >= ids[:-1]):
+        bank, rows = np.unique(ids, return_inverse=True)
+        return bank, rows.astype(np.int32)
+    # Already sorted: a row opens a new ID where it differs from its predecessor.
+    opens = np.empty(ids.shape, dtype=bool)
+    opens[0] = True
+    np.not_equal(ids[1:], ids[:-1], out=opens[1:])
+    rows = np.cumsum(opens, dtype=np.int32)
+    rows -= 1
+    return ids[opens], rows
 
 
 def _tet_radius_target(value: float | None, /) -> float | None:
@@ -8445,7 +9436,7 @@ class TetMesh3D:
         )
         if face_orientation_bank is not None and (
             face_orientation_bank.shape != (face_array.shape[0],)
-            or np.any(~np.isin(face_orientation_bank, (-1, 1)))
+            or np.any(np.abs(face_orientation_bank) != 1)
         ):
             raise ValueError(
                 "face_orientations must contain one signed orientation per face."
@@ -8804,13 +9795,17 @@ class TetMesh3D:
     def _identity(self, /) -> TetMeshIdentity:
         generation = _U64()
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(4))
+        lengths = (_I64 * 4)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_identity_sizes"](
                 self._live(),
                 ctypes.addressof(generation),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                base,
+                base + 8,
+                base + 16,
+                base + 24,
             ),
             "tet_mesh_identity_sizes",
         )
@@ -8818,8 +9813,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity byte length"
             )
@@ -8861,12 +9856,13 @@ class TetMesh3D:
 
     def _periodic_identity_strings(self, /) -> tuple[str, str, str, str, str, str] | None:
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(6))
+        lengths = (_I64 * 6)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_periodic_identity_sizes"](
                 self._live(),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                *range(base, base + 48, 8),
             ),
             "tet_mesh_periodic_identity_sizes",
         )
@@ -8874,8 +9870,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity byte length"
             )
@@ -9018,225 +10014,43 @@ class TetMesh3D:
                 ),
                 "tet_mesh_snapshot_sizes",
             )
-            if np.any(sizes < 0):
+            counts = sizes.tolist()
+            if min(counts) < 0:
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "negative tetrahedral snapshot size"
                 )
-            (
-                vertex_count,
-                cell_count,
-                facet_count,
-                segment_count,
-                source_point_count,
-                source_face_count,
-                source_segment_count,
-                periodic_orbit_count,
-                periodic_member_count,
-                periodic_quotient_cell_count,
-                periodic_quotient_lifted_count,
-                periodic_entity_map_count,
-                periodic_entity_lifted_count,
-                periodic_entity_quotient_count,
-                periodic_entity_winding_count,
-                periodic_entity_corner_count,
-                periodic_entity_representative_count,
-                vertex_ancestry_count,
-                cell_ancestor_count,
-            ) = map(int, sizes.tolist())
-            vertex_ids = np.empty((vertex_count,), dtype=np.uint64)
-            points = np.empty((vertex_count, 3), dtype=np.float64)
-            vertex_size_targets = np.empty((vertex_count,), dtype=np.float64)
-            witness_strata = np.empty((vertex_count,), dtype=np.int8)
-            witness_entities = np.empty((vertex_count,), dtype=np.int32)
-            witness_parameters = np.empty((vertex_count, 2), dtype=np.float64)
-            witness_deviations = np.empty((vertex_count,), dtype=np.float64)
-            dimensions = np.empty((vertex_count,), dtype=np.int8)
-            radii = np.empty((vertex_count,), dtype=np.float64)
-            protected_vertices = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_present = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_endpoints = np.empty((vertex_count, 2), dtype=np.uint64)
-            edge_parameters = np.empty((vertex_count,), dtype=np.float64)
-            vertex_ancestry_offsets = np.empty((vertex_count + 1,), dtype=np.int64)
-            vertex_ancestor_ids = np.empty((vertex_ancestry_count,), dtype=np.uint64)
-            vertex_ancestor_winding = np.empty((vertex_ancestry_count, 3), dtype=np.int64)
-            vertex_ancestry_weights = np.empty((vertex_ancestry_count,), dtype=np.float64)
-            cell_ancestry_offsets = np.empty((cell_count + 1,), dtype=np.int64)
-            cell_ancestor_ids = np.empty((cell_ancestor_count,), dtype=np.uint64)
-            cell_ancestry_edit_kinds = np.empty((cell_count,), dtype=np.int32)
-            cell_ids = np.empty((cell_count,), dtype=np.uint64)
-            cell_vertices = np.empty((cell_count, 4), dtype=np.int64)
-            regions = np.empty((cell_count,), dtype=np.int32)
-            cell_size_targets = np.empty((cell_count,), dtype=np.float64)
-            facet_ids = np.empty((facet_count,), dtype=np.uint64)
-            facet_vertices = np.empty((facet_count, 3), dtype=np.int64)
-            facet_sources = np.empty((facet_count,), dtype=np.int32)
-            facet_orientations = np.empty((facet_count,), dtype=np.int8)
-            protected_facets = np.empty((facet_count,), dtype=np.int8)
-            segment_ids = np.empty((segment_count,), dtype=np.uint64)
-            segment_vertices = np.empty((segment_count, 2), dtype=np.int64)
-            segment_sources = np.empty((segment_count,), dtype=np.int32)
-            protected_segments = np.empty((segment_count,), dtype=np.int8)
-            source_points = np.empty((source_point_count, 3), dtype=np.float64)
-            source_faces = np.empty((source_face_count, 3), dtype=np.int32)
-            source_face_groups = np.empty((source_face_count,), dtype=np.int32)
-            source_face_ids = np.empty((source_face_count,), dtype=np.int64)
-            source_face_tolerances = np.empty((source_face_count,), dtype=np.float64)
-            source_segments = np.empty((source_segment_count, 2), dtype=np.int32)
-            source_segment_groups = np.empty((source_segment_count,), dtype=np.int32)
-            source_segment_ids = np.empty((source_segment_count,), dtype=np.int64)
-            source_segment_tolerances = np.empty(
-                (source_segment_count,), dtype=np.float64
-            )
-            source_face_planes = np.empty((source_face_count, 3, 3), dtype=np.float64)
-            source_face_plane_tolerances = np.empty(
-                (source_face_count,), dtype=np.float64
-            )
-            periodic_orbits = (_TetPeriodicOrbit * periodic_orbit_count)()
-            periodic_members = (_TetPeriodicVertexMember * periodic_member_count)()
-            periodic_quotient_cells = (
-                _TetPeriodicQuotientCell * periodic_quotient_cell_count
-            )()
-            periodic_quotient_lifted_cell_ids = np.empty(
-                (periodic_quotient_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_maps = (
-                _TetPeriodicEntityOrbitMap * periodic_entity_map_count
-            )()
-            periodic_entity_lifted_ids = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_quotient_ids = np.empty(
-                (periodic_entity_quotient_count,), dtype=np.uint64
-            )
-            periodic_entity_lifted_to_quotient = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_orientation_signs = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_winding_shifts = np.empty(
-                (periodic_entity_winding_count,), dtype=np.int64
-            )
-            periodic_entity_corner_permutations = np.empty(
-                (periodic_entity_corner_count,), dtype=np.int32
-            )
-            periodic_entity_representative_rows = np.empty(
-                (periodic_entity_representative_count,), dtype=np.int32
-            )
+            # One buffer holds every flat bank (in 8-byte aligned slices); the
+            # returned banks are views of it.
+            extents = []
+            total = 0
+            for _name, _dtype, _shape, count, extra, row_bytes in _TET_SNAPSHOT_BANKS:
+                rows = counts[count] + extra
+                extents.append((rows, total))
+                total += (rows * row_bytes + 7) & ~7
+            buffer = np.empty((total,), dtype=np.uint8)
+            address = buffer.ctypes.data
+            # The capacity fields lead the request, in snapshot-size order.
+            request = _TetMeshSnapshotRequest(*counts)
+            b: dict[str, np.ndarray] = {}
+            for (name, dtype, shape, _count, _extra, _row_bytes), (rows, offset) in zip(
+                _TET_SNAPSHOT_BANKS, extents, strict=True
+            ):
+                b[name] = np.ndarray((rows, *shape), dtype, buffer, offset)
+                if rows:
+                    setattr(request, name, address + offset)
+            periodic_orbits = (_TetPeriodicOrbit * counts[7])()
+            periodic_members = (_TetPeriodicVertexMember * counts[8])()
+            periodic_quotient_cells = (_TetPeriodicQuotientCell * counts[9])()
+            periodic_entity_maps = (_TetPeriodicEntityOrbitMap * counts[11])()
+            if counts[7]:
+                request.periodic_orbits = ctypes.cast(periodic_orbits, _P)
+            if counts[8]:
+                request.periodic_members = ctypes.cast(periodic_members, _P)
+            if counts[9]:
+                request.periodic_quotient_cells = ctypes.cast(periodic_quotient_cells, _P)
+            if counts[11]:
+                request.periodic_entity_maps = ctypes.cast(periodic_entity_maps, _P)
             generation = _U64()
-            request = _TetMeshSnapshotRequest()
-            for name, value in (
-                ("vertex_capacity", vertex_count),
-                ("cell_capacity", cell_count),
-                ("facet_capacity", facet_count),
-                ("segment_capacity", segment_count),
-                ("source_point_capacity", source_point_count),
-                ("source_face_capacity", source_face_count),
-                ("source_segment_capacity", source_segment_count),
-                ("periodic_orbit_capacity", periodic_orbit_count),
-                ("periodic_member_capacity", periodic_member_count),
-                ("periodic_quotient_cell_capacity", periodic_quotient_cell_count),
-                ("periodic_quotient_lifted_capacity", periodic_quotient_lifted_count),
-                ("periodic_entity_map_capacity", periodic_entity_map_count),
-                ("periodic_entity_lifted_capacity", periodic_entity_lifted_count),
-                ("periodic_entity_quotient_capacity", periodic_entity_quotient_count),
-                ("periodic_entity_winding_capacity", periodic_entity_winding_count),
-                ("periodic_entity_corner_capacity", periodic_entity_corner_count),
-                (
-                    "periodic_entity_representative_capacity",
-                    periodic_entity_representative_count,
-                ),
-                ("vertex_ancestry_capacity", vertex_ancestry_count),
-                ("cell_ancestor_capacity", cell_ancestor_count),
-            ):
-                setattr(request, name, value)
-            for name, array in (
-                ("vertex_ids", vertex_ids),
-                ("points", points),
-                ("vertex_size_targets", vertex_size_targets),
-                ("witness_strata", witness_strata),
-                ("witness_entities", witness_entities),
-                ("witness_parameters", witness_parameters),
-                ("witness_deviations", witness_deviations),
-                ("vertex_dimensions", dimensions),
-                ("protection_radii", radii),
-                ("protected_vertices", protected_vertices),
-                ("cell_ids", cell_ids),
-                ("vertex_edge_witness_present", edge_witness_present),
-                ("vertex_edge_witness_endpoints", edge_witness_endpoints),
-                ("vertex_edge_parameters", edge_parameters),
-                ("vertex_ancestry_offsets", vertex_ancestry_offsets),
-                ("vertex_ancestor_ids", vertex_ancestor_ids),
-                ("vertex_ancestor_winding", vertex_ancestor_winding),
-                ("vertex_ancestry_weights", vertex_ancestry_weights),
-                ("cell_ancestry_offsets", cell_ancestry_offsets),
-                ("cell_ancestor_ids", cell_ancestor_ids),
-                ("cell_ancestry_edit_kinds", cell_ancestry_edit_kinds),
-                ("cell_vertex_rows", cell_vertices),
-                ("cell_regions", regions),
-                ("cell_size_targets", cell_size_targets),
-                ("facet_ids", facet_ids),
-                ("facet_vertex_rows", facet_vertices),
-                ("facet_sources", facet_sources),
-                ("facet_orientations", facet_orientations),
-                ("protected_facets", protected_facets),
-                ("segment_ids", segment_ids),
-                ("segment_vertex_rows", segment_vertices),
-                ("segment_sources", segment_sources),
-                ("protected_segments", protected_segments),
-                ("source_points", source_points),
-                ("source_faces", source_faces),
-                ("source_face_groups", source_face_groups),
-                ("source_face_ids", source_face_ids),
-                ("source_face_tolerances", source_face_tolerances),
-                ("source_segments", source_segments),
-                ("source_segment_groups", source_segment_groups),
-                ("source_segment_ids", source_segment_ids),
-                ("source_segment_tolerances", source_segment_tolerances),
-                ("source_face_planes", source_face_planes),
-                ("source_face_plane_tolerances", source_face_plane_tolerances),
-            ):
-                setattr(request, name, _tet_mesh_pointer(array) if array.size else None)
-            request.periodic_orbits = (
-                ctypes.cast(periodic_orbits, _P) if periodic_orbit_count else None
-            )
-            request.periodic_members = (
-                ctypes.cast(periodic_members, _P) if periodic_member_count else None
-            )
-            request.periodic_quotient_cells = (
-                ctypes.cast(periodic_quotient_cells, _P)
-                if periodic_quotient_cell_count
-                else None
-            )
-            request.periodic_quotient_lifted_cell_ids = _tet_mesh_pointer(
-                periodic_quotient_lifted_cell_ids
-            )
-            request.periodic_entity_maps = (
-                ctypes.cast(periodic_entity_maps, _P)
-                if periodic_entity_map_count
-                else None
-            )
-            request.periodic_entity_lifted_ids = _tet_mesh_pointer(
-                periodic_entity_lifted_ids
-            )
-            request.periodic_entity_quotient_ids = _tet_mesh_pointer(
-                periodic_entity_quotient_ids
-            )
-            request.periodic_entity_lifted_to_quotient = _tet_mesh_pointer(
-                periodic_entity_lifted_to_quotient
-            )
-            request.periodic_entity_orientation_signs = _tet_mesh_pointer(
-                periodic_entity_orientation_signs
-            )
-            request.periodic_entity_winding_shifts = _tet_mesh_pointer(
-                periodic_entity_winding_shifts
-            )
-            request.periodic_entity_corner_permutations = _tet_mesh_pointer(
-                periodic_entity_corner_permutations
-            )
-            request.periodic_entity_representative_rows = _tet_mesh_pointer(
-                periodic_entity_representative_rows
-            )
             request.generation = ctypes.addressof(generation)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_snapshot"](
@@ -9255,29 +10069,31 @@ class TetMesh3D:
                 periodic_orbits,
                 periodic_members,
                 periodic_quotient_cells,
-                periodic_quotient_lifted_cell_ids,
+                b["periodic_quotient_lifted_cell_ids"],
                 periodic_entity_maps,
-                periodic_entity_lifted_ids,
-                periodic_entity_quotient_ids,
-                periodic_entity_lifted_to_quotient,
-                periodic_entity_orientation_signs,
-                periodic_entity_winding_shifts,
-                periodic_entity_corner_permutations,
-                periodic_entity_representative_rows,
+                b["periodic_entity_lifted_ids"],
+                b["periodic_entity_quotient_ids"],
+                b["periodic_entity_lifted_to_quotient"],
+                b["periodic_entity_orientation_signs"],
+                b["periodic_entity_winding_shifts"],
+                b["periodic_entity_corner_permutations"],
+                b["periodic_entity_representative_rows"],
             )
-            if np.any(~np.isfinite(vertex_size_targets)) or np.any(
-                vertex_size_targets < 0.0
-            ):
+            vertex_size_targets = b["vertex_size_targets"]
+            # NaN fails both comparisons.
+            if not np.all((vertex_size_targets >= 0.0) & (vertex_size_targets < np.inf)):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh vertex size targets"
                 )
+            vertex_ancestry_offsets = b["vertex_ancestry_offsets"]
+            cell_ancestry_offsets = b["cell_ancestry_offsets"]
             if (
                 vertex_ancestry_offsets[0] != 0
-                or vertex_ancestry_offsets[-1] != vertex_ancestry_count
-                or np.any(np.diff(vertex_ancestry_offsets) < 0)
-                or np.any(~np.isfinite(vertex_ancestry_weights))
+                or vertex_ancestry_offsets[-1] != counts[17]
+                or np.any(vertex_ancestry_offsets[1:] < vertex_ancestry_offsets[:-1])
+                or not np.all(np.isfinite(b["vertex_ancestry_weights"]))
                 or cell_ancestry_offsets[0] != 0
-                or cell_ancestry_offsets[-1] != cell_ancestor_count
+                or cell_ancestry_offsets[-1] != counts[18]
             ):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR,
@@ -9285,58 +10101,57 @@ class TetMesh3D:
                 )
             # Native writes cells, facets and segments in ID order with their
             # corners as vertex rows, and every cell's size target and lineage.
-            face_id_bank, face_group_rows = np.unique(
-                source_face_ids, return_inverse=True
-            )
-            segment_id_bank, segment_group_rows = np.unique(
-                source_segment_ids, return_inverse=True
-            )
-            face_group_rows = face_group_rows.astype(np.int32)
-            segment_group_rows = segment_group_rows.astype(np.int32)
+            source_face_ids = b["source_face_ids"]
+            source_segment_ids = b["source_segment_ids"]
+            face_id_bank, face_group_rows = _source_id_bank(source_face_ids)
+            segment_id_bank, segment_group_rows = _source_id_bank(source_segment_ids)
             vertex_size_targets.setflags(write=False)
-            cell_size_targets.setflags(write=False)
+            b["cell_size_targets"].setflags(write=False)
             return TetMeshArrays(
-                points,
+                b["points"],
                 vertex_size_targets,
-                cell_vertices,
-                regions,
-                cell_size_targets,
-                facet_vertices,
+                b["cell_vertex_rows"],
+                b["cell_regions"],
+                b["cell_size_targets"],
+                b["facet_vertex_rows"],
                 _source_group_labels(
-                    source_face_groups, source_face_ids, facet_sources, "face"
+                    b["source_face_groups"], source_face_ids, b["facet_sources"], "face"
                 ),
-                segment_vertices,
+                b["segment_vertex_rows"],
                 _source_group_labels(
-                    source_segment_groups, source_segment_ids, segment_sources, "segment"
+                    b["source_segment_groups"],
+                    source_segment_ids,
+                    b["segment_sources"],
+                    "segment",
                 ),
-                dimensions,
-                radii,
-                protected_vertices,
-                edge_witness_present,
-                edge_witness_endpoints,
-                edge_parameters,
-                vertex_ids,
-                cell_ids,
-                facet_ids,
-                facet_orientations,
-                protected_facets,
-                segment_ids,
-                protected_segments,
-                source_points,
-                source_faces,
+                b["vertex_dimensions"],
+                b["protection_radii"],
+                b["protected_vertices"],
+                b["vertex_edge_witness_present"],
+                b["vertex_edge_witness_endpoints"],
+                b["vertex_edge_parameters"],
+                b["vertex_ids"],
+                b["cell_ids"],
+                b["facet_ids"],
+                b["facet_orientations"],
+                b["protected_facets"],
+                b["segment_ids"],
+                b["protected_segments"],
+                b["source_points"],
+                b["source_faces"],
                 face_group_rows,
                 face_id_bank,
-                source_face_tolerances,
-                source_segments,
+                b["source_face_tolerances"],
+                b["source_segments"],
                 segment_group_rows,
                 segment_id_bank,
-                source_segment_tolerances,
-                source_face_planes,
-                source_face_plane_tolerances,
-                witness_strata,
-                witness_entities,
-                witness_parameters,
-                witness_deviations,
+                b["source_segment_tolerances"],
+                b["source_face_planes"],
+                b["source_face_plane_tolerances"],
+                b["witness_strata"],
+                b["witness_entities"],
+                b["witness_parameters"],
+                b["witness_deviations"],
                 identity.generation,
                 identity.identity_bound,
                 identity.source_id,
@@ -9344,12 +10159,12 @@ class TetMesh3D:
                 identity.source_map_id,
                 identity.frame_id,
                 vertex_ancestry_offsets,
-                vertex_ancestor_ids,
-                vertex_ancestor_winding,
-                vertex_ancestry_weights,
+                b["vertex_ancestor_ids"],
+                b["vertex_ancestor_winding"],
+                b["vertex_ancestry_weights"],
                 cell_ancestry_offsets,
-                cell_ancestor_ids,
-                cell_ancestry_edit_kinds,
+                b["cell_ancestor_ids"],
+                b["cell_ancestry_edit_kinds"],
                 periodic_snapshot,
                 _tet_implicit_source_snapshot(self._library, self._live()),
             )
@@ -11922,6 +12737,587 @@ __all__ = [
     "SurfaceEnvelopeResult",
     "surface_envelope",
     "IntervalBoxProgram",
+    "MeshCertificate",
+    "MeshRemeshResult",
+    "mesh_certify",
+    "mesh_remesh",
+    "ZeroSetCertificate",
     "ZeroSetRemeshResult",
+    "zero_set_certify",
     "zero_set_remesh",
+    "CadSurfaceResult",
+    "cad_mesh",
 ]
+
+__all__ += [
+    "CadFidelityChords",
+    "CadFidelityMesh",
+    "CadFidelityResult",
+    "verify_cad_fidelity",
+]
+
+
+class _CadSurfaceControls(ctypes.Structure):
+    _fields_ = (
+        ("face_sizes", _P),
+        ("face_tolerances", _P),
+        ("curve_tolerances", _P),
+        ("tolerance_fraction", _F64),
+        ("grading", _F64),
+        ("minimum_size", _F64),
+    )
+
+
+class _CadSurfaceArrays(ctypes.Structure):
+    _fields_ = (
+        ("vertex_capacity", _I64),
+        ("triangle_capacity", _I64),
+        ("sliver_capacity", _I64),
+        ("curve_edge_capacity", _I64),
+        ("face_capacity", _I64),
+        ("curve_capacity", _I64),
+        ("parameter_capacity", _I64),
+        ("failure_capacity", _I64),
+        ("face_failure_capacity", _I64),
+        ("points", _P),
+        ("vertex_dimensions", _P),
+        ("vertex_entities", _P),
+        ("vertex_parameters", _P),
+        ("triangles", _P),
+        ("triangle_patches", _P),
+        ("triangle_uv", _P),
+        ("triangle_edge_uses", _P),
+        ("facet_regions", _P),
+        ("sliver_uv", _P),
+        ("sliver_patches", _P),
+        ("curve_edges", _P),
+        ("curve_edge_curves", _P),
+        ("curve_edge_parameters", _P),
+        ("face_stats", _P),
+        ("curve_offsets", _P),
+        ("curve_parameters", _P),
+        ("curve_sag_splits", _P),
+        ("curve_failures", _P),
+        ("curve_statistics", _P),
+        ("face_failures", _P),
+    )
+
+
+_CAD_FACE_STATS_DTYPE = np.dtype(
+    [
+        (name, np.int64)
+        for name in (
+            "metric_evaluations",
+            "insertions",
+            "unresolved_size",
+            "unresolved_angle",
+            "encroachment_refusals",
+            "nonstar_refusals",
+            "outside_refusals",
+            "proximity_refusals",
+            "unresolved_triangles",
+            "excluded_refusals",
+            "fixed_triangles_skipped",
+            "omitted_pole_points",
+            "periodic_corner_gaps",
+        )
+    ]
+    + [("max_periodic_corner_gap_ulps", np.uint64)],
+    align=True,
+)
+_CAD_CURVE_STATS_DTYPE = np.dtype(
+    [
+        (name, np.int64)
+        for name in (
+            "first_order_evaluations",
+            "second_order_evaluations",
+            "sag_evaluations",
+            "small_feature_resamples",
+            "sag_splits",
+            "parameter_count",
+            "unresolved_count",
+        )
+    ],
+    align=True,
+)
+_CAD_CURVE_FAILURE_DTYPE = np.dtype(
+    [("curve", np.int32), ("first", np.float64), ("last", np.float64)],
+    align=True,
+)
+_CAD_FACE_FAILURE_DTYPE = np.dtype(
+    [
+        ("face", np.int32),
+        ("loop", np.int32),
+        ("use", np.int32),
+        ("axis", np.int32),
+        ("reason", np.int32),
+        ("turns", np.int64),
+        ("parameter", np.float64),
+        ("triangle", np.int32),
+        ("bad_size", np.int32),
+        ("bad_angle", np.int32),
+        ("refusal_kind", np.int32),
+        ("curve", np.int32),
+        ("curve_segment", np.int32),
+        ("candidate_uv", np.float64, (2,)),
+        ("triangle_uv", np.float64, (3, 2)),
+        ("segment_parameters", np.float64, (2,)),
+    ],
+    align=True,
+)
+
+
+class _CadChartArrays(ctypes.Structure):
+    _fields_ = (
+        ("triangle_capacity", _I64),
+        ("use_capacity", _I64),
+        ("chord_capacity", _I64),
+        ("triangles", _P),
+        ("patches", _P),
+        ("uv", _P),
+        ("chart_to_mesh", _P),
+        ("edge_chord", _P),
+        ("use_patch", _P),
+        ("use_range", _P),
+        ("chord_use", _P),
+        ("chord_loop", _P),
+        ("chord_uv", _P),
+        ("chord_range", _P),
+    )
+
+
+class CadChartResult(NamedTuple):
+    """Chart partition and physical correspondence, including pole slivers."""
+
+    triangles: np.ndarray
+    patches: np.ndarray
+    uv: np.ndarray
+    chart_to_mesh: np.ndarray
+    edge_chord: np.ndarray
+    use_patch: np.ndarray
+    use_range: np.ndarray
+    chord_use: np.ndarray
+    chord_loop: np.ndarray
+    chord_uv: np.ndarray
+    chord_range: np.ndarray
+
+
+class CadSurfaceResult(NamedTuple):
+    """Owned surface candidate and the curve/face construction findings."""
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    vertex_dimensions: np.ndarray
+    vertex_entities: np.ndarray
+    vertex_parameters: np.ndarray
+    triangles: np.ndarray
+    triangle_patches: np.ndarray
+    triangle_uv: np.ndarray
+    triangle_edge_uses: np.ndarray
+    facet_regions: np.ndarray
+    sliver_uv: np.ndarray
+    sliver_patches: np.ndarray
+    curve_edges: np.ndarray
+    curve_edge_curves: np.ndarray
+    curve_edge_parameters: np.ndarray
+    face_stats: np.ndarray
+    curve_offsets: np.ndarray
+    curve_parameters: np.ndarray
+    curve_sag_splits: np.ndarray
+    curve_failures: np.ndarray
+    curve_statistics: np.ndarray
+    face_failures: np.ndarray
+    pole_sectors: np.ndarray
+    chart: CadChartResult
+
+
+class _CadVolumeControls(ctypes.Structure):
+    _fields_ = (
+        ("radius_edge_bound", ctypes.c_double),
+        ("min_dihedral_degrees", ctypes.c_double),
+        ("min_relative_determinant", ctypes.c_double),
+        ("geometry_order", _I32),
+    )
+
+
+_CAD_QUADRATIC_STATS_FIELDS = (
+    "curve_edges",
+    "surface_edges",
+    "interior_edges",
+    "initial_invalid",
+    "initial_unresolved",
+    "harmonic_nodes",
+    "harmonic_repaired_cells",
+    "straightened_edges",
+    "final_invalid",
+    "final_unresolved",
+)
+_CAD_VOLUME_STATS_DTYPE = np.dtype(
+    [
+        (name, np.int64)
+        for name in (
+            "curve_ns",
+            "face_ns",
+            "assembly_ns",
+            "volume_ns",
+            "quadratic_ns",
+            "recovery_attempts",
+            "boundary_splits",
+            "refine_inserted",
+            "refine_unmet",
+            "improve_inserted",
+            "improve_collapsed",
+            "improve_relocated",
+            "unmet_cells",
+        )
+    ]
+    + [
+        ("recovery_status", np.int32),
+        ("recovery_reason", np.int32),
+        ("failure_kind", np.int32),
+        ("failure_entity", np.int64),
+        (
+            "quadratic",
+            np.dtype(
+                [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
+            ),
+        ),
+    ],
+    align=True,
+)
+_CAD_BOUNDARY_SPLIT_DTYPE = np.dtype(
+    [
+        ("reason", np.int32),
+        ("entity_kind", np.int32),
+        ("entity", np.int64),
+        ("vertices", np.int32, (2,)),
+        ("vertex", np.int32),
+        ("dimension", np.int32),
+        ("carrier", np.int32),
+        ("parameters", np.float64, (2,)),
+    ],
+    align=True,
+)
+
+
+class _CadVolumeArrays(ctypes.Structure):
+    _fields_ = (
+        ("point_capacity", _I64),
+        ("tetrahedron_capacity", _I64),
+        ("triangle_capacity", _I64),
+        ("edge_capacity", _I64),
+        ("record_capacity", _I64),
+        ("split_capacity", _I64),
+        *(
+            (name, _P)
+            for name in (
+                "points",
+                "tetrahedra",
+                "tetrahedron_regions",
+                "boundary_faces",
+                "edges",
+                "nodes",
+                "edge_kinds",
+                "edge_entities",
+                "cell_edges",
+                "cell_decisions",
+                "records",
+                "splits",
+                "stats",
+            )
+        ),
+    )
+
+
+class CadVolumeResult(NamedTuple):
+    """Fixed-boundary tetrahedra of a CAD surface candidate and its P2 nodes.
+
+    Points begin with the surface points; cells are right-handed;
+    ``boundary_faces[t]`` is the (cell, local face opposite that vertex) of
+    surface triangle ``t``. P2 arrays are empty for geometry order 1.
+    """
+
+    points: np.ndarray
+    tetrahedra: np.ndarray
+    tetrahedron_regions: np.ndarray
+    boundary_faces: np.ndarray
+    edges: np.ndarray
+    nodes: np.ndarray
+    edge_kinds: np.ndarray
+    edge_entities: np.ndarray
+    cell_edges: np.ndarray
+    cell_decisions: np.ndarray
+    records: np.ndarray
+    splits: np.ndarray
+    stats: np.ndarray
+
+
+class CadSolidResult(NamedTuple):
+    """The surface (after any boundary split) and the volume of a CAD solid."""
+
+    status: MeshcoreStatus
+    surface: CadSurfaceResult
+    volume: CadVolumeResult
+
+
+def cad_mesh(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    /,
+    *,
+    tolerance_fraction: float = 0.5,
+    grading: float = 1.3,
+    minimum_size: float = 1e-12,
+) -> CadSurfaceResult:
+    """Discretize the curves and assemble a native CAD surface candidate."""
+    return _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        None,
+    )[0]
+
+
+def cad_mesh_solid(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    /,
+    *,
+    tolerance_fraction: float = 0.5,
+    grading: float = 1.3,
+    minimum_size: float = 1e-12,
+    radius_edge_bound: float = 2.0,
+    min_dihedral_degrees: float = 15.5,
+    min_relative_determinant: float = 0.0,
+    geometry_order: int = 1,
+) -> CadSolidResult:
+    """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
+
+    ``face_sizes`` are the requested edge lengths h; the volume is sized from
+    them. UNRESOLVED returns the result with unmet quality targets, unresolved
+    P2 cells, or no cells when recovery still refused after the one boundary
+    split (``volume.stats``).
+    """
+    controls = _CadVolumeControls(
+        radius_edge_bound,
+        min_dihedral_degrees,
+        min_relative_determinant,
+        geometry_order,
+    )
+    surface, volume = _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        controls,
+    )
+    if volume is None:
+        raise MeshcoreError(surface.status, "cad_mesh_solid: no volume")
+    return CadSolidResult(surface.status, surface, volume)
+
+
+def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeResult:
+    counts = np.empty((6,), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
+        "cad_volume_sizes",
+    )
+    p, m, t, n, r, s = (int(c) for c in counts)
+    cells = m if n else 0
+    banks = (
+        np.empty((p, 3), dtype=np.float64),
+        np.empty((m, 4), dtype=np.int32),
+        np.empty((m,), dtype=np.int32),
+        np.empty((t, 2), dtype=np.int32),
+        np.empty((n, 2), dtype=np.int32),
+        np.empty((n, 3), dtype=np.float64),
+        np.empty((n,), dtype=np.int8),
+        np.empty((n,), dtype=np.int32),
+        np.empty((cells, 6), dtype=np.int64),
+        np.empty((cells,), dtype=np.int32),
+        np.empty((r, 2), dtype=np.int64),
+        np.empty((s,), dtype=_CAD_BOUNDARY_SPLIT_DTYPE),
+        np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
+    )
+    outputs = _CadVolumeArrays(p, m, t, n, r, s, *(a.ctypes.data for a in banks))
+    _raise_for_call(
+        library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
+        "cad_volume_export",
+    )
+    return CadVolumeResult(*banks)
+
+
+def _cad_mesh(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    tolerance_fraction: float,
+    grading: float,
+    minimum_size: float,
+    volume: _CadVolumeControls | None,
+    /,
+) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
+    sizes = _real_array(face_sizes, "face_sizes")
+    tolerances = _real_array(face_tolerances, "face_tolerances")
+    curve_tols = _real_array(curve_tolerances, "curve_tolerances")
+    if sizes.shape != (model.surface_nodes.size,) or tolerances.shape != sizes.shape:
+        raise ValueError("face sizes and tolerances must have one value per face.")
+    if curve_tols.shape != (model.curve_nodes.size,):
+        raise ValueError("curve tolerances must have one value per curve.")
+    structure, retained = _cad_model_structure(model)
+    controls = _CadSurfaceControls(
+        sizes.ctypes.data,
+        tolerances.ctypes.data,
+        curve_tols.ctypes.data,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+    )
+    library = load_meshcore()
+    handle = ctypes.c_void_p()
+    status = MeshcoreStatus(
+        library["phx_mc_cad_mesh"](
+            ctypes.addressof(structure),
+            ctypes.addressof(controls),
+            ctypes.addressof(handle),
+        )
+        if volume is None
+        else library["phx_mc_cad_mesh_solid"](
+            ctypes.addressof(structure),
+            ctypes.addressof(controls),
+            ctypes.addressof(volume),
+            ctypes.addressof(handle),
+        )
+    )
+    del retained
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "cad_mesh")
+    if not handle.value:
+        raise MeshcoreError(status, "cad_mesh: no complete candidate")
+    try:
+        counts = np.empty((9,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_cad_surface_result_sizes"](handle, counts.ctypes.data),
+            "cad_surface_result_sizes",
+        )
+        if np.any(counts < 0):
+            raise MeshcoreError(
+                MeshcoreStatus.INTERNAL_ERROR, "negative CAD surface size"
+            )
+        v, t, s, e, f, c, p, failures, face_failure_count = counts
+        points = np.empty((v, 3), dtype=np.float64)
+        dimensions = np.empty((v,), dtype=np.int8)
+        entities = np.empty((v,), dtype=np.int32)
+        parameters = np.empty((v, 2), dtype=np.float64)
+        triangles = np.empty((t, 3), dtype=np.int32)
+        patches = np.empty((t,), dtype=np.int32)
+        uv = np.empty((t, 3, 2), dtype=np.float64)
+        uses = np.empty((t, 3), dtype=np.int32)
+        regions = np.empty((t, 2), dtype=np.int32)
+        sliver_uv = np.empty((s, 3, 2), dtype=np.float64)
+        sliver_patches = np.empty((s,), dtype=np.int32)
+        edges = np.empty((e, 2), dtype=np.int32)
+        edge_curves = np.empty((e,), dtype=np.int32)
+        edge_parameters = np.empty((e, 2), dtype=np.float64)
+        face_stats = np.empty((f,), dtype=_CAD_FACE_STATS_DTYPE)
+        offsets = np.empty((c + 1,), dtype=np.int64)
+        curve_parameters = np.empty((p,), dtype=np.float64)
+        splits = np.empty((c,), dtype=np.int64)
+        curve_failures = np.empty((failures,), dtype=_CAD_CURVE_FAILURE_DTYPE)
+        curve_statistics = np.empty((1,), dtype=_CAD_CURVE_STATS_DTYPE)
+        face_failures = np.empty((face_failure_count,), dtype=_CAD_FACE_FAILURE_DTYPE)
+        banks = (
+            points,
+            dimensions,
+            entities,
+            parameters,
+            triangles,
+            patches,
+            uv,
+            uses,
+            regions,
+            sliver_uv,
+            sliver_patches,
+            edges,
+            edge_curves,
+            edge_parameters,
+            face_stats,
+            offsets,
+            curve_parameters,
+            splits,
+            curve_failures,
+            curve_statistics,
+            face_failures,
+        )
+        outputs = _CadSurfaceArrays(
+            *(int(n) for n in counts), *(a.ctypes.data for a in banks)
+        )
+        _raise_for_call(
+            library["phx_mc_cad_surface_result_export"](
+                handle, ctypes.addressof(outputs)
+            ),
+            "cad_surface_result_export",
+        )
+        sector_count = ctypes.c_int64()
+        _raise_for_call(
+            library["phx_mc_cad_surface_pole_sectors"](
+                handle, 0, None, ctypes.addressof(sector_count)
+            ),
+            "cad_surface_pole_sectors",
+        )
+        pole_sectors = np.empty((sector_count.value, 4), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_cad_surface_pole_sectors"](
+                handle,
+                sector_count.value,
+                pole_sectors.ctypes.data,
+                ctypes.addressof(sector_count),
+            ),
+            "cad_surface_pole_sectors",
+        )
+        chart_counts = np.empty((3,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_cad_chart_sizes"](handle, chart_counts.ctypes.data),
+            "cad_chart_sizes",
+        )
+        if np.any(chart_counts < 0):
+            raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "negative CAD chart size")
+        chart_triangles, chart_uses, chart_chords = chart_counts
+        chart_banks = (
+            np.empty((chart_triangles, 3), dtype=np.int64),
+            np.empty((chart_triangles,), dtype=np.int32),
+            np.empty((chart_triangles, 3, 2), dtype=np.float64),
+            np.empty((chart_triangles,), dtype=np.int64),
+            np.empty((chart_triangles, 3), dtype=np.int64),
+            np.empty((chart_uses,), dtype=np.int64),
+            np.empty((chart_uses, 2), dtype=np.float64),
+            np.empty((chart_chords,), dtype=np.int64),
+            np.empty((chart_chords,), dtype=np.int64),
+            np.empty((chart_chords, 2, 2), dtype=np.float64),
+            np.empty((chart_chords, 2), dtype=np.float64),
+        )
+        chart_outputs = _CadChartArrays(
+            *(int(n) for n in chart_counts), *(a.ctypes.data for a in chart_banks)
+        )
+        _raise_for_call(
+            library["phx_mc_cad_chart_export"](handle, ctypes.addressof(chart_outputs)),
+            "cad_chart_export",
+        )
+        surface = CadSurfaceResult(
+            status, *banks, pole_sectors, CadChartResult(*chart_banks)
+        )
+        return surface, None if volume is None else _cad_volume_export(library, handle)
+    finally:
+        library["phx_mc_cad_surface_result_free"](handle)

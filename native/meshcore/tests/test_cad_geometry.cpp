@@ -6,9 +6,11 @@
 // implicit intersection chart against the closed-form cylinder pair, and
 // the differential quantities of the C entry against known curvatures.
 #include <algorithm>
+#include <cfloat>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -17,7 +19,10 @@
 
 #include "cad_geometry.hpp"
 #include "check.hpp"
+#include "elementary.hpp"
+#include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
+#include "verify_cad_fidelity.hpp"
 
 namespace {
 
@@ -368,6 +373,7 @@ void composite_nodes() {
   // Fourth-order template jets: an offset of an offset.
   const int32_t nested = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {offset}, {0.5});
   const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t offset_plane = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {plane}, {0.25});
   const int32_t circle2 = b.add_template("circle2", {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, radius});
   const int32_t mapped = b.add(PHX_MC_CAD_NODE_SURFACE_MAPPED, {plane, circle2}, {});
   const int32_t iso = b.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {sphere, 1}, {0.4});
@@ -381,6 +387,34 @@ void composite_nodes() {
   phx_mc_cad_model model = b.model();
   CadGeometry geometry;
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double box_lo[2] = {0.1, 0.2}, box_hi[2] = {0.2, 0.3};
+  for (int32_t node : {offset, offset_plane, offset_curve}) {
+    const int dimension = node == offset_curve ? 2 : 3;
+    const int variables = node == offset_curve ? 1 : 2;
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      const auto interval_status = geometry.interval_jets(node, box_lo, box_hi, order, lower, upper,
+                                                          interval_workspace);
+      PHX_CHECK(interval_status == PHX_MC_OK);
+      if (interval_status != PHX_MC_OK) continue;
+      for (int i = 0; i <= 10; ++i)
+        for (int j = 0; j <= (variables == 2 ? 10 : 0); ++j) {
+          const double point[2] = {box_lo[0] + (box_hi[0] - box_lo[0]) * i / 10,
+                                   box_lo[1] + (box_hi[1] - box_lo[1]) * j / 10};
+          PHX_CHECK(geometry.jets(node, point, order, jet, point_workspace));
+          const int terms = variables == 2 ? (order + 1) * (order + 2) / 2 : order + 1;
+          for (int k = 0; k < dimension * terms; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
   const auto cylinder = [&](double u, double v) {
     return add(kOrigin, add(scaled(radius, radial(u)), scaled(v, kAxis)));
   };
@@ -529,6 +563,30 @@ void spline_nodes() {
   for (int k = 0; k < 3; ++k) PHX_CHECK_NEAR(value[k], expected[k], 8 * kEpsilon);
   const double beyond[2] = {2.5, 0.5};
   PHX_CHECK(!geometry.jets(tspline, beyond, 0, value, workspace));
+  // Interval jets contain point jets on boxes inside a piece and across the break.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double boxes[3][4] = {{0.1, 0.4, 0.2, 0.6}, {0.7, 1.3, 0.1, 0.9}, {1.5, 1.5, 0.3, 0.3}};
+  for (const auto& box : boxes) {
+    const double lo[2] = {box[0], box[2]}, hi[2] = {box[1], box[3]};
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(tspline, lo, hi, order, lower, upper,
+                                       interval_workspace) == PHX_MC_OK);
+      const int count = 3 * (order + 1) * (order + 2) / 2;
+      for (int i = 0; i <= 12; ++i)
+        for (int j = 0; j <= 12; ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 12, lo[1] + (hi[1] - lo[1]) * j / 12};
+          PHX_CHECK(geometry.jets(tspline, uv, order, jet, workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
 }
 
 // The branch x > 0 of the z cylinder (R = 1) and the x cylinder (r = 0.6),
@@ -587,6 +645,438 @@ void intersection_chart() {
   const double outside = 1.25;
   double jet[9];
   PHX_CHECK(!geometry.jets(point, &outside, 0, jet, workspace));
+  // Interval jets enclose the point jets and the closed form on subintervals.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double ranges[3][2] = {{0.1, 0.3}, {0.45, 0.6}, {0.8, 0.8}};
+  for (int32_t node : {point, first_uv, second_uv}) {
+    const int dimension = node == point ? 3 : 2;
+    for (const auto& range : ranges)
+      for (int order = 0; order <= 2; ++order) {
+        double lower[9], upper[9], value[9];
+        PHX_CHECK(geometry.interval_jets(node, &range[0], &range[1], order, lower, upper,
+                                         interval_workspace) == PHX_MC_OK);
+        for (int i = 0; i <= 16; ++i) {
+          const double t = range[0] + (range[1] - range[0]) * i / 16;
+          PHX_CHECK(geometry.jets(node, &t, order, value, workspace));
+          for (int k = 0; k < dimension * (order + 1); ++k) {
+            PHX_CHECK(lower[k] <= value[k]);
+            PHX_CHECK(value[k] <= upper[k]);
+          }
+        }
+        if (node == point) {
+          const Vector x = closed(theta(range[0]));
+          for (int k = 0; k < 3; ++k) PHX_CHECK(lower[k] <= x[k] && x[k] <= upper[k]);
+        }
+      }
+  }
+  // A collapsed free-coordinate box cannot strictly contain its Krawczyk
+  // image, so no unique root is proved and the node is refused.
+  std::vector<double> narrow = b.reals;
+  const auto chart = static_cast<std::size_t>(model.node_real_offsets[point] + 2);
+  narrow[chart + 12] = narrow[chart + 8];
+  interval_workspace.coefficient_lower = narrow.data();
+  interval_workspace.coefficient_upper = narrow.data();
+  double lower[9], upper[9];
+  PHX_CHECK(geometry.interval_jets(point, &ranges[0][0], &ranges[0][1], 0, lower, upper,
+                                   interval_workspace) == PHX_MC_UNRESOLVED);
+}
+
+void spline_interval_nodes() {
+  Builder b;
+  const std::vector<double> knots{0, 0, 0, 0.5, 1, 1, 1};
+  const int32_t curve = b.add(PHX_MC_CAD_NODE_BSPLINE_CURVE, {2, 4, 3},
+      concat({knots, {0, 0, 0, 0.2, 0.7, 0.1, 0.8, 0.4, 0.3, 1, 1, 0},
+              {1, 0.7, 1.2, 1}}));
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1,
+       0, 0, 0, 0, 1, 0.2, 1, 0, 0.3, 1, 1, 0.5, 1, 0.7, 1.2, 1});
+  b.surfaces = {surface};
+  b.curves = {curve};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double lo[2] = {0.2, 0.25}, hi[2] = {0.8, 0.75};
+  for (int node : {curve, surface}) {
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(node, lo, hi, order, lower, upper, workspace) ==
+                PHX_MC_OK);
+      const int count = 3 * (node == curve ? order + 1 : (order + 1) * (order + 2) / 2);
+      for (int i = 0; i <= 20; ++i)
+        for (int j = 0; j <= (node == curve ? 0 : 20); ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 20,
+                                lo[1] + (hi[1] - lo[1]) * j / 20};
+          PHX_CHECK(geometry.jets(node, uv, order, jet, point_workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
+}
+
+void spline_bernstein_enclosure_reference() {
+  static constexpr double reference[2][20] = {
+#include "spline_hessian_fixture.inc"
+  };
+  const double third = 1.0 / 3.0;
+  Builder b;
+  const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+      {0, 0, 1, 1, 0, 0, 1, 1, 0, 0, third, 0, 1, third,
+       1, 0, third, 1, 1, third, 1, third, 2 * third, 1});
+  b.surfaces = {surface};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  std::vector<double> lower_coefficients = b.reals, upper_coefficients = b.reals;
+  for (int i : {10, 13, 16, 19, 21, 22})
+    upper_coefficients[i] = std::nextafter(upper_coefficients[i],
+                                           std::numeric_limits<double>::infinity());
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = lower_coefficients.data();
+  workspace.coefficient_upper = upper_coefficients.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double box_lower[2][2] = {{0.5, 0}, {0, 0.5}};
+  const double box_upper[2][2] = {{1, 0.5}, {0.5, 1}};
+  for (int row = 0; row < 2; ++row) {
+    double lower[18], upper[18];
+    PHX_CHECK(geometry.interval_jets(surface, box_lower[row], box_upper[row], 2,
+                                     lower, upper, workspace) == PHX_MC_OK);
+    // The native denominator uses the positive-weight convex hull.
+    PHX_CHECK(lower_coefficients[21] <= reference[row][0]);
+    PHX_CHECK(upper_coefficients[20] >= reference[row][1]);
+    for (int i = 0; i < 9; ++i) {
+      PHX_CHECK(lower[9 + i] <= reference[row][2 + 2 * i]);
+      PHX_CHECK(upper[9 + i] >= reference[row][3 + 2 * i]);
+    }
+    // The restricted numerator nets contain Python's exact enclosure (to the
+    // fixture's outward rounding, at most a few ulp) and lie within the
+    // generic interval Cox--de Boor enclosure. Fault caught: a missing or
+    // mis-signed quotient-rule term, or a wrong restriction.
+    double net_lower[9], net_upper[9];
+    PHX_CHECK(phx::mc::cad::fidelity_net_hessian(geometry, 0, workspace, box_lower[row],
+                                                 box_upper[row], net_lower, net_upper) ==
+              PHX_MC_OK);
+    const auto ulps = [](double x, int n, double direction) {
+      for (int k = 0; k < n; ++k) x = std::nextafter(x, direction);
+      return x;
+    };
+    const double inf = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < 9; ++i) {
+      PHX_CHECK(net_lower[i] <= ulps(reference[row][2 + 2 * i], 4, inf));
+      PHX_CHECK(net_upper[i] >= ulps(reference[row][3 + 2 * i], 4, -inf));
+      PHX_CHECK(lower[9 + i] <= net_lower[i] && net_upper[i] <= upper[9 + i]);
+    }
+  }
+}
+
+// A placed rational biquadratic spline with two u spans: the net Hessian
+// encloses dense point Hessians on boxes inside one span and across the
+// knot. Fault caught: a span selection, local scaling or placement error.
+void spline_numerator_nets_placed() {
+  Builder b;
+  std::vector<double> values{0, 0, 0, 0.5, 1, 1, 1, 0, 0, 0, 1, 1, 1};
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 3; ++j)
+      values.insert(values.end(), {0.3 * i, 0.5 * j + 0.1 * i * i, 0.2 * ((i + j) % 3)});
+  for (int k = 0; k < 12; ++k) values.push_back(0.5 + 0.25 * ((3 * k) % 5));
+  const int32_t spline = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {2, 2, 4, 3}, values);
+  const int32_t placed = b.add(PHX_MC_CAD_NODE_AFFINE, {spline, 3},
+                               {0.6, -0.8, 0, 0.8, 0.6, 0, 0, 0, 2, 1, 2, 3});
+  b.surfaces = {placed};
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double boxes[3][4] = {{0.1, 0.3, 0.2, 0.45}, {0.4, 0.6, 0.5, 0.7}, {0.7, 0.75, 0.0, 1.0}};
+  for (const auto& box : boxes) {
+    const double lo[2] = {box[0], box[2]}, hi[2] = {box[1], box[3]};
+    double net_lower[9], net_upper[9];
+    PHX_CHECK(phx::mc::cad::fidelity_net_hessian(geometry, 0, workspace, lo, hi, net_lower,
+                                                 net_upper) == PHX_MC_OK);
+    for (int i = 0; i <= 20; ++i)
+      for (int j = 0; j <= 20; ++j) {
+        const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 20, lo[1] + (hi[1] - lo[1]) * j / 20};
+        double jet[18];
+        PHX_CHECK(geometry.jets(placed, uv, 2, jet, point_workspace));
+        for (int k = 0; k < 9; ++k) {
+          const double slack = 1e-12 * (1.0 + std::fabs(jet[9 + k]));
+          PHX_CHECK(net_lower[k] - slack <= jet[9 + k] && jet[9 + k] <= net_upper[k] + slack);
+        }
+      }
+  }
+}
+
+// Second-order jet in (u, v) over binary128 (113-bit) arithmetic: the
+// independent reference for the closed forms. It differentiates the source
+// definitions (Python evaluate formulas), not the hand derivatives. Only
+// platforms whose long double is binary128 (e.g. Linux aarch64) run these two
+// tests; elsewhere (x86-64 x87, Apple arm64, MSVC) they report a skip.
+#if LDBL_MANT_DIG >= 113
+using Quad = long double;
+static_assert(std::numeric_limits<Quad>::digits >= 113, "binary128 long double required");
+struct QJet { Quad v = 0, u = 0, w = 0, uu = 0, uw = 0, ww = 0; };  // w: second parameter
+QJet qconst(Quad c) { return {c, 0, 0, 0, 0, 0}; }
+QJet operator+(const QJet& a, const QJet& b) {
+  return {a.v + b.v, a.u + b.u, a.w + b.w, a.uu + b.uu, a.uw + b.uw, a.ww + b.ww};
+}
+QJet operator-(const QJet& a, const QJet& b) {
+  return {a.v - b.v, a.u - b.u, a.w - b.w, a.uu - b.uu, a.uw - b.uw, a.ww - b.ww};
+}
+QJet operator*(const QJet& a, const QJet& b) {
+  return {a.v * b.v, a.u * b.v + a.v * b.u, a.w * b.v + a.v * b.w,
+          a.uu * b.v + 2 * a.u * b.u + a.v * b.uu,
+          a.uw * b.v + a.u * b.w + a.w * b.u + a.v * b.uw,
+          a.ww * b.v + 2 * a.w * b.w + a.v * b.ww};
+}
+// f(a) with f, f', f'' at a.v (chain rule to second order).
+QJet qapply(const QJet& a, Quad f, Quad f1, Quad f2) {
+  return {f, f1 * a.u, f1 * a.w, f1 * a.uu + f2 * a.u * a.u, f1 * a.uw + f2 * a.u * a.w,
+          f1 * a.ww + f2 * a.w * a.w};
+}
+QJet qsin(const QJet& a) { return qapply(a, sinl(a.v), cosl(a.v), -sinl(a.v)); }
+QJet qcos(const QJet& a) { return qapply(a, cosl(a.v), -sinl(a.v), -cosl(a.v)); }
+using QVector = std::array<QJet, 3>;
+
+// The source map of a closed-form test node at (u, v), from its stored reals.
+QVector quad_surface(const Builder& b, int32_t node, const QJet& u, const QJet& v) {
+  const double* r = b.reals.data() + b.real_offsets[static_cast<std::size_t>(node)];
+  const int64_t* ints = b.integers.data() + b.integer_offsets[static_cast<std::size_t>(node)];
+  const auto vec = [&](int at) {
+    return QVector{qconst(r[at]), qconst(r[at + 1]), qconst(r[at + 2])};
+  };
+  const auto lin = [&](const QJet& s, const QVector& a) { return QVector{s * a[0], s * a[1], s * a[2]}; };
+  const auto sum = [](const QVector& a, const QVector& c) { return QVector{a[0] + c[0], a[1] + c[1], a[2] + c[2]}; };
+  const int32_t kind = b.kinds[static_cast<std::size_t>(node)];
+  if (kind == PHX_MC_CAD_NODE_AFFINE) {
+    const QVector inner = quad_surface(b, static_cast<int32_t>(ints[0]), u, v);
+    QVector out;
+    for (int i = 0; i < 3; ++i)
+      out[i] = qconst(r[9 + i]) + qconst(r[3 * i]) * inner[0] + qconst(r[3 * i + 1]) * inner[1] +
+               qconst(r[3 * i + 2]) * inner[2];
+    return out;
+  }
+  if (kind == PHX_MC_CAD_NODE_REVOLUTION) {
+    // axis_origin + axial + radial cos u + (axis x radial) sin u.
+    const QVector profile = quad_surface(b, static_cast<int32_t>(ints[0]), v, v);
+    const QVector origin = vec(0), axis = vec(3);
+    QVector relative;
+    for (int i = 0; i < 3; ++i) relative[i] = profile[i] - origin[i];
+    const QJet dot = relative[0] * axis[0] + relative[1] * axis[1] + relative[2] * axis[2];
+    const QVector axial = lin(dot, axis);
+    QVector radial, turned;
+    for (int i = 0; i < 3; ++i) radial[i] = relative[i] - axial[i];
+    turned[0] = axis[1] * radial[2] - axis[2] * radial[1];
+    turned[1] = axis[2] * radial[0] - axis[0] * radial[2];
+    turned[2] = axis[0] * radial[1] - axis[1] * radial[0];
+    return sum(sum(origin, axial), sum(lin(qcos(u), radial), lin(qsin(u), turned)));
+  }
+  const int64_t id = ints[0];
+  const QVector o = vec(0), e1 = vec(3), e2 = vec(6);
+  if (id == template_index("plane")) return sum(o, sum(lin(u, e1), lin(v, e2)));
+  if (id == template_index("line3")) return sum(o, lin(v, e1));  // profile: (origin, direction)
+  if (id == template_index("exact_line3"))
+    return sum(lin(qconst(1) - v, o), lin(v, e1));  // (1 - t) first + t last
+  const QVector axis = vec(9);
+  const QVector ring = sum(lin(qcos(u), e1), lin(qsin(u), e2));
+  if (id == template_index("cylinder")) return sum(o, sum(lin(qconst(r[12]), ring), lin(v, axis)));
+  if (id == template_index("cone")) {
+    const QJet radius = qconst(r[12]) + v * qconst(tanl(static_cast<Quad>(r[13])));
+    return sum(o, sum(lin(v, axis), lin(radius, ring)));
+  }
+  if (id == template_index("sphere"))
+    return sum(o, lin(qconst(r[12]), sum(lin(qcos(v), ring), lin(qsin(v), axis))));
+  // torus
+  const QJet ring_radius = qconst(r[12]) + qconst(r[13]) * qcos(v);
+  return sum(o, sum(lin(ring_radius, ring), lin(qconst(r[13]) * qsin(v), axis)));
+}
+
+// True value lies in a double enclosure: quad error is ~2^-112 relative, far
+// below one binary64 ulp, so the margin cannot hide a binary64-visible fault.
+bool quad_inside(Quad value, double lower, double upper) {
+  const Quad margin = 1e-30L * (1 + fabsl(value));
+  return static_cast<Quad>(lower) <= value + margin && value - margin <= static_cast<Quad>(upper);
+}
+
+// Anchored sin/cos: binary128 sin/cos at interior points of every interval
+// lie inside the enclosure, over dense points of [-8 pi, 8 pi] including
+// anchors k/64 and their neighbours, 0 and multiples of pi/2, for point,
+// tiny, anchor-scale and fallback-wide intervals; the width stays within
+// 4x the elementary kernel's plus 8 ulp. Fault caught (run by hand): a
+// dropped Taylor term or a wrong anchor rotation.
+void anchored_trigonometry() {
+  const phx::mc::GradualNearestScope mode;
+  std::vector<double> starts;
+  for (int k = -1609; k <= 1609; ++k) {  // anchors over [-8 pi, 8 pi] (8 pi * 64 ~ 1608.5)
+    const double a = k / 64.0;
+    starts.insert(starts.end(), {a, std::nextafter(a, -1e9), std::nextafter(a, 1e9), a + 1.0 / 128,
+                                 a + 0.37 / 64});
+  }
+  for (int k = -16; k <= 16; ++k) starts.push_back(k * (M_PI / 2));
+  starts.insert(starts.end(), {0.0, 1e-300, -1e-300, 5e-324});
+  const double widths[] = {0.0, 1e-300, 1e-15, 1e-9, 1e-3, 0.03, 0x1p-4, 0.07, 0.5, 3.0};
+  std::mt19937_64 random(5);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  double worst_excess = 0.0;
+  for (double start : starts)
+    for (double width : widths) {
+      const double lo = start, hi = start + width;
+      double out[4];
+      PHX_CHECK(phx::mc::cad::fidelity_anchored_sincos(lo, hi, out) == PHX_MC_OK);
+      for (int k = 0; k <= 8; ++k) {
+        const double x = k == 0 ? lo : k == 8 ? hi : std::min(hi, lo + (hi - lo) * unit(random));
+        PHX_CHECK(quad_inside(cosl(static_cast<Quad>(x)), out[0], out[1]));
+        PHX_CHECK(quad_inside(sinl(static_cast<Quad>(x)), out[2], out[3]));
+      }
+      // Width: at most the elementary kernel's plus 1.25 w (first-order
+      // dependency of the anchor rotation, |cos|, |sin| <= 1) plus 16 ulp.
+      const auto c = phx::mc::elementary::cos(lo, hi), s = phx::mc::elementary::sin(lo, hi);
+      const double ulp = 0x1p-52;
+      PHX_CHECK(out[1] - out[0] <= (c.upper - c.lower) + 1.25 * width + 16 * ulp);
+      PHX_CHECK(out[3] - out[2] <= (s.upper - s.lower) + 1.25 * width + 16 * ulp);
+      worst_excess = std::max({worst_excess,
+                               ((out[1] - out[0]) - (c.upper - c.lower)) / (width + ulp),
+                               ((out[3] - out[2]) - (s.upper - s.lower)) / (width + ulp)});
+    }
+  std::printf("anchored trigonometry: worst (width - elementary width) / (w + ulp) = %.3f\n",
+              worst_excess);
+}
+
+// Interval closed forms: (1) at sampled points of each box, the binary128
+// value, first and second derivatives of the source definition lie inside
+// the enclosure; (2) they intersect the template programs' rigorous point
+// enclosures; (3) point-box width. Covers the anchored sin/cos (small boxes,
+// far arguments) and its elementary fallback (wide boxes). Fault caught: a
+// wrong derivative formula, sign or frame transformation, or an unsound
+// trigonometric enclosure.
+void interval_closed_forms() {
+  Builder b;
+  const double radius = 1.5, minor = 0.4, r0 = 0.7, angle = 0.3;
+  const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t cylinder =
+      b.add_template("cylinder", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t cone = b.add_template(
+      "cone", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {r0}, {angle}}));
+  const int32_t sphere =
+      b.add_template("sphere", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}}));
+  const int32_t torus = b.add_template(
+      "torus", concat({v3(kOrigin), v3(kE1), v3(kE2), v3(kAxis), {radius}, {minor}}));
+  const int32_t line = b.add_template(
+      "line3", concat({v3(add(kOrigin, scaled(radius, kE1))), v3(add(kAxis, scaled(0.3, kE2)))}));
+  const int32_t exact = b.add_template(
+      "exact_line3", concat({v3(add(kOrigin, scaled(radius, kE1))),
+                             v3(add(kOrigin, add(scaled(0.5, kE1), scaled(2.0, kAxis))))}));
+  const int32_t revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {line}, concat({v3(kOrigin), v3(kAxis)}));
+  const int32_t exact_revolution =
+      b.add(PHX_MC_CAD_NODE_REVOLUTION, {exact}, concat({v3(kOrigin), v3(kAxis)}));
+  const std::vector<double> placement{0, -1, 0, 1, 0, 0, 0, 0, 1, 1.0, 2.0, 3.0};
+  const int32_t placed_revolution = b.add(PHX_MC_CAD_NODE_AFFINE, {revolution, 3}, placement);
+  const int32_t placed_torus = b.add(PHX_MC_CAD_NODE_AFFINE, {torus, 3}, placement);
+  const std::vector<int32_t> nodes{plane, cylinder, cone, sphere, torus, revolution,
+                                   exact_revolution, placed_revolution, placed_torus};
+  b.surfaces = nodes;
+  const phx_mc_cad_model model = b.model();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace workspace;
+  workspace.coefficient_lower = b.reals.data();
+  workspace.coefficient_upper = b.reals.data();
+  workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  std::mt19937_64 random(91);
+  std::uniform_real_distribution<double> uu(-7.0, 7.0), vv(-1.4, 1.4), unit(0.0, 1.0);
+  const double widths[] = {0.0, 1e-3, 0.03, 0.06, 0.5};
+  for (std::size_t face = 0; face < nodes.size(); ++face)
+    for (int sample = 0; sample < 40; ++sample)
+      for (double width : widths) {
+        const double shift = sample == 0 ? 200.0 : 0.0;
+        const double lo[2] = {uu(random) + shift, vv(random)};
+        const double hi[2] = {lo[0] + width, lo[1] + width};
+        double closed_lower[18], closed_upper[18];
+        PHX_CHECK(phx::mc::cad::fidelity_closed_jets(geometry, static_cast<int32_t>(face),
+                                                     workspace, lo, hi, closed_lower,
+                                                     closed_upper) == PHX_MC_OK);
+        for (int k = 0; k < 6; ++k) {
+          const double x[2] = {
+              k == 0 ? lo[0] : k == 1 ? hi[0] : std::min(hi[0], lo[0] + (hi[0] - lo[0]) * unit(random)),
+              k == 0 ? lo[1] : k == 1 ? hi[1] : std::min(hi[1], lo[1] + (hi[1] - lo[1]) * unit(random))};
+          const QJet qu{static_cast<Quad>(x[0]), 1, 0, 0, 0, 0};
+          const QJet qv{static_cast<Quad>(x[1]), 0, 1, 0, 0, 0};
+          const QVector exact = quad_surface(b, nodes[face], qu, qv);
+          for (int axis = 0; axis < 3; ++axis) {
+            const Quad terms[6] = {exact[axis].v, exact[axis].u, exact[axis].w,
+                                   exact[axis].uu, exact[axis].uw, exact[axis].ww};
+            for (int t = 0; t < 6; ++t)
+              PHX_CHECK(quad_inside(terms[t], closed_lower[3 * t + axis], closed_upper[3 * t + axis]));
+          }
+          double lower[18], upper[18];
+          PHX_CHECK(geometry.interval_jets(nodes[face], x, x, 2, lower, upper, workspace) ==
+                    PHX_MC_OK);
+          for (int i = 0; i < 18; ++i) {
+            PHX_CHECK(closed_lower[i] <= upper[i] && lower[i] <= closed_upper[i]);
+            if (width == 0.0)
+              PHX_CHECK(closed_upper[i] - closed_lower[i] <=
+                        1e-13 * (1.0 + std::fabs(closed_upper[i]) + std::fabs(lo[0])));
+          }
+        }
+      }
+}
+#endif  // LDBL_MANT_DIG >= 113
+
+void spline_kink_fidelity() {
+  for (int degree : {1, 2}) {
+    Builder b;
+    const std::vector<double> knots = degree == 1
+        ? std::vector<double>{0, 0, 0.5, 1, 1}
+        : std::vector<double>{0, 0, 0, 0.5, 0.5, 1, 1, 1};
+    const std::vector<double> x = degree == 1
+        ? std::vector<double>{0, 0.5, 1} : std::vector<double>{0, 0.25, 0.5, 0.75, 1};
+    const std::vector<double> z = degree == 1
+        ? std::vector<double>{0, 1, 0} : std::vector<double>{0, 0, 1, 0, 0};
+    std::vector<double> values = knots;
+    values.insert(values.end(), {0, 0, 1, 1});
+    for (std::size_t i = 0; i < x.size(); ++i)
+      for (double v : {0.0, 1.0})
+        values.insert(values.end(), {x[i], v, z[i]});
+    values.insert(values.end(), 2 * x.size(), 1.0);
+    const int32_t surface = b.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE,
+                                  {degree, 1, static_cast<int64_t>(x.size()), 2}, values);
+    b.surfaces = {surface};
+    const phx_mc_cad_model model = b.model();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+    phx::mc::cad::IntervalEvaluationWorkspace workspace;
+    workspace.coefficient_lower = b.reals.data();
+    workspace.coefficient_upper = b.reals.data();
+    workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+    const double uv[] = {0, 0, 1, 0, 0, 1};
+    const double vertices[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const auto bound = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 1000.0, 0, workspace);
+    PHX_CHECK(bound.status == PHX_MC_OK);
+    for (int i = 0; i <= 100; ++i) {
+      const double u = i / 100.0;
+      const double hat = 2 * std::min(u, 1 - u);
+      const double exact_distance = degree == 1 ? hat : hat * hat;
+      PHX_CHECK(bound.upper >= exact_distance);
+    }
+    const auto failed = phx::mc::cad::fidelity_triangle(
+        geometry, 0, vertices, uv, 0.1, 4, workspace);
+    PHX_CHECK(failed.status == PHX_MC_UNRESOLVED);
+  }
 }
 
 void entry_point() {
@@ -662,6 +1152,17 @@ int main() {
   curve_templates();
   composite_nodes();
   spline_nodes();
+  spline_interval_nodes();
+  spline_bernstein_enclosure_reference();
+  spline_numerator_nets_placed();
+#if LDBL_MANT_DIG >= 113
+  anchored_trigonometry();
+  interval_closed_forms();
+#else
+  std::printf("anchored_trigonometry, interval_closed_forms: skipped (long double has %d "
+              "mantissa bits; the reference needs binary128)\n", LDBL_MANT_DIG);
+#endif
+  spline_kink_fidelity();
   intersection_chart();
   entry_point();
   return phx::mc::test::finish("test_cad_geometry");

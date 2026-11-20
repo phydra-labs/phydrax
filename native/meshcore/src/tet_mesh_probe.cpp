@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "dyadic.hpp"
-#include "surface_remesh.hpp"
+#include "surface_certify.hpp"
 
 namespace phx::mc {
 namespace {

@@ -8,11 +8,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -25,6 +27,8 @@
 #include "geometry3.hpp"
 #include "local_incidence.hpp"
 #include "predicates.hpp"
+#include "prefetch.hpp"
+#include "spatial_sort.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_scalar.hpp"
 
@@ -523,21 +527,34 @@ struct FeatureRecord {
   std::int32_t row;
 };
 
-// The largest metric length of one binary64 coordinate step at `p`.
-double coordinate_resolution(const TetMesh& mesh, const double* p) {
-  double resolution = 0.0;
-  for (int axis = 0; axis < 3; ++axis) {
-    const double magnitude = std::abs(p[axis]);
-    const double step = std::nextafter(magnitude, std::numeric_limits<double>::infinity()) -
-                        magnitude;
-    // The step is a power of two, so the transform of the step along an axis
-    // is the step times the transform of that axis.
-    std::array<double, 3> unit{};
-    unit[static_cast<std::size_t>(axis)] = 1.0;
-    resolution = std::max(resolution, step * geometry::length(mesh.metric_transform(unit)));
+// The largest metric length of one binary64 coordinate step at a point.
+class CoordinateResolution {
+ public:
+  explicit CoordinateResolution(const TetMesh& mesh) {
+    // The step is a power of two, so the transform of the step along an
+    // axis is the step times the transform of that axis.
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      std::array<double, 3> unit{};
+      unit[axis] = 1.0;
+      scales_[axis] = geometry::length(mesh.metric_transform(unit));
+    }
   }
-  return resolution;
-}
+  double operator()(const double* p) const noexcept {
+    double resolution = 0.0;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const double magnitude = std::abs(p[axis]);
+      // The next representable value above a nonnegative (or infinite or
+      // NaN, whose step is NaN either way) magnitude.
+      const double above =
+          std::bit_cast<double>(std::bit_cast<std::uint64_t>(magnitude) + 1U);
+      resolution = std::max(resolution, (above - magnitude) * scales_[axis]);
+    }
+    return resolution;
+  }
+
+ private:
+  std::array<double, 3> scales_{};
+};
 
 // lambda(v) for every live vertex slot: the distance from v to the nearest
 // feature not incident to v. Point features are the live vertices, line
@@ -551,8 +568,10 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   const double infinity = std::numeric_limits<double>::infinity();
   sizes.assign(slot_count, infinity);
   // The shortest incident edge bounds lambda from above and sets the query
-  // radius.
+  // radius. Squared lengths are compared: the square root (of metric_distance)
+  // is correctly rounded and monotone, so it commutes with the minimum.
   const TetrahedralComplex& complex = mesh.complex();
+  const bool metric = mesh.metric_active();
   for (std::size_t row = 0; row < complex.tets.size(); ++row) {
     const std::int32_t cell = static_cast<std::int32_t>(row);
     if (!complex.live(cell) || is_ghost(complex.tets[row])) continue;
@@ -561,35 +580,70 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
       for (int second = first + 1; second < 4; ++second) {
         const std::int32_t a = tetrahedron.v[first];
         const std::int32_t b = tetrahedron.v[second];
-        const double length = metric_distance(mesh, mesh.point(a), mesh.point(b));
-        sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], length);
-        sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], length);
+        const double* p = mesh.point(a);
+        const double* q = mesh.point(b);
+        double squared = 0.0;
+        if (metric) {
+          const auto d = mesh.metric_transform({p[0] - q[0], p[1] - q[1], p[2] - q[2]});
+          squared = geometry::dot(d.data(), d.data());
+        } else {
+          squared = geometry::squared_distance(p, q);
+        }
+        sizes[static_cast<std::size_t>(a)] = std::min(sizes[static_cast<std::size_t>(a)], squared);
+        sizes[static_cast<std::size_t>(b)] = std::min(sizes[static_cast<std::size_t>(b)], squared);
       }
     }
   }
+  for (double& size : sizes) size = std::sqrt(size);
 
-  // Features by corner slots (-1 past the last corner): the live vertices,
-  // the planes, the distinct lines.
+  // Features by corner slots (-1 past the last corner): the planes, then the
+  // points and lines no plane dominates. A plane's distance from v is at most
+  // that of each of its corners and edges, so a feature on a plane not
+  // incident to v never lowers lambda(v): a facet edge is dropped (the
+  // facets on it that contain v hold it as v's opposite edge, measured
+  // below), and so is a vertex whose facets share no vertex but itself (for
+  // every v some facet at it excludes v). Points off every facet and the
+  // segments that are no facet edge stay.
   std::vector<std::array<std::int32_t, 3>> features;
-  std::vector<std::uint64_t> lines;
-  lines.reserve(segments.size() + 3 * facets.size());
   const auto line_key = [](std::int32_t a, std::int32_t b) {
     const auto low = static_cast<std::uint32_t>(std::min(a, b));
     const auto high = static_cast<std::uint32_t>(std::max(a, b));
     return (static_cast<std::uint64_t>(low) << 32) | high;
   };
+  // Segment slots (low, high), listed by low slot (CSR), so that a facet
+  // edge marks the segments on it directly.
+  std::vector<std::array<std::int32_t, 2>> segment_slots;
+  segment_slots.reserve(segments.size());
+  std::vector<std::uint32_t> segment_starts(slot_count + 1, 0U);
   for (const TetSnapshotSegment& segment : segments) {
     const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    lines.push_back(line_key(a, b));
+    segment_slots.push_back({std::min(a, b), std::max(a, b)});
+    ++segment_starts[static_cast<std::size_t>(std::min(a, b)) + 1];
   }
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
-      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
+  std::partial_sum(segment_starts.begin(), segment_starts.end(), segment_starts.begin());
+  std::vector<std::uint32_t> segment_rows(segment_slots.size());
+  {
+    std::vector<std::uint32_t> cursor(segment_starts.begin(), segment_starts.end() - 1);
+    for (std::size_t row = 0; row < segment_slots.size(); ++row) {
+      segment_rows[cursor[static_cast<std::size_t>(segment_slots[row][0])]++] =
+          static_cast<std::uint32_t>(row);
     }
   }
-  const std::size_t plane_begin = features.size();
+  std::vector<char> on_facet(segment_slots.size(), 0);
+  const auto mark_facet_line = [&](std::int32_t a, std::int32_t b) {
+    const std::int32_t low = std::min(a, b);
+    const std::int32_t high = std::max(a, b);
+    for (std::uint32_t at = segment_starts[static_cast<std::size_t>(low)];
+         at < segment_starts[static_cast<std::size_t>(low) + 1]; ++at) {
+      if (segment_slots[segment_rows[at]][1] == high) on_facet[segment_rows[at]] = 1;
+    }
+  };
+  // Per slot, the two vertices every facet at it might still share with it
+  // (-1: none; -2: no facet yet).
+  std::vector<std::array<std::int32_t, 2>> shared(slot_count, {-2, -2});
+  features.reserve(facets.size());
   for (const TetSnapshotFacet& facet : facets) {
     std::array<std::int32_t, 3> slots{};
     for (std::size_t corner = 0; corner < 3; ++corner) {
@@ -598,10 +652,31 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     }
     features.push_back(slots);
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      lines.push_back(line_key(slots[corner], slots[(corner + 1) % 3]));
+      const std::int32_t first = slots[(corner + 1) % 3];
+      const std::int32_t second = slots[(corner + 2) % 3];
+      mark_facet_line(first, second);
+      auto& common = shared[static_cast<std::size_t>(slots[corner])];
+      if (common[0] == -2) {
+        common = {first, second};
+        continue;
+      }
+      for (std::int32_t& vertex : common) {
+        if (vertex != first && vertex != second) vertex = -1;
+      }
     }
   }
+  const std::size_t plane_begin = 0;
   const std::size_t plane_end = features.size();
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+    if (shared[slot][0] == -2 || shared[slot][0] >= 0 || shared[slot][1] >= 0) {
+      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
+    }
+  }
+  std::vector<std::uint64_t> lines;
+  for (std::size_t row = 0; row < segment_slots.size(); ++row) {
+    if (on_facet[row] == 0) lines.push_back(line_key(segment_slots[row][0], segment_slots[row][1]));
+  }
   std::sort(lines.begin(), lines.end());
   lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
   for (std::uint64_t key : lines) {
@@ -716,9 +791,32 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
 
   std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
   smallest = infinity;
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    const std::int32_t vertex = static_cast<std::int32_t>(slot);
-    if (!mesh.live_vertex(vertex)) continue;
+  const CoordinateResolution coordinate_resolution(mesh);
+  // Each lambda depends only on its vertex: the vertices go cell by cell
+  // (a counting sort on their cells), so consecutive queries read nearby
+  // cells.
+  std::vector<std::int32_t> order;
+  {
+    std::vector<std::uint32_t> starts(frame.size() + 1, 0U);
+    std::vector<std::uint32_t> cells(slot_count, 0U);
+    std::size_t live = 0;
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+      if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+      const auto& here = world[slot];
+      cells[slot] = static_cast<std::uint32_t>(frame.index(
+          frame.coordinate(here[0], 0), frame.coordinate(here[1], 1), frame.coordinate(here[2], 2)));
+      ++starts[cells[slot] + 1];
+      ++live;
+    }
+    std::partial_sum(starts.begin(), starts.end(), starts.begin());
+    order.resize(live);
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+      if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+      order[starts[cells[slot]]++] = static_cast<std::int32_t>(slot);
+    }
+  }
+  for (const std::int32_t vertex : order) {
+    const auto slot = static_cast<std::size_t>(vertex);
     const double* p = mesh.point(vertex);
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
@@ -783,7 +881,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     if (!std::isfinite(lambda)) return false;
     // Features nearer than the coordinate spacing at v cannot be separated by
     // a representable point; lambda is floored there, which keeps it positive.
-    lambda = std::max(lambda, coordinate_resolution(mesh, p));
+    lambda = std::max(lambda, coordinate_resolution(p));
     sizes[slot] = lambda;
     smallest = std::min(smallest, lambda);
   }
@@ -797,57 +895,72 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
 constexpr int kHilbertBits = 12;
 constexpr std::uint32_t kHilbertMax = (1U << kHilbertBits) - 1U;
 
-// Index of the 3D Hilbert curve through the grid point (x, y, z), by
-// Skilling's transpose ("Programming the Hilbert curve", AIP Conf. Proc. 707,
-// 2004): undo the excess work, Gray-encode, then interleave the bits. The
-// per-bit choices are masks, not branches (the same bits).
-std::uint64_t hilbert_key(std::uint32_t x, std::uint32_t y, std::uint32_t z) noexcept {
-  std::uint32_t axes[3]{x, y, z};
-  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
-    const std::uint32_t p = q - 1;
-    for (int axis = 0; axis < 3; ++axis) {
-      // Set bit: invert the low bits of axis 0; clear bit: exchange them.
-      const std::uint32_t set = 0U - static_cast<std::uint32_t>((axes[axis] & q) != 0);
-      const std::uint32_t swap = (axes[0] ^ axes[axis]) & p & ~set;
-      axes[0] ^= (p & set) | swap;
-      axes[axis] ^= swap;
-    }
-  }
-  for (int axis = 1; axis < 3; ++axis) axes[axis] ^= axes[axis - 1];
-  std::uint32_t flip = 0;
-  for (std::uint32_t q = 1U << (kHilbertBits - 1); q > 1; q >>= 1) {
-    flip ^= (q - 1) & (0U - static_cast<std::uint32_t>((axes[2] & q) != 0));
-  }
-  for (std::uint32_t& axis : axes) axis ^= flip;
-  // Interleave: bit b of axis a goes to bit 3 b + (2 - a).
-  const auto spread = [](std::uint64_t value) {
-    value &= 0x1fffffULL;
-    value = (value | value << 32) & 0x1f00000000ffffULL;
-    value = (value | value << 16) & 0x1f0000ff0000ffULL;
-    value = (value | value << 8) & 0x100f00f00f00f00fULL;
-    value = (value | value << 4) & 0x10c30c30c30c30c3ULL;
-    value = (value | value << 2) & 0x1249249249249249ULL;
-    return value;
-  };
-  return spread(axes[0]) << 2 | spread(axes[1]) << 1 | spread(axes[2]);
-}
-
-// Hilbert keys of points in a box: each axis scaled by the largest extent.
+// Hilbert grid of points in a box: each axis scaled by the largest extent.
 struct HilbertFrame {
   double lower[3]{};
   double scale = 0.0;
 
-  std::uint64_t key(const double* point) const noexcept {
-    std::uint32_t grid[3];
-    for (int axis = 0; axis < 3; ++axis) {
+  std::array<std::uint32_t, 3> grid(const double* point) const noexcept {
+    std::array<std::uint32_t, 3> cell{};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
       const double scaled = (point[axis] - lower[axis]) * scale;
-      grid[axis] = !(scaled > 0.0) ? 0U
+      cell[axis] = !(scaled > 0.0) ? 0U
                    : scaled >= static_cast<double>(kHilbertMax) ? kHilbertMax
                                                                  : static_cast<std::uint32_t>(scaled);
     }
-    return hilbert_key(grid[0], grid[1], grid[2]);
+    return cell;
   }
 };
+
+// Sets each item's key to the index of the 3D Hilbert curve through its grid
+// point (Skilling's transpose, hilbert_transpose), 32 independent lanes at a
+// time.
+template <class Item>
+void assign_hilbert_keys(std::vector<Item>& items,
+                         std::span<const std::array<std::uint32_t, 3>> grids) {
+  constexpr std::size_t kLanes = 32;
+  for (std::size_t begin = 0; begin < items.size(); begin += kLanes) {
+    const std::size_t end = std::min(items.size(), begin + kLanes);
+    std::uint32_t lanes[3][kLanes] = {};
+    for (std::size_t at = begin; at < end; ++at) {
+      for (std::size_t axis = 0; axis < 3; ++axis) lanes[axis][at - begin] = grids[at][axis];
+    }
+    hilbert_transpose<3, kHilbertBits, kLanes>(lanes);
+    for (std::size_t at = begin; at < end; ++at) {
+      const std::uint32_t transposed[3]{lanes[0][at - begin], lanes[1][at - begin],
+                                        lanes[2][at - begin]};
+      items[at].key = interleave_transpose(transposed, 3);
+    }
+  }
+}
+
+// Sorts `items` by (key, cell_id), keys below 2^(4 kHilbertBits) (a BRIO
+// round above a Hilbert index): a stable radix sort on the key, one
+// kHilbertBits digit per pass, then each run of equal keys (a few items in
+// one grid cell) by cell ID.
+template <class Item>
+void sort_by_key_then_id(std::vector<Item>& items, std::vector<Item>& scratch) {
+  constexpr std::size_t kBuckets = std::size_t{1} << kHilbertBits;
+  std::vector<std::size_t> starts(kBuckets + 1);
+  scratch.resize(items.size());
+  for (int pass = 0; pass < 4; ++pass) {
+    const int shift = kHilbertBits * pass;
+    std::fill(starts.begin(), starts.end(), 0);
+    for (const Item& item : items) ++starts[((item.key >> shift) & kHilbertMax) + 1];
+    for (std::size_t bucket = 1; bucket <= kBuckets; ++bucket) starts[bucket] += starts[bucket - 1];
+    for (const Item& item : items) scratch[starts[(item.key >> shift) & kHilbertMax]++] = item;
+    items.swap(scratch);
+  }
+  for (std::size_t begin = 0, end = 0; begin < items.size(); begin = end) {
+    end = begin + 1;
+    while (end < items.size() && items[end].key == items[begin].key) ++end;
+    if (end - begin > 1) {
+      std::sort(items.begin() + static_cast<std::ptrdiff_t>(begin),
+                items.begin() + static_cast<std::ptrdiff_t>(end),
+                [](const Item& a, const Item& b) { return a.cell_id < b.cell_id; });
+    }
+  }
+}
 
 // A cell exactly positively oriented whose binary64 orientation determinant
 // is positive as well (so it is measurable), from one floating evaluation:
@@ -968,7 +1081,7 @@ class InteriorCavity {
           stack_.push_back(next);
           // Its neighbors are read next (the stack is last in, first out).
           for (std::int32_t beyond : candidate.n) {
-            if (beyond >= 0) __builtin_prefetch(&tets[static_cast<std::size_t>(beyond)]);
+            if (beyond >= 0) prefetch(&tets[static_cast<std::size_t>(beyond)]);
           }
         } else {
           candidate.stamp = rejected;
@@ -1608,7 +1721,9 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return first < second ? EdgeKey{first, second} : EdgeKey{second, first};
   };
   const auto sorted_face = [](FaceKey face) {
-    std::sort(face.begin(), face.end());
+    if (face[1] < face[0]) std::swap(face[0], face[1]);
+    if (face[2] < face[1]) std::swap(face[1], face[2]);
+    if (face[1] < face[0]) std::swap(face[0], face[1]);
     return face;
   };
   // Hard size fields are stored in regular-tetrahedron circumradius units.
@@ -1627,13 +1742,26 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // cone insertion touches only the cells, facets and segments around it.
   detail::LocalIncidence incidence;
   if (!incidence.initialize(mesh)) return PHX_MC_INTERNAL_ERROR;
+  // Only boundary splits read the facet rows by face; a fixed boundary only
+  // checks its faces distinct.
   std::map<FaceKey, std::size_t> facet_rows_by_face;
-  for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
-    if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second) {
+  if (mesh.policy_ != BoundaryPolicy::kFixed) {
+    for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
+      if (!facet_rows_by_face.emplace(sorted_face(mesh.facets_[row].vertices), row).second) {
+        return PHX_MC_INTERNAL_ERROR;
+      }
+    }
+  } else {
+    std::vector<FaceKey> faces;
+    faces.reserve(mesh.facets_.size());
+    for (const TetSnapshotFacet& facet : mesh.facets_) faces.push_back(sorted_face(facet.vertices));
+    std::sort(faces.begin(), faces.end());
+    if (std::adjacent_find(faces.begin(), faces.end()) != faces.end()) {
       return PHX_MC_INTERNAL_ERROR;
     }
   }
   TetSegmentIndex segment_rows_by_edge;
+  segment_rows_by_edge.reserve(mesh.segments_.size());
   for (std::size_t row = 0; row < mesh.segments_.size(); ++row) {
     const TetSnapshotSegment& segment = mesh.segments_[row];
     if (!segment_rows_by_edge
@@ -1649,23 +1777,47 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // seeded with its edge star, and its halves stay embedded. The constrained
   // faces are the facet bank's rows, so a segment on a facet edge is on one;
   // only the others read their edge star.
-  std::vector<EdgeKey> facet_edges;
-  facet_edges.reserve(3 * mesh.facets_.size());
-  for (const TetSnapshotFacet& facet : mesh.facets_) {
+  // The facet edges by lower vertex slot (a slot-indexed table of the
+  // higher slots); an endpoint with no slot is no segment's endpoint.
+  const std::size_t slot_total = mesh.vertex_slot_count();
+  std::vector<std::uint32_t> facet_edge_starts(slot_total + 2, 0U);
+  std::vector<std::array<std::int32_t, 3>> facet_slots(mesh.facets_.size());
+  for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      facet_edges.push_back(sorted_edge(facet.vertices[corner], facet.vertices[(corner + 1) % 3]));
+      facet_slots[row][corner] = mesh.vertex_slot(mesh.facets_[row].vertices[corner]);
+    }
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = facet_slots[row][corner];
+      const std::int32_t b = facet_slots[row][(corner + 1) % 3];
+      if (a < 0 || b < 0) continue;
+      ++facet_edge_starts[static_cast<std::size_t>(std::min(a, b)) + 2];
     }
   }
-  std::sort(facet_edges.begin(), facet_edges.end());
+  std::partial_sum(facet_edge_starts.begin(), facet_edge_starts.end(), facet_edge_starts.begin());
+  std::vector<std::int32_t> facet_edge_ends(facet_edge_starts.back());
+  for (const std::array<std::int32_t, 3>& slots : facet_slots) {
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = slots[corner];
+      const std::int32_t b = slots[(corner + 1) % 3];
+      if (a < 0 || b < 0) continue;
+      facet_edge_ends[facet_edge_starts[static_cast<std::size_t>(std::min(a, b)) + 1]++] =
+          std::max(a, b);
+    }
+  }
+  // facet_edge_starts[v] .. facet_edge_starts[v + 1] are now the rows of v.
+  const auto facet_edge = [&](std::int32_t a, std::int32_t b) {
+    const auto low = static_cast<std::size_t>(std::min(a, b));
+    const std::int32_t high = std::max(a, b);
+    return std::find(facet_edge_ends.begin() + facet_edge_starts[low],
+                     facet_edge_ends.begin() + facet_edge_starts[low + 1],
+                     high) != facet_edge_ends.begin() + facet_edge_starts[low + 1];
+  };
   std::set<EdgeKey> embedded_segments;
   for (const TetSnapshotSegment& segment : mesh.segments_) {
     const std::int32_t first = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t second = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(first) || !mesh.live_vertex(second)) return PHX_MC_INTERNAL_ERROR;
-    if (std::binary_search(facet_edges.begin(), facet_edges.end(),
-                           sorted_edge(segment.vertices[0], segment.vertices[1]))) {
-      continue;
-    }
+    if (facet_edge(first, second)) continue;
     const std::span<const std::int32_t> star = incidence.edge_star(first, second);
     bool on_face = false;
     for (std::int32_t cell : star) {
@@ -1877,13 +2029,15 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // Delaunay refinement assumes a constrained Delaunay triangulation: a cell
   // whose circumsphere holds a vertex is not removed by inserting its
   // circumcenter, which then lies near that vertex. The input (a recovered
-  // PLC) and every insertion are flipped toward it (flip_to_constrained_delaunay).
+  // PLC) and every insertion are flipped toward it (flip_to_constrained_delaunay),
+  // except an input proven constrained Delaunay and unedited since
+  // (TetMesh::delaunay_generation_), where every face test would fail.
   const std::function<bool(std::uint64_t, std::uint64_t)> is_segment =
       [&](std::uint64_t first, std::uint64_t second) {
         return segment_rows_by_edge.contains(sorted_edge(first, second));
       };
   std::vector<std::uint64_t> flipped;
-  {
+  if (mesh.delaunay_generation_ != mesh.generation_) {
     std::vector<std::uint64_t> all_cells;
     for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
       const std::int32_t cell = static_cast<std::int32_t>(row);
@@ -1908,13 +2062,19 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // an upper bound of the true lfs(x) (lfs is 1-Lipschitz), so the estimate
   // never falls below lfs_min > 0 and insertion_guard keeps the packing
   // argument (Ruppert, Shewchuk) bounding the vertex count.
+  // feature_size_at keeps the metric distances from its point to its
+  // neighbors (in neighbor order) for clear_of.
+  std::vector<double> neighbor_distances;
+  const CoordinateResolution coordinate_resolution(mesh);
   const auto feature_size_at = [&](const double* point, std::span<const std::int32_t> neighbors) {
+    neighbor_distances.clear();
     double size = std::numeric_limits<double>::infinity();
     for (std::int32_t vertex : neighbors) {
-      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] +
-                                metric_distance(mesh, point, mesh.point(vertex)));
+      const double distance = metric_distance(mesh, point, mesh.point(vertex));
+      neighbor_distances.push_back(distance);
+      size = std::min(size, feature_sizes[static_cast<std::size_t>(vertex)] + distance);
     }
-    return std::max(size, coordinate_resolution(mesh, point));
+    return std::max(size, coordinate_resolution(point));
   };
   const auto spacing_guard = [&](double feature_size, double target_size) {
     const double guard = kSizeGuardFraction * feature_size;
@@ -1942,12 +2102,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   };
   // The spacing guard: no natural neighbor of a point (a vertex of its
   // cavity, which holds its nearest vertex in a Delaunay neighborhood) lies
-  // closer than `radius`.
-  const auto clear_of = [&](const double* point, std::span<const std::int32_t> neighbors,
-                            double radius) {
+  // closer than `radius`; it reads the neighbors feature_size_at measured
+  // last.
+  const auto clear_of = [&](double radius) {
     if (!(radius > 0.0) || !std::isfinite(radius)) return false;
-    for (std::int32_t vertex : neighbors) {
-      if (metric_distance(mesh, point, mesh.point(vertex)) < radius) return false;
+    for (double distance : neighbor_distances) {
+      if (distance < radius) return false;
     }
     return true;
   };
@@ -2253,8 +2413,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         return PHX_MC_OK;
       }
       const double feature_size = feature_size_at(point, cavity_vertices);
-      if (radius > 0.0 &&
-          !clear_of(point, cavity_vertices, insertion_guard(feature_size, radius, target))) {
+      if (radius > 0.0 && !clear_of(insertion_guard(feature_size, radius, target))) {
         return PHX_MC_OK;
       }
       const std::size_t facet_count = mesh.facets_.size();
@@ -2601,9 +2760,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // violating cell of a round proposes its circumcenter; proposals are taken
   // along the Hilbert curve, each walking from its own cell while that is
   // still live, so walks stay short and consecutive cavities share cache
-  // lines. The first round is sorted by circumcenter; the cells an insertion
-  // creates are the next round's candidates, already in curve order as their
-  // insertions were. Bowyer-Watson insertion keeps the constrained Delaunay
+  // lines. The first round is taken in BRIO rounds (by cell ID) along the
+  // curve of circumcenters: its cells are the recovered mesh's, whose wide
+  // circumspheres give each insertion a large cavity, and spreading the
+  // early insertions keeps later ones from re-cutting the cones of their
+  // curve neighbors. The cells an insertion creates are the next round's
+  // candidates, already in curve order as their insertions were.
+  // Bowyer-Watson insertion keeps the constrained Delaunay
   // property where the cavity is Delaunay, so interior insertions are not
   // followed by flips. A cell left unchanged keeps its cause and is not
   // proposed again; the round count is capped (no cap is reached on the
@@ -2641,6 +2804,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     double target;
   };
   std::vector<Proposal> proposals;
+  std::vector<Proposal> sorted_scratch;
+  std::vector<std::array<std::uint32_t, 3>> proposal_grids;
   // Every proposed cell ID: a live cell that misses a criterion when the
   // rounds end was proposed (each created cell is evaluated in the round
   // after its creation), so the unmet records measure only these.
@@ -2665,7 +2830,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
                                    int& outcome) -> std::int32_t {
     outcome = 2;
     const double feature_size = feature_size_at(point, interior.vertices);
-    if (!clear_of(point, interior.vertices, insertion_guard(feature_size, radius, size))) {
+    if (!clear_of(insertion_guard(feature_size, radius, size))) {
       return PHX_MC_OK;
     }
     removed_cells.clear();
@@ -2790,7 +2955,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         break;
       }
       const double feature_size = feature_size_at(candidate, interior.vertices);
-      if (!clear_of(candidate, interior.vertices, insertion_guard(feature_size, radius, size))) {
+      if (!clear_of(insertion_guard(feature_size, radius, size))) {
         break;
       }
       const double quality = screen_cone(mesh, interior.boundary, candidate, radius_edge_bound,
@@ -2989,7 +3154,7 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
         double center[3];
         if (!violates(slot, proposal, center)) continue;
-        proposal.key = frame.key(center);
+        proposal_grids.push_back(frame.grid(center));
       }
       proposals.push_back(proposal);
     }
@@ -3001,9 +3166,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // Later rounds keep the order in which the previous round's insertions,
     // taken along the curve, created their cells.
     if (pass == 0) {
-      std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
-        return a.key != b.key ? a.key < b.key : a.cell_id < b.cell_id;
-      });
+      assign_hilbert_keys(proposals, std::span<const std::array<std::uint32_t, 3>>(proposal_grids));
+      const int brio_rounds = brio_round_count(proposals.size());
+      for (Proposal& proposal : proposals) {
+        const auto brio = brio_round(static_cast<std::int32_t>(proposal.cell_id), brio_rounds);
+        proposal.key |= static_cast<std::uint64_t>(brio) << (3 * kHilbertBits);
+      }
+      sort_by_key_then_id(proposals, sorted_scratch);
     }
     for (Proposal& proposal : proposals) {
       if (!mesh.complex_.live(proposal.slot) || mesh.cell_id(proposal.slot) != proposal.cell_id) {

@@ -302,8 +302,15 @@ class ContactSearch {
     std::nth_element(extents.begin(), middle, extents.end());
     const double size = *middle;
     if (!(size > 0.0) || !std::isfinite(size)) return false;
+    // The grid index of a coordinate, or kAxisCells when its quotient is not
+    // below kAxisCells (or not finite): the quotient is range-checked as a
+    // double, since in-domain extents make it reach about 2^293 and a cast
+    // of an out-of-range value is undefined. Every value is at least the
+    // origin, so the quotient is not negative.
     const auto cell = [&](double value, int axis) {
-      return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
+      const double quotient = std::floor((value - origin[axis]) / size);
+      return quotient < static_cast<double>(kAxisCells) ? static_cast<int64_t>(quotient)
+                                                         : kAxisCells;
     };
     std::vector<std::pair<uint64_t, uint32_t>> entries;
     std::vector<std::size_t> large;
@@ -606,6 +613,7 @@ extern "C" int32_t phx_mc_verify_tetrahedra(int64_t point_count, const double* p
     }
     if (!indices_valid(point_count, cell_count, 4, cells)) return PHX_MC_INVALID_INPUT;
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx_mc_tetrahedra_verdict result{};
     result.first_outside_domain_point = kNone;
     result.first_nonpositive_cell = kNone;
@@ -690,6 +698,7 @@ extern "C" int32_t phx_mc_verify_volume(int64_t point_count, const double* point
       if (pair[0] < -1 || pair[1] < -1 || pair[0] == pair[1]) return PHX_MC_INVALID_INPUT;
     }
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     phx_mc_volume_verdict result{};
     result.first_outside_domain_point = kNone;
     result.first_nonpositive_cell = kNone;
@@ -801,6 +810,7 @@ extern "C" int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
       }
     }
     const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const auto approx_difference = [](double x, double y) {
       return Approx::exact(x) - Approx::exact(y);
     };

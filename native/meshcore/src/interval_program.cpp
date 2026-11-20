@@ -99,6 +99,25 @@ constexpr std::uint64_t kIntervalOpcodeCapabilities =
     (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
     (std::uint64_t{1} << kPowerElementwise) | (std::uint64_t{1} << kTan);
 
+// The opcodes phx_mc_interval_program_batch executes (the elementwise kernels'
+// subset; it refuses the reciprocal, opcode 11, by contract).
+constexpr std::uint64_t kBatchOpcodes =
+    (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
+    (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kSubtractSame) |
+    (std::uint64_t{1} << kMultiply) |
+    (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
+    (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
+    (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
+    (std::uint64_t{1} << kAbsolute) | (std::uint64_t{1} << kCompare) |
+    (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kSelect) |
+    (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
+    (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
+    (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
+    (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
+    (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
+    (std::uint64_t{1} << kTan) |
+    (std::uint64_t{1} << kPowerElementwise);
+
 // Branch-evidence event rows: kind, test, size, a, a_index, boxes. Element k
 // is the workspace entry a + (a_index < 0 ? k : indices[a_index + k]); where
 // the test holds, the event clears the flags of box indices[boxes + k], or of
@@ -480,7 +499,10 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
           lower[out + k] = -std::numeric_limits<double>::infinity();
           upper[out + k] = std::numeric_limits<double>::infinity();
         } else {
-          lower[out + k] = down(least);
+          // An exact 0 lower end stays 0 (|x| >= 0 exactly), so a real-power
+          // base guard on |x| holds on a box touching the plane x = 0; the
+          // other ends round outward as the host interval absolute does.
+          lower[out + k] = least == 0.0 ? 0.0 : down(least);
           upper[out + k] = up(most);
         }
       }
@@ -1319,11 +1341,21 @@ void execute_jet(const int64_t* instructions, int64_t instruction_count, const i
 
 }  // namespace
 
+bool phx::mc::batch_admissible(const int64_t* instructions, int64_t instruction_count) noexcept {
+  for (int64_t row = 0; row < instruction_count; ++row) {
+    const std::int64_t opcode = row_at(instructions, row).opcode;
+    if (opcode < 0 || opcode >= 64 || !(kBatchOpcodes & (std::uint64_t{1} << opcode)))
+      return false;
+  }
+  return true;
+}
+
 int32_t phx::mc::PreparedIntervalProgram::bind(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
     int64_t workspace_size) {
   workspace_size_ = -1;
+  events_.clear();
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -1362,6 +1394,41 @@ int32_t phx::mc::PreparedIntervalProgram::execute(
       return PHX_MC_INVALID_ARGUMENT;
     execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
                       indices_.data(), parameters_.data(), lower, upper);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx::mc::PreparedIntervalProgram::bind_events(const int64_t* events,
+                                                      int64_t event_count) {
+  events_.clear();
+  return phx::mc::guarded([&]() -> int32_t {
+    if (workspace_size_ < 0 || !phx::mc::addressable(event_count, kEventFields, sizeof(int64_t)) ||
+        (event_count > 0 && events == nullptr))
+      return PHX_MC_INVALID_ARGUMENT;
+    if (!events_valid(events, event_count, indices_.data(),
+                      static_cast<int64_t>(indices_.size()), workspace_size_, 1))
+      return PHX_MC_INVALID_INPUT;
+    if (event_count) events_.assign(events, events + event_count * kEventFields);
+    return PHX_MC_OK;
+  });
+}
+
+int32_t phx::mc::PreparedIntervalProgram::execute_branches(double* lower, double* upper,
+                                                           int64_t workspace_size, bool& smooth,
+                                                           bool& continuous) const {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (workspace_size_ < 0 || workspace_size != workspace_size_ ||
+        (workspace_size > 0 && (lower == nullptr || upper == nullptr)))
+      return PHX_MC_INVALID_ARGUMENT;
+    execute_validated(instructions_.data(), static_cast<int64_t>(instructions_.size() / kFields),
+                      indices_.data(), parameters_.data(), lower, upper);
+    std::uint8_t box_smooth = 1, box_continuous = 1;
+    record_events(events_.data(), static_cast<int64_t>(events_.size()) / kEventFields,
+                  indices_.data(), lower, upper, 1, &box_smooth, &box_continuous);
+    smooth = box_smooth == 1;
+    continuous = box_continuous == 1;
     return PHX_MC_OK;
   });
 }
@@ -1415,25 +1482,8 @@ int32_t phx_mc_interval_program_batch(const int64_t* instructions, int64_t instr
     if (!program_valid(instructions, instruction_count, indices, index_count, parameters,
                        parameter_count, workspace_size))
       return PHX_MC_INVALID_INPUT;
-    constexpr std::uint64_t supported =
-        (std::uint64_t{1} << kGather) | (std::uint64_t{1} << kAdd) |
-        (std::uint64_t{1} << kSubtract) | (std::uint64_t{1} << kSubtractSame) |
-        (std::uint64_t{1} << kMultiply) |
-        (std::uint64_t{1} << kNegate) | (std::uint64_t{1} << kReduceSum) |
-        (std::uint64_t{1} << kSine) | (std::uint64_t{1} << kCosine) |
-        (std::uint64_t{1} << kSqrt) | (std::uint64_t{1} << kSquare) |
-        (std::uint64_t{1} << kAbsolute) | (std::uint64_t{1} << kCompare) |
-        (std::uint64_t{1} << kEqual) | (std::uint64_t{1} << kSelect) |
-        (std::uint64_t{1} << kMaximum) | (std::uint64_t{1} << kMinimum) |
-        (std::uint64_t{1} << kExtremumPair) | (std::uint64_t{1} << kExtremumReduce) |
-        (std::uint64_t{1} << kDecide) | (std::uint64_t{1} << kAttain) |
-        (std::uint64_t{1} << kExp) | (std::uint64_t{1} << kLog) |
-        (std::uint64_t{1} << kDivideElementwise) | (std::uint64_t{1} << kAtan) |
-        (std::uint64_t{1} << kTan) |
-        (std::uint64_t{1} << kPowerElementwise);
-    for (int64_t row = 0; row < instruction_count; ++row)
-      if (!(supported & (std::uint64_t{1} << row_at(instructions, row).opcode)))
-        return PHX_MC_INVALID_INPUT;
+    if (!phx::mc::batch_admissible(instructions, instruction_count))
+      return PHX_MC_INVALID_INPUT;
     if (count == 0 || workspace_size == 0) return PHX_MC_OK;
     return phx::mc::parallel_for(
         static_cast<std::size_t>(count), {64, static_cast<uint32_t>(parallelism)},

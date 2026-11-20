@@ -1310,6 +1310,137 @@ void test_nonrepresentable_split_is_suppressed_into_the_volume() {
   }
 }
 
+// FNV-1a over the published points (bit patterns) and cells.
+std::uint64_t recovery_hash(const PlcRecovery& result) {
+  std::uint64_t hash = 0xcbf29ce484222325ULL;
+  const auto mix = [&](const void* data, std::size_t bytes) {
+    const auto* byte = static_cast<const unsigned char*>(data);
+    for (std::size_t at = 0; at < bytes; ++at) hash = (hash ^ byte[at]) * 0x100000001b3ULL;
+  };
+  mix(result.points.data(), result.points.size() * sizeof(double));
+  mix(result.tets.data(), result.tets.size() * sizeof(int32_t));
+  return hash;
+}
+
+// Two small FIXED inputs whose source triangles are split thousands of
+// times (about 4000 and 9000 points before suppression): the children of a
+// split source triangle are legalized from the edges that can have changed,
+// not by rescanning every child edge after each flip (hundreds of seconds
+// before). The output is the rescanning legalization's (hash), and the
+// circle-test count stays near the flips' (it grew quadratically).
+void test_legalization_of_heavily_split_source_triangles() {
+  struct Case {
+    std::vector<double> points;
+    std::vector<int32_t> triangles;
+    std::size_t vertices;
+    std::size_t cells;
+    std::uint64_t hash;
+    int64_t max_tests;
+  };
+  const std::vector<Case> cases{
+      {{0x1.00000000001ddp+0, -0x1.58fbc01f1b1a8p-42, 0x1.8a68d4a88dc5dp-48,
+        -0x1.ffffffffffe79p-2, 0x1.bb67ae858466ep-1, -0x1.3a682b07ff0b4p-54,
+        -0x1.ffffffffff127p-2, -0x1.bb67ae8585a2bp-1, -0x1.28c6299fa595bp-42,
+        0x1.5ed142951e284p-1, 0x1.c81ab9ee6496ep-1, 0x1.b3fc33b5852adp-5,
+        -0x1.1d340f0160aacp+0, 0x1.2f0ef3494d2c4p-3, 0x1.b3fc33b5871f7p-5,
+        0x1.b72db6db44192p-2, -0x1.09ef3b605b4c9p+0, 0x1.b3fc33b59f611p-5},
+       {0, 1, 2, 3, 4, 5, 0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 2, 0, 3, 2, 3, 5},
+       453, 2659, 0x547535603f2f93beULL, 60000},
+      {{0x1.553ff62d971d4p+0, 0x1.1876b50522525p-47, -0x1.eff8eaa1badf6p-47,
+        0x1.8ad2fc39eb879p-47, 0x1.553ff62d971e4p+0, 0x1.db9450429eadcp-51,
+        -0x1.553ff62d9711dp+0, -0x1.a94707483317cp-46, -0x1.575f1d433f399p-46,
+        0x1.e78470cf87f11p-46, -0x1.553ff62d97222p+0, -0x1.308ed0c7a9edap-45,
+        0x1.20fc80572a656p+0, 0x1.cf7808a39b24ap-2, 0x1.a8e796bc368f5p-5,
+        -0x1.cf7808a39b2afp-2, 0x1.20fc80572a6d9p+0, 0x1.a8e796bc368b3p-5,
+        -0x1.20fc80572a6e9p+0, -0x1.cf7808a39b38bp-2, 0x1.a8e796bc37509p-5,
+        0x1.cf7808a39b2d3p-2, -0x1.20fc80572a657p+0, 0x1.a8e796bc3757bp-5,
+        0x1.2a484f07b265p+0, 0x1.4ad8a5601542p-47, 0x1.a8e796bc360f8p-4,
+        0x1.1ed91de94ca34p-45, 0x1.2a484f07b2643p+0, 0x1.a8e796bc36a57p-4,
+        -0x1.2a484f07b260dp+0, 0x1.d8990c8137628p-47, 0x1.a8e796bc36037p-4,
+        0x1.83e66b9506defp-47, -0x1.2a484f07b2718p+0, 0x1.a8e796bc364d2p-4,
+        0x1.06d63456cdd39p+0, 0x1.a587e44e3538fp-2, 0x1.3eadb10d28846p-3,
+        -0x1.a587e44e3574dp-2, 0x1.06d63456cdc27p+0, 0x1.3eadb10d2871bp-3,
+        -0x1.06d63456cdd03p+0, -0x1.a587e44e3580fp-2, 0x1.3eadb10d2873cp-3,
+        0x1.a587e44e35578p-2, -0x1.06d63456cdc2ap+0, 0x1.3eadb10d28715p-3,
+        0x1.8f1b48bd8b9b3p-1, 0x1.c8c24b453f229p-47, 0x1.a8e796bc35f68p-3,
+        0x1.855d3e95ee3f8p-47, 0x1.8f1b48bd8baedp-1, 0x1.a8e796bc35b39p-3,
+        -0x1.8f1b48bd8b879p-1, -0x1.a23fabde3573bp-47, 0x1.a8e796bc363fbp-3,
+        0x1.e146966d3f75cp-49, -0x1.8f1b48bd8ba0cp-1, 0x1.a8e796bc3606ep-3},
+       {0,  1,  2,  16, 17, 18, 0,  2,  3,  16, 18, 19, 0,  1,  5,  0,  5,  4,
+        1,  2,  6,  1,  6,  5,  2,  3,  7,  2,  7,  6,  3,  0,  4,  3,  4,  7,
+        4,  5,  8,  5,  9,  8,  5,  6,  9,  6,  10, 9,  6,  7,  10, 7,  11, 10,
+        7,  4,  11, 4,  8,  11, 8,  9,  13, 8,  13, 12, 9,  10, 14, 9,  14, 13,
+        10, 11, 15, 10, 15, 14, 11, 8,  12, 11, 12, 15, 12, 13, 16, 13, 17, 16,
+        13, 14, 17, 14, 18, 17, 14, 15, 18, 15, 19, 18, 15, 12, 19, 12, 16, 19},
+       985, 5743, 0x024cd66b0c0f974aULL, 120000}};
+  for (const Case& entry : cases) {
+    PlcRecovery result;
+    const int32_t status =
+        recover_closed_surface(entry.points, entry.triangles, BoundaryPolicy::kFixed, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    std::printf("legalization: %zu points, %zu cells, hash %016llx, %lld circle tests\n",
+                result.points.size() / 3, result.tets.size() / 4,
+                static_cast<unsigned long long>(recovery_hash(result)),
+                static_cast<long long>(result.legalize_tests));
+    PHX_CHECK(result.points.size() / 3 == entry.vertices);
+    PHX_CHECK(result.tets.size() / 4 == entry.cells);
+    PHX_CHECK(recovery_hash(result) == entry.hash);
+    PHX_CHECK(result.legalize_tests > 0 && result.legalize_tests < entry.max_tests);
+    check_fixed_boundary(result, entry.points.size() / 3);
+  }
+}
+
+// A segment inside an interface facet, with volume segments ending just
+// above and below its midpoint on opposite sides of it (two boxes stacked
+// at z = 1, the interface triangulated through the segment's ends 8 and 9):
+// recovery splits interface boundary edges (split_source_edge marks the
+// subfaces through each old interval fresh) and publishes the segment and
+// every boundary edge as segments.
+void test_facet_segment_beside_volume_segments_recovers() {
+  const std::vector<double> points{
+      0, 0, 0,  1, 0, 0,  1, 1, 0,  0, 1, 0,  0, 0, 1,  1, 0, 1,  1, 1, 1,  0, 1, 1,
+      .1, .5, 1,  .9, .5, 1,  .5, .51, 1.01,  .5, .5, 1.8,  .5, .49, .99,  .5, .5, .2,
+      0, 0, 2,  1, 0, 2,  1, 1, 2,  0, 1, 2};
+  const std::vector<int32_t> vertices{
+      0, 3, 2, 1,                                                       // bottom
+      0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7,                   // lower walls
+      4, 5, 15, 14, 5, 6, 16, 15, 6, 7, 17, 16, 7, 4, 14, 17,           // upper walls
+      14, 15, 16, 17,                                                   // top
+      4, 5, 9, 4, 9, 8, 4, 8, 7, 5, 6, 9, 6, 7, 8, 6, 8, 9};           // interface
+  const std::vector<int64_t> offsets{0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40,
+                                     43, 46, 49, 52, 55, 58};
+  const std::vector<int32_t> facets{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 10, 10};
+  const std::vector<int32_t> regions{-1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 1,
+                                     -1, 1, -1, 1, -1, 1, -1, 1, 1, 0};
+  const std::vector<int32_t> segments{8, 9, 10, 11, 12, 13};
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(points.size() / 3);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(facets.size());
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = vertices.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = 11;
+  input.facet_regions = regions.data();
+  input.segment_count = 3;
+  input.segments = segments.data();
+  input.policy = BoundaryPolicy::kConforming;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  std::size_t pieces = 0;
+  for (std::size_t row = 0; row < result.segment_sources.size(); ++row) {
+    const auto source = static_cast<std::size_t>(result.segment_sources[row]);
+    const int32_t a = result.plc_edges[2 * source], b = result.plc_edges[2 * source + 1];
+    pieces += std::min(a, b) == 8 && std::max(a, b) == 9 ? 1 : 0;
+  }
+  PHX_CHECK(pieces >= 1);
+  PHX_CHECK(result.points.size() / 3 > points.size() / 3);
+  check_conforming_recovery(result, points.size() / 3, 11);
+}
+
 void test_bent_exterior_crease_edges_recover_under_both_policies() {
   // A hexagonal base in the plane x + y + 3z = 1 whose rounded vertices make
   // every fan diagonal a crease bent by rounding only, under an apex. The
@@ -1695,8 +1826,8 @@ void test_external_cavity_replacement_reseeds_incremental_locate() {
 // A constrained face around the short edge ab (between the cells abcd and
 // abec of its three-cell ring) blocks the cavity of a point next to ab, but
 // the cavity reaches the other side around ab: the cone would erase the
-// constrained face (its star link fails after the topology write). The
-// insertion is refused before any write and leaves the complex unchanged.
+// constrained face. The insertion is refused before any write and leaves
+// the complex unchanged.
 void test_insertion_refuses_a_cavity_around_a_constrained_face() {
   const std::array<double, 18> points{
       0.0, 0.0, -0.1, 0.0, 0.0, 0.1, 1.0, 0.0, 0.0,
@@ -1766,6 +1897,135 @@ void test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons() 
   input.points = bowtie.data();
   PHX_CHECK(prepare_plc_source(input, source) == PHX_MC_INVALID_INPUT);
   PHX_CHECK(source.failure.reason == kPlcInvalidPolygon);
+}
+
+// One triangle, declared as a polygon, with a segment or a free point.
+// Corners and extras are given in (u, v, w) with the triangle in w = 0;
+// `x_normal` maps w to x (the triangle then sits at the lowest x of the
+// segment's span), else w maps to z. `extras_first` declares the extra
+// points before the triangle's corners. The triangle is an internal sheet
+// (no closure failure) unless `open`; `recover` runs recover_plc instead of
+// source preparation.
+PlcFailure single_triangle_contact(const std::vector<std::array<double, 3>>& extras,
+                                   bool has_segment, bool x_normal, bool extras_first,
+                                   int32_t& status, bool recover = false, bool open = false) {
+  const std::array<std::array<double, 3>, 3> corners{{{-1, -1, 0}, {2, -1, 0}, {-1, 2, 0}}};
+  std::vector<double> points;
+  std::array<int32_t, 3> loop{};
+  std::vector<int32_t> extra_ids;
+  const auto add = [&](const std::array<double, 3>& uvw) {
+    const auto id = static_cast<int32_t>(points.size() / 3);
+    if (x_normal) {
+      points.insert(points.end(), {uvw[2], uvw[0], uvw[1]});
+    } else {
+      points.insert(points.end(), {uvw[0], uvw[1], uvw[2]});
+    }
+    return id;
+  };
+  if (extras_first) {
+    for (const auto& extra : extras) extra_ids.push_back(add(extra));
+  }
+  for (std::size_t k = 0; k < 3; ++k) loop[k] = add(corners[k]);
+  if (!extras_first) {
+    for (const auto& extra : extras) extra_ids.push_back(add(extra));
+  }
+  const std::array<int64_t, 2> offsets{0, 3};
+  const std::array<int32_t, 1> polygon_facets{0};
+  const std::array<int32_t, 2> facet_regions{open ? -1 : 0, 0};
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(points.size() / 3);
+  input.points = points.data();
+  input.polygon_count = 1;
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = loop.data();
+  input.polygon_facets = polygon_facets.data();
+  input.facet_count = 1;
+  input.facet_regions = facet_regions.data();
+  if (has_segment) {
+    input.segment_count = 1;
+    input.segments = extra_ids.data();
+  }
+  PlcRecovery source;
+  status = recover ? recover_plc(input, source) : prepare_plc_source(input, source);
+  return source.failure;
+}
+
+// recover_plc defers the source contact check past the closure check and
+// into recovery (a source conforming to its first triangulation proves its
+// contacts legal), yet reports what source preparation reports: an illegal
+// contact before an open boundary or any recovery failure.
+void test_recover_plc_reports_contacts_first() {
+  const std::vector<std::pair<std::vector<std::array<double, 3>>, bool>> extras{
+      {{{0, 0, -1}, {0, 0, 1}}, true}, {{{1, 1, -1}, {1, 1, 1}}, true},
+      {{{0, 0, 0}}, false},           {{{-1, 0.5, 0}}, false},
+      {{{1, 1, 0.5}}, false}};
+  int checked = 0;
+  for (const bool open : {false, true}) {
+    for (const bool x_normal : {false, true}) {
+      for (const bool extras_first : {false, true}) {
+        for (const auto& [points, has_segment] : extras) {
+          int32_t prepared = PHX_MC_OK;
+          int32_t recovered = PHX_MC_OK;
+          const PlcFailure expected = single_triangle_contact(
+              points, has_segment, x_normal, extras_first, prepared, false, open);
+          const PlcFailure actual = single_triangle_contact(
+              points, has_segment, x_normal, extras_first, recovered, true, open);
+          if (prepared != PHX_MC_OK) {
+            PHX_CHECK(recovered == prepared);
+            PHX_CHECK(actual.reason == expected.reason);
+            PHX_CHECK(actual.first_kind == expected.first_kind && actual.first == expected.first);
+            PHX_CHECK(actual.second_kind == expected.second_kind &&
+                      actual.second == expected.second);
+          } else {
+            PHX_CHECK(actual.reason != kPlcIntersecting);
+          }
+          ++checked;
+        }
+      }
+    }
+  }
+  PHX_CHECK(checked == 40);
+}
+
+// The contact check sweeps items by lower x, so a segment piercing a
+// triangle arrives before it when the segment reaches lower x (x_normal) and
+// after it otherwise; both orders, and both declaration orders, are refused
+// and report the pair in sweep order. A free point on the closed triangle
+// never precedes it (its x is at least the triangle's lowest; equal lower x
+// sorts the triangle first): the point is refused inside the triangle and on
+// its lowest-x edge, declared before and after the corners.
+void test_source_preparation_refuses_contacts_in_either_kind_order() {
+  for (const bool x_normal : {false, true}) {
+    for (const bool extras_first : {false, true}) {
+      int32_t status = PHX_MC_OK;
+      const PlcFailure pierced = single_triangle_contact(
+          {{0, 0, -1}, {0, 0, 1}}, true, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_CONSTRAINT_INTERSECTION);
+      PHX_CHECK(pierced.reason == kPlcIntersecting);
+      PHX_CHECK(pierced.first_kind == (x_normal ? kPlcEdge : kPlcPolygon));
+      PHX_CHECK(pierced.second_kind == (x_normal ? kPlcPolygon : kPlcEdge));
+      PHX_CHECK(pierced.first == 0 && pierced.second == 0);
+
+      // The same segment beside the triangle is a legal contact.
+      const PlcFailure beside = single_triangle_contact(
+          {{1, 1, -1}, {1, 1, 1}}, true, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_OK && beside.reason == kPlcNoFailure);
+
+      const int64_t free_id = extras_first ? 0 : 3;
+      for (const std::array<double, 3>& on : {std::array<double, 3>{0, 0, 0},
+                                               std::array<double, 3>{-1, 0.5, 0}}) {
+        const PlcFailure touched =
+            single_triangle_contact({on}, false, x_normal, extras_first, status);
+        PHX_CHECK(status == PHX_MC_CONSTRAINT_INTERSECTION);
+        PHX_CHECK(touched.reason == kPlcIntersecting);
+        PHX_CHECK(touched.first_kind == kPlcPolygon && touched.first == 0);
+        PHX_CHECK(touched.second_kind == kPlcPoint && touched.second == free_id);
+      }
+      const PlcFailure apart =
+          single_triangle_contact({{1, 1, 0.5}}, false, x_normal, extras_first, status);
+      PHX_CHECK(status == PHX_MC_OK && apart.reason == kPlcNoFailure);
+    }
+  }
 }
 
 
@@ -2885,18 +3145,11 @@ void build_sheet_in_box(const std::vector<double>& points, const std::vector<int
 }
 
 // A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
-// flat offset faces), as an internal sheet of region 0 inside a box hull.
-// Vertices 15, 21, 20, 22 are coplanar up to an orientation of ~4e-22.
-// Under FIXED the segment (15, 21) used to be split, and the star of its
-// split point held a sliver over a subface whose wedge no Steiner-free fill
-// or binary64 cone point covered; the point was removed only by merging
-// the wedge with the cells beyond its link faces (before that, FIXED_SEGMENT
-// was refused). The flips of edge recovery now recover the segment without
-// a split: no point is suppressed, the recovery publishes the input points
-// alone, and the search budgets, which bound only suppression searches,
-// change nothing.
-void test_sliver_wedge_segment_recovers_without_a_split() {
-  const std::vector<double> points{
+// flat offset faces), as an internal sheet of region 0 inside a box hull
+// (the first 26 triangles). Vertices 15, 21, 20, 22 are coplanar up to an
+// orientation of ~4e-22.
+const std::vector<double>& sliver_sheet_points() {
+  static const std::vector<double> points{
       -0x1.321f529b7e48dp-2, 0x1.64ab155864700p-9, -0x1.9f044e4d6d58ep-4,
       -0x1.321f529b7e48dp-2, 0x1.44e4bff842afcp-8, -0x1.9f6d8f547cb34p-4,
       -0x1.1da47153d0345p-2, 0x1.64ab155864700p-9, -0x1.8b6cffe486f86p-4,
@@ -2959,7 +3212,11 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
       -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
       -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
       -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,  };
-  const std::vector<int32_t> triangles{
+  return points;
+}
+
+const std::vector<int32_t>& sliver_sheet_triangles() {
+  static const std::vector<int32_t> triangles{
       0, 3, 1, 6, 7, 8, 4, 11, 5, 2, 8, 9,
       13, 18, 16, 16, 18, 15, 15, 21, 22, 15, 22, 20,
       15, 18, 21, 20, 22, 19, 10, 23, 12, 19, 26, 24,
@@ -2970,6 +3227,20 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
       58, 60, 61, 58, 61, 59, 54, 58, 59, 54, 59, 55,
       56, 57, 61, 56, 61, 60, 54, 56, 60, 54, 60, 58,
       55, 59, 61, 55, 61, 57,  };
+  return triangles;
+}
+
+// Under FIXED the segment (15, 21) of the sliver sheet used to be split, and
+// the star of its split point held a sliver over a subface whose wedge no
+// Steiner-free fill or binary64 cone point covered; the point was removed
+// only by merging the wedge with the cells beyond its link faces (before
+// that, FIXED_SEGMENT was refused). The flips of edge recovery now recover
+// the segment without a split: no point is suppressed, the recovery
+// publishes the input points alone, and the search budgets, which bound only
+// suppression searches, change nothing.
+void test_sliver_wedge_segment_recovers_without_a_split() {
+  const std::vector<double>& points = sliver_sheet_points();
+  const std::vector<int32_t>& triangles = sliver_sheet_triangles();
   const std::size_t point_count = points.size() / 3;
   const std::size_t faces = triangles.size() / 3;
   SheetInBox plc;
@@ -2997,6 +3268,89 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
   negative.search_byte_budget = -1;
   PlcRecovery invalid;
   PHX_CHECK(recover_plc(negative, invalid) == PHX_MC_INVALID_ARGUMENT);
+}
+
+// The sliver sheet with vertex 18, next to the segment (15, 21), raised by
+// 2^-40 in z: edge recovery's flips no longer recover a sheet segment, which
+// FIXED splits, and the split point leaves again through the exhaustive
+// suppression search (no polynomial fill covers its wedge). The declared
+// search budget governs that search end to end: with exactly the states the
+// searches expand the recovery is the same; with one state fewer, or fewer
+// bytes than one chunk of states, the searches are inconclusive and the
+// pinched pass relocates the point into the volume by peeling. Every
+// recovery keeps the boundary and is deterministic in its budget.
+void test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget() {
+  std::vector<double> points = sliver_sheet_points();
+  points[3 * 18 + 2] += 0x1p-40;
+  const std::vector<int32_t>& triangles = sliver_sheet_triangles();
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  SheetInBox plc;
+  build_sheet_in_box(points, triangles, 26, plc);
+  const PlcInput& input = plc.input;
+  const auto recover = [&](const PlcInput& declared, PlcRecovery& result) {
+    const int32_t status = recover_plc(declared, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) return false;
+    check_conforming_recovery(result, point_count, faces);
+    check_fixed_boundary(result, point_count);
+    PlcRecovery again;
+    PHX_CHECK(recover_plc(declared, again) == PHX_MC_OK);
+    PHX_CHECK(again.points == result.points && again.tets == result.tets &&
+              again.faces == result.faces && again.segments == result.segments);
+    PHX_CHECK(again.suppression_routes.size() == result.suppression_routes.size());
+    return true;
+  };
+  const auto segment_route = [](const PlcSuppressionRoute& route, int64_t kind) {
+    return route.route == kind && route.point >= 0 &&
+           route.stratum == static_cast<int64_t>(SourceStratum::kSegment) && route.entity >= 0;
+  };
+  PlcRecovery searched;
+  if (!recover(input, searched)) return;
+  const PlcSuppressionSearch& evidence = searched.suppression_search;
+  PHX_CHECK(searched.points.size() == points.size());
+  PHX_CHECK(evidence.searches >= 1 && evidence.fills >= 1 && evidence.nodes > 0);
+  PHX_CHECK(evidence.node_budget == kPlcSearchNodeBudget);
+  PHX_CHECK(evidence.byte_budget == kPlcSearchByteBudget);
+  PHX_CHECK(evidence.max_bytes >= 4096 * 40 && evidence.max_depth > 0);
+  PHX_CHECK(evidence.exceeded == 0 && evidence.inconclusive == 0 && evidence.peeled == 0);
+  PHX_CHECK(!searched.suppression_routes.empty());
+  for (const PlcSuppressionRoute& route : searched.suppression_routes) {
+    PHX_CHECK(segment_route(route, kPlcRouteSearch) && route.states > 0 && route.bytes > 0);
+  }
+
+  PlcInput exact = input;
+  exact.search_node_budget = evidence.nodes;
+  PlcRecovery same;
+  if (!recover(exact, same)) return;
+  PHX_CHECK(same.points == searched.points && same.tets == searched.tets);
+  PHX_CHECK(same.suppression_search.nodes == evidence.nodes &&
+            same.suppression_search.exceeded == 0);
+
+  PlcInput short_nodes = input;
+  short_nodes.search_node_budget = evidence.nodes - 1;
+  PlcRecovery peeled;
+  if (!recover(short_nodes, peeled)) return;
+  const PlcSuppressionSearch& over = peeled.suppression_search;
+  PHX_CHECK(over.node_budget == evidence.nodes - 1 && over.nodes == evidence.nodes - 1);
+  PHX_CHECK(over.exceeded == 1 && over.inconclusive >= 1 && over.exceeded_nodes > 0);
+  PHX_CHECK(over.peeled >= 1 && over.peeled_after_inconclusive >= 1);
+  PHX_CHECK(peeled.points.size() / 3 > point_count);
+  PHX_CHECK(std::any_of(peeled.suppression_routes.begin(), peeled.suppression_routes.end(),
+                        [&](const PlcSuppressionRoute& route) {
+                          return segment_route(route, kPlcRoutePeelAfterInconclusive) &&
+                                 route.states > 0;
+                        }));
+
+  PlcInput short_bytes = input;
+  short_bytes.search_byte_budget = 4096 * 40 - 1;
+  PlcRecovery starved;
+  if (!recover(short_bytes, starved)) return;
+  const PlcSuppressionSearch& none = starved.suppression_search;
+  PHX_CHECK(none.byte_budget == 4096 * 40 - 1 && none.searches > 0 && none.nodes == 0);
+  PHX_CHECK(none.inconclusive == none.searches && none.exceeded == 1);
+  PHX_CHECK(none.peeled >= 1 && none.peeled_after_inconclusive >= 1);
+  PHX_CHECK(starved.points.size() / 3 > point_count);
 }
 
 // The minimal configuration of the lost chain interval (PlcChainInterval),
@@ -3864,11 +4218,15 @@ int main() {
   test_protection_index_keeps_nonincident_segment_candidates();
   test_source_preparation_triangulates_and_compiles_plc_edges();
   test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons();
+  test_source_preparation_refuses_contacts_in_either_kind_order();
+  test_recover_plc_reports_contacts_first();
   test_conforming_nonrepresentable_segment_uses_vertex_cavity();
   test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming();
   test_conforming_missing_boundary_edges_recover_with_exact_witnesses();
   test_witnessed_segment_split_is_published_exactly();
   test_nonrepresentable_split_is_suppressed_into_the_volume();
+  test_legalization_of_heavily_split_source_triangles();
+  test_facet_segment_beside_volume_segments_recovers();
   test_bent_exterior_crease_edges_recover_under_both_policies();
   test_conforming_representable_segment_prefers_vertex_cavity();
   test_incremental_point_slot_reindexes_corners_and_rolls_back();
@@ -3890,6 +4248,7 @@ int main() {
   test_suppression_wedge_without_delaunay_fill_is_searched();
   test_relocation_peels_a_pinched_wedge();
   test_sliver_wedge_segment_recovers_without_a_split();
+  test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget();
   test_sheet_segment_through_a_cone_apex_recovers_without_a_split();
   test_recurring_obstruction_patch_recovers_without_growth();
   test_lobed_edge_patch_recovers_without_merging();

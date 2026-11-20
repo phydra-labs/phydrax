@@ -319,6 +319,8 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
     shape = batch_shape + (a.shape[-2], b.shape[-1])
     if a.shape[-1] == 0:
         result = np.zeros(shape, dtype=np.float64)
+    elif math.prod(batch_shape) >= _COMPONENT_BATCH:
+        result = _component_matmul(a, b, batch_shape)
     else:
         result = np.multiply(a[..., :, 0, None], b[..., None, 0, :])
         for index in range(1, a.shape[-1]):
@@ -329,6 +331,49 @@ def binary64_matmul(first: ArrayLike, second: ArrayLike, /) -> NDArray[np.float6
     if right_vector:
         result = np.squeeze(result, axis=-1)
     return np.asarray(result, dtype=np.float64)
+
+
+# Batch size from which matrix entries are evaluated as contiguous batch arrays.
+_COMPONENT_BATCH = 512
+
+
+def _component_matmul(
+    a: np.ndarray, b: np.ndarray, batch_shape: tuple[int, ...], /
+) -> NDArray[np.float64]:
+    """Evaluate :func:`binary64_matmul` entry by entry over contiguous batches.
+
+    The products and left-to-right additions are those of the broadcast route;
+    only the memory layout differs, so every entry is bitwise identical. Small
+    matrix axes innermost would make every NumPy loop a few elements long.
+    """
+    rows, inner, columns = a.shape[-2], a.shape[-1], b.shape[-1]
+    rank = len(batch_shape)
+    left = np.ascontiguousarray(
+        np.broadcast_to(
+            np.moveaxis(
+                a.reshape((1,) * (rank + 2 - a.ndim) + a.shape), (-2, -1), (0, 1)
+            ),
+            (rows, inner, *batch_shape),
+        )
+    )
+    right = np.ascontiguousarray(
+        np.broadcast_to(
+            np.moveaxis(
+                b.reshape((1,) * (rank + 2 - b.ndim) + b.shape), (-2, -1), (0, 1)
+            ),
+            (inner, columns, *batch_shape),
+        )
+    )
+    result = np.empty((rows, columns, *batch_shape), dtype=np.float64)
+    product = np.empty(batch_shape, dtype=np.float64)
+    for row in range(rows):
+        for column in range(columns):
+            entry = result[row, column]
+            np.multiply(left[row, 0], right[0, column], out=entry)
+            for index in range(1, inner):
+                np.multiply(left[row, index], right[index, column], out=product)
+                np.add(entry, product, out=entry)
+    return np.moveaxis(result, (0, 1), (-2, -1))
 
 
 def binary64_difference_magnitude(
@@ -395,6 +440,76 @@ def binary64_norm_lower(components: ArrayLike, /) -> NDArray[np.float64]:
     squares that underflow contribute zero.
     """
     return _directed_norm(components, False)
+
+
+def _upward(value: NDArray[np.float64], /) -> NDArray[np.float64]:
+    """One step toward ``+inf`` after a rounded operation, unless exactly zero."""
+    return np.where(value == 0.0, 0.0, np.nextafter(value, np.inf))
+
+
+def binary64_first_order_interpolation_upper(
+    spread: ArrayLike, vertex_lower: ArrayLike, vertex_upper: ArrayLike, /
+) -> float:
+    """Upper bound of ``|f - I f|`` on a simplex from the width of a Jacobian enclosure.
+
+    The ``n + 1`` parameter vertices of an ``n``-simplex lie in the boxes
+    ``[vertex_lower[j], vertex_upper[j]]``, ``I f`` is the affine interpolant
+    of ``f`` at them, and ``spread[i, k]`` bounds the width of an enclosure of
+    ``d f_i / d x_k`` over the simplex. ``f`` must be continuous and piecewise
+    smooth there: an interval program of its derivative, evaluated over the
+    simplex, then encloses the derivative along every segment except at
+    finitely many points, so the bound needs no second derivative and holds
+    across kinks.
+
+    From a vertex ``v_j``, ``p = v_j + sum_k l_k (v_k - v_j)`` gives
+    ``f_i(p) - I f_i(p) = sum_k l_k (G - G_k) . (v_k - v_j)``, where ``G`` and
+    ``G_k`` are averages of ``grad f_i`` along segments and so lie in its
+    enclosure. Each term is at most ``spread[i] . |v_k - v_j|``, and with the
+    largest barycentric weight ``l_j >= 1 / (n + 1)`` every component is at
+    most ``n / (n + 1)`` times its largest edge term. Every rounded operation
+    steps toward ``+inf``; a nonfinite spread gives ``inf``.
+    """
+    spread_ = np.asarray(spread, dtype=np.float64)
+    lower_ = np.asarray(vertex_lower, dtype=np.float64)
+    upper_ = np.asarray(vertex_upper, dtype=np.float64)
+    if (
+        lower_.ndim != 2
+        or lower_.shape[0] != lower_.shape[1] + 1
+        or upper_.shape != lower_.shape
+        or spread_.ndim != 2
+        or spread_.shape[1] != lower_.shape[1]
+    ):
+        raise ValueError(
+            "first-order interpolation bounds need (n + 1, n) vertex boxes and an (m, n) spread."
+        )
+    if (
+        not np.all(np.isfinite(lower_))
+        or not np.all(np.isfinite(upper_))
+        or np.any(lower_ > upper_)
+    ):
+        raise ValueError(
+            "first-order interpolation vertex boxes must be finite and ordered."
+        )
+    if not np.all(spread_ >= 0.0):
+        return math.inf
+    dimension = lower_.shape[1]
+    terms = np.zeros((spread_.shape[0],), dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        for first in range(dimension + 1):
+            for second in range(first + 1, dimension + 1):
+                edge = np.maximum(
+                    binary64_difference_magnitude(upper_[second], lower_[first])[1],
+                    binary64_difference_magnitude(lower_[second], upper_[first])[1],
+                )
+                term = np.zeros_like(terms)
+                for axis in range(dimension):
+                    term = _upward(term + _upward(spread_[:, axis] * edge[axis]))
+                terms = np.maximum(terms, term)
+        ratio = dimension / (dimension + 1)
+        if Fraction(ratio) != Fraction(dimension, dimension + 1):
+            ratio = math.nextafter(ratio, math.inf)
+        bound = _upward(binary64_norm_upper(terms) * ratio)
+    return float(bound) if np.isfinite(bound) else math.inf
 
 
 def binary64_spectral_upper(matrix: ArrayLike, /) -> float:

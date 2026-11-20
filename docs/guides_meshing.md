@@ -930,9 +930,10 @@ An adaptive implicit layer wall comes from the implicit volume carrier path:
 (`phydrax.meshing.providers._native_layer`) returns the discovery scaffold
 triangles when each is within the radius-edge bound of the core fill schedule
 (a layer column and its cap triangle inherit the wall triangle's shape), else
-the native zero-set band remesh toward `edge_length` with every created
-triangle certified within the scaffold distance bound and transversal to the
-field gradient. Layer thickness is never adjusted to accommodate sliver
+the native zero-set remesh toward `edge_length`, constructed by floating point
+and then certified: every triangle within the scaffold distance bound,
+transversal to the field gradient and embedded, refused triangles repaired
+locally. Layer thickness is never adjusted to accommodate sliver
 triangles. The zero set is oriented out of its solid, so the default `inward`
 wall is reversed and layers grow into the solid. Each remeshed wall cell names
 its nearest scaffold triangle as chart seed; repeated seeds are legitimate and
@@ -1073,14 +1074,25 @@ refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
 `FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an
 internal diagonal of a coplanar facet group is recovered like any other segment.
 
-An analytic implicit profile with established reach is meshed by isosurface
-stuffing (`implicit_stuffing`) by default: a body-centered cubic lattice is
-cut at the zero set, the floating-point result is accepted only after its
-exact volume certificate, profile topology and certified facet deviation, and a
-rejected lattice is repaired by a finer one. Its boundary coverage is the
-tubular-projection degree proof. Adaptive implicit volume discovery is distinct
-and must be selected explicitly as `implicit_adaptive_tetrahedral`; it is not a
-fallback for stuffing failure. A direct `BRepModel` volume request
+An analytic implicit profile with established reach is meshed by restricted
+Delaunay refinement (`implicit_restricted_delaunay`) by default, surface first.
+Seeds are the roots on the sign-change edges of an interval-pruned box tree, so
+every component of the zero set is seeded. Restricted facets are refined at
+their surface Delaunay ball centers until their edges meet the bound the
+certified facet deviation d^2 / (6 (R - d)) gives for the fidelity tolerance,
+their angles 30° and their ball centers the tolerance. Interior cells of the
+same Delaunay triangulation are refined to the radius-edge bound, and slivers
+are removed by flips and relocation to at least 15° minimum dihedral angle. No
+point is inserted closer to a vertex than a separation bound, so the
+refinement terminates by a packing argument; a refinement the bound refuses is
+an `UNRESOLVED` construction failure, never a silently coarser mesh.
+Construction is floating point with exact predicates. The result is accepted
+only after the certified facet deviation (failing facets re-seed the
+refinement), the profile topology and the volume certificates; its boundary
+coverage is the tubular-projection degree proof. Adaptive implicit volume
+discovery is distinct and must be selected explicitly as
+`implicit_adaptive_tetrahedral`; it is not a fallback for restricted Delaunay
+failure. A direct `BRepModel` volume request
 builds and accepts its parametric boundary mesh internally before CAD
 tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
@@ -1091,24 +1103,34 @@ scaffold, whose triangles can be slivers. Because a tetrahedron on a `FIXED`
 face has a radius-edge ratio at least the face's, a carrier with any face above
 `NativeVolumeSchedule.radius_edge_bound` is first remeshed natively toward the
 requested uniform target size (else its mean edge length) and a 30° minimum
-angle. Every created triangle is admitted by the zero-set band predicate using
-the smallest explicitly declared whole-surface `maximum_deviation` and hard
+angle. Construction is floating point (splits, collapses, flips and
+relocations, vertices projected onto the zero set by Newton steps on point
+jets, sizes lowered where the zero set curves) and proves nothing; the result
+is then certified with the zero-set band predicate using the smallest
+explicitly declared whole-surface `maximum_deviation` and hard
 protected-feature deviation, further limited by the analytic profile's
 established tube when a profile is present. Soft protected features do not
 tighten this admission bound. Foreign or partial implicit feature scopes are
 refused. If remeshing is required, an absent positive declared bound or a zero
 exact bound is refused rather than replaced with an invented tolerance.
 
-Native interval enclosures certify each created face's distance to the zero set
-within that selected bound and its normal transversal to the field gradient with
-the carrier's orientation. Untouched scaffold faces retain the independently
-established original scaffold distance bound; that bound is not substituted for
-the requested admission tolerance. Vertex proposals come from interval Newton
-along the gradient line. The native result reports the maximum certified
-distance over both created and untouched faces, and the volume fidelity bound
-adds the fill's boundary-witness deviation outward before checking the original
-request and hard features. The remeshed carrier identity binds both distance
-bounds, and achieved evidence includes `carrier_remesh_admission_tolerance`.
+Native interval enclosures certify each face's distance to the zero set within
+that selected bound and its normal transversal to the field gradient with the
+carrier's orientation, and exact contact classification certifies the surface
+embedded. Triangles touching an input crease (adjacent input triangles turning
+more than 45°) are kept bitwise from the scaffold. A scaffold face whose proof
+fails (next to a crease transversality is not decidable) retains the
+independently established original scaffold distance bound; that bound is not
+substituted for the requested admission tolerance. Any other refused triangle
+is repaired locally by splitting its longest edge at a projected midpoint and
+certified again, for at most four rounds; a triangle still refused is a typed
+refusal. The native result reports the maximum distance over proved and kept
+faces, and the volume fidelity bound adds the fill's boundary-witness
+deviation outward before checking the original request and hard features.
+The remeshed carrier identity
+binds both distance bounds, and achieved evidence includes
+`carrier_remesh_admission_tolerance`, the certification refusals, the kept
+scaffold triangles and the repair splits.
 
 Each face's chart witness names the nearest scaffold triangle, and coverage
 proves degree one without a one-to-one scaffold correspondence: the certified
@@ -1370,8 +1392,8 @@ instead of findings. Validity, determinant, construction and nonrepresentable
 rows, size, source fidelity, protected features and coverage stay hard. Hard
 schedules keep their identities; `SOFT` enters the schedule identity. The PLC, CAD,
 image, envelope and adaptive implicit volume routes support soft targets. Routes
-whose acceptance never reads these rows (isosurface stuffing, layer core, hex
-families, polyhedral carriers) refuse `SOFT` rather than ignore it.
+whose acceptance never reads these rows (analytic restricted Delaunay, layer
+core, hex families, polyhedral carriers) refuse `SOFT` rather than ignore it.
 Qualification profiles declare `SOFT` only where the source authored the
 targets as aims; the profile records that source.
 

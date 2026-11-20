@@ -17,6 +17,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..discretization import CellMesh
+from ..discretization._topology import has_repeated_values
 from ..typing import checked
 from ..units import UnitDefinition
 from ._scope import (
@@ -298,7 +299,7 @@ def validate_mesh_zones(zones: tuple[MeshZone, ...], /) -> tuple[MeshZone, ...]:
     names = tuple(zone.name for zone in zones)
     if len(set(names)) != len(names):
         raise ValueError("Mesh zone names must be unique.")
-    occupied: dict[tuple[str, str, int, str], set[int]] = {}
+    occupied: dict[tuple[str, str, int, str], list[np.ndarray]] = {}
     for zone in zones:
         scope = zone.scope
         key = (
@@ -307,11 +308,15 @@ def validate_mesh_zones(zones: tuple[MeshZone, ...], /) -> tuple[MeshZone, ...]:
             scope.entity_dimension,
             scope.entity_set_id,
         )
-        identifiers = {int(value) for value in np.asarray(scope.entity_ids)}
-        previous = occupied.setdefault(key, set())
-        if previous & identifiers:
+        occupied.setdefault(key, []).append(np.asarray(scope.entity_ids))
+    for identifiers in occupied.values():
+        # Zones on one entity set must not share an ID (each zone's distinct IDs).
+        if len(identifiers) > 1 and has_repeated_values(
+            np.concatenate(
+                tuple(np.unique(values.astype(np.int64)) for values in identifiers)
+            )
+        ):
             raise ValueError("Mesh zones on one entity set must be disjoint.")
-        previous.update(identifiers)
     return zones
 
 

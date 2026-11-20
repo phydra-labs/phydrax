@@ -137,6 +137,21 @@ def numeric_array_fingerprint(value: np.ndarray, /) -> str:
     return digest.hexdigest()
 
 
+def _rational_chart_row_digest(row: tuple[tuple[tuple[int, int], ...], ...], /) -> bytes:
+    encoded_row = bytearray(b"rational-chart-row\0")
+    encoded_row.extend(len(row).to_bytes(8, "big"))
+    for point in row:
+        encoded_row.extend(len(point).to_bytes(8, "big"))
+        for numerator, denominator in point:
+            for value in (numerator, denominator):
+                magnitude = abs(value)
+                encoded = magnitude.to_bytes((magnitude.bit_length() + 7) // 8, "big")
+                encoded_row.append(value < 0)
+                encoded_row.extend(len(encoded).to_bytes(8, "big"))
+                encoded_row.extend(encoded)
+    return hashlib.sha256(encoded_row).digest()
+
+
 def rational_chart_bank_fingerprint(
     bank: tuple[tuple[tuple[tuple[int, int], ...], ...], ...], /
 ) -> str:
@@ -146,22 +161,16 @@ def rational_chart_bank_fingerprint(
     rows: dict[tuple[tuple[tuple[int, int], ...], ...], bytes] = {}
     for start in range(0, len(bank), _SEQUENCE_CHUNK):
         chunk = bank[start : start + _SEQUENCE_CHUNK]
+        # Row digests concatenate exactly as successive updates would; equal
+        # rows have equal digests, so a chunk of one row repeats its digest.
+        if chunk.count(chunk[0]) == len(chunk):
+            row_digest = rows.get(chunk[0])
+            if row_digest is None:
+                row_digest = rows[chunk[0]] = _rational_chart_row_digest(chunk[0])
+            digest.update(row_digest * len(chunk))
+            continue
         for row in set(chunk).difference(rows):
-            encoded_row = bytearray(b"rational-chart-row\0")
-            encoded_row.extend(len(row).to_bytes(8, "big"))
-            for point in row:
-                encoded_row.extend(len(point).to_bytes(8, "big"))
-                for numerator, denominator in point:
-                    for value in (numerator, denominator):
-                        magnitude = abs(value)
-                        encoded = magnitude.to_bytes(
-                            (magnitude.bit_length() + 7) // 8, "big"
-                        )
-                        encoded_row.append(value < 0)
-                        encoded_row.extend(len(encoded).to_bytes(8, "big"))
-                        encoded_row.extend(encoded)
-            rows[row] = hashlib.sha256(encoded_row).digest()
-        # Row digests concatenate exactly as successive updates would.
+            rows[row] = _rational_chart_row_digest(row)
         digest.update(b"".join(map(rows.__getitem__, chunk)))
     return digest.hexdigest()
 
@@ -357,9 +366,54 @@ def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
     return budget
 
 
+def _text_leaves(value: Any, /) -> bool:
+    """Whether a value is a string, None, or a tuple nest of those."""
+    kind = type(value)
+    if kind is str or value is None:
+        return True
+    return kind is tuple and all(map(_text_leaves, value))
+
+
+def _repeated_text_tokens(value: tuple[Any, ...] | list[Any], /) -> dict[Any, str] | None:
+    """Canonical JSON of each distinct item of a long, repetitive text sequence.
+
+    Only strings, None and tuple nests of those qualify: equal such values
+    encode identically (equal numbers of different types would not).
+    """
+    if not _text_leaves(value[0]):
+        return None
+    try:
+        uniform = value.count(value[0]) == len(value)
+        distinct = {value[0]} if uniform else set(value)
+    except (TypeError, ValueError):
+        # Unhashable items, or items whose equality is not a truth value.
+        return None
+    if 2 * len(distinct) > len(value) or not all(map(_text_leaves, distinct)):
+        return None
+    return {item: _ENCODER.encode(item) for item in distinct}
+
+
 def _write_sequence(
     value: tuple[Any, ...] | list[Any], write: Callable[[str], object], /
 ) -> None:
+    tokens = _repeated_text_tokens(value) if len(value) > _SEQUENCE_CHUNK else None
+    if tokens is not None:
+        # Per-row identity columns repeat few values: each distinct item is
+        # encoded once and the array text joined from those encodings; a
+        # chunk of one value repeats its encoding.
+        token = tokens.__getitem__
+        write("[")
+        for start in range(0, len(value), _SEQUENCE_CHUNK):
+            if start:
+                write(",")
+            chunk = value[start : start + _SEQUENCE_CHUNK]
+            if chunk.count(chunk[0]) == len(chunk):
+                text = token(chunk[0])
+                write((text + ",") * (len(chunk) - 1) + text)
+            else:
+                write(",".join(map(token, chunk)))
+        write("]")
+        return
     if _JSON_SCALAR_TYPES.issuperset(map(type, value)):
         if len(value) <= _SEQUENCE_CHUNK:
             write(_ENCODER.encode(value))

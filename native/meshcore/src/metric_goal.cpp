@@ -245,8 +245,10 @@ bool hull_projection(int corner_count, const double* corners, const double* goal
       directions[row][axis] = corners[3 * (row + 1) + axis] - corners[axis];
     }
   }
-  double gram[4];
-  double right[2];
+  // The solve reads the upper triangle of the leading order x order block
+  // only; the zeros define the remaining entries for any order.
+  double gram[4] = {0.0, 0.0, 0.0, 0.0};
+  double right[2] = {0.0, 0.0};
   for (int row = 0; row < order; ++row) {
     for (int column = row; column < order; ++column) {
       gram[order * row + column] = dot3(directions[row], directions[column]);

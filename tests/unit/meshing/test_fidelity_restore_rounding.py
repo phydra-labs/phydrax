@@ -1,10 +1,12 @@
 """Restore adopts stored source-fidelity evidence across platform rounding.
 
 A source-fidelity certificate hashes only exact content. Its certified float
-bounds are stored evidence: restore recomputes the certificate, requires equal
-exact content and intersecting enclosures, and keeps the stored bounds and the
-bound-limit decisions taken when the result was generated. These tests stand
-in for another platform by perturbing the recomputed bounds by a few ulps.
+bounds are evidence: restore recomputes the certificate, requires equal exact
+content and intersecting enclosures, keeps the bound-limit decisions taken
+when the result was generated, and ships the outward hull of the stored and
+recomputed enclosures, on which every kept decision must still hold. These
+tests stand in for another platform by perturbing the recomputed bounds by a
+few ulps.
 """
 
 from __future__ import annotations
@@ -158,16 +160,40 @@ def test_restore_accepts_other_platform_bound_rounding_with_identical_ids(
     assert restored.certification is not None and accepted.certification is not None
     stored, kept = accepted.certification.fidelity, restored.certification.fidelity
     assert stored is not None and kept is not None
-    assert np.array_equal(kept.deviation_bounds, stored.deviation_bounds)
+    # The shipped evidence is the hull of the stored and the recomputed bounds.
+    recomputed = np.asarray(
+        _other_platform(stored, ulps).deviation_bounds, dtype=np.float64
+    )
+    stored_bounds = np.asarray(stored.deviation_bounds, dtype=np.float64)
+    hull = np.stack(
+        (
+            np.minimum(stored_bounds[:, 0], recomputed[:, 0]),
+            np.maximum(stored_bounds[:, 1], recomputed[:, 1]),
+        ),
+        axis=1,
+    )
+    assert np.array_equal(kept.deviation_bounds, hull)
+    # The cover ships the reproved simplices with the larger of both bounds.
     assert kept.coverage is not None and stored.coverage is not None
-    assert np.array_equal(kept.coverage.simplices, stored.coverage.simplices)
+    other = _other_platform(stored, ulps).coverage
+    assert other is not None
+    assert np.array_equal(kept.coverage.simplices, other.simplices)
+    assert np.array_equal(
+        kept.coverage.deviation_bounds,
+        np.maximum(stored.coverage.deviation_bounds, other.deviation_bounds),
+    )
+    assert kept.coverage.cover_id == stored.coverage.cover_id
 
 
 @pytest.mark.meshcore
-def test_near_threshold_bound_keeps_the_generation_decision(
+def test_near_threshold_decision_the_reproof_does_not_hold_is_refused(
     accepted: CellMeshingResult, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """1 ulp below tolerance when written, 1 ulp above when recomputed: accepted."""
+    """1 ulp below tolerance when written, 1 ulp above when recomputed: refused.
+
+    The shipped hull reaches the recomputed upper bound, which does not meet the
+    tolerance, so the stored pass is not proved on this platform.
+    """
     assert accepted.certification is not None
     fidelity = accepted.certification.fidelity
     assert fidelity is not None
@@ -175,12 +201,17 @@ def test_near_threshold_bound_keeps_the_generation_decision(
     row = int(np.argmax(np.asarray(fidelity.deviation_bounds)[:, 1]))
     cell = fidelity.source_cell_global_ids[row]
 
+    # Every stored fidelity proof (the result's and the CAD PLC's) is written
+    # near the threshold at this row; restore names whichever it reaches first.
+    forged_cells: set[int] = set()
+
     def written(certificate: SourceFidelityCertificate) -> SourceFidelityCertificate:
         bounds = np.array(certificate.deviation_bounds, copy=True)
         bounds[row, 1] = np.nextafter(tolerance, -np.inf)
         forged = _with_fields(certificate, deviation_bounds=bounds)
         # Bounds are evidence, not identity: the stored claim keeps its ID.
         assert forged.certificate_id == certificate.certificate_id
+        forged_cells.add(certificate.source_cell_global_ids[row])
         return forged
 
     def recomputed(certificate: SourceFidelityCertificate) -> SourceFidelityCertificate:
@@ -203,13 +234,182 @@ def test_near_threshold_bound_keeps_the_generation_decision(
 
     stored = _replace_stored(accepted, written)
     _recompute_as(monkeypatch, recomputed)
-    restored = CellMeshingResult.from_stored_fields(stored)
+    with pytest.raises(SourceFidelityReproofError) as refusal:
+        CellMeshingResult.from_stored_fields(stored)
+    assert refusal.value.bound == "deviation_bounds"
+    assert refusal.value.cell in forged_cells
 
-    assert _identities(restored) == _identities(accepted)
-    assert restored.certification is not None and restored.certification.passed
-    kept = restored.certification.fidelity
-    assert kept is not None and kept.status == "certified"
-    assert np.asarray(kept.deviation_bounds)[row, 1] == np.nextafter(tolerance, -np.inf)
+
+def _stored_and_fresh(
+    accepted: CellMeshingResult, fresh_fraction: float, /
+) -> tuple[SourceFidelityCertificate, SourceFidelityCertificate, int]:
+    """A stored claim of ``[0, 0]`` at one cell and its reproof.
+
+    A pre-fix chord bound across a C0 knot claimed zero deviation there; the
+    reproof encloses the true deviation as ``[0, fresh_fraction * tolerance]``.
+    """
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    row = int(np.argmax(np.asarray(fidelity.deviation_bounds)[:, 1]))
+    fresh_upper = fresh_fraction * fidelity.tolerance
+    stored_bounds = np.array(fidelity.deviation_bounds, copy=True)
+    stored_bounds[row] = (0.0, 0.0)
+    fresh_bounds = np.array(fidelity.deviation_bounds, copy=True)
+    fresh_bounds[row] = (0.0, fresh_upper)
+    findings = fidelity.findings
+    if fresh_upper > fidelity.tolerance:
+        findings = (
+            *findings,
+            MeshCertificateFinding(
+                "source_fidelity_tolerance",
+                "unresolved",
+                "cell",
+                (fidelity.source_cell_global_ids[row],),
+                detail="The continuous directed deviation upper bound exceeds the requested tolerance.",
+            ),
+        )
+    return (
+        _with_fields(fidelity, deviation_bounds=stored_bounds),
+        _with_fields(fidelity, deviation_bounds=fresh_bounds, findings=findings),
+        row,
+    )
+
+
+@pytest.mark.meshcore
+def test_adoption_refuses_a_stored_zero_bound_whose_reproof_exceeds_tolerance(
+    accepted: CellMeshingResult,
+) -> None:
+    stored, fresh, row = _stored_and_fresh(accepted, 2.0)
+    assert stored.status == "certified" and fresh.status != "certified"
+    with pytest.raises(SourceFidelityReproofError) as refusal:
+        stored.adopt_reproof(fresh)
+    assert refusal.value.bound == "deviation_bounds"
+    assert refusal.value.cell == stored.source_cell_global_ids[row]
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_bound_over_a_stored_zero_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    stored, fresh, row = _stored_and_fresh(accepted, 0.5)
+    adopted = stored.adopt_reproof(fresh)
+    assert adopted.status == "certified"
+    assert adopted.certificate_id == stored.certificate_id
+    shipped = np.asarray(adopted.deviation_bounds)[row]
+    assert tuple(shipped) == (0.0, 0.5 * stored.tolerance)
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_one_sided_normal_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    cells = len(fidelity.source_cell_global_ids)
+    small = np.full((cells,), 0.01, dtype=np.float64)
+    reproved = np.array(small, copy=True)
+    reproved[cells // 2] = 0.25
+    stored = _with_fields(
+        fidelity,
+        normal_deviation_bounds=small,
+        maximum_normal_deviation_lower=0.0,
+        maximum_normal_deviation_bound=0.01,
+    )
+    fresh = _with_fields(
+        fidelity,
+        normal_deviation_bounds=reproved,
+        maximum_normal_deviation_lower=0.0,
+        maximum_normal_deviation_bound=0.25,
+    )
+    adopted = stored.adopt_reproof(fresh)
+    assert adopted.normal_deviation_bounds is not None
+    assert np.array_equal(adopted.normal_deviation_bounds, reproved)
+    assert adopted.maximum_normal_deviation_bound == 0.25
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_cover_bound_over_a_stored_zero_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None and fidelity.coverage is not None
+    cover = fidelity.coverage
+    zero = SourceBoundaryChartCover(
+        cover.simplices,
+        np.zeros_like(np.asarray(cover.deviation_bounds)),
+        cover.semantics,
+        cover.complete,
+        cover.source_id,
+        cover.source_revision,
+        findings=cover.findings,
+        restriction_ids=cover.restriction_ids,
+    )
+    assert np.any(np.asarray(cover.deviation_bounds) > 0.0)
+    adopted = _with_fields(fidelity, coverage=zero).adopt_reproof(fidelity)
+    assert adopted.coverage is not None
+    assert np.array_equal(adopted.coverage.deviation_bounds, cover.deviation_bounds)
+
+
+def _chart_rows(target_to_root: tuple[float, float], jacobian: float) -> Any:
+    """Two reusable rows; row 0 carries the given evidence, row 1 fixed evidence."""
+    from phydrax.geometry.implicit._chart_restriction import ImplicitChartRows
+
+    keys = np.arange(32, dtype=np.uint8).reshape((2, 16))
+    values = np.asarray(
+        (
+            (1e-9, *target_to_root, 0.0, 0.1, jacobian, 0.5, 2.0),
+            (1e-9, 0.0, 1e-3, 0.0, 0.1, 1.0, 0.5, 2.0),
+        ),
+        dtype=np.float64,
+    )
+    return ImplicitChartRows(keys, np.ones((2,), dtype=np.bool_), values)
+
+
+@pytest.mark.meshcore
+def test_adoption_ships_the_reproved_chart_row_over_a_stored_zero_bound(
+    accepted: CellMeshingResult,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    half = 0.5 * fidelity.tolerance
+    stored = _with_fields(fidelity, chart_rows=_chart_rows((0.0, 0.0), 1.0))
+    fresh = _with_fields(fidelity, chart_rows=_chart_rows((0.0, half), 0.75))
+    adopted = stored.adopt_reproof(fresh)
+    assert adopted.chart_rows is not None
+    row = np.asarray(adopted.chart_rows.values)[0]
+    assert tuple(row[1:3]) == (0.0, half)
+    assert row[5] == 0.75
+    adopted.chart_rows.require_current()
+
+
+@pytest.mark.meshcore
+@pytest.mark.parametrize(
+    ("target_to_root", "jacobian", "bound"),
+    (
+        ((0.0, 2.0), 1.0, "chart_rows.target_to_root"),
+        ((0.0, 0.0), 0.0, "chart_rows.chart_jacobian_lower"),
+    ),
+    ids=("tolerance", "jacobian"),
+)
+def test_adoption_refuses_a_chart_row_decision_its_reproof_does_not_hold(
+    accepted: CellMeshingResult,
+    target_to_root: tuple[float, float],
+    jacobian: float,
+    bound: str,
+) -> None:
+    assert accepted.certification is not None
+    fidelity = accepted.certification.fidelity
+    assert fidelity is not None
+    reproved = (target_to_root[0], target_to_root[1] * fidelity.tolerance)
+    stored = _with_fields(fidelity, chart_rows=_chart_rows((0.0, 0.0), 1.0))
+    fresh = _with_fields(fidelity, chart_rows=_chart_rows(reproved, jacobian))
+    with pytest.raises(SourceFidelityReproofError) as refusal:
+        stored.adopt_reproof(fresh)
+    assert refusal.value.bound == bound
 
 
 @pytest.mark.meshcore

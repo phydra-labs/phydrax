@@ -45,6 +45,85 @@ from phydrax.meshing.providers._native_periodic import (
 )
 
 
+@pytest.mark.parametrize(
+    ("dimension", "skewed"), [(2, False), (2, True), (3, False), (3, True)]
+)
+def test_native_periodic_delaunay_certifies_every_anchored_circumball(
+    dimension: int, skewed: bool
+) -> None:
+    from phydrax import _meshcore
+
+    generator = np.random.default_rng(31 + dimension)
+    lattice = np.eye(dimension, dtype=np.float64)
+    if skewed:
+        lattice[1, 0] = 0.4
+        if dimension == 3:
+            lattice[2] = (-0.3, 0.2, 0.8)
+    inverse = np.linalg.inv(lattice)
+    count = 600
+    lifted = generator.random((count, dimension)) + generator.integers(
+        -1, 2, (count, dimension)
+    )
+    points = lifted @ lattice
+    fractional = points @ inverse
+    initial = 1.0 / 64.0
+    result = _meshcore.periodic_delaunay_local(
+        points,
+        fractional,
+        np.arange(count, dtype=np.int64),
+        np.zeros(count, dtype=np.int32),
+        0,
+        lattice,
+        inverse,
+        initial_margin=initial,
+    )
+    vertices = np.asarray(result.vertices, dtype=np.int64)
+    shifts = np.asarray(result.shifts, dtype=np.int64)
+    base = -np.floor(fractional).astype(np.int64)
+    reach_scale = np.linalg.norm(inverse, axis=0)
+    required = 0.0
+    facets: dict[tuple[tuple[int, ...], ...], int] = {}
+    for row in range(vertices.shape[0]):
+        corners = points[vertices[row]] + shifts[row] @ lattice
+        edges = corners[1:] - corners[0]
+        offset = np.linalg.solve(2.0 * edges, np.sum(edges * edges, axis=1))
+        center = (corners[0] + offset) @ inverse
+        reach = np.linalg.norm(offset) * reach_scale
+        required = max(
+            required,
+            float(np.max(reach - center)),
+            float(np.max(center + reach - 1.0)),
+        )
+        rows: list[tuple[int, tuple[int, ...]]] = sorted(
+            (int(vertices[row, index]), tuple(int(value) for value in shifts[row, index]))
+            for index in range(dimension + 1)
+        )
+        # Each cell is the translate whose least vertex is its base translate.
+        assert rows[0][1] == tuple(int(value) for value in base[rows[0][0]])
+        for face in range(dimension + 1):
+            kept = [row for index, row in enumerate(rows) if index != face]
+            key = tuple(
+                (
+                    vertex,
+                    *(
+                        value - first
+                        for value, first in zip(shift, kept[0][1], strict=True)
+                    ),
+                )
+                for vertex, shift in kept
+            )
+            facets[key] = facets.get(key, 0) + 1
+    # Every facet orbit bounds exactly two cells: the quotient is closed.
+    assert set(facets.values()) == {2}
+    # The margin is the least initial 2^k holding every anchored circumball.
+    margin = result.certified_margin
+    doublings = round(np.log2(margin / initial))
+    assert margin == initial * 2.0**doublings
+    assert required <= margin * (1.0 + 1.0e-9)
+    if doublings > 0:
+        assert required > 0.5 * margin * (1.0 + 1.0e-6)
+
+
 def test_exact_size_statistic_compares_interpolated_lengths() -> None:
     from phydrax.meshing._device_adaptation import (
         _owner_local_size_statistic_compare,

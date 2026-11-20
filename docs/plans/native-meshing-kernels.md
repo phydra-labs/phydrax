@@ -19,11 +19,24 @@ tetrahedra, then implicit volumes, then the CAD solid.
   arithmetic only inside filtered predicates.
 - Certification is a separate verifier over (mesh, source, tolerances) and reports pass, fail with
   findings, or unresolved.
+- A certifier counts only after an independent read-only review of its proof. Every certifier reviewed
+  so far had a soundness defect on first read, all fixed and re-read: `mesh_certify`,
+  `zero_set_certify` (two-way, tube plus possible-zero cover), `verify_volume`, the native surface
+  verifiers `verify_surface_embedding` and `verify_chart_partition`, the quadratic validity screen
+  (correct on first read), the mapped-locator root discharge; `verify_cad_fidelity` (V3) is under
+  re-read. Rows certified by an unreviewed certifier are construction rows with sampled quality.
+- References are re-measured on the macOS machine with each reference and our row interleaved
+  (reference, ours, repeated; minimum each), because machine state alone moves identical code by
+  about 15 % between minutes. Gmsh HXT runs with its default optimizer (`Mesh.Optimize 1`): with 0 its
+  meshes keep dihedral angles down to 0.1 degrees, far below our bar. Stored ceilings are a guide, not
+  the acceptance.
 - Every replaced route is a clean cutover: callers, tests, docs, changelog, generated data in the same
   change; no compatibility path.
 - Determinism: the output depends on the input only (not on thread count or timing).
-- All work runs on the macOS machine only (user decision); native changes are validated by `ctest`
-  with Apple clang. Cross-platform byte identity is not required.
+- Work runs on three machines (user decision Nov 19): macOS (S3, S0-B, S1, S7, integration), Linux
+  (S2), Windows (S4); acceptance timings are taken on the macOS machine only, quiet, back to back with
+  the reference. Native changes pass `ctest` with Apple clang and with each machine's compiler.
+  Cross-platform byte identity is not required.
 
 ## S0 Foundations
 
@@ -53,6 +66,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   inputs (canonicalized).
 - Acceptance: 3D Delaunay at 1e6 points at most 1.8x CGAL (ledger: CGAL 3.26 s, ours 9.08 s); 2D at
   most 2x CGAL.
+- Status (Nov 20, quiet macOS acceptance, references re-measured back to back): ACCEPTED. 2D 0.87-0.92x
+  CGAL, 3D 0.88-0.93x, regular 0.95-0.99x CGAL Regular_3, periodic 0.43-0.63x CGAL Periodic_3 (direct
+  covering-space engine; declared margin change), 1e3-1e6. Output canonicalization stayed mandatory for
+  every caller (linear-time instead of an option).
 
 ### S0-C Flat tetrahedral state
 - `native/meshcore/src/tet_mesh.hpp`, `tet_mesh_state.cpp`, `tet_mesh_capi.cpp`: cells, neighbors,
@@ -88,15 +105,23 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: refinement plus improvement at or above Gmsh HXT single thread (0.34 / 0.63 / 0.77 M tets/s
   on sphere / torus / two cylinders at about 0.8 M tets) with minimum dihedral at least 15 degrees and
   radius-edge at most 2.
+- Status (Nov 20, quiet acceptance 3 on `04ebe132d`, HXT with its default optimizer, torus inputs
+  exported from the measured tree): sphere 0.46 / 0.56x, restricted torus 25 0.87x, grid torus 0.39 /
+  0.32x; recovery 0.21-0.37x CGAL CDT_3. Restricted torus 72 (14k triangles) 1.031x block-timed and
+  1.004x interleaved: open, decided in the next quiet interleaved window. The torus inputs are the
+  restricted-Delaunay surfaces of facet edge 0.072 and 0.025 (stuffing removed).
 
 ### S3-C One-call pipeline and certification
-- `native/meshcore/src/surface_to_tets.cpp` (new) and C entry `phx_mc_surface_to_tets`: recovery,
-  refinement, improvement in one call on flat arrays, returning cells, region labels, boundary
-  classification.
+- Pipeline (decided Nov 19, superseding a separate `surface_to_tets.cpp` / `phx_mc_surface_to_tets`
+  entry): recovery (`phx_mc_plc3d_recover`), adoption of the recovery's native mesh
+  (`TetMesh3D.from_recovery`, no array round trip), refinement and improvement on that native state,
+  and one export. The state never leaves native memory between stages and the Python glue is a fixed
+  handful of calls, so a single C entry would add an ABI without measurable gain; the benchmark's
+  `surface-to-tets-*` rows time exactly this composition end to end.
 - `native/meshcore/src/verify_volume.cpp` (new) and C entry `phx_mc_verify_volume`: exact orientation of
   every cell, combinatorial conformity, boundary equals the input surface, region consistency.
 - Python: the PLC volume route (`phydrax/meshing/providers/_native_volume.py`,
-  `_volume_generation.py`) cut over to the one call; `prove=True` runs the verifier and the existing
+  `_volume_generation.py`) cut over to that native-state pipeline; `prove=True` runs the verifier and the existing
   source-fidelity statement for the given surface; `prove=False` returns the candidate.
 - Tests: route tests updated; the certificate rejects a mesh with a flipped cell, a missing boundary
   face, and a cell outside the surface.
@@ -119,28 +144,51 @@ tetrahedra, then implicit volumes, then the CAD solid.
   1.9 s; `CellMesh` topology 3.45 s; source tables and size field 1.7 s; source associations 8.6 s
   (Equinox's static-field walk about 4.6 s of it); audit 4.4 s (sampled quality evaluation 2.7,
   coincident-vertex search 0.5, edge coverage 0.4, evidence 0.3). NOT met: L6 "in seconds".
+- Update (Nov 19, certify3): bitwise-identical host quality (cell chunks, component-wise corner
+  measures and dihedral angles, component `binary64_matmul`), cheaper topology helpers, simplex
+  top incidence from the cell routes, verified connectivity routes in PLC associations, vectorized
+  size-control selection, sweep-proposed coincident pairs, `StaticRows` for
+  `MeshingScope.unqualified_entity_ids`; identities unchanged. Certified icosphere execute
+  without the profiler (one-facet driver, load 2-10): L4 0.55 s, L5 1.9 s, L6 10.3-10.5 s (was
+  17.1). NOT met: L6 <= 8 s; the remainder is native about 1.9 s, simplex topology about 2.1 s
+  (identity sorts and searches), association construction about 1.8 s (per-row identity JSON
+  and SHA-256 of about 200 MB), host quality about 0.7 s.
+- Suppression coverage (Nov 19, hygiene; S3-C item 7): the four Steiner-suppression fixtures that
+  flips now recover without a split are kept as such; the exhaustive search, the `PlcSearchBudget`
+  accounting (exact budget, one state short, fewer bytes than one chunk: exceeded/inconclusive)
+  and relocation by peeling (`PEEL_AFTER_INCONCLUSIVE`) are exercised again end to end under FIXED
+  by the sliver sheet with vertex 18 raised by 2^-40 (native
+  `test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget`; Python
+  `recover_plc_3d` evidence and the `generate_plc_volume` route with a declared budget in
+  `test_native_volume_generation.py`). Kept, not deleted: these paths are reachable. NOT
+  covered end to end: wedge merging (`merges > 0`); about 15k FIXED variants (twisted n-prisms
+  and towers of them, jittered sliver/cone/lobed patches, single and paired coordinate
+  perturbations of the sliver sheet, each under default and starved budgets) found none, and no
+  unreachability proof exists, so the path and its evidence fields stay. The same sweep found two
+  FIXED recoveries (a 6-vertex twisted prism and a 20-point tower) taking 427 s and over 600 s; the
+  cause was subface legalization rescanning every subface after each flip, fixed by an edge-map
+  worklist (4.65 s and 12.4 s, identical output; pinned as native regressions).
 
 ## Later slices (planned when S3 is accepted; same rules)
-- S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice
-  (`implicit_stuffing.cpp`; Labelle and Shewchuk 2007, with quadrilateral splits through the smallest
-  identity instead of the parity rule; red-green BCC grading after Molino et al. 2003): the band within
-  one spacing of the zero set is the uniform lattice, coarser cells away from it by Lipschitz clearance
-  bounds, red closure and green transitions (25 degrees or better); cut points by active-set regula
-  falsi, warping, conforming stencils. The analytic profile route takes the first spacing from the
-  certified facet bound d^2 / (6 (R - d)) with 1.5 spacings per stuffed triangle diameter (measured
-  maximum 1.41), stuffs the boundary's bounding box, accepts the lattice (exact volume certificate,
-  topology, certified facet deviation; a rejected lattice is repaired by a finer one) and runs the
-  native fixed-boundary quality pass (improvement, refinement only for what improvement leaves
-  unresolved) only when the stuffed cells miss the schedule with margin. `construct()` returns the
-  arrays; `execute()` publishes the `CellMesh` and certifies. Status (Nov 19): construction on the
-  ledger solids takes sphere 4.2 / 9.7 ms (CGAL opt=0 1.4 / 2.5 ms; NOT met) and torus 42 / 103 ms
-  (Gmsh 90 / 224 ms; met) with 2,400 / 5,736 and 22,856 / 50,576 cells, minimum dihedral 30.0 / 20.9 /
-  20.5 / 19.9 degrees; all four certify (fidelity sphere 0.0088 / 0.0047, torus 0.0086 / 0.0058),
-  acceptance with certification 9.6 / 35 s (sphere) and 74 / 197 s (torus). The sphere gap is cell
-  count: the stuffing kernel and the exact volume certificate alone exceed CGAL's time at the
-  certified spacing, and grading cannot coarsen a solid only four to five spacings thick. Remaining:
-  native certifiers (global embedding, validity, distance evidence once per acceptance) and fewer
-  boundary triangles per area at the same certified bound.
+- S1 implicit field to tetrahedra by restricted Delaunay refinement, surface first
+  (`restricted_delaunay.cpp`, `box_tree.cpp`; Boissonnat and Oudot 2005, Rineau and Yvinec 2007),
+  the analytic profile route `implicit_restricted_delaunay`. Seeds: the possible-zero box tree of the
+  interval program (`possible_zero_boxes`, the one subdivision owner) down to the facet edge bound,
+  one root per sign-change edge of a kept box, so every component is seeded by enclosure inclusion.
+  One S0-B Delaunay triangulation: restricted facets refined at their surface ball centers for edge
+  (the certified facet bound d^2 / (6 (R - d)) at 0.95 of the tolerance), 30 degree angle and ball
+  distance; inside cells at their circumcenters for radius-edge 1.98, redirected to the restricted
+  facet whose surface ball they encroach. Termination by packing: no insertion within a separation
+  bound (a quarter of min(e / 2, d, size)) of a vertex; a refused facet still violating the criteria is
+  PHX_MC_UNRESOLVED, a construction failure. Surface repair by failure kind (box roots of uncovered
+  boxes, ball centers at singular vertices, a finer edge bound), boundary vertices projected onto the
+  zero set, slivers removed by edge and face removal and relocation to 15.5 degrees, leftover
+  circumcenters inserted (three rounds), the S3 fixed-boundary improvement as last fallback.
+  `execute()` re-seeds facets above the certified deviation and certifies. Isosurface stuffing was
+  measured on every implicit model and test (restricted 2-10x faster with 4-9x fewer cells, all
+  certified) and deleted. Status (Nov 19, loaded): sphere 1.4 / 2.1 ms with 442 / 827 cells, torus
+  21 / 34 ms with 3,990 / 6,695 cells, minimum dihedral 15.5 degrees or better, all four certify;
+  quiet back-to-back run against CGAL opt=0 (sphere) and Gmsh (torus) pending.
 - S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
   one native call `phx_mc_cad_mesh` on a flat geometry bundle; curves split once by integrating the
   size field and shared by every use; faces meshed in their native parameter chart by metric Delaunay
@@ -157,3 +205,21 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
 - S5 STEP import and remaining exchange formats. S6 layers, hex-dominant, overset, Voronoi. S7 threads
   and devices at scale.
+
+## Row ownership (every ledger row; `.tmp/ledger/`)
+
+| Ledger rows | Reference to beat (single thread) | Slice | Machine |
+|---|---|---|---|
+| F1 point-set Delaunay 2D/3D, 1e3-1e6 | CGAL DT2 / DT3 | S0-B | macOS |
+| Regular triangulation 3D, periodic Delaunay (native-kernels §2-3) | CGAL Regular_3 (2.6-2.9x today), Periodic_3 (5x) | S0-B | macOS |
+| F1 planar CDT and quality refinement (square, square + ring + slit) | Triangle `pcQ`, `pq20a` / `pq30a` | S2-C (`cdt2d`) | Linux |
+| F3 surface to tetrahedra; recovery; refinement; export | Gmsh HXT on the same surface; CGAL CDT_3 | S3 | macOS |
+| Improvement passes on a given mesh (native-kernels §3) | MMG3D `-optim` at equal quality | S3-B | macOS |
+| F4 implicit to tetrahedra | CGAL make_mesh_3, Gmsh | S1 | macOS |
+| F2 CAD solid, F5 curved order 2/3 | Gmsh HXT per size; Netgen `Curve`, Gmsh `setOrder` | S2 | Linux |
+| F7 surface remesh and decimation (1e6 to 1e3-1e5, dense and noisy torus; sphere ladder) | MMGS, CGAL isotropic remeshing | S4-Surface | Windows |
+| F6 / F6b metric adaptation | MMG3D, Omega_h | S4-3D | Windows |
+| F10 queries (closest point, signed distance, winding number, point location) | libigl AABB / FastWindingNumberBVH | S0 queries | macOS after S3 |
+| F8 hex-dominant, F9 prism layers, F13 overset, F14 Voronoi | cfMesh / snappyHexMesh, Gmsh / Netgen, TIOGA, VoroCrust | S6 | assigned after S3 |
+| STEP import and exchange formats (spline faces are S2, decision D1) | the S2 rows on the STEP models (washer, NIST) | S5 | Linux after S2 |
+| Threads and devices | each row above at 1-8 threads | S7 | macOS |

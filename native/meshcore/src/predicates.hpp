@@ -21,7 +21,18 @@
 // orient2d/orient3d are evaluated with Shewchuk's adaptive scheme: stage A
 // static filter, stage B exact evaluation on the rounded differences with the
 // published stage-B bound (and exactness when all difference tails vanish),
-// then full expansion arithmetic.  incircle/insphere use the same stages.
+// then full expansion arithmetic.  insphere runs stage A, then exact integer
+// arithmetic when the coordinates (or the exact differences) are integers
+// times one power of two, then Shewchuk's insphereadapt: stage B on the
+// exact expansion of the rounded differences (against his stage-B bound, or
+// exact when every difference is), stage C (the stage-B estimate corrected
+// by the first-order difference tails, against his stage-C bound), then the
+// full expansion.  incircle runs Shewchuk's incircleadapt: stage B first on
+// a double-double estimate of the rounded-difference determinant (against
+// the stage-B bound with a larger second-order term, or a second-order bound
+// when every difference is exact), then on its exact expansion, stage C (the
+// stage-B estimate corrected by the first-order difference tails, against
+// his stage-C bound), then the full expansion.
 // Weighted power tests use the dynamic forward-error filter then expansions.
 //
 // *_sos variants apply index-ordered Simulation of Simplicity:
@@ -33,6 +44,7 @@
 //     nonzero unless all points lie on one hyperplane (collinear / coplanar).
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 #include "expansion.hpp"
@@ -63,6 +75,72 @@ int orient2d(const double* a, const double* b, const double* c);
 int orient3d(const double* a, const double* b, const double* c, const double* d);
 int incircle(const double* a, const double* b, const double* c, const double* d);
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e);
+
+// The stage of incircle that decides its sign: the floating filter (stage A,
+// incircle_stage), stage B on the compensated estimate or on the exact
+// expansion of the rounded differences, stage C (first-order difference
+// tails) or stage D (the full expansion).
+enum class IncircleStage : std::uint8_t { kA, kBCompensated, kBExpansion, kC, kD };
+struct IncircleDecision {
+  int sign;
+  IncircleStage stage;
+};
+// incircle with the stage that decided it (incircle returns its sign).
+IncircleDecision incircle_decision(const double* a, const double* b, const double* c,
+                                   const double* d);
+
+// The stage of insphere that decides its sign: the floating filter (stage
+// A), the exact integer evaluation, stage B on the exact expansion of the
+// rounded differences (its estimate against the stage-B bound, or its sign
+// when every difference is exact), stage C (first-order difference tails)
+// or stage D (the full expansion).
+enum class InsphereStage : std::uint8_t { kA, kInteger, kB, kBExact, kC, kD };
+struct InsphereDecision {
+  int sign;
+  InsphereStage stage;
+};
+// insphere with the stage that decided it (insphere returns its sign).
+InsphereDecision insphere_decision(const double* a, const double* b, const double* c,
+                                   const double* d, const double* e);
+
+// orient2d through its first, floating stage inlined. Shewchuk's bound on
+// |detleft| + |detright| holds for either sign pattern (opposite signs make
+// |det| the sum), so the test needs no branch on the signs.
+inline int orient2d_filtered(const double* a, const double* b, const double* c) noexcept {
+  const double detleft = (a[0] - c[0]) * (b[1] - c[1]);
+  const double detright = (a[1] - c[1]) * (b[0] - c[0]);
+  const double det = detleft - detright;
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound =
+      (3.0 + 16.0 * kEpsilon) * kEpsilon * (std::fabs(detleft) + std::fabs(detright));
+  if (det > errbound) return 1;
+  if (-det > errbound) return -1;
+  return orient2d(a, b, c);
+}
+
+// The floating stage of incircle (Shewchuk's stage A expression and bound):
+// the sign it decides, or 0 when the exact predicate must decide.
+inline int incircle_stage(const double* a, const double* b, const double* c,
+                          const double* d) noexcept {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double alift = adx * adx + ady * ady;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double clift = cdx * cdx + cdy * cdy;
+  const double det =
+      alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (10.0 + 96.0 * kEpsilon) * kEpsilon * permanent;
+  if (det > errbound) return 1;
+  if (-det > errbound) return -1;
+  return 0;
+}
 
 // The floating stage of orient3d (Shewchuk's stage A expression and error
 // bound): `det` the negated orientation determinant, `errbound` its bound.
@@ -150,6 +228,57 @@ inline int insphere_filtered(const double* a, const double* b, const double* c, 
                              const double* e) noexcept {
   const int sign = insphere_stage(a, b, c, d, e);
   return sign != 0 ? sign : insphere(a, b, c, d, e);
+}
+
+// The floating stage of power3d: insphere_stage with the lift of row k
+// |p_k - e|^2 - (w_k - w_e). That lift takes two roundings more than the
+// insphere lift (the weight difference and the subtraction), each within
+// eps of M_k = |p_k - e|^2 + |w_k - w_e| >= |lift_k|; with M_k in place of
+// the lift in the permanent (at most 24 M X Y Z, bounded by 25 M X Y Z as in
+// insphere_stage), Shewchuk's insphere analysis holds with the lift error
+// grown from 3 eps to 5 eps of M_k, which a doubled coefficient covers.
+// Weights and coordinates in their domains keep every product normal.
+[[gnu::always_inline]] inline int power3d_stage(const double* a, const double* b,
+                                                const double* c, const double* d,
+                                                const double* e, double wa, double wb,
+                                                double wc, double wd, double we) noexcept {
+  const double aex = a[0] - e[0], bex = b[0] - e[0], cex = c[0] - e[0], dex = d[0] - e[0];
+  const double aey = a[1] - e[1], bey = b[1] - e[1], cey = c[1] - e[1], dey = d[1] - e[1];
+  const double aez = a[2] - e[2], bez = b[2] - e[2], cez = c[2] - e[2], dez = d[2] - e[2];
+  const double ab = aex * bey - bex * aey;
+  const double bc = bex * cey - cex * bey;
+  const double cd = cex * dey - dex * cey;
+  const double da = dex * aey - aex * dey;
+  const double ac = aex * cey - cex * aey;
+  const double bd = bex * dey - dex * bey;
+  const double abc = aez * bc - bez * ac + cez * ab;
+  const double bcd = bez * cd - cez * bd + dez * bc;
+  const double cda = cez * da + dez * ac + aez * cd;
+  const double dab = dez * ab + aez * bd + bez * da;
+  const double asquare = aex * aex + aey * aey + aez * aez;
+  const double bsquare = bex * bex + bey * bey + bez * bez;
+  const double csquare = cex * cex + cey * cey + cez * cez;
+  const double dsquare = dex * dex + dey * dey + dez * dez;
+  const double aweight = wa - we, bweight = wb - we, cweight = wc - we, dweight = wd - we;
+  const double alift = asquare - aweight, blift = bsquare - bweight;
+  const double clift = csquare - cweight, dlift = dsquare - dweight;
+  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
+  const double x = std::fmax(std::fmax(std::fabs(aex), std::fabs(bex)),
+                             std::fmax(std::fabs(cex), std::fabs(dex)));
+  const double y = std::fmax(std::fmax(std::fabs(aey), std::fabs(bey)),
+                             std::fmax(std::fabs(cey), std::fabs(dey)));
+  const double z = std::fmax(std::fmax(std::fabs(aez), std::fabs(bez)),
+                             std::fmax(std::fabs(cez), std::fabs(dez)));
+  const double lift = std::fmax(
+      std::fmax(asquare + std::fabs(aweight), bsquare + std::fabs(bweight)),
+      std::fmax(csquare + std::fabs(cweight), dsquare + std::fabs(dweight)));
+  const double permanent = 25.0 * lift * (x * y * z);
+  constexpr double kEpsilon = 0x1p-53;
+  const double errbound = (32.0 + 448.0 * kEpsilon) * kEpsilon * permanent;
+  // power3d is the negated Shewchuk determinant.
+  if (det > errbound) return -1;
+  if (-det > errbound) return 1;
+  return 0;
 }
 
 int power2d(const double* a, const double* b, const double* c, const double* d, double wa,

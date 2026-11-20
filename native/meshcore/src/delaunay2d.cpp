@@ -3,8 +3,10 @@
 //
 // C ABI: 2D Delaunay and regular triangulations (incremental Bowyer-Watson
 // with ghost triangles and symbolic perturbation, see triangulation2d.hpp).
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "capi_guard.hpp"
@@ -41,20 +43,42 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   if (point_count == 0) {
     return PHX_MC_DEGENERATE_INPUT;
   }
+  const std::vector<int32_t> order =
+      deduplicated_insertion_order(points, point_count, 2, active_weights, result->vertex_map);
+  // Vertex k of the triangulation is input point order[k], stored in
+  // insertion order so that walks and cavities touch nearby memory; its
+  // input index orders the symbolic perturbation, so the triangulation is
+  // that of the input points.
+  const std::size_t count = order.size();
+  std::vector<double> local_points(2 * count);
+  std::vector<double> local_weights(weighted ? count : 0);
+  for (std::size_t k = 0; k < count; ++k) {
+    const double* point = points + 2 * static_cast<std::size_t>(order[k]);
+    local_points[2 * k] = point[0];
+    local_points[2 * k + 1] = point[1];
+    if (weighted) local_weights[k] = weights[order[k]];
+  }
+  std::vector<int32_t> local_order(count);
+  std::iota(local_order.begin(), local_order.end(), 0);
   Triangulation2D triangulation;
-  triangulation.reset(points, point_count, active_weights);
-  status = build_delaunay_2d(triangulation, points, point_count, active_weights,
-                             result->vertex_map);
+  triangulation.reset(local_points.data(), static_cast<int64_t>(count),
+                      weighted ? local_weights.data() : nullptr);
+  triangulation.identities = order.data();
+  status = build_ordered_delaunay_2d(triangulation, local_order);
   if (status != PHX_MC_OK) {
     return status;
   }
+  std::vector<char> input_alive(static_cast<std::size_t>(point_count), 0);
+  for (std::size_t k = 0; k < count; ++k) {
+    input_alive[static_cast<std::size_t>(order[k])] = triangulation.vertex_triangle[k] >= 0;
+  }
   for (int32_t& target : result->vertex_map) {
-    if (target >= 0 && triangulation.vertex_triangle[static_cast<std::size_t>(target)] < 0) {
+    if (target >= 0 && input_alive[static_cast<std::size_t>(target)] == 0) {
       target = -1;
     }
   }
   result->points.assign(points, points + 2 * point_count);
-  triangulation.finite_cells(result->cells);
+  triangulation.finite_cells(result->cells);  // input indices (identities)
   if (canonical) canonicalize_cells(*result);
   *mesh = result.release();
   return PHX_MC_OK;

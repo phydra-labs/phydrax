@@ -51,10 +51,27 @@ struct TemplateDefinition {
   ProgramData hessian;
 };
 
+struct Node;
 // Caller-owned scratch of one evaluating thread (program workspace and jets).
 struct EvaluationWorkspace {
   PointWorkspace program;
   std::vector<double> jets;
+  const Node* span_node = nullptr;
+  int64_t span_chart = -1;
+};
+
+// Exact-source coefficient enclosures use the model's node_reals layout.
+// The point path continues to use node_reals itself. Programs and temporary
+// endpoints are retained by the calling thread across interval evaluations.
+struct IntervalEvaluationWorkspace {
+  const double* coefficient_lower = nullptr;
+  const double* coefficient_upper = nullptr;
+  int64_t coefficient_count = 0;
+  const ProgramData* bound_program[3] = {};
+  PreparedIntervalProgram program[3];
+  std::vector<double> lower, upper;
+  std::vector<double> taylor_lower, taylor_upper;
+  bool direct_template = false;
 };
 
 // Closed-form surface evaluators (decision D3) that stand in for a node's
@@ -103,6 +120,24 @@ class CadGeometry {
   int32_t pcurve_node(int64_t use) const noexcept { return model_.use_pcurve_nodes[use]; }
   const Node& node(int32_t index) const noexcept { return nodes_[static_cast<std::size_t>(index)]; }
 
+  // Append representation breakpoints mapped to s in (0,1), where the
+  // node parameter is first + s * (last - first). All distinct spline knots
+  // are retained, regardless of multiplicity: each starts a polynomial span.
+  // degree is raised to the largest encountered spline degree. Endpoints are
+  // the topological vertices and are supplied separately by the caller.
+  // Crossings of adjacent surface knot or piece lines are not enumerated:
+  // they only change the sampled face-curvature size integrand. In particular,
+  // a C0 surface crease is the face stage's responsibility.
+  void curve_breakpoints(int32_t index, double first, double last,
+                         std::vector<double>& points, int& degree) const;
+
+  // Evaluate the exact parameter on the chart selected by span_interior,
+  // which must be strictly inside a representation span; a breakpoint returns
+  // false rather than choosing either side. Curve composites are followed.
+  // Surface knot/piece crossings are not curve representation spans.
+  bool jets_in_span(int32_t node, double parameter, double span_interior, int order,
+                    double* result, EvaluationWorkspace& workspace) const;
+
   // Derivatives of `node` at `point` (its input coordinates) through total
   // order `order` (0 to 2): for n = 0..order the derivatives
   // d^n / (du^(n-j) dv^j), j = 0..n (one per order for one input), each an
@@ -110,6 +145,13 @@ class CadGeometry {
   // False when the point lies outside the node's evaluation domain.
   bool jets(int32_t node, const double* point, int order, double* result,
             EvaluationWorkspace& workspace) const;
+
+  // Outward enclosure of derivatives in the jets layout, over an input box.
+  // The workspace supplies exact-source coefficient bounds for node_reals.
+  // Unsupported nodes or unbounded results return PHX_MC_UNRESOLVED.
+  int32_t interval_jets(int32_t node, const double* input_lower, const double* input_upper,
+                        int order, double* output_lower, double* output_upper,
+                        IntervalEvaluationWorkspace& workspace) const;
 
   // The local Taylor expansion of `node` at `point` in its own parameters.
   bool expand(int32_t node, const double* point, int order, Taylor* out,
@@ -123,7 +165,8 @@ class CadGeometry {
                        EvaluationWorkspace& workspace) const;
   bool expand_closed(const Node& node, const double* point, int order, Taylor* out) const;
   void bind_closed_form(Node& node) const;
-  bool expand_bspline_curve(const Node& node, double t, int order, Taylor* out) const;
+  bool expand_bspline_curve(const Node& node, double t, int order, int span_override,
+                            Taylor* out) const;
   bool expand_bspline_surface(const Node& node, const double* point, int order,
                               Taylor* out) const;
   bool expand_tspline_surface(const Node& node, const double* point, int order,

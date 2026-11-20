@@ -23,7 +23,9 @@ from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     IntervalBoxProgram,
+    IntervalBranchProgram,
     MeshcoreError,
+    zero_set_certify,
     zero_set_remesh,
 )
 from ..._physical import SpatialCoordinateContract
@@ -85,8 +87,8 @@ from .._controls import (
     RegionSeed,
 )
 from .._implicit_volume import (
-    prepare_stuffed_implicit_volume,
-    PreparedStuffedImplicitVolume,
+    prepare_restricted_implicit_volume,
+    PreparedRestrictedImplicitVolume,
 )
 from .._native_construction import (
     NativeCertificationRequest,
@@ -1896,10 +1898,15 @@ def _carrier_quality(
     )
 
 
-def _implicit_field_box_programs(
+def _implicit_field_programs(
     geometry: CompiledGeometry, /
-) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
-    """Lower f and grad f of the implicit source to one-box native interval programs."""
+) -> tuple[IntervalBranchProgram, IntervalBoxProgram]:
+    """Lower f, with its branch-evidence events, and grad f of the implicit source.
+
+    f's ``IntervalBranchProgram`` is the one program a carrier witness's
+    corner signs and continuity, and a tetrahedral source's facet admissions,
+    are all decided by.
+    """
     kernel, state = geometry.kernel, geometry.state
 
     def value(point: Array) -> Array:
@@ -1910,6 +1917,10 @@ def _implicit_field_box_programs(
             prepare_interval_function(function, 3, batch_capacity=1, execution="native")
             for function in (value, jax.grad(value))
         )
+        value_program, gradient_program = (program.native_program for program in programs)
+        if value_program is None or gradient_program is None:
+            raise RuntimeError("Native interval preparation returned no native program.")
+        lowered = programs[0].native_branches().branch_box_program()
     except IntervalExtensionError as error:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -1918,10 +1929,7 @@ def _implicit_field_box_programs(
             provider_code="native_implicit_carrier_remesh",
             stage="source_inspection",
         ) from error
-    value_program, gradient_program = (program.native_program for program in programs)
-    if value_program is None or gradient_program is None:
-        raise RuntimeError("Native interval preparation returned no native program.")
-    return value_program.box_program(), gradient_program.box_program()
+    return lowered, gradient_program.box_program()
 
 
 def _carrier_edge_length(
@@ -2143,32 +2151,52 @@ def _remesh_implicit_carrier(
     schedule: NativeVolumeSchedule,
     vertices: np.ndarray,
     faces: np.ndarray,
+    witness_boxes: np.ndarray,
+    domain: np.ndarray,
     carrier_distance: float,
     admission_tolerance: float,
-    incidence: tuple[np.ndarray, np.ndarray] | None = None,
     /,
-) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, float]:
-    """Remesh the scaffold carrier under the native zero-set band admission.
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray, np.ndarray, float]:
+    """Remesh the scaffold carrier natively and certify every resulting triangle.
 
-    Every created triangle is certified within ``admission_tolerance`` of the
-    zero set and transversal to the field gradient; untouched scaffold
-    triangles keep their independently established ``carrier_distance``. The
-    result must meet the FIXED-fill radius-edge bound or the route refuses.
+    Construction is floating point; every triangle of the result is then
+    certified within ``admission_tolerance`` of the zero set, transversal to
+    the field gradient and embedded, except triangles kept from the carrier
+    around creases, which are accepted at the diagonal of their scaffold cell
+    box (``witness_boxes``, one per carrier face) when the certificate proves
+    that box holds a zero of the field; refused triangles are repaired
+    locally. The certificate also proves every zero of the field in
+    ``domain`` (the discovery's lattice domain) near the result, or refuses.
+    ``carrier_distance`` only steers the construction's projection reach.
+    Returns the certified surface, its surface-to-zero-set distance, and the
+    construction and certification counters. The result must meet the
+    FIXED-fill radius-edge bound or the route refuses.
     """
-    value, gradient = _implicit_field_box_programs(source.geometry)
+    value, gradient = _implicit_field_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
     try:
         remeshed = zero_set_remesh(
             vertices,
             faces,
-            value,
-            gradient,
+            value.program,
             admission_tolerance,
             carrier_distance,
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
-            incidence=incidence,
-            admission_limited_coarsening=True,
+        )
+        certified = zero_set_certify(
+            remeshed.vertices,
+            remeshed.triangles,
+            value,
+            gradient,
+            admission_tolerance,
+            remeshed.orientation,
+            vertices,
+            faces,
+            witness_boxes,
+            domain,
+            edge_length,
+            _CARRIER_MINIMUM_ANGLE_DEGREES,
         )
     except (MeshcoreError, ValueError, OverflowError) as error:
         raise _failure(
@@ -2177,7 +2205,18 @@ def _remesh_implicit_carrier(
             provider_code="native_implicit_carrier_remesh",
             stage="surface_meshing",
         ) from error
-    worst = _maximum_face_radius_edge_ratio(remeshed.vertices, remeshed.triangles)
+    # Both directions within the admission tolerance: the zero set ->
+    # surface bound is published with the certificate and gated here.
+    if not certified.reverse_distance <= admission_tolerance:
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "The implicit carrier zero-set remesh certified the zero set only within "
+            f"{certified.reverse_distance:.6g} of the surface, above the admission "
+            f"tolerance {admission_tolerance:.6g}.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        )
+    worst = _maximum_face_radius_edge_ratio(certified.vertices, certified.triangles)
     if schedule.radius_edge_bound is None and not np.isfinite(worst):
         raise _failure(
             MeshingFailureCategory.QUALITY_REJECTED,
@@ -2201,10 +2240,12 @@ def _remesh_implicit_carrier(
             stage="surface_meshing",
         )
     return (
-        remeshed.vertices,
-        remeshed.triangles,
-        remeshed.distance,
+        certified.vertices,
+        certified.triangles,
+        certified.distance,
+        certified.reverse_distance,
         remeshed.counters,
+        certified.counters,
         edge_length,
     )
 
@@ -2382,24 +2423,30 @@ def _implicit_plc_carrier(
         # The scaffold carrier provably cannot meet the FIXED-fill bound.
         admission_tolerance = _implicit_carrier_admission_tolerance(source, specification)
         scaffold_vertices, scaffold_triangles = vertices, triangles
-        incidence = None
-        if 3 * len(triangles) <= np.iinfo(np.int32).max:
-            topology = extracted.topology
-            incidence = (
-                np.asarray(topology.vertex_face_offsets),
-                np.asarray(topology.vertex_faces),
-            )
-        vertices, triangles, carrier_distance, counters, edge_length = (
-            _remesh_implicit_carrier(
-                source,
-                specification,
-                schedule,
-                vertices,
-                triangles,
-                scaffold_distance,
-                admission_tolerance,
-                incidence,
-            )
+        # Each discovery face lies in its scaffold leaf cell, whose box is the
+        # face's witness (the certificate checks containment and a zero in it).
+        scaffold = discovery.scaffold
+        witness_boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[
+            np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+        ]
+        (
+            vertices,
+            triangles,
+            carrier_distance,
+            reverse_distance,
+            counters,
+            certification,
+            edge_length,
+        ) = _remesh_implicit_carrier(
+            source,
+            specification,
+            schedule,
+            vertices,
+            triangles,
+            witness_boxes,
+            np.asarray(scaffold.domain, dtype=np.float64),
+            scaffold_distance,
+            admission_tolerance,
         )
         face_scaffold_rows = _nearest_scaffold_rows(
             scaffold_vertices, scaffold_triangles, vertices, triangles
@@ -2435,8 +2482,13 @@ def _implicit_plc_carrier(
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_admission_tolerance", admission_tolerance),
             ("carrier_remesh_unmet_count", float(counters[4])),
-            ("carrier_remesh_transversality_refusals", float(counters[6])),
-            ("carrier_remesh_distance_refusals", float(counters[7])),
+            ("carrier_remesh_transversality_refusals", float(certification[0])),
+            ("carrier_remesh_distance_refusals", float(certification[1])),
+            ("carrier_remesh_embedding_refusals", float(certification[2])),
+            ("carrier_remesh_kept_carrier_triangles", float(certification[3])),
+            ("carrier_remesh_repair_splits", float(certification[4])),
+            ("carrier_remesh_reverse_distance", reverse_distance),
+            ("carrier_remesh_reverse_proof", float(certification[8])),
         )
     carrier_revision = canonical_fingerprint(
         {
@@ -4215,21 +4267,21 @@ def prepare_native_implicit(
     _PreparedImplicitRoute
     | _PreparedFixedImplicitRoute
     | _PreparedImplicitVolumeRoute
-    | PreparedStuffedImplicitVolume
+    | PreparedRestrictedImplicitVolume
 ):
-    """Prepare adaptive surface/volume or direct stuffed analytic volume data."""
+    """Prepare adaptive surface/volume or direct restricted analytic volume data."""
     normalized = False
     programs = None
     normalized_bound = None
     if isinstance(source, AnalyticImplicitProfile):
         if isinstance(specification, VolumeMeshingSpec) and options.route in (
             None,
-            "implicit_stuffing",
+            "implicit_restricted_delaunay",
         ):
             if options.implicit_policy is not None:
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "AdaptiveImplicitSurfacePolicy cannot alter the isosurface-stuffing route.",
+                    "AdaptiveImplicitSurfacePolicy cannot alter the restricted Delaunay route.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )
@@ -4241,11 +4293,11 @@ def prepare_native_implicit(
             if not isinstance(schedule, NativeVolumeSchedule):
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Stuffed analytic volume generation requires a NativeVolumeSchedule.",
+                    "Restricted analytic volume generation requires a NativeVolumeSchedule.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )
-            return prepare_stuffed_implicit_volume(
+            return prepare_restricted_implicit_volume(
                 source,
                 specification,
                 schedule,
@@ -4255,7 +4307,7 @@ def prepare_native_implicit(
             if options.route != "implicit_adaptive_tetrahedral":
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "An analytic volume profile uses the isosurface-stuffing route by default; adaptive discovery requires explicit implicit_adaptive_tetrahedral selection.",
+                    "An analytic volume profile uses the restricted Delaunay route by default; adaptive discovery requires explicit implicit_adaptive_tetrahedral selection.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )

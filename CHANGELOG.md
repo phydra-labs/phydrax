@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
+  per-triangle distance bounds between a finished CAD surface mesh and its
+  exact source (interior, trim lens, pole and knot-line terms), with lazily
+  built exact coefficient enclosures and interval jets for every CAD node kind.
+  Its rows count once an independent review of the proof is complete.
+- Native quadratic CAD node placement `phx_mc_cad_quadratic_nodes`: one P2
+  node per tetrahedral edge on its curve or face (curve midpoint parameters,
+  face midpoint UV), interior edges at midpoints, validity by the exact
+  quadratic tetrahedron check, harmonic repair then straightening of failing
+  cells with records.
 - `TetMesh3D.from_recovery` adopts a PLC recovery's native mesh
   (`PlcRecovery3D.native`, C API `phx_mc_tet_mesh_create_from_plc`): it takes
   the recovery's cell adjacency and, for a mesh that is its own source bank,
@@ -194,7 +204,7 @@
   implicit-face edges are collapsed onto existing vertices before the fill.
   The implicit-face fidelity bound is certified per triangle and is now
   always finite. The gradient-flow bound takes the better of the
-  componentwise interval and a centred form about the triangle centroid as
+  componentwise interval and a centered form about the triangle centroid as
   its gradient-norm lower bound; the componentwise interval alone contains
   zero wherever the normal turns across the box, which had left the bound
   infinite. A triangle it does not prove is split at its edge midpoints,
@@ -324,6 +334,242 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Benchmarks: an `improve-sphere` row times state creation plus improvement
+  (radius-edge 2) on TetGen icosphere meshes of 17,274 / 142,911 / 1,163,771
+  tetrahedra against MMG3D `-optim -nosurf`, with each size's minimum-dihedral
+  target set to MMG3D's achieved minimum rounded up to 0.1 degrees (22.0 /
+  19.3 / 19.8), and checks the result's quality itself (kept closed boundary,
+  no inverted cells). `benchmarks/native_meshing_mmg3d.py` prepares the inputs
+  and times MMG3D for interleaved comparison; the icosphere generator moves to
+  `benchmarks/_meshing_surfaces.py`.
+- Native PLC volumes build their tetrahedral topology from the native
+  `phx_mc_tet_mesh_entities` (sorted unique edges and faces, cell routes, face
+  edges, incidence orders); the tables are checked against the cells in linear
+  time, so topology and all ids are unchanged, and generic `CellMesh`
+  construction still needs no native library. `OrientedIncidence` accepts a
+  checked `canonical_order`; lexicographic incidence sorting, duplicate-row
+  checks, canonical entity ids, mesh-zone disjointness and per-row association
+  identity serialization are faster with identical results. Certified
+  icosphere `execute` (one-facet driver): level 6 10.7 s -> 8.0-8.4 s, level 5
+  1.9 -> 1.5-1.7 s. PLC recovery lists the convex hull's triangles per vertex
+  with a counting sort.
+- Native fixed-boundary volume meshing has lower fixed costs with unchanged
+  output: `TetMesh3D.from_recovery` adopts the recovered adjacency, segments
+  and (for a Delaunay, self-covered recovery) cell orientation without proving
+  them again (`validate=True` still re-proves them) and skips the
+  declared-plane pass when nothing is declared; `TetMesh3D.arrays` fills every
+  bank from one native buffer; protection radii and local feature sizes find
+  facet segments through a per-vertex index and prune against the running
+  radius.
+- Native planar Delaunay is faster with byte-identical output: the
+  constrained triangulation's initial Delaunay build runs on insertion-ordered
+  point copies and relabels to input indices (cache-local walks), the BRIO key
+  sort radix-sorts only the significant top bits, 2D canonical cell ordering
+  is a counting sort of cell ids, and the insertion loop presizes its scratch
+  and drops prefetches that measured as overhead.
+- Native restricted implicit meshing has a lower fixed per-call cost with
+  unchanged output: each lattice coordinate of the box tree is computed once
+  for all levels, the box tree's interval evaluation runs in reused batches,
+  the surface topology check groups edges instead of sorting them, and the
+  boundary polish and sliver pass allocate less (about 13% fewer cycles on
+  the implicit sphere and torus rows).
+- Native CAD surface meshing: every CAD face is meshed in its parameter chart
+  by a frontal metric refinement kernel with a guarded worst-angle pass and
+  assembled into one surface with shared curve discretizations, pole fans and
+  explicit refusal records; chart refinement falls back to the midpoint of
+  the longest unconstrained edge when both the frontal point and the
+  circumcenter are refused as too close to a vertex. Chart meshes and face
+  outputs change (no fingerprinted consumer yet).
+- Native surface-to-tetrahedra is faster with identical output: insphere
+  evaluates Shewchuk's stages B and C on stack expansions before the full
+  expansion (`insphere_decision` reports the deciding stage and tests pin the
+  stage B and C bounds); PLC recovery recognizes a source that conforms to the
+  Delaunay triangulation of its points (every triangle a face, every edge row an
+  edge, every cell positive) and only labels its faces, without bounding
+  corners, reuses the preparation's sorted edge index, finds subfaces in a
+  lowest-vertex table and classifies regions from them (falling back to the
+  full classification, in order, on any conflict); the Delaunay build commits
+  each cone in one pass; refinement looks up facet edges in a slot table,
+  deduplicates feature lines by counting sort and queries feature sizes cell
+  by cell; subface legalization keeps its edge map across flips and rechecks
+  only edges a flip or split can have changed (two small fixed-boundary
+  inputs: 422 s -> 4.7 s and more than 600 s -> 12.4 s).
+- Analytic implicit certification is faster with identical identities:
+  `AnalyticImplicitProfile.boundary_cover` checks each candidate count on its
+  parameter diagonals before building the full grid (same first admissible
+  count, bit-identical samples), and acceptance computes the analytic distance
+  evidence once for witness validation, the fidelity certificate and the
+  tubular coverage premise. A tolerance-0.002 sphere certifies in 66 s instead
+  of 428 s.
+- Planar constrained Delaunay refinement allocates and checks less per call
+  and per insertion; refined meshes are unchanged.
+- Analytic implicit profile volumes are meshed by restricted Delaunay
+  refinement, surface first (`implicit_restricted_delaunay`,
+  `phx_mc_implicit_restricted_delaunay`,
+  `NativeIntervalProgram.restricted_tetrahedra`). Seeds come from the
+  possible-zero cover of the interval program on the anchored dyadic lattice
+  of adaptive discovery (`box_tree.hpp`), facets are refined to the certified
+  facet bound, the interior in the same triangulation to radius-edge 2, and
+  slivers are removed to 15 degrees; a separation bound makes termination a
+  packing argument and a refused refinement is an `UNRESOLVED` construction
+  failure. Isosurface stuffing (`implicit_stuffing`,
+  `phx_mc_implicit_stuffing`, `stuff_tetrahedra`, `PreparedStuffed*`) is
+  removed: on every implicit model the restricted route is 2-10x faster with
+  4-9x fewer cells, and every model that certified before still certifies.
+  Declared identity change: route literal, prepared fingerprints (facet edge
+  and cell size instead of spacing and levels), and every analytic-profile
+  volume's mesh, result and certification ids; the S3 `surface-to-tets-torus`
+  benchmark inputs are the restricted torus surfaces of facet edge 0.072 and
+  0.025.
+- The certified PLC route is faster with identical mesh, certificate and
+  result identities: host cell quality runs in cache-sized cell chunks on
+  contiguous coordinate components (bitwise-identical values), simplex
+  `CellMesh` topology takes its top incidence from the cell routes, PLC source
+  associations take cell-to-edge/face rows from the simplicial connectivity
+  once each routed row is checked to be the cell's face, size-control winners
+  are selected for all samples at once (same refusals, first failing sample
+  first), the audit's coincident-vertex search proposes pairs by a sorted
+  first-axis sweep, and organization checks skip work already established.
+  Certified icosphere (81,920 triangles) `execute`: 17.1 -> 10.3 s.
+- Representation change (declared; ids, codecs, archives and pickles
+  unchanged): `StaticRows`, the final tuple subclass held as one static PyTree
+  leaf, moved from `phydrax.meshing._association` to `phydrax._strict`;
+  `GeometryAssociation` row banks and `MeshingScope.unqualified_entity_ids`
+  use it, and a scope without sides no longer re-derives its ID bank.
+- Native periodic Delaunay triangulates directly on the flat torus: each point
+  is one vertex, cells carry lattice offsets, walks and cavities run through
+  the covering space, bootstrapped from the certified image triangulation of a
+  BRIO sample and falling back to it whenever the quotient is not a valid
+  triangulation of the torus. Filters run on rounded translates with a bound
+  for their rounding; signs and the tie-breaking stay exact, so cells, keys and
+  support bounds are unchanged. Declared identity change: `certified_margin`
+  is now the least `initial_margin * 2^k` holding every published cell's
+  circumball (same `required_margin` formula, facet closure), never larger
+  than before, so `certified_periodic_margin`, periodic shell certificates and
+  owner-local view ids can change, and stored archives with a larger margin
+  must be regenerated. New `periodic-3d` benchmark row (CGAL Periodic_3).
+- Native in-circle tests the floating filter cannot decide go through
+  Shewchuk's adaptive stages (B, C, D) with a double-double estimate of the
+  stage-B determinant in front; signs remain exact and every 2D Delaunay,
+  regular, CDT and Ruppert output is byte-identical. Near-cocircular input is
+  much faster (the published 206-point ring's undecided tests 583 ns -> 18 ns
+  each); `test_predicates` checks every stage against the unfiltered
+  expansion on 461,144 near-degenerate cases.
+- Native zero-set remeshing collapses edges far below the collapse threshold
+  onto an endpoint instead of a projected midpoint (no point jet per collapse
+  when coarsening a fine input); new `surface-remesh-sphere-1e3` and
+  `surface-remesh-sphere-1e5` benchmark rows (the MMGS sphere ladder).
+- Native surface-to-tetrahedra is faster with identical output: a PLC
+  recovery that needed no local edits, Steiner points or metric marks its
+  cells as Delaunay, and refinement of the adopted mesh skips its initial flip
+  pass while the mesh is unedited; interior insertions link cone cells across
+  a dense table of local boundary-vertex indices; the segment index and
+  improvement's source-edge set are hash containers and improvement's
+  insertion cavities use the segment index instead of scanning the segment
+  bank; recovery inserts its bounding corners into the untouched Delaunay
+  triangulation without per-cell validation; first-round refinement proposals
+  get batched Hilbert keys and a radix sort.
+- Planar quality refinement processes bad triangles through a deterministic
+  spatial bucket queue (`refine_queue.hpp`, one bucket where buckets do not
+  pay) and constructs inserted points from a canonical vertex order. Declared
+  identity change: refined planar meshes (points, triangles, segment and
+  constraint ids, parents) and their triangulation fingerprints change,
+  including the periodic-box cap triangulation; non-refining constrained
+  Delaunay output is unchanged. Refined meshes are permutation-invariant on
+  generic input; 1e6-point refinement runs about 2.2x faster, with minimum
+  angles above Triangle's at equal input.
+- CAD chart refinement uses the same queue (2x faster at 1e6 triangles; chart
+  meshes change, no fingerprinted consumer yet), and curve discretization
+  gives every representation span at least the ceiling of its metric length,
+  keeping boundary segments within unit length in every adjacent face metric.
+- Native zero-set surface remeshing constructs without per-edit proofs (a
+  floating-point adapter with curvature sizing, projection on point jets and
+  quality repair) and certifies afterwards: `zero_set_certify` proves the
+  distance and transversality of every triangle where it can, keeps the
+  carrier's own triangles at the carrier's bound where the proof fails next to
+  a crease, certifies the surface embedded and closed, repairs refused
+  triangles locally and returns the certified surface; the surface envelope
+  remesh uses the same construction and band certification. The per-edit
+  certified remesher is removed. New benchmark rows `surface-remesh-sphere`
+  and `surface-remesh-torus` (MMGS) with independently measured angles and
+  two-way distance.
+- The native library builds with MSVC again: the exact integer insphere rows
+  use the `wide_integer.hpp` helpers (native 128-bit arithmetic where the
+  compiler has it, portable limbs otherwise, identical results), popcount is
+  `std::popcount` and prefetch a portable hint.
+- The PLC tetrahedral route adopts the native recovery through
+  `TetMesh3D.from_recovery`; a kept conforming carrier is still constructed
+  from its arrays. Identities unchanged.
+- PLC route acceptance audit: `audit_cell_mesh(..., tetrahedral_degree=)`,
+  selected by the `volume_plc` certification schedule, takes the checks the
+  native tetrahedral degree theorem (`phx_mc_verify_tetrahedra`) implies from a
+  global embedding certificate it decided certified: collapsed and duplicate
+  cells, nonmanifold and inconsistently oriented facets and edges, open
+  boundary, boundary self-intersection, vertex stars wherever each boundary
+  vertex has one fan of boundary triangles, and zero measure / mean-ratio and
+  at-least-2^294 aspect thresholds. Welded vertices, a pinched boundary vertex
+  or other thresholds are evaluated as on every route. Declared identity
+  change: `CellMeshAuditReport.tetrahedral_degree` (new static field) records
+  the selection and enters `report_id`, so `volume_plc` audit, certification
+  and result identities change; counts, issues and quality reports are
+  unchanged.
+- `GeometryAssociation` per-row static banks (`source_entity_ids`,
+  `source_roles`, `source_occurrence_paths`, `source_region_sides`,
+  `source_parameter_intervals`, `target_parameter_intervals`,
+  `target_reference_pieces`, `source_parameter_points`) are validated immutable
+  tuples held as one static PyTree leaf each, so construction no longer walks
+  every row element. Accessors still return tuples (equal and hash-equal to
+  plain tuples); association, organization and result identities, archives and
+  pickles are unchanged.
+- Faster with identical results: simplex `CellMesh` topology is assembled once
+  (6.3 s -> 3.3 s at 636,257 tetrahedra), packed row ordering sorts uint64 keys
+  by value, sorted unique rows and duplicate checks value-sort int64 keys, and
+  patch-zone adjacency groups only the examined faces' incidences. Certified
+  icosphere (81,920 triangles) `execute`: L4 1.30 -> 0.68 s, L5 5.12 -> 2.67
+  s, L6 32.8 -> 17.2 s (single thread, loaded machine).
+- Native point-set and weighted Delaunay are faster with identical cells:
+  cone cells are linked through a dense directed-edge table before any
+  topology write (a cavity whose boundary is not a closed surface is refused
+  with the complex unchanged, and refinement reports it as a topology
+  rejection), coordinates are stored in insertion order with input-index
+  tie-breaking, cavity growth prefetches and avoids branches, the planar walk
+  evaluates a step's three edge orientations at once and reuses cavity slots
+  in release order (slot order, `vertex_triangle` and walk steps unchanged),
+  Hilbert keys are computed in 32-point blocks, weighted 3D conflicts are
+  decided by a static floating-point power-test filter before the exact
+  fallback, and canonical cell ordering runs in linear time (radix sort on the
+  first vertex, branch-free ranks within each group) for every caller, with
+  byte-identical output. New benchmark row `regular-3d` (CGAL Regular_3).
+  Quiet-machine acceptance against CGAL measured back to back at 1e3-1e6
+  points: 2D 0.88-0.94x, 3D 0.87-0.92x, regular 3D 0.95-0.98x.
+- Native CAD curve parameters: one shared parameter set per curve for every
+  use and both seam copies, breakpoints from the curve representation only,
+  size integration with curvature and gradation, degree-aware sampling and a
+  sampled sag screen with bisection; final curve fidelity remains subject to
+  certification.
+- Native chart-metric refinement kernel for CAD faces: metric Bowyer-Watson
+  cavities (metric in-circle at the candidate) with exact star-shaped validity,
+  constrained boundaries that are never split, fixed regions and an admission
+  callback for pole zones, and per-criterion diagnostics of refused insertions
+  and unresolved triangles.
+- Planar constrained Delaunay and refinement: output coordinates are moved
+  instead of copied, cavity traversal storage is reused, stale heap entries
+  are not rotated, and the ghost-slot indexing in `attach_to_hull` is fixed;
+  new benchmark rows `cdt-2d` and `ruppert-2d` on the ledger's inputs.
+- Native test: PLC contact pairs are refused in either kind order.
+- Native surface-to-tetrahedra recovery and refinement are faster with
+  identical output (contact pairs bucketed by cell without sorting, edge rows
+  and closure read from edge-use runs, source-face indices built on first
+  query, direct protection-radius row visits, reserved incidence lists,
+  coplanar edge-sharing source triangles proved legal without the full
+  intersection test, fewer divisions and square roots in refinement setup).
+  Contact checking now also tests segment-triangle and point pairs that
+  arrive in reverse kind order.
+- PLC tetrahedral certification no longer runs per-row Python: audit
+  association and patch-zone checks, piecewise-linear domain measures (exact
+  integer arithmetic), source tables, size fields, scopes and association
+  fingerprints are vectorized with unchanged identities. The certified
+  81,920-triangle icosphere (636,257 cells) takes 32.8 s instead of 77.8 s.
 - Native meshing decides clear Delaunay predicate cases (recovery, flips) in
   their inline floating stage, links cavity stars through a table sized to
   each cone, and finds edge cells in improvement by walking around the edge;
@@ -1652,7 +1898,7 @@
   once: the saved torus carrier fills with 1766 instead of 5956 cells, and the
   first metric epoch refines.
 - The implicit qualification fidelity ladder no longer requires the exact
-  volume error to fall strictly. The sagitta-centred carrier's error is a
+  volume error to fall strictly. The sagitta-centered carrier's error is a
   near-cancellation of outward and inward caps and is not monotone in the
   tolerance. Every level must instead hold the exact volume inside the certified
   enclosure V(r ± ε) at its certified mesh-to-source bound ε. Both ε and the
@@ -1694,6 +1940,106 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The CUDA native loader no longer rewraps its own missing-dependency refusal
+  as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
+  re-raised as is.
+- Zero-set certification repairs to 0.8 of the tolerance once a surface needs
+  a repair, so the reverse proof has room (surfaces that need no repair are
+  unchanged); a carrier witness box must pass the value program's guarded
+  evaluation; interval box programs are not copyable and rebinding clears
+  their continuity requirement.
+- Restricted Delaunay meshing keeps every seed box on which a domain guard
+  may fail (`phx_mc_implicit_restricted_delaunay` and
+  `implicit_restricted_delaunay` take the value program's guards), so a
+  real-power field no longer loses surface components; interval absolute value
+  keeps an exact 0 lower end, so real powers of |x| no longer fail their base
+  guard on boxes meeting a coordinate plane.
+- Tetrahedral implicit sources gate every facet admission on the field's
+  branch evidence: `phx_mc_tet_implicit_source` carries `value_events` and
+  `TetMeshImplicitSource.value` is an `IntervalBranchProgram`, so an implicit
+  facet whose box may hold a jump of f is refused instead of certified.
+- Zero-set certification (`zero_set_certify`): every interval enclosure a
+  triangle, tube or witness proof reads requires the value program's branch
+  evidence to report f continuous on the box, and transversality requires f
+  smooth there; the possible-zero cover keeps boxes where a guard (real-power
+  domain flag) fails; the reverse proof refuses a domain that does not hold the
+  surface, the tube proof stands only within the tolerance, and the implicit
+  remesh route and layer wall gate on and report the reverse distance;
+  `box_reach` no longer refuses boxes at mesh vertices; the cover refuses
+  before its children exceed the box budget.
+- Mapped cell location discharges an undecided inverse-root box beside an
+  isolated root only when a Krawczyk check over the box and the root's
+  enclosure isolates a single root; rootless boxes are bisected and each
+  sub-box must be excluded or isolated, so a second tolerance root keeps the
+  refusal. Points whose reference roots lie on dyadic bisection planes now
+  locate instead of being refused as "inverse-root search is incomplete".
+- Certified derivative bounds no longer miss kinks. Nested-JVP acceleration
+  and Hessian enclosures differentiate `abs`, min/max and selections
+  piecewise, so c(t) = (t, |t - 1/2|) was certified at about 1e-16 chord
+  deviation against a true 1/2. Curve chord bounds and generic-map surface
+  interpolation, adaptive interpolation and normal-turn bounds now use
+  second-order bounds only where the carrier declares C1 or the point map's
+  branch evidence (`evaluate_branches`) proves smoothness, a first-order
+  Jacobian-spread bound (`binary64_first_order_interpolation_upper`) where it
+  is only continuous, and refuse across possible jumps.
+- Source-fidelity restore ships the outward hull of the stored and recomputed
+  evidence (global and per-cell enclosures, implicit chart rows, and the chart
+  cover, which carries its recomputed simplices with the larger bound) and
+  refuses an adopted decision the hull does not support, so a stale
+  certificate with an undersized stored bound is no longer re-certified.
+  Implicit sign coverage is recomputed on restore from the hulled
+  mesh-to-source bound; a bound that changes the leaf structure or reaches the
+  tolerance is refused. Declared identity change: coverage certificate,
+  bounded-homotopy witness, witnessed-boundary and implicit sign-coverage ids
+  no longer hash platform-rounded distance bounds (they carry decisions,
+  counts and exact leaf structure; the bounds stay validated evidence); degree,
+  report and result ids that include them change.
+- The surface certifiers refuse coordinates outside the exact predicates'
+  domain before contact classification, and the surface-remesh benchmark rows
+  run `zero_set_certify` in their untimed quality stage (a refusal or an
+  unresolved result is a miss).
+- The mesh-source distance certificate (`mesh_certify`) is rigorous (three
+  independent reviews): coverage is decided with exact orientation tests,
+  overlap vertices are decided exactly before any map is formed (an exactly
+  empty overlap is 0), crossing parameters carry error enclosures, affine maps
+  are formed only when the determinant's magnitude bound excludes zero and
+  ill-conditioned maps refuse, rounding pads follow a written first-order
+  derivation with a factor-two margin, and every non-finite value refuses. A
+  surface certified both ways is returned when a later angle-only pass fails.
+- `zero_set_certify` proves carried triangles by per-triangle witness boxes:
+  `carrier_boxes` replaces the caller-declared `carrier_distance` (clean
+  cutover); a triangle is carried only when its corners lie in its box and two
+  box corners have value enclosures of opposite sign, at the box diagonal, and
+  per-triangle carried flags are reported.
+- Chart partition certificates refuse overlapping UV triangles (covering
+  multiplicity above one) through the shared surface-contact enumeration,
+  require consecutive chords of a trim use to join bitwise; the surface
+  embedding verifier clears exactly coplanar pairs only on an exact separating
+  line, checks its rounding-mode scope and refuses more than 2^32 points.
+- Fixed spline source interpolation certificates at interior C0 knot lines:
+  a chart triangle crossing a knot line of multiplicity at least the degree
+  (rational: decided from knots and weights) is clipped exactly into smooth
+  pieces whose vertex residuals are enclosed, instead of using one Hessian
+  bound across the crease (which could certify 0 for a distance of 1).
+  Possible discontinuities, non-triangular cells across such a line and
+  T-spline Hessian bounds without a C1 certificate are refused. Declared
+  identity change: fidelity certificate ids and cover ids can change where
+  decisions change, and stored deformation records or certificates of charts
+  crossing such knots must be regenerated.
+- The native volume verifier, the PLC recovery contact grid and the surface
+  certifier range-check grid quotients before converting them to integers: an
+  accepted coordinate range near the exact-predicate limits previously made
+  the cast undefined and could drop contact pairs from the embedding proof.
+- Native code builds without GCC 13 flow-analysis warnings (confirmed with GCC
+  13.3) and without GCC 16 `-Wall -Wextra` warnings: expansion copies, hull
+  projection, implicit contour templates, interval simplex compositions,
+  revolution jets and triangle clipping keep their invariants local; behavior
+  unchanged.
+- `test_predicates` places inputs just below and just above every filter and
+  adaptive-stage error bound of the orientation and in-circle predicates, and
+  a perturbed sliver sheet exercises fixed-boundary Steiner suppression, the
+  search budget's accounting and peeling after an inconclusive search end to
+  end (native and through `generate_plc_volume`).
 - Fixed welded mesh audits reporting certain self-intersections for disjoint
   coplanar triangles when the floating-point normal cancels.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve

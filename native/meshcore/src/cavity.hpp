@@ -59,10 +59,13 @@ inline int neighbor_slot(const Tetrahedron& tet, int32_t neighbor) {
   return -1;
 }
 
+// Corners of the facet opposite v[k], ordered so that v[k] is on its
+// positive side.
+inline constexpr int kOrientedFacet[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
+
 // Facet opposite v[k], oriented so that the omitted vertex is on its positive side.
 inline void oriented_facet(const int32_t* v, int k, int32_t* facet) {
-  static constexpr int order[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
-  for (int r = 0; r < 3; ++r) facet[r] = v[order[k][r]];
+  for (int r = 0; r < 3; ++r) facet[r] = v[kOrientedFacet[k][r]];
 }
 
 struct FacetKey {
@@ -325,7 +328,7 @@ class CavityEdit {
       Tetrahedron tet = complex_.tets[static_cast<std::size_t>(face.tet)];
       tet.v[face.slot] = center;
       std::fill(tet.n, tet.n + 4, -1);
-      tet.n[face.slot] = face.outside;
+      tet.n[face.slot] = kExternal;
       tet.stamp = 0;
       tet.state = 0;
       tet.constrained = 0;
@@ -344,6 +347,67 @@ class CavityEdit {
     return EditStatus::kOk;
   }
 
+  // stage_cone then commit in one pass for an unlabeled complex without a
+  // journal (Delaunay construction; otherwise it runs those two): the same
+  // slots, cells and neighbors, written once. The cone is linked before the
+  // first write, so a boundary that is not a closed manifold surface is
+  // refused (kNonManifold), as is a cone the slot bank cannot hold
+  // (kSlotLimit), with the complex unchanged.
+  EditStatus commit_cone(int32_t center, std::span<const int32_t> cavity,
+                         std::span<const BoundaryFacet> boundary) {
+    if (complex_.labeled() || complex_.journal != nullptr) {
+      const EditStatus status = stage_cone(center, cavity, boundary);
+      return status == EditStatus::kOk ? commit() : status;
+    }
+    ++staging_revision_;
+    staged_ = false;
+    cone_center_ = kNoCone;
+    const std::size_t count = boundary.size();
+    std::vector<Tetrahedron>& tets = complex_.tets;
+    cone_cells_.resize(count);
+    int64_t created_finite = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = boundary[i];
+      ConeCell& cell = cone_cells_[i];
+      std::copy_n(tets[static_cast<std::size_t>(face.tet)].v, 4, cell.v);
+      cell.v[face.slot] = center;
+      created_finite += (cell.v[0] | cell.v[1] | cell.v[2] | cell.v[3]) >= 0 ? 1 : 0;
+    }
+    if (!link_cone(
+            count, [this](std::size_t i, int k) { return cone_cells_[i].v[k]; },
+            [boundary](std::size_t i) { return boundary[i].slot; },
+            [this](std::size_t i, int k, int32_t twin) { cone_cells_[i].n[k] = twin; })) {
+      return EditStatus::kNonManifold;
+    }
+    const std::size_t extra = count > cavity.size() ? count - cavity.size() : 0;
+    const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
+    if (fresh > static_cast<std::size_t>(kMaxTetrahedronSlots) - tets.size()) {
+      return EditStatus::kSlotLimit;
+    }
+    const std::size_t freed = cavity.size() > count ? cavity.size() - count : 0;
+    complex_.reserve(fresh, freed);
+    int64_t removed_finite = 0;
+    for (int32_t t : cavity) removed_finite += is_ghost(tets[static_cast<std::size_t>(t)]) ? 0 : 1;
+    ids_.clear();
+    ids_.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      ids_.push_back(i < cavity.size() ? cavity[i] : complex_.allocate());
+    }
+    for (std::size_t i = count; i < cavity.size(); ++i) complex_.release(cavity[i]);
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = boundary[i];
+      const ConeCell& cell = cone_cells_[i];
+      Tetrahedron& tet = tets[static_cast<std::size_t>(ids_[i])];
+      tet = Tetrahedron{{cell.v[0], cell.v[1], cell.v[2], cell.v[3]}, {}, 0, 0, 0, kNoRegion};
+      for (int k = 0; k < 4; ++k) {
+        tet.n[k] = k == face.slot ? face.outside : ids_[static_cast<std::size_t>(cell.n[k])];
+      }
+      tets[static_cast<std::size_t>(face.outside)].n[face.back] = ids_[i];
+    }
+    complex_.finite_count += created_finite - removed_finite;
+    return EditStatus::kOk;
+  }
+
   std::span<const int32_t> removed() const { return removed_; }
   std::span<const Tetrahedron> proposal() const { return created_; }
   int32_t proposal_constraint(std::size_t cell, int slot) const {
@@ -351,10 +415,16 @@ class CavityEdit {
   }
 
   // All allocations precede the first topology write. The no-throw mutation
-  // block uses only the banks reserved here and staged edit storage.
+  // block uses only the banks reserved here and staged edit storage. A cone
+  // is linked on the staged cells first, so a boundary that is not a closed
+  // manifold surface is refused (kNonManifold) with the complex unchanged.
   EditStatus commit() {
     ++staging_revision_;
     if (!staged_) return EditStatus::kBoundaryMismatch;
+    if (cone_center_ != kNoCone && !link_staged_cone()) {
+      rollback();
+      return EditStatus::kNonManifold;
+    }
     int64_t removed_finite = 0, created_finite = 0;
     for (int32_t t : removed_) {
       removed_finite += is_ghost(complex_.tets[static_cast<std::size_t>(t)]) ? 0 : 1;
@@ -370,8 +440,7 @@ class CavityEdit {
         ? removed_.size() - created_.size() : 0;
     complex_.reserve(fresh, freed);
     ids_.clear();
-    ids_.reserve(created_.size());
-    if (cone_center_ != kNoCone) reserve_star_table(created_.size());
+    ids_.reserve(created_.size() + 1);
     std::vector<CellEvent>* journal = complex_.journal;
     if (journal != nullptr) {
       reserve_for(*journal, journal->size() + removed_.size() + created_.size());
@@ -382,7 +451,7 @@ class CavityEdit {
     }
 
     staged_ = false;
-    const bool linked = apply(cone_center_ != kNoCone);
+    apply();
     if (journal != nullptr) {
       for (int32_t id : ids_) {
         const int32_t* v = complex_.tets[static_cast<std::size_t>(id)].v;
@@ -391,7 +460,7 @@ class CavityEdit {
     }
     complex_.finite_count += created_finite - removed_finite;
     cone_center_ = kNoCone;
-    return linked ? EditStatus::kOk : EditStatus::kInternal;
+    return EditStatus::kOk;
   }
   void rollback() {
     ++staging_revision_;
@@ -406,7 +475,17 @@ class CavityEdit {
   static constexpr int32_t kExternal = std::numeric_limits<int32_t>::min();
   struct Preserved { FacetKey key; int32_t id; };
   struct FacetSlot { FacetKey key; int32_t owner; };
-  struct StarSlot { std::uint64_t key; int32_t tet; int32_t slot; std::uint32_t stamp; };
+  // A cone cell of commit_cone: its vertices and its neighbors as cone rows
+  // (the face opposite the center unset).
+  struct ConeCell {
+    int32_t v[4];
+    int32_t n[4];
+  };
+  struct EdgeRecord {
+    std::uint64_t key;
+    int32_t owner;
+    bool operator<(const EdgeRecord& other) const { return key < other.key; }
+  };
 
   EditStatus collect_boundary() {
     sorted_removed_.assign(removed_.begin(), removed_.end());
@@ -519,78 +598,146 @@ class CavityEdit {
     return EditStatus::kOk;
   }
 
-  // The table keeps the capacity of the largest cone seen; each cone probes
-  // only the power-of-two prefix sized to it (at least six slots per created
-  // cell), so a small cone stays within a few cache lines.
-  void reserve_star_table(std::size_t count) {
-    std::size_t capacity = 64;
-    while (capacity < 6 * count) capacity <<= 1;
-    star_capacity_ = capacity;
-    if (star_table_.size() < capacity) {
-      star_table_.assign(capacity, StarSlot{0, 0, 0, 0});
-      star_stamp_ = 0;
+  // Cone cell i stands on boundary facet i, whose oriented triangle (the
+  // facet opposite the center) runs along edge j of the cell, the edge
+  // opposite facet corner j, as (corner j + 1, corner j + 2); the cell across
+  // that edge runs along it the other way.
+  static constexpr const auto& kConeFacet = kOrientedFacet;
+  // Cones with more boundary vertices pair their edges by sorting.
+  static constexpr std::uint32_t kDenseConeVertices = 512;
+
+  // Links `count` cone cells across the edges of the cavity boundary (their
+  // face opposite the center stays as it is): corner(i, k) is vertex k of
+  // cone cell i, slot(i) its center corner, and link(i, k, j) gives face k
+  // of cell i the neighbor j. Boundary vertices get dense local numbers, so
+  // every directed edge owns one entry of a square table: the first pass
+  // records each edge's owner (4 cell + corner), the second gives each cell
+  // the owner of its reversed edge, without probing or branching on which
+  // cell of a pair arrives first. The second pass also proves the pairing a
+  // bijection (each entry still holds its own edge; the reversed entry names
+  // an edge of this cone that is the reverse), so the table is never
+  // cleared and a boundary that is not a closed manifold surface is
+  // refused. A closed connected surface has V - E + F <= 2, so at most
+  // count / 2 + 2 vertices.
+  template <class Corner, class Slot, class Link>
+  bool link_cone(std::size_t count, const Corner& corner, const Slot& slot, const Link& link) {
+    if (count > static_cast<std::size_t>(std::numeric_limits<int32_t>::max() / 4)) return false;
+    if (++link_epoch_ == 0) {
+      std::fill(vertex_tags_.begin(), vertex_tags_.end(), 0);
+      link_epoch_ = 1;
     }
-  }
-  static std::uint64_t edge_key(int32_t a, int32_t b) {
-    const int32_t low = std::min(a, b), high = std::max(a, b);
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(low + 1)) << 32) |
-           static_cast<std::uint32_t>(high + 1);
-  }
-  bool link_star(int32_t center) {
-    ++star_stamp_;
-    if (star_stamp_ == 0) {
-      for (StarSlot& slot : star_table_) slot.stamp = 0;
-      star_stamp_ = 1;
-    }
-    const std::size_t mask = star_capacity_ - 1;
-    std::size_t pending = 0;
-    for (int32_t id : ids_) {
-      Tetrahedron& tet = complex_.tets[static_cast<std::size_t>(id)];
-      const int apex = vertex_slot(tet, center);
-      if (apex < 0) return false;
-      for (int s = 0; s < 4; ++s) {
-        if (s == apex) continue;
-        int32_t pair[2];
-        int count = 0;
-        for (int r = 0; r < 4; ++r) if (r != s && r != apex) pair[count++] = tet.v[r];
-        const std::uint64_t key = edge_key(pair[0], pair[1]);
-        std::size_t h = static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & mask;
-        for (;;) {
-          StarSlot& entry = star_table_[h];
-          if (entry.stamp != star_stamp_) {
-            entry = {key, id, s, star_stamp_};
-            ++pending;
-            break;
-          }
-          if (entry.key == key) {
-            if (entry.tet < 0) return false;
-            tet.n[s] = entry.tet;
-            complex_.tets[static_cast<std::size_t>(entry.tet)].n[entry.slot] = id;
-            entry.tet = -1;
-            --pending;
-            break;
-          }
-          h = (h + 1) & mask;
+    cone_locals_.resize(3 * count);
+    std::uint32_t vertices = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      const int* facet = kConeFacet[slot(i)];
+      for (int j = 0; j < 3; ++j) {
+        // Vertices are at least kGhostVertex = -1.
+        const auto index = static_cast<std::size_t>(corner(i, facet[j]) + 1);
+        if (index >= vertex_tags_.size()) {
+          vertex_tags_.resize(std::max(index + 1, 2 * vertex_tags_.size()), 0);
         }
+        // A select, not a branch: first and repeated visits of a vertex
+        // interleave unpredictably.
+        std::uint64_t& tag = vertex_tags_[index];
+        const bool fresh = (tag >> 32) != link_epoch_;
+        tag = fresh ? (static_cast<std::uint64_t>(link_epoch_) << 32) | vertices : tag;
+        vertices += fresh ? 1U : 0U;
+        cone_locals_[3 * i + static_cast<std::size_t>(j)] = static_cast<std::uint32_t>(tag);
       }
     }
-    return pending == 0;
+    if (vertices > count / 2 + 2) return false;
+    return vertices <= kDenseConeVertices ? link_cone_dense(count, vertices, slot, link)
+                                          : link_cone_sorted(count, slot, link);
   }
-  bool apply(bool cone) {
+  std::uint32_t cone_corner(std::size_t owner, int offset) const {
+    const std::size_t cell = owner >> 2;
+    const int corner = static_cast<int>(owner & 3U) + offset;
+    return cone_locals_[3 * cell + static_cast<std::size_t>(corner >= 3 ? corner - 3 : corner)];
+  }
+  template <class Slot, class Link>
+  bool link_cone_dense(std::size_t count, std::uint32_t vertices, const Slot& slot,
+                       const Link& link) {
+    std::size_t dim = 1;
+    while (dim < vertices) dim <<= 1;
+    if (edge_owners_.size() < dim * dim) edge_owners_.resize(dim * dim, -1);
+    for (std::size_t i = 0; i < count; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        const std::size_t owner = 4 * i + static_cast<std::size_t>(j);
+        edge_owners_[cone_corner(owner, 1) * dim + cone_corner(owner, 2)] =
+            static_cast<int32_t>(owner);
+      }
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      const int* facet = kConeFacet[slot(i)];
+      for (int j = 0; j < 3; ++j) {
+        const std::size_t owner = 4 * i + static_cast<std::size_t>(j);
+        const std::uint32_t from = cone_corner(owner, 1), to = cone_corner(owner, 2);
+        const int32_t twin = edge_owners_[to * dim + from];
+        if (edge_owners_[from * dim + to] != static_cast<int32_t>(owner) || twin < 0 ||
+            static_cast<std::size_t>(twin) >= 4 * count || (twin & 3) == 3 ||
+            cone_corner(static_cast<std::size_t>(twin), 1) != to ||
+            cone_corner(static_cast<std::size_t>(twin), 2) != from) {
+          return false;
+        }
+        link(i, facet[j], twin >> 2);
+      }
+    }
+    return true;
+  }
+  template <class Slot, class Link>
+  bool link_cone_sorted(std::size_t count, const Slot& slot, const Link& link) {
+    const auto key = [](std::uint32_t from, std::uint32_t to) {
+      return (static_cast<std::uint64_t>(from) << 32) | to;
+    };
+    edge_records_.clear();
+    edge_records_.reserve(3 * count);
+    for (std::size_t owner = 0; owner < 4 * count; ++owner) {
+      if ((owner & 3U) == 3U) continue;
+      edge_records_.push_back(
+          {key(cone_corner(owner, 1), cone_corner(owner, 2)), static_cast<int32_t>(owner)});
+    }
+    std::sort(edge_records_.begin(), edge_records_.end());
+    for (std::size_t r = 1; r < edge_records_.size(); ++r) {
+      if (edge_records_[r].key == edge_records_[r - 1].key) return false;
+    }
+    for (const EdgeRecord& record : edge_records_) {
+      const auto owner = static_cast<std::size_t>(record.owner);
+      const EdgeRecord reversed{key(cone_corner(owner, 2), cone_corner(owner, 1)), 0};
+      const auto twin = std::lower_bound(edge_records_.begin(), edge_records_.end(), reversed);
+      if (twin == edge_records_.end() || twin->key != reversed.key) return false;
+      link(owner >> 2, kConeFacet[slot(owner >> 2)][owner & 3U], twin->owner >> 2);
+    }
+    return true;
+  }
+  // link_cone on the staged cone cells.
+  bool link_staged_cone() {
+    return link_cone(
+        created_.size(),
+        [this](std::size_t i, int k) { return created_[i].v[k]; },
+        [this](std::size_t i) { return boundary_[i].slot; },
+        [this](std::size_t i, int k, int32_t twin) { created_[i].n[k] = twin; });
+  }
+  void apply() {
     for (std::size_t i = 0; i < created_.size(); ++i) {
       ids_.push_back(i < removed_.size() ? removed_[i] : complex_.allocate());
     }
     for (std::size_t i = created_.size(); i < removed_.size(); ++i) complex_.release(removed_[i]);
+    // Staged neighbors are created indices or kExternal (the outer face,
+    // linked below); a sentinel slot past the created ones maps kExternal
+    // to itself, so the remap selects rather than branches.
+    const auto sentinel = static_cast<int32_t>(created_.size());
+    ids_.push_back(kExternal);
     for (std::size_t i = 0; i < created_.size(); ++i) {
       Tetrahedron tet = created_[i];
-      if (!cone) {
-        for (int k = 0; k < 4; ++k) {
-          if (tet.n[k] != kExternal) tet.n[k] = ids_[static_cast<std::size_t>(tet.n[k])];
-        }
+      for (int k = 0; k < 4; ++k) {
+        const int32_t staged = tet.n[k] == kExternal ? sentinel : tet.n[k];
+        tet.n[k] = ids_[static_cast<std::size_t>(staged)];
       }
       complex_.tets[static_cast<std::size_t>(ids_[i])] = tet;
       if (complex_.labeled()) complex_.set_region(ids_[i], created_regions_[i]);
     }
+    ids_.pop_back();
+    const bool cone = cone_center_ != kNoCone;
     for (std::size_t f = 0; f < boundary_.size(); ++f) {
       const BoundaryFacet& face = boundary_[f];
       const int32_t owner = cone ? static_cast<int32_t>(4 * f) + face.slot : owners_[f];
@@ -598,7 +745,6 @@ class CavityEdit {
       complex_.tets[static_cast<std::size_t>(id)].n[owner % 4] = face.outside;
       complex_.tets[static_cast<std::size_t>(face.outside)].n[face.back] = id;
     }
-    if (cone && !link_star(cone_center_)) return false;
     if (complex_.labeled()) {
       for (std::size_t i = 0; i < created_.size(); ++i) {
         for (int k = 0; k < 4; ++k) {
@@ -606,7 +752,6 @@ class CavityEdit {
         }
       }
     }
-    return true;
   }
 
   TetrahedralComplex& complex_;
@@ -619,9 +764,12 @@ class CavityEdit {
   std::vector<int32_t> created_constraints_, created_regions_, owners_, ids_;
   std::vector<Preserved> preserved_, inner_constraints_;
   std::vector<FacetSlot> facets_;
-  std::vector<StarSlot> star_table_;
-  std::size_t star_capacity_ = 0;
-  std::uint32_t star_stamp_ = 0;
+  std::vector<std::uint64_t> vertex_tags_;
+  std::vector<std::uint32_t> cone_locals_;
+  std::vector<int32_t> edge_owners_;
+  std::vector<EdgeRecord> edge_records_;
+  std::vector<ConeCell> cone_cells_;
+  std::uint32_t link_epoch_ = 0;
 };
 
 // Quotient-cell transaction uses already-owned identity-aware cells and a

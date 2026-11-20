@@ -30,7 +30,7 @@ import phydrax.meshing._sizing as sizing_owner
 import phydrax.meshing.providers._native_options as options_owner
 import phydrax.meshing.providers._native_sources as sources_owner
 
-from ..._meshcore import MeshcoreError, zero_set_remesh
+from ..._meshcore import MeshcoreError, zero_set_certify, zero_set_remesh
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1831,21 +1831,25 @@ def implicit_layer_wall(
             return kernel.boundary_field(state, point[None, :])[0]
 
         try:
-            value_program, gradient_program = (
+            value_prepared, gradient_prepared = (
                 prepare_interval_function(
                     function, 3, batch_capacity=1, execution="native"
-                ).native_program
+                )
                 for function in (value, jax.grad(value))
             )
+            # f with its branch-evidence events: the one program every proof,
+            # witness corner sign and witness continuity decision reads.
+            value_branches = value_prepared.native_branches().branch_box_program()
+            gradient_program = gradient_prepared.native_program
         except IntervalExtensionError as error:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
                 "The implicit layer wall remesh requires a native interval lowering "
-                f"of the field and its gradient: {error}",
+                f"of the field, its gradient and its branch evidence: {error}",
                 provider_code="native_layer_implicit_wall",
                 stage="source_inspection",
             ) from error
-        if value_program is None or gradient_program is None:
+        if gradient_program is None:
             raise RuntimeError("Native interval preparation returned no native program.")
         if edge_length is None:
             edges = np.unique(
@@ -1863,16 +1867,35 @@ def implicit_layer_wall(
                 )
             )
         try:
+            gradient_box = gradient_program.box_program()
             remeshed = zero_set_remesh(
                 vertices,
                 faces,
-                value_program.box_program(),
-                gradient_program.box_program(),
+                value_branches.program,
                 scaffold_distance,
                 scaffold_distance,
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
-                admission_limited_coarsening=False,
+            )
+            # Each discovery face lies in its scaffold leaf cell, whose box
+            # is the face's witness for faces kept around creases.
+            scaffold = discovery.scaffold
+            witness_boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[
+                np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+            ]
+            certified = zero_set_certify(
+                remeshed.vertices,
+                remeshed.triangles,
+                value_branches,
+                gradient_box,
+                scaffold_distance,
+                remeshed.orientation,
+                vertices,
+                faces,
+                witness_boxes,
+                np.asarray(scaffold.domain, dtype=np.float64),
+                edge_length,
+                _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
         except (MeshcoreError, ValueError, OverflowError) as error:
             raise MeshingFailure(
@@ -1881,8 +1904,20 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             ) from error
-        vertices = np.array(remeshed.vertices, dtype=np.float64, copy=True)
-        faces = np.array(remeshed.triangles, dtype=np.int64, copy=True)
+        # Both directions within the scaffold distance: the zero set ->
+        # surface bound is published with the certificate and gated here.
+        if not certified.reverse_distance <= scaffold_distance:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "The implicit layer wall zero-set remesh certified the zero set only "
+                f"within {certified.reverse_distance:.6g} of the wall, above "
+                f"{scaffold_distance:.6g}.",
+                provider_code="native_layer_implicit_wall",
+                stage="surface_meshing",
+            )
+        distance = certified.distance
+        vertices = np.array(certified.vertices, dtype=np.float64, copy=True)
+        faces = np.array(certified.triangles, dtype=np.int64, copy=True)
         worst = float(np.max(_face_radius_edge_ratios(vertices, faces)))
         if not worst <= radius_edge_bound:
             raise MeshingFailure(
@@ -1893,13 +1928,21 @@ def implicit_layer_wall(
                 provider_code="native_layer_implicit_wall",
                 stage="surface_meshing",
             )
-        distance = float(remeshed.distance)
+        # `distance` bounds the remeshed wall: the certified bound of proved
+        # faces and the witness-box diagonal of faces kept from the scaffold.
         evidence = (
             ("carrier_remeshed", 1.0),
             *before,
             *_carrier_quality(vertices, faces, "after"),
             ("carrier_remesh_edge_length", edge_length),
             ("carrier_remesh_unmet_count", float(remeshed.counters[4])),
+            ("carrier_remesh_transversality_refusals", float(certified.counters[0])),
+            ("carrier_remesh_distance_refusals", float(certified.counters[1])),
+            ("carrier_remesh_embedding_refusals", float(certified.counters[2])),
+            ("carrier_remesh_kept_carrier_triangles", float(certified.counters[3])),
+            ("carrier_remesh_repair_splits", float(certified.counters[4])),
+            ("carrier_remesh_reverse_distance", certified.reverse_distance),
+            ("carrier_remesh_reverse_proof", float(certified.counters[8])),
         )
     wall = CellMesh.from_triangles(vertices, faces, numeric_version=query.source_revision)
     return ImplicitLayerWall(

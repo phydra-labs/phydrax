@@ -20,10 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 from phydrax.geometry._interval_enclosure import prepare_interval_function
@@ -36,6 +38,10 @@ def _none_unmet(result: object, /) -> int:
     return 0
 
 
+def _no_quality(result: object, /) -> tuple[int, dict[str, float]]:
+    return 0, {}
+
+
 @dataclass(frozen=True, slots=True)
 class _Row:
     name: str
@@ -44,6 +50,13 @@ class _Row:
     count: Callable[[object], int]
     # Cells left off the row's quality targets; a row with any does not pass.
     unmet: Callable[[object], int] = _none_unmet
+    domain: str | None = None
+    # Independent measurement of the last result (not timed): the number of
+    # targets it misses, and the measured values.
+    quality: Callable[[object], tuple[int, dict[str, float]]] = _no_quality
+    # The timed seconds of one run when the row times a stage of a larger
+    # call by the kernel's own stage clock; None times the whole call.
+    stage_seconds: Callable[[object], float] | None = None
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -84,12 +97,155 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
+def _planar_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        raise TypeError("A planar constrained kernel returns ConstrainedDelaunay2D.")
+    return result.triangles.shape[0]
+
+
+def _planar_unmet(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        raise TypeError("A planar constrained kernel returns ConstrainedDelaunay2D.")
+    return int(result.status != _meshcore.MeshcoreStatus.OK)
+
+
+def _planar_minimum_angle(result: _meshcore.ConstrainedDelaunay2D, /) -> float:
+    triangles = result.points[result.triangles]
+    minimum = 180.0
+    for k in range(3):
+        a = triangles[:, (k + 1) % 3] - triangles[:, k]
+        b = triangles[:, (k + 2) % 3] - triangles[:, k]
+        cross = np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
+        dot = np.sum(a * b, axis=1)
+        minimum = min(minimum, float(np.degrees(np.arctan2(cross, dot)).min()))
+    return minimum
+
+
+def _planar_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    fixture = Path(__file__).with_name("native_meshing_inputs")
+    ring_points = np.load(fixture / "q2ring_pts.npy", allow_pickle=False)
+    ring_segments = np.load(fixture / "q2ring_seg.npy", allow_pickle=False)
+    if ring_points.dtype != np.float64 or ring_points.shape != (206, 2):
+        raise ValueError("The published ring points must be float64 with shape (206, 2).")
+    if ring_segments.dtype != np.int32 or ring_segments.shape != (205, 2):
+        raise ValueError("The published ring segments must be int32 with shape (205, 2).")
+    square_points = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
+    square_segments = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int32)
+    rows: list[_Row] = []
+    for size in sizes:
+        count = int(4 * np.sqrt(size))
+        angles = 2 * np.pi * np.arange(count) / count
+        ring = np.column_stack((0.5 + 0.3 * np.cos(angles), 0.5 + 0.3 * np.sin(angles)))
+        points = np.vstack((ring, _uniform_points(size - count, 2, 777 + size)))
+        segments = np.column_stack(
+            (np.arange(count), (np.arange(count) + 1) % count)
+        ).astype(np.int32)
+        rows.append(
+            _Row(
+                "cdt-2d",
+                size,
+                lambda p=points, s=segments: _meshcore.constrained_delaunay_2d(
+                    p, s, keep_convex_hull=True
+                ),
+                _planar_cells,
+                _planar_unmet,
+                "ring",
+            )
+        )
+        for domain, p, s in (
+            ("square", square_points, square_segments),
+            ("ring-slit", ring_points, ring_segments),
+        ):
+            rows.append(
+                _Row(
+                    "ruppert-2d",
+                    size,
+                    lambda p=p, s=s, n=size: _meshcore.constrained_delaunay_2d(
+                        p, s, keep_convex_hull=True, min_angle=20.0, max_area=1.5 / n
+                    ),
+                    _planar_cells,
+                    _planar_unmet,
+                    domain,
+                )
+            )
+    return tuple(rows)
+
+
+def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    # The ledger's weighted points: uniform in the unit cube, weights uniform
+    # in [0, (0.5 n^(-1/3))^2), so some points are redundant.
+    rows: list[_Row] = []
+    for size in sizes:
+        points = _uniform_points(size, 3, 20261119)
+        limit = (0.5 * size ** (-1.0 / 3.0)) ** 2
+        weights = limit * np.random.default_rng(20261120).random(size, dtype=np.float64)
+        rows.append(
+            _Row(
+                "regular-3d",
+                size,
+                lambda points=points, weights=weights: _meshcore.regular_3d(
+                    points, weights
+                ),
+                _cells,
+            )
+        )
+    return tuple(rows)
+
+
+def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    # Uniform points on the unit 3-torus at the default initial margin.
+    lattice = np.eye(3, dtype=np.float64)
+    rows: list[_Row] = []
+    for size in sizes:
+        points = _uniform_points(size, 3, 20261121)
+        rows.append(
+            _Row(
+                "periodic-3d",
+                size,
+                lambda points=points: _meshcore.periodic_delaunay(
+                    points, points, lattice, lattice
+                ),
+                _cells,
+            )
+        )
+    return tuple(rows)
+
+
+def _rows(
+    sizes: tuple[int, ...], names: frozenset[str] | None, improve_inputs: Path | None, /
+) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
+        (frozenset({"cdt-2d", "ruppert-2d"}), lambda: _planar_rows(sizes)),
+        (frozenset({"regular-3d"}), lambda: _regular_rows(sizes)),
+        (frozenset({"periodic-3d"}), lambda: _periodic_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
+        (
+            frozenset(
+                {
+                    "surface-remesh-sphere-1e3",
+                    "surface-remesh-sphere",
+                    "surface-remesh-sphere-1e5",
+                    "surface-remesh-torus",
+                }
+            ),
+            _remesh_rows,
+        ),
+        (
+            frozenset(
+                {
+                    "mesh-remesh-torus-1e3",
+                    "mesh-remesh-torus",
+                    "mesh-remesh-torus-1e5",
+                    "mesh-remesh-noisy-torus-1e3",
+                    "mesh-remesh-noisy-torus",
+                    "mesh-remesh-noisy-torus-1e5",
+                }
+            ),
+            _mesh_remesh_rows,
+        ),
         (
             frozenset(
                 {
@@ -100,6 +256,8 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
             ),
             _volume_rows,
         ),
+        (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
+        (frozenset({"improve-sphere"}), lambda: _improve_rows(improve_inputs)),
     )
     rows: list[_Row] = []
     for family, build in families:
@@ -108,58 +266,18 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
     return tuple(rows)
 
 
-def _icosphere(level: int, /) -> tuple[np.ndarray, np.ndarray]:
-    # The ledger's unit icosphere: 20 * 4**level outward triangles.
-    golden = (1.0 + 5.0**0.5) / 2.0
-    vertices = np.asarray(
-        [
-            [-1, golden, 0], [1, golden, 0], [-1, -golden, 0], [1, -golden, 0],
-            [0, -1, golden], [0, 1, golden], [0, -1, -golden], [0, 1, -golden],
-            [golden, 0, -1], [golden, 0, 1], [-golden, 0, -1], [-golden, 0, 1],
-        ],
-        dtype=np.float64,
-    )  # fmt: skip
-    faces = np.asarray(
-        [
-            [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9],
-            [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2],
-            [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10],
-            [8, 6, 7], [9, 8, 1],
-        ],
-        dtype=np.int64,
-    )  # fmt: skip
-    vertices /= np.linalg.norm(vertices, axis=1, keepdims=True)
-    for _ in range(level):
-        edges = np.sort(
-            np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]])), axis=1
-        )
-        unique, inverse = np.unique(edges, axis=0, return_inverse=True)
-        middle = vertices[unique[:, 0]] + vertices[unique[:, 1]]
-        middle /= np.linalg.norm(middle, axis=1, keepdims=True)
-        count = faces.shape[0]
-        inverse = inverse.reshape((-1,)) + vertices.shape[0]
-        a, b, c = inverse[:count], inverse[count : 2 * count], inverse[2 * count :]
-        vertices = np.concatenate((vertices, middle))
-        faces = np.concatenate(
-            (
-                np.stack((faces[:, 0], a, c), axis=1),
-                np.stack((faces[:, 1], b, a), axis=1),
-                np.stack((faces[:, 2], c, b), axis=1),
-                np.stack((a, b, c), axis=1),
-            )
-        )
-    return vertices, faces
-
-
-def _uv_torus(around: int, /) -> tuple[np.ndarray, np.ndarray]:
-    # The ledger's torus R = 1, r = 0.4 with an (around x around / 2) grid.
+def _uv_torus(
+    around: int, major: float = 1.0, minor: float = 0.4, /
+) -> tuple[np.ndarray, np.ndarray]:
+    # The ledger's grid torus (R = 1, r = 0.4 unless given) with an
+    # (around x around / 2) grid.
     across = around // 2
     u = 2.0 * np.pi * np.arange(around) / around
     w = 2.0 * np.pi * np.arange(across) / across
     grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
-    ring = 1.0 + 0.4 * np.cos(grid_w)
+    ring = major + minor * np.cos(grid_w)
     vertices = np.stack(
-        (ring * np.cos(grid_u), ring * np.sin(grid_u), 0.4 * np.sin(grid_w)), axis=-1
+        (ring * np.cos(grid_u), ring * np.sin(grid_u), minor * np.sin(grid_w)), axis=-1
     ).reshape((-1, 3))
     i, j = np.meshgrid(np.arange(around), np.arange(across), indexing="ij")
     a = (i * across + j).reshape((-1,))
@@ -217,7 +335,7 @@ def _recovery_rows() -> tuple[_Row, ...]:
     # fixed; the row size is the triangle count.
     rows: list[_Row] = []
     for level in (4, 5, 6, 7):
-        vertices, faces = _icosphere(level)
+        vertices, faces = icosphere(level)
         facets = _facets(vertices, faces)
         rows.append(
             _Row(
@@ -273,9 +391,13 @@ def _surface_to_tets(
     return _VolumeResult(mesh.arrays().tetrahedra.shape[0], improved.unmet_cells)
 
 
-def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
-    # A well-shaped closed torus surface (R = 1, r = 0.4): the outward boundary
-    # of the isosurface-stuffed solid at the given lattice spacing.
+def _restricted_torus_surface(edge: float, /) -> tuple[np.ndarray, np.ndarray]:
+    # A well-shaped closed torus surface (R = 1, r = 0.4): the restricted
+    # Delaunay surface of the solid with facet edges at most `edge`, facet
+    # angles of at least 30 degrees and surface ball centers within edge / 8
+    # of the facets (the edge bound governs), without interior targets. Edges
+    # 0.072 and 0.025 give 14,010 and 123,098 triangles of mean edge 0.0524
+    # and 0.0177.
     def torus(x: Array) -> Array:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - 0.4,))
@@ -285,23 +407,18 @@ def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
     ).native_program
     if program is None:
         raise RuntimeError("The torus rows need the native interval program.")
-    upper = np.asarray((1.5, 1.5, 0.5), dtype=np.float64)
-    stuffed = program.stuff_tetrahedra(-upper, upper, spacing)
-    cells = stuffed.cells
-    faces = np.concatenate(
-        (
-            cells[:, [1, 2, 3]],
-            cells[:, [0, 3, 2]],
-            cells[:, [0, 1, 3]],
-            cells[:, [0, 2, 1]],
-        )
+    upper = np.asarray((1.4, 1.4, 0.4), dtype=np.float64)
+    criteria = _meshcore.RestrictedDelaunayCriteria(
+        edge, edge / 8.0, 30.0, math.inf, None, 0.0, 0.0, 0.8
     )
-    _, inverse, counts = np.unique(
-        np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True
+    volume = program.restricted_tetrahedra(
+        -upper, upper, criteria, 1, 0, np.empty((0, 3), dtype=np.float64)
     )
-    boundary = faces[counts[inverse.reshape((-1,))] == 1]
+    if volume.status is not _meshcore.MeshcoreStatus.OK or not volume.topology_matched:
+        raise RuntimeError("The torus rows need a resolved restricted torus surface.")
+    boundary = volume.boundary_faces
     used, local = np.unique(boundary, return_inverse=True)
-    return stuffed.points[used], local.reshape(boundary.shape).astype(np.int64)
+    return volume.points[used], local.reshape(boundary.shape).astype(np.int64)
 
 
 def _volume_rows() -> tuple[_Row, ...]:
@@ -310,17 +427,21 @@ def _volume_rows() -> tuple[_Row, ...]:
     # export) with the boundary fixed, against Gmsh HXT generate(3) on the same
     # surface. The circumradius target 1.75 sqrt(3/8) h, h the mean surface
     # edge, matches HXT's element counts. The sphere and grid torus row sizes
-    # are the triangle counts, the stuffed torus row size the stuffing spacing
-    # in thousandths. The grid torus (cocircular rows, every edge constrained)
-    # is a hard input for both tools.
+    # are the triangle counts, the restricted torus row size its facet edge
+    # bound in thousandths. The grid torus (cocircular rows, every edge
+    # constrained) is a hard input for both tools.
     rows: list[_Row] = []
     shapes = (
         ("surface-to-tets-sphere", faces.shape[0], (vertices, faces))
-        for vertices, faces in (_icosphere(5), _icosphere(6))
+        for vertices, faces in (icosphere(5), icosphere(6))
     )
     tori = (
-        ("surface-to-tets-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
-        for thousandths in (67, 22)
+        (
+            "surface-to-tets-torus",
+            thousandths,
+            _restricted_torus_surface(1e-3 * thousandths),
+        )
+        for thousandths in (72, 25)
     )
     grids = (
         ("surface-to-tets-grid-torus", faces.shape[0], (vertices, faces))
@@ -359,15 +480,329 @@ def _volume_unmet(result: object, /) -> int:
     return result.unmet
 
 
+# Gmsh 4.15.2 HXT (2D=6, 3D=10) tetrahedra of the quadric at the same h, and
+# Netgen's optimized linear mesh under Curve(2), on the LIN machine (reference
+# report); the count band is reported, not enforced.
+_GMSH_QUADRIC_TETS = {0.2293: 1_054, 0.1061: 8_493, 0.04925: 75_913, 0.02286: 717_939}
+_NETGEN_QUADRIC_TETS = {0.1061: 6_095, 0.04925: 67_533}
+
+
+def _cad_rows() -> tuple[_Row, ...]:
+    # The repository's quadric fixture (z cylinder r 1, x cylinder r 0.6) as
+    # one native call: curves, faces, fixed-boundary volume (and P2 for the
+    # -p2 rows, timed by its stage clock against Netgen's Curve(2)). The row
+    # size is h in units of 1e-5.
+    import phydrax as phx
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
+
+    contract = phx.SpatialCoordinateContract.si()
+    vertical, transverse = (
+        phx.geometry.brep.brep_cylinder(
+            radius,
+            height,
+            base_center=base,
+            axis=axis,
+            coordinate_contract=contract,
+            source_id=f"qualification:native-cad-quadric-{name}",
+        )
+        for name, radius, height, base, axis in (
+            ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+            ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        )
+    )
+    solid = phx.geometry.brep.boolean_brep(
+        vertical,
+        transverse,
+        "intersection",
+        policy=phx.geometry.brep.BRepBooleanPolicy(),
+    ).model
+    model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+
+    def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        return _meshcore.cad_mesh_solid(
+            model,
+            np.full((faces,), size),
+            np.full((faces,), 0.4),
+            np.full((curves,), np.inf),
+            geometry_order=order,
+        )
+
+    rows: list[_Row] = []
+    for size, tets in _GMSH_QUADRIC_TETS.items():
+        rows.append(
+            _Row(
+                "cad-quadric",
+                round(size * 1e5),
+                lambda size=size: run(size, 1),
+                _cad_cells,
+                _cad_unmet,
+                quality=lambda result, tets=tets: _cad_quality(result, tets),
+            )
+        )
+    for size, tets in _NETGEN_QUADRIC_TETS.items():
+        rows.append(
+            _Row(
+                "cad-quadric-p2",
+                round(size * 1e5),
+                lambda size=size: run(size, 2),
+                _cad_cells,
+                _cad_unmet,
+                quality=lambda result, tets=tets: _cad_quality(result, tets),
+                stage_seconds=lambda result: (
+                    float(_cad_stats(result)["quadratic_ns"]) * 1e-9
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _cad_stats(result: object, /) -> Any:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    return result.volume.stats[0]
+
+
+def _cad_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    return result.volume.tetrahedra.shape[0]
+
+
+def _cad_unmet(result: object, /) -> int:
+    stats = _cad_stats(result)
+    quadratic = stats["quadratic"]
+    return int(
+        stats["unmet_cells"] + quadratic["final_invalid"] + quadratic["final_unresolved"]
+    )
+
+
+def _dihedral_degrees(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    corners = points[cells]
+    pairs = (
+        (0, 1, 2, 3),
+        (0, 2, 1, 3),
+        (0, 3, 1, 2),
+        (1, 2, 0, 3),
+        (1, 3, 0, 2),
+        (2, 3, 0, 1),
+    )
+    angles = []
+    for a, b, c, d in pairs:
+        # The dihedral at edge ab between faces abc and abd.
+        axis = corners[:, b] - corners[:, a]
+        axis /= np.linalg.norm(axis, axis=1, keepdims=True)
+        u = corners[:, c] - corners[:, a]
+        w = corners[:, d] - corners[:, a]
+        u -= np.sum(u * axis, axis=1, keepdims=True) * axis
+        w -= np.sum(w * axis, axis=1, keepdims=True) * axis
+        cosine = np.sum(u * w, axis=1) / (
+            np.linalg.norm(u, axis=1) * np.linalg.norm(w, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    return np.stack(angles, axis=1)
+
+
+def _radius_edge(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    corners = points[cells]
+    origin = corners[:, 0]
+    edges = corners[:, 1:] - origin[:, None, :]
+    rhs = 0.5 * np.sum(edges * edges, axis=2)
+    center = np.linalg.solve(edges, rhs[..., None])[..., 0]
+    radius = np.linalg.norm(center, axis=1)
+    index = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    shortest = np.min(
+        np.stack(
+            [np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in index],
+            axis=1,
+        ),
+        axis=1,
+    )
+    return radius / shortest
+
+
+def _cad_quality(result: object, reference_tets: int, /) -> tuple[int, dict[str, float]]:
+    # Dihedral range and radius-edge measured here; the tetrahedron count
+    # against the reference's (+-20 % band reported, not a target); the
+    # native stage times.
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    points, cells = result.volume.points, result.volume.tetrahedra
+    dihedral = _dihedral_degrees(points, cells)
+    radius_edge = _radius_edge(points, cells)
+    stats = _cad_stats(result)
+    measured = {
+        "minimum_dihedral_degrees": float(dihedral.min()),
+        "maximum_dihedral_degrees": float(dihedral.max()),
+        "maximum_radius_edge": float(radius_edge.max()),
+        "reference_tets": float(reference_tets),
+        "tets_over_reference": cells.shape[0] / reference_tets,
+        "surface_triangles": float(result.surface.triangles.shape[0]),
+        "boundary_splits": float(stats["boundary_splits"]),
+        **{
+            f"{stage}_seconds": float(stats[f"{stage}_ns"]) * 1e-9
+            for stage in ("curve", "face", "assembly", "volume", "quadratic")
+        },
+    }
+    missed = int(np.sum(np.min(dihedral, axis=1) < 15.5)) + int(np.sum(radius_edge > 2.0))
+    return missed, measured
+
+
+class _ImproveResult(NamedTuple):
+    mesh: _meshcore.TetMesh3D
+    unmet: int
+
+
+def _improve(
+    points: np.ndarray, cells: np.ndarray, faces: np.ndarray, dihedral: float, /
+) -> _ImproveResult:
+    # State creation on the given mesh with its boundary fixed, then
+    # improvement to radius-edge 2 and the given minimum dihedral.
+    empty = np.empty((0,), dtype=np.int32)
+    mesh = _meshcore.TetMesh3D(
+        points,
+        cells,
+        np.zeros((cells.shape[0],), dtype=np.int32),
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int32),
+        np.empty((0, 2), dtype=np.int32),
+        empty,
+        boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
+    )
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=dihedral)
+    if run.status not in (
+        _meshcore.MeshcoreStatus.OK,
+        _meshcore.MeshcoreStatus.UNRESOLVED,
+    ):
+        raise RuntimeError(f"Improvement failed with status {run.status!r}.")
+    return _ImproveResult(mesh, run.unmet_cells)
+
+
+def _boundary_faces(cells: np.ndarray, /) -> np.ndarray:
+    # Faces used by one cell, oriented outward as in that cell.
+    faces = np.concatenate(
+        (
+            cells[:, [1, 2, 3]],
+            cells[:, [0, 3, 2]],
+            cells[:, [0, 1, 3]],
+            cells[:, [0, 2, 1]],
+        )
+    )
+    _, first, count = np.unique(
+        np.sort(faces, axis=1), axis=0, return_index=True, return_counts=True
+    )
+    return faces[first[count == 1]]
+
+
+def _improve_rows(directory: Path | None, /) -> tuple[_Row, ...]:
+    # Improvement passes on a given mesh: the TetGen tetrahedra of the
+    # icosphere at levels 3, 4 and 5 (minimum dihedral about 1.5 degrees),
+    # prepared by `benchmarks/native_meshing_mmg3d.py prepare DIR`, which also
+    # times the reference (MMG3D -optim -nosurf, library time) on the same
+    # input. Timed: state creation plus improvement; the row size is the
+    # input tetrahedron count. The dihedral target of each size is the
+    # minimum dihedral MMG3D achieves on it (rounded up to 0.1 degree, kept
+    # with the ceiling), so the row is at equal or better quality.
+    if directory is None:
+        raise RuntimeError(
+            "The improve-sphere rows need --improve-inputs DIR from "
+            "`benchmarks/native_meshing_mmg3d.py prepare DIR`."
+        )
+    targets = json.loads(_CEILINGS.read_text(encoding="utf-8"))["rows"]["improve-sphere"]
+    rows: list[_Row] = []
+    for level in (3, 4, 5):
+        given = np.load(directory / f"improve-sphere-{level}.npz")
+        points = np.ascontiguousarray(given["points"], dtype=np.float64)
+        cells = np.ascontiguousarray(given["cells"], dtype=np.int32)
+        faces = _boundary_faces(cells)
+        dihedral = float(targets[str(cells.shape[0])]["minimum_dihedral_degrees"])
+        rows.append(
+            _Row(
+                "improve-sphere",
+                cells.shape[0],
+                lambda points=points, cells=cells, faces=faces, dihedral=dihedral: (
+                    _improve(points, cells, faces, dihedral)
+                ),
+                _improved_cells,
+                _improved_unmet,
+                quality=lambda result, points=points, faces=faces, dihedral=dihedral: (
+                    _improved_quality(result, points, faces, dihedral)
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _improved_result(result: object, /) -> _ImproveResult:
+    if not isinstance(result, _ImproveResult):
+        raise TypeError("The improve row returns an _ImproveResult.")
+    return result
+
+
+def _improved_cells(result: object, /) -> int:
+    return _improved_result(result).mesh.arrays().tetrahedra.shape[0]
+
+
+def _improved_unmet(result: object, /) -> int:
+    return _improved_result(result).unmet
+
+
+def _improved_quality(
+    result: object, given_points: np.ndarray, given_faces: np.ndarray, target: float, /
+) -> tuple[int, dict[str, float]]:
+    # Targets: the minimum dihedral `target`, radius-edge 2, the given closed
+    # boundary kept exactly (FIXED: its triangles, by vertex coordinates), no
+    # inverted cell (the input's positive orientation).
+    arrays = _improved_result(result).mesh.arrays()
+    points = np.asarray(arrays.points)
+    cells = np.asarray(arrays.tetrahedra, dtype=np.int64)
+    dihedral = _dihedral_degrees(points, cells)
+    radius_edge = _radius_edge(points, cells)
+    corners = points[cells]
+    edges = corners[:, 1:] - corners[:, :1]
+    volume = np.einsum("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
+    given = {tuple(point): row for row, point in enumerate(given_points.tolist())}
+    boundary = _boundary_faces(cells)
+    rows = np.asarray(
+        [
+            given.get(tuple(point), -1)
+            for point in points[boundary.reshape((-1,))].tolist()
+        ],
+        dtype=np.int64,
+    ).reshape(boundary.shape)
+    closed = bool(np.all(rows >= 0)) and np.array_equal(
+        np.unique(np.sort(rows, axis=1), axis=0),
+        np.unique(np.sort(given_faces, axis=1), axis=0),
+    )
+    inverted = int(np.sum(volume <= 0.0))
+    measured = {
+        "target_dihedral_degrees": target,
+        "minimum_dihedral_degrees": float(dihedral.min()),
+        "maximum_dihedral_degrees": float(dihedral.max()),
+        "maximum_radius_edge": float(radius_edge.max()),
+        "closed_boundary": float(closed),
+        "inverted": float(inverted),
+    }
+    missed = (
+        int(np.sum(np.min(dihedral, axis=1) < target))
+        + int(np.sum(radius_edge > 2.0))
+        + inverted
+        + int(not closed)
+    )
+    return missed, measured
+
+
 def _implicit_rows() -> tuple[_Row, ...]:
     # The external comparison's sphere (radius 0.371) and torus (major 0.742,
     # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
-    # profile route's construction: stuffing at the route's spacing, lattice
-    # acceptance (exact volume certificate, topology, certified facet
-    # deviation) and the fixed-boundary quality pass when the stuffed cells
-    # need it, ending at the constructed arrays as the references end at their
-    # native meshes. Publication as a CellMesh and certification are not
-    # timed. The row size is the tolerance in thousandths.
+    # profile route's construction: restricted Delaunay refinement of the zero
+    # set from the interval box tree's seeds to the certified facet bound, of
+    # the interior cells in the same triangulation to radius-edge 2, sliver
+    # removal to 15 degrees and the fixed-boundary quality fallback, ending at
+    # the constructed arrays as the references end at their native meshes.
+    # Publication as a CellMesh and certification are not timed. The row size
+    # is the tolerance in thousandths.
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry import Sphere, Torus
     from phydrax.geometry.implicit import AnalyticImplicitProfile
@@ -377,7 +812,7 @@ def _implicit_rows() -> tuple[_Row, ...]:
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
-    from phydrax.meshing._implicit_volume import PreparedStuffedImplicitVolume
+    from phydrax.meshing._implicit_volume import PreparedRestrictedImplicitVolume
     from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_implicit import prepare_native_implicit
@@ -412,21 +847,449 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 profile,
                 specification,
                 NativeMeshingOptions(
-                    "implicit_stuffing", volume_schedule=NativeVolumeSchedule()
+                    "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
                 ),
                 contract,
             )
-            if not isinstance(prepared, PreparedStuffedImplicitVolume):
-                raise TypeError("An analytic profile volume prepares the stuffing route.")
+            if not isinstance(prepared, PreparedRestrictedImplicitVolume):
+                raise TypeError(
+                    "An analytic profile volume prepares the restricted route."
+                )
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
 
-def _constructed_cells(result: object, /) -> int:
-    from phydrax.meshing._implicit_volume import StuffedImplicitConstruction
+def _remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's surface remeshing rows: unit icospheres (20,480 to 1,310,720
+    # triangles) and the R = 1, r = 0.4 grid torus (90,000) remeshed toward a
+    # target triangle count N, i.e. the edge h of an equilateral triangle of
+    # area A/N, within tolerance h^2/4 and a 30 degree minimum angle. The row
+    # name carries the target (no suffix: 1e4; `-1e3`, `-1e5`); the row size is
+    # the input triangle count. The row times the construction; the quality
+    # stage (untimed) certifies it with zero_set_certify, a refusal counting
+    # as a miss, and measures the certified surface independently against the
+    # exact surface.
+    def sphere(x: Array) -> Array:
+        return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
-    if not isinstance(result, StuffedImplicitConstruction):
-        raise TypeError("The stuffing construction returns its constructed arrays.")
+    def torus(x: Array) -> Array:
+        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
+        return ring * ring + x[2] * x[2] - 0.16
+
+    # Per field: f and grad f as one-box programs (construction), and f with
+    # its branch-evidence events (the certificate's value program).
+    programs = []
+    for label, function in (("sphere", sphere), ("torus", torus)):
+        value_prepared = prepare_interval_function(
+            function, 3, batch_capacity=1, execution="native"
+        )
+        gradient_program = prepare_interval_function(
+            jax.grad(function), 3, batch_capacity=1, execution="native"
+        ).native_program
+        if value_prepared.native_program is None or gradient_program is None:
+            raise RuntimeError(
+                f"The {label} field and its gradient must lower to native "
+                "interval programs."
+            )
+        programs.append(
+            (
+                value_prepared.native_program.box_program(),
+                gradient_program.box_program(),
+                value_prepared.native_branches().branch_box_program(),
+            )
+        )
+    (
+        (sphere_value, sphere_gradient, sphere_certified),
+        (torus_value, torus_gradient, torus_certified),
+    ) = programs
+    spheres = {level: icosphere(level) for level in (5, 6, 7, 8)}
+    sphere_rows = (
+        ("surface-remesh-sphere-1e3", 5, 1e3),
+        ("surface-remesh-sphere-1e3", 6, 1e3),
+        ("surface-remesh-sphere", 6, 1e4),
+        ("surface-remesh-sphere", 7, 1e4),
+        ("surface-remesh-sphere-1e5", 7, 1e5),
+        ("surface-remesh-sphere-1e5", 8, 1e5),
+    )
+    rows: list[_Row] = []
+    # The certificate's domains: boxes holding each zero set with a margin.
+    sphere_domain = np.array(
+        [[-1.25, -1.25, -1.25], [1.25, 1.25, 1.25]], dtype=np.float64
+    )
+    torus_domain = np.array([[-1.5, -1.5, -0.5], [1.5, 1.5, 0.5]], dtype=np.float64)
+    for name, value, gradient, certified, domain, distance, samples, area, (
+        vertices,
+        faces,
+    ), target in (
+        *(
+            (
+                name,
+                sphere_value,
+                sphere_gradient,
+                sphere_certified,
+                sphere_domain,
+                _sphere_distance,
+                _sphere_samples,
+                4.0 * math.pi,
+                spheres[level],
+                target,
+            )
+            for name, level, target in sphere_rows
+        ),
+        (
+            "surface-remesh-torus",
+            torus_value,
+            torus_gradient,
+            torus_certified,
+            torus_domain,
+            _torus_distance,
+            _torus_samples,
+            4.0 * math.pi**2 * 0.4,
+            _uv_torus(300),
+            1e4,
+        ),
+    ):
+        edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * target))
+        tolerance = edge * edge / 4.0
+        rows.append(
+            _Row(
+                name,
+                faces.shape[0],
+                lambda vertices=vertices, faces=faces, value=value, edge=edge, tolerance=tolerance: (
+                    _meshcore.zero_set_remesh(
+                        vertices, faces, value, tolerance, tolerance, edge, 30.0
+                    )
+                ),
+                _remeshed_triangles,
+                _remesh_unmet,
+                quality=lambda result, certified=certified, gradient=gradient, domain=domain, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                    _zero_set_quality(
+                        result,
+                        certified,
+                        gradient,
+                        domain,
+                        tolerance,
+                        edge,
+                        distance,
+                        samples,
+                    )
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+# The ledger's F7 torus: R = 0.742, r = 0.371 on a 1000 x 500 grid
+# (1,000,000 triangles), and the same with every vertex moved along the exact
+# normal by N(0, 0.001) (seed 2), as `f7_setup.py`.
+_F7_MAJOR, _F7_MINOR, _F7_NOISE = 0.742, 0.371, 0.001
+# CGAL isotropic_remeshing's distances to the true torus on the noisy rows
+# (ledger M1, the smaller of its two directions), the reference those rows
+# may not exceed.
+_F7_NOISY_REFERENCE = {1e3: 0.0141, 1e4: 0.00248, 1e5: 0.00241}
+
+
+def _f7_torus(noisy: bool, /) -> tuple[np.ndarray, np.ndarray]:
+    vertices, faces = _uv_torus(1000, _F7_MAJOR, _F7_MINOR)
+    if not noisy:
+        return vertices, faces
+    u = 2.0 * np.pi * np.arange(1000) / 1000
+    w = 2.0 * np.pi * np.arange(500) / 500
+    grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
+    normals = np.stack(
+        (
+            np.cos(grid_w) * np.cos(grid_u),
+            np.cos(grid_w) * np.sin(grid_u),
+            np.sin(grid_w),
+        ),
+        axis=-1,
+    ).reshape((-1, 3))
+    noise = np.random.default_rng(2).normal(0.0, _F7_NOISE, vertices.shape[0])
+    return vertices + normals * noise[:, None], faces
+
+
+def _mesh_remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's F7 rows: the dense and the noisy torus remeshed with the
+    # input mesh as the only source toward N = 1e3 / 1e4 / 1e5 triangles: edge
+    # h of an equilateral triangle of area A/N and tolerance h^2 / (8 r), the
+    # sagitta of h on the minor circle; the noisy 1e4 / 1e5 rows allow the
+    # noise's 5 sigma more. The row name carries the target (no suffix: 1e4);
+    # the size is the input triangle count. The row times the construction;
+    # the certificate against the input (mesh_certify, both directions) and
+    # the distances to the true torus are measured after it, untimed.
+    area = 4.0 * math.pi**2 * _F7_MAJOR * _F7_MINOR
+    rows: list[_Row] = []
+    for noisy, label in ((False, "mesh-remesh-torus"), (True, "mesh-remesh-noisy-torus")):
+        vertices, faces = _f7_torus(noisy)
+        for suffix, target in (("-1e3", 1e3), ("", 1e4), ("-1e5", 1e5)):
+            edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * target))
+            tolerance = edge * edge / (8.0 * _F7_MINOR)
+            if noisy and target > 1e3:
+                tolerance += 5.0 * _F7_NOISE
+            true_tolerance = _F7_NOISY_REFERENCE[target] if noisy else tolerance
+            rows.append(
+                _Row(
+                    label + suffix,
+                    faces.shape[0],
+                    lambda vertices=vertices, faces=faces, edge=edge, tolerance=tolerance: (
+                        _meshcore.mesh_remesh(vertices, faces, tolerance, edge, 30.0)
+                    ),
+                    _mesh_remeshed_triangles,
+                    _mesh_remesh_unmet,
+                    quality=lambda result, vertices=vertices, faces=faces, edge=edge, tolerance=tolerance, true_tolerance=true_tolerance: (
+                        _mesh_remesh_quality(
+                            result, vertices, faces, edge, tolerance, true_tolerance
+                        )
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def _mesh_remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _mesh_remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance by the construction itself (counters 4 and 5).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return int(result.counters[4] + result.counters[5])
+
+
+def _mesh_remesh_quality(
+    result: object,
+    source_vertices: np.ndarray,
+    source_faces: np.ndarray,
+    edge: float,
+    tolerance: float,
+    true_tolerance: float,
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The certificate against the input (both directions, within the row's
+    # tolerance; a refusal is one miss), then angles and distances to the true
+    # torus as _surface_quality measures them, against `true_tolerance`, of
+    # the certified surface (the constructed one when refused).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    torus = (
+        lambda points: _torus_distance(points, _F7_MAJOR, _F7_MINOR),
+        lambda count: _torus_samples(count, _F7_MAJOR, _F7_MINOR),
+    )
+    try:
+        certificate = _meshcore.mesh_certify(
+            source_vertices,
+            source_faces,
+            result.vertices,
+            result.triangles,
+            tolerance,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, *torus, true_tolerance
+        )
+        return missed + 1, {
+            **measured,
+            "certified": 0.0,
+            "certified_tolerance": tolerance,
+        }
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, *torus, true_tolerance
+    )
+    return missed, {
+        **measured,
+        "certified": 1.0,
+        "certified_tolerance": tolerance,
+        "certified_surface_to_source": float(certificate.distances[0]),
+        "certified_source_to_surface": float(certificate.distances[1]),
+    }
+
+
+def _remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance by the construction itself (counters 4 and 6).
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return int(result.counters[4] + result.counters[6])
+
+
+def _sphere_distance(points: np.ndarray, /) -> np.ndarray:
+    return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
+
+
+def _torus_distance(
+    points: np.ndarray, major: float = 1.0, minor: float = 0.4, /
+) -> np.ndarray:
+    ring = np.linalg.norm(points[..., :2], axis=-1) - major
+    return np.abs(np.hypot(ring, points[..., 2]) - minor)
+
+
+def _sphere_samples(count: int, /) -> np.ndarray:
+    directions = np.random.default_rng(20261119).normal(size=(count, 3))
+    return directions / np.linalg.norm(directions, axis=1, keepdims=True)
+
+
+def _torus_samples(count: int, major: float = 1.0, minor: float = 0.4, /) -> np.ndarray:
+    u, v = 2.0 * np.pi * np.random.default_rng(20261119).random((2, count))
+    ring = major + minor * np.cos(v)
+    return np.stack((ring * np.cos(u), ring * np.sin(u), minor * np.sin(v)), axis=1)
+
+
+def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.ndarray:
+    # Exact Euclidean distance from one point to each triangle (rows of corners).
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+    first, second = b - a, c - a
+    normal = np.cross(first, second)
+    squared_normal = np.sum(normal * normal, axis=1)
+    offset = point - a
+    height = np.sum(offset * normal, axis=1)
+    projected = offset - (height / squared_normal)[:, None] * normal
+    aa, ab, bb = (
+        np.sum(x * y, axis=1)
+        for x, y in ((first, first), (first, second), (second, second))
+    )
+    pa, pb = np.sum(projected * first, axis=1), np.sum(projected * second, axis=1)
+    determinant = aa * bb - ab * ab
+    s, t = (bb * pa - ab * pb) / determinant, (aa * pb - ab * pa) / determinant
+    inside = (s >= 0.0) & (t >= 0.0) & (s + t <= 1.0)
+    squared = np.where(inside, height * height / squared_normal, np.inf)
+    for start, end in ((a, b), (b, c), (c, a)):
+        edge = end - start
+        along = np.clip(
+            np.sum((point - start) * edge, axis=1) / np.sum(edge * edge, axis=1), 0, 1
+        )
+        closest = start + along[:, None] * edge
+        squared = np.minimum(squared, np.sum((point - closest) ** 2, axis=1))
+    return np.sqrt(squared)
+
+
+def _zero_set_quality(
+    result: object,
+    value: _meshcore.IntervalBranchProgram,
+    gradient: _meshcore.IntervalBoxProgram,
+    domain: np.ndarray,
+    tolerance: float,
+    edge: float,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The two-way certificate against the zero set in `domain`
+    # (zero_set_certify at the tolerance, with no carrier: the rows hold no
+    # witness for their input; a refusal is one miss, and so is a certified
+    # zero set -> surface bound above the tolerance), then _surface_quality
+    # of the certified surface (of the constructed one when refused).
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    try:
+        certificate = _meshcore.zero_set_certify(
+            result.vertices,
+            result.triangles,
+            value,
+            gradient,
+            tolerance,
+            result.orientation,
+            np.empty((0, 3), dtype=np.float64),
+            np.empty((0, 3), dtype=np.int64),
+            np.empty((0, 2, 3), dtype=np.float64),
+            domain,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, distance, samples, tolerance
+        )
+        return missed + 1, {**measured, "certified": 0.0}
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, distance, samples, tolerance
+    )
+    return missed + int(certificate.reverse_distance > tolerance), {
+        **measured,
+        "certified": 1.0,
+        "certified_distance": certificate.distance,
+        "certified_reverse_distance": certificate.reverse_distance,
+        "certified_reverse_proof": float(certificate.counters[8]),
+        "certified_cover_boxes": float(certificate.counters[9]),
+    }
+
+
+def _surface_quality(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    tolerance: float,
+    /,
+) -> tuple[int, dict[str, float]]:
+    # Angles of every triangle; mesh -> surface at 15 barycentric points per
+    # triangle and surface -> mesh at 4000 points of the exact surface (exact
+    # distance to the triangles whose centroid lies within twice the longest
+    # edge), both against the exact distance function.
+    from scipy.spatial import cKDTree
+
+    corners = vertices[triangles]
+    angles = []
+    for k in range(3):
+        first = corners[:, (k + 1) % 3] - corners[:, k]
+        second = corners[:, (k + 2) % 3] - corners[:, k]
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    angle = np.stack(angles, axis=1)
+    weights = np.asarray(
+        [(i / 4, j / 4, 1 - (i + j) / 4) for i in range(5) for j in range(5 - i)],
+        dtype=np.float64,
+    )
+    # (W, 3) @ (T, 3, 3): every triangle's barycentric sample points.
+    mesh_to_surface = float(np.max(distance(weights @ corners)))
+    centroids = corners.mean(axis=1)
+    reach = 2.0 * float(
+        np.max(np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2))
+    )
+    tree = cKDTree(centroids)
+    surface_to_mesh = 0.0
+    for point in samples(4000):
+        nearby = tree.query_ball_point(point, reach)
+        surface_to_mesh = max(
+            surface_to_mesh,
+            float(np.min(_point_triangle_distances(point, corners[nearby]))),
+        )
+    below = int(np.sum(angle.min(axis=1) < 30.0))
+    missed = below + int(mesh_to_surface > tolerance) + int(surface_to_mesh > tolerance)
+    return missed, {
+        "minimum_angle_degrees": float(angle.min()),
+        "maximum_angle_degrees": float(angle.max()),
+        "below_minimum_angle": float(below),
+        "mesh_to_surface": mesh_to_surface,
+        "surface_to_mesh": surface_to_mesh,
+        "tolerance": tolerance,
+    }
+
+
+def _constructed_cells(result: object, /) -> int:
+    from phydrax.meshing._implicit_volume import RestrictedImplicitConstruction
+
+    if not isinstance(result, RestrictedImplicitConstruction):
+        raise TypeError("The restricted construction returns its constructed arrays.")
     return result.tetrahedra.shape[0]
 
 
@@ -448,16 +1311,20 @@ def _ceiling(
 
 def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     samples: list[float] = []
-    count = 0
-    unmet = 0
+    result: object = None
     for _ in range(repeats):
         result, seconds = measure_host(row.run)
-        samples.append(seconds)
-        count = row.count(result)
-        unmet = row.unmet(result)
+        samples.append(
+            seconds if row.stage_seconds is None else row.stage_seconds(result)
+        )
+    missed, quality = row.quality(result)
+    if isinstance(result, _meshcore.ConstrainedDelaunay2D):
+        quality = {**quality, "minimum_angle_degrees": _planar_minimum_angle(result)}
     return {
-        "elements": count,
-        "unmet": unmet,
+        "elements": row.count(result),
+        "unmet": row.unmet(result),
+        "quality_missed": missed,
+        "quality": quality,
         "seconds": samples,
         "minimum_seconds": min(samples),
     }
@@ -473,6 +1340,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--improve-inputs",
+        type=Path,
+        default=None,
+        help="directory from `benchmarks/native_meshing_mmg3d.py prepare` (improve-sphere rows)",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -480,21 +1353,24 @@ def main(argv: list[str] | None = None) -> int:
     records: list[dict[str, Any]] = []
     failed = False
     names = None if arguments.rows is None else frozenset(arguments.rows)
-    for row in _rows(tuple(arguments.sizes), names):
+    for row in _rows(tuple(arguments.sizes), names, arguments.improve_inputs):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
+        if row.domain is not None:
+            record["domain"] = row.domain
         ceiling = _ceiling(ceilings, row, measured["elements"])
         if ceiling is not None:
             seconds, allowed, tool = ceiling
             ratio = measured["minimum_seconds"] / seconds
+            meets = measured["unmet"] == 0 and measured["quality_missed"] == 0
             record |= {
                 "reference_tool": tool,
                 "reference_seconds": seconds,
                 "ratio": ratio,
                 "allowed_ratio": allowed,
-                "passed": ratio <= allowed and measured["unmet"] == 0,
+                "passed": ratio <= allowed and meets,
             }
-            failed = failed or ratio > allowed or measured["unmet"] > 0
+            failed = failed or ratio > allowed or not meets
         records.append(record)
         print(json.dumps(record), flush=True)
     if arguments.output is not None:

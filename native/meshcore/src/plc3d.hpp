@@ -249,6 +249,9 @@ struct PlcRecovery {
   // are not exactly coplanar (no planar flip can recover them). Published
   // results (prepare_plc_source, recover_plc) hold none.
   int64_t hidden_plc_edges = 0;
+  // In-plane circle tests of the subface legalization (Lawson flips of the
+  // children of split source triangles). Native only.
+  int64_t legalize_tests = 0;
   std::vector<int8_t> vertex_dimension;
   std::vector<int32_t> input_triangles;
   std::vector<int32_t> input_polygons;
@@ -258,6 +261,11 @@ struct PlcRecovery {
   PlcSourceRefusal source_refusal;
   PlcSuppressionSearch suppression_search;
   std::vector<PlcSuppressionRoute> suppression_routes;
+  // The published cells are cells of the (symbolically perturbed) Delaunay
+  // triangulation of the published points under the identity metric: no
+  // local edit, Steiner point or metric shaped them, so no published vertex
+  // lies strictly inside a published cell's circumsphere.
+  bool delaunay = false;
   PlcFailure failure;
 };
 

@@ -42,7 +42,8 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
-  src/implicit_stuffing.cpp
+  src/tet_entities.cpp
+  src/box_tree.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
   src/metric_float.cpp
@@ -77,9 +78,11 @@ set(PHX_MC_SOURCES
   src/predicates.cpp
   src/quadratic_bounds.cpp
   src/restricted_delaunay.cpp
+  src/surface_adapt.cpp
+  src/mesh_source.cpp
+  src/surface_certify.cpp
   src/surface_envelope.cpp
   src/surface_mesh.cpp
-  src/surface_remesh.cpp
   src/tet_mesh.cpp
   src/tet_mesh_collapse.cpp
   src/tet_mesh_export.cpp
@@ -94,12 +97,23 @@ set(PHX_MC_SOURCES
   src/refine3d.cpp
   src/improve3d.cpp
   src/zero_set_admission.cpp
+  src/zero_set_tube.cpp
   src/elementary.cpp
   src/planar_partition.cpp
   src/angle.cpp
   src/angle_capi.cpp
   src/metric_relocation.cpp
   src/cad_geometry.cpp
+  src/cad_refine2d.cpp
+  src/cad_curves.cpp
+  src/cad_curves_capi.cpp
+  src/verify_chart_partition.cpp
+  src/verify_surface_embedding.cpp
+  src/verify_cad_fidelity.cpp
+  src/cad_faces.cpp
+  src/cad_mesh.cpp
+  src/cad_capi.cpp
+  src/cad_curving.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -126,13 +140,14 @@ set(PHX_MC_HEADERS
   src/interval_arithmetic.hpp
   src/geometry3.hpp
   src/intersections.hpp
+  src/box_tree.hpp
+  src/key_map.hpp
   src/mesh.hpp
   src/parallel.hpp
   src/plc3d.hpp
   src/predicates.hpp
   src/restricted_delaunay.hpp
   src/rounding.hpp
-  src/scratch_faces.hpp
   src/source_construction.hpp
   src/tet_mesh.hpp
   src/tet_mesh_handle.hpp
@@ -144,6 +159,10 @@ set(PHX_MC_HEADERS
   src/triangulation2d.hpp
   src/triangulation3d.hpp
   src/zero_set_admission.hpp
+  src/zero_set_tube.hpp
+  src/surface_adapt.hpp
+  src/surface_certify.hpp
+  src/mesh_source.hpp
   src/elementary.hpp
   src/directed_norm.hpp
   src/directed_interval.hpp
@@ -152,6 +171,19 @@ set(PHX_MC_HEADERS
   src/cad_geometry.hpp
   src/cad_geometry_programs.inc
   src/cad_jet.hpp
+  src/cdt2d.hpp
+  src/chart_surface.hpp
+  src/cad_refine2d.hpp
+  src/cad_curves.hpp
+  src/cad_curve_discretization.hpp
+  src/refine_queue.hpp
+  src/verify_chart_partition.hpp
+  src/verify_surface_embedding.hpp
+  src/verify_cad_fidelity.hpp
+  src/cad_faces.hpp
+  src/cad_mesh.hpp
+  src/cad_curving.hpp
+  src/quadratic_validity_screen.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -267,16 +299,26 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_periodic)
   phx_mc_add_test(test_power_diagram)
   phx_mc_add_test(test_restricted_delaunay)
+  phx_mc_add_test(test_box_tree)
   phx_mc_add_test(test_tet_mesh)
   phx_mc_add_test(test_tet_mesh_relocation)
   phx_mc_add_test(test_improve3d)
   phx_mc_add_test(test_hex_topology)
   phx_mc_add_test(test_surface_envelope)
   phx_mc_add_test(test_surface_mesh)
-  phx_mc_add_test(test_surface_remesh)
+  phx_mc_add_test(test_surface_certify)
+  phx_mc_add_test(test_mesh_source)
   phx_mc_add_test(test_zero_set_admission)
   phx_mc_add_test(test_elementary)
   phx_mc_add_test(test_planar_partition)
   phx_mc_add_test(test_wide_integer)
   phx_mc_add_test(test_cad_geometry)
+  phx_mc_add_test(test_cad_refine2d)
+  phx_mc_add_test(test_cad_curves)
+  phx_mc_add_test(test_verify_chart_partition)
+  phx_mc_add_test(test_verify_surface_embedding)
+  phx_mc_add_test(test_verify_cad_fidelity)
+  phx_mc_add_test(test_cad_mesh)
+  phx_mc_add_test(test_cad_curving)
+  phx_mc_add_test(test_cad_volume)
 endif()

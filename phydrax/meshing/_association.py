@@ -60,12 +60,13 @@ from .._fingerprint import (
     rational_chart_bank_fingerprint,
 )
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
-from .._strict import StrictModule
+from .._strict import StaticRows, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
+from ..discretization._topology import has_repeated_values
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -99,22 +100,6 @@ type SourceBoundaryTargetPiece = (
     SourceBoundaryReferencePiece | SourceBoundaryImagePullback
 )
 type SourceBoundaryTargetPieceRow = tuple[SourceBoundaryTargetPiece, ...]
-
-
-@final
-class _StaticRows[RowT](tuple[RowT, ...]):
-    """Immutable host-metadata row bank held as one static PyTree leaf.
-
-    A plain tuple is a PyTree node, so Equinox's construction-time search for
-    JAX arrays in static fields visits every row element. JAX registers node
-    types exactly, so this final tuple subclass is a single leaf. It is built
-    only from rows ``GeometryAssociation`` validated to be host metadata
-    (strings, roles, exact Fractions, integers, ``None`` and their tuples),
-    which already refuses arrays and tracers. Equality, hashing, ordering,
-    iteration and the canonical fingerprint are the tuple's.
-    """
-
-    __slots__ = ()
 
 
 def _target_piece_sort_key(piece: SourceBoundaryTargetPiece, /) -> tuple[Any, ...]:
@@ -748,6 +733,8 @@ def _validate_target_reference_piece_rows(
 ) -> None:
     if len(rows) != count:
         raise ValueError("Target face piece rows must align with association rows.")
+    if not has_present_rows(rows):
+        return
     for row, pieces in enumerate(rows):
         if pieces is None:
             continue
@@ -1011,18 +998,41 @@ def _unclassified_id(
     )
 
 
+def has_present_rows(values: tuple[object, ...], /) -> bool:
+    """Whether any row of a validated association row bank is not ``None``.
+
+    Row banks hold host metadata (tuples, Fractions, roles, pieces), none of
+    which compares equal to ``None``; the count runs at C level.
+    """
+    return values.count(None) != len(values)
+
+
 def _present_rows(values: tuple[object, ...], /) -> np.ndarray:
     """Per-row ``value is not None``."""
+    absent = values.count(None)
+    if absent in (0, len(values)):
+        return np.full((len(values),), absent == 0, dtype=np.bool_)
     return np.fromiter(
         map(is_not, values, repeat(None)), dtype=np.bool_, count=len(values)
     )
 
 
 def _rows_are(values: tuple[object, ...], member: object, /) -> np.ndarray:
-    """Per-row ``value is member``."""
+    """Per-row ``value is member`` for an enum member (equal only to itself)."""
+    same = values.count(member)
+    if same in (0, len(values)):
+        return np.full((len(values),), same != 0, dtype=np.bool_)
     return np.fromiter(
         map(is_, values, repeat(member)), dtype=np.bool_, count=len(values)
     )
+
+
+def _rows_equal(values: tuple[object, ...], member: object, /) -> np.ndarray:
+    """Per-row ``value == member``; uniform tables count at C level."""
+    equal = values.count(member)
+    if equal in (0, len(values)):
+        return np.full((len(values),), equal != 0, dtype=np.bool_)
+    return np.fromiter(map(eq, values, repeat(member)), dtype=np.bool_, count=len(values))
 
 
 def _distinct(values: tuple[object, ...], /) -> tuple[object, ...] | None:
@@ -1137,6 +1147,8 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
 
 def _fraction_rows_fingerprint(rows: tuple[tuple[Fraction, ...] | None, ...], /) -> str:
     """Bind optional exact rational rows without serializing individual JSON tokens."""
+    if not has_present_rows(rows):
+        return rational_chart_bank_fingerprint(((),) * len(rows))
     tokens = {
         row: () if row is None else (tuple((v.numerator, v.denominator) for v in row),)
         for row in set(rows)
@@ -1253,11 +1265,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         if targets.ndim != 1 or not np.issubdtype(targets.dtype, np.integer):
             raise TypeError("target_global_ids must be one integer vector.")
         targets = targets.astype(np.int64, copy=False)
-        if (
-            targets.size == 0
-            or np.any(targets < 0)
-            or np.unique(targets).size != targets.size
-        ):
+        if targets.size == 0 or np.any(targets < 0) or has_repeated_values(targets):
             raise ValueError(
                 "Target geometry association IDs must be unique and non-negative."
             )
@@ -1360,7 +1368,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
             )
         whole = (Fraction(0), Fraction(1))
-        if any(map(eq, target_intervals, repeat(whole))):
+        if target_intervals.count(whole):
             target_intervals = tuple(
                 None if interval == whole else interval for interval in target_intervals
             )
@@ -1402,9 +1410,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             _present_rows(parameter_points),
             _present_rows(target_intervals),
         )
-        unsided = np.fromiter(
-            map(eq, region_sides, repeat((None, None))), dtype=np.bool_, count=count
-        )
+        unsided = _rows_equal(region_sides, (None, None))
         if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
             resolved_ & facet & unsided
         ):
@@ -1437,7 +1443,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.target_entity_set_id = entity_set
         self.target_global_ids = jnp.asarray(targets)
         # The per-row banks were validated above to hold host metadata only.
-        self.source_entity_ids = _StaticRows(sources)
+        self.source_entity_ids = StaticRows(sources)
         self.residuals = jnp.asarray(distances)
         self.resolved = jnp.asarray(resolved_)
         self.ambiguous = jnp.asarray(ambiguous_)
@@ -1450,14 +1456,14 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.exact = bool(exact)
         self.provenance = provenance
         self.parent_association_id = parent
-        self.source_roles = _StaticRows(roles)
-        self.source_occurrence_paths = _StaticRows(occurrences)
-        self.source_region_sides = _StaticRows(region_sides)
-        self.source_parameter_intervals = _StaticRows(parameter_intervals)
-        self.target_parameter_intervals = _StaticRows(target_intervals)
-        self.target_reference_pieces = _StaticRows(target_pieces)
+        self.source_roles = StaticRows(roles)
+        self.source_occurrence_paths = StaticRows(occurrences)
+        self.source_region_sides = StaticRows(region_sides)
+        self.source_parameter_intervals = StaticRows(parameter_intervals)
+        self.target_parameter_intervals = StaticRows(target_intervals)
+        self.target_reference_pieces = StaticRows(target_pieces)
         self.source_boundary_witness_id = source_boundary_witness_id
-        self.source_parameter_points = _StaticRows(parameter_points)
+        self.source_parameter_points = StaticRows(parameter_points)
         self.association_id = canonical_fingerprint(
             {
                 "kind": "geometry-association",
@@ -1492,7 +1498,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                             target_intervals
                         )
                     }
-                    if any(map(is_not, target_intervals, repeat(None)))
+                    if has_present_rows(target_intervals)
                     else {}
                 ),
                 **(
@@ -1593,12 +1599,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         ):
             raise ValueError("Geometry association contains undeclared target IDs.")
         dimension = entity_set.intrinsic_dimension
-        if (
-            any(map(is_not, self.target_parameter_intervals, repeat(None)))
-            and dimension != 1
-        ):
+        if has_present_rows(self.target_parameter_intervals) and dimension != 1:
             raise ValueError("Target parameter intervals require mesh-edge targets.")
-        has_pieces = any(map(is_not, self.target_reference_pieces, repeat(None)))
+        has_pieces = has_present_rows(self.target_reference_pieces)
         if has_pieces and dimension != 2:
             raise ValueError("Target reference pieces require mesh-face targets.")
         if (
