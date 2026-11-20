@@ -1861,6 +1861,22 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Certified derivative bounds no longer miss kinks. Nested-JVP acceleration
+  and Hessian enclosures differentiate `abs`, min/max and selections
+  piecewise, so c(t) = (t, |t - 1/2|) was certified at about 1e-16 chord
+  deviation against a true 1/2. Curve chord bounds and generic-map surface
+  interpolation, adaptive interpolation and normal-turn bounds now use
+  second-order bounds only where the carrier declares C1 or the point map's
+  branch evidence (`evaluate_branches`) proves smoothness, a first-order
+  Jacobian-spread bound (`binary64_first_order_interpolation_upper`) where it
+  is only continuous, and refuse across possible jumps.
+- Source-fidelity restore ships the outward hull of the stored and recomputed
+  enclosures and refuses an adopted decision the hull does not support, so a
+  stale certificate with an unsound stored bound is no longer re-certified.
+  Declared identity change: coverage certificate, bounded-homotopy witness
+  and witnessed-boundary ids no longer hash platform-rounded distance bounds
+  (the bounds stay validated evidence); report and result ids that include
+  them change.
 - The surface certifiers refuse coordinates outside the exact predicates'
   domain before contact classification, and the surface-remesh benchmark rows
   run `zero_set_certify` in their untimed quality stage (a refusal or an
