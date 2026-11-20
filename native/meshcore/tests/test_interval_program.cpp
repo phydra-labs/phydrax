@@ -578,9 +578,11 @@ void branch_opcodes() {
     PHX_CHECK(pair(unequal + k, 1.0 - expected_equal[k][1], 1.0 - expected_equal[k][0]));
   }
   PHX_CHECK(pair(magnitude, step_down(1.0), step_up(2.0)));
-  PHX_CHECK(pair(magnitude + 1, -kSmallest, step_up(3.0)));
+  // A magnitude meeting 0 keeps the exact lower end 0 (never rounded below
+  // it), so a real-power base guard on |x| holds on boxes meeting x = 0.
+  PHX_CHECK(pair(magnitude + 1, 0.0, step_up(3.0)));
   PHX_CHECK(pair(magnitude + 2, -kInfinity, kInfinity));
-  PHX_CHECK(pair(magnitude + 3, -kSmallest, kInfinity));
+  PHX_CHECK(pair(magnitude + 3, 0.0, kInfinity));
   PHX_CHECK(pair(magnitude + 4, step_down(0.5), step_up(4.0)));
   const double expected_least[8][2] = {{1, 1}, {1, 0}, {0, 0}, {0, 0},
                                        {1, 0}, {1, 1}, {0, 0}, {0, 0}};
@@ -1033,7 +1035,7 @@ void floating_point_modes() {
   PHX_CHECK(branches(branchy_nearest, nearest_events, 2) == PHX_MC_OK);
   PHX_CHECK((nearest_events.smooth == std::vector<std::uint8_t>{1, 0}));
   PHX_CHECK(same(branchy_nearest.lower[magnitude], step_down(kSmallest)));
-  PHX_CHECK(same(branchy_nearest.lower[magnitude + 1], -kSmallest));
+  PHX_CHECK(same(branchy_nearest.lower[magnitude + 1], 0.0));
   PHX_CHECK(same(branchy_nearest.upper[magnitude + 1], step_up(kSmallest)));
   struct Hazard { bool flush; int rounding; };
   const std::array<Hazard, 5> hazards{{{true, FE_TONEAREST}, {false, FE_UPWARD},

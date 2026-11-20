@@ -72,6 +72,7 @@ struct FieldProgram {
   std::vector<double> seeds;
   std::vector<double> parameters;
   int64_t output = 0;
+  std::vector<int64_t> guards{};  // entries whose lower bound must be >= 0
 };
 
 constexpr int64_t kAdd = 2;
@@ -143,7 +144,8 @@ Volume restricted_volume(const Solid& solid, const std::array<double, PHX_MC_RES
       program.rows.data(), static_cast<int64_t>(program.rows.size() / 8), &no_index, 0,
       program.parameters.data(), static_cast<int64_t>(program.parameters.size()), program.seeds.data(),
       program.seeds.data(), static_cast<int64_t>(program.seeds.size()), program.output,
-      solid.lower.data(), solid.upper.data(), criteria.data(), topology, 0, nullptr, &handle);
+      program.guards.data(), static_cast<int64_t>(program.guards.size()), solid.lower.data(),
+      solid.upper.data(), criteria.data(), topology, 0, nullptr, &handle);
   if (handle == nullptr) return result;
   int64_t sizes[3] = {};
   PHX_CHECK(phx_mc_restricted_volume_sizes(handle, sizes, result.report.data()) == PHX_MC_OK);
@@ -362,8 +364,57 @@ void restricted_meshing_arguments() {
   const auto valid = ledger_criteria(0.01);
   PHX_CHECK(phx_mc_implicit_restricted_delaunay(
                 sphere.program.rows.data(), 4, &no_index, 0, sphere.program.parameters.data(), 1,
-                sphere.program.seeds.data(), sphere.program.seeds.data(), 10, 9, sphere.lower.data(),
-                sphere.upper.data(), valid.data(), topology, 0, nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+                sphere.program.seeds.data(), sphere.program.seeds.data(), 10, 9, nullptr, 0,
+                sphere.lower.data(), sphere.upper.data(), valid.data(), topology, 0, nullptr,
+                nullptr) == PHX_MC_INVALID_ARGUMENT);
+  // A guard outside the workspace is refused.
+  const int64_t outside = 10;
+  phx_mc_restricted_volume* handle = nullptr;
+  PHX_CHECK(phx_mc_implicit_restricted_delaunay(
+                sphere.program.rows.data(), 4, &no_index, 0, sphere.program.parameters.data(), 1,
+                sphere.program.seeds.data(), sphere.program.seeds.data(), 10, 9, &outside, 1,
+                sphere.lower.data(), sphere.upper.data(), valid.data(), topology, 0, nullptr,
+                &handle) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(handle == nullptr);
+}
+
+// A real-power field with zeros on two spheres: q = (|p|^2 - 0.01)^0.5 and
+// f = (q - 0.2)(q - 0.4), the product of its two radial factors, zero at
+// |p|^2 = 0.05 and 0.17. f is undefined inside |p| = 0.1, where the power's
+// interval is the placeholder [0, 0] with its guard entry failed (f there
+// [0.08, 0.08], no zero): only its guard keeps the coarse boxes holding both
+// that ball and the inner sphere. Passed the guard, the seed cover finds both
+// spheres and the restricted surface has their two components.
+void guarded_real_power_seeds_both_spheres() {
+  constexpr int64_t kMultiply = 5, kPower = 27;
+  // 0-2 x, 3 0.01, 4 0.5, 5 0.2, 6 0.4, 7-9 squares, 10 |p|^2, 11 the base,
+  // 12 q and 13 its guard, 14-15 the factors, 16 f.
+  FieldProgram program{
+      {kSquare, 7, 3, 0, -1, -1, -1, 0, kReduceSum, 10, 1, 7, -1, -1, 0, 3,
+       kSubtract, 11, 1, 10, -1, 3, -1, 0, kPower, 12, 1, 11, -1, 4, -1, 0,
+       kSubtract, 14, 1, 12, -1, 5, -1, 0, kSubtract, 15, 1, 12, -1, 6, -1, 0,
+       kMultiply, 16, 1, 14, -1, 15, -1, 0},
+      {0.0, 0.0, 0.0, 0.01, 0.5, 0.2, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+      {3.0 * 0x1p-52},
+      16,
+      {13}};
+  const Solid shell{program, {-0.42, -0.42, -0.42}, {0.42, 0.42, 0.42}, 2, 4,
+                    [](const double* p) {
+                      const double r = std::hypot(p[0], p[1], p[2]);
+                      return std::max(std::sqrt(0.05) - r, r - std::sqrt(0.17));
+                    }};
+  const Volume volume = restricted_volume(shell, ledger_criteria(0.01));
+  PHX_CHECK(volume.status == PHX_MC_OK);
+  if (volume.status != PHX_MC_OK) return;
+  PHX_CHECK(volume.report[2] == 1);  // topology matched
+  PHX_CHECK(volume.report[3] == 0);  // every box root covered
+  check_boundary(volume, shell);
+  // Without the guard the seed cover drops those boxes: the surface misses a
+  // sphere and its topology does not match.
+  Solid unguarded = shell;
+  unguarded.program.guards.clear();
+  const Volume dropped = restricted_volume(unguarded, ledger_criteria(0.01));
+  PHX_CHECK(dropped.status != PHX_MC_OK || dropped.report[2] != 1);
 }
 }  // namespace
 
@@ -371,5 +422,6 @@ int main() {
   circumcenter_bounds();
   restricted_meshing();
   restricted_meshing_arguments();
+  guarded_real_power_seeds_both_spheres();
   return phx::mc::test::finish("test_restricted_delaunay");
 }

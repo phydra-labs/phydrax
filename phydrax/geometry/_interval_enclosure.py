@@ -502,7 +502,10 @@ def interval_absolute(value: Interval, /) -> Interval:
     crosses = (lower <= 0.0) & (upper >= 0.0)
     low = np.where(crosses, 0.0, _ieee_minimum(np.abs(lower), np.abs(upper)))
     high = _ieee_maximum(np.abs(lower), np.abs(upper))
-    return _round_out(low, high)
+    rounded_lower, rounded_upper = _round_out(low, high)
+    # |x| >= 0 exactly: an exact 0 lower end stays 0, so a real-power base
+    # guard on |x| holds on a box touching the plane x = 0.
+    return np.where(low == 0.0, 0.0, rounded_lower), rounded_upper
 
 
 def interval_maximum(first: Interval, second: Interval, /) -> Interval:

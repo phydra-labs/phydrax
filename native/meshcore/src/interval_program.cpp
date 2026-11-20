@@ -499,7 +499,10 @@ void execute_row(const Row& row, std::int64_t begin, std::int64_t end,
           lower[out + k] = -std::numeric_limits<double>::infinity();
           upper[out + k] = std::numeric_limits<double>::infinity();
         } else {
-          lower[out + k] = down(least);
+          // An exact 0 lower end stays 0 (|x| >= 0 exactly), so a real-power
+          // base guard on |x| holds on a box touching the plane x = 0; the
+          // other ends round outward as the host interval absolute does.
+          lower[out + k] = least == 0.0 ? 0.0 : down(least);
           upper[out + k] = up(most);
         }
       }

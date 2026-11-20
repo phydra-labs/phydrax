@@ -1136,7 +1136,27 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
+        (
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+        ),
     ),
     "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
     "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
@@ -3858,6 +3878,7 @@ def implicit_restricted_delaunay(
     seed_lower: np.ndarray,
     seed_upper: np.ndarray,
     output_entry: int,
+    guards: np.ndarray,
     lower: object,
     upper: object,
     criteria: RestrictedDelaunayCriteria,
@@ -3870,8 +3891,10 @@ def implicit_restricted_delaunay(
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
     interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
-    interval workspace templates and ``output_entry`` the workspace entry of
-    f. The box ``[lower, upper]`` contains the zero set, whose restricted
+    interval workspace templates, ``output_entry`` the workspace entry of f
+    and ``guards`` the workspace entries whose lower bound must be ``>= 0``
+    (the program's domain guards: a box on which one may fail is kept by the
+    seed cover). The box ``[lower, upper]`` contains the zero set, whose restricted
     surface should have ``components`` edge-connected components and Euler
     characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
     points near the zero set added to the box-tree seeds. The result is a
@@ -3881,6 +3904,11 @@ def implicit_restricted_delaunay(
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
+    guard_array = np.ascontiguousarray(
+        _native_integer_array(guards, "guards", np.dtype(np.int64))
+    )
+    if guard_array.ndim != 1:
+        raise ValueError("guards must be one-dimensional.")
     seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
     if seeds.ndim != 2 or seeds.shape[1] != 3:
         raise ValueError("extra_seeds must have shape (n, 3).")
@@ -3912,6 +3940,8 @@ def implicit_restricted_delaunay(
             seed_upper.ctypes.data,
             seed_lower.size,
             output_entry,
+            guard_array.ctypes.data,
+            guard_array.size,
             lower_array.ctypes.data,
             upper_array.ctypes.data,
             values.ctypes.data,

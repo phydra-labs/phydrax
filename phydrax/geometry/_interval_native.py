@@ -424,6 +424,7 @@ class NativeIntervalProgram:
             seed_lower,
             seed_upper,
             int(output.reshape((-1,))[0]),
+            self.domain_guards,
             lower,
             upper,
             criteria,
