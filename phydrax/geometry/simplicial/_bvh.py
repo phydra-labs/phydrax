@@ -19,14 +19,27 @@ from ..._bvh import (
     bvh_nearest_items,
     BVHBuildPolicy,
     BVHNearestResult,
+    host_tree_arrays,
     PackedBVH,
     prepare_bvh,
     reduce_packed_bvh_nodes,
     refit_packed_bvh_bounds,
 )
+from ..._bvh_native import (
+    native_point_queries,
+    triangle_nearest,
+    triangle_signed_distance,
+    triangle_winding_dipole,
+    triangle_winding_exact,
+)
 from ..._strict import StrictModule
 from ...typing import checked, Dim, Float64, Int32, parse
-from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
+from ._mesh import (
+    _closest_points_on_triangles,
+    _closest_triangle_features,
+    MeshQueryResult,
+    TriangleMesh,
+)
 
 
 if TYPE_CHECKING:
@@ -34,6 +47,7 @@ if TYPE_CHECKING:
 
 
 type SegmentQueryExecution = Literal["auto", "bvh", "dense"]
+type SignedDistanceSign = Literal["pseudonormal", "winding_number"]
 
 
 class _SegmentVertexDim(Dim):
@@ -397,11 +411,92 @@ def _closing_boundaries(
     return boundary_offsets, edges
 
 
+def _face_edges(faces: np.ndarray, /) -> np.ndarray:
+    """Undirected edge index of every face side (a,b), (b,c), (c,a)."""
+    origin = faces.astype(np.int64)
+    destination = faces[:, [1, 2, 0]].astype(np.int64)
+    keys = np.stack(
+        (np.minimum(origin, destination), np.maximum(origin, destination)), axis=-1
+    ).reshape((-1, 2))
+    _, edge = np.unique(keys, axis=0, return_inverse=True)
+    return edge.reshape(faces.shape).astype(np.int32)
+
+
+def _feature_normals(vertices: Array, faces: Array, face_edges: Array, /) -> Array:
+    """Angle-weighted pseudonormals (Baerentzen-Aanaes) per face and closest feature.
+
+    Row `(face, feature)`: the unit face normal, the sums of the unit normals of
+    the faces sharing each side (a,b) (b,c) (c,a), and the corner-angle-weighted
+    sums at the corners a, b, c. For a closed oriented surface the sign of
+    `dot(point - closest, row)` at the closest feature is the inside/outside sign.
+    """
+    triangles = vertices[faces]
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    normal = jnp.cross(b - a, c - a)
+    length = jnp.linalg.norm(normal, axis=-1, keepdims=True)
+    unit = jnp.where(length > 0.0, normal / jnp.where(length > 0.0, length, 1.0), 0.0)
+
+    def angle(first: Array, second: Array) -> Array:
+        return jnp.arctan2(
+            jnp.linalg.norm(jnp.cross(first, second), axis=-1),
+            jnp.sum(first * second, axis=-1),
+        )
+
+    corner_angles = jnp.stack(
+        (angle(b - a, c - a), angle(c - b, a - b), angle(a - c, b - c)), axis=1
+    )
+    vertex_normals = (
+        jnp.zeros_like(vertices)
+        .at[faces]
+        .add(corner_angles[:, :, None] * unit[:, None, :])
+    )
+    edge_normals = (
+        jnp.zeros((3 * faces.shape[0], 3), dtype=vertices.dtype)
+        .at[face_edges]
+        .add(jnp.broadcast_to(unit[:, None, :], (faces.shape[0], 3, 3)))
+    )
+    return jnp.concatenate(
+        (unit[:, None, :], edge_normals[face_edges], vertex_normals[faces]), axis=1
+    )
+
+
+def _dipoles(vertices: Array, faces: Array, bvh: PackedBVH, /) -> Array:
+    """Per-node dipoles `(area normal, area-weighted center, radius)` (Barill et al. 2018)."""
+    triangles = vertices[faces]
+    area_vectors = 0.5 * jnp.cross(
+        triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+    )
+    areas = jnp.linalg.norm(area_vectors, axis=-1)
+    moments = reduce_packed_bvh_nodes(
+        bvh,
+        jnp.concatenate(
+            (
+                area_vectors,
+                areas[:, None],
+                areas[:, None] * jnp.mean(triangles, axis=1),
+            ),
+            axis=1,
+        ),
+        reduction="sum",
+    )
+    node_center = moments[:, 4:] / moments[:, 3:4]
+    reach = jnp.maximum(
+        jnp.abs(bvh.bbox_max - node_center),
+        jnp.abs(node_center - bvh.bbox_min),
+    )
+    node_radius = jnp.linalg.norm(reach, axis=-1)
+    return jnp.concatenate((moments[:, :3], node_center, node_radius[:, None]), axis=1)
+
+
 class TriangleBVH(StrictModule):
     """Exact stack-traversed AABB hierarchy over one fixed triangle topology.
 
     `refit` moves the hierarchy to new differentiable vertex positions while
-    keeping its topology; every query remains exact after refitting.
+    keeping its topology; every query remains exact after refitting. Closing
+    fans, dipoles, and feature pseudonormals are prepared once per embedding.
+    Concrete float64 queries run natively when the meshcore library is present
+    (same decisions as the JAX route up to floating-point reduction order);
+    traced queries and a missing library take the JAX route.
     """
 
     vertices: Array
@@ -409,6 +504,9 @@ class TriangleBVH(StrictModule):
     bvh: PackedBVH
     boundary_offsets: Array
     boundary_edges: Array
+    face_edges: Array
+    dipoles: Array
+    feature_normals: Array
 
     @checked
     def __init__(
@@ -426,11 +524,15 @@ class TriangleBVH(StrictModule):
             dtype=mesh.vertices.dtype,
         )
         boundary_offsets, boundary_edges = _closing_boundaries(faces, packed)
+        face_edges = jnp.asarray(_face_edges(faces), dtype=jnp.int32)
         self.vertices = mesh.vertices
         self.faces = mesh.faces
         self.bvh = packed
         self.boundary_offsets = jnp.asarray(boundary_offsets, dtype=jnp.int32)
         self.boundary_edges = jnp.asarray(boundary_edges, dtype=jnp.int32)
+        self.face_edges = face_edges
+        self.dipoles = _dipoles(mesh.vertices, mesh.faces, packed)
+        self.feature_normals = _feature_normals(mesh.vertices, mesh.faces, face_edges)
 
     @property
     def triangles(self) -> Array:
@@ -445,7 +547,16 @@ class TriangleBVH(StrictModule):
         packed = refit_packed_bvh_bounds(
             self.bvh, jnp.min(triangles, axis=1), jnp.max(triangles, axis=1)
         )
-        return eqx.tree_at(lambda tree: (tree.vertices, tree.bvh), self, (values, packed))
+        return eqx.tree_at(
+            lambda tree: (tree.vertices, tree.bvh, tree.dipoles, tree.feature_normals),
+            self,
+            (
+                values,
+                packed,
+                _dipoles(values, self.faces, packed),
+                _feature_normals(values, self.faces, self.face_edges),
+            ),
+        )
 
     def _points(self, points: ArrayLike, /) -> tuple[Array, tuple[int, ...]]:
         values = jnp.asarray(points, dtype=self.vertices.dtype)
@@ -453,9 +564,26 @@ class TriangleBVH(StrictModule):
             raise ValueError("points must have trailing dimension 3.")
         return values.reshape((-1, 3)), values.shape[:-1]
 
+    def _native(self, flat: Array, /) -> bool:
+        return flat.dtype == jnp.float64 and native_point_queries(self, flat)
+
     def nearest_faces(self, points: ArrayLike, /, *, k: int = 1) -> BVHNearestResult:
         """Exact `k` nearest faces per point, ties ordered by face index."""
         flat, leading = self._points(points)
+        if self._native(flat):
+            nearest = triangle_nearest(
+                host_tree_arrays(self.bvh),
+                np.asarray(self.vertices),
+                np.asarray(self.faces),
+                np.asarray(flat),
+                k=k,
+            )
+            return BVHNearestResult(
+                items=jnp.asarray(nearest.faces.reshape((*leading, k)), dtype=jnp.int32),
+                distance_squared=jnp.asarray(
+                    nearest.distance_squared.reshape((*leading, k)), dtype=jnp.float64
+                ),
+            )
 
         def distance(point: Array, items: Array) -> Array:
             selected = self.vertices[self.faces[items]]
@@ -470,11 +598,24 @@ class TriangleBVH(StrictModule):
 
     def query(self, points: ArrayLike, /) -> MeshQueryResult:
         flat, leading = self._points(points)
-        face = self.nearest_faces(flat).items[:, 0]
+        if self._native(flat):
+            nearest = triangle_nearest(
+                host_tree_arrays(self.bvh),
+                np.asarray(self.vertices),
+                np.asarray(self.faces),
+                np.asarray(flat),
+                k=1,
+            )
+            face = jnp.asarray(nearest.faces[:, 0], dtype=jnp.int32)
+            closest = jnp.asarray(nearest.closest[:, 0], dtype=jnp.float64)
+        else:
+            face = self.nearest_faces(flat).items[:, 0]
+            closest = jax.vmap(
+                lambda point, vertices: _closest_points_on_triangles(
+                    point, vertices[None]
+                )[0]
+            )(flat, self.vertices[self.faces[face]])
         triangle = self.vertices[self.faces[face]]
-        closest = jax.vmap(
-            lambda point, vertices: _closest_points_on_triangles(point, vertices[None])[0]
-        )(flat, triangle)
         normal = jnp.cross(
             triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]
         )
@@ -486,6 +627,49 @@ class TriangleBVH(StrictModule):
             normal=normal.reshape((*leading, 3)),
         )
 
+    def signed_distance(
+        self, points: ArrayLike, /, *, sign: SignedDistanceSign = "pseudonormal"
+    ) -> Array:
+        """Signed distances to the surface, negative inside.
+
+        `"pseudonormal"` signs by the angle-weighted pseudonormal of the closest
+        feature (exact inside/outside for closed, consistently oriented,
+        non-self-intersecting surfaces); `"winding_number"` signs by the exact
+        generalized winding number (`|w| > 0.5` is inside, as `MeshRegion`),
+        which also holds for open or imperfect surfaces.
+        """
+        sign_ = parse(sign, SignedDistanceSign, "sign")
+        flat, leading = self._points(points)
+        match sign_:
+            case "pseudonormal":
+                distance = self._pseudonormal_distance(flat)
+            case "winding_number":
+                magnitude = self.query(flat).distance
+                inside = jnp.abs(self.winding_number(flat).values) > 0.5
+                distance = jnp.where(inside, -magnitude, magnitude)
+            case _:
+                assert_never(sign_)
+        return distance.reshape(leading)
+
+    def _pseudonormal_distance(self, flat: Array, /) -> Array:
+        if self._native(flat):
+            distance, _, _ = triangle_signed_distance(
+                host_tree_arrays(self.bvh),
+                np.asarray(self.vertices),
+                np.asarray(self.faces),
+                np.asarray(self.feature_normals),
+                np.asarray(flat),
+            )
+            return jnp.asarray(distance, dtype=jnp.float64)
+        face = self.nearest_faces(flat).items[:, 0]
+        closest, feature = jax.vmap(
+            lambda point, vertices: _closest_triangle_features(point, vertices[None])
+        )(flat, self.vertices[self.faces[face]])
+        away = flat - closest[:, 0]
+        normal = self.feature_normals[face, feature[:, 0]]
+        magnitude = jnp.linalg.norm(away, axis=-1)
+        return jnp.where(jnp.sum(away * normal, axis=-1) < 0.0, -magnitude, magnitude)
+
     def _leaf_solid_angle(self, point: Array, leaf: Array) -> Array:
         items = self.bvh.leaf_items[leaf]
         triangles = self.triangles[jnp.maximum(items, 0)]
@@ -495,6 +679,20 @@ class TriangleBVH(StrictModule):
     def winding_number(self, points: ArrayLike, /) -> WindingNumberResult:
         """Exact generalized winding numbers by hierarchical closing fans."""
         flat, leading = self._points(points)
+        if self._native(flat):
+            native = triangle_winding_exact(
+                host_tree_arrays(self.bvh),
+                np.asarray(self.vertices),
+                np.asarray(self.faces),
+                np.asarray(self.boundary_offsets),
+                np.asarray(self.boundary_edges),
+                np.asarray(flat),
+            )
+            return WindingNumberResult(
+                values=jnp.asarray(native.reshape(leading), dtype=jnp.float64),
+                route=WindingNumberRoute.EXACT,
+                opening_angle=None,
+            )
         lanes = jnp.arange(_FAN_CHUNK, dtype=jnp.int32)
         edge_count = self.boundary_edges.shape[0]
 
@@ -558,30 +756,23 @@ class TriangleBVH(StrictModule):
         if not np.isfinite(opening_angle) or opening_angle <= 0.0:
             raise ValueError("opening_angle must be finite and positive.")
         flat, leading = self._points(points)
-        triangles = self.triangles
-        area_vectors = 0.5 * jnp.cross(
-            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
-        )
-        areas = jnp.linalg.norm(area_vectors, axis=-1)
-        moments = reduce_packed_bvh_nodes(
-            self.bvh,
-            jnp.concatenate(
-                (
-                    area_vectors,
-                    areas[:, None],
-                    areas[:, None] * jnp.mean(triangles, axis=1),
-                ),
-                axis=1,
-            ),
-            reduction="sum",
-        )
-        node_normal = moments[:, :3]
-        node_center = moments[:, 4:] / moments[:, 3:4]
-        reach = jnp.maximum(
-            jnp.abs(self.bvh.bbox_max - node_center),
-            jnp.abs(node_center - self.bvh.bbox_min),
-        )
-        node_radius = jnp.linalg.norm(reach, axis=-1)
+        if self._native(flat):
+            native = triangle_winding_dipole(
+                host_tree_arrays(self.bvh),
+                np.asarray(self.vertices),
+                np.asarray(self.faces),
+                np.asarray(self.dipoles),
+                float(opening_angle),
+                np.asarray(flat),
+            )
+            return WindingNumberResult(
+                values=jnp.asarray(native.reshape(leading), dtype=jnp.float64),
+                route=WindingNumberRoute.FAST_DIPOLE,
+                opening_angle=float(opening_angle),
+            )
+        node_normal = self.dipoles[:, :3]
+        node_center = self.dipoles[:, 3:6]
+        node_radius = self.dipoles[:, 6]
         beta = jnp.asarray(opening_angle, dtype=flat.dtype)
 
         def near(point: Any, node: Any) -> Any:
@@ -609,6 +800,7 @@ class TriangleBVH(StrictModule):
 __all__ = [
     "SegmentBVH",
     "SegmentQueryExecution",
+    "SignedDistanceSign",
     "TriangleBVH",
     "WindingNumberResult",
     "WindingNumberRoute",

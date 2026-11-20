@@ -27,6 +27,7 @@ from typing import cast, get_args, Literal
 
 import numpy as np
 
+from ._bvh_native import HostTree, tree_view
 from ._meshcore import _raise_for_call, load_meshcore, MeshcoreLibrary, MeshcoreStatus
 from .typing import parse
 
@@ -35,7 +36,6 @@ type BernsteinDomain = Literal["simplex", "prism", "box"]
 type ElementaryFunction = Literal[
     "exp", "log", "sin", "cos", "tan", "atan", "tanh", "asin", "acos"
 ]
-type HostTree = tuple[np.ndarray, ...]
 type _IntegerRows = tuple[tuple[int, ...], ...]
 
 # Native exact word widths in 64-bit limbs (256 to 4096 bits).
@@ -778,86 +778,6 @@ def separation_screen(
 # ------------------------------------------------------------- BVH pair stream
 
 
-class _TreeView(ctypes.Structure):
-    _fields_ = (
-        ("node_count", ctypes.c_int64),
-        ("leaf_count", ctypes.c_int64),
-        ("leaf_width", ctypes.c_int64),
-        ("item_count", ctypes.c_int64),
-        ("node_min", ctypes.c_void_p),
-        ("node_max", ctypes.c_void_p),
-        ("node_size", ctypes.c_void_p),
-        ("left", ctypes.c_void_p),
-        ("right", ctypes.c_void_p),
-        ("leaf", ctypes.c_void_p),
-        ("leaf_items", ctypes.c_void_p),
-        ("item_min", ctypes.c_void_p),
-        ("item_max", ctypes.c_void_p),
-    )
-
-
-def _tree_view(tree: HostTree, /) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
-    if len(tree) != 8:
-        raise ValueError("host trees require eight arrays.")
-    for index, value in enumerate(tree):
-        dtype = np.float64 if index in (0, 1, 6, 7) else np.int64
-        if not isinstance(value, np.ndarray) or value.dtype != dtype:
-            raise ValueError("host tree bounds must be float64 and indices int64.")
-    node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = tree
-    if (
-        node_min.ndim != 2
-        or node_min.shape[0] < 1
-        or node_min.shape[1] < 1
-        or node_max.shape != node_min.shape
-    ):
-        raise ValueError("node bounds must share one nonempty (nodes, dimension) shape.")
-    node_count, dimension = node_min.shape
-    if any(value.shape != (node_count,) for value in (left, right, leaf)):
-        raise ValueError("node metadata must have one entry per node.")
-    if leaf_items.ndim != 2 or leaf_items.shape[1] < 1:
-        raise ValueError("leaf items must have shape (leaves, positive leaf width).")
-    if (
-        item_min.ndim != 2
-        or item_min.shape[1] != dimension
-        or item_max.shape != item_min.shape
-    ):
-        raise ValueError("item bounds must share the node dimension and one shape.")
-    if np.any(leaf >= leaf_items.shape[0]):
-        raise ValueError("node leaf indices exceed the leaf array.")
-    internal = leaf < 0
-    if any(
-        np.any((value[internal] < 0) | (value[internal] >= node_count))
-        for value in (left, right)
-    ):
-        raise ValueError("child indices exceed the node arrays.")
-    if np.any(leaf_items >= item_min.shape[0]):
-        raise ValueError("leaf item indices exceed the item bounds.")
-    node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = (
-        np.ascontiguousarray(value) for value in tree
-    )
-    # The descent key is the reference's own float64 extent sum.
-    node_size = np.ascontiguousarray(np.sum(node_max - node_min, axis=-1))
-    arrays = (
-        node_min,
-        node_max,
-        node_size,
-        left,
-        right,
-        leaf,
-        leaf_items,
-        item_min,
-        item_max,
-    )
-    view = _TreeView(
-        int(node_min.shape[0]),
-        int(leaf_items.shape[0]),
-        int(leaf_items.shape[1]),
-        int(item_min.shape[0]),
-        *(_pointer(array) for array in arrays),
-    )
-    return view, arrays
-
-
 def bvh_pair_blocks(
     first: HostTree,
     second: HostTree,
@@ -881,8 +801,8 @@ def bvh_pair_blocks(
     """
     # The views and their arrays stay referenced by this frame for the
     # stream's lifetime.
-    first_view, first_arrays = _tree_view(first)
-    second_view, second_arrays = _tree_view(second)
+    first_view, first_arrays = tree_view(first)
+    second_view, second_arrays = tree_view(second)
     if first_arrays[0].shape[1] != second_arrays[0].shape[1]:
         raise ValueError("both host trees must have the same dimension.")
     library = load_meshcore()

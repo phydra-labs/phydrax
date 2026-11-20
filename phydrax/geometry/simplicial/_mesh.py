@@ -289,17 +289,21 @@ class _TriangleCubatureMap(AbstractCubatureMap):
         return super().evaluate(chart_indices, reference)
 
 
-def _closest_segment(point: Array, start: Array, end: Array) -> Array:
+def _segment_parameter(point: Array, start: Array, end: Array) -> Array:
     direction = end - start
     parameter = jnp.sum((point - start) * direction, axis=-1) / jnp.sum(
         direction * direction,
         axis=-1,
     )
-    parameter = jnp.clip(parameter, 0.0, 1.0)
-    return start + parameter[..., None] * direction
+    return jnp.clip(parameter, 0.0, 1.0)
 
 
-def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:
+def _closest_triangle_features(point: Array, triangles: Array) -> tuple[Array, Array]:
+    """Closest points of `triangles` to `point` and their closest features.
+
+    Features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a), 4/5/6 the
+    corners a/b/c; the first minimum in face/(a,b)/(b,c)/(c,a) order wins.
+    """
     a = triangles[:, 0]
     b = triangles[:, 1]
     c = triangles[:, 2]
@@ -326,14 +330,40 @@ def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:
     first = 1.0 - second - third
     inside = (first >= 0.0) & (second >= 0.0) & (third >= 0.0)
 
-    on_ab = _closest_segment(point, a, b)
-    on_bc = _closest_segment(point, b, c)
-    on_ca = _closest_segment(point, c, a)
+    parameters = jnp.stack(
+        (
+            _segment_parameter(point, a, b),
+            _segment_parameter(point, b, c),
+            _segment_parameter(point, c, a),
+        ),
+        axis=1,
+    )
+    on_ab = a + parameters[:, 0, None] * (b - a)
+    on_bc = b + parameters[:, 1, None] * (c - b)
+    on_ca = c + parameters[:, 2, None] * (a - c)
     candidates = jnp.stack((projection, on_ab, on_bc, on_ca), axis=1)
     distance_sq = jnp.sum((candidates - point) ** 2, axis=-1)
     distance_sq = distance_sq.at[:, 0].set(jnp.where(inside, distance_sq[:, 0], jnp.inf))
     selected = jnp.argmin(distance_sq, axis=1)
-    return jnp.take_along_axis(candidates, selected[:, None, None], axis=1)[:, 0]
+    closest = jnp.take_along_axis(candidates, selected[:, None, None], axis=1)[:, 0]
+    # A clamped edge parameter lands on the edge's start or end corner.
+    edge_parameter = jnp.take_along_axis(
+        parameters, jnp.maximum(selected - 1, 0)[:, None], axis=1
+    )[:, 0]
+    feature = jnp.where(
+        selected == 0,
+        0,
+        jnp.where(
+            edge_parameter == 0.0,
+            3 + selected,
+            jnp.where(edge_parameter == 1.0, 4 + selected % 3, selected),
+        ),
+    ).astype(jnp.int32)
+    return closest, feature
+
+
+def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:
+    return _closest_triangle_features(point, triangles)[0]
 
 
 class TriangleMeshQueryIndex(StrictModule):

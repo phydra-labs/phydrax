@@ -6,14 +6,21 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry import BVHBuildKind, BVHBuildPolicy
 from phydrax.geometry.simplicial import (
     TriangleBVH,
     TriangleMesh,
     WindingNumberRoute,
+)
+
+
+_requires_meshcore = pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
 )
 
 
@@ -181,3 +188,91 @@ def test_nearest_faces_orders_exact_geometric_ties_by_original_index() -> None:
     ).nearest_faces(np.asarray(((0.25, 0.25, 2.0),), dtype=np.float64), k=2)
     np.testing.assert_array_equal(nearest.items, ((0, 1),))
     np.testing.assert_array_equal(nearest.distance_squared, ((4.0, 4.0),))
+
+
+def _native_case() -> tuple[TriangleBVH, Any, Any]:
+    vertices, faces = _sphere(32, 20)
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
+    points = np.random.default_rng(8).uniform(-1.3, 1.3, (400, 3))
+    # Corners and edge midpoints raised off the surface reach vertex and edge features.
+    edge_points = 0.5 * (vertices[faces[:, 0]] + vertices[faces[:, 1]])
+    points = np.concatenate((points, 1.05 * vertices[:40], 0.97 * edge_points[:40]))
+    return index, vertices, points
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+def test_native_nearest_and_query_match_traced_route() -> None:
+    index, _, points = _native_case()
+    native = index.nearest_faces(points, k=2)
+    traced = jax.jit(lambda values: index.nearest_faces(values, k=2))(points)
+    np.testing.assert_allclose(
+        native.distance_squared, traced.distance_squared, atol=1e-15
+    )
+    # Faces agree wherever the two nearest are not tied to rounding.
+    gap = np.asarray(traced.distance_squared[:, 1] - traced.distance_squared[:, 0])
+    separated = gap > 1.0e-12
+    np.testing.assert_array_equal(
+        np.asarray(native.items[separated, 0]), np.asarray(traced.items[separated, 0])
+    )
+    query = index.query(points)
+    traced_query = jax.jit(lambda values: index.query(values))(points)
+    np.testing.assert_array_equal(
+        np.asarray(query.face_index)[separated],
+        np.asarray(traced_query.face_index)[separated],
+    )
+    np.testing.assert_allclose(query.distance, traced_query.distance, atol=1e-15)
+    np.testing.assert_allclose(
+        np.asarray(query.closest_point)[separated],
+        np.asarray(traced_query.closest_point)[separated],
+        atol=1e-14,
+    )
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+def test_native_winding_numbers_match_traced_route() -> None:
+    index, _, points = _native_case()
+    exact = index.winding_number(points)
+    traced = jax.jit(lambda values: index.winding_number(values).values)(points)
+    assert exact.route is WindingNumberRoute.EXACT
+    np.testing.assert_allclose(exact.values, traced, atol=1e-12)
+    np.testing.assert_array_equal(np.abs(exact.values) > 0.5, np.abs(traced) > 0.5)
+    fast = index.fast_winding_number(points, opening_angle=2.0)
+    traced_fast = jax.jit(lambda values: index.fast_winding_number(values).values)(points)
+    assert fast.route is WindingNumberRoute.FAST_DIPOLE and fast.opening_angle == 2.0
+    np.testing.assert_allclose(fast.values, traced_fast, atol=1e-12)
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+def test_native_signed_distance_matches_traced_route_and_sphere() -> None:
+    index, _, points = _native_case()
+    radius = np.linalg.norm(points, axis=-1)
+    outside_band = np.abs(radius - 1.0) > 0.02
+    for sign in ("pseudonormal", "winding_number"):
+        native = np.asarray(index.signed_distance(points, sign=sign))
+        traced = np.asarray(
+            jax.jit(lambda values, sign=sign: index.signed_distance(values, sign=sign))(
+                points
+            )
+        )
+        np.testing.assert_allclose(native, traced, atol=1e-15)
+        np.testing.assert_array_equal(
+            (native < 0.0)[outside_band], (radius < 1.0)[outside_band]
+        )
+        np.testing.assert_allclose(
+            np.abs(native), np.asarray(index.query(points).distance), atol=1e-15
+        )
+    with pytest.raises(ValueError, match="sign"):
+        index.signed_distance(points, sign="nearest")  # ty: ignore[invalid-argument-type]
+
+
+def test_pseudonormal_sign_holds_beside_corners() -> None:
+    # Radial points just outside and inside each corner of a coarse sphere have
+    # the corner (or an incident edge) as closest feature.
+    vertices, faces = _sphere(6, 4)
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=2))
+    points = np.concatenate((1.01 * vertices, 0.99 * vertices))
+    distance = np.asarray(jax.jit(lambda values: index.signed_distance(values))(points))
+    np.testing.assert_array_equal(distance < 0.0, np.repeat((False, True), len(vertices)))

@@ -1680,7 +1680,8 @@ def _host_boxes_overlap(
     return np.all(extent >= -(absolute_tolerance + relative_tolerance * scale), axis=-1)
 
 
-def _host_arrays(bvh: PackedBVH, /) -> tuple[np.ndarray, ...]:
+def host_tree_arrays(bvh: PackedBVH, /) -> tuple[np.ndarray, ...]:
+    """The concrete tree as the float64/int64 host arrays of the native tree view."""
     return (
         np.asarray(bvh.bbox_min, dtype=np.float64),
         np.asarray(bvh.bbox_max, dtype=np.float64),
@@ -1837,8 +1838,8 @@ def bvh_overlap_pair_blocks(
     test = _validate_host_pair_arguments(
         first, second, include_touching, absolute_tolerance, relative_tolerance
     )
-    first_arrays = _host_arrays(first)
-    second_arrays = _host_arrays(second)
+    first_arrays = host_tree_arrays(first)
+    second_arrays = host_tree_arrays(second)
     if (
         meshcore_available()
         and first_arrays[0].shape[0] > 0
@@ -1910,6 +1911,7 @@ __all__ = [
     "bvh_overlap_pair_blocks",
     "bvh_overlap_pairs",
     "bvh_overlap_pairs_host",
+    "host_tree_arrays",
     "point_select_leaf_items",
     "prepare_bvh",
     "ray_select_leaf_items",

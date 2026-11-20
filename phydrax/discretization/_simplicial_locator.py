@@ -15,7 +15,14 @@ from jax.core import Tracer
 
 from phydrax.ein import contract
 
-from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
+from .._bvh import (
+    BVHBuildPolicy,
+    host_tree_arrays,
+    PackedBVH,
+    point_select_leaf_items,
+    prepare_bvh,
+)
+from .._bvh_native import native_point_queries, tetrahedron_locate
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -258,6 +265,8 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
                 raise ValueError(
                     "cell_mask must be a boolean array with one entry per cell."
                 )
+        if self._native_affine_tetrahedra(values, cell_mask):
+            return self._locate_affine_tetrahedra(values, cell_mask)
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
         while True:
@@ -313,6 +322,69 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         if len(parts) == 1:
             return parts[0]
         return jax.tree.map(lambda *rows: jnp.concatenate(rows, axis=0), *parts)
+
+    def _native_affine_tetrahedra(
+        self, values: Array, cell_mask: ConvertibleToArray | None, /
+    ) -> bool:
+        """Whether `locate` runs natively: concrete float64 affine tetrahedra."""
+        return (
+            self.cell_map.coordinate_element.degree == 1
+            and self.cell_map.reference_dimension == 3
+            and self.cell_map.ambient_dimension == 3
+            and values.dtype == jnp.float64
+            and self.coordinates.dtype == jnp.float64
+            and native_point_queries(
+                self.coordinates, self.cells, self.bvh, values, cell_mask
+            )
+        )
+
+    def _locate_affine_tetrahedra(
+        self, values: Array, cell_mask: ConvertibleToArray | None, /
+    ) -> CellLocationResult:
+        """Native affine location over the same tree, lowest accepting cell on ties.
+
+        Reference coordinates are exact signed-volume ratios rather than Newton
+        iterates, so every located point reports zero iterations and no seed
+        fallback; the candidate search is always complete.
+        """
+        located = tetrahedron_locate(
+            host_tree_arrays(self.bvh),
+            np.asarray(self.coordinates),
+            np.asarray(self.cells),
+            np.asarray(values),
+            cell_mask=None if cell_mask is None else np.asarray(cell_mask),
+            tolerance=self.policy.reference_tolerance,
+        )
+        inside = located.status == int(CellLocationStatus.LOCATED)
+        barycentric = np.where(
+            inside[:, None],
+            np.concatenate(
+                ((1.0 - np.sum(located.reference, axis=1))[:, None], located.reference),
+                axis=1,
+            ),
+            0.0,
+        )
+        point_count = values.shape[0]
+        return CellLocationResult(
+            jnp.asarray(located.cells, dtype=jnp.int32),
+            jnp.asarray(located.reference, dtype=values.dtype),
+            jnp.asarray(barycentric, dtype=values.dtype),
+            jnp.asarray(located.residual, dtype=values.dtype),
+            jnp.asarray(
+                np.where(inside, 0, self.policy.maximum_iterations), dtype=jnp.int32
+            ),
+            jnp.asarray(located.condition, dtype=values.dtype),
+            jnp.asarray(inside),
+            jnp.zeros((point_count,), dtype=jnp.bool_),
+            jnp.asarray(located.containing, dtype=jnp.int32),
+            jnp.asarray(located.status, dtype=jnp.int32),
+            jnp.asarray(inside),
+            jnp.asarray(located.candidates, dtype=jnp.int32),
+            jnp.asarray(located.candidate_reference, dtype=values.dtype),
+            jnp.ones((point_count,), dtype=jnp.bool_),
+            (),
+            self.locator_id,
+        )
 
     def _resolve_candidates(
         self,

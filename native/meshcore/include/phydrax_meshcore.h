@@ -1575,21 +1575,16 @@ PHX_MC_API int32_t phx_mc_separation_screen(
     const double* first_lower, const double* first_upper, const int64_t* second_offsets,
     const double* second_lower, const double* second_upper, const double* normals,
     int8_t* decisions, int32_t parallelism);
-/* Simultaneous traversal of two packed bounding-volume hierarchies yielding
- * overlapping item pairs in bounded blocks. Arrays follow PackedBVH: node
+
+/* ------------------------------------------------------- BVH tree view */
+/* One packed bounding-volume hierarchy built by the caller (PackedBVH): node
  * bounds (nodes, dimension), node_size (nodes) the descent key (the caller's
  * sum of node extents), left/right/leaf (nodes), leaf items (leaves,
- * leaf_width) with -1 padding, item bounds (items, dimension). The caller keeps
- * every array alive and unchanged until phx_mc_bvh_pair_stream_free.
- * Reachable nodes must form a rooted tree (no cycles or shared children);
- * leaf nodes have left = right = -1. Validation is iterative without a depth cap.
- * Blocks follow the LIFO node-block traversal of the host reference: node blocks are
- * split at node_block pairs, leaf pairs are tested in chunks of
- * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
- * is one block. A non-leaf node of the first tree descends when the second
- * node is a leaf or node_size is not smaller. Boxes overlap when
- * min(max) - max(min) > 0 on every axis or, with include_touching,
- * >= -(atol + rtol * max(1, |bounds|)). */
+ * leaf_width) with -1 padding, item bounds (items, dimension). Node 0 is the
+ * root; reachable nodes must form a rooted tree (no cycles or shared
+ * children); leaf nodes have left = right = -1. Every consumer validates the
+ * view iteratively without a depth cap and only traverses it: the native side
+ * never builds or changes a tree. */
 typedef struct phx_mc_bvh_tree_view {
   int64_t node_count;
   int64_t leaf_count;
@@ -1605,6 +1600,17 @@ typedef struct phx_mc_bvh_tree_view {
   const double* item_min;
   const double* item_max;
 } phx_mc_bvh_tree_view;
+
+/* Simultaneous traversal of two views yielding overlapping item pairs in
+ * bounded blocks. The caller keeps every array alive and unchanged until
+ * phx_mc_bvh_pair_stream_free.
+ * Blocks follow the LIFO node-block traversal of the host reference: node blocks are
+ * split at node_block pairs, leaf pairs are tested in chunks of
+ * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
+ * is one block. A non-leaf node of the first tree descends when the second
+ * node is a leaf or node_size is not smaller. Boxes overlap when
+ * min(max) - max(min) > 0 on every axis or, with include_touching,
+ * >= -(atol + rtol * max(1, |bounds|)). */
 typedef struct phx_mc_bvh_pair_stream phx_mc_bvh_pair_stream;
 PHX_MC_API int32_t phx_mc_bvh_pair_stream_create(
     const phx_mc_bvh_tree_view* first, const phx_mc_bvh_tree_view* second, int32_t dimension,
@@ -1623,6 +1629,79 @@ PHX_MC_API int32_t phx_mc_bvh_pair_stream_next(
     phx_mc_bvh_pair_stream* stream, int64_t pair_capacity, int64_t block_capacity,
     int64_t* first_items, int64_t* second_items, int64_t* block_ends, int64_t* blocks);
 PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
+
+/* ---------------------------------------------------- BVH point queries */
+/* Batched single-threaded point queries over one three-dimensional view whose
+ * items are triangles (faces, int32 (items, 3) into vertices (vertex_count, 3))
+ * or tetrahedra (cells, int32 (items, 4)). Item bounds must enclose their
+ * items. Every output is caller-owned with one row per query; an invalid view,
+ * index or argument returns PHX_MC_INVALID_ARGUMENT before writing.
+ *
+ * Closest features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a),
+ * 4/5/6 the corners a/b/c of the face's vertex order. */
+#define PHX_MC_BVH_FEATURE_COUNT 7
+/* The k nearest faces per point, ordered by (squared distance, face index):
+ * depth-first branch and bound visiting the nearer child first and every node
+ * whose box distance does not exceed the current k-th distance, so exact ties
+ * resolve to the lower index. A face's distance is that of its closest point
+ * (the projection when its barycentrics are nonnegative, else the nearest
+ * clamped edge point, first minimum in face/(a,b)/(b,c)/(c,a) order). Rows with
+ * fewer than k finite distances are padded with -1, +inf, and feature -1.
+ * faces_out/distance_squared/features are (count, k); closest (count, k, 3). */
+PHX_MC_API int32_t phx_mc_bvh_triangle_nearest(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int64_t count, const double* points, int32_t k,
+    int32_t* faces_out, double* distance_squared, double* closest, int8_t* features);
+/* Signed distance by angle-weighted pseudonormals: the nearest face (k = 1 as
+ * above), and the sign of dot(point - closest, feature_normals[face, feature])
+ * with feature_normals (items, 7, 3) indexed by closest feature; a zero dot is
+ * outside (positive). distance (count), faces_out (count), closest (count, 3);
+ * a point without a finite nearest face gets NaN, -1 and NaN. */
+PHX_MC_API int32_t phx_mc_bvh_triangle_signed_distance(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, const double* feature_normals, int64_t count,
+    const double* points, double* distance, int32_t* faces_out, double* closest);
+/* Generalized winding numbers by a hierarchical cut from the root (children
+ * visited left first). EXACT (route 0): a node whose closed box excludes the
+ * point contributes the solid angle of its closing fan, the boundary edges
+ * [boundary_offsets[node], boundary_offsets[node + 1]) of boundary_edges
+ * (edges, 2) joined to the box center; an opened leaf sums its triangles' solid
+ * angles. FAST_DIPOLE (route 1): a node whose dipole center lies farther than
+ * opening_angle times its radius contributes dot(normal, center - point) /
+ * |center - point|^3 with dipoles (nodes, 7) = (area normal, center, radius).
+ * Solid angles are Van Oosterom-Strackee; values are sums over 4 pi. The
+ * arrays of the other route may be null. */
+#define PHX_MC_WINDING_EXACT 0
+#define PHX_MC_WINDING_FAST_DIPOLE 1
+PHX_MC_API int32_t phx_mc_bvh_triangle_winding(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int32_t route, const int64_t* boundary_offsets,
+    int64_t boundary_edge_count, const int32_t* boundary_edges, const double* dipoles,
+    double opening_angle, int64_t count, const double* points, double* values);
+/* Point location in positively oriented affine tetrahedra. Candidates are the
+ * cells (with a nonzero cell_mask entry; cell_mask may be null) whose item box
+ * padded by tolerance contains the point, reached through node boxes padded
+ * alike. A candidate with a finite positive Jacobian determinant accepts the
+ * point when its reference coordinates r (signed-volume ratios,
+ * x = v0 + [v1 - v0, v2 - v0, v3 - v0] r) satisfy r >= -tolerance and
+ * sum(r) <= 1 + tolerance. cells_out is the lowest accepting cell (or -1),
+ * reference (count, 3) its r, residual |x(r) - point| and condition
+ * |J|_F |J^-1|_F; status follows phx_mc_locate_status; containing (count) the
+ * number of accepting cells, of which the lowest min(containing, capacity) go
+ * ascending into candidates (count, capacity) with their r in
+ * candidate_reference (count, capacity, 3), -1 / 0 padded. */
+enum phx_mc_locate_status {
+  PHX_MC_LOCATE_LOCATED = 0,
+  PHX_MC_LOCATE_OUTSIDE = 1,
+  PHX_MC_LOCATE_DEGENERATE_CELL = 2,
+  PHX_MC_LOCATE_NONFINITE = 3
+};
+PHX_MC_API int32_t phx_mc_bvh_tetrahedron_locate(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
+    const double* points, int32_t capacity, int32_t* cells_out, double* reference,
+    double* residual, double* condition, int32_t* status, int32_t* containing,
+    int32_t* candidates, double* candidate_reference);
 
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5

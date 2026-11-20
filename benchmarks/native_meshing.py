@@ -17,8 +17,9 @@ import math
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +29,10 @@ from jax import Array
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 from phydrax.geometry._interval_enclosure import prepare_interval_function
+
+
+if TYPE_CHECKING:
+    from phydrax.discretization import PreparedSimplicialCellLocator
 
 
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
@@ -210,7 +215,9 @@ def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
+def _rows(
+    sizes: tuple[int, ...], names: frozenset[str] | None, query_inputs: Path | None, /
+) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
@@ -255,6 +262,15 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         ),
         (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
     )
+    queries = frozenset(
+        {"query-closest", "query-signed", "query-winding", "query-locate"}
+    )
+    if query_inputs is not None:
+        families += ((queries, lambda: _query_rows(sizes, query_inputs)),)
+    elif names is not None and queries & names:
+        raise ValueError(
+            "The query rows read the ledger's F10 inputs: pass --query-inputs."
+        )
     rows: list[_Row] = []
     for family, build in families:
         if names is None or family & names:
@@ -1188,6 +1204,183 @@ def _constructed_cells(result: object, /) -> int:
     return result.tetrahedra.shape[0]
 
 
+# The ledger's F10 surface: parametric torus R = 0.742, r = 0.371 (99,856
+# triangles); point location in a Gmsh tetrahedral unit sphere (930,942 cells).
+_F10_MAJOR = 0.742
+_F10_MINOR = 0.371
+# Signs and inside decisions are checked only farther than this from the
+# analytic surface (the ledger's band).
+_F10_BAND = 0.002
+_F10_CHECKED_DISTANCES = 5_000
+
+
+def _query_count(result: object, /) -> int:
+    if not isinstance(result, np.ndarray):
+        raise TypeError("A query row returns one host value per query.")
+    return result.shape[0]
+
+
+def _distance_error(
+    points: np.ndarray, reported: np.ndarray, corners: np.ndarray, /
+) -> float:
+    # Exact distances over the triangles whose boxes reach the reported
+    # distance: the true nearest is among them unless the report is too small,
+    # which the error then exposes anyway.
+    lower, upper = np.min(corners, axis=1), np.max(corners, axis=1)
+    error = 0.0
+    for point, value in zip(points, np.abs(reported), strict=True):
+        gap = np.maximum(0.0, np.maximum(lower - point, point - upper))
+        near = np.sum(gap * gap, axis=1) <= (value + 1.0e-9) ** 2
+        exact = np.min(_point_triangle_distances(point, corners[near]), initial=np.inf)
+        error = max(error, abs(value - exact))
+    return error
+
+
+def _distance_quality(
+    checked: np.ndarray, corners: np.ndarray, result: object, /
+) -> tuple[int, dict[str, float]]:
+    error = _distance_error(checked, np.asarray(result)[: checked.shape[0]], corners)
+    return int(error > 1.0e-12), {"max_abs_error_first5000": error}
+
+
+def _signed_quality(
+    checked: np.ndarray,
+    corners: np.ndarray,
+    truth: np.ndarray,
+    far: np.ndarray,
+    result: object,
+    /,
+) -> tuple[int, dict[str, float]]:
+    values = np.asarray(result)
+    error = _distance_error(checked, values[: checked.shape[0]], corners)
+    mismatched = int(np.sum((values[far] < 0.0) != (truth[far] < 0.0)))
+    return int(error > 1.0e-12) + mismatched, {
+        "max_abs_error_first5000": error,
+        "sign_mismatch_outside_band": float(mismatched),
+    }
+
+
+def _winding_quality(
+    truth: np.ndarray, far: np.ndarray, result: object, /
+) -> tuple[int, dict[str, float]]:
+    inside = np.asarray(result) > 0.5
+    mismatched = int(np.sum(inside[far] != (truth[far] < 0.0)))
+    return mismatched, {"inside_mismatch_outside_band": float(mismatched)}
+
+
+def _locate_quality(
+    tets: np.ndarray, queries: np.ndarray, result: object, /
+) -> tuple[int, dict[str, float]]:
+    cell = np.asarray(result, dtype=np.int64)
+    found = cell >= 0
+    tet = tets[cell[found]]
+    # Independent barycentrics by a dense NumPy solve per found point.
+    lam = np.linalg.solve(
+        np.stack([tet[:, k] - tet[:, 0] for k in (1, 2, 3)], axis=-1),
+        (queries[found] - tet[:, 0])[..., None],
+    )[..., 0]
+    barycentric = np.concatenate((1.0 - np.sum(lam, axis=1)[:, None], lam), axis=1)
+    radius = np.linalg.norm(queries, axis=1)
+    measured = {
+        "found": float(np.sum(found)),
+        "wrong_cell": float(np.sum(np.min(barycentric, axis=1) < -1.0e-9)),
+        "missed_inside": float(np.sum((radius < 0.998) & ~found)),
+        "false_inside": float(np.sum((radius > 1.002) & found)),
+    }
+    missed = measured["wrong_cell"] + measured["missed_inside"] + measured["false_inside"]
+    return int(missed), measured
+
+
+def _f10_locator(volume: Mapping[str, np.ndarray], /) -> PreparedSimplicialCellLocator:
+    from phydrax.discretization import (
+        CellBlock,
+        CellMesh,
+        FiniteElementFieldSpec,
+        FiniteElementPlan,
+        lagrange_element,
+        PreparedSimplicialCellLocator,
+        SimplicialLocationPolicy,
+    )
+    from phydrax.discretization.fem import prepare_finite_element_cell_map
+
+    mesh = CellMesh(
+        jnp.asarray(volume["xyz"], dtype=jnp.float64),
+        (CellBlock("tet", "tetrahedron", jnp.asarray(volume["tet"], dtype=jnp.int32)),),
+    )
+    discretization = FiniteElementPlan(
+        mesh, FiniteElementFieldSpec("u", lagrange_element("tetrahedron", 1))
+    ).prepare()
+    return PreparedSimplicialCellLocator(
+        prepare_finite_element_cell_map(discretization, 0),
+        discretization.default_runtime.coordinates,
+        SimplicialLocationPolicy(16, 8, 4),
+    )
+
+
+def _query_rows(sizes: tuple[int, ...], inputs: Path, /) -> tuple[_Row, ...]:
+    # Acceleration structures are built once, outside the timed queries.
+    from phydrax.geometry.simplicial import TriangleBVH, TriangleMesh
+
+    surface = np.load(inputs / "torus-1e5.npz")
+    vertices = np.asarray(surface["xyz"], dtype=np.float64)
+    faces = np.asarray(surface["tri"], dtype=np.int32)
+    corners = vertices[faces]
+    index = TriangleBVH(TriangleMesh(vertices, faces))
+    volume = dict(np.load(inputs / "tet1e6.npz"))
+    locator = _f10_locator(volume)
+    tets = np.asarray(volume["xyz"], dtype=np.float64)[
+        np.asarray(volume["tet"], dtype=np.int64)
+    ]
+    rows: list[_Row] = []
+    for size in sizes:
+        if size not in (100_000, 1_000_000):
+            continue
+        label = f"1e{round(math.log10(size))}"
+        points = np.load(inputs / f"q-{label}.npy")
+        located = np.load(inputs / f"qloc-{label}.npy")
+        radial = np.hypot(
+            np.linalg.norm(points[:, :2], axis=1) - _F10_MAJOR, points[:, 2]
+        )
+        truth = radial - _F10_MINOR
+        far = np.abs(truth) > _F10_BAND
+        checked = points[:_F10_CHECKED_DISTANCES]
+        rows.extend(
+            (
+                _Row(
+                    "query-closest",
+                    size,
+                    lambda points=points: np.asarray(index.query(points).distance),
+                    _query_count,
+                    quality=partial(_distance_quality, checked, corners),
+                ),
+                _Row(
+                    "query-signed",
+                    size,
+                    lambda points=points: np.asarray(index.signed_distance(points)),
+                    _query_count,
+                    quality=partial(_signed_quality, checked, corners, truth, far),
+                ),
+                _Row(
+                    "query-winding",
+                    size,
+                    lambda points=points: np.asarray(
+                        index.fast_winding_number(points).values
+                    ),
+                    _query_count,
+                    quality=partial(_winding_quality, truth, far),
+                ),
+                _Row(
+                    "query-locate",
+                    size,
+                    lambda points=located: np.asarray(locator.locate(points).cell_ids),
+                    _query_count,
+                    quality=partial(_locate_quality, tets, located),
+                ),
+            )
+        )
+    return tuple(rows)
+
+
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -1235,6 +1428,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--query-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F10 inputs (torus-1e5.npz, tet1e6.npz, "
+        "q-1eN.npy, qloc-1eN.npy); the query rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -1242,7 +1442,7 @@ def main(argv: list[str] | None = None) -> int:
     records: list[dict[str, Any]] = []
     failed = False
     names = None if arguments.rows is None else frozenset(arguments.rows)
-    for row in _rows(tuple(arguments.sizes), names):
+    for row in _rows(tuple(arguments.sizes), names, arguments.query_inputs):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
         if row.domain is not None:
