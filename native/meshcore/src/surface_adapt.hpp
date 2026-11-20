@@ -90,11 +90,13 @@ struct SurfaceResult {
 // Remeshes (points, triangles) in place and compacts the output (only
 // vertices of surviving triangles, in first-use order). The input must be a
 // closed, consistently oriented 2-manifold (PHX_MC_INVALID_INPUT otherwise);
-// a vertex the oracle cannot project is PHX_MC_UNRESOLVED. On any status but
-// PHX_MC_OK the vectors hold no result.
+// a vertex the oracle cannot project is PHX_MC_UNRESOLVED. `twins`, when
+// given, are closed_manifold's corner twins of these very triangles (a
+// source bound on them already checked them), so the check is not repeated.
+// On any status but PHX_MC_OK the vectors hold no result.
 int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                       const SurfaceOracle& oracle, const AdaptTargets& targets,
-                      AdaptCounters& counters);
+                      const std::vector<int64_t>* twins, AdaptCounters& counters);
 
 struct CertifyCounters {
   double distance = 0;            // maximum certified or carrier bound

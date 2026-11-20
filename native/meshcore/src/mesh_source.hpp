@@ -89,6 +89,9 @@ class MeshSource {
 
   const std::vector<Point>& points() const noexcept { return points_; }
   const std::vector<Triangle>& triangles() const noexcept { return triangles_; }
+  // The twin of every corner (closed_manifold's, corner 3 t + k is the edge
+  // (f[k], f[k + 1]) of triangle t), for consumers of the same triangles.
+  const std::vector<int64_t>& corner_twins() const noexcept { return twins_; }
 
  private:
   std::array<int64_t, 3> cell_of(const Point& p) const;
@@ -97,7 +100,7 @@ class MeshSource {
   }
   std::vector<Point> points_;
   std::vector<Triangle> triangles_;
-  std::vector<std::array<int64_t, 3>> neighbors_;  // across edge (f[k], f[k + 1])
+  std::vector<int64_t> twins_;  // twin corner of every corner; its triangle is twin / 3
   std::vector<Point> face_normals_, vertex_normals_;
   std::vector<std::array<double, 4>> balls_;  // per triangle: centroid, radius
   std::vector<std::array<double, 2>> vertex_curvatures_;  // (largest, smallest)

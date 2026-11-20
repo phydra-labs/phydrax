@@ -854,7 +854,7 @@ int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
   status = adapt_surface(points, triangles, oracle,
                          AdaptTargets{request.edge_length, request.tolerance,
                                       request.minimum_angle_degrees},
-                         adapted);
+                         nullptr, adapted);
   if (status != PHX_MC_OK) return status;
   counters[0] = adapted.splits;
   counters[1] = adapted.collapses;
