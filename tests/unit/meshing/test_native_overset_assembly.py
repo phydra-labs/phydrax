@@ -428,10 +428,10 @@ def test_unproved_construction_reads_donor_coverage_unproved() -> None:
         phx.meshing.CellMeshAuditDisposition.SKIP,
     ],
 )
-@pytest.mark.parametrize("native", [True, False])
+@pytest.mark.parametrize("route", ["native", "python", "partitioned"])
 def test_overset_refuses_carriers_without_certified_validity(
     disposition: phx.meshing.CellMeshAuditDisposition,
-    native: bool,
+    route: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Trilinear background hexahedra with positive volume but negative corner
@@ -457,11 +457,18 @@ def test_overset_refuses_carriers_without_certified_validity(
     )
     assert not _overset._cell_result(background).audit.validity.all_certified
     _, shell, specs = _assembly(False, "sphere")
-    if not native:
+    if route == "python":
         # The Python owner refuses the same carriers.
         monkeypatch.setattr(_meshcore, "meshcore_available", lambda: False)
+    # The partitioned route is refused before any owner dispatch.
+    priority = ("shell", "background") if route == "partitioned" else None
     with pytest.raises(ValueError, match="require certified cell validity"):
-        prepare_overset_connectivity(MeshAssembly((background, shell)), specs)
+        prepare_overset_connectivity(
+            MeshAssembly((background, shell)),
+            specs,
+            partition_priority=priority,
+            partition_sources={} if priority is not None else None,
+        )
 
 
 def test_python_owner_prepares_tetrahedra_without_meshcore(
