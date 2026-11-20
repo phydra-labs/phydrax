@@ -2044,7 +2044,8 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * accepted from the carrier; repair splits; certification rounds run; tube
  * triangles refused in its last round; cover leaves left outside by the last
  * cover run, -1 when its level would exceed the box tree's limit, -2 when it
- * would exceed `cover_budget`; the proof used, 1 tube or 2 cover, 0 when
+ * would exceed `cover_budget`, -3 when a surface vertex lies outside the
+ * domain; the proof used, 1 tube or 2 cover, 0 when
  * none; the boxes evaluated by every cover run) on PHX_MC_OK and
  * PHX_MC_UNRESOLVED. */
 typedef struct phx_mc_zero_set_certify_request {

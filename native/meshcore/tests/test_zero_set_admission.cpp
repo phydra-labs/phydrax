@@ -526,7 +526,7 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
                 const Surface* carrier = nullptr, double widen = 0,
                 Surface* certified = nullptr, std::vector<uint8_t>* carried = nullptr,
                 double* reverse = nullptr, double edge = 0.3,
-                int64_t budget = kCoverBudget) {
+                int64_t budget = kCoverBudget, const double* domain = kDomain.data()) {
   std::vector<double> boxes;
   if (carrier != nullptr)
     for (size_t f = 0; f < carrier->triangles.size(); f += 3) {
@@ -562,7 +562,7 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
       carrier == nullptr ? nullptr : carrier->triangles.data(),
       carrier == nullptr ? 0 : static_cast<int64_t>(carrier->triangles.size() / 3),
       carrier == nullptr ? nullptr : boxes.data(),
-      kDomain.data(),
+      domain,
       edge,
       30.0,
       budget,
@@ -668,6 +668,13 @@ void remesh_sphere_carrier() {
   PHX_CHECK(certify(wide.vertices, wide.triangles, two_value, two_gradient, tolerance, -1,
                     distance, failures) == PHX_MC_UNRESOLVED);
   PHX_CHECK(failures[1] == 0 && failures[6] == 0 && failures[7] > 0 && failures[8] == 0);
+  // A domain that does not hold the surface (review F4: it gave proof 1 with
+  // reverse 0) is refused: -3, no proof.
+  const std::array<double, 6> elsewhere{5.0, 5.0, 5.0, 6.0, 6.0, 6.0};
+  PHX_CHECK(certify(wide.vertices, wide.triangles, value, gradient, tolerance, 1, distance,
+                    failures, nullptr, 0, nullptr, nullptr, nullptr, 0.3, kCoverBudget,
+                    elsewhere.data()) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[7] == -3 && failures[8] == 0);
   const Remeshed narrow = construct(input, value, tolerance, 0.3, true);
   PHX_CHECK(narrow.status == PHX_MC_OK);
   PHX_CHECK(narrow.vertices == wide.vertices);

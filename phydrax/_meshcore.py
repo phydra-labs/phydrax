@@ -5427,6 +5427,8 @@ def zero_set_certify(
             if outside == -2
             else "the zero-set cover exceeded the box tree's level limit"
             if outside == -1
+            else "a surface vertex lies outside the domain"
+            if outside == -3
             else f"{outside} zero-set cover leaves left outside"
         )
         raise MeshcoreError(

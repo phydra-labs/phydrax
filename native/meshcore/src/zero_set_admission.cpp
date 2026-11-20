@@ -975,11 +975,22 @@ int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshS
 // refuses or leaves a leaf outside rho, the cover within the tolerance
 // alone, reverse = its bound. counters receives (tube triangles refused in
 // its last round; cover leaves left outside by the last cover run, -1 or -2
-// as cover_within; the proof, 1 tube or 2 cover; boxes evaluated).
+// as cover_within, -3 when a surface vertex lies outside the domain; the
+// proof, 1 tube or 2 cover; boxes evaluated).
 int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
                          const std::vector<Point>& points, const std::vector<Triangle>& triangles,
                          const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
                          double& reverse, int64_t* counters) {
+  // The cover proves every zero in the domain near the surface; a surface
+  // that leaves the domain is not what that proves.
+  const double* lower = request.domain;
+  const double* upper = request.domain + 3;
+  for (const Point& p : points)
+    for (int d = 0; d < 3; ++d)
+      if (!(p[d] >= lower[d] && p[d] <= upper[d])) {
+        counters[1] = -3;
+        return PHX_MC_UNRESOLVED;
+      }
   TubeCertificate tube;
   int32_t status = certify_tube(points, triangles, value, gradient, request.orientation,
                                 request.edge_length, request.tolerance, tube);
