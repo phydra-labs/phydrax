@@ -1494,6 +1494,14 @@ void box_reach_bounds_distance() {
   PHX_CHECK(!(at_box < 0.2) && !(at_box < std::nextafter(0.2, 0.0)));
   // A degenerate box is refused (+inf), never accepted.
   PHX_CHECK(box_reach(mesh, {0.3, 0.2, 0.1}, {0.2, 0.3, 0.2}) == kInfinity);
+  // At a mesh vertex (barycentric weights such as (0, 1, 0)) the bound is
+  // finite and tiny, not refused (review F3: 1 - s rounded below 0 at s = 1).
+  for (const Point& v : mesh.points()) {
+    const double at_vertex = box_reach(mesh, v, v);
+    std::printf("box_reach at vertex: %.3g\n", at_vertex);
+    // A few roundings of coordinates up to 3 in size.
+    PHX_CHECK(at_vertex >= 0 && at_vertex <= 1e-14);
+  }
 }
 
 }  // namespace

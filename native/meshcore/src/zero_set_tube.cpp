@@ -459,8 +459,10 @@ double box_reach(const MeshSource& mesh, const Point& lower, const Point& upper)
   if (!(total > 0) || !std::isfinite(total)) return kInfinity;
   const double s = std::max(w[1], 0.0) / total;
   double t = std::max(w[2], 0.0) / total;
-  const double room = subtract(point(1.0), point(s)).lower;  // <= 1 - s
-  if (!(s <= 1) || !(room >= 0)) return kInfinity;
+  // A lower bound of 1 - s (>= 0 since s <= 1): the subtraction's lower end
+  // rounds below 0 at s = 1, where 0 itself is exact.
+  const double room = std::max(subtract(point(1.0), point(s)).lower, 0.0);
+  if (!(s <= 1)) return kInfinity;
   t = std::min(t, room);
   const Triangle& f = mesh.triangles()[static_cast<size_t>(nearest.triangle)];
   const Point& p0 = mesh.points()[static_cast<size_t>(f[0])];
