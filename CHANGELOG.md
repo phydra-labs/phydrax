@@ -1843,6 +1843,15 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The native volume verifier, the PLC recovery contact grid and the surface
+  certifier range-check grid quotients before converting them to integers: an
+  accepted coordinate range near the exact-predicate limits previously made
+  the cast undefined and could drop contact pairs from the embedding proof.
+- Native code builds without GCC 13 flow-analysis warnings
+  (`Expansion::inline_`, `metric_goal`, `implicit_polygon`,
+  `interval_simplex_restrict`): the invariants are local and visible.
+- `test_predicates` places inputs just below and just above every filter and
+  adaptive-stage error bound of the orientation and in-circle predicates.
 - Fixed welded mesh audits reporting certain self-intersections for disjoint
   coplanar triangles when the floating-point normal cancels.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve
