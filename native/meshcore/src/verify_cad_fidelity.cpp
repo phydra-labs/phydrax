@@ -1420,11 +1420,23 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
 // the surface image of the chord. The interior triangle bound already covers
 // that image in both directions, so a separate 3D curve chord sag is not
 // needed. Source 3D edge/face consistency is a source-model obligation.
-// `padded`: the padded box (u lower, v lower, u upper, v upper) that holds
-// the lens.
+// The chord is cut into `pieces` equal parts in lambda = (t - t_0) /
+// (t_1 - t_0) (the use's parameters[0] at lambda 0). With p and the chord
+// interpolant l at the same lambda, w = p - l is, per chart axis, the
+// interpolation remainder of p plus the interpolated endpoint mismatch, so
+// on a piece [lambda_0, lambda_1]
+//   |w_a| <= mismatch_a + M_a dt^2 / 2 max lambda (1 - lambda)   (C2 p),
+//   |w_a| <= mismatch_a + M_a dt min(1, 2 max min(lambda, 1 - lambda)) (C1 p),
+// with M_a the p-curve's |p_a''| (|p_a'|) over the whole interval: the lens
+// is thin near the chord ends. Piece k's lens points (on the segments from
+// l(lambda) to p(lambda), lambda in the piece) lie in its padded box: the box
+// of l over the piece padded per axis by those bounds; caps[k] is the
+// mean-value bound over that box. `boxes` holds (u lower, v lower, u upper,
+// v upper) per piece. One piece is the whole chord's lens.
 int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                         const double* chord_uv, const double* parameters,
-                        IntervalEvaluationWorkspace& workspace, double& cap, double* padded) {
+                        IntervalEvaluationWorkspace& workspace, int pieces, double* caps,
+                        double* boxes) {
   const double low = std::min(parameters[0], parameters[1]);
   const double high = std::max(parameters[0], parameters[1]);
   const int regularity = spline_regularity(geometry, geometry.pcurve_node(use), &low, &high,
@@ -1435,10 +1447,6 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                                            regularity == 1 ? 1 : 2,
                                            pc_lower, pc_upper, workspace);
   if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-  // Per chart axis a, w_a(t) = p_a(t) - (the chord's linear interpolant)_a is
-  // the p-curve's interpolation remainder plus the interpolated endpoint
-  // mismatch: |w_a| <= error[a]. The lens point between them is within
-  // error[a] of the chord per axis, so the padded box pads each axis by its own.
   const auto dt = di::subtract(di::point(high), di::point(low));
   const int derivative = regularity == 1 ? 2 : 4;
   double endpoint_error[2] = {0.0, 0.0};
@@ -1454,46 +1462,64 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
       endpoint_error[axis] = std::max(endpoint_error[axis], di::magnitude(difference));
     }
   }
-  double error[2] = {0.0, 0.0};
+  // The whole-chord remainder scale per axis: M dt (C1) or M dt^2 / 2 (C2).
+  di::Interval scale[2];
   for (int axis = 0; axis < 2; ++axis) {
     const auto bound = di::point(
         di::magnitude({pc_lower[derivative + axis], pc_upper[derivative + axis]}));
-    const auto remainder = regularity == 1
+    scale[axis] = regularity == 1
         ? di::multiply(bound, dt)
-        : di::multiply(di::point(0.125), di::multiply(bound, di::multiply(dt, dt)));
-    const auto sum = di::add(di::point(endpoint_error[axis]), remainder);
-    if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
-    error[axis] = sum.upper;
+        : di::multiply(di::point(0.5), di::multiply(bound, di::multiply(dt, dt)));
   }
-  double box_lower[2], box_upper[2];
-  for (int axis = 0; axis < 2; ++axis) {
-    box_lower[axis] = di::subtract(di::point(std::min(chord_uv[axis], chord_uv[2 + axis])),
-                                  di::point(error[axis])).lower;
-    box_upper[axis] = di::add(di::point(std::max(chord_uv[axis], chord_uv[2 + axis])),
-                              di::point(error[axis])).upper;
+  const auto chord_point = [&](double lambda, int axis) {
+    return di::add(di::point(chord_uv[axis]),
+                   di::multiply(di::point(lambda), di::subtract(di::point(chord_uv[2 + axis]),
+                                                                di::point(chord_uv[axis]))));
+  };
+  for (int piece = 0; piece < pieces; ++piece) {
+    const double first = double(piece) / pieces, last = double(piece + 1) / pieces;
+    // The lambda of the piece nearest 1/2: where the remainder weight peaks.
+    const double peak = last <= 0.5 ? last : first >= 0.5 ? first : 0.5;
+    const auto weight = regularity == 1
+        ? di::point(std::min(1.0, 2.0 * std::min(peak, 1.0 - peak)))
+        : di::multiply(di::point(peak), di::subtract(di::point(1.0), di::point(peak)));
+    double error[2], box_lower[2], box_upper[2];
+    for (int axis = 0; axis < 2; ++axis) {
+      const auto sum = di::add(di::point(endpoint_error[axis]), di::multiply(scale[axis], weight));
+      if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
+      error[axis] = sum.upper;
+      const auto a = chord_point(first, axis), b = chord_point(last, axis);
+      box_lower[axis] = di::subtract(di::point(std::min(a.lower, b.lower)),
+                                     di::point(error[axis])).lower;
+      box_upper[axis] = di::add(di::point(std::max(a.upper, b.upper)),
+                                di::point(error[axis])).upper;
+    }
+    // The mean-value bound below needs S Lipschitz on the padded box: a
+    // possible discontinuity there is refused, as in leaf_bound.
+    if (spline_regularity(geometry, geometry.surface_node(face), box_lower, box_upper,
+                          workspace) == 2)
+      return PHX_MC_UNRESOLVED;
+    double surface_lower[9], surface_upper[9];
+    status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
+                                    surface_lower, surface_upper, workspace);
+    if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+    // S(x) - S(y) = integral of DS w along the segment (in the padded box);
+    // component k is at most |S_u,k| |w_u| + |S_v,k| |w_v| over the box.
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto su =
+          di::point(di::magnitude({surface_lower[3 + axis], surface_upper[3 + axis]}));
+      const auto sv =
+          di::point(di::magnitude({surface_lower[6 + axis], surface_upper[6 + axis]}));
+      magnitude[axis] = di::add(di::multiply(su, di::point(error[0])),
+                                di::multiply(sv, di::point(error[1]))).upper;
+    }
+    caps[piece] = phx::mc::geometry::norm_upper(magnitude);
+    if (!std::isfinite(caps[piece])) return PHX_MC_UNRESOLVED;
+    double* box = boxes + 4 * piece;
+    box[0] = box_lower[0], box[1] = box_lower[1], box[2] = box_upper[0], box[3] = box_upper[1];
   }
-  // The mean-value bound below needs S Lipschitz on the padded box: a
-  // possible discontinuity there is refused, as in leaf_bound.
-  if (spline_regularity(geometry, geometry.surface_node(face), box_lower, box_upper,
-                        workspace) == 2)
-    return PHX_MC_UNRESOLVED;
-  double surface_lower[9], surface_upper[9];
-  status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
-                                  surface_lower, surface_upper, workspace);
-  if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-  // S(x) - S(y) = integral of DS w along the segment (in the padded box);
-  // component k is at most |S_u,k| |w_u| + |S_v,k| |w_v| over the box.
-  double magnitude[3];
-  for (int axis = 0; axis < 3; ++axis) {
-    const auto su = di::point(di::magnitude({surface_lower[3 + axis], surface_upper[3 + axis]}));
-    const auto sv = di::point(di::magnitude({surface_lower[6 + axis], surface_upper[6 + axis]}));
-    magnitude[axis] = di::add(di::multiply(su, di::point(error[0])),
-                              di::multiply(sv, di::point(error[1]))).upper;
-  }
-  cap = phx::mc::geometry::norm_upper(magnitude);
-  padded[0] = box_lower[0], padded[1] = box_lower[1];
-  padded[2] = box_upper[0], padded[3] = box_upper[1];
-  return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+  return PHX_MC_OK;
 }
 
 // One distinct interior chart edge: its first occurrence (triangle * 3 +
@@ -1658,21 +1684,31 @@ struct CornerCache {
   int32_t face = -1;
 };
 
-// Trim lens charges, per subdivision leaf. A point x where the trimmed face
-// and the chord polygon differ lies in the lens of one chord, inside that
-// chord's padded box (trim_lens_bound), within the cap's chart distance of a
-// point y of the chord and of a point z of the arc: |S(x) - S(y)| and
-// |S(x) - S(z)| are at most the cap. If x is outside the polygon (a face
-// point), the mesh point I_T(y) of the leaf holding y is within that leaf's
-// bound plus the cap; if x is inside it (a mesh point I_T(x)), the face point
-// S(z) is within the bound of the leaf holding x plus the cap. Both leaves'
-// chart boxes meet the padded box (y and x lie in it), so each leaf is
-// charged the largest cap of a chord of its face whose padded box meets the
-// leaf's box; a leaf away from every lens is charged nothing. A refused cap
-// has no box: every row of its face refuses. Chords are
+// Trim lens charges, per subdivision leaf and per chord piece. A point x
+// where the trimmed face and the chord polygon differ lies in the lens of one
+// chord, on the segment from y = l(lambda) to z = p(lambda) for a lambda in
+// some piece of that chord (trim_lens_bound), inside that piece's padded box
+// (both y and the segment are), within the piece's per-axis chart bounds of
+// y and z: |S(x) - S(y)| and |S(x) - S(z)| are at most the piece's cap. If x
+// is outside the polygon (a face point), the mesh point I_T(y) of the leaf
+// holding y is within that leaf's bound plus the cap; if x is inside it (a
+// mesh point I_T(x)), the face point S(z) is within the bound of the leaf
+// holding x plus the cap. Both leaves' chart boxes meet the piece's padded
+// box (y and x lie in it), so each leaf is charged the largest cap of a piece
+// of a chord of its face whose padded box meets the leaf's box; a leaf away
+// from every lens piece is charged nothing. A refused chord has no pieces:
+// every row of its face refuses. Pieces are
 // binned per face on a grid whose cell is the face's largest padded-box
 // extent (a box meets at most 2 x 2 cells); one monotone cell map serves
 // boxes and rows, so meeting boxes share the cell of a common point.
+// API: construct from one Chord entry per lens piece {face (-1: skipped),
+// box = closed chart box (u lower, v lower, u upper, v upper) holding the
+// piece's lens and matching chord points, cap = the distance charge of any
+// point there}; any producer whose entries satisfy that box/cap contract (a
+// trim chord piece, or another lens such as a seam) may add entries. charge
+// (face, box) returns the largest cap of an entry of `face` whose box meets
+// the closed `box` (0 when none); subdivided_bound passes each leaf's
+// outward chart box and adds the result to the leaf bound.
 class LensIndex {
  public:
   struct Chord { int32_t face = -1; double box[4]{}; double cap = 0.0; };
@@ -1919,7 +1955,7 @@ int32_t fidelity_trim_lens(const CadGeometry& geometry, int32_t face, int64_t us
     return PHX_MC_INVALID_ARGUMENT;
   const phx::mc::GradualNearestScope mode;
   if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-  return trim_lens_bound(geometry, face, use, chord_uv, parameters, workspace, *cap, padded);
+  return trim_lens_bound(geometry, face, use, chord_uv, parameters, workspace, 1, cap, padded);
 }
 
 double fidelity_lens_charge(int64_t surface_count, int64_t chord_count, const int32_t* faces,
@@ -2111,31 +2147,43 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     double maximum = 0.0;
     std::vector<phx::mc::cad::FaceKernel> kernels(static_cast<std::size_t>(model->surface_count));
     std::vector<phx::mc::cad::CornerCache> corners(static_cast<std::size_t>(point_count));
-    // Every chord's lens cap once, then the charges of phx::mc::cad::LensIndex.
-    std::vector<phx::mc::cad::LensIndex::Chord> lens_chords(static_cast<std::size_t>(chord_count));
+    // Every chord's lens caps once, kLensPieces pieces along the chord
+    // (trim_lens_bound), then the per-leaf charges of phx::mc::cad::LensIndex.
+    constexpr int kLensPieces = 8;
+    std::vector<phx::mc::cad::LensIndex::Chord> lens_pieces(
+        static_cast<std::size_t>(chord_count) * kLensPieces);
+    std::vector<double> chord_cap(static_cast<std::size_t>(chord_count), 0.0);
     std::vector<uint8_t> face_refused(static_cast<std::size_t>(model->surface_count), 0);
     for (int64_t chord = 0; chord < chord_count; ++chord) {
-      auto& entry = lens_chords[static_cast<std::size_t>(chord)];
       const auto face = static_cast<int32_t>(use_patch[chord_use[chord]]);
+      double caps[kLensPieces], boxes[4 * kLensPieces];
       if (phx::mc::cad::trim_lens_bound(geometry, face, chord_use[chord], chord_uv + 4 * chord,
-                                        chord_range + 2 * chord, workspace, entry.cap,
-                                        entry.box) == PHX_MC_OK)
-        entry.face = face;
-      else
+                                        chord_range + 2 * chord, workspace, kLensPieces, caps,
+                                        boxes) != PHX_MC_OK) {
         face_refused[static_cast<std::size_t>(face)] = 1;
+        continue;
+      }
+      for (int piece = 0; piece < kLensPieces; ++piece) {
+        auto& entry = lens_pieces[static_cast<std::size_t>(chord * kLensPieces + piece)];
+        entry.face = face;
+        entry.cap = caps[piece];
+        std::copy(boxes + 4 * piece, boxes + 4 * piece + 4, entry.box);
+        chord_cap[static_cast<std::size_t>(chord)] =
+            std::max(chord_cap[static_cast<std::size_t>(chord)], caps[piece]);
+      }
     }
-    const phx::mc::cad::LensIndex lens_index(model->surface_count, lens_chords);
+    const phx::mc::cad::LensIndex lens_index(model->surface_count, std::move(lens_pieces));
     for (int64_t i = 0; i < triangle_count; ++i) {
       const auto row = static_cast<std::size_t>(i);
       bool trim_refused = face_refused[static_cast<std::size_t>(face_rows[i])] != 0;
-      // The leaves along an own chord pay its cap at every depth: a cap at or
-      // above tolerance refuses the row at once. Every other charge is the
-      // per-leaf one of subdivided_bound.
+      // The leaves along the middle of an own chord pay its largest piece cap
+      // at every depth: a cap at or above tolerance refuses the row at once.
+      // Every other charge is the per-leaf one of subdivided_bound.
       double own = 0.0;
       double vertices[9];
       for (int j = 0; j < 3; ++j) {
         const int64_t chord = edge_chord[3 * i + j];
-        if (chord >= 0) own = std::max(own, lens_chords[static_cast<std::size_t>(chord)].cap);
+        if (chord >= 0) own = std::max(own, chord_cap[static_cast<std::size_t>(chord)]);
         const int64_t vertex = triangles[3 * i + j];
         for (int axis = 0; axis < 3; ++axis)
           vertices[3 * j + axis] = points[3 * vertex + axis];
