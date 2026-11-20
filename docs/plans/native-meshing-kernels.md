@@ -252,6 +252,37 @@ tetrahedra, then implicit volumes, then the CAD solid.
     edges, cfMesh 0.456 / 1.09 s). Native growth directions and heights with certified non-intersection,
     thinning only where the certificate requires it, the core by S3 with the top layer fixed; full depth
     measured by true distance.
+    Timed scopes. Gmsh's 0.309 s is classify + extrudeBoundaryLayer + generate(3) from its surface
+    mesh (layers and core); cfMesh's 0.545 / 1.77 / 0.456 / 1.09 s are generateBoundaryLayers alone
+    on a tetMesh made first (3.2-5.8 s, untimed); Netgen's is the whole GenerateMesh. Our rows time
+    the larger scope, Gmsh's: the Gmsh surface mesh in, certified layers, the S3 core with the top
+    level fixed, one conforming prism + tet mesh out; the layer step is reported separately.
+    Design and result (Nov 20). One call, `phx_mc_prism_layers` (`_meshcore.prism_layers`), on a
+    closed oriented triangle wall and cumulative heights: one straight column per wall vertex (the
+    SMOOTH topology). Construction in floating point: feature edges by dihedral angle split vertex
+    fans into smooth sectors; a weighted quadratic jet per vertex and sector gives the normal and
+    second fundamental form (no one-sided bias at a ridge); smooth columns grow along the normal by
+    D, ridge and corner columns along the minimum-norm medial w with w . g_i = a_i, a_i the
+    curvature-corrected height of sector i (the inward offset of a convex ridge is exact); a
+    screened Laplacian (decay four times the largest ridge offset, Gauss-Seidel worklist to 1e-4 D)
+    carries ridge offsets into neighboring smooth columns, each corrected for curvature along its
+    offset; float Bernstein checks thin failing columns (x 0.8). Certification (`prove`): the nine
+    Bernstein controls of every prism Jacobian (six corners by orient3d, three mixed by a filtered
+    expansion) and the top level embedded and disjoint from the wall by exact triangle contacts
+    (uniform grid), failures thinned and recertified down to `minimum_scale` (else UNRESOLVED).
+    Interleaved against the best reference (minimum of three each; ours certified): sphere h 0.1
+    0.052 s vs Gmsh 0.315 s; sphere h 0.05 0.232 s vs cfMesh 1.85 s; quadric h 0.1 0.041 s vs
+    cfMesh 0.463 s; quadric h 0.05 0.187 s vs cfMesh 1.14 s (layer step 0.024 / 0.085 / 0.017 /
+    0.062 s). 0 inverted prisms and tets, 0 generated nodes outside, no thinning; top depth by true
+    distance 0.074416 +- 1e-9 on the sphere (Netgen 0.0740-0.0744, Gmsh 0.0744-0.0767) and
+    0.07438-0.07442 on the quadric (Netgen thins to 0.0124 / 0.0081); minimum corner ratio 0.957
+    (sphere), 0.768 / 0.736 (quadric, all at the sharp edges; Netgen 0.31 / 0.22, NekMesh 0.45).
+    `prepare_boundary_layers` stays the owner of the public ADVANCING contract: it publishes
+    rational per-cell validity certificates (digests the native cell-validity bridge does not decide
+    for prisms), warped-wall contact proofs, column and front-row ancestry, FAN ridge splitting with
+    corner patches, rim columns, obstacles, periodic and quadrilateral walls (today 126 s on the F9
+    sphere and 90 s on the quadric at h 0.1, layers only; its cell certification is 174 of 206 s
+    under the profiler). Cutting it over needs native emission of those certificates.
   - S6-B conforming Voronoi (F14; VoroCrust 5.2-40.5 s, 95 % surface sampling; its explicit-mesh step
     0.04-0.67 s, our restricted power cells 26-56x slower). Native conforming seeds (surface ball
     pairs, interior seeds by the size field) and restricted cells taken from the Delaunay dual, clipping

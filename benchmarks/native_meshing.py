@@ -15,6 +15,7 @@ import argparse
 import json
 import math
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -237,6 +238,7 @@ def _rows(
     improve_inputs: Path | None,
     query_inputs: Path | None,
     overset_inputs: Path | None,
+    layer_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -296,6 +298,13 @@ def _rows(
     elif names is not None and queries & names:
         raise ValueError(
             "The query rows read the ledger's F10 inputs: pass --query-inputs."
+        )
+    layer_rows = frozenset(name for name, _ in _F9_MODELS)
+    if layer_inputs is not None:
+        families += ((layer_rows, lambda: _layer_rows(layer_inputs)),)
+    elif names is not None and layer_rows & names:
+        raise ValueError(
+            "The layer rows read the ledger's F9 surfaces: pass --layer-inputs."
         )
     rows: list[_Row] = []
     for family, build in families:
@@ -2047,6 +2056,269 @@ def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row,
     return tuple(rows)
 
 
+# Ledger F9: five prism layers, first height 0.01, growth 1.2 (total 0.074416),
+# grown inward from the Gmsh surface meshes the reference tools layer (h 0.1
+# and 0.05; the ledger's gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl).
+_F9_HEIGHTS = np.cumsum(0.01 * 1.2 ** np.arange(5, dtype=np.float64))
+# The best reference depth band (Netgen on the sphere: 0.0740-0.0744 by true
+# distance) bounds the depth error of every unthinned column top.
+_F9_DEPTH_TOLERANCE = 4e-4
+# Gmsh's classification angle in the reference driver (classifySurfaces 40).
+_F9_FEATURE_ANGLE = 40.0
+# The certified repair's thinning floor (Netgen thins to 11-17 % at edges).
+_F9_MINIMUM_SCALE = 0.1
+_F9_MODELS = (("layers-sphere", "sphere"), ("layers-quadric", "quadric"))
+
+
+class _LayerCase(NamedTuple):
+    model: str
+    vertices: np.ndarray
+    # Outward-oriented wall triangles.
+    faces: np.ndarray
+    # The core's size target: the mean wall edge.
+    size: float
+
+
+class _LayerResult(NamedTuple):
+    layers: _meshcore.PrismLayers
+    # Layer levels (rows of PrismLayers.points), then the core's own vertices.
+    points: np.ndarray
+    prisms: np.ndarray
+    tetrahedra: np.ndarray
+    unmet: int
+    layer_seconds: float
+    core_seconds: float
+
+
+def _read_ascii_stl(path: Path, /) -> tuple[np.ndarray, np.ndarray]:
+    corners = np.asarray(
+        [
+            line.split()[1:4]
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.lstrip().startswith("vertex")
+        ],
+        dtype=np.float64,
+    )
+    vertices, inverse = np.unique(corners, axis=0, return_inverse=True)
+    return vertices, inverse.reshape((-1, 3)).astype(np.int64)
+
+
+def _layered_mesh(case: _LayerCase, /) -> _LayerResult:
+    # The whole task of Gmsh's timed call (classify, extrude, 3D): the wall
+    # surface in; certified prism layers grown inward, the core meshed by S3
+    # with the top level as fixed boundary; one conforming mixed mesh out.
+    start = time.perf_counter()
+    layers = _meshcore.prism_layers(
+        case.vertices,
+        case.faces[:, ::-1],
+        _F9_HEIGHTS,
+        feature_angle_degrees=_F9_FEATURE_ANGLE,
+        minimum_scale=_F9_MINIMUM_SCALE,
+        prove=True,
+    )
+    layered = time.perf_counter()
+    if layers.status is not _meshcore.MeshcoreStatus.OK:
+        raise RuntimeError(f"Prism layers ended with {layers.status!r}.")
+    count = case.vertices.shape[0]
+    levels = layers.points.shape[0]
+    top = layers.points[levels - count :]
+    recovered = _recover(
+        top, case.faces, np.zeros((case.faces.shape[0],), dtype=np.int32)
+    )
+    if recovered.status is not _meshcore.MeshcoreStatus.OK:
+        raise RuntimeError(f"Core recovery ended with {recovered.status!r}.")
+    mesh = _meshcore.TetMesh3D.from_recovery(
+        recovered, boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED
+    )
+    sizes = np.full((recovered.points.shape[0],), case.size, dtype=np.float64)
+    refined = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+    if refined.status not in (
+        _meshcore.MeshcoreStatus.OK,
+        _meshcore.MeshcoreStatus.UNRESOLVED,
+    ):
+        raise RuntimeError(f"Core refinement failed with status {refined.status!r}.")
+    improved = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
+    core = mesh.arrays()
+    if not np.array_equal(core.points[:count], top):
+        raise RuntimeError("The core must keep the top level's vertices first.")
+    cells = core.tetrahedra.astype(np.int64)
+    tetrahedra = np.where(cells < count, cells + (levels - count), cells - count + levels)
+    return _LayerResult(
+        layers,
+        np.concatenate((layers.points, core.points[count:])),
+        layers.prisms.astype(np.int64),
+        tetrahedra,
+        improved.unmet_cells,
+        layered - start,
+        time.perf_counter() - layered,
+    )
+
+
+def _layer_result(result: object, /) -> _LayerResult:
+    if not isinstance(result, _LayerResult):
+        raise TypeError("The layer row returns a _LayerResult.")
+    return result
+
+
+def _layer_cells(result: object, /) -> int:
+    layered = _layer_result(result)
+    return layered.prisms.shape[0] + layered.tetrahedra.shape[0]
+
+
+def _layer_unmet(result: object, /) -> int:
+    return _layer_result(result).unmet
+
+
+def _solid_depth(model: str, points: np.ndarray, /) -> np.ndarray:
+    # Signed true distance to the solid's boundary, positive inside: the unit
+    # sphere, and the quadric as the intersection of the z cylinder r 1 and
+    # the x cylinder r 0.6 (the distance to the complement of a convex
+    # intersection is the least distance to a complement).
+    match model:
+        case "sphere":
+            return 1.0 - np.linalg.norm(points, axis=-1)
+        case "quadric":
+            return np.minimum(
+                1.0 - np.hypot(points[:, 0], points[:, 1]),
+                0.6 - np.hypot(points[:, 1], points[:, 2]),
+            )
+        case _:
+            raise ValueError(f"Unknown F9 model {model!r}.")
+
+
+def _prism_corner_jacobians(points: np.ndarray, prisms: np.ndarray, /) -> np.ndarray:
+    # The ledger's six corner Jacobians per prism (meas_bl.py): at each bottom
+    # and top corner, det[edge to the next corner, edge to the one after, the
+    # corner's own column edge].
+    corners = points[prisms]
+    values = []
+    for k in range(3):
+        a, b, c = k, (k + 1) % 3, (k + 2) % 3
+        up = corners[:, a + 3] - corners[:, a]
+        for level in (0, 3):
+            values.append(
+                np.linalg.det(
+                    np.stack(
+                        (
+                            corners[:, b + level] - corners[:, a + level],
+                            corners[:, c + level] - corners[:, a + level],
+                            up,
+                        ),
+                        axis=2,
+                    )
+                )
+            )
+    return np.stack(values, axis=1)
+
+
+def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, float]]:
+    layered = _layer_result(result)
+    layers = layered.layers
+    count = case.vertices.shape[0]
+    levels = layers.points.shape[0]
+    jacobians = _prism_corner_jacobians(layered.points, layered.prisms)
+    largest = np.max(np.abs(jacobians), axis=1)
+    lowest = np.min(jacobians, axis=1)
+    inverted_prisms = int(np.count_nonzero(lowest <= 1e-12 * largest))
+    ratios = lowest / largest
+    corners = layered.points[layered.tetrahedra]
+    volumes = np.linalg.det(
+        np.stack(
+            (
+                corners[:, 1] - corners[:, 0],
+                corners[:, 2] - corners[:, 0],
+                corners[:, 3] - corners[:, 0],
+            ),
+            axis=2,
+        )
+    )
+    inverted_tets = int(np.count_nonzero(volumes <= 0.0))
+    top_depth = _solid_depth(case.model, layers.points[levels - count :])
+    full = layers.scale == 1.0
+    total = float(_F9_HEIGHTS[-1])
+    depth_error = float(np.max(np.abs(top_depth[full] - total))) if np.any(full) else 0.0
+    generated = _solid_depth(case.model, layered.points[count:])
+    outside = int(np.count_nonzero(generated < -1e-9))
+    ridge = layers.vertex_kind != 0
+    thinned = layers.scale < 1.0
+    # Prisms whose wall triangle lies within 1.5 h of a sharp edge (meas_bl).
+    bottom = layered.points[layered.prisms[:, :3]].mean(axis=1)
+    edge = float(
+        np.median(
+            np.linalg.norm(
+                case.vertices[case.faces[:, 1]] - case.vertices[case.faces[:, 0]], axis=1
+            )
+        )
+    )
+    near = (
+        (np.abs(np.hypot(bottom[:, 0], bottom[:, 1]) - 1.0) < 1.5 * edge)
+        & (np.abs(np.hypot(bottom[:, 1], bottom[:, 2]) - 0.6) < 1.5 * edge)
+        if case.model == "quadric"
+        else np.zeros((bottom.shape[0],), dtype=np.bool_)
+    )
+    missed = (
+        inverted_prisms + inverted_tets + outside + int(depth_error > _F9_DEPTH_TOLERANCE)
+    )
+    return missed, {
+        "prisms": float(layered.prisms.shape[0]),
+        "tetrahedra": float(layered.tetrahedra.shape[0]),
+        "inverted_prisms": float(inverted_prisms),
+        "inverted_tetrahedra": float(inverted_tets),
+        "minimum_corner_ratio": float(np.min(ratios)),
+        "minimum_corner_ratio_near_sharp_edges": float(np.min(ratios[near]))
+        if np.any(near)
+        else math.nan,
+        "prisms_near_sharp_edges": float(np.count_nonzero(near)),
+        "top_depth_minimum": float(np.min(top_depth)),
+        "top_depth_maximum": float(np.max(top_depth)),
+        "unthinned_top_depth_error": depth_error,
+        "layer_depth_maximum": float(np.max(_solid_depth(case.model, layers.points))),
+        "intended_depth": total,
+        "generated_nodes_outside": float(outside),
+        "wall_nodes_outside_given": float(
+            np.count_nonzero(_solid_depth(case.model, case.vertices) < -1e-9)
+        ),
+        "ridge_vertices": float(np.count_nonzero(ridge)),
+        "thinned_vertices": float(np.count_nonzero(thinned)),
+        "ridge_thinning_fraction": float(np.count_nonzero(thinned & ridge))
+        / max(float(np.count_nonzero(ridge)), 1.0),
+        "minimum_scale": float(np.min(layers.scale)),
+        "certified": float(layers.stats[16]),
+        "layer_step_seconds": layered.layer_seconds,
+        "layer_kernel_seconds": float(layers.stats[6]),
+        "layer_certification_seconds": float(layers.stats[5]),
+        "core_seconds": layered.core_seconds,
+    }
+
+
+def _layer_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row sizes are the request h in thousandths.
+    rows: list[_Row] = []
+    for name, model in _F9_MODELS:
+        for thousandths in (100, 50):
+            vertices, faces = _read_ascii_stl(
+                inputs / f"gmsh-{model}-h{thousandths / 1000:g}-t0.01-n5-sign-1-surf.stl"
+            )
+            edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+            spacing = float(
+                np.mean(
+                    np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
+                )
+            )
+            case = _LayerCase(model, vertices, faces, spacing)
+            rows.append(
+                _Row(
+                    name,
+                    thousandths,
+                    partial(_layered_mesh, case),
+                    _layer_cells,
+                    unmet=_layer_unmet,
+                    quality=partial(_layer_quality, case),
+                )
+            )
+    return tuple(rows)
+
+
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -2114,6 +2386,13 @@ def main(argv: list[str] | None = None) -> int:
         help="directory of the ledger's F13 tetrahedral inputs (f13-tet1eNs.npz); "
         "the overset-tet rows run only with it",
     )
+    parser.add_argument(
+        "--layer-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F9 surfaces "
+        "(gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl); the layer rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -2127,6 +2406,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.improve_inputs,
         arguments.query_inputs,
         arguments.overset_inputs,
+        arguments.layer_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
