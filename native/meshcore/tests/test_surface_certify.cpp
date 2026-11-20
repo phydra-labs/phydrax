@@ -297,6 +297,26 @@ void illegal_contact_cases() {
   PHX_CHECK(refused[0] == 0);
 }
 
+// Exact predicates are exact only in their coordinate domain: a tetrahedron
+// with a corner at 0x1p400 (whose degree-3 orientation terms overflow) and
+// one with a 0x1p-130 coordinate are refused on their own, without any
+// contact, and an in-domain one beside them is not.
+void out_of_domain_corners_are_refused() {
+  using phx::mc::remesh::refuse_illegal_contacts;
+  std::vector<Point> points;
+  std::vector<Triangle> triangles;
+  append_tetrahedron({0, 0, 0}, points, triangles);
+  append_tetrahedron({10, 0, 0}, points, triangles);
+  append_tetrahedron({20, 0, 0}, points, triangles);
+  points[4][0] = 0x1p400;
+  points[9][1] = 0x1p-130;
+  std::vector<uint8_t> refused;
+  PHX_CHECK(refuse_illegal_contacts(points, triangles, nullptr, refused) > 0);
+  for (size_t t = 0; t < 4; ++t) PHX_CHECK(refused[t] == 0);
+  PHX_CHECK(refused[4] + refused[5] + refused[6] + refused[7] == 3);
+  PHX_CHECK(refused[8] + refused[9] + refused[10] + refused[11] == 3);
+}
+
 }  // namespace
 
 int main() {
@@ -304,5 +324,6 @@ int main() {
   certified_free_radius_is_exact();
   closed_manifold_cases();
   illegal_contact_cases();
+  out_of_domain_corners_are_refused();
   return phx::mc::test::finish("test_surface_certify");
 }
