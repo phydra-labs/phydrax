@@ -384,7 +384,21 @@ void fixed_pole_zone() {
   in.fixed_vertices=fixed.data(); in.admit_point=pole_admit; in.admit_context=&probe;
   CadRefine2DResult result;
   const int status=cad_refine2d(in,result);
-  PHX_CHECK(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED);
+  std::printf("fixed-pole status=%d unresolved=%ld refusals=%ld/%ld/%ld/%ld/%ld\n",
+              status,result.stats.unresolved_triangles,result.stats.encroachment_refusals,
+              result.stats.outside_refusals,result.stats.proximity_refusals,
+              result.stats.nonstar_refusals,result.stats.excluded_refusals);
+  // Fault caught: a changed fixed-zone refusal outcome or missing final evidence.
+  PHX_CHECK(status==PHX_MC_UNRESOLVED && result.stats.unresolved_triangles==21);
+  PHX_CHECK(result.stats.encroachment_refusals==9 && result.stats.outside_refusals==1 &&
+            result.stats.proximity_refusals==0 && result.stats.nonstar_refusals==0 &&
+            result.stats.excluded_refusals==18);
+  PHX_CHECK(result.unresolved.size()==21);
+  for(const auto& e:result.unresolved) {
+    PHX_CHECK(e.bad_size || e.bad_angle);
+    if(e.refusal==CadRefine2DRefusal::encroachment)
+      PHX_CHECK(e.segment>=0 && e.segment<in.segment_count && e.relocation_failed);
+  }
   int64_t excluded=0;
   for(const auto& p:probe.candidates) excluded+=std::hypot(p[0],p[1])<0.9 || p[0]>2;
   // Fault caught: skipping candidate admission or counting a different refusal.
@@ -499,14 +513,18 @@ int main() {
   int32_t status;
   auto r=run(f,height_field,nullptr,status);
   report_refusals("height-field",status,r);
-  PHX_CHECK(status==PHX_MC_OK || (status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles>0));
+  // Fault caught: a height-field chart regressing from resolved to unresolved.
+  PHX_CHECK(status==PHX_MC_OK && r.stats.unresolved_triangles==0 &&
+            r.stats.encroachment_refusals==0 && r.stats.outside_refusals==0 &&
+            r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
+            r.unresolved.empty());
   check_topology(f,r);
   r=run(f,gradient,nullptr,status);
   report_refusals("gradient",status,r);
   // Fault caught: failing to relocate any candidate blocked by a fixed segment,
   // or dropping the remaining failed-relocation evidence.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
-  PHX_CHECK(r.stats.encroachment_refusals==9 && r.stats.outside_refusals==1);
+  PHX_CHECK(r.stats.encroachment_refusals==6 && r.stats.outside_refusals==4);
   PHX_CHECK(r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
             r.stats.unresolved_triangles>0 && r.stats.relocations_accepted>0 &&
             r.stats.relocations_failed>0);
