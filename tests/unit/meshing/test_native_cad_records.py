@@ -17,6 +17,7 @@ from phydrax.meshing._adaptation import (
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
     MeshAdaptationPolicy,
+    MeshAdaptationResult,
     MeshAdaptationRoute,
     prepare_mesh_adaptation,
 )
@@ -431,6 +432,161 @@ def test_native_cad_adaptation_round_trip_keeps_records_and_certificate() -> Non
     )
     with pytest.raises(ValueError, match="bound no single source chart triangle"):
         retarget_native_cad_surface(witness, parent.mesh, split.target.mesh, forged)
+
+
+def _refine(
+    result: CellMeshingResult,
+    transfer: phx.meshing.BRepAssociationTransfer,
+    vertex_rows: np.ndarray,
+    /,
+) -> MeshAdaptationResult:
+    """Bisect every cell incident to ``vertex_rows``."""
+    cells = np.asarray(result.mesh.blocks[0].vertices, dtype=np.int64)
+    marked = np.flatnonzero(np.isin(cells, vertex_rows).any(axis=1))
+    return execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            result,
+            MarkedMeshAdaptation(np.asarray(result.mesh.blocks[0].global_ids)[marked]),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
+            ),
+        )
+    )
+
+
+def _curve_vertex_rows(result: CellMeshingResult, /) -> np.ndarray:
+    curve = _records(result).curve
+    assert curve is not None
+    edges, _ = simplex_volume_entities(result.mesh)
+    ids = np.asarray(result.mesh.entity_set(1).entity_ids)
+    return np.unique(edges[np.isin(ids, np.asarray(curve.target_global_ids))])
+
+
+def test_native_cad_adaptation_splits_curve_edges_exactly() -> None:
+    # Refining the cells at the box's curve edges bisects curve edges (box
+    # h 0.5: 24 -> 25 -> 45 curve edges). Reference: bisection halves an
+    # edge, so every child interval is its root interval scaled by a power of
+    # two at a multiple of its width, and the children partition the root
+    # exactly (records). The native certificate re-proves each target.
+    # Then a curve midpoint whose stencil claims weights 1/4, 3/4 is refused
+    # (it does not lie at that combination). Faults caught: a chord range
+    # split off the vertex, a child interval not a half, a forged stencil
+    # mapped anyway.
+    from phydrax.meshing._lineage import VertexInterpolationStencil
+    from phydrax.meshing._native_cad_records import retarget_native_cad_surface
+
+    model = _box()
+    current = _native(model, 0.5)
+    transfer = _transfer(model)
+    original = _records(current)
+    assert original.curve is not None
+    split = None
+    for _ in range(2):
+        result = _refine(current, transfer, _curve_vertex_rows(current))
+        target = result.target
+        certification = target.certification
+        assert certification is not None and certification.passed
+        assert certification.native_cad is not None
+        assert certification.native_cad.status == "certified"
+        records = _records(target)
+        assert records.root_id == original.root_id
+        curve = records.curve
+        assert curve is not None
+        before = _records(current).curve
+        assert before is not None
+        if len(curve.target_global_ids) > len(before.target_global_ids):
+            split = result
+        records.require_curve(_curve(target))
+        for parent, interval in zip(
+            np.asarray(curve.parent_ids).tolist(),
+            curve.source_parameter_intervals,
+            strict=True,
+        ):
+            assert interval is not None
+            low, high = sorted(
+                Fraction.from_float(value) for value in original.root_parameters[parent]
+            )
+            width = interval[1] - interval[0]
+            ratio = (high - low) / width
+            assert ratio.denominator == 1
+            assert ratio.numerator & (ratio.numerator - 1) == 0
+            assert ((interval[0] - low) / width).denominator == 1
+        transfer.validate_source(target)
+        current = target
+    assert split is not None, "refining at the curve edges must split one"
+
+    stencil = split.stencil
+    assert stencil is not None
+    parent = split.source
+    assert parent.certification is not None
+    assert parent.certification.native_cad is not None
+    parent_curve = _records(parent).curve
+    assert parent_curve is not None
+    edges, _ = simplex_volume_entities(parent.mesh)
+    entity_ids = np.asarray(parent.mesh.entity_set(1).entity_ids)
+    parent_ids = np.asarray(parent.mesh.vertex_global_ids)
+    curve_pairs = {
+        frozenset(parent_ids[edge].tolist())
+        for edge in edges[np.isin(entity_ids, np.asarray(parent_curve.target_global_ids))]
+    }
+    sources = np.asarray(stencil.source_global_ids, dtype=np.int64)
+    valid = np.asarray(stencil.valid, dtype=np.bool_)
+    row = next(
+        index
+        for index in range(sources.shape[0])
+        if int(valid[index].sum()) == 2
+        and frozenset(sources[index][valid[index]].tolist()) in curve_pairs
+    )
+    weights = np.asarray(stencil.weights, dtype=np.float64).copy()
+    exact = [list(values) for values in stencil.exact_weights]
+    first, second = np.flatnonzero(valid[row])[:2]
+    weights[row, first], weights[row, second] = 0.25, 0.75
+    exact[row][first], exact[row][second] = Fraction(1, 4), Fraction(3, 4)
+    forged = VertexInterpolationStencil(
+        stencil.source_entity_set_id,
+        stencil.target_entity_set_id,
+        np.asarray(stencil.target_global_ids),
+        sources,
+        weights,
+        valid,
+        preserves_constants=stencil.preserves_constants,
+        exact_weights=tuple(tuple(values) for values in exact),
+    )
+    with pytest.raises(ValueError, match="does not lie at its stencil combination"):
+        retarget_native_cad_surface(
+            parent.certification.native_cad.witness,
+            parent.mesh,
+            split.target.mesh,
+            forged,
+        )
+
+
+def test_native_cad_adaptation_refuses_a_split_pole_segment() -> None:
+    # Refining the cells at the sphere's pole slivers bisects a sliver's P-Q
+    # edge in the third round (sphere h 0.3). Its midpoint M would need two
+    # chart points joined by a collapsed edge off the pole, which V3's
+    # chart-mesh link rejects (measured before this refusal: every chart row
+    # unresolved, reason 4, CHART_MESH_LINK findings on the split slivers),
+    # so the transfer refuses with its reason instead. The first two rounds,
+    # which keep every P-Q edge, are certified with the slivers kept.
+    model = _sphere_model()
+    source = _native(model, 0.3)
+    transfer = _transfer(model)
+
+    def pole_rows(result: CellMeshingResult, /) -> np.ndarray:
+        ids = np.asarray(result.mesh.vertex_global_ids)
+        return np.flatnonzero(np.isin(ids, _records(result).sliver_vertices.reshape(-1)))
+
+    current = source
+    for _ in range(2):
+        refined = _refine(current, transfer, pole_rows(current)).target
+        assert refined.certification is not None and refined.certification.passed
+        np.testing.assert_array_equal(
+            _records(refined).sliver_vertices, _records(source).sliver_vertices
+        )
+        current = refined
+    with pytest.raises(ValueError, match="split pole segment"):
+        _refine(current, transfer, pole_rows(current))
 
 
 def test_native_cad_records_survive_the_archive(

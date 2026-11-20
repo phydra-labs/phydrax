@@ -308,9 +308,9 @@ class NativeCadRecords(StrictModule, NonTrainableState):
 
         The curve association follows the curve-edge lineage (a split curve
         edge's children take the exact halves of its source interval, the
-        source occurrence inherited); a pole sliver ``{P, Q}`` whose segment
-        was split becomes the sliver pairs of consecutive target vertices
-        along it.
+        source occurrence inherited); the pole slivers keep their vertex ids,
+        and a split pole segment is refused (see
+        :func:`retarget_native_cad_surface`).
         """
         from ._surface_association_transfer import _curve_edges_with_root_ancestry
 
@@ -339,19 +339,13 @@ class NativeCadRecords(StrictModule, NonTrainableState):
                 np.asarray(source.mesh.vertex_global_ids).tolist()
             )
         }
-        target_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
-        slivers: list[tuple[int, int]] = []
         for first, second in self.sliver_vertices.tolist():
-            p, q = source_rows[first], source_rows[second]
-            chain = sorted(
-                (row_weights.get(q, Fraction(0)), int(target_ids[row]))
-                for row, row_weights in enumerate(weights)
-                if set(row_weights) <= {p, q}
-            )
-            slivers.extend(
-                (min(a, b), max(a, b))
-                for (_, a), (_, b) in zip(chain, chain[1:], strict=False)
-            )
+            segment = {source_rows[first], source_rows[second]}
+            if any(set(row) == segment for row in weights):
+                raise ValueError(
+                    "Native CAD records refuse a split pole segment "
+                    f"{(first, second)}: a non-pole point has no collapsed chart image."
+                )
         return NativeCadRecords(
             target,
             self.source_id,
@@ -359,7 +353,7 @@ class NativeCadRecords(StrictModule, NonTrainableState):
             self.root_curves,
             self.root_parameters,
             curve,
-            np.asarray(sorted(slivers), dtype=np.int64).reshape((-1, 2)),
+            self.sliver_vertices,
         )
 
 
@@ -711,14 +705,19 @@ def retarget_native_cad_surface(
     of the chart sub-triangle with the same corner weights: on a face edge
     the chart midpoint of the row's edge, on a curve edge additionally the
     chord's parameter midpoint (chords split linearly with their ranges).
-    Pole slivers split along their physical segment. No point is projected;
-    the native verifiers re-prove the target realization from scratch.
-    A target boundary vertex whose ancestry is not rational in one source
-    chart row is refused.
+    No point is projected: every target boundary vertex must lie at its
+    stencil combination, and the native verifiers re-prove the target
+    realization from scratch. Refused, with the reason: ancestry that is not
+    rational or not within one source chart row, a vertex off its stencil
+    combination, and a split pole segment (a pole sliver's P-Q edge; its
+    midpoint would need a collapsed chart edge off the pole, which the chart
+    model does not admit).
     """
     if witness.mesh_id != source.mesh_id:
         raise ValueError("Native CAD surface witness binds another source mesh.")
     weights = _stencil_weights(source, target, stencil)
+    source_points = np.asarray(source.coordinates, dtype=np.float64)
+    target_points = np.asarray(target.coordinates, dtype=np.float64)
     chart_triangles = np.asarray(witness.chart_triangles, dtype=np.int64)
     chart_uv = np.asarray(witness.chart_uv, dtype=np.float64)
     chart_patches = np.asarray(witness.chart_patches, dtype=np.int64)
@@ -785,6 +784,23 @@ def retarget_native_cad_surface(
                 "bound no single source chart triangle."
             )
         vertices = [int(value) for value in key]
+        # Map exactly: the target point must be its stencil combination of
+        # the source corners (up to the rounding of that combination).
+        for vertex in vertices:
+            expected = sum(
+                float(weight) * source_points[source_row]
+                for source_row, weight in weights[vertex].items()
+            )
+            scale = max(1.0, float(np.max(np.abs(target_points[vertex]))))
+            if (
+                np.max(np.abs(target_points[vertex] - expected))
+                > 8 * np.finfo(np.float64).eps * scale
+            ):
+                raise ValueError(
+                    "Native CAD chart transfer refuses target boundary vertex row "
+                    f"{vertex}: it does not lie at its stencil combination of the "
+                    "source chart corners."
+                )
         barycentric = [corner_weights(row, vertex) for vertex in vertices]
         (a0, a1, _), (b0, b1, _), (c0, c1, _) = barycentric
         area = (b0 - a0) * (c1 - a1) - (b1 - a1) * (c0 - a0)
@@ -798,34 +814,37 @@ def retarget_native_cad_surface(
     for row in np.flatnonzero(chart_to_mesh < 0).tolist():
         corners = chart_triangles[row].tolist()
         single = next(k for k in range(3) if corners.count(corners[k]) == 1)
-        x, y, z = (single + 1) % 3, (single + 2) % 3, single
-        p, q = corners[x], corners[z]
-        # Target vertices on the physical segment PQ, ordered from P to Q.
-        chain = sorted(
-            (vertex_weights.get(q, Fraction(0)), vertex)
+        p, q = corners[(single + 1) % 3], corners[single]
+        # A sliver pairs two chart images of the pole P with Q; its segment
+        # PQ is one mesh edge. Splitting it at M would give M two chart
+        # points joined by a collapsed edge off the pole, which the chart
+        # model (V3's chart-mesh link) does not admit.
+        on_segment = [
+            vertex
             for vertex, vertex_weights in enumerate(weights)
-            if set(vertex_weights) <= {p, q}
-        )
-        if chain[0][0] != 0 or chain[-1][0] != 1:
-            raise ValueError("A native CAD pole sliver lost its segment ends.")
-
-        def at(corner: int, s: Fraction, /) -> tuple[Fraction, Fraction, Fraction]:
-            values = [Fraction(0)] * 3
-            values[corner] = 1 - s
-            values[z] += s
-            return values[0], values[1], values[2]
-
-        levels = chain[:-1]
-        q_vertex = chain[-1][1]
-        for (s0, v0), (s1, v1) in zip(levels, levels[1:], strict=False):
-            pieces.append((row, [v0, v0, v1], [at(x, s0), at(y, s0), at(y, s1)]))
-            pieces.append((row, [v0, v1, v1], [at(x, s0), at(y, s1), at(x, s1)]))
-        s_last, v_last = levels[-1]
+            if set(vertex_weights) <= {p, q} and len(vertex_weights) == 2
+        ]
+        if on_segment:
+            raise ValueError(
+                "Native CAD chart transfer refuses a split pole segment: target "
+                f"vertex rows {on_segment} lie inside the sliver segment of source "
+                f"vertices {sorted((p, q))}, and a non-pole point has no collapsed "
+                "chart image."
+            )
+        vertices = []
+        for corner in corners:
+            (target_row,) = (
+                vertex
+                for vertex, vertex_weights in enumerate(weights)
+                if vertex_weights == {corner: Fraction(1)}
+            )
+            vertices.append(target_row)
+        identity = (Fraction(1), Fraction(0), Fraction(0))
         pieces.append(
             (
                 row,
-                [v_last, v_last, q_vertex],
-                [at(x, s_last), at(y, s_last), at(z, Fraction(0))],
+                vertices,
+                [identity, identity[2:] + identity[:2], identity[1:] + identity[:1]],
             )
         )
 
