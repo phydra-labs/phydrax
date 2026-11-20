@@ -777,7 +777,8 @@ class Refinement {
     evidence.refusal=kind;
     evidence.candidate[0]=p[0]; evidence.candidate[1]=p[1];
     evidence.segment=segment;
-    evidence.relocation_failed=kind==CadRefine2DRefusal::encroachment;
+    evidence.relocation_failed=kind==CadRefine2DRefusal::encroachment ||
+                               kind==CadRefine2DRefusal::proximity;
   }
   bool relocate_ray(int32_t t,const double* p,const CadMetric2D& m,int32_t segment) {
     const double* a=segment_endpoint(segment,0);
@@ -858,6 +859,17 @@ class Refinement {
     if (status_!=PHX_MC_OK || encroaches(q,mq)>=0 || too_close(q,mq)) return false;
     return insert(host,q,mq,t,true);
   }
+  // Inserts t's circumcenter under the same admission, location, lens and
+  // proximity checks as any candidate.
+  bool insert_circumcenter(int32_t t,const double* circumcenter) {
+    if (input_.admit_point && !input_.admit_point(input_.admit_context,circumcenter)) return false;
+    std::pair<int32_t,int> blocked{-1,-1};
+    const int32_t host=tri_.walk(t,circumcenter,&blocked);
+    if (!inside(host)) return false;
+    const CadMetric2D m=metric(circumcenter);
+    return status_==PHX_MC_OK && encroaches(circumcenter,m)<0 && !too_close(circumcenter,m) &&
+           insert(host,circumcenter,m,t,true);
+  }
   void process(int32_t t) {
     double radius, p[2];
     CadMetric2D center_metric;
@@ -883,25 +895,27 @@ class Refinement {
         ++result_.stats.relocations_accepted;
         return;
       }
-      if (status_==PHX_MC_OK &&
-          (!input_.admit_point || input_.admit_point(input_.admit_context,circumcenter))) {
-        const int32_t alternate=tri_.walk(t,circumcenter,&blocked);
-        if (inside(alternate)) {
-          const CadMetric2D alternate_metric=metric(circumcenter);
-          if (status_==PHX_MC_OK && encroaches(circumcenter,alternate_metric)<0 &&
-              !too_close(circumcenter,alternate_metric) &&
-              insert(alternate,circumcenter,alternate_metric,t,true)) {
-            ++result_.stats.relocations_accepted;
-            return;
-          }
-        }
+      if (status_==PHX_MC_OK && insert_circumcenter(t,circumcenter)) {
+        ++result_.stats.relocations_accepted;
+        return;
       }
       ++result_.stats.relocations_failed;
       if (status_!=PHX_MC_OK) return;
       refuse(result_.stats.encroachment_refusals,CadRefine2DRefusal::encroachment,t,p,segment);
       return;
     }
-    if (too_close(p,m)) { refuse(result_.stats.proximity_refusals,CadRefine2DRefusal::proximity,t,p); return; }
+    if (too_close(p,m)) {
+      // A frontal point too close to a vertex falls back to the circumcenter.
+      ++result_.stats.relocations_tried;
+      if (insert_circumcenter(t,circumcenter)) {
+        ++result_.stats.relocations_accepted;
+        return;
+      }
+      ++result_.stats.relocations_failed;
+      if (status_!=PHX_MC_OK) return;
+      refuse(result_.stats.proximity_refusals,CadRefine2DRefusal::proximity,t,p);
+      return;
+    }
     insert(host,p,m,t);
   }
   bool metric_conflict(int32_t t,const double* p,const CadMetric2D& m) const {

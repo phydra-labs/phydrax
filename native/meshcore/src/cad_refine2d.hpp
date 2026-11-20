@@ -90,8 +90,9 @@ struct CadRefine2DResult {
 // On normal and point-cap exits, unresolved lists failing live triangles in
 // slot order with their last refusal, if any; a none refusal has no candidate.
 // An encroachment segment is an index into the caller's input segment array.
-// Encroachment refusals record whether relocation was attempted and failed;
-// its outcome is also counted in the relocation statistics.
+// Encroachment and proximity refusals record that relocation was attempted
+// and failed (encroachment: ray, offcenter, circumcenter; proximity: the
+// circumcenter); each outcome is also counted in the relocation statistics.
 // Triangles with three fixed input vertices are neither refined nor scanned;
 // fixed_triangles_skipped counts them in the final mesh. The optional admission
 // callback rejects candidate points before their metric is evaluated.

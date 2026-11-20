@@ -620,6 +620,90 @@ void blocked_boundary_evidence() {
   PHX_CHECK(observed>0);
   PHX_CHECK(result.unresolved.size()==static_cast<std::size_t>(result.stats.unresolved_triangles));
 }
+// Plane with a square hole as the face stage meshes it (size .4, boundary
+// grading .3, chord floor): outer square [-1,1]^2 and hole [-.3,.3]^2 with
+// eight samples per side, plus one sample at (-1,-.98) giving a .02 chord.
+struct ChordFloor {
+  std::vector<double> points;
+  std::vector<int32_t> segments;
+  std::vector<double> spacing;
+};
+CadMetric2D chord_floor_metric(const double* p, void* context) {
+  const auto& f=*static_cast<const ChordFloor*>(context);
+  const double size=0.4, grading=0.3;
+  double h=size;
+  for(std::size_t i=0;i<f.spacing.size();++i)
+    h=std::min(h,f.spacing[i]+grading*std::hypot(p[0]-f.points[2*i],p[1]-f.points[2*i+1]));
+  for(std::size_t s=0;s<f.segments.size();s+=2) {
+    const double* a=&f.points[2*f.segments[s]]; const double* b=&f.points[2*f.segments[s+1]];
+    const double ab[2]={b[0]-a[0],b[1]-a[1]}, ap[2]={p[0]-a[0],p[1]-a[1]};
+    const double norm=ab[0]*ab[0]+ab[1]*ab[1];
+    const double t=std::clamp((ab[0]*ap[0]+ab[1]*ap[1])/norm,0.0,1.0);
+    const double d=std::hypot(ap[0]-t*ab[0],ap[1]-t*ab[1]);
+    h=std::max(h,std::min(size,std::sqrt(norm)-grading*d));
+  }
+  return {1/(h*h),0,1/(h*h)};
+}
+void proximity_circumcenter() {
+  ChordFloor f;
+  auto loop=[&](const std::vector<std::array<double,2>>& corners,bool extra) {
+    const int32_t first=static_cast<int32_t>(f.points.size()/2);
+    for(std::size_t c=0;c<corners.size();++c) {
+      const auto& a=corners[c]; const auto& b=corners[(c+1)%corners.size()];
+      std::vector<double> samples;
+      for(int k=0;k<8;++k) samples.push_back(k/8.0);
+      if(extra && c==3) samples.push_back(0.99);
+      for(double s:samples) {
+        f.points.push_back(a[0]+s*(b[0]-a[0]));
+        f.points.push_back(a[1]+s*(b[1]-a[1]));
+      }
+    }
+    const int32_t n=static_cast<int32_t>(f.points.size()/2)-first;
+    for(int32_t i=0;i<n;++i) { f.segments.push_back(first+i); f.segments.push_back(first+(i+1)%n); }
+  };
+  loop({{{-1,-1}},{{1,-1}},{{1,1}},{{-1,1}}},true);
+  loop({{{-0.3,-0.3}},{{-0.3,0.3}},{{0.3,0.3}},{{0.3,-0.3}}},false);
+  f.spacing.assign(f.points.size()/2,INFINITY);
+  for(std::size_t s=0;s<f.segments.size();s+=2) {
+    const int32_t a=f.segments[s], b=f.segments[s+1];
+    const double length=std::hypot(f.points[2*b]-f.points[2*a],f.points[2*b+1]-f.points[2*a+1]);
+    f.spacing[a]=std::min(f.spacing[a],length); f.spacing[b]=std::min(f.spacing[b],length);
+  }
+  const double hole[2]={0,0};
+  CadRefine2DInput in;
+  in.points=f.points.data(); in.point_count=static_cast<int32_t>(f.points.size()/2);
+  in.segments=f.segments.data(); in.segment_count=static_cast<int32_t>(f.segments.size()/2);
+  in.holes=hole; in.hole_count=1;
+  in.metric=chord_floor_metric; in.metric_context=&f; in.point_cap=10000;
+  CadRefine2DResult r;
+  const int32_t status=cad_refine2d(in,r);
+  std::printf("proximity-circumcenter status=%d unresolved=%lld refusals=%lld/%lld/%lld/%lld relocations=%lld/%lld/%lld\n",
+      status,static_cast<long long>(r.stats.unresolved_triangles),
+      static_cast<long long>(r.stats.encroachment_refusals),static_cast<long long>(r.stats.outside_refusals),
+      static_cast<long long>(r.stats.proximity_refusals),static_cast<long long>(r.stats.nonstar_refusals),
+      static_cast<long long>(r.stats.relocations_tried),static_cast<long long>(r.stats.relocations_accepted),
+      static_cast<long long>(r.stats.relocations_failed));
+  // Fault caught: refusing a frontal point for proximity without trying the
+  // admissible circumcenter. The bad-size triangle (-.3,0) (-.3,.075)
+  // (-.384,.0877) on the .075 hole chord had its frontal point .491 h from
+  // (-.3,.075) and no fallback; only the input-forced bad-angle triangle on
+  // the .02 chord at (-1,-1) remains.
+  PHX_CHECK(status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles==1 && r.unresolved.size()==1);
+  PHX_CHECK(r.stats.encroachment_refusals==1 && r.stats.outside_refusals==0 &&
+            r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0);
+  PHX_CHECK(r.stats.relocations_tried==2 && r.stats.relocations_accepted==1 &&
+            r.stats.relocations_failed==1);
+  for(const auto& e:r.unresolved) {
+    PHX_CHECK(!e.bad_size && e.bad_angle && e.refusal==CadRefine2DRefusal::encroachment);
+    const auto& c=r.triangulation.triangles[e.triangle];
+    bool corner=false;
+    for(int k=0;k<3;++k) {
+      const double* q=r.triangulation.point(c.v[k]);
+      corner=corner || (q[0]==-1.0 && q[1]==-1.0);
+    }
+    PHX_CHECK(corner);
+  }
+}
 
 }  // namespace
 
@@ -629,6 +713,7 @@ int main() {
   metric_case({2.5,1.5,2.5},4,4,8,8);
   metric_errors();
   long_fixed_segment();
+  proximity_circumcenter();
   hole_and_small_angle();
   varying_metric();
   adversarial_metrics();
