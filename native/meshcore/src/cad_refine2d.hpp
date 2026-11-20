@@ -31,6 +31,10 @@ struct CadRefine2DInput {
   const uint8_t* fixed_vertices = nullptr;
   int32_t (*admit_point)(void* context, const double point[2]) = nullptr;
   void* admit_context = nullptr;
+  // Optional chart-to-physical position for angle-pass acceptance; return
+  // nonzero on success and write three finite coordinates.
+  int32_t (*surface_position)(void* context, const double point[2], double xyz[3]) = nullptr;
+  void* surface_context = nullptr;
 };
 
 struct CadRefine2DStats {
@@ -76,6 +80,9 @@ struct CadRefine2DResult {
 // spacing (face stage, design B.2); boundary constraints are never split.
 // With graded metrics and boundary lengths <= 1, no refusal was observed on the
 // measured fixtures, but this is not a general no-refusal guarantee.
+// A triangle is oversized when its metric circumradius exceeds sqrt(1/2) of
+// the larger of one unit and the metric length (at its centroid) of each of
+// its fixed segments, since no insertion can shorten a segment.
 // On completed or point-cap exits, statistics count each unresolved triangle
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
@@ -90,6 +97,14 @@ struct CadRefine2DResult {
 // callback rejects candidate points before their metric is evaluated.
 // The caller must ensure all other evaluated triangle centroids are in the
 // metric callback's domain; candidate admission does not filter centroids.
+// After a successful census, an angle pass moves free unconstrained vertices
+// of triangles whose smallest metric angle is below halfway between
+// min_angle_degrees and 60, worst star first. A move must improve the star's
+// worst metric angle and keep every star triangle passing the refinement test;
+// with surface_position it must also keep the star's smallest 3D angle from
+// decreasing and its longest 3D edge from growing, otherwise it must keep the
+// star locally metric-Delaunay. A failed or nonfinite position evaluation
+// returns PHX_MC_INVALID_INPUT.
 int32_t cad_refine2d(const CadRefine2DInput& input, CadRefine2DResult& result);
 
 // Re-evaluate one live finite region triangle using the same centroid metric

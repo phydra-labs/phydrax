@@ -244,7 +244,11 @@ void metric_errors() {
     const bool protected_angle=cell.v[shortest]<recount.point_count &&
         tr.constraint(static_cast<int32_t>(t),j)!=-1 &&
         tr.constraint(static_cast<int32_t>(t),k)!=-1;
-    const bool expected_size=radius>std::sqrt(0.5);
+    // A triangle on a fixed segment is judged against that segment's own size.
+    double size_limit=std::sqrt(0.5);
+    for(int e=0;e<3;++e)
+      if(tr.constraint(static_cast<int32_t>(t),e)!=-1) size_limit=std::max(size_limit,std::sqrt(0.5)*length[e]);
+    const bool expected_size=radius>size_limit;
     const bool expected_angle=!protected_angle &&
         min_angle<25.0*3.14159265358979323846/180.0;
     bool size=false, angle=false;
@@ -258,6 +262,52 @@ void metric_errors() {
   PHX_CHECK(total>1 && c.stats.unresolved_triangles==total);
   PHX_CHECK(c.stats.unresolved_size==sizes && c.stats.unresolved_angle==angles);
   check_topology(f,c);
+}
+void long_fixed_segment() {
+  // One fixed bottom segment 1.5 graded units long; the other sides are
+  // sampled at half a unit.
+  Fixture f;
+  auto add=[&](double x,double y) { f.points.push_back(x); f.points.push_back(y); };
+  add(0,0);
+  for(int i=0;i<6;++i) add(1.5,0.5*i);
+  for(int i=0;i<3;++i) add(1.5-0.5*i,3);
+  for(int i=0;i<6;++i) add(0,3-0.5*i);
+  const int n=static_cast<int>(f.points.size()/2);
+  for(int i=0;i<n;++i) { f.segments.push_back(i); f.segments.push_back((i+1)%n); }
+  CadMetric2D identity{1,0,1};
+  int32_t status;
+  const auto r=run(f,constant,&identity,status);
+  report_refusals("long-fixed-segment",status,r);
+  // Fault caught: judging the triangle on the long segment against the graded
+  // size, which no insertion can meet because fixed segments are never split.
+  PHX_CHECK(status==PHX_MC_OK && r.stats.unresolved_triangles==0);
+  check_topology(f,r);
+  const auto& tr=r.triangulation;
+  const int32_t a=r.vertex_map[0], b=r.vertex_map[1];
+  int on_segment=0;
+  for(std::size_t t=0;t<tr.triangles.size();++t) {
+    if(!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+    const auto& c=tr.triangles[t];
+    const double* p[3]={tr.point(c.v[0]),tr.point(c.v[1]),tr.point(c.v[2])};
+    double length[3];
+    for(int k=0;k<3;++k)
+      length[k]=std::hypot(p[next3(k)][0]-p[prev3(k)][0],p[next3(k)][1]-p[prev3(k)][1]);
+    const double area=0.5*std::abs((p[1][0]-p[0][0])*(p[2][1]-p[0][1])-
+                                   (p[1][1]-p[0][1])*(p[2][0]-p[0][0]));
+    const double radius=length[0]*length[1]*length[2]/(4*area);
+    bool long_edge=false;
+    for(int k=0;k<3;++k)
+      long_edge|=(c.v[next3(k)]==a && c.v[prev3(k)]==b) || (c.v[next3(k)]==b && c.v[prev3(k)]==a);
+    if(long_edge) {
+      ++on_segment;
+      // Fault caught: the long segment's triangle exceeding its own segment size.
+      PHX_CHECK(radius>std::sqrt(0.5) && radius<=std::sqrt(0.5)*1.5);
+    } else {
+      // Fault caught: the relaxed limit leaking to triangles off the long segment.
+      PHX_CHECK(radius<=std::sqrt(0.5)*1.0000001);
+    }
+  }
+  PHX_CHECK(on_segment==1);
 }
 void hole_and_small_angle() {
   Fixture f=rectangle(8,8,8,8);
@@ -391,11 +441,11 @@ void fixed_pole_zone() {
               result.stats.outside_refusals,result.stats.proximity_refusals,
               result.stats.nonstar_refusals,result.stats.excluded_refusals);
   // Fault caught: a changed fixed-zone refusal outcome or missing final evidence.
-  PHX_CHECK(status==PHX_MC_UNRESOLVED && result.stats.unresolved_triangles==21);
-  PHX_CHECK(result.stats.encroachment_refusals==9 && result.stats.outside_refusals==1 &&
-            result.stats.proximity_refusals==0 && result.stats.nonstar_refusals==0 &&
-            result.stats.excluded_refusals==18);
-  PHX_CHECK(result.unresolved.size()==21);
+  PHX_CHECK(status==PHX_MC_UNRESOLVED && result.stats.unresolved_triangles==11);
+  PHX_CHECK(result.stats.encroachment_refusals==2 && result.stats.outside_refusals==0 &&
+            result.stats.proximity_refusals==1 && result.stats.nonstar_refusals==0 &&
+            result.stats.excluded_refusals==16);
+  PHX_CHECK(result.unresolved.size()==11);
   for(const auto& e:result.unresolved) {
     PHX_CHECK(e.bad_size || e.bad_angle);
     if(e.refusal==CadRefine2DRefusal::encroachment)
@@ -422,6 +472,79 @@ void fixed_pole_zone() {
   // Fault caught: scanning fixed cap triangles or misreporting their count.
   PHX_CHECK(skipped>0 && result.stats.fixed_triangles_skipped==skipped);
   check_topology(f,result);
+}
+
+int32_t cylinder_position(void* context,const double p[2],double xyz[3]) {
+  ++*static_cast<int*>(context);
+  xyz[0]=std::cos(p[0]); xyz[1]=std::sin(p[0]); xyz[2]=p[1];
+  return 1;
+}
+
+void worst_angle_star() {
+  const double points[]={-1,-1, 1,-1, 1,1, -1,1, 0.3,0.2};
+  const int32_t segments[]={0,1,1,2,2,3,3,0};
+  CadMetric2D m{0.09,0,0.09};
+  CadRefine2DInput in;
+  in.points=points; in.point_count=5; in.segments=segments; in.segment_count=4;
+  in.metric=constant; in.metric_context=&m; in.point_cap=5;
+  CadRefine2DResult metric_result;
+  PHX_CHECK(cad_refine2d(in,metric_result)==PHX_MC_OK);
+  // The constant isotropic metric makes metric angles Euclidean.
+  auto fan_worst=[](const double* p) {
+    const double corners[4][2]={{-1,-1},{1,-1},{1,1},{-1,1}};
+    double worst=-1;
+    for(int i=0;i<4;++i) {
+      const double* q[3]={corners[i],corners[(i+1)%4],p};
+      for(int k=0;k<3;++k) {
+        const double ax=q[(k+1)%3][0]-q[k][0],ay=q[(k+1)%3][1]-q[k][1];
+        const double bx=q[(k+2)%3][0]-q[k][0],by=q[(k+2)%3][1]-q[k][1];
+        worst=std::max(worst,(ax*bx+ay*by)/std::sqrt((ax*ax+ay*ay)*(bx*bx+by*by)));
+      }
+    }
+    return worst;
+  };
+  const double* moved=metric_result.triangulation.point(metric_result.vertex_map[4]);
+  // Fault caught: omitting the worst-star optimization.
+  PHX_CHECK(fan_worst(moved)<fan_worst(points+8));
+  const uint8_t fixed[]={0,0,0,0,1};
+  int evaluations=0;
+  in.fixed_vertices=fixed; in.surface_position=cylinder_position; in.surface_context=&evaluations;
+  CadRefine2DResult baseline;
+  PHX_CHECK(cad_refine2d(in,baseline)==PHX_MC_OK);
+  const double* protected_point=baseline.triangulation.point(baseline.vertex_map[4]);
+  // Fault caught: moving a fixed interior point.
+  PHX_CHECK(protected_point[0]==points[8] && protected_point[1]==points[9]);
+  in.fixed_vertices=nullptr;
+  CadRefine2DResult physical;
+  PHX_CHECK(cad_refine2d(in,physical)==PHX_MC_OK);
+  PHX_CHECK(evaluations>0);
+  auto quality=[](const CadRefine2DResult& result) {
+    double worst=-1, longest=0;
+    const auto& tr=result.triangulation;
+    for(std::size_t t=0;t<tr.triangles.size();++t) {
+      if(!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+      double xyz[3][3]; int ignored=0;
+      for(int k=0;k<3;++k) cylinder_position(&ignored,tr.point(tr.triangles[t].v[k]),xyz[k]);
+      for(int k=0;k<3;++k) {
+        double aa=0,bb=0,ab=0;
+        for(int j=0;j<3;++j) {
+          const double a=xyz[next3(k)][j]-xyz[k][j], b=xyz[prev3(k)][j]-xyz[k][j];
+          aa+=a*a; bb+=b*b; ab+=a*b;
+        }
+        longest=std::max({longest,aa,bb});
+        worst=std::max(worst,ab/std::sqrt(aa*bb));
+      }
+    }
+    return std::array<double,2>{worst,longest};
+  };
+  const auto before=quality(baseline),after=quality(physical);
+  // Fault caught: accepting a move that worsens a 3D angle or lengthens an
+  // edge, or the position hook disabling the pass.
+  PHX_CHECK(after[0]<before[0] && after[1]<=before[1]);
+  for(int i=0;i<4;++i) {
+    const double* p=physical.triangulation.point(physical.vertex_map[i]);
+    PHX_CHECK(p[0]==points[2*i] && p[1]==points[2*i+1]);
+  }
 }
 
 void permutation_invariance() {
@@ -505,10 +628,12 @@ int main() {
   metric_case({100,0,1},0.8,8,8,8);
   metric_case({2.5,1.5,2.5},4,4,8,8);
   metric_errors();
+  long_fixed_segment();
   hole_and_small_angle();
   varying_metric();
   adversarial_metrics();
   fixed_pole_zone();
+  worst_angle_star();
   permutation_invariance();
   blocked_boundary_evidence();
   const Fixture f=rectangle(6,6,6,6);
@@ -526,7 +651,7 @@ int main() {
   // Fault caught: failing to relocate any candidate blocked by a fixed segment,
   // or dropping the remaining failed-relocation evidence.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
-  PHX_CHECK(r.stats.encroachment_refusals==6 && r.stats.outside_refusals==4);
+  PHX_CHECK(r.stats.encroachment_refusals==3 && r.stats.outside_refusals==0);
   PHX_CHECK(r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
             r.stats.unresolved_triangles>0 && r.stats.relocations_accepted>0 &&
             r.stats.relocations_failed>0);

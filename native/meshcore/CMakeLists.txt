@@ -108,6 +108,9 @@ set(PHX_MC_SOURCES
   src/verify_chart_partition.cpp
   src/verify_surface_embedding.cpp
   src/verify_cad_fidelity.cpp
+  src/cad_faces.cpp
+  src/cad_mesh.cpp
+  src/cad_capi.cpp
 )
 set(PHX_MC_HEADERS
   include/phydrax_meshcore.h
@@ -173,6 +176,8 @@ set(PHX_MC_HEADERS
   src/verify_chart_partition.hpp
   src/verify_surface_embedding.hpp
   src/verify_cad_fidelity.hpp
+  src/cad_faces.hpp
+  src/cad_mesh.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -306,4 +311,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_verify_chart_partition)
   phx_mc_add_test(test_verify_surface_embedding)
   phx_mc_add_test(test_verify_cad_fidelity)
+  phx_mc_add_test(test_cad_mesh)
 endif()

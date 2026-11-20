@@ -2839,6 +2839,111 @@ PHX_MC_API int32_t phx_mc_verify_chart_partition(
     const int64_t* chord_use, const int64_t* chord_loop, const double* chord_uv,
     const double* chord_range, int64_t evidence_capacity,
     phx_mc_chart_failure* evidence, int64_t* evidence_count);
+/* One-call curve and surface construction; controls have physical units.
+   face_sizes are requested edge lengths h. Curves and faces use the internal
+   size h_t = h/sqrt(2): the chart size test R <= h_t/sqrt(2) gives every
+   edge <= 2R <= h. */
+typedef struct phx_mc_cad_surface_controls {
+  const double* face_sizes;
+  const double* face_tolerances;
+  const double* curve_tolerances;
+  double tolerance_fraction;
+  double grading;
+  double minimum_size;
+} phx_mc_cad_surface_controls;
+
+typedef struct phx_mc_cad_face_stats {
+  int64_t metric_evaluations, insertions, unresolved_size, unresolved_angle;
+  int64_t encroachment_refusals, nonstar_refusals, outside_refusals, proximity_refusals;
+  int64_t unresolved_triangles, excluded_refusals, fixed_triangles_skipped, omitted_pole_points;
+  int64_t periodic_corner_gaps;
+  uint64_t max_periodic_corner_gap_ulps;
+} phx_mc_cad_face_stats;
+
+/* A gap whose quotient by the period exceeds 2^52 in magnitude is refused
+ * as unrepresentable. */
+enum {
+  PHX_MC_CAD_FACE_SHEET_MISMATCH = 1,
+  PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE = 2,
+  PHX_MC_CAD_FACE_PERIODIC_WRAP = 3
+};
+enum {
+  PHX_MC_CAD_FACE_REFINEMENT = 4
+};
+/* Refinement refusal kinds match the chart kernel's deterministic records. */
+enum {
+  PHX_MC_CAD_REFUSAL_NONE = 0,
+  PHX_MC_CAD_REFUSAL_ENCROACHMENT = 1,
+  PHX_MC_CAD_REFUSAL_OUTSIDE = 2,
+  PHX_MC_CAD_REFUSAL_PROXIMITY = 3,
+  PHX_MC_CAD_REFUSAL_NONSTAR = 4,
+  PHX_MC_CAD_REFUSAL_EXCLUDED = 5
+};
+typedef struct phx_mc_cad_face_failure {
+  int32_t face, loop, use, axis, reason;
+  int64_t turns;
+  double parameter;
+  /* Refinement-only fields: triangle is a pre-flip chart slot, not a global
+   * triangle index. Coordinates are in the face's native parameter chart.
+   * curve_segment is the zero-based segment in that curve's shared samples;
+   * curve and curve_segment are -1 when no curve segment is implicated.
+   * segment_parameters are normalized curve parameters, ordered along the use.
+   * candidate_uv is NaN when refusal_kind is NONE. */
+  int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
+  double candidate_uv[2], triangle_uv[6], segment_parameters[2];
+} phx_mc_cad_face_failure;
+
+typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
+typedef struct phx_mc_cad_surface_arrays {
+  int64_t vertex_capacity, triangle_capacity, sliver_capacity, curve_edge_capacity, face_capacity;
+  int64_t curve_capacity, parameter_capacity, failure_capacity, face_failure_capacity;
+  double* points; int8_t* vertex_dimensions; int32_t* vertex_entities; double* vertex_parameters;
+  int32_t* triangles; int32_t* triangle_patches; double* triangle_uv;
+  int32_t* triangle_edge_uses; int32_t* facet_regions;
+  double* sliver_uv; int32_t* sliver_patches;
+  int32_t* curve_edges; int32_t* curve_edge_curves; double* curve_edge_parameters;
+  phx_mc_cad_face_stats* face_stats;
+  int64_t* curve_offsets; double* curve_parameters; int64_t* curve_sag_splits;
+  phx_mc_cad_curve_failure* curve_failures;
+  phx_mc_cad_curve_statistics* curve_statistics;
+  phx_mc_cad_face_failure* face_failures;
+} phx_mc_cad_surface_arrays;
+
+/* OK returns a complete candidate. UNRESOLVED returns a handle with either a
+ * complete candidate or only findings (zero vertices and triangles); a curve
+ * failure without a complete proposal may return a null handle. Sizes are
+ * vertices, triangles, slivers, curve edges, faces, curves, curve parameters,
+ * unresolved curve intervals and face failures, respectively. Export validates
+ * every capacity and required output before writing anything. */
+PHX_MC_API int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
+                                    const phx_mc_cad_surface_controls* controls,
+                                    phx_mc_cad_surface_result** result);
+PHX_MC_API int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,
+                                                    int64_t sizes[9]);
+PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_result* result,
+                                                     const phx_mc_cad_surface_arrays* arrays);
+PHX_MC_API void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result);
+
+/* Per-pole rows: face, pole use, protected sectors, free sectors. With
+ * capacity zero and rows null, only the required row count is returned. */
+PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    int64_t* rows, int64_t* count);
+
+/* Chart rows include collapsed pole slivers; chart_to_mesh is -1 for those
+ * rows, otherwise the index in the exported physical triangle array.
+ * edge_chord is -1 for interior edges. Chord rows include pole uses. */
+typedef struct phx_mc_cad_chart_arrays {
+  int64_t triangle_capacity, use_capacity, chord_capacity;
+  int64_t* triangles; int32_t* patches; double* uv;
+  int64_t* chart_to_mesh; int64_t* edge_chord;
+  int64_t* use_patch; double* use_range;
+  int64_t* chord_use; int64_t* chord_loop; double* chord_uv; double* chord_range;
+} phx_mc_cad_chart_arrays;
+PHX_MC_API int32_t phx_mc_cad_chart_sizes(
+    const phx_mc_cad_surface_result* result, int64_t sizes[3]);
+PHX_MC_API int32_t phx_mc_cad_chart_export(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_chart_arrays* arrays);
 
 enum {
   PHX_MC_FIDELITY_CERTIFIED = 0,
