@@ -121,6 +121,15 @@ tetrahedra, then implicit volumes, then the CAD solid.
   1.9 s; `CellMesh` topology 3.45 s; source tables and size field 1.7 s; source associations 8.6 s
   (Equinox's static-field walk about 4.6 s of it); audit 4.4 s (sampled quality evaluation 2.7,
   coincident-vertex search 0.5, edge coverage 0.4, evidence 0.3). NOT met: L6 "in seconds".
+- Update (Nov 19, certify3): bitwise-identical host quality (cell chunks, component-wise corner
+  measures and dihedral angles, component `binary64_matmul`), cheaper topology helpers, simplex
+  top incidence from the cell routes, verified connectivity routes in PLC associations, vectorized
+  size-control selection, sweep-proposed coincident pairs, `StaticRows` for
+  `MeshingScope.unqualified_entity_ids`; identities unchanged. Certified icosphere execute
+  without the profiler (one-facet driver, load 2-10): L4 0.55 s, L5 1.9 s, L6 10.3-10.5 s (was
+  17.1). NOT met: L6 <= 8 s; the remainder is native about 1.9 s, simplex topology about 2.1 s
+  (identity sorts and searches), association construction about 1.8 s (per-row identity JSON
+  and SHA-256 of about 200 MB), host quality about 0.7 s.
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice

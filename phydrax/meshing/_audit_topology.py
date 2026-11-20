@@ -14,6 +14,7 @@ construction invariants and are always evaluated.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -83,10 +84,7 @@ def _coincident_representatives(
             index = int(parents[index])
         return index
 
-    bvh = prepare_bvh(points, points, dtype=np.float64)
-    for first, second in bvh_overlap_pair_blocks(
-        bvh, bvh, include_touching=True, absolute_tolerance=tolerance
-    ):
+    for first, second in _coincidence_candidates(points, tolerance):
         unique = first < second
         first, second = first[unique], second[unique]
         close = np.linalg.norm(points[first] - points[second], axis=1) <= tolerance
@@ -98,6 +96,39 @@ def _coincident_representatives(
         parents[index] = root(index)
     sizes = np.bincount(parents, minlength=count)
     return parents, int(np.count_nonzero(sizes[parents] > 1))
+
+
+# A first-axis sweep is used while it proposes at most this many pairs per point.
+_SWEEP_PAIRS_PER_POINT = 8
+
+
+def _coincidence_candidates(
+    points: np.ndarray, tolerance: float, /
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Blocks of vertex pairs containing every pair within ``tolerance``.
+
+    Two points within the tolerance are within it on the first axis, and
+    ``fl(x + tolerance)`` is at least every representable coordinate within the
+    tolerance above ``x``, so the sorted first-axis sweep proposes every close
+    pair. When coordinates crowd one first-axis slab the sweep would propose
+    too many pairs, and BVH overlap blocks propose them instead. The roots of
+    the union-find are component minima, so the partition does not depend on
+    the proposal order.
+    """
+    order = np.argsort(points[:, 0], kind="stable")
+    axis = points[order, 0]
+    stops = np.searchsorted(axis, axis + tolerance, side="right")
+    counts = stops - np.arange(1, axis.size + 1)
+    if int(np.sum(counts)) <= _SWEEP_PAIRS_PER_POINT * axis.size:
+        starts = np.repeat(np.arange(axis.size), counts)
+        offsets = np.arange(starts.size) - np.repeat(np.cumsum(counts) - counts, counts)
+        first, second = order[starts], order[starts + 1 + offsets]
+        yield np.minimum(first, second), np.maximum(first, second)
+        return
+    bvh = prepare_bvh(points, points, dtype=np.float64)
+    yield from bvh_overlap_pair_blocks(
+        bvh, bvh, include_touching=True, absolute_tolerance=tolerance
+    )
 
 
 # Welded cells and facets -----------------------------------------------------------
