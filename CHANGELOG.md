@@ -400,6 +400,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Process-lifetime host caches keyed by open element degrees, orders,
+  polygon arities, kinematic topologies, quadrature orders and trigonometric
+  tables are bounded (the trigonometric table store is least-recently-used),
+  and custom-JVP interval extensions are registered weakly, so evicted tables
+  are released; results are unchanged.
 - Planar Ruppert refinement ranks bad triangles in exact badness buckets with
   Triangle-style FIFO order inside a bucket, reuses split and flipped slots in
   place, writes cells directly in canonical order, sorts few spatial keys with
