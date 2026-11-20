@@ -2357,14 +2357,28 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // mesh vertex at a corner of a pole chord (use_kinds 1) whose chart latitude
 // is bitwise sigma kHalfPiLower. Its region R is the rows of the face that
 // touch it (fan rows and slivers) or that have a corner in the closed cap
-// sigma v >= kCapLatitude (pi/4 rounded down: an exact predicate on the
-// input chart points, not on any bound). R holds every row meeting the cap,
-// so an edge R shares with a uv row joins two corners below the cap (the uv
-// row has none in it), where the uv chart's straight edge of surface length
-// l sags l^2 / (8 r sin rho) < sqrt 2 times the sphere's own l^2 / (8 r),
-// and a mesh ring at the threshold cannot split rows between the charts. R
-// is associated in the pole chart (regular for rho <= 2), the rest of the
-// face in uv.
+// sigma v >= kCapLatitude (an exact predicate on the input chart points, not
+// on any bound). R holds every row meeting the cap, so an edge R shares with
+// a uv row joins two corners below the cap (the uv row has none in it), and a
+// mesh ring at the threshold cannot split rows between the charts. R is
+// associated in the pole chart, the rest of the face in uv.
+//
+// The threshold. A chart-straight edge of surface length l whose image has
+// total curvature k on the sphere of radius r sags l^2 k / 8; k^2 = 1/r^2 +
+// k_g^2 (normal curvature 1/r for every curve). The worst direction in both
+// charts is the azimuthal one at colatitude rho (radial lines are meridians,
+// k_g = 0, in both). uv chart: a latitude circle, r k_g = cot rho, so the
+// sag factor over the sphere's own l^2 / (8 r) is 1/sin rho. Pole chart, the
+// metric d rho^2 + sin^2 rho d theta^2 in polar coordinates of (x, y): the
+// Cartesian line tangent at rho has rho'' = 1/rho, theta' = 1/rho, speed
+// sin rho / rho, and the geodesic rho'' = sin rho cos rho theta'^2, so
+// r k_g = (rho - sin rho cos rho) / sin^2 rho. The pole chart is no worse
+// than the uv chart where (rho - sin rho cos rho) / sin^2 rho <= cot rho,
+// i.e. rho <= sin 2 rho: rho <= rho* = 0.947747133516990... (the positive
+// root of rho = sin 2 rho), latitude pi/2 - rho* = 0.623049193277906...,
+// rounded down to kCapLatitude (the cap only grows). Rows reach at most one
+// edge below it, so their corners stay far inside the series domain rho <= 2
+// (q <= 4); a corner beyond it makes pole::jets fail and the row refuses.
 //
 // Contract (MAC bc1b665 option (i), seam lens charge). For R's rows the
 // linear map is taken on the pole-chart corners (pole_corners), Phi on each
@@ -2398,7 +2412,7 @@ struct PoleRegion {
   std::vector<std::array<double, 6>> corners;  // pole-chart corners per row
 };
 
-constexpr double kCapLatitude = 0x1.921fb54442d18p-1;
+constexpr double kCapLatitude = 0x1.3f004dc9db074p-1;
 
 // The regions of every eligible pole; row_region[i] is the index of the
 // region holding row i, or -1.

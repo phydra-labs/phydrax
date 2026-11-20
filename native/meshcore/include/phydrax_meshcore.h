@@ -3002,7 +3002,9 @@ typedef struct phx_mc_fidelity_finding {
  * Certification is conditional on a separately verified chart partition.
  * Sphere poles (a sphere template, its placement, or a circle revolved about
  * an axis through its center, certified from the exact coefficients): rows
- * touching the pole vertex or with a corner in the cap |v| >= pi/4 are associated in
+ * touching the pole vertex or with a corner in the cap |v| >= 0.6230491932779061
+ * (pi/2 - rho*, rho* = sin 2 rho*: where the pole chart's edge sag stops
+ * being worse than the uv chart's; see verify_cad_fidelity.cpp) are associated in
  * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
  * the triangle's linear map taken there; each edge where that region meets a
  * uv row (or a seam or pole chord) carries a seam lens bound charged to both

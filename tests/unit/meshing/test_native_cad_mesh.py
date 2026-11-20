@@ -134,7 +134,7 @@ def _assert_cad_fidelity(
             half = np.float64(np.pi / 2)
             for sigma in (1.0, -1.0):
                 local = np.flatnonzero((uv[:, :, 1] == sigma * half).any(axis=1)
-                                       | (sigma * uv[:, :, 1] >= np.float64(np.pi / 4)).any(axis=1))
+                                       | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(axis=1))
                 if local.size == 0 or not np.any(uv[:, :, 1] == sigma * half):
                     continue
                 rho = half - sigma * uv[local, :, 1]
