@@ -334,6 +334,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Benchmarks: an `improve-sphere` row times state creation plus improvement
+  (radius-edge 2) on TetGen icosphere meshes of 17,274 / 142,911 / 1,163,771
+  tetrahedra against MMG3D `-optim -nosurf`, with each size's minimum-dihedral
+  target set to MMG3D's achieved minimum rounded up to 0.1 degrees (22.0 /
+  19.3 / 19.8), and checks the result's quality itself (kept closed boundary,
+  no inverted cells). `benchmarks/native_meshing_mmg3d.py` prepares the inputs
+  and times MMG3D for interleaved comparison; the icosphere generator moves to
+  `benchmarks/_meshing_surfaces.py`.
 - Native PLC volumes build their tetrahedral topology from the native
   `phx_mc_tet_mesh_entities` (sorted unique edges and faces, cell routes, face
   edges, incidence orders); the tables are checked against the cells in linear
