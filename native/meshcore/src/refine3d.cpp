@@ -605,12 +605,40 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   // every v some facet at it excludes v). Points off every facet and the
   // segments that are no facet edge stay.
   std::vector<std::array<std::int32_t, 3>> features;
-  std::vector<std::uint64_t> facet_lines;
-  facet_lines.reserve(3 * facets.size());
   const auto line_key = [](std::int32_t a, std::int32_t b) {
     const auto low = static_cast<std::uint32_t>(std::min(a, b));
     const auto high = static_cast<std::uint32_t>(std::max(a, b));
     return (static_cast<std::uint64_t>(low) << 32) | high;
+  };
+  // Segment slots (low, high), listed by low slot (CSR), so that a facet
+  // edge marks the segments on it directly.
+  std::vector<std::array<std::int32_t, 2>> segment_slots;
+  segment_slots.reserve(segments.size());
+  std::vector<std::uint32_t> segment_starts(slot_count + 1, 0U);
+  for (const TetSnapshotSegment& segment : segments) {
+    const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
+    const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
+    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
+    segment_slots.push_back({std::min(a, b), std::max(a, b)});
+    ++segment_starts[static_cast<std::size_t>(std::min(a, b)) + 1];
+  }
+  std::partial_sum(segment_starts.begin(), segment_starts.end(), segment_starts.begin());
+  std::vector<std::uint32_t> segment_rows(segment_slots.size());
+  {
+    std::vector<std::uint32_t> cursor(segment_starts.begin(), segment_starts.end() - 1);
+    for (std::size_t row = 0; row < segment_slots.size(); ++row) {
+      segment_rows[cursor[static_cast<std::size_t>(segment_slots[row][0])]++] =
+          static_cast<std::uint32_t>(row);
+    }
+  }
+  std::vector<char> on_facet(segment_slots.size(), 0);
+  const auto mark_facet_line = [&](std::int32_t a, std::int32_t b) {
+    const std::int32_t low = std::min(a, b);
+    const std::int32_t high = std::max(a, b);
+    for (std::uint32_t at = segment_starts[static_cast<std::size_t>(low)];
+         at < segment_starts[static_cast<std::size_t>(low) + 1]; ++at) {
+      if (segment_slots[segment_rows[at]][1] == high) on_facet[segment_rows[at]] = 1;
+    }
   };
   // Per slot, the two vertices every facet at it might still share with it
   // (-1: none; -2: no facet yet).
@@ -626,7 +654,7 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     for (std::size_t corner = 0; corner < 3; ++corner) {
       const std::int32_t first = slots[(corner + 1) % 3];
       const std::int32_t second = slots[(corner + 2) % 3];
-      facet_lines.push_back(line_key(first, second));
+      mark_facet_line(first, second);
       auto& common = shared[static_cast<std::size_t>(slots[corner])];
       if (common[0] == -2) {
         common = {first, second};
@@ -645,15 +673,9 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
       features.push_back({static_cast<std::int32_t>(slot), -1, -1});
     }
   }
-  std::sort(facet_lines.begin(), facet_lines.end());
   std::vector<std::uint64_t> lines;
-  lines.reserve(segments.size());
-  for (const TetSnapshotSegment& segment : segments) {
-    const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
-    const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
-    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    const std::uint64_t key = line_key(a, b);
-    if (!std::binary_search(facet_lines.begin(), facet_lines.end(), key)) lines.push_back(key);
+  for (std::size_t row = 0; row < segment_slots.size(); ++row) {
+    if (on_facet[row] == 0) lines.push_back(line_key(segment_slots[row][0], segment_slots[row][1]));
   }
   std::sort(lines.begin(), lines.end());
   lines.erase(std::unique(lines.begin(), lines.end()), lines.end());

@@ -183,13 +183,14 @@ class ProtectionIndex {
   // to `point`, in no particular order, each once: every row a distance
   // below 2 `reach` can come from.
   template <class Visit>
-  void candidates(const double* point, double reach, Visit&& visit) const {
+  void candidates(const double* point, const double& reach, Visit&& visit) const {
     // Subtraction, squaring, summation, and square root are monotone in each
     // absolute coordinate difference, so the clamped-box distance is also a
     // lower bound for the actual represented closest-point calculation. A
     // squared box distance of at least (2 reach)^2 (1 + 2^-40), rounded
     // down, bounds every such distance by at least 2 reach after rounding.
-    const double threshold = 4.0 * reach * reach * (1.0 + 0x1p-40);
+    // `reach` is the caller's running minimum: a row it has since outgrown
+    // cannot lower it, so the bound follows it.
     const auto take = [&](uint32_t row) {
       const Box& box = boxes_[row];
       double squared = 0.0;
@@ -197,7 +198,7 @@ class ProtectionIndex {
         const double gap = point[axis] - std::clamp(point[axis], box.lower[axis], box.upper[axis]);
         squared += gap * gap;
       }
-      if (!(squared >= threshold)) visit(static_cast<std::size_t>(row));
+      if (!(squared >= 4.0 * reach * reach * (1.0 + 0x1p-40))) visit(static_cast<std::size_t>(row));
     };
     for (const uint32_t row : unbounded_) take(row);
     if (starts_.empty()) return;
@@ -340,11 +341,16 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
   }
   std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
   std::vector<int32_t> incident(offsets.back());
+  // The edge row (index in `edges` / 2) of each incidence.
+  std::vector<uint32_t> incident_edge(offsets.back());
   {
     std::vector<std::size_t> next(offsets.begin(), offsets.end() - 1);
     for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
-      incident[next[static_cast<std::size_t>(edges[e])]++] = edges[e + 1];
-      incident[next[static_cast<std::size_t>(edges[e + 1])]++] = edges[e];
+      const std::size_t a = next[static_cast<std::size_t>(edges[e])]++;
+      const std::size_t b = next[static_cast<std::size_t>(edges[e + 1])]++;
+      incident[a] = edges[e + 1];
+      incident[b] = edges[e];
+      incident_edge[a] = incident_edge[b] = static_cast<uint32_t>(e / 2);
     }
   }
   std::vector<double> radii(count, 0.0);
@@ -390,18 +396,17 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
   // vertex whose triangles share no vertex but itself (for every v some
   // triangle at it excludes v).
   std::vector<std::array<int32_t, 2>> shared(count, {-2, -2});
-  std::vector<std::uint64_t> triangle_edges;
-  triangle_edges.reserve(triangles.size());
-  const auto edge_key = [](int32_t a, int32_t b) {
-    return (static_cast<std::uint64_t>(static_cast<uint32_t>(std::min(a, b))) << 32) |
-           static_cast<uint32_t>(std::max(a, b));
-  };
+  // Edges that lie on a triangle, by edge row.
+  std::vector<char> on_triangle(edges.size() / 2, 0);
   for (std::size_t row = 0; row + 2 < triangles.size(); row += 3) {
     for (std::size_t corner = 0; corner < 3; ++corner) {
       const int32_t vertex = triangles[row + corner];
       const int32_t first = triangles[row + (corner + 1) % 3];
       const int32_t second = triangles[row + (corner + 2) % 3];
-      triangle_edges.push_back(edge_key(first, second));
+      for (std::size_t at = offsets[static_cast<std::size_t>(first)];
+           at < offsets[static_cast<std::size_t>(first) + 1]; ++at) {
+        if (incident[at] == second) on_triangle[incident_edge[at]] = 1;
+      }
       auto& common = shared[static_cast<std::size_t>(vertex)];
       if (common[0] == -2) {
         common = {first, second};
@@ -420,7 +425,6 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
       }
     }
   }
-  std::sort(triangle_edges.begin(), triangle_edges.end());
   std::vector<int32_t> lone_points;
   std::vector<double> lone_coordinates;
   for (std::size_t v = 0; v < count; ++v) {
@@ -431,8 +435,7 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
   }
   std::vector<int32_t> lone_edges;
   for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
-    if (!std::binary_search(triangle_edges.begin(), triangle_edges.end(),
-                            edge_key(edges[e], edges[e + 1]))) {
+    if (on_triangle[e / 2] == 0) {
       lone_edges.push_back(edges[e]);
       lone_edges.push_back(edges[e + 1]);
     }

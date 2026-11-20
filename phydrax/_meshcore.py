@@ -8798,20 +8798,28 @@ def _source_group_labels(
     ``groups`` and ``labels`` give each source row's group and source ID; a
     group carries one source ID. A value naming no group is kept.
     """
-    unique_groups, first_rows, inverse = np.unique(
-        groups, return_index=True, return_inverse=True
-    )
-    unique_labels = labels[first_rows]
-    if np.any(labels != unique_labels[inverse.reshape((-1,))]):
+    result = values.astype(np.int64)
+    if groups.size == 0:
+        return result
+    # Groups are source rows (nonnegative and below the row count), so a
+    # dense table maps them; any row whose label differs from its group's
+    # table entry (whichever row wrote it) proves a group with two labels.
+    if groups.min() < 0:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"a {kind} source group row is negative"
+        )
+    span = int(groups.max()) + 1
+    present = np.zeros((span,), dtype=bool)
+    present[groups] = True
+    table = np.empty((span,), dtype=labels.dtype)
+    table[groups] = labels
+    if np.any(labels != table[groups]):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"one {kind} group has multiple source IDs"
         )
-    result = values.astype(np.int64)
-    if unique_groups.size == 0:
-        return result
-    positions = np.minimum(np.searchsorted(unique_groups, values), unique_groups.size - 1)
-    named = unique_groups[positions] == values
-    result[named] = unique_labels[positions[named]]
+    named = (values >= 0) & (values < span)
+    named[named] = present[values[named]]
+    result[named] = table[values[named]]
     return result
 
 
