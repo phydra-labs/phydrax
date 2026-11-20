@@ -2618,6 +2618,29 @@ PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* point
                                         const int32_t* surface, const int32_t* surface_regions,
                                         phx_mc_volume_verdict* verdict);
 
+/* Sorted unique entities of a tetrahedral mesh (src/tet_entities.cpp). Every
+ * entity is the increasing row of its vertex indices; edges (edge_count, 2)
+ * and faces (face_count, 3) are the distinct such rows in lexicographic order.
+ * cell_edges (m, 6) and cell_faces (m, 4) route each cell's local edges
+ * (0,1) (0,2) (0,3) (1,2) (1,3) (2,3) and faces (0,1,2) (0,1,3) (0,2,3)
+ * (1,2,3) to their rows; face_edges (face_count, 3) routes each face's edges
+ * opposite its vertices in turn. The incidence orders sort each degree's
+ * flat face routes (simplex-major, opposite each local vertex in turn; a
+ * cell's faces opposite its stably sorted vertices) stably by face row:
+ * vertex_edge_order (2 edge_count), edge_face_order (3 face_count),
+ * face_cell_order (4m). Capacities: edges, vertex_edge_order and
+ * edge_face_order 12m items, faces and face_edges 4m rows. A vertex index
+ * outside [0, vertex_count) is PHX_MC_INVALID_INPUT; m above INT32_MAX / 12
+ * is PHX_MC_INVALID_ARGUMENT. */
+PHX_MC_API int32_t phx_mc_tet_mesh_entities(int64_t vertex_count, int64_t cell_count,
+                                            const int32_t* cells, int32_t* edges,
+                                            int64_t* edge_count, int32_t* faces,
+                                            int64_t* face_count, int32_t* cell_edges,
+                                            int32_t* cell_faces, int32_t* face_edges,
+                                            int32_t* vertex_edge_order,
+                                            int32_t* edge_face_order,
+                                            int32_t* face_cell_order);
+
 /* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
  * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
  * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive

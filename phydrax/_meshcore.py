@@ -1120,6 +1120,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_verify_tetrahedra": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
+    "phx_mc_tet_mesh_entities": (
+        _I32,
+        (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_verify_chart_partition": (
         _I32,
@@ -3440,6 +3444,74 @@ def verify_volume(
     )
 
 
+class TetMeshEntities(NamedTuple):
+    """Sorted unique edges and faces of a tetrahedral mesh with their routes.
+
+    ``edges`` ``(e, 2)`` and ``faces`` ``(f, 3)`` are the distinct increasing
+    vertex rows in lexicographic order; ``cell_edges`` ``(m, 6)`` and
+    ``cell_faces`` ``(m, 4)`` route each cell's local edges and faces in
+    combination order; ``face_edges`` ``(f, 3)`` routes each face's edges
+    opposite its vertices in turn. ``incidence_orders`` sort each degree's
+    flat face routes (simplex-major; a cell's faces opposite its stably sorted
+    vertices) stably by face row. All int32.
+    """
+
+    edges: np.ndarray
+    faces: np.ndarray
+    cell_edges: np.ndarray
+    cell_faces: np.ndarray
+    face_edges: np.ndarray
+    incidence_orders: tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+def tet_mesh_entities(cells: object, vertex_count: int, /) -> TetMeshEntities:
+    """Sorted unique edges and faces of ``(m, 4)`` tetrahedra and their routes."""
+    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
+        raise ValueError("cells must have shape (m, 4).")
+    count = cell_array.shape[0]
+    edges = np.empty((6 * count, 2), dtype=np.int32)
+    faces = np.empty((4 * count, 3), dtype=np.int32)
+    face_edges = np.empty((4 * count, 3), dtype=np.int32)
+    cell_edges = np.empty((count, 6), dtype=np.int32)
+    cell_faces = np.empty((count, 4), dtype=np.int32)
+    vertex_edge_order = np.empty((12 * count,), dtype=np.int32)
+    edge_face_order = np.empty((12 * count,), dtype=np.int32)
+    face_cell_order = np.empty((4 * count,), dtype=np.int32)
+    edge_count = ctypes.c_int64()
+    face_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_tet_mesh_entities"](
+        int(vertex_count),
+        count,
+        cell_array.ctypes.data,
+        edges.ctypes.data,
+        ctypes.byref(edge_count),
+        faces.ctypes.data,
+        ctypes.byref(face_count),
+        cell_edges.ctypes.data,
+        cell_faces.ctypes.data,
+        face_edges.ctypes.data,
+        vertex_edge_order.ctypes.data,
+        edge_face_order.ctypes.data,
+        face_cell_order.ctypes.data,
+    )
+    _raise_for_call(status, "tet_mesh_entities")
+    edge_total = edge_count.value
+    face_total = face_count.value
+    return TetMeshEntities(
+        edges[:edge_total].copy(),
+        faces[:face_total].copy(),
+        cell_edges,
+        cell_faces,
+        face_edges[:face_total].copy(),
+        (
+            vertex_edge_order[: 2 * edge_total].copy(),
+            edge_face_order[: 3 * face_total].copy(),
+            face_cell_order,
+        ),
+    )
+
+
 def validity_coordinates(values: object, /) -> np.ndarray:
     """Which values ``tetrahedra_validity`` decides exactly (elementwise mask).
 
@@ -5153,8 +5225,9 @@ def _tet_implicit_source_snapshot(
     source = TetMeshImplicitSource(
         IntervalBranchProgram(
             copy_program(view.value),
-            copy_bank(view.value_events, 6 * view.value_event_count, np.dtype(np.int64))
-            .reshape(-1, 6),
+            copy_bank(
+                view.value_events, 6 * view.value_event_count, np.dtype(np.int64)
+            ).reshape(-1, 6),
         ),
         copy_program(view.gradient),
         copy_bank(view.groups, view.group_count, np.dtype(np.int32)),

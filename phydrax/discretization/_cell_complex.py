@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from itertools import combinations
 from typing import final, TYPE_CHECKING
 
@@ -27,6 +27,7 @@ from ._topology import (
     EntitySubset,
     OrientedIncidence,
     row_positions,
+    rows_increase,
 )
 
 
@@ -140,6 +141,9 @@ def _resolved_entity_ids(
 def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
     if keys.ndim != 2:
         raise ValueError("Canonical entity keys must be rank-2.")
+    if rows_increase(keys, strict=True):
+        # Strictly increasing keys are their own lexicographic order.
+        return np.arange(keys.shape[0], dtype=np.int64)
     order = _row_order(keys)
     identifiers = np.empty((keys.shape[0],), dtype=np.int64)
     identifiers[order] = np.arange(keys.shape[0], dtype=np.int64)
@@ -1406,23 +1410,26 @@ def _tetrahedral_complex(
 
 
 def _simplicial_incidence_routes(
-    levels: tuple[np.ndarray, ...], /, *, top_faces: np.ndarray | None = None
+    levels: tuple[np.ndarray, ...],
+    /,
+    *,
+    face_routes: Mapping[int, np.ndarray] | None = None,
 ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
     """Face-to-simplex ``(face row, simplex row, sign)`` routes of each degree.
 
     ``levels`` are the increasing vertex rows of every degree; simplex row ``r``
     of degree ``k`` routes its faces opposite each vertex in turn, with sign
     ``(-1)^i`` for the face opposite local vertex ``i``. A face absent from the
-    level below is refused. ``top_faces`` may supply the top degree's face rows
-    (one row per top simplex, opposite each local vertex) when the caller
-    already located them.
+    level below is refused. ``face_routes`` may supply a degree's face rows
+    (one row per simplex of that degree, opposite each local vertex) when the
+    caller already located them.
     """
     routes: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     for degree, upper in enumerate(levels[1:], start=1):
         lower = levels[degree - 1]
         positions = np.arange(degree + 1, dtype=np.int32)
-        if top_faces is not None and degree == len(levels) - 1:
-            source = np.asarray(top_faces, dtype=np.int32).reshape((-1,))
+        if face_routes is not None and degree in face_routes:
+            source = np.asarray(face_routes[degree], dtype=np.int32).reshape((-1,))
         else:
             face_columns = np.stack(
                 [positions[positions != removed] for removed in range(degree + 1)]

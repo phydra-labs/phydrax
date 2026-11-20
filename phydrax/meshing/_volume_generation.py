@@ -27,6 +27,7 @@ from .._meshcore import (
     PlcSearchBudget,
     PlcSuppressionSearch,
     recover_plc_3d,
+    tet_mesh_entities,
     TetMesh3D,
     TetMeshArrays,
     TetMeshCandidateQuality,
@@ -43,6 +44,7 @@ from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import CellValidityPolicy
+from ..discretization._cell_mesh import TetrahedronEntityTables
 from ..discretization._nested_reference import (
     exact_reference_chart_controls,
     ExactReferenceChartControl,
@@ -1425,6 +1427,9 @@ def _make_construction(
         dimension=3,
         block_name="native-plc-tetrahedra",
         vertex_global_ids=used,
+        tetrahedron_entities=TetrahedronEntityTables(
+            *tet_mesh_entities(tetrahedra, points.shape[0])
+        ),
     )
     reference_chart_controls: tuple[ExactReferenceChartControl, ...] = ()
     if isinstance(domain, MappedReferenceDomain):

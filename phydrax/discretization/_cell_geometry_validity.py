@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import weakref
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from itertools import product
 from typing import Any, assert_never, NamedTuple, NoReturn, SupportsIndex
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -146,10 +148,19 @@ class CellValidityStatus(IntEnum):
     UNRESOLVED = 2
 
 
+# Identities of live geometries whose every leaf is an immutable JAX array,
+# keyed by object identity (each entry dies with its geometry).
+_GEOMETRY_IDS: dict[int, tuple[weakref.ref[CellGeometrySpec], str]] = {}
+
+
 def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
     """Bind the complete coordinate map and its source/restriction ancestry."""
+    key = id(geometry)
+    cached = _GEOMETRY_IDS.get(key)
+    if cached is not None and cached[0]() is geometry:
+        return cached[1]
     restriction = geometry.restriction_source
-    return canonical_fingerprint(
+    identity = canonical_fingerprint(
         {
             "kind": "cell-geometry",
             "layout": geometry.geometry_layout_id,
@@ -167,6 +178,14 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
             "content": array_tree_fingerprint(geometry),
         }
     )
+    if geometry.exact_coordinate_bank is None and all(
+        isinstance(leaf, Array) for leaf in jax.tree_util.tree_leaves(geometry)
+    ):
+        _GEOMETRY_IDS[key] = (
+            weakref.ref(geometry, lambda _, key=key: _GEOMETRY_IDS.pop(key, None)),
+            identity,
+        )
+    return identity
 
 
 _TETRAHEDRA = frozenset(("tetrahedron", "simplex:3"))

@@ -42,6 +42,7 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
+  src/tet_entities.cpp
   src/box_tree.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
