@@ -141,7 +141,13 @@ std::vector<phx_mc_fidelity_finding> association_findings(
     const auto& high = direction ? second : first;
     const std::array<uint64_t, 4> key{low[0], low[1], high[0], high[1]};
     uint64_t hash = static_cast<uint32_t>(face_rows[triangle]);
-    for (uint64_t value : key) hash = (hash ^ value) * UINT64_C(1099511628211);
+    for (uint64_t value : key) {
+      value += UINT64_C(0x9e3779b97f4a7c15);
+      value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+      value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
+      value ^= value >> 31;
+      hash ^= value + UINT64_C(0x9e3779b97f4a7c15) + (hash << 6) + (hash >> 2);
+    }
     std::size_t position = static_cast<std::size_t>(hash) & (table_size - 1);
     while (table[position].first >= 0 &&
            (table[position].patch != face_rows[triangle] || table[position].endpoints != key))
