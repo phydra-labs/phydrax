@@ -471,7 +471,11 @@ def _volume_rows() -> tuple[_Row, ...]:
         for vertices, faces in (_icosphere(5), _icosphere(6))
     )
     tori = (
-        ("surface-to-tets-torus", thousandths, _restricted_torus_surface(1e-3 * thousandths))
+        (
+            "surface-to-tets-torus",
+            thousandths,
+            _restricted_torus_surface(1e-3 * thousandths),
+        )
         for thousandths in (72, 25)
     )
     grids = (
@@ -570,7 +574,9 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 contract,
             )
             if not isinstance(prepared, PreparedRestrictedImplicitVolume):
-                raise TypeError("An analytic profile volume prepares the restricted route.")
+                raise TypeError(
+                    "An analytic profile volume prepares the restricted route."
+                )
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
@@ -617,12 +623,21 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ("surface-remesh-sphere-1e5", 8, 1e5),
     )
     rows: list[_Row] = []
-    for name, value, gradient, distance, samples, area, (vertices, faces), target in (
+    # The certificate's domains: boxes holding each zero set with a margin.
+    sphere_domain = np.array(
+        [[-1.25, -1.25, -1.25], [1.25, 1.25, 1.25]], dtype=np.float64
+    )
+    torus_domain = np.array([[-1.5, -1.5, -0.5], [1.5, 1.5, 0.5]], dtype=np.float64)
+    for name, value, gradient, domain, distance, samples, area, (
+        vertices,
+        faces,
+    ), target in (
         *(
             (
                 name,
                 sphere_value,
                 sphere_gradient,
+                sphere_domain,
                 _sphere_distance,
                 _sphere_samples,
                 4.0 * math.pi,
@@ -635,6 +650,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
             "surface-remesh-torus",
             torus_value,
             torus_gradient,
+            torus_domain,
             _torus_distance,
             _torus_samples,
             4.0 * math.pi**2 * 0.4,
@@ -655,11 +671,12 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                quality=lambda result, value=value, gradient=gradient, domain=domain, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
                     _zero_set_quality(
                         result,
                         value,
                         gradient,
+                        domain,
                         tolerance,
                         edge,
                         distance,
@@ -873,16 +890,17 @@ def _zero_set_quality(
     result: object,
     value: _meshcore.IntervalBoxProgram,
     gradient: _meshcore.IntervalBoxProgram,
+    domain: np.ndarray,
     tolerance: float,
     edge: float,
     distance: Callable[[np.ndarray], np.ndarray],
     samples: Callable[[int], np.ndarray],
     /,
 ) -> tuple[int, dict[str, float]]:
-    # The certificate against the zero set (zero_set_certify at the tolerance,
-    # with no carrier: the rows hold no witness for their input; a refusal is
-    # one miss), then _surface_quality of the certified surface (of the
-    # constructed one when refused).
+    # The two-way certificate against the zero set in `domain`
+    # (zero_set_certify at the tolerance, with no carrier: the rows hold no
+    # witness for their input; a refusal is one miss), then _surface_quality
+    # of the certified surface (of the constructed one when refused).
     if not isinstance(result, _meshcore.ZeroSetRemeshResult):
         raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
     try:
@@ -896,6 +914,7 @@ def _zero_set_quality(
             np.empty((0, 3), dtype=np.float64),
             np.empty((0, 3), dtype=np.int64),
             np.empty((0, 2, 3), dtype=np.float64),
+            domain,
             edge,
             30.0,
         )
@@ -914,6 +933,7 @@ def _zero_set_quality(
         **measured,
         "certified": 1.0,
         "certified_distance": certificate.distance,
+        "certified_reverse_distance": certificate.reverse_distance,
     }
 
 

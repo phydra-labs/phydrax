@@ -571,10 +571,11 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("carrier_triangles", _P),
         ("carrier_triangle_count", _I64),
         ("carrier_boxes", _P),
+        ("domain", _P),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
         ("result", _P),
-        ("distance", _P),
+        ("distances", _P),
         ("counters", _P),
     )
 
@@ -3573,7 +3574,6 @@ def cad_geometry_evaluate(
     return result
 
 
-
 class RestrictedDelaunayCriteria(NamedTuple):
     """Refinement targets of `implicit_restricted_delaunay`.
 
@@ -5019,23 +5019,28 @@ def _take_surface_result(
 
 
 class ZeroSetCertificate(NamedTuple):
-    """A surface certified against ``{f = 0}``, repaired locally where needed.
+    """A surface certified against ``{f = 0}`` both ways, repaired locally.
 
     ``vertices`` and ``triangles`` are the certified surface: the input unless
-    a refused triangle was repaired. ``distance`` is the maximum over the
-    proved triangles (each within the tolerance) and, for triangles accepted
-    from the carrier, their witness box diagonals, which may exceed the
-    tolerance. ``counters`` (read-only int64) are the certifications refused
-    for transversality and for distance and the triangles refused for
-    embedding, all over every round and carrier triangles included, the
-    triangles accepted from the carrier, the repair splits and the
-    certification rounds run. ``carried`` (read-only bool, one per triangle)
-    flags the triangles accepted from the carrier.
+    a refused triangle was repaired. ``distance`` bounds the distance from the
+    surface to the zero set: the maximum over the proved triangles (each
+    within the tolerance) and, for triangles accepted from the carrier, their
+    witness box diagonals, which may exceed the tolerance.
+    ``reverse_distance`` bounds the distance from every zero of ``f`` in the
+    domain to the surface. ``counters`` (read-only int64) are the
+    certifications refused for transversality and for distance and the
+    triangles refused for embedding, all over every round and carrier
+    triangles included, the triangles accepted from the carrier, the repair
+    splits, the certification rounds run, the tube triangles refused in its
+    last round and the cover leaves outside the tube's reach. ``carried``
+    (read-only bool, one per triangle) flags the triangles accepted from the
+    carrier.
     """
 
     vertices: np.ndarray
     triangles: np.ndarray
     distance: float
+    reverse_distance: float
     counters: np.ndarray
     carried: np.ndarray
 
@@ -5050,6 +5055,7 @@ def zero_set_certify(
     carrier_vertices: object,
     carrier_triangles: object,
     carrier_boxes: object,
+    domain: object,
     edge_length: float,
     minimum_angle_degrees: float,
     /,
@@ -5071,9 +5077,18 @@ def zero_set_certify(
     is also nondegenerate with only legal exact contacts with nearby
     triangles. Refused triangles are repaired: the longest edge of each is
     split at its midpoint projected onto ``{f = 0}`` and only what changed is
-    certified again, for at most four rounds. A surface that is not a closed
-    oriented 2-manifold raises ``ValueError``; a triangle left refused raises
-    ``MeshcoreError`` (``UNRESOLVED``) naming the refusals.
+    certified again, for at most four rounds.
+
+    The zero set is then bounded against the surface over ``domain`` (a
+    ``(2, 3)`` lower/upper box): along segments ``y +- w(y)`` through the
+    surface (interpolated vertex normals of length ``edge_length``, adapted)
+    ``f`` is proved strictly monotone with one zero and caps clear of the
+    surface by ``rho``, and every leaf of the native possible-zero cover of
+    the domain must lie within ``rho`` of the surface, so every zero of ``f``
+    in the domain lies on such a segment, within ``reverse_distance`` of the
+    surface. A surface that is not a closed oriented 2-manifold raises
+    ``ValueError``; a triangle left refused, or a zero set the tube cannot
+    hold, raises ``MeshcoreError`` (``UNRESOLVED``) naming the refusals.
     """
     if orientation not in (-1, 1):
         raise ValueError("orientation must be 1 or -1.")
@@ -5103,11 +5118,18 @@ def zero_set_certify(
     boxes = np.ascontiguousarray(np.asarray(carrier_boxes, dtype=np.float64))
     if boxes.shape != (carrier_faces.shape[0], 2, 3):
         raise ValueError("carrier_boxes must hold one (2, 3) box per carrier triangle.")
+    bounds = np.ascontiguousarray(np.asarray(domain, dtype=np.float64))
+    if (
+        bounds.shape != (2, 3)
+        or not np.all(np.isfinite(bounds))
+        or not np.all(bounds[0] < bounds[1])
+    ):
+        raise ValueError("domain must be a finite (2, 3) box with lower < upper.")
     value_view, value_arrays = _interval_box_program(value, 1, "value")
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
-    distance = np.zeros((1,), dtype=np.float64)
-    counters = np.zeros((6,), dtype=np.int64)
+    distances = np.zeros((2,), dtype=np.float64)
+    counters = np.zeros((8,), dtype=np.int64)
     request = _ZeroSetCertifyRequest(
         points.ctypes.data,
         points.shape[0],
@@ -5122,10 +5144,11 @@ def zero_set_certify(
         carrier_faces.ctypes.data,
         carrier_faces.shape[0],
         boxes.ctypes.data,
+        bounds.ctypes.data,
         float(edge_length),
         float(minimum_angle_degrees),
         ctypes.addressof(handle),
-        distance.ctypes.data,
+        distances.ctypes.data,
         counters.ctypes.data,
     )
     library = load_meshcore()
@@ -5137,25 +5160,30 @@ def zero_set_certify(
             f"zero_set_certify left triangles refused after {int(counters[5])} rounds "
             f"and {int(counters[4])} repair splits ({int(counters[0])} refusals for "
             f"transversality, {int(counters[1])} for distance, {int(counters[2])} for "
-            "embedding).",
+            f"embedding; {int(counters[6])} tube triangles refused, {int(counters[7])} "
+            "zero-set cover leaves outside the tube).",
         )
     _raise_for_call(status, "zero_set_certify")
     out_vertices, out_triangles, carried = _take_surface_result(
         library, handle, "zero_set_certify"
     )
-    certified = float(distance[0])
+    certified, reverse = float(distances[0]), float(distances[1])
     if (
         not np.isfinite(certified)
         or certified < 0.0
         or (int(counters[3]) == 0 and certified > tolerance)
         or int(counters[3]) != int(np.count_nonzero(carried))
+        or not np.isfinite(reverse)
+        or reverse < 0.0
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
             "zero_set_certify returned invalid distance evidence.",
         )
     counters.setflags(write=False)
-    return ZeroSetCertificate(out_vertices, out_triangles, certified, counters, carried)
+    return ZeroSetCertificate(
+        out_vertices, out_triangles, certified, reverse, counters, carried
+    )
 
 
 _MESH_SOURCE_CONTRACTS = {

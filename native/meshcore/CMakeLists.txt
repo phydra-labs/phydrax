@@ -96,6 +96,7 @@ set(PHX_MC_SOURCES
   src/refine3d.cpp
   src/improve3d.cpp
   src/zero_set_admission.cpp
+  src/zero_set_tube.cpp
   src/elementary.cpp
   src/planar_partition.cpp
   src/angle.cpp
@@ -152,6 +153,7 @@ set(PHX_MC_HEADERS
   src/triangulation2d.hpp
   src/triangulation3d.hpp
   src/zero_set_admission.hpp
+  src/zero_set_tube.hpp
   src/surface_adapt.hpp
   src/surface_certify.hpp
   src/mesh_source.hpp

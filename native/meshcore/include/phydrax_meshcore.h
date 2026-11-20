@@ -2000,16 +2000,30 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
- * `value` has one output, `gradient` three. On PHX_MC_OK `result` owns the
+ * `value` has one output, `gradient` three. Once every triangle is
+ * certified, the zero set -> surface direction is decided over the domain
+ * box (lower xyz, upper xyz; finite, lower < upper): the tube of the surface
+ * (zero_set_tube.hpp: segments y +- w(y) along interpolated vertex normals of
+ * length edge_length, adapted by doubling or halving, on which f is strictly
+ * monotone with one zero, and whose caps are at least rho from the surface)
+ * holds every zero of f in it within `reverse` of the surface; every leaf of
+ * the possible-zero cover of the domain (box_tree.hpp) must lie within rho
+ * of the surface, a box being accepted at the first level where it does and
+ * subdivided otherwise down to a target diameter of rho / 2, so every zero
+ * of f in the domain lies in the tube. On PHX_MC_OK `result` owns the
  * certified surface (phx_mc_surface_result_*, with per-triangle carried
- * flags) and `distance` is the maximum over the proved triangles (each at
- * most `tolerance`) and, for triangles accepted from the carrier, their
- * witness diagonals, which may exceed `tolerance`; a
- * triangle left refused is PHX_MC_UNRESOLVED. counters receives (triangle
+ * flags) and distances =
+ * (the maximum over the proved triangles, each at most `tolerance`, and,
+ * for triangles accepted from the carrier, their witness diagonals, which
+ * may exceed `tolerance`; `reverse`). A triangle left refused, a tube
+ * triangle refused after its rounds, or a cover leaf outside rho of the
+ * surface is PHX_MC_UNRESOLVED (no result). counters receives (triangle
  * certifications refused for transversality, refused for distance,
  * triangles refused for embedding, all over every round, carrier triangles
  * included; triangles accepted from the carrier; repair splits;
- * certification rounds run) on PHX_MC_OK and PHX_MC_UNRESOLVED. */
+ * certification rounds run; tube triangles refused in its last round; cover
+ * leaves not within rho, -1 when the cover's level would exceed the box
+ * tree's limit) on PHX_MC_OK and PHX_MC_UNRESOLVED. */
 typedef struct phx_mc_zero_set_certify_request {
   const double* vertices;
   int64_t vertex_count;
@@ -2024,10 +2038,11 @@ typedef struct phx_mc_zero_set_certify_request {
   const int64_t* carrier_triangles;
   int64_t carrier_triangle_count;
   const double* carrier_boxes;
+  const double* domain;
   double edge_length;
   double minimum_angle_degrees;
   void** result;
-  double* distance;
+  double* distances;
   int64_t* counters;
 } phx_mc_zero_set_certify_request;
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);

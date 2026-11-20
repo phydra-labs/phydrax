@@ -12,11 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "box_tree.hpp"
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
 #include "surface_adapt.hpp"
+#include "zero_set_tube.hpp"
 
 namespace phx::mc::remesh {
 namespace {
@@ -871,6 +873,59 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
   return norm_upper(extent);
 }
 
+// Zero set -> surface (see phx_mc_zero_set_certify): the tube of the
+// certified surface (zero_set_tube.hpp) and the possible-zero cover of the
+// request's domain (box_tree.hpp), a kept box accepted as soon as it lies
+// within rho of the surface, down to a target diameter of rho / 2. `reverse`
+// receives the tube's bound; counters[0] the tube triangles refused in its
+// last round, counters[1] the cover leaves not within rho (-1 when the
+// target level exceeds the tree's).
+int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
+                         const std::vector<Point>& points, const std::vector<Triangle>& triangles,
+                         const IntervalBoxProgram& value,
+                         const IntervalBoxProgram& gradient, double& reverse, int64_t* counters) {
+  TubeCertificate tube;
+  int32_t status = certify_tube(points, triangles, value, gradient, request.orientation,
+                                request.edge_length, request.tolerance, tube);
+  counters[0] = tube.refused;
+  if (status != PHX_MC_OK) return status;
+  MeshSource surface;
+  if (surface.bind(points, triangles) != PHX_MC_OK) return PHX_MC_INTERNAL_ERROR;
+  const double* lower = request.domain;
+  const double* upper = request.domain + 3;
+  const phx_mc_interval_box_program& field = request.value;
+  const phx::mc::IntervalProgramView interval{
+      field.instructions,    field.instruction_count, field.indices,
+      field.index_count,     field.parameters,        field.parameter_count,
+      field.workspace_lower, field.workspace_upper,   field.workspace_size,
+      field.outputs[0]};
+  const auto within = [&](const std::array<double, 6>& box) {
+    return box_within_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]},
+                            tube.rho);
+  };
+  const phx::mc::BoxAcceptance accept = within;
+  std::vector<phx::mc::DyadicLeaf> leaves;
+  status = phx::mc::possible_zero_leaves(
+      interval, lower, upper, phx::mc::dyadic_target_level(lower, upper, 0.5 * tube.rho),
+      &accept, leaves);
+  // The programs and the domain are validated above, so an invalid argument
+  // here is a target level beyond the tree's limit: rho is too small for it.
+  if (status == PHX_MC_INVALID_ARGUMENT) {
+    counters[1] = -1;
+    return PHX_MC_UNRESOLVED;
+  }
+  if (status != PHX_MC_OK) return status;
+  // Leaves the predicate did not accept: refused at the target level, or
+  // stopped at the representability limit before it was offered.
+  int64_t outside = 0;
+  for (const phx::mc::DyadicLeaf& leaf : leaves)
+    if (!leaf.accepted && !within(leaf.box)) ++outside;
+  counters[1] = outside;
+  if (outside > 0) return PHX_MC_UNRESOLVED;
+  reverse = tube.reverse;
+  return PHX_MC_OK;
+}
+
 // Certification with local repair of a closed surface against the zero set
 // (see phx_mc_zero_set_certify).
 int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
@@ -888,9 +943,15 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
       (request.carrier_triangle_count > 0 && request.carrier_triangles == nullptr) ||
       (request.carrier_triangle_count > 0 && request.carrier_boxes == nullptr) ||
       !phx::mc::addressable(request.carrier_triangle_count, 6, sizeof(double)) ||
-      !(request.edge_length > 0) || !std::isfinite(request.edge_length) ||
-      !(request.minimum_angle_degrees > 0) || !(request.minimum_angle_degrees < 60))
+      request.domain == nullptr || !(request.edge_length > 0) ||
+      !std::isfinite(request.edge_length) || !(request.minimum_angle_degrees > 0) ||
+      !(request.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
+  for (int d = 0; d < 3; ++d)
+    if (!std::isfinite(request.domain[d]) || !std::isfinite(request.domain[d + 3]) ||
+        !(request.domain[d] < request.domain[d + 3]))
+      return PHX_MC_INVALID_ARGUMENT;
+  std::fill(request.counters, request.counters + 8, 0);
   IntervalBoxProgram value, gradient;
   const auto bind = [](IntervalBoxProgram& program, const phx_mc_interval_box_program& source,
                        int64_t outputs) -> int32_t {
@@ -967,9 +1028,15 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   request.counters[4] = certified.repair_splits;
   request.counters[5] = certified.rounds;
   if (status != PHX_MC_OK) return status;
+  // Zero set -> surface over the domain (phx_mc_zero_set_certify).
+  double reverse = 0;
+  status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
+                            request.counters + 6);
+  if (status != PHX_MC_OK) return status;
   // Proved triangles are within the tolerance; carried triangles keep their
   // witness bound, which the caller weighs against its request.
-  *request.distance = certified.distance;
+  request.distances[0] = certified.distance;
+  request.distances[1] = reverse;
   result.points = std::move(points);
   result.triangles = std::move(triangles);
   result.carried = std::move(certified.carried);
@@ -995,7 +1062,7 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* 
 }
 
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request) {
-  if (request == nullptr || request->distance == nullptr || request->counters == nullptr ||
+  if (request == nullptr || request->distances == nullptr || request->counters == nullptr ||
       request->result == nullptr)
     return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;

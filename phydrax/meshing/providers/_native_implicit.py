@@ -2145,6 +2145,7 @@ def _remesh_implicit_carrier(
     vertices: np.ndarray,
     faces: np.ndarray,
     witness_boxes: np.ndarray,
+    domain: np.ndarray,
     carrier_distance: float,
     admission_tolerance: float,
     /,
@@ -2157,10 +2158,12 @@ def _remesh_implicit_carrier(
     around creases, which are accepted at the diagonal of their scaffold cell
     box (``witness_boxes``, one per carrier face) when the certificate proves
     that box holds a zero of the field; refused triangles are repaired
-    locally. ``carrier_distance`` only steers the construction's projection
-    reach. Returns the certified surface, its distance, and the construction
-    and certification counters. The result must meet the FIXED-fill
-    radius-edge bound or the route refuses.
+    locally. The certificate also proves every zero of the field in
+    ``domain`` (the discovery's lattice domain) near the result, or refuses.
+    ``carrier_distance`` only steers the construction's projection reach.
+    Returns the certified surface, its surface-to-zero-set distance, and the
+    construction and certification counters. The result must meet the
+    FIXED-fill radius-edge bound or the route refuses.
     """
     value, gradient = _implicit_field_box_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
@@ -2184,6 +2187,7 @@ def _remesh_implicit_carrier(
             vertices,
             faces,
             witness_boxes,
+            domain,
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
         )
@@ -2414,6 +2418,7 @@ def _implicit_plc_carrier(
                 vertices,
                 triangles,
                 witness_boxes,
+                np.asarray(scaffold.domain, dtype=np.float64),
                 scaffold_distance,
                 admission_tolerance,
             )

@@ -21,6 +21,7 @@ from scipy.spatial import ConvexHull
 from benchmarks.native_meshing import (
     _facets,
     _icosphere,
+    _point_triangle_distances,
     _recover,
     _restricted_torus_surface,
     _sphere_distance,
@@ -2478,6 +2479,11 @@ def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]
     return value.box_program(), gradient.box_program()
 
 
+# A box holding the unit sphere and the lenses below, for the two-way
+# certificates.
+_CERTIFIED_DOMAIN = np.array([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=np.float64)
+
+
 def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
     value, gradient = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
@@ -2500,10 +2506,26 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         vertices,
         faces,
         _widened_boxes(vertices, faces, 0.005),
+        _CERTIFIED_DOMAIN,
         0.15,
         30.0,
     )
     assert 0.0 <= certificate.distance <= 0.01
+    # Both ways: every point of the unit sphere (sampled) lies within the
+    # certified reverse distance of the surface.
+    sphere_points = _sphere_samples(2000)
+    nearest = np.min(
+        np.stack(
+            [
+                _point_triangle_distances(
+                    point, certificate.vertices[certificate.triangles]
+                )
+                for point in sphere_points
+            ]
+        ),
+        axis=1,
+    )
+    assert np.max(nearest) <= certificate.reverse_distance < 0.15
     # Input triangles the remesh left untouched are proved, not carried.
     assert certificate.counters[3] == 0 and not np.any(certificate.carried)
     # Nothing needed repair: the certified surface is the constructed one.
@@ -2513,12 +2535,22 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     # A vertex lifted off the sphere: its star fails the proof and splitting
     # cannot repair it, unless the carrier holds those very triangles with
     # witness boxes that straddle the sphere; they are then accepted at their
-    # box diagonals (above the tolerance) and flagged as carried.
+    # box diagonals (above the tolerance) and flagged as carried, and the
+    # zero set is still proved near the surface.
     lifted = np.array(remeshed.vertices)
-    lifted[0] *= 1.05
+    lifted[0] *= 1.02
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         zero_set_certify(
-            lifted, remeshed.triangles, value, gradient, 0.01, 1, *no_carrier, 0.15, 30.0
+            lifted,
+            remeshed.triangles,
+            value,
+            gradient,
+            0.01,
+            1,
+            *no_carrier,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
         )
     carrier_faces = remeshed.triangles[:, (1, 2, 0)]
     boxes = _widened_boxes(lifted, carrier_faces, 0.02)
@@ -2532,6 +2564,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         lifted,
         carrier_faces,
         boxes,
+        _CERTIFIED_DOMAIN,
         0.15,
         30.0,
     )
@@ -2551,6 +2584,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
             lifted,
             carrier_faces,
             boxes + 10.0,
+            _CERTIFIED_DOMAIN,
             0.15,
             30.0,
         )
@@ -2590,7 +2624,15 @@ def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
     value, gradient = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
-    controls = (value, gradient, 0.01, 0.15, _sphere_distance, _sphere_samples)
+    controls = (
+        value,
+        gradient,
+        _CERTIFIED_DOMAIN,
+        0.01,
+        0.15,
+        _sphere_distance,
+        _sphere_samples,
+    )
     missed, measured = _zero_set_quality(remeshed, *controls)
     assert missed == 0 and measured["certified"] == 1.0
     # A vertex lifted off the sphere: the certificate refuses it, which counts
@@ -2657,7 +2699,7 @@ def _oblique_lens_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return vertices, np.asarray(triangles, dtype=np.int64), rotation[:, 2]
 
 
-def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
+def test_zero_set_certify_refuses_a_csg_lens_crease_both_ways() -> None:
     vertices, faces, axis = _oblique_lens_carrier()
     first, second = -_LENS_SHIFT * axis, _LENS_SHIFT * axis
 
@@ -2681,35 +2723,24 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
     remeshed = zero_set_remesh(
         vertices, faces, value.box_program(), 0.02, 0.02, 0.2, 30.0
     )
-    certified = zero_set_certify(
-        remeshed.vertices,
-        remeshed.triangles,
-        value.box_program(),
-        gradient.box_program(),
-        0.02,
-        remeshed.orientation,
-        vertices,
-        faces,
-        _widened_boxes(vertices, faces, 0.02),
-        0.2,
-        30.0,
-    )
-    # Triangles next to the crease rest on the carrier, accepted at their
-    # witness boxes' diagonals; boxes of nearby remeshed triangles straddle
-    # the slanted branch switch, fail transversality and are repaired by
-    # splits within the round budget.
-    assert certified.counters[3] > 0
-    assert np.count_nonzero(certified.carried) == certified.counters[3]
-    assert certified.distance > 0.02
-    assert certified.counters[0] > certified.counters[3]
-    assert certified.counters[4] > 0 and certified.counters[5] <= 4
-    directed = {
-        (int(face[k]), int(face[(k + 1) % 3]))
-        for face in certified.triangles
-        for k in range(3)
-    }
-    assert len(directed) == 3 * certified.triangles.shape[0]
-    assert all((head, tail) in directed for tail, head in directed)
+    # Triangles next to the crease rest on the carrier (witness boxes), but
+    # the zero set -> surface direction is refused there: the tube cannot
+    # cross the crease, and two-way certification is mandatory.
+    with pytest.raises(MeshcoreError, match=r"[1-9][0-9]* tube triangles refused"):
+        zero_set_certify(
+            remeshed.vertices,
+            remeshed.triangles,
+            value.box_program(),
+            gradient.box_program(),
+            0.02,
+            remeshed.orientation,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.02),
+            _CERTIFIED_DOMAIN,
+            0.2,
+            30.0,
+        )
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:

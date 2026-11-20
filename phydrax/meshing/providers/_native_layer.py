@@ -1892,6 +1892,7 @@ def implicit_layer_wall(
                 vertices,
                 faces,
                 witness_boxes,
+                np.asarray(scaffold.domain, dtype=np.float64),
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
