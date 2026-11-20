@@ -947,7 +947,7 @@ class ConstrainedMesher {
       if (same_point(c, pa) || same_point(c, pb)) {
         return 0;
       }
-      const int side = orient2d(pa, pb, c);
+      const int side = orient2d_filtered(pa, pb, c);
       if (side == 0) {
         return strictly_between(pa, pb, c) ? 1 : 0;
       }
@@ -959,8 +959,8 @@ class ConstrainedMesher {
       const int32_t q = side > 0 ? b : a;
       const int32_t apex =
           tri_.triangles[static_cast<std::size_t>(near_side)].v[tri_.edge_index(near_side, p, q)];
-      return orient2d(tri_.point(q), tri_.point(apex), c) > 0 &&
-                     orient2d(tri_.point(apex), tri_.point(p), c) > 0
+      return orient2d_filtered(tri_.point(q), tri_.point(apex), c) > 0 &&
+                     orient2d_filtered(tri_.point(apex), tri_.point(p), c) > 0
                  ? 2
                  : 0;
     };
@@ -998,7 +998,7 @@ class ConstrainedMesher {
     if (!(ratio > 0.0 && ratio < 1.0)) {
       return false;
     }
-    const int side = orient2d(pa, pb, chosen);
+    const int side = orient2d_filtered(pa, pb, chosen);
     if (side == 0) {
       const int32_t v = new_vertex(chosen, ends, id, a, b, ratio);
       split_edge(t, k, v, id);
@@ -1092,7 +1092,8 @@ class ConstrainedMesher {
       int zero_count = 0;
       int zero_edge = -1;
       for (int k = 0; k < 3; ++k) {
-        if (orient2d(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]), center) == 0) {
+        if (orient2d_filtered(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]),
+                              center) == 0) {
           ++zero_count;
           zero_edge = k;
         }
