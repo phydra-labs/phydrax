@@ -1997,10 +1997,15 @@ def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
 def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     forgery: str,
 ) -> None:
+    # A region control keeps the CAD solid on the existing (Python) route, the
+    # route of every gated CAD plan; native CAD solids are covered by
+    # test_native_cad_records.py.
     from copy import copy
 
     import phydrax as phx
     from phydrax.geometry.brep import brep_box
+    from phydrax.meshing._controls import RegionControl
+    from phydrax.meshing._organization import RegionRole
     from phydrax.meshing._sizing import UniformSizeControl
 
     model = brep_box(
@@ -2015,6 +2020,14 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.5),),
+        region_controls=(
+            RegionControl(
+                MeshingScope.from_geometry(model, model.solid_ids[0]),
+                "region-0",
+                "material-0",
+                RegionRole.SOLID,
+            ),
+        ),
         maximum_deviation=0.02,
     )
     source = (

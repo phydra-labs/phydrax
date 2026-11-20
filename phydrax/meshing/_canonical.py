@@ -331,6 +331,12 @@ def _certify_cell_mesh_acceptance(
         and certification_inputs.layer_core_root_geometry is not layer_core_root_geometry
     ):
         raise ValueError("Layer root geometry must match its certified source authority.")
+    if (
+        certification_inputs is not None
+        and certification_inputs.native_cad_records is not None
+    ):
+        # A native CAD solid's curve association is its records' authority.
+        certification_inputs.native_cad_records.require_associations(associations)
     if computed_root is not None and (
         certification_inputs is None or layer_core_root_geometry is None
     ):
@@ -885,6 +891,7 @@ def _accept_native_construction(
         fidelity_witness=request.fidelity_witness,
         source_coverage_witness=request.source_coverage_witness,
         native_cad_surface=request.native_cad_surface,
+        native_cad_records=request.native_cad_records,
         validated=validated,
     )
     organization = construction.organization

@@ -29,7 +29,12 @@ from ...discretization.fem._reference import lagrange_element
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_cad_certificate import NativeCadSurfaceWitness
-from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
+from .._native_cad_records import native_cad_associations, native_cad_records
+from .._native_construction import (
+    NativeCertificationRequest,
+    NativeMeshConstruction,
+    NativeMeshOrganization,
+)
 from .._result import MeshingComplianceReport
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
 
@@ -51,7 +56,8 @@ def cad_solid_support_issues(
     specification = prepared.specification
     if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
-    # The native candidate carries no organization or occurrence records yet.
+    # The native candidate carries B-Rep associations and curve records, but
+    # no patch or region organization (mesh patches, zones, region evidence).
     if specification.patch_controls or specification.region_controls:
         issues.append("patch and region controls need source organization records")
     if prepared.boundary_request.selected_patches != tuple(
@@ -174,12 +180,14 @@ def execute_cad_solid(
         requested=tuple(requested),
         achieved=(("unmet_quality_cells", float(stats["unmet_cells"])),),
     )
+    regions = np.asarray(volume.tetrahedron_regions, dtype=np.int64)
+    records = native_cad_records(mesh, solid.surface, domain, float(deviation))
     certification = NativeCertificationRequest(
         MeshCertificationSchedule("volume_cad"),
         domain.source_id,
         domain.source_revision,
         domain=domain,
-        cell_regions=np.asarray(volume.tetrahedron_regions, dtype=np.int64),
+        cell_regions=regions,
         # The boundary preparation's query selects every source face (support).
         fidelity_source=boundary.boundary_source,
         fidelity_tolerance=float(deviation),
@@ -188,6 +196,7 @@ def execute_cad_solid(
         native_cad_surface=NativeCadSurfaceWitness(
             mesh, solid.surface, len(cad_geometry_bundle(domain).model.loop_surfaces)
         ),
+        native_cad_records=records,
     )
     return NativeMeshConstruction(
         mesh,
@@ -195,6 +204,11 @@ def execute_cad_solid(
         compliance,
         certification,
         geometry=geometry,
+        organization=NativeMeshOrganization(
+            associations=native_cad_associations(
+                mesh, solid.surface, domain, regions, float(deviation), records
+            )
+        ),
     )
 
 

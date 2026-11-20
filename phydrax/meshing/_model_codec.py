@@ -823,6 +823,7 @@ def _register_model_archive_types() -> None:
         NativeCadCertificate,
         NativeCadSurfaceWitness,
     )
+    from ..meshing._native_cad_records import NativeCadRecords
     from ..meshing._organization import (
         MeshAttribute,
         MeshAttributeRole,
@@ -1494,6 +1495,7 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MeshCertificationReport),
         ("phydrax.meshing", NativeCadSurfaceWitness),
         ("phydrax.meshing", NativeCadCertificate),
+        ("phydrax.meshing", NativeCadRecords),
         ("phydrax.meshing", BlockInterfaceControl),
         ("phydrax.meshing", TransfiniteCurveControl),
         ("phydrax.meshing", TransfiniteSurfaceControl),
