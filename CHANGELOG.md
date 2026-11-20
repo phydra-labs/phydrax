@@ -400,6 +400,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Size compliance judges the quantity each producing kernel bounds, declared
+  once per route in `SIZE_COMPLIANCE_DECLARATIONS` (`phydrax/meshing/_sizing.py`,
+  documented under "Size compliance" in the meshing guide). The native CAD
+  solid route judges the p50/p95 circumradius of the scoped boundary triangles
+  against h/sqrt(2), the chart kernel's bound (report rows
+  `size:<control>:p50_circumradius` / `p95_circumradius`; CAD compliance report
+  ids change); S3 / PLC volume boundary faces keep edge <= h; every other
+  route's size statement is unchanged and recorded in the table. The
+  `phx_mc_cad_mesh_solid` documentation states that the CAD volume passes h
+  unchanged as the circumradius target.
 - Fixed-boundary PLC recovery refuses a source triangle whose smallest-angle
   sine is below the 2^-22 relative-determinant floor before meshing
   (`UNRESOLVED` / `INVALID_FACET`, naming the triangle and its polygon, with
