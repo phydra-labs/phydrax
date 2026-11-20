@@ -3298,21 +3298,37 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       }
       const auto reach = static_cast<std::int64_t>(std::sqrt(half_diagonal) / a) + 1;
       constexpr double kShift[3]{0.31, 0.47, 0.13};
+      // Lattice site (i, j, k, shift) of each seed, by seed id, and the seed id
+      // of each kept site (-1 where none was kept).
+      const std::int64_t side = 2 * reach + 1;
+      const auto site_of = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+        return static_cast<std::size_t>(((shift * side + k + reach) * side + j + reach) * side + i +
+                                        reach);
+      };
+      std::vector<std::int32_t> site_seed(static_cast<std::size_t>(2 * side * side * side), -1);
+      std::vector<std::array<std::int64_t, 4>> seed_sites;
+      // The point of a lattice site; true when it is strictly inside the box.
+      const auto site_point = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k,
+                                  double* point) {
+        const double local[3]{(static_cast<double>(i) + kShift[0] + 0.5 * shift) * a,
+                              (static_cast<double>(j) + kShift[1] + 0.5 * shift) * a,
+                              (static_cast<double>(k) + kShift[2] + 0.5 * shift) * a};
+        bool in_box = true;
+        for (int axis = 0; axis < 3; ++axis) {
+          point[axis] = middle[axis] + rotation[axis][0] * local[0] +
+                        rotation[axis][1] * local[1] + rotation[axis][2] * local[2];
+          in_box = in_box && point[axis] > lower[axis] && point[axis] < upper[axis];
+        }
+        return in_box;
+      };
       for (int shift = 0; shift < 2; ++shift) {
         for (std::int64_t k = -reach; k <= reach; ++k)
           for (std::int64_t j = -reach; j <= reach; ++j)
             for (std::int64_t i = -reach; i <= reach; ++i) {
-              const double local[3]{(static_cast<double>(i) + kShift[0] + 0.5 * shift) * a,
-                                    (static_cast<double>(j) + kShift[1] + 0.5 * shift) * a,
-                                    (static_cast<double>(k) + kShift[2] + 0.5 * shift) * a};
               Seed seed{0, seeds.size(), {}};
-              bool in_box = true;
-              for (int axis = 0; axis < 3; ++axis) {
-                seed.point[axis] = middle[axis] + rotation[axis][0] * local[0] +
-                                   rotation[axis][1] * local[1] + rotation[axis][2] * local[2];
-                in_box = in_box && seed.point[axis] > lower[axis] && seed.point[axis] < upper[axis];
-              }
-              if (!in_box || near_boundary(seed.point)) continue;
+              if (!site_point(shift, i, j, k, seed.point) || near_boundary(seed.point)) continue;
+              site_seed[site_of(shift, i, j, k)] = static_cast<std::int32_t>(seeds.size());
+              seed_sites.push_back({i, j, k, shift});
               seeds.push_back(seed);
               seed_grids.push_back(frame.grid(seed.point));
             }
@@ -3328,33 +3344,191 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
       std::vector<Seed> seed_scratch;
       sort_by_key_then_id(seeds, seed_scratch);
       const double radius = a * std::sqrt(5.0) / 4.0;
-      for (const Seed& seed : seeds) {
-        if (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) break;
-        std::int32_t current = start;
-        bool inside = false;
-        for (int step = 0; step < 100000; ++step) {
+      // Seeds are located from their lattice neighbours. A seed's nearest
+      // neighbours are the eight sites of the other shift at the cube's
+      // corners, at distance |PQ| = (sqrt(3) / 2) a. Every kept seed is at
+      // least the band 0.5 a from every boundary facet (near_boundary bins
+      // each facet into every cell its band-grown box meets, clamping points
+      // off the grid to its edge cells, so no facet within the band is
+      // missed), so when Q is a kept seed too or another site clear of the
+      // band, for a point X on PQ, min(|XP|, |XQ|) <= (sqrt(3) / 4) a <
+      // 0.434 a and dist(X, facet) >= 0.5 a - 0.434 a > 0.066 a: PQ meets
+      // no boundary or interface facet, and P and Q lie in the same region
+      // or are both outside the domain. The kept seeds joined by these
+      // segments (union-find below) are therefore wholly inside one region
+      // or wholly outside. A site clear of the band that is not strictly
+      // inside the bounding box of the vertices is outside the domain (the
+      // domain's interior lies inside the box), so a group joined to one is
+      // outside without a walk; that is every group of the box's exterior.
+      // Any other group is decided outside by the first of its seeds found
+      // in no cell. A seed is walked to from a cell incident to an inserted
+      // neighbour when there is one (a few cells away), else from the last
+      // located cell. The walk is a visibility walk across every facet
+      // between live cells (interfaces too; the proof keeps the seed in its
+      // group's region) that never re-enters a cell, so it ends within the
+      // number of cells: in the cell holding the seed, or where every facet
+      // facing the seed leads off the domain or to a visited cell. A walk
+      // that ends that way decides nothing (a concave boundary or a
+      // non-Delaunay cycle can stop it); the seed is then located by testing
+      // every live cell.
+      // Groups by seed id; the last entry stands for the box's exterior.
+      const auto exterior = static_cast<std::int32_t>(seeds.size());
+      std::vector<std::int32_t> group(seeds.size() + 1);
+      std::iota(group.begin(), group.end(), 0);
+      const auto root_of = [&](std::int32_t id) {
+        while (group[static_cast<std::size_t>(id)] != id) {
+          const std::int32_t up = group[static_cast<std::size_t>(group[static_cast<std::size_t>(id)])];
+          group[static_cast<std::size_t>(id)] = up;
+          id = up;
+        }
+        return id;
+      };
+      const auto join = [&](std::int32_t first, std::int32_t second) {
+        const std::int32_t x = root_of(first), y = root_of(second);
+        if (x != y) group[static_cast<std::size_t>(std::max(x, y))] = std::min(x, y);
+      };
+      // Calls `visit(shift, i, j, k)` for the eight nearest sites of seed `id`.
+      const auto for_sites = [&](std::int32_t id, auto&& visit) {
+        const auto& at = seed_sites[static_cast<std::size_t>(id)];
+        const int shift = 1 - static_cast<int>(at[3]);
+        const std::int64_t first = shift == 1 ? -1 : 0;
+        for (std::int64_t dk = first; dk <= first + 1; ++dk)
+          for (std::int64_t dj = first; dj <= first + 1; ++dj)
+            for (std::int64_t di = first; di <= first + 1; ++di) {
+              visit(shift, at[0] + di, at[1] + dj, at[2] + dk);
+            }
+      };
+      const auto kept = [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+        if (i < -reach || i > reach || j < -reach || j > reach || k < -reach || k > reach) {
+          return -1;
+        }
+        return site_seed[site_of(shift, i, j, k)];
+      };
+      for (std::int32_t id = 0; id < exterior; ++id) {
+        for_sites(id, [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+          const std::int32_t other = kept(shift, i, j, k);
+          if (other >= 0) {
+            join(id, other);
+            return;
+          }
+          double point[3];
+          if (!site_point(shift, i, j, k, point) && !near_boundary(point)) join(id, exterior);
+        });
+      }
+      // Per group root: 1 when the group is outside the domain.
+      std::vector<std::uint8_t> outside(group.size(), 0U);
+      outside[static_cast<std::size_t>(root_of(exterior))] = 1U;
+      // The vertex inserted for each seed and one cell of its star; the cell
+      // while it is live and still holds the vertex.
+      std::vector<std::array<std::int32_t, 2>> placed(seeds.size(), {-1, -1});
+      const auto star_cell = [&](std::int32_t id) {
+        const auto [vertex, cell] = placed[static_cast<std::size_t>(id)];
+        if (cell < 0 || !mesh.complex_.live(cell)) return -1;
+        const Tetrahedron& tet = mesh.tet(cell);
+        return std::find(tet.v, tet.v + 4, vertex) != tet.v + 4 ? cell : -1;
+      };
+      // The last seed placed in each block of 4 x 4 x 4 lattice cubes: a seed
+      // none of whose neighbours is placed yet (the first BRIO rounds) starts
+      // from the nearest placed block, not from the last located cell, which
+      // can lie across a concavity.
+      constexpr std::int64_t kBlock = 4;
+      const std::int64_t blocks = (side + kBlock - 1) / kBlock;
+      std::vector<std::int32_t> block_seed(static_cast<std::size_t>(blocks * blocks * blocks), -1);
+      const auto block_of = [&](std::int64_t i, std::int64_t j, std::int64_t k) {
+        return std::array<std::int64_t, 3>{(i + reach) / kBlock, (j + reach) / kBlock,
+                                           (k + reach) / kBlock};
+      };
+      const auto block_index = [&](const std::array<std::int64_t, 3>& block) {
+        return static_cast<std::size_t>((block[2] * blocks + block[1]) * blocks + block[0]);
+      };
+      std::vector<std::uint32_t> visited;
+      std::uint32_t walk_stamp = 0;
+      const auto holds = [&](std::int32_t cell, const double* p) {
+        const Tetrahedron& tet = mesh.tet(cell);
+        for (int face = 0; face < 4; ++face) {
+          std::int32_t facet[3];
+          oriented_facet(tet.v, face, facet);
+          if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
+                                p) < 0) {
+            return false;
+          }
+        }
+        return true;
+      };
+      // The live cell holding `p`, or -1 when no cell holds it.
+      const auto locate = [&](std::int32_t from, const double* p) -> std::int32_t {
+        if (visited.size() < mesh.complex_.tets.size()) visited.resize(mesh.complex_.tets.size(), 0U);
+        if (++walk_stamp == 0) {
+          std::fill(visited.begin(), visited.end(), 0U);
+          walk_stamp = 1;
+        }
+        std::int32_t current = from;
+        while (current >= 0) {
+          visited[static_cast<std::size_t>(current)] = walk_stamp;
           const Tetrahedron& tet = mesh.tet(current);
-          int exit = -1;
-          for (int face = 0; face < 4 && exit < 0; ++face) {
+          std::int32_t next = -1;
+          bool facing = false;
+          for (int face = 0; face < 4 && next < 0; ++face) {
             std::int32_t facet[3];
             oriented_facet(tet.v, face, facet);
             if (orient3d_filtered(mesh.point(facet[0]), mesh.point(facet[1]), mesh.point(facet[2]),
-                                  seed.point) < 0) {
-              exit = face;
+                                  p) >= 0) {
+              continue;
+            }
+            facing = true;
+            const std::int32_t across = tet.n[face];
+            if (mesh.complex_.live(across) && !is_ghost(mesh.tet(across)) &&
+                visited[static_cast<std::size_t>(across)] != walk_stamp) {
+              next = across;
             }
           }
-          if (exit < 0) {
-            inside = true;
-            break;
-          }
-          const std::int32_t next = tet.n[exit];
-          if (mesh.complex_.constraint(current, exit) != kNoConstraint ||
-              !mesh.complex_.live(next) || is_ghost(mesh.tet(next))) {
-            break;
-          }
+          if (!facing) return current;
           current = next;
         }
-        if (!inside) continue;
+        for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
+          const auto cell = static_cast<std::int32_t>(row);
+          if (mesh.complex_.live(cell) && !is_ghost(mesh.tet(cell)) && holds(cell, p)) return cell;
+        }
+        return -1;
+      };
+      for (const Seed& seed : seeds) {
+        const auto id = static_cast<std::int32_t>(seed.cell_id);
+        const std::int32_t root = root_of(id);
+        if (outside[static_cast<std::size_t>(root)] != 0U) continue;
+        std::int32_t from = -1;
+        for_sites(id, [&](int shift, std::int64_t i, std::int64_t j, std::int64_t k) {
+          const std::int32_t other = kept(shift, i, j, k);
+          if (from < 0 && other >= 0) from = star_cell(other);
+        });
+        const auto& site = seed_sites[static_cast<std::size_t>(id)];
+        const auto block = block_of(site[0], site[1], site[2]);
+        // Shells of blocks around the seed's own, outward to the farthest.
+        for (std::int64_t shell = 0; from < 0 && shell < blocks; ++shell) {
+          for (std::int64_t z = block[2] - shell; z <= block[2] + shell && from < 0; ++z)
+            for (std::int64_t y = block[1] - shell; y <= block[1] + shell && from < 0; ++y) {
+              // Inside the shell's faces in z and y, only its two x faces.
+              const bool face = std::abs(z - block[2]) == shell || std::abs(y - block[1]) == shell;
+              const std::int64_t stride = face || shell == 0 ? 1 : 2 * shell;
+              for (std::int64_t x = block[0] - shell; x <= block[0] + shell && from < 0;
+                   x += stride) {
+                if (x < 0 || y < 0 || z < 0 || x >= blocks || y >= blocks || z >= blocks) continue;
+                const std::int32_t other = block_seed[block_index({x, y, z})];
+                if (other >= 0) from = star_cell(other);
+              }
+            }
+        }
+        if (from < 0) {
+          if (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) {
+            start = 0;
+            while (!mesh.complex_.live(start) || is_ghost(mesh.tet(start))) ++start;
+          }
+          from = start;
+        }
+        const std::int32_t current = locate(from, seed.point);
+        if (current < 0) {
+          outside[static_cast<std::size_t>(root)] = 1U;
+          continue;
+        }
         start = current;
         double target = 0.0;
         if (!cell_target(mesh, mesh.tet(current).v, target) ||
@@ -3364,7 +3538,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
         int outcome = 2;
         const std::int32_t error = insert_interior(current, seed.point, radius, target, outcome);
         if (error != PHX_MC_OK) return error;
-        if (outcome == 0 && !created_slots.empty()) start = created_slots.front();
+        if (outcome == 0 && !created_slots.empty()) {
+          start = created_slots.front();
+          placed[static_cast<std::size_t>(id)] = {
+              static_cast<std::int32_t>(mesh.vertex_ids_.size()) - 1, start};
+          block_seed[block_index(block)] = id;
+        }
       }
     }
     return PHX_MC_OK;

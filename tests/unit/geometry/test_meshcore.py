@@ -3285,6 +3285,38 @@ def test_fixed_boundary_refinement_packs_the_interior_as_the_bounding_lattice() 
     assert run.inserted_vertices <= 1.25 * 2.0 * volume / lattice**3
 
 
+def test_fixed_boundary_lattice_reaches_a_non_convex_interior() -> None:
+    # The torus tube curves out of line of sight of any one interior point:
+    # lattice seeds are located throughout it, so the vertices deeper than
+    # half a lattice spacing are spread evenly around the ring (a seed lost
+    # to a blocked walk leaves its stretch to circumcenter refinement, which
+    # packs it about 1.6 times as densely), and refinement inserts about the
+    # lattice count (1.43 times it with stretches lost).
+    vertices, faces = _BENCHMARK_SURFACES["restricted-torus-72"]()
+    recovery = _recover(vertices, faces, _facets(vertices, faces))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    size = float(
+        np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
+    )
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    assert run.status is MeshcoreStatus.OK and run.unmet_cells == 0
+    arrays = mesh.arrays()
+    points = np.asarray(arrays.points)
+    corners = points[np.asarray(arrays.tetrahedra)]
+    volume = float(np.sum(np.abs(np.linalg.det(corners[:, 1:] - corners[:, :1])))) / 6.0
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * volume / lattice**3
+    inserted = points[recovery.points.shape[0] :]
+    depth = 0.4 - np.hypot(np.hypot(inserted[:, 0], inserted[:, 1]) - 1.0, inserted[:, 2])
+    deep = inserted[depth > 0.5 * lattice]
+    angle = np.arctan2(deep[:, 1], deep[:, 0]) + np.pi
+    sectors = np.bincount(np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8)
+    assert sectors.max() <= 1.1 * sectors.min()
+
+
 def test_mesh_adoption_refuses_a_recovery_without_its_native_result() -> None:
     recovery = _benchmark_recovery("grid-torus-100")
     with pytest.raises(ValueError, match="no native result"):
