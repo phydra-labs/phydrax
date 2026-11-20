@@ -1957,7 +1957,8 @@ PHX_MC_API int32_t phx_mc_tet_mesh_implicit_source(
  * (splits, collapses, flips, relocations, triangles below the minimum angle,
  * the carrier's orientation relative to grad f by the floating-point majority
  * of the input triangles, triangles whose sampled distance exceeds
- * `tolerance`, 0). Certify the result with phx_mc_zero_set_certify. */
+ * `tolerance`, 0). `result` owns the surface (phx_mc_surface_result_*).
+ * Certify the result with phx_mc_zero_set_certify. */
 typedef struct phx_mc_zero_set_remesh_request {
   const double* vertices;
   int64_t vertex_count;
@@ -1993,8 +1994,7 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * projection as in phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
  * `value` has one output, `gradient` three. On PHX_MC_OK `result` owns the
- * certified surface (read with phx_mc_zero_set_remesh_sizes / _arrays, free
- * with phx_mc_zero_set_remesh_free) and `distance` is the maximum over the
+ * certified surface (phx_mc_surface_result_*) and `distance` is the maximum over the
  * proved triangles (each at most `tolerance`) and, for triangles accepted
  * from the carrier, carrier_distance, which may exceed `tolerance`; a
  * triangle left refused is PHX_MC_UNRESOLVED. counters receives (triangle
@@ -2023,11 +2023,91 @@ typedef struct phx_mc_zero_set_certify_request {
   int64_t* counters;
 } phx_mc_zero_set_certify_request;
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);
-PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes);
-PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
-                                                 int64_t triangle_capacity, double* vertices,
-                                                 int64_t* triangles);
-PHX_MC_API void phx_mc_zero_set_remesh_free(void* result);
+/* An owned surface result: sizes = (vertices, triangles); arrays copies them
+ * (PHX_MC_CAPACITY_EXCEEDED when a capacity is short); free releases it. */
+PHX_MC_API int32_t phx_mc_surface_result_sizes(const void* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_surface_result_arrays(void* result, int64_t vertex_capacity,
+                                                int64_t triangle_capacity, double* vertices,
+                                                int64_t* triangles);
+PHX_MC_API void phx_mc_surface_result_free(void* result);
+/* Remeshes a closed, consistently oriented triangle mesh (the source, with
+ * nondegenerate triangles; else PHX_MC_INVALID_INPUT) toward `edge_length`
+ * (lowered where the source curves, so that a well-shaped triangle stays
+ * within `tolerance`) and `minimum_angle_degrees`. Construction only, as
+ * phx_mc_zero_set_remesh, with the source as the surface: new and moved
+ * vertices go to their nearest point of the source (bucket grid), normals
+ * interpolate angle-weighted vertex normals, the two principal curvatures
+ * per-vertex estimates (the largest and smallest normal curvature along the
+ * ring edges). A source rough at this tolerance (mean |L(l)| above 2% of it,
+ * l = L(x) . n the normal part of the uniform Laplacian, as vertex noise
+ * gives) is first
+ * Taubin-smoothed at a radius of about edge_length / 2, every vertex kept
+ * within tolerance / 2 of the input, and construction follows the smoothed
+ * copy. Writes counters (splits, collapses, flips, relocations, triangles
+ * below the minimum angle, triangles whose sampled distance to the
+ * construction source exceeds `tolerance`). `result` owns the surface
+ * (phx_mc_surface_result_*). */
+typedef struct phx_mc_mesh_remesh_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  double tolerance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  int64_t* counters;
+} phx_mc_mesh_remesh_request;
+PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request);
+/* Certifies a remeshed surface (vertices, triangles) against its source mesh
+ * in both directions, repairing it locally as phx_mc_zero_set_certify does.
+ * Surface -> source: every triangle T gets an upper bound on the distance
+ * from each of its points to the source. Points take planar coordinates
+ * along T's normal, and each triangle maps affinely onto the planar
+ * triangle of its corners' (binary64) coordinates; the patch (source
+ * triangles reached across edges whose planar triangles meet T's) must wind
+ * once around T's planar triangle (exact orient2d), so every x = X(y) in T
+ * has a patch point Y(y) over the same planar y, and d(x, source) <=
+ * |X(y) - Y(y)|, convex over each overlap of planar triangles: the bound is
+ * its value at the overlap vertices (corners and edge crossings decided
+ * exactly; crossings evaluated within a certified offset, with the maps'
+ * slopes and a first-order rounding pad, rounded up). Refused triangles
+ * (bound above `tolerance`, or no winding) are split and flipped for at
+ * most four rounds, with embedding checked exactly. Source -> surface: the
+ * same bound for every source triangle against the certified surface, along
+ * the surface's interpolated normal (a source triangle may be rougher than
+ * the surface); the surface triangles nearest the corners of a refused
+ * source triangle are split. After any repair, angles are restored by flips
+ * and relocations and both directions are decided again, for at most three
+ * further passes. Both sources must be closed oriented 2-manifolds with
+ * nondegenerate triangles. On PHX_MC_OK `result` owns the certified surface
+ * (phx_mc_surface_result_*) and distances = (largest surface -> source
+ * bound, largest source -> surface bound), each at most `tolerance`.
+ * PHX_MC_UNRESOLVED when a surface triangle stays refused or a source
+ * triangle is not proved within `tolerance` (no result). counters receives
+ * (triangle certifications refused for distance, triangles refused for
+ * embedding, repair splits, rounds run, all summed over every pass; source
+ * triangles not proved within `tolerance` in the last pass; relocations
+ * restoring angles after repairs) on PHX_MC_OK and PHX_MC_UNRESOLVED,
+ * distances on both too (the second +inf when the surface direction
+ * failed). */
+typedef struct phx_mc_mesh_certify_request {
+  const double* source_vertices;
+  int64_t source_vertex_count;
+  const int64_t* source_triangles;
+  int64_t source_triangle_count;
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* triangles;
+  int64_t triangle_count;
+  double tolerance;
+  double edge_length;
+  double minimum_angle_degrees;
+  void** result;
+  double* distances;
+  int64_t* counters;
+} phx_mc_mesh_certify_request;
+PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_request* request);
 
 /* --------------------------------------------------------------- level sets */
 #define PHX_MC_LEVEL_SET_FULL_CARRIERS 0

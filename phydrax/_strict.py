@@ -23,7 +23,7 @@ import dataclasses
 import re
 import types
 from collections.abc import Iterator, Mapping
-from typing import Any, TYPE_CHECKING, TypeVar
+from typing import Any, final, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax
@@ -357,3 +357,19 @@ class StrictModule(eqx.Module, Strict, metaclass=_StrictEqxMeta):
             ):
                 return _bind_method(out.__func__, self)
             return out
+
+
+@final
+class StaticRows[RowT](tuple[RowT, ...]):
+    """Immutable host-metadata row bank held as one static PyTree leaf.
+
+    A plain tuple is a PyTree node, so Equinox's construction-time search for
+    JAX arrays in static fields visits every row element. JAX registers node
+    types exactly, so this final tuple subclass is a single leaf. Owners build
+    it only from rows they validated to be host metadata (strings, enums, exact
+    Fractions, integers, ``None`` and their tuples), which already refuses
+    arrays and tracers. Equality, hashing, ordering, iteration and the
+    canonical fingerprint are the tuple's.
+    """
+
+    __slots__ = ()

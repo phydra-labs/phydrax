@@ -2975,18 +2975,11 @@ void build_sheet_in_box(const std::vector<double>& points, const std::vector<int
 }
 
 // A 26-triangle patch of the scale-2 torus reconstruction envelope (nearly
-// flat offset faces), as an internal sheet of region 0 inside a box hull.
-// Vertices 15, 21, 20, 22 are coplanar up to an orientation of ~4e-22.
-// Under FIXED the segment (15, 21) used to be split, and the star of its
-// split point held a sliver over a subface whose wedge no Steiner-free fill
-// or binary64 cone point covered; the point was removed only by merging
-// the wedge with the cells beyond its link faces (before that, FIXED_SEGMENT
-// was refused). The flips of edge recovery now recover the segment without
-// a split: no point is suppressed, the recovery publishes the input points
-// alone, and the search budgets, which bound only suppression searches,
-// change nothing.
-void test_sliver_wedge_segment_recovers_without_a_split() {
-  const std::vector<double> points{
+// flat offset faces), as an internal sheet of region 0 inside a box hull
+// (the first 26 triangles). Vertices 15, 21, 20, 22 are coplanar up to an
+// orientation of ~4e-22.
+const std::vector<double>& sliver_sheet_points() {
+  static const std::vector<double> points{
       -0x1.321f529b7e48dp-2, 0x1.64ab155864700p-9, -0x1.9f044e4d6d58ep-4,
       -0x1.321f529b7e48dp-2, 0x1.44e4bff842afcp-8, -0x1.9f6d8f547cb34p-4,
       -0x1.1da47153d0345p-2, 0x1.64ab155864700p-9, -0x1.8b6cffe486f86p-4,
@@ -3049,7 +3042,11 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
       -0x1.ac1ec529c9fa7p-5, -0x1.798ea1a81a302p-3, 0x1.f9610c74592c0p-4,
       -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, -0x1.10f8a60720728p-2,
       -0x1.ac1ec529c9fa7p-5, 0x1.a68a73b273dabp-3, 0x1.f9610c74592c0p-4,  };
-  const std::vector<int32_t> triangles{
+  return points;
+}
+
+const std::vector<int32_t>& sliver_sheet_triangles() {
+  static const std::vector<int32_t> triangles{
       0, 3, 1, 6, 7, 8, 4, 11, 5, 2, 8, 9,
       13, 18, 16, 16, 18, 15, 15, 21, 22, 15, 22, 20,
       15, 18, 21, 20, 22, 19, 10, 23, 12, 19, 26, 24,
@@ -3060,6 +3057,20 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
       58, 60, 61, 58, 61, 59, 54, 58, 59, 54, 59, 55,
       56, 57, 61, 56, 61, 60, 54, 56, 60, 54, 60, 58,
       55, 59, 61, 55, 61, 57,  };
+  return triangles;
+}
+
+// Under FIXED the segment (15, 21) of the sliver sheet used to be split, and
+// the star of its split point held a sliver over a subface whose wedge no
+// Steiner-free fill or binary64 cone point covered; the point was removed
+// only by merging the wedge with the cells beyond its link faces (before
+// that, FIXED_SEGMENT was refused). The flips of edge recovery now recover
+// the segment without a split: no point is suppressed, the recovery
+// publishes the input points alone, and the search budgets, which bound only
+// suppression searches, change nothing.
+void test_sliver_wedge_segment_recovers_without_a_split() {
+  const std::vector<double>& points = sliver_sheet_points();
+  const std::vector<int32_t>& triangles = sliver_sheet_triangles();
   const std::size_t point_count = points.size() / 3;
   const std::size_t faces = triangles.size() / 3;
   SheetInBox plc;
@@ -3087,6 +3098,89 @@ void test_sliver_wedge_segment_recovers_without_a_split() {
   negative.search_byte_budget = -1;
   PlcRecovery invalid;
   PHX_CHECK(recover_plc(negative, invalid) == PHX_MC_INVALID_ARGUMENT);
+}
+
+// The sliver sheet with vertex 18, next to the segment (15, 21), raised by
+// 2^-40 in z: edge recovery's flips no longer recover a sheet segment, which
+// FIXED splits, and the split point leaves again through the exhaustive
+// suppression search (no polynomial fill covers its wedge). The declared
+// search budget governs that search end to end: with exactly the states the
+// searches expand the recovery is the same; with one state fewer, or fewer
+// bytes than one chunk of states, the searches are inconclusive and the
+// pinched pass relocates the point into the volume by peeling. Every
+// recovery keeps the boundary and is deterministic in its budget.
+void test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget() {
+  std::vector<double> points = sliver_sheet_points();
+  points[3 * 18 + 2] += 0x1p-40;
+  const std::vector<int32_t>& triangles = sliver_sheet_triangles();
+  const std::size_t point_count = points.size() / 3;
+  const std::size_t faces = triangles.size() / 3;
+  SheetInBox plc;
+  build_sheet_in_box(points, triangles, 26, plc);
+  const PlcInput& input = plc.input;
+  const auto recover = [&](const PlcInput& declared, PlcRecovery& result) {
+    const int32_t status = recover_plc(declared, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) return false;
+    check_conforming_recovery(result, point_count, faces);
+    check_fixed_boundary(result, point_count);
+    PlcRecovery again;
+    PHX_CHECK(recover_plc(declared, again) == PHX_MC_OK);
+    PHX_CHECK(again.points == result.points && again.tets == result.tets &&
+              again.faces == result.faces && again.segments == result.segments);
+    PHX_CHECK(again.suppression_routes.size() == result.suppression_routes.size());
+    return true;
+  };
+  const auto segment_route = [](const PlcSuppressionRoute& route, int64_t kind) {
+    return route.route == kind && route.point >= 0 &&
+           route.stratum == static_cast<int64_t>(SourceStratum::kSegment) && route.entity >= 0;
+  };
+  PlcRecovery searched;
+  if (!recover(input, searched)) return;
+  const PlcSuppressionSearch& evidence = searched.suppression_search;
+  PHX_CHECK(searched.points.size() == points.size());
+  PHX_CHECK(evidence.searches >= 1 && evidence.fills >= 1 && evidence.nodes > 0);
+  PHX_CHECK(evidence.node_budget == kPlcSearchNodeBudget);
+  PHX_CHECK(evidence.byte_budget == kPlcSearchByteBudget);
+  PHX_CHECK(evidence.max_bytes >= 4096 * 40 && evidence.max_depth > 0);
+  PHX_CHECK(evidence.exceeded == 0 && evidence.inconclusive == 0 && evidence.peeled == 0);
+  PHX_CHECK(!searched.suppression_routes.empty());
+  for (const PlcSuppressionRoute& route : searched.suppression_routes) {
+    PHX_CHECK(segment_route(route, kPlcRouteSearch) && route.states > 0 && route.bytes > 0);
+  }
+
+  PlcInput exact = input;
+  exact.search_node_budget = evidence.nodes;
+  PlcRecovery same;
+  if (!recover(exact, same)) return;
+  PHX_CHECK(same.points == searched.points && same.tets == searched.tets);
+  PHX_CHECK(same.suppression_search.nodes == evidence.nodes &&
+            same.suppression_search.exceeded == 0);
+
+  PlcInput short_nodes = input;
+  short_nodes.search_node_budget = evidence.nodes - 1;
+  PlcRecovery peeled;
+  if (!recover(short_nodes, peeled)) return;
+  const PlcSuppressionSearch& over = peeled.suppression_search;
+  PHX_CHECK(over.node_budget == evidence.nodes - 1 && over.nodes == evidence.nodes - 1);
+  PHX_CHECK(over.exceeded == 1 && over.inconclusive >= 1 && over.exceeded_nodes > 0);
+  PHX_CHECK(over.peeled >= 1 && over.peeled_after_inconclusive >= 1);
+  PHX_CHECK(peeled.points.size() / 3 > point_count);
+  PHX_CHECK(std::any_of(peeled.suppression_routes.begin(), peeled.suppression_routes.end(),
+                        [&](const PlcSuppressionRoute& route) {
+                          return segment_route(route, kPlcRoutePeelAfterInconclusive) &&
+                                 route.states > 0;
+                        }));
+
+  PlcInput short_bytes = input;
+  short_bytes.search_byte_budget = 4096 * 40 - 1;
+  PlcRecovery starved;
+  if (!recover(short_bytes, starved)) return;
+  const PlcSuppressionSearch& none = starved.suppression_search;
+  PHX_CHECK(none.byte_budget == 4096 * 40 - 1 && none.searches > 0 && none.nodes == 0);
+  PHX_CHECK(none.inconclusive == none.searches && none.exceeded == 1);
+  PHX_CHECK(none.peeled >= 1 && none.peeled_after_inconclusive >= 1);
+  PHX_CHECK(starved.points.size() / 3 > point_count);
 }
 
 // The minimal configuration of the lost chain interval (PlcChainInterval),
@@ -3981,6 +4075,7 @@ int main() {
   test_suppression_wedge_without_delaunay_fill_is_searched();
   test_relocation_peels_a_pinched_wedge();
   test_sliver_wedge_segment_recovers_without_a_split();
+  test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget();
   test_sheet_segment_through_a_cone_apex_recovers_without_a_split();
   test_recurring_obstruction_patch_recovers_without_growth();
   test_lobed_edge_patch_recovers_without_merging();

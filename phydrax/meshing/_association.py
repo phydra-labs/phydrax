@@ -60,12 +60,13 @@ from .._fingerprint import (
     rational_chart_bank_fingerprint,
 )
 from .._live_proofs import live_content_fingerprint, LiveProofLedger
-from .._strict import StrictModule
+from .._strict import StaticRows, StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, EntitySet
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_transition_types import CellGeometryTransition
 from ..discretization._cell_mesh import SimplicialConnectivity
+from ..discretization._topology import has_repeated_values
 from ..geometry._source_boundary_records import (
     SourceBoundaryChartWitness,
     SourceBoundaryFaceImageWitness,
@@ -99,22 +100,6 @@ type SourceBoundaryTargetPiece = (
     SourceBoundaryReferencePiece | SourceBoundaryImagePullback
 )
 type SourceBoundaryTargetPieceRow = tuple[SourceBoundaryTargetPiece, ...]
-
-
-@final
-class _StaticRows[RowT](tuple[RowT, ...]):
-    """Immutable host-metadata row bank held as one static PyTree leaf.
-
-    A plain tuple is a PyTree node, so Equinox's construction-time search for
-    JAX arrays in static fields visits every row element. JAX registers node
-    types exactly, so this final tuple subclass is a single leaf. It is built
-    only from rows ``GeometryAssociation`` validated to be host metadata
-    (strings, roles, exact Fractions, integers, ``None`` and their tuples),
-    which already refuses arrays and tracers. Equality, hashing, ordering,
-    iteration and the canonical fingerprint are the tuple's.
-    """
-
-    __slots__ = ()
 
 
 def _target_piece_sort_key(piece: SourceBoundaryTargetPiece, /) -> tuple[Any, ...]:
@@ -1011,8 +996,19 @@ def _unclassified_id(
     )
 
 
+def has_present_rows(values: tuple[object, ...], /) -> bool:
+    """Whether any row of a validated association row bank is not ``None``.
+
+    Row banks hold host metadata (tuples, Fractions, roles, pieces), none of
+    which compares equal to ``None``; the count runs at C level.
+    """
+    return values.count(None) != len(values)
+
+
 def _present_rows(values: tuple[object, ...], /) -> np.ndarray:
     """Per-row ``value is not None``."""
+    if not has_present_rows(values):
+        return np.zeros((len(values),), dtype=np.bool_)
     return np.fromiter(
         map(is_not, values, repeat(None)), dtype=np.bool_, count=len(values)
     )
@@ -1253,11 +1249,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         if targets.ndim != 1 or not np.issubdtype(targets.dtype, np.integer):
             raise TypeError("target_global_ids must be one integer vector.")
         targets = targets.astype(np.int64, copy=False)
-        if (
-            targets.size == 0
-            or np.any(targets < 0)
-            or np.unique(targets).size != targets.size
-        ):
+        if targets.size == 0 or np.any(targets < 0) or has_repeated_values(targets):
             raise ValueError(
                 "Target geometry association IDs must be unique and non-negative."
             )
@@ -1437,7 +1429,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.target_entity_set_id = entity_set
         self.target_global_ids = jnp.asarray(targets)
         # The per-row banks were validated above to hold host metadata only.
-        self.source_entity_ids = _StaticRows(sources)
+        self.source_entity_ids = StaticRows(sources)
         self.residuals = jnp.asarray(distances)
         self.resolved = jnp.asarray(resolved_)
         self.ambiguous = jnp.asarray(ambiguous_)
@@ -1450,14 +1442,14 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         self.exact = bool(exact)
         self.provenance = provenance
         self.parent_association_id = parent
-        self.source_roles = _StaticRows(roles)
-        self.source_occurrence_paths = _StaticRows(occurrences)
-        self.source_region_sides = _StaticRows(region_sides)
-        self.source_parameter_intervals = _StaticRows(parameter_intervals)
-        self.target_parameter_intervals = _StaticRows(target_intervals)
-        self.target_reference_pieces = _StaticRows(target_pieces)
+        self.source_roles = StaticRows(roles)
+        self.source_occurrence_paths = StaticRows(occurrences)
+        self.source_region_sides = StaticRows(region_sides)
+        self.source_parameter_intervals = StaticRows(parameter_intervals)
+        self.target_parameter_intervals = StaticRows(target_intervals)
+        self.target_reference_pieces = StaticRows(target_pieces)
         self.source_boundary_witness_id = source_boundary_witness_id
-        self.source_parameter_points = _StaticRows(parameter_points)
+        self.source_parameter_points = StaticRows(parameter_points)
         self.association_id = canonical_fingerprint(
             {
                 "kind": "geometry-association",
@@ -1492,7 +1484,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                             target_intervals
                         )
                     }
-                    if any(map(is_not, target_intervals, repeat(None)))
+                    if has_present_rows(target_intervals)
                     else {}
                 ),
                 **(
@@ -1593,12 +1585,9 @@ class GeometryAssociation(StrictModule, NonTrainableState):
         ):
             raise ValueError("Geometry association contains undeclared target IDs.")
         dimension = entity_set.intrinsic_dimension
-        if (
-            any(map(is_not, self.target_parameter_intervals, repeat(None)))
-            and dimension != 1
-        ):
+        if has_present_rows(self.target_parameter_intervals) and dimension != 1:
             raise ValueError("Target parameter intervals require mesh-edge targets.")
-        has_pieces = any(map(is_not, self.target_reference_pieces, repeat(None)))
+        has_pieces = has_present_rows(self.target_reference_pieces)
         if has_pieces and dimension != 2:
             raise ValueError("Target reference pieces require mesh-face targets.")
         if (

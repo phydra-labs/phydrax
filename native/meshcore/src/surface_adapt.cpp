@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -48,12 +47,13 @@ inline double norm2(const Point& a) { return dot(a, a); }
 
 // With corners on a surface of principal curvatures k1, k2, a triangle of
 // side L deviates from it by about kappa L^2 / 8, kappa = max(|k|_max,
-// (2/3)(|k1| + |k2|)): the edge midpoints by the normal curvature along the
-// edge times L^2 / 8, the centroid of an equilateral triangle by
-// (|k1| + |k2|) L^2 / 12 (a sphere: k L^2 / 6).
+// (2/3)|k1 + k2|): the edge midpoints by the normal curvature along the edge
+// times L^2 / 8, the centroid of an equilateral triangle by |k1 + k2| L^2 / 12
+// (a sphere: k L^2 / 6). On a saddle the deviation has no interior extremum,
+// so the edges bound it, and (2/3)|k1 + k2| < |k|_max there.
 inline double effective_curvature(double first, double second) {
-  const double a = std::abs(first), b = std::abs(second);
-  return std::max(std::max(a, b), (2.0 / 3.0) * (a + b));
+  return std::max(std::max(std::abs(first), std::abs(second)),
+                  (2.0 / 3.0) * std::abs(first + second));
 }
 
 // Smallest angle of a triangle in degrees (0 for a degenerate one).
@@ -97,6 +97,10 @@ class Adapter {
   // Splits the longest edge that is not kept of every flagged triangle (rows
   // as loaded), then restores angles by Delaunay flips; returns the splits.
   int64_t repair(const std::vector<uint8_t>& refused);
+  // Relocates the corners of every triangle below the minimum angle while
+  // that lifts their stars (as improve_quality, without collapses or
+  // splits), with Delaunay flips; returns the relocations.
+  int64_t relax();
   void store(std::vector<Point>& points, std::vector<Triangle>& triangles) const;
 
  private:
@@ -244,43 +248,21 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
   const size_t n = points.size(), m = triangles.size();
   if (n > static_cast<size_t>(INT32_MAX / 4) || m > static_cast<size_t>(INT32_MAX / 12))
     return PHX_MC_CAPACITY_EXCEEDED;
+  std::vector<int64_t> twins;
+  if (!closed_manifold(triangles, n, &twins)) return PHX_MC_INVALID_INPUT;
   corners_.resize(3 * m);
-  opposite_.assign(3 * m, -1);
+  opposite_.resize(3 * m);
   kept_edges_.assign(3 * m, 0);
   vertex_corner_.assign(n, -1);
-  std::unordered_map<uint64_t, int32_t> directed;
-  directed.reserve(3 * m);
-  for (size_t t = 0; t < m; ++t)
-    for (size_t k = 0; k < 3; ++k) {
-      const int64_t v = triangles[t][k];
-      if (v < 0 || static_cast<size_t>(v) >= n) return PHX_MC_INVALID_INPUT;
-      corners_[3 * t + k] = static_cast<int32_t>(v);
-    }
   for (size_t c = 0; c < 3 * m; ++c) {
-    const uint64_t a = static_cast<uint32_t>(corners_[c]);
-    const uint64_t b = static_cast<uint32_t>(corners_[3 * (c / 3) + (c % 3 + 1) % 3]);
-    if (a == b) return PHX_MC_INVALID_INPUT;
-    if (!directed.emplace((a << 32) | b, static_cast<int32_t>(c)).second) return PHX_MC_INVALID_INPUT;
-    vertex_corner_[a] = static_cast<int32_t>(c);
+    corners_[c] = static_cast<int32_t>(triangles[c / 3][c % 3]);
+    opposite_[c] = static_cast<int32_t>(twins[c]);
+    vertex_corner_[static_cast<size_t>(corners_[c])] = static_cast<int32_t>(c);
   }
-  for (size_t c = 0; c < 3 * m; ++c) {
-    const uint64_t a = static_cast<uint32_t>(corners_[c]);
-    const uint64_t b = static_cast<uint32_t>(corners_[3 * (c / 3) + (c % 3 + 1) % 3]);
-    const auto found = directed.find((b << 32) | a);
-    if (found == directed.end()) return PHX_MC_INVALID_INPUT;
-    opposite_[c] = found->second;
-  }
-  // Every used vertex has one fan (a closed manifold): its ring returns to the
-  // first half-edge after as many steps as it has corners.
-  std::vector<int32_t> corner_count(n, 0);
-  for (const int32_t v : corners_) ++corner_count[static_cast<size_t>(v)];
   positions_ = points;
   normals_.assign(n, Point{0, 0, 0});
   sizes_.assign(n, targets_.edge_length);
   roles_.assign(n, Role::kFree);
-  for (size_t v = 0; v < n; ++v)
-    if (vertex_corner_[v] >= 0 && valence(static_cast<int32_t>(v)) != corner_count[v])
-      return PHX_MC_INVALID_INPUT;
   // Crease edges by the input's own turn.
   for (size_t c = 0; c < 3 * m && targets_.keep_creases; ++c) {
     const auto h = static_cast<int32_t>(c);
@@ -871,6 +853,28 @@ int64_t Adapter::repair(const std::vector<uint8_t>& refused) {
   return splits;
 }
 
+int64_t Adapter::relax() {
+  const double target = targets_.minimum_angle_degrees;
+  const int64_t before = counters_.relocations;
+  for (int sweep = 0; sweep < kQualitySweeps; ++sweep) {
+    flip_delaunay();
+    const int64_t moved = counters_.relocations;
+    for (size_t t = 0; t < corners_.size() / 3; ++t) {
+      if (!alive_triangle(static_cast<int32_t>(t))) continue;
+      const size_t base = 3 * t;
+      for (size_t k = 0; k < 3; ++k) {
+        if (minimum_angle(position(corners_[base]), position(corners_[base + 1]),
+                          position(corners_[base + 2])) >= target)
+          break;
+        const int32_t v = corners_[base + k];
+        if (!relocate(v, ring_centroid(v), true)) relocate(v, equilateral_goal(v), true);
+      }
+    }
+    if (counters_.relocations == moved) break;
+  }
+  return counters_.relocations - before;
+}
+
 void Adapter::run() {
   for (int sweep = 0; sweep < kSizeSweeps; ++sweep) {
     split_long();
@@ -924,6 +928,34 @@ int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
   }
   adapter.run();
   adapter.store(points, triangles);
+  return PHX_MC_OK;
+}
+
+int32_t repair_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                       const SurfaceOracle& oracle, const AdaptTargets& targets,
+                       const std::vector<uint8_t>& refused, int64_t& splits) {
+  splits = 0;
+  AdaptCounters counters;
+  Adapter adapter(oracle, targets, counters);
+  const int32_t status = adapter.load(points, triangles, false);
+  if (status != PHX_MC_OK) return status;
+  splits = adapter.repair(refused);
+  if (splits > 0) adapter.store(points, triangles);
+  return PHX_MC_OK;
+}
+
+int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
+                      const SurfaceOracle& oracle, const AdaptTargets& targets,
+                      int64_t& relocations) {
+  relocations = 0;
+  AdaptCounters counters;
+  Adapter adapter(oracle, targets, counters);
+  const int32_t status = adapter.load(points, triangles, false);
+  if (status != PHX_MC_OK) return status;
+  relocations = adapter.relax();
+  // Flips alone are kept only with relocations, so an unchanged surface
+  // (relocations == 0) needs no new decision.
+  if (relocations > 0) adapter.store(points, triangles);
   return PHX_MC_OK;
 }
 
@@ -995,15 +1027,44 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
     std::sort(next.begin(), next.end(),
               [](const Decided& x, const Decided& y) { return x.key < y.key; });
     decided.swap(next);
-    AdaptCounters edits;
-    Adapter adapter(oracle, targets, edits);
-    const int32_t status = adapter.load(points, triangles, false);
+    int64_t splits = 0;
+    const int32_t status = repair_surface(points, triangles, oracle, targets, refused, splits);
     if (status != PHX_MC_OK) return status;
-    const int64_t splits = adapter.repair(refused);
     counters.repair_splits += splits;
     if (splits == 0) return PHX_MC_UNRESOLVED;
-    adapter.store(points, triangles);
   }
 }
 
 }  // namespace phx::mc::remesh
+
+extern "C" {
+
+PHX_MC_API int32_t phx_mc_surface_result_sizes(const void* result, int64_t* sizes) {
+  if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  const auto& data = *static_cast<const phx::mc::remesh::SurfaceResult*>(result);
+  sizes[0] = static_cast<int64_t>(data.points.size());
+  sizes[1] = static_cast<int64_t>(data.triangles.size());
+  return PHX_MC_OK;
+}
+
+PHX_MC_API int32_t phx_mc_surface_result_arrays(void* result, int64_t vertex_capacity,
+                                                int64_t triangle_capacity, double* vertices,
+                                                int64_t* triangles) {
+  if (result == nullptr || vertices == nullptr || triangles == nullptr)
+    return PHX_MC_INVALID_ARGUMENT;
+  const auto& data = *static_cast<const phx::mc::remesh::SurfaceResult*>(result);
+  if (vertex_capacity < static_cast<int64_t>(data.points.size()) ||
+      triangle_capacity < static_cast<int64_t>(data.triangles.size()))
+    return PHX_MC_CAPACITY_EXCEEDED;
+  for (size_t v = 0; v < data.points.size(); ++v)
+    for (size_t d = 0; d < 3; ++d) vertices[3 * v + d] = data.points[v][d];
+  for (size_t t = 0; t < data.triangles.size(); ++t)
+    for (size_t k = 0; k < 3; ++k) triangles[3 * t + k] = data.triangles[t][k];
+  return PHX_MC_OK;
+}
+
+PHX_MC_API void phx_mc_surface_result_free(void* result) {
+  delete static_cast<phx::mc::remesh::SurfaceResult*>(result);
+}
+
+}  // extern "C"

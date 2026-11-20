@@ -317,12 +317,15 @@ class Expansion {
     }
   }
 
+  // Copies `count` >= 0 components; size_ becomes nonzero only with the copy
+  // that defines its components.
   void assign(const double* values, int count) {
     size_ = 0;
-    reserve(count);
-    if (count > 0) {
-      std::memcpy(data(), values, static_cast<std::size_t>(count) * sizeof(double));
+    if (count <= 0) {
+      return;
     }
+    reserve(count);
+    std::memcpy(data(), values, static_cast<std::size_t>(count) * sizeof(double));
     size_ = count;
   }
 

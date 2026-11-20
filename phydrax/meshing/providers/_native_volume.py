@@ -21,7 +21,8 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
-from ...discretization._topology import _row_order, row_positions
+from ...discretization._cell_mesh import SimplicialConnectivity
+from ...discretization._topology import _row_order, row_positions, sorted_unique_rows
 from ...geometry._affine_plc_boundary import AffinePlcBoundarySource
 from ...geometry._affine_plc_domain import AffinePlcDomain
 from ...geometry._affine_plc_geometry import map_affine_plc_mesh
@@ -778,12 +779,6 @@ def _face_order_sign(
     return -1 if inversions % 2 else 1
 
 
-_TETRAHEDRON_EDGES = np.asarray(
-    [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]], dtype=np.int64
-)
-_TETRAHEDRON_FACES = np.asarray(
-    [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]], dtype=np.int64
-)
 _TRIANGLE_EDGES = np.asarray([[0, 1], [1, 2], [0, 2]], dtype=np.int64)
 
 
@@ -793,6 +788,24 @@ def _rows_of_simplices(table: np.ndarray, query: np.ndarray, /) -> np.ndarray:
         np.sort(np.asarray(table, dtype=np.int64), axis=1),
         np.sort(np.asarray(query, dtype=np.int64), axis=1),
     )
+
+
+def _cell_entity_rows(
+    mesh: CellMesh, cells: np.ndarray, entities: np.ndarray, degree: int, /
+) -> np.ndarray:
+    """Row of ``entities`` of every cell's ``degree`` faces, cell-major, or -1.
+
+    A simplicial connectivity's cell routes are taken once every routed row is
+    checked to be exactly the cell's sorted face; other connectivities search.
+    """
+    local = np.asarray(tuple(combinations(range(4), degree + 1)), dtype=np.int64)
+    faces = np.sort(cells[:, local], axis=-1)
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        routes = np.asarray(connectivity.cell_entities[degree], dtype=np.int64)
+        if routes.shape == faces.shape[:2] and np.array_equal(entities[routes], faces):
+            return routes.reshape((-1,))
+    return _rows_of_simplices(entities, faces.reshape((-1, degree + 1)))
 
 
 def _single_region(rows: np.ndarray, values: np.ndarray, count: int, /) -> np.ndarray:
@@ -998,10 +1011,8 @@ def _source_associations(
     # faces contain it, else the one region of its cells.
     edge_count = connectivity_edges.shape[0]
     edge_region = _single_region(
-        _rows_of_simplices(
-            connectivity_edges, cells[:, _TETRAHEDRON_EDGES].reshape((-1, 2))
-        ),
-        np.repeat(cell_regions, _TETRAHEDRON_EDGES.shape[0]),
+        _cell_entity_rows(mesh, cells, connectivity_edges, 1),
+        np.repeat(cell_regions, 6),
         edge_count,
     )
     boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
@@ -1073,10 +1084,8 @@ def _source_associations(
     # region of its cells.
     face_count = connectivity_faces.shape[0]
     face_region = _single_region(
-        _rows_of_simplices(
-            connectivity_faces, cells[:, _TETRAHEDRON_FACES].reshape((-1, 3))
-        ),
-        np.repeat(cell_regions, _TETRAHEDRON_FACES.shape[0]),
+        _cell_entity_rows(mesh, cells, connectivity_faces, 2),
+        np.repeat(cell_regions, 4),
         face_count,
     )
     boundary_rows = _rows_of_simplices(connectivity_faces, boundary_faces)
@@ -1696,12 +1705,10 @@ def _volume_compliance(
         if selected_faces.size == 0:
             issues.append(f"size_control:{control.control_id}:no_boundary_faces")
             continue
-        edge_rows = {
-            tuple(sorted((int(face[k]), int(face[(k + 1) % 3]))))
-            for face in construction.boundary_faces[selected_faces].tolist()
-            for k in range(3)
-        }
-        edges = np.asarray(sorted(edge_rows), dtype=np.int64)
+        faces = np.asarray(construction.boundary_faces, dtype=np.int64)[selected_faces]
+        edges = sorted_unique_rows(
+            np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
+        )
         lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
         policy = specification.size_compliance
         for statistic in policy.target_statistics:

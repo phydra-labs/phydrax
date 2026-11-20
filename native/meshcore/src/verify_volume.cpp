@@ -302,8 +302,15 @@ class ContactSearch {
     std::nth_element(extents.begin(), middle, extents.end());
     const double size = *middle;
     if (!(size > 0.0) || !std::isfinite(size)) return false;
+    // The grid index of a coordinate, or kAxisCells when its quotient is not
+    // below kAxisCells (or not finite): the quotient is range-checked as a
+    // double, since in-domain extents make it reach about 2^293 and a cast
+    // of an out-of-range value is undefined. Every value is at least the
+    // origin, so the quotient is not negative.
     const auto cell = [&](double value, int axis) {
-      return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
+      const double quotient = std::floor((value - origin[axis]) / size);
+      return quotient < static_cast<double>(kAxisCells) ? static_cast<int64_t>(quotient)
+                                                         : kAxisCells;
     };
     std::vector<std::pair<uint64_t, uint32_t>> entries;
     std::vector<std::size_t> large;
