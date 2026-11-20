@@ -35,6 +35,7 @@ from phydrax._meshcore import (
     clip_reference_tetrahedron_exact,
     implicit_face_proposals,
     IntervalBoxProgram,
+    IntervalBranchProgram,
     mesh_certify,
     mesh_remesh,
     meshcore_available,
@@ -2462,13 +2463,14 @@ def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
     np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
 
 
-def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+def _unit_sphere_box_programs() -> tuple[
+    IntervalBoxProgram, IntervalBoxProgram, IntervalBranchProgram
+]:
     def sphere(x: Array) -> Array:
         return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
-    value = prepare_interval_function(
-        sphere, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(sphere, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
     gradient = prepare_interval_function(
         jax.grad(sphere), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2476,7 +2478,11 @@ def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]
         raise RuntimeError(
             "The unit sphere field must lower to native interval programs."
         )
-    return value.box_program(), gradient.box_program()
+    return (
+        value.box_program(),
+        gradient.box_program(),
+        prepared.native_branches().branch_box_program(),
+    )
 
 
 # A box holding the unit sphere and the lenses below, for the two-way
@@ -2485,7 +2491,7 @@ _CERTIFIED_DOMAIN = np.array([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=np.flo
 
 
 def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
-    value, gradient = _unit_sphere_box_programs()
+    value, gradient, branches = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     assert remeshed.orientation == 1
@@ -2499,7 +2505,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     certificate = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value,
+        branches,
         gradient,
         0.01,
         1,
@@ -2544,7 +2550,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         zero_set_certify(
             lifted,
             remeshed.triangles,
-            value,
+            branches,
             gradient,
             0.01,
             1,
@@ -2558,7 +2564,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     carried = zero_set_certify(
         lifted,
         remeshed.triangles,
-        value,
+        branches,
         gradient,
         0.01,
         1,
@@ -2578,7 +2584,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         zero_set_certify(
             lifted,
             remeshed.triangles,
-            value,
+            branches,
             gradient,
             0.01,
             1,
@@ -2622,11 +2628,11 @@ def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
 
 
 def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
-    value, gradient = _unit_sphere_box_programs()
+    value, gradient, branches = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     controls = (
-        value,
+        branches,
         gradient,
         _CERTIFIED_DOMAIN,
         0.01,
@@ -2713,9 +2719,9 @@ def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
         )
         return jnp.maximum(to_first - 1.0, to_second - 1.0)
 
-    value = prepare_interval_function(
-        lens, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(lens, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
+    branches = prepared.native_branches().branch_box_program()
     gradient = prepare_interval_function(
         jax.grad(lens), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2730,7 +2736,7 @@ def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
     certified = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value.box_program(),
+        branches,
         gradient.box_program(),
         0.02,
         remeshed.orientation,
@@ -2751,7 +2757,7 @@ def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
         zero_set_certify(
             remeshed.vertices,
             remeshed.triangles,
-            value.box_program(),
+            branches,
             gradient.box_program(),
             0.02,
             remeshed.orientation,
@@ -2762,6 +2768,44 @@ def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
             0.2,
             30.0,
             cover_budget=int(certified.counters[9]) // 2,
+        )
+
+
+def test_zero_set_certify_carries_nothing_across_a_jump() -> None:
+    # where(x > 0, 1, -1) has corner values -1 and +1 on every witness box
+    # around the plane x = 0 and a finite (zero) gradient program, but no zero:
+    # its branch evidence reports those boxes discontinuous, so a tetrahedron
+    # around the origin as its own carrier has no triangle accepted from it.
+    def step(x: Array) -> Array:
+        return jnp.where(x[0] > 0.0, 1.0, -1.0)
+
+    prepared = prepare_interval_function(step, 3, batch_capacity=1, execution="native")
+    if prepared.native_program is None:
+        raise RuntimeError("The step field must lower to a native interval program.")
+    gradient = prepare_interval_function(
+        jax.grad(step), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if gradient is None:
+        raise RuntimeError("The step gradient must lower to a native interval program.")
+    vertices = np.array(
+        ((0.5, 0.5, 0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (-0.5, -0.5, 0.5)),
+        dtype=np.float64,
+    )
+    faces = np.array(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64)
+    with pytest.raises(MeshcoreError, match=r"; 0 triangles accepted from the carrier"):
+        zero_set_certify(
+            vertices,
+            faces,
+            prepared.native_branches().branch_box_program(),
+            gradient.box_program(),
+            0.05,
+            1,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.5),
+            _CERTIFIED_DOMAIN,
+            0.3,
+            30.0,
         )
 
 

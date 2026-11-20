@@ -564,6 +564,8 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("triangle_count", _I64),
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("tolerance", _F64),
         ("orientation", _I32),
         ("carrier_vertices", _P),
@@ -4683,6 +4685,19 @@ class IntervalBoxProgram(NamedTuple):
     """Workspace entries (real-power bases) whose lower bound must be >= 0."""
 
 
+class IntervalBranchProgram(NamedTuple):
+    """A one-box native interval program with its branch-evidence events.
+
+    ``events`` (``(rows, 6)`` int64: kind, test, size, a, a_index, boxes; see
+    ``phx_mc_interval_program_branches``) clear the box's ``continuous`` flag
+    where a jump (a select that may switch, a pole, a domain edge) may lie in
+    it; ``program`` is the field lowered together with those events.
+    """
+
+    program: IntervalBoxProgram
+    events: np.ndarray
+
+
 class TetMeshImplicitSource(NamedTuple):
     """Source-bound native interval programs and exterior facet group rows."""
 
@@ -5051,7 +5066,7 @@ class ZeroSetCertificate(NamedTuple):
 def zero_set_certify(
     vertices: object,
     triangles: object,
-    value: IntervalBoxProgram,
+    value: IntervalBranchProgram,
     gradient: IntervalBoxProgram,
     tolerance: float,
     orientation: int,
@@ -5075,10 +5090,13 @@ def zero_set_certify(
     triangle (``zero_set_remesh`` keeps the carrier's triangles around
     creases, where transversality is not decidable) proved by its witness
     box: ``carrier_boxes`` (one ``(2, 3)`` lower/upper box per carrier
-    triangle) must contain the triangle's corners and have two corners where
-    the interval enclosures of ``f`` have strictly opposite signs, so the box
-    holds a zero of ``f``; the triangle is then accepted at the box diagonal,
-    and a box failing either check accepts nothing. Every certified triangle
+    triangle) must contain the triangle's corners, be proved free of jumps
+    by the branch-evidence events of ``value`` (``f`` lowered with them: the
+    same program gives the corner signs and every other proof) and have two
+    corners where the interval enclosures of ``f`` have strictly opposite
+    signs, so the box holds a zero of ``f``; the triangle is then accepted at
+    the box diagonal, and a box failing a check accepts nothing. Every
+    certified triangle
     is also nondegenerate with only legal exact contacts with nearby
     triangles. Refused triangles are repaired: the longest edge of each is
     split at its midpoint projected onto ``{f = 0}`` and only what changed is
@@ -5139,8 +5157,13 @@ def zero_set_certify(
         or not np.all(bounds[0] < bounds[1])
     ):
         raise ValueError("domain must be a finite (2, 3) box with lower < upper.")
-    value_view, value_arrays = _interval_box_program(value, 1, "value")
+    value_view, value_arrays = _interval_box_program(value.program, 1, "value.program")
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
+    events = np.ascontiguousarray(
+        _native_integer_array(value.events, "value.events", np.dtype(np.int64))
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("value.events must have shape (rows, 6).")
     handle = ctypes.c_void_p()
     distances = np.zeros((2,), dtype=np.float64)
     counters = np.zeros((10,), dtype=np.int64)
@@ -5151,6 +5174,8 @@ def zero_set_certify(
         faces.shape[0],
         value_view,
         gradient_view,
+        events.ctypes.data,
+        events.shape[0],
         float(tolerance),
         int(orientation),
         carrier_points.ctypes.data,
@@ -5183,7 +5208,8 @@ def zero_set_certify(
             f"zero_set_certify left triangles refused after {int(counters[5])} rounds "
             f"and {int(counters[4])} repair splits ({int(counters[0])} refusals for "
             f"transversality, {int(counters[1])} for distance, {int(counters[2])} for "
-            f"embedding; {int(counters[6])} tube triangles refused, {cover}).",
+            f"embedding; {int(counters[3])} triangles accepted from the carrier; "
+            f"{int(counters[6])} tube triangles refused, {cover}).",
         )
     _raise_for_call(status, "zero_set_certify")
     out_vertices, out_triangles, carried = _take_surface_result(

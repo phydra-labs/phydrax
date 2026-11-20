@@ -44,6 +44,8 @@ struct Program {
   std::vector<double> parameters{kGamma};
   std::vector<double> lower, upper;
   std::vector<int64_t> outputs;
+  // Branch-evidence event rows (kind, test, size, a, a_index, boxes).
+  std::vector<int64_t> events;
 
   void row(int64_t opcode, int64_t out, int64_t size, int64_t a, int64_t a_index, int64_t b,
            int64_t b_index, int64_t aux) {
@@ -512,9 +514,10 @@ constexpr std::array<double, 6> kDomain{-2.0, -2.0, -2.0, 2.0, 2.0, 2.0};
 
 // phx_mc_zero_set_certify over kDomain with the triangles of `carrier` (if
 // any) witnessed by their bounding boxes widened by `widen` on every side,
-// at `edge` (repair target and tube length) and `budget` boxes per cover
-// run; the certified surface is copied into `certified`, its carried flags
-// into `carried` and the zero set -> surface bound into `reverse` when given.
+// their continuity decided by `value`'s branch events, at `edge` (repair
+// target and tube length) and `budget` boxes per cover run; the certified
+// surface is copied into `certified`, its carried flags into `carried` and
+// the zero set -> surface bound into `reverse` when given.
 int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>& triangles,
                 const Program& value, const Program& gradient, double tolerance,
                 int32_t orientation, double& distance, Failures& failures,
@@ -548,6 +551,8 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
       static_cast<int64_t>(triangles.size() / 3),
       value.view(),
       gradient.view(),
+      value.events.data(),
+      static_cast<int64_t>(value.events.size() / 6),
       tolerance,
       orientation,
       carrier == nullptr ? nullptr : carrier->vertices.data(),
@@ -813,12 +818,16 @@ void certify_refusals() {
   PHX_CHECK(phx_mc_zero_set_certify(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
-// A witness box needs f continuous in it: f = 1 / x has corner values -1 and
-// +1 on [-1, 1]^3 but no zero there (a pole), and its gradient enclosure over
-// the box is not finite, so a tetrahedron around the origin as its own
-// carrier has nothing accepted from it. The same boxes for f = x (a zero at
-// x = 0, finite gradient) do accept carrier triangles.
+// A witness box needs f proved continuous in it by its branch evidence.
+// f = 1 / x (a pole, event: a jump where x meets 0) and f = where(x > 0, 1,
+// -1) (a jump where the comparison is undecided; its gradient program is 0,
+// finite) both have corner values -1 and +1 on [-1, 1]^3 but no zero there,
+// so a tetrahedron around the origin as its own carrier has nothing accepted
+// from it. The same boxes for f = x (no events, a zero at x = 0) do accept
+// carrier triangles.
 void witness_needs_continuity() {
+  constexpr int64_t kCompareRow = 13, kSelectRow = 14, kJump = 1, kMeetsZero = 0,
+                    kUndecided = 3;
   Surface tetrahedron{{0.5, 0.5, 0.5, 0.5, -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, 0.5},
                       {0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2}};
   if (signed_volume(tetrahedron.vertices, tetrahedron.triangles) < 0)
@@ -827,12 +836,22 @@ void witness_needs_continuity() {
   Program pole = seeded({}, 4);
   pole.row(kReciprocal, 3, 1, 0, -1, -1, -1, 0);
   pole.outputs = {3};
+  pole.events = {kJump, kMeetsZero, 1, 0, -1, -1};
   // grad (1 / x) = (0 - 1 / x^2, 0, 0) with the seed 0 at entry 3.
   Program pole_gradient = seeded({0.0}, 7);
   pole_gradient.row(kSquare, 4, 1, 0, -1, -1, -1, 0);
   pole_gradient.row(kReciprocal, 5, 1, 4, -1, -1, -1, 0);
   pole_gradient.row(kSubtract, 6, 1, 3, -1, 5, -1, 0);
   pole_gradient.outputs = {6, 3, 3};
+  // where(x > 0, 1, -1): seeds 0, -1, 1 at 3, 4, 5; x > 0 at 6; select at 7.
+  Program step = seeded({0.0, -1.0, 1.0}, 8);
+  step.row(kCompareRow, 6, 1, 0, -1, 3, -1, 0);
+  step.row(kSelectRow, 7, 1, 6, -1, 4, -1, 1);
+  step.outputs = {7};
+  step.events = {kJump, kUndecided, 1, 6, -1, -1};
+  Program step_gradient = seeded({0.0}, 5);
+  step_gradient.row(kAdd, 4, 1, 3, -1, 3, -1, 0);
+  step_gradient.outputs = {4, 4, 4};
   Program plane = seeded({0.0}, 5);
   plane.row(kSubtract, 4, 1, 0, -1, 3, -1, 0);
   plane.outputs = {4};
@@ -841,15 +860,16 @@ void witness_needs_continuity() {
   plane_gradient.row(kAdd, 5, 1, 3, -1, 4, -1, 0);
   plane_gradient.row(kAdd, 6, 1, 4, -1, 4, -1, 0);
   plane_gradient.outputs = {5, 6, 6};
-  for (const bool continuous : {false, true}) {
+  const std::array<std::pair<const Program*, const Program*>, 3> fields{
+      {{&pole, &pole_gradient}, {&step, &step_gradient}, {&plane, &plane_gradient}}};
+  for (size_t k = 0; k < fields.size(); ++k) {
     double distance = -1;
     Failures failures{};
-    const int32_t status = certify(
-        tetrahedron.vertices, tetrahedron.triangles, continuous ? plane : pole,
-        continuous ? plane_gradient : pole_gradient, 0.05, 1, distance, failures, &tetrahedron,
-        0.5);
+    const int32_t status = certify(tetrahedron.vertices, tetrahedron.triangles, *fields[k].first,
+                                   *fields[k].second, 0.05, 1, distance, failures, &tetrahedron,
+                                   0.5);
     PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
-    PHX_CHECK(continuous ? failures[3] > 0 : failures[3] == 0);
+    PHX_CHECK(k == 2 ? failures[3] > 0 : failures[3] == 0);
   }
 }
 

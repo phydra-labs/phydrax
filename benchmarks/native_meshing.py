@@ -598,21 +598,32 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return ring * ring + x[2] * x[2] - 0.16
 
+    # Per field: f and grad f as one-box programs (construction), and f with
+    # its branch-evidence events (the certificate's value program).
     programs = []
     for label, function in (("sphere", sphere), ("torus", torus)):
-        pair = []
-        for field in (function, jax.grad(function)):
-            program = prepare_interval_function(
-                field, 3, batch_capacity=1, execution="native"
-            ).native_program
-            if program is None:
-                raise RuntimeError(
-                    f"The {label} field and its gradient must lower to native "
-                    "interval programs."
-                )
-            pair.append(program.box_program())
-        programs.append(tuple(pair))
-    (sphere_value, sphere_gradient), (torus_value, torus_gradient) = programs
+        value_prepared = prepare_interval_function(
+            function, 3, batch_capacity=1, execution="native"
+        )
+        gradient_program = prepare_interval_function(
+            jax.grad(function), 3, batch_capacity=1, execution="native"
+        ).native_program
+        if value_prepared.native_program is None or gradient_program is None:
+            raise RuntimeError(
+                f"The {label} field and its gradient must lower to native "
+                "interval programs."
+            )
+        programs.append(
+            (
+                value_prepared.native_program.box_program(),
+                gradient_program.box_program(),
+                value_prepared.native_branches().branch_box_program(),
+            )
+        )
+    (
+        (sphere_value, sphere_gradient, sphere_certified),
+        (torus_value, torus_gradient, torus_certified),
+    ) = programs
     spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
     sphere_rows = (
         ("surface-remesh-sphere-1e3", 5, 1e3),
@@ -628,7 +639,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
         [[-1.25, -1.25, -1.25], [1.25, 1.25, 1.25]], dtype=np.float64
     )
     torus_domain = np.array([[-1.5, -1.5, -0.5], [1.5, 1.5, 0.5]], dtype=np.float64)
-    for name, value, gradient, domain, distance, samples, area, (
+    for name, value, gradient, certified, domain, distance, samples, area, (
         vertices,
         faces,
     ), target in (
@@ -637,6 +648,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 name,
                 sphere_value,
                 sphere_gradient,
+                sphere_certified,
                 sphere_domain,
                 _sphere_distance,
                 _sphere_samples,
@@ -650,6 +662,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
             "surface-remesh-torus",
             torus_value,
             torus_gradient,
+            torus_certified,
             torus_domain,
             _torus_distance,
             _torus_samples,
@@ -671,10 +684,10 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, value=value, gradient=gradient, domain=domain, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                quality=lambda result, certified=certified, gradient=gradient, domain=domain, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
                     _zero_set_quality(
                         result,
-                        value,
+                        certified,
                         gradient,
                         domain,
                         tolerance,
@@ -888,7 +901,7 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
 
 def _zero_set_quality(
     result: object,
-    value: _meshcore.IntervalBoxProgram,
+    value: _meshcore.IntervalBranchProgram,
     gradient: _meshcore.IntervalBoxProgram,
     domain: np.ndarray,
     tolerance: float,

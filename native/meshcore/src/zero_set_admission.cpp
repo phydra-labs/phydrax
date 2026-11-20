@@ -846,26 +846,48 @@ class ZeroSetCertifier final : public TriangleCertifier {
   const ZeroSetBandAdmission& admission_;
 };
 
+// Whether `value` (the very program whose corner signs, proofs and cover the
+// certificate uses) reports f continuous on a box: its branch-evidence
+// events (value_events over its own workspace; phx_mc_interval_program_branches,
+// one box) leave the box's `continuous` flag set. `status` receives a
+// refusal of the program or its events.
+bool continuous_on(const phx_mc_zero_set_certify_request& request, const Point& lower,
+                   const Point& upper, int32_t& status) {
+  const phx_mc_interval_box_program& program = request.value;
+  const auto width = static_cast<size_t>(program.workspace_size);
+  std::vector<double> low(program.workspace_lower, program.workspace_lower + width);
+  std::vector<double> high(program.workspace_upper, program.workspace_upper + width);
+  for (size_t d = 0; d < 3; ++d) {
+    low[d] = lower[d];
+    high[d] = upper[d];
+  }
+  uint8_t smooth = 0, continuous = 0;
+  status = phx_mc_interval_program_branches(
+      program.instructions, program.instruction_count, program.indices, program.index_count,
+      program.parameters, program.parameter_count, low.data(), high.data(),
+      program.workspace_size, request.value_events, request.value_event_count, 1, &smooth,
+      &continuous);
+  return status == PHX_MC_OK && continuous == 1;
+}
+
 // The distance bound a witness box proves for a carrier triangle (see
 // phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
-// f's gradient enclosure over the box is finite (so f is Lipschitz there and
-// continuous on every segment in it), and two box corners have value
-// enclosures of strictly opposite sign, so a zero of f lies on the segment
-// between them, in the box; every point of the triangle is then within the
-// box diagonal (rounded up) of it. +inf when a check fails.
-double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
-                     const Point& upper, const IntervalBoxProgram& value,
-                     const IntervalBoxProgram& gradient) {
+// f is continuous on the box by its branch evidence (continuous_on), and two
+// box corners have value enclosures of strictly opposite sign, so a zero of
+// f lies on the segment between them, in the box; every point of the
+// triangle is then within the box diagonal (rounded up) of it. +inf when a
+// check fails; `status` receives a refusal of the branch program.
+double witness_bound(const phx_mc_zero_set_certify_request& request, const Point& a,
+                     const Point& b, const Point& c, const Point& lower, const Point& upper,
+                     const IntervalBoxProgram& value, int32_t& status) {
+  status = PHX_MC_OK;
   for (int d = 0; d < 3; ++d) {
     if (!std::isfinite(lower[d]) || !std::isfinite(upper[d]) || !(lower[d] <= upper[d]))
       return kInfinity;
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
-  IntervalVector slope{};
-  if (!gradient.evaluate(lower, upper, slope.data()) || !finite(slope[0]) || !finite(slope[1]) ||
-      !finite(slope[2]))
-    return kInfinity;
+  if (!continuous_on(request, lower, upper, status)) return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};
@@ -994,6 +1016,8 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
       (request.carrier_triangle_count > 0 && request.carrier_triangles == nullptr) ||
       (request.carrier_triangle_count > 0 && request.carrier_boxes == nullptr) ||
       !phx::mc::addressable(request.carrier_triangle_count, 6, sizeof(double)) ||
+      request.value_event_count < 0 ||
+      (request.value_event_count > 0 && request.value_events == nullptr) ||
       request.domain == nullptr || !(request.edge_length > 0) ||
       !std::isfinite(request.edge_length) || !(request.minimum_angle_degrees > 0) ||
       !(request.minimum_angle_degrees < 60) || request.cover_budget < 1)
@@ -1054,8 +1078,10 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
     const Point& b = carrier_points[static_cast<size_t>(carrier_triangles[t][1])];
     const Point& c = carrier_points[static_cast<size_t>(carrier_triangles[t][2])];
     const double* box = request.carrier_boxes + 6 * t;
-    const double bound = witness_bound(a, b, c, {box[0], box[1], box[2]},
-                                       {box[3], box[4], box[5]}, value, gradient);
+    int32_t refusal = PHX_MC_OK;
+    const double bound = witness_bound(request, a, b, c, {box[0], box[1], box[2]},
+                                       {box[3], box[4], box[5]}, value, refusal);
+    if (refusal != PHX_MC_OK) return refusal;
     if (!(bound < kInfinity)) continue;
     carrier.entries.push_back({triangle_key(a, b, c), bound});
     reach = std::max(reach, bound);

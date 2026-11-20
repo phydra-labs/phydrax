@@ -2882,10 +2882,7 @@ class PreparedIntervalFunction:
         jaxpr = self.closed_jaxpr.jaxpr
         native = None
         if self.native_program is not None and self.execution != "batched":
-            native = self.native_branch_program
-            if native is None:
-                native = self._lower_native(axes)
-                object.__setattr__(self, "native_branch_program", native)
+            native = self.native_branches()
         for start in range(0, count, self.batch_capacity):
             stop = min(start + self.batch_capacity, count)
             active = stop - start
@@ -2913,6 +2910,18 @@ class PreparedIntervalFunction:
             smooth[start:stop] = chunk_smooth[:active]
             continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
+
+    def native_branches(self, /) -> NativeIntervalProgram:
+        """The native program with branch-evidence events, lowered on first query."""
+        if self.native_program is None or self.execution == "batched":
+            raise IntervalExtensionError(
+                "native branch evidence requires a native, non-batched program."
+            )
+        native = self.native_branch_program
+        if native is None:
+            native = self._lower_native(self._branch_batch_axes())
+            object.__setattr__(self, "native_branch_program", native)
+        return native
 
     def _branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
         if not self.branch_axes:

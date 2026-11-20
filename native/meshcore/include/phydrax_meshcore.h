@@ -1985,11 +1985,14 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * surface remeshed; a NULL carrier with zero counts accepts none) whose
  * witness box proves it: carrier_boxes holds, per carrier triangle, a box
  * (lower xyz, upper xyz) that contains the triangle's three corners (exact
- * comparisons), over which the gradient enclosure is finite, and that has
- * two corners at which the interval enclosures of f have strictly opposite
- * signs, so the box holds a zero of f on the segment between them; such a
- * triangle is accepted at the box diagonal (rounded up). A carrier triangle
- * whose box fails a check is never accepted from the carrier.
+ * comparisons), on which f is proved continuous (`value`'s branch-evidence
+ * events, value_events rows over value's own workspace, leave the box
+ * `continuous`; phx_mc_interval_program_branches), and that has two corners
+ * at which the interval enclosures of f have strictly opposite signs, so the
+ * box holds a zero of f on the segment between them; such a triangle is
+ * accepted at the box diagonal (rounded up). A carrier triangle whose box
+ * fails a check is never accepted from the carrier; invalid events are
+ * refused (PHX_MC_INVALID_INPUT) when a carrier triangle is decided.
  * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
@@ -2000,11 +2003,11 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
- * `value` has one output, `gradient` three; the caller asserts that over any
- * box where the gradient enclosure is finite, f is Lipschitz with its
- * (Clarke) gradient in that enclosure: the entry does not check branch
- * evidence, so a select whose branches jump, with a finite gradient program,
- * breaks the proofs here. Once every triangle is certified, the zero set ->
+ * `value` has one output, `gradient` three; for the triangle and tube proofs
+ * the caller asserts that over any box where the gradient enclosure is
+ * finite, f is Lipschitz with its (Clarke) gradient in that enclosure (those
+ * proofs do not consult branch evidence). Once every triangle is certified,
+ * the zero set ->
  * surface direction is decided over the domain box (lower xyz, upper xyz;
  * finite, lower < upper) through the possible-zero cover of the domain
  * (box_tree.hpp): every zero of f in the domain lies in a leaf, each kept box
@@ -2043,6 +2046,8 @@ typedef struct phx_mc_zero_set_certify_request {
   int64_t triangle_count;
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   double tolerance;
   int32_t orientation;
   const double* carrier_vertices;

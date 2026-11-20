@@ -1831,21 +1831,25 @@ def implicit_layer_wall(
             return kernel.boundary_field(state, point[None, :])[0]
 
         try:
-            value_program, gradient_program = (
+            value_prepared, gradient_prepared = (
                 prepare_interval_function(
                     function, 3, batch_capacity=1, execution="native"
-                ).native_program
+                )
                 for function in (value, jax.grad(value))
             )
+            # f with its branch-evidence events: the one program every proof,
+            # witness corner sign and witness continuity decision reads.
+            value_branches = value_prepared.native_branches().branch_box_program()
+            gradient_program = gradient_prepared.native_program
         except IntervalExtensionError as error:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
                 "The implicit layer wall remesh requires a native interval lowering "
-                f"of the field and its gradient: {error}",
+                f"of the field, its gradient and its branch evidence: {error}",
                 provider_code="native_layer_implicit_wall",
                 stage="source_inspection",
             ) from error
-        if value_program is None or gradient_program is None:
+        if gradient_program is None:
             raise RuntimeError("Native interval preparation returned no native program.")
         if edge_length is None:
             edges = np.unique(
@@ -1863,14 +1867,11 @@ def implicit_layer_wall(
                 )
             )
         try:
-            value_box, gradient_box = (
-                value_program.box_program(),
-                gradient_program.box_program(),
-            )
+            gradient_box = gradient_program.box_program()
             remeshed = zero_set_remesh(
                 vertices,
                 faces,
-                value_box,
+                value_branches.program,
                 scaffold_distance,
                 scaffold_distance,
                 edge_length,
@@ -1885,7 +1886,7 @@ def implicit_layer_wall(
             certified = zero_set_certify(
                 remeshed.vertices,
                 remeshed.triangles,
-                value_box,
+                value_branches,
                 gradient_box,
                 scaffold_distance,
                 remeshed.orientation,
