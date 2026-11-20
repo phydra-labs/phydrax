@@ -113,6 +113,8 @@ def _rows_from_stable_ids(
 def _target_support(
     specification: VolumeMeshingSpec,
     /,
+    *,
+    maximum_geometry_order: int = 1,
 ) -> list[str]:
     target = specification.target
     families = target.cell_families
@@ -122,11 +124,16 @@ def _target_support(
     if (
         target.topological_dimension != 3
         or target.ambient_dimension != 3
-        or target.geometry_order != 1
+        or not 1 <= target.geometry_order <= maximum_geometry_order
         or families.allowed_transitions
         or families.allow_mixed
     ):
-        issues.append("affine tetrahedra in ambient dimension three")
+        issues.append(
+            "affine tetrahedra in ambient dimension three"
+            if maximum_geometry_order == 1
+            else f"tetrahedra of geometry order at most {maximum_geometry_order} "
+            "in ambient dimension three"
+        )
     if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
         issues.append("the simplex volume-fill strategy")
     return issues

@@ -1,0 +1,180 @@
+"""Native CAD solid route: one ``cad_mesh_solid`` call to an unproved candidate.
+
+``prove=False`` CAD volume plans construct here: curves, faces and the
+fixed-boundary volume (geometry order 1 or 2) come from one native call and
+become the candidate mesh as exported. ``prove=True`` still runs the Python
+construction route and its certification.
+
+The native stage already adopts its PLC recovery as a tetrahedral mesh,
+refines and improves it, so the exported final arrays become a
+:class:`CellMesh` directly (as the PLC route's ``_make_construction`` does)
+rather than through ``TetMesh3D.from_recovery``.
+
+The candidate reports no achieved source deviation: the native construction
+carries no deviation bound, and none is invented.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from ..._meshcore import cad_mesh_solid, CadSolidResult, MeshcoreStatus
+from ...discretization._cell_geometry import CellGeometrySpec
+from ...discretization._cell_mesh import CellMesh
+from ...discretization._reference_cell import reference_cell_topology
+from ...discretization.fem._reference import lagrange_element
+from ...geometry._domain_boundary import MeshingDomainBoundarySource
+from .._certification_schedule import MeshCertificationSchedule
+from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
+from .._result import MeshingComplianceReport
+from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
+from ._native_surface import _PreparedNativeSurface
+
+
+if TYPE_CHECKING:
+    from ._native import _PreparedDirectBRepCadVolume
+
+
+# Native cell edge order (phx_mc_cad_quadratic_nodes): 01 02 03 12 13 23.
+_NATIVE_EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+_BLOCK = "native-cad-tetrahedra"
+
+
+def cad_solid_support_issues(
+    prepared: _PreparedDirectBRepCadVolume, /
+) -> tuple[str, ...]:
+    """Why a prepared CAD volume cannot take the native unproved route."""
+    issues: list[str] = []
+    if prepared.specification.layer_controls:
+        issues.append("layer controls take the layer/core route")
+    boundary = prepared.boundary_preparation
+    if not isinstance(boundary, _PreparedNativeSurface) or boundary.selected_patches != (
+        tuple(range(len(prepared.domain.patches)))
+    ):
+        issues.append("the boundary preparation does not size every source face")
+    issues.extend(cad_bundle_support_issues(prepared.domain))
+    return tuple(issues)
+
+
+def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometrySpec:
+    """P2 map of the native edge nodes: vertex DOFs name points, edge DOFs nodes."""
+    volume = solid.volume
+    element = lagrange_element(mesh.blocks[0].cell_kind, 2)
+    vertices = np.asarray(
+        reference_cell_topology(mesh.blocks[0].cell_kind).vertices, dtype=np.float64
+    )
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
+    point_count = volume.points.shape[0]
+    cells = np.asarray(volume.tetrahedra, dtype=np.int64)
+    cell_edges = np.asarray(volume.cell_edges, dtype=np.int64)
+    route = np.empty((cells.shape[0], nodes.shape[0]), dtype=np.int32)
+    for dof, node in enumerate(nodes):
+        corner = np.flatnonzero(np.all(vertices == node, axis=1))
+        if corner.size:
+            route[:, dof] = cells[:, int(corner[0])]
+            continue
+        slot = next(
+            row
+            for row, (a, b) in enumerate(_NATIVE_EDGES)
+            if np.array_equal(0.5 * (vertices[a] + vertices[b]), node)
+        )
+        route[:, dof] = point_count + cell_edges[:, slot]
+    coordinates = np.concatenate(
+        (np.asarray(volume.points, dtype=np.float64), volume.nodes), axis=0
+    )
+    return CellGeometrySpec({_BLOCK: element}, {_BLOCK: route}, coordinates)
+
+
+def execute_cad_solid(
+    prepared: _PreparedDirectBRepCadVolume, /
+) -> NativeMeshConstruction:
+    """Construct the CAD solid natively; the result carries no proof.
+
+    Face sizes are the boundary preparation's per-face sizes, the source
+    tolerance is the request's ``maximum_deviation`` on every face and curve,
+    and the volume targets are the route's volume schedule. A native refusal
+    (UNRESOLVED without cells) raises; unmet quality targets are compliance
+    issues.
+    """
+    domain = prepared.domain
+    specification = prepared.specification
+    schedule = prepared.options.volume_schedule
+    deviation = specification.maximum_deviation
+    boundary = prepared.boundary_preparation
+    if schedule is None or deviation is None or cad_solid_support_issues(prepared):
+        raise ValueError("The prepared CAD volume has no native unproved route.")
+    assert isinstance(boundary, _PreparedNativeSurface)
+    domain.require_current(domain.source_id, domain.source_revision)
+    sizes = np.asarray(boundary.size_values, dtype=np.float64)
+    model = cad_geometry_bundle(domain).model
+    order = specification.target.geometry_order
+    solid = cad_mesh_solid(
+        model,
+        sizes,
+        np.full(sizes.shape, deviation, dtype=np.float64),
+        np.full((model.curve_nodes.size,), deviation, dtype=np.float64),
+        radius_edge_bound=(
+            np.inf if schedule.radius_edge_bound is None else schedule.radius_edge_bound
+        ),
+        min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+        min_relative_determinant=schedule.minimum_relative_determinant,
+        geometry_order=order,
+    )
+    volume = solid.volume
+    stats = volume.stats[0]
+    if volume.tetrahedra.shape[0] == 0:
+        raise ValueError(
+            "Native CAD volume recovery refused the surface "
+            f"(status {int(stats['recovery_status'])}, "
+            f"reason {int(stats['recovery_reason'])})."
+        )
+    mesh = CellMesh.from_simplices(
+        np.asarray(volume.points, dtype=np.float64),
+        np.asarray(volume.tetrahedra, dtype=np.int64),
+        dimension=3,
+        block_name=_BLOCK,
+        numeric_version=domain.source_revision,
+    )
+    geometry = (
+        CellGeometrySpec.affine(mesh) if order == 1 else _quadratic_geometry(mesh, solid)
+    )
+    issues: list[str] = []
+    if solid.status is MeshcoreStatus.UNRESOLVED:
+        issues.append(f"native_unmet_quality_cells:{int(stats['unmet_cells'])}")
+    requested: list[tuple[str, float]] = [
+        ("maximum_deviation", float(deviation)),
+        ("minimum_dihedral_degrees", float(schedule.minimum_dihedral_degrees)),
+    ]
+    if schedule.radius_edge_bound is not None:
+        requested.append(("radius_edge_bound", float(schedule.radius_edge_bound)))
+    compliance = MeshingComplianceReport(
+        specification.specification_id,
+        issues=tuple(issues),
+        requested=tuple(requested),
+        achieved=(("unmet_quality_cells", float(stats["unmet_cells"])),),
+    )
+    certification = NativeCertificationRequest(
+        MeshCertificationSchedule("volume_cad"),
+        domain.source_id,
+        domain.source_revision,
+        domain=domain,
+        cell_regions=np.asarray(volume.tetrahedron_regions, dtype=np.int64),
+        fidelity_source=MeshingDomainBoundarySource(
+            domain, tuple(range(len(domain.patches)))
+        ),
+        fidelity_tolerance=float(deviation),
+        protected_features=specification.protected_features,
+        feature_source=domain,
+    )
+    return NativeMeshConstruction(
+        mesh,
+        prepared.coordinate_contract,
+        compliance,
+        certification,
+        geometry=geometry,
+    )
+
+
+__all__ = ["cad_solid_support_issues", "execute_cad_solid"]

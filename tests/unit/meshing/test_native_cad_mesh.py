@@ -540,3 +540,125 @@ def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
     np.testing.assert_array_equal(again.volume.points, volume.points)
     np.testing.assert_array_equal(again.volume.tetrahedra, cells)
     np.testing.assert_array_equal(again.volume.nodes, volume.nodes)
+
+
+def _cad_volume_plan(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    order: int,
+    /,
+    *,
+    radius_edge: float = 2.0,
+    dihedral: float = 15.5,
+) -> phx.meshing.NativeMeshingPlan:
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(
+            3, 3, CellFamilyPolicy(required=("tetrahedron",)), geometry_order=order
+        ),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, size),),
+        maximum_deviation=0.05,
+    )
+    return phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=radius_edge, minimum_dihedral_degrees=dihedral
+            ),
+        )
+    ).plan(model, specification)
+
+
+def _sphere_model() -> phx.geometry.brep.BRepModel:
+    return phx.geometry.brep.brep_sphere(
+        0.5,
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="native-cad-route-sphere",
+    )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+@pytest.mark.parametrize(
+    ("name", "size", "radius"),
+    [("quadric", 0.3, None), ("sphere", 0.2, 0.5)],
+)
+def test_unproved_cad_solid_takes_the_native_route(
+    name: str, size: float, radius: float | None, order: int
+) -> None:
+    from phydrax.meshing import CellMeshingCandidate
+
+    model = _quadric_model() if name == "quadric" else _sphere_model()
+    candidate = _cad_volume_plan(model, size, order).execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.route == "cad_tetrahedral"
+    mesh = candidate.mesh
+    assert mesh.topological_dimension == 3 and len(mesh.blocks) == 1
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    corners = points[cells]
+    assert np.all(np.linalg.det(corners[:, 1:] - corners[:, :1]) > 0.0)
+    # The boundary is closed: every boundary face occurs once.
+    faces = np.sort(
+        np.concatenate(
+            [
+                cells[:, [1, 2, 3]],
+                cells[:, [0, 2, 3]],
+                cells[:, [0, 1, 3]],
+                cells[:, [0, 1, 2]],
+            ]
+        ),
+        axis=1,
+    )
+    unique, counts = np.unique(faces, axis=0, return_counts=True)
+    assert set(counts.tolist()) == {1, 2}
+    boundary = np.unique(unique[counts == 1])
+    if radius is not None:
+        np.testing.assert_allclose(
+            np.linalg.norm(points[boundary], axis=1), radius, atol=1e-12
+        )
+    # Volume of the native mesh is the solid's within its deviation.
+    volume = float(np.sum(np.linalg.det(corners[:, 1:] - corners[:, :1])) / 6.0)
+    expected = 4.0 / 3.0 * np.pi * radius**3 if radius is not None else None
+    if expected is not None:
+        assert 0.9 * expected < volume < expected
+    geometry = candidate.geometry
+    assert geometry.elements[0].local_dof_count == (4 if order == 1 else 10)
+    report = candidate._construction.compliance
+    assert "maximum_deviation" not in dict(report.achieved)
+
+
+def test_proved_cad_solid_keeps_the_python_route() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+    from phydrax.meshing._result import CellMeshingResult
+
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    assert isinstance(result, CellMeshingResult)
+    assert result.certification is not None and result.certification.passed
+    witness = result.certification.inputs.fidelity_witness
+    # The Python construction's CAD ancestry, absent from the native route.
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert witness.cad_plc is not None
+    assert result.mesh.blocks[0].name != "native-cad-tetrahedra"
+
+
+def test_proved_quadratic_cad_solid_is_refused() -> None:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
+    with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
+        plan.execute()
