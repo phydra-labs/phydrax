@@ -349,7 +349,7 @@
 
 ### Changed
 - Fixed-boundary tetrahedral refinement with a size field (CAD volumes,
-  surface to tetrahedra) first fills the interior with the body-centred cubic
+  surface to tetrahedra) first fills the interior with the body-centered cubic
   lattice whose cells meet the circumradius bound (cube edge 4 * 0.98 * h /
   sqrt(5), turned off the axes, half a spacing clear of the boundary, only
   where the field is within 2 % of its minimum), then runs circumcenter
