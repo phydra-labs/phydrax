@@ -54,6 +54,8 @@ set(PHX_MC_SOURCES
   src/metric_carrier.cpp
   src/metric_collapse.cpp
   src/metric_source_capi.cpp
+  src/bvh_query.cpp
+  src/bvh_query_capi.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
@@ -266,6 +268,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_exact_kernels)
+  phx_mc_add_test(test_bvh_query)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)
