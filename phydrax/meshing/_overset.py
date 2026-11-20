@@ -4810,6 +4810,15 @@ def _native_assembly_supported(
             for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
         ):
             return False
+    # The native banks carry no measures: every cell must already be proved
+    # valid (positive orientation) by the carrier's audit, not skipped or
+    # dispositioned by policy.
+    for part in parts:
+        if not _cell_result(part).audit.validity.all_certified:
+            raise ValueError(
+                "Overset mapped cells require positive finite physical measures: "
+                f"part {part.name!r} lacks certified validity for every cell."
+            )
     return True
 
 
