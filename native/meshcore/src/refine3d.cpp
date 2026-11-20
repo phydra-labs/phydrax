@@ -596,28 +596,26 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   }
   for (double& size : sizes) size = std::sqrt(size);
 
-  // Features by corner slots (-1 past the last corner): the live vertices,
-  // the planes, the distinct lines.
+  // Features by corner slots (-1 past the last corner): the planes, then the
+  // points and lines no plane dominates. A plane's distance from v is at most
+  // that of each of its corners and edges, so a feature on a plane not
+  // incident to v never lowers lambda(v): a facet edge is dropped (the
+  // facets on it that contain v hold it as v's opposite edge, measured
+  // below), and so is a vertex whose facets share no vertex but itself (for
+  // every v some facet at it excludes v). Points off every facet and the
+  // segments that are no facet edge stay.
   std::vector<std::array<std::int32_t, 3>> features;
-  std::vector<std::uint64_t> lines;
-  lines.reserve(segments.size() + 3 * facets.size());
+  std::vector<std::uint64_t> facet_lines;
+  facet_lines.reserve(3 * facets.size());
   const auto line_key = [](std::int32_t a, std::int32_t b) {
     const auto low = static_cast<std::uint32_t>(std::min(a, b));
     const auto high = static_cast<std::uint32_t>(std::max(a, b));
     return (static_cast<std::uint64_t>(low) << 32) | high;
   };
-  for (const TetSnapshotSegment& segment : segments) {
-    const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
-    const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
-    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
-    lines.push_back(line_key(a, b));
-  }
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    if (mesh.live_vertex(static_cast<std::int32_t>(slot))) {
-      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
-    }
-  }
-  const std::size_t plane_begin = features.size();
+  // Per slot, the two vertices every facet at it might still share with it
+  // (-1: none; -2: no facet yet).
+  std::vector<std::array<std::int32_t, 2>> shared(slot_count, {-2, -2});
+  features.reserve(facets.size());
   for (const TetSnapshotFacet& facet : facets) {
     std::array<std::int32_t, 3> slots{};
     for (std::size_t corner = 0; corner < 3; ++corner) {
@@ -626,30 +624,42 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     }
     features.push_back(slots);
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      lines.push_back(line_key(slots[corner], slots[(corner + 1) % 3]));
-    }
-  }
-  const std::size_t plane_end = features.size();
-  // The distinct lines in key order: grouped by lower slot (a counting sort),
-  // each group's higher slots sorted and deduplicated.
-  {
-    std::vector<std::uint32_t> starts(slot_count + 2, 0U);
-    for (std::uint64_t key : lines) ++starts[static_cast<std::size_t>(key >> 32) + 2];
-    std::partial_sum(starts.begin(), starts.end(), starts.begin());
-    std::vector<std::int32_t> highs(lines.size());
-    for (std::uint64_t key : lines) {
-      highs[starts[static_cast<std::size_t>(key >> 32) + 1]++] =
-          static_cast<std::int32_t>(key & 0xffffffffU);
-    }
-    for (std::size_t low = 0; low < slot_count; ++low) {
-      const auto begin = highs.begin() + starts[low];
-      const auto end = highs.begin() + starts[low + 1];
-      std::sort(begin, end);
-      for (auto high = begin; high != end; ++high) {
-        if (high != begin && *high == *(high - 1)) continue;
-        features.push_back({static_cast<std::int32_t>(low), *high, -1});
+      const std::int32_t first = slots[(corner + 1) % 3];
+      const std::int32_t second = slots[(corner + 2) % 3];
+      facet_lines.push_back(line_key(first, second));
+      auto& common = shared[static_cast<std::size_t>(slots[corner])];
+      if (common[0] == -2) {
+        common = {first, second};
+        continue;
+      }
+      for (std::int32_t& vertex : common) {
+        if (vertex != first && vertex != second) vertex = -1;
       }
     }
+  }
+  const std::size_t plane_begin = 0;
+  const std::size_t plane_end = features.size();
+  for (std::size_t slot = 0; slot < slot_count; ++slot) {
+    if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+    if (shared[slot][0] == -2 || shared[slot][0] >= 0 || shared[slot][1] >= 0) {
+      features.push_back({static_cast<std::int32_t>(slot), -1, -1});
+    }
+  }
+  std::sort(facet_lines.begin(), facet_lines.end());
+  std::vector<std::uint64_t> lines;
+  lines.reserve(segments.size());
+  for (const TetSnapshotSegment& segment : segments) {
+    const std::int32_t a = mesh.vertex_slot(segment.vertices[0]);
+    const std::int32_t b = mesh.vertex_slot(segment.vertices[1]);
+    if (!mesh.live_vertex(a) || !mesh.live_vertex(b)) return false;
+    const std::uint64_t key = line_key(a, b);
+    if (!std::binary_search(facet_lines.begin(), facet_lines.end(), key)) lines.push_back(key);
+  }
+  std::sort(lines.begin(), lines.end());
+  lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+  for (std::uint64_t key : lines) {
+    features.push_back({static_cast<std::int32_t>(key >> 32),
+                        static_cast<std::int32_t>(key & 0xffffffffU), -1});
   }
 
   // Cells of 1.5 median shortest incident edges (measured best on the ledger
@@ -902,15 +912,16 @@ void assign_hilbert_keys(std::vector<Item>& items,
   }
 }
 
-// Sorts `items` by (key, cell_id), keys below 2^(3 kHilbertBits): a stable
-// radix sort on the key, one kHilbertBits digit per pass, then each run of
-// equal keys (a few items in one grid cell) by cell ID.
+// Sorts `items` by (key, cell_id), keys below 2^(4 kHilbertBits) (a BRIO
+// round above a Hilbert index): a stable radix sort on the key, one
+// kHilbertBits digit per pass, then each run of equal keys (a few items in
+// one grid cell) by cell ID.
 template <class Item>
 void sort_by_key_then_id(std::vector<Item>& items, std::vector<Item>& scratch) {
   constexpr std::size_t kBuckets = std::size_t{1} << kHilbertBits;
   std::vector<std::size_t> starts(kBuckets + 1);
   scratch.resize(items.size());
-  for (int pass = 0; pass < 3; ++pass) {
+  for (int pass = 0; pass < 4; ++pass) {
     const int shift = kHilbertBits * pass;
     std::fill(starts.begin(), starts.end(), 0);
     for (const Item& item : items) ++starts[((item.key >> shift) & kHilbertMax) + 1];
@@ -2727,9 +2738,13 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // violating cell of a round proposes its circumcenter; proposals are taken
   // along the Hilbert curve, each walking from its own cell while that is
   // still live, so walks stay short and consecutive cavities share cache
-  // lines. The first round is sorted by circumcenter; the cells an insertion
-  // creates are the next round's candidates, already in curve order as their
-  // insertions were. Bowyer-Watson insertion keeps the constrained Delaunay
+  // lines. The first round is taken in BRIO rounds (by cell ID) along the
+  // curve of circumcenters: its cells are the recovered mesh's, whose wide
+  // circumspheres give each insertion a large cavity, and spreading the
+  // early insertions keeps later ones from re-cutting the cones of their
+  // curve neighbors. The cells an insertion creates are the next round's
+  // candidates, already in curve order as their insertions were.
+  // Bowyer-Watson insertion keeps the constrained Delaunay
   // property where the cavity is Delaunay, so interior insertions are not
   // followed by flips. A cell left unchanged keeps its cause and is not
   // proposed again; the round count is capped (no cap is reached on the
@@ -3130,6 +3145,11 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     // taken along the curve, created their cells.
     if (pass == 0) {
       assign_hilbert_keys(proposals, std::span<const std::array<std::uint32_t, 3>>(proposal_grids));
+      const int brio_rounds = brio_round_count(proposals.size());
+      for (Proposal& proposal : proposals) {
+        const auto brio = brio_round(static_cast<std::int32_t>(proposal.cell_id), brio_rounds);
+        proposal.key |= static_cast<std::uint64_t>(brio) << (3 * kHilbertBits);
+      }
       sort_by_key_then_id(proposals, sorted_scratch);
     }
     for (Proposal& proposal : proposals) {
