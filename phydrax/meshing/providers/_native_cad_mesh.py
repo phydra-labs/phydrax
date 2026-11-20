@@ -26,6 +26,7 @@ from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._reference import lagrange_element
 from .._certification_schedule import MeshCertificationSchedule
+from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
@@ -130,10 +131,14 @@ def execute_cad_solid(
     volume = solid.volume
     stats = volume.stats[0]
     if volume.tetrahedra.shape[0] == 0:
-        raise ValueError(
-            "Native CAD volume recovery refused the surface "
-            f"(status {int(stats['recovery_status'])}, "
-            f"reason {int(stats['recovery_reason'])})."
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "Native CAD volume recovery refused the surface after its boundary "
+            f"split (status {solid.status.name}, recovery status "
+            f"{int(stats['recovery_status'])}, reason "
+            f"{int(stats['recovery_reason'])}).",
+            provider_code="native_cad_volume_unresolved",
+            stage="volume_meshing",
         )
     mesh = CellMesh.from_simplices(
         np.asarray(volume.points, dtype=np.float64),

@@ -682,19 +682,67 @@ def test_native_cad_candidate_prove_is_refused(order: int) -> None:
     assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
 
 
-def test_cad_volume_proof_preparation_is_lazy() -> None:
-    # Planning and prove=False never prepare the trim cover or chart roots;
-    # the first proved execution prepares them once.
-    from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
+def test_invalid_trim_cad_solid_is_refused_at_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A p-curve without a chart enclosure is invalid source for every proof
+    # level: planning refuses it before any construction.
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.meshing._contracts import MeshingFailure
 
+    def no_enclosure(*_: object) -> np.ndarray:
+        raise ValueError("p-curve enclosure diverges")
+
+    monkeypatch.setattr(SourcePreparation, "curve_box", no_enclosure)
+    with pytest.raises(MeshingFailure, match="requires a continuous p-curve enclosure"):
+        _cad_volume_plan(_sphere_model(), 0.3, 1)
+
+
+def test_incomplete_trim_cover_is_refused_at_proof_not_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Trim cover coverage is proof preparation: the plan and the unproved
+    # native candidate do not consume it; the proved execution refuses.
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import MeshingFailure
+
+    monkeypatch.setattr(
+        MeshingDomainBoundarySource,
+        "boundary_chart_cover",
+        lambda *_, **__: SimpleNamespace(complete=False),
+    )
     plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    prepared = plan.prepared
-    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
+    with pytest.raises(
+        MeshingFailure,
+        match="does not provide complete selected-patch coverage",
+    ):
+        plan.execute()
+
+
+def test_cad_volume_proof_preparation_runs_once_on_first_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing.providers._native_surface as native_surface
+
+    calls: list[native_surface.NativeSurfaceRequest] = []
+    prepare = native_surface.prepare_native_surface_proof
+
+    def counted(
+        request: native_surface.NativeSurfaceRequest,
+    ) -> native_surface._PreparedNativeSurface:
+        calls.append(request)
+        return prepare(request)
+
+    monkeypatch.setattr(native_surface, "prepare_native_surface_proof", counted)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
     plan.execute(prove=False)
-    assert prepared.boundary_proof._prepared is None
-    plan.execute()
-    proof = prepared.boundary_proof._prepared
-    assert proof is not None
-    assert proof.size_values is prepared.boundary_request.size_values
-    plan.execute()
-    assert prepared.boundary_proof._prepared is proof
+    assert not calls
+    first = plan.execute()
+    second = plan.execute()
+    assert len(calls) == 1
+    assert first.certification is not None and first.certification.passed
+    assert second.mesh.mesh_id == first.mesh.mesh_id

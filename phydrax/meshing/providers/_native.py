@@ -723,11 +723,11 @@ class _BoundaryProofPreparation:
 class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
     """Dependency preparation: accepted parametric boundary, then CAD fill.
 
-    Planning validates the request and sizes the boundary faces
-    (``boundary_request``). The trim validation, trim cover and chart roots
-    that only the proved construction consumes are prepared on its first
-    execution, so their refusals (invalid trim, uncertifiable or incomplete
-    trim cover, unrooted charts) surface there, not at planning.
+    Planning validates the request and its trims and sizes the boundary faces
+    (``boundary_request``). The trim cover and chart roots that only the
+    proved construction consumes are prepared on its first execution, so
+    their refusals (uncertifiable or incomplete trim cover, unrooted charts)
+    surface there, not at planning.
     """
 
     domain: MeshingDomain

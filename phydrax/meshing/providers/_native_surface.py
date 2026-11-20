@@ -6641,8 +6641,14 @@ def native_surface_request(
     options: NativeMeshingOptions,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    preparation: domain_owner.SourcePreparation | None = None,
 ) -> NativeSurfaceRequest:
-    """Validate a surface request and size its faces; no chart is prepared."""
+    """Validate a surface request and its trims and size its faces.
+
+    Refuses p-curves without a continuous, finite, ordered chart enclosure;
+    no chart is prepared.
+    """
     if options.route not in (None, "parametric_surface"):
         raise ValueError(
             "Native surface preparation requires the parametric_surface route."
@@ -6674,6 +6680,9 @@ def native_surface_request(
             "; ".join(unsupported),
             category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
         )
+    _validate_chart_trims(
+        domain, selected, domain_owner.SourcePreparation.of(domain, preparation)
+    )
     size_values, _ = _size_field(domain, specification, selected, scope_ids)
     return NativeSurfaceRequest(
         domain,
@@ -6693,15 +6702,15 @@ def prepare_native_surface_proof(
     *,
     preparation: domain_owner.SourcePreparation | None = None,
 ) -> _PreparedNativeSurface:
-    """Validate the trims, certify the trim cover and root the charts.
+    """Certify the trim cover and root the charts of a validated request.
 
-    Refuses an invalid trim, a trim cover the boundary query cannot retain or
-    that is incomplete, and charts without certified roots.
+    Refuses a trim cover the boundary query cannot retain or that is
+    incomplete, and charts without certified roots.
     """
     domain = request.domain
     selected = request.selected_patches
     preparation = domain_owner.SourcePreparation.of(domain, preparation)
-    _validate_chart_trims(domain, selected, preparation)
+    # The request validated the trims.
     try:
         cover = request.boundary_source.boundary_chart_cover(preparation=preparation)
     except (TypeError, ValueError) as error:
@@ -6747,7 +6756,13 @@ def prepare_native_surface(
     without one the domain is prepared for this call alone.
     """
     return prepare_native_surface_proof(
-        native_surface_request(source, specification, options, coordinate_contract),
+        native_surface_request(
+            source,
+            specification,
+            options,
+            coordinate_contract,
+            preparation=preparation,
+        ),
         preparation=preparation,
     )
 
