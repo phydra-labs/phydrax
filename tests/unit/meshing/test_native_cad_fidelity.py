@@ -1093,3 +1093,80 @@ def test_brep_torus_coefficients_are_finite() -> None:
     assert np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
     assert np.all(lower <= bundle.model.node_reals)
     assert np.all(bundle.model.node_reals <= upper)
+
+
+def _tspline_surface() -> AbstractSurfacePatch:
+    """A rational cubic T-spline on non-dyadic knots k/3 with rational weights."""
+    from phydrax._interpolation import TMesh2D
+    from phydrax.geometry.brep._tspline import TSplineSurfacePatch
+
+    knots = tuple(Fraction(index, 3) for index in range(4))
+    mesh = TMesh2D.tensor_product(knots, knots)
+    parameters = tuple(anchor.local_knots.greville_parameter for anchor in mesh.anchors)
+    points = tuple((u, v, (u - Fraction(1, 2)) ** 2 + u * v / 3) for u, v in parameters)
+    weights = tuple(1 + u / 3 + v / 5 for u, v in parameters)
+    return TSplineSurfacePatch(
+        mesh,
+        np.asarray([[float(value) for value in point] for point in points]),
+        np.asarray([float(value) for value in weights]),
+        exact_control_points=points,
+        exact_weights=weights,
+    )
+
+
+def test_tspline_exact_coefficients_and_fidelity() -> None:
+    """Exact non-dyadic extraction data; native bound >= dense distance; Python parity."""
+    surface = _tspline_surface()
+    domain = _surface_domain(surface)
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    node = bundle.model.surface_nodes[0]
+    start, stop = bundle.model.node_real_offsets[node], bundle.model.node_real_offsets[node + 1]
+    assert np.all(np.isfinite(lower[start:stop])) and np.all(np.isfinite(upper[start:stop]))
+    realization = surface.realization  # type: ignore[attr-defined]
+    exact_bounds = [value for piece in realization.extractions for value in piece.parameter_bounds]
+    assert any(value.denominator == 3 for value in exact_bounds)
+    for offset, value in enumerate(exact_bounds):
+        assert Fraction.from_float(float(lower[start + offset])) <= value
+        assert value <= Fraction.from_float(float(upper[start + offset]))
+    operators = start + len(exact_bounds)
+    first = realization.extractions[0].exact_extraction_operator
+    for row, values in enumerate(first):
+        for column, value in enumerate(values):
+            index = operators + 16 * row + column
+            assert Fraction.from_float(float(lower[index])) <= value
+            assert value <= Fraction.from_float(float(upper[index]))
+    mesh, chords = _cylinder_mesh(domain)
+    uv_points = np.zeros((mesh.points.shape[0], 2))
+    uv_points[mesh.triangles.reshape(-1)] = mesh.uv.reshape((-1, 2))
+    candidate = mesh._replace(points=np.asarray(surface.evaluate(uv_points)))
+    result = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords, 0.5, 4)
+    assert result.status == MeshcoreStatus.OK
+    assert result.findings.size == 0
+    rows = np.flatnonzero(np.all(mesh.edge_chord < 0, axis=1))
+    assert _python_chart_decisions(domain, candidate, rows, 0.5) == tuple(
+        status == MeshcoreStatus.OK for status in result.item_status[rows]
+    )
+    for row in range(mesh.triangles.shape[0]):
+        vertices = candidate.points[candidate.triangles[row]]
+        weights = np.asarray(
+            [(1 - (i + j) / 20, i / 20, j / 20) for i in range(21) for j in range(21 - i)]
+        )
+        exact = np.asarray(surface.evaluate(weights @ candidate.uv[row]))
+        distance = np.linalg.norm(exact - weights @ vertices, axis=1)
+        assert np.all(distance <= result.upper[row])
+    for row in rows:
+        chart = tuple(
+            (Fraction.from_float(float(a)), Fraction.from_float(float(b)))
+            for a, b in candidate.uv[row]
+        )
+        reference = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[0]
+        assert reference is not None
+        # Native refines until it meets the target: certify within Python's bound.
+        tight = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords,
+                                    float(reference), 6)
+        assert tight.item_status[row] == MeshcoreStatus.OK
+        assert tight.upper[row] <= float(reference)
+        print("tspline native/Python depth 0", result.upper[row] / float(reference),
+              "within Python bound", tight.upper[row] / float(reference),
+              "subdivisions", tight.subdivisions[row])

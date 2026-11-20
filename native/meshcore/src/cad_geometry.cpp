@@ -314,6 +314,161 @@ int32_t spline_interval_jets(bool surface, const int64_t* ints, const double* lo
   return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
+// Enclosure of a univariate Bernstein polynomial's coefficients restricted to
+// [a, b] within [0, 1]: coefficient k is the blossom at (a^(n-k), b^k),
+// evaluated by de Casteljau steps in interval arithmetic.
+void restrict_bernstein(const SplineInterval* in, int degree, double a, double b,
+                        int stride, SplineInterval* out) {
+  using namespace phx::mc::remesh;
+  SplineInterval source[4];
+  for (int i = 0; i <= degree; ++i) source[i] = in[i * stride];
+  for (int k = 0; k <= degree; ++k) {
+    SplineInterval work[4];
+    for (int i = 0; i <= degree; ++i) work[i] = source[i];
+    for (int step = 0; step < degree; ++step) {
+      const double t = step < degree - k ? a : b;
+      const SplineInterval weight = point(t), complement = subtract(point(1.0), point(t));
+      for (int i = 0; i < degree - step; ++i)
+        work[i] = add(multiply(complement, work[i]), multiply(weight, work[i + 1]));
+    }
+    out[k * stride] = work[0];
+  }
+}
+
+// Rational cubic T-spline over the pieces meeting the box. Each piece is the
+// exact Bernstein extraction on its exact parameter rectangle. Per piece the
+// homogeneous Bernstein nets of the requested derivatives are restricted to
+// the box's local rectangle and their hulls bound the polynomial derivatives
+// (convex hull property). The local rectangle is clamped to [0, 1]: box points
+// outside a piece belong to a neighbour, which is visited as well. The
+// source's passing ASTS certificate (required to build the surface) proves C2
+// trace continuity, so the hull of per-piece Hessians bounds the whole box.
+int32_t tspline_interval_jets(const int64_t* ints, const double* lower, const double* upper,
+                              const double* input_lower, const double* input_upper, int order,
+                              double* output_lower, double* output_upper) {
+  using namespace phx::mc::remesh;
+  const int64_t pieces = ints[0], count = ints[1], width = ints[2];
+  const int64_t* rows = ints + 3;
+  const int64_t operators = 4 * pieces, points = operators + 16 * pieces * width;
+  const int64_t weights = points + 3 * count, length = weights + count;
+  for (int64_t i = 0; i < length; ++i)
+    if (!finite(SplineInterval{lower[i], upper[i]})) return PHX_MC_INVALID_ARGUMENT;
+  const auto at = [&](int64_t i) { return SplineInterval{lower[i], upper[i]}; };
+  const int terms = (order + 1) * (order + 2) / 2;
+  const int du[6] = {0, 1, 0, 2, 1, 0}, dv[6] = {0, 0, 1, 0, 1, 2};
+  bool found = false;
+  for (int64_t piece = 0; piece < pieces; ++piece) {
+    const int64_t b = 4 * piece;
+    if (input_upper[0] < lower[b] || input_lower[0] > upper[b + 1] ||
+        input_upper[1] < lower[b + 2] || input_lower[1] > upper[b + 3])
+      continue;
+    SplineInterval local[2], scale[2];
+    bool empty = false;
+    for (int axis = 0; axis < 2; ++axis) {
+      const SplineInterval first = at(b + 2 * axis), last = at(b + 2 * axis + 1);
+      const SplineInterval extent = subtract(last, first);
+      if (!spline_divide(subtract(SplineInterval{input_lower[axis], input_upper[axis]}, first),
+                         extent, local[axis]) ||
+          !spline_divide(point(1.0), extent, scale[axis]))
+        return PHX_MC_UNRESOLVED;
+      local[axis] = {std::max(local[axis].lower, 0.0), std::min(local[axis].upper, 1.0)};
+      empty = empty || local[axis].lower > local[axis].upper;
+    }
+    if (empty) continue;
+    // Homogeneous Bernstein net (w x, w y, w z, w) of this piece.
+    SplineInterval net[4][4][4]{};
+    double min_weight = std::numeric_limits<double>::infinity(), max_weight = 0.0;
+    for (int64_t l = 0; l < width; ++l) {
+      const int64_t row = rows[piece * width + l];
+      if (row < 0) continue;
+      const SplineInterval weight = at(weights + row);
+      if (!(weight.lower > 0.0)) return PHX_MC_UNRESOLVED;
+      min_weight = std::min(min_weight, weight.lower);
+      max_weight = std::max(max_weight, weight.upper);
+      SplineInterval homogeneous[4];
+      for (int c = 0; c < 3; ++c) homogeneous[c] = multiply(weight, at(points + 3 * row + c));
+      homogeneous[3] = weight;
+      const int64_t op = operators + 16 * (piece * width + l);
+      for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+          const SplineInterval entry = at(op + 4 * i + j);
+          if (entry.lower == 0.0 && entry.upper == 0.0) continue;
+          for (int c = 0; c < 4; ++c)
+            net[c][i][j] = add(net[c][i][j], multiply(entry, homogeneous[c]));
+        }
+    }
+    SplineInterval numerator[6][3]{}, denominator[6]{};
+    for (int t = 0; t < terms; ++t) {
+      const int nu = 3 - du[t], nv = 3 - dv[t];
+      // Derivative nets: forward differences times n!/(n-d)!, times the
+      // chain-rule factor of the piece's parameter scaling.
+      SplineInterval factor = point(du[t] == 0 ? 1.0 : du[t] == 1 ? 3.0 : 6.0);
+      factor = multiply(factor, point(dv[t] == 0 ? 1.0 : dv[t] == 1 ? 3.0 : 6.0));
+      for (int k = 0; k < du[t]; ++k) factor = multiply(factor, scale[0]);
+      for (int k = 0; k < dv[t]; ++k) factor = multiply(factor, scale[1]);
+      for (int c = 0; c < 4; ++c) {
+        SplineInterval d[4][4];
+        for (int i = 0; i <= nu; ++i)
+          for (int j = 0; j <= nv; ++j) {
+            SplineInterval value = point(0.0);
+            for (int p = 0; p <= du[t]; ++p)
+              for (int q = 0; q <= dv[t]; ++q) {
+                const double sign = ((du[t] - p + dv[t] - q) % 2 == 0 ? 1.0 : -1.0) *
+                                    (du[t] == 2 && p == 1 ? 2.0 : 1.0) *
+                                    (dv[t] == 2 && q == 1 ? 2.0 : 1.0);
+                value = add(value, multiply(point(sign), net[c][i + p][j + q]));
+              }
+            d[i][j] = value;
+          }
+        SplineInterval restricted[4][4];
+        for (int i = 0; i <= nu; ++i)
+          restrict_bernstein(&d[i][0], nv, local[1].lower, local[1].upper, 1, &restricted[i][0]);
+        for (int j = 0; j <= nv; ++j)
+          restrict_bernstein(&restricted[0][j], nu, local[0].lower, local[0].upper, 4,
+                             &restricted[0][j]);
+        SplineInterval hull = restricted[0][0];
+        for (int i = 0; i <= nu; ++i)
+          for (int j = 0; j <= nv; ++j)
+            hull = {std::min(hull.lower, restricted[i][j].lower),
+                    std::max(hull.upper, restricted[i][j].upper)};
+        hull = multiply(hull, factor);
+        if (c == 3) denominator[t] = hull;
+        else numerator[t][c] = hull;
+      }
+    }
+    // The extracted basis is a nonnegative partition of unity on the piece.
+    denominator[0].lower = std::max(denominator[0].lower, min_weight);
+    denominator[0].upper = std::min(denominator[0].upper, max_weight);
+    SplineInterval result[6][3]{};
+    for (int c = 0; c < 3; ++c) {
+      if (!spline_divide(numerator[0][c], denominator[0], result[0][c]))
+        return PHX_MC_UNRESOLVED;
+      for (int t = 1; t < terms; ++t) {
+        SplineInterval rhs = subtract(numerator[t][c], multiply(denominator[t], result[0][c]));
+        if (du[t] == 2)
+          rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[1], result[1][c])));
+        if (dv[t] == 2)
+          rhs = subtract(rhs, multiply(point(2.0), multiply(denominator[2], result[2][c])));
+        if (du[t] == 1 && dv[t] == 1) {
+          rhs = subtract(rhs, multiply(denominator[1], result[2][c]));
+          rhs = subtract(rhs, multiply(denominator[2], result[1][c]));
+        }
+        if (!spline_divide(rhs, denominator[0], result[t][c])) return PHX_MC_UNRESOLVED;
+      }
+    }
+    for (int t = 0; t < terms; ++t)
+      for (int c = 0; c < 3; ++c) {
+        const int slot = t * 3 + c;
+        output_lower[slot] = found ? std::min(output_lower[slot], result[t][c].lower)
+                                   : result[t][c].lower;
+        output_upper[slot] = found ? std::max(output_upper[slot], result[t][c].upper)
+                                   : result[t][c].upper;
+      }
+    found = true;
+  }
+  return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
 // Normalized interval Taylor coefficients through total order three. This
 // evaluates the smooth value program directly, avoiding branch flags in the
 // generated derivative programs when an offset needs a certified normal.
@@ -733,6 +888,14 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
                                 current.integers, workspace.coefficient_lower + offset,
                                 workspace.coefficient_upper + offset, input_lower, input_upper,
                                 order, output_lower, output_upper);
+  }
+  if (current.kind == PHX_MC_CAD_NODE_TSPLINE_SURFACE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    return tspline_interval_jets(current.integers, workspace.coefficient_lower + offset,
+                                 workspace.coefficient_upper + offset, input_lower, input_upper,
+                                 order, output_lower, output_upper);
   }
   if (current.kind == PHX_MC_CAD_NODE_REVOLUTION) {
     const phx::mc::GradualNearestScope mode;

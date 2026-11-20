@@ -559,6 +559,30 @@ void spline_nodes() {
   for (int k = 0; k < 3; ++k) PHX_CHECK_NEAR(value[k], expected[k], 8 * kEpsilon);
   const double beyond[2] = {2.5, 0.5};
   PHX_CHECK(!geometry.jets(tspline, beyond, 0, value, workspace));
+  // Interval jets contain point jets on boxes inside a piece and across the break.
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  const double boxes[3][4] = {{0.1, 0.4, 0.2, 0.6}, {0.7, 1.3, 0.1, 0.9}, {1.5, 1.5, 0.3, 0.3}};
+  for (const auto& box : boxes) {
+    const double lo[2] = {box[0], box[2]}, hi[2] = {box[1], box[3]};
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      PHX_CHECK(geometry.interval_jets(tspline, lo, hi, order, lower, upper,
+                                       interval_workspace) == PHX_MC_OK);
+      const int count = 3 * (order + 1) * (order + 2) / 2;
+      for (int i = 0; i <= 12; ++i)
+        for (int j = 0; j <= 12; ++j) {
+          const double uv[2] = {lo[0] + (hi[0] - lo[0]) * i / 12, lo[1] + (hi[1] - lo[1]) * j / 12};
+          PHX_CHECK(geometry.jets(tspline, uv, order, jet, workspace));
+          for (int k = 0; k < count; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
 }
 
 // The branch x > 0 of the z cylinder (R = 1) and the x cylinder (r = 0.6),

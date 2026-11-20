@@ -1234,6 +1234,28 @@ def _coefficient_sources(
             *(value for row in entity.exact_control_points for point in row for value in point),
             *(value for row in entity.exact_weights for value in row),
         )
+    if isinstance(entity, TSplineSurfacePatch):
+        # Exact piece rectangles and Bernstein extraction rows of the target
+        # realization, in the bundle's piece order, padded with exact zeros;
+        # then the exact current (post-transfer) controls and weights.
+        realization = entity.realization
+        width = int(np.asarray(realization.piece_coefficient_rows).shape[1])
+        zero_row = (Fraction(0),) * 16
+        homogeneous = entity.exact_target_homogeneous
+        return (
+            *(value for piece in realization.extractions for value in piece.parameter_bounds),
+            *(
+                value
+                for piece in realization.extractions
+                for row in (
+                    *piece.exact_extraction_operator,
+                    *(zero_row,) * (width - len(piece.exact_extraction_operator)),
+                )
+                for value in row
+            ),
+            *(value / row[-1] for row in homogeneous for value in row[:-1]),
+            *(row[-1] for row in homogeneous),
+        )
     if isinstance(entity, OffsetSurface):
         base = entity.base
         distance = entity.distance_exact * (entity.frame_sign or 1)
