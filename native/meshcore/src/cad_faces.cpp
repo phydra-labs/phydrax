@@ -17,6 +17,13 @@
 
 namespace phx::mc {
 
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::none) == PHX_MC_CAD_REFUSAL_NONE);
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::encroachment) == PHX_MC_CAD_REFUSAL_ENCROACHMENT);
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::outside) == PHX_MC_CAD_REFUSAL_OUTSIDE);
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::proximity) == PHX_MC_CAD_REFUSAL_PROXIMITY);
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::nonstar) == PHX_MC_CAD_REFUSAL_NONSTAR);
+static_assert(static_cast<int32_t>(CadRefine2DRefusal::excluded) == PHX_MC_CAD_REFUSAL_EXCLUDED);
+
 int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
                                           const CadCurveDiscretization& curves) {
   if (model.curve_count < 0 || !curves.offsets ||
@@ -112,7 +119,7 @@ int32_t check_loop_closure(const phx_mc_cad_model& model, int32_t face, int32_t 
       result.failure = {face, loop, -1, axis,
                         decision > 0 ? PHX_MC_CAD_FACE_PERIODIC_WRAP
                                      : PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE,
-                        turns, 0.0};
+                        turns, 0.0, -1, 0, 0, 0, -1, -1, {}, {}, {}};
       return PHX_MC_UNRESOLVED;
     }
     ++result.periodic_corner_gaps;
@@ -176,7 +183,7 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
               result.failure = {face, static_cast<int32_t>(loop), static_cast<int32_t>(use), axis,
                                 decision < 0 ? PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE
                                              : PHX_MC_CAD_FACE_SHEET_MISMATCH,
-                                turns, parameter};
+                                turns, parameter, -1, 0, 0, 0, -1, -1, {}, {}, {}};
               return PHX_MC_UNRESOLVED;
             }
             shift[axis] = shift[axis] - Expansion::product(static_cast<double>(turns), period);
@@ -187,7 +194,8 @@ int32_t make_boundary(const cad::CadGeometry& geometry, const CadCurveDiscretiza
           const double shifted = exact.estimate();
           if (!std::isfinite(shifted) || !(exact - Expansion(shifted)).is_zero()) {
             result.failure = {face, static_cast<int32_t>(loop), static_cast<int32_t>(use), axis,
-                              PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE, 0, parameter};
+                              PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE, 0, parameter,
+                              -1, 0, 0, 0, -1, -1, {}, {}, {}};
             return PHX_MC_UNRESOLVED;
           }
           uv[axis] = shifted;
@@ -853,6 +861,56 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
     }
     if (sliver) result.slivers.push_back(cell);
     else result.triangles.push_back(cell);
+  }
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const auto& model = geometry.model();
+  result.refinement_failures.reserve(refined.unresolved.size());
+  for (const auto& failure : refined.unresolved) {
+    phx_mc_cad_face_failure record{};
+    record.face = face;
+    record.loop = record.use = record.axis = -1;
+    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
+    record.triangle = failure.triangle;
+    record.bad_size = failure.bad_size;
+    record.bad_angle = failure.bad_angle;
+    record.refusal_kind = static_cast<int32_t>(failure.refusal);
+    record.curve = record.curve_segment = -1;
+    record.candidate_uv[0] = record.candidate_uv[1] = nan;
+    record.segment_parameters[0] = record.segment_parameters[1] = nan;
+    if (failure.refusal != CadRefine2DRefusal::none) {
+      record.candidate_uv[0] = failure.candidate[0] / metric.scale_u;
+      record.candidate_uv[1] = failure.candidate[1] / metric.scale_v;
+    }
+    const auto& cell = tri.triangles[static_cast<std::size_t>(failure.triangle)];
+    for (int k = 0; k < 3; ++k) {
+      const double* point = tri.point(cell.v[k]);
+      record.triangle_uv[2*k] = point[0] / metric.scale_u;
+      record.triangle_uv[2*k+1] = point[1] / metric.scale_v;
+    }
+    if (failure.segment >= 0) {
+      if (static_cast<std::size_t>(failure.segment) >= boundary.edges.size())
+        return PHX_MC_INTERNAL_ERROR;
+      const auto& edge = boundary.edges[static_cast<std::size_t>(failure.segment)];
+      record.use = edge.use;
+      record.curve = edge.curve;
+      record.segment_parameters[0] = edge.parameters[0];
+      record.segment_parameters[1] = edge.parameters[1];
+      for (int64_t loop = 0; loop < model.loop_count; ++loop)
+        if (edge.use >= model.loop_use_offsets[loop] && edge.use < model.loop_use_offsets[loop+1]) {
+          record.loop = static_cast<int32_t>(loop);
+          break;
+        }
+      if (edge.curve >= 0) {
+        const int64_t first = curves.offsets[edge.curve];
+        const int64_t last = curves.offsets[edge.curve+1];
+        const double s = std::min(edge.parameters[0], edge.parameters[1]);
+        const double* found = std::lower_bound(curves.parameters+first, curves.parameters+last, s);
+        if (found == curves.parameters+last || *found != s ||
+            found-curves.parameters-first >= last-first-1) return PHX_MC_INTERNAL_ERROR;
+        record.curve_segment = static_cast<int32_t>(found-curves.parameters-first);
+      }
+    }
+    result.refinement_failures.push_back(record);
   }
   result.vertices = std::move(vertices);
   result.boundary_edges = std::move(boundary.edges);

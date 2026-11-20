@@ -151,9 +151,12 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     if (local.failure.reason != 0) {
       output = CadSurfaceMesh{};
+      output.face_failures = std::move(mesh.face_failures);
       output.face_failures.push_back(local.failure);
       return PHX_MC_UNRESOLVED;
     }
+    mesh.face_failures.insert(mesh.face_failures.end(), local.refinement_failures.begin(),
+                              local.refinement_failures.end());
     if (status == PHX_MC_UNRESOLVED) overall = status;
     mesh.face_stats.push_back(local.stats);
     mesh.omitted_pole_points.push_back(local.omitted_pole_points);

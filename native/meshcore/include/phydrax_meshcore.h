@@ -2650,10 +2650,30 @@ enum {
   PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE = 2,
   PHX_MC_CAD_FACE_PERIODIC_WRAP = 3
 };
+enum {
+  PHX_MC_CAD_FACE_REFINEMENT = 4
+};
+/* Refinement refusal kinds match the chart kernel's deterministic records. */
+enum {
+  PHX_MC_CAD_REFUSAL_NONE = 0,
+  PHX_MC_CAD_REFUSAL_ENCROACHMENT = 1,
+  PHX_MC_CAD_REFUSAL_OUTSIDE = 2,
+  PHX_MC_CAD_REFUSAL_PROXIMITY = 3,
+  PHX_MC_CAD_REFUSAL_NONSTAR = 4,
+  PHX_MC_CAD_REFUSAL_EXCLUDED = 5
+};
 typedef struct phx_mc_cad_face_failure {
   int32_t face, loop, use, axis, reason;
   int64_t turns;
   double parameter;
+  /* Refinement-only fields: triangle is a pre-flip chart slot, not a global
+   * triangle index. Coordinates are in the face's native parameter chart.
+   * curve_segment is the zero-based segment in that curve's shared samples;
+   * curve and curve_segment are -1 when no curve segment is implicated.
+   * segment_parameters are normalized curve parameters, ordered along the use.
+   * candidate_uv is NaN when refusal_kind is NONE. */
+  int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
+  double candidate_uv[2], triangle_uv[6], segment_parameters[2];
 } phx_mc_cad_face_failure;
 
 typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from phydrax._meshcore import cad_mesh, MeshcoreStatus
+from phydrax._meshcore import _CAD_FACE_FAILURE_DTYPE, cad_mesh, MeshcoreStatus
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 from tests.unit.meshing.test_native_cad_bundle import _quadric_model
@@ -18,6 +18,33 @@ from tests.unit.meshing.test_native_cad_bundle import _quadric_model
 @pytest.fixture(scope="module")
 def domain() -> MeshingDomain:
     return MeshingDomain.from_brep(_quadric_model())
+
+
+def test_face_failure_dtype_matches_native_layout() -> None:
+    # These offsets and size are also static_asserted against the C struct.
+    offsets = {
+        "face": 0,
+        "loop": 4,
+        "use": 8,
+        "axis": 12,
+        "reason": 16,
+        "turns": 24,
+        "parameter": 32,
+        "triangle": 40,
+        "bad_size": 44,
+        "bad_angle": 48,
+        "refusal_kind": 52,
+        "curve": 56,
+        "curve_segment": 60,
+        "candidate_uv": 64,
+        "triangle_uv": 80,
+        "segment_parameters": 128,
+    }
+    assert _CAD_FACE_FAILURE_DTYPE.itemsize == 144
+    fields = _CAD_FACE_FAILURE_DTYPE.fields
+    if fields is None:
+        pytest.fail("face failure dtype has no fields")
+    assert {name: field[1] for name, field in fields.items()} == offsets
 
 
 def _fixture_arrays() -> dict[str, np.ndarray]:
@@ -172,3 +199,38 @@ def test_quadric_surface_candidate(domain: MeshingDomain) -> None:
     )
     assert mesh_to_source < 0.2
     assert source_to_mesh < 0.2
+
+
+def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None:
+    model = cad_geometry_bundle(domain).model
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), 0.08, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    assert result.status is MeshcoreStatus.UNRESOLVED
+    failures = result.face_failures
+    assert failures.size == np.sum(result.face_stats["unresolved_triangles"])
+    assert failures.size > 0
+    assert np.all(failures["reason"] == 4)
+    assert np.all((failures["bad_size"] != 0) | (failures["bad_angle"] != 0))
+    assert np.all(failures["triangle"] >= 0)
+    assert np.all(np.isfinite(failures["triangle_uv"]))
+    assert np.any(failures["curve"] >= 0)
+    blocked = failures[failures["curve"] >= 0]
+    assert np.all(blocked["refusal_kind"] == 1)
+    assert np.all(np.isfinite(blocked["candidate_uv"]))
+    for failure in failures:
+        if failure["curve"] < 0:
+            continue
+        curve = failure["curve"]
+        segment = failure["curve_segment"]
+        assert 0 <= curve < model.curve_nodes.size
+        assert segment >= 0
+        start = result.curve_offsets[curve] + segment
+        assert start + 1 < result.curve_offsets[curve + 1]
+        np.testing.assert_array_equal(
+            np.sort(failure["segment_parameters"]),
+            result.curve_parameters[start : start + 2],
+        )

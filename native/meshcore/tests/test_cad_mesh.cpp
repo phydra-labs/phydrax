@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -18,6 +19,23 @@ namespace {
 using phx::mc::CadCurveDiscretization;
 using phx::mc::CadFaceMesh;
 using phx::mc::cad::CadGeometry;
+static_assert(sizeof(phx_mc_cad_face_failure) == 144);
+static_assert(offsetof(phx_mc_cad_face_failure, face) == 0);
+static_assert(offsetof(phx_mc_cad_face_failure, loop) == 4);
+static_assert(offsetof(phx_mc_cad_face_failure, use) == 8);
+static_assert(offsetof(phx_mc_cad_face_failure, axis) == 12);
+static_assert(offsetof(phx_mc_cad_face_failure, reason) == 16);
+static_assert(offsetof(phx_mc_cad_face_failure, turns) == 24);
+static_assert(offsetof(phx_mc_cad_face_failure, parameter) == 32);
+static_assert(offsetof(phx_mc_cad_face_failure, triangle) == 40);
+static_assert(offsetof(phx_mc_cad_face_failure, bad_size) == 44);
+static_assert(offsetof(phx_mc_cad_face_failure, bad_angle) == 48);
+static_assert(offsetof(phx_mc_cad_face_failure, refusal_kind) == 52);
+static_assert(offsetof(phx_mc_cad_face_failure, curve) == 56);
+static_assert(offsetof(phx_mc_cad_face_failure, curve_segment) == 60);
+static_assert(offsetof(phx_mc_cad_face_failure, candidate_uv) == 64);
+static_assert(offsetof(phx_mc_cad_face_failure, triangle_uv) == 80);
+static_assert(offsetof(phx_mc_cad_face_failure, segment_parameters) == 128);
 
 struct PlaneWithHole {
   std::vector<int32_t> kinds, surface_nodes, curve_nodes, pcurve_nodes;
@@ -603,6 +621,43 @@ void periodic_patch(bool torus, bool ungraded = false) {
     PHX_CHECK(status == PHX_MC_UNRESOLVED);
     PHX_CHECK(result.stats.encroachment_refusals > 0);
     PHX_CHECK(result.stats.unresolved_triangles > 0);
+    PHX_CHECK(result.refinement_failures.size() ==
+              static_cast<std::size_t>(result.stats.unresolved_triangles));
+    int encroachments = 0;
+    for (const auto& failure : result.refinement_failures) {
+      PHX_CHECK(failure.face == 0 && failure.reason == PHX_MC_CAD_FACE_REFINEMENT);
+      PHX_CHECK(failure.triangle >= 0 && (failure.bad_size || failure.bad_angle));
+      PHX_CHECK(phx::mc::orient2d(failure.triangle_uv, failure.triangle_uv+2,
+                                  failure.triangle_uv+4) > 0);
+      if (failure.refusal_kind != PHX_MC_CAD_REFUSAL_ENCROACHMENT) continue;
+      ++encroachments;
+      PHX_CHECK(failure.loop == 0 && failure.use >= 0 && failure.use < model.use_count);
+      if (failure.use < 0 || failure.use >= model.use_count) continue;
+      PHX_CHECK(failure.curve == model.use_entities[failure.use]);
+      PHX_CHECK(failure.curve_segment >= 0);
+      if (failure.curve < 0 || failure.curve >= model.curve_count ||
+          failure.curve_segment < 0) continue;
+      const int64_t first = bank.sample_offsets[failure.curve] + failure.curve_segment;
+      PHX_CHECK(first+1 < bank.sample_offsets[failure.curve+1]);
+      if (first+1 >= bank.sample_offsets[failure.curve+1]) continue;
+      PHX_CHECK(std::min(failure.segment_parameters[0], failure.segment_parameters[1]) ==
+                bank.samples[first]);
+      PHX_CHECK(std::max(failure.segment_parameters[0], failure.segment_parameters[1]) ==
+                bank.samples[first+1]);
+      PHX_CHECK(std::isfinite(failure.candidate_uv[0]) &&
+                std::isfinite(failure.candidate_uv[1]));
+    }
+    PHX_CHECK(encroachments > 0);
+    phx::mc::CadSurfaceMesh assembled;
+    const double sizes[]{requested_size}, tolerances[]{0.4};
+    PHX_CHECK(phx::mc::cad_mesh_surface(geometry,curves,sizes,tolerances,0.5,assembled) ==
+              PHX_MC_UNRESOLVED);
+    PHX_CHECK(assembled.face_failures.size() == result.refinement_failures.size());
+    for (std::size_t i = 0; i < assembled.face_failures.size(); ++i) {
+      PHX_CHECK(assembled.face_failures[i].triangle == result.refinement_failures[i].triangle);
+      PHX_CHECK(assembled.face_failures[i].curve_segment ==
+                result.refinement_failures[i].curve_segment);
+    }
   } else {
     PHX_CHECK(status == PHX_MC_OK);
   }

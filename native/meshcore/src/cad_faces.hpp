@@ -35,6 +35,7 @@ struct CadFaceMesh {
   int64_t periodic_corner_gaps = 0;
   uint64_t max_periodic_corner_gap_ulps = 0;
   phx_mc_cad_face_failure failure{};
+  std::vector<phx_mc_cad_face_failure> refinement_failures;
 };
 
 // Validates the shared curve discretization once before any face consumes it.
