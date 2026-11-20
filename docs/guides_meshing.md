@@ -1074,14 +1074,25 @@ refusal naming its source entity: `STEINER_SUPPRESSION` under `CONFORMING`,
 `FIXED_SEGMENT`/`FIXED_FACET` under `FIXED`. A requested curve feature on an
 internal diagonal of a coplanar facet group is recovered like any other segment.
 
-An analytic implicit profile with established reach is meshed by isosurface
-stuffing (`implicit_stuffing`) by default: a body-centered cubic lattice is
-cut at the zero set, the floating-point result is accepted only after its
-exact volume certificate, profile topology and certified facet deviation, and a
-rejected lattice is repaired by a finer one. Its boundary coverage is the
-tubular-projection degree proof. Adaptive implicit volume discovery is distinct
-and must be selected explicitly as `implicit_adaptive_tetrahedral`; it is not a
-fallback for stuffing failure. A direct `BRepModel` volume request
+An analytic implicit profile with established reach is meshed by restricted
+Delaunay refinement (`implicit_restricted_delaunay`) by default, surface first.
+Seeds are the roots on the sign-change edges of an interval-pruned box tree, so
+every component of the zero set is seeded. Restricted facets are refined at
+their surface Delaunay ball centers until their edges meet the bound the
+certified facet deviation d^2 / (6 (R - d)) gives for the fidelity tolerance,
+their angles 30° and their ball centers the tolerance. Interior cells of the
+same Delaunay triangulation are refined to the radius-edge bound, and slivers
+are removed by flips and relocation to at least 15° minimum dihedral angle. No
+point is inserted closer to a vertex than a separation bound, so the
+refinement terminates by a packing argument; a refinement the bound refuses is
+an `UNRESOLVED` construction failure, never a silently coarser mesh.
+Construction is floating point with exact predicates. The result is accepted
+only after the certified facet deviation (failing facets re-seed the
+refinement), the profile topology and the volume certificates; its boundary
+coverage is the tubular-projection degree proof. Adaptive implicit volume
+discovery is distinct and must be selected explicitly as
+`implicit_adaptive_tetrahedral`; it is not a fallback for restricted Delaunay
+failure. A direct `BRepModel` volume request
 builds and accepts its parametric boundary mesh internally before CAD
 tetrahedral filling. It requires a whole-source face scope and an explicit
 `maximum_deviation`; no tolerance is inferred from source tessellation or
@@ -1381,8 +1392,8 @@ instead of findings. Validity, determinant, construction and nonrepresentable
 rows, size, source fidelity, protected features and coverage stay hard. Hard
 schedules keep their identities; `SOFT` enters the schedule identity. The PLC, CAD,
 image, envelope and adaptive implicit volume routes support soft targets. Routes
-whose acceptance never reads these rows (isosurface stuffing, layer core, hex
-families, polyhedral carriers) refuse `SOFT` rather than ignore it.
+whose acceptance never reads these rows (analytic restricted Delaunay, layer
+core, hex families, polyhedral carriers) refuse `SOFT` rather than ignore it.
 Qualification profiles declare `SOFT` only where the source authored the
 targets as aims; the profile records that source.
 

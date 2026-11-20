@@ -2,7 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Isosurface-stuffed tetrahedralization of analytic implicit profiles."""
+"""Restricted Delaunay tetrahedralization of analytic implicit profiles.
+
+The zero set is meshed first by restricted Delaunay refinement, and the
+interior from the same triangulation.
+"""
 
 from __future__ import annotations
 
@@ -18,11 +22,7 @@ from scipy.sparse.csgraph import connected_components
 from .._fingerprint import canonical_fingerprint
 from .._meshcore import (
     MeshcoreStatus,
-    PlcBoundaryPolicy,
-    TetMesh3D,
-    TetMeshEditStatus,
-    TetMeshRun,
-    verify_volume,
+    RestrictedDelaunayCriteria,
 )
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
@@ -76,23 +76,20 @@ from ._volume_generation import _shape_targets_gated, NativeVolumeSchedule
 
 
 _FACE_CORNERS = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
-# Lattice repair: each rejected stuffing shrinks the spacing by this factor.
-_STUFFING_REFINEMENT_FACTOR = 0.8
-_STUFFING_REFINEMENTS = 7
-# Largest stuffed boundary-triangle diameter per lattice spacing that the
-# first spacing provides for: warping moves a lattice vertex by at most 0.36
-# spacings, and measured stuffed surfaces stay below 1.42.
-_STUFFED_DIAMETER_PER_SPACING = 1.5
-# The first lattice aims at this fraction of the fidelity tolerance.
-_FIRST_LATTICE_FIDELITY_FRACTION = 0.95
-# Coarse lattice cells span at most this fraction of the boundary's smallest
-# extent.
-_GRADING_EXTENT_FRACTION = 0.125
-# Stuffed cells skip the native quality pass when their binary64 shape
-# estimates clear the schedule by these margins.
+# The restricted facets aim at this fraction of the fidelity tolerance.
+_FIDELITY_FRACTION = 0.95
+# Constructed cells aim at the schedule's shape targets with these margins.
 _SCHEDULE_RATIO_MARGIN = 0.99
 _SCHEDULE_DETERMINANT_MARGIN = 2.0
 _SCHEDULE_DIHEDRAL_MARGIN = 0.5
+# Restricted Delaunay construction: Boissonnat-Oudot's 30 degree facet angle
+# bound, at least the surface-to-volume rows' 15 degree dihedral angle, box
+# roots closer than this fraction of the facet edge bound to an earlier seed
+# left to the refinement, and the facet-deviation repair rounds.
+_RESTRICTED_FACET_ANGLE_DEGREES = 30.0
+_RESTRICTED_DIHEDRAL_DEGREES = 15.0
+_RESTRICTED_SEED_SPACING = 0.8
+_RESTRICTED_REPAIRS = 3
 
 
 def _failure(
@@ -101,7 +98,7 @@ def _failure(
     return MeshingFailure(
         category,
         message,
-        provider_code="native_implicit_stuffing",
+        provider_code="native_implicit_restricted_delaunay",
         stage=stage,
     )
 
@@ -161,7 +158,7 @@ def _support_issues(
     if specification.hole_seeds:
         issues.append("additional void regions not present in the analytic profile")
     if specification.patch_controls:
-        issues.append("patch controls on the derived stuffed boundary")
+        issues.append("patch controls on the derived restricted boundary")
     if specification.periodic_constraints:
         issues.append("periodic constraints on the analytic profile domain")
     if specification.layer_controls:
@@ -169,9 +166,9 @@ def _support_issues(
     return tuple(sorted(set(issues)))
 
 
-def _stuffing_bounds(profile: AnalyticImplicitProfile) -> np.ndarray:
-    # The stuffing lattice pads this box by one coarse cell on each side and
-    # refuses a solid that reaches the padding.
+def _boundary_bounds(profile: AnalyticImplicitProfile) -> np.ndarray:
+    # The restricted construction's box tree pads this box, which holds the
+    # zero set.
     bounds = np.array(profile.boundary_bounds, dtype=np.float64, copy=True)
     if (
         bounds.shape != (2, 3)
@@ -197,7 +194,7 @@ def _cover_radius(
     if not math.isfinite(requested) or requested <= 0.0:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Stuffed analytic volume construction requires a positive physical fidelity tolerance.",
+            "Restricted analytic volume construction requires a positive physical fidelity tolerance.",
             "source_inspection",
         )
     boundary_size = min(
@@ -262,87 +259,6 @@ def _topology_matches(
         components == profile.component_count
         and euler == profile.boundary_euler_characteristic
     )
-
-
-def _boundary_faces(cells: np.ndarray, vertex_count: int, /) -> np.ndarray:
-    """Outward faces of positive tetrahedra that no other cell shares.
-
-    Faces are enumerated per local face (one opposite each corner), all cells
-    for each; the boundary keeps that order.
-    """
-    faces = np.asarray(cells, dtype=np.int64)[:, np.asarray(_FACE_CORNERS)]
-    faces = faces.transpose((1, 0, 2)).reshape((-1, 3))
-    ordered = np.sort(faces, axis=1)
-    if vertex_count < 2**21:
-        keys = (ordered[:, 0] * vertex_count + ordered[:, 1]) * vertex_count
-        keys += ordered[:, 2]
-        order = np.argsort(keys)
-        sorted_keys = keys[order]
-    else:
-        # Three packed vertex indices would overflow int64.
-        order = np.lexsort((ordered[:, 2], ordered[:, 1], ordered[:, 0]))
-        sorted_keys = ordered[order]
-    distinct = np.ones((faces.shape[0] + 1,), dtype=np.bool_)
-    if sorted_keys.ndim == 1:
-        distinct[1:-1] = sorted_keys[1:] != sorted_keys[:-1]
-    else:
-        distinct[1:-1] = np.any(sorted_keys[1:] != sorted_keys[:-1], axis=1)
-    single = np.empty((faces.shape[0],), dtype=np.bool_)
-    single[order] = distinct[:-1] & distinct[1:]
-    return faces[single]
-
-
-def _meets_schedule(
-    points: np.ndarray, tetrahedra: np.ndarray, schedule: NativeVolumeSchedule, /
-) -> bool:
-    """Whether every cell meets the schedule's shape targets with margin.
-
-    Binary64 estimates of the radius-edge ratio, the smallest dihedral angle
-    and the relative determinant (as the native quality pass measures them)
-    with a margin far above their rounding error: a proposal, which the
-    certified compliance of `execute()` checks again.
-    """
-    corners = np.asarray(points, dtype=np.float64)[np.asarray(tetrahedra, dtype=np.int64)]
-    origin = corners[:, 0]
-    a, b, c = (corners[:, k] - origin for k in (1, 2, 3))
-    bc, ca, ab = np.cross(b, c), np.cross(c, a), np.cross(a, b)
-    determinant = np.einsum("ij,ij->i", a, bc)
-    if np.any(~(determinant > 0.0)):
-        return False
-    pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int64)
-    lengths = np.linalg.norm(corners[:, pairs[:, 1]] - corners[:, pairs[:, 0]], axis=2)
-    if schedule.radius_edge_bound is not None:
-        center = (
-            np.einsum("ij,ij->i", a, a)[:, None] * bc
-            + np.einsum("ij,ij->i", b, b)[:, None] * ca
-            + np.einsum("ij,ij->i", c, c)[:, None] * ab
-        ) / (2.0 * determinant[:, None])
-        ratio = np.linalg.norm(center, axis=1) / np.min(lengths, axis=1)
-        if np.max(ratio) > _SCHEDULE_RATIO_MARGIN * schedule.radius_edge_bound:
-            return False
-    # Products of the three edge lengths at each corner.
-    corner_edges = np.asarray(
-        ((0, 1, 2), (0, 3, 4), (1, 3, 5), (2, 4, 5)), dtype=np.int64
-    )
-    products = np.max(np.prod(lengths[:, corner_edges], axis=2), axis=1)
-    floor = max(schedule.minimum_relative_determinant, 2.0**-22)
-    if np.min(determinant / products) <= _SCHEDULE_DETERMINANT_MARGIN * floor:
-        return False
-    # Outward face normals; the interior dihedral angle of two faces has
-    # cosine -n_i . n_j.
-    face_normals = np.stack(
-        [
-            np.cross(corners[:, j] - corners[:, i], corners[:, k] - corners[:, i])
-            for i, j, k in _FACE_CORNERS
-        ],
-        axis=1,
-    )
-    face_normals /= np.linalg.norm(face_normals, axis=2, keepdims=True)
-    cosine = -np.einsum(
-        "ijk,ijk->ij", face_normals[:, pairs[:, 0]], face_normals[:, pairs[:, 1]]
-    )
-    smallest = math.degrees(math.acos(min(float(np.max(cosine)), 1.0)))
-    return smallest >= schedule.minimum_dihedral_degrees + _SCHEDULE_DIHEDRAL_MARGIN
 
 
 def _tetra_quality(
@@ -506,15 +422,14 @@ def _dihedral_degrees_lower(cosine_lower: float, /) -> float:
     return max(bound, 0.0)
 
 
-class StuffedImplicitConstruction(NamedTuple):
-    """The constructed tetrahedral state of the stuffing route, before publication.
+class RestrictedImplicitConstruction(NamedTuple):
+    """The constructed tetrahedral state of the restricted route, before publication.
 
     ``points`` rows are the vertices; positively oriented ``tetrahedra`` and
-    outward ``boundary_faces`` (one per source boundary facet, in stuffing
-    order) index those rows. ``vertex_ids`` and ``cell_ids`` are the global
-    identities `PreparedStuffedImplicitVolume.execute` publishes for the rows:
-    the row numbers of the stuffed lattice, or the identities the native
-    fixed-boundary quality pass carries from them.
+    outward ``boundary_faces`` (the restricted surface) index those rows.
+    ``vertex_ids`` and ``cell_ids`` are the global identities
+    `PreparedRestrictedImplicitVolume.execute` publishes for the rows: their
+    row numbers.
     """
 
     points: np.ndarray
@@ -534,170 +449,8 @@ def _rows_of(identifiers: np.ndarray, query: np.ndarray, /) -> np.ndarray | None
     return order[position]
 
 
-def _improved(state: TetMesh3D, schedule: NativeVolumeSchedule, /) -> TetMeshRun:
-    improvement = state.improve(
-        radius_edge_bound=schedule.radius_edge_bound,
-        min_dihedral_degrees=schedule.minimum_dihedral_degrees,
-        minimum_relative_determinant=schedule.minimum_relative_determinant,
-    )
-    if improvement.edit_status is not TetMeshEditStatus.APPLIED:
-        raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"Native joint quality improvement returned edit status {improvement.edit_status.name}.",
-            "implicit_quality_improvement",
-        )
-    return improvement
-
-
-def _native_fixed_boundary_quality_pass(
-    points: np.ndarray,
-    tetrahedra: np.ndarray,
-    boundary_faces: np.ndarray,
-    schedule: NativeVolumeSchedule,
-    /,
-) -> StuffedImplicitConstruction:
-    """Improve a source-constrained tetrahedral state with its boundary fixed.
-
-    ``points`` and ``tetrahedra`` are the primal arrays; vertex and cell
-    identities are their row numbers, which the native state carries.
-    """
-    coordinates = np.asarray(points, dtype=np.float64)
-    tetrahedra = np.asarray(tetrahedra, dtype=np.int32)
-    cell_ids = np.arange(tetrahedra.shape[0], dtype=np.int64)
-    vertex_ids = np.arange(coordinates.shape[0], dtype=np.int64)
-    facets = np.asarray(boundary_faces, dtype=np.int32).reshape((-1, 3))
-    if (
-        facets.shape[0] == 0
-        or facets.size
-        and (np.any(facets < 0) or np.any(facets >= coordinates.shape[0]))
-    ):
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Analytic volume boundary facets must index the current target mesh.",
-            "implicit_quality_preparation",
-        )
-    if facets.shape[0] > np.iinfo(np.int32).max:
-        raise OverflowError("Analytic volume facet labels exceed native int32 indices.")
-    face_sources = np.arange(facets.shape[0], dtype=np.int32)
-    face_orientations = np.ones((facets.shape[0],), dtype=np.int8)
-    segments = np.empty((0, 2), dtype=np.int32)
-    segment_sources = np.empty((0,), dtype=np.int32)
-    regions = np.zeros((tetrahedra.shape[0],), dtype=np.int32)
-    source_boundary_ids = vertex_ids[facets]
-    state = TetMesh3D(
-        coordinates,
-        tetrahedra,
-        regions,
-        facets,
-        face_sources,
-        segments,
-        segment_sources,
-        boundary_policy=PlcBoundaryPolicy.FIXED,
-        vertex_ids=np.asarray(vertex_ids, dtype=np.uint64),
-        cell_ids=np.asarray(cell_ids, dtype=np.uint64),
-        face_orientations=face_orientations,
-    )
-    try:
-        # Local improvement first; Steiner refinement only for the cells it
-        # leaves unresolved, since inserted vertices cost dihedral quality.
-        improvement = _improved(state, schedule)
-        if improvement.status is MeshcoreStatus.UNRESOLVED:
-            refinement = state.refine(radius_edge_bound=schedule.radius_edge_bound)
-            if refinement.edit_status is not TetMeshEditStatus.APPLIED:
-                raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    f"Native fixed-boundary radius refinement returned edit status {refinement.edit_status.name}.",
-                    "implicit_quality_refinement",
-                )
-            if refinement.status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
-                raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    f"Native fixed-boundary radius refinement failed with {refinement.status.name}.",
-                    "implicit_quality_refinement",
-                )
-            improvement = _improved(state, schedule)
-        if improvement.status is MeshcoreStatus.UNRESOLVED:
-            unmet = state.unmet()
-            residuals = tuple(
-                (int(criterion), float(value))
-                for criterion, value in zip(
-                    unmet.criteria.tolist(), unmet.values.tolist(), strict=True
-                )
-            )
-            raise _failure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Native fixed-boundary quality improvement remains unresolved "
-                f"for {improvement.unmet_cells} cell(s): {residuals}.",
-                "implicit_quality_improvement",
-            )
-        if improvement.status is not MeshcoreStatus.OK or improvement.unmet_cells != 0:
-            raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Native joint quality improvement returned inconsistent success status "
-                f"{improvement.status.name} with {improvement.unmet_cells} unmet cell(s).",
-                "implicit_quality_improvement",
-            )
-        arrays = state.arrays()
-    finally:
-        state.close()
-
-    native_vertex_ids = np.asarray(arrays.vertex_ids, dtype=np.uint64)
-    native_cell_ids = np.asarray(arrays.cell_ids, dtype=np.uint64)
-    if np.any(native_vertex_ids > np.iinfo(np.int64).max) or np.any(
-        native_cell_ids > np.iinfo(np.int64).max
-    ):
-        raise OverflowError(
-            "Native quality identities exceed canonical CellMesh int64 IDs."
-        )
-    if (
-        arrays.tetrahedron_regions.shape != (arrays.tetrahedra.shape[0],)
-        or np.any(arrays.tetrahedron_regions != 0)
-        or arrays.face_sources.shape != (facets.shape[0],)
-        or arrays.faces.shape != facets.shape
-        or arrays.segments.shape != (0, 2)
-        or arrays.segment_sources.size != 0
-    ):
-        raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Native joint quality edits changed target regions or fixed source-constraint banks.",
-            "implicit_quality_materialization",
-        )
-    # Every source keeps exactly its facet: the sources are a permutation of
-    # the input facet rows, and each carries the same vertex identities.
-    actual_sources = np.asarray(arrays.face_sources, dtype=np.int64)
-    by_source = np.argsort(actual_sources, kind="stable")
-    actual_faces = native_vertex_ids.astype(np.int64)[
-        np.asarray(arrays.faces, dtype=np.int64)[by_source]
-    ]
-    if not np.array_equal(
-        actual_sources[by_source], np.arange(facets.shape[0], dtype=np.int64)
-    ) or not np.array_equal(
-        np.sort(actual_faces, axis=1), np.sort(source_boundary_ids, axis=1)
-    ):
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Native joint quality edits changed a fixed source-boundary facet.",
-            "implicit_quality_materialization",
-        )
-    output_vertex_ids = native_vertex_ids.astype(np.int64)
-    output_boundary_faces = _rows_of(output_vertex_ids, source_boundary_ids)
-    if output_boundary_faces is None:
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Native fixed-boundary improvement removed an authored boundary vertex.",
-            "implicit_quality_materialization",
-        )
-    return StuffedImplicitConstruction(
-        np.asarray(arrays.points, dtype=np.float64),
-        np.asarray(arrays.tetrahedra, dtype=np.int32),
-        output_boundary_faces.astype(np.int32),
-        output_vertex_ids,
-        native_cell_ids.astype(np.int64),
-    )
-
-
 def _published_mesh(
-    construction: StuffedImplicitConstruction, numeric_version: str, /
+    construction: RestrictedImplicitConstruction, numeric_version: str, /
 ) -> tuple[CellMesh, np.ndarray, np.ndarray]:
     """The canonical mesh of a construction, its boundary face IDs and rows.
 
@@ -716,8 +469,8 @@ def _published_mesh(
     if not isinstance(connectivity, TetrahedralConnectivity):
         raise _failure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Native joint quality output lost tetrahedral connectivity.",
-            "implicit_quality_materialization",
+            "The published restricted construction lost tetrahedral connectivity.",
+            "implicit_publication",
         )
     output_vertex_ids = np.asarray(output.vertex_global_ids, dtype=np.int64)
     source_boundary_ids = np.asarray(construction.vertex_ids, dtype=np.int64)[
@@ -727,8 +480,8 @@ def _published_mesh(
     if output_boundary_faces is None:
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "Native fixed-boundary improvement removed an authored boundary vertex.",
-            "implicit_quality_materialization",
+            "The published mesh lost a boundary vertex of the restricted construction.",
+            "implicit_publication",
         )
     boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
     output_faces = np.asarray(connectivity.faces, dtype=np.int64)
@@ -739,8 +492,8 @@ def _published_mesh(
     if not np.array_equal(actual_boundary, expected_boundary):
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "Native fixed-boundary improvement changed the embedded target boundary.",
-            "implicit_quality_materialization",
+            "The published mesh boundary differs from the restricted construction's surface.",
+            "implicit_publication",
         )
     face_ids = np.asarray(output.entity_set(2).entity_ids, dtype=np.int64)
     return (
@@ -863,7 +616,7 @@ def _organization(
             source_revision=profile.source_revision,
             coordinate_contract=contract,
             provenance=(
-                "geometry-owned-stuffed-implicit-volume-boundary",
+                "geometry-owned-restricted-implicit-volume-boundary",
                 profile.profile_id,
                 profile.domain_id,
             ),
@@ -987,7 +740,7 @@ def _compliance(
     )
 
 
-def _stuffing_program(profile: AnalyticImplicitProfile, /) -> NativeIntervalProgram:
+def _field_program(profile: AnalyticImplicitProfile, /) -> NativeIntervalProgram:
     """Native point program of the profile's boundary field, one point per row."""
     kernel, state = profile.geometry.kernel, profile.geometry.state
 
@@ -1006,94 +759,15 @@ def _stuffing_program(profile: AnalyticImplicitProfile, /) -> NativeIntervalProg
     return program
 
 
-def _stuffed_primal_mesh(
-    profile: AnalyticImplicitProfile,
-    specification: VolumeMeshingSpec,
-    program: NativeIntervalProgram,
-    bounds: np.ndarray,
-    fidelity_tolerance: float,
-    spacing: float,
-    levels: int,
-    /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Stuff the profile interior on one lattice, or return None for a finer lattice.
-
-    The floating-point construction proposes; the exact volume certificate,
-    the profile topology and the certified facet deviation accept it.
-    Returns the points, the positive tetrahedra and the outward boundary
-    triangles.
-    """
-    try:
-        # The profile field is a signed distance: Lipschitz constant one.
-        stuffed = program.stuff_tetrahedra(
-            bounds[0], bounds[1], spacing, levels=levels, lipschitz=1.0
-        )
-    except ValueError as error:
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            f"The analytic interior must lie inside its boundary bounds: {error}",
-            "implicit_stuffing",
-        ) from error
-    points, cells = stuffed.points, stuffed.cells
-    if stuffed.degenerate_count or cells.shape[0] == 0:
-        return None
-    boundary = _boundary_faces(cells, points.shape[0])
-    if not verify_volume(points, cells, boundary).certified:
-        return None
-    if not _topology_matches(profile, boundary):
-        return None
-    if np.any(profile.triangle_distance_upper(points[boundary]) > fidelity_tolerance):
-        return None
-    if not specification.size_controls:
-        return points, cells, boundary.astype(np.int32)
-    edges = np.unique(
-        np.sort(
-            np.concatenate(
-                (boundary[:, [0, 1]], boundary[:, [1, 2]], boundary[:, [2, 0]])
-            ),
-            axis=1,
-        ),
-        axis=0,
-    )
-    edge_lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    for control in specification.size_controls:
-        if (
-            not isinstance(control, UniformSizeControl)
-            or control.strength is not SizeControlStrength.HARD
-        ):
-            continue
-        allowed = control.target_size * (
-            1.0 + specification.size_compliance.relative_tolerance
-        )
-        allowed += specification.size_compliance.absolute_tolerance
-        if control.maximum_size is not None:
-            allowed = min(allowed, control.maximum_size)
-        if (
-            control.minimum_size is not None
-            and float(np.min(edge_lengths)) < control.minimum_size
-        ):
-            raise _failure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                f"Hard minimum boundary size for control {control.control_id!r} is unmet by the stuffed boundary.",
-                "specification_compliance",
-            )
-        if float(np.max(edge_lengths)) > allowed:
-            return None
-        for statistic in specification.size_compliance.target_statistics:
-            quantile = 0.5 if statistic == "p50" else 0.95
-            if float(np.quantile(edge_lengths, quantile)) > allowed:
-                return None
-    return points, cells, boundary.astype(np.int32, copy=False)
-
-
 @final
-class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
-    """Prepared analytic-profile volume route by isosurface stuffing.
+class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
+    """Prepared analytic-profile volume route by restricted Delaunay refinement.
 
-    ``program`` is the profile field's native point program, lowered once at
-    preparation. ``bounds`` is the boundary's bounding box, which the lattice
-    pads; ``spacing`` the first lattice spacing near the zero set and
-    ``levels`` the number of halvings of the lattice away from it.
+    ``program`` is the profile field's native program, lowered once at
+    preparation, and ``bounds`` the boundary's bounding box, which holds the
+    zero set. Restricted facets keep their longest edge within
+    ``facet_edge`` and cells their circumradius within ``cell_size`` (None:
+    no size).
     """
 
     profile: AnalyticImplicitProfile
@@ -1104,8 +778,8 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
     fidelity_tolerance: float = eqx.field(static=True)
     seed_cover_radius: float = eqx.field(static=True)
     bounds: np.ndarray
-    spacing: float = eqx.field(static=True)
-    levels: int = eqx.field(static=True)
+    facet_edge: float = eqx.field(static=True)
+    cell_size: float | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1118,8 +792,8 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         fidelity_tolerance: float,
         seed_cover_radius: float,
         bounds: np.ndarray,
-        spacing: float,
-        levels: int,
+        facet_edge: float,
+        cell_size: float | None,
         prepared_id: str,
         /,
     ) -> None:
@@ -1133,60 +807,99 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         box = np.array(bounds, dtype=np.float64, copy=True)
         box.setflags(write=False)
         self.bounds = box
-        self.spacing = float(spacing)
-        self.levels = levels
+        self.facet_edge = float(facet_edge)
+        self.cell_size = cell_size
         self.prepared_id = prepared_id
 
-    def construct(self, /) -> StuffedImplicitConstruction:
-        """Stuff, accept and improve the lattice: the arrays before publication.
+    def construct(self, /) -> RestrictedImplicitConstruction:
+        """The constructed arrays before publication.
 
-        Acceptance of a lattice uses the exact volume certificate, the profile
-        topology and the certified facet deviation. Stuffed cells that meet
-        the schedule's shape targets with margin are kept as they are; others
-        go through the native fixed-boundary quality pass. `execute` publishes
-        the arrays as a `CellMesh` and runs the source-fidelity, coverage,
-        compliance and embedding certificates on it.
+        `execute` publishes them as a `CellMesh` and runs the source-fidelity,
+        coverage, compliance and embedding certificates on it.
         """
-        profile = self.profile
-        spacing = self.spacing
-        # A rejected lattice is repaired by a finer one; the bounded number of
-        # refinements keeps the cell count within 64 times the first attempt's.
-        for _ in range(_STUFFING_REFINEMENTS):
-            attempt = _stuffed_primal_mesh(
-                profile,
-                self.specification,
-                self.program,
-                self.bounds,
-                self.fidelity_tolerance,
-                spacing,
-                self.levels,
-            )
-            if attempt is not None:
-                break
-            spacing *= _STUFFING_REFINEMENT_FACTOR
-        else:
+        return self._constructed(np.empty((0, 3), dtype=np.float64))
+
+    def _constructed(self, extra_seeds: np.ndarray, /) -> RestrictedImplicitConstruction:
+        """Restricted Delaunay refinement of the zero set, then of the interior.
+
+        ``extra_seeds`` are points near the zero set that start the surface
+        beside the box-tree roots (facet repair). Cells reach the schedule's
+        margined shape targets, with at least the restricted dihedral angle,
+        by flips and relocations, else the native fixed-boundary quality pass.
+        """
+        schedule = self.schedule
+        ratio = (
+            None
+            if schedule.radius_edge_bound is None
+            else _SCHEDULE_RATIO_MARGIN * schedule.radius_edge_bound
+        )
+        criteria = RestrictedDelaunayCriteria(
+            self.facet_edge,
+            self.fidelity_tolerance,
+            _RESTRICTED_FACET_ANGLE_DEGREES,
+            math.inf if self.cell_size is None else self.cell_size,
+            ratio,
+            max(schedule.minimum_dihedral_degrees, _RESTRICTED_DIHEDRAL_DEGREES)
+            + _SCHEDULE_DIHEDRAL_MARGIN,
+            _SCHEDULE_DETERMINANT_MARGIN
+            * max(schedule.minimum_relative_determinant, 2.0**-22),
+            _RESTRICTED_SEED_SPACING,
+        )
+        volume = self.program.restricted_tetrahedra(
+            self.bounds[0],
+            self.bounds[1],
+            criteria,
+            self.profile.component_count,
+            self.profile.boundary_euler_characteristic,
+            extra_seeds,
+        )
+        if volume.status is MeshcoreStatus.UNRESOLVED:
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "No stuffed lattice met the certified volume, topology, fidelity and size controls.",
-                "implicit_stuffing",
+                "Restricted Delaunay refinement is unresolved at its separation bound "
+                f"({volume.refused_facets} refused facet(s) still violate the criteria).",
+                "implicit_restricted_delaunay",
             )
-        points, cells, boundary = attempt
-        if _meets_schedule(points, cells, self.schedule):
-            return StuffedImplicitConstruction(
-                points,
-                cells,
-                boundary,
-                np.arange(points.shape[0], dtype=np.int64),
-                np.arange(cells.shape[0], dtype=np.int64),
+        if volume.unmet_cells:
+            raise _failure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "Restricted Delaunay construction left "
+                f"{volume.unmet_cells} cell(s) below the shape targets.",
+                "implicit_restricted_delaunay",
             )
-        return _native_fixed_boundary_quality_pass(points, cells, boundary, self.schedule)
+        return RestrictedImplicitConstruction(
+            volume.points,
+            volume.cells,
+            volume.boundary_faces,
+            np.arange(volume.points.shape[0], dtype=np.int64),
+            np.arange(volume.cells.shape[0], dtype=np.int64),
+        )
+
+    def _repaired(
+        self, construction: RestrictedImplicitConstruction, /
+    ) -> RestrictedImplicitConstruction:
+        """The construction with restricted facets above the tolerance repaired.
+
+        A restricted facet whose certified deviation exceeds the tolerance is
+        split: its centroid, moved onto the zero set, seeds the refinement
+        again, for a bounded number of rounds.
+        """
+        seeds = np.empty((0, 3), dtype=np.float64)
+        for _ in range(_RESTRICTED_REPAIRS):
+            facets = construction.points[construction.boundary_faces]
+            failing = self.profile.triangle_distance_upper(facets) > self.fidelity_tolerance
+            if not np.any(failing):
+                break
+            seeds = np.concatenate((seeds, np.mean(facets[failing], axis=1)))
+            construction = self._constructed(seeds)
+        return construction
 
     def execute(self, /) -> NativeMeshConstruction:
         profile = self.profile
         specification = self.specification
         profile.require_bound(profile.geometry, self.coordinate_contract)
         mesh, target_face_global_ids, boundary_faces = _published_mesh(
-            self.construct(), profile.source_revision
+            self._repaired(self.construct()), profile.source_revision
         )
         samples = profile.boundary_cover(self.seed_cover_radius)
         if (
@@ -1206,8 +919,8 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         if not _topology_matches(profile, boundary_faces):
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "The native fixed-boundary quality pass changed analytic boundary topology.",
-                "implicit_quality_materialization",
+                "The restricted construction's surface does not have the analytic boundary topology.",
+                "implicit_restricted_delaunay",
             )
         facet_deviation = profile.triangle_distance_upper(
             np.asarray(mesh.coordinates, dtype=np.float64)[boundary_faces]
@@ -1215,8 +928,8 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         if np.any(facet_deviation > self.fidelity_tolerance):
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "The native fixed-boundary quality pass violated analytic source fidelity.",
-                "implicit_quality_materialization",
+                "The restricted construction's surface exceeds the analytic source fidelity after repair.",
+                "implicit_restricted_delaunay",
             )
         deviation_upper = float(np.max(facet_deviation, initial=0.0))
         geometry = CellGeometrySpec.affine(mesh)
@@ -1252,7 +965,7 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
         if not compliance.passed:
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Stuffed analytic volume construction does not meet requested controls: "
+                "Restricted analytic volume construction does not meet requested controls: "
                 + "; ".join(compliance.issues),
                 "specification_compliance",
             )
@@ -1302,22 +1015,26 @@ class PreparedStuffedImplicitVolume(StrictModule, NonTrainableState):
 
 
 @checked
-def prepare_stuffed_implicit_volume(
+def prepare_restricted_implicit_volume(
     profile: AnalyticImplicitProfile,
     specification: VolumeMeshingSpec,
     schedule: NativeVolumeSchedule,
     coordinate_contract: SpatialCoordinateContract,
     /,
-) -> PreparedStuffedImplicitVolume:
-    """Prepare the isosurface-stuffing route of an analytic profile."""
+) -> PreparedRestrictedImplicitVolume:
+    """Prepare the restricted Delaunay volume route of an analytic profile.
+
+    The facet edge bound follows from the profile's certified reach and the
+    fidelity tolerance, and the cell size from the uniform size controls.
+    """
     issues = _support_issues(profile, specification)
     if not _shape_targets_gated(schedule):
-        # Its native quality pass refuses any unresolved cell before acceptance.
+        # The construction refuses any cell it leaves below the shape targets.
         issues += ("hard NativeVolumeSchedule shape strength",)
     if issues:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Stuffed analytic volume controls are unsupported: " + "; ".join(issues),
+            "Restricted analytic volume controls are unsupported: " + "; ".join(issues),
             "source_inspection",
         )
     try:
@@ -1338,27 +1055,23 @@ def prepare_stuffed_implicit_volume(
         default=math.inf,
     )
     # The certified facet deviation of a triangle of diameter d on the zero
-    # set of a signed distance of reach R is d^2 / (6 (R - d)); the first
-    # lattice holds it below a fraction of the tolerance for the largest
-    # stuffed triangle diameter per spacing.
+    # set of a signed distance of reach R is d^2 / (6 (R - d)); restricted
+    # facets hold it below a fraction of the tolerance.
     reach = profile.reach_lower
-    aim = _FIRST_LATTICE_FIDELITY_FRACTION * fidelity
+    aim = _FIDELITY_FRACTION * fidelity
     diameter = math.sqrt(9.0 * aim * aim + 6.0 * aim * reach) - 3.0 * aim
-    spacing = min(target_size, diameter / _STUFFED_DIAMETER_PER_SPACING)
-    if not math.isfinite(spacing) or spacing <= 0.0:
+    facet_edge = min(target_size, diameter)
+    if not math.isfinite(facet_edge) or facet_edge <= 0.0:
         raise _failure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "The profile's reach and requested volume size must admit a finite positive lattice spacing.",
+            "The profile's reach and requested volume size must admit a finite positive facet edge.",
             "source_inspection",
         )
-    bounds = _stuffing_bounds(profile)
-    smallest_extent = float(np.min(bounds[1] - bounds[0]))
-    levels = min(
-        16,
-        max(
-            0, math.floor(math.log2(_GRADING_EXTENT_FRACTION * smallest_extent / spacing))
-        ),
+    # The circumradius of the regular tetrahedron of the target edge.
+    cell_size = (
+        None if math.isinf(target_size) else target_size * math.sqrt(6.0) / 4.0
     )
+    bounds = _boundary_bounds(profile)
     identity = canonical_fingerprint(
         {
             "kind": "prepared-restricted-implicit-volume",
@@ -1370,23 +1083,23 @@ def prepare_stuffed_implicit_volume(
             "fidelity_tolerance": fidelity,
             "cover_radius": cover,
             "bounds": bounds,
-            "spacing": spacing,
-            "levels": levels,
+            "facet_edge": facet_edge,
+            "cell_size": cell_size,
         }
     )
-    return PreparedStuffedImplicitVolume(
+    return PreparedRestrictedImplicitVolume(
         profile,
         specification,
         schedule,
         coordinate_contract,
-        _stuffing_program(profile),
+        _field_program(profile),
         fidelity,
         cover,
         bounds,
-        spacing,
-        levels,
+        facet_edge,
+        cell_size,
         identity,
     )
 
 
-__all__ = ["PreparedStuffedImplicitVolume", "prepare_stuffed_implicit_volume"]
+__all__ = ["PreparedRestrictedImplicitVolume", "prepare_restricted_implicit_volume"]

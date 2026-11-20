@@ -8603,7 +8603,7 @@ def _source_coverage_archive_fixture() -> tuple[
         source,
         specification,
         NativeMeshingOptions(
-            "implicit_stuffing",
+            "implicit_restricted_delaunay",
             volume_schedule=NativeVolumeSchedule(),
         ),
         coordinate_contract,

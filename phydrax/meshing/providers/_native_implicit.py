@@ -86,8 +86,8 @@ from .._controls import (
     RegionSeed,
 )
 from .._implicit_volume import (
-    prepare_stuffed_implicit_volume,
-    PreparedStuffedImplicitVolume,
+    prepare_restricted_implicit_volume,
+    PreparedRestrictedImplicitVolume,
 )
 from .._native_construction import (
     NativeCertificationRequest,
@@ -4224,21 +4224,21 @@ def prepare_native_implicit(
     _PreparedImplicitRoute
     | _PreparedFixedImplicitRoute
     | _PreparedImplicitVolumeRoute
-    | PreparedStuffedImplicitVolume
+    | PreparedRestrictedImplicitVolume
 ):
-    """Prepare adaptive surface/volume or direct stuffed analytic volume data."""
+    """Prepare adaptive surface/volume or direct restricted analytic volume data."""
     normalized = False
     programs = None
     normalized_bound = None
     if isinstance(source, AnalyticImplicitProfile):
         if isinstance(specification, VolumeMeshingSpec) and options.route in (
             None,
-            "implicit_stuffing",
+            "implicit_restricted_delaunay",
         ):
             if options.implicit_policy is not None:
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "AdaptiveImplicitSurfacePolicy cannot alter the isosurface-stuffing route.",
+                    "AdaptiveImplicitSurfacePolicy cannot alter the restricted Delaunay route.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )
@@ -4250,11 +4250,11 @@ def prepare_native_implicit(
             if not isinstance(schedule, NativeVolumeSchedule):
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Stuffed analytic volume generation requires a NativeVolumeSchedule.",
+                    "Restricted analytic volume generation requires a NativeVolumeSchedule.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )
-            return prepare_stuffed_implicit_volume(
+            return prepare_restricted_implicit_volume(
                 source,
                 specification,
                 schedule,
@@ -4264,7 +4264,7 @@ def prepare_native_implicit(
             if options.route != "implicit_adaptive_tetrahedral":
                 raise _failure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "An analytic volume profile uses the isosurface-stuffing route by default; adaptive discovery requires explicit implicit_adaptive_tetrahedral selection.",
+                    "An analytic volume profile uses the restricted Delaunay route by default; adaptive discovery requires explicit implicit_adaptive_tetrahedral selection.",
                     provider_code="native_implicit_preflight",
                     stage="source_inspection",
                 )

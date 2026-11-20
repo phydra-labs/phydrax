@@ -42,7 +42,7 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
-  src/implicit_stuffing.cpp
+  src/box_tree.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
   src/metric_float.cpp
@@ -130,6 +130,8 @@ set(PHX_MC_HEADERS
   src/interval_arithmetic.hpp
   src/geometry3.hpp
   src/intersections.hpp
+  src/box_tree.hpp
+  src/key_map.hpp
   src/mesh.hpp
   src/parallel.hpp
   src/plc3d.hpp
