@@ -655,11 +655,9 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, vertices=vertices, faces=faces, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                quality=lambda result, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
                     _zero_set_quality(
                         result,
-                        vertices,
-                        faces,
                         value,
                         gradient,
                         tolerance,
@@ -873,8 +871,6 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
 
 def _zero_set_quality(
     result: object,
-    carrier_vertices: np.ndarray,
-    carrier_faces: np.ndarray,
     value: _meshcore.IntervalBoxProgram,
     gradient: _meshcore.IntervalBoxProgram,
     tolerance: float,
@@ -883,9 +879,9 @@ def _zero_set_quality(
     samples: Callable[[int], np.ndarray],
     /,
 ) -> tuple[int, dict[str, float]]:
-    # The certificate against the zero set (zero_set_certify, the input as the
-    # carrier at the route's carrier distance, the tolerance; a refusal is one
-    # miss), then _surface_quality of the certified surface (of the
+    # The certificate against the zero set (zero_set_certify at the tolerance,
+    # with no carrier: the rows hold no witness for their input; a refusal is
+    # one miss), then _surface_quality of the certified surface (of the
     # constructed one when refused).
     if not isinstance(result, _meshcore.ZeroSetRemeshResult):
         raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
@@ -897,9 +893,9 @@ def _zero_set_quality(
             gradient,
             tolerance,
             result.orientation,
-            carrier_vertices,
-            carrier_faces,
-            tolerance,
+            np.empty((0, 3), dtype=np.float64),
+            np.empty((0, 3), dtype=np.int64),
+            np.empty((0, 2, 3), dtype=np.float64),
             edge,
             30.0,
         )
@@ -918,7 +914,6 @@ def _zero_set_quality(
         **measured,
         "certified": 1.0,
         "certified_distance": certificate.distance,
-        "carrier_triangles": float(certificate.counters[3]),
     }
 
 

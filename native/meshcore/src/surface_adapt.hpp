@@ -79,10 +79,12 @@ struct AdaptCounters {
   int64_t below_angle = 0, above_tolerance = 0;
 };
 
-// An owned surface returned through the C ABI (phx_mc_surface_result_*).
+// An owned surface returned through the C ABI (phx_mc_surface_result_*);
+// `carried` is empty or holds one flag per triangle.
 struct SurfaceResult {
   std::vector<Point> points;
   std::vector<Triangle> triangles;
+  std::vector<uint8_t> carried;
 };
 
 // Remeshes (points, triangles) in place and compacts the output (only
@@ -101,6 +103,9 @@ struct CertifyCounters {
   int64_t carrier = 0;            // triangles accepted from the carrier
   int64_t repair_splits = 0;
   int64_t rounds = 0;             // certification rounds run
+  // Per triangle of the last round (the certified surface on PHX_MC_OK):
+  // 1 when it was accepted from the carrier.
+  std::vector<uint8_t> carried;
 };
 
 // Certifies (points, triangles) (surface_certify.hpp) and repairs refused
