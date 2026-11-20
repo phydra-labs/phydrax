@@ -3110,14 +3110,19 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
 /* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
  * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
- * use_patch is the model's loop surface of each use; use_range is the
- * model's use range bitwise, in either order; chord_loop is the model loop
- * of the chord's use; V4's use-coverage and loop-closure checks hold on these
- * rows (every use covered by chords chaining bitwise from its first to its
- * last range value; every loop one closed bitwise UV cycle). A sliver
- * (chart_to_mesh -1) needs a mesh triangle with the edge from its pole vertex
- * to its third vertex (else a CHART_MESH_LINK finding). V4's orientation,
- * edge pairing and overlap checks remain a separate precondition.
+ * every surface is on a loop; use_patch is the model's loop surface of each
+ * use; use_range is the model's use range bitwise, in its sense-directed
+ * order (first, last for sense +1) or reversed, one direction for all uses
+ * of a face; chord_loop is the model loop of the chord's use; V4's
+ * use-coverage, loop-closure and orientation checks hold on these rows
+ * (every use covered by chords chaining bitwise from its first to its last
+ * range value; every loop one closed bitwise UV cycle; every chart triangle
+ * oriented as its face's chord cycles). A sliver (chart_to_mesh -1) needs a
+ * mesh triangle with the edge from its pole vertex to its third vertex (else
+ * a CHART_MESH_LINK finding). Interior edge pairing is the association
+ * check; with it, one direction per face and the model's loop nesting, the
+ * chart triangles cover each trimmed face once (V4's overlap enumeration is
+ * not repeated).
  * Trusted, not re-established natively: T-spline C2 continuity and partition
  * of unity (Python's ASTS certificate of the exported pieces); continuity of
  * an intersection root across chart seams and the terminal threshold (the

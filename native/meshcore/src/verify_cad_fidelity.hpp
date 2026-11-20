@@ -38,5 +38,10 @@ int32_t fidelity_net_hessian(const CadGeometry& geometry, int32_t face,
 int32_t fidelity_trim_lens(const CadGeometry& geometry, int32_t face, int64_t use,
                            const double* chord_uv, const double* parameters,
                            IntervalEvaluationWorkspace& workspace, double* cap, double* padded);
+// The largest cap of a chord of `face` whose padded box (boxes: u lower,
+// v lower, u upper, v upper per chord) meets `box` (the lens charge index).
+double fidelity_lens_charge(int64_t surface_count, int64_t chord_count, const int32_t* faces,
+                            const double* boxes, const double* caps, int32_t face,
+                            const double* box);
 
 }  // namespace phx::mc::cad

@@ -812,8 +812,52 @@ int intersection_breaks(const CadGeometry& geometry, int32_t index, double box_l
   return count;
 }
 
+// The hull (lo, hi: q0 q1 of the first surface, q2 q3 of the second) of the
+// stored chart boxes and chart chords of every chart the parameter interval
+// can select (a fixed chart alone; else the reachable carrier charts and the
+// terminal chart). Every root of those charts lies in its chart box.
+void intersection_carrier_hull(const CadGeometry& geometry, int32_t index, double box_lower,
+                               double box_upper, const IntervalEvaluationWorkspace& workspace,
+                               double* lo, double* hi) {
+  const Node& node = geometry.node(index);
+  const int64_t charts = node.integers[2], fixed = node.integers[4], terminal = node.integers[5];
+  const int64_t offset = geometry.model().node_real_offsets[index];
+  const double* lower = workspace.coefficient_lower + offset;
+  const double* upper = workspace.coefficient_upper + offset;
+  for (int k = 0; k < 4; ++k) {
+    lo[k] = std::numeric_limits<double>::infinity();
+    hi[k] = -std::numeric_limits<double>::infinity();
+  }
+  const auto include = [&](int64_t chart) {
+    const int64_t base = 2 + 25 * chart;  // start, end, lower, upper (4 each), P (9)
+    for (int k = 0; k < 4; ++k)
+      for (int part = 0; part < 4; ++part) {
+        lo[k] = std::min(lo[k], lower[base + 4 * part + k]);
+        hi[k] = std::max(hi[k], upper[base + 4 * part + k]);
+      }
+  };
+  if (fixed >= 0) {
+    include(fixed);
+    return;
+  }
+  const bool reversed = node.integers[6] != 0;
+  const di::Interval sum{lower[0], upper[0]};
+  const di::Interval reach = reversed
+      ? di::subtract(sum, di::Interval{box_lower, box_upper})
+      : di::Interval{box_lower, box_upper};
+  const double first = std::max(0.0, std::floor(reach.lower));
+  const double last = std::min(static_cast<double>(charts - 1), std::floor(reach.upper));
+  for (double c = first; c <= last; c += 1.0) include(static_cast<int64_t>(c));
+  if (terminal >= 0) include(terminal);
+  if (!(lo[0] <= hi[0]))  // nothing reachable: the evaluation itself refuses
+    for (int k = 0; k < 4; ++k) {
+      lo[k] = -std::numeric_limits<double>::infinity();
+      hi[k] = std::numeric_limits<double>::infinity();
+    }
+}
+
 int spline_regularity(const CadGeometry& geometry, int32_t index, const double* box_lower,
-                      const double* box_upper, const IntervalEvaluationWorkspace& workspace) {
+                      const double* box_upper, IntervalEvaluationWorkspace& workspace) {
   const Node& node = geometry.node(index);
   const int64_t offset = geometry.model().node_real_offsets[index];
   const auto child = [&](int slot, const double* lo, const double* hi) {
@@ -860,15 +904,49 @@ int spline_regularity(const CadGeometry& geometry, int32_t index, const double* 
       return child(0, box_lower + 1, box_upper + 1);
     case PHX_MC_CAD_NODE_RULED:
       return std::max(child(0, box_lower, box_upper), child(1, box_lower, box_upper));
-    case PHX_MC_CAD_NODE_REPARAMETERIZED:
-    case PHX_MC_CAD_NODE_ISOPARAMETRIC:
-      return child(0, all_lower, all_upper);
-    case PHX_MC_CAD_NODE_SURFACE_MAPPED:
-      return std::max(child(0, all_lower, all_upper), child(1, all_lower, all_upper));
+    // The child parameter over the box: first + s (last - first), s = t or
+    // 1 - t, outward.
+    case PHX_MC_CAD_NODE_REPARAMETERIZED: {
+      const di::Interval first{workspace.coefficient_lower[offset],
+                               workspace.coefficient_upper[offset]};
+      const di::Interval last{workspace.coefficient_lower[offset + 1],
+                              workspace.coefficient_upper[offset + 1]};
+      const di::Interval t{box_lower[0], box_upper[0]};
+      const di::Interval s = node.integers[1] != 0 ? di::subtract(di::point(1.0), t) : t;
+      const di::Interval mapped = di::add(first, di::multiply(s, di::subtract(last, first)));
+      if (!di::finite(mapped)) return child(0, all_lower, all_upper);
+      return child(0, &mapped.lower, &mapped.upper);
+    }
+    // The surface over the fixed coordinate and the curve interval.
+    case PHX_MC_CAD_NODE_ISOPARAMETRIC: {
+      const int fixed = static_cast<int>(node.integers[1]);
+      double lo[2], hi[2];
+      lo[fixed] = workspace.coefficient_lower[offset];
+      hi[fixed] = workspace.coefficient_upper[offset];
+      lo[1 - fixed] = box_lower[0];
+      hi[1 - fixed] = box_upper[0];
+      return child(0, lo, hi);
+    }
+    // The surface over the p-curve's interval image of the box (the whole
+    // plane when the image is not finite).
+    case PHX_MC_CAD_NODE_SURFACE_MAPPED: {
+      const auto pcurve = static_cast<int32_t>(node.integers[1]);
+      const int regularity = spline_regularity(geometry, pcurve, box_lower, box_upper, workspace);
+      double lo[2], hi[2];
+      if (geometry.interval_jets(pcurve, box_lower, box_upper, 0, lo, hi, workspace) != PHX_MC_OK ||
+          !std::isfinite(lo[0]) || !std::isfinite(lo[1]) || !std::isfinite(hi[0]) ||
+          !std::isfinite(hi[1]))
+        return std::max(regularity, child(0, all_lower, all_upper));
+      return std::max(regularity, child(0, lo, hi));
+    }
     // A chart seam or the terminal threshold inside the interval is a C0
     // break of the parameterization (Python's IntersectionCurve.is_c1_on).
+    // Each carrier is asked over the hull of the chart boxes the interval can
+    // select: the root lies in its chart's box (the chart certificate).
     case PHX_MC_CAD_NODE_INTERSECTION: {
-      const int result = std::max(child(0, all_lower, all_upper), child(1, all_lower, all_upper));
+      double lo[4], hi[4];
+      intersection_carrier_hull(geometry, index, box_lower[0], box_upper[0], workspace, lo, hi);
+      const int result = std::max(child(0, lo, hi), child(1, lo + 2, hi + 2));
       if (result != 0) return result;
       return intersection_breaks(geometry, index, box_lower[0], box_upper[0], workspace, nullptr,
                                  0) != 0 ? 1 : 0;
@@ -894,7 +972,7 @@ constexpr double kClipConditioning = 0x1p-20;
 // takes the first-order bound.
 bool c0_knot_lines(const CadGeometry& geometry, int32_t index, int curve_axis,
                    const double* box_lower, const double* box_upper,
-                   const IntervalEvaluationWorkspace& workspace, KnotLine* lines, int& count) {
+                   IntervalEvaluationWorkspace& workspace, KnotLine* lines, int& count) {
   const Node& node = geometry.node(index);
   const auto child = [&](int slot, int axis) {
     return c0_knot_lines(geometry, static_cast<int32_t>(node.integers[slot]), axis, box_lower,
@@ -956,13 +1034,12 @@ bool c0_knot_lines(const CadGeometry& geometry, int32_t index, int curve_axis,
     // Chart breaks of a curve parameter whose surfaces are smooth everywhere.
     case PHX_MC_CAD_NODE_INTERSECTION: {
       if (curve_axis < 0) return false;
-      const double all_lower[2] = {-std::numeric_limits<double>::infinity(),
-                                   -std::numeric_limits<double>::infinity()};
-      const double all_upper[2] = {std::numeric_limits<double>::infinity(),
-                                   std::numeric_limits<double>::infinity()};
+      double lo[4], hi[4];
+      intersection_carrier_hull(geometry, index, box_lower[curve_axis], box_upper[curve_axis],
+                                workspace, lo, hi);
       for (int slot = 0; slot < 2; ++slot)
-        if (spline_regularity(geometry, static_cast<int32_t>(node.integers[slot]), all_lower,
-                              all_upper, workspace) != 0)
+        if (spline_regularity(geometry, static_cast<int32_t>(node.integers[slot]), lo + 2 * slot,
+                              hi + 2 * slot, workspace) != 0)
           return false;
       double breaks[kMaxKnotLines];
       const int found = intersection_breaks(geometry, index, box_lower[curve_axis],
@@ -1687,7 +1764,9 @@ class LensIndex {
         result = std::max(result, chord.cap);
       }
     };
-    if ((high[0] - low[0] + 1) * (high[1] - low[1] + 1) > 64) {
+    // Either span alone decides before the product could overflow.
+    const int64_t span_x = high[0] - low[0], span_y = high[1] - low[1];
+    if (span_x >= 64 || span_y >= 64 || (span_x + 1) * (span_y + 1) > 64) {
       visit(static_cast<std::size_t>(face.first), static_cast<std::size_t>(face.last));
       return result;
     }
@@ -1790,6 +1869,19 @@ int32_t fidelity_trim_lens(const CadGeometry& geometry, int32_t face, int64_t us
   return trim_lens_bound(geometry, face, use, chord_uv, parameters, workspace, *cap, padded);
 }
 
+double fidelity_lens_charge(int64_t surface_count, int64_t chord_count, const int32_t* faces,
+                            const double* boxes, const double* caps, int32_t face,
+                            const double* box) {
+  std::vector<LensIndex::Chord> chords(static_cast<std::size_t>(chord_count));
+  for (int64_t c = 0; c < chord_count; ++c) {
+    auto& chord = chords[static_cast<std::size_t>(c)];
+    chord.face = faces[c];
+    std::copy(boxes + 4 * c, boxes + 4 * c + 4, chord.box);
+    chord.cap = caps[c];
+  }
+  return LensIndex(surface_count, std::move(chords)).charge(face, box);
+}
+
 int32_t fidelity_net_hessian(const CadGeometry& geometry, int32_t face,
                              IntervalEvaluationWorkspace& workspace, const double* lower,
                              const double* upper, double* hessian_lower, double* hessian_upper) {
@@ -1884,12 +1976,17 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
       for (int j = 0; j < 6; ++j)
         if (!std::isfinite(uv[6 * i + j])) return PHX_MC_NONFINITE_INPUT;
     }
-    // V4's use coverage and loop closure are this verifier's precondition,
-    // checked here: the caller's use and loop rows are bound to the model
-    // (patch from loop_surfaces, range bitwise in either order, chord loop
-    // from loop_use_offsets), then V4's own checks run on them.
+    // V4's use coverage, loop closure and orientation are this verifier's
+    // precondition, checked here: the caller's use and loop rows are bound
+    // to the model (patch from loop_surfaces, chord loop from
+    // loop_use_offsets, every surface on some loop), every use of one face
+    // runs one way (all in the model's sense-directed range order, or all
+    // reversed, as cad_mesh exports them), then V4's own checks run on them.
+    // With one direction per face, consistent orientation and the boundary
+    // chain, the chart triangles cover the trimmed region once.
     if (loop_count != model->loop_count) return PHX_MC_INVALID_INPUT;
     std::vector<int64_t> use_loop(static_cast<std::size_t>(use_count), -1);
+    std::vector<int8_t> direction(static_cast<std::size_t>(model->surface_count), 0);
     for (int64_t loop = 0; loop < loop_count; ++loop)
       for (int64_t use = model->loop_use_offsets[loop]; use < model->loop_use_offsets[loop + 1];
            ++use) {
@@ -1897,20 +1994,34 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
         const auto bits = [](double value) { return std::bit_cast<uint64_t>(value); };
         const double* given = use_range + 2 * use;
         const double* source = model->use_ranges + 2 * use;
-        const bool forward = bits(given[0]) == bits(source[0]) && bits(given[1]) == bits(source[1]);
-        const bool backward = bits(given[0]) == bits(source[1]) && bits(given[1]) == bits(source[0]);
-        if (use_patch[use] != model->loop_surfaces[loop] || !(forward || backward))
+        const bool sense = model->use_senses[use] > 0;
+        const double first = source[sense ? 0 : 1], last = source[sense ? 1 : 0];
+        const bool forward = bits(given[0]) == bits(first) && bits(given[1]) == bits(last);
+        const bool backward = bits(given[0]) == bits(last) && bits(given[1]) == bits(first);
+        const int32_t face = model->loop_surfaces[loop];
+        int8_t& way = direction[static_cast<std::size_t>(face)];
+        const int8_t found = forward ? 1 : backward ? -1 : 0;
+        if (use_patch[use] != face || found == 0 || (way != 0 && way != found))
           return PHX_MC_INVALID_INPUT;
+        way = found;
       }
+    for (const int8_t way : direction)
+      if (way == 0) return PHX_MC_INVALID_INPUT;  // a surface on no loop
     for (int64_t i = 0; i < chord_count; ++i)
       if (chord_loop[i] != use_loop[static_cast<std::size_t>(chord_use[i])])
         return PHX_MC_INVALID_INPUT;
     {
+      const phx::mc::GradualNearestScope exact;
+      if (!exact.established()) return PHX_MC_INTERNAL_ERROR;
       std::vector<phx_mc_chart_failure> failures;
+      std::vector<uint8_t> oriented;
       phx::mc::chart::check_uses(use_count, use_patch, use_range, chord_count, chord_use,
                                  chord_loop, chord_uv, chord_range, failures);
       phx::mc::chart::check_loops(loop_count, chord_count, chord_loop, chord_use, use_patch,
                                   chord_uv, failures);
+      phx::mc::chart::check_orientation(model->surface_count, triangle_count, face_rows, uv,
+                                        chord_count, chord_use, use_patch, chord_uv, oriented,
+                                        failures);
       if (!failures.empty()) return PHX_MC_INVALID_INPUT;
     }
     auto findings = phx::mc::cad::association_findings(

@@ -6616,7 +6616,26 @@ class _PreparedNativeSurface(StrictModule, NonTrainableState):
         )
 
 
-def prepare_native_surface(
+@dataclass(frozen=True, slots=True, eq=False)
+class NativeSurfaceRequest:
+    """A validated surface request: selected faces, sizes and boundary query.
+
+    Holds what construction from native arrays consumes; the trim validation,
+    trim cover and chart roots that only the Python construction and its proof
+    consume are prepared by :func:`prepare_native_surface_proof`.
+    """
+
+    domain: domain_owner.MeshingDomain
+    specification: SurfaceMeshingSpec
+    coordinate_contract: SpatialCoordinateContract
+    schedule: NativeSurfaceSchedule
+    selected_patches: tuple[int, ...]
+    scope_ids: tuple[np.ndarray, ...]
+    size_values: np.ndarray
+    boundary_source: domain_boundary_owner.MeshingDomainBoundarySource
+
+
+def native_surface_request(
     source: domain_owner.MeshingDomain | ReconstructedGeometrySource,
     specification: SurfaceMeshingSpec,
     options: NativeMeshingOptions,
@@ -6624,11 +6643,11 @@ def prepare_native_surface(
     /,
     *,
     preparation: domain_owner.SourcePreparation | None = None,
-) -> _PreparedNativeSurface:
-    """Prepare actual trimmed source charts for canonical mesh acceptance.
+) -> NativeSurfaceRequest:
+    """Validate a surface request and its trims and size its faces.
 
-    ``preparation`` is the caller's `SourcePreparation` of the source domain;
-    without one the domain is prepared for this call alone.
+    Refuses p-curves without a continuous, finite, ordered chart enclosure;
+    no chart is prepared.
     """
     if options.route not in (None, "parametric_surface"):
         raise ValueError(
@@ -6641,7 +6660,6 @@ def prepare_native_surface(
         raise TypeError("parametric_surface requires a NativeSurfaceSchedule.")
     domain = _domain_for_source(source)
     domain.require_current(domain.source_id, domain.source_revision)
-    preparation = domain_owner.SourcePreparation.of(domain, preparation)
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
     if coordinate_contract.coordinate_system != "cartesian":
@@ -6662,10 +6680,39 @@ def prepare_native_surface(
             "; ".join(unsupported),
             category=MeshingFailureCategory.UNSUPPORTED_COMBINATION,
         )
-    _validate_chart_trims(domain, selected, preparation)
-    boundary_source = domain_boundary_owner.MeshingDomainBoundarySource(domain, selected)
+    _validate_chart_trims(
+        domain, selected, domain_owner.SourcePreparation.of(domain, preparation)
+    )
+    size_values, _ = _size_field(domain, specification, selected, scope_ids)
+    return NativeSurfaceRequest(
+        domain,
+        specification,
+        coordinate_contract,
+        schedule,
+        selected,
+        scope_ids,
+        size_values,
+        domain_boundary_owner.MeshingDomainBoundarySource(domain, selected),
+    )
+
+
+def prepare_native_surface_proof(
+    request: NativeSurfaceRequest,
+    /,
+    *,
+    preparation: domain_owner.SourcePreparation | None = None,
+) -> _PreparedNativeSurface:
+    """Certify the trim cover and root the charts of a validated request.
+
+    Refuses a trim cover the boundary query cannot retain or that is
+    incomplete, and charts without certified roots.
+    """
+    domain = request.domain
+    selected = request.selected_patches
+    preparation = domain_owner.SourcePreparation.of(domain, preparation)
+    # The request validated the trims.
     try:
-        cover = boundary_source.boundary_chart_cover(preparation=preparation)
+        cover = request.boundary_source.boundary_chart_cover(preparation=preparation)
     except (TypeError, ValueError) as error:
         raise _failure(
             f"source boundary query cannot retain its trim cover: {error}",
@@ -6678,19 +6725,51 @@ def prepare_native_surface(
             category=MeshingFailureCategory.INVALID_SOURCE,
             entity_ids=tuple(int(patch) for patch in selected),
         )
-    size_values, _ = _size_field(domain, specification, selected, scope_ids)
-    roots = _chart_bounds(domain, selected, scope_ids, coordinate_contract, preparation)
+    roots = _chart_bounds(
+        domain, selected, request.scope_ids, request.coordinate_contract, preparation
+    )
     return _PreparedNativeSurface(
         domain,
-        specification,
-        coordinate_contract,
-        schedule,
+        request.specification,
+        request.coordinate_contract,
+        request.schedule,
         selected,
-        scope_ids,
-        size_values,
+        request.scope_ids,
+        request.size_values,
         roots,
-        boundary_source,
+        request.boundary_source,
     )
 
 
-__all__ = ["prepare_native_surface"]
+def prepare_native_surface(
+    source: domain_owner.MeshingDomain | ReconstructedGeometrySource,
+    specification: SurfaceMeshingSpec,
+    options: NativeMeshingOptions,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+    *,
+    preparation: domain_owner.SourcePreparation | None = None,
+) -> _PreparedNativeSurface:
+    """Prepare actual trimmed source charts for canonical mesh acceptance.
+
+    ``preparation`` is the caller's `SourcePreparation` of the source domain;
+    without one the domain is prepared for this call alone.
+    """
+    return prepare_native_surface_proof(
+        native_surface_request(
+            source,
+            specification,
+            options,
+            coordinate_contract,
+            preparation=preparation,
+        ),
+        preparation=preparation,
+    )
+
+
+__all__ = [
+    "native_surface_request",
+    "NativeSurfaceRequest",
+    "prepare_native_surface",
+    "prepare_native_surface_proof",
+]
