@@ -1171,11 +1171,12 @@ bool CadGeometry::expand(int32_t index, const double* point, int order, Taylor* 
       for (int i = 0; i < 3; ++i) axpy(relative[i], -axis[i], dot, radial[i], local);
       sine_cosine(angle, sine, cosine, local);
       for (int i = 0; i < 3; ++i) {
-        Taylor axial, cross, turned, product;
-        scale(dot, axis[i], axial, local);
+        // Jets hold only the terms of the truncation, so they are written
+        // term-wise rather than copied whole.
+        Taylor cross, turned, product;
+        scale(dot, axis[i], out[i], local);
         scale(radial[(i + 2) % 3], axis[(i + 1) % 3], cross, local);
         axpy(cross, -axis[(i + 2) % 3], radial[(i + 1) % 3], cross, local);
-        out[i] = axial;
         out[i].c[0] += origin[i];
         multiply(radial[i], cosine, turned, local);
         axpy(out[i], 1.0, turned, out[i], local);

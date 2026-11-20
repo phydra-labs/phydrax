@@ -19,6 +19,9 @@ tetrahedra, then implicit volumes, then the CAD solid.
   arithmetic only inside filtered predicates.
 - Certification is a separate verifier over (mesh, source, tolerances) and reports pass, fail with
   findings, or unresolved.
+- A certifier counts only after an independent read-only review of its proof (Nov 20: the first three
+  reviewed, `mesh_certify`, `zero_set_certify` and `verify_volume`, each had a soundness defect, all
+  fixed). Rows certified by an unreviewed certifier are construction rows with sampled quality.
 - Every replaced route is a clean cutover: callers, tests, docs, changelog, generated data in the same
   change; no compatibility path.
 - Determinism: the output depends on the input only (not on thread count or timing).
@@ -55,6 +58,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   inputs (canonicalized).
 - Acceptance: 3D Delaunay at 1e6 points at most 1.8x CGAL (ledger: CGAL 3.26 s, ours 9.08 s); 2D at
   most 2x CGAL.
+- Status (Nov 20, quiet macOS acceptance, references re-measured back to back): ACCEPTED. 2D 0.87-0.92x
+  CGAL, 3D 0.88-0.93x, regular 0.95-0.99x CGAL Regular_3, periodic 0.43-0.63x CGAL Periodic_3 (direct
+  covering-space engine; declared margin change), 1e3-1e6. Output canonicalization stayed mandatory for
+  every caller (linear-time instead of an option).
 
 ### S0-C Flat tetrahedral state
 - `native/meshcore/src/tet_mesh.hpp`, `tet_mesh_state.cpp`, `tet_mesh_capi.cpp`: cells, neighbors,
@@ -90,6 +97,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: refinement plus improvement at or above Gmsh HXT single thread (0.34 / 0.63 / 0.77 M tets/s
   on sphere / torus / two cylinders at about 0.8 M tets) with minimum dihedral at least 15 degrees and
   radius-edge at most 2.
+- Status (Nov 20, quiet macOS acceptance against Gmsh HXT on the same surfaces): ACCEPTED. Sphere
+  0.54 / 0.65x, stuffed torus 0.95 / 0.91x, grid torus 0.64 / 0.62x; recovery 0.35-0.61x CGAL CDT_3.
+  The stuffed-torus rows reopen when S1 replaces stuffing (their inputs are regenerated from the
+  restricted-Delaunay surface) and are re-measured in the next quiet window.
 
 ### S3-C One-call pipeline and certification
 - Pipeline (decided Nov 19, superseding a separate `surface_to_tets.cpp` / `phx_mc_surface_to_tets`
@@ -124,6 +135,28 @@ tetrahedra, then implicit volumes, then the CAD solid.
   1.9 s; `CellMesh` topology 3.45 s; source tables and size field 1.7 s; source associations 8.6 s
   (Equinox's static-field walk about 4.6 s of it); audit 4.4 s (sampled quality evaluation 2.7,
   coincident-vertex search 0.5, edge coverage 0.4, evidence 0.3). NOT met: L6 "in seconds".
+- Update (Nov 19, certify3): bitwise-identical host quality (cell chunks, component-wise corner
+  measures and dihedral angles, component `binary64_matmul`), cheaper topology helpers, simplex
+  top incidence from the cell routes, verified connectivity routes in PLC associations, vectorized
+  size-control selection, sweep-proposed coincident pairs, `StaticRows` for
+  `MeshingScope.unqualified_entity_ids`; identities unchanged. Certified icosphere execute
+  without the profiler (one-facet driver, load 2-10): L4 0.55 s, L5 1.9 s, L6 10.3-10.5 s (was
+  17.1). NOT met: L6 <= 8 s; the remainder is native about 1.9 s, simplex topology about 2.1 s
+  (identity sorts and searches), association construction about 1.8 s (per-row identity JSON
+  and SHA-256 of about 200 MB), host quality about 0.7 s.
+- Suppression coverage (Nov 19, hygiene; S3-C item 7): the four Steiner-suppression fixtures that
+  flips now recover without a split are kept as such; the exhaustive search, the `PlcSearchBudget`
+  accounting (exact budget, one state short, fewer bytes than one chunk: exceeded/inconclusive)
+  and relocation by peeling (`PEEL_AFTER_INCONCLUSIVE`) are exercised again end to end under FIXED
+  by the sliver sheet with vertex 18 raised by 2^-40 (native
+  `test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget`; Python
+  `recover_plc_3d` evidence and the `generate_plc_volume` route with a declared budget in
+  `test_native_volume_generation.py`). Kept, not deleted: these paths are reachable. NOT
+  covered end to end: wedge merging (`merges > 0`); about 15k FIXED variants (twisted n-prisms
+  and towers of them, jittered sliver/cone/lobed patches, single and paired coordinate
+  perturbations of the sliver sheet, each under default and starved budgets) found none, and no
+  unreachability proof exists, so the path and its evidence fields stay. The same sweep found
+  FIXED recoveries of small twisted prisms and towers (16-30 points) running past 60 s.
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice

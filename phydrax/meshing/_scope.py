@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
+from .._strict import StaticRows, StrictModule
 from .._trainable import NonTrainableState
 from .._validation import nonnegative_integer
 from ..discretization import CellMesh, EntitySelection, EntitySet
@@ -572,7 +572,8 @@ class MeshingScope(StrictModule, NonTrainableState):
                 raise ValueError("Unqualified IDs must be unique non-negative integers.")
             unqualified = tuple(sorted(int(value) for value in unqualified))
         sides = tuple(sorted(sides, key=_side_key))
-        if not np.array_equal(
+        # Without sides, IDs projected from the sorted bank are the bank itself.
+        if (unqualified_entity_ids is not None or sides) and not np.array_equal(
             identifiers,
             np.union1d(
                 np.asarray(unqualified, dtype=np.int64),
@@ -586,7 +587,8 @@ class MeshingScope(StrictModule, NonTrainableState):
         self.entity_dimension = dimension
         self.entity_set_id = entity_set
         self.entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
-        self.unqualified_entity_ids = unqualified
+        # The unqualified IDs were validated above to be host integers.
+        self.unqualified_entity_ids = StaticRows(unqualified)
         self.side_records = sides
         if sides:
             self.scope_id = canonical_fingerprint(

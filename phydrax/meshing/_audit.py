@@ -58,6 +58,7 @@ from ._association import (
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
+    has_present_rows,
     source_boundary_association_piece_rows,
     source_boundary_image_association_piece_rows,
 )
@@ -840,7 +841,9 @@ def _mesh_evidence_issues(
             issues.append("organization_binding")
         table = sorted_ids.get(scope.entity_set_id)
         if table is None:
-            table = np.sort(np.asarray(entities.entity_ids, dtype=np.int64))
+            table = np.asarray(entities.entity_ids, dtype=np.int64)
+            if np.any(table[1:] < table[:-1]):
+                table = np.sort(table)
             sorted_ids[scope.entity_set_id] = table
         requested = np.asarray(scope.entity_ids, dtype=np.int64)
         position = np.minimum(np.searchsorted(table, requested), table.size - 1)
@@ -867,6 +870,10 @@ def _mesh_evidence_issues(
         )
     recurring_targets: dict[tuple[object, ...], np.ndarray] = {}
     for group, parts in group_targets.items():
+        if len(parts) == 1:
+            # One association's target IDs are unique by construction.
+            recurring_targets[group] = np.empty((0,), dtype=np.int64)
+            continue
         values, counts = np.unique(np.concatenate(parts), return_counts=True)
         recurring_targets[group] = values[counts > 1]
     resolved_sources = {}
@@ -1563,7 +1570,7 @@ def _validated_partial_edge_coverage(
     for association in associations:
         if (
             association.association_id in facet_edge_proofs
-            or any(value is not None for value in association.target_parameter_intervals)
+            or has_present_rows(association.target_parameter_intervals)
             or (
                 association.source_boundary_witness_id is not None
                 and association.target_entity_set_id == mesh.entity_set(1).entity_set_id

@@ -1002,6 +1002,89 @@ def _fan_warpage(points: Any, normal: Any, host: bool, /) -> Any:
     return xp.max(_quality_atan2(sine, cosine, host), axis=-1)
 
 
+def _host_solid_corner_measures(
+    points: np.ndarray, table: _CornerTable, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Host ``_corner_measures`` of three-frame solid corners without a metric.
+
+    Evaluated on corner-major component arrays with the vector form's rounded
+    operations in the same order (determinant cofactors, norms and matrix
+    entries from the first product, traces and products from zero and one), so
+    every value is bitwise identical; NumPy's loops run over all cells.
+    """
+    corners = np.ascontiguousarray(np.transpose(points, (2, 1, 0)))
+    apex = corners[:, table.vertices]
+    # frame[a][d]: component a of the edge to neighbor d, one row per corner.
+    frame = [
+        [corners[axis, table.neighbors[:, side]] - apex[axis] for side in range(3)]
+        for axis in range(3)
+    ]
+    determinant = _component_determinant(frame)
+    lengths = [
+        np.sqrt(
+            frame[0][side] * frame[0][side]
+            + frame[1][side] * frame[1][side]
+            + frame[2][side] * frame[2][side]
+        )
+        for side in range(3)
+    ]
+    tiny = _tiny(points)
+    scaled = (
+        determinant
+        / np.maximum(1.0 * lengths[0] * lengths[1] * lengths[2], tiny)
+        / table.ideal_scaled[:, None]
+    )
+    inverse = table.ideal_inverse
+    target = [
+        [
+            frame[axis][0] * inverse[:, 0, column, None]
+            + frame[axis][1] * inverse[:, 1, column, None]
+            + frame[axis][2] * inverse[:, 2, column, None]
+            for column in range(3)
+        ]
+        for axis in range(3)
+    ]
+    gram = [
+        [
+            target[0][row] * target[0][column]
+            + target[1][row] * target[1][column]
+            + target[2][row] * target[2][column]
+            for column in range(3)
+        ]
+        for row in range(3)
+    ]
+    positive = determinant > 0.0
+    gram_determinant = np.maximum(_component_determinant(gram), tiny)
+    trace = 0.0 + gram[0][0] + gram[1][1] + gram[2][2]
+    adjugate_trace = (
+        gram[0][0] * gram[1][1]
+        - gram[0][1] * gram[1][0]
+        + gram[0][0] * gram[2][2]
+        - gram[0][2] * gram[2][0]
+        + gram[1][1] * gram[2][2]
+        - gram[1][2] * gram[2][1]
+    )
+    ratio = np.where(
+        positive,
+        3 * binary64_cube_root(gram_determinant) / np.maximum(trace, tiny),
+        0.0,
+    )
+    condition = np.where(
+        positive, np.sqrt(trace * adjugate_trace / gram_determinant) / 3, np.inf
+    )
+    metric_ratio = np.full(ratio.shape, np.nan, dtype=points.dtype)
+    return determinant.T, scaled.T, ratio.T, condition.T, metric_ratio.T
+
+
+def _component_determinant(matrix: list[list[np.ndarray]], /) -> np.ndarray:
+    """``_square_determinant`` of a 3x3 matrix of component arrays."""
+    return (
+        matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
+    )
+
+
 def _corner_measures(
     points: Any,
     table: _CornerTable,
@@ -1011,6 +1094,14 @@ def _corner_measures(
     /,
 ) -> tuple[Any, Any, Any, Any, Any]:
     """Corner signed determinant, scaled Jacobian, shape and metric quality."""
+    if (
+        host
+        and metric is None
+        and unit_normal is None
+        and points.shape[-1] == 3
+        and table.neighbors.shape[1] == 3
+    ):
+        return _host_solid_corner_measures(points, table)
     xp = np if host else jnp
     frames = xp.swapaxes(
         points[:, table.neighbors] - points[:, table.vertices][:, :, None, :], -1, -2
@@ -1172,7 +1263,44 @@ def _surface_quality(kind: str, points: Any, metric: Any, host: bool, /) -> _Blo
     )
 
 
+def _component_sum(*terms: np.ndarray) -> np.ndarray:
+    """``_quality_sum`` of component terms: from zero, in increasing order."""
+    total = 0.0 + terms[0]
+    for term in terms[1:]:
+        total = total + term
+    return total
+
+
+def _host_dihedral_angles(points: np.ndarray, samples: np.ndarray, /) -> np.ndarray:
+    """Host ``_dihedral_angles`` over contiguous coordinate components.
+
+    The same rounded products, sums (norms from the first square, other sums
+    from zero) and cross products as the vector form, so every angle is
+    bitwise identical; component arrays keep NumPy's loops long.
+    """
+    components = np.moveaxis(points, -1, 0)
+    origin = components[:, :, samples[:, 0]]
+    edge = components[:, :, samples[:, 1]] - origin
+    first = components[:, :, samples[:, 2]] - origin
+    second = components[:, :, samples[:, 3]] - origin
+    length = np.sqrt(edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2])
+    unit = edge / np.maximum(length, _tiny(points))
+    sine = _component_sum(
+        (first[1] * second[2] - first[2] * second[1]) * unit[0],
+        (first[2] * second[0] - first[0] * second[2]) * unit[1],
+        (first[0] * second[1] - first[1] * second[0]) * unit[2],
+    )
+    cosine = _component_sum(
+        first[0] * second[0], first[1] * second[1], first[2] * second[2]
+    ) - _component_sum(
+        first[0] * unit[0], first[1] * unit[1], first[2] * unit[2]
+    ) * _component_sum(second[0] * unit[0], second[1] * unit[1], second[2] * unit[2])
+    return _angle(sine, cosine, True)
+
+
 def _dihedral_angles(points: Any, samples: np.ndarray, host: bool, /) -> Any:
+    if host and points.shape[-1] == 3:
+        return _host_dihedral_angles(points, samples)
     xp = np if host else jnp
     origin = points[:, samples[:, 0]]
     edge = points[:, samples[:, 1]] - origin
@@ -1415,6 +1543,30 @@ def _cell_metric(values: Array | None, rows: np.ndarray, /) -> Array | None:
     return interpolate_mesh_metric(values[rows], weights)
 
 
+# Cells per host quality evaluation: temporaries stay cache resident.
+_HOST_QUALITY_CHUNK = 8192
+
+
+def _host_block_quality(
+    kind: str, points: np.ndarray, rows: np.ndarray, metric: np.ndarray | None, /
+) -> _BlockQuality:
+    """Host standard-block quality, evaluated over consecutive cell chunks.
+
+    Every quality formula is evaluated per cell, so chunking changes only the
+    memory traffic: each value is bitwise the one of a single evaluation.
+    """
+    parts = [
+        _standard_block_quality(
+            kind,
+            points[rows[start : start + _HOST_QUALITY_CHUNK]],
+            None if metric is None else metric[start : start + _HOST_QUALITY_CHUNK],
+            True,
+        )
+        for start in range(0, max(rows.shape[0], 1), _HOST_QUALITY_CHUNK)
+    ]
+    return _BlockQuality(*(np.concatenate(values) for values in zip(*parts, strict=True)))
+
+
 def evaluate_cell_quality(
     mesh: CellMesh,
     coordinates: ArrayLike | None = None,
@@ -1461,11 +1613,23 @@ def evaluate_cell_quality(
         else:
             rows = np.asarray(block.vertices, dtype=np.int32)
             cell_metric = _cell_metric(vertex_metric, rows)
-            if host and cell_metric is not None:
-                cell_metric = np.asarray(cell_metric, dtype=np.float64)
-            blocks.append(
-                _standard_block_quality(block.cell_kind, points[rows], cell_metric, host)
-            )
+            if host:
+                blocks.append(
+                    _host_block_quality(
+                        block.cell_kind,
+                        np.asarray(points, dtype=np.float64),
+                        rows,
+                        None
+                        if cell_metric is None
+                        else np.asarray(cell_metric, dtype=np.float64),
+                    )
+                )
+            else:
+                blocks.append(
+                    _standard_block_quality(
+                        block.cell_kind, points[rows], cell_metric, host
+                    )
+                )
         offsets.append(stop)
     fields = _BlockQuality(
         *(

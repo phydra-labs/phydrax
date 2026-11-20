@@ -11,6 +11,7 @@
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
+#include "predicates.hpp"
 
 namespace phx::mc::remesh {
 
@@ -141,44 +142,55 @@ TriangleKey triangle_key(const Point& a, const Point& b, const Point& c) {
   return {a, b, c};
 }
 
-bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count) {
+bool closed_manifold(const std::vector<Triangle>& triangles, size_t vertex_count,
+                     std::vector<int64_t>* twins) {
   const size_t corners = 3 * triangles.size();
-  // (tail, head, corner) of every directed edge, sorted.
-  std::vector<std::array<int64_t, 3>> directed(corners);
-  std::vector<int64_t> first(vertex_count, -1), count(vertex_count, 0);
+  const auto tail = [&](size_t c) { return triangles[c / 3][c % 3]; };
+  const auto head = [&](size_t c) { return triangles[c / 3][(c % 3 + 1) % 3]; };
+  // Corner c is the directed edge tail(c) -> head(c); outgoing edges by tail.
+  std::vector<int64_t> start(vertex_count + 1, 0);
   for (size_t c = 0; c < corners; ++c) {
-    const int64_t a = triangles[c / 3][c % 3], b = triangles[c / 3][(c % 3 + 1) % 3];
+    const int64_t a = tail(c), b = head(c);
     if (a < 0 || b < 0 || a == b || static_cast<size_t>(a) >= vertex_count ||
         static_cast<size_t>(b) >= vertex_count)
       return false;
-    directed[c] = {a, b, static_cast<int64_t>(c)};
-    if (first[static_cast<size_t>(a)] < 0) first[static_cast<size_t>(a)] = static_cast<int64_t>(c);
-    ++count[static_cast<size_t>(a)];
+    ++start[static_cast<size_t>(a) + 1];
   }
-  std::sort(directed.begin(), directed.end());
+  for (size_t v = 0; v < vertex_count; ++v) start[v + 1] += start[v];
+  std::vector<int64_t> outgoing(corners), fill(start.begin(), start.end() - 1);
+  for (size_t c = 0; c < corners; ++c)
+    outgoing[static_cast<size_t>(fill[static_cast<size_t>(tail(c))]++)] = static_cast<int64_t>(c);
+  // The twin of a -> b is the one edge b -> a; a second b -> a (or a second
+  // a -> b, whose reverse then finds two) is not a manifold.
   std::vector<int64_t> opposite(corners, -1);
-  for (size_t i = 0; i < corners; ++i) {
-    if (i + 1 < corners && directed[i][0] == directed[i + 1][0] &&
-        directed[i][1] == directed[i + 1][1])
-      return false;
-    const std::array<int64_t, 3> reverse{directed[i][1], directed[i][0], -1};
-    const auto found = std::lower_bound(directed.begin(), directed.end(), reverse);
-    if (found == directed.end() || (*found)[0] != reverse[0] || (*found)[1] != reverse[1])
-      return false;
-    opposite[static_cast<size_t>(directed[i][2])] = (*found)[2];
+  for (size_t c = 0; c < corners; ++c) {
+    const int64_t a = tail(c);
+    const auto b = static_cast<size_t>(head(c));
+    int64_t found = -1;
+    for (int64_t s = start[b]; s < start[b + 1]; ++s) {
+      const auto e = static_cast<size_t>(outgoing[static_cast<size_t>(s)]);
+      if (head(e) != a) continue;
+      if (found >= 0) return false;
+      found = static_cast<int64_t>(e);
+    }
+    if (found < 0) return false;
+    opposite[c] = found;
   }
   // The ring of v (outgoing corner c, then the twin of the edge entering v in
   // c's triangle) returns to its first corner after all of v's corners.
   for (size_t v = 0; v < vertex_count; ++v) {
-    if (first[v] < 0) continue;
-    int64_t c = first[v], steps = 0;
+    const int64_t count = start[v + 1] - start[v];
+    if (count == 0) continue;
+    const int64_t first = outgoing[static_cast<size_t>(start[v])];
+    int64_t c = first, steps = 0;
     do {
       const int64_t entering = c - c % 3 + (c % 3 + 2) % 3;
       c = opposite[static_cast<size_t>(entering)];
       ++steps;
-    } while (c != first[v] && steps <= count[v]);
-    if (steps != count[v]) return false;
+    } while (c != first && steps <= count);
+    if (steps != count) return false;
   }
+  if (twins != nullptr) *twins = std::move(opposite);
   return true;
 }
 
@@ -204,10 +216,12 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
   double extents = 0;
   size_t counted = 0;
   for (size_t t = 0; t < m; ++t) {
+    // Exact classification (collinearity, contacts) holds only for
+    // coordinates in the predicates' domain; others are refused unread.
     bool ok = true;
     for (size_t k = 0; k < 3; ++k) {
       corners[t][k] = points[static_cast<size_t>(triangles[t][k])];
-      for (int d = 0; d < 3; ++d) ok = ok && std::isfinite(corners[t][k][d]);
+      for (int d = 0; d < 3; ++d) ok = ok && phx::mc::coordinate_in_domain(corners[t][k][d]);
     }
     if (!ok || phx::mc::geometry::collinear(corners[t][0], corners[t][1], corners[t][2])) {
       refused[t] = 1;
@@ -216,8 +230,8 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
     finite[t] = 1;
     double extent = 0;
     for (int d = 0; d < 3; ++d) {
-      const double lo = std::min({corners[t][0][d], corners[t][1][d], corners[t][2][d]});
-      const double hi = std::max({corners[t][0][d], corners[t][1][d], corners[t][2][d]});
+      const double lo = std::min(std::min(corners[t][0][d], corners[t][1][d]), corners[t][2][d]);
+      const double hi = std::max(std::max(corners[t][0][d], corners[t][1][d]), corners[t][2][d]);
       boxes[t][static_cast<size_t>(d)] = lo;
       boxes[t][static_cast<size_t>(d) + 3] = hi;
       origin[d] = std::min(origin[d], lo);
@@ -228,12 +242,16 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
     ++counted;
   }
   if (counted == 0) return static_cast<int64_t>(m);
-  // Cell coordinates stay within 2^20 per axis.
+  // Cell coordinates stay within 2^20 per axis; a quotient that is not (a
+  // span or extent overflowing makes the cell infinite and the quotient of
+  // an overflowing difference NaN) takes 2^20, which keeps the coordinate
+  // monotone and the cast defined.
   double cell = extents / static_cast<double>(counted);
   for (int d = 0; d < 3; ++d) cell = std::max(cell, (top[d] - origin[d]) * 0x1p-20);
   if (!(cell > 0)) cell = 1;
   const auto coordinate = [&](double value, int d) {
-    return static_cast<int64_t>(std::floor((value - origin[d]) / cell));
+    const double quotient = std::floor((value - origin[d]) / cell);
+    return quotient <= 0x1p20 ? static_cast<int64_t>(quotient) : int64_t{1} << 20;
   };
   constexpr int64_t kGridCells = 64;
   std::vector<std::array<int64_t, 6>> ranges(m);

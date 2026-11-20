@@ -535,8 +535,9 @@ def _source_tables(
     face_polygons = np.asarray(recovery.input_polygons, dtype=np.int64)
     face_facets = np.asarray(complex_.polygon_facets[face_polygons], dtype=np.int64)
     face_tolerances = facet_bounds[face_facets]
+    facet_occurrence_paths = complex_.facet_occurrence_paths
     face_occurrence_paths = tuple(
-        complex_.facet_occurrence_paths[int(facet)] for facet in face_facets
+        facet_occurrence_paths[facet] for facet in face_facets.tolist()
     )
     source_face_ids = _source_face_ids(
         faces,
@@ -660,8 +661,9 @@ def _source_tables(
     )
     edge_facet_rows = incidences[parent_rows, 2]
     carrier_complex_rows = active_source_complex_rows[carrier_edge_source_rows]
+    edge_facet_bank = complex_.plc_edge_facets
     declared_facets = tuple(
-        sorted(complex_.plc_edge_facets[complex_row])
+        sorted(edge_facet_bank[complex_row])
         for complex_row in carrier_complex_rows.tolist()
     )
     if not np.array_equal(
@@ -685,14 +687,33 @@ def _source_tables(
         carrier_edge_source_rows
     ]
 
-    source_segment_tolerances = segment_bounds[active_source_complex_rows].copy()
-    for local_row, complex_row in enumerate(active_source_complex_rows.tolist()):
-        facets = complex_.plc_edge_facets[int(complex_row)]
-        if facets:
-            source_segment_tolerances[local_row] = min(
-                float(source_segment_tolerances[local_row]),
-                float(np.min(facet_bounds[np.asarray(facets, dtype=np.int64)])),
+    source_segment_tolerances = segment_bounds[active_source_complex_rows]
+    active_edge_facets = tuple(
+        edge_facet_bank[complex_row]
+        for complex_row in active_source_complex_rows.tolist()
+    )
+    active_facet_counts = np.fromiter(
+        map(len, active_edge_facets), dtype=np.int64, count=len(active_edge_facets)
+    )
+    # Each edge's facet bounds fold in declared order from +inf, as np.min's
+    # reduction does; the edge keeps its own bound unless a facet's is smaller.
+    least_facet_bounds = np.full(active_facet_counts.shape, np.inf, dtype=np.float64)
+    np.minimum.at(
+        least_facet_bounds,
+        np.repeat(np.arange(active_facet_counts.size), active_facet_counts),
+        facet_bounds[
+            np.fromiter(
+                chain.from_iterable(active_edge_facets),
+                dtype=np.int64,
+                count=int(np.sum(active_facet_counts)),
             )
+        ],
+    )
+    source_segment_tolerances = np.where(
+        least_facet_bounds < source_segment_tolerances,
+        least_facet_bounds,
+        source_segment_tolerances,
+    )
     source_facet_region_sides = np.asarray(complex_.facet_regions, dtype=np.int64).copy()
     facet_labels = np.asarray(complex_.facet_entity_ids, dtype=np.int64)
     # Native group ranks follow the PLC's facet and active edge rows, not the
@@ -1018,7 +1039,6 @@ def _size_field(
                     winner = winner_by_sample[left]
                     source_supports[vertex].append((int(facet), float(value), winner))
         elif stratum == 2 and 0 <= entity < tables.faces.shape[0]:
-            triangle = tables.faces[entity]
             facet = int(tables.face_facets[entity])
             weights = (1.0 - parameters[0] - parameters[1], parameters[0], parameters[1])
             rows = (

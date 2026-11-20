@@ -2,9 +2,12 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "check.hpp"
@@ -529,19 +532,25 @@ void test_power3d_stage_agrees() {
               decided, zeros, mismatches);
 }
 
-// The exact incircle sign by full expansion arithmetic on the exact
-// coordinate differences, without any filter: the reference for the stages.
-int incircle_reference(const double* a, const double* b, const double* c, const double* d) {
+// The incircle determinant by full expansion arithmetic on the exact
+// coordinate differences (D) or, with `exact` false, on their binary64
+// roundings (D~), without any filter.
+Expansion incircle_value(const double* a, const double* b, const double* c, const double* d,
+                         bool exact) {
   const double* p[3] = {a, b, c};
   Expansion x[3], y[3], lift[3];
   for (int k = 0; k < 3; ++k) {
-    x[k] = Expansion::difference(p[k][0], d[0]);
-    y[k] = Expansion::difference(p[k][1], d[1]);
+    x[k] = exact ? Expansion::difference(p[k][0], d[0]) : Expansion(p[k][0] - d[0]);
+    y[k] = exact ? Expansion::difference(p[k][1], d[1]) : Expansion(p[k][1] - d[1]);
     lift[k] = x[k] * x[k] + y[k] * y[k];
   }
-  return (lift[0] * (x[1] * y[2] - x[2] * y[1]) + lift[1] * (x[2] * y[0] - x[0] * y[2]) +
-          lift[2] * (x[0] * y[1] - x[1] * y[0]))
-      .sign();
+  return lift[0] * (x[1] * y[2] - x[2] * y[1]) + lift[1] * (x[2] * y[0] - x[0] * y[2]) +
+         lift[2] * (x[0] * y[1] - x[1] * y[0]);
+}
+
+// The exact incircle sign: the reference for the stages.
+int incircle_reference(const double* a, const double* b, const double* c, const double* d) {
+  return incircle_value(a, b, c, d, true).sign();
 }
 
 // d moved by `ulps` units in the last place of one coordinate (negative
@@ -671,6 +680,411 @@ void test_incircle_stages_agree() {
       zeros, mismatches);
 }
 
+// ---------------------------------------------------------------- stage thresholds
+
+constexpr double kUnit = 0x1p-53;
+
+// The binary64 neighbors low < high in the positive interval [low, high] with
+// `holds` false at low and true at high, by bisection of the ordered bit
+// patterns; `holds` need not be monotone.
+template <class Holds>
+std::array<double, 2> straddle(double low, double high, const Holds& holds) {
+  PHX_CHECK(0.0 < low && low < high && !holds(low) && holds(high));
+  std::uint64_t below = std::bit_cast<std::uint64_t>(low);
+  std::uint64_t above = std::bit_cast<std::uint64_t>(high);
+  while (above - below > 1) {
+    const std::uint64_t middle = below + (above - below) / 2;
+    if (holds(std::bit_cast<double>(middle))) {
+      above = middle;
+    } else {
+      below = middle;
+    }
+  }
+  return {std::bit_cast<double>(below), std::bit_cast<double>(above)};
+}
+
+// Shewchuk's incircle bounds (stage B on the compensated estimate, or on
+// 64u^2 P when every difference is exact; see predicates.cpp).
+constexpr double kIncircleBoundA = (10.0 + 96.0 * kUnit) * kUnit;
+constexpr double kIncircleBoundB = (4.0 + 128.0 * kUnit) * kUnit;
+constexpr double kIncircleBoundBExact = 64.0 * kUnit * kUnit;
+constexpr double kIncircleBoundC = (44.0 + 576.0 * kUnit) * kUnit * kUnit;
+constexpr double kIncircleResultBound = (3.0 + 8.0 * kUnit) * kUnit;
+
+// What the incircle stages decide on: Shewchuk's stage-A value and permanent
+// P (his published expressions), estimates of the exact determinant D~ of the
+// rounded differences and of the exact determinant D, and whether every
+// difference is exact.
+struct IncircleQuantities {
+  double stage_a;
+  double permanent;
+  double rounded;
+  double exact;
+  bool exact_differences;
+};
+
+IncircleQuantities incircle_quantities(const double* a, const double* b, const double* c,
+                                       const double* d) {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double alift = adx * adx + ady * ady;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double clift = cdx * cdx + cdy * cdy;
+  bool exact_differences = true;
+  for (const double* p : {a, b, c}) {
+    for (int axis = 0; axis < 2; ++axis) {
+      exact_differences =
+          exact_differences && two_diff_tail(p[axis], d[axis], p[axis] - d[axis]) == 0.0;
+    }
+  }
+  return {alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady),
+          (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+              (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+              (std::fabs(adxbdy) + std::fabs(bdxady)) * clift,
+          incircle_value(a, b, c, d, false).estimate(), incircle_value(a, b, c, d, true).estimate(),
+          exact_differences};
+}
+
+bool incircle_stage_a_decides(const IncircleQuantities& q) {
+  const double bound = kIncircleBoundA * q.permanent;
+  return q.stage_a > bound || -q.stage_a > bound;
+}
+double incircle_ratio_b(const IncircleQuantities& q) {
+  return std::fabs(q.rounded) / (kIncircleBoundB * q.permanent);
+}
+double incircle_ratio_b_exact(const IncircleQuantities& q) {
+  return std::fabs(q.exact) / (kIncircleBoundBExact * q.permanent);
+}
+double incircle_ratio_c(const IncircleQuantities& q) {
+  return std::fabs(q.exact) /
+         (kIncircleBoundC * q.permanent + kIncircleResultBound * std::fabs(q.rounded));
+}
+
+// The stage the published bounds force to decide, or none inside a band in
+// which the certified error of a stage's estimate leaves its decision open.
+// Compensated stage B: |D~ - E| <= 52.4u^2 Pi + u |E| with Pi <= (1 + 7u) P,
+// a relative 15u at the bound, so E clears (4 + 128u)u P when |D~| exceeds it
+// by a relative 2^-40 and cannot when |D~| falls short by as much; then the
+// expansion stage B, whose estimate of D~ is good to a few u, cannot clear
+// (4 + 48u)u P either. With exact differences (D = D~) E clears 64u^2 P when
+// |D| >= 1.83 * 64u^2 P (117.1 - 52.5 > 64) and cannot when |D| <= 0.17 *
+// 64u^2 P (10.9 + 52.5 < 64), and stage B on the exact expansion decides.
+// Stage C certifies |D - det_C| < errbound_C, so it decides when |D| >= 2.01
+// errbound_C.
+std::optional<IncircleStage> forced_incircle_stage(const IncircleQuantities& q) {
+  if (incircle_stage_a_decides(q)) return IncircleStage::kA;
+  if (q.exact_differences) {
+    const double ratio = incircle_ratio_b_exact(q);
+    if (ratio >= 1.83) return IncircleStage::kBCompensated;
+    if (ratio <= 0.17) return IncircleStage::kBExpansion;
+    return std::nullopt;
+  }
+  const double ratio = incircle_ratio_b(q);
+  if (ratio >= 1.0 + 0x1p-40) return IncircleStage::kBCompensated;
+  if (ratio > 1.0 - 0x1p-40) return std::nullopt;
+  if (incircle_ratio_c(q) >= 2.01) return IncircleStage::kC;
+  return std::nullopt;
+}
+
+// Each incircle stage just above and just below its error bound (inputs at
+// the binary64 neighbors where |estimate| / bound crosses 1 or the edge of
+// the band its estimate's certified error leaves open) decides with the
+// expected stage and the exact sign. a = (65, s) beside the circle
+// x^2 + y^2 = 65^2 through the lattice points b, c, d gives D = orient(b, c,
+// d) s^2 (its lift exceeds the circle's by s^2), so the ratios move by a
+// relative 2^-26 or less between neighboring s, rounding included. With
+// d = (-65, 0) every difference is exact; with d = (-33, -56), s + 56 rounds.
+// Stage C is placed on the circle through a, b, c and the origin with d a
+// tiny multiple of (1, phi): the rounded differences are a, b, c, so D~ = 0
+// and det_C is the first-order correction alone, which here matches D to a
+// relative 2^-40 (its terms do not cancel and the tails are below 2^-50 of
+// the differences); the bound is then sharp to 2^-30.
+void test_incircle_stage_thresholds() {
+  const double b[2] = {16.0, 63.0};
+  const double c[2] = {-60.0, 25.0};
+  const double exact_d[2] = {-65.0, 0.0};
+  const double rounded_d[2] = {-33.0, -56.0};
+  int checked = 0;
+  const auto check = [&](const double* a, const double* p, const double* q, const double* d,
+                         IncircleStage expected, bool forced) {
+    const IncircleQuantities quantities = incircle_quantities(a, p, q, d);
+    if (forced) PHX_CHECK(forced_incircle_stage(quantities) == expected);
+    const IncircleDecision decision = incircle_decision(a, p, q, d);
+    PHX_CHECK(decision.stage == expected);
+    PHX_CHECK(decision.sign != 0 && decision.sign == incircle_reference(a, p, q, d));
+    PHX_CHECK(incircle(a, p, q, d) == decision.sign);
+    ++checked;
+  };
+  const auto beside = [&](const double* d) {
+    return [d, &b, &c](double s) {
+      const double a[2] = {65.0, s};
+      return incircle_quantities(a, b, c, d);
+    };
+  };
+  const auto at = [&](const double* d, double s, IncircleStage expected, bool exact) {
+    const double a[2] = {65.0, s};
+    PHX_CHECK(incircle_quantities(a, b, c, d).exact_differences == exact);
+    check(a, b, c, d, expected, true);
+  };
+  // Stage A, against the bound on its own floating value.
+  for (const double* d : {exact_d, rounded_d}) {
+    const auto quantities = beside(d);
+    const auto [below, above] = straddle(0x1p-30, 1.0, [&](double s) {
+      return incircle_stage_a_decides(quantities(s));
+    });
+    at(d, above, IncircleStage::kA, d == exact_d);
+    at(d, below, IncircleStage::kBCompensated, d == exact_d);
+  }
+  // Compensated stage B with rounded differences; stage C decides below.
+  const auto rounded = beside(rounded_d);
+  const double b_above = straddle(0x1p-30, 1.0, [&](double s) {
+    return incircle_ratio_b(rounded(s)) >= 1.0 + 0x1p-40;
+  })[1];
+  const double b_below = straddle(0x1p-30, 1.0, [&](double s) {
+    return incircle_ratio_b(rounded(s)) > 1.0 - 0x1p-40;
+  })[0];
+  at(rounded_d, b_above, IncircleStage::kBCompensated, false);
+  at(rounded_d, b_below, IncircleStage::kC, false);
+  // Compensated stage B with exact differences; the expansion decides below.
+  const auto exact = beside(exact_d);
+  const double exact_above =
+      straddle(0x1p-60, 1.0, [&](double s) { return incircle_ratio_b_exact(exact(s)) >= 1.83; })[1];
+  const double exact_below =
+      straddle(0x1p-60, 1.0, [&](double s) { return incircle_ratio_b_exact(exact(s)) > 0.17; })[0];
+  at(exact_d, exact_above, IncircleStage::kBCompensated, true);
+  at(exact_d, exact_below, IncircleStage::kBExpansion, true);
+  // Stage C; the full expansion decides below.
+  const double ca[2] = {12.0, 4.0}, cb[2] = {10.0, 10.0}, cc[2] = {-2.0, 4.0};
+  const auto origin_offset = [&](double t) {
+    const double d[2] = {t, 0.6180339887498949 * t};
+    return incircle_quantities(ca, cb, cc, d);
+  };
+  const double c_above = straddle(0x1p-110, 0x1p-60, [&](double t) {
+    return incircle_ratio_c(origin_offset(t)) >= 1.0 + 0x1p-30;
+  })[1];
+  const double c_below = straddle(0x1p-110, 0x1p-60, [&](double t) {
+    return incircle_ratio_c(origin_offset(t)) > 1.0 - 0x1p-30;
+  })[0];
+  for (const auto& [t, expected] : {std::pair{c_above, IncircleStage::kC},
+                                    std::pair{c_below, IncircleStage::kD}}) {
+    const IncircleQuantities q = origin_offset(t);
+    PHX_CHECK(q.rounded == 0.0 && !q.exact_differences && !incircle_stage_a_decides(q));
+    const double d[2] = {t, 0.6180339887498949 * t};
+    check(ca, cb, cc, d, expected, false);
+  }
+  std::printf(
+      "incircle thresholds: %d checked; A on its value; B %.17g | %.17g; B exact %.6g | %.6g; "
+      "C %.17g | %.17g\n",
+      checked, incircle_ratio_b(rounded(b_below)), incircle_ratio_b(rounded(b_above)),
+      incircle_ratio_b_exact(exact(exact_below)), incircle_ratio_b_exact(exact(exact_above)),
+      incircle_ratio_c(origin_offset(c_below)), incircle_ratio_c(origin_offset(c_above)));
+}
+
+// orient2d's det[a - c, b - c] from exact (or rounded) differences.
+Expansion orient2d_value(const double* a, const double* b, const double* c, bool exact) {
+  const auto difference = [exact](double p, double q) {
+    return exact ? Expansion::difference(p, q) : Expansion(p - q);
+  };
+  return difference(a[0], c[0]) * difference(b[1], c[1]) -
+         difference(a[1], c[1]) * difference(b[0], c[0]);
+}
+
+// Shewchuk's orient3d determinant det[a - d; b - d; c - d] (orient3d is its
+// negated sign) from exact (or rounded) differences.
+Expansion orient3d_value(const double* a, const double* b, const double* c, const double* d,
+                         bool exact) {
+  const double* p[3] = {a, b, c};
+  Expansion x[3], y[3], z[3];
+  for (int k = 0; k < 3; ++k) {
+    x[k] = exact ? Expansion::difference(p[k][0], d[0]) : Expansion(p[k][0] - d[0]);
+    y[k] = exact ? Expansion::difference(p[k][1], d[1]) : Expansion(p[k][1] - d[1]);
+    z[k] = exact ? Expansion::difference(p[k][2], d[2]) : Expansion(p[k][2] - d[2]);
+  }
+  return z[0] * (x[1] * y[2] - x[2] * y[1]) + z[1] * (x[2] * y[0] - x[0] * y[2]) +
+         z[2] * (x[0] * y[1] - x[1] * y[0]);
+}
+
+// Shewchuk's insphere determinant, the lifted determinant over a - e, ..,
+// d - e (insphere is its negated sign), from exact (or rounded) differences
+// by cofactor expansion along the lifts.
+Expansion insphere_value(const double* const* p, bool exact) {
+  const double* e = p[4];
+  Expansion x[4], y[4], z[4], lift[4];
+  for (int k = 0; k < 4; ++k) {
+    x[k] = exact ? Expansion::difference(p[k][0], e[0]) : Expansion(p[k][0] - e[0]);
+    y[k] = exact ? Expansion::difference(p[k][1], e[1]) : Expansion(p[k][1] - e[1]);
+    z[k] = exact ? Expansion::difference(p[k][2], e[2]) : Expansion(p[k][2] - e[2]);
+    lift[k] = x[k] * x[k] + y[k] * y[k] + z[k] * z[k];
+  }
+  const auto minor = [&](int i, int j, int k) {
+    return x[i] * (y[j] * z[k] - y[k] * z[j]) - x[j] * (y[i] * z[k] - y[k] * z[i]) +
+           x[k] * (y[i] * z[j] - y[j] * z[i]);
+  };
+  return lift[3] * minor(0, 1, 2) - lift[2] * minor(0, 1, 3) + lift[1] * minor(0, 2, 3) -
+         lift[0] * minor(1, 2, 3);
+}
+
+// Shewchuk's insphere stage-A value and permanent (his published
+// expressions, as insphere evaluates them).
+std::array<double, 2> insphere_stage_a(const double* const* p) {
+  const double* e = p[4];
+  const double aex = p[0][0] - e[0], bex = p[1][0] - e[0], cex = p[2][0] - e[0];
+  const double dex = p[3][0] - e[0];
+  const double aey = p[0][1] - e[1], bey = p[1][1] - e[1], cey = p[2][1] - e[1];
+  const double dey = p[3][1] - e[1];
+  const double aez = p[0][2] - e[2], bez = p[1][2] - e[2], cez = p[2][2] - e[2];
+  const double dez = p[3][2] - e[2];
+  const double aexbey = aex * bey, bexaey = bex * aey, ab = aexbey - bexaey;
+  const double bexcey = bex * cey, cexbey = cex * bey, bc = bexcey - cexbey;
+  const double cexdey = cex * dey, dexcey = dex * cey, cd = cexdey - dexcey;
+  const double dexaey = dex * aey, aexdey = aex * dey, da = dexaey - aexdey;
+  const double aexcey = aex * cey, cexaey = cex * aey, ac = aexcey - cexaey;
+  const double bexdey = bex * dey, dexbey = dex * bey, bd = bexdey - dexbey;
+  const double abc = aez * bc - bez * ac + cez * ab;
+  const double bcd = bez * cd - cez * bd + dez * bc;
+  const double cda = cez * da + dez * ac + aez * cd;
+  const double dab = dez * ab + aez * bd + bez * da;
+  const double alift = aex * aex + aey * aey + aez * aez;
+  const double blift = bex * bex + bey * bey + bez * bez;
+  const double clift = cex * cex + cey * cey + cez * cez;
+  const double dlift = dex * dex + dey * dey + dez * dez;
+  const double det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
+  const double az = std::fabs(aez), bz = std::fabs(bez), cz = std::fabs(cez), dz = std::fabs(dez);
+  const double ab_plus = std::fabs(aexbey) + std::fabs(bexaey);
+  const double bc_plus = std::fabs(bexcey) + std::fabs(cexbey);
+  const double cd_plus = std::fabs(cexdey) + std::fabs(dexcey);
+  const double da_plus = std::fabs(dexaey) + std::fabs(aexdey);
+  const double ac_plus = std::fabs(aexcey) + std::fabs(cexaey);
+  const double bd_plus = std::fabs(bexdey) + std::fabs(dexbey);
+  const double permanent = (cd_plus * bz + bd_plus * cz + bc_plus * dz) * alift +
+                           (da_plus * cz + ac_plus * dz + cd_plus * az) * blift +
+                           (ab_plus * dz + bd_plus * az + da_plus * bz) * clift +
+                           (bc_plus * az + ac_plus * bz + ab_plus * cz) * dlift;
+  return {det, permanent};
+}
+
+// orient2d, orient3d and insphere at the binary64 neighbors where their
+// stage A (Shewchuk's floating value against his bound, as evaluated) and
+// stage B (the estimate of D~ against his stage-B bound, decided with a
+// 2^-40 margin, as that estimate is good to a few u) cross 1 return the exact
+// sign; the public floating stages (orientation_stage, insphere_stage) decide
+// just above their own bounds and defer just below. These predicates do not
+// report their deciding stage, and being linear in the varied coordinate,
+// orient2d and orient3d move by up to a tenth of their bound between
+// neighbors. insphere uses e = (45, s, 0) beside the sphere of radius 45
+// through lattice points, where D = orient s^2 and its expansion stages run
+// (s spans more bits than its integer stages take).
+void test_orientation_stage_thresholds() {
+  int checked = 0;
+  // orient2d: a = (0.5, y) beside the line through b and c; a - c rounds.
+  const double b2[2] = {12.0, 12.0}, c2[2] = {24.0, 24.0};
+  const auto orient2d_check = [&](double y) {
+    const double a[2] = {0.5, y};
+    const int exact = orient2d_value(a, b2, c2, true).sign();
+    PHX_CHECK(exact != 0 && orient2d(a, b2, c2) == exact && orient2d_filtered(a, b2, c2) == exact);
+    ++checked;
+  };
+  const auto orient2d_ratios = [&](double y) {
+    const double a[2] = {0.5, y};
+    const double left = (a[0] - c2[0]) * (b2[1] - c2[1]);
+    const double right = (a[1] - c2[1]) * (b2[0] - c2[0]);
+    const double sum = std::fabs(left) + std::fabs(right);
+    return std::array<double, 2>{
+        std::fabs(left - right) / ((3.0 + 16.0 * kUnit) * kUnit * sum),
+        std::fabs(orient2d_value(a, b2, c2, false).estimate()) /
+            ((2.0 + 12.0 * kUnit) * kUnit * sum)};
+  };
+  for (const double y : straddle(0.5, 0.5 + 0x1p-30, [&](double value) {
+         return orient2d_ratios(value)[0] >= 1.0;
+       })) {
+    orient2d_check(y);
+  }
+  orient2d_check(straddle(0.5, 0.5 + 0x1p-30, [&](double y) {
+    return orient2d_ratios(y)[1] >= 1.0 + 0x1p-40;
+  })[1]);
+  orient2d_check(straddle(0.5, 0.5 + 0x1p-30, [&](double y) {
+    return orient2d_ratios(y)[1] > 1.0 - 0x1p-40;
+  })[0]);
+
+  // orient3d: a = (0.5, 0.25, z) beside the plane z = (x + y) / 2 + 6 through
+  // b, c, d; a - d rounds.
+  const double b3[3] = {12.0, 0.0, 12.0}, c3[3] = {0.0, 12.0, 12.0}, d3[3] = {24.0, 24.0, 30.0};
+  const auto orient3d_at = [&](double z, bool stage_decides) {
+    const double a[3] = {0.5, 0.25, z};
+    const int exact = -orient3d_value(a, b3, c3, d3, true).sign();
+    const OrientationStage stage = orientation_stage(a, b3, c3, d3);
+    const bool decided = stage.det > stage.errbound || -stage.det > stage.errbound;
+    PHX_CHECK(exact != 0 && orient3d(a, b3, c3, d3) == exact &&
+              orient3d_filtered(a, b3, c3, d3) == exact);
+    PHX_CHECK(decided == stage_decides && (!decided || (stage.det > 0.0 ? -1 : 1) == exact));
+    ++checked;
+  };
+  const auto orient3d_ratio_b = [&](double z) {
+    const double a[3] = {0.5, 0.25, z};
+    const double permanent =
+        orientation_stage(a, b3, c3, d3).errbound / ((7.0 + 56.0 * kUnit) * kUnit);
+    return std::fabs(orient3d_value(a, b3, c3, d3, false).estimate()) /
+           ((3.0 + 28.0 * kUnit) * kUnit * permanent);
+  };
+  const auto [z_below, z_above] = straddle(6.375, 6.375 + 0x1p-20, [&](double z) {
+    const double a[3] = {0.5, 0.25, z};
+    const OrientationStage stage = orientation_stage(a, b3, c3, d3);
+    return stage.det > stage.errbound || -stage.det > stage.errbound;
+  });
+  orient3d_at(z_below, false);
+  orient3d_at(z_above, true);
+  orient3d_at(straddle(6.375, 6.375 + 0x1p-20, [&](double z) {
+    return orient3d_ratio_b(z) >= 1.0 + 0x1p-40;
+  })[1], false);
+  orient3d_at(straddle(6.375, 6.375 + 0x1p-20, [&](double z) {
+    return orient3d_ratio_b(z) > 1.0 - 0x1p-40;
+  })[0], false);
+
+  // insphere: e = (45, s, 0) beside the sphere of radius 45; e's differences
+  // with the y coordinates round.
+  const double pa[3] = {36.0, 27.0, 0.0}, pb[3] = {0.0, 27.0, 36.0};
+  const double pc[3] = {-20.0, 5.0, 40.0}, pd[3] = {5.0, -40.0, -20.0};
+  const auto insphere_at = [&](double s) {
+    const double e[3] = {45.0, s, 0.0};
+    const double* p[5] = {pa, pb, pc, pd, e};
+    const int exact = -insphere_value(p, true).sign();
+    PHX_CHECK(exact != 0 && insphere(pa, pb, pc, pd, e) == exact);
+    ++checked;
+    return insphere_stage(pa, pb, pc, pd, e);
+  };
+  const auto insphere_ratios = [&](double s) {
+    const double e[3] = {45.0, s, 0.0};
+    const double* p[5] = {pa, pb, pc, pd, e};
+    const auto [det, permanent] = insphere_stage_a(p);
+    return std::array<double, 2>{
+        std::fabs(det) / ((16.0 + 224.0 * kUnit) * kUnit * permanent),
+        std::fabs(insphere_value(p, false).estimate()) /
+            ((5.0 + 72.0 * kUnit) * kUnit * permanent)};
+  };
+  for (const double s : straddle(0x1p-30, 1.0, [&](double value) {
+         return insphere_ratios(value)[0] > 1.0;
+       })) {
+    insphere_at(s);
+  }
+  const auto [public_below, public_above] = straddle(0x1p-30, 1.0, [&](double s) {
+    const double e[3] = {45.0, s, 0.0};
+    return insphere_stage(pa, pb, pc, pd, e) != 0;
+  });
+  PHX_CHECK(insphere_at(public_below) == 0);
+  PHX_CHECK(insphere_at(public_above) != 0);
+  const double insphere_b_above =
+      straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] >= 1.0 + 0x1p-40; })[1];
+  const double insphere_b_below =
+      straddle(0x1p-30, 1.0, [&](double s) { return insphere_ratios(s)[1] > 1.0 - 0x1p-40; })[0];
+  insphere_at(insphere_b_above);
+  insphere_at(insphere_b_below);
+  std::printf("orientation thresholds: %d checked; insphere B %.17g | %.17g\n", checked,
+              insphere_ratios(insphere_b_below)[1], insphere_ratios(insphere_b_above)[1]);
+}
+
 }  // namespace
 
 int main() {
@@ -681,6 +1095,8 @@ int main() {
   test_insphere_exact_paths();
   test_power3d_stage_agrees();
   test_incircle_stages_agree();
+  test_incircle_stage_thresholds();
+  test_orientation_stage_thresholds();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();

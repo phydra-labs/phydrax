@@ -244,6 +244,46 @@ void check_coverage() {
   PHX_CHECK(status == PHX_MC_INVALID_INPUT);
 }
 
+// One unit tetrahedron and seventeen of side 2^-100 (72 boundary faces, the
+// grid broad phase with cells of the tiny median extent): the unit cell's
+// boxes span 2^100 cells, a quotient no int64 holds, so the grid must give
+// way to the sweep. The first tiny cell sits on the unit cell's face z = 0,
+// across it when `contact`, just below it otherwise; the rest lie apart at
+// negative coordinates. Every coordinate is a binary64 in the predicate
+// domain.
+Mesh unit_cell_with_tiny_cells(bool contact) {
+  constexpr double kSide = 0x1p-100;
+  Mesh mesh;
+  const auto add_cell = [&mesh](const std::array<double, 3>& base, double side) {
+    const auto first = static_cast<int32_t>(mesh.points.size() / 3);
+    mesh.points.insert(mesh.points.end(), {base[0], base[1], base[2], base[0] + side, base[1],
+                                           base[2], base[0], base[1] + side, base[2], base[0],
+                                           base[1], base[2] + side});
+    std::array<int32_t, 4> cell{first, first + 1, first + 2, first + 3};
+    if (determinant(mesh.points, cell.data()) < 0.0) std::swap(cell[2], cell[3]);
+    mesh.cells.insert(mesh.cells.end(), cell.begin(), cell.end());
+    mesh.regions.push_back(0);
+  };
+  add_cell({0.0, 0.0, 0.0}, 1.0);
+  add_cell({0x1p-95, 0x1p-95, contact ? -0x1p-101 : -2.0 * kSide}, kSide);
+  for (int k = 1; k <= 16; ++k) add_cell({-(k + 1) * 0x1p-95, -0x1p-95, -0x1p-95}, kSide);
+  return mesh;
+}
+
+void check_grid_quotient_overflow() {
+  int32_t status = 0;
+  const phx_mc_tetrahedra_verdict apart = embedding(unit_cell_with_tiny_cells(false), &status);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK(apart.status == PHX_MC_VERDICT_CERTIFIED);
+  PHX_CHECK(apart.boundary_faces == 72 && apart.boundary_shells == 18);
+  PHX_CHECK(apart.boundary_contacts == 0);
+  const phx_mc_tetrahedra_verdict across = embedding(unit_cell_with_tiny_cells(true), &status);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK(across.status == PHX_MC_VERDICT_VIOLATED);
+  PHX_CHECK(across.boundary_contacts > 0);
+  PHX_CHECK(across.first_contact_cell == 0 && across.second_contact_cell == 1);
+}
+
 void check_validity() {
   Mesh mesh = cube_union({{0, 0, 0}}, 2);
   // A sliver: three cube corners and a point just off their plane.
@@ -280,5 +320,6 @@ int main() {
   check_embedding();
   check_coverage();
   check_validity();
+  check_grid_quotient_overflow();
   return phx::mc::test::finish("test_verify_volume");
 }

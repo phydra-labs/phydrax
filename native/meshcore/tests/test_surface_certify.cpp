@@ -216,15 +216,22 @@ void append_tetrahedron(const Point& origin, std::vector<Point>& points,
     triangles.push_back({base + face[0], base + face[1], base + face[2]});
 }
 
-// Closed oriented 2-manifolds pass; a border, a repeated directed edge, a
-// reversed triangle and two closed surfaces sharing one vertex (two fans at
-// it) do not.
+// Closed oriented 2-manifolds pass, and every returned twin reverses its
+// corner's edge; a border, a repeated directed edge, a reversed triangle and
+// two closed surfaces sharing one vertex (two fans at it) do not.
 void closed_manifold_cases() {
   using phx::mc::remesh::closed_manifold;
   std::vector<Point> points;
   std::vector<Triangle> triangles;
   append_tetrahedron({0, 0, 0}, points, triangles);
-  PHX_CHECK(closed_manifold(triangles, points.size()));
+  std::vector<int64_t> twins;
+  PHX_CHECK(closed_manifold(triangles, points.size(), &twins));
+  PHX_CHECK(twins.size() == 3 * triangles.size());
+  for (size_t c = 0; c < twins.size(); ++c) {
+    const auto g = static_cast<size_t>(twins[c]);
+    PHX_CHECK(triangles[c / 3][c % 3] == triangles[g / 3][(g % 3 + 1) % 3]);
+    PHX_CHECK(triangles[c / 3][(c % 3 + 1) % 3] == triangles[g / 3][g % 3]);
+  }
   std::vector<Triangle> open = triangles;
   open.pop_back();
   PHX_CHECK(!closed_manifold(open, points.size()));
@@ -290,6 +297,26 @@ void illegal_contact_cases() {
   PHX_CHECK(refused[0] == 0);
 }
 
+// Exact predicates are exact only in their coordinate domain: a tetrahedron
+// with a corner at 0x1p400 (whose degree-3 orientation terms overflow) and
+// one with a 0x1p-130 coordinate are refused on their own, without any
+// contact, and an in-domain one beside them is not.
+void out_of_domain_corners_are_refused() {
+  using phx::mc::remesh::refuse_illegal_contacts;
+  std::vector<Point> points;
+  std::vector<Triangle> triangles;
+  append_tetrahedron({0, 0, 0}, points, triangles);
+  append_tetrahedron({10, 0, 0}, points, triangles);
+  append_tetrahedron({20, 0, 0}, points, triangles);
+  points[4][0] = 0x1p400;
+  points[9][1] = 0x1p-130;
+  std::vector<uint8_t> refused;
+  PHX_CHECK(refuse_illegal_contacts(points, triangles, nullptr, refused) > 0);
+  for (size_t t = 0; t < 4; ++t) PHX_CHECK(refused[t] == 0);
+  PHX_CHECK(refused[4] + refused[5] + refused[6] + refused[7] == 3);
+  PHX_CHECK(refused[8] + refused[9] + refused[10] + refused[11] == 3);
+}
+
 }  // namespace
 
 int main() {
@@ -297,5 +324,6 @@ int main() {
   certified_free_radius_is_exact();
   closed_manifold_cases();
   illegal_contact_cases();
+  out_of_domain_corners_are_refused();
   return phx::mc::test::finish("test_surface_certify");
 }

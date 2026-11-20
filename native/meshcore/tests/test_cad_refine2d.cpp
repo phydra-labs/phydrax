@@ -1,6 +1,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -384,7 +385,8 @@ void fixed_pole_zone() {
   in.fixed_vertices=fixed.data(); in.admit_point=pole_admit; in.admit_context=&probe;
   CadRefine2DResult result;
   const int status=cad_refine2d(in,result);
-  std::printf("fixed-pole status=%d unresolved=%ld refusals=%ld/%ld/%ld/%ld/%ld\n",
+  std::printf("fixed-pole status=%d unresolved=%" PRId64 " refusals=%" PRId64 "/%" PRId64
+              "/%" PRId64 "/%" PRId64 "/%" PRId64 "\n",
               status,result.stats.unresolved_triangles,result.stats.encroachment_refusals,
               result.stats.outside_refusals,result.stats.proximity_refusals,
               result.stats.nonstar_refusals,result.stats.excluded_refusals);
