@@ -953,6 +953,130 @@ TetSegmentIndex segment_rows(const TetMesh& mesh) {
   return rows;
 }
 
+// Applied boundary insertions by kind.
+int inserted_facet_points = 0;
+int inserted_segment_points = 0;
+
+// Splits a random boundary edge at its midpoint on its facet group (or its
+// segment) through insert_boundary_point on `local` and the equivalent
+// refinement batch on `batch`: 0 when the local insertion is refused (the
+// state unchanged), 1 for a facet point, 2 for a segment point, -1 when the
+// batch does not apply it.
+int insert_split(const Box& box, Generator& generator, TetMesh& local, TetMesh& batch,
+                 LocalIncidence& incidence, Banks& banks) {
+  TetMeshSnapshot before;
+  PHX_CHECK(local.snapshot(before) == TetEditStatus::kApplied);
+  const TetSnapshotFacet& chosen =
+      before.constrained_facets[generator.pick(before.constrained_facets.size())];
+  const std::size_t corner = generator.pick(3);
+  const std::uint64_t a_id = chosen.vertices[corner];
+  const std::uint64_t b_id = chosen.vertices[(corner + 1) % 3];
+  const std::int32_t a = local.vertex_slot(a_id);
+  const std::int32_t b = local.vertex_slot(b_id);
+  std::vector<std::size_t> facet_rows;
+  for (std::size_t row = 0; row < before.constrained_facets.size(); ++row) {
+    const auto& vertices = before.constrained_facets[row].vertices;
+    if (std::count(vertices.begin(), vertices.end(), a_id) == 1 &&
+        std::count(vertices.begin(), vertices.end(), b_id) == 1) {
+      facet_rows.push_back(row);
+    }
+  }
+  std::vector<std::size_t> segment_rows_split;
+  for (std::size_t row = 0; row < before.constrained_segments.size(); ++row) {
+    if (sorted_edge(before.constrained_segments[row].vertices[0],
+                    before.constrained_segments[row].vertices[1]) == sorted_edge(a_id, b_id)) {
+      segment_rows_split.push_back(row);
+    }
+  }
+  Point midpoint{};
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    midpoint[axis] = 0.5 * (local.point(a)[axis] + local.point(b)[axis]);
+  }
+  std::optional<SourceWitness> witness;
+  if (!segment_rows_split.empty()) {
+    witness = segment_witness(box, before.constrained_segments[segment_rows_split[0]].source,
+                              midpoint);
+  } else if (on_piece(box, chosen.source, midpoint)) {
+    witness = facet_witness(box, chosen.source, midpoint);
+  }
+  if (!witness) return 0;
+  // The cavity: the cells around ab and the hull ghosts across their faces
+  // through ab.
+  const std::vector<std::int32_t> star(incidence.edge_star(a, b).begin(),
+                                       incidence.edge_star(a, b).end());
+  std::vector<std::int32_t> cavity = star;
+  for (std::int32_t cell : star) {
+    const Tetrahedron& tet = local.tet(cell);
+    for (int face = 0; face < 4; ++face) {
+      if (tet.v[face] != a && tet.v[face] != b && is_ghost(local.tet(tet.n[face]))) {
+        cavity.push_back(tet.n[face]);
+      }
+    }
+  }
+  TetEditVertex vertex;
+  vertex.id = generator.fresh_id();
+  vertex.carrier = midpoint;
+  vertex.witness = *witness;
+  std::vector<std::uint64_t> created;
+  std::vector<std::uint64_t> removed_ids;
+  for (std::int32_t cell : star) removed_ids.push_back(local.cell_id(cell));
+  const TetEditStatus status = incidence.insert_boundary_point(local, vertex, cavity, facet_rows,
+                                                               segment_rows_split, created);
+  if (status != TetEditStatus::kApplied) return same_state(local, batch) ? 0 : -1;
+
+  // The same edit as a refinement batch: the created cells, facets and
+  // segments with their identities.
+  TetMeshSnapshot after;
+  PHX_CHECK(local.snapshot(after) == TetEditStatus::kApplied);
+  TetEdit operation;
+  // insert_boundary_point records its cells as refinement.
+  operation.kind = TetEditKind::kRefineCell;
+  operation.removed_cell_ids = removed_ids;
+  for (const TetSnapshotCell& cell : after.cells) {
+    if (std::find(created.begin(), created.end(), cell.id) == created.end()) continue;
+    TetEditCell replacement;
+    replacement.id = cell.id;
+    replacement.vertices = cell.vertices;
+    replacement.region = cell.region;
+    replacement.ancestor_cell_ids = cell.ancestor_cell_ids;
+    const std::int32_t slot = local.cell_slot(cell.id);
+    for (int face = 0; face < 4; ++face) {
+      // Snapshot corners are the cell's slot order.
+      replacement.facet_sources[static_cast<std::size_t>(face)] =
+          local.complex().constraint(slot, face);
+    }
+    operation.replacement_cells.push_back(replacement);
+  }
+  for (std::size_t row : facet_rows) {
+    operation.removed_facet_ids.push_back(before.constrained_facets[row].id);
+  }
+  for (std::size_t row : segment_rows_split) {
+    operation.removed_segment_ids.push_back(before.constrained_segments[row].id);
+  }
+  std::set<std::uint64_t> old_facets;
+  for (const auto& facet : before.constrained_facets) old_facets.insert(facet.id);
+  for (const auto& facet : after.constrained_facets) {
+    if (old_facets.contains(facet.id)) continue;
+    operation.replacement_facets.push_back(
+        TetEditFacet{facet.id, facet.vertices, facet.source, facet.orientation, false});
+  }
+  std::set<std::uint64_t> old_segments;
+  for (const auto& segment : before.constrained_segments) old_segments.insert(segment.id);
+  for (const auto& segment : after.constrained_segments) {
+    if (old_segments.contains(segment.id)) continue;
+    operation.replacement_segments.push_back(
+        TetEditSegment{segment.id, segment.vertices, segment.source, false});
+  }
+  operation.changed_vertices.push_back(vertex);
+  const TetEditStatus batch_status = apply_batch(batch, operation);
+  if (batch_status != TetEditStatus::kApplied) {
+    std::fprintf(stderr, "  boundary insertion: batch %s\n", status_name(batch_status));
+    return -1;
+  }
+  banks.apply(operation);
+  return segment_rows_split.empty() ? 1 : 2;
+}
+
 // Verdict counts by (swap, status).
 using Tally = std::map<std::pair<bool, TetEditStatus>, int>;
 // Applied collapses whose survivor moved.
@@ -981,6 +1105,28 @@ void differential(const char* name, std::array<int, 3> n, bool two_regions, Boun
   int compared = 0;
   int outside = 0;
   for (int edit = 0; edit < edits; ++edit) {
+    if (generator.chance(0.15)) {
+      // A boundary split, so later edits run on an index that went through
+      // insert_boundary_point.
+      const int split = insert_split(box, generator, local, batch, incidence, banks);
+      if (split < 0) {
+        std::fprintf(stderr, "%s edit %d: boundary insertion diverged\n", name, edit);
+        PHX_CHECK(false);
+        return;
+      }
+      if (split > 0) {
+        (split == 1 ? inserted_facet_points : inserted_segment_points) += 1;
+        segment_index = segment_rows(local);
+        if (!same_state(local, batch) || !consistent_complex(local) ||
+            !incidence_current(local, incidence)) {
+          std::fprintf(stderr, "%s edit %d: states differ after a boundary insertion\n", name,
+                       edit);
+          PHX_CHECK(false);
+          return;
+        }
+      }
+      continue;
+    }
     const bool swapping = generator.chance(0.5);
     const auto perturbation =
         generator.chance(0.7) ? Perturbation::kNone
@@ -1074,6 +1220,9 @@ void boundary_edits_match_apply_edit_batch() {
   }
   std::printf("  moved-survivor collapses applied: %d\n", moved_collapses);
   PHX_CHECK(moved_collapses > 0);
+  std::printf("  boundary insertions applied: %d facet points, %d segment points\n",
+              inserted_facet_points, inserted_segment_points);
+  PHX_CHECK(inserted_facet_points > 0 && inserted_segment_points > 0);
 }
 
 // Periodic and implicit-bound meshes are outside the contract.
