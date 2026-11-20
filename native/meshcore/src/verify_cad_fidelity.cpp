@@ -1454,7 +1454,7 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
       endpoint_error[axis] = std::max(endpoint_error[axis], di::magnitude(difference));
     }
   }
-  double error[3] = {0.0, 0.0, 0.0};
+  double error[2] = {0.0, 0.0};
   for (int axis = 0; axis < 2; ++axis) {
     const auto bound = di::point(
         di::magnitude({pc_lower[derivative + axis], pc_upper[derivative + axis]}));
