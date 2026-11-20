@@ -362,32 +362,41 @@ class Triangulation3D {
       collect_removed_vertices();
       if (weights_.empty() && !removed_.empty()) return PHX_MC_UNRESOLVED;
     }
-    const ConeInsertion inserted = insert_checked_cone(
-        complex_, edit_,
-        [this](const int32_t* v) {
-          // While build() owns the complex, the cavity is the conflict region
-          // of p in the triangulation of the perturbed lifting, star-shaped
-          // from p: a facet whose plane holds p has both cells on one side
-          // of the conflict test, so no cone cell is flat or inverted.
-          if (building_) return true;
-          // A sign the floating stage decides is the unperturbed sign.
-          if (carriers_exact()) {
-            const OrientationStage stage =
-                orientation_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]));
-            if (-stage.det > stage.errbound) return true;
-            if (stage.det > stage.errbound) return false;
-          }
-          const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
-          if (carriers_only(q)) {
-            const OrientationStage stage =
-                orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
-            if (-stage.det > stage.errbound) return true;
-            if (stage.det > stage.errbound) return false;
-          }
-          return orient3d_sos(q[0], q[1], q[2], q[3], identity(v[0]), identity(v[1]),
-                              identity(v[2]), identity(v[3])) > 0;
-        },
-        p, cavity_, boundary_, true);
+    // While build() owns the complex, the cavity is the conflict region of p
+    // in the triangulation of the perturbed lifting, star-shaped from p: a
+    // facet whose plane holds p has both cells on one side of the conflict
+    // test, so no cone cell is flat or inverted and the cone is committed
+    // unchecked.
+    ConeInsertion inserted = ConeInsertion::kApplied;
+    if (building_) {
+      switch (edit_.commit_cone(p, cavity_, boundary_)) {
+        case EditStatus::kOk: break;
+        case EditStatus::kSlotLimit: inserted = ConeInsertion::kSlotLimit; break;
+        default: inserted = ConeInsertion::kInternal; break;
+      }
+    } else {
+      inserted = insert_checked_cone(
+          complex_, edit_,
+          [this](const int32_t* v) {
+            // A sign the floating stage decides is the unperturbed sign.
+            if (carriers_exact()) {
+              const OrientationStage stage =
+                  orientation_stage(point(v[0]), point(v[1]), point(v[2]), point(v[3]));
+              if (-stage.det > stage.errbound) return true;
+              if (stage.det > stage.errbound) return false;
+            }
+            const ExactPointRef q[4]{ref(v[0]), ref(v[1]), ref(v[2]), ref(v[3])};
+            if (carriers_only(q)) {
+              const OrientationStage stage =
+                  orientation_stage(q[0].carrier, q[1].carrier, q[2].carrier, q[3].carrier);
+              if (-stage.det > stage.errbound) return true;
+              if (stage.det > stage.errbound) return false;
+            }
+            return orient3d_sos(q[0], q[1], q[2], q[3], identity(v[0]), identity(v[1]),
+                                identity(v[2]), identity(v[3])) > 0;
+          },
+          p, cavity_, boundary_, true);
+    }
     switch (inserted) {
       case ConeInsertion::kApplied: break;
       case ConeInsertion::kInvertedCell:
