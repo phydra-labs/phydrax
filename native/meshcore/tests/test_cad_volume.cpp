@@ -18,6 +18,7 @@
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "cad_quadric_model.inc"
+#include "cad_sphere_equator_rings.inc"
 
 namespace {
 
@@ -408,6 +409,40 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
   PHX_CHECK(evidence == 0);
 }
 
+// A surface with zero-area triangles (the sphere's former coincident equator
+// rings) is refused before recovery, naming the first such triangle and its
+// relative area, instead of minutes of improvement against it.
+void flat_surface_triangle() {
+  const Bank sphere = sphere_bank();
+  const phx_mc_cad_model model = sphere.model();
+  phx::mc::cad::CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  const std::vector<double> sizes{0.3}, tolerances{0.05};
+  const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count), 0.05);
+  phx::mc::cad::CurveDiscretization curves;
+  const phx::mc::cad::CurveControls controls{sizes.data(), tolerances.data(),
+                                             curve_tolerances.data(), 0.8, 1.3, 1e-8};
+  PHX_CHECK(phx::mc::cad::discretize_curves(geometry, controls, curves) == PHX_MC_OK);
+  phx::mc::CadSurfaceMesh surface;
+  surface.points = kEquatorRingPoints;
+  surface.triangles = kEquatorRingTriangles;
+  surface.triangle_patches.assign(surface.triangles.size(), 0);
+  phx::mc::CadVolumeMesh volume;
+  const int32_t status = phx::mc::cad_mesh_volume(
+      geometry, curves, surface, sizes.data(),
+      phx::mc::CadVolumeControls{2.0, 15.5, 0x1p-35, 1}, volume);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(volume.tetrahedra.empty() && volume.points.empty());
+  const auto& stats = volume.stats;
+  PHX_CHECK(stats.recovery_attempts == 0 && stats.refine_inserted == 0 &&
+            stats.improve_inserted == 0);
+  PHX_CHECK(stats.recovery_status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(stats.recovery_reason == PHX_MC_PLC_INVALID_FACET);
+  PHX_CHECK(stats.failure_kind == PHX_MC_PLC_ENTITY_FACET && stats.failure_entity == 8);
+  PHX_CHECK(stats.failure_measure >= 0.0 && stats.failure_measure < 1e-12);
+  PHX_CHECK(stats.volume_ns < 100000000);
+}
+
 // Invalid controls are refused before any work.
 void refusals() {
   const phx_mc_cad_model model = quadric_model();
@@ -438,6 +473,7 @@ int main() {
   forced_split("sphere curve split", sphere_model, 0.3, true, on_sphere);
   forced_split("quadric face split", quadric, 0.2293, false, on_quadric);
   forced_split("quadric curve split", quadric, 0.2293, true, on_quadric);
+  flat_surface_triangle();
   refusals();
   return phx::mc::test::finish("test_cad_volume");
 }

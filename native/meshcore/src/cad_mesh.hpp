@@ -94,8 +94,11 @@ int32_t cad_split_surface_edge(const cad::CadGeometry& geometry, cad::CurveDiscr
 // Volume stage (design B.7) and, for geometry order 2, P2 nodes (B.8).
 // `sizes` are the requested face edge lengths h. OK: tetrahedra meeting
 // every target; UNRESOLVED: a complete mesh with unmet quality targets or
-// P2 cells, or no mesh when recovery refused after the one boundary-split
-// retry (stats.recovery_status, recovery_reason, failure_kind/entity).
+// P2 cells, or no mesh when a surface triangle is flat to rounding (refused
+// before recovery: reason INVALID_FACET, the triangle row and its relative
+// area in failure_entity/failure_measure) or recovery refused after the one
+// boundary-split retry (stats.recovery_status, recovery_reason,
+// failure_kind/entity).
 int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretization& curves,
                         CadSurfaceMesh& surface, const double* sizes,
                         const CadVolumeControls& controls, CadVolumeMesh& result,
