@@ -847,18 +847,25 @@ class ZeroSetCertifier final : public TriangleCertifier {
 };
 
 // The distance bound a witness box proves for a carrier triangle (see
-// phx_mc_zero_set_certify): its corners lie in the box (exact comparisons)
-// and two box corners have value enclosures of strictly opposite sign, so a
-// zero of f lies in the box; every point of the triangle is then within the
+// phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
+// f's gradient enclosure over the box is finite (so f is Lipschitz there and
+// continuous on every segment in it), and two box corners have value
+// enclosures of strictly opposite sign, so a zero of f lies on the segment
+// between them, in the box; every point of the triangle is then within the
 // box diagonal (rounded up) of it. +inf when a check fails.
 double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
-                     const Point& upper, const IntervalBoxProgram& value) {
+                     const Point& upper, const IntervalBoxProgram& value,
+                     const IntervalBoxProgram& gradient) {
   for (int d = 0; d < 3; ++d) {
     if (!std::isfinite(lower[d]) || !std::isfinite(upper[d]) || !(lower[d] <= upper[d]))
       return kInfinity;
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
+  IntervalVector slope{};
+  if (!gradient.evaluate(lower, upper, slope.data()) || !finite(slope[0]) || !finite(slope[1]) ||
+      !finite(slope[2]))
+    return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};
@@ -1004,7 +1011,7 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
     const Point& c = carrier_points[static_cast<size_t>(carrier_triangles[t][2])];
     const double* box = request.carrier_boxes + 6 * t;
     const double bound = witness_bound(a, b, c, {box[0], box[1], box[2]},
-                                       {box[3], box[4], box[5]}, value);
+                                       {box[3], box[4], box[5]}, value, gradient);
     if (!(bound < kInfinity)) continue;
     carrier.entries.push_back({triangle_key(a, b, c), bound});
     reach = std::max(reach, bound);

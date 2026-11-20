@@ -805,6 +805,46 @@ void certify_refusals() {
   PHX_CHECK(phx_mc_zero_set_certify(nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
+// A witness box needs f continuous in it: f = 1 / x has corner values -1 and
+// +1 on [-1, 1]^3 but no zero there (a pole), and its gradient enclosure over
+// the box is not finite, so a tetrahedron around the origin as its own
+// carrier has nothing accepted from it. The same boxes for f = x (a zero at
+// x = 0, finite gradient) do accept carrier triangles.
+void witness_needs_continuity() {
+  Surface tetrahedron{{0.5, 0.5, 0.5, 0.5, -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, 0.5},
+                      {0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2}};
+  if (signed_volume(tetrahedron.vertices, tetrahedron.triangles) < 0)
+    for (size_t f = 0; f < tetrahedron.triangles.size(); f += 3)
+      std::swap(tetrahedron.triangles[f + 1], tetrahedron.triangles[f + 2]);
+  Program pole = seeded({}, 4);
+  pole.row(kReciprocal, 3, 1, 0, -1, -1, -1, 0);
+  pole.outputs = {3};
+  // grad (1 / x) = (0 - 1 / x^2, 0, 0) with the seed 0 at entry 3.
+  Program pole_gradient = seeded({0.0}, 7);
+  pole_gradient.row(kSquare, 4, 1, 0, -1, -1, -1, 0);
+  pole_gradient.row(kReciprocal, 5, 1, 4, -1, -1, -1, 0);
+  pole_gradient.row(kSubtract, 6, 1, 3, -1, 5, -1, 0);
+  pole_gradient.outputs = {6, 3, 3};
+  Program plane = seeded({0.0}, 5);
+  plane.row(kSubtract, 4, 1, 0, -1, 3, -1, 0);
+  plane.outputs = {4};
+  // grad x = (1, 0, 0): the seeds 1 and 0, copied by adding 0.
+  Program plane_gradient = seeded({1.0, 0.0}, 7);
+  plane_gradient.row(kAdd, 5, 1, 3, -1, 4, -1, 0);
+  plane_gradient.row(kAdd, 6, 1, 4, -1, 4, -1, 0);
+  plane_gradient.outputs = {5, 6, 6};
+  for (const bool continuous : {false, true}) {
+    double distance = -1;
+    Failures failures{};
+    const int32_t status = certify(
+        tetrahedron.vertices, tetrahedron.triangles, continuous ? plane : pole,
+        continuous ? plane_gradient : pole_gradient, 0.05, 1, distance, failures, &tetrahedron,
+        0.5);
+    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    PHX_CHECK(continuous ? failures[3] > 0 : failures[3] == 0);
+  }
+}
+
 // A surface constructed for a looser tolerance is repaired to a tighter one:
 // the refused triangles are split, their midpoints projected, until every
 // triangle certifies; the result is still a closed oriented surface.
@@ -1256,6 +1296,7 @@ int main() {
   whole_piece_bracketing_cases();
   remesh_sphere_carrier();
   certify_refusals();
+  witness_needs_continuity();
   certify_repairs_locally();
   remesh_jittered_carrier();
   remesh_coarsening_absorbs_rosette();
