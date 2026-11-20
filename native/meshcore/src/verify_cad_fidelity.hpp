@@ -19,9 +19,12 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
                                          double tolerance, int32_t max_depth,
                                          IntervalEvaluationWorkspace& workspace);
 
-// The per-face kernels fidelity_triangle uses, for tests. Closed-form jets
-// (terms 0..5 of the point-jet layout, 18 values) over a parameter box;
-// PHX_MC_UNRESOLVED when the face is not a closed form.
+// The per-face kernels fidelity_triangle uses, for tests.
+// The anchored cos/sin enclosure over [lower, upper] (fresh anchors):
+// out = {cos lower, cos upper, sin lower, sin upper}.
+int32_t fidelity_anchored_sincos(double lower, double upper, double* out);
+// Closed-form jets (terms 0..5 of the point-jet layout, 18 values) over a
+// parameter box; PHX_MC_UNRESOLVED when the face is not a closed form.
 int32_t fidelity_closed_jets(const CadGeometry& geometry, int32_t face,
                              IntervalEvaluationWorkspace& workspace, const double* lower,
                              const double* upper, double* jet_lower, double* jet_upper);

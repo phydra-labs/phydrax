@@ -1531,6 +1531,18 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
                           workspace);
 }
 
+int32_t fidelity_anchored_sincos(double lower, double upper, double* out) {
+  if (!(lower <= upper) || !std::isfinite(lower) || !std::isfinite(upper) || out == nullptr)
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  AnchoredTrigonometry trig;
+  di::Interval c, s;
+  trig.evaluate({lower, upper}, c, s);
+  out[0] = c.lower, out[1] = c.upper, out[2] = s.lower, out[3] = s.upper;
+  return PHX_MC_OK;
+}
+
 int32_t fidelity_closed_jets(const CadGeometry& geometry, int32_t face,
                              IntervalEvaluationWorkspace& workspace, const double* lower,
                              const double* upper, double* jet_lower, double* jet_upper) {
