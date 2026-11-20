@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from ..geometry._mesh_certificates import MeshCertificateStatus
     from ..geometry._meshing_domain import MeshingDomain
     from ._contracts import ProtectedFeature
+    from ._native_cad_records import NativeCadRecords
 
 
 # Subdivision depth of the V3 fidelity bounds per chart triangle.
@@ -378,15 +379,6 @@ def _native_findings(
     return (), fidelity.upper, shell_id
 
 
-# Obligations of the Python CAD certificate no native verifier proves. A
-# passing native certificate states them; it does not claim them.
-UNPROVED_PREMISES = (
-    # Source entity occurrence paths per boundary row: the native witness
-    # names model face indices only.
-    "source_occurrence_records",
-)
-
-
 class NativeCadCertificate(StrictModule, NonTrainableState):
     """V4, V2, V3 and volume verdicts of one native CAD solid.
 
@@ -395,8 +387,8 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
     ``triangle_deviation`` holds it per chart triangle. ``source_shell`` is
     the identity of the source-shell proof (:mod:`._native_cad_shell`: one
     embedded shell with outward material side), ``None`` unless proved.
-    ``unproved_premises`` names the obligations this certificate does not
-    prove.
+    ``records_id`` binds the native occurrence and curve records
+    (:mod:`._native_cad_records`) the candidate's associations must match.
     """
 
     witness: NativeCadSurfaceWitness
@@ -405,7 +397,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
     triangle_deviation: np.ndarray | None
     source_shell: str | None
     findings: tuple[MeshCertificateFinding, ...]
-    unproved_premises: tuple[str, ...] = eqx.field(static=True)
+    records_id: str
     status: MeshCertificateStatus = eqx.field(static=True)
     certificate_id: str
 
@@ -415,6 +407,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         geometry: CellGeometrySpec,
         domain: MeshingDomain,
         witness: NativeCadSurfaceWitness,
+        records: NativeCadRecords,
         tolerance: float,
         protected_features: tuple[ProtectedFeature, ...] | None,
         maximum_normal_deviation: float | None,
@@ -424,6 +417,16 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
             raise TypeError("witness must be NativeCadSurfaceWitness.")
         if witness.mesh_id != mesh.mesh_id:
             raise ValueError("The native CAD surface witness binds another mesh.")
+        from ._native_cad_records import NativeCadRecords
+
+        if type(records) is not NativeCadRecords:
+            raise TypeError("records must be NativeCadRecords.")
+        if (records.source_id, records.source_revision) != (
+            domain.source_id,
+            domain.source_revision,
+        ):
+            raise ValueError("The native CAD records bind another source revision.")
+        records.require_mesh(mesh)
         findings, bounds, shell = _native_findings(
             mesh,
             geometry,
@@ -439,7 +442,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         self.triangle_deviation = None if bounds is None else _array(bounds, np.float64)
         self.source_shell = shell
         self.findings = findings
-        self.unproved_premises = UNPROVED_PREMISES
+        self.records_id = records.records_id
         self.status = certificate_status(findings)
         self.certificate_id = canonical_fingerprint(
             {
@@ -449,7 +452,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
                 "maximum_deviation": self.maximum_deviation,
                 "source_shell": shell,
                 "findings": tuple(value.finding_id for value in findings),
-                "unproved_premises": UNPROVED_PREMISES,
+                "records": records.records_id,
             }
         )
 

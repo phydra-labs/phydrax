@@ -15,8 +15,8 @@
   their source uses, trim-to-chord homotopy, reference trim sheets); cone and
   torus solids are refused there as on the Python route. The report's
   `native_cad` certificate carries the findings, V3's maximum bound, the shell
-  proof and the obligation it does not prove (`unproved_premises`: source
-  occurrence records). Protected features or a normal-deviation bound given to
+  proof and the native occurrence/curve records it binds (`records_id`; the
+  certification inputs require them with the witness). Protected features or a normal-deviation bound given to
   the native certificate are refused as unresolved. A soft
   `NativeVolumeSchedule.shape_strength` publishes unmet radius-edge/dihedral
   rows as `soft_shape_target_unmet_count` (prove and unproved; validity,

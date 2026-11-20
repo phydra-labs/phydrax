@@ -846,11 +846,13 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             # The native verifiers own source fidelity and material coverage.
             assert isinstance(inputs.domain, MeshingDomain)
             assert inputs.fidelity_tolerance is not None
+            assert inputs.native_cad_records is not None
             native_cad = NativeCadCertificate(
                 inputs.mesh,
                 inputs.geometry,
                 inputs.domain,
                 inputs.native_cad_surface,
+                inputs.native_cad_records,
                 inputs.fidelity_tolerance,
                 inputs.protected_features,
                 inputs.maximum_normal_deviation,
@@ -1159,9 +1161,15 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         if (
             self.native_cad is not None
             and inputs.native_cad_surface is not None
-            and self.native_cad.witness.witness_id != inputs.native_cad_surface.witness_id
+            and inputs.native_cad_records is not None
+            and (
+                self.native_cad.witness.witness_id != inputs.native_cad_surface.witness_id
+                or self.native_cad.records_id != inputs.native_cad_records.records_id
+            )
         ):
-            raise ValueError("Stored native CAD certificate binds another witness.")
+            raise ValueError(
+                "Stored native CAD certificate binds another witness or records."
+            )
         if (
             self.fidelity is not None
             and inputs.source is not None

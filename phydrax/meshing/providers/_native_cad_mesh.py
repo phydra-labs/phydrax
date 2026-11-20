@@ -175,7 +175,7 @@ def construct_cad_solid(prepared: _PreparedDirectBRepCadVolume, /) -> CadSolidRe
     deviation = specification.maximum_deviation
     boundary = prepared.boundary_request
     if schedule is None or deviation is None or cad_solid_support_issues(prepared):
-        raise ValueError("The prepared CAD volume has no native unproved route.")
+        raise ValueError("The prepared CAD volume has no native route.")
     domain.require_current(domain.source_id, domain.source_revision)
     sizes = np.asarray(boundary.size_values, dtype=np.float64)
     model = cad_geometry_bundle(domain).model

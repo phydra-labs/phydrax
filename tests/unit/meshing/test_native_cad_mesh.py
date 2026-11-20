@@ -756,7 +756,6 @@ _UNPROVED_SHELL_FIXTURES = {
 
 @pytest.mark.parametrize("name", sorted(_CERTIFIED_FIXTURES))
 def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
-    from phydrax.meshing._native_cad_certificate import UNPROVED_PREMISES
     from phydrax.meshing._result import CellMeshingResult
 
     factory, size = _CERTIFIED_FIXTURES[name]
@@ -772,10 +771,10 @@ def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
     assert native.tolerance == 0.05
     assert native.maximum_deviation is not None
     assert 0.0 <= native.maximum_deviation <= 0.05
-    # The source shell is proved, not stated as a premise.
+    # The source shell and the occurrence records are proved, not premises.
     assert native.source_shell is not None
-    assert native.unproved_premises == UNPROVED_PREMISES
-    assert "source_shell_embedding" not in native.unproved_premises
+    records = certification.inputs.native_cad_records
+    assert records is not None and native.records_id == records.records_id
     # One construction, then certification: the same candidate and report.
     again = plan.execute(prove=False).prove()
     assert again.mesh.mesh_id == result.mesh.mesh_id
@@ -863,7 +862,9 @@ def test_native_cad_certificate_refuses_requests_without_native_owner(
     request = candidate._construction.certification
     witness = request.native_cad_surface
     domain = request.domain
-    assert witness is not None and isinstance(domain, MeshingDomain)
+    records = request.native_cad_records
+    assert witness is not None and records is not None
+    assert isinstance(domain, MeshingDomain)
     features = (
         (ProtectedFeature(MeshingScope.whole(domain, 2), FeatureKind.SURFACE),)
         if request_field == "protected features"
@@ -871,7 +872,14 @@ def test_native_cad_certificate_refuses_requests_without_native_owner(
     )
     normal = 0.5 if request_field == "normal deviation" else None
     certificate = NativeCadCertificate(
-        candidate.mesh, candidate.geometry, domain, witness, 0.05, features, normal
+        candidate.mesh,
+        candidate.geometry,
+        domain,
+        witness,
+        records,
+        0.05,
+        features,
+        normal,
     )
     assert certificate.status == "unresolved"
     assert certificate.source_shell is None
@@ -940,6 +948,9 @@ def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
     assert result.certification is not None
     native = result.certification.native_cad
     assert native is not None
+    records = result.certification.inputs.native_cad_records
+    assert records is not None and native.records_id == records.records_id
+    associations = ",".join(item.association_id for item in result.associations)
     subprocess.run(
         [
             sys.executable,
@@ -952,11 +963,16 @@ r = read_model_artifact(sys.argv[1], expected_type=CellMeshingResult,
     restore=restore_model_archive_value, expected_content_id=sys.argv[2], limits=MODEL_ARCHIVE_LIMITS)
 assert r.certification.report_id == sys.argv[3]
 assert r.certification.native_cad.certificate_id == sys.argv[4]
+assert r.certification.inputs.native_cad_records.records_id == sys.argv[5]
+assert r.certification.native_cad.records_id == sys.argv[5]
+assert ",".join(item.association_id for item in r.associations) == sys.argv[6]
 """,
             str(path),
             content_id,
             result.certification.report_id,
             native.certificate_id,
+            records.records_id,
+            associations,
         ],
         check=True,
         capture_output=True,

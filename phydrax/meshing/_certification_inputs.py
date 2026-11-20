@@ -415,8 +415,9 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         ``native_cad_surface`` makes the native CAD verifiers (V4, V2, V3 and
         the volume tiling) the source-fidelity and coverage proof of a
         ``volume_cad`` schedule; it excludes a chart fidelity witness.
-        ``native_cad_records`` (only with it) retain the native solid's curve
-        edge authority, which association transfer and adaptation consume.
+        ``native_cad_records`` (required with it, only with it) are the native
+        solid's occurrence and curve-edge records: the native certificate
+        binds them, and association transfer and adaptation consume them.
 
         ``validated`` holds validations the caller already made for exactly
         these operands; a witness with one is not validated again.
@@ -521,10 +522,12 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 or fidelity_witness is not None
                 or source_coverage_witness is not None
                 or native_cad_surface.mesh_id != mesh.mesh_id
+                or native_cad_records is None
             ):
                 raise ValueError(
-                    "A native CAD surface witness binds its own volume_cad mesh "
-                    "and MeshingDomain, without other fidelity or coverage witnesses."
+                    "A native CAD surface witness binds its own volume_cad mesh, "
+                    "MeshingDomain and native records, without other fidelity or "
+                    "coverage witnesses."
                 )
         if native_cad_records is not None:
             if (

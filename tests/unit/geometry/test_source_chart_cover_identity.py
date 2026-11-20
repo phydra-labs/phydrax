@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._meshcore import meshcore_identity
 from phydrax.geometry._domain_boundary import (
     _enclosure_center,
     _source_point_box,
@@ -36,13 +35,14 @@ from phydrax.geometry.brep._constructors import (
 )
 from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._patches import CylinderPatch, SpherePatch, TorusPatch
-from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
 from phydrax.meshing._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._controls import RegionControl
+from phydrax.meshing._organization import RegionRole
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
@@ -199,26 +199,32 @@ def _cad_cylinder_volume() -> CellMeshingResult:
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        # A region control keeps the existing CAD construction and its stored
+        # chart cover, which these tests pin.
+        region_controls=(
+            RegionControl(
+                MeshingScope.from_geometry(model, model.solid_ids[0]),
+                "region-0",
+                "material-0",
+                RegionRole.SOLID,
+            ),
+        ),
         maximum_deviation=0.05,
     )
-    # The Python CAD construction and its stored chart cover, which these
-    # tests pin; CAD plans now execute natively.
-    plan = phx.meshing.NativeMeshingProvider(
-        NativeMeshingOptions(
-            "cad_tetrahedral",
-            volume_schedule=NativeVolumeSchedule(
-                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
-            ),
+    result = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                ),
+            )
         )
-    ).plan(model, specification)
-    return _accept_native_construction(
-        plan.prepared.execute(),
-        plan.specification,
-        _NATIVE_PROVIDER,
-        meshcore_identity(),
-        plan.plan_id,
-        plan.route,
+        .plan(model, specification)
+        .execute()
     )
+    assert isinstance(result, CellMeshingResult)
+    return result
 
 
 @pytest.fixture(scope="module")

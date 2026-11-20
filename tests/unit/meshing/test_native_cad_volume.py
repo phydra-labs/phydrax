@@ -2053,19 +2053,16 @@ def test_rooted_plane_partition_rejects_overlap_across_blocks() -> None:
     assert failure.value.status == "violated"
 
 
-def _python_cad_route(plan: phx.meshing.NativeMeshingPlan) -> CellMeshingResult:
-    # The Python CAD volume construction and its certification, which these
-    # tests pin; CAD plans now execute natively.
-    from phydrax._meshcore import meshcore_identity
-    from phydrax.meshing._canonical import _accept_native_construction, _NATIVE_PROVIDER
-
-    return _accept_native_construction(
-        plan.prepared.execute(),
-        plan.specification,
-        _NATIVE_PROVIDER,
-        meshcore_identity(),
-        plan.plan_id,
-        plan.route,
+def _python_route_region(model: BRepModel) -> tuple[RegionControl, ...]:
+    # A region control keeps the existing CAD construction (its chart witness
+    # is what these tests pin); uncontrolled CAD solids take the native route.
+    return (
+        RegionControl(
+            MeshingScope.from_geometry(model, model.solid_ids[0]),
+            "region-0",
+            "material-0",
+            RegionRole.SOLID,
+        ),
     )
 
 
@@ -2082,9 +2079,10 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        region_controls=_python_route_region(model),
         maximum_deviation=0.05,
     )
-    result = _python_cad_route(
+    result = (
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2092,8 +2090,11 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        ).plan(model, specification)
+        )
+        .plan(model, specification)
+        .execute()
     )
+    assert isinstance(result, CellMeshingResult)
 
     assert result.certification is not None and result.certification.passed
     witness = result.certification.inputs.fidelity_witness
@@ -2136,9 +2137,10 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        region_controls=_python_route_region(model),
         maximum_deviation=0.05,
     )
-    result = _python_cad_route(
+    result = (
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2146,8 +2148,11 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        ).plan(model, specification)
+        )
+        .plan(model, specification)
+        .execute()
     )
+    assert isinstance(result, CellMeshingResult)
 
     assert result.certification is not None and result.certification.passed
     assert result.compliance.issues == ()
@@ -2277,7 +2282,7 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
         size_controls=(UniformSizeControl(boundary, 0.3),),
         maximum_deviation=0.05,
     )
-    result = _python_cad_route(
+    result = (
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -2285,8 +2290,12 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
                     radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
                 ),
             )
-        ).plan(model, specification)
+        )
+        .plan(model, specification)
+        .execute()
     )
+    assert isinstance(result, CellMeshingResult)
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
     vertex_set = result.mesh.entity_set(0).entity_set_id
     (recorded,) = (
         association
