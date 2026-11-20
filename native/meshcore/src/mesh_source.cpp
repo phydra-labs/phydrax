@@ -148,7 +148,10 @@ int32_t MeshSource::bind(std::vector<Point> points, std::vector<Triangle> triang
       vertex_curvatures_[u][1] = std::min(vertex_curvatures_[u][1], kappa);
     }
   }
-  // Bucket grid of the triangle boxes, cells of the mean box extent.
+  // Bucket grid of the triangle boxes, cells of twice the mean box extent: a
+  // box meets one or two cells per axis, so the grid holds fewer entries,
+  // and a query near the surface still finds its nearest triangle in its own
+  // cell or the next ring.
   Point top{-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
             -std::numeric_limits<double>::infinity()};
   origin_ = {-top[0], -top[1], -top[2]};
@@ -157,7 +160,7 @@ int32_t MeshSource::bind(std::vector<Point> points, std::vector<Triangle> triang
       origin_[d] = std::min(origin_[d], p[d]);
       top[d] = std::max(top[d], p[d]);
     }
-  cell_ = extents / static_cast<double>(m);
+  cell_ = 2.0 * extents / static_cast<double>(m);
   for (int d = 0; d < 3; ++d) cell_ = std::max(cell_, (top[d] - origin_[d]) * 0x1p-10);
   if (!(cell_ > 0)) cell_ = 1;
   int64_t total = 1;
