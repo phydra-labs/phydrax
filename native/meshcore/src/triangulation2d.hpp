@@ -81,14 +81,13 @@ class Triangulation2D {
   }
 
   // Index k of the edge u -> w in triangle t (v[k+1] == u, v[k+2] == w), or -1.
+  // Written as selects (the lowest matching k wins, as a scan would return),
+  // which Apple clang compiles without data-dependent branches.
   int edge_index(int32_t t, int32_t u, int32_t w) const {
     const Triangle2D& tri = triangles[t];
-    for (int k = 0; k < 3; ++k) {
-      if (tri.v[next3(k)] == u && tri.v[prev3(k)] == w) {
-        return k;
-      }
-    }
-    return -1;
+    int k = (tri.v[0] == u && tri.v[1] == w) ? 2 : -1;
+    k = (tri.v[2] == u && tri.v[0] == w) ? 1 : k;
+    return (tri.v[1] == u && tri.v[2] == w) ? 0 : k;
   }
 
   int32_t allocate() {
