@@ -8,7 +8,6 @@ that reference uses absolute per-triangle area and accepts a single flipped row.
 from __future__ import annotations
 
 import ctypes
-import os
 from collections import defaultdict
 from fractions import Fraction
 from itertools import combinations
@@ -16,6 +15,7 @@ from itertools import combinations
 import numpy as np
 from numpy.typing import NDArray
 
+from phydrax._meshcore import load_meshcore
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.geometry._exact_polyhedral_geometry import triangle_contact_points3
@@ -34,14 +34,7 @@ class _ChartFailure(ctypes.Structure):
 
 
 def _chart_verdict(uv: NDArray[np.float64]) -> bool:
-    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
-    function = library.phx_mc_verify_chart_partition
-    function.restype = ctypes.c_int32
-    function.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
-                         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int64,
-                         ctypes.c_void_p, ctypes.POINTER(ctypes.c_int64)]
+    function = load_meshcore()["phx_mc_verify_chart_partition"]
     uv = np.ascontiguousarray(uv, dtype=np.float64)
     triangle_patch = np.zeros(len(uv), dtype=np.int32)
     use_patch = np.zeros(4, dtype=np.int64)
@@ -55,7 +48,8 @@ def _chart_verdict(uv: NDArray[np.float64]) -> bool:
     status = function(1, len(uv), triangle_patch.ctypes.data, uv.ctypes.data,
                       4, use_patch.ctypes.data, use_range.ctypes.data, 1, 4,
                       chord_use.ctypes.data, chord_loop.ctypes.data, chord_uv.ctypes.data,
-                      use_range.ctypes.data, 128, evidence, ctypes.byref(count))
+                      use_range.ctypes.data, 128, ctypes.addressof(evidence),
+                      ctypes.addressof(count))
     if status != 0:
         raise RuntimeError(f"chart verifier refused input: {status}")
     return count.value == 0
@@ -110,17 +104,13 @@ class _SurfaceVerdict(ctypes.Structure):
 
 
 def _surface_verdict(points: NDArray[np.float64], triangles: NDArray[np.int64]) -> bool:
-    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
-    function = library.phx_mc_verify_surface_embedding
-    function.restype = ctypes.c_int32
-    function.argtypes = [ctypes.c_int64, ctypes.c_void_p, ctypes.c_int64, ctypes.c_void_p,
-                         ctypes.c_int64, ctypes.c_void_p, ctypes.POINTER(_SurfaceVerdict)]
+    function = load_meshcore()["phx_mc_verify_surface_embedding"]
     points = np.ascontiguousarray(points, dtype=np.float64)
     triangles = np.ascontiguousarray(triangles, dtype=np.int64)
     evidence = (_SurfaceFinding * 512)()
     verdict = _SurfaceVerdict()
     status = function(len(points), points.ctypes.data, len(triangles), triangles.ctypes.data,
-                      512, evidence, ctypes.byref(verdict))
+                      512, ctypes.addressof(evidence), ctypes.addressof(verdict))
     if status != 0:
         raise RuntimeError(f"surface verifier refused input: {status}")
     return verdict.finding_count == 0

@@ -2747,7 +2747,8 @@ PHX_MC_API int32_t phx_mc_cad_curves_test(
 /* Surface embedding verifier. Findings are deterministic; edge findings carry
  * vertex indices, contact findings triangle indices and their exact intersection
  * classification. Outside-domain and degenerate findings identify the point
- * or triangle, respectively. Insufficient capacity leaves outputs unchanged. */
+ * or triangle, respectively. Insufficient capacity leaves outputs unchanged.
+ * More than 2^32 points are refused with PHX_MC_INDEX_RANGE_ERROR. */
 enum phx_mc_surface_finding_kind {
   PHX_MC_SURFACE_OUTSIDE_DOMAIN = 1,
   PHX_MC_SURFACE_DEGENERATE = 2,
@@ -2779,12 +2780,16 @@ PHX_MC_API int32_t phx_mc_verify_surface_embedding(
  * are (count,2). The source must establish that its oriented trim cycles bound
  * the patch. Endpoint and range joins compare bitwise, including signed zero.
  * On OK evidence_count gives the failures (zero certifies). Insufficient
- * capacity reports the required count without writing evidence. */
+ * capacity reports the required count without writing evidence. Consecutive
+ * chords of a use must join bitwise in UV and share one loop (USE_COVERAGE).
+ * OVERLAP: two correctly oriented triangles of one patch whose UV interiors
+ * meet other than along a shared vertex or edge (row/other: triangle rows). */
 enum phx_mc_chart_failure_kind {
   PHX_MC_CHART_ORIENTATION = 1,
   PHX_MC_CHART_EDGE = 2,
   PHX_MC_CHART_USE_COVERAGE = 3,
-  PHX_MC_CHART_LOOP = 4
+  PHX_MC_CHART_LOOP = 4,
+  PHX_MC_CHART_OVERLAP = 5
 };
 typedef struct phx_mc_chart_failure {
   int32_t kind;
