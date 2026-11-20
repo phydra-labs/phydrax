@@ -14,6 +14,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -629,11 +630,26 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
     }
   }
   const std::size_t plane_end = features.size();
-  std::sort(lines.begin(), lines.end());
-  lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
-  for (std::uint64_t key : lines) {
-    features.push_back({static_cast<std::int32_t>(key >> 32),
-                        static_cast<std::int32_t>(key & 0xffffffffU), -1});
+  // The distinct lines in key order: grouped by lower slot (a counting sort),
+  // each group's higher slots sorted and deduplicated.
+  {
+    std::vector<std::uint32_t> starts(slot_count + 2, 0U);
+    for (std::uint64_t key : lines) ++starts[static_cast<std::size_t>(key >> 32) + 2];
+    std::partial_sum(starts.begin(), starts.end(), starts.begin());
+    std::vector<std::int32_t> highs(lines.size());
+    for (std::uint64_t key : lines) {
+      highs[starts[static_cast<std::size_t>(key >> 32) + 1]++] =
+          static_cast<std::int32_t>(key & 0xffffffffU);
+    }
+    for (std::size_t low = 0; low < slot_count; ++low) {
+      const auto begin = highs.begin() + starts[low];
+      const auto end = highs.begin() + starts[low + 1];
+      std::sort(begin, end);
+      for (auto high = begin; high != end; ++high) {
+        if (high != begin && *high == *(high - 1)) continue;
+        features.push_back({static_cast<std::int32_t>(low), *high, -1});
+      }
+    }
   }
 
   // Cells of 1.5 median shortest incident edges (measured best on the ledger
@@ -744,9 +760,31 @@ bool local_feature_sizes(const TetMesh& mesh, std::size_t slot_count,
   std::vector<std::uint32_t> seen(static_cast<std::size_t>(large_count), 0U);
   smallest = infinity;
   const CoordinateResolution coordinate_resolution(mesh);
-  for (std::size_t slot = 0; slot < slot_count; ++slot) {
-    const std::int32_t vertex = static_cast<std::int32_t>(slot);
-    if (!mesh.live_vertex(vertex)) continue;
+  // Each lambda depends only on its vertex: the vertices go cell by cell
+  // (a counting sort on their cells), so consecutive queries read nearby
+  // cells.
+  std::vector<std::int32_t> order;
+  {
+    std::vector<std::uint32_t> starts(frame.size() + 1, 0U);
+    std::vector<std::uint32_t> cells(slot_count, 0U);
+    std::size_t live = 0;
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+      if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+      const auto& here = world[slot];
+      cells[slot] = static_cast<std::uint32_t>(frame.index(
+          frame.coordinate(here[0], 0), frame.coordinate(here[1], 1), frame.coordinate(here[2], 2)));
+      ++starts[cells[slot] + 1];
+      ++live;
+    }
+    std::partial_sum(starts.begin(), starts.end(), starts.begin());
+    order.resize(live);
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+      if (!mesh.live_vertex(static_cast<std::int32_t>(slot))) continue;
+      order[starts[cells[slot]]++] = static_cast<std::int32_t>(slot);
+    }
+  }
+  for (const std::int32_t vertex : order) {
+    const auto slot = static_cast<std::size_t>(vertex);
     const double* p = mesh.point(vertex);
     double lambda = sizes[slot];
     if (!std::isfinite(lambda)) return false;
@@ -1706,23 +1744,47 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
   // seeded with its edge star, and its halves stay embedded. The constrained
   // faces are the facet bank's rows, so a segment on a facet edge is on one;
   // only the others read their edge star.
-  std::vector<EdgeKey> facet_edges;
-  facet_edges.reserve(3 * mesh.facets_.size());
-  for (const TetSnapshotFacet& facet : mesh.facets_) {
+  // The facet edges by lower vertex slot (a slot-indexed table of the
+  // higher slots); an endpoint with no slot is no segment's endpoint.
+  const std::size_t slot_total = mesh.vertex_slot_count();
+  std::vector<std::uint32_t> facet_edge_starts(slot_total + 2, 0U);
+  std::vector<std::array<std::int32_t, 3>> facet_slots(mesh.facets_.size());
+  for (std::size_t row = 0; row < mesh.facets_.size(); ++row) {
     for (std::size_t corner = 0; corner < 3; ++corner) {
-      facet_edges.push_back(sorted_edge(facet.vertices[corner], facet.vertices[(corner + 1) % 3]));
+      facet_slots[row][corner] = mesh.vertex_slot(mesh.facets_[row].vertices[corner]);
+    }
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = facet_slots[row][corner];
+      const std::int32_t b = facet_slots[row][(corner + 1) % 3];
+      if (a < 0 || b < 0) continue;
+      ++facet_edge_starts[static_cast<std::size_t>(std::min(a, b)) + 2];
     }
   }
-  std::sort(facet_edges.begin(), facet_edges.end());
+  std::partial_sum(facet_edge_starts.begin(), facet_edge_starts.end(), facet_edge_starts.begin());
+  std::vector<std::int32_t> facet_edge_ends(facet_edge_starts.back());
+  for (const std::array<std::int32_t, 3>& slots : facet_slots) {
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = slots[corner];
+      const std::int32_t b = slots[(corner + 1) % 3];
+      if (a < 0 || b < 0) continue;
+      facet_edge_ends[facet_edge_starts[static_cast<std::size_t>(std::min(a, b)) + 1]++] =
+          std::max(a, b);
+    }
+  }
+  // facet_edge_starts[v] .. facet_edge_starts[v + 1] are now the rows of v.
+  const auto facet_edge = [&](std::int32_t a, std::int32_t b) {
+    const auto low = static_cast<std::size_t>(std::min(a, b));
+    const std::int32_t high = std::max(a, b);
+    return std::find(facet_edge_ends.begin() + facet_edge_starts[low],
+                     facet_edge_ends.begin() + facet_edge_starts[low + 1],
+                     high) != facet_edge_ends.begin() + facet_edge_starts[low + 1];
+  };
   std::set<EdgeKey> embedded_segments;
   for (const TetSnapshotSegment& segment : mesh.segments_) {
     const std::int32_t first = mesh.vertex_slot(segment.vertices[0]);
     const std::int32_t second = mesh.vertex_slot(segment.vertices[1]);
     if (!mesh.live_vertex(first) || !mesh.live_vertex(second)) return PHX_MC_INTERNAL_ERROR;
-    if (std::binary_search(facet_edges.begin(), facet_edges.end(),
-                           sorted_edge(segment.vertices[0], segment.vertices[1]))) {
-      continue;
-    }
+    if (facet_edge(first, second)) continue;
     const std::span<const std::int32_t> star = incidence.edge_star(first, second);
     bool on_face = false;
     for (std::int32_t cell : star) {
