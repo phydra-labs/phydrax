@@ -133,6 +133,19 @@ tetrahedra, then implicit volumes, then the CAD solid.
   17.1). NOT met: L6 <= 8 s; the remainder is native about 1.9 s, simplex topology about 2.1 s
   (identity sorts and searches), association construction about 1.8 s (per-row identity JSON
   and SHA-256 of about 200 MB), host quality about 0.7 s.
+- Suppression coverage (Nov 19, hygiene; S3-C item 7): the four Steiner-suppression fixtures that
+  flips now recover without a split are kept as such; the exhaustive search, the `PlcSearchBudget`
+  accounting (exact budget, one state short, fewer bytes than one chunk: exceeded/inconclusive)
+  and relocation by peeling (`PEEL_AFTER_INCONCLUSIVE`) are exercised again end to end under FIXED
+  by the sliver sheet with vertex 18 raised by 2^-40 (native
+  `test_perturbed_sliver_split_is_searched_and_peeled_within_its_budget`; Python
+  `recover_plc_3d` evidence and the `generate_plc_volume` route with a declared budget in
+  `test_native_volume_generation.py`). Kept, not deleted: these paths are reachable. NOT
+  covered end to end: wedge merging (`merges > 0`); about 15k FIXED variants (twisted n-prisms
+  and towers of them, jittered sliver/cone/lobed patches, single and paired coordinate
+  perturbations of the sliver sheet, each under default and starved budgets) found none, and no
+  unreachability proof exists, so the path and its evidence fields stay. The same sweep found
+  FIXED recoveries of small twisted prisms and towers (16-30 points) running past 60 s.
 
 ## Later slices (planned when S3 is accepted; same rules)
 - S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice

@@ -14,9 +14,12 @@ import pytest
 from phydrax._meshcore import (
     MeshcoreStatus,
     PLC_SEARCH_BUDGET,
+    PlcBoundaryPolicy as NativePlcBoundaryPolicy,
     PlcRecovery3D,
     PlcSearchBudget,
+    PlcSuppressionRouteKind,
     prepare_plc_source,
+    recover_plc_3d,
 )
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._domain_certification import _upper_sum, certify_domain_coverage
@@ -472,6 +475,260 @@ def test_native_volume_schedule_declares_the_plc_search_budget() -> None:
     for invalid in (PlcSearchBudget(0, 1), PlcSearchBudget(1, 1 << 63), (1, 1)):
         with pytest.raises(ValueError, match="plc_search_budget"):
             NativeVolumeSchedule(plc_search_budget=cast(Any, invalid))
+
+
+# The sliver sheet of native test_plc3d (a 26-triangle patch of a torus
+# reconstruction envelope, an internal sheet of region 0 inside a box hull),
+# with vertex 18 raised by 2^-40 in z so that a FIXED recovery splits a sheet
+# segment and suppresses the split point again through the exhaustive search.
+_SLIVER_SHEET_POINTS = (
+    ("-0x1.321f529b7e48dp-2", "0x1.64ab155864700p-9", "-0x1.9f044e4d6d58ep-4"),
+    ("-0x1.321f529b7e48dp-2", "0x1.44e4bff842afcp-8", "-0x1.9f6d8f547cb34p-4"),
+    ("-0x1.1da47153d0345p-2", "0x1.64ab155864700p-9", "-0x1.8b6cffe486f86p-4"),
+    ("-0x1.2ea4bfb8f9dcap-2", "0x1.90fa434d4d438p-8", "-0x1.9aac371f2c0a0p-4"),
+    ("-0x1.1da47153d0345p-2", "0x1.3ff164bc0b59bp-7", "-0x1.8bbdaebc7f731p-4"),
+    ("-0x1.1da47153d0345p-2", "0x1.74437725edd60p-6", "-0x1.8d0ed94a2f94fp-4"),
+    ("-0x1.10a41fc60deb2p-2", "-0x1.2c4e63cec09e0p-8", "-0x1.74953c7234962p-4"),
+    ("-0x1.0929900c221fdp-2", "0x1.64ab155864700p-9", "-0x1.62b433c85e1cdp-4"),
+    ("-0x1.0ec37ed33496ep-2", "0x1.64ab155864700p-9", "-0x1.6d12b8a6cf44ep-4"),
+    ("-0x1.0ec37ed33496ep-2", "0x1.1aa48ab4c6656p-6", "-0x1.6d12b8a6cf44ep-4"),
+    ("-0x1.0929900c221fdp-2", "0x1.74437725edd60p-6", "-0x1.628a696721414p-4"),
+    ("-0x1.0f0ee6494c799p-2", "0x1.74437725edd60p-6", "-0x1.6e40567f2ecfap-4"),
+    ("-0x1.0929900c221fdp-2", "0x1.417243acd1c5cp-5", "-0x1.64ee3e9c504d6p-4"),
+    ("-0x1.015ee75c92b0dp-2", "-0x1.1b18b1cfd4ba0p-6", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.e95d5d88e816cp-3", "-0x1.1b18b1cfd4ba0p-6", "-0x1.21510e2381767p-4"),
+    ("-0x1.0574b7b52e89ap-2", "0x1.64ab155864700p-9", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.02b3867e68436p-2", "-0x1.677031e86de53p-7", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.e95d5d88e816cp-3", "-0x1.df29744103290p-10", "-0x1.176176e794470p-4"),
+    ("-0x1.e95d5d88e816cp-3", "0x1.64ab155864700p-9", "-0x1.1392d9c79b6fbp-4"),
+    ("-0x1.04f3d3509a726p-2", "0x1.74437725edd60p-6", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.04f3d3509a726p-2", "0x1.bfc4b98e1d95ep-8", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.e95d5d88e816cp-3", "0x1.38f5f1b6b472bp-6", "-0x1.1392d9c79b6fbp-4"),
+    ("-0x1.e95d5d88e816cp-3", "0x1.74437725edd60p-6", "-0x1.15966b59ebcccp-4"),
+    ("-0x1.03a2bd51870c3p-2", "0x1.5df8c5d0678f0p-5", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.04787c2539657p-2", "0x1.bf54b594797cap-6", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.e95d5d88e816cp-3", "0x1.31b0aedaec2bep-5", "-0x1.1ae383e68ac86p-4"),
+    ("-0x1.e95d5d88e816cp-3", "0x1.5df8c5d0678f0p-5", "-0x1.1d31d8f539a98p-4"),
+    ("-0x1.e3597df5eb8f7p-3", "0x1.64ab155864700p-9", "-0x1.04bf786bcd16ep-4"),
+    ("-0x1.df9945c0d3287p-3", "-0x1.99efe71e5a8f4p-7", "-0x1.04bf786bcd16ep-4"),
+    ("-0x1.dd706f156eafdp-3", "0x1.64ab155864700p-9", "-0x1.d9cb3709b4922p-5"),
+    ("-0x1.d75168e158446p-3", "0x1.79ea0fcf1641ap-7", "-0x1.c14f1e395ae47p-5"),
+    ("-0x1.af239e16ec059p-3", "-0x1.1925a596238cep-3", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.9771d86a2fc4cp-3", "-0x1.1925a596238cep-3", "-0x1.31cbeca73419bp-4"),
+    ("-0x1.ba125575f3db9p-3", "-0x1.e05fc60d8ec80p-4", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.b5a8494b81df2p-3", "-0x1.0e6653e8197e5p-3", "-0x1.56aafd8a8568cp-4"),
+    ("-0x1.a55a6d67c1e75p-3", "-0x1.fc30f008b30d0p-4", "-0x1.2090a266f15bfp-4"),
+    ("-0x1.9771d86a2fc4cp-3", "-0x1.f3995d29258fap-4", "-0x1.04bf786bcd16ep-4"),
+    ("-0x1.abecb9b1ddd94p-3", "-0x1.e05fc60d8ec80p-4", "-0x1.2db53afb293fcp-4"),
+    ("-0x1.9e36039523d1fp-3", "-0x1.e05fc60d8ec80p-4", "-0x1.04bf786bcd16ep-4"),
+    ("-0x1.855338a25fc2cp-3", "-0x1.070705ce538aep-3", "-0x1.04bf786bcd16ep-4"),
+    ("-0x1.6e7c15dad39bep-3", "0x1.64ab155864700p-9", "-0x1.6ca7e7babe988p-3"),
+    ("-0x1.6e7c15dad39bep-3", "0x1.74437725edd60p-6", "-0x1.6a3af6febb231p-3"),
+    ("-0x1.4586534b7772ep-3", "-0x1.23c7f85239018p-7", "-0x1.4f2c8902b3584p-3"),
+    ("-0x1.4586534b7772ep-3", "0x1.64ab155864700p-9", "-0x1.445f7bcd67b41p-3"),
+    ("-0x1.4dc7a8e49a5e7p-3", "0x1.74437725edd60p-6", "-0x1.4f2c8902b3584p-3"),
+    ("-0x1.4df6ad2ca323fp-3", "0x1.30c0a81c904d6p-6", "-0x1.4f2c8902b3584p-3"),
+    ("-0x1.4586534b7772ep-3", "0x1.f45c51d48132cp-8", "-0x1.451c52c970e07p-3"),
+    ("-0x1.4586534b7772ep-3", "0x1.0f2944f072564p-5", "-0x1.4f2c8902b3584p-3"),
+    ("-0x1.408b17954aecfp-3", "-0x1.e67da83ce114ep-7", "-0x1.4f2c8902b3584p-3"),
+    ("-0x1.38bcb8a748624p-3", "-0x1.6997b95cb86a0p-7", "-0x1.4262ee5e8447ap-3"),
+    ("-0x1.2b6881200b218p-3", "0x1.64ab155864700p-9", "-0x1.2636c673572f4p-3"),
+    ("-0x1.28ea30b684b4bp-3", "0x1.74437725edd60p-6", "-0x1.2636c673572f4p-3"),
+    ("-0x1.29bfa1850a6bep-3", "0x1.0acaf0de74c60p-6", "-0x1.2636c673572f4p-3"),
+    ("-0x1.1c9090bc1b49ep-3", "0x1.74437725edd60p-6", "-0x1.17dd188567644p-3"),
+    ("-0x1.c763460d6e7e7p-2", "-0x1.798ea1a81a302p-3", "-0x1.10f8a60720728p-2"),
+    ("-0x1.c763460d6e7e7p-2", "-0x1.798ea1a81a302p-3", "0x1.f9610c74592c0p-4"),
+    ("-0x1.c763460d6e7e7p-2", "0x1.a68a73b273dabp-3", "-0x1.10f8a60720728p-2"),
+    ("-0x1.c763460d6e7e7p-2", "0x1.a68a73b273dabp-3", "0x1.f9610c74592c0p-4"),
+    ("-0x1.ac1ec529c9fa7p-5", "-0x1.798ea1a81a302p-3", "-0x1.10f8a60720728p-2"),
+    ("-0x1.ac1ec529c9fa7p-5", "-0x1.798ea1a81a302p-3", "0x1.f9610c74592c0p-4"),
+    ("-0x1.ac1ec529c9fa7p-5", "0x1.a68a73b273dabp-3", "-0x1.10f8a60720728p-2"),
+    ("-0x1.ac1ec529c9fa7p-5", "0x1.a68a73b273dabp-3", "0x1.f9610c74592c0p-4"),
+)
+_SLIVER_SHEET_TRIANGLES = np.asarray(
+    (
+        (0, 3, 1),
+        (6, 7, 8),
+        (4, 11, 5),
+        (2, 8, 9),
+        (13, 18, 16),
+        (16, 18, 15),
+        (15, 21, 22),
+        (15, 22, 20),
+        (15, 18, 21),
+        (20, 22, 19),
+        (10, 23, 12),
+        (19, 26, 24),
+        (19, 22, 25),
+        (14, 27, 17),
+        (14, 28, 27),
+        (27, 29, 30),
+        (31, 36, 35),
+        (33, 34, 35),
+        (35, 38, 37),
+        (32, 39, 36),
+        (40, 44, 45),
+        (41, 47, 44),
+        (42, 49, 48),
+        (43, 51, 52),
+        (43, 46, 51),
+        (50, 52, 53),
+        (54, 55, 57),
+        (54, 57, 56),
+        (58, 60, 61),
+        (58, 61, 59),
+        (54, 58, 59),
+        (54, 59, 55),
+        (56, 57, 61),
+        (56, 61, 60),
+        (54, 56, 60),
+        (54, 60, 58),
+        (55, 59, 61),
+        (55, 61, 57),
+    ),
+    dtype=np.int64,
+)
+_SLIVER_SHEET_FACES = 26
+
+
+def _perturbed_sliver_sheet() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    points = np.asarray(
+        [[float.fromhex(value) for value in row] for row in _SLIVER_SHEET_POINTS],
+        dtype=np.float64,
+    )
+    points[18, 2] += 2.0**-40
+    rows = np.arange(_SLIVER_SHEET_TRIANGLES.shape[0])
+    regions = np.stack(
+        (np.where(rows < _SLIVER_SHEET_FACES, 0, -1), np.zeros_like(rows)), axis=1
+    )
+    triangles = _SLIVER_SHEET_TRIANGLES
+    edges = np.concatenate(
+        (triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]])
+    )
+    segments = np.unique(np.sort(edges, axis=1), axis=0)
+    return points, regions, segments
+
+
+def _recover_perturbed_sliver(budget: PlcSearchBudget) -> PlcRecovery3D:
+    points, regions, segments = _perturbed_sliver_sheet()
+    triangles = _SLIVER_SHEET_TRIANGLES
+    return recover_plc_3d(
+        points,
+        np.arange(0, triangles.size + 1, 3, dtype=np.int64),
+        triangles.reshape(-1),
+        np.arange(triangles.shape[0], dtype=np.int64),
+        regions,
+        segments=segments,
+        boundary_policy=NativePlcBoundaryPolicy.FIXED,
+        search_budget=budget,
+    )
+
+
+def test_fixed_recovery_searches_a_split_point_away_within_the_declared_budget() -> None:
+    searched = _recover_perturbed_sliver(PLC_SEARCH_BUDGET)
+    evidence = searched.suppression_search
+    assert searched.status == MeshcoreStatus.OK
+    # The split point left: only input points remain, and the boundary keeps
+    # its input triangles.
+    assert searched.points.shape[0] == len(_SLIVER_SHEET_POINTS)
+    assert np.all(np.asarray(searched.faces) < len(_SLIVER_SHEET_POINTS))
+    assert evidence.searches >= 1 and evidence.fills >= 1 and evidence.nodes > 0
+    assert (evidence.node_budget, evidence.byte_budget) == PLC_SEARCH_BUDGET
+    assert evidence.exceeded == evidence.inconclusive == evidence.peeled == 0
+    assert searched.suppression_routes
+    for route in searched.suppression_routes:
+        assert route.route is PlcSuppressionRouteKind.SEARCH
+        assert route.stratum == 1 and route.states > 0
+    exact = _recover_perturbed_sliver(
+        PlcSearchBudget(evidence.nodes, PLC_SEARCH_BUDGET.bytes)
+    )
+    np.testing.assert_array_equal(exact.points, searched.points)
+    np.testing.assert_array_equal(exact.tetrahedra, searched.tetrahedra)
+
+
+@pytest.mark.parametrize("starved", ("one-state-short", "below-one-chunk"))
+def test_fixed_recovery_peels_a_split_point_after_an_inconclusive_search(
+    starved: str,
+) -> None:
+    nodes = _recover_perturbed_sliver(PLC_SEARCH_BUDGET).suppression_search.nodes
+    budget = (
+        PlcSearchBudget(nodes - 1, PLC_SEARCH_BUDGET.bytes)
+        if starved == "one-state-short"
+        else PlcSearchBudget(PLC_SEARCH_BUDGET.nodes, 4096 * 40 - 1)
+    )
+    peeled = _recover_perturbed_sliver(budget)
+    evidence = peeled.suppression_search
+    assert peeled.status == MeshcoreStatus.OK
+    assert (evidence.node_budget, evidence.byte_budget) == budget
+    assert evidence.exceeded == 1 and evidence.inconclusive >= 1
+    assert evidence.peeled >= 1 and evidence.peeled_after_inconclusive >= 1
+    # The point moved into the volume; the boundary keeps its input triangles.
+    assert peeled.points.shape[0] > len(_SLIVER_SHEET_POINTS)
+    assert np.all(np.asarray(peeled.faces) < len(_SLIVER_SHEET_POINTS))
+    assert any(
+        route.route is PlcSuppressionRouteKind.PEEL_AFTER_INCONCLUSIVE
+        and route.stratum == 1
+        for route in peeled.suppression_routes
+    )
+    again = _recover_perturbed_sliver(budget)
+    np.testing.assert_array_equal(again.points, peeled.points)
+    np.testing.assert_array_equal(again.tetrahedra, peeled.tetrahedra)
+    assert again.suppression_routes == peeled.suppression_routes
+
+
+def _sliver_construction(budget: PlcSearchBudget) -> VolumeConstruction:
+    points, regions, segments = _perturbed_sliver_sheet()
+    triangles = _SLIVER_SHEET_TRIANGLES
+    complex_ = PiecewiseLinearComplex(
+        points,
+        triangles,
+        np.arange(triangles.shape[0], dtype=np.int64),
+        regions,
+        ("solid",),
+        segments=segments,
+        vertex_ids=tuple(f"vertex-{row}" for row in range(points.shape[0])),
+        vertex_occurrence_paths=((),) * points.shape[0],
+        facet_ids=tuple(f"facet-{row}" for row in range(triangles.shape[0])),
+        facet_occurrence_paths=((),) * triangles.shape[0],
+        segment_ids=tuple(f"segment-{row}" for row in range(segments.shape[0])),
+        segment_occurrence_paths=((),) * segments.shape[0],
+        region_occurrence_paths=((),),
+        boundary="fixed",
+    )
+    source = NativePlcSource(complex_, "sliver-sheet", "revision-1")
+    seed = RegionSeed(
+        np.asarray((-0.25, -0.15, -0.1), dtype=np.float64),
+        "solid",
+        "solid-material",
+        RegionRole.SOLID,
+    )
+    return generate_plc_volume(
+        complex_,
+        _request(source, region_seeds=(seed,)),
+        NativeVolumeSchedule(
+            radius_edge_bound=8.0, minimum_dihedral_degrees=0.0, plc_search_budget=budget
+        ),
+        source_id=source.source_id,
+        source_revision=source.source_revision,
+        source_map_id="",
+        frame_id=SpatialCoordinateContract.si().spatial_id,
+        source_domain=source.mapped_domain,
+    )
+
+
+def test_volume_route_carries_the_plc_search_budget_to_a_fixed_recovery() -> None:
+    # The schedule's budget reaches the recovery: the default searches the
+    # split point away, a budget below one chunk of states peels it into the
+    # volume; both keep the fixed boundary and are deterministic.
+    searched = _sliver_construction(PLC_SEARCH_BUDGET)
+    starved_budget = PlcSearchBudget(PLC_SEARCH_BUDGET.nodes, 4096 * 40 - 1)
+    peeled = _sliver_construction(starved_budget)
+    for construction in (searched, peeled):
+        assert construction.boundary_policy == "fixed"
+        assert np.all(construction.input_vertices[construction.boundary_faces] >= 0)
+    assert not np.array_equal(peeled.mesh.coordinates, searched.mesh.coordinates)
+    again = _sliver_construction(starved_budget)
+    np.testing.assert_array_equal(again.mesh.coordinates, peeled.mesh.coordinates)
 
 
 def test_soft_shape_strength_is_refused_where_shape_rows_are_not_published() -> None:
