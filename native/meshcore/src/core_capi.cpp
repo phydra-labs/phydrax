@@ -552,6 +552,39 @@ int32_t phx_mc_mesh_copy_constraint_ratios(const phx_mc_mesh* mesh, int64_t poin
   });
 }
 
+int32_t phx_mc_mesh_shape(const phx_mc_mesh* mesh, int64_t* shape) {
+  if (mesh == nullptr || shape == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  shape[0] = mesh->dimension;
+  shape[1] = mesh->point_count();
+  shape[2] = mesh->cell_count();
+  shape[3] = mesh->input_point_count;
+  return PHX_MC_OK;
+}
+
+int32_t phx_mc_mesh_copy_all(const phx_mc_mesh* mesh, int64_t point_capacity,
+                             int64_t cell_capacity, int64_t input_capacity, double* points,
+                             int32_t* cells, int32_t* vertex_map, int32_t* cell_segments,
+                             int32_t* sources, int32_t* parents, double* ratios) {
+  int32_t status = phx_mc_mesh_copy_points(mesh, point_capacity, points);
+  if (status == PHX_MC_OK) status = phx_mc_mesh_copy_cells(mesh, cell_capacity, cells);
+  if (status == PHX_MC_OK) status = phx_mc_mesh_copy_vertex_map(mesh, input_capacity, vertex_map);
+  if (status == PHX_MC_OK) {
+    status = phx_mc_mesh_copy_cell_segments(mesh, cell_capacity, cell_segments);
+  }
+  if (status == PHX_MC_OK) {
+    status = phx_mc_mesh_copy_constraint_sources(mesh, point_capacity, sources);
+  }
+  if (status == PHX_MC_OK) {
+    status = phx_mc_mesh_copy_constraint_parents(mesh, point_capacity, parents);
+  }
+  if (status == PHX_MC_OK) {
+    status = phx_mc_mesh_copy_constraint_ratios(mesh, point_capacity, ratios);
+  }
+  return status;
+}
+
 void phx_mc_mesh_free(phx_mc_mesh* mesh) { delete mesh; }
 
 int32_t phx_mc_plc3d_prepare_source(

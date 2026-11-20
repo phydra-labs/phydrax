@@ -276,6 +276,15 @@ PHX_MC_API int32_t phx_mc_mesh_copy_constraint_parents(
     const phx_mc_mesh* mesh, int64_t point_capacity, int32_t* parents);
 PHX_MC_API int32_t phx_mc_mesh_copy_constraint_ratios(
     const phx_mc_mesh* mesh, int64_t point_capacity, double* ratios);
+/* shape[4] = {dimension, point count, cell count, input point count}. */
+PHX_MC_API int32_t phx_mc_mesh_shape(const phx_mc_mesh* mesh, int64_t* shape);
+/* The seven copies above in one call (points, cells, vertex map, cell
+ * segments, constraint sources, parents, ratios), in that order; returns the
+ * first failing copy's status. */
+PHX_MC_API int32_t phx_mc_mesh_copy_all(
+    const phx_mc_mesh* mesh, int64_t point_capacity, int64_t cell_capacity,
+    int64_t input_capacity, double* points, int32_t* cells, int32_t* vertex_map,
+    int32_t* cell_segments, int32_t* sources, int32_t* parents, double* ratios);
 PHX_MC_API void phx_mc_mesh_free(phx_mc_mesh* mesh);
 
 /* ------------------------------------- retained native numerical kernels */
