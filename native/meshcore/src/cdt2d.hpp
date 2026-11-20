@@ -136,22 +136,23 @@ struct BadOrder {
 // matching one processed either way. The pop sequence, and so the mesh, is
 // therefore independent of the heap layout, and a 4-ary heap is used.
 //
-// Without spatial buckets the entries are ranked by badness: a queued entry
-// is bad, so its badness is above one (possibly +inf; never NaN, as
-// std::max keeps the area ratio over a NaN angle ratio), and the bits of a
-// double above one increase with its value. Rank 0 holds badness >= 16,
-// then 256 ranks per octave down to
-// one; equal badness shares a rank, so BadOrder never puts a worse entry in
-// a later rank and the pop sequence is that of one heap (see
-// SpatialRefinementQueue). Measured on the ring at 1e4 (badness median 2.2,
-// 99th percentile 52): the single heap's pops were 20 % of the refinement
-// under libc++; the ranks keep each heap at about 30 entries.
+// Without spatial buckets the entries are ranked by badness, as in
+// Triangle's bad-triangle queue: a queued entry is bad, so its badness is
+// above one (possibly +inf; never NaN, as std::max keeps the area ratio over
+// a NaN angle ratio), and the bits of a double above one increase with its
+// value. 16 ranks per octave, the worst rank first, first in first out
+// within a rank: the pop order is not BadOrder's (OUTPUT-CHANGING), but every
+// bad triangle is still processed until none is left, so the Ruppert/Chew
+// termination and quality criteria are those of any processing order.
+// Measured on the ring at 1e4: the single heap's pops were 20 % of the
+// refinement under libc++, the rank FIFOs 4 %.
 struct BadRank {
   static constexpr int kBuckets = 1024;
+  static constexpr bool kFifo = true;
   int operator()(const BadTriangle& entry) const {
     const uint64_t bits = std::bit_cast<uint64_t>(entry.badness);
     constexpr uint64_t kOne = std::bit_cast<uint64_t>(1.0);
-    const uint64_t rank = bits > kOne ? (bits - kOne) >> 44 : 0;
+    const uint64_t rank = bits > kOne ? (bits - kOne) >> 48 : 0;
     return kBuckets - 1 - static_cast<int>(std::min<uint64_t>(rank, kBuckets - 1));
   }
 };

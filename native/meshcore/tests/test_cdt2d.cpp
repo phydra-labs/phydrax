@@ -885,6 +885,7 @@ struct RankedWorse {
 };
 struct RankedRank {
   static constexpr int kBuckets = 8;
+  static constexpr bool kFifo = false;
   int operator()(const RankedEntry& e) const { return kBuckets - 1 - e.priority / 7; }
 };
 
