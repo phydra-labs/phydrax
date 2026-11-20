@@ -545,7 +545,7 @@ def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
 
 
 def _cad_volume_plan(
-    model: phx.geometry.brep.BRepModel,
+    model: phx.geometry.brep.BRepModel | MeshingDomain,
     size: float,
     order: int,
     /,
@@ -769,3 +769,35 @@ assert r.certification.native_cad.certificate_id == sys.argv[4]
         text=True,
         timeout=900,
     )
+
+
+def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
+    # An archive-restored domain holds equal, unshared copies of the source
+    # objects; in the same process (bundle cache warm) it proves the solid.
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    path = tmp_path / "native-cad-domain.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        expected_content_id=model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.certification is not None and result.certification is not None
+    assert restored.certification.report_id == result.certification.report_id
+    domain = restored.certification.inputs.domain
+    assert isinstance(domain, MeshingDomain)
+    again = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    assert again.certification is not None and again.certification.passed

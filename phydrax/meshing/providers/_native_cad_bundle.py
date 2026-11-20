@@ -1001,20 +1001,27 @@ def cad_entity_model(
 
 
 _CACHE_CAPACITY = 32
-_CACHE: OrderedDict[str, tuple[CadModel, np.ndarray, tuple[str, ...]]] = OrderedDict()
+# The node graph follows the domain's object sharing (one node per source
+# object), which ``domain_id`` does not identify: an archive-restored domain
+# has the same ID but unshared copies. An entry therefore serves only the
+# domain object it was built from (held alive here) and is rebuilt otherwise.
+_CACHE: OrderedDict[
+    str, tuple[MeshingDomain, tuple[CadModel, np.ndarray, tuple[str, ...]]]
+] = OrderedDict()
 
 
 def _cached(domain: MeshingDomain, /) -> tuple[CadModel, np.ndarray, tuple[str, ...]]:
     key = domain.domain_id
-    entry = _CACHE.get(key)
-    if entry is None:
+    cached = _CACHE.get(key)
+    if cached is None or cached[0] is not domain:
         entry = _build(domain)
-        _CACHE[key] = entry
+        _CACHE[key] = (domain, entry)
+        _CACHE.move_to_end(key)
         if len(_CACHE) > _CACHE_CAPACITY:
             _CACHE.popitem(last=False)
-    else:
-        _CACHE.move_to_end(key)
-    return entry
+        return entry
+    _CACHE.move_to_end(key)
+    return cached[1]
 
 
 def cad_bundle_support_issues(domain: MeshingDomain, /) -> tuple[str, ...]:
