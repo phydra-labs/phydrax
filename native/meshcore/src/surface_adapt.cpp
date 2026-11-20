@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -962,7 +963,7 @@ int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
 int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                         const SurfaceOracle& oracle, const AdaptTargets& targets,
                         const TriangleCertifier& certifier, const CarrierEvidence& carrier,
-                        CertifyCounters& counters) {
+                        const TriangleCertifier* repair_certifier, CertifyCounters& counters) {
   if (!(targets.edge_length > 0) || !(targets.tolerance > 0) ||
       !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
@@ -978,10 +979,20 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
   };
   const auto by_key = [](const Decided& entry, const TriangleKey& key) { return entry.key < key; };
   std::vector<Decided> decided, next;
-  std::vector<uint8_t> refused, changed, illegal;
+  std::vector<uint8_t> refused, above, fresh, changed, illegal;
+  struct Standing {
+    std::vector<Point> points;
+    std::vector<Triangle> triangles;
+    std::vector<uint8_t> carried;
+    double distance;
+    int64_t carrier;
+  };
+  std::optional<Standing> last_standing;
   for (int round = 0;; ++round) {
     const size_t m = triangles.size();
     refused.assign(m, 0);
+    above.assign(m, 0);
+    fresh.assign(m, 0);
     changed.assign(m, 0);
     counters.carried.assign(m, 0);
     next.clear();
@@ -1011,33 +1022,60 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
           ++carried;
         }
       }
-      if (bound < kInfinity)
-        maximum = std::max(maximum, bound);
-      else
+      if (!(bound < kInfinity))
         refused[t] = 1;
+      else
+        maximum = std::max(maximum, bound);
+      fresh[t] = static_cast<uint8_t>(!known);
       next.push_back({key, proved, false});
     }
     counters.refused_embedding += refuse_illegal_contacts(
         points, triangles, round == 0 ? nullptr : &changed, illegal);
-    int64_t count = 0;
+    int64_t count = 0, margin = 0;
     for (size_t t = 0; t < m; ++t) {
       refused[t] = static_cast<uint8_t>(refused[t] | illegal[t]);
       next[t].refused = refused[t] != 0;
       count += refused[t];
     }
+    // Once the surface needs a repair, every triangle decided this round
+    // (all of them in the first) must also stand in the tighter band: one
+    // proved only by `certifier` is repaired too, not refused.
+    if (repair_certifier != nullptr && (round > 0 || count > 0))
+      for (size_t t = 0; t < m; ++t) {
+        if (!fresh[t] || refused[t] || counters.carried[t]) continue;
+        const Point& a = points[static_cast<size_t>(triangles[t][0])];
+        const Point& b = points[static_cast<size_t>(triangles[t][1])];
+        const Point& c = points[static_cast<size_t>(triangles[t][2])];
+        if (repair_certifier->bound(a, b, c) < kInfinity) continue;
+        above[t] = 1;
+        ++margin;
+      }
     counters.rounds = round + 1;
     counters.carrier = carried;
     counters.distance = maximum;
-    if (count == 0) return PHX_MC_OK;
-    if (round + 1 == kRepairRounds) return PHX_MC_UNRESOLVED;
+    // A margin repair may break what already stood (a new contact): the
+    // last standing surface is kept to return instead.
+    if (count == 0 && margin > 0)
+      last_standing = Standing{points, triangles, counters.carried, maximum, carried};
+    const auto finish = [&]() {
+      if (count == 0 || !last_standing) return count == 0 ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+      points = std::move(last_standing->points);
+      triangles = std::move(last_standing->triangles);
+      counters.carried = std::move(last_standing->carried);
+      counters.distance = last_standing->distance;
+      counters.carrier = last_standing->carrier;
+      return PHX_MC_OK;
+    };
+    if (count + margin == 0 || round + 1 == kRepairRounds) return finish();
     std::sort(next.begin(), next.end(),
               [](const Decided& x, const Decided& y) { return x.key < y.key; });
     decided.swap(next);
+    for (size_t t = 0; t < m; ++t) above[t] = static_cast<uint8_t>(above[t] | refused[t]);
     int64_t splits = 0;
-    const int32_t status = repair_surface(points, triangles, oracle, targets, refused, splits);
+    const int32_t status = repair_surface(points, triangles, oracle, targets, above, splits);
     if (status != PHX_MC_OK) return status;
     counters.repair_splits += splits;
-    if (splits == 0) return PHX_MC_UNRESOLVED;
+    if (splits == 0) return finish();
   }
 }
 

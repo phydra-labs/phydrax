@@ -861,12 +861,11 @@ void witness_needs_continuity() {
 
 // A surface constructed for a looser tolerance is repaired to a tighter one:
 // the refused triangles are split and their midpoints projected until every
-// triangle certifies (forward). The repair stops as soon as each triangle is
-// within the tolerance, so the zero set lies about that far from the surface
-// too, and the tube's reverse bound comes out a little above it (0.0089
-// against 0.008): with proof 1 held to the tolerance (review F5) and the
-// cover alone unable to place leaves that close, the two-way certificate
-// refuses. The repair itself is visible in the counters.
+// triangle certifies. Once a repair is needed, every triangle is held to 0.8
+// of the tolerance too, so the zero set leaves the reverse proof room: both
+// directions certify (repaired only to the tolerance itself, the tube's
+// reverse bound came out at 0.0089 against 0.008 and the certificate
+// refused).
 void certify_repairs_locally() {
   const Surface input = uv_sphere(8, 40);
   const Program value = sphere_value(), gradient = sphere_gradient();
@@ -875,15 +874,18 @@ void certify_repairs_locally() {
   if (remeshed.status != PHX_MC_OK) return;
   // Sides near 0.3 on the unit sphere leave sagittas near 0.015.
   constexpr double tighter = 0.008;
-  double distance = -1;
+  double distance = -1, reverse = -1;
   Failures failures{};
-  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tighter, 1, distance,
-                    failures) == PHX_MC_UNRESOLVED);
-  std::printf("certify repair: %lld splits, %lld rounds, tube refused %lld, outside %lld\n",
-              static_cast<long long>(failures[4]), static_cast<long long>(failures[5]),
-              static_cast<long long>(failures[6]), static_cast<long long>(failures[7]));
+  Surface certified;
+  const int32_t status = certify(remeshed.vertices, remeshed.triangles, value, gradient, tighter,
+                                 1, distance, failures, nullptr, 0, &certified, nullptr, &reverse);
+  std::printf("certify repair: %lld splits, %lld rounds, forward %.6g, reverse %.6g, proof %lld\n",
+              static_cast<long long>(failures[4]), static_cast<long long>(failures[5]), distance,
+              reverse, static_cast<long long>(failures[8]));
+  PHX_CHECK(status == PHX_MC_OK);
   PHX_CHECK(failures[1] > 0 && failures[4] > 0 && failures[5] > 1);
-  PHX_CHECK(failures[6] == 0 && failures[7] > 0 && failures[8] == 0);
+  PHX_CHECK(distance <= tighter && reverse <= tighter && failures[8] > 0);
+  PHX_CHECK(certified.triangles.size() > remeshed.triangles.size());
 }
 
 // Octahedron subdivided `levels` times onto the unit sphere, every coordinate

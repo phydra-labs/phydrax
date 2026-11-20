@@ -916,7 +916,8 @@ extern "C" PHX_MC_API int32_t phx_mc_mesh_certify(const phx_mc_mesh_certify_requ
     for (int pass = 0;; ++pass) {
       CertifyCounters counters;
       const int32_t status =
-          certify_surface(points, triangles, oracle, targets, certifier, CarrierEvidence{}, counters);
+          certify_surface(points, triangles, oracle, targets, certifier, CarrierEvidence{},
+                          nullptr, counters);
       if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
       request->distances[0] = counters.distance;
       request->distances[1] = std::numeric_limits<double>::infinity();

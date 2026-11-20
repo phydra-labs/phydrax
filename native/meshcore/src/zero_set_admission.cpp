@@ -29,6 +29,12 @@ constexpr double kInfinity = std::numeric_limits<double>::infinity();
 // Midpoint levels of the uncertifiable-point search: the residual maximum of
 // a triangle is located to 2^-6 of its extent before the full subdivision.
 constexpr int kWitnessLevels = 6;
+// Once a repair is needed, every triangle decided in a round must also be
+// proved within this fraction of the tolerance. A repair splits where the
+// zero set strays about the tolerance from the surface, and the reverse bound
+// there is about the forward one plus the tube's slack (0.0089 against 0.008
+// when repaired only to the tolerance; 0.0072 at 0.8 of it).
+constexpr double kRepairFraction = 0.8;
 
 void bounding_box(const Point& a, const Point& b, const Point& c, Point& lower, Point& upper) {
   for (int d = 0; d < 3; ++d) {
@@ -1111,15 +1117,20 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   }
   std::sort(carrier.entries.begin(), carrier.entries.end());
   oracle.set_reach(request.edge_length + reach);
-  AdmissionMemo memo;
+  AdmissionMemo memo, repair_memo;
   const ZeroSetBandAdmission admission(value, gradient, request.tolerance, request.orientation,
                                        &memo);
   const ZeroSetCertifier certifier(admission);
+  // Once a repair is needed, triangles are held to the tighter band too.
+  const ZeroSetBandAdmission repair_admission(value, gradient,
+                                              kRepairFraction * request.tolerance,
+                                              request.orientation, &repair_memo);
+  const ZeroSetCertifier repair_certifier(repair_admission);
   CertifyCounters certified;
   status = certify_surface(points, triangles, oracle,
                            AdaptTargets{request.edge_length, request.tolerance,
                                         request.minimum_angle_degrees},
-                           certifier, carrier, certified);
+                           certifier, carrier, &repair_certifier, certified);
   const ZeroSetBandAdmission::Refusals refusals = admission.refusals();
   request.counters[0] = refusals.transversality;
   request.counters[1] = refusals.distance;
