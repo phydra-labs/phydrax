@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 from jax import Array
 
-from ..._fixed_order import cross3, dot3, product
+from ..._fixed_order import cross3
 from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
 from ...discretization._cell_mesh import CellMesh
@@ -290,10 +291,8 @@ class _TriangleCubatureMap(AbstractCubatureMap):
         return super().evaluate(chart_indices, reference)
 
 
-def _segment_parameter(point: Array, start: Array, end: Array) -> Array:
-    direction = end - start
-    parameter = dot3(point - start, direction) / dot3(direction, direction)
-    return jnp.clip(parameter, 0.0, 1.0)
+def _sum3(terms: Array, /) -> Array:
+    return (terms[..., 0] + terms[..., 1]) + terms[..., 2]
 
 
 def _closest_triangle_features(point: Array, triangles: Array) -> tuple[Array, Array]:
@@ -301,45 +300,63 @@ def _closest_triangle_features(point: Array, triangles: Array) -> tuple[Array, A
 
     Features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a), 4/5/6 the
     corners a/b/c; the first minimum in face/(a,b)/(b,c)/(c,a) order wins. The
-    arithmetic follows the fixed schedule of `phydrax._fixed_order`, so every
+    arithmetic follows the fixed schedule of `phydrax._fixed_order` (each
+    stage's independent products cross one barrier together), so every
     execution mode and the native kernels round alike.
     """
+    barrier = jax.lax.optimization_barrier
     a = triangles[:, 0]
     b = triangles[:, 1]
     c = triangles[:, 2]
     ab = b - a
     ac = c - a
+    bc = c - b
+    ca = a - c
     normal = cross3(ab, ac)
-    normal_norm_sq = dot3(normal, normal)
-    height = dot3(point - a, normal) / normal_norm_sq
-    projection = point - product(height[:, None], normal)
-
+    nn, aa, ax, xx, bb, cc = barrier(
+        (normal * normal, ab * ab, ab * ac, ac * ac, bc * bc, ca * ca)
+    )
+    normal_norm_sq, d00, d01, d11 = _sum3(nn), _sum3(aa), _sum3(ax), _sum3(xx)
+    offset_a = point - a
+    on_normal, on_ab, on_bc, on_ca = barrier(
+        (offset_a * normal, offset_a * ab, (point - b) * bc, (point - c) * ca)
+    )
+    height = _sum3(on_normal) / normal_norm_sq
+    parameters = jnp.clip(
+        jnp.stack(
+            (
+                _sum3(on_ab) / d00,
+                _sum3(on_bc) / _sum3(bb),
+                _sum3(on_ca) / _sum3(cc),
+            ),
+            axis=1,
+        ),
+        0.0,
+        1.0,
+    )
+    lifted, along_ab, along_bc, along_ca, d00d11, d01d01 = barrier(
+        (
+            height[:, None] * normal,
+            parameters[:, 0, None] * ab,
+            parameters[:, 1, None] * bc,
+            parameters[:, 2, None] * ca,
+            d00 * d11,
+            d01 * d01,
+        )
+    )
+    projection = point - lifted
+    candidates = jnp.stack((projection, a + along_ab, b + along_bc, c + along_ca), axis=1)
     v2 = projection - a
-    d00 = dot3(ab, ab)
-    d01 = dot3(ab, ac)
-    d11 = dot3(ac, ac)
-    d20 = dot3(v2, ab)
-    d21 = dot3(v2, ac)
-    denominator = product(d00, d11) - product(d01, d01)
-    second = (product(d11, d20) - product(d01, d21)) / denominator
-    third = (product(d00, d21) - product(d01, d20)) / denominator
+    offsets = candidates - point
+    v2ab, v2ac, squares = barrier((v2 * ab, v2 * ac, offsets * offsets))
+    d20, d21 = _sum3(v2ab), _sum3(v2ac)
+    p1, p2, p3, p4 = barrier((d11 * d20, d01 * d21, d00 * d21, d01 * d20))
+    denominator = d00d11 - d01d01
+    second = (p1 - p2) / denominator
+    third = (p3 - p4) / denominator
     first = 1.0 - second - third
     inside = (first >= 0.0) & (second >= 0.0) & (third >= 0.0)
-
-    parameters = jnp.stack(
-        (
-            _segment_parameter(point, a, b),
-            _segment_parameter(point, b, c),
-            _segment_parameter(point, c, a),
-        ),
-        axis=1,
-    )
-    on_ab = a + product(parameters[:, 0, None], b - a)
-    on_bc = b + product(parameters[:, 1, None], c - b)
-    on_ca = c + product(parameters[:, 2, None], a - c)
-    candidates = jnp.stack((projection, on_ab, on_bc, on_ca), axis=1)
-    offsets = candidates - point
-    distance_sq = dot3(offsets, offsets)
+    distance_sq = _sum3(squares)
     distance_sq = distance_sq.at[:, 0].set(jnp.where(inside, distance_sq[:, 0], jnp.inf))
     selected = jnp.argmin(distance_sq, axis=1)
     closest = jnp.take_along_axis(candidates, selected[:, None, None], axis=1)[:, 0]

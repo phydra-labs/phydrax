@@ -34,24 +34,20 @@ def ordered_sum(values: Array, /) -> Array:
 
 def dot3(first: Array, second: Array, /) -> Array:
     """``(u0 v0 + u1 v1) + u2 v2`` over the trailing axis of length 3."""
-    return (
-        product(first[..., 0], second[..., 0]) + product(first[..., 1], second[..., 1])
-    ) + product(first[..., 2], second[..., 2])
+    terms = product(first, second)
+    return (terms[..., 0] + terms[..., 1]) + terms[..., 2]
 
 
 def cross3(first: Array, second: Array, /) -> Array:
     """``(u1 v2 - u2 v1, u2 v0 - u0 v2, u0 v1 - u1 v0)`` over the trailing axis."""
-    return jnp.stack(
+    # Both product vectors cross one barrier together.
+    leading, trailing = jax.lax.optimization_barrier(
         (
-            product(first[..., 1], second[..., 2])
-            - product(first[..., 2], second[..., 1]),
-            product(first[..., 2], second[..., 0])
-            - product(first[..., 0], second[..., 2]),
-            product(first[..., 0], second[..., 1])
-            - product(first[..., 1], second[..., 0]),
-        ),
-        axis=-1,
+            first[..., (1, 2, 0)] * second[..., (2, 0, 1)],
+            first[..., (2, 0, 1)] * second[..., (1, 2, 0)],
+        )
     )
+    return leading - trailing
 
 
 def quotient(numerator: Array, denominator: Array | float, /) -> Array:

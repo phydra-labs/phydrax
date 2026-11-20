@@ -32,7 +32,15 @@ from ..._bvh_native import (
     triangle_winding_dipole,
     triangle_winding_exact,
 )
-from ..._fixed_order import cross3, dot3, norm3, ordered_sum, product, quotient
+from ..._fixed_order import (
+    cross3,
+    dot3,
+    norm3,
+    ordered_sum,
+    product,
+    quotient,
+    root,
+)
 from ..._strict import StrictModule
 from ...typing import checked, Dim, Float64, Int32, parse
 from ._mesh import (
@@ -320,23 +328,37 @@ class WindingNumberResult(StrictModule):
         return self.route is WindingNumberRoute.FAST_DIPOLE
 
 
+def _sum3(terms: Array, /) -> Array:
+    return (terms[..., 0] + terms[..., 1]) + terms[..., 2]
+
+
 def _solid_angles(point: Array, first: Array, second: Array, third: Array) -> Array:
     """Signed solid angles of triangles seen from `point` (Van Oosterom-Strackee).
 
-    Fixed schedule of `phydrax._fixed_order`, shared with the native kernels.
+    Fixed schedule of `phydrax._fixed_order`, shared with the native kernels:
+    each stage's products cross one barrier together.
     """
+    barrier = jax.lax.optimization_barrier
     a = first - point
     b = second - point
     c = third - point
-    length_a = norm3(a)
-    length_b = norm3(b)
-    length_c = norm3(c)
-    numerator = dot3(a, cross3(b, c))
-    denominator = (
-        (product(product(length_a, length_b), length_c) + product(dot3(a, b), length_c))
-        + product(dot3(b, c), length_a)
-    ) + product(dot3(c, a), length_b)
-    return product(2.0, jnp.arctan2(numerator, denominator))
+    normal = cross3(b, c)
+    aa, bb, cc, ab, bc, ca, triple = barrier(
+        (a * a, b * b, c * c, a * b, b * c, c * a, a * normal)
+    )
+    length_a, length_b, length_c = barrier(
+        (jnp.sqrt(_sum3(aa)), jnp.sqrt(_sum3(bb)), jnp.sqrt(_sum3(cc)))
+    )
+    terms = barrier(
+        (
+            (length_a * length_b) * length_c,
+            _sum3(ab) * length_c,
+            _sum3(bc) * length_a,
+            _sum3(ca) * length_b,
+        )
+    )
+    denominator = ((terms[0] + terms[1]) + terms[2]) + terms[3]
+    return product(2.0, jnp.arctan2(_sum3(triple), denominator))
 
 
 def _reduce_chains(
@@ -836,10 +858,12 @@ class TriangleBVH(StrictModule):
 
         def dipole(point: Any, node: Any) -> Any:
             offset = node_center[node] - point
-            distance = norm3(offset)
-            return dot3(node_normal[node], offset) / product(
-                product(distance, distance), distance
+            squares, moments = jax.lax.optimization_barrier(
+                (offset * offset, node_normal[node] * offset)
             )
+            distance = root(_sum3(squares))
+            # A product feeding only a division cannot fuse: no barrier needed.
+            return _sum3(moments) / ((distance * distance) * distance)
 
         values = bvh_hierarchical_sum(
             self.bvh,
