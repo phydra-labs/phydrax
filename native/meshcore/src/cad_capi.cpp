@@ -30,20 +30,13 @@ void copy_flat(const std::vector<std::array<T, N>>& source, T* destination) {
 }
 bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
 
-// Curve and face stages into `candidate` (faces at the chart size h/sqrt(2)),
-// with their stage times. Returns OK/UNRESOLVED with a candidate, else the
-// failure.
+// Curve and face stages into `candidate` (faces at the request's size h,
+// refined where its tolerance needs it), with their stage times. Returns
+// OK/UNRESOLVED with a candidate, else the failure.
 int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
                      const phx_mc_cad_surface_controls& controls,
                      phx_mc_cad_surface_result& candidate) {
-  // The chart size test R <= h_t/sqrt(2) bounds every edge by 2R; with
-  // h_t = h/sqrt(2) each edge is <= h, the requested size.
-  std::vector<double> internal_sizes;
-  if (controls.face_sizes && model.surface_count > 0) {
-    internal_sizes.assign(controls.face_sizes, controls.face_sizes + model.surface_count);
-    for (double& size : internal_sizes) size *= 0.70710678118654752440;
-  }
-  const double* face_sizes = controls.face_sizes ? internal_sizes.data() : nullptr;
+  const double* face_sizes = controls.face_sizes;
   const phx::mc::cad::CurveControls curve_controls{
       face_sizes, controls.face_tolerances, controls.curve_tolerances,
       controls.tolerance_fraction, controls.grading, controls.minimum_size};

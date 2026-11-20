@@ -418,6 +418,22 @@ void floor_chords(const FaceMetric& context, int32_t index, const double* point,
   }
 }
 
+// Isotropic base size at a face point: the request h, graded from the
+// boundary samples and floored on fixed chords. Grading from the nearby
+// sample spacing asks for small triangles around a short boundary segment, but
+// a neighbouring long chord is fixed: every triangle on it has circumradius
+// >= L/2 and no vertex may enter its diametral disk, so a size below L there
+// cannot be met. The chord floor is the smallest g-Lipschitz field that is
+// >= L on every chord; it overrides the grading, never the request or the
+// curvature sizes.
+double base_size(const FaceMetric& context, const double* jet) {
+  double h = context.size;
+  const double ungraded = h;
+  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
+  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
+  return h;
+}
+
 CadMetric2D face_metric(const double chart[2], void* opaque) {
   auto& context = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
@@ -428,24 +444,54 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
     const double invalid = std::numeric_limits<double>::quiet_NaN();
     return {invalid, invalid, invalid};
   }
-  double h = context.size;
-  const double curvature = std::max(std::abs(differential.curvatures[0]),
-                                    std::abs(differential.curvatures[1]));
-  if (curvature > 0.0)
-    h = std::min(h, std::sqrt(6.0 * context.theta * context.tolerance / curvature));
-  // Grading from the nearby sample spacing asks for small triangles around a
-  // short boundary segment, but a neighbouring long chord is fixed: every
-  // triangle on it has circumradius >= L/2 and no vertex may enter its
-  // diametral disk, so a size below L there cannot be met. The chord floor is
-  // the smallest g-Lipschitz field that is >= L on every chord; it overrides
-  // the grading, never the request or curvature size.
-  const double ungraded = h;
-  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
-  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
-  const double inverse = 1.0 / (h * h);
-  return {differential.first_form[0] * inverse / (context.scale_u * context.scale_u),
-          differential.first_form[1] * inverse / (context.scale_u * context.scale_v),
-          differential.first_form[2] * inverse / (context.scale_v * context.scale_v)};
+  // Fidelity: the isotropic size intersected with the request's curvature
+  // tensor (cad::fidelity_metric).
+  double m[3];
+  cad::fidelity_metric(differential, base_size(context, jet), context.theta, context.tolerance, m,
+                       nullptr);
+  return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
+          m[2] / (context.scale_v * context.scale_v)};
+}
+
+// The face metric at a vertex as a row-major 3D tensor for the face stage's
+// flips: lambda_2 along the k_2 principal direction, lambda_1 across it
+// (normal included). False where the fidelity term does not bind (the flips
+// then stay the plain 3D Delaunay test) or the jet is degenerate.
+bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9]) {
+  const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
+  double m[3], lambda[2];
+  const double h = base_size(context, jet);
+  cad::fidelity_metric(differential, h, context.theta, context.tolerance, m, lambda);
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
+  const double base = 1.0 / (h * h);
+  if (lambda[0] == lambda[1]) return lambda[0] != base;
+  // Eigenvector of W = I^-1 II for k_2: a column of W - k_1 Id (the range of
+  // the spectral projector), the longer one for conditioning.
+  const double* I = differential.first_form;
+  const double* II = differential.second_form;
+  const double determinant = I[0] * I[2] - I[1] * I[1];
+  const double a = (I[2] * II[0] - I[1] * II[1]) / determinant;
+  const double b = (I[2] * II[1] - I[1] * II[2]) / determinant;
+  const double c = (I[0] * II[1] - I[1] * II[0]) / determinant;
+  const double d = (I[0] * II[2] - I[1] * II[1]) / determinant;
+  const double k1 = differential.curvatures[0];
+  double direction[2] = {a - k1, c};
+  if (std::hypot(b, d - k1) > std::hypot(direction[0], direction[1])) {
+    direction[0] = b;
+    direction[1] = d - k1;
+  }
+  double e[3];
+  for (int i = 0; i < 3; ++i) e[i] = jet[3 + i] * direction[0] + jet[6 + i] * direction[1];
+  const double length = std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+  if (!(length > 0.0) || !std::isfinite(length)) return false;
+  for (double& x : e) x /= length;
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) tensor[3 * i + j] += (lambda[1] - lambda[0]) * e[i] * e[j];
+  return true;
 }
 
 // Chart-to-physical position of a face vertex: the classified position at an
@@ -804,7 +850,16 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     const double speed = std::hypot(std::hypot(jet[derivative], jet[derivative + 1]),
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
-    double spacing = std::min(limit, metric.size / speed);
+    // The rings are isotropic: their spacing is the face metric's smallest
+    // size, the request h or the fidelity size sqrt(4 theta tol / |k|max).
+    cad::SurfaceDifferential differential;
+    if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
+    const double curvature = std::max(std::abs(differential.curvatures[0]),
+                                      std::abs(differential.curvatures[1]));
+    double size = metric.size;
+    if (curvature > 0.0)
+      size = std::min(size, std::sqrt(4.0 * metric.theta * metric.tolerance / curvature));
+    double spacing = std::min(limit, size / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
     double width = std::min(limit, 3.0 * spacing);
     while (width < limit) {
@@ -946,6 +1001,32 @@ double maximum_cosine(const SurfaceTriangulation& surface,
   return maximum;
 }
 
+// Largest metric circumradius over cells (centroid metric, as the chart
+// kernel's size test); infinity on a degenerate or invalid cell.
+double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& surface,
+                             const std::vector<int32_t>& cells) {
+  double maximum = 0.0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    const double* a = surface.chart(t[0]);
+    const double* b = surface.chart(t[1]);
+    const double* c = surface.chart(t[2]);
+    const double centroid[2] = {(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
+    const CadMetric2D m = face_metric(centroid, &metric);
+    const double x = b[0] - a[0], y = b[1] - a[1], u = c[0] - a[0], v = c[1] - a[1];
+    const double bx = m.uu * x + m.uv * y, by = m.uv * x + m.vv * y;
+    const double cx = m.uu * u + m.uv * v, cy = m.uv * u + m.vv * v;
+    const double bb = x * bx + y * by, cc = u * cx + v * cy;
+    const double determinant = bx * cy - by * cx;
+    const double dx = (bb * cy - cc * by) / (2 * determinant);
+    const double dy = (bx * cc - cx * bb) / (2 * determinant);
+    const double radius2 = dx * (m.uu * dx + m.uv * dy) + dy * (m.uv * dx + m.vv * dy);
+    if (!std::isfinite(radius2)) return std::numeric_limits<double>::infinity();
+    maximum = std::max(maximum, radius2);
+  }
+  return std::sqrt(maximum);
+}
+
 void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed,
             std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
   std::vector<std::vector<int32_t>> incident(vertices.size());
@@ -980,6 +1061,9 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed,
       std::array<double, 3> xyz;
       if (!face_position(&metric, chart, xyz.data())) continue;
       const double previous_quality = maximum_cosine(surface, incident[v]);
+      // The move keeps the kernel's size bound (metric circumradius <=
+      // 1/sqrt(2), on which the fidelity bound rests) or a star already past it.
+      const double previous_radius = maximum_metric_radius(metric, surface, incident[v]);
       const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
       const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
                                             surface.points[3 * v + 2]};
@@ -993,7 +1077,9 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed,
           break;
         }
       }
-      if (!legal || maximum_cosine(surface, incident[v]) > previous_quality) {
+      if (!legal || maximum_cosine(surface, incident[v]) > previous_quality ||
+          maximum_metric_radius(metric, surface, incident[v]) >
+              std::max(0.70710678118654752440, previous_radius)) {
         std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
         std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
       } else {
@@ -1137,6 +1223,21 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   }
   const int32_t prepare_status = surface.prepare();
   if (prepare_status != PHX_MC_OK) return prepare_status;
+  // Where the fidelity tensor binds, the flips judge Delaunay in the face
+  // metric (vertex tensors averaged by the sweep), so they keep the metric
+  // shape the kernel built instead of undoing it in 3D (measured: plain 3D
+  // flips left interior triangles past the theta * tol sag bound).
+  {
+    std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
+    bool binding = false;
+    const double isotropic = 1.0 / (metric.size * metric.size);
+    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+      double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
+      for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
+      binding |= vertex_metric(metric, tri.point(i), tensor);
+    }
+    if (binding) surface.metrics = std::move(tensors);
+  }
   surface.sweep();
   smooth(metric, mapped_fixed, vertices, surface);
   result.slivers.clear();

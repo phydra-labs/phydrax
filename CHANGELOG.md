@@ -334,6 +334,17 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD face meshing sizes faces with one meaning of `h`: the face
+  metric is `I/h^2` intersected with the request's curvature tensor
+  `|II| / (4 theta tol)` (the kernel accepts metric circumradius
+  `<= 1/sqrt(2)`, so linear interpolation error `<= theta tol`; where the
+  curvature term does not bind the metric is exactly `I/h^2`). The C entry no
+  longer meshes at `h/sqrt(2)`. Curves take each face's smallest size
+  `min(h, sqrt(4 theta tol / |k|max))` (the request `h` within three sizes of
+  a face pole, where fixed rings replace kernel points); pole rings use the
+  same size; face flips judge Delaunay in the face metric where the curvature
+  term binds; smoothing keeps the kernel's metric circumradius bound. Face
+  and solid meshes change.
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and

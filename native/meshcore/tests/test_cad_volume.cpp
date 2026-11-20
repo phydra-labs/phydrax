@@ -319,17 +319,15 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
   phx::mc::cad::CadGeometry geometry;
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
-  std::vector<double> chart_sizes = sizes;
-  for (double& h : chart_sizes) h *= 0.70710678118654752440;
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
   const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count),
                                              std::numeric_limits<double>::infinity());
   phx::mc::cad::CurveDiscretization curves;
-  const phx::mc::cad::CurveControls controls{chart_sizes.data(), tolerances.data(),
+  const phx::mc::cad::CurveControls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   PHX_CHECK(phx::mc::cad::discretize_curves(geometry, controls, curves) == PHX_MC_OK);
   phx::mc::CadSurfaceMesh surface;
-  PHX_CHECK(phx::mc::cad_mesh_surface(geometry, curves.view(), chart_sizes.data(),
+  PHX_CHECK(phx::mc::cad_mesh_surface(geometry, curves.view(), sizes.data(),
                                       tolerances.data(), 0.5, surface) == PHX_MC_OK);
   const std::size_t triangles = surface.triangles.size(), points = surface.points.size();
   const std::size_t parameters = curves.parameters.size();
