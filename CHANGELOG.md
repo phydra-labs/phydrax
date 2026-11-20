@@ -334,6 +334,13 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Layer-core column certification runs every column query of a bank through
+  one prepared query tree and the shared `_bvh` overlap pair stream against a
+  wall tree built once; candidates and certificates are unchanged. Native
+  layer-core adaptation and certification no longer repeat exact work
+  (template point keys, named facet orientation actions, periodic facet-trace
+  key tables, per-term copies in polynomial composition, core-cap corners and
+  coverage sums); identities and outputs are unchanged.
 - Native meshing: `NativeMeshingPlan.execute(prove=False)` on B-Rep CAD
   volumes (no layer controls, bundle-supported geometry) constructs curves,
   faces and the fixed-boundary tetrahedra (geometry order 1 or 2) in one native
