@@ -2807,6 +2807,21 @@ PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
     const phx_mc_cad_surface_result* result, int64_t capacity,
     int64_t* rows, int64_t* count);
 
+/* Chart rows include collapsed pole slivers; chart_to_mesh is -1 for those
+ * rows, otherwise the index in the exported physical triangle array.
+ * edge_chord is -1 for interior edges. Chord rows include pole uses. */
+typedef struct phx_mc_cad_chart_arrays {
+  int64_t triangle_capacity, use_capacity, chord_capacity;
+  int64_t* triangles; int32_t* patches; double* uv;
+  int64_t* chart_to_mesh; int64_t* edge_chord;
+  int64_t* use_patch; double* use_range;
+  int64_t* chord_use; int64_t* chord_loop; double* chord_uv; double* chord_range;
+} phx_mc_cad_chart_arrays;
+PHX_MC_API int32_t phx_mc_cad_chart_sizes(
+    const phx_mc_cad_surface_result* result, int64_t sizes[3]);
+PHX_MC_API int32_t phx_mc_cad_chart_export(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_chart_arrays* arrays);
+
 #ifdef __cplusplus
 }
 #endif

@@ -9,6 +9,22 @@
 
 namespace phx::mc {
 
+// Verifier input in chart-triangle order. Triangle vertex IDs refer to points
+// in the assembled mesh, including repeated pole IDs in collapsed slivers.
+struct CadChartEvidence {
+  std::vector<std::array<int64_t, 3>> triangles;
+  std::vector<int32_t> patches;
+  std::vector<std::array<double, 6>> uv;
+  std::vector<int64_t> chart_to_mesh;
+  std::vector<std::array<int64_t, 3>> edge_chord;
+  std::vector<int64_t> use_patch;
+  std::vector<std::array<double, 2>> use_range;
+  std::vector<int64_t> chord_use, chord_loop;
+  std::vector<std::array<double, 4>> chord_uv;
+  std::vector<std::array<double, 2>> chord_range;
+};
+
+
 struct CadSurfaceMesh {
   std::vector<std::array<double, 3>> points;
   std::vector<int8_t> vertex_dimensions;
@@ -30,6 +46,7 @@ struct CadSurfaceMesh {
   std::vector<std::array<int64_t, 4>> pole_sectors;
   std::vector<int64_t> periodic_corner_gaps;
   std::vector<uint64_t> max_periodic_corner_gap_ulps;
+  CadChartEvidence chart;
   std::vector<phx_mc_cad_face_failure> face_failures;
 };
 

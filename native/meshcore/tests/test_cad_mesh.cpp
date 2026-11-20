@@ -359,6 +359,50 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
 }
 
 
+void check_chart(const phx_mc_cad_model& model, const phx::mc::CadSurfaceMesh& mesh) {
+  const auto& chart = mesh.chart;
+  const std::size_t n = chart.triangles.size();
+  PHX_CHECK(n == mesh.triangles.size() + mesh.sliver_uv.size());
+  PHX_CHECK(chart.edge_chord.size() == n);
+  std::vector<int> seen(mesh.triangles.size(), 0);
+  for (std::size_t t = 0; t < n; ++t) {
+    const int64_t mapped = chart.chart_to_mesh[t];
+    if (mapped >= 0 && static_cast<std::size_t>(mapped) < mesh.triangles.size()) {
+      ++seen[static_cast<std::size_t>(mapped)];
+      for (int k = 0; k < 3; ++k)
+        PHX_CHECK(chart.triangles[t][k] == mesh.triangles[static_cast<std::size_t>(mapped)][k]);
+    } else {
+      PHX_CHECK(mapped == -1);
+      bool pole_chord = false;
+      for (int k = 0; k < 3; ++k) {
+        const int64_t chord = chart.edge_chord[t][k];
+        if (chord >= 0 && model.use_kinds[chart.chord_use[chord]] == 1 &&
+            chart.triangles[t][k] == chart.triangles[t][(k+1)%3]) pole_chord = true;
+      }
+      PHX_CHECK(pole_chord);
+    }
+  }
+  for (int count : seen) PHX_CHECK(count == 1);
+  std::vector<phx_mc_chart_failure> findings(3*n + chart.chord_use.size() + 10);
+  int64_t count = 0;
+  const int32_t status = phx_mc_verify_chart_partition(
+      model.surface_count, static_cast<int64_t>(n), chart.patches.data(),
+      chart.uv.empty() ? nullptr : chart.uv.front().data(),
+      model.use_count, chart.use_patch.data(),
+      chart.use_range.empty() ? nullptr : chart.use_range.front().data(),
+      model.loop_count, static_cast<int64_t>(chart.chord_use.size()),
+      chart.chord_use.data(), chart.chord_loop.data(),
+      chart.chord_uv.empty() ? nullptr : chart.chord_uv.front().data(),
+      chart.chord_range.empty() ? nullptr : chart.chord_range.front().data(),
+      static_cast<int64_t>(findings.size()), findings.data(), &count);
+  PHX_CHECK(status == PHX_MC_OK);
+  for (int64_t i = 0; i < count && i < static_cast<int64_t>(findings.size()); ++i)
+    std::fprintf(stderr, "chart finding kind=%d patch=%lld row=%lld other=%lld\n",
+                 findings[i].kind, static_cast<long long>(findings[i].patch),
+                 static_cast<long long>(findings[i].row), static_cast<long long>(findings[i].other));
+  PHX_CHECK(count == 0);
+}
+
 SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
@@ -404,6 +448,46 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &short_arrays) == PHX_MC_CAPACITY_EXCEEDED);
   if (!result.points.empty()) PHX_CHECK(result.points[0] == 42.0);
   PHX_CHECK(phx_mc_cad_surface_result_export(handle, &arrays) == PHX_MC_OK);
+  CadGeometry chart_geometry;
+  PHX_CHECK(chart_geometry.bind(model) == PHX_MC_OK);
+  const CadCurveDiscretization chart_curves{result.curve_offsets.data(), result.curve_parameters.data()};
+  phx::mc::CadSurfaceMesh chart_mesh;
+  PHX_CHECK(phx::mc::cad_mesh_surface(chart_geometry, chart_curves, sizes.data(),
+                                      tolerances.data(), 0.5, chart_mesh) == PHX_MC_OK);
+  check_chart(model, chart_mesh);
+  int64_t chart_sizes[3]{};
+  PHX_CHECK(phx_mc_cad_chart_sizes(handle, chart_sizes) == PHX_MC_OK);
+  phx::mc::CadChartEvidence exported;
+  exported.triangles.resize(chart_sizes[0]); exported.patches.resize(chart_sizes[0]);
+  exported.uv.resize(chart_sizes[0]); exported.chart_to_mesh.resize(chart_sizes[0]);
+  exported.edge_chord.resize(chart_sizes[0]); exported.use_patch.resize(chart_sizes[1]);
+  exported.use_range.resize(chart_sizes[1]); exported.chord_use.resize(chart_sizes[2]);
+  exported.chord_loop.resize(chart_sizes[2]); exported.chord_uv.resize(chart_sizes[2]);
+  exported.chord_range.resize(chart_sizes[2]);
+  phx_mc_cad_chart_arrays chart_arrays{
+      chart_sizes[0], chart_sizes[1], chart_sizes[2],
+      exported.triangles.front().data(), exported.patches.data(), exported.uv.front().data(),
+      exported.chart_to_mesh.data(), exported.edge_chord.front().data(),
+      exported.use_patch.data(), exported.use_range.front().data(),
+      exported.chord_use.data(), exported.chord_loop.data(), exported.chord_uv.front().data(),
+      exported.chord_range.front().data()};
+  auto short_chart = chart_arrays;
+  --short_chart.triangle_capacity;
+  exported.patches[0] = 12345;
+  PHX_CHECK(phx_mc_cad_chart_export(handle, &short_chart) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(exported.patches[0] == 12345);
+  PHX_CHECK(phx_mc_cad_chart_export(handle, &chart_arrays) == PHX_MC_OK);
+  PHX_CHECK(exported.triangles == chart_mesh.chart.triangles);
+  PHX_CHECK(exported.patches == chart_mesh.chart.patches);
+  PHX_CHECK(exported.uv == chart_mesh.chart.uv);
+  PHX_CHECK(exported.chart_to_mesh == chart_mesh.chart.chart_to_mesh);
+  PHX_CHECK(exported.edge_chord == chart_mesh.chart.edge_chord);
+  PHX_CHECK(exported.use_patch == chart_mesh.chart.use_patch);
+  PHX_CHECK(exported.use_range == chart_mesh.chart.use_range);
+  PHX_CHECK(exported.chord_use == chart_mesh.chart.chord_use);
+  PHX_CHECK(exported.chord_loop == chart_mesh.chart.chord_loop);
+  PHX_CHECK(exported.chord_uv == chart_mesh.chart.chord_uv);
+  PHX_CHECK(exported.chord_range == chart_mesh.chart.chord_range);
   check_boundary_lengths(model, result, size);
   for (const auto& failure : result.face_failures)
     std::fprintf(stderr, "failure face=%d loop=%d use=%d axis=%d reason=%d turns=%lld parameter=%.17g\n",
@@ -443,7 +527,34 @@ void check_deterministic(const SurfaceArrays& a, const SurfaceArrays& b) {
             std::memcmp(&a.curve_stats,&b.curve_stats,sizeof(a.curve_stats)) == 0);
 }
 
+void check_surface_embedding(const std::vector<double>& points,
+                             const std::vector<int32_t>& triangles,
+                             std::vector<std::pair<int64_t, int64_t>> expected_edges = {}) {
+  const std::vector<int64_t> indices(triangles.begin(), triangles.end());
+  std::vector<phx_mc_surface_finding> findings(3*triangles.size()+1);
+  phx_mc_surface_embedding_verdict verdict{};
+  PHX_CHECK(phx_mc_verify_surface_embedding(
+      static_cast<int64_t>(points.size()/3), points.data(),
+      static_cast<int64_t>(indices.size()/3), indices.data(),
+      static_cast<int64_t>(findings.size()), findings.data(), &verdict) == PHX_MC_OK);
+  std::vector<std::pair<int64_t, int64_t>> actual_edges;
+  for (int64_t i = 0; i < verdict.finding_count; ++i) {
+    const auto& finding = findings[static_cast<std::size_t>(i)];
+    if (finding.kind != PHX_MC_SURFACE_EDGE)
+      std::fprintf(stderr, "surface finding kind=%d first=%lld second=%lld\n", finding.kind,
+                   static_cast<long long>(finding.first), static_cast<long long>(finding.second));
+    PHX_CHECK(finding.kind == PHX_MC_SURFACE_EDGE);
+    actual_edges.emplace_back(finding.first, finding.second);
+  }
+  std::sort(expected_edges.begin(), expected_edges.end());
+  std::sort(actual_edges.begin(), actual_edges.end());
+  PHX_CHECK(actual_edges == expected_edges);
+  PHX_CHECK(verdict.status == (expected_edges.empty() ? PHX_MC_VERDICT_CERTIFIED :
+                                                        PHX_MC_VERDICT_VIOLATED));
+}
+
 void check_closed(const SurfaceArrays& mesh, int expected_euler) {
+  check_surface_embedding(mesh.points, mesh.triangles);
   std::map<std::pair<int32_t,int32_t>, std::pair<int,int>> edges;
   for (std::size_t i = 0; i < mesh.triangles.size(); i += 3)
     for (int k = 0; k < 3; ++k) {
@@ -840,6 +951,24 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
   if (cone) check_cone_assembly(bank, size);
   const auto original_samples = bank.samples;
   const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
+  if (trim) {
+    phx::mc::CadSurfaceMesh mesh;
+    const double tolerance = 0.4;
+    PHX_CHECK(phx::mc::cad_mesh_surface(geometry, curves, &size, &tolerance, 0.5, mesh) == PHX_MC_OK);
+    check_chart(model, mesh);
+    std::vector<double> xyz;
+    std::vector<int32_t> triangles;
+    std::vector<std::pair<int64_t, int64_t>> expected;
+    for (const auto& point : mesh.points) xyz.insert(xyz.end(), point.begin(), point.end());
+    for (const auto& cell : mesh.triangles)
+      triangles.insert(triangles.end(), cell.begin(), cell.end());
+    for (std::size_t i = 0; i < mesh.curve_edges.size(); ++i) {
+      if (mesh.curve_edge_curves[i] == 1) continue;  // Shared seam is interior.
+      const auto& edge = mesh.curve_edges[i];
+      expected.emplace_back(std::min(edge[0], edge[1]), std::max(edge[0], edge[1]));
+    }
+    check_surface_embedding(xyz, triangles, expected);
+  }
   std::vector<std::array<double, 2>> metric_points;
   CadFaceMesh result;
   const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, size, 0.4, 0.5,

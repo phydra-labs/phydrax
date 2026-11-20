@@ -154,3 +154,37 @@ extern "C" int32_t phx_mc_cad_surface_pole_sectors(
   *count = required;
   return PHX_MC_OK;
 }
+
+extern "C" int32_t phx_mc_cad_chart_sizes(const phx_mc_cad_surface_result* result,
+                                            int64_t sizes[3]) {
+  if (!result || !sizes) return PHX_MC_INVALID_ARGUMENT;
+  const auto& chart = result->mesh.chart;
+  sizes[0] = static_cast<int64_t>(chart.triangles.size());
+  sizes[1] = static_cast<int64_t>(chart.use_patch.size());
+  sizes[2] = static_cast<int64_t>(chart.chord_use.size());
+  return PHX_MC_OK;
+}
+
+extern "C" int32_t phx_mc_cad_chart_export(const phx_mc_cad_surface_result* result,
+                                             const phx_mc_cad_chart_arrays* a) {
+  if (!result || !a || a->triangle_capacity < 0 || a->use_capacity < 0 ||
+      a->chord_capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+  const auto& c = result->mesh.chart;
+  const auto nt = c.triangles.size(), nu = c.use_patch.size(), nc = c.chord_use.size();
+  if (static_cast<uint64_t>(a->triangle_capacity) < nt ||
+      static_cast<uint64_t>(a->use_capacity) < nu ||
+      static_cast<uint64_t>(a->chord_capacity) < nc) return PHX_MC_CAPACITY_EXCEEDED;
+  if (!present(a->triangles, nt) || !present(a->patches, nt) || !present(a->uv, nt) ||
+      !present(a->chart_to_mesh, nt) || !present(a->edge_chord, nt) ||
+      !present(a->use_patch, nu) || !present(a->use_range, nu) ||
+      !present(a->chord_use, nc) || !present(a->chord_loop, nc) ||
+      !present(a->chord_uv, nc) || !present(a->chord_range, nc))
+    return PHX_MC_INVALID_ARGUMENT;
+  copy_flat(c.triangles, a->triangles); copy_rows(c.patches, a->patches);
+  copy_flat(c.uv, a->uv); copy_rows(c.chart_to_mesh, a->chart_to_mesh);
+  copy_flat(c.edge_chord, a->edge_chord); copy_rows(c.use_patch, a->use_patch);
+  copy_flat(c.use_range, a->use_range); copy_rows(c.chord_use, a->chord_use);
+  copy_rows(c.chord_loop, a->chord_loop); copy_flat(c.chord_uv, a->chord_uv);
+  copy_flat(c.chord_range, a->chord_range);
+  return PHX_MC_OK;
+}

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
 import re
 from pathlib import Path
 
@@ -10,15 +12,82 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._meshcore import _CAD_FACE_FAILURE_DTYPE, cad_mesh, MeshcoreStatus
+from phydrax._meshcore import (
+    _CAD_FACE_FAILURE_DTYPE,
+    cad_mesh,
+    CadModel,
+    CadSurfaceResult,
+    MeshcoreStatus,
+)
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 from tests.unit.meshing.test_native_cad_bundle import _quadric_model
+from tests.unit.meshing.test_native_surface_verifiers import (
+    _ChartFailure,
+    _surface_verdict,
+)
 
 
 @pytest.fixture(scope="module")
 def domain() -> MeshingDomain:
     return MeshingDomain.from_brep(_quadric_model())
+
+
+def _assert_surface_verifiers(model: CadModel, result: CadSurfaceResult) -> None:
+    chart = result.chart
+    mesh_rows = chart.chart_to_mesh >= 0
+    np.testing.assert_array_equal(
+        chart.triangles[mesh_rows], result.triangles[chart.chart_to_mesh[mesh_rows]]
+    )
+    np.testing.assert_array_equal(
+        np.sort(chart.chart_to_mesh[mesh_rows]),
+        np.arange(len(result.triangles), dtype=np.int64),
+    )
+    assert np.count_nonzero(~mesh_rows) == len(result.sliver_uv)
+    assert _surface_verdict(result.points, result.triangles.astype(np.int64))
+    library = ctypes.CDLL(os.environ["PHYDRAX_MESHCORE_LIBRARY"])
+    function = library.phx_mc_verify_chart_partition
+    function.restype = ctypes.c_int32
+    function.argtypes = [
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_int64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+    ]
+    evidence = (_ChartFailure * (3 * len(chart.triangles) + len(chart.chord_use) + 10))()
+    count = ctypes.c_int64()
+    status = function(
+        model.surface_nodes.size,
+        len(chart.triangles),
+        chart.patches.ctypes.data,
+        chart.uv.ctypes.data,
+        len(chart.use_patch),
+        chart.use_patch.ctypes.data,
+        chart.use_range.ctypes.data,
+        len(model.loop_surfaces),
+        len(chart.chord_use),
+        chart.chord_use.ctypes.data,
+        chart.chord_loop.ctypes.data,
+        chart.chord_uv.ctypes.data,
+        chart.chord_range.ctypes.data,
+        len(evidence),
+        evidence,
+        ctypes.byref(count),
+    )
+    assert status == 0
+    assert count.value == 0
 
 
 def test_face_failure_dtype_matches_native_layout() -> None:
@@ -164,6 +233,7 @@ def test_quadric_surface_candidate(domain: MeshingDomain) -> None:
         np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
     )
     assert result.status is MeshcoreStatus.OK
+    _assert_surface_verifiers(model, result)
     triangles = result.points[result.triangles]
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
     for first, second in ((b - a, c - a), (c - b, a - b), (a - c, b - c)):
@@ -214,6 +284,7 @@ def test_sphere_pole_sector_evidence_and_shared_samples() -> None:
         np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
     )
     assert result.status is MeshcoreStatus.OK
+    _assert_surface_verifiers(model, result)
     assert result.pole_sectors.shape == (2, 4)
     np.testing.assert_array_equal(
         result.pole_sectors[:, 2], np.array([8, 8], dtype=np.int64)

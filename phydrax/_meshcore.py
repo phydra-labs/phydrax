@@ -1088,6 +1088,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_free": (None, (_P,)),
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
+    "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_chart_export": (_I32, (_P, _P)),
     "phx_mc_implicit_stuffing": (
         _I32,
         (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
@@ -12168,6 +12170,41 @@ _CAD_FACE_FAILURE_DTYPE = np.dtype(
 )
 
 
+class _CadChartArrays(ctypes.Structure):
+    _fields_ = (
+        ("triangle_capacity", _I64),
+        ("use_capacity", _I64),
+        ("chord_capacity", _I64),
+        ("triangles", _P),
+        ("patches", _P),
+        ("uv", _P),
+        ("chart_to_mesh", _P),
+        ("edge_chord", _P),
+        ("use_patch", _P),
+        ("use_range", _P),
+        ("chord_use", _P),
+        ("chord_loop", _P),
+        ("chord_uv", _P),
+        ("chord_range", _P),
+    )
+
+
+class CadChartResult(NamedTuple):
+    """Chart partition and physical correspondence, including pole slivers."""
+
+    triangles: np.ndarray
+    patches: np.ndarray
+    uv: np.ndarray
+    chart_to_mesh: np.ndarray
+    edge_chord: np.ndarray
+    use_patch: np.ndarray
+    use_range: np.ndarray
+    chord_use: np.ndarray
+    chord_loop: np.ndarray
+    chord_uv: np.ndarray
+    chord_range: np.ndarray
+
+
 class CadSurfaceResult(NamedTuple):
     """Owned surface candidate and the curve/face construction findings."""
 
@@ -12194,6 +12231,7 @@ class CadSurfaceResult(NamedTuple):
     curve_statistics: np.ndarray
     face_failures: np.ndarray
     pole_sectors: np.ndarray
+    chart: CadChartResult
 
 
 def cad_mesh(
@@ -12319,6 +12357,36 @@ def cad_mesh(
             ),
             "cad_surface_pole_sectors",
         )
-        return CadSurfaceResult(status, *banks, pole_sectors)
+        chart_counts = np.empty((3,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_cad_chart_sizes"](handle, chart_counts.ctypes.data),
+            "cad_chart_sizes",
+        )
+        if np.any(chart_counts < 0):
+            raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "negative CAD chart size")
+        chart_triangles, chart_uses, chart_chords = chart_counts
+        chart_banks = (
+            np.empty((chart_triangles, 3), dtype=np.int64),
+            np.empty((chart_triangles,), dtype=np.int32),
+            np.empty((chart_triangles, 3, 2), dtype=np.float64),
+            np.empty((chart_triangles,), dtype=np.int64),
+            np.empty((chart_triangles, 3), dtype=np.int64),
+            np.empty((chart_uses,), dtype=np.int64),
+            np.empty((chart_uses, 2), dtype=np.float64),
+            np.empty((chart_chords,), dtype=np.int64),
+            np.empty((chart_chords,), dtype=np.int64),
+            np.empty((chart_chords, 2, 2), dtype=np.float64),
+            np.empty((chart_chords, 2), dtype=np.float64),
+        )
+        chart_outputs = _CadChartArrays(
+            *(int(n) for n in chart_counts), *(a.ctypes.data for a in chart_banks)
+        )
+        _raise_for_call(
+            library["phx_mc_cad_chart_export"](handle, ctypes.addressof(chart_outputs)),
+            "cad_chart_export",
+        )
+        return CadSurfaceResult(
+            status, *banks, pole_sectors, CadChartResult(*chart_banks)
+        )
     finally:
         library["phx_mc_cad_surface_result_free"](handle)
