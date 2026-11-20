@@ -2634,7 +2634,10 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its
- * interval workspace templates (the point executor uses their midpoints).
+ * interval workspace templates (the point executor uses their midpoints) and
+ * guards its entries whose lower bound must be >= 0 (domain guards such as
+ * real-power bases): a box on which a guard may fail is kept by the seed
+ * cover, since f may be undefined there and its enclosure is no evidence.
  * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
  * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
  * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
@@ -2671,7 +2674,8 @@ PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
     const double* seed_lower, const double* seed_upper, int64_t workspace_size,
-    int64_t output_entry, const double* lower, const double* upper, const double* criteria,
+    int64_t output_entry, const int64_t* guards, int64_t guard_count, const double* lower,
+    const double* upper, const double* criteria,
     const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
     phx_mc_restricted_volume** volume);
 /* sizes receives the point, cell and boundary face counts; report receives

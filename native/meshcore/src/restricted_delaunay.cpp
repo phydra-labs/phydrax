@@ -1708,7 +1708,8 @@ extern "C" PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
     const double* seed_lower, const double* seed_upper, int64_t workspace_size,
-    int64_t output_entry, const double* lower, const double* upper, const double* criteria,
+    int64_t output_entry, const int64_t* guards, int64_t guard_count, const double* lower,
+    const double* upper, const double* criteria,
     const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
     phx_mc_restricted_volume** volume) {
   return phx::mc::guarded([&]() -> int32_t {
@@ -1734,6 +1735,11 @@ extern "C" PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     for (int64_t k = 0; k < 3 * extra_seed_count; ++k)
       if (!std::isfinite(extra_seeds[k])) return PHX_MC_INVALID_ARGUMENT;
     if (output_entry < 0 || output_entry >= workspace_size) return PHX_MC_INVALID_ARGUMENT;
+    if (guard_count < 0 || (guard_count > 0 && guards == nullptr) ||
+        !phx::mc::addressable(guard_count, 1, sizeof(int64_t)))
+      return PHX_MC_INVALID_ARGUMENT;
+    for (int64_t g = 0; g < guard_count; ++g)
+      if (guards[g] < 0 || guards[g] >= workspace_size) return PHX_MC_INVALID_ARGUMENT;
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     int32_t status = phx::mc::validate_point_program(
@@ -1750,7 +1756,7 @@ extern "C" PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const phx::mc::IntervalProgramView interval{instructions, instruction_count, indices,
                                                 index_count,  parameters,        parameter_count,
                                                 seed_lower,   seed_upper,        workspace_size,
-                                                output_entry};
+                                                output_entry, guards,            guard_count};
     auto result = std::make_unique<phx_mc_restricted_volume>();
     status = phx::mc::mesh_restricted(
         interval, field,
