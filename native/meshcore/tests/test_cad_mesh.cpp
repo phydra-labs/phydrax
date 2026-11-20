@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <vector>
 
 #include "cad_faces.hpp"
@@ -879,6 +880,55 @@ void periodic_patch(bool torus, bool ungraded = false) {
   }
 }
 
+// The kernel's position hook must report, at every final face vertex chart,
+// exactly the 3D point that surface assembly emits for that vertex.
+void check_position_hook(const CadGeometry& geometry, const CadCurveDiscretization& curves,
+                         const double* sizes, const double* tolerances) {
+  phx::mc::CadSurfaceMesh mesh;
+  const int32_t assembled =
+      phx::mc::cad_mesh_surface(geometry, curves, sizes, tolerances, 0.5, mesh);
+  PHX_CHECK(assembled == PHX_MC_OK || assembled == PHX_MC_UNRESOLVED);
+  if (assembled != PHX_MC_OK && assembled != PHX_MC_UNRESOLVED) return;
+  std::map<std::tuple<int32_t, double, double>, int32_t> interior;
+  std::map<std::pair<int32_t, int32_t>, int32_t> curve_rows;
+  std::vector<int32_t> curve_count(static_cast<std::size_t>(geometry.model().curve_count), 0);
+  for (std::size_t row = 0; row < mesh.points.size(); ++row) {
+    const int32_t entity = mesh.vertex_entities[row];
+    if (mesh.vertex_dimensions[row] == 2)
+      interior[{entity, mesh.vertex_parameters[row][0], mesh.vertex_parameters[row][1]}] =
+          static_cast<int32_t>(row);
+    else if (mesh.vertex_dimensions[row] == 1)
+      curve_rows[{entity, ++curve_count[entity]}] = static_cast<int32_t>(row);
+  }
+  for (int32_t face = 0; face < geometry.surface_count(); ++face) {
+    CadFaceMesh local;
+    std::vector<std::array<double, 5>> calls;
+    const int32_t status = phx::mc::cad_mesh_face(geometry, curves, face, sizes[face],
+                                                  tolerances[face], 0.5, local, nullptr, &calls);
+    PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_UNRESOLVED);
+    std::sort(calls.begin(), calls.end());
+    for (const auto& vertex : local.vertices) {
+      int32_t row = -1;
+      if (vertex.dimension == 0) row = vertex.entity;
+      else if (vertex.dimension == 1) {
+        const auto it = curve_rows.find({vertex.entity, vertex.curve_index});
+        if (it != curve_rows.end()) row = it->second;
+      } else {
+        const auto it = interior.find({face, vertex.uv[0], vertex.uv[1]});
+        if (it != interior.end()) row = it->second;
+      }
+      PHX_CHECK(row >= 0);
+      if (row < 0) continue;
+      const auto& point = mesh.points[static_cast<std::size_t>(row)];
+      const std::array<double, 5> low{vertex.uv[0], vertex.uv[1], -INFINITY, -INFINITY, -INFINITY};
+      auto it = std::lower_bound(calls.begin(), calls.end(), low);
+      PHX_CHECK(it != calls.end() && (*it)[0] == vertex.uv[0] && (*it)[1] == vertex.uv[1]);
+      for (; it != calls.end() && (*it)[0] == vertex.uv[0] && (*it)[1] == vertex.uv[1]; ++it)
+        PHX_CHECK((*it)[2] == point[0] && (*it)[3] == point[1] && (*it)[4] == point[2]);
+    }
+  }
+}
+
 void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_top = 1.45,
                  bool probe = false) {
   constexpr double pi = 3.14159265358979323846;
@@ -950,6 +1000,11 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
   if (!cone && !trim) check_sphere_assembly(bank, size);
   if (cone) check_cone_assembly(bank, size);
   const auto original_samples = bank.samples;
+  {
+    const double tolerance = 0.4;
+    check_position_hook(geometry, {bank.sample_offsets.data(), bank.samples.data()}, &size,
+                        &tolerance);
+  }
   const CadCurveDiscretization curves{bank.sample_offsets.data(), bank.samples.data()};
   if (trim) {
     phx::mc::CadSurfaceMesh mesh;
@@ -1236,6 +1291,7 @@ void quadric_assembly() {
     return out;
   };
   const SurfaceArrays mesh = run(), again = run();
+  check_position_hook(geometry, input, sizes, tolerances);
   check_deterministic(mesh, again);
   check_closed(mesh, 2);
   const SurfaceArrays generated = assemble_surface(model, spacing);

@@ -63,10 +63,15 @@ int32_t validate_cad_curve_discretization(const phx_mc_cad_model& model,
                                           const CadCurveDiscretization& curves);
 
 // Meshes one native chart, preserving curve samples and collapsed-pole records.
+// The chart kernel's angle pass receives the face position hook, which yields
+// the classified corner/curve point at an input boundary chart and the face's
+// order-0 evaluation elsewhere; every final face vertex position comes from it.
+// position_calls, when given, records each hook result as {u, v, x, y, z}.
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result,
-                      std::vector<std::array<double, 2>>* metric_points = nullptr);
+                      std::vector<std::array<double, 2>>* metric_points = nullptr,
+                      std::vector<std::array<double, 5>>* position_calls = nullptr);
 
 }  // namespace phx::mc

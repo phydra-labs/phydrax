@@ -273,6 +273,10 @@ struct FaceMetric {
   std::vector<BoundaryNode> boundary_tree;
   std::vector<PoleZone> poles;
   std::vector<std::array<double, 2>>* metric_points;
+  // Input boundary charts with their classified corner/curve positions, sorted
+  // by chart, so the position hook agrees with assembly bit for bit.
+  std::vector<std::pair<std::array<double, 2>, std::array<double, 3>>> boundary_positions;
+  std::vector<std::array<double, 5>>* position_calls;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -353,6 +357,28 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
   return {differential.first_form[0] * inverse / (context.scale_u * context.scale_u),
           differential.first_form[1] * inverse / (context.scale_u * context.scale_v),
           differential.first_form[2] * inverse / (context.scale_v * context.scale_v)};
+}
+
+// Chart-to-physical position of a face vertex: the classified position at an
+// input boundary chart, otherwise the face's order-0 evaluation. Every final
+// face position is produced here, so the kernel's 3D guards see the points
+// that assembly emits.
+int32_t face_position(void* opaque, const double chart[2], double xyz[3]) {
+  auto& context = *static_cast<FaceMetric*>(opaque);
+  const std::array<double, 2> key{chart[0], chart[1]};
+  const auto found = std::lower_bound(
+      context.boundary_positions.begin(), context.boundary_positions.end(), key,
+      [](const auto& entry, const std::array<double, 2>& value) { return entry.first < value; });
+  const double uv[2] = {chart[0] / context.scale_u, chart[1] / context.scale_v};
+  if (found != context.boundary_positions.end() && found->first == key) {
+    std::copy(found->second.begin(), found->second.end(), xyz);
+  } else if (!context.geometry->jets(context.geometry->surface_node(context.face), uv, 0, xyz,
+                                     context.workspace)) {
+    return 0;
+  }
+  if (context.position_calls)
+    context.position_calls->push_back({uv[0], uv[1], xyz[0], xyz[1], xyz[2]});
+  return 1;
 }
 
 int loop_orientation(const FaceBoundary& boundary, const std::vector<int32_t>& loop) {
@@ -825,14 +851,12 @@ double maximum_cosine(const SurfaceTriangulation& surface,
   return maximum;
 }
 
-void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& metric,
-            const std::vector<uint8_t>& fixed, std::vector<CadFaceVertex>& vertices,
-            SurfaceTriangulation& surface) {
+void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed,
+            std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
   std::vector<std::vector<int32_t>> incident(vertices.size());
   for (std::size_t cell = 0; cell < surface.cells.size(); ++cell) {
     for (const int32_t v : surface.cells[cell]) incident[v].push_back(static_cast<int32_t>(cell));
   }
-  cad::EvaluationWorkspace workspace;
   for (int pass = 0; pass < 2; ++pass) {
     for (std::size_t v = 0; v < vertices.size(); ++v) {
       if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty()) continue;
@@ -859,7 +883,7 @@ void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& me
       chart[1] /= sum;
       const std::array<double, 2> uv{chart[0] / metric.scale_u, chart[1] / metric.scale_v};
       std::array<double, 3> xyz;
-      if (!evaluate_position(geometry, face, uv, workspace, xyz)) continue;
+      if (!face_position(&metric, chart, xyz.data())) continue;
       const double previous_quality = maximum_cosine(surface, incident[v]);
       const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
       const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
@@ -889,7 +913,8 @@ void smooth(const cad::CadGeometry& geometry, int32_t face, const FaceMetric& me
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
-                      CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points) {
+                      CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
+                      std::vector<std::array<double, 5>>* position_calls) {
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
@@ -898,7 +923,9 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   result = CadFaceMesh{};
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
-  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, metric_points};
+  FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {},
+                    metric_points, {}, position_calls};
+  if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);
   if (status != PHX_MC_OK) return status;
@@ -951,6 +978,14 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   if (points.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
       segments.size()/2 > static_cast<std::size_t>(kMaxMeshPoints) ||
       holes.size()/2 > static_cast<std::size_t>(kMaxMeshPoints)) return PHX_MC_INDEX_RANGE_ERROR;
+  metric.boundary_positions.resize(boundary.vertices.size());
+  for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
+    auto& entry = metric.boundary_positions[i];
+    entry.first = {points[2 * i], points[2 * i + 1]};
+    if (!classified_position(geometry, curves, face, boundary.vertices[i], workspace, entry.second))
+      return PHX_MC_INVALID_INPUT;
+  }
+  std::sort(metric.boundary_positions.begin(), metric.boundary_positions.end());
   CadRefine2DInput input;
   input.points = points.data();
   input.point_count = static_cast<int32_t>(points.size() / 2);
@@ -965,6 +1000,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.fixed_vertices = fixed.data();
   input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
   input.admit_context = &metric;
+  input.surface_position = face_position;
+  input.surface_context = &metric;
   CadRefine2DResult refined;
   status = cad_refine2d(input, refined);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
@@ -983,21 +1020,17 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   }
   for (int32_t i = 0; i < tri.vertex_count(); ++i) {
     const double* p = tri.point(i);
-    std::array<double, 2> uv{p[0] / metric.scale_u, p[1] / metric.scale_v};
-    vertices[i] = {uv, 2, face, -1};
-    std::array<double, 3> xyz;
-    if (!evaluate_position(geometry, face, uv, workspace, xyz)) return PHX_MC_INVALID_INPUT;
-    std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * i);
+    vertices[i] = {{p[0] / metric.scale_u, p[1] / metric.scale_v}, 2, face, -1};
+    if (!face_position(&metric, p, surface.points.data() + 3 * i)) return PHX_MC_INVALID_INPUT;
   }
   for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
     const int32_t mapped = refined.vertex_map[i];
     if (mapped < 0 || mapped >= tri.vertex_count() || vertices[mapped].dimension != 2)
       return PHX_MC_INVALID_INPUT;
+    // The hook's classified lookup is keyed by the input chart point.
+    const double* p = tri.point(mapped);
+    if (p[0] != points[2 * i] || p[1] != points[2 * i + 1]) return PHX_MC_INTERNAL_ERROR;
     vertices[mapped] = boundary.vertices[i];
-    std::array<double, 3> xyz;
-    if (!classified_position(geometry, curves, face, vertices[mapped], workspace, xyz))
-      return PHX_MC_INVALID_INPUT;
-    std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * mapped);
   }
   for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
     if (!tri.live[t] || !tri.region[t] || tri.is_ghost(static_cast<int32_t>(t))) continue;
@@ -1010,7 +1043,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   const int32_t prepare_status = surface.prepare();
   if (prepare_status != PHX_MC_OK) return prepare_status;
   surface.sweep();
-  smooth(geometry, face, metric, mapped_fixed, vertices, surface);
+  smooth(metric, mapped_fixed, vertices, surface);
   result.slivers.clear();
   result.triangles.clear();
   std::vector<std::pair<int32_t, int32_t>> pole_edges;
