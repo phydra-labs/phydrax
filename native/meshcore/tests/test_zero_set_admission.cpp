@@ -645,7 +645,8 @@ void remesh_sphere_carrier() {
               "%lld, leaves outside %lld\n",
               distance, reverse, sampled, static_cast<long long>(failures[6]),
               static_cast<long long>(failures[7]));
-  PHX_CHECK(reverse >= sampled && reverse < kInfinity);
+  // The tube refines its residual toward the tolerance (0.05).
+  PHX_CHECK(reverse >= sampled && reverse <= tolerance);
   // The same surface against f = (s - 1)(s - 4): it certifies near the unit
   // sphere (one way, with the gradient's sign there), but the radius-2
   // sphere of zeros lies far outside its tube, so the cover refuses.
@@ -1279,8 +1280,8 @@ void tube_cases() {
   std::printf("tube: rho %.3g reverse %.3g sampled %.3g rounds %lld\n", certificate.rho,
               certificate.reverse, sampled, static_cast<long long>(certificate.rounds));
   PHX_CHECK(certificate.reverse >= sampled);
-  // O(h^2): within a few sagittas, far below the tube's reach (0.05).
-  PHX_CHECK(certificate.reverse <= 0.02);
+  // The tube refines its residual toward the tolerance (0.01).
+  PHX_CHECK(certificate.reverse <= 0.01);
   TubeCertificate reversed;
   PHX_CHECK(certify_tube(points, triangles, value, gradient, -1, 0.05, 0.01, reversed) ==
             PHX_MC_UNRESOLVED);

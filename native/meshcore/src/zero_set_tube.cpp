@@ -61,6 +61,7 @@ std::vector<Point> vertex_directions(const std::vector<Point>& points,
 // The per-triangle quantities of the certificate (zero_set_tube.hpp).
 struct Prism {
   double g = 0;          // min over pieces of lower(G . w) over T x [-1, 1]
+  double near = 0;       // the same over T x [-tau, tau], tau = R_T / g (>= g)
   double residual = 0;   // R_T >= |f| over T
   double reach = 0;      // r = max_k |w_k| (upper)
   double clearance = 0;  // q: cap clearance decided within q of each cap
@@ -334,6 +335,15 @@ Verdict decide(const Point& p0, const Point& p1, const Point& p2, const Point& w
       whole, value, gradient, std::min(0.25 * g, tolerance * g / reach), kResidualLevels);
   if (!(residual < kInfinity)) return Verdict::kLong;
   if (!(next_down(g - residual) > 0)) return Verdict::kShort;
+  // The zero on each segment lies at |t| <= tau = R_T / g; over that thin
+  // slab grad f . w is bounded again (a smaller box, so a larger bound
+  // g_slab), and the zero lies at |t| <= R_T / g_slab (reverse).
+  double g_slab = g;
+  const double tau = next_up(residual / g);
+  if (tau < 1) {
+    const Piece slab{whole.corner, whole.along, {-tau, tau}};
+    g_slab = std::max(g, swept_bound(slab, gradient, 0.9 * estimate, kPieceLevels));
+  }
   // det[dF/ds, dF/dr, dF/dt] over T x [-1, 1] (oriented_over).
   const IntervalVector e1 = enclosed_difference(p1, p0), e2 = enclosed_difference(p2, p0);
   const IntervalVector dw1 = enclosed_difference(w1, w0), dw2 = enclosed_difference(w2, w0);
@@ -358,7 +368,7 @@ Verdict decide(const Point& p0, const Point& p1, const Point& p2, const Point& w
       return Verdict::kLong;
     lipschitz = std::max(lipschitz, norm_upper(near));
   }
-  prism = {g, residual, reach, clearance, lipschitz, lower, upper};
+  prism = {g, g_slab, residual, reach, clearance, lipschitz, lower, upper};
   return std::isfinite(prism.lipschitz) && prism.lipschitz > 0 ? Verdict::kAccepted
                                                                 : Verdict::kLong;
 }
@@ -408,7 +418,7 @@ int32_t certify_tube(const std::vector<Point>& points, const std::vector<Triangl
           continue;
         }
         rho = std::min(rho, std::min(prism.clearance, next_down(margin / prism.lipschitz)));
-        reverse = std::max(reverse, next_up(next_up(prism.residual / prism.g) * prism.reach));
+        reverse = std::max(reverse, next_up(next_up(prism.residual / prism.near) * prism.reach));
       }
     }
     certificate.refused = failed;

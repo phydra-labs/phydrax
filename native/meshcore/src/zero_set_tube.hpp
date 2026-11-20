@@ -18,8 +18,10 @@
 //  * residual: R_T >= |f| over T (per sub-triangle, the natural enclosure
 //    over its box intersected with corner-anchored mean-value forms);
 //  * caps: g_T > R_T, so f(F(y, +-1)) has the sign of +-1 and every segment
-//    holds exactly one zero, at |t| <= R_T / g_T: every zero of f in U lies
-//    within reverse = max_T (R_T / g_T) max_k |w_k| of M;
+//    holds exactly one zero, at |t| <= tau_T = R_T / g_T; with g0_T >= g_T
+//    the monotonicity bound over T x [-tau_T, tau_T] (a thinner swept box),
+//    the zero lies at |t| <= R_T / g0_T: every zero of f in U lies within
+//    reverse = max_T (R_T / g0_T) max_k |w_k| of M;
 //  * orientation: det[dF/ds, dF/dr, dF/dt] has the orientation's sign on
 //    T x [-1, 1] (s, r the barycentric parameters along p1 - p0 and p2 - p0;
 //    per piece, intervals over its t and over the box hull of its corners'

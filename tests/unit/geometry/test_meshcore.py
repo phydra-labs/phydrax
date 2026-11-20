@@ -2512,7 +2512,8 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     )
     assert 0.0 <= certificate.distance <= 0.01
     # Both ways: every point of the unit sphere (sampled) lies within the
-    # certified reverse distance of the surface.
+    # certified reverse distance of the surface, which the tube refines toward
+    # the tolerance.
     sphere_points = _sphere_samples(2000)
     nearest = np.min(
         np.stack(
@@ -2525,7 +2526,7 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
         ),
         axis=1,
     )
-    assert np.max(nearest) <= certificate.reverse_distance < 0.15
+    assert np.max(nearest) <= certificate.reverse_distance <= 0.01
     # Input triangles the remesh left untouched are proved, not carried.
     assert certificate.counters[3] == 0 and not np.any(certificate.carried)
     # Nothing needed repair: the certified surface is the constructed one.

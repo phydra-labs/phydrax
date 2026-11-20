@@ -899,7 +899,8 @@ def _zero_set_quality(
 ) -> tuple[int, dict[str, float]]:
     # The two-way certificate against the zero set in `domain`
     # (zero_set_certify at the tolerance, with no carrier: the rows hold no
-    # witness for their input; a refusal is one miss), then _surface_quality
+    # witness for their input; a refusal is one miss, and so is a certified
+    # zero set -> surface bound above the tolerance), then _surface_quality
     # of the certified surface (of the constructed one when refused).
     if not isinstance(result, _meshcore.ZeroSetRemeshResult):
         raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
@@ -929,7 +930,7 @@ def _zero_set_quality(
     missed, measured = _surface_quality(
         certificate.vertices, certificate.triangles, distance, samples, tolerance
     )
-    return missed, {
+    return missed + int(certificate.reverse_distance > tolerance), {
         **measured,
         "certified": 1.0,
         "certified_distance": certificate.distance,
