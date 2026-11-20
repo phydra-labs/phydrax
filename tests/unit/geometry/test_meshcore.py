@@ -2700,7 +2700,7 @@ def _oblique_lens_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return vertices, np.asarray(triangles, dtype=np.int64), rotation[:, 2]
 
 
-def test_zero_set_certify_refuses_a_csg_lens_crease_both_ways() -> None:
+def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
     vertices, faces, axis = _oblique_lens_carrier()
     first, second = -_LENS_SHIFT * axis, _LENS_SHIFT * axis
 
@@ -2724,10 +2724,30 @@ def test_zero_set_certify_refuses_a_csg_lens_crease_both_ways() -> None:
     remeshed = zero_set_remesh(
         vertices, faces, value.box_program(), 0.02, 0.02, 0.2, 30.0
     )
-    # Triangles next to the crease rest on the carrier (witness boxes), but
-    # the zero set -> surface direction is refused there: the tube cannot
-    # cross the crease, and two-way certification is mandatory.
-    with pytest.raises(MeshcoreError, match=r"[1-9][0-9]* tube triangles refused"):
+    # Triangles next to the crease rest on the carrier (witness boxes) and the
+    # tube cannot cross the crease; the possible-zero cover alone, within the
+    # tolerance, proves the zero set -> surface direction (proof 2).
+    certified = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        value.box_program(),
+        gradient.box_program(),
+        0.02,
+        remeshed.orientation,
+        vertices,
+        faces,
+        _widened_boxes(vertices, faces, 0.02),
+        _CERTIFIED_DOMAIN,
+        0.2,
+        30.0,
+    )
+    assert certified.counters[3] > 0
+    assert np.count_nonzero(certified.carried) == certified.counters[3]
+    assert certified.counters[6] > 0 and certified.counters[8] == 2
+    assert 0.0 <= certified.reverse_distance < 0.02
+    # The same cover under half the boxes it evaluated: refused, naming the
+    # budget, rather than run unbounded.
+    with pytest.raises(MeshcoreError, match="exceeded its budget"):
         zero_set_certify(
             remeshed.vertices,
             remeshed.triangles,
@@ -2741,6 +2761,7 @@ def test_zero_set_certify_refuses_a_csg_lens_crease_both_ways() -> None:
             _CERTIFIED_DOMAIN,
             0.2,
             30.0,
+            cover_budget=int(certified.counters[9]) // 2,
         )
 
 

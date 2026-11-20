@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <span>
 
 #include "dyadic.hpp"
@@ -60,47 +61,59 @@ class AxisCoordinates {
 // opcode batch-admissible), else the general executor `general`, box by box,
 // for every advertised opcode. Both are enclosures, not the same arithmetic:
 // leaves may differ between them where an enclosure decides a sign narrowly.
+// Boxes are evaluated in chunks of kChunk, so the interval workspaces stay
+// bounded whatever the level's size (each box's enclosure is independent of
+// the chunking).
 int32_t straddling(const IntervalProgramView& program, const PreparedIntervalProgram* general,
                    std::span<const double> boxes, std::vector<char>& keep) {
+  constexpr std::size_t kChunk = std::size_t{1} << 14;
   const std::size_t count = boxes.size() / 6;
   keep.assign(count, 0);
-  if (count == 0) return PHX_MC_OK;
   const auto width = static_cast<std::size_t>(program.workspace_size);
-  std::vector<double> lower(count * width), upper(count * width);
-  for (std::size_t b = 0; b < count; ++b) {
-    std::copy_n(program.seed_lower, width, lower.begin() + static_cast<std::ptrdiff_t>(b * width));
-    std::copy_n(program.seed_upper, width, upper.begin() + static_cast<std::ptrdiff_t>(b * width));
-    for (std::size_t d = 0; d < 3; ++d) {
-      lower[b * width + d] = boxes[6 * b + d];
-      upper[b * width + d] = boxes[6 * b + 3 + d];
-    }
-  }
-  if (general == nullptr) {
-    const int32_t status = phx_mc_interval_program_batch(
-        program.instructions, program.instruction_count, program.indices, program.index_count,
-        program.parameters, program.parameter_count, lower.data(), upper.data(),
-        program.workspace_size, static_cast<int64_t>(count), 1);
-    if (status != PHX_MC_OK) return status;
-  } else {
-    for (std::size_t b = 0; b < count; ++b) {
-      const int32_t status = general->execute(lower.data() + b * width, upper.data() + b * width,
-                                              program.workspace_size);
-      if (status != PHX_MC_OK) return status;
-    }
-  }
   const auto output = static_cast<std::size_t>(program.output);
-  for (std::size_t b = 0; b < count; ++b)
-    keep[b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+  std::vector<double> lower, upper;
+  for (std::size_t first = 0; first < count; first += kChunk) {
+    const std::size_t chunk = std::min(kChunk, count - first);
+    lower.resize(chunk * width);
+    upper.resize(chunk * width);
+    for (std::size_t b = 0; b < chunk; ++b) {
+      std::copy_n(program.seed_lower, width, lower.begin() + static_cast<std::ptrdiff_t>(b * width));
+      std::copy_n(program.seed_upper, width, upper.begin() + static_cast<std::ptrdiff_t>(b * width));
+      for (std::size_t d = 0; d < 3; ++d) {
+        lower[b * width + d] = boxes[6 * (first + b) + d];
+        upper[b * width + d] = boxes[6 * (first + b) + 3 + d];
+      }
+    }
+    if (general == nullptr) {
+      const int32_t status = phx_mc_interval_program_batch(
+          program.instructions, program.instruction_count, program.indices, program.index_count,
+          program.parameters, program.parameter_count, lower.data(), upper.data(),
+          program.workspace_size, static_cast<int64_t>(chunk), 1);
+      if (status != PHX_MC_OK) return status;
+    } else {
+      for (std::size_t b = 0; b < chunk; ++b) {
+        const int32_t status = general->execute(lower.data() + b * width, upper.data() + b * width,
+                                                program.workspace_size);
+        if (status != PHX_MC_OK) return status;
+      }
+    }
+    for (std::size_t b = 0; b < chunk; ++b)
+      keep[first + b] = !(upper[b * width + output] < 0.0) && !(lower[b * width + output] > 0.0);
+  }
   return PHX_MC_OK;
 }
 
 using Index = std::array<int64_t, 3>;
 
 // The kept leaves of the anchored lattice, level by level as discover_leaves;
-// a kept box `accept` (if not null) accepts becomes an accepted leaf.
+// a kept box `accept` (if not null) accepts becomes an accepted leaf. Before
+// a level is evaluated, `evaluated_boxes` (every box evaluated so far) grows
+// by the level's frontier, refused with PHX_MC_CAPACITY_EXCEEDED beyond
+// `budget`.
 int32_t possible_leaves(const IntervalProgramView& interval, const double* lower, const double* upper,
-                        int32_t target_level, const BoxAcceptance* accept,
-                        std::vector<DyadicLeaf>& leaves) {
+                        int32_t target_level, const BoxAcceptance* accept, int64_t budget,
+                        int64_t& evaluated_boxes, std::vector<DyadicLeaf>& leaves) {
+  evaluated_boxes = 0;
   // One dispatch per program: the batch kernel when it admits every opcode
   // (as before), else the general executor (reciprocal fields).
   PreparedIntervalProgram general;
@@ -116,6 +129,9 @@ int32_t possible_leaves(const IntervalProgramView& interval, const double* lower
   std::vector<double> boxes;
   std::vector<char> valid, keep;
   for (int32_t level = 0; !frontier.empty(); ++level) {
+    if (static_cast<int64_t>(frontier.size()) > budget - evaluated_boxes)
+      return PHX_MC_CAPACITY_EXCEEDED;
+    evaluated_boxes += static_cast<int64_t>(frontier.size());
     std::array<AxisCoordinates, 3> coordinates{AxisCoordinates(lower[0], upper[0], level),
                                                AxisCoordinates(lower[1], upper[1], level),
                                                AxisCoordinates(lower[2], upper[2], level)};
@@ -188,7 +204,10 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
                             const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out) {
   if (target_level < 0 || target_level > kMaximumLevel) return PHX_MC_INVALID_ARGUMENT;
-  int32_t status = possible_leaves(interval, lower, upper, target_level, nullptr, out.leaves);
+  int64_t evaluated_boxes = 0;
+  int32_t status = possible_leaves(interval, lower, upper, target_level, nullptr,
+                                   std::numeric_limits<int64_t>::max(), evaluated_boxes,
+                                   out.leaves);
   if (status != PHX_MC_OK) return status;
   // The lattice vertices of the leaves, each once, keyed by their index at
   // the target level, at their nearest binary64 coordinates.
@@ -262,9 +281,13 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
 
 int32_t possible_zero_leaves(const IntervalProgramView& interval, const double* lower,
                              const double* upper, int32_t target_level,
-                             const BoxAcceptance* accept, std::vector<DyadicLeaf>& leaves) {
-  if (target_level < 0 || target_level > kMaximumLevel) return PHX_MC_INVALID_ARGUMENT;
-  return possible_leaves(interval, lower, upper, target_level, accept, leaves);
+                             const BoxAcceptance* accept, int64_t budget,
+                             int64_t& evaluated_boxes, std::vector<DyadicLeaf>& leaves) {
+  evaluated_boxes = 0;
+  if (target_level < 0 || target_level > kMaximumLevel || budget < 1)
+    return PHX_MC_INVALID_ARGUMENT;
+  return possible_leaves(interval, lower, upper, target_level, accept, budget, evaluated_boxes,
+                         leaves);
 }
 
 }  // namespace phx::mc

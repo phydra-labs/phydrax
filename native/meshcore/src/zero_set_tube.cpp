@@ -440,31 +440,41 @@ int32_t certify_tube(const std::vector<Point>& points, const std::vector<Triangl
   return PHX_MC_UNRESOLVED;
 }
 
-bool box_within_reach(const MeshSource& mesh, const Point& lower, const Point& upper,
-                      double reach) {
+double box_reach(const MeshSource& mesh, const Point& lower, const Point& upper) {
   Point center{};
   IntervalVector half{};
-  double scale = 0;
   for (int d = 0; d < 3; ++d) {
     if (!std::isfinite(lower[d]) || !std::isfinite(upper[d]) || !(lower[d] <= upper[d]))
-      return false;
+      return kInfinity;
     center[d] = 0.5 * lower[d] + 0.5 * upper[d];
-    // Every box point is within max(c - lower, upper - c) of the computed
-    // centre c in this coordinate.
     const Interval below = subtract(point(center[d]), point(lower[d]));
     const Interval above = subtract(point(upper[d]), point(center[d]));
     half[static_cast<size_t>(d)] = {0, std::max(below.upper, above.upper)};
-    scale = std::max(scale, std::max(std::fabs(lower[d]), std::fabs(upper[d])));
   }
   const MeshSource::Nearest nearest = mesh.nearest(center);
-  if (nearest.triangle < 0 || !std::isfinite(nearest.distance)) return false;
-  // The computed closest point is a rounded convex combination of the
-  // triangle's corners: within 16 u of the coordinate scale of a point of the
-  // triangle; the computed distance to it within a relative 8 u.
-  for (const double x : nearest.point) scale = std::max(scale, std::fabs(x));
-  const double offset = next_up(nearest.distance * (1 + 0x1p-50) + 0x1p-49 * scale);
-  const double bound = next_up(offset + norm_upper(half));
-  return bound < reach;
+  if (nearest.triangle < 0) return kInfinity;
+  // A point P of the named triangle (box_reach in zero_set_tube.hpp).
+  const std::array<double, 3>& w = nearest.barycentric;
+  const double total = std::max(w[0], 0.0) + std::max(w[1], 0.0) + std::max(w[2], 0.0);
+  if (!(total > 0) || !std::isfinite(total)) return kInfinity;
+  const double s = std::max(w[1], 0.0) / total;
+  double t = std::max(w[2], 0.0) / total;
+  const double room = subtract(point(1.0), point(s)).lower;  // <= 1 - s
+  if (!(s <= 1) || !(room >= 0)) return kInfinity;
+  t = std::min(t, room);
+  const Triangle& f = mesh.triangles()[static_cast<size_t>(nearest.triangle)];
+  const Point& p0 = mesh.points()[static_cast<size_t>(f[0])];
+  const Point& p1 = mesh.points()[static_cast<size_t>(f[1])];
+  const Point& p2 = mesh.points()[static_cast<size_t>(f[2])];
+  IntervalVector offset{};
+  for (int d = 0; d < 3; ++d) {
+    const Interval along = multiply(point(s), subtract(point(p1[d]), point(p0[d])));
+    const Interval across = multiply(point(t), subtract(point(p2[d]), point(p0[d])));
+    const Interval on = add(add(point(p0[d]), along), across);
+    offset[static_cast<size_t>(d)] = subtract(point(center[d]), on);
+  }
+  const double bound = next_up(norm_upper(offset) + norm_upper(half));
+  return std::isfinite(bound) ? bound : kInfinity;
 }
 
 }  // namespace phx::mc::remesh

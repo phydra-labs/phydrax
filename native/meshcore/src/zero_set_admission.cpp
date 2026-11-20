@@ -880,24 +880,17 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
   return norm_upper(extent);
 }
 
-// Zero set -> surface (see phx_mc_zero_set_certify): the tube of the
-// certified surface (zero_set_tube.hpp) and the possible-zero cover of the
-// request's domain (box_tree.hpp), a kept box accepted as soon as it lies
-// within rho of the surface, down to a target diameter of rho / 2. `reverse`
-// receives the tube's bound; counters[0] the tube triangles refused in its
-// last round, counters[1] the cover leaves not within rho (-1 when the
-// target level exceeds the tree's).
-int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
-                         const std::vector<Point>& points, const std::vector<Triangle>& triangles,
-                         const IntervalBoxProgram& value,
-                         const IntervalBoxProgram& gradient, double& reverse, int64_t* counters) {
-  TubeCertificate tube;
-  int32_t status = certify_tube(points, triangles, value, gradient, request.orientation,
-                                request.edge_length, request.tolerance, tube);
-  counters[0] = tube.refused;
-  if (status != PHX_MC_OK) return status;
-  MeshSource surface;
-  if (surface.bind(points, triangles) != PHX_MC_OK) return PHX_MC_INTERNAL_ERROR;
+// The possible-zero cover of the request's domain (box_tree.hpp), each kept
+// box accepted at the first level where box_reach puts it within `radius` of
+// the surface, down to a target diameter of radius / 2, evaluating at most
+// request.cover_budget boxes. Every zero of f in the domain lies in a leaf
+// (the tree's inclusion), so when no leaf is left outside, every zero lies
+// within `bound` (the largest leaf reach, < radius) of the surface.
+// `outside` counts the leaves left outside, -1 when the target level exceeds
+// the tree's, -2 when the run would exceed the budget; `boxes` accumulates
+// the boxes evaluated.
+int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshSource& surface,
+                     double radius, int64_t& outside, double& bound, int64_t& boxes) {
   const double* lower = request.domain;
   const double* upper = request.domain + 3;
   const phx_mc_interval_box_program& field = request.value;
@@ -906,30 +899,81 @@ int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
       field.index_count,     field.parameters,        field.parameter_count,
       field.workspace_lower, field.workspace_upper,   field.workspace_size,
       field.outputs[0]};
-  const auto within = [&](const std::array<double, 6>& box) {
-    return box_within_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]},
-                            tube.rho);
+  bound = 0;
+  const auto reach = [&](const std::array<double, 6>& box) {
+    return box_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]});
   };
-  const phx::mc::BoxAcceptance accept = within;
+  const phx::mc::BoxAcceptance accept = [&](const std::array<double, 6>& box) {
+    const double r = reach(box);
+    if (!(r < radius)) return false;
+    bound = std::max(bound, r);
+    return true;
+  };
   std::vector<phx::mc::DyadicLeaf> leaves;
-  status = phx::mc::possible_zero_leaves(
-      interval, lower, upper, phx::mc::dyadic_target_level(lower, upper, 0.5 * tube.rho),
-      &accept, leaves);
-  // The programs and the domain are validated above, so an invalid argument
-  // here is a target level beyond the tree's limit: rho is too small for it.
+  int64_t evaluated = 0;
+  const int32_t status = phx::mc::possible_zero_leaves(
+      interval, lower, upper, phx::mc::dyadic_target_level(lower, upper, 0.5 * radius), &accept,
+      request.cover_budget, evaluated, leaves);
+  boxes += evaluated;
+  if (status == PHX_MC_CAPACITY_EXCEEDED) {
+    outside = -2;
+    return PHX_MC_OK;
+  }
+  // The programs and the domain are validated before, so an invalid
+  // argument here is a target level beyond the tree's limit.
   if (status == PHX_MC_INVALID_ARGUMENT) {
-    counters[1] = -1;
-    return PHX_MC_UNRESOLVED;
+    outside = -1;
+    return PHX_MC_OK;
   }
   if (status != PHX_MC_OK) return status;
   // Leaves the predicate did not accept: refused at the target level, or
   // stopped at the representability limit before it was offered.
-  int64_t outside = 0;
-  for (const phx::mc::DyadicLeaf& leaf : leaves)
-    if (!leaf.accepted && !within(leaf.box)) ++outside;
-  counters[1] = outside;
-  if (outside > 0) return PHX_MC_UNRESOLVED;
-  reverse = tube.reverse;
+  outside = 0;
+  for (const phx::mc::DyadicLeaf& leaf : leaves) {
+    if (leaf.accepted) continue;
+    const double r = reach(leaf.box);
+    if (r < radius)
+      bound = std::max(bound, r);
+    else
+      ++outside;
+  }
+  return PHX_MC_OK;
+}
+
+// Zero set -> surface (see phx_mc_zero_set_certify), by one of two proofs.
+// Tube: the tube of the surface (zero_set_tube.hpp) and the cover within its
+// rho, so every zero lies in the tube, within the tube's reverse bound, and
+// within the cover's bound: reverse = the smaller. Cover: when the tube
+// refuses or leaves a leaf outside rho, the cover within the tolerance
+// alone, reverse = its bound. counters receives (tube triangles refused in
+// its last round; cover leaves left outside by the last cover run, -1 or -2
+// as cover_within; the proof, 1 tube or 2 cover; boxes evaluated).
+int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
+                         const std::vector<Point>& points, const std::vector<Triangle>& triangles,
+                         const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
+                         double& reverse, int64_t* counters) {
+  TubeCertificate tube;
+  int32_t status = certify_tube(points, triangles, value, gradient, request.orientation,
+                                request.edge_length, request.tolerance, tube);
+  counters[0] = tube.refused;
+  if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+  MeshSource surface;
+  if (surface.bind(points, triangles) != PHX_MC_OK) return PHX_MC_INTERNAL_ERROR;
+  double bound = 0;
+  if (status == PHX_MC_OK) {
+    status = cover_within(request, surface, tube.rho, counters[1], bound, counters[3]);
+    if (status != PHX_MC_OK) return status;
+    if (counters[1] == 0) {
+      reverse = std::min(tube.reverse, bound);
+      counters[2] = 1;
+      return PHX_MC_OK;
+    }
+  }
+  status = cover_within(request, surface, request.tolerance, counters[1], bound, counters[3]);
+  if (status != PHX_MC_OK) return status;
+  if (counters[1] != 0) return PHX_MC_UNRESOLVED;
+  reverse = bound;
+  counters[2] = 2;
   return PHX_MC_OK;
 }
 
@@ -952,13 +996,13 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
       !phx::mc::addressable(request.carrier_triangle_count, 6, sizeof(double)) ||
       request.domain == nullptr || !(request.edge_length > 0) ||
       !std::isfinite(request.edge_length) || !(request.minimum_angle_degrees > 0) ||
-      !(request.minimum_angle_degrees < 60))
+      !(request.minimum_angle_degrees < 60) || request.cover_budget < 1)
     return PHX_MC_INVALID_ARGUMENT;
   for (int d = 0; d < 3; ++d)
     if (!std::isfinite(request.domain[d]) || !std::isfinite(request.domain[d + 3]) ||
         !(request.domain[d] < request.domain[d + 3]))
       return PHX_MC_INVALID_ARGUMENT;
-  std::fill(request.counters, request.counters + 8, 0);
+  std::fill(request.counters, request.counters + 10, 0);
   IntervalBoxProgram value, gradient;
   const auto bind = [](IntervalBoxProgram& program, const phx_mc_interval_box_program& source,
                        int64_t outputs) -> int32_t {

@@ -79,13 +79,19 @@ int32_t certify_tube(const std::vector<Point>& points, const std::vector<Triangl
                      int orientation, double length, double tolerance,
                      TubeCertificate& certificate);
 
-// Whether every point of the closed box lies within `reach` of the mesh
-// bound to `mesh` (strictly): the distance from the box centre to its
-// nearest mesh point (bucket-grid query), rounded up with a margin for the
-// closest-point evaluation, plus the box half-diagonal (rounded up), is
-// below `reach`. A box whose possible zeros pass lies in the tube when
-// `reach` is the tube's rho.
-bool box_within_reach(const MeshSource& mesh, const Point& lower, const Point& upper,
-                      double reach);
+// An upper bound of the distance from every point of the closed box to the
+// mesh bound to `mesh` (+inf when it cannot be formed). Derivation: with c
+// the computed box centre, every box point x has |x_d - c_d| <= h_d =
+// max(c_d - lower_d, upper_d - c_d) (each difference enclosed outward), so
+// |x - c| <= |h|. The mesh query names a triangle (p0, p1, p2) near c with
+// barycentric weights; s = w1 / W and t = w2 / W (W the sum of the weights
+// clamped at 0) are nonnegative doubles, and t is lowered, if needed, to at
+// most the downward rounding of 1 - s, so s + t <= 1 exactly and P = p0 +
+// s (p1 - p0) + t (p2 - p0) is a point of that triangle, hence of M. |c - P|
+// is enclosed by interval arithmetic over P's coordinates. Then d(x, M) <=
+// |x - P| <= |h| + |c - P|, both terms upper norms of outward enclosures and
+// their sum rounded up. The query's choice of triangle affects only the
+// tightness, never the soundness.
+double box_reach(const MeshSource& mesh, const Point& lower, const Point& upper);
 
 }  // namespace phx::mc::remesh

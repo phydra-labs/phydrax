@@ -499,24 +499,29 @@ Remeshed construct(const Surface& input, const Program& value, double tolerance,
 }
 
 // (transversality, distance and embedding refusals over every round, carrier
-// triangles, repair splits, rounds, tube triangles refused, cover leaves
-// outside the tube's reach)
-using Failures = std::array<int64_t, 8>;
+// triangles, repair splits, rounds, tube triangles refused, cover leaves left
+// outside by the last cover run, the reverse proof: 1 tube, 2 cover, boxes
+// the covers evaluated)
+using Failures = std::array<int64_t, 10>;
+
+// The cover budget of the certificates below unless a test sets its own.
+constexpr int64_t kCoverBudget = int64_t{1} << 23;
 
 // The domain of the certificates below: it holds the sphere and the lens.
 constexpr std::array<double, 6> kDomain{-2.0, -2.0, -2.0, 2.0, 2.0, 2.0};
 
 // phx_mc_zero_set_certify over kDomain with the triangles of `carrier` (if
 // any) witnessed by their bounding boxes widened by `widen` on every side,
-// at `edge` (repair target and tube length); the certified surface is copied
-// into `certified`, its carried flags into `carried` and the zero set ->
-// surface bound into `reverse` when given.
+// at `edge` (repair target and tube length) and `budget` boxes per cover
+// run; the certified surface is copied into `certified`, its carried flags
+// into `carried` and the zero set -> surface bound into `reverse` when given.
 int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>& triangles,
                 const Program& value, const Program& gradient, double tolerance,
                 int32_t orientation, double& distance, Failures& failures,
                 const Surface* carrier = nullptr, double widen = 0,
                 Surface* certified = nullptr, std::vector<uint8_t>* carried = nullptr,
-                double* reverse = nullptr, double edge = 0.3) {
+                double* reverse = nullptr, double edge = 0.3,
+                int64_t budget = kCoverBudget) {
   std::vector<double> boxes;
   if (carrier != nullptr)
     for (size_t f = 0; f < carrier->triangles.size(); f += 3) {
@@ -553,6 +558,7 @@ int32_t certify(const std::vector<double>& vertices, const std::vector<int64_t>&
       kDomain.data(),
       edge,
       30.0,
+      budget,
       &handle,
       distances.data(),
       failures.data()};
@@ -624,7 +630,7 @@ void remesh_sphere_carrier() {
                     nullptr, nullptr, &reverse) == PHX_MC_OK);
   PHX_CHECK(distance >= 0 && distance <= tolerance);
   PHX_CHECK(failures[2] == 0 && failures[3] == 0);
-  PHX_CHECK(failures[6] == 0 && failures[7] == 0);
+  PHX_CHECK(failures[6] == 0 && failures[7] == 0 && failures[8] == 1);
   // Zero set -> surface: every point of the unit sphere is within `reverse`
   // of the certified surface (brute force over a sphere grid).
   double sampled = 0;
@@ -649,11 +655,12 @@ void remesh_sphere_carrier() {
   PHX_CHECK(reverse >= sampled && reverse <= tolerance);
   // The same surface against f = (s - 1)(s - 4): it certifies near the unit
   // sphere (one way, with the gradient's sign there), but the radius-2
-  // sphere of zeros lies far outside its tube, so the cover refuses.
+  // sphere of zeros lies far outside its tube and its tolerance, so both
+  // covers leave leaves outside.
   const Program two_value = two_sphere_value(), two_gradient = two_sphere_gradient();
   PHX_CHECK(certify(wide.vertices, wide.triangles, two_value, two_gradient, tolerance, -1,
                     distance, failures) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(failures[1] == 0 && failures[6] == 0 && failures[7] > 0);
+  PHX_CHECK(failures[1] == 0 && failures[6] == 0 && failures[7] > 0 && failures[8] == 0);
   const Remeshed narrow = construct(input, value, tolerance, 0.3, true);
   PHX_CHECK(narrow.status == PHX_MC_OK);
   PHX_CHECK(narrow.vertices == wide.vertices);
@@ -1162,10 +1169,11 @@ const std::vector<int64_t> kRosetteTriangles{
 
 // Coarsening that carrier toward a length 300 times the rosette core's edges
 // (and a tolerance loose enough for that length): the core is absorbed, so no
-// edge of its scale survives. Every triangle is certified within the
-// tolerance, but at edges of half the radius the zero set lies farther from
-// the surface than the tube's clearance reaches, so the two-way certificate
-// refuses from the cover (not from the triangles or the tube).
+// edge of its scale survives. Every triangle and the tube are certified, but
+// at edges of half the radius the zero set lies farther from the surface
+// than the tube's clearance reaches: the cover within rho leaves leaves
+// outside, and the cover alone within the tolerance certifies (proof 2), its
+// bound at least the sampled distance from the sphere to the surface.
 void remesh_coarsening_absorbs_rosette() {
   PHX_CHECK(signed_volume(kRosettePoints, kRosetteTriangles) > 0);
   PHX_CHECK(minimum_angle(kRosettePoints, kRosetteTriangles) < 29.2);
@@ -1179,11 +1187,28 @@ void remesh_coarsening_absorbs_rosette() {
   PHX_CHECK(closed_oriented(remeshed.triangles));
   PHX_CHECK(signed_volume(remeshed.vertices, remeshed.triangles) > 0);
   PHX_CHECK(minimum_angle(remeshed.vertices, remeshed.triangles) >= 30.0);
-  double distance = -1;
+  double distance = -1, reverse = -1;
   Failures failures{};
   PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance, 1, distance,
-                    failures, nullptr, 0, nullptr, nullptr, nullptr, edge) == PHX_MC_UNRESOLVED);
-  PHX_CHECK(failures[0] == 0 && failures[1] == 0 && failures[6] == 0 && failures[7] > 0);
+                    failures, nullptr, 0, nullptr, nullptr, &reverse, edge) == PHX_MC_OK);
+  PHX_CHECK(failures[0] == 0 && failures[1] == 0 && failures[6] == 0 && failures[7] == 0 &&
+            failures[8] == 2);
+  double sampled = 0;
+  for (int i = 0; i <= 40; ++i)
+    for (int j = 0; j < 80; ++j) {
+      const Point p = sphere_point(kPi * i / 40, 2 * kPi * j / 80);
+      double nearest = kInfinity;
+      for (size_t f = 0; f < remeshed.triangles.size(); f += 3) {
+        const auto at = [&](size_t k) {
+          const size_t v = 3 * static_cast<size_t>(remeshed.triangles[f + k]);
+          return Point{remeshed.vertices[v], remeshed.vertices[v + 1], remeshed.vertices[v + 2]};
+        };
+        nearest = std::min(nearest, triangle_distance(p, at(0), at(1), at(2)));
+      }
+      sampled = std::max(sampled, nearest);
+    }
+  std::printf("rosette cover proof: reverse %.4g sampled %.4g\n", reverse, sampled);
+  PHX_CHECK(reverse >= sampled && reverse < tolerance);
   double shortest = std::numeric_limits<double>::infinity();
   const auto& t = remeshed.triangles;
   for (size_t f = 0; f < t.size(); f += 3)
@@ -1215,13 +1240,13 @@ void remesh_lens_crease() {
   PHX_CHECK(remeshed.status == PHX_MC_OK);
   if (remeshed.status != PHX_MC_OK) return;
   const double turn = maximum_turn(remeshed.vertices, remeshed.triangles);
-  double distance = -1;
+  double distance = -1, reverse = -1;
   Failures failures{};
   std::vector<uint8_t> carried;
   const int32_t status =
       certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance,
               static_cast<int32_t>(remeshed.counters[5]), distance, failures, &input, tolerance,
-              nullptr, &carried);
+              nullptr, &carried, &reverse);
   std::printf("lens crease: %lld -> %lld triangles, max turn %.1f deg, below %lld, above %lld, "
               "certify %d distance %.3g refusals %lld %lld %lld kept %lld splits %lld\n",
               static_cast<long long>(input.triangles.size() / 3),
@@ -1231,14 +1256,25 @@ void remesh_lens_crease() {
               static_cast<long long>(failures[0]), static_cast<long long>(failures[1]),
               static_cast<long long>(failures[2]), static_cast<long long>(failures[3]),
               static_cast<long long>(failures[4]));
-  // Two-way certification is mandatory and the tube cannot cross the
-  // crease: the forward certificate carries the crease triangles, the tube
-  // refuses there, and no result is returned.
+  // The forward certificate carries the crease triangles and the tube
+  // refuses there; the cover alone within the tolerance proves the zero set
+  // -> surface direction (proof 2).
   PHX_CHECK(failures[3] > 0);
   PHX_CHECK(closed_oriented(remeshed.triangles));
-  PHX_CHECK(status == PHX_MC_UNRESOLVED);
-  PHX_CHECK(failures[6] > 0);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK(failures[6] > 0 && failures[7] == 0 && failures[8] == 2 && failures[9] > 0);
+  PHX_CHECK(reverse >= 0 && reverse < tolerance);
   PHX_CHECK(turn > 100);
+  // The same cover under a budget below the boxes it evaluates: refused
+  // before the run exceeds it, reported as -2, no result.
+  const int64_t evaluated = failures[9];
+  std::printf("lens cover proof: reverse %.4g, %lld boxes evaluated\n", reverse,
+              static_cast<long long>(evaluated));
+  PHX_CHECK(certify(remeshed.vertices, remeshed.triangles, value, gradient, tolerance,
+                    static_cast<int32_t>(remeshed.counters[5]), distance, failures, &input,
+                    tolerance, nullptr, nullptr, nullptr, 0.3, evaluated / 2) ==
+            PHX_MC_UNRESOLVED);
+  PHX_CHECK(failures[7] == -2 && failures[8] == 0 && failures[9] <= evaluated / 2);
 }
 
 // The tube of an octasphere with corners on the unit sphere (2,048
@@ -1288,6 +1324,29 @@ void tube_cases() {
   PHX_CHECK(reversed.refused == static_cast<int64_t>(triangles.size()));
 }
 
+// box_reach is an outward bound of the distance from a box to the mesh. A
+// tetrahedron whose bottom face lies on z = 0 under the boxes: a point at
+// height 0.1 is exactly 0.1 from it, and the box [0.2, 0.3]^2 x [0.1, 0.2]
+// reaches exactly 0.2 (its top corners project into the face). A leaf whose
+// exact distance sits at or just above a radius D is never within D.
+void box_reach_bounds_distance() {
+  using phx::mc::remesh::box_reach;
+  using phx::mc::remesh::MeshSource;
+  using phx::mc::remesh::Triangle;
+  MeshSource mesh;
+  PHX_CHECK(mesh.bind({{-1, -1, 0}, {3, -1, 0}, {-1, 3, 0}, {0, 0, -1}},
+                      {Triangle{0, 2, 1}, Triangle{0, 1, 3}, Triangle{1, 2, 3},
+                       Triangle{2, 0, 3}}) == PHX_MC_OK);
+  const double at_point = box_reach(mesh, {0.25, 0.25, 0.1}, {0.25, 0.25, 0.1});
+  PHX_CHECK(at_point >= 0.1 && at_point <= 0.1 * (1 + 1e-14));
+  const double at_box = box_reach(mesh, {0.2, 0.2, 0.1}, {0.3, 0.3, 0.2});
+  PHX_CHECK(at_box >= 0.2 && at_box < 0.25);
+  // Exact distance 0.2 against D = 0.2 and D = next_down(0.2): not within.
+  PHX_CHECK(!(at_box < 0.2) && !(at_box < std::nextafter(0.2, 0.0)));
+  // A degenerate box is refused (+inf), never accepted.
+  PHX_CHECK(box_reach(mesh, {0.3, 0.2, 0.1}, {0.2, 0.3, 0.2}) == kInfinity);
+}
+
 }  // namespace
 
 int main() {
@@ -1303,5 +1362,6 @@ int main() {
   remesh_coarsening_absorbs_rosette();
   remesh_lens_crease();
   tube_cases();
+  box_reach_bounds_distance();
   return phx::mc::test::finish("test_zero_set_admission");
 }

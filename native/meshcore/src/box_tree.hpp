@@ -93,10 +93,15 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
 
 // The possible-zero leaves alone (no lattice vertices, no roots), each kept
 // box first offered to `accept`, if not null, which may stop it at any level
-// up to target_level (at most kMaximumLevel of the tree, 20). With a null
-// predicate the leaves are possible_zero_boxes'. Returns a PHX_MC status.
+// up to target_level (at most kMaximumLevel of the tree, 20). At most
+// `budget` (>= 1) boxes are evaluated over all levels: a level that would
+// exceed it is refused with PHX_MC_CAPACITY_EXCEEDED before it is evaluated.
+// `evaluated_boxes` receives the boxes evaluated. With a null predicate and
+// an unreached budget the leaves are possible_zero_boxes'. Returns a PHX_MC
+// status.
 int32_t possible_zero_leaves(const IntervalProgramView& interval, const double* lower,
                              const double* upper, int32_t target_level,
-                             const BoxAcceptance* accept, std::vector<DyadicLeaf>& leaves);
+                             const BoxAcceptance* accept, int64_t budget,
+                             int64_t& evaluated_boxes, std::vector<DyadicLeaf>& leaves);
 
 }  // namespace phx::mc

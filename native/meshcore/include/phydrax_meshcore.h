@@ -2004,30 +2004,38 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * box where the gradient enclosure is finite, f is Lipschitz with its
  * (Clarke) gradient in that enclosure: the entry does not check branch
  * evidence, so a select whose branches jump, with a finite gradient program,
- * breaks the proofs here. Once every triangle is
- * certified, the zero set -> surface direction is decided over the domain
- * box (lower xyz, upper xyz; finite, lower < upper): the tube of the surface
- * (zero_set_tube.hpp: segments y +- w(y) along interpolated vertex normals of
- * length edge_length, adapted by doubling or halving, on which f is strictly
- * monotone with one zero, and whose caps are at least rho from the surface)
- * holds every zero of f in it within `reverse` of the surface; every leaf of
- * the possible-zero cover of the domain (box_tree.hpp) must lie within rho
- * of the surface, a box being accepted at the first level where it does and
- * subdivided otherwise down to a target diameter of rho / 2, so every zero
- * of f in the domain lies in the tube. On PHX_MC_OK `result` owns the
- * certified surface (phx_mc_surface_result_*, with per-triangle carried
- * flags) and distances =
+ * breaks the proofs here. Once every triangle is certified, the zero set ->
+ * surface direction is decided over the domain box (lower xyz, upper xyz;
+ * finite, lower < upper) through the possible-zero cover of the domain
+ * (box_tree.hpp): every zero of f in the domain lies in a leaf, each kept box
+ * is accepted at the first level where an outward bound of its distance to
+ * the surface (box_reach, zero_set_tube.hpp) is below a radius D, and boxes
+ * are subdivided otherwise down to a target diameter of D / 2; with no leaf
+ * left outside, every zero lies within the largest accepted bound (< D).
+ * Two proofs: (1, tube) the tube of the surface (zero_set_tube.hpp: segments
+ * y +- w(y) along interpolated vertex normals of length edge_length, adapted
+ * by doubling or halving, on which f is strictly monotone with one zero, and
+ * whose caps are at least rho from the surface) holds every zero within its
+ * own bound, and the cover at D = rho puts every zero in the tube: `reverse`
+ * is the smaller of the two bounds; (2, cover) when the tube refuses or a
+ * leaf is left outside rho, the cover alone at D = `tolerance`, `reverse`
+ * its bound. On PHX_MC_OK `result` owns the certified surface
+ * (phx_mc_surface_result_*, with per-triangle carried flags) and distances =
  * (the maximum over the proved triangles, each at most `tolerance`, and,
  * for triangles accepted from the carrier, their witness diagonals, which
- * may exceed `tolerance`; `reverse`). A triangle left refused, a tube
- * triangle refused after its rounds, or a cover leaf outside rho of the
- * surface is PHX_MC_UNRESOLVED (no result). counters receives (triangle
- * certifications refused for transversality, refused for distance,
- * triangles refused for embedding, all over every round, carrier triangles
- * included; triangles accepted from the carrier; repair splits;
- * certification rounds run; tube triangles refused in its last round; cover
- * leaves not within rho, -1 when the cover's level would exceed the box
- * tree's limit) on PHX_MC_OK and PHX_MC_UNRESOLVED. */
+ * may exceed `tolerance`; `reverse`). A triangle left refused, or a cover
+ * leaf outside the tolerance after both proofs, is PHX_MC_UNRESOLVED (no
+ * result). Each cover run evaluates at most `cover_budget` (>= 1) boxes over
+ * all its levels; a run that would exceed it is refused (no leaf is
+ * accepted from it). counters receives ten entries (triangle certifications
+ * refused for transversality, refused for distance, triangles refused for
+ * embedding, all over every round, carrier triangles included; triangles
+ * accepted from the carrier; repair splits; certification rounds run; tube
+ * triangles refused in its last round; cover leaves left outside by the last
+ * cover run, -1 when its level would exceed the box tree's limit, -2 when it
+ * would exceed `cover_budget`; the proof used, 1 tube or 2 cover, 0 when
+ * none; the boxes evaluated by every cover run) on PHX_MC_OK and
+ * PHX_MC_UNRESOLVED. */
 typedef struct phx_mc_zero_set_certify_request {
   const double* vertices;
   int64_t vertex_count;
@@ -2045,6 +2053,7 @@ typedef struct phx_mc_zero_set_certify_request {
   const double* domain;
   double edge_length;
   double minimum_angle_degrees;
+  int64_t cover_budget;
   void** result;
   double* distances;
   int64_t* counters;

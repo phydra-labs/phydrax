@@ -935,6 +935,8 @@ def _zero_set_quality(
         "certified": 1.0,
         "certified_distance": certificate.distance,
         "certified_reverse_distance": certificate.reverse_distance,
+        "certified_reverse_proof": float(certificate.counters[8]),
+        "certified_cover_boxes": float(certificate.counters[9]),
     }
 
 

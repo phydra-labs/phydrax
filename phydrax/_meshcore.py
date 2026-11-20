@@ -574,6 +574,7 @@ class _ZeroSetCertifyRequest(ctypes.Structure):
         ("domain", _P),
         ("edge_length", _F64),
         ("minimum_angle_degrees", _F64),
+        ("cover_budget", _I64),
         ("result", _P),
         ("distances", _P),
         ("counters", _P),
@@ -5032,9 +5033,11 @@ class ZeroSetCertificate(NamedTuple):
     triangles refused for embedding, all over every round and carrier
     triangles included, the triangles accepted from the carrier, the repair
     splits, the certification rounds run, the tube triangles refused in its
-    last round and the cover leaves outside the tube's reach. ``carried``
-    (read-only bool, one per triangle) flags the triangles accepted from the
-    carrier.
+    last round, the cover leaves left outside by the last cover run (-1 past
+    the box tree's level limit, -2 past ``cover_budget``), the proof of
+    ``reverse_distance`` (1 tube, 2 cover) and the boxes the covers evaluated.
+    ``carried`` (read-only
+    bool, one per triangle) flags the triangles accepted from the carrier.
     """
 
     vertices: np.ndarray
@@ -5059,6 +5062,8 @@ def zero_set_certify(
     edge_length: float,
     minimum_angle_degrees: float,
     /,
+    *,
+    cover_budget: int = 1 << 23,
 ) -> ZeroSetCertificate:
     """Certify a ``zero_set_remesh`` result against ``{f = 0}``, repairing it locally.
 
@@ -5080,15 +5085,20 @@ def zero_set_certify(
     certified again, for at most four rounds.
 
     The zero set is then bounded against the surface over ``domain`` (a
-    ``(2, 3)`` lower/upper box): along segments ``y +- w(y)`` through the
-    surface (interpolated vertex normals of length ``edge_length``, adapted)
-    ``f`` is proved strictly monotone with one zero and caps clear of the
-    surface by ``rho``, and every leaf of the native possible-zero cover of
-    the domain must lie within ``rho`` of the surface, so every zero of ``f``
-    in the domain lies on such a segment, within ``reverse_distance`` of the
-    surface. A surface that is not a closed oriented 2-manifold raises
-    ``ValueError``; a triangle left refused, or a zero set the tube cannot
-    hold, raises ``MeshcoreError`` (``UNRESOLVED``) naming the refusals.
+    ``(2, 3)`` lower/upper box) through the native possible-zero cover of the
+    domain, which holds every zero of ``f`` in it: each kept box is accepted
+    once an outward bound of its distance to the surface is below a radius
+    ``D``. Proof 1 (tube): along segments ``y +- w(y)`` through the surface
+    (interpolated vertex normals of length ``edge_length``, adapted) ``f`` is
+    proved strictly monotone with one zero and caps clear of the surface by
+    ``rho``; the cover at ``D = rho`` puts every zero on such a segment, and
+    ``reverse_distance`` is the smaller of the tube's and the cover's bound.
+    Proof 2 (cover): when the tube refuses or a leaf is left outside ``rho``,
+    the cover alone at ``D = tolerance``. Each cover run evaluates at most
+    ``cover_budget`` boxes or is refused. A surface that is not a closed
+    oriented 2-manifold raises ``ValueError``; a triangle left refused, or a
+    zero set neither proof holds, raises ``MeshcoreError`` (``UNRESOLVED``)
+    naming the refusals.
     """
     if orientation not in (-1, 1):
         raise ValueError("orientation must be 1 or -1.")
@@ -5099,6 +5109,10 @@ def zero_set_certify(
         raise ValueError(
             "tolerance and edge_length must be positive, minimum_angle_degrees in (0, 60)."
         )
+    if isinstance(cover_budget, bool) or not isinstance(cover_budget, int):
+        raise TypeError("cover_budget must be an int.")
+    if cover_budget < 1:
+        raise ValueError("cover_budget must be positive.")
     points = np.ascontiguousarray(_points(vertices, "vertices", 3), dtype=np.float64)
     faces = _native_integer_array(
         _index_array(triangles, "triangles"), "triangles", np.dtype(np.int64)
@@ -5129,7 +5143,7 @@ def zero_set_certify(
     gradient_view, gradient_arrays = _interval_box_program(gradient, 3, "gradient")
     handle = ctypes.c_void_p()
     distances = np.zeros((2,), dtype=np.float64)
-    counters = np.zeros((8,), dtype=np.int64)
+    counters = np.zeros((10,), dtype=np.int64)
     request = _ZeroSetCertifyRequest(
         points.ctypes.data,
         points.shape[0],
@@ -5147,6 +5161,7 @@ def zero_set_certify(
         bounds.ctypes.data,
         float(edge_length),
         float(minimum_angle_degrees),
+        int(cover_budget),
         ctypes.addressof(handle),
         distances.ctypes.data,
         counters.ctypes.data,
@@ -5155,13 +5170,20 @@ def zero_set_certify(
     status = library["phx_mc_zero_set_certify"](ctypes.byref(request))
     del value_arrays, gradient_arrays  # kept alive through the native call
     if status == MeshcoreStatus.UNRESOLVED:
+        outside = int(counters[7])
+        cover = (
+            f"the zero-set cover exceeded its budget of {int(cover_budget)} boxes"
+            if outside == -2
+            else "the zero-set cover exceeded the box tree's level limit"
+            if outside == -1
+            else f"{outside} zero-set cover leaves left outside"
+        )
         raise MeshcoreError(
             MeshcoreStatus.UNRESOLVED,
             f"zero_set_certify left triangles refused after {int(counters[5])} rounds "
             f"and {int(counters[4])} repair splits ({int(counters[0])} refusals for "
             f"transversality, {int(counters[1])} for distance, {int(counters[2])} for "
-            f"embedding; {int(counters[6])} tube triangles refused, {int(counters[7])} "
-            "zero-set cover leaves outside the tube).",
+            f"embedding; {int(counters[6])} tube triangles refused, {cover}).",
         )
     _raise_for_call(status, "zero_set_certify")
     out_vertices, out_triangles, carried = _take_surface_result(
@@ -5175,6 +5197,8 @@ def zero_set_certify(
         or int(counters[3]) != int(np.count_nonzero(carried))
         or not np.isfinite(reverse)
         or reverse < 0.0
+        or int(counters[8]) not in (1, 2)
+        or (int(counters[8]) == 2 and not reverse < tolerance)
     ):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR,
