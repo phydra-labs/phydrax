@@ -655,10 +655,10 @@ class _ImproveResult(NamedTuple):
 
 
 def _improve(
-    points: np.ndarray, cells: np.ndarray, faces: np.ndarray, /
+    points: np.ndarray, cells: np.ndarray, faces: np.ndarray, dihedral: float, /
 ) -> _ImproveResult:
     # State creation on the given mesh with its boundary fixed, then
-    # improvement to radius-edge 2 and dihedral 20 degrees.
+    # improvement to radius-edge 2 and the given minimum dihedral.
     empty = np.empty((0,), dtype=np.int32)
     mesh = _meshcore.TetMesh3D(
         points,
@@ -670,7 +670,7 @@ def _improve(
         empty,
         boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED,
     )
-    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=20.0)
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=dihedral)
     if run.status not in (
         _meshcore.MeshcoreStatus.OK,
         _meshcore.MeshcoreStatus.UNRESOLVED,
@@ -701,29 +701,33 @@ def _improve_rows(directory: Path | None, /) -> tuple[_Row, ...]:
     # prepared by `benchmarks/native_meshing_mmg3d.py prepare DIR`, which also
     # times the reference (MMG3D -optim -nosurf, library time) on the same
     # input. Timed: state creation plus improvement; the row size is the
-    # input tetrahedron count.
+    # input tetrahedron count. The dihedral target of each size is the
+    # minimum dihedral MMG3D achieves on it (rounded up to 0.1 degree, kept
+    # with the ceiling), so the row is at equal or better quality.
     if directory is None:
         raise RuntimeError(
             "The improve-sphere rows need --improve-inputs DIR from "
             "`benchmarks/native_meshing_mmg3d.py prepare DIR`."
         )
+    targets = json.loads(_CEILINGS.read_text(encoding="utf-8"))["rows"]["improve-sphere"]
     rows: list[_Row] = []
     for level in (3, 4, 5):
         given = np.load(directory / f"improve-sphere-{level}.npz")
         points = np.ascontiguousarray(given["points"], dtype=np.float64)
         cells = np.ascontiguousarray(given["cells"], dtype=np.int32)
         faces = _boundary_faces(cells)
+        dihedral = float(targets[str(cells.shape[0])]["minimum_dihedral_degrees"])
         rows.append(
             _Row(
                 "improve-sphere",
                 cells.shape[0],
-                lambda points=points, cells=cells, faces=faces: _improve(
-                    points, cells, faces
+                lambda points=points, cells=cells, faces=faces, dihedral=dihedral: (
+                    _improve(points, cells, faces, dihedral)
                 ),
                 _improved_cells,
                 _improved_unmet,
-                quality=lambda result, points=points, faces=faces: _improved_quality(
-                    result, points, faces
+                quality=lambda result, points=points, faces=faces, dihedral=dihedral: (
+                    _improved_quality(result, points, faces, dihedral)
                 ),
             )
         )
@@ -745,9 +749,9 @@ def _improved_unmet(result: object, /) -> int:
 
 
 def _improved_quality(
-    result: object, given_points: np.ndarray, given_faces: np.ndarray, /
+    result: object, given_points: np.ndarray, given_faces: np.ndarray, target: float, /
 ) -> tuple[int, dict[str, float]]:
-    # Targets: minimum dihedral 20 degrees, radius-edge 2, the given closed
+    # Targets: the minimum dihedral `target`, radius-edge 2, the given closed
     # boundary kept exactly (FIXED: its triangles, by vertex coordinates), no
     # inverted cell (the input's positive orientation).
     arrays = _improved_result(result).mesh.arrays()
@@ -773,6 +777,7 @@ def _improved_quality(
     )
     inverted = int(np.sum(volume <= 0.0))
     measured = {
+        "target_dihedral_degrees": target,
         "minimum_dihedral_degrees": float(dihedral.min()),
         "maximum_dihedral_degrees": float(dihedral.max()),
         "maximum_radius_edge": float(radius_edge.max()),
@@ -780,7 +785,7 @@ def _improved_quality(
         "inverted": float(inverted),
     }
     missed = (
-        int(np.sum(np.min(dihedral, axis=1) < 20.0))
+        int(np.sum(np.min(dihedral, axis=1) < target))
         + int(np.sum(radius_edge > 2.0))
         + inverted
         + int(not closed)
