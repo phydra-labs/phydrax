@@ -53,6 +53,9 @@ class _Row:
     # Independent measurement of the last result (not timed): the number of
     # targets it misses, and the measured values.
     quality: Callable[[object], tuple[int, dict[str, float]]] = _no_quality
+    # The timed seconds of one run when the row times a stage of a larger
+    # call by the kernel's own stage clock; None times the whole call.
+    stage_seconds: Callable[[object], float] | None = None
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -250,6 +253,7 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
             ),
             _volume_rows,
         ),
+        (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
     )
     rows: list[_Row] = []
     for family, build in families:
@@ -513,6 +517,175 @@ def _volume_unmet(result: object, /) -> int:
     if not isinstance(result, _VolumeResult):
         raise TypeError("The volume row returns a _VolumeResult.")
     return result.unmet
+
+
+# Gmsh 4.15.2 HXT (2D=6, 3D=10) tetrahedra of the quadric at the same h, and
+# Netgen's optimized linear mesh under Curve(2), on the LIN machine (reference
+# report); the count band is reported, not enforced.
+_GMSH_QUADRIC_TETS = {0.2293: 1_054, 0.1061: 8_493, 0.04925: 75_913, 0.02286: 717_939}
+_NETGEN_QUADRIC_TETS = {0.1061: 6_095, 0.04925: 67_533}
+
+
+def _cad_rows() -> tuple[_Row, ...]:
+    # The repository's quadric fixture (z cylinder r 1, x cylinder r 0.6) as
+    # one native call: curves, faces, fixed-boundary volume (and P2 for the
+    # -p2 rows, timed by its stage clock against Netgen's Curve(2)). The row
+    # size is h in units of 1e-5.
+    import phydrax as phx
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
+
+    contract = phx.SpatialCoordinateContract.si()
+    vertical, transverse = (
+        phx.geometry.brep.brep_cylinder(
+            radius,
+            height,
+            base_center=base,
+            axis=axis,
+            coordinate_contract=contract,
+            source_id=f"qualification:native-cad-quadric-{name}",
+        )
+        for name, radius, height, base, axis in (
+            ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+            ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        )
+    )
+    solid = phx.geometry.brep.boolean_brep(
+        vertical,
+        transverse,
+        "intersection",
+        policy=phx.geometry.brep.BRepBooleanPolicy(),
+    ).model
+    model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+
+    def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        return _meshcore.cad_mesh_solid(
+            model,
+            np.full((faces,), size),
+            np.full((faces,), 0.4),
+            np.full((curves,), np.inf),
+            geometry_order=order,
+        )
+
+    rows: list[_Row] = []
+    for size, tets in _GMSH_QUADRIC_TETS.items():
+        rows.append(
+            _Row(
+                "cad-quadric",
+                round(size * 1e5),
+                lambda size=size: run(size, 1),
+                _cad_cells,
+                _cad_unmet,
+                quality=lambda result, tets=tets: _cad_quality(result, tets),
+            )
+        )
+    for size, tets in _NETGEN_QUADRIC_TETS.items():
+        rows.append(
+            _Row(
+                "cad-quadric-p2",
+                round(size * 1e5),
+                lambda size=size: run(size, 2),
+                _cad_cells,
+                _cad_unmet,
+                quality=lambda result, tets=tets: _cad_quality(result, tets),
+                stage_seconds=lambda result: (
+                    float(_cad_stats(result)["quadratic_ns"]) * 1e-9
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _cad_stats(result: object, /) -> Any:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    return result.volume.stats[0]
+
+
+def _cad_cells(result: object, /) -> int:
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    return result.volume.tetrahedra.shape[0]
+
+
+def _cad_unmet(result: object, /) -> int:
+    stats = _cad_stats(result)
+    quadratic = stats["quadratic"]
+    return int(
+        stats["unmet_cells"] + quadratic["final_invalid"] + quadratic["final_unresolved"]
+    )
+
+
+def _dihedral_degrees(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    corners = points[cells]
+    pairs = (
+        (0, 1, 2, 3),
+        (0, 2, 1, 3),
+        (0, 3, 1, 2),
+        (1, 2, 0, 3),
+        (1, 3, 0, 2),
+        (2, 3, 0, 1),
+    )
+    angles = []
+    for a, b, c, d in pairs:
+        # The dihedral at edge ab between faces abc and abd.
+        axis = corners[:, b] - corners[:, a]
+        axis /= np.linalg.norm(axis, axis=1, keepdims=True)
+        u = corners[:, c] - corners[:, a]
+        w = corners[:, d] - corners[:, a]
+        u -= np.sum(u * axis, axis=1, keepdims=True) * axis
+        w -= np.sum(w * axis, axis=1, keepdims=True) * axis
+        cosine = np.sum(u * w, axis=1) / (
+            np.linalg.norm(u, axis=1) * np.linalg.norm(w, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    return np.stack(angles, axis=1)
+
+
+def _radius_edge(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    corners = points[cells]
+    origin = corners[:, 0]
+    edges = corners[:, 1:] - origin[:, None, :]
+    rhs = 0.5 * np.sum(edges * edges, axis=2)
+    center = np.linalg.solve(edges, rhs[..., None])[..., 0]
+    radius = np.linalg.norm(center, axis=1)
+    index = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    shortest = np.min(
+        np.stack(
+            [np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in index],
+            axis=1,
+        ),
+        axis=1,
+    )
+    return radius / shortest
+
+
+def _cad_quality(result: object, reference_tets: int, /) -> tuple[int, dict[str, float]]:
+    # Dihedral range and radius-edge measured here; the tetrahedron count
+    # against the reference's (+-20 % band reported, not a target); the
+    # native stage times.
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    points, cells = result.volume.points, result.volume.tetrahedra
+    dihedral = _dihedral_degrees(points, cells)
+    radius_edge = _radius_edge(points, cells)
+    stats = _cad_stats(result)
+    measured = {
+        "minimum_dihedral_degrees": float(dihedral.min()),
+        "maximum_dihedral_degrees": float(dihedral.max()),
+        "maximum_radius_edge": float(radius_edge.max()),
+        "reference_tets": float(reference_tets),
+        "tets_over_reference": cells.shape[0] / reference_tets,
+        "surface_triangles": float(result.surface.triangles.shape[0]),
+        "boundary_splits": float(stats["boundary_splits"]),
+        **{
+            f"{stage}_seconds": float(stats[f"{stage}_ns"]) * 1e-9
+            for stage in ("curve", "face", "assembly", "volume", "quadratic")
+        },
+    }
+    missed = int(np.sum(np.min(dihedral, axis=1) < 15.5)) + int(np.sum(radius_edge > 2.0))
+    return missed, measured
 
 
 def _implicit_rows() -> tuple[_Row, ...]:
@@ -1036,7 +1209,9 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     result: object = None
     for _ in range(repeats):
         result, seconds = measure_host(row.run)
-        samples.append(seconds)
+        samples.append(
+            seconds if row.stage_seconds is None else row.stage_seconds(result)
+        )
     missed, quality = row.quality(result)
     if isinstance(result, _meshcore.ConstrainedDelaunay2D):
         quality = {**quality, "minimum_angle_degrees": _planar_minimum_angle(result)}

@@ -182,6 +182,7 @@ set(PHX_MC_HEADERS
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp
+  src/quadratic_validity_screen.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -318,4 +319,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_verify_cad_fidelity)
   phx_mc_add_test(test_cad_mesh)
   phx_mc_add_test(test_cad_curving)
+  phx_mc_add_test(test_cad_volume)
 endif()
