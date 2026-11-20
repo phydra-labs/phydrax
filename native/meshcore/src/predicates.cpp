@@ -595,11 +595,11 @@ bool insphere_integer(const double* const* p, const double* x, const double* y,
   return true;
 }
 
-int insphere_expansion(const double* const* p, const double* x, const double* y,
-                       const double* z, bool exact_differences, double permanent);
+InsphereDecision insphere_expansion(const double* const* p, const double* x, const double* y,
+                                    const double* z, bool exact_differences, double permanent);
 
 [[gnu::noinline, gnu::cold]]
-int insphere_adapt(const double* const* p, double permanent) {
+InsphereDecision insphere_adapt(const double* const* p, double permanent) {
   const double* e = p[4];
   double x[4], y[4], z[4];
   bool exact_differences = true;
@@ -612,7 +612,9 @@ int insphere_adapt(const double* const* p, double permanent) {
                         two_diff_tail(p[k][2], e[2], z[k]) == 0.0;
   }
   int integer_sign = 0;
-  if (insphere_integer(p, x, y, z, exact_differences, integer_sign)) return integer_sign;
+  if (insphere_integer(p, x, y, z, exact_differences, integer_sign)) {
+    return {integer_sign, InsphereStage::kInteger};
+  }
   return insphere_expansion(p, x, y, z, exact_differences, permanent);
 }
 
@@ -667,8 +669,8 @@ int insphere_lifted(double x, double y, double z, double sign, int length, const
 // tails, against isperrboundC. Stage D: the exact determinant of the exact
 // differences. Every sign is exact.
 [[gnu::noinline, gnu::cold]]
-int insphere_expansion(const double* const* p, const double* x, const double* y,
-                       const double* z, bool exact_differences, double permanent) {
+InsphereDecision insphere_expansion(const double* const* p, const double* x, const double* y,
+                                    const double* z, bool exact_differences, double permanent) {
   const double* e = p[4];
   double ab[kInspherePairTerms], bc[kInspherePairTerms], cd[kInspherePairTerms];
   double da[kInspherePairTerms], ac[kInspherePairTerms], bd[kInspherePairTerms];
@@ -701,10 +703,10 @@ int insphere_expansion(const double* const* p, const double* x, const double* y,
   for (int k = 0; k < totallen; ++k) estimate += total[k];
   const double errbound = kIspErrBoundB * permanent;
   if (estimate >= errbound || -estimate >= errbound) {
-    return sign_of(estimate);
+    return {sign_of(estimate), InsphereStage::kB};
   }
   if (exact_differences) {
-    return sign_of(total[totallen - 1]);
+    return {sign_of(total[totallen - 1]), InsphereStage::kBExact};
   }
   // Stage C: the stage-B estimate plus the first-order terms in the
   // difference tails, against isperrboundC (Shewchuk's insphereadapt; ab3
@@ -755,7 +757,7 @@ int insphere_expansion(const double* const* p, const double* x, const double* y,
                (cex * cextail + cey * ceytail + cez * ceztail) *
                    (dez * ab3 + aez * bd3 + bez * da3))));
   if (det >= errbound_c || -det >= errbound_c) {
-    return sign_of(det);
+    return {sign_of(det), InsphereStage::kC};
   }
   Expansion rx[4], ry[4], rz[4], lift[4];
   for (int k = 0; k < 4; ++k) {
@@ -764,10 +766,12 @@ int insphere_expansion(const double* const* p, const double* x, const double* y,
     rz[k] = Expansion::difference(p[k][2], e[2]);
     lift[k] = rx[k] * rx[k] + ry[k] * ry[k] + rz[k] * rz[k];
   }
-  return lifted3_rows(rx, ry, rz, lift).sign();
+  return {lifted3_rows(rx, ry, rz, lift).sign(), InsphereStage::kD};
 }
 
-int insphere_shewchuk(const double* const* p) {
+// Shewchuk's insphere (his sign: positive when e lies outside), with the
+// deciding stage.
+InsphereDecision insphere_shewchuk(const double* const* p) {
   const double* e = p[4];
   const double aex = p[0][0] - e[0], bex = p[1][0] - e[0], cex = p[2][0] - e[0], dex = p[3][0] - e[0];
   const double aey = p[0][1] - e[1], bey = p[1][1] - e[1], cey = p[2][1] - e[1], dey = p[3][1] - e[1];
@@ -821,7 +825,7 @@ int insphere_shewchuk(const double* const* p) {
           dlift;
   const double errbound = kIspErrBoundA * permanent;
   if (det > errbound || -det > errbound) {
-    return sign_of(det);
+    return {sign_of(det), InsphereStage::kA};
   }
   return insphere_adapt(p, permanent);
 }
@@ -1120,9 +1124,16 @@ int incircle(const double* a, const double* b, const double* c, const double* d)
   return incircle_staged(a, b, c, d).sign;
 }
 
+InsphereDecision insphere_decision(const double* a, const double* b, const double* c,
+                                   const double* d, const double* e) {
+  const double* p[5] = {a, b, c, d, e};
+  const InsphereDecision decision = insphere_shewchuk(p);
+  return {-decision.sign, decision.stage};
+}
+
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e) {
   const double* p[5] = {a, b, c, d, e};
-  return -insphere_shewchuk(p);
+  return -insphere_shewchuk(p).sign;
 }
 
 int power2d(const double* a, const double* b, const double* c, const double* d, double wa,
