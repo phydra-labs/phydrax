@@ -1069,7 +1069,7 @@ def _rational_spline_line_gap_squared(
             upper_uv,
         )
         interpolation = _exact_rational_span_interpolation_bounds(
-            spans, (chart_triangle,)
+            spans, (chart_triangle,), surface
         )
         if interpolation.shape != (1,) or not np.isfinite(interpolation[0]):
             return None

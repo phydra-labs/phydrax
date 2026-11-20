@@ -79,6 +79,17 @@ CadRefine2DResult run(const Fixture& f,CadMetric2DFunction metric,void* context,
   in.metric=metric; in.metric_context=context; in.point_cap=cap;
   CadRefine2DResult result;
   status=cad_refine2d(in,result);
+  PHX_CHECK(result.stats.relocations_tried==result.stats.relocations_accepted+result.stats.relocations_failed);
+  // Fault caught: retaining transient refusal evidence after successful refinement.
+  if(status==PHX_MC_OK) PHX_CHECK(result.unresolved.empty());
+  if(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED) {
+    PHX_CHECK(result.unresolved.size()==static_cast<std::size_t>(result.stats.unresolved_triangles));
+    int32_t previous=-1;
+    for(const auto& evidence:result.unresolved) {
+      PHX_CHECK(evidence.triangle>previous && (evidence.bad_size || evidence.bad_angle));
+      previous=evidence.triangle;
+    }
+  }
   return result;
 }
 void report_refusals(const char* name,int32_t status,const CadRefine2DResult& r) {
@@ -373,7 +384,21 @@ void fixed_pole_zone() {
   in.fixed_vertices=fixed.data(); in.admit_point=pole_admit; in.admit_context=&probe;
   CadRefine2DResult result;
   const int status=cad_refine2d(in,result);
-  PHX_CHECK(status==PHX_MC_OK || status==PHX_MC_UNRESOLVED);
+  std::printf("fixed-pole status=%d unresolved=%ld refusals=%ld/%ld/%ld/%ld/%ld\n",
+              status,result.stats.unresolved_triangles,result.stats.encroachment_refusals,
+              result.stats.outside_refusals,result.stats.proximity_refusals,
+              result.stats.nonstar_refusals,result.stats.excluded_refusals);
+  // Fault caught: a changed fixed-zone refusal outcome or missing final evidence.
+  PHX_CHECK(status==PHX_MC_UNRESOLVED && result.stats.unresolved_triangles==21);
+  PHX_CHECK(result.stats.encroachment_refusals==9 && result.stats.outside_refusals==1 &&
+            result.stats.proximity_refusals==0 && result.stats.nonstar_refusals==0 &&
+            result.stats.excluded_refusals==18);
+  PHX_CHECK(result.unresolved.size()==21);
+  for(const auto& e:result.unresolved) {
+    PHX_CHECK(e.bad_size || e.bad_angle);
+    if(e.refusal==CadRefine2DRefusal::encroachment)
+      PHX_CHECK(e.segment>=0 && e.segment<in.segment_count && e.relocation_failed);
+  }
   int64_t excluded=0;
   for(const auto& p:probe.candidates) excluded+=std::hypot(p[0],p[1])<0.9 || p[0]>2;
   // Fault caught: skipping candidate admission or counting a different refusal.
@@ -445,6 +470,32 @@ void permutation_invariance() {
     PHX_CHECK(std::memcmp(a_cells.data(),b_cells.data(),a_cells.size()*sizeof(a_cells[0]))==0);
 }
 
+void blocked_boundary_evidence() {
+  const double points[]={0,0,4,0,4,1,3.9,1,0,1};
+  const int32_t segments[]={2,3,0,1};
+  CadMetric2D m{1,0,1};
+  CadRefine2DInput in;
+  in.points=points; in.point_count=5; in.segments=segments; in.segment_count=2;
+  in.keep_convex_hull=true; in.metric=constant; in.metric_context=&m; in.point_cap=1000;
+  CadRefine2DResult result;
+  const int32_t status=cad_refine2d(in,result);
+  PHX_CHECK(status==PHX_MC_UNRESOLVED);
+  int observed=0;
+  for(const auto& e:result.unresolved) if(e.refusal==CadRefine2DRefusal::encroachment) {
+    ++observed;
+    // Fault caught: returning a BVH position instead of the input segment index.
+    PHX_CHECK(e.segment==1);
+    PHX_CHECK(e.relocation_failed);
+    // Independent Euclidean diametral-lens test for the blocked bottom segment.
+    PHX_CHECK((e.candidate[0]-points[0])*(e.candidate[0]-points[2])+
+              (e.candidate[1]-points[1])*(e.candidate[1]-points[3])<0);
+    PHX_CHECK(e.triangle>=0 && static_cast<std::size_t>(e.triangle)<result.triangulation.triangles.size());
+    PHX_CHECK(e.bad_size || e.bad_angle);
+  }
+  PHX_CHECK(observed>0);
+  PHX_CHECK(result.unresolved.size()==static_cast<std::size_t>(result.stats.unresolved_triangles));
+}
+
 }  // namespace
 
 int main() {
@@ -457,19 +508,26 @@ int main() {
   adversarial_metrics();
   fixed_pole_zone();
   permutation_invariance();
+  blocked_boundary_evidence();
   const Fixture f=rectangle(6,6,6,6);
   int32_t status;
   auto r=run(f,height_field,nullptr,status);
   report_refusals("height-field",status,r);
-  PHX_CHECK(status==PHX_MC_OK || (status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles>0));
+  // Fault caught: a height-field chart regressing from resolved to unresolved.
+  PHX_CHECK(status==PHX_MC_OK && r.stats.unresolved_triangles==0 &&
+            r.stats.encroachment_refusals==0 && r.stats.outside_refusals==0 &&
+            r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
+            r.unresolved.empty());
   check_topology(f,r);
   r=run(f,gradient,nullptr,status);
   report_refusals("gradient",status,r);
-  // Fault caught: a silently resolved or differently refused long boundary.
+  // Fault caught: failing to relocate any candidate blocked by a fixed segment,
+  // or dropping the remaining failed-relocation evidence.
   PHX_CHECK(status==PHX_MC_UNRESOLVED);
-  PHX_CHECK(r.stats.encroachment_refusals==21);
-  PHX_CHECK(r.stats.outside_refusals==0 && r.stats.proximity_refusals==0 &&
-            r.stats.nonstar_refusals==0 && r.stats.unresolved_triangles>0);
+  PHX_CHECK(r.stats.encroachment_refusals==6 && r.stats.outside_refusals==4);
+  PHX_CHECK(r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0 &&
+            r.stats.unresolved_triangles>0 && r.stats.relocations_accepted>0 &&
+            r.stats.relocations_failed>0);
   check_topology(f,r);
   Fixture fine=rectangle(6,6,24,24);
   r=run(fine,graded_identity,&fine,status);

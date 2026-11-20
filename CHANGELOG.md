@@ -1843,15 +1843,39 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The surface certifiers refuse coordinates outside the exact predicates'
+  domain before contact classification, and the surface-remesh benchmark rows
+  run `zero_set_certify` in their untimed quality stage (a refusal or an
+  unresolved result is a miss).
+- The mesh-source distance certificate (`mesh_certify`) is rigorous: coverage
+  decisions use exact orientation tests, overlap vertices and crossing
+  parameters carry certified error enclosures, affine maps are formed only
+  when the stage-A determinant interval excludes zero (ill-conditioned maps
+  refuse), and every non-finite value refuses instead of being dropped.
+- Fixed spline source interpolation certificates at interior C0 knot lines:
+  a chart triangle crossing a knot line of multiplicity at least the degree
+  (rational: decided from knots and weights) is clipped exactly into smooth
+  pieces whose vertex residuals are enclosed, instead of using one Hessian
+  bound across the crease (which could certify 0 for a distance of 1).
+  Possible discontinuities, non-triangular cells across such a line and
+  T-spline Hessian bounds without a C1 certificate are refused. Declared
+  identity change: fidelity certificate ids and cover ids can change where
+  decisions change, and stored deformation records or certificates of charts
+  crossing such knots must be regenerated.
 - The native volume verifier, the PLC recovery contact grid and the surface
   certifier range-check grid quotients before converting them to integers: an
   accepted coordinate range near the exact-predicate limits previously made
   the cast undefined and could drop contact pairs from the embedding proof.
-- Native code builds without GCC 13 flow-analysis warnings
-  (`Expansion::inline_`, `metric_goal`, `implicit_polygon`,
-  `interval_simplex_restrict`): the invariants are local and visible.
+- Native code builds without GCC 13 flow-analysis warnings (confirmed with GCC
+  13.3) and without GCC 16 `-Wall -Wextra` warnings: expansion copies, hull
+  projection, implicit contour templates, interval simplex compositions,
+  revolution jets and triangle clipping keep their invariants local; behavior
+  unchanged.
 - `test_predicates` places inputs just below and just above every filter and
-  adaptive-stage error bound of the orientation and in-circle predicates.
+  adaptive-stage error bound of the orientation and in-circle predicates, and
+  a perturbed sliver sheet exercises fixed-boundary Steiner suppression, the
+  search budget's accounting and peeling after an inconclusive search end to
+  end (native and through `generate_plc_volume`).
 - Fixed welded mesh audits reporting certain self-intersections for disjoint
   coplanar triangles when the floating-point normal cancels.
 - Fixed the native CAD qualification intersection evidence reporting a p-curve

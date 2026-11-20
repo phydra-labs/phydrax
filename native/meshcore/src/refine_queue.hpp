@@ -61,16 +61,21 @@ class SpatialRefinementQueue {
       const int ix = std::min(static_cast<int>(u * buckets_), buckets_ - 1);
       const int iy = std::min(static_cast<int>(v * buckets_), buckets_ - 1);
       bucket = iy * buckets_ + ix;
+      if (entries_[bucket].empty()) entries_[bucket].reserve_small();
     }
     entries_[bucket].push(entry);
     current_ = std::min(current_, bucket);
   }
 
  private:
+  struct Bucket : std::priority_queue<Entry, std::vector<Entry>, Worse> {
+    // Avoid repeated tiny allocations when a spatial bucket is first used.
+    void reserve_small() { this->c.reserve(4); }
+  };
   double xmin_, ymin_, dx_, dy_;
   int buckets_;
   int current_;
-  std::array<std::priority_queue<Entry, std::vector<Entry>, Worse>, 256> entries_;
+  std::array<Bucket, 256> entries_;
 };
 
 }  // namespace phx::mc

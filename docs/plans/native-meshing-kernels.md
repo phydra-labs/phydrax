@@ -19,6 +19,9 @@ tetrahedra, then implicit volumes, then the CAD solid.
   arithmetic only inside filtered predicates.
 - Certification is a separate verifier over (mesh, source, tolerances) and reports pass, fail with
   findings, or unresolved.
+- A certifier counts only after an independent read-only review of its proof (Nov 20: the first three
+  reviewed, `mesh_certify`, `zero_set_certify` and `verify_volume`, each had a soundness defect, all
+  fixed). Rows certified by an unreviewed certifier are construction rows with sampled quality.
 - Every replaced route is a clean cutover: callers, tests, docs, changelog, generated data in the same
   change; no compatibility path.
 - Determinism: the output depends on the input only (not on thread count or timing).
@@ -55,6 +58,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   inputs (canonicalized).
 - Acceptance: 3D Delaunay at 1e6 points at most 1.8x CGAL (ledger: CGAL 3.26 s, ours 9.08 s); 2D at
   most 2x CGAL.
+- Status (Nov 20, quiet macOS acceptance, references re-measured back to back): ACCEPTED. 2D 0.87-0.92x
+  CGAL, 3D 0.88-0.93x, regular 0.95-0.99x CGAL Regular_3, periodic 0.43-0.63x CGAL Periodic_3 (direct
+  covering-space engine; declared margin change), 1e3-1e6. Output canonicalization stayed mandatory for
+  every caller (linear-time instead of an option).
 
 ### S0-C Flat tetrahedral state
 - `native/meshcore/src/tet_mesh.hpp`, `tet_mesh_state.cpp`, `tet_mesh_capi.cpp`: cells, neighbors,
@@ -90,6 +97,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: refinement plus improvement at or above Gmsh HXT single thread (0.34 / 0.63 / 0.77 M tets/s
   on sphere / torus / two cylinders at about 0.8 M tets) with minimum dihedral at least 15 degrees and
   radius-edge at most 2.
+- Status (Nov 20, quiet macOS acceptance against Gmsh HXT on the same surfaces): ACCEPTED. Sphere
+  0.54 / 0.65x, stuffed torus 0.95 / 0.91x, grid torus 0.64 / 0.62x; recovery 0.35-0.61x CGAL CDT_3.
+  The stuffed-torus rows reopen when S1 replaces stuffing (their inputs are regenerated from the
+  restricted-Delaunay surface) and are re-measured in the next quiet window.
 
 ### S3-C One-call pipeline and certification
 - Pipeline (decided Nov 19, superseding a separate `surface_to_tets.cpp` / `phx_mc_surface_to_tets`

@@ -11,6 +11,7 @@
 #include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
+#include "predicates.hpp"
 
 namespace phx::mc::remesh {
 
@@ -215,10 +216,12 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
   double extents = 0;
   size_t counted = 0;
   for (size_t t = 0; t < m; ++t) {
+    // Exact classification (collinearity, contacts) holds only for
+    // coordinates in the predicates' domain; others are refused unread.
     bool ok = true;
     for (size_t k = 0; k < 3; ++k) {
       corners[t][k] = points[static_cast<size_t>(triangles[t][k])];
-      for (int d = 0; d < 3; ++d) ok = ok && std::isfinite(corners[t][k][d]);
+      for (int d = 0; d < 3; ++d) ok = ok && phx::mc::coordinate_in_domain(corners[t][k][d]);
     }
     if (!ok || phx::mc::geometry::collinear(corners[t][0], corners[t][1], corners[t][2])) {
       refused[t] = 1;

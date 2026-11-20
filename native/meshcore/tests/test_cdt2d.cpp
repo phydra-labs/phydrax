@@ -317,6 +317,22 @@ void check_quality(const Result& r, double min_angle, double max_area) {
   }
 }
 
+void test_cavity_legalization_predicate_order() {
+  const double w[2] = {0.0, 0.0}, u[2] = {1.0, 0.0}, x[2] = {0.0, 1.0};
+  const std::array<std::array<double, 2>, 3> candidates = {{
+      {{0.75, 0.75}}, {{1.25, 1.25}}, {{1.0, 1.0}},
+  }};
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const double* m = candidates[i].data();
+    const int cavity = incircle_sos(w, u, x, m, 0, 1, 2, 3);
+    const int legalize = incircle_sos(m, u, w, x, 3, 1, 0, 2);
+    PHX_CHECK(cavity == legalize);
+    PHX_CHECK(cavity != 0);
+    if (i == 0) PHX_CHECK(cavity > 0);
+    if (i == 1) PHX_CHECK(cavity < 0);
+  }
+}
+
 void test_ghost_layout() {
   // Begin with one triangle, then insert outside each side and on hull edges.
   const std::vector<double> points = {
@@ -375,6 +391,15 @@ void test_spatial_queue_order() {
   };
   PHX_CHECK((sequence(false) == std::vector<int>{1, 0, 3, 2}));
   PHX_CHECK(sequence(false) == sequence(true));
+  SpatialRefinementQueue<Entry, Worse> spatial(0.0, 0.0, 1.0, 1.0, 10000.0, 4);
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int i = 0; i < 10; ++i) spatial.push({i, i}, 0.1, 0.1);
+    for (int i = 9; i >= 0; --i) {
+      PHX_CHECK(spatial.top().id == i);
+      spatial.pop();
+    }
+    PHX_CHECK(spatial.empty());
+  }
   SpatialRefinementQueue<Entry, Worse> single(0.0, 0.0, 1.0, 1.0, 10.0, 4);
   PHX_CHECK(!single.spatial());
   single.push({2, 0});
@@ -476,6 +501,22 @@ void test_ruppert_square() {
   PHX_CHECK_NEAR(total_area(r), 1.0, 1e-12);
   PHX_CHECK(r.points.size() / 2 > 4);
   for (int i = 0; i < 8; ++i) PHX_CHECK(r.points[i] == in.points[i]);
+}
+
+void test_refinement_angle_thresholds() {
+  for (const double min_angle : {24.9, 25.0, 25.1}) {
+    for (const double max_area : {0.04, kInf}) {
+      Input in;
+      in.points = {0, 0, 1, 0, 1, 1, 0, 1, 0.51, 0.28};
+      in.segments = {0, 1, 1, 2, 2, 3, 3, 0};
+      in.min_angle = min_angle;
+      in.max_area = max_area;
+      const Result r = run(in);
+      PHX_CHECK(r.status == PHX_MC_OK);
+      check_mesh(r);
+      check_quality(r, min_angle, max_area);
+    }
+  }
 }
 
 void test_ruppert_l_shape() {
@@ -731,9 +772,11 @@ int main() {
   test_lattice_segments();
   test_hole_carving();
   test_ghost_layout();
+  test_cavity_legalization_predicate_order();
   test_refinement_determinism();
   test_spatial_queue_order();
   test_ruppert_square();
+  test_refinement_angle_thresholds();
   test_ruppert_l_shape();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();
