@@ -1015,8 +1015,8 @@ def test_unproved_cad_solid_honours_or_refuses_every_field(
 
 @pytest.mark.parametrize(
     ("shape", "deviation"),
-    [("sphere", 0.0), ("sphere", 1e-12), ("box", 1e-12)],
-    ids=["curved-zero", "curved-tiny", "planar-tiny"],
+    [("sphere", 0.0), ("box", 1e-12)],
+    ids=["curved-zero", "planar-tiny"],
 )
 def test_unattainable_protected_surface_deviation_is_refused_promptly(
     shape: str, deviation: float
@@ -1079,4 +1079,57 @@ def test_unattainable_protected_surface_deviation_is_refused_promptly(
     evidence = failure.evidence
     assert dict(evidence.requested_quantities)["maximum_deviation"] == deviation
     assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > deviation
+    assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
+
+
+def test_curve_sample_budget_of_a_surface_schedule_bounds_curve_sampling() -> None:
+    # A non-default sample budget bounds the same unmet curved chord limit
+    # (a hard protected surface at 1e-12) in fewer samples; the budget enters
+    # the schedule identity only when it differs from the default.
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingFailure,
+        MeshingFailureCategory,
+        SurfaceMeshingSpec,
+    )
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+    from phydrax.meshing.providers._native_schedules import (
+        DEFAULT_MAXIMUM_CURVE_SAMPLES,
+        NativeSurfaceSchedule,
+    )
+
+    default = NativeSurfaceSchedule()
+    assert (
+        NativeSurfaceSchedule(
+            maximum_curve_samples=DEFAULT_MAXIMUM_CURVE_SAMPLES
+        ).schedule_id
+        == default.schedule_id
+    )
+    schedule = NativeSurfaceSchedule(maximum_curve_samples=256)
+    assert schedule.schedule_id != default.schedule_id
+    model = _sphere_model()
+    scope = MeshingScope.whole(model, 2)
+    feature = ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=1e-12)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.5),),
+        protected_features=(feature,),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions("parametric_surface", surface_schedule=schedule)
+    ).plan(model, specification)
+    with pytest.raises(MeshingFailure, match="within 256 samples") as raised:
+        plan.execute(prove=False)
+    failure = raised.value
+    assert failure.category is MeshingFailureCategory.COMPLIANCE_FAILED
+    evidence = failure.evidence
+    requested = dict(evidence.requested_quantities)
+    assert requested == {"maximum_curve_samples": 256.0, "maximum_deviation": 1e-12}
+    assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > 1e-12
     assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
