@@ -29,7 +29,15 @@ from .._certification_schedule import MeshCertificationSchedule
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
-from ._native_surface import _PreparedNativeSurface
+
+
+NATIVE_CAD_SOLID_UNCERTIFIABLE = (
+    "This CAD solid was constructed by the native cad_mesh_solid route, whose "
+    "certification needs the native verifiers (V4 chart partition, V2 surface "
+    "embedding, V3 CAD fidelity) that are not yet accepted; no witness of this "
+    "mesh exists. execute(prove=True) constructs and proves the Python CAD "
+    "volume instead."
+)
 
 
 if TYPE_CHECKING:
@@ -48,11 +56,10 @@ def cad_solid_support_issues(
     issues: list[str] = []
     if prepared.specification.layer_controls:
         issues.append("layer controls take the layer/core route")
-    boundary = prepared.boundary_preparation
-    if not isinstance(boundary, _PreparedNativeSurface) or boundary.selected_patches != (
-        tuple(range(len(prepared.domain.patches)))
+    if prepared.boundary_request.selected_patches != tuple(
+        range(len(prepared.domain.patches))
     ):
-        issues.append("the boundary preparation does not size every source face")
+        issues.append("the boundary request does not size every source face")
     issues.extend(cad_bundle_support_issues(prepared.domain))
     return tuple(issues)
 
@@ -101,10 +108,9 @@ def execute_cad_solid(
     specification = prepared.specification
     schedule = prepared.options.volume_schedule
     deviation = specification.maximum_deviation
-    boundary = prepared.boundary_preparation
+    boundary = prepared.boundary_request
     if schedule is None or deviation is None or cad_solid_support_issues(prepared):
         raise ValueError("The prepared CAD volume has no native unproved route.")
-    assert isinstance(boundary, _PreparedNativeSurface)
     domain.require_current(domain.source_id, domain.source_revision)
     sizes = np.asarray(boundary.size_values, dtype=np.float64)
     model = cad_geometry_bundle(domain).model
@@ -172,7 +178,12 @@ def execute_cad_solid(
         compliance,
         certification,
         geometry=geometry,
+        uncertifiable=NATIVE_CAD_SOLID_UNCERTIFIABLE,
     )
 
 
-__all__ = ["cad_solid_support_issues", "execute_cad_solid"]
+__all__ = [
+    "NATIVE_CAD_SOLID_UNCERTIFIABLE",
+    "cad_solid_support_issues",
+    "execute_cad_solid",
+]

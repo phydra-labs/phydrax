@@ -662,3 +662,39 @@ def test_proved_quadratic_cad_solid_is_refused() -> None:
     plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
     with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
         plan.execute()
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_native_cad_candidate_prove_is_refused(order: int) -> None:
+    # Until the native verifiers are accepted, a native candidate has no
+    # witness: prove() refuses it rather than certify it or rebuild the
+    # Python mesh.
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing.providers._native_cad_mesh import (
+        NATIVE_CAD_SOLID_UNCERTIFIABLE,
+    )
+
+    candidate = _cad_volume_plan(_sphere_model(), 0.3, order).execute(prove=False)
+    with pytest.raises(MeshingFailure) as failure:
+        candidate.prove()
+    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
+    assert str(failure.value) == NATIVE_CAD_SOLID_UNCERTIFIABLE
+    assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
+
+
+def test_cad_volume_proof_preparation_is_lazy() -> None:
+    # Planning and prove=False never prepare the trim cover or chart roots;
+    # the first proved execution prepares them once.
+    from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
+
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
+    prepared = plan.prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    plan.execute(prove=False)
+    assert prepared.boundary_proof._prepared is None
+    plan.execute()
+    proof = prepared.boundary_proof._prepared
+    assert proof is not None
+    assert proof.size_values is prepared.boundary_request.size_values
+    plan.execute()
+    assert prepared.boundary_proof._prepared is proof
