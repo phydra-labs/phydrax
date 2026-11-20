@@ -428,7 +428,12 @@ int32_t triangulate_planar_loop(
 
 class SourcePreparer {
  public:
-  SourcePreparer(const PlcInput& input, PlcRecovery& output) : input_(input), output_(output) {}
+  // `defer_contacts`: check_contacts is left to the caller, which runs it
+  // before acting on any later outcome unless it proves every contact legal
+  // (recover_plc); a closure failure here still reports a contact failure
+  // first, as the undeferred order does.
+  SourcePreparer(const PlcInput& input, PlcRecovery& output, bool defer_contacts = false)
+      : input_(input), output_(output), defer_contacts_(defer_contacts) {}
 
   int32_t run() {
     const int32_t shape = validate_shape();
@@ -450,10 +455,18 @@ class SourcePreparer {
     build_groups();
     const int32_t edges = build_edges();
     if (edges != PHX_MC_OK) return edges;
-    const int32_t contacts = check_contacts();
-    if (contacts != PHX_MC_OK) return contacts;
+    if (!defer_contacts_) {
+      const int32_t contacts = check_contacts();
+      if (contacts != PHX_MC_OK) return contacts;
+    }
     const int32_t closure = check_closure();
-    if (closure != PHX_MC_OK) return closure;
+    if (closure != PHX_MC_OK) {
+      if (defer_contacts_) {
+        const int32_t contacts = check_contacts();
+        if (contacts != PHX_MC_OK) return contacts;
+      }
+      return closure;
+    }
     publish_source();
     return PHX_MC_OK;
   }
@@ -851,6 +864,7 @@ class SourcePreparer {
     return PHX_MC_OK;
   }
 
+ public:
   // Every pair of items (triangles, segments, and points no triangle or
   // segment uses) whose closed boxes overlap is tested exactly (legal_pair).
   // An illegal input reports its first illegal pair in the order of a sweep
@@ -916,6 +930,7 @@ class SourcePreparer {
                 first_kind, first_entity, second_kind, second_entity);
   }
 
+ private:
   // Visits every pair (i, j), i < j, of `items` whose closed boxes overlap,
   // once, through a uniform grid of cells of the median item extent: two
   // overlapping boxes both meet the cell of the larger lower corner on each
@@ -1237,6 +1252,7 @@ class SourcePreparer {
 
   const PlcInput& input_;
   PlcRecovery& output_;
+  const bool defer_contacts_;
   std::vector<Triple> triangles_;
   std::vector<int32_t> triangle_polygon_;
   std::vector<int32_t> triangle_facet_;
@@ -1446,6 +1462,7 @@ class SourceFaceTable {
     }
   }
   std::set<Triple>& unverified() { return unverified_; }
+  std::size_t size() const { return faces_.size(); }
 
  private:
   struct Entry {
@@ -1663,34 +1680,72 @@ class PlcRecoveryBuilder {
   }
 
 
-  int32_t run(PlcRecovery& output) {
+  // `check_contacts`: the source contact check the preparation deferred
+  // (empty: it ran there). It runs before the first recovery edit unless the
+  // source conforms to the first triangulation (conforming_faces), which
+  // proves every contact legal; contacts_settled() tells whether that point
+  // was reached.
+  int32_t run(PlcRecovery& output, const std::function<int32_t()>& check_contacts) {
     if (!initialize_points()) return status_;
-    for (;;) {
-      const bool reuse_incremental = incremental_triangulation_ready_;
-      incremental_triangulation_ready_ = false;
-      if (!reuse_incremental) {
-        status_ = build_triangulation();
-        if (status_ != PHX_MC_OK) return status_;
+    status_ = build_triangulation();
+    if (status_ != PHX_MC_OK) return status_;
+    std::vector<ConformingFace> conforming;
+    const bool conforms = conforming_faces(conforming);
+    contacts_settled_ = true;
+    if (!conforms && check_contacts) {
+      status_ = check_contacts();
+      if (status_ != PHX_MC_OK) {
+        contact_failure_ = true;
+        return status_;
       }
-      bool restart = false;
-      status_ = recover_source_edges(restart);
-      if (status_ != PHX_MC_OK) return status_;
-      if (restart) continue;
-      status_ = recover_source_faces(restart);
-      if (status_ != PHX_MC_OK) return status_;
-      if (!restart) break;
+    }
+    if (conforms) {
+      // Every subface is a face of the complex and every chain row an edge
+      // of one, so recovery would only label them (mark_source_faces).
+      TetrahedralComplex& complex = triangulation_->complex();
+      for (const ConformingFace& face : conforming) {
+        complex.set_facet_constraint(face.cell, face.slot, face.facet);
+      }
+    } else {
+      index_candidate_points();
+      track_complex();
+      incremental_triangulation_ready_ = true;
+      for (;;) {
+        const bool reuse_incremental = incremental_triangulation_ready_;
+        incremental_triangulation_ready_ = false;
+        if (!reuse_incremental) {
+          status_ = build_triangulation();
+          if (status_ != PHX_MC_OK) return status_;
+          track_complex();
+        }
+        bool restart = false;
+        status_ = recover_source_edges(restart);
+        if (status_ != PHX_MC_OK) return status_;
+        if (restart) continue;
+        status_ = recover_source_faces(restart);
+        if (status_ != PHX_MC_OK) return status_;
+        if (!restart) break;
+      }
     }
     status_ = suppress_witnessed_vertices();
     if (status_ != PHX_MC_OK) return status_;
     status_ = classify_regions();
     if (status_ != PHX_MC_OK) return status_;
-    status_ = check_embedded_entities();
-    if (status_ != PHX_MC_OK) return status_;
+    if (!conforms || !conforming_embedded(conforming)) {
+      if (conforms) track_complex();
+      status_ = check_embedded_entities();
+      if (status_ != PHX_MC_OK) return status_;
+    }
     publish();
     if (status_ != PHX_MC_OK) return status_;
     output = std::move(candidate_);
     return PHX_MC_OK;
   }
+
+  bool contacts_settled() const { return contacts_settled_; }
+  // Whether run failed on the deferred contact check (the failure is the
+  // preparation's).
+  bool contact_failure() const { return contact_failure_; }
 
   const PlcSourceRefusal& source_refusal() const { return candidate_.source_refusal; }
   // The failure, with a hidden internal edge (never published) named by its
@@ -2746,7 +2801,6 @@ class PlcRecoveryBuilder {
     }
     candidate_.witnesses.resize(static_cast<std::size_t>(source_point_count_));
     candidate_.vertex_dimension.resize(static_cast<std::size_t>(source_point_count_), 0);
-    index_candidate_points();
     return true;
   }
 
@@ -2841,9 +2895,16 @@ class PlcRecoveryBuilder {
       const int32_t status = triangulation_->build(order, alive_);
       if (status != PHX_MC_OK) return fail(status, kPlcNonrepresentable, kPlcNoEntity, -1);
     }
+    triangulation_->complex().enable_labels();
+    return PHX_MC_OK;
+  }
+
+  // Starts tracking the complex build_triangulation built for local edits:
+  // incidence lists, vertex hints and the edit journal, with every subface
+  // and chain row unverified.
+  void track_complex() {
     const int64_t count = static_cast<int64_t>(work_points_.size() / 3);
     TetrahedralComplex& complex = triangulation_->complex();
-    complex.enable_labels();
     vertex_tet_.assign(static_cast<std::size_t>(count), -1);
     incidence_.assign(static_cast<std::size_t>(count), {});
     {
@@ -2883,7 +2944,6 @@ class PlcRecoveryBuilder {
       polygon.cover_current = false;
       polygon.verified_cover.clear();
     }
-    return PHX_MC_OK;
   }
 
   // Applies the journaled cell replacements to the incidence lists, and
@@ -7971,6 +8031,116 @@ class PlcRecoveryBuilder {
     return PHX_MC_OK;
   }
 
+  // A subface of a conforming source: the lower-numbered finite cell through
+  // it and its slot there (where mark_source_faces labels it), its facet,
+  // its source triangle and the cells on both sides.
+  struct ConformingFace {
+    int32_t cell;
+    int slot;
+    int32_t facet;
+    int32_t triangle;
+    std::array<int32_t, 2> sides;
+  };
+
+  // Whether the source conforms to the triangulation build_triangulation
+  // built first: without planar polygons, exact positions or a metric, with
+  // every finite cell exactly positive (so the complex triangulates its
+  // points and two of its faces meet in a shared face or not at all), every
+  // subface a face of it that mark_source_faces would label (into `faces`,
+  // in cell order) and every chain row an edge of a subface. The subfaces,
+  // chain rows and points then meet only in shared vertices and edges, so
+  // every source contact is legal, and recovery has nothing to edit.
+  bool conforming_faces(std::vector<ConformingFace>& faces) const {
+    faces.clear();
+    if (!planar_polygons_.empty() || planar_source_faces_.size() != 0 ||
+        !exact_points_.empty() || input_.affine_metric != nullptr) {
+      return false;
+    }
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      if (edge_chains_[row].size() > 1 &&
+          edge_triangle_offsets_[row] == edge_triangle_offsets_[row + 1]) {
+        return false;
+      }
+    }
+    const TetrahedralComplex& complex = triangulation_->complex();
+    faces.reserve(source_faces_.size());
+    for (std::size_t row = 0; row < complex.tets.size(); ++row) {
+      const auto cell = static_cast<int32_t>(row);
+      if (!complex.live(cell)) continue;
+      const Tetrahedron& tet = complex.tets[row];
+      const bool ghost = is_ghost(tet);
+      if (!ghost && orient3d_filtered(point(tet.v[0]), point(tet.v[1]), point(tet.v[2]),
+                                      point(tet.v[3])) <= 0) {
+        return false;
+      }
+      for (int slot = 0; slot < 4; ++slot) {
+        // Each face once, from its lower cell.
+        const int32_t other = tet.n[slot];
+        if (other < cell) continue;
+        int32_t face[3];
+        oriented_facet(tet.v, slot, face);
+        if (face[0] < 0 || face[1] < 0 || face[2] < 0) continue;
+        const auto source = source_faces_.find(sorted_triple(face));
+        if (source == source_faces_.end()) continue;
+        const Tetrahedron& beyond = complex.tets[static_cast<std::size_t>(other)];
+        const int back = neighbor_slot(beyond, cell);
+        const FacetKey oriented = FacetKey::of(source->second.oriented.data());
+        ConformingFace conforming{cell, slot, source->second.facet,
+                                  source->second.source_triangle, {cell, other}};
+        if (!ghost && !is_ghost(beyond)) {
+          int32_t opposite[3];
+          oriented_facet(beyond.v, back, opposite);
+          if ((FacetKey::of(face) == oriented) == (FacetKey::of(opposite) == oriented)) {
+            return false;
+          }
+        } else if (corner_count_ != 0) {
+          return false;
+        } else if (ghost) {
+          conforming.cell = other;
+          conforming.slot = back;
+        }
+        faces.push_back(conforming);
+      }
+    }
+    return faces.size() == source_faces_.size();
+  }
+
+  // check_embedded_entities for a conforming source, true when it passes:
+  // every chain row is an edge of a subface with a finite domain cell on one
+  // side, and every source point is used by a triangle or segment. False
+  // leaves the decision to check_embedded_entities.
+  bool conforming_embedded(const std::vector<ConformingFace>& faces) const {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    std::vector<char> referenced(static_cast<std::size_t>(source_point_count_), 0);
+    for (int32_t vertex : candidate_.input_triangles) referenced[static_cast<std::size_t>(vertex)] = 1;
+    for (int64_t row = 0; row < input_.segment_count; ++row) {
+      referenced[static_cast<std::size_t>(input_.segments[2 * row])] = 1;
+      referenced[static_cast<std::size_t>(input_.segments[2 * row + 1])] = 1;
+    }
+    if (std::find(referenced.begin(), referenced.end(), 0) != referenced.end()) return false;
+    std::vector<char> in_domain(candidate_.input_triangles.size() / 3, 0);
+    for (const ConformingFace& face : faces) {
+      for (int32_t side : face.sides) {
+        if (!is_ghost(complex.tets[static_cast<std::size_t>(side)]) && complex.region(side) >= 0) {
+          in_domain[static_cast<std::size_t>(face.triangle)] = 1;
+        }
+      }
+    }
+    for (std::size_t row = 0; row < edge_chains_.size(); ++row) {
+      if (edge_chains_[row].size() < 2) continue;
+      const auto begin = edge_triangle_rows_.begin() +
+                         static_cast<std::ptrdiff_t>(edge_triangle_offsets_[row]);
+      const auto end = edge_triangle_rows_.begin() +
+                       static_cast<std::ptrdiff_t>(edge_triangle_offsets_[row + 1]);
+      if (std::none_of(begin, end, [&](int32_t triangle) {
+            return in_domain[static_cast<std::size_t>(triangle)] != 0;
+          })) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   int32_t check_embedded_entities() {
     const TetrahedralComplex& complex = triangulation_->complex();
     sync_complex();
@@ -8210,6 +8380,9 @@ class PlcRecoveryBuilder {
   std::vector<int32_t> volume_output_;
   // True once a local recovery edit has left the complex non-Delaunay.
   bool local_edits_ = false;
+  // Whether run reached the deferred contact check, and whether it failed.
+  bool contacts_settled_ = false;
+  bool contact_failure_ = false;
   // Point count at the last rebuild requested for a strongly Delaunay subface.
   std::size_t subface_rebuild_points_ = 0;
   // Candidate points moved off the boundary by Steiner suppression.
@@ -8244,19 +8417,28 @@ int32_t recover_plc(const PlcInput& input, PlcRecovery& result) {
       if (status != PHX_MC_OK) return status;
     }
     PlcRecovery prepared;
-    const int32_t source_status = prepare_recovery_source(input, prepared);
+    SourcePreparer preparer(input, prepared, true);
+    const int32_t source_status = preparer.run();
     if (source_status != PHX_MC_OK) {
       result.failure = prepared.failure;
       result.source_refusal = prepared.source_refusal;
       return source_status;
     }
     PlcRecoveryBuilder builder(input, prepared);
-    const int32_t status = builder.run(result);
-    if (status != PHX_MC_OK) {
-      result.failure = builder.failure();
-      result.source_refusal = builder.source_refusal();
-      result.suppression_search = builder.suppression_search();
+    const int32_t status = builder.run(result, [&] { return preparer.check_contacts(); });
+    if (status == PHX_MC_OK) return PHX_MC_OK;
+    // An illegal source contact is reported before any later failure.
+    const int32_t contacts = builder.contact_failure()    ? status
+                             : builder.contacts_settled() ? PHX_MC_OK
+                                                          : preparer.check_contacts();
+    if (contacts != PHX_MC_OK) {
+      result.failure = prepared.failure;
+      result.source_refusal = prepared.source_refusal;
+      return contacts;
     }
+    result.failure = builder.failure();
+    result.source_refusal = builder.source_refusal();
+    result.suppression_search = builder.suppression_search();
     return status;
   } catch (const std::bad_alloc&) {
     result.failure = {};

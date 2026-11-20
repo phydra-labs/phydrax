@@ -1772,10 +1772,12 @@ void test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons() 
 // Corners and extras are given in (u, v, w) with the triangle in w = 0;
 // `x_normal` maps w to x (the triangle then sits at the lowest x of the
 // segment's span), else w maps to z. `extras_first` declares the extra
-// points before the triangle's corners.
+// points before the triangle's corners. The triangle is an internal sheet
+// (no closure failure) unless `open`; `recover` runs recover_plc instead of
+// source preparation.
 PlcFailure single_triangle_contact(const std::vector<std::array<double, 3>>& extras,
                                    bool has_segment, bool x_normal, bool extras_first,
-                                   int32_t& status) {
+                                   int32_t& status, bool recover = false, bool open = false) {
   const std::array<std::array<double, 3>, 3> corners{{{-1, -1, 0}, {2, -1, 0}, {-1, 2, 0}}};
   std::vector<double> points;
   std::array<int32_t, 3> loop{};
@@ -1798,7 +1800,7 @@ PlcFailure single_triangle_contact(const std::vector<std::array<double, 3>>& ext
   }
   const std::array<int64_t, 2> offsets{0, 3};
   const std::array<int32_t, 1> polygon_facets{0};
-  const std::array<int32_t, 2> facet_regions{0, 0};  // an internal sheet: no closure
+  const std::array<int32_t, 2> facet_regions{open ? -1 : 0, 0};
   PlcInput input;
   input.point_count = static_cast<int64_t>(points.size() / 3);
   input.points = points.data();
@@ -1813,8 +1815,45 @@ PlcFailure single_triangle_contact(const std::vector<std::array<double, 3>>& ext
     input.segments = extra_ids.data();
   }
   PlcRecovery source;
-  status = prepare_plc_source(input, source);
+  status = recover ? recover_plc(input, source) : prepare_plc_source(input, source);
   return source.failure;
+}
+
+// recover_plc defers the source contact check past the closure check and
+// into recovery (a source conforming to its first triangulation proves its
+// contacts legal), yet reports what source preparation reports: an illegal
+// contact before an open boundary or any recovery failure.
+void test_recover_plc_reports_contacts_first() {
+  const std::vector<std::pair<std::vector<std::array<double, 3>>, bool>> extras{
+      {{{0, 0, -1}, {0, 0, 1}}, true}, {{{1, 1, -1}, {1, 1, 1}}, true},
+      {{{0, 0, 0}}, false},           {{{-1, 0.5, 0}}, false},
+      {{{1, 1, 0.5}}, false}};
+  int checked = 0;
+  for (const bool open : {false, true}) {
+    for (const bool x_normal : {false, true}) {
+      for (const bool extras_first : {false, true}) {
+        for (const auto& [points, has_segment] : extras) {
+          int32_t prepared = PHX_MC_OK;
+          int32_t recovered = PHX_MC_OK;
+          const PlcFailure expected = single_triangle_contact(
+              points, has_segment, x_normal, extras_first, prepared, false, open);
+          const PlcFailure actual = single_triangle_contact(
+              points, has_segment, x_normal, extras_first, recovered, true, open);
+          if (prepared != PHX_MC_OK) {
+            PHX_CHECK(recovered == prepared);
+            PHX_CHECK(actual.reason == expected.reason);
+            PHX_CHECK(actual.first_kind == expected.first_kind && actual.first == expected.first);
+            PHX_CHECK(actual.second_kind == expected.second_kind &&
+                      actual.second == expected.second);
+          } else {
+            PHX_CHECK(actual.reason != kPlcIntersecting);
+          }
+          ++checked;
+        }
+      }
+    }
+  }
+  PHX_CHECK(checked == 40);
 }
 
 // The contact check sweeps items by lower x, so a segment piercing a
@@ -4049,6 +4088,7 @@ int main() {
   test_source_preparation_triangulates_and_compiles_plc_edges();
   test_source_preparation_refuses_nonplanar_and_self_intersecting_polygons();
   test_source_preparation_refuses_contacts_in_either_kind_order();
+  test_recover_plc_reports_contacts_first();
   test_conforming_nonrepresentable_segment_uses_vertex_cavity();
   test_unsplittable_boundary_loop_edge_recovers_under_fixed_and_conforming();
   test_conforming_missing_boundary_edges_recover_with_exact_witnesses();
