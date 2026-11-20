@@ -11,6 +11,8 @@
 #include <limits>
 #include <vector>
 
+#include "wide_integer.hpp"
+
 namespace phx::mc {
 namespace {
 
@@ -22,6 +24,10 @@ constexpr double kO3dErrBoundA = (7.0 + 56.0 * kEpsilon) * kEpsilon;
 constexpr double kO3dErrBoundB = (3.0 + 28.0 * kEpsilon) * kEpsilon;
 constexpr double kIccErrBoundA = (10.0 + 96.0 * kEpsilon) * kEpsilon;
 constexpr double kIccErrBoundB = (4.0 + 48.0 * kEpsilon) * kEpsilon;
+constexpr double kIccErrBoundBCompensated = (4.0 + 128.0 * kEpsilon) * kEpsilon;
+constexpr double kIccErrBoundBCompensatedExact = 64.0 * kEpsilon * kEpsilon;
+constexpr double kIccErrBoundC = (44.0 + 576.0 * kEpsilon) * kEpsilon * kEpsilon;
+constexpr double kResultErrBound = (3.0 + 8.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundA = (16.0 + 224.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundB = (5.0 + 72.0 * kEpsilon) * kEpsilon;
 
@@ -144,38 +150,191 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
 
 // ---------------------------------------------------------------- incircle
 
+// Exact p q - r s as a four-component expansion (zeros allowed).
+void product_difference(double p, double q, double r, double s, double* h) {
+  double pq1, pq0, rs1, rs0;
+  two_product(p, q, pq1, pq0);
+  two_product(r, s, rs1, rs0);
+  two_two_diff(pq1, pq0, rs1, rs0, h);
+}
+
+// Exact (x^2 + y^2) m for the four-component minor m; `h` holds at most 32
+// components.
+int lifted_minor(double x, double y, const double* minor, double* h) {
+  double xm[8], xxm[16], ym[8], yym[16];
+  const int xlen = scale_expansion_zeroelim(4, minor, x, xm);
+  const int xxlen = scale_expansion_zeroelim(xlen, xm, x, xxm);
+  const int ylen = scale_expansion_zeroelim(4, minor, y, ym);
+  const int yylen = scale_expansion_zeroelim(ylen, ym, y, yym);
+  return fast_expansion_sum_zeroelim(xxlen, xxm, yylen, yym, h);
+}
+
+// Stage D: the exact sign on the exact coordinate differences.
 [[gnu::noinline, gnu::cold]]
-int incircle_adapt(const double* const* p, double permanent) {
+int incircle_expansion(const double* const* p) {
   const double* d = p[3];
-  double x[3], y[3];
-  bool exact_differences = true;
-  for (int k = 0; k < 3; ++k) {
-    x[k] = p[k][0] - d[0];
-    y[k] = p[k][1] - d[1];
-    exact_differences = exact_differences && two_diff_tail(p[k][0], d[0], x[k]) == 0.0 &&
-                        two_diff_tail(p[k][1], d[1], y[k]) == 0.0;
-  }
   Expansion rx[3], ry[3], lift[3];
-  for (int k = 0; k < 3; ++k) {
-    rx[k] = Expansion(x[k]);
-    ry[k] = Expansion(y[k]);
-    lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
-  }
-  const Expansion stage_b = lifted2_rows(rx, ry, lift);
-  const double estimate = stage_b.estimate();
-  const double errbound = kIccErrBoundB * permanent;
-  if (estimate >= errbound || -estimate >= errbound) {
-    return sign_of(estimate);
-  }
-  if (exact_differences) {
-    return stage_b.sign();
-  }
   for (int k = 0; k < 3; ++k) {
     rx[k] = Expansion::difference(p[k][0], d[0]);
     ry[k] = Expansion::difference(p[k][1], d[1]);
     lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
   }
   return lifted2_rows(rx, ry, lift).sign();
+}
+
+// The double-double value hi + lo (an unevaluated sum).
+struct DoubleDouble {
+  double hi;
+  double lo;
+};
+
+// x^2 + y^2 to within 3.02 u^2 (x^2 + y^2), u = 2^-53, with |lo| <= 2.01 u
+// (x^2 + y^2).
+inline DoubleDouble square_sum_dd(double x, double y) {
+  double xx, xx_error, yy, yy_error, hi, tail;
+  two_product(x, x, xx, xx_error);
+  two_product(y, y, yy, yy_error);
+  two_sum(xx, yy, hi, tail);
+  return {hi, tail + (xx_error + yy_error)};
+}
+
+// p q - r s to within 3.02 u^2 Q, Q = |p q| + |r s|, with |lo| <= 2.01 u Q.
+inline DoubleDouble product_difference_dd(double p, double q, double r, double s) {
+  double pq, pq_error, rs, rs_error, hi, tail;
+  two_product(p, q, pq, pq_error);
+  two_product(r, s, rs, rs_error);
+  two_diff(pq, rs, hi, tail);
+  return {hi, tail + (pq_error - rs_error)};
+}
+
+// l m without the l.lo m.lo term.
+inline DoubleDouble product_dd(DoubleDouble l, DoubleDouble m) {
+  double hi, error;
+  two_product(l.hi, m.hi, hi, error);
+  return {hi, error + (l.hi * m.lo + l.lo * m.hi)};
+}
+
+// Stage B on a compensated estimate, ahead of Shewchuk's stage-B expansion:
+// E, the double-double evaluation of the determinant D~ of the rounded
+// differences, rounded once. With u = 2^-53, Pi the exact permanent of the
+// rounded differences (sum of |monomials| of D~) and P >= Pi (1 - u)^7 the
+// stage-A permanent: the lifts and minors carry 3.02u^2 relative error, the
+// three lifted products 23.4u^2 L_k Q_k, their summation 29u^2 Pi and the
+// final rounding u |E|, so |D~ - E| <= 52.4u^2 Pi + u |E|. When every
+// difference is exact, D = D~ and |E| > fl(64u^2 P) >= 63.9u^2 P gives |D -
+// E| < |E|. Otherwise each of the twelve degree-4 monomials of the exact D
+// moves by at most (4u + 22.1u^2) of its rounded value, so |D - D~| <= (4u +
+// 22.1u^2) Pi, |D - E| <= (4u + 103u^2) P + u |E|, and |E| > fl((4 + 128u)
+// u P) >= (4u + 123.9u^2) P gives |D - E| < |E|. In-domain coordinates and
+// their rounded differences are multiples of 2^-172, so every nonzero
+// product here is at least 2^-688 in magnitude: none underflows. Returns the
+// certified sign, or 0.
+int incircle_compensated(const double* const* p, double permanent) {
+  const double *a = p[0], *b = p[1], *c = p[2], *d = p[3];
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const DoubleDouble at =
+      product_dd(square_sum_dd(adx, ady), product_difference_dd(bdx, cdy, cdx, bdy));
+  const DoubleDouble bt =
+      product_dd(square_sum_dd(bdx, bdy), product_difference_dd(cdx, ady, adx, cdy));
+  const DoubleDouble ct =
+      product_dd(square_sum_dd(cdx, cdy), product_difference_dd(adx, bdy, bdx, ady));
+  double ab_hi, ab_tail, hi, tail;
+  two_sum(at.hi, bt.hi, ab_hi, ab_tail);
+  two_sum(ab_hi, ct.hi, hi, tail);
+  const double estimate = hi + (((ab_tail + tail) + (at.lo + bt.lo)) + ct.lo);
+  const bool exact_differences =
+      two_diff_tail(a[0], d[0], adx) == 0.0 && two_diff_tail(a[1], d[1], ady) == 0.0 &&
+      two_diff_tail(b[0], d[0], bdx) == 0.0 && two_diff_tail(b[1], d[1], bdy) == 0.0 &&
+      two_diff_tail(c[0], d[0], cdx) == 0.0 && two_diff_tail(c[1], d[1], cdy) == 0.0;
+  const double errbound =
+      (exact_differences ? kIccErrBoundBCompensatedExact : kIccErrBoundBCompensated) * permanent;
+  if (estimate > errbound) return 1;
+  if (-estimate > errbound) return -1;
+  return 0;
+}
+
+// Shewchuk's incircleadapt from stage B on. Stage B: the exact determinant
+// of the rounded differences (on stack buffers), whose estimate decides
+// against iccerrboundB and whose sign is exact when every difference is.
+// Stage C: that estimate plus the first-order terms in the difference tails,
+// against iccerrboundC. Stage D: the full expansion. Every sign is exact.
+[[gnu::noinline, gnu::cold]]
+IncircleDecision incircle_expansion_stages(const double* const* p, double permanent) {
+  const double *a = p[0], *b = p[1], *c = p[2], *d = p[3];
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  double bc[4], ca[4], ab[4];
+  product_difference(bdx, cdy, cdx, bdy, bc);
+  product_difference(cdx, ady, adx, cdy, ca);
+  product_difference(adx, bdy, bdx, ady, ab);
+  double adet[32], bdet[32], cdet[32], abdet[64], fin[96];
+  const int alen = lifted_minor(adx, ady, bc, adet);
+  const int blen = lifted_minor(bdx, bdy, ca, bdet);
+  const int clen = lifted_minor(cdx, cdy, ab, cdet);
+  const int ablen = fast_expansion_sum_zeroelim(alen, adet, blen, bdet, abdet);
+  const int finlen = fast_expansion_sum_zeroelim(ablen, abdet, clen, cdet, fin);
+  double det = 0.0;
+  for (int k = 0; k < finlen; ++k) det += fin[k];
+  const double errbound_b = kIccErrBoundB * permanent;
+  if (det >= errbound_b || -det >= errbound_b) {
+    return {sign_of(det), IncircleStage::kBExpansion};
+  }
+  const double adxtail = two_diff_tail(a[0], d[0], adx);
+  const double adytail = two_diff_tail(a[1], d[1], ady);
+  const double bdxtail = two_diff_tail(b[0], d[0], bdx);
+  const double bdytail = two_diff_tail(b[1], d[1], bdy);
+  const double cdxtail = two_diff_tail(c[0], d[0], cdx);
+  const double cdytail = two_diff_tail(c[1], d[1], cdy);
+  if (adxtail == 0.0 && bdxtail == 0.0 && cdxtail == 0.0 && adytail == 0.0 &&
+      bdytail == 0.0 && cdytail == 0.0) {
+    return {sign_of(fin[finlen - 1]), IncircleStage::kBExpansion};
+  }
+  const double errbound_c = kIccErrBoundC * permanent + kResultErrBound * std::fabs(det);
+  det += ((adx * adx + ady * ady) *
+              ((bdx * cdytail + cdy * bdxtail) - (bdy * cdxtail + cdx * bdytail)) +
+          2.0 * (adx * adxtail + ady * adytail) * (bdx * cdy - bdy * cdx)) +
+         ((bdx * bdx + bdy * bdy) *
+              ((cdx * adytail + ady * cdxtail) - (cdy * adxtail + adx * cdytail)) +
+          2.0 * (bdx * bdxtail + bdy * bdytail) * (cdx * ady - cdy * adx)) +
+         ((cdx * cdx + cdy * cdy) *
+              ((adx * bdytail + bdy * adxtail) - (ady * bdxtail + bdx * adytail)) +
+          2.0 * (cdx * cdxtail + cdy * cdytail) * (adx * bdy - ady * bdx));
+  if (det >= errbound_c || -det >= errbound_c) {
+    return {sign_of(det), IncircleStage::kC};
+  }
+  return {incircle_expansion(p), IncircleStage::kD};
+}
+
+// The stages after stage A: the compensated stage B, then the expansions.
+[[gnu::noinline]]
+IncircleDecision incircle_adapt(const double* const* p, double permanent) {
+  const int sign = incircle_compensated(p, permanent);
+  if (sign != 0) return {sign, IncircleStage::kBCompensated};
+  return incircle_expansion_stages(p, permanent);
+}
+
+// Stage A, then incircle_adapt; inlined into both public entry points.
+[[gnu::always_inline]] inline IncircleDecision incircle_staged(const double* a, const double* b,
+                                                               const double* c, const double* d) {
+  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
+  const double alift = adx * adx + ady * ady;
+  const double cdxady = cdx * ady, adxcdy = adx * cdy;
+  const double blift = bdx * bdx + bdy * bdy;
+  const double adxbdy = adx * bdy, bdxady = bdx * ady;
+  const double clift = cdx * cdx + cdy * cdy;
+  const double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
+                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
+                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
+  const double errbound = kIccErrBoundA * permanent;
+  if (det > errbound || -det > errbound) {
+    return {sign_of(det), IncircleStage::kA};
+  }
+  const double* p[4] = {a, b, c, d};
+  return incircle_adapt(p, permanent);
 }
 
 // ---------------------------------------------------------------- insphere (Shewchuk sign)
@@ -190,13 +349,11 @@ int incircle_adapt(const double* const* p, double permanent) {
 // `value` and the N-limb `total`, modulo 2^(64 N).
 template <int N>
 void accumulate(std::uint64_t (&total)[N], const std::uint64_t* value, int count, bool subtract) {
-  unsigned __int128 carry = subtract ? 1 : 0;
+  std::uint64_t carry = subtract ? 1 : 0;
   for (int i = 0; i < N; ++i) {
     std::uint64_t limb = i < count ? value[i] : 0;
     if (subtract) limb = ~limb;
-    const unsigned __int128 sum = static_cast<unsigned __int128>(total[i]) + limb + carry;
-    total[i] = static_cast<std::uint64_t>(sum);
-    carry = sum >> 64;
+    total[i] = phx::mc::add_with_carry(total[i], limb, carry);
   }
 }
 
@@ -211,14 +368,13 @@ void limbs_product(const std::uint64_t* left, int left_count, const std::uint64_
                    int right_count, std::uint64_t* product) {
   std::fill(product, product + left_count + right_count, std::uint64_t{0});
   for (int i = 0; i < left_count; ++i) {
-    unsigned __int128 carry = 0;
+    std::uint64_t carry = 0;
     for (int j = 0; j < right_count; ++j) {
-      const unsigned __int128 term =
-          static_cast<unsigned __int128>(left[i]) * right[j] + product[i + j] + carry;
-      product[i + j] = static_cast<std::uint64_t>(term);
-      carry = term >> 64;
+      std::uint64_t high = 0;
+      product[i + j] = phx::mc::multiply_accumulate(left[i], right[j], product[i + j], carry, high);
+      carry = high;
     }
-    product[i + right_count] = static_cast<std::uint64_t>(carry);
+    product[i + right_count] = carry;
   }
 }
 
@@ -264,29 +420,104 @@ bool common_integers(const double* values, int count, int width, std::int64_t* i
   return true;
 }
 
+// The 128-bit pieces of the integer insphere rows. Compilers with a native
+// 128-bit integer evaluate them in it; elsewhere the wide-integer limb helpers
+// give the same two's-complement bits.
+#if defined(__SIZEOF_INT128__)
+__extension__ using SignedWide = __int128;
+__extension__ using UnsignedWide = unsigned __int128;
+
+void store_wide(UnsignedWide wide, std::uint64_t (&value)[2]) {
+  value[0] = static_cast<std::uint64_t>(wide);
+  value[1] = static_cast<std::uint64_t>(wide >> 64);
+}
+#else
+// value = a * b as a two's-complement 128-bit value, exact for |a|, |b| < 2^63.
+void signed_product(std::int64_t a, std::int64_t b, std::uint64_t (&value)[2]) {
+  const std::uint64_t ua = a < 0 ? ~static_cast<std::uint64_t>(a) + 1 : static_cast<std::uint64_t>(a);
+  const std::uint64_t ub = b < 0 ? ~static_cast<std::uint64_t>(b) + 1 : static_cast<std::uint64_t>(b);
+  value[0] = phx::mc::multiply_wide(ua, ub, value[1]);
+  if ((a < 0) != (b < 0)) {
+    std::uint64_t zero[2]{};
+    accumulate(zero, value, 2, true);
+    value[0] = zero[0];
+    value[1] = zero[1];
+  }
+}
+#endif
+
+// value = a d - b c in two's-complement 128-bit limbs, exact for |a|..|d| < 2^62.
+void signed_minor(std::int64_t a, std::int64_t b, std::int64_t c, std::int64_t d,
+                  std::uint64_t (&value)[2]) {
+#if defined(__SIZEOF_INT128__)
+  store_wide(static_cast<UnsignedWide>(static_cast<SignedWide>(a) * d -
+                                       static_cast<SignedWide>(b) * c),
+             value);
+#else
+  std::uint64_t right[2];
+  signed_product(a, d, value);
+  signed_product(b, c, right);
+  accumulate(value, right, 2, true);
+#endif
+}
+
+// value = x^2 + y^2 + z^2 as an unsigned 128-bit value, exact for |x|, |y|, |z| < 2^62.
+void square_sum(std::int64_t x, std::int64_t y, std::int64_t z, std::uint64_t (&value)[2]) {
+#if defined(__SIZEOF_INT128__)
+  store_wide(static_cast<UnsignedWide>(static_cast<SignedWide>(x) * x +
+                                       static_cast<SignedWide>(y) * y +
+                                       static_cast<SignedWide>(z) * z),
+             value);
+#else
+  value[0] = 0;
+  value[1] = 0;
+  for (const std::int64_t coordinate : {x, y, z}) {
+    std::uint64_t square[2];
+    signed_product(coordinate, coordinate, square);
+    accumulate(value, square, 2, false);
+  }
+#endif
+}
+
+// The magnitude of a two's-complement 128-bit value; true when it is negative.
+bool wide_magnitude(const std::uint64_t (&value)[2], std::uint64_t (&magnitude)[2]) {
+  const bool negative = limbs_negative(value);
+#if defined(__SIZEOF_INT128__)
+  const UnsignedWide bits = (static_cast<UnsignedWide>(value[1]) << 64) | value[0];
+  store_wide(negative ? ~bits + 1 : bits, magnitude);
+#else
+  magnitude[0] = 0;
+  magnitude[1] = 0;
+  accumulate(magnitude, value, 2, negative);
+#endif
+  return negative;
+}
+
 // Sign of lifted3_rows on integer rows below 2^62 in magnitude: minors below
 // 2^125 and lifts below 2^126 in 128 bits, cofactors below 2^189 in three
 // limbs, the determinant below 2^317 in five.
 int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const std::int64_t* z) {
-  const auto minor = [&](int i, int j) {
-    return static_cast<__int128>(x[i]) * y[j] - static_cast<__int128>(x[j]) * y[i];
+  // minor(i, j) = x_i y_j - x_j y_i, below 2^125 in magnitude.
+  const auto minor = [&](int i, int j, std::uint64_t (&value)[2]) {
+    signed_minor(x[i], x[j], y[i], y[j], value);
   };
-  const __int128 ab = minor(0, 1), bc = minor(1, 2), cd = minor(2, 3);
-  const __int128 da = minor(3, 0), ac = minor(0, 2), bd = minor(1, 3);
-  const auto magnitude = [](__int128 value) {
-    const auto bits = static_cast<unsigned __int128>(value);
-    return value < 0 ? ~bits + 1 : bits;
-  };
+  std::uint64_t ab[2], bc[2], cd[2], da[2], ac[2], bd[2];
+  minor(0, 1, ab);
+  minor(1, 2, bc);
+  minor(2, 3, cd);
+  minor(3, 0, da);
+  minor(0, 2, ac);
+  minor(1, 3, bd);
   // total += z[k] m (minus: -=).
-  const auto add_term = [&](std::uint64_t (&total)[3], int k, __int128 m, bool minus) {
+  const auto add_term = [&](std::uint64_t (&total)[3], int k, const std::uint64_t (&m)[2],
+                            bool minus) {
     const std::uint64_t row =
         z[k] < 0 ? ~static_cast<std::uint64_t>(z[k]) + 1 : static_cast<std::uint64_t>(z[k]);
-    const unsigned __int128 size = magnitude(m);
-    const std::uint64_t right[2]{static_cast<std::uint64_t>(size),
-                                 static_cast<std::uint64_t>(size >> 64)};
+    std::uint64_t right[2];
+    const bool negative = wide_magnitude(m, right);
     std::uint64_t product[3];
     limbs_product(&row, 1, right, 2, product);
-    accumulate(total, product, 3, ((z[k] < 0) != (m < 0)) != minus);
+    accumulate(total, product, 3, ((z[k] < 0) != negative) != minus);
   };
   // abc = z0 bc - z1 ac + z2 ab; bcd = z1 cd - z2 bd + z3 bc;
   // cda = z2 da + z3 ac + z0 cd; dab = z3 ab + z0 bd + z1 da.
@@ -306,11 +537,9 @@ int insphere_integer_rows(const std::int64_t* x, const std::int64_t* y, const st
   // det = (l3 abc - l2 dab) + (l1 cda - l0 bcd).
   std::uint64_t det[5]{};
   const auto add_lifted = [&](int k, const std::uint64_t (&cofactor)[3], bool minus) {
-    const unsigned __int128 lift = static_cast<unsigned __int128>(
-        static_cast<__int128>(x[k]) * x[k] + static_cast<__int128>(y[k]) * y[k] +
-        static_cast<__int128>(z[k]) * z[k]);
-    const std::uint64_t left[2]{static_cast<std::uint64_t>(lift),
-                                static_cast<std::uint64_t>(lift >> 64)};
+    // x^2 + y^2 + z^2 below 2^126.
+    std::uint64_t left[2];
+    square_sum(x[k], y[k], z[k], left);
     const bool negative = limbs_negative(cofactor);
     std::uint64_t size[3]{cofactor[0], cofactor[1], cofactor[2]};
     if (negative) {
@@ -760,25 +989,13 @@ int orient3d(const double* a, const double* b, const double* c, const double* d)
   return -orient3d_shewchuk(a, b, c, d);
 }
 
+IncircleDecision incircle_decision(const double* a, const double* b, const double* c,
+                                   const double* d) {
+  return incircle_staged(a, b, c, d);
+}
+
 int incircle(const double* a, const double* b, const double* c, const double* d) {
-  const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
-  const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
-  const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
-  const double alift = adx * adx + ady * ady;
-  const double cdxady = cdx * ady, adxcdy = adx * cdy;
-  const double blift = bdx * bdx + bdy * bdy;
-  const double adxbdy = adx * bdy, bdxady = bdx * ady;
-  const double clift = cdx * cdx + cdy * cdy;
-  const double det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
-  const double permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift +
-                           (std::fabs(cdxady) + std::fabs(adxcdy)) * blift +
-                           (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
-  const double errbound = kIccErrBoundA * permanent;
-  if (det > errbound || -det > errbound) {
-    return sign_of(det);
-  }
-  const double* p[4] = {a, b, c, d};
-  return incircle_adapt(p, permanent);
+  return incircle_staged(a, b, c, d).sign;
 }
 
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e) {

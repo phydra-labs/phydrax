@@ -1,7 +1,8 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// kZeroSetBand admission for the certified surface remesher (surface_remesh.hpp):
-// a triangle represents the zero set Z = {f = 0} of a lowered scalar field f when
+// kZeroSetBand admission, the fidelity certificate of zero-set surfaces
+// (surface_certify.hpp): a triangle represents the zero set Z = {f = 0} of a
+// lowered scalar field f when
 //  * distance: every point of the closed triangle T lies within the declared
 //    tolerance of Z. Let F enclose f over T and G enclose grad f over the box B
 //    = bbox(T) widened by r, with m = min |g| over g in G > 0. Following the
@@ -37,7 +38,7 @@
 
 #include "directed_interval.hpp"
 #include "interval_program.hpp"
-#include "surface_remesh.hpp"
+#include "surface_certify.hpp"
 
 namespace phx::mc::remesh {
 
@@ -93,7 +94,7 @@ class AdmissionMemo {
   std::vector<Entry> entries_;
 };
 
-class ZeroSetBandAdmission final : public TriangleAdmission {
+class ZeroSetBandAdmission final {
  public:
   ZeroSetBandAdmission(const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
                        double tolerance, int orientation, AdmissionMemo* memo = nullptr)
@@ -103,21 +104,10 @@ class ZeroSetBandAdmission final : public TriangleAdmission {
         orientation_(orientation),
         memo_(memo) {}
 
-  AdmissionKind kind() const override { return AdmissionKind::kZeroSetBand; }
   // Point enclosure of f at the vertex (mean-value anchor for admits()).
-  VertexEvidence evaluate(const Point& position) const override;
+  VertexEvidence evaluate(const Point& position) const;
   bool admits(const Point& a, const Point& b, const Point& c,
-              const std::array<VertexEvidence, 3>& evidence) const override;
-  // Interval Newton along the gradient line through `position`; returns the
-  // position unchanged when no root is isolated (a proposal only).
-  Point project(const Point& position) const override;
-  // Gradient-enclosure cone over bbox(T) widened by the tolerance, widened by
-  // the tilt a triangle within the tolerance of Z may have.
-  NormalCone normal_cone(const Point& a, const Point& b, const Point& c,
-                         const std::array<VertexEvidence, 3>& evidence) const override;
-  // The tilt term every cone carries.
-  double normal_cone_floor(const Point& a, const Point& b, const Point& c,
-                           const std::array<VertexEvidence, 3>& evidence) const override;
+              const std::array<VertexEvidence, 3>& evidence) const;
 
   // Certified upper bound on max_{x in T} dist(x, Z), +inf when undecided.
   double distance_bound(const Point& a, const Point& b, const Point& c,

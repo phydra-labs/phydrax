@@ -36,6 +36,7 @@
 // the result afterwards. With zero levels the lattice is the uniform one.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -359,7 +360,7 @@ class GradedLattice {
           vertices_.find_midpoint(inner[2], inner[0]) >= 0)
         return true;
     }
-    const int count = __builtin_popcount(mask);
+    const int count = std::popcount(mask);
     if (count == 1) return false;
     for (unsigned face : kFaceEdges)
       if ((mask & ~face) == 0) return false;  // two or three edges of one face

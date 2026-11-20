@@ -59,10 +59,13 @@ inline int neighbor_slot(const Tetrahedron& tet, int32_t neighbor) {
   return -1;
 }
 
+// Corners of the facet opposite v[k], ordered so that v[k] is on its
+// positive side.
+inline constexpr int kOrientedFacet[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
+
 // Facet opposite v[k], oriented so that the omitted vertex is on its positive side.
 inline void oriented_facet(const int32_t* v, int k, int32_t* facet) {
-  static constexpr int order[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
-  for (int r = 0; r < 3; ++r) facet[r] = v[order[k][r]];
+  for (int r = 0; r < 3; ++r) facet[r] = v[kOrientedFacet[k][r]];
 }
 
 struct FacetKey {
@@ -532,7 +535,7 @@ class CavityEdit {
   // facet opposite the center) runs along edge j of the cell, the edge
   // opposite facet corner j, as (corner j + 1, corner j + 2); the cell across
   // that edge runs along it the other way.
-  static constexpr int kConeFacet[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
+  static constexpr const auto& kConeFacet = kOrientedFacet;
   // Cones with more boundary vertices pair their edges by sorting.
   static constexpr std::uint32_t kDenseConeVertices = 512;
 

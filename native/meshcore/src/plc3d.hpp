@@ -258,6 +258,11 @@ struct PlcRecovery {
   PlcSourceRefusal source_refusal;
   PlcSuppressionSearch suppression_search;
   std::vector<PlcSuppressionRoute> suppression_routes;
+  // The published cells are cells of the (symbolically perturbed) Delaunay
+  // triangulation of the published points under the identity metric: no
+  // local edit, Steiner point or metric shaped them, so no published vertex
+  // lies strictly inside a published cell's circumsphere.
+  bool delaunay = false;
   PlcFailure failure;
 };
 

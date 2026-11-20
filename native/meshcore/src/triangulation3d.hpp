@@ -15,6 +15,7 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "prefetch.hpp"
 #include "source_construction.hpp"
 #include "spatial_sort.hpp"
 
@@ -230,6 +231,19 @@ class Triangulation3D {
     for (std::size_t k = 2; k < count && status == PHX_MC_OK; ++k) {
       if (k == third || k == fourth) continue;
       status = insert(order[k], alive);
+    }
+    building_ = false;
+    return status;
+  }
+  // Inserts `points` in order into the triangulation build() returned, which
+  // nothing has edited since (the caller's contract): it is still the
+  // Delaunay triangulation of the inserted points, so as in build() the
+  // cells need no validation.
+  int32_t extend(std::span<const int32_t> points, std::span<char> alive) {
+    building_ = true;
+    int32_t status = PHX_MC_OK;
+    for (std::size_t k = 0; k < points.size() && status == PHX_MC_OK; ++k) {
+      status = insert(points[k], alive);
     }
     building_ = false;
     return status;
@@ -606,7 +620,7 @@ class Triangulation3D {
           // Its neighbors are read when it leaves the stack.
           for (int32_t next : joined.n) {
             if (static_cast<std::size_t>(next) < complex_.tets.size()) {
-              prefetch_read(&complex_.tets[static_cast<std::size_t>(next)]);
+              prefetch(&complex_.tets[static_cast<std::size_t>(next)]);
             }
           }
           cavity_.push_back(neighbor);

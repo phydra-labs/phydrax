@@ -36,6 +36,10 @@ def _none_unmet(result: object, /) -> int:
     return 0
 
 
+def _no_quality(result: object, /) -> tuple[int, dict[str, float]]:
+    return 0, {}
+
+
 @dataclass(frozen=True, slots=True)
 class _Row:
     name: str
@@ -45,6 +49,9 @@ class _Row:
     # Cells left off the row's quality targets; a row with any does not pass.
     unmet: Callable[[object], int] = _none_unmet
     domain: str | None = None
+    # Independent measurement of the last result (not timed): the number of
+    # targets it misses, and the measured values.
+    quality: Callable[[object], tuple[int, dict[str, float]]] = _no_quality
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
@@ -180,14 +187,45 @@ def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+    # Uniform points on the unit 3-torus at the default initial margin.
+    lattice = np.eye(3, dtype=np.float64)
+    rows: list[_Row] = []
+    for size in sizes:
+        points = _uniform_points(size, 3, 20261121)
+        rows.append(
+            _Row(
+                "periodic-3d",
+                size,
+                lambda points=points: _meshcore.periodic_delaunay(
+                    points, points, lattice, lattice
+                ),
+                _cells,
+            )
+        )
+    return tuple(rows)
+
+
 def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
         (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
         (frozenset({"cdt-2d", "ruppert-2d"}), lambda: _planar_rows(sizes)),
         (frozenset({"regular-3d"}), lambda: _regular_rows(sizes)),
+        (frozenset({"periodic-3d"}), lambda: _periodic_rows(sizes)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
+        (
+            frozenset(
+                {
+                    "surface-remesh-sphere-1e3",
+                    "surface-remesh-sphere",
+                    "surface-remesh-sphere-1e5",
+                    "surface-remesh-torus",
+                }
+            ),
+            _remesh_rows,
+        ),
         (
             frozenset(
                 {
@@ -520,6 +558,204 @@ def _implicit_rows() -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+def _remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's surface remeshing rows: unit icospheres (20,480 to 1,310,720
+    # triangles) and the R = 1, r = 0.4 grid torus (90,000) remeshed toward a
+    # target triangle count N, i.e. the edge h of an equilateral triangle of
+    # area A/N, within tolerance h^2/4 and a 30 degree minimum angle. The row
+    # name carries the target (no suffix: 1e4; `-1e3`, `-1e5`); the row size is
+    # the input triangle count. The row times the construction; certification
+    # (zero_set_certify) is a separate entry and is not timed. Quality is
+    # measured independently against the exact surface.
+    def sphere(x: Array) -> Array:
+        return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
+
+    def torus(x: Array) -> Array:
+        ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
+        return ring * ring + x[2] * x[2] - 0.16
+
+    values = []
+    for label, function in (("sphere", sphere), ("torus", torus)):
+        program = prepare_interval_function(
+            function, 3, batch_capacity=1, execution="native"
+        ).native_program
+        if program is None:
+            raise RuntimeError(
+                f"The {label} field must lower to a native interval program."
+            )
+        values.append(program.box_program())
+    sphere_value, torus_value = values
+    spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
+    sphere_rows = (
+        ("surface-remesh-sphere-1e3", 5, 1e3),
+        ("surface-remesh-sphere-1e3", 6, 1e3),
+        ("surface-remesh-sphere", 6, 1e4),
+        ("surface-remesh-sphere", 7, 1e4),
+        ("surface-remesh-sphere-1e5", 7, 1e5),
+        ("surface-remesh-sphere-1e5", 8, 1e5),
+    )
+    rows: list[_Row] = []
+    for name, value, distance, samples, area, (vertices, faces), target in (
+        *(
+            (
+                name,
+                sphere_value,
+                _sphere_distance,
+                _sphere_samples,
+                4.0 * math.pi,
+                spheres[level],
+                target,
+            )
+            for name, level, target in sphere_rows
+        ),
+        (
+            "surface-remesh-torus",
+            torus_value,
+            _torus_distance,
+            _torus_samples,
+            4.0 * math.pi**2 * 0.4,
+            _uv_torus(300),
+            1e4,
+        ),
+    ):
+        edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * target))
+        tolerance = edge * edge / 4.0
+        rows.append(
+            _Row(
+                name,
+                faces.shape[0],
+                lambda vertices=vertices, faces=faces, value=value, edge=edge, tolerance=tolerance: (
+                    _meshcore.zero_set_remesh(
+                        vertices, faces, value, tolerance, tolerance, edge, 30.0
+                    )
+                ),
+                _remeshed_triangles,
+                _remesh_unmet,
+                quality=lambda result, distance=distance, samples=samples, tolerance=tolerance: (
+                    _remesh_quality(result, distance, samples, tolerance)
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance by the construction itself (counters 4 and 6).
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return int(result.counters[4] + result.counters[6])
+
+
+def _sphere_distance(points: np.ndarray, /) -> np.ndarray:
+    return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
+
+
+def _torus_distance(points: np.ndarray, /) -> np.ndarray:
+    ring = np.linalg.norm(points[..., :2], axis=-1) - 1.0
+    return np.abs(np.hypot(ring, points[..., 2]) - 0.4)
+
+
+def _sphere_samples(count: int, /) -> np.ndarray:
+    directions = np.random.default_rng(20261119).normal(size=(count, 3))
+    return directions / np.linalg.norm(directions, axis=1, keepdims=True)
+
+
+def _torus_samples(count: int, /) -> np.ndarray:
+    u, v = 2.0 * np.pi * np.random.default_rng(20261119).random((2, count))
+    ring = 1.0 + 0.4 * np.cos(v)
+    return np.stack((ring * np.cos(u), ring * np.sin(u), 0.4 * np.sin(v)), axis=1)
+
+
+def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.ndarray:
+    # Exact Euclidean distance from one point to each triangle (rows of corners).
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+    first, second = b - a, c - a
+    normal = np.cross(first, second)
+    squared_normal = np.sum(normal * normal, axis=1)
+    offset = point - a
+    height = np.sum(offset * normal, axis=1)
+    projected = offset - (height / squared_normal)[:, None] * normal
+    aa, ab, bb = (
+        np.sum(x * y, axis=1)
+        for x, y in ((first, first), (first, second), (second, second))
+    )
+    pa, pb = np.sum(projected * first, axis=1), np.sum(projected * second, axis=1)
+    determinant = aa * bb - ab * ab
+    s, t = (bb * pa - ab * pb) / determinant, (aa * pb - ab * pa) / determinant
+    inside = (s >= 0.0) & (t >= 0.0) & (s + t <= 1.0)
+    squared = np.where(inside, height * height / squared_normal, np.inf)
+    for start, end in ((a, b), (b, c), (c, a)):
+        edge = end - start
+        along = np.clip(
+            np.sum((point - start) * edge, axis=1) / np.sum(edge * edge, axis=1), 0, 1
+        )
+        closest = start + along[:, None] * edge
+        squared = np.minimum(squared, np.sum((point - closest) ** 2, axis=1))
+    return np.sqrt(squared)
+
+
+def _remesh_quality(
+    result: object,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    tolerance: float,
+    /,
+) -> tuple[int, dict[str, float]]:
+    # Angles of every triangle; mesh -> surface at 15 barycentric points per
+    # triangle and surface -> mesh at 4000 points of the exact surface (exact
+    # distance to the triangles whose centroid lies within twice the longest
+    # edge), both against the exact distance function.
+    from scipy.spatial import cKDTree
+
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    corners = result.vertices[result.triangles]
+    angles = []
+    for k in range(3):
+        first = corners[:, (k + 1) % 3] - corners[:, k]
+        second = corners[:, (k + 2) % 3] - corners[:, k]
+        cosine = np.sum(first * second, axis=1) / (
+            np.linalg.norm(first, axis=1) * np.linalg.norm(second, axis=1)
+        )
+        angles.append(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    angle = np.stack(angles, axis=1)
+    weights = np.asarray(
+        [(i / 4, j / 4, 1 - (i + j) / 4) for i in range(5) for j in range(5 - i)],
+        dtype=np.float64,
+    )
+    # (W, 3) @ (T, 3, 3): every triangle's barycentric sample points.
+    mesh_to_surface = float(np.max(distance(weights @ corners)))
+    centroids = corners.mean(axis=1)
+    reach = 2.0 * float(
+        np.max(np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2))
+    )
+    tree = cKDTree(centroids)
+    surface_to_mesh = 0.0
+    for point in samples(4000):
+        nearby = tree.query_ball_point(point, reach)
+        surface_to_mesh = max(
+            surface_to_mesh,
+            float(np.min(_point_triangle_distances(point, corners[nearby]))),
+        )
+    below = int(np.sum(angle.min(axis=1) < 30.0))
+    missed = below + int(mesh_to_surface > tolerance) + int(surface_to_mesh > tolerance)
+    return missed, {
+        "minimum_angle_degrees": float(angle.min()),
+        "maximum_angle_degrees": float(angle.max()),
+        "below_minimum_angle": float(below),
+        "mesh_to_surface": mesh_to_surface,
+        "surface_to_mesh": surface_to_mesh,
+        "tolerance": tolerance,
+    }
+
+
 def _constructed_cells(result: object, /) -> int:
     from phydrax.meshing._implicit_volume import StuffedImplicitConstruction
 
@@ -546,26 +782,18 @@ def _ceiling(
 
 def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     samples: list[float] = []
-    count = 0
     result: object = None
-    unmet = 0
     for _ in range(repeats):
         result, seconds = measure_host(row.run)
         samples.append(seconds)
-        count = row.count(result)
-        unmet = row.unmet(result)
+    missed, quality = row.quality(result)
     if isinstance(result, _meshcore.ConstrainedDelaunay2D):
-        return {
-            "domain": row.domain,
-            "elements": count,
-            "unmet": unmet,
-            "minimum_angle_degrees": _planar_minimum_angle(result),
-            "seconds": samples,
-            "minimum_seconds": min(samples),
-        }
+        quality = {**quality, "minimum_angle_degrees": _planar_minimum_angle(result)}
     return {
-        "elements": count,
-        "unmet": unmet,
+        "elements": row.count(result),
+        "unmet": row.unmet(result),
+        "quality_missed": missed,
+        "quality": quality,
         "seconds": samples,
         "minimum_seconds": min(samples),
     }
@@ -591,18 +819,21 @@ def main(argv: list[str] | None = None) -> int:
     for row in _rows(tuple(arguments.sizes), names):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
+        if row.domain is not None:
+            record["domain"] = row.domain
         ceiling = _ceiling(ceilings, row, measured["elements"])
         if ceiling is not None:
             seconds, allowed, tool = ceiling
             ratio = measured["minimum_seconds"] / seconds
+            meets = measured["unmet"] == 0 and measured["quality_missed"] == 0
             record |= {
                 "reference_tool": tool,
                 "reference_seconds": seconds,
                 "ratio": ratio,
                 "allowed_ratio": allowed,
-                "passed": ratio <= allowed and measured["unmet"] == 0,
+                "passed": ratio <= allowed and meets,
             }
-            failed = failed or ratio > allowed or measured["unmet"] > 0
+            failed = failed or ratio > allowed or not meets
         records.append(record)
         print(json.dumps(record), flush=True)
     if arguments.output is not None:

@@ -21,7 +21,13 @@
 // orient2d/orient3d are evaluated with Shewchuk's adaptive scheme: stage A
 // static filter, stage B exact evaluation on the rounded differences with the
 // published stage-B bound (and exactness when all difference tails vanish),
-// then full expansion arithmetic.  incircle/insphere use the same stages.
+// then full expansion arithmetic.  insphere uses the same stages.  incircle
+// runs Shewchuk's incircleadapt: stage B first on a double-double estimate
+// of the rounded-difference determinant (against the stage-B bound with a
+// larger second-order term, or a second-order bound when every difference
+// is exact), then on its exact expansion, stage C (the stage-B estimate
+// corrected by the first-order difference tails, against his stage-C bound),
+// then the full expansion.
 // Weighted power tests use the dynamic forward-error filter then expansions.
 //
 // *_sos variants apply index-ordered Simulation of Simplicity:
@@ -64,6 +70,19 @@ int orient2d(const double* a, const double* b, const double* c);
 int orient3d(const double* a, const double* b, const double* c, const double* d);
 int incircle(const double* a, const double* b, const double* c, const double* d);
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e);
+
+// The stage of incircle that decides its sign: the floating filter (stage A,
+// incircle_stage), stage B on the compensated estimate or on the exact
+// expansion of the rounded differences, stage C (first-order difference
+// tails) or stage D (the full expansion).
+enum class IncircleStage : std::uint8_t { kA, kBCompensated, kBExpansion, kC, kD };
+struct IncircleDecision {
+  int sign;
+  IncircleStage stage;
+};
+// incircle with the stage that decided it (incircle returns its sign).
+IncircleDecision incircle_decision(const double* a, const double* b, const double* c,
+                                   const double* d);
 
 // orient2d through its first, floating stage inlined. Shewchuk's bound on
 // |detleft| + |detright| holds for either sign pattern (opposite signs make

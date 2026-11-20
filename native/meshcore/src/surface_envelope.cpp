@@ -16,7 +16,7 @@
 #include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
-#include "surface_remesh.hpp"
+#include "surface_adapt.hpp"
 #include "directed_interval.hpp"
 #include "intersections.hpp"
 #include "topology_keys.hpp"
@@ -666,15 +666,18 @@ extern "C" PHX_MC_API void phx_mc_surface_envelope_free(void* handle) {
 //
 // The marching-tetrahedra surface certifies that every point of every output
 // triangle lies in the band bounds[2] <= d_source <= bounds[1]. Its triangles
-// are cuts of grid tetrahedra, often needles and caps. The source-agnostic
-// remesher (surface_remesh.hpp) replaces them toward a target edge length h
-// (twice the sampling spacing) and a 30 degree minimum angle under the
-// kOffsetBand admission: vertex values are bounded through the covering cloud
+// are cuts of grid tetrahedra, often needles and caps. The floating-point
+// adapter (surface_adapt.hpp) replaces them toward a target edge length h
+// (twice the sampling spacing) and a 30 degree minimum angle, projecting
+// vertices radially onto the offset sphere of their nearest cloud point;
+// then every triangle is certified in the band (certify_surface, repairing
+// refusals locally): vertex values are bounded through the covering cloud
 // exactly as in the certificate (d_cloud - covering - arithmetic <= d_source
-// <= d_cloud + arithmetic), and a triangle is admitted when its 1-Lipschitz
-// enclosure [min L_i - R, max U_i + R] (R its certified free radius) lies in
-// the band. The band bounds and the interpolation error are unchanged, and the
-// source-to-surface bound is recomputed on the remeshed vertices.
+// <= d_cloud + arithmetic), and a triangle is in the band when its
+// 1-Lipschitz enclosure [min L_i - R, max U_i + R] (R its certified free
+// radius) lies in it. The band bounds and the interpolation error are
+// unchanged, and the source-to-surface bound is recomputed on the remeshed
+// vertices.
 namespace {
 
 // Uniform bucket grid over a point set answering nearest-distance queries.
@@ -808,123 +811,25 @@ struct PointIndex {
   }
 };
 
-class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
+// The band certificate of one triangle (see the comment above).
+class EnvelopeBandCertifier final : public phx::mc::remesh::TriangleCertifier {
  public:
-  EnvelopeBandAdmission(const EnvelopeData& envelope, const PointIndex& cloud_index)
+  EnvelopeBandCertifier(const EnvelopeData& envelope, const PointIndex& cloud_index)
       : data(envelope), cloud(cloud_index), lower(envelope.bounds[2]), upper(envelope.bounds[1]) {}
 
-  phx::mc::remesh::AdmissionKind kind() const override {
-    return phx::mc::remesh::AdmissionKind::kOffsetBand;
-  }
-  phx::mc::remesh::VertexEvidence evaluate(const V& position) const override {
-    const double nearest = cloud.nearest(position);
-    return {next_down(next_down(nearest - data.covering_radius) - data.arithmetic_error),
-            next_up(nearest + data.arithmetic_error)};
-  }
-  bool admits(const V& a, const V& b, const V& c,
-              const std::array<phx::mc::remesh::VertexEvidence, 3>& evidence) const override {
+  double bound(const V& a, const V& b, const V& c) const override {
     const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
-    if (!std::isfinite(radius)) return false;
+    if (!std::isfinite(radius)) return std::numeric_limits<double>::infinity();
     double high = 0, low = std::numeric_limits<double>::infinity();
-    for (const auto& vertex : evidence) {
-      high = std::max(high, vertex.upper);
-      low = std::min(low, vertex.lower);
+    for (const V* corner : {&a, &b, &c}) {
+      const double nearest = cloud.nearest(*corner);
+      high = std::max(high, next_up(nearest + data.arithmetic_error));
+      low = std::min(low,
+                     next_down(next_down(nearest - data.covering_radius) - data.arithmetic_error));
     }
-    return next_up(high + radius) <= upper && next_down(low - radius) >= lower;
-  }
-  // Radial projection onto the offset sphere of the nearest cloud point.
-  V project(const V& x) const override {
-    const int64_t item = cloud.nearest_index(x);
-    if (item < 0) return x;
-    const V& p = data.cloud[static_cast<size_t>(item)];
-    const V direction = difference(x, p);
-    const double norm = length(direction);
-    if (!(norm > 0) || !std::isfinite(norm)) return x;
-    return add(p, mul(direction, data.offset / norm));
-  }
-  // Source normals of the band piece are the directions (x - q) / |x - q| from
-  // a nearest source point q of a triangle point x. Every x lies within R of
-  // a corner v (R = certified free radius); q lies within the covering radius
-  // c of a cloud point p, and |x - q| <= |x - p*| for v's nearest cloud point
-  // p* (on the source), which gives, with d = |v - p*|,
-  //   |v - p|^2 - d^2 <= 2 R |p - p*| + 2 c (d + R) + c^2,  |v - p| <= d + 2R + c,
-  // and (x - q) / |x - q| lies within asin((R + c) / |v - p|) of (v - p) / |v - p|.
-  // The cone holds every such direction over the candidate cloud points of the
-  // three corners (relative slack 1e-9 on the filters).
-  phx::mc::remesh::NormalCone normal_cone(
-      const V& a, const V& b, const V& c,
-      const std::array<phx::mc::remesh::VertexEvidence, 3>&) const override {
-    phx::mc::remesh::NormalCone cone;
-    const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
-    if (!std::isfinite(radius)) return cone;
-    const double covering = data.covering_radius;
-    const std::array<const V*, 3> corners{&a, &b, &c};
-    std::array<V, 3> nearest{};
-    V axis{0, 0, 0};
-    for (int k = 0; k < 3; ++k) {
-      const int64_t item = cloud.nearest_index(*corners[k]);
-      if (item < 0) return cone;
-      nearest[k] = data.cloud[static_cast<size_t>(item)];
-      const V direction = difference(*corners[k], nearest[k]);
-      const double norm = length(direction);
-      if (!(norm > radius + covering)) return cone;
-      axis = add(axis, mul(direction, 1 / norm));
-    }
-    const double axis_length = length(axis);
-    if (!(axis_length > 0)) return cone;
-    axis = mul(axis, 1 / axis_length);
-    const phx::mc::remesh::IntervalVector exact_axis = {
-        phx::mc::remesh::point(axis[0]), phx::mc::remesh::point(axis[1]),
-        phx::mc::remesh::point(axis[2])};
-    const double margin = next_up(radius + covering);
-    double half = 0;
-    bool open = false;
-    for (int k = 0; k < 3 && !open; ++k) {
-      const V& v = *corners[k];
-      const double d = length(difference(v, nearest[k]));
-      const double reach = (d + 2 * radius + covering) * (1 + 1.0e-9);
-      cloud.for_each_near(v, reach, [&](const V& p) {
-        const V offset = difference(v, p);
-        const double squared = dot(offset.data(), offset.data());
-        if (squared > reach * reach) return;
-        const double allowance = 2 * radius * length(difference(p, nearest[k])) +
-                                 2 * covering * (d + radius) + covering * covering;
-        if (squared - d * d > allowance + (allowance + d * d) * 1.0e-9) return;
-        // The angle between the axis and v - p and the spread
-        // asin((R + c) / |v - p|), both from above: v - p is enclosed
-        // componentwise and its length bounded from below.
-        const phx::mc::remesh::IntervalVector exact_offset =
-            phx::mc::remesh::enclosed_difference(v, p);
-        const double shortest = phx::mc::remesh::norm_lower(exact_offset);
-        if (!(shortest > margin)) {
-          open = true;
-          return;
-        }
-        const double between = phx::mc::remesh::angle_upper(exact_axis, exact_offset);
-        const double spread = phx::mc::remesh::asin_upper(next_up(margin / shortest));
-        half = std::max(half, next_up(between + spread));
-      });
-    }
-    if (open || !(half < cone.half_angle)) return cone;
-    cone.axis = axis;
-    cone.half_angle = half;
-    return cone;
-  }
-  // Every cone holds the nearest cloud point p* of each corner as a candidate,
-  // whose term is at least asin((R + c) / |v - p*|) >= asin((R + c) / U_v).
-  // A lower bound of the cone's half-angle: sum, quotient and arcsine are
-  // rounded down.
-  double normal_cone_floor(
-      const V& a, const V& b, const V& c,
-      const std::array<phx::mc::remesh::VertexEvidence, 3>& evidence) const override {
-    const double radius = phx::mc::remesh::certified_free_radius(a, b, c, data.roundoff);
-    double nearest_upper = std::numeric_limits<double>::infinity();
-    for (const auto& vertex : evidence) nearest_upper = std::min(nearest_upper, vertex.upper);
-    const double margin = radius + data.covering_radius;
-    if (!std::isfinite(radius) || !(nearest_upper > margin)) return phx::mc::remesh::kOpenCone;
-    const double floor =
-        phx::mc::remesh::asin_lower(next_down(next_down(margin) / nearest_upper));
-    return floor > 0 ? floor : 0.0;
+    return next_up(high + radius) <= upper && next_down(low - radius) >= lower
+               ? 0.0
+               : std::numeric_limits<double>::infinity();
   }
 
  private:
@@ -933,21 +838,73 @@ class EnvelopeBandAdmission final : public phx::mc::remesh::TriangleAdmission {
   double lower, upper;
 };
 
-int32_t remesh_envelope(EnvelopeData& data, phx::mc::remesh::RemeshCounters& counters) {
+// The offset surface of the covering cloud as a floating-point oracle: a
+// position goes radially onto the offset sphere of its nearest cloud point,
+// whose curvature is 1 / offset in every direction.
+class EnvelopeOracle final : public phx::mc::remesh::SurfaceOracle {
+ public:
+  EnvelopeOracle(const EnvelopeData& envelope, const PointIndex& cloud_index)
+      : data(envelope), cloud(cloud_index) {}
+
+  bool project(const V& position, phx::mc::remesh::SurfacePoint& out) const override {
+    const int64_t item = cloud.nearest_index(position);
+    if (item < 0) return false;
+    const V& p = data.cloud[static_cast<size_t>(item)];
+    const V direction = difference(position, p);
+    const double norm = length(direction);
+    if (!(norm > 0) || !std::isfinite(norm)) return false;
+    out.normal = mul(direction, 1 / norm);
+    out.on = add(p, mul(out.normal, data.offset));
+    out.curvature_first = out.curvature_second = 1 / data.offset;
+    return true;
+  }
+  void project_all(const std::vector<V>& positions,
+                   std::vector<phx::mc::remesh::SurfacePoint>& out,
+                   std::vector<uint8_t>& found) const override {
+    out.assign(positions.size(), {});
+    found.assign(positions.size(), 0);
+    for (size_t i = 0; i < positions.size(); ++i)
+      found[i] = project(positions[i], out[i]) ? 1 : 0;
+  }
+  void distances(const std::vector<V>& positions, std::vector<double>& out) const override {
+    out.resize(positions.size());
+    for (size_t i = 0; i < positions.size(); ++i)
+      out[i] = std::fabs(cloud.nearest(positions[i]) - data.offset);
+  }
+
+ private:
+  const EnvelopeData& data;
+  const PointIndex& cloud;
+};
+
+int32_t remesh_envelope(EnvelopeData& data, std::array<int64_t, 5>& counters) {
   const double h = 2 * data.spacing;
   const double lower = data.bounds[2], upper = data.bounds[1];
   if (!(h > 0) || !(lower > 0) || !(upper > lower)) return PHX_MC_INVALID_ARGUMENT;
   PointIndex cloud;
   int32_t status = cloud.build(data.cloud, std::max(h / 2, data.covering_radius));
   if (status != PHX_MC_OK) return status;
-  const EnvelopeBandAdmission admission(data, cloud);
+  // Construction aims at the offset; the certificate's band, after the
+  // covering and arithmetic charges, is what the samples may use.
+  const double margin =
+      std::min(data.offset - lower - data.covering_radius - 2 * data.arithmetic_error,
+               upper - data.offset - data.arithmetic_error);
+  if (!(margin > 0)) return PHX_MC_UNRESOLVED;
+  const EnvelopeOracle oracle(data, cloud);
+  // The offset of a cloud has no creases to keep: every vertex is projected.
+  const phx::mc::remesh::AdaptTargets targets{h, margin, 30.0, false};
   std::vector<V> points = data.surface_points;
   std::vector<F> triangles = data.triangles;
-  // An envelope is the boundary of the solid around its source: closed.
-  status = phx::mc::remesh::remesh_surface(
-      points, triangles, admission,
-      {h, 30.0, false, phx::mc::remesh::InputTopology::kClosed}, counters);
+  phx::mc::remesh::AdaptCounters adapted;
+  status = phx::mc::remesh::adapt_surface(points, triangles, oracle, targets, adapted);
   if (status != PHX_MC_OK) return status;
+  const EnvelopeBandCertifier certifier(data, cloud);
+  phx::mc::remesh::CertifyCounters certified;
+  status = phx::mc::remesh::certify_surface(points, triangles, oracle, targets, certifier, {},
+                                            certified);
+  if (status != PHX_MC_OK) return status;
+  counters = {adapted.splits + certified.repair_splits, adapted.collapses, adapted.flips,
+              adapted.relocations, adapted.below_angle};
   // Source-to-surface: every source point lies within the covering radius of
   // a cloud point, which lies within its nearest-vertex distance of the
   // surface.
@@ -980,15 +937,11 @@ extern "C" PHX_MC_API int32_t phx_mc_surface_envelope_remesh(void* handle, doubl
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     auto& data = *static_cast<EnvelopeData*>(handle);
     if (data.cloud.empty() || data.triangles.empty()) return PHX_MC_INVALID_ARGUMENT;
-    phx::mc::remesh::RemeshCounters result;
+    std::array<int64_t, 5> result{};
     const int32_t status = remesh_envelope(data, result);
     if (status != PHX_MC_OK) return status;
     std::copy(data.bounds.begin(), data.bounds.end(), bounds);
-    counters[0] = result.splits;
-    counters[1] = result.collapses;
-    counters[2] = result.flips;
-    counters[3] = result.relocations;
-    counters[4] = result.unmet;
+    std::copy(result.begin(), result.end(), counters);
     return PHX_MC_OK;
   });
 }
