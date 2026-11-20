@@ -414,7 +414,16 @@ def _washer() -> phx.geometry.brep.BRepModel:
 
 
 @pytest.mark.parametrize(
-    ("name", "size"), (("cone_apex", 0.15), ("capped_cylinder", 0.2), ("washer", 0.1))
+    ("name", "size"),
+    (
+        ("cone_apex", 0.15),
+        # At 0.2 a chart triangle's frontal point and circumcenter both lie
+        # within half a metric unit of a vertex; the longest-edge midpoint
+        # fallback resolves it.
+        ("cone_apex", 0.2),
+        ("capped_cylinder", 0.2),
+        ("washer", 0.1),
+    ),
 )
 def test_revolved_surfaces_pass_native_verifiers(name: str, size: float) -> None:
     si = phx.SpatialCoordinateContract.si()
