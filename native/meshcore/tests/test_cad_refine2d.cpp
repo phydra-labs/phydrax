@@ -686,12 +686,14 @@ void proximity_circumcenter() {
   // Fault caught: refusing a frontal point for proximity without trying the
   // admissible circumcenter. The bad-size triangle (-.3,0) (-.3,.075)
   // (-.384,.0877) on the .075 hole chord had its frontal point .491 h from
-  // (-.3,.075) and no fallback; only the input-forced bad-angle triangle on
-  // the .02 chord at (-1,-1) remains.
+  // (-.3,.075) and no fallback. Its centroid-metric oversize is no longer
+  // confirmed by its side-integrated lengths in the graded floor, so it no
+  // longer asks for a point; only the input-forced bad-angle triangle on the
+  // .02 chord at (-1,-1) remains, after one failed relocation.
   PHX_CHECK(status==PHX_MC_UNRESOLVED && r.stats.unresolved_triangles==1 && r.unresolved.size()==1);
   PHX_CHECK(r.stats.encroachment_refusals==1 && r.stats.outside_refusals==0 &&
             r.stats.proximity_refusals==0 && r.stats.nonstar_refusals==0);
-  PHX_CHECK(r.stats.relocations_tried==2 && r.stats.relocations_accepted==1 &&
+  PHX_CHECK(r.stats.relocations_tried==1 && r.stats.relocations_accepted==0 &&
             r.stats.relocations_failed==1);
   for(const auto& e:r.unresolved) {
     PHX_CHECK(!e.bad_size && e.bad_angle && e.refusal==CadRefine2DRefusal::encroachment);

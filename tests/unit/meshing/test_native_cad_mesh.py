@@ -512,6 +512,52 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
                 assert stats["improve_inserted"][0] == 0, (size, theta)
 
 
+@pytest.mark.parametrize("latitude", (45, 50, 55, 60, 65, 70, 75, 80, 85))
+def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
+    # The unit ball below a latitude cut at 45-85 deg: the dome's trim circle
+    # lies where the latitude chart is as anisotropic as beside a pole. Before
+    # trim-line zones (rings seeded from the trim as from a pole) and the
+    # side-integrated size confirmation, 55 of these 135 runs returned the
+    # face stage UNRESOLVED (refusals beside the trim; with the confirmation
+    # alone most runs at 75-85 deg still did, with the zones alone one at 45
+    # deg). Each run must resolve, keep every edge over h / 10 and stay within
+    # the requested tolerance of the sphere: the distance of a flat
+    # triangle's point x to the unit sphere is |1 - |x||, sampled on a
+    # barycentric grid.
+    domain = MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
+    model = cad_geometry_bundle(domain).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    steps = 8
+    weights = np.asarray(
+        [
+            (1 - (i + j) / steps, i / steps, j / steps)
+            for i in range(steps + 1)
+            for j in range(steps + 1 - i)
+        ],
+        dtype=np.float64,
+    )
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
+            tolerance = size / 6.0
+            result = cad_mesh(
+                model,
+                np.full((faces,), size, dtype=np.float64),
+                np.full((faces,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert result.status is MeshcoreStatus.OK, (size, theta)
+            corners = result.points[result.triangles]
+            edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+            assert edges.min() > 0.1 * size, (size, theta)
+            radius = np.linalg.norm(corners, axis=2)
+            dome = np.all(np.abs(radius - 1.0) < 1e-12, axis=1)
+            assert np.any(dome) and not np.all(dome)
+            samples = np.einsum("kv,rvd->rkd", weights, corners[dome])
+            distance = np.abs(1.0 - np.linalg.norm(samples, axis=2))
+            assert distance.max() <= tolerance, (size, theta, distance.max())
+
+
 def _washer() -> phx.geometry.brep.BRepModel:
     brep = phx.geometry.brep
     return brep.brep_revolution(

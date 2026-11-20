@@ -82,7 +82,9 @@ struct CadRefine2DResult {
 // measured fixtures, but this is not a general no-refusal guarantee.
 // A triangle is oversized when its metric circumradius exceeds sqrt(1/2) of
 // the larger of one unit and the metric length (at its centroid) of each of
-// its fixed segments, since no insertion can shorten a segment.
+// its fixed segments, since no insertion can shorten a segment, and the same
+// test holds with side lengths integrated along the sides (two Gauss points
+// each; nodes interior to the side, so the metric must be valid there).
 // On completed or point-cap exits, statistics count each unresolved triangle
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
