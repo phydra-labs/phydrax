@@ -177,6 +177,7 @@ set(PHX_MC_HEADERS
   src/verify_chart_partition.hpp
   src/verify_surface_embedding.hpp
   src/verify_cad_fidelity.hpp
+  src/verify_cad_pole_chart.hpp
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp

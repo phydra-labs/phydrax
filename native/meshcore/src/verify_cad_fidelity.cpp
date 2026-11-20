@@ -16,6 +16,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "verify_chart_partition.hpp"
+#include "verify_cad_pole_chart.hpp"
 
 namespace phx::mc::cad {
 namespace {
@@ -1859,6 +1860,156 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
   return result;
 }
 
+// Pole chart (verify_cad_pole_chart.hpp): the sphere frame of a face whose
+// kernel is a closed-form sphere; false for every other family.
+bool pole_sphere_frame(const FaceKernel& kernel, pole::SphereFrame& frame) {
+  if (!kernel.closed || kernel.frame.kind != ClosedForm::kSphere) return false;
+  const di::Interval* d = kernel.frame.data;
+  for (int i = 0; i < 3; ++i) {
+    frame.o[i] = d[i];
+    frame.e1[i] = d[3 + i];
+    frame.e2[i] = d[6 + i];
+    frame.a[i] = d[9 + i];
+  }
+  frame.r = d[12];
+  return true;
+}
+
+// Enclosure of the pole-chart image rho (cos u, sin u) of a chart point.
+bool pole_chart_image(AnchoredTrigonometry& trig, const double* uv, int sigma,
+                      di::Interval* image) {
+  di::Interval rho, c, s;
+  if (!pole::colatitude(uv[1], sigma, rho)) return false;
+  trig.evaluate(di::point(uv[0]), c, s);
+  image[0] = di::multiply(rho, c);
+  image[1] = di::multiply(rho, s);
+  return di::finite(image[0]) && di::finite(image[1]);
+}
+
+// The row's pole-chart corners (x0, y0, x1, y1, x2, y2): a pole corner (bit
+// j of `pole_mask`, decided by the caller from exact topology) is the origin,
+// the pole's own chart point; every other corner the binary64 midpoint of its
+// image enclosure. The triangle's linear map is taken on these corners.
+bool pole_corners(AnchoredTrigonometry& trig, const double* uv, int sigma, int32_t pole_mask,
+                  double* xy) {
+  for (int j = 0; j < 3; ++j) {
+    if ((pole_mask >> j) & 1) {
+      xy[2 * j] = xy[2 * j + 1] = 0.0;
+      continue;
+    }
+    di::Interval image[2];
+    if (!pole_chart_image(trig, uv + 2 * j, sigma, image)) return false;
+    for (int axis = 0; axis < 2; ++axis)
+      xy[2 * j + axis] = image[axis].lower + 0.5 * (image[axis].upper - image[axis].lower);
+  }
+  return true;
+}
+
+// |S(x) - sum_i w_i X_i| at a pole-chart leaf vertex, over its enclosure.
+int32_t pole_vertex_error(const pole::SphereFrame& frame, int sigma, const Vertex& vertex,
+                          const di::Interval* point, const double* vertices, double& error) {
+  di::Interval jets[4][3];
+  if (!pole::jets(frame, sigma, point[0], point[1], 0, 0, jets)) return PHX_MC_UNRESOLVED;
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    auto linear = di::point(0.0);
+    for (int i = 0; i < 3; ++i)
+      if (vertex.weight[i] != 0.0)
+        linear = di::add(linear, di::multiply(di::point(vertex.weight[i]),
+                                              di::point(vertices[3 * i + axis])));
+    const auto difference = di::subtract(jets[0][axis], linear);
+    if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
+    magnitude[axis] = di::magnitude(difference);
+  }
+  error = phx::mc::geometry::norm_upper(magnitude);
+  return std::isfinite(error) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// leaf_bound in the pole chart: S - I_L by the Taylor remainder of the
+// pole-chart Hessian over the leaf box (offsets from the box centre), plus
+// the affine I_L - I_T, maximal at a leaf vertex.
+int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& leaf,
+                        const double* vertices, const double* xy, double& vertex_term,
+                        double& upper) {
+  double box_lower[2] = {std::numeric_limits<double>::infinity(),
+                         std::numeric_limits<double>::infinity()};
+  double box_upper[2] = {-std::numeric_limits<double>::infinity(),
+                         -std::numeric_limits<double>::infinity()};
+  double mismatch = 0.0;
+  for (const Vertex& vertex : leaf.vertices) {
+    di::Interval point[2];
+    exact_chart_point(vertex, xy, point);
+    for (int axis = 0; axis < 2; ++axis) {
+      box_lower[axis] = std::min(box_lower[axis], point[axis].lower);
+      box_upper[axis] = std::max(box_upper[axis], point[axis].upper);
+    }
+    double error = 0.0;
+    const int32_t status = pole_vertex_error(frame, sigma, vertex, point, vertices, error);
+    if (status != PHX_MC_OK) return status;
+    mismatch = std::max(mismatch, error);
+  }
+  vertex_term = mismatch;
+  di::Interval jets[4][3];
+  if (!pole::jets(frame, sigma, {box_lower[0], box_upper[0]}, {box_lower[1], box_upper[1]}, 1, 3,
+                  jets))
+    return PHX_MC_UNRESOLVED;
+  const auto ex = half_extent(box_lower[0], box_upper[0]);
+  const auto ey = half_extent(box_lower[1], box_upper[1]);
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto hxx = di::point(di::magnitude(jets[1][axis]));
+    const auto hxy = di::point(di::magnitude(jets[2][axis]));
+    const auto hyy = di::point(di::magnitude(jets[3][axis]));
+    auto sum = di::multiply(hxx, di::multiply(ex, ex));
+    const auto mixed = di::multiply(hxy, di::multiply(ex, ey));
+    sum = di::add(sum, di::add(mixed, mixed));
+    sum = di::add(sum, di::multiply(hyy, di::multiply(ey, ey)));
+    magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
+  }
+  upper = di::add(di::point(mismatch), di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
+  return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+}
+
+// sup over the pole-chart triangle of |S - I_T| (the same subdivision as
+// subdivided_bound, without lens charges: the seam charge is the caller's).
+FidelityTriangleResult pole_subdivided_bound(const pole::SphereFrame& frame, int sigma,
+                                             const double* vertices, const double* xy,
+                                             double tolerance, int32_t max_depth) {
+  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  Leaf stack[73];
+  stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
+  int size = 1;
+  double maximum = 0.0;
+  while (size > 0) {
+    const Leaf leaf = stack[--size];
+    double bound = 0.0, vertex_term = 0.0;
+    result.status = pole_leaf_bound(frame, sigma, leaf, vertices, xy, vertex_term, bound);
+    if (result.status != PHX_MC_OK) return result;
+    if (bound <= tolerance) {
+      maximum = std::max(maximum, bound);
+      continue;
+    }
+    if (leaf.depth >= max_depth || result.subdivisions >= 1000000) {
+      result.status = PHX_MC_UNRESOLVED;
+      result.reason = PHX_MC_FIDELITY_RESOLUTION;
+      return result;
+    }
+    ++result.subdivisions;
+    const Vertex ab = midpoint(leaf.vertices[0], leaf.vertices[1]);
+    const Vertex bc = midpoint(leaf.vertices[1], leaf.vertices[2]);
+    const Vertex ca = midpoint(leaf.vertices[2], leaf.vertices[0]);
+    const int32_t depth = leaf.depth + 1;
+    stack[size++] = {{leaf.vertices[0], ab, ca}, depth};
+    stack[size++] = {{ab, leaf.vertices[1], bc}, depth};
+    stack[size++] = {{ca, bc, leaf.vertices[2]}, depth};
+    stack[size++] = {{ab, bc, ca}, depth};
+  }
+  result.upper = maximum;
+  result.reason = PHX_MC_FIDELITY_CERTIFIED;
+  return result;
+}
+
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -1878,6 +2029,71 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
   prepare_face_kernel(geometry, face, workspace, kernel);
   return subdivided_bound(geometry, kernel, vertices, uv, nullptr, tolerance, max_depth, false,
                           nullptr, face, workspace);
+}
+
+FidelityTriangleResult fidelity_pole_triangle(const CadGeometry& geometry, int32_t face,
+                                              const double* vertices, const double* uv,
+                                              int32_t pole_side, int32_t pole_mask,
+                                              double tolerance, int32_t max_depth,
+                                              IntervalEvaluationWorkspace& workspace) {
+  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  if (face < 0 || face >= geometry.surface_count() || vertices == nullptr || uv == nullptr ||
+      (pole_side != 1 && pole_side != -1) || pole_mask < 0 || pole_mask > 7 ||
+      !std::isfinite(tolerance) || tolerance < 0.0 || max_depth < 0 || max_depth > 24) {
+    result.status = PHX_MC_INVALID_ARGUMENT;
+    return result;
+  }
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) { result.status = PHX_MC_INTERNAL_ERROR; return result; }
+  FaceKernel kernel;
+  prepare_face_kernel(geometry, face, workspace, kernel);
+  pole::SphereFrame frame;
+  double xy[6];
+  if (!pole_sphere_frame(kernel, frame) || !pole_corners(kernel.trig, uv, pole_side, pole_mask, xy))
+    return result;
+  return pole_subdivided_bound(frame, pole_side, vertices, xy, tolerance, max_depth);
+}
+
+int32_t fidelity_pole_image(const CadGeometry& geometry, int32_t face,
+                            IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                            const double* uv, double* image) {
+  if (face < 0 || face >= geometry.surface_count() || (pole_side != 1 && pole_side != -1))
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  FaceKernel kernel;
+  prepare_face_kernel(geometry, face, workspace, kernel);
+  pole::SphereFrame frame;
+  di::Interval point[2];
+  if (!pole_sphere_frame(kernel, frame) || !pole_chart_image(kernel.trig, uv, pole_side, point))
+    return PHX_MC_UNRESOLVED;
+  image[0] = point[0].lower, image[1] = point[0].upper;
+  image[2] = point[1].lower, image[3] = point[1].upper;
+  return PHX_MC_OK;
+}
+
+int32_t fidelity_pole_jets(const CadGeometry& geometry, int32_t face,
+                           IntervalEvaluationWorkspace& workspace, int32_t pole_side,
+                           const double* lower, const double* upper, double* jet_lower,
+                           double* jet_upper) {
+  if (face < 0 || face >= geometry.surface_count() || (pole_side != 1 && pole_side != -1))
+    return PHX_MC_INVALID_ARGUMENT;
+  const phx::mc::GradualNearestScope mode;
+  if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+  FaceKernel kernel;
+  prepare_face_kernel(geometry, face, workspace, kernel);
+  pole::SphereFrame frame;
+  di::Interval jets[4][3];
+  if (!pole_sphere_frame(kernel, frame) ||
+      !pole::jets(frame, pole_side, {lower[0], upper[0]}, {lower[1], upper[1]}, 0, 3, jets))
+    return PHX_MC_UNRESOLVED;
+  for (int term = 0; term < 4; ++term)
+    for (int axis = 0; axis < 3; ++axis) {
+      jet_lower[3 * term + axis] = jets[term][axis].lower;
+      jet_upper[3 * term + axis] = jets[term][axis].upper;
+    }
+  return PHX_MC_OK;
 }
 
 int32_t fidelity_anchored_sincos(double lower, double upper, double* out) {

@@ -1004,6 +1004,134 @@ void lens_index_overflow() {
   std::printf("B lens index (index_overflow): charge %.2f\n", charge);
   PHX_CHECK(charge == 0.5);
 }
+
+// Pole chart (verify_cad_pole_chart.hpp) on a sphere of radius 2 about
+// (0.5, -0.25, 1): fan rows (one pole corner) and band rows (none) at both
+// poles, against an independent reference: S(x, y) = o + r (sin rho / rho
+// (x, y) + sigma cos rho a) sampled densely over the pole-chart triangle
+// (the same-parameter deviation), and the exact distance | |p - o| - r | of
+// densely sampled mesh points. Fault caught: a jet sign, a series
+// coefficient or a missing Taylor term (the bound would fall below the
+// sampled deviation or the jets miss S); a displaced pole or band vertex
+// must refuse at the tolerance; a non-sphere face is refused.
+void pole_chart_rows() {
+  const double r = 2.0, centre[3] = {0.5, -0.25, 1.0}, top = M_PI / 2;
+  Model m;
+  const int32_t sphere =
+      m.add_template("sphere", {centre[0], centre[1], centre[2], 1, 0, 0, 0, 1, 0, 0, 0, 1, r});
+  m.surface(sphere);
+  m.surface(m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0}));
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const auto reference = [&](double x, double y, int sigma) {
+    const double rho = std::hypot(x, y), g = rho == 0.0 ? 1.0 : std::sin(rho) / rho;
+    return std::array<double, 3>{centre[0] + r * g * x, centre[1] + r * g * y,
+                                 centre[2] + sigma * r * std::cos(rho)};
+  };
+  // Jets enclose the source map at the matching chart point.
+  for (int sigma : {1, -1})
+    for (int k = 0; k < 16; ++k) {
+      const double uv[2] = {0.4 * k, sigma * (top - 0.05 * (k + 1))};
+      double image[4], xyz[3], lo[12], hi[12];
+      PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, uv, image) == PHX_MC_OK);
+      const double box_lower[2] = {image[0], image[2]}, box_upper[2] = {image[1], image[3]};
+      PHX_CHECK(fidelity_pole_jets(geometry, 0, workspace, sigma, box_lower, box_upper, lo, hi) ==
+                PHX_MC_OK);
+      PHX_CHECK(geometry.jets(sphere, uv, 0, xyz, point_workspace));
+      for (int axis = 0; axis < 3; ++axis)
+        PHX_CHECK(lo[axis] - 1e-14 <= xyz[axis] && xyz[axis] <= hi[axis] + 1e-14);
+      // Second differences of the reference lie in the Hessian enclosure of
+      // a box holding the stencil (up to the O(step^2) stencil error).
+      const double x = 0.5 * (image[0] + image[1]), y = 0.5 * (image[2] + image[3]), e = 1e-3;
+      const double wide_lower[2] = {x - e, y - e}, wide_upper[2] = {x + e, y + e};
+      PHX_CHECK(fidelity_pole_jets(geometry, 0, workspace, sigma, wide_lower, wide_upper, lo,
+                                   hi) == PHX_MC_OK);
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto at = [&](double dx, double dy) {
+          return reference(x + dx, y + dy, sigma)[static_cast<std::size_t>(axis)];
+        };
+        const double sxx = (at(e, 0) - 2 * at(0, 0) + at(-e, 0)) / (e * e);
+        const double syy = (at(0, e) - 2 * at(0, 0) + at(0, -e)) / (e * e);
+        const double sxy = (at(e, e) - at(e, -e) - at(-e, e) + at(-e, -e)) / (4 * e * e);
+        PHX_CHECK(lo[3 + axis] - 1e-5 <= sxx && sxx <= hi[3 + axis] + 1e-5);
+        PHX_CHECK(lo[6 + axis] - 1e-5 <= sxy && sxy <= hi[6 + axis] + 1e-5);
+        PHX_CHECK(lo[9 + axis] - 1e-5 <= syy && syy <= hi[9 + axis] + 1e-5);
+      }
+    }
+  struct Row { const char* name; std::array<double, 6> uv; int mask; };
+  // Unit-sphere colatitudes 0.2 (ring 1) and 0.4 (ring 2), ring 1 every pi/4.
+  const double r1 = top - 0.2, r2 = top - 0.4;
+  const Row rows[] = {{"fan", {0.3, top, 0.0, r1, M_PI / 4, r1}, 1},
+                      {"band", {0.0, r1, M_PI / 8, r2, M_PI / 4, r1}, 0},
+                      {"band outer", {M_PI / 4, r1, M_PI / 8, r2, 3 * M_PI / 8, r2}, 0}};
+  const double tolerance = 0.01 * r * r;
+  for (int sigma : {1, -1})
+    for (const Row& row : rows) {
+      double uv[6], points[9], xy[6];
+      for (int j = 0; j < 3; ++j) {
+        uv[2 * j] = row.uv[static_cast<std::size_t>(2 * j)];
+        uv[2 * j + 1] = sigma * row.uv[static_cast<std::size_t>(2 * j + 1)];
+        PHX_CHECK(geometry.jets(sphere, uv + 2 * j, 0, points + 3 * j, point_workspace));
+        double image[4];
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, uv + 2 * j, image) ==
+                  PHX_MC_OK);
+        const bool at_pole = (row.mask >> j) & 1;
+        xy[2 * j] = at_pole ? 0.0 : image[0] + 0.5 * (image[1] - image[0]);
+        xy[2 * j + 1] = at_pole ? 0.0 : image[2] + 0.5 * (image[3] - image[2]);
+      }
+      double sampled = 0.0, distance = 0.0;
+      const int n = 96;
+      for (int a = 0; a <= n; ++a)
+        for (int b = 0; a + b <= n; ++b) {
+          const double w[3] = {static_cast<double>(a) / n, static_cast<double>(b) / n,
+                               static_cast<double>(n - a - b) / n};
+          const double x = w[0] * xy[0] + w[1] * xy[2] + w[2] * xy[4];
+          const double y = w[0] * xy[1] + w[1] * xy[3] + w[2] * xy[5];
+          const auto s = reference(x, y, sigma);
+          double deviation = 0.0, radius = 0.0;
+          for (int axis = 0; axis < 3; ++axis) {
+            const double p = w[0] * points[axis] + w[1] * points[3 + axis] + w[2] * points[6 + axis];
+            deviation += (s[static_cast<std::size_t>(axis)] - p) * (s[static_cast<std::size_t>(axis)] - p);
+            radius += (p - centre[axis]) * (p - centre[axis]);
+          }
+          sampled = std::max(sampled, std::sqrt(deviation));
+          distance = std::max(distance, std::fabs(std::sqrt(radius) - r));
+        }
+      const auto pole = fidelity_pole_triangle(geometry, 0, points, uv, sigma, row.mask,
+                                               tolerance, 12, workspace);
+      const auto chart = fidelity_triangle(geometry, 0, points, uv, tolerance, 12, workspace);
+      std::printf("P pole chart (%s, sigma %d): status %d reason %d splits %d upper %.6e sampled "
+                  "%.6e distance %.6e uv-chart status %d upper %.6e\n",
+                  row.name, sigma, pole.status, pole.reason, pole.subdivisions, pole.upper,
+                  sampled, distance, chart.status, chart.upper);
+      PHX_CHECK(pole.status == PHX_MC_OK && pole.upper <= tolerance && pole.upper >= sampled &&
+                pole.upper >= distance && sampled >= distance);
+      // A displaced vertex (pole for the fan row, ring otherwise) by 0.05 r
+      // along the normal refuses at the tolerance.
+      const int moved = row.mask != 0 ? 0 : 1;
+      double shifted[9];
+      std::copy(points, points + 9, shifted);
+      for (int axis = 0; axis < 3; ++axis)
+        shifted[3 * moved + axis] += 0.05 * (points[3 * moved + axis] - centre[axis]);
+      const auto refused = fidelity_pole_triangle(geometry, 0, shifted, uv, sigma, row.mask,
+                                                  tolerance, 12, workspace);
+      PHX_CHECK(refused.status == PHX_MC_UNRESOLVED);
+    }
+  // Families without a certified pole chart are refused.
+  const double flat_uv[6] = {0, 0, 1, 0, 0, 1}, flat[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const auto plane = fidelity_pole_triangle(geometry, 1, flat, flat_uv, 1, 0, 1.0, 8, workspace);
+  PHX_CHECK(plane.status == PHX_MC_UNRESOLVED && plane.reason == PHX_MC_FIDELITY_INTERVAL_REFUSAL);
+  // A corner past the pole latitude has no colatitude.
+  const double past[6] = {0, std::nextafter(top, 4.0), 0, 1, 1, 1};
+  double past_points[9] = {0, 0, 3, 2.5, -0.25, 1, 0.5, 1.75, 1};
+  const auto beyond = fidelity_pole_triangle(geometry, 0, past_points, past, 1, 0, 1.0, 8,
+                                             workspace);
+  PHX_CHECK(beyond.status == PHX_MC_UNRESOLVED);
+}
 }  // namespace
 
 int main() {
@@ -1024,6 +1152,7 @@ int main() {
   hole_orientation_demo();
   surface_without_loop_demo();
   lens_index_overflow();
+  pole_chart_rows();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
