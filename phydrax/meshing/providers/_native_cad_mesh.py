@@ -24,11 +24,13 @@ from ..._meshcore import cad_mesh_solid, CadSolidResult, MeshcoreStatus
 from ...discretization._cell_geometry import CellGeometrySpec
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
+from ...discretization._topology import sorted_unique_rows
 from ...discretization.fem._reference import lagrange_element
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_construction import NativeCertificationRequest, NativeMeshConstruction
 from .._result import MeshingComplianceReport
+from .._sizing import SizeControlStrength, UniformSizeControl
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
 
 
@@ -62,6 +64,13 @@ def cad_solid_support_issues(
     # controls are honoured by the existing route only.
     if specification.patch_controls or specification.region_controls:
         issues.append("patch and region controls need source organization records")
+    # The native call has no seeded region classification, and one deviation
+    # on every face and curve: seeds and protected features (their own
+    # deviation bounds and feature evidence) are honoured by the existing route.
+    if specification.region_seeds or specification.hole_seeds:
+        issues.append("region and hole seeds need seeded region classification")
+    if specification.protected_features:
+        issues.append("protected features need their own deviation and evidence")
     if prepared.boundary_request.selected_patches != tuple(
         range(len(prepared.domain.patches))
     ):
@@ -97,6 +106,59 @@ def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometr
         (np.asarray(volume.points, dtype=np.float64), volume.nodes), axis=0
     )
     return CellGeometrySpec({_BLOCK: element}, {_BLOCK: route}, coordinates)
+
+
+def _size_compliance(
+    prepared: _PreparedDirectBRepCadVolume,
+    solid: CadSolidResult,
+    issues: list[str],
+    requested: list[tuple[str, float]],
+    achieved: list[tuple[str, float]],
+    /,
+) -> None:
+    """Boundary edge-length statistics of each face size control (PLC route's rows)."""
+    from ._native_cad_volume import _domain_scope_rows
+
+    specification = prepared.specification
+    policy = specification.size_compliance
+    surface = solid.surface
+    points = np.asarray(solid.volume.points, dtype=np.float64)
+    triangles = np.asarray(surface.triangles, dtype=np.int64)
+    patches = np.asarray(surface.triangle_patches, dtype=np.int64)
+    for control in specification.size_controls:
+        if not isinstance(control, UniformSizeControl):
+            issues.append(f"size_control:{control.control_id}:unsupported")
+            continue
+        rows = _domain_scope_rows(prepared.domain, control.scope, 2)
+        faces = triangles[np.isin(patches, rows)]
+        if faces.shape[0] == 0:
+            issues.append(f"size_control:{control.control_id}:no_boundary_faces")
+            continue
+        edges = sorted_unique_rows(
+            np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
+        )
+        lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        for statistic in policy.target_statistics:
+            value = float(np.quantile(lengths, 0.5 if statistic == "p50" else 0.95))
+            key = f"size:{control.control_id}:{statistic}"
+            requested.append((key, control.target_size))
+            achieved.append((key, value))
+            allowed = (
+                control.target_size * (1.0 + policy.relative_tolerance)
+                + policy.absolute_tolerance
+            )
+            if control.strength is SizeControlStrength.HARD and value > allowed:
+                issues.append(key)
+        if control.maximum_size is not None:
+            maximum = float(np.max(lengths))
+            key = f"size:{control.control_id}:maximum"
+            requested.append((key, control.maximum_size))
+            achieved.append((key, maximum))
+            if (
+                control.strength is SizeControlStrength.HARD
+                and maximum > control.maximum_size
+            ):
+                issues.append(key)
 
 
 def execute_cad_solid(
@@ -164,11 +226,15 @@ def execute_cad_solid(
     ]
     if schedule.radius_edge_bound is not None:
         requested.append(("radius_edge_bound", float(schedule.radius_edge_bound)))
+    achieved: list[tuple[str, float]] = [
+        ("unmet_quality_cells", float(stats["unmet_cells"]))
+    ]
+    _size_compliance(prepared, solid, issues, requested, achieved)
     compliance = MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),
         requested=tuple(requested),
-        achieved=(("unmet_quality_cells", float(stats["unmet_cells"])),),
+        achieved=tuple(achieved),
     )
     certification = NativeCertificationRequest(
         MeshCertificationSchedule("volume_cad"),

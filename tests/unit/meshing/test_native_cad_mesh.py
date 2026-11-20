@@ -21,10 +21,12 @@ from phydrax._meshcore import (
     CadModel,
     CadSurfaceResult,
     load_meshcore,
+    MeshcoreError,
     MeshcoreStatus,
     verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.meshing._contracts import VolumeMeshingSpec
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
     coefficient_bounds,
@@ -810,3 +812,203 @@ def test_unproved_cad_solid_with_region_control_honours_it() -> None:
     (evidence,) = candidate._construction.organization.region_boundary_evidence
     assert evidence.control_id == control.control_id
     assert evidence.material_id == "controlled-solid"
+
+
+def _field_specification(
+    field: str, model: phx.geometry.brep.BRepModel
+) -> VolumeMeshingSpec:
+    """A coarse sphere specification that sets only ``field``."""
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._controls import (
+        FeatureKind,
+        HoleSeed,
+        PeriodicConstraint,
+        ProtectedFeature,
+        RegionSeed,
+    )
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import (
+        CurvatureSizeControl,
+        SizeCompliancePolicy,
+        SizeControl,
+        UniformSizeControl,
+    )
+
+    boundary = MeshingScope.whole(model, 2)
+    solid = MeshingScope.whole(model, 3)
+    tetrahedra = CellFamilyPolicy(required=("tetrahedron",))
+    size = UniformSizeControl(boundary, 0.3)
+
+    def build(
+        *,
+        families: CellFamilyPolicy = tetrahedra,
+        fill: VolumeFillStrategy = VolumeFillStrategy.SIMPLEX,
+        size_controls: tuple[SizeControl, ...] = (size,),
+        protected_features: tuple[ProtectedFeature, ...] = (),
+        region_seeds: tuple[RegionSeed, ...] = (),
+        hole_seeds: tuple[HoleSeed, ...] = (),
+        periodic_constraints: tuple[PeriodicConstraint, ...] = (),
+        size_compliance: SizeCompliancePolicy | None = None,
+        maximum_deviation: float | None = 0.05,
+    ) -> VolumeMeshingSpec:
+        return VolumeMeshingSpec(
+            CellMeshingTarget(3, 3, families),
+            boundary,
+            fill,
+            size_controls=size_controls,
+            protected_features=protected_features,
+            region_seeds=region_seeds,
+            hole_seeds=hole_seeds,
+            periodic_constraints=periodic_constraints,
+            size_compliance=size_compliance,
+            maximum_deviation=maximum_deviation,
+        )
+
+    match field:
+        case "protected_features":
+            return build(
+                protected_features=(
+                    ProtectedFeature(
+                        boundary, FeatureKind.SURFACE, maximum_deviation=0.05
+                    ),
+                )
+            )
+        case "region_seeds":
+            region = MeshingDomain.from_brep(model).regions[0].name
+            return build(
+                region_seeds=(
+                    RegionSeed(np.zeros(3), region, "seeded", RegionRole.SOLID),
+                )
+            )
+        case "hole_seeds":
+            return build(hole_seeds=(HoleSeed(np.zeros(3), solid),))
+        case "size_maximum":
+            return build(
+                size_controls=(UniformSizeControl(boundary, 0.2, maximum_size=0.2),)
+            )
+        case "size_compliance":
+            return build(
+                size_controls=(UniformSizeControl(boundary, 0.2),),
+                size_compliance=SizeCompliancePolicy(target_statistics=("p95",)),
+            )
+        case "size_curvature":
+            return build(size_controls=(size, CurvatureSizeControl(boundary, 0.5)))
+        case "size_growth":
+            return build(
+                size_controls=(
+                    UniformSizeControl(boundary, 0.3, maximum_growth_rate=1.2),
+                )
+            )
+        case "size_volume_scope":
+            return build(size_controls=(UniformSizeControl(solid, 0.3),))
+        case "periodic_constraints":
+            return build(
+                periodic_constraints=(PeriodicConstraint(boundary, boundary, np.eye(4)),)
+            )
+        case "maximum_deviation":
+            return build(maximum_deviation=None)
+        case "cell_families":
+            return build(families=CellFamilyPolicy(required=("hexahedron",)))
+        case "fill_strategy":
+            return build(fill=VolumeFillStrategy.POLYHEDRAL)
+    raise AssertionError(field)
+
+
+_FIELD_OUTCOMES = (
+    ("protected_features", "existing"),
+    ("region_seeds", "existing"),
+    ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
+    ("size_maximum", "native"),
+    ("size_compliance", "native"),
+    ("size_curvature", "supports uniform size controls on source faces only"),
+    ("size_growth", "patch-size growth controls without a source geodesic"),
+    ("size_volume_scope", "size controls must bind source face occurrences"),
+    ("periodic_constraints", "does not support periodic constraints"),
+    ("maximum_deviation", "requires an explicit maximum_deviation"),
+    ("cell_families", "a tetrahedral volume target"),
+    ("fill_strategy", "the simplex volume-fill strategy"),
+)
+
+
+@pytest.mark.parametrize(
+    ("field", "outcome"),
+    _FIELD_OUTCOMES,
+    ids=[field for field, _ in _FIELD_OUTCOMES],
+)
+def test_unproved_cad_solid_honours_or_refuses_every_field(
+    field: str, outcome: str
+) -> None:
+    # No specification field is silently dropped by the native route: it is
+    # honoured there (reported size statistics), the plan keeps the existing
+    # construction, or planning/execution refuses it with a stated reason.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import MeshingFailure
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = _sphere_model()
+
+    def execute() -> CellMeshingCandidate:
+        specification = _field_specification(field, model)
+        candidate = (
+            phx.meshing.NativeMeshingProvider(
+                NativeMeshingOptions(
+                    "cad_tetrahedral",
+                    volume_schedule=NativeVolumeSchedule(
+                        radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                    ),
+                )
+            )
+            .plan(model, specification)
+            .execute(prove=False)
+        )
+        assert isinstance(candidate, CellMeshingCandidate)
+        return candidate
+
+    if outcome not in {"native", "existing"}:
+        with pytest.raises((MeshingFailure, MeshcoreError), match=re.escape(outcome)):
+            execute()
+        return
+    candidate = execute()
+    native = candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+    assert native == (outcome == "native")
+    specification = _field_specification(field, model)
+    report = candidate._construction.compliance
+    if field == "region_seeds":
+        organization = candidate._construction.organization
+        assert organization is not None
+        assert [zone.material_id for zone in organization.zones] == ["seeded"]
+    if field == "protected_features":
+        (feature,) = specification.protected_features
+        key = f"protected:{feature.feature_id}:maximum_deviation"
+        assert dict(report.requested)[key] == 0.05
+        assert key in dict(report.achieved)
+    if not native:
+        return
+    (control,) = specification.size_controls
+    assert isinstance(control, UniformSizeControl)
+    policy = specification.size_compliance
+    requested, achieved = dict(report.requested), dict(report.achieved)
+    # Requested value and the bound its row is an issue above.
+    bounds = {
+        name: (
+            control.target_size,
+            control.target_size * (1.0 + policy.relative_tolerance)
+            + policy.absolute_tolerance,
+        )
+        for name in policy.target_statistics
+    }
+    if control.maximum_size is not None:
+        bounds["maximum"] = (control.maximum_size, control.maximum_size)
+    rows = {key for key in achieved if key.startswith("size:")}
+    assert rows == {f"size:{control.control_id}:{name}" for name in bounds}
+    for name, (target, allowed) in bounds.items():
+        key = f"size:{control.control_id}:{name}"
+        assert requested[key] == target
+        assert (key in report.issues) == (achieved[key] > allowed)
