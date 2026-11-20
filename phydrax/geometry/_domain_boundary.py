@@ -2397,7 +2397,7 @@ class MeshingDomainBoundarySource(StrictModule, NonTrainableState):
                     )
                 elif exact_spans is not None:
                     interpolation = _exact_rational_span_interpolation_bounds(
-                        exact_spans, exact_charts
+                        exact_spans, exact_charts, entry.surface
                     )
                     if interpolation.shape != (len(exact_charts),) or not np.all(
                         np.isfinite(interpolation)
