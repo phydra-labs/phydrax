@@ -181,15 +181,11 @@ void plane_with_hole() {
 // any size field: its apex must lie outside both long chords' diametral disks,
 // and the best such apex gives a smallest angle of about 5 degrees (grid
 // search over [-1,-.6]^2) against the 25-degree target.
-// The second record is a kernel defect, pinned so a fix shows up here: the
-// triangle (-.3,0) (-.3,.075) (-.384,.0877) on the hole chord has angles
-// 43.8/98.6/37.6 degrees and is only bad_size (R/h = .719 > 1/sqrt(2); the
-// metric there is the plain .075 + .3 d grading, the chord floor is below it).
-// The frontal candidate lies .491 h from (-.3,.075), inside the .5 h proximity
-// radius, so it is refused with kind proximity. The circumcenter
-// (-.3487,.0375) is .72 h from every vertex and outside the chord's diametral
-// disk, but the kernel tries no fallback after a proximity refusal (only after
-// encroachment), so the record is not forced by the input.
+// The triangle (-.3,0) (-.3,.075) (-.384,.0877) on the hole chord (bad_size only,
+// R/h = .719 > 1/sqrt(2)) used to stay unresolved: its frontal candidate lies .491 h
+// from (-.3,.075), inside the .5 h proximity radius, and the kernel tried no
+// fallback after a proximity refusal. The kernel now tries the admissible
+// circumcenter (-.3487,.0375) there, so only the forced corner record remains.
 void short_long_corner() {
   PlaneWithHole fixture;
   fixture.samples.clear();
@@ -206,39 +202,30 @@ void short_long_corner() {
   CadFaceMesh result;
   const int32_t status = phx::mc::cad_mesh_face(geometry, curves, 0, 0.4, 0.1, 0.5, result);
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
-  PHX_CHECK(result.stats.unresolved_triangles == 2);
-  PHX_CHECK(result.refinement_failures.size() == 2);
+  PHX_CHECK(result.stats.unresolved_triangles == 1);
+  PHX_CHECK(result.refinement_failures.size() == 1);
   PHX_CHECK(result.boundary_edges.size() == 65);
   if (result.boundary_edges.size() == 65) {
     check_loop(result, 0, 33);
     check_loop(result, 33, 32);
   }
-  int corner_records = 0, hole_records = 0;
+  int corner_records = 0;
   for (const auto& failure : result.refinement_failures) {
-    bool corner = false, short_a = false, short_b = false, hole_a = false, hole_b = false;
+    bool corner = false, short_a = false, short_b = false;
     for (int k = 0; k < 3; ++k) {
       const double u = failure.triangle_uv[2 * k], v = failure.triangle_uv[2 * k + 1];
       corner = corner || std::hypot(u + 1.0, v + 1.0) < 0.8;
       short_a = short_a || (u == -1.0 && v == -1.0);
       short_b = short_b || (u == -1.0 && std::abs(v + 0.98) < 1e-12);
-      hole_a = hole_a || (u == -0.3 && v == 0.0);
-      hole_b = hole_b || (u == -0.3 && std::abs(v - 0.075) < 1e-12);
     }
-    if (corner) {
-      ++corner_records;
-      PHX_CHECK(!failure.bad_size && failure.bad_angle && short_a && short_b);
-      PHX_CHECK(failure.refusal_kind ==
-                static_cast<int32_t>(phx::mc::CadRefine2DRefusal::encroachment));
-      PHX_CHECK(failure.curve == 0 && failure.curve_segment == 0);
-    } else {
-      ++hole_records;
-      PHX_CHECK(failure.bad_size && !failure.bad_angle && hole_a && hole_b);
-      PHX_CHECK(failure.refusal_kind ==
-                static_cast<int32_t>(phx::mc::CadRefine2DRefusal::proximity));
-      PHX_CHECK(failure.curve == -1 && failure.curve_segment == -1);
-    }
+    PHX_CHECK(corner);
+    ++corner_records;
+    PHX_CHECK(!failure.bad_size && failure.bad_angle && short_a && short_b);
+    PHX_CHECK(failure.refusal_kind ==
+              static_cast<int32_t>(phx::mc::CadRefine2DRefusal::encroachment));
+    PHX_CHECK(failure.curve == 0 && failure.curve_segment == 0);
   }
-  PHX_CHECK(corner_records == 1 && hole_records == 1);
+  PHX_CHECK(corner_records == 1);
 }
 
 // A noninteger one-ulp closure gap on a periodic axis is rounding, not a wrap.
