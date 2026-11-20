@@ -334,6 +334,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native fixed-boundary volume meshing has lower fixed costs with unchanged
+  output: `TetMesh3D.from_recovery` adopts the recovered adjacency, segments
+  and (for a Delaunay, self-covered recovery) cell orientation without proving
+  them again (`validate=True` still re-proves them) and skips the
+  declared-plane pass when nothing is declared; `TetMesh3D.arrays` fills every
+  bank from one native buffer; protection radii and local feature sizes find
+  facet segments through a per-vertex index and prune against the running
+  radius.
 - Native planar Delaunay is faster with byte-identical output: the
   constrained triangulation's initial Delaunay build runs on insertion-ordered
   point copies and relabels to input indices (cache-local walks), the BRIO key
