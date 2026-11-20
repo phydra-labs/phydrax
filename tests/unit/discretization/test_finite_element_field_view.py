@@ -433,6 +433,37 @@ def test_location_discharges_boxes_beside_an_isolated_root() -> None:
     )
 
 
+def test_location_refuses_a_second_tolerance_root_beside_an_isolated_root() -> None:
+    # The fold eta -> (eta - 0.26)(eta + 2.3e-10) has an exact root at
+    # eta = 0.26 and a tolerance root just below eta = 0 in a certified
+    # rootless box; the isolated root must not discharge that box.
+    shift = 0.24999999995 + 2e-11
+
+    def fold(xi: Any, eta: Any) -> Any:
+        return np.stack(
+            (xi, (eta - 0.26) * (eta + 2.3e-10) / 0.26 - (xi - shift)), axis=-1
+        )
+
+    nodes = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5))
+    )
+    coordinates = fold(nodes[:, 0], nodes[:, 1])
+    mesh = phx.discretization.CellMesh.from_triangles(
+        coordinates[:3], np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    geometry = phx.discretization.CellGeometrySpec(
+        {"triangles": phx.discretization.lagrange_element("triangle", 2)},
+        {"triangles": np.arange(6, dtype=np.int32)[None]},
+        coordinates,
+    )
+    locator = PreparedMappedCellLocator.from_cell_geometry(mesh, geometry, 0)
+
+    located = locator.locate(np.asarray(((shift, 0.0),)))
+
+    assert not bool(np.asarray(located.candidates_complete)[0])
+    assert located.status.tolist() != [int(CellLocationStatus.LOCATED)]
+
+
 def test_mapped_host_bvh_traverses_all_leaves_and_respects_masks() -> None:
     origins = np.column_stack((2.0 * np.arange(20), np.zeros(20)))
     vertices = (origins[:, None, :] + np.asarray(((0, 0), (1, 0), (0, 1)))).reshape(-1, 2)
