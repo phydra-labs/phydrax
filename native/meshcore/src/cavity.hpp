@@ -347,6 +347,67 @@ class CavityEdit {
     return EditStatus::kOk;
   }
 
+  // stage_cone then commit in one pass for an unlabeled complex without a
+  // journal (Delaunay construction; otherwise it runs those two): the same
+  // slots, cells and neighbors, written once. The cone is linked before the
+  // first write, so a boundary that is not a closed manifold surface is
+  // refused (kNonManifold), as is a cone the slot bank cannot hold
+  // (kSlotLimit), with the complex unchanged.
+  EditStatus commit_cone(int32_t center, std::span<const int32_t> cavity,
+                         std::span<const BoundaryFacet> boundary) {
+    if (complex_.labeled() || complex_.journal != nullptr) {
+      const EditStatus status = stage_cone(center, cavity, boundary);
+      return status == EditStatus::kOk ? commit() : status;
+    }
+    ++staging_revision_;
+    staged_ = false;
+    cone_center_ = kNoCone;
+    const std::size_t count = boundary.size();
+    std::vector<Tetrahedron>& tets = complex_.tets;
+    cone_cells_.resize(count);
+    int64_t created_finite = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = boundary[i];
+      ConeCell& cell = cone_cells_[i];
+      std::copy_n(tets[static_cast<std::size_t>(face.tet)].v, 4, cell.v);
+      cell.v[face.slot] = center;
+      created_finite += (cell.v[0] | cell.v[1] | cell.v[2] | cell.v[3]) >= 0 ? 1 : 0;
+    }
+    if (!link_cone(
+            count, [this](std::size_t i, int k) { return cone_cells_[i].v[k]; },
+            [boundary](std::size_t i) { return boundary[i].slot; },
+            [this](std::size_t i, int k, int32_t twin) { cone_cells_[i].n[k] = twin; })) {
+      return EditStatus::kNonManifold;
+    }
+    const std::size_t extra = count > cavity.size() ? count - cavity.size() : 0;
+    const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
+    if (fresh > static_cast<std::size_t>(kMaxTetrahedronSlots) - tets.size()) {
+      return EditStatus::kSlotLimit;
+    }
+    const std::size_t freed = cavity.size() > count ? cavity.size() - count : 0;
+    complex_.reserve(fresh, freed);
+    int64_t removed_finite = 0;
+    for (int32_t t : cavity) removed_finite += is_ghost(tets[static_cast<std::size_t>(t)]) ? 0 : 1;
+    ids_.clear();
+    ids_.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      ids_.push_back(i < cavity.size() ? cavity[i] : complex_.allocate());
+    }
+    for (std::size_t i = count; i < cavity.size(); ++i) complex_.release(cavity[i]);
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = boundary[i];
+      const ConeCell& cell = cone_cells_[i];
+      Tetrahedron& tet = tets[static_cast<std::size_t>(ids_[i])];
+      tet = Tetrahedron{{cell.v[0], cell.v[1], cell.v[2], cell.v[3]}, {}, 0, 0, 0, kNoRegion};
+      for (int k = 0; k < 4; ++k) {
+        tet.n[k] = k == face.slot ? face.outside : ids_[static_cast<std::size_t>(cell.n[k])];
+      }
+      tets[static_cast<std::size_t>(face.outside)].n[face.back] = ids_[i];
+    }
+    complex_.finite_count += created_finite - removed_finite;
+    return EditStatus::kOk;
+  }
+
   std::span<const int32_t> removed() const { return removed_; }
   std::span<const Tetrahedron> proposal() const { return created_; }
   int32_t proposal_constraint(std::size_t cell, int slot) const {
@@ -360,7 +421,7 @@ class CavityEdit {
   EditStatus commit() {
     ++staging_revision_;
     if (!staged_) return EditStatus::kBoundaryMismatch;
-    if (cone_center_ != kNoCone && !link_cone()) {
+    if (cone_center_ != kNoCone && !link_staged_cone()) {
       rollback();
       return EditStatus::kNonManifold;
     }
@@ -414,6 +475,12 @@ class CavityEdit {
   static constexpr int32_t kExternal = std::numeric_limits<int32_t>::min();
   struct Preserved { FacetKey key; int32_t id; };
   struct FacetSlot { FacetKey key; int32_t owner; };
+  // A cone cell of commit_cone: its vertices and its neighbors as cone rows
+  // (the face opposite the center unset).
+  struct ConeCell {
+    int32_t v[4];
+    int32_t n[4];
+  };
   struct EdgeRecord {
     std::uint64_t key;
     int32_t owner;
@@ -539,19 +606,21 @@ class CavityEdit {
   // Cones with more boundary vertices pair their edges by sorting.
   static constexpr std::uint32_t kDenseConeVertices = 512;
 
-  // Links the staged cone cells across the edges of the cavity boundary
-  // (their face opposite the center stays kExternal). Boundary vertices get
-  // dense local numbers, so every directed edge owns one entry of a square
-  // table: the first pass records each edge's owner (4 cell + corner), the
-  // second gives each cell the owner of its reversed edge, without probing
-  // or branching on which cell of a pair arrives first. The second pass
-  // also proves the pairing a bijection (each entry still holds its own
-  // edge; the reversed entry names an edge of this cone that is the
-  // reverse), so the table is never cleared and a boundary that is not a
-  // closed manifold surface is refused. A closed connected surface has
-  // V - E + F <= 2, so at most count / 2 + 2 vertices.
-  bool link_cone() {
-    const std::size_t count = created_.size();
+  // Links `count` cone cells across the edges of the cavity boundary (their
+  // face opposite the center stays as it is): corner(i, k) is vertex k of
+  // cone cell i, slot(i) its center corner, and link(i, k, j) gives face k
+  // of cell i the neighbor j. Boundary vertices get dense local numbers, so
+  // every directed edge owns one entry of a square table: the first pass
+  // records each edge's owner (4 cell + corner), the second gives each cell
+  // the owner of its reversed edge, without probing or branching on which
+  // cell of a pair arrives first. The second pass also proves the pairing a
+  // bijection (each entry still holds its own edge; the reversed entry names
+  // an edge of this cone that is the reverse), so the table is never
+  // cleared and a boundary that is not a closed manifold surface is
+  // refused. A closed connected surface has V - E + F <= 2, so at most
+  // count / 2 + 2 vertices.
+  template <class Corner, class Slot, class Link>
+  bool link_cone(std::size_t count, const Corner& corner, const Slot& slot, const Link& link) {
     if (count > static_cast<std::size_t>(std::numeric_limits<int32_t>::max() / 4)) return false;
     if (++link_epoch_ == 0) {
       std::fill(vertex_tags_.begin(), vertex_tags_.end(), 0);
@@ -560,10 +629,10 @@ class CavityEdit {
     cone_locals_.resize(3 * count);
     std::uint32_t vertices = 0;
     for (std::size_t i = 0; i < count; ++i) {
-      const int* facet = kConeFacet[boundary_[i].slot];
+      const int* facet = kConeFacet[slot(i)];
       for (int j = 0; j < 3; ++j) {
         // Vertices are at least kGhostVertex = -1.
-        const auto index = static_cast<std::size_t>(created_[i].v[facet[j]] + 1);
+        const auto index = static_cast<std::size_t>(corner(i, facet[j]) + 1);
         if (index >= vertex_tags_.size()) {
           vertex_tags_.resize(std::max(index + 1, 2 * vertex_tags_.size()), 0);
         }
@@ -577,18 +646,20 @@ class CavityEdit {
       }
     }
     if (vertices > count / 2 + 2) return false;
-    return vertices <= kDenseConeVertices ? link_cone_dense(vertices) : link_cone_sorted();
+    return vertices <= kDenseConeVertices ? link_cone_dense(count, vertices, slot, link)
+                                          : link_cone_sorted(count, slot, link);
   }
   std::uint32_t cone_corner(std::size_t owner, int offset) const {
     const std::size_t cell = owner >> 2;
     const int corner = static_cast<int>(owner & 3U) + offset;
     return cone_locals_[3 * cell + static_cast<std::size_t>(corner >= 3 ? corner - 3 : corner)];
   }
-  bool link_cone_dense(std::uint32_t vertices) {
+  template <class Slot, class Link>
+  bool link_cone_dense(std::size_t count, std::uint32_t vertices, const Slot& slot,
+                       const Link& link) {
     std::size_t dim = 1;
     while (dim < vertices) dim <<= 1;
     if (edge_owners_.size() < dim * dim) edge_owners_.resize(dim * dim, -1);
-    const std::size_t count = created_.size();
     for (std::size_t i = 0; i < count; ++i) {
       for (int j = 0; j < 3; ++j) {
         const std::size_t owner = 4 * i + static_cast<std::size_t>(j);
@@ -597,7 +668,7 @@ class CavityEdit {
       }
     }
     for (std::size_t i = 0; i < count; ++i) {
-      const int* facet = kConeFacet[boundary_[i].slot];
+      const int* facet = kConeFacet[slot(i)];
       for (int j = 0; j < 3; ++j) {
         const std::size_t owner = 4 * i + static_cast<std::size_t>(j);
         const std::uint32_t from = cone_corner(owner, 1), to = cone_corner(owner, 2);
@@ -608,13 +679,13 @@ class CavityEdit {
             cone_corner(static_cast<std::size_t>(twin), 2) != from) {
           return false;
         }
-        created_[i].n[facet[j]] = twin >> 2;
+        link(i, facet[j], twin >> 2);
       }
     }
     return true;
   }
-  bool link_cone_sorted() {
-    const std::size_t count = created_.size();
+  template <class Slot, class Link>
+  bool link_cone_sorted(std::size_t count, const Slot& slot, const Link& link) {
     const auto key = [](std::uint32_t from, std::uint32_t to) {
       return (static_cast<std::uint64_t>(from) << 32) | to;
     };
@@ -634,10 +705,17 @@ class CavityEdit {
       const EdgeRecord reversed{key(cone_corner(owner, 2), cone_corner(owner, 1)), 0};
       const auto twin = std::lower_bound(edge_records_.begin(), edge_records_.end(), reversed);
       if (twin == edge_records_.end() || twin->key != reversed.key) return false;
-      created_[owner >> 2].n[kConeFacet[boundary_[owner >> 2].slot][owner & 3U]] =
-          twin->owner >> 2;
+      link(owner >> 2, kConeFacet[slot(owner >> 2)][owner & 3U], twin->owner >> 2);
     }
     return true;
+  }
+  // link_cone on the staged cone cells.
+  bool link_staged_cone() {
+    return link_cone(
+        created_.size(),
+        [this](std::size_t i, int k) { return created_[i].v[k]; },
+        [this](std::size_t i) { return boundary_[i].slot; },
+        [this](std::size_t i, int k, int32_t twin) { created_[i].n[k] = twin; });
   }
   void apply() {
     for (std::size_t i = 0; i < created_.size(); ++i) {
@@ -690,6 +768,7 @@ class CavityEdit {
   std::vector<std::uint32_t> cone_locals_;
   std::vector<int32_t> edge_owners_;
   std::vector<EdgeRecord> edge_records_;
+  std::vector<ConeCell> cone_cells_;
   std::uint32_t link_epoch_ = 0;
 };
 

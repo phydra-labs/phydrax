@@ -324,6 +324,29 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native surface-to-tetrahedra is faster with identical output: insphere
+  evaluates Shewchuk's stages B and C on stack expansions before the full
+  expansion (`insphere_decision` reports the deciding stage and tests pin the
+  stage B and C bounds); PLC recovery recognises a source that conforms to the
+  Delaunay triangulation of its points (every triangle a face, every edge row an
+  edge, every cell positive) and only labels its faces, without bounding
+  corners, reuses the preparation's sorted edge index, finds subfaces in a
+  lowest-vertex table and classifies regions from them (falling back to the
+  full classification, in order, on any conflict); the Delaunay build commits
+  each cone in one pass; refinement looks up facet edges in a slot table,
+  deduplicates feature lines by counting sort and queries feature sizes cell
+  by cell; subface legalisation keeps its edge map across flips and rechecks
+  only edges a flip or split can have changed (two small fixed-boundary
+  inputs: 422 s -> 4.7 s and more than 600 s -> 12.4 s).
+- Analytic implicit certification is faster with identical identities:
+  `AnalyticImplicitProfile.boundary_cover` checks each candidate count on its
+  parameter diagonals before building the full grid (same first admissible
+  count, bit-identical samples), and acceptance computes the analytic distance
+  evidence once for witness validation, the fidelity certificate and the
+  tubular coverage premise. A tolerance-0.002 sphere certifies in 66 s instead
+  of 428 s.
+- Planar constrained Delaunay refinement allocates and checks less per call
+  and per insertion; refined meshes are unchanged.
 - Analytic implicit profile volumes are meshed by restricted Delaunay
   refinement, surface first (`implicit_restricted_delaunay`,
   `phx_mc_implicit_restricted_delaunay`,
@@ -1861,15 +1884,44 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Certified derivative bounds no longer miss kinks. Nested-JVP acceleration
+  and Hessian enclosures differentiate `abs`, min/max and selections
+  piecewise, so c(t) = (t, |t - 1/2|) was certified at about 1e-16 chord
+  deviation against a true 1/2. Curve chord bounds and generic-map surface
+  interpolation, adaptive interpolation and normal-turn bounds now use
+  second-order bounds only where the carrier declares C1 or the point map's
+  branch evidence (`evaluate_branches`) proves smoothness, a first-order
+  Jacobian-spread bound (`binary64_first_order_interpolation_upper`) where it
+  is only continuous, and refuse across possible jumps.
+- Source-fidelity restore ships the outward hull of the stored and recomputed
+  enclosures and refuses an adopted decision the hull does not support, so a
+  stale certificate with an unsound stored bound is no longer re-certified.
+  Declared identity change: coverage certificate, bounded-homotopy witness
+  and witnessed-boundary ids no longer hash platform-rounded distance bounds
+  (the bounds stay validated evidence); report and result ids that include
+  them change.
 - The surface certifiers refuse coordinates outside the exact predicates'
   domain before contact classification, and the surface-remesh benchmark rows
   run `zero_set_certify` in their untimed quality stage (a refusal or an
   unresolved result is a miss).
-- The mesh-source distance certificate (`mesh_certify`) decides coverage with
-  exact orientation tests, encloses overlap vertices and crossing parameters
-  with error bounds, forms affine maps only when the stage-A determinant test
-  excludes zero (ill-conditioned maps refuse), and refuses every non-finite
-  value instead of dropping it.
+- The mesh-source distance certificate (`mesh_certify`) is rigorous (three
+  independent reviews): coverage is decided with exact orientation tests,
+  overlap vertices are decided exactly before any map is formed (an exactly
+  empty overlap is 0), crossing parameters carry error enclosures, affine maps
+  are formed only when the determinant's magnitude bound excludes zero and
+  ill-conditioned maps refuse, rounding pads follow a written first-order
+  derivation with a factor-two margin, and every non-finite value refuses. A
+  surface certified both ways is returned when a later angle-only pass fails.
+- `zero_set_certify` proves carried triangles by per-triangle witness boxes:
+  `carrier_boxes` replaces the caller-declared `carrier_distance` (clean
+  cutover); a triangle is carried only when its corners lie in its box and two
+  box corners have value enclosures of opposite sign, at the box diagonal, and
+  per-triangle carried flags are reported.
+- Chart partition certificates refuse overlapping UV triangles (covering
+  multiplicity above one) through the shared surface-contact enumeration,
+  require consecutive chords of a trim use to join bitwise; the surface
+  embedding verifier clears exactly coplanar pairs only on an exact separating
+  line, checks its rounding-mode scope and refuses more than 2^32 points.
 - Fixed spline source interpolation certificates at interior C0 knot lines:
   a chart triangle crossing a knot line of multiplicity at least the degree
   (rational: decided from knots and weights) is clipped exactly into smooth

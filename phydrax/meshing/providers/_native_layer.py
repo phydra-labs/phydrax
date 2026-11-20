@@ -1876,6 +1876,12 @@ def implicit_layer_wall(
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
+            # Each discovery face lies in its scaffold leaf cell, whose box
+            # is the face's witness for faces kept around creases.
+            scaffold = discovery.scaffold
+            witness_boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[
+                np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
+            ]
             certified = zero_set_certify(
                 remeshed.vertices,
                 remeshed.triangles,
@@ -1885,7 +1891,7 @@ def implicit_layer_wall(
                 remeshed.orientation,
                 vertices,
                 faces,
-                scaffold_distance,
+                witness_boxes,
                 edge_length,
                 _CARRIER_MINIMUM_ANGLE_DEGREES,
             )
@@ -1910,7 +1916,7 @@ def implicit_layer_wall(
                 stage="surface_meshing",
             )
         # `distance` bounds the remeshed wall: the certified bound of proved
-        # faces and the scaffold distance of faces kept from the scaffold.
+        # faces and the witness-box diagonal of faces kept from the scaffold.
         evidence = (
             ("carrier_remeshed", 1.0),
             *before,

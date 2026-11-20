@@ -844,6 +844,33 @@ class ZeroSetCertifier final : public TriangleCertifier {
   const ZeroSetBandAdmission& admission_;
 };
 
+// The distance bound a witness box proves for a carrier triangle (see
+// phx_mc_zero_set_certify): its corners lie in the box (exact comparisons)
+// and two box corners have value enclosures of strictly opposite sign, so a
+// zero of f lies in the box; every point of the triangle is then within the
+// box diagonal (rounded up) of it. +inf when a check fails.
+double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
+                     const Point& upper, const IntervalBoxProgram& value) {
+  for (int d = 0; d < 3; ++d) {
+    if (!std::isfinite(lower[d]) || !std::isfinite(upper[d]) || !(lower[d] <= upper[d]))
+      return kInfinity;
+    for (const Point* p : {&a, &b, &c})
+      if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
+  }
+  bool negative = false, positive = false;
+  for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
+    Point at{};
+    for (int d = 0; d < 3; ++d) at[d] = (corner >> d) & 1 ? upper[d] : lower[d];
+    Interval enclosure{};
+    if (!value.evaluate(at, at, &enclosure) || !finite(enclosure)) continue;
+    negative = negative || enclosure.upper < 0;
+    positive = positive || enclosure.lower > 0;
+  }
+  if (!(negative && positive)) return kInfinity;
+  const IntervalVector extent = enclosed_difference(upper, lower);
+  return norm_upper(extent);
+}
+
 // Certification with local repair of a closed surface against the zero set
 // (see phx_mc_zero_set_certify).
 int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
@@ -859,7 +886,8 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
       !phx::mc::addressable(request.carrier_triangle_count, 3, sizeof(int64_t)) ||
       (request.carrier_vertex_count > 0 && request.carrier_vertices == nullptr) ||
       (request.carrier_triangle_count > 0 && request.carrier_triangles == nullptr) ||
-      !(request.carrier_distance >= 0) || !std::isfinite(request.carrier_distance) ||
+      (request.carrier_triangle_count > 0 && request.carrier_boxes == nullptr) ||
+      !phx::mc::addressable(request.carrier_triangle_count, 6, sizeof(double)) ||
       !(request.edge_length > 0) || !std::isfinite(request.edge_length) ||
       !(request.minimum_angle_degrees > 0) || !(request.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
@@ -881,7 +909,8 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   status = oracle.bind(request.value);
   if (status != PHX_MC_OK) return status;
   oracle.set_orientation(request.orientation);
-  oracle.set_reach(request.edge_length + request.carrier_distance);
+  // The widest proved witness steers the projection reach (below), as the
+  // carrier distance does in the remesh (construction only).
   const auto load = [](const double* vertices, int64_t vertex_count, const int64_t* triangles,
                        int64_t triangle_count, std::vector<Point>& points,
                        std::vector<Triangle>& rows) {
@@ -907,12 +936,20 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
             request.carrier_triangle_count, carrier_points, carrier_triangles))
     return PHX_MC_INVALID_INPUT;
   CarrierEvidence carrier;
-  carrier.distance = request.carrier_distance;
-  for (const Triangle& t : carrier_triangles)
-    carrier.keys.push_back(triangle_key(carrier_points[static_cast<size_t>(t[0])],
-                                        carrier_points[static_cast<size_t>(t[1])],
-                                        carrier_points[static_cast<size_t>(t[2])]));
-  std::sort(carrier.keys.begin(), carrier.keys.end());
+  double reach = 0;
+  for (size_t t = 0; t < carrier_triangles.size(); ++t) {
+    const Point& a = carrier_points[static_cast<size_t>(carrier_triangles[t][0])];
+    const Point& b = carrier_points[static_cast<size_t>(carrier_triangles[t][1])];
+    const Point& c = carrier_points[static_cast<size_t>(carrier_triangles[t][2])];
+    const double* box = request.carrier_boxes + 6 * t;
+    const double bound = witness_bound(a, b, c, {box[0], box[1], box[2]},
+                                       {box[3], box[4], box[5]}, value);
+    if (!(bound < kInfinity)) continue;
+    carrier.entries.push_back({triangle_key(a, b, c), bound});
+    reach = std::max(reach, bound);
+  }
+  std::sort(carrier.entries.begin(), carrier.entries.end());
+  oracle.set_reach(request.edge_length + reach);
   AdmissionMemo memo;
   const ZeroSetBandAdmission admission(value, gradient, request.tolerance, request.orientation,
                                        &memo);
@@ -930,11 +967,12 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   request.counters[4] = certified.repair_splits;
   request.counters[5] = certified.rounds;
   if (status != PHX_MC_OK) return status;
-  // Proved triangles are within the tolerance; carrier triangles keep the
-  // carrier's own distance, which the caller weighs against its request.
+  // Proved triangles are within the tolerance; carried triangles keep their
+  // witness bound, which the caller weighs against its request.
   *request.distance = certified.distance;
   result.points = std::move(points);
   result.triangles = std::move(triangles);
+  result.carried = std::move(certified.carried);
   return PHX_MC_OK;
 }
 }  // namespace

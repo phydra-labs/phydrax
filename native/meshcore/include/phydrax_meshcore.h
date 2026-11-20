@@ -1981,22 +1981,30 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * triangle against a certified lower bound of |grad f| over its widened box,
  * subdividing where needed) and its normal is transversal to grad f with
  * `orientation` (+1 or -1), or, when that proof fails, when it has the
- * corner coordinates, in the same cyclic order, of a triangle of the carrier
- * (the surface remeshed, within carrier_distance of the zero set by its
- * producer's evidence; a NULL carrier with zero counts accepts none); and
- * when it is nondegenerate with
+ * corner coordinates, in the same cyclic order, of a carrier triangle (the
+ * surface remeshed; a NULL carrier with zero counts accepts none) whose
+ * witness box proves it: carrier_boxes holds, per carrier triangle, a box
+ * (lower xyz, upper xyz) that contains the triangle's three corners (exact
+ * comparisons) and has two corners at which the interval enclosures of f
+ * have strictly opposite signs, so the box holds a zero of f on the segment
+ * between them; such a triangle is accepted at the box diagonal (rounded
+ * up). A carrier triangle whose box fails either check is never accepted
+ * from the carrier. And a triangle is certified only when it is nondegenerate
+ * with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
  * consistently oriented 2-manifold (else PHX_MC_INVALID_INPUT). Refused
  * triangles are repaired: the longest edge of each, unless kept at a crease
  * (see phx_mc_zero_set_remesh), is split at its midpoint projected onto
- * {f = 0} (edge_length, minimum_angle_degrees and carrier_distance steer the
- * projection as in phx_mc_zero_set_remesh), Delaunay flips follow, and only
+ * {f = 0} (edge_length, minimum_angle_degrees and the largest witness
+ * diagonal steer the projection as carrier_distance does in
+ * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
  * `value` has one output, `gradient` three. On PHX_MC_OK `result` owns the
- * certified surface (phx_mc_surface_result_*) and `distance` is the maximum over the
- * proved triangles (each at most `tolerance`) and, for triangles accepted
- * from the carrier, carrier_distance, which may exceed `tolerance`; a
+ * certified surface (phx_mc_surface_result_*, with per-triangle carried
+ * flags) and `distance` is the maximum over the proved triangles (each at
+ * most `tolerance`) and, for triangles accepted from the carrier, their
+ * witness diagonals, which may exceed `tolerance`; a
  * triangle left refused is PHX_MC_UNRESOLVED. counters receives (triangle
  * certifications refused for transversality, refused for distance,
  * triangles refused for embedding, all over every round, carrier triangles
@@ -2015,7 +2023,7 @@ typedef struct phx_mc_zero_set_certify_request {
   int64_t carrier_vertex_count;
   const int64_t* carrier_triangles;
   int64_t carrier_triangle_count;
-  double carrier_distance;
+  const double* carrier_boxes;
   double edge_length;
   double minimum_angle_degrees;
   void** result;
@@ -2024,11 +2032,16 @@ typedef struct phx_mc_zero_set_certify_request {
 } phx_mc_zero_set_certify_request;
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request);
 /* An owned surface result: sizes = (vertices, triangles); arrays copies them
- * (PHX_MC_CAPACITY_EXCEEDED when a capacity is short); free releases it. */
+ * (PHX_MC_CAPACITY_EXCEEDED when a capacity is short); carried writes one
+ * flag per triangle, 1 for a triangle accepted from the carrier by its
+ * witness box (phx_mc_zero_set_certify; 0 for every other result); free
+ * releases it. */
 PHX_MC_API int32_t phx_mc_surface_result_sizes(const void* result, int64_t* sizes);
 PHX_MC_API int32_t phx_mc_surface_result_arrays(void* result, int64_t vertex_capacity,
                                                 int64_t triangle_capacity, double* vertices,
                                                 int64_t* triangles);
+PHX_MC_API int32_t phx_mc_surface_result_carried(const void* result, int64_t triangle_capacity,
+                                                 uint8_t* carried);
 PHX_MC_API void phx_mc_surface_result_free(void* result);
 /* Remeshes a closed, consistently oriented triangle mesh (the source, with
  * nondegenerate triangles; else PHX_MC_INVALID_INPUT) toward `edge_length`
@@ -2082,9 +2095,12 @@ PHX_MC_API int32_t phx_mc_mesh_remesh(const phx_mc_mesh_remesh_request* request)
  * further passes. Both sources must be closed oriented 2-manifolds with
  * nondegenerate triangles. On PHX_MC_OK `result` owns the certified surface
  * (phx_mc_surface_result_*) and distances = (largest surface -> source
- * bound, largest source -> surface bound), each at most `tolerance`.
- * PHX_MC_UNRESOLVED when a surface triangle stays refused or a source
- * triangle is not proved within `tolerance` (no result). counters receives
+ * bound, largest source -> surface bound), each at most `tolerance`; when a
+ * pass after one that certified both ways fails (angle relaxation is a
+ * target, not part of the certificate), that certified surface is returned.
+ * PHX_MC_UNRESOLVED when no pass certifies both ways: a surface triangle
+ * stays refused or a source triangle is not proved within `tolerance` (no
+ * result). counters receives
  * (triangle certifications refused for distance, triangles refused for
  * embedding, repair splits, rounds run, all summed over every pass; source
  * triangles not proved within `tolerance` in the last pass; relocations

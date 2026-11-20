@@ -7,7 +7,7 @@
 //  * fidelity: its source certifier (TriangleCertifier) states a finite
 //    bound for the closed triangle, or, when it cannot, the triangle is one
 //    of the carrier's own (the same corner coordinates in the same cyclic
-//    order), accepted at the carrier's declared distance;
+//    order) whose own bound its producer proved, accepted at that bound;
 //  * embedding: every other triangle whose box meets its box has only legal
 //    contact with it (disjoint, a shared vertex, or a shared edge), by exact
 //    classification.
@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace phx::mc::remesh {
@@ -57,11 +58,11 @@ class TriangleCertifier {
 using TriangleKey = std::array<Point, 3>;
 TriangleKey triangle_key(const Point& a, const Point& b, const Point& c);
 
-// The triangles of the surface that was remeshed, accepted without a proof at
-// `distance` (its producer's evidence).
+// Triangles of the surface that was remeshed, each with a distance bound its
+// producer proved for it (zero-set witness boxes: phx_mc_zero_set_certify),
+// accepted at that bound when the certifier cannot certify them.
 struct CarrierEvidence {
-  std::vector<TriangleKey> keys;  // sorted
-  double distance = 0;
+  std::vector<std::pair<TriangleKey, double>> entries;  // sorted by key
 };
 
 // Whether the triangles form a closed, consistently oriented 2-manifold over

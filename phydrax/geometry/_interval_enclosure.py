@@ -2698,9 +2698,11 @@ class PreparedIntervalFunction:
     jet_tables: dict[tuple[bytes, int, int, int], _JetTable] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
-    # Vmapped box axis of every traced variable, derived on first branch query.
+    # Vmapped box axis of every traced variable: supplied by a consumer that
+    # retains `branch_batch_axes()` beside this jaxpr, else derived on first
+    # branch query.
     branch_axes: dict[jax_core.Var, int | None] = field(
-        default_factory=dict, init=False, repr=False, compare=False
+        default_factory=dict, repr=False, compare=False
     )
     # The point map traced at `_HOST_BLOCK` boxes with its constants' intervals
     # (``None`` when that trace captures other constants), derived on first use.
@@ -2873,7 +2875,7 @@ class PreparedIntervalFunction:
         ledger events in its program (``phx_mc_interval_program_branches``).
         """
         lower_, upper_ = self._boxes(lower, upper)
-        axes = self._branch_batch_axes()
+        axes = self.branch_batch_axes()
         count = lower_.shape[0]
         low_result = np.empty((count, *self.output_shape), dtype=np.float64)
         high_result = np.empty_like(low_result)
@@ -2914,7 +2916,8 @@ class PreparedIntervalFunction:
             continuous[start:stop] = chunk_continuous[:active]
         return low_result, high_result, smooth, continuous
 
-    def _branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
+    def branch_batch_axes(self) -> dict[jax_core.Var, int | None]:
+        """The vmapped box axis of every variable of this program's jaxpr."""
         if not self.branch_axes:
             if self.function is None:
                 raise IntervalExtensionError(

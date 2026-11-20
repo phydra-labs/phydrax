@@ -142,6 +142,127 @@ def test_curve_chord_and_point_bounds_enclose_exact_parabola_deviation() -> None
     assert squared <= (8 * chord) ** 2 <= squared * (1 + Fraction(1, 2**40))
 
 
+class _KinkedCurve(BoundaryMap):
+    """``c(t) = (t, |t - 1/2|)`` or, stepped, ``(t, [t > 1/2])``."""
+
+    stepped: bool
+
+    def __init__(self, stepped: bool, /) -> None:
+        self.stepped = stepped
+
+    @property
+    def num_charts(self) -> int:
+        return 1
+
+    @property
+    def reference_dimension(self) -> int:
+        return 1
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    def map(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        height = (
+            jnp.where(parameter > 0.5, 1.0, 0.0)
+            if self.stepped
+            else jnp.abs(parameter - 0.5)
+        )
+        return jnp.stack((parameter, height), axis=-1)
+
+    def jacobian(self, chart_indices: Any, reference: Any, /) -> Any:
+        del chart_indices
+        parameter = jnp.asarray(reference)[..., 0]
+        slope = jnp.zeros_like(parameter) if self.stepped else jnp.sign(parameter - 0.5)
+        tangent = jnp.stack((jnp.ones_like(parameter), slope), axis=-1)
+        return tangent[..., :, None]
+
+
+def _kinked_curve_specification(
+    stepped: bool, /
+) -> tuple[NativeCurveSource, CurveMeshingSpec]:
+    atlas = BoundaryAtlas(
+        _KinkedCurve(stepped),
+        source_entity_ids=jnp.asarray((83,), dtype=jnp.int32),
+        source_id="kinked-curve",
+    )
+    source = NativeCurveSource(atlas, "revision")
+    scope = MeshingScope(
+        source.source_id,
+        source.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        1,
+        source.scope_entity_set_id(1),
+        np.asarray(source.chart_scope_entity_ids, dtype=np.int64),
+    )
+    specification = CurveMeshingSpec(
+        CellMeshingTarget(1, 2, CellFamilyPolicy(required=("interval",))),
+        scope,
+        size_controls=(
+            UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+        ),
+        maximum_deviation=0.01,
+    )
+    return source, specification
+
+
+def test_curve_chord_bound_across_a_kink_encloses_the_true_deviation() -> None:
+    source, specification = _kinked_curve_specification(False)
+    prepared = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).prepared
+    ends = (
+        np.asarray((0.0, 0.5), dtype=np.float64),
+        np.asarray((1.0, 0.5), dtype=np.float64),
+    )
+    # c(1/2) = (1/2, 0) lies 1/2 below the chord; c'' is a Dirac mass there.
+    chord = _chord_bound(prepared, 0, 0.0, 1.0, *ends)
+    assert chord >= 0.5
+    assert chord <= 1.0 + 2.0**-40
+    # Off the kink the chart is affine: the second-order term vanishes and
+    # only the outward endpoint enclosures remain.
+    straight = (
+        np.asarray((0.625, 0.125), dtype=np.float64),
+        np.asarray((0.875, 0.375), dtype=np.float64),
+    )
+    assert _chord_bound(prepared, 0, 0.625, 0.875, *straight) <= 2.0**-50
+
+
+def test_curve_chord_bound_across_a_jump_is_refused() -> None:
+    source, specification = _kinked_curve_specification(True)
+    prepared = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).prepared
+    ends = (
+        np.asarray((0.0, 0.0), dtype=np.float64),
+        np.asarray((1.0, 1.0), dtype=np.float64),
+    )
+    assert _chord_bound(prepared, 0, 0.0, 1.0, *ends) == math.inf
+
+
+def test_curve_route_meshes_a_kinked_chart_within_its_certified_deviation() -> None:
+    source, specification = _kinked_curve_specification(False)
+    construction = prepare_native_curve(
+        source,
+        specification,
+        NativeMeshingOptions("curve_arc_length"),
+        SpatialCoordinateContract.si(),
+    ).execute()
+    coordinates = np.asarray(construction.mesh.coordinates)
+    # A vertex near the kink: no chord may cut across it by more than 0.01.
+    kink = np.asarray((0.5, 0.0), dtype=np.float64)
+    assert np.min(np.linalg.norm(coordinates - kink, axis=1)) <= 0.01
+    assert construction.compliance.passed
+
+
 class _VariableSpeedLine(BoundaryMap):
     @property
     def num_charts(self) -> int:

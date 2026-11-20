@@ -70,13 +70,19 @@ struct PossibleZeroBoxes {
   std::vector<int32_t> root_leaf;
 };
 
+// The deepest lattice level: 21 bits of lattice index per axis keep a vertex
+// key in 64 bits. A target level above it is refused with
+// PHX_MC_INVALID_ARGUMENT, so callers deriving a level from a size can tell
+// "too fine for the tree" from a malformed request.
+inline constexpr int32_t kMaximumBoxTreeLevel = 20;
+
 // The smallest level whose cell diagonal, an upper bound of the domain's
 // diagonal times 2^-level, is at most `diameter` (_target_level of the
 // adaptive discovery with relative diameter diameter / diagonal).
 int32_t dyadic_target_level(const double* lower, const double* upper, double diameter);
 
 // The possible-zero cover of the anchored lattice of [lower, upper] down to
-// `target_level` (at most 30), f at the lattice vertices of its target-level
+// `target_level` (at most kMaximumBoxTreeLevel), f at the lattice vertices of its target-level
 // leaves by the point program `point` (binary64 proposals). By inclusion of
 // the enclosure every zero of f in the domain lies in a leaf. Returns a
 // PHX_MC status.
