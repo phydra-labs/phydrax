@@ -32,6 +32,7 @@
 #include "plc3d.hpp"
 #include "topology_keys.hpp"
 #include "tet_mesh.hpp"
+#include "improve3d.hpp"
 
 namespace phx::mc {
 namespace {
@@ -466,6 +467,8 @@ class SourcePreparer {
     if (seeds != PHX_MC_OK) return seeds;
     const int32_t polygons = triangulate_polygons();
     if (polygons != PHX_MC_OK) return polygons;
+    const int32_t flat = check_flat_triangles();
+    if (flat != PHX_MC_OK) return flat;
     const int32_t planes = check_planes();
     if (planes != PHX_MC_OK) return planes;
     build_groups();
@@ -650,6 +653,53 @@ class SourcePreparer {
       for (const Triple& triangle : triangles) {
         const int32_t added = add_triangle(triangle, polygon);
         if (added != PHX_MC_OK) return added;
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  // A fixed boundary is never edited, so each source triangle stays a face of
+  // the cells resting on it. A cell's relative determinant (|det(E)| over the
+  // largest product of the three edge lengths at a vertex, the measure the
+  // kernels floor at kMetricDeterminantFloor = 2^-22) is at most, at a corner
+  // v of that face, |e1| |e2| sin(theta_v) |e3| / (|e1| |e2| |e3|) =
+  // sin(theta_v): at most the sine of the triangle's smallest angle,
+  // 2A / (l_max l_mid). A triangle whose smallest-angle sine is below the
+  // floor therefore admits no cell above it: every cell on it stays below
+  // the floor whatever refinement and improvement do, and they would only
+  // shuffle vertices around it. Such a triangle (flat to rounding, such as a
+  // seam between two coincident rings) is refused before recovery
+  // (UNRESOLVED, INVALID_FACET naming the source triangle and its authored
+  // polygon), with its smallest-angle sine and the floor as the
+  // deviation/bound evidence. The binary64 evaluation error of the sine is a
+  // few u = 2^-53 relative to the longest edges, far below the floor, so the
+  // decision is the measure's. Measured in the authored coordinates.
+  int32_t check_flat_triangles() {
+    if (input_.policy != BoundaryPolicy::kFixed) return PHX_MC_OK;
+    for (std::size_t t = 0; t < triangles_.size(); ++t) {
+      const Triple& face = triangles_[t];
+      std::array<double, 3> squared{};
+      for (int k = 0; k < 3; ++k) {
+        const double* p = point(face[static_cast<std::size_t>(k)]);
+        const double* q = point(face[static_cast<std::size_t>((k + 1) % 3)]);
+        for (int axis = 0; axis < 3; ++axis) {
+          squared[static_cast<std::size_t>(k)] += (q[axis] - p[axis]) * (q[axis] - p[axis]);
+        }
+      }
+      std::sort(squared.begin(), squared.end());
+      std::array<double, 3> e1{}, e2{};
+      for (int axis = 0; axis < 3; ++axis) {
+        e1[static_cast<std::size_t>(axis)] = point(face[1])[axis] - point(face[0])[axis];
+        e2[static_cast<std::size_t>(axis)] = point(face[2])[axis] - point(face[0])[axis];
+      }
+      const double cx = e1[1] * e2[2] - e1[2] * e2[1];
+      const double cy = e1[2] * e2[0] - e1[0] * e2[2];
+      const double cz = e1[0] * e2[1] - e1[1] * e2[0];
+      const double sine = std::sqrt((cx * cx + cy * cy + cz * cz) / (squared[2] * squared[1]));
+      if (sine < kMetricDeterminantFloor) {
+        output_.source_refusal = {sine, kMetricDeterminantFloor};
+        return fail(PHX_MC_UNRESOLVED, kPlcInvalidFacet, kPlcFacet, static_cast<int64_t>(t),
+                    kPlcPolygon, triangle_polygon_[t]);
       }
     }
     return PHX_MC_OK;

@@ -2366,6 +2366,64 @@ def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_ver
         assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
+def _seamed_tetrahedron(
+    lift: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # The unit corner tetrahedron with edge AB doubled on its bottom and
+    # front faces by a point M near AB's midpoint, lifted `lift` outward off
+    # both; the seam triangle (A, M, B), last, closes the gap between the two
+    # paths. Each triangle is its own facet bounding region 0.
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.5, -lift, -lift],
+        ]
+    )
+    triangles = np.asarray(
+        [[0, 2, 4], [2, 1, 4], [0, 1, 3], [0, 3, 2], [1, 2, 3], [0, 4, 1]], dtype=np.int32
+    )
+    count = triangles.shape[0]
+    return (
+        points,
+        np.arange(0, 3 * count + 1, 3, dtype=np.int64),
+        triangles.reshape((-1,)),
+        np.arange(count, dtype=np.int32),
+        np.tile(np.asarray([[-1, 0]], dtype=np.int32), (count, 1)),
+    )
+
+
+def test_fixed_boundary_refuses_a_triangle_flat_to_rounding() -> None:
+    # A fixed boundary keeps every source triangle, and a cell on a triangle
+    # has relative determinant at most the sine of the triangle's smallest
+    # angle: a seam triangle whose sine is below the kernels' determinant
+    # floor 2^-22 can carry no admissible cell, so recovery refuses it before
+    # meshing, naming the triangle with its sine and the floor.
+    seam = _seamed_tetrahedron(1e-12)
+    with pytest.raises(PlcSourceFailure) as refusal:
+        recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.FIXED)
+    failure = refusal.value
+    assert failure.status is MeshcoreStatus.UNRESOLVED
+    assert failure.reason is PlcFailureReason.INVALID_FACET
+    assert (failure.first_kind, failure.first) == (PlcEntityKind.FACET, 5)
+    assert (failure.second_kind, failure.second) == (PlcEntityKind.POLYGON, 5)
+    a, m, b = seam[0][[0, 4, 1]]
+    lengths = np.sort(
+        [np.linalg.norm(m - a), np.linalg.norm(b - m), np.linalg.norm(a - b)]
+    )
+    sine = np.linalg.norm(np.cross(m - a, b - a)) / (lengths[2] * lengths[1])
+    assert failure.certified_deviation == pytest.approx(sine, rel=1e-6)
+    assert failure.declared_bound == 2.0**-22
+    # A conforming boundary may split the seam, and a seam lifted to a sine
+    # above the floor is a valid fixed boundary.
+    recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.CONFORMING)
+    lifted = _seamed_tetrahedron(1e-6)
+    recovered = recover_plc_3d(*lifted, boundary_policy=PlcBoundaryPolicy.FIXED)
+    assert recovered.faces.shape[0] == 6
+
+
 def test_declared_planes_recover_a_rotated_cube_missing_its_face_diagonals() -> None:
     # Corners are the correct roundings of the exact corners of a rotated
     # cube of half side 1/8, and each face declares its exact plane (origin
