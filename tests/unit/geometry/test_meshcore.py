@@ -30,6 +30,8 @@ from phydrax._meshcore import (
     clip_reference_tetrahedron_exact,
     implicit_face_proposals,
     IntervalBoxProgram,
+    mesh_certify,
+    mesh_remesh,
     meshcore_available,
     meshcore_identity,
     MeshcoreError,
@@ -2530,6 +2532,29 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     )
     assert carried.distance == 0.02
     assert carried.counters[3] > 0 and carried.counters[4] == 0
+
+
+def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
+    vertices, faces = _icosphere(4)
+    remeshed = mesh_remesh(vertices, faces, 0.01, 0.2, 30.0)
+    assert remeshed.triangles.shape[0] < faces.shape[0]
+    certificate = mesh_certify(
+        vertices, faces, remeshed.vertices, remeshed.triangles, 0.01, 0.2, 30.0
+    )
+    assert np.all(certificate.distances >= 0.0)
+    assert np.all(certificate.distances <= 0.01)
+    assert certificate.counters[4] == 0
+    # Corners go to their nearest source points: on the inscribed polyhedron,
+    # inside the unit sphere and within the tolerance of it.
+    radii = np.linalg.norm(certificate.vertices, axis=1)
+    assert np.all(radii <= 1.0 + 1e-12) and np.all(radii >= 1.0 - 0.01)
+    # Against a source 2% larger the surface is 0.02 away: refused.
+    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+        mesh_certify(
+            1.02 * vertices, faces, remeshed.vertices, remeshed.triangles, 0.01, 0.2, 30.0
+        )
+    with pytest.raises(ValueError, match="closed oriented 2-manifold"):
+        mesh_remesh(vertices, faces[:-1], 0.01, 0.2, 30.0)
 
 
 _LENS_SHIFT = 0.8

@@ -586,11 +586,6 @@ bool ZeroSetBandAdmission::admits(const Point& a, const Point& b, const Point& c
 }
 
 namespace {
-struct ZeroSetRemeshResult {
-  std::vector<Point> points;
-  std::vector<Triangle> triangles;
-};
-
 // The implicit source as a floating-point oracle: second-order jets of f from
 // the point executor (value, gradient, Hessian), Newton projection along the
 // gradient, and principal curvatures of the level set. Proposals only.
@@ -757,7 +752,7 @@ class ImplicitOracle final : public SurfaceOracle {
 // Floating-point construction (see phx_mc_zero_set_remesh): no interval
 // program is bound and nothing is proved.
 int32_t remesh_zero_set(const phx_mc_zero_set_remesh_request& request,
-                        ZeroSetRemeshResult& result, int64_t* counters, bool indices_i32) {
+                        SurfaceResult& result, int64_t* counters, bool indices_i32) {
   if (request.vertex_count < 3 || request.triangle_count < 1 ||
       !phx::mc::addressable(request.vertex_count, 3, sizeof(double)) ||
       !phx::mc::addressable(request.triangle_count, 3, indices_i32 ? sizeof(int32_t) : sizeof(int64_t)) ||
@@ -852,7 +847,7 @@ class ZeroSetCertifier final : public TriangleCertifier {
 // Certification with local repair of a closed surface against the zero set
 // (see phx_mc_zero_set_certify).
 int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
-                         ZeroSetRemeshResult& result) {
+                         SurfaceResult& result) {
   if (request.vertex_count < 3 || request.triangle_count < 1 ||
       !phx::mc::addressable(request.vertex_count, 3, sizeof(double)) ||
       !phx::mc::addressable(request.triangle_count, 3, sizeof(int64_t)) ||
@@ -952,7 +947,7 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* 
     return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
-    auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
+    auto owned = std::make_unique<phx::mc::remesh::SurfaceResult>();
     const int32_t status =
         phx::mc::remesh::remesh_zero_set(*request, *owned, request->counters, false);
     if (status != PHX_MC_OK) return status;
@@ -969,7 +964,7 @@ PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
+    auto owned = std::make_unique<phx::mc::remesh::SurfaceResult>();
     const int32_t status = phx::mc::remesh::certify_zero_set(*request, *owned);
     if (status != PHX_MC_OK) return status;
     *request->result = owned.release();
@@ -982,41 +977,13 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
     return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;
   return phx::mc::guarded([&]() -> int32_t {
-    auto owned = std::make_unique<phx::mc::remesh::ZeroSetRemeshResult>();
+    auto owned = std::make_unique<phx::mc::remesh::SurfaceResult>();
     const int32_t status =
         phx::mc::remesh::remesh_zero_set(*request, *owned, request->counters, true);
     if (status != PHX_MC_OK) return status;
     *request->result = owned.release();
     return PHX_MC_OK;
   });
-}
-
-PHX_MC_API int32_t phx_mc_zero_set_remesh_sizes(const void* result, int64_t* sizes) {
-  if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
-  const auto& data = *static_cast<const phx::mc::remesh::ZeroSetRemeshResult*>(result);
-  sizes[0] = static_cast<int64_t>(data.points.size());
-  sizes[1] = static_cast<int64_t>(data.triangles.size());
-  return PHX_MC_OK;
-}
-
-PHX_MC_API int32_t phx_mc_zero_set_remesh_arrays(void* result, int64_t vertex_capacity,
-                                                 int64_t triangle_capacity, double* vertices,
-                                                 int64_t* triangles) {
-  if (result == nullptr || vertices == nullptr || triangles == nullptr)
-    return PHX_MC_INVALID_ARGUMENT;
-  const auto& data = *static_cast<const phx::mc::remesh::ZeroSetRemeshResult*>(result);
-  if (vertex_capacity < static_cast<int64_t>(data.points.size()) ||
-      triangle_capacity < static_cast<int64_t>(data.triangles.size()))
-    return PHX_MC_CAPACITY_EXCEEDED;
-  for (size_t v = 0; v < data.points.size(); ++v)
-    for (size_t d = 0; d < 3; ++d) vertices[3 * v + d] = data.points[v][d];
-  for (size_t t = 0; t < data.triangles.size(); ++t)
-    for (size_t k = 0; k < 3; ++k) triangles[3 * t + k] = data.triangles[t][k];
-  return PHX_MC_OK;
-}
-
-PHX_MC_API void phx_mc_zero_set_remesh_free(void* result) {
-  delete static_cast<phx::mc::remesh::ZeroSetRemeshResult*>(result);
 }
 
 }  // extern "C"

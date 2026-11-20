@@ -229,6 +229,19 @@ def _rows(sizes: tuple[int, ...], names: frozenset[str] | None, /) -> tuple[_Row
         (
             frozenset(
                 {
+                    "mesh-remesh-torus-1e3",
+                    "mesh-remesh-torus",
+                    "mesh-remesh-torus-1e5",
+                    "mesh-remesh-noisy-torus-1e3",
+                    "mesh-remesh-noisy-torus",
+                    "mesh-remesh-noisy-torus-1e5",
+                }
+            ),
+            _mesh_remesh_rows,
+        ),
+        (
+            frozenset(
+                {
                     "surface-to-tets-sphere",
                     "surface-to-tets-torus",
                     "surface-to-tets-grid-torus",
@@ -287,15 +300,18 @@ def _icosphere(level: int, /) -> tuple[np.ndarray, np.ndarray]:
     return vertices, faces
 
 
-def _uv_torus(around: int, /) -> tuple[np.ndarray, np.ndarray]:
-    # The ledger's torus R = 1, r = 0.4 with an (around x around / 2) grid.
+def _uv_torus(
+    around: int, major: float = 1.0, minor: float = 0.4, /
+) -> tuple[np.ndarray, np.ndarray]:
+    # The ledger's grid torus (R = 1, r = 0.4 unless given) with an
+    # (around x around / 2) grid.
     across = around // 2
     u = 2.0 * np.pi * np.arange(around) / around
     w = 2.0 * np.pi * np.arange(across) / across
     grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
-    ring = 1.0 + 0.4 * np.cos(grid_w)
+    ring = major + minor * np.cos(grid_w)
     vertices = np.stack(
-        (ring * np.cos(grid_u), ring * np.sin(grid_u), 0.4 * np.sin(grid_w)), axis=-1
+        (ring * np.cos(grid_u), ring * np.sin(grid_u), minor * np.sin(grid_w)), axis=-1
     ).reshape((-1, 3))
     i, j = np.meshgrid(np.arange(around), np.arange(across), indexing="ij")
     a = (i * across + j).reshape((-1,))
@@ -632,11 +648,147 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 _remeshed_triangles,
                 _remesh_unmet,
                 quality=lambda result, distance=distance, samples=samples, tolerance=tolerance: (
-                    _remesh_quality(result, distance, samples, tolerance)
+                    _surface_quality(
+                        *_zero_set_surface(result), distance, samples, tolerance
+                    )
                 ),
             )
         )
     return tuple(rows)
+
+
+# The ledger's F7 torus: R = 0.742, r = 0.371 on a 1000 x 500 grid
+# (1,000,000 triangles), and the same with every vertex moved along the exact
+# normal by N(0, 0.001) (seed 2), as `f7_setup.py`.
+_F7_MAJOR, _F7_MINOR, _F7_NOISE = 0.742, 0.371, 0.001
+# CGAL isotropic_remeshing's distances to the true torus on the noisy rows
+# (ledger M1, the smaller of its two directions), the reference those rows
+# may not exceed.
+_F7_NOISY_REFERENCE = {1e3: 0.0141, 1e4: 0.00248, 1e5: 0.00241}
+
+
+def _f7_torus(noisy: bool, /) -> tuple[np.ndarray, np.ndarray]:
+    vertices, faces = _uv_torus(1000, _F7_MAJOR, _F7_MINOR)
+    if not noisy:
+        return vertices, faces
+    u = 2.0 * np.pi * np.arange(1000) / 1000
+    w = 2.0 * np.pi * np.arange(500) / 500
+    grid_u, grid_w = np.meshgrid(u, w, indexing="ij")
+    normals = np.stack(
+        (
+            np.cos(grid_w) * np.cos(grid_u),
+            np.cos(grid_w) * np.sin(grid_u),
+            np.sin(grid_w),
+        ),
+        axis=-1,
+    ).reshape((-1, 3))
+    noise = np.random.default_rng(2).normal(0.0, _F7_NOISE, vertices.shape[0])
+    return vertices + normals * noise[:, None], faces
+
+
+def _mesh_remesh_rows() -> tuple[_Row, ...]:
+    # The ledger's F7 rows: the dense and the noisy torus remeshed with the
+    # input mesh as the only source toward N = 1e3 / 1e4 / 1e5 triangles: edge
+    # h of an equilateral triangle of area A/N and tolerance h^2 / (8 r), the
+    # sagitta of h on the minor circle; the noisy 1e4 / 1e5 rows allow the
+    # noise's 5 sigma more. The row name carries the target (no suffix: 1e4);
+    # the size is the input triangle count. The row times the construction;
+    # the certificate against the input (mesh_certify, both directions) and
+    # the distances to the true torus are measured after it, untimed.
+    area = 4.0 * math.pi**2 * _F7_MAJOR * _F7_MINOR
+    rows: list[_Row] = []
+    for noisy, label in ((False, "mesh-remesh-torus"), (True, "mesh-remesh-noisy-torus")):
+        vertices, faces = _f7_torus(noisy)
+        for suffix, target in (("-1e3", 1e3), ("", 1e4), ("-1e5", 1e5)):
+            edge = math.sqrt(4.0 * area / (math.sqrt(3.0) * target))
+            tolerance = edge * edge / (8.0 * _F7_MINOR)
+            if noisy and target > 1e3:
+                tolerance += 5.0 * _F7_NOISE
+            true_tolerance = _F7_NOISY_REFERENCE[target] if noisy else tolerance
+            rows.append(
+                _Row(
+                    label + suffix,
+                    faces.shape[0],
+                    lambda vertices=vertices, faces=faces, edge=edge, tolerance=tolerance: (
+                        _meshcore.mesh_remesh(vertices, faces, tolerance, edge, 30.0)
+                    ),
+                    _mesh_remeshed_triangles,
+                    _mesh_remesh_unmet,
+                    quality=lambda result, vertices=vertices, faces=faces, edge=edge, tolerance=tolerance, true_tolerance=true_tolerance: (
+                        _mesh_remesh_quality(
+                            result, vertices, faces, edge, tolerance, true_tolerance
+                        )
+                    ),
+                )
+            )
+    return tuple(rows)
+
+
+def _mesh_remeshed_triangles(result: object, /) -> int:
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return result.triangles.shape[0]
+
+
+def _mesh_remesh_unmet(result: object, /) -> int:
+    # Triangles below the minimum angle plus triangles sampled beyond the
+    # tolerance by the construction itself (counters 4 and 5).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    return int(result.counters[4] + result.counters[5])
+
+
+def _mesh_remesh_quality(
+    result: object,
+    source_vertices: np.ndarray,
+    source_faces: np.ndarray,
+    edge: float,
+    tolerance: float,
+    true_tolerance: float,
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The certificate against the input (both directions, within the row's
+    # tolerance; a refusal is one miss), then angles and distances to the true
+    # torus as _surface_quality measures them, against `true_tolerance`, of
+    # the certified surface (the constructed one when refused).
+    if not isinstance(result, _meshcore.MeshRemeshResult):
+        raise TypeError("The mesh remesh row returns a MeshRemeshResult.")
+    torus = (
+        lambda points: _torus_distance(points, _F7_MAJOR, _F7_MINOR),
+        lambda count: _torus_samples(count, _F7_MAJOR, _F7_MINOR),
+    )
+    try:
+        certificate = _meshcore.mesh_certify(
+            source_vertices,
+            source_faces,
+            result.vertices,
+            result.triangles,
+            tolerance,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, *torus, true_tolerance
+        )
+        return missed + 1, {
+            **measured,
+            "certified": 0.0,
+            "certified_tolerance": tolerance,
+        }
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, *torus, true_tolerance
+    )
+    return missed, {
+        **measured,
+        "certified": 1.0,
+        "certified_tolerance": tolerance,
+        "certified_surface_to_source": float(certificate.distances[0]),
+        "certified_source_to_surface": float(certificate.distances[1]),
+    }
 
 
 def _remeshed_triangles(result: object, /) -> int:
@@ -657,9 +809,11 @@ def _sphere_distance(points: np.ndarray, /) -> np.ndarray:
     return np.abs(np.linalg.norm(points, axis=-1) - 1.0)
 
 
-def _torus_distance(points: np.ndarray, /) -> np.ndarray:
-    ring = np.linalg.norm(points[..., :2], axis=-1) - 1.0
-    return np.abs(np.hypot(ring, points[..., 2]) - 0.4)
+def _torus_distance(
+    points: np.ndarray, major: float = 1.0, minor: float = 0.4, /
+) -> np.ndarray:
+    ring = np.linalg.norm(points[..., :2], axis=-1) - major
+    return np.abs(np.hypot(ring, points[..., 2]) - minor)
 
 
 def _sphere_samples(count: int, /) -> np.ndarray:
@@ -667,10 +821,10 @@ def _sphere_samples(count: int, /) -> np.ndarray:
     return directions / np.linalg.norm(directions, axis=1, keepdims=True)
 
 
-def _torus_samples(count: int, /) -> np.ndarray:
+def _torus_samples(count: int, major: float = 1.0, minor: float = 0.4, /) -> np.ndarray:
     u, v = 2.0 * np.pi * np.random.default_rng(20261119).random((2, count))
-    ring = 1.0 + 0.4 * np.cos(v)
-    return np.stack((ring * np.cos(u), ring * np.sin(u), 0.4 * np.sin(v)), axis=1)
+    ring = major + minor * np.cos(v)
+    return np.stack((ring * np.cos(u), ring * np.sin(u), minor * np.sin(v)), axis=1)
 
 
 def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.ndarray:
@@ -701,8 +855,15 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
     return np.sqrt(squared)
 
 
-def _remesh_quality(
-    result: object,
+def _zero_set_surface(result: object, /) -> tuple[np.ndarray, np.ndarray]:
+    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
+        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
+    return result.vertices, result.triangles
+
+
+def _surface_quality(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
     distance: Callable[[np.ndarray], np.ndarray],
     samples: Callable[[int], np.ndarray],
     tolerance: float,
@@ -714,9 +875,7 @@ def _remesh_quality(
     # edge), both against the exact distance function.
     from scipy.spatial import cKDTree
 
-    if not isinstance(result, _meshcore.ZeroSetRemeshResult):
-        raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
-    corners = result.vertices[result.triangles]
+    corners = vertices[triangles]
     angles = []
     for k in range(3):
         first = corners[:, (k + 1) % 3] - corners[:, k]

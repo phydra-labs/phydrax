@@ -74,6 +74,24 @@
     },
     "surface-remesh-torus": {
       "90000": {"tool": "mmgs", "seconds": 0.274, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus-1e3": {
+      "1000000": {"tool": "mmgs", "seconds": 0.600, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus": {
+      "1000000": {"tool": "mmgs", "seconds": 0.775, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-torus-1e5": {
+      "1000000": {"tool": "mmgs", "seconds": 2.95, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus-1e3": {
+      "1000000": {"tool": "cgal", "seconds": 6.98, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus": {
+      "1000000": {"tool": "cgal", "seconds": 7.01, "allowed_ratio": 1.0}
+    },
+    "mesh-remesh-noisy-torus-1e5": {
+      "1000000": {"tool": "cgal", "seconds": 6.89, "allowed_ratio": 1.0}
     }
   }
 }
