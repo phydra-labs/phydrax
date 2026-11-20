@@ -1128,10 +1128,13 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
-    "phx_mc_implicit_stuffing": (
+    "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _I64, _I64, _P, _P, _F64, _I32, _F64, _P, _P),
+        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
     ),
+    "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
+    "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_restricted_volume_free": (None, (_P,)),
     "phx_mc_simplex_quadratic_bounds": (
         _I32,
         (_I64, _I32, _I32, _P, _P, _P, _P, _P, _P),
@@ -3581,77 +3584,166 @@ def cad_geometry_evaluate(
     return result
 
 
-class StuffedVolume(NamedTuple):
-    """Tetrahedra of ``{f <= 0}`` from isosurface stuffing (construction only)."""
+
+class RestrictedDelaunayCriteria(NamedTuple):
+    """Refinement targets of `implicit_restricted_delaunay`.
+
+    Restricted facets are refined while their longest edge exceeds
+    ``facet_edge``, their circumcenter lies farther than ``facet_distance``
+    from their surface Delaunay ball center, or their smallest angle is below
+    ``facet_angle_degrees`` (at most 30). Inside cells are refined while their
+    circumradius exceeds ``cell_size`` or their radius-edge ratio exceeds
+    ``radius_edge_bound`` (None: no ratio target); cells then below the ratio,
+    ``minimum_dihedral_degrees`` or ``minimum_relative_determinant`` go through
+    the fixed-boundary quality improvement. Box roots closer than
+    ``seed_spacing * facet_edge`` to an earlier seed are left to refinement.
+    """
+
+    facet_edge: float
+    facet_distance: float
+    facet_angle_degrees: float
+    cell_size: float
+    radius_edge_bound: float | None
+    minimum_dihedral_degrees: float
+    minimum_relative_determinant: float
+    seed_spacing: float
+
+
+class RestrictedImplicitVolume(NamedTuple):
+    """Tetrahedra of ``{f <= 0}`` by restricted Delaunay refinement (construction only).
+
+    ``points`` rows are the vertices, ``cells`` positive tetrahedra and
+    ``boundary_faces`` the outward boundary triangles. The construction report:
+    refinement ``insertions``, surface ``repair_rounds``, whether the
+    restricted surface matched the requested topology, the box roots no
+    surface vertex covers, the facets still violating the criteria because
+    the separation bound refused their refinement point, and the cells the
+    quality improvement left unmet. ``status`` is ``UNRESOLVED`` when the
+    separation bound stopped or refused the refinement, or an inside cell
+    reached the far box; the arrays are then the proposal reached.
+    """
 
     points: np.ndarray
     cells: np.ndarray
-    degenerate_count: int
+    boundary_faces: np.ndarray
+    insertions: int
+    repair_rounds: int
+    topology_matched: bool
+    uncovered_roots: int
+    refused_facets: int
+    unmet_cells: int
+    status: MeshcoreStatus
 
 
-def implicit_stuffing(
+def implicit_restricted_delaunay(
     instructions: np.ndarray,
     indices: np.ndarray,
     parameters: np.ndarray,
-    seeds: np.ndarray,
+    seed_lower: np.ndarray,
+    seed_upper: np.ndarray,
     output_entry: int,
     lower: object,
     upper: object,
-    spacing: float,
-    levels: int,
-    lipschitz: float,
+    criteria: RestrictedDelaunayCriteria,
+    components: int,
+    euler_characteristic: int,
+    extra_seeds: object,
     /,
-) -> StuffedVolume:
-    """Isosurface stuffing of an interval program's zero set inside a box.
+) -> RestrictedImplicitVolume:
+    """Restricted Delaunay meshing of an interval program's solid ``{f <= 0}``.
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
-    interval program with three inputs; ``seeds`` its workspace template and
-    ``output_entry`` the workspace entry of f. The lattice has ``spacing``
-    near the zero set and coarsens up to ``levels`` times away from it, for f
-    with Lipschitz constant ``lipschitz``. The result is a proposal: it is
-    certified afterwards.
+    interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
+    interval workspace templates and ``output_entry`` the workspace entry of
+    f. The box ``[lower, upper]`` contains the zero set, whose restricted
+    surface should have ``components`` edge-connected components and Euler
+    characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
+    points near the zero set added to the box-tree seeds. The result is a
+    proposal: it is certified afterwards.
     """
     lower_array = _real_array(lower, "lower")
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
-    degenerate = ctypes.c_int64()
-    handle = ctypes.c_void_p()
+    seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
+    if seeds.ndim != 2 or seeds.shape[1] != 3:
+        raise ValueError("extra_seeds must have shape (n, 3).")
+    values = np.asarray(
+        (
+            criteria.facet_edge,
+            criteria.facet_distance,
+            criteria.facet_angle_degrees,
+            criteria.cell_size,
+            0.0 if criteria.radius_edge_bound is None else criteria.radius_edge_bound,
+            criteria.minimum_dihedral_degrees,
+            criteria.minimum_relative_determinant,
+            criteria.seed_spacing,
+        ),
+        dtype=np.float64,
+    )
+    topology = np.asarray((components, euler_characteristic), dtype=np.int64)
     library = load_meshcore()
-    status = library["phx_mc_implicit_stuffing"](
-        instructions.ctypes.data,
-        instructions.shape[0],
-        indices.ctypes.data,
-        indices.size,
-        parameters.ctypes.data,
-        parameters.size,
-        seeds.ctypes.data,
-        seeds.size,
-        output_entry,
-        lower_array.ctypes.data,
-        upper_array.ctypes.data,
-        spacing,
-        levels,
-        lipschitz,
-        ctypes.addressof(degenerate),
-        ctypes.addressof(handle),
+    handle = ctypes.c_void_p()
+    status = MeshcoreStatus(
+        library["phx_mc_implicit_restricted_delaunay"](
+            instructions.ctypes.data,
+            instructions.shape[0],
+            indices.ctypes.data,
+            indices.size,
+            parameters.ctypes.data,
+            parameters.size,
+            seed_lower.ctypes.data,
+            seed_upper.ctypes.data,
+            seed_lower.size,
+            output_entry,
+            lower_array.ctypes.data,
+            upper_array.ctypes.data,
+            values.ctypes.data,
+            topology.ctypes.data,
+            seeds.shape[0],
+            seeds.ctypes.data,
+            ctypes.addressof(handle),
+        )
     )
-    _raise_for_call(
-        status,
-        "implicit_stuffing",
-        contracts={
-            MeshcoreStatus.INVALID_INPUT: (
-                "f is NaN at a lattice vertex, or the solid {f <= 0} reaches the "
-                "lattice padding outside the box"
-            )
-        },
-    )
+    if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):
+        _raise_for_call(status, "implicit_restricted_delaunay")
     if not handle.value:
         raise MeshcoreError(
-            MeshcoreStatus.INTERNAL_ERROR, "implicit_stuffing: missing mesh"
+            MeshcoreStatus.INTERNAL_ERROR, "implicit_restricted_delaunay: missing volume"
         )
-    points, cells, _, _, _, _, _ = _read_mesh(library, handle)
-    return StuffedVolume(points, cells, degenerate.value)
+    # The native handle is released even when a copy fails.
+    try:
+        sizes = np.zeros((3,), dtype=np.int64)
+        report = np.zeros((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_sizes"](
+                handle, sizes.ctypes.data, report.ctypes.data
+            ),
+            "restricted_volume_sizes",
+        )
+        points = np.empty((int(sizes[0]), 3), dtype=np.float64)
+        cells = np.empty((int(sizes[1]), 4), dtype=np.int32)
+        faces = np.empty((int(sizes[2]), 3), dtype=np.int32)
+        _raise_for_call(
+            library["phx_mc_restricted_volume_copy"](
+                handle, points.ctypes.data, cells.ctypes.data, faces.ctypes.data
+            ),
+            "restricted_volume_copy",
+        )
+    finally:
+        library["phx_mc_restricted_volume_free"](handle)
+    return RestrictedImplicitVolume(
+        points,
+        cells,
+        faces,
+        int(report[0]),
+        int(report[1]),
+        bool(report[2]),
+        int(report[3]),
+        int(report[4]),
+        int(report[5]),
+        status,
+    )
 
 
 class RestrictedPowerCells(NamedTuple):

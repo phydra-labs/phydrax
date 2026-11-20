@@ -2564,26 +2564,61 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double floor, int8_t* valid, double* lower,
                                               double* upper);
 
-/* Tetrahedral mesh of {f <= 0} inside the box [lower, upper] by isosurface
- * stuffing on a graded body-centered cubic lattice. f is entry output_entry
- * of an interval program with three inputs, evaluated in binary64 by
- * phx_mc_program_evaluate (seeds as there), and |f(x) - f(y)| <= lipschitz
- * |x - y| (a signed distance has lipschitz 1). The lattice of the given
- * spacing fills the band within one spacing of the zero set; away from it
- * the lattice coarsens by halving, up to `levels` (0 to 16) times, through
- * conforming red-green transitions (0 levels: the uniform lattice). The
- * lattice pads the box by one coarse cell on each side; a lattice vertex
- * outside the box with f <= 0 (the solid leaves the box) is refused with
- * PHX_MC_INVALID_INPUT. Construction only: the result is certified
- * afterwards (phx_mc_verify_volume and the source fidelity bounds).
- * degenerate_count reports stencil tetrahedra with zero orientation, which
- * are omitted (the volume certificate then fails). */
-PHX_MC_API int32_t phx_mc_implicit_stuffing(
+/* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
+ * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
+ * an interval program with three inputs; seed_lower and seed_upper are its
+ * interval workspace templates (the point executor uses their midpoints).
+ * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
+ * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
+ * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
+ * diagonal at most sqrt(3) criteria[0]; every edge of a kept cell whose vertex values have strictly
+ * opposite signs carries a root, and the roots farther than
+ * criteria[7] * criteria[0] from earlier ones (with every extra_seeds point,
+ * moved onto the zero set by Newton steps) start the Delaunay triangulation.
+ * Restricted facets (dual Voronoi edge crossing the zero set) are refined at
+ * their surface Delaunay ball centers while their longest edge exceeds
+ * criteria[0], the distance from their circumcenter to the ball center
+ * exceeds criteria[1] or their smallest angle is below criteria[2] degrees;
+ * cells whose circumcenter lies in {f < 0} are refined at their circumcenter
+ * while their circumradius exceeds criteria[3] or their radius-edge ratio
+ * exceeds criteria[4], unless the circumcenter would destroy a restricted
+ * facet, which is refined instead. The restricted surface is then checked
+ * against topology[0] edge-connected components and Euler characteristic
+ * topology[1] and against the box roots (every root within criteria[0] of a
+ * surface vertex); a failure is repaired by inserting the roots of uncovered
+ * boxes and the ball centers of facets at singular vertices, or else by
+ * halving the edge bound's square, up to four rounds. The boundary vertices
+ * are moved onto the zero set by Newton steps. Cells below criteria[5]
+ * degrees minimum dihedral angle are removed with the boundary fixed by edge
+ * removal, face removal and relocation of interior vertices (every new cell
+ * within criteria[4] radius-edge ratio and criteria[6] relative
+ * determinant); cells these leave are refined at their circumcenters and
+ * the construction repeated, up to three rounds, then any cell still below
+ * the targets goes through the fixed-boundary quality improvement. On
+ * success *volume owns the points, positive tetrahedra, outward boundary
+ * triangles and the report (phx_mc_restricted_volume_sizes). Construction
+ * only: the result is certified afterwards. */
+#define PHX_MC_RESTRICTED_CRITERIA_SIZE 8
+typedef struct phx_mc_restricted_volume phx_mc_restricted_volume;
+PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
-    int64_t index_count, const double* parameters, int64_t parameter_count, const double* seeds,
-    int64_t workspace_size, int64_t output_entry, const double* lower, const double* upper,
-    double spacing, int32_t levels, double lipschitz, int64_t* degenerate_count,
-    phx_mc_mesh** mesh);
+    int64_t index_count, const double* parameters, int64_t parameter_count,
+    const double* seed_lower, const double* seed_upper, int64_t workspace_size,
+    int64_t output_entry, const double* lower, const double* upper, const double* criteria,
+    const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
+    phx_mc_restricted_volume** volume);
+/* sizes receives the point, cell and boundary face counts; report receives
+ * PHX_MC_RESTRICTED_REPORT_SIZE entries: refinement insertions, surface
+ * repair rounds, whether the restricted surface matched the topology, the box
+ * roots no surface vertex covers, the cells the quality improvement left
+ * below the targets, and whether the refinement budget ran out. */
+#define PHX_MC_RESTRICTED_REPORT_SIZE 6
+PHX_MC_API int32_t phx_mc_restricted_volume_sizes(const phx_mc_restricted_volume* volume,
+                                                  int64_t* sizes, int64_t* report);
+/* points (point count x 3), cells (cell count x 4), faces (face count x 3). */
+PHX_MC_API int32_t phx_mc_restricted_volume_copy(const phx_mc_restricted_volume* volume,
+                                                 double* points, int32_t* cells, int32_t* faces);
+PHX_MC_API void phx_mc_restricted_volume_free(phx_mc_restricted_volume* volume);
 
 /* CAD geometry bundle: every surface, 3D curve and p-curve of a CAD model is a
  * node of one geometry graph; a node's children precede it. Per node kind,

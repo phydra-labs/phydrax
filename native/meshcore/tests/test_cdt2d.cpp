@@ -541,6 +541,35 @@ void test_ruppert_l_shape() {
   check_quality(angle_only, 30.0, kInf);
 }
 
+// OK is reported without a final scan unless refinement gave up somewhere,
+// so OK must still certify every cell. Obtuse-cornered domains with interior
+// points and demanding angles exercise both outcomes.
+void test_ok_status_certifies_quality() {
+  std::uint64_t seed = 0x5eedf1a9u;
+  int ok = 0;
+  for (int round = 0; round < 60; ++round) {
+    Input in;
+    const int corners = 5 + round % 7;
+    for (int i = 0; i < corners; ++i) {
+      const double angle = 2.0 * 3.14159265358979323846 * (i + 0.3 * uniform(seed)) / corners;
+      in.points.insert(in.points.end(), {std::cos(angle), std::sin(angle)});
+      in.segments.insert(in.segments.end(), {i, (i + 1) % corners});
+    }
+    for (int i = 0; i < round % 9; ++i) {
+      in.points.insert(in.points.end(), {uniform(seed) - 0.5, uniform(seed) - 0.5});
+    }
+    in.min_angle = round % 2 == 0 ? 33.0 : 28.0;
+    in.max_area = round % 3 == 0 ? kInf : 0.02;
+    const Result r = run(in);
+    PHX_CHECK(r.status == PHX_MC_OK || r.status == PHX_MC_UNRESOLVED);
+    if (r.status == PHX_MC_OK) {
+      ++ok;
+      check_quality(r, in.min_angle, in.max_area);
+    }
+  }
+  PHX_CHECK(ok > 0);
+}
+
 void test_ruppert_slanted_polygon() {
   // Non-axis-aligned boundary (inexact midpoints), convex hull and a hole.
   Input in;
@@ -778,6 +807,7 @@ int main() {
   test_ruppert_square();
   test_refinement_angle_thresholds();
   test_ruppert_l_shape();
+  test_ok_status_certifies_quality();
   test_ruppert_slanted_polygon();
   test_constraint_source_witnesses();
   test_refinement_preserves_smooth_samples_and_constraint_junctions();

@@ -89,8 +89,8 @@ from phydrax.meshing._contracts import (
 from phydrax.meshing._implicit_volume import (
     _tetra_quality,
     _topology_matches,
-    PreparedStuffedImplicitVolume,
-    StuffedImplicitConstruction,
+    PreparedRestrictedImplicitVolume,
+    RestrictedImplicitConstruction,
 )
 from phydrax.meshing._native_construction import NativeMeshConstruction
 from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
@@ -990,7 +990,7 @@ def test_native_implicit_route_rejects_sampled_discovery() -> None:
 @pytest.mark.parametrize(
     "route",
     (
-        "implicit_stuffing",
+        "implicit_restricted_delaunay",
         "implicit_adaptive_tetrahedral",
     ),
 )
@@ -1006,7 +1006,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
         root_tolerance=1.0e-8,
     )
     discovery: AdaptiveImplicitSurface | None = None
-    if route == "implicit_stuffing":
+    if route == "implicit_restricted_delaunay":
         source: NativeImplicitSource | AnalyticImplicitProfile = AnalyticImplicitProfile(
             geometry,
             contract,
@@ -1102,7 +1102,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
     )
     assert _boundary_issues(construction.mesh, boundary) == ()
     assert len(construction.organization.zones) == 1
-    if route == "implicit_stuffing":
+    if route == "implicit_restricted_delaunay":
         assert isinstance(source, AnalyticImplicitProfile)
         assert construction.certification.domain is source
         assert construction.certification.fidelity_source is source
@@ -1798,13 +1798,28 @@ def _unpaired_faces(cells: np.ndarray) -> set[tuple[int, ...]]:
     return {key for key, count in counts.items() if count == 1}
 
 
-def test_stuffed_construction_arrays_publish_their_own_boundary() -> None:
+def _smallest_dihedral_degrees(points: np.ndarray, cells: np.ndarray) -> float:
+    corners = points[cells]
+    normals = np.stack(
+        [
+            np.cross(corners[:, j] - corners[:, i], corners[:, k] - corners[:, i])
+            for i, j, k in ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
+        ],
+        axis=1,
+    )
+    normals /= np.linalg.norm(normals, axis=2, keepdims=True)
+    pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)))
+    cosine = -np.einsum("ijk,ijk->ij", normals[:, pairs[:, 0]], normals[:, pairs[:, 1]])
+    return float(np.degrees(np.arccos(np.clip(np.max(cosine), -1.0, 1.0))))
+
+
+def test_restricted_construction_arrays_publish_their_own_boundary() -> None:
     contract = SpatialCoordinateContract.si()
     profile = AnalyticImplicitProfile(
         Sphere((0.0, 0.0, 0.0), 0.371, feature_id="construction-sphere").compile(),
         contract,
-        source_id="stuffed-construction",
-        source_revision="stuffed-construction-r1",
+        source_id="restricted-construction",
+        source_revision="restricted-construction-r1",
     )
     scope = MeshingScope(
         profile.source_id,
@@ -1822,29 +1837,29 @@ def test_stuffed_construction_arrays_publish_their_own_boundary() -> None:
         maximum_deviation=0.05,
     )
 
-    def construct(radius_edge_bound: float) -> StuffedImplicitConstruction:
+    def construct(radius_edge_bound: float) -> RestrictedImplicitConstruction:
         prepared = prepare_native_implicit(
             profile,
             specification,
             NativeMeshingOptions(
-                "implicit_stuffing",
+                "implicit_restricted_delaunay",
                 volume_schedule=NativeVolumeSchedule(radius_edge_bound=radius_edge_bound),
             ),
             contract,
         )
-        assert isinstance(prepared, PreparedStuffedImplicitVolume)
+        assert isinstance(prepared, PreparedRestrictedImplicitVolume)
         return prepared.construct()
 
-    # The default schedule keeps the stuffed lattice; a radius-edge bound of
-    # 1.3 sends it through the native fixed-boundary quality pass.
-    stuffed = construct(2.0)
-    improved = construct(1.3)
-    np.testing.assert_array_equal(
-        stuffed.vertex_ids, np.arange(stuffed.points.shape[0], dtype=np.int64)
-    )
-    assert improved.points.shape[0] > stuffed.points.shape[0]
-    for construction, bound in ((stuffed, 2.0), (improved, 1.3)):
+    # Each schedule's radius-edge bound is met by the construction itself.
+    for bound in (2.0, 1.3):
+        construction = construct(bound)
         points, cells = construction.points, construction.tetrahedra
+        np.testing.assert_array_equal(
+            construction.vertex_ids, np.arange(points.shape[0], dtype=np.int64)
+        )
+        np.testing.assert_array_equal(
+            construction.cell_ids, np.arange(cells.shape[0], dtype=np.int64)
+        )
         corners = points[cells]
         edges = corners[:, 1:] - corners[:, :1]
         determinant = np.einsum(
@@ -1866,8 +1881,8 @@ def test_stuffed_construction_arrays_publish_their_own_boundary() -> None:
             axis=0,
         )
         assert np.max(np.linalg.norm(center, axis=1) / shortest) <= bound * (1.0 + 1e-9)
-        assert np.unique(construction.vertex_ids).size == points.shape[0]
-        assert np.unique(construction.cell_ids).size == cells.shape[0]
+        # The construction's dihedral floor is 15 degrees above the schedule's 10.
+        assert _smallest_dihedral_degrees(points, cells) >= 15.0
         boundary = construction.boundary_faces
         assert {tuple(sorted(face)) for face in boundary.tolist()} == _unpaired_faces(
             cells
@@ -1878,10 +1893,50 @@ def test_stuffed_construction_arrays_publish_their_own_boundary() -> None:
             points[boundary[:, 2]] - points[boundary[:, 0]],
         )
         assert np.all(np.einsum("ij,ij->i", normals, points[boundary[:, 0]]) > 0.0)
-    # The quality pass keeps every boundary facet, coordinates and order.
-    np.testing.assert_array_equal(
-        improved.points[improved.boundary_faces], stuffed.points[stuffed.boundary_faces]
+        # The floating-point construction is a function of its inputs.
+        again = construct(bound)
+        np.testing.assert_array_equal(again.points, points)
+        np.testing.assert_array_equal(again.tetrahedra, cells)
+        np.testing.assert_array_equal(again.boundary_faces, boundary)
+
+
+@pytest.mark.parametrize(
+    "tolerance",
+    (0.01, 0.005),
+    ids=("ledger-torus-10", "fine-torus-5"),
+)
+def test_restricted_construction_resolves_the_ring_torus(tolerance: float) -> None:
+    # Leftover sliver circumcenters once cascaded at rounding scale (10), and
+    # interior points beside the zero set left facets off it (5); both now
+    # end in a construction of the requested fidelity and shape.
+    contract = SpatialCoordinateContract.si()
+    profile = AnalyticImplicitProfile(
+        Torus((0.0, 0.0, 0.0), 0.371, 1.113, feature_id="restricted-ring-torus").compile(),
+        contract,
+        source_id="restricted-ring-torus",
     )
+    scope = MeshingScope.whole(profile, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        scope,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(),
+        maximum_deviation=tolerance,
+    )
+    prepared = prepare_native_implicit(
+        profile,
+        specification,
+        NativeMeshingOptions(
+            "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
+        ),
+        contract,
+    )
+    assert isinstance(prepared, PreparedRestrictedImplicitVolume)
+    construction = prepared.construct()
+    points, boundary = construction.points, construction.boundary_faces
+    assert _topology_matches(profile, boundary)
+    assert _smallest_dihedral_degrees(points, construction.tetrahedra) >= 15.0
+    assert np.all(profile.triangle_distance_upper(points[boundary]) <= tolerance)
 
 
 def test_projection_degree_refuses_an_off_source_boundary() -> None:
@@ -1904,7 +1959,7 @@ def test_projection_degree_refuses_an_off_source_boundary() -> None:
         _prove_degree_one_normal_fiber(profile, triangles, tube)
 
 
-def test_stuffed_torus_projection_degree_accepts_complete_volume() -> None:
+def test_restricted_torus_projection_degree_accepts_complete_volume() -> None:
     contract = SpatialCoordinateContract.si()
     geometry = Torus(
         (0.0, 0.0, 0.0),
@@ -1941,7 +1996,7 @@ def test_stuffed_torus_projection_degree_accepts_complete_volume() -> None:
         profile,
         specification,
         NativeMeshingOptions(
-            "implicit_stuffing",
+            "implicit_restricted_delaunay",
             volume_schedule=NativeVolumeSchedule(),
         ),
         contract,
@@ -1986,7 +2041,7 @@ def test_qualification_implicit_volume_preserves_hard_controls() -> None:
     assert specification.protected_features[0].hard
 
 
-def test_stuffed_implicit_volume_refuses_soft_shape_strength() -> None:
+def test_restricted_implicit_volume_refuses_soft_shape_strength() -> None:
     from phydrax.meshing._sizing import SizeControlStrength
 
     contract = SpatialCoordinateContract.si()
@@ -2015,7 +2070,7 @@ def test_stuffed_implicit_volume_refuses_soft_shape_strength() -> None:
         prepare_native_implicit(
             profile,
             specification,
-            NativeMeshingOptions("implicit_stuffing", volume_schedule=soft),
+            NativeMeshingOptions("implicit_restricted_delaunay", volume_schedule=soft),
             contract,
         )
 

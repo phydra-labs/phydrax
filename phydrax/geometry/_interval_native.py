@@ -19,7 +19,13 @@ from numpy.typing import NDArray
 
 from .._interpolation._bspline import bspline_jet_rule_alignment
 from .._jax_program import custom_jvp_rule_owner
-from .._meshcore import _raise_for_call, implicit_stuffing, load_meshcore, StuffedVolume
+from .._meshcore import (
+    _raise_for_call,
+    implicit_restricted_delaunay,
+    load_meshcore,
+    RestrictedDelaunayCriteria,
+    RestrictedImplicitVolume,
+)
 from ._interval_enclosure import (
     _as_interval,
     _CUSTOM_EXTENSIONS,
@@ -377,39 +383,49 @@ class NativeIntervalProgram:
             hessian.reshape((*shape, variables, variables)),
         )
 
-    def stuff_tetrahedra(
+    def restricted_tetrahedra(
         self,
         lower: NDArray[np.float64],
         upper: NDArray[np.float64],
-        spacing: float,
+        criteria: RestrictedDelaunayCriteria,
+        components: int,
+        euler_characteristic: int,
+        extra_seeds: NDArray[np.float64],
         /,
-        *,
-        levels: int = 0,
-        lipschitz: float = 1.0,
-    ) -> StuffedVolume:
-        """Tetrahedra of ``{f <= 0}`` in a box by isosurface stuffing.
+    ) -> RestrictedImplicitVolume:
+        """Tetrahedra of ``{f <= 0}`` by restricted Delaunay refinement, surface first.
 
-        ``f`` is the program's single output over three inputs; ``spacing`` is
-        the lattice spacing within one spacing of the zero set. Away from it
-        the lattice coarsens by halving up to ``levels`` times, which is valid
-        when ``|f(x) - f(y)| <= lipschitz |x - y|`` (``lipschitz`` 1 for a
-        signed distance). A floating-point construction: the result is a
-        proposal certified afterwards.
+        ``f`` is the program's single output over three inputs; the box
+        ``[lower, upper]`` contains its zero set, whose surface should have
+        ``components`` components and Euler characteristic
+        ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are points near
+        the zero set added to the box-tree seeds. A floating-point
+        construction: the result is a proposal certified afterwards.
         """
         if self.input_dimension != 3 or math.prod(self.output.shape) != 1:
-            raise ValueError("isosurface stuffing requires one output of three inputs.")
-        seeds, outputs = self._point_workspace()
-        return implicit_stuffing(
+            raise ValueError("restricted Delaunay meshing requires one output of three inputs.")
+        if self.batch_capacity != 1 or not self.elementwise:
+            raise ValueError("restricted Delaunay meshing requires an elementwise one-box program.")
+        seed_lower = np.zeros((self.workspace_size,), dtype=np.float64)
+        seed_upper = np.zeros_like(seed_lower)
+        for seed in self.seeds:
+            size = seed.lower.size
+            seed_lower[seed.offset : seed.offset + size] = seed.lower.reshape((-1,))
+            seed_upper[seed.offset : seed.offset + size] = seed.upper.reshape((-1,))
+        output = np.arange(self.workspace_size, dtype=np.int64)[self._batch_output]
+        return implicit_restricted_delaunay(
             self.instructions,
             self.indices,
             self.parameters,
-            seeds,
-            int(outputs[0]),
+            seed_lower,
+            seed_upper,
+            int(output.reshape((-1,))[0]),
             lower,
             upper,
-            spacing,
-            levels,
-            lipschitz,
+            criteria,
+            components,
+            euler_characteristic,
+            extra_seeds,
         )
 
     def evaluate_branches(
