@@ -296,7 +296,9 @@ int exact_orient(const Planar& a, const Planar& b, const Planar& c) {
 }
 
 // Shewchuk's floating stage of orient2d(a, b, c), det[a - c, b - c], and a
-// bound on its error.
+// bound on the magnitude of its error. (Shewchuk's stage-A constant
+// (3 + 16u)u is a sign threshold: it moves the final subtraction's u |det|
+// to the other side. As a magnitude bound the constant is (4 + 32u)u.)
 struct Orientation {
   double det;
   double error;
@@ -304,7 +306,7 @@ struct Orientation {
 Orientation orientation(const Planar& a, const Planar& b, const Planar& c) {
   const double left = (a[0] - c[0]) * (b[1] - c[1]);
   const double right = (a[1] - c[1]) * (b[0] - c[0]);
-  return {left - right, (3.0 + 16.0 * kUnit) * kUnit * (std::abs(left) + std::abs(right))};
+  return {left - right, (4.0 + 32.0 * kUnit) * kUnit * (std::abs(left) + std::abs(right))};
 }
 
 // Whether an edge direction of `from` separates the two planar triangles by
@@ -338,8 +340,8 @@ bool separated(const std::array<Planar, 3>& from, const std::array<Planar, 3>& o
 // |M|_F^2 / |det M| of M = [p1 - p0, p2 - p0] (outward, from the
 // determinant's certified lower bound), and the relative error of the
 // computed determinant (by which every computed column may be off). Nothing
-// when Shewchuk's stage-A bound does not keep the determinant at least twice
-// its error away from 0, or a coefficient is not finite.
+// when the error bound does not keep the determinant at least twice its
+// error away from 0, or a coefficient is not finite.
 struct Affine {
   Planar origin;
   Point base;
@@ -363,8 +365,8 @@ std::optional<Affine> affine(const std::array<Planar, 3>& p, const std::array<Po
     map.columns[1][d] = (second[d] * m00 - first[d] * m01) / det;
   }
   map.norm = std::sqrt(dot(map.columns[0], map.columns[0]) + dot(map.columns[1], map.columns[1]));
-  map.condition = (m00 * m00 + m01 * m01 + m10 * m10 + m11 * m11) / lower * (1 + 8 * kUnit);
-  map.relative = determinant.error / lower * (1 + 8 * kUnit);
+  map.condition = (m00 * m00 + m01 * m01 + m10 * m10 + m11 * m11) / lower * (1 + 16 * kUnit);
+  map.relative = determinant.error / lower * (1 + 16 * kUnit);
   if (!std::isfinite(map.norm) || !std::isfinite(map.condition) || !std::isfinite(map.relative))
     return std::nullopt;
   return map;
@@ -391,53 +393,30 @@ double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Poin
       if (exact_orient(corners[k], corners[(k + 1) % 3], x) * side < 0) return false;
     return true;
   };
-  const std::optional<Affine> own_affine = affine(own, own_space);
-  const std::optional<Affine> other_affine = affine(other, other_space);
-  if (!own_affine || !other_affine) return std::numeric_limits<double>::infinity();
-  const Affine& own_map = *own_affine;
-  const Affine& other_map = *other_affine;
-  // The rounding pad below is first order in u * condition; past 2^-10 its
-  // neglected terms are no longer small, so the caller's height bound decides.
-  if (kUnit * own_map.condition > 0x1p-10 || kUnit * other_map.condition > 0x1p-10)
-    return std::numeric_limits<double>::infinity();
-  double planar_scale = 0, space_scale = 0;
-  for (size_t k = 0; k < 3; ++k)
-    for (size_t d = 0; d < 3; ++d) {
-      if (d < 2)
-        planar_scale =
-            std::max(planar_scale, std::max(std::abs(own[k][d]), std::abs(other[k][d])));
-      space_scale =
-          std::max(space_scale, std::max(std::abs(own_space[k][d]), std::abs(other_space[k][d])));
-    }
-  // First-order rounding of the two maps at a point of both triangles (the
-  // planar differences, the 2 x 2 inverse, the products), constants doubled,
-  // plus each map's columns off by its determinant's relative error over
-  // planar offsets up to twice the planar scale.
-  const double slope = own_map.norm + other_map.norm;
-  const double evaluation =
-      8 * kUnit *
-          (own_map.condition * (own_map.norm * planar_scale + space_scale) +
-           other_map.condition * (other_map.norm * planar_scale + space_scale)) +
-      4 * kUnit * space_scale +
-      2 * (own_map.relative * own_map.norm + other_map.relative * other_map.norm) *
-          planar_scale;
-  double bound = 0;
-  // The gap at an exact overlap vertex within `offset` of x; a nonfinite
-  // value refuses (+inf), never drops out of the maximum.
-  const auto visit = [&](const Planar& x, double offset) {
-    const double value = norm(sub(evaluate(own_map, x), evaluate(other_map, x))) +
-                         slope * offset + evaluation;
-    bound = std::isfinite(value) ? std::max(bound, value)
-                                 : std::numeric_limits<double>::infinity();
+  // The overlap's vertices, decided exactly before any map is formed: an
+  // exactly empty overlap bounds nothing (0), whatever the maps' rounding.
+  struct Vertex {
+    Planar at;
+    double offset;  // certified distance bound to the exact vertex
   };
+  std::array<Vertex, 15> vertices{};
+  size_t count = 0;
+  double planar_scale = 0;
+  for (size_t k = 0; k < 3; ++k)
+    for (size_t d = 0; d < 2; ++d)
+      planar_scale = std::max(planar_scale, std::max(std::abs(own[k][d]), std::abs(other[k][d])));
   for (size_t k = 0; k < 3; ++k) {
-    if (inside(own[k], other, other_side)) visit(own[k], 0);
-    if (inside(other[k], own, own_side)) visit(other[k], 0);
+    if (inside(own[k], other, other_side)) vertices[count++] = {own[k], 0};
+    if (inside(other[k], own, own_side)) vertices[count++] = {other[k], 0};
   }
   // Proper edge crossings (touching ones are corners inside the other): the
   // crossing's parameter along a segment is a / (a + b) for the two
-  // orientations' magnitudes, enclosed from their error bounds; of the two
-  // segments, the tighter enclosure is kept.
+  // orientations' magnitudes, enclosed from their error bounds (each
+  // quotient and product rounded, 8u outward); of the two segments, the
+  // tighter enclosure is kept. The point evaluated at the enclosure's middle
+  // lies within half its width times the segment length of the exact
+  // crossing, plus its own rounding (two operations per coordinate, at most
+  // 16u planar_scale).
   for (size_t i = 0; i < 3; ++i)
     for (size_t j = 0; j < 3; ++j) {
       const Planar& p = own[i];
@@ -447,8 +426,7 @@ double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Poin
       if (exact_orient(q, q_next, p) * exact_orient(q, q_next, p_next) >= 0 ||
           exact_orient(p, p_next, q) * exact_orient(p, p_next, q_next) >= 0)
         continue;
-      double offset = std::numeric_limits<double>::infinity();
-      Planar crossing{};
+      Vertex crossing{{}, std::numeric_limits<double>::infinity()};
       for (const auto& [from, to, line, line_next] :
            {std::tuple{p, p_next, q, q_next}, std::tuple{q, q_next, p, p_next}}) {
         const Orientation a = orientation(line, line_next, from);
@@ -457,21 +435,63 @@ double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Poin
         const double a_high = std::abs(a.det) + a.error;
         const double b_low = std::max(std::abs(b.det) - b.error, 0.0);
         const double b_high = std::abs(b.det) + b.error;
-        const double w_low = std::max(a_low / (a_low + b_high) * (1 - 4 * kUnit), 0.0);
-        const double w_high = std::min(a_high / (a_high + b_low) * (1 + 4 * kUnit), 1.0);
+        const double w_low = std::max(a_low / (a_low + b_high) * (1 - 8 * kUnit), 0.0);
+        const double w_high = std::min(a_high / (a_high + b_low) * (1 + 8 * kUnit), 1.0);
         const double w = 0.5 * (w_low + w_high);
         const Planar x{from[0] + w * (to[0] - from[0]), from[1] + w * (to[1] - from[1])};
         const double length = std::sqrt((to[0] - from[0]) * (to[0] - from[0]) +
                                         (to[1] - from[1]) * (to[1] - from[1]));
-        const double candidate =
-            0.5 * (w_high - w_low) * length * (1 + 4 * kUnit) + 8 * kUnit * planar_scale;
-        if (candidate < offset) {
-          offset = candidate;
-          crossing = x;
-        }
+        const double offset =
+            0.5 * (w_high - w_low) * length * (1 + 8 * kUnit) + 16 * kUnit * planar_scale;
+        if (offset < crossing.offset) crossing = {x, offset};
       }
-      visit(crossing, offset);
+      vertices[count++] = crossing;
     }
+  if (count == 0) return 0;
+  const std::optional<Affine> own_affine = affine(own, own_space);
+  const std::optional<Affine> other_affine = affine(other, other_space);
+  if (!own_affine || !other_affine) return std::numeric_limits<double>::infinity();
+  const Affine& own_map = *own_affine;
+  const Affine& other_map = *other_affine;
+  // The rounding pad below is first order in u * condition; past 2^-10 its
+  // neglected terms are no longer small, so the caller's height bound decides.
+  if (kUnit * own_map.condition > 0x1p-10 || kUnit * other_map.condition > 0x1p-10)
+    return std::numeric_limits<double>::infinity();
+  double space_scale = 0;
+  for (size_t k = 0; k < 3; ++k)
+    for (size_t d = 0; d < 3; ++d)
+      space_scale =
+          std::max(space_scale, std::max(std::abs(own_space[k][d]), std::abs(other_space[k][d])));
+  // First-order rounding of one map at a point x of its triangle, with
+  // offset y = x - p0 (|y| <= the triangle's diameter <= 2 sqrt(2) times the
+  // planar scale): y carries u relative; each computed column is
+  // (first m11 - second m10) / det with first, second the spatial
+  // differences (|.| <= 2 space_scale, u relative) and m the planar ones
+  // (u relative): a numerator off by about 3u |first| |M|_F, so a column off
+  // by 3u 2 space_scale |M|_F / |det| plus the determinant's relative error
+  // times |J|; times |y| <= sqrt(2) |M|_F that is about 8.5u condition
+  // space_scale plus relative |J| |y|. The products, sums and the base add
+  // about 4u condition |J| planar_scale and 3u space_scale. Constants are
+  // doubled (16, 8) and the relative term takes |y| <= 3 planar_scale.
+  // Both maps' errors add; slope * offset carries a crossing's distance to
+  // the exact vertex.
+  const double slope = own_map.norm + other_map.norm;
+  const double evaluation =
+      16 * kUnit *
+          (own_map.condition * (own_map.norm * planar_scale + space_scale) +
+           other_map.condition * (other_map.norm * planar_scale + space_scale)) +
+      8 * kUnit * space_scale +
+      3 * (own_map.relative * own_map.norm + other_map.relative * other_map.norm) *
+          planar_scale;
+  double bound = 0;
+  // A nonfinite value refuses (+inf), never drops out of the maximum.
+  for (size_t k = 0; k < count; ++k) {
+    const double value =
+        norm(sub(evaluate(own_map, vertices[k].at), evaluate(other_map, vertices[k].at))) +
+        slope * vertices[k].offset + evaluation;
+    bound = std::isfinite(value) ? std::max(bound, value)
+                                 : std::numeric_limits<double>::infinity();
+  }
   return bound * (1 + 0x1p-40);
 }
 
@@ -609,7 +629,8 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
   // triangles, so it peaks at the overlap's vertices (overlap_gap_bound).
   // Through the frame, |X - Y| is also at most the gap between the heights,
   // each a convex combination of its corners' (computed along `direction`,
-  // rounded within 32 units of `scale`): that bounds overlaps too
+  // rounded within 64 units of `scale`; the projection's rounding reaches
+  // about 48): that bounds overlaps too
   // ill-conditioned to evaluate.
   double bound = 0;
   for (const int64_t t : patch_) {
@@ -620,7 +641,7 @@ double MeshSource::triangle_bound(const Point& a, const Point& b, const Point& c
       high = std::max(high, lift(f[k])[2]);
     }
     const double extreme =
-        (std::max(high - corner_low, corner_high - low) + 32 * kUnit * scale) * (1 + 0x1p-40);
+        (std::max(high - corner_low, corner_high - low) + 64 * kUnit * scale) * (1 + 0x1p-40);
     if (extreme <= bound) continue;
     const std::array<Point, 3> source_space{points_[static_cast<size_t>(f[0])],
                                             points_[static_cast<size_t>(f[1])],

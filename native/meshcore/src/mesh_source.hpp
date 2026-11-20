@@ -49,12 +49,14 @@ using Planar = std::array<double, 2>;
 // the exact one (its parameter enclosed from the orientation error bounds),
 // plus the maps' slopes times that offset and a first-order bound on the
 // rounding of the evaluation, rounded up by a relative 2^-40. 0 when `other`
-// is exactly degenerate (it overlaps no area) or the overlap is empty. +inf
-// (refused) when `own` is exactly degenerate, when either map's determinant
-// is not certified away from 0 (|det| <= twice Shewchuk's stage-A error
-// bound), when either map's u * condition exceeds 2^-10 (where the
-// first-order rounding pad no longer bounds the evaluation), or when a vertex
-// value is not finite. Coordinates must satisfy coordinate_in_domain.
+// is exactly degenerate (it overlaps no area) or the overlap is exactly empty
+// (decided before any map is formed). +inf (refused) when `own` is exactly
+// degenerate, or, for a nonempty overlap, when either map's determinant is
+// not certified away from 0 (|det| <= twice its error magnitude bound,
+// (4 + 32u)u times the products' magnitudes), when either map's
+// u * condition exceeds 2^-10 (where the first-order rounding pad no longer
+// bounds the evaluation), or when a vertex value is not finite. Coordinates
+// must satisfy coordinate_in_domain.
 double overlap_gap_bound(const std::array<Planar, 3>& own, const std::array<Point, 3>& own_space,
                          const std::array<Planar, 3>& other,
                          const std::array<Point, 3>& other_space);
