@@ -3024,6 +3024,21 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+/* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
+ * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
+ * use_patch is the model's loop surface of each use; use_range is the
+ * model's use range bitwise, in either order; chord_loop is the model loop
+ * of the chord's use; V4's use-coverage and loop-closure checks hold on these
+ * rows (every use covered by chords chaining bitwise from its first to its
+ * last range value; every loop one closed bitwise UV cycle). A sliver
+ * (chart_to_mesh -1) needs a mesh triangle with the edge from its pole vertex
+ * to its third vertex (else a CHART_MESH_LINK finding). V4's orientation,
+ * edge pairing and overlap checks remain a separate precondition.
+ * Trusted, not re-established natively: T-spline C2 continuity and partition
+ * of unity (Python's ASTS certificate of the exported pieces); continuity of
+ * an intersection root across chart seams and the terminal threshold (the
+ * chart constructor; V3 treats each break as a C0 line); the source model's
+ * 3D edge / face consistency. Rows are written only when the call completes. */
 
 /* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
  * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the

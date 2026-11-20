@@ -1,7 +1,11 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <limits>
 #include <vector>
 
 #include "cad_geometry.hpp"
@@ -9,8 +13,707 @@
 #include "phydrax_meshcore.h"
 #include "verify_cad_fidelity.hpp"
 
+namespace {
+using namespace phx::mc::cad;
+
+// A flat CAD model assembled row by row; it owns every table it exposes.
+struct Model {
+  std::vector<int32_t> kinds;
+  std::vector<int64_t> integer_offsets{0}, integers, real_offsets{0};
+  std::vector<double> reals;
+  std::vector<int32_t> surfaces;
+  std::vector<int8_t> orientations;
+  std::vector<double> periods, domains, corners;
+  std::vector<int32_t> curves, curve_corners;
+  std::vector<double> curve_ranges;
+  std::vector<int64_t> loop_offsets{0}, region_offsets{0};
+  std::vector<int32_t> loop_surfaces, use_entities, use_pcurves;
+  std::vector<int8_t> use_kinds, use_senses;
+  std::vector<double> use_ranges;
+
+  int32_t add(int32_t kind, std::vector<int64_t> ints, std::vector<double> values) {
+    kinds.push_back(kind);
+    integers.insert(integers.end(), ints.begin(), ints.end());
+    reals.insert(reals.end(), values.begin(), values.end());
+    integer_offsets.push_back(static_cast<int64_t>(integers.size()));
+    real_offsets.push_back(static_cast<int64_t>(reals.size()));
+    return static_cast<int32_t>(kinds.size() - 1);
+  }
+  int32_t add_template(const char* name, std::vector<double> values) {
+    const int32_t id = template_index(name);
+    PHX_CHECK(id >= 0);
+    return add(PHX_MC_CAD_NODE_TEMPLATE, {id}, std::move(values));
+  }
+  void surface(int32_t node) {
+    surfaces.push_back(node);
+    orientations.push_back(1);
+    periods.insert(periods.end(), {0.0, 0.0});
+    domains.insert(domains.end(), {-8.0, 8.0, -8.0, 8.0});
+  }
+  void corner(double x, double y, double z) { corners.insert(corners.end(), {x, y, z}); }
+  void curve(int32_t node, int32_t first, int32_t last) {
+    curves.push_back(node);
+    curve_corners.insert(curve_corners.end(), {first, last});
+    curve_ranges.insert(curve_ranges.end(), {0.0, 1.0});
+  }
+  void use(int8_t kind, int32_t entity, double first, double last, int32_t pcurve) {
+    use_kinds.push_back(kind);
+    use_entities.push_back(entity);
+    use_senses.push_back(1);
+    use_ranges.insert(use_ranges.end(), {first, last});
+    use_pcurves.push_back(pcurve);
+  }
+  void close_loop(int32_t surface_row) {
+    loop_surfaces.push_back(surface_row);
+    loop_offsets.push_back(static_cast<int64_t>(use_kinds.size()));
+  }
+  phx_mc_cad_model view() const {
+    phx_mc_cad_model m{};
+    m.node_count = static_cast<int64_t>(kinds.size());
+    m.node_kinds = kinds.data();
+    m.node_integer_offsets = integer_offsets.data();
+    m.node_integers = integers.data();
+    m.node_real_offsets = real_offsets.data();
+    m.node_reals = reals.data();
+    m.corner_count = static_cast<int64_t>(corners.size() / 3);
+    m.corner_points = corners.data();
+    m.surface_count = static_cast<int64_t>(surfaces.size());
+    m.surface_nodes = surfaces.data();
+    m.surface_orientations = orientations.data();
+    m.surface_periods = periods.data();
+    m.surface_parameter_domains = domains.data();
+    m.curve_count = static_cast<int64_t>(curves.size());
+    m.curve_nodes = curves.data();
+    m.curve_corners = curve_corners.data();
+    m.curve_ranges = curve_ranges.data();
+    m.loop_count = static_cast<int64_t>(loop_surfaces.size());
+    m.loop_use_offsets = loop_offsets.data();
+    m.loop_surfaces = loop_surfaces.data();
+    m.use_count = static_cast<int64_t>(use_kinds.size());
+    m.use_kinds = use_kinds.data();
+    m.use_entities = use_entities.data();
+    m.use_senses = use_senses.data();
+    m.use_ranges = use_ranges.data();
+    m.use_pcurve_nodes = use_pcurves.data();
+    m.region_surface_offsets = region_offsets.data();
+    return m;
+  }
+  // Point coefficient bounds: the binary64 reals are the exact source.
+  void bind_bounds(IntervalEvaluationWorkspace& workspace) const {
+    workspace.coefficient_lower = reals.data();
+    workspace.coefficient_upper = reals.data();
+    workspace.coefficient_count = static_cast<int64_t>(reals.size());
+  }
+};
+
+// One intersection chart: start, end, box lower, box upper (4 each), P (3, 3).
+void add_chart(std::vector<double>& reals, std::array<double, 4> start, std::array<double, 4> end,
+               std::array<double, 8> box, std::array<double, 9> preconditioner) {
+  reals.insert(reals.end(), start.begin(), start.end());
+  reals.insert(reals.end(), end.begin(), end.end());
+  reals.insert(reals.end(), box.begin(), box.end());
+  reals.insert(reals.end(), preconditioner.begin(), preconditioner.end());
+}
+
+// Chart and chord rows of phx_mc_verify_cad_fidelity.
+struct Mesh {
+  std::vector<double> points;
+  std::vector<int64_t> triangles;
+  std::vector<int32_t> face_rows;
+  std::vector<double> uv;
+  std::vector<int64_t> mesh_triangles, chart_to_mesh, edge_chord;
+  std::vector<int64_t> use_patch;
+  std::vector<double> use_range;
+  int64_t loop_count = 0;
+  std::vector<int64_t> chord_use, chord_loop;
+  std::vector<double> chord_uv, chord_range;
+};
+
+struct Verdict {
+  int32_t status;
+  std::vector<double> upper;
+  std::vector<int32_t> item_status, reasons, subdivisions;
+  double maximum;
+  std::vector<phx_mc_fidelity_finding> findings;
+};
+
+// Outputs start at sentinels, so a refusal that must leave them unchanged
+// can be checked.
+constexpr double kSentinel = -7.0;
+
+Verdict verify(const Model& model, const Mesh& mesh, double tolerance, int32_t depth) {
+  const phx_mc_cad_model view = model.view();
+  const auto rows = mesh.face_rows.size();
+  Verdict verdict{0, std::vector<double>(rows, kSentinel), std::vector<int32_t>(rows, -7),
+                  std::vector<int32_t>(rows, -7), std::vector<int32_t>(rows, -7), kSentinel,
+                  std::vector<phx_mc_fidelity_finding>(64)};
+  int64_t evidence_count = 0;
+  verdict.status = phx_mc_verify_cad_fidelity(
+      &view, static_cast<int64_t>(model.reals.size()), model.reals.data(), model.reals.data(),
+      static_cast<int64_t>(mesh.points.size() / 3), mesh.points.data(),
+      static_cast<int64_t>(rows), mesh.triangles.data(), mesh.face_rows.data(), mesh.uv.data(),
+      static_cast<int64_t>(mesh.mesh_triangles.size() / 3), mesh.mesh_triangles.data(),
+      mesh.chart_to_mesh.data(), static_cast<int64_t>(mesh.use_patch.size()),
+      mesh.use_patch.data(), mesh.use_range.data(), mesh.loop_count,
+      static_cast<int64_t>(mesh.chord_use.size()), mesh.chord_use.data(), mesh.chord_loop.data(),
+      mesh.chord_uv.data(), mesh.chord_range.data(), mesh.edge_chord.data(), tolerance, depth,
+      static_cast<int64_t>(rows), verdict.upper.data(), verdict.item_status.data(),
+      verdict.reasons.data(), verdict.subdivisions.data(), &verdict.maximum,
+      static_cast<int64_t>(verdict.findings.size()), verdict.findings.data(), &evidence_count);
+  verdict.findings.resize(static_cast<std::size_t>(std::max<int64_t>(evidence_count, 0)));
+  return verdict;
+}
+
+// |S(x) - I_T(x)| sampled on the chart triangle for a closed form S.
+template <class Surface>
+double sampled_interpolation_error(const double* uv, const double* points, Surface surface) {
+  double worst = 0.0;
+  constexpr int kSteps = 400;
+  for (int i = 0; i <= kSteps; ++i)
+    for (int j = 0; j <= kSteps - i; ++j) {
+      const double w[3] = {1.0 - (i + j) / double(kSteps), i / double(kSteps), j / double(kSteps)};
+      const double u = w[0] * uv[0] + w[1] * uv[2] + w[2] * uv[4];
+      const double v = w[0] * uv[1] + w[1] * uv[3] + w[2] * uv[5];
+      const std::array<double, 3> s = surface(u, v);
+      double squared = 0.0;
+      for (int axis = 0; axis < 3; ++axis) {
+        const double linear = w[0] * points[axis] + w[1] * points[3 + axis] + w[2] * points[6 + axis];
+        squared += (s[axis] - linear) * (s[axis] - linear);
+      }
+      worst = std::max(worst, std::sqrt(squared));
+    }
+  return worst;
+}
+
+// F1 (leaf), MAC's demo_ab B: the extrusion along z of the line where the
+// planes z = 0 and y = 0 meet, charted by x in [0, 1] on carrier [0, 1] and
+// by x in [1, 1.01] on carrier [1, 2]: S(u, v) = (x(u), 0, v) has a speed
+// jump at the seam u = 1. The chart triangle (0.5, 0), (1.5, 0), (0.5, 1)
+// straddles it; the sampled |S - I_T| is 0.2475 at (1, 0) (certified
+// 2.0e-15 before). Fault caught: a seam treated as a C2 point (the
+// per-chart Hessians are zero).
+void intersection_seam_leaf() {
+  Model m;
+  const int32_t first = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  const int32_t second = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 0, 1});
+  // R = S1(u1, v1) - S2(u2, v2) = (u1 - u2, v1, -v2); free (v1, u2, v2).
+  const std::array<double, 9> inverse{0, 1, 0, -1, 0, 0, 0, 0, -1};
+  std::vector<double> reals{0.0, 0.0};
+  add_chart(reals, {0, 0, 0, 0}, {1, 0, 1, 0}, {0, -0.1, -0.1, -0.1, 1, 0.1, 1.1, 0.1}, inverse);
+  add_chart(reals, {1, 0, 1, 0}, {1.01, 0, 1.01, 0}, {1, -0.1, 0.9, -0.1, 1.01, 0.1, 1.11, 0.1},
+            inverse);
+  const int32_t line = m.add(PHX_MC_CAD_NODE_INTERSECTION, {first, second, 2, 0, -1, -1, 0, 0, 0},
+                             reals);
+  const int32_t swept = m.add(PHX_MC_CAD_NODE_EXTRUSION, {line}, {0, 0, 1});
+  m.surface(swept);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const double uv[6] = {0.5, 0.0, 1.5, 0.0, 0.5, 1.0};
+  double points[9];
+  for (int i = 0; i < 3; ++i)
+    PHX_CHECK(geometry.jets(swept, uv + 2 * i, 0, points + 3 * i, point_workspace));
+  const double truth = sampled_interpolation_error(uv, points, [](double u, double v) {
+    return std::array<double, 3>{u <= 1.0 ? u : 1.0 + 0.01 * (u - 1.0), 0.0, v};
+  });
+  PHX_CHECK(truth >= 0.2474);
+  const auto strict = fidelity_triangle(geometry, 0, points, uv, 1e-9, 8, workspace);
+  std::printf("F1 leaf (tolerance 1e-9): status %d upper %.6e sampled %.6e\n", strict.status,
+              strict.upper, truth);
+  PHX_CHECK(strict.status != PHX_MC_OK || strict.upper >= truth);
+  // The seam is an exact C0 line, so the clipped pieces certify a tight bound.
+  const auto result = fidelity_triangle(geometry, 0, points, uv, 1.0, 8, workspace);
+  std::printf("F1 leaf (tolerance 1): status %d upper %.6e\n", result.status, result.upper);
+  PHX_CHECK(result.status == PHX_MC_OK && result.upper >= truth && result.upper <= 0.25);
+}
+
+// F1 (lens): the plane z = 0 capped by the extrusion along z of the C1
+// quadratic B-spline (w, w^2 / 2, 0), w in [0, 2]; the p-curve (w, w^2 / 2)
+// is charted by w in [0.49994, 0.99994] (carrier [0, 1]) and [0.99994,
+// 1.015625] (carrier [1, 2]). The chord over [0.875, 2] crosses the seam,
+// where the speed drops 32-fold; its sampled distance sup |p(t) - L(t)| (the
+// plane is an isometry) must be within the cap. Fault caught: a seam
+// treated as a C2 point in the second-derivative remainder.
+void intersection_seam_lens() {
+  Model m;
+  const int32_t plane = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  const int32_t spline = m.add(PHX_MC_CAD_NODE_BSPLINE_CURVE, {2, 3, 3},
+                               {0, 0, 0, 2, 2, 2, 0, 0, 0, 1, 0, 0, 2, 2, 0, 1, 1, 1});
+  const int32_t carrier = m.add(PHX_MC_CAD_NODE_EXTRUSION, {spline}, {0, 0, 1});
+  // R = (u1 - w, v1 - w^2 / 2, -h); free (u1, v1, h): P = diag(1, 1, -1).
+  const std::array<double, 9> inverse{1, 0, 0, 0, 1, 0, 0, 0, -1};
+  const std::array<double, 8> box{-1, -1, -1, -1, 3, 3, 3, 1};
+  const double w[3] = {0.49994, 0.99994, 1.015625};
+  std::vector<double> reals{0.0, 0.0};
+  for (int c = 0; c < 2; ++c)
+    add_chart(reals, {w[c], 0.5 * w[c] * w[c], w[c], 0}, {w[c + 1], 0.5 * w[c + 1] * w[c + 1],
+                                                          w[c + 1], 0},
+              box, inverse);
+  const int32_t point = m.add(PHX_MC_CAD_NODE_INTERSECTION,
+                              {plane, carrier, 2, 0, -1, -1, 0, 2, 2}, reals);
+  const int32_t pcurve = m.add(PHX_MC_CAD_NODE_INTERSECTION,
+                               {plane, carrier, 2, 1, -1, -1, 0, 2, 2}, reals);
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(point, 0, 0);
+  m.use(0, 0, 0.875, 2.0, pcurve);
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const double parameters[2] = {0.875, 2.0};
+  double chord[4];
+  for (int end = 0; end < 2; ++end) {
+    double jet[2];
+    PHX_CHECK(geometry.jets(pcurve, parameters + end, 0, jet, point_workspace));
+    chord[2 * end] = jet[0], chord[2 * end + 1] = jet[1];
+  }
+  double truth = 0.0;
+  for (int i = 0; i <= 90000; ++i) {
+    const double t = 0.875 + 1.125 * i / 90000.0;
+    const double wt = t <= 1.0 ? w[0] + t * (w[1] - w[0]) : w[1] + (t - 1.0) * (w[2] - w[1]);
+    const double s = (t - 0.875) / 1.125;
+    const double du = wt - ((1 - s) * chord[0] + s * chord[2]);
+    const double dv = 0.5 * wt * wt - ((1 - s) * chord[1] + s * chord[3]);
+    truth = std::max(truth, std::hypot(du, dv));
+  }
+  double cap = 0.0, padded[4];
+  const int32_t status = fidelity_trim_lens(geometry, 0, 0, chord, parameters, workspace, &cap,
+                                            padded);
+  std::printf("F1 lens: status %d cap %.6e sampled %.6e\n", status, cap, truth);
+  PHX_CHECK(status != PHX_MC_OK || cap >= truth);
+}
+
+double segment_distance(const double* p, const double* a, const double* b) {
+  const double ab[2] = {b[0] - a[0], b[1] - a[1]}, ap[2] = {p[0] - a[0], p[1] - a[1]};
+  const double s = std::clamp((ab[0] * ap[0] + ab[1] * ap[1]) / (ab[0] * ab[0] + ab[1] * ab[1]),
+                              0.0, 1.0);
+  return std::hypot(ap[0] - s * ab[0], ap[1] - s * ab[1]);
+}
+
+// F1 (lens), MAC's demo_c: the plane (u, v, 0) trimmed by its intersection
+// with the extrusion along z of the C1 quadratic B-spline whose curve is
+// (w - 1.5, 0) for w <= 1 and (w - 1.5, -32 (w - 1)^2) after; charts w in
+// [0.49994, 0.99994] and [0.99994, 1.015625], use range [0.875, 2], one
+// mesh triangle A B C. The source boundary point farthest from the triangle
+// is 6.298e-3 away; V3 certified 3.523e-3 before. Fault caught: a seam
+// treated as a C2 point in the p-curve remainder.
+void intersection_seam_lens_demo() {
+  const double c = 64.0, delta = 0x1p-6, eps = 0x1p-14, alpha = 0.125, dw0 = 0.5;
+  const double ws = 1.0 - eps, wa = ws - dw0, we = 1.0 + delta;
+  const auto gx = [&](double w) { return w - 1.5; };
+  const auto gy = [&](double w) { return w <= 1.0 ? 0.0 : -c * (w - 1.0) * (w - 1.0) / 2; };
+  Model m;
+  const int32_t plane = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  const int32_t spline = m.add(PHX_MC_CAD_NODE_BSPLINE_CURVE, {2, 4, 3},
+                               {0, 0, 0, 1, 2, 2, 2, -1.5, 0, 0, -1, 0, 0, 0, 0, 0, 0.5, -c / 2,
+                                0, 1, 1, 1, 1});
+  const int32_t carrier = m.add(PHX_MC_CAD_NODE_EXTRUSION, {spline}, {0, 0, 1});
+  std::vector<double> reals{0.0, 0.0};
+  const std::array<double, 9> inverse{1, 0, 0, 0, 1, 0, 0, 0, -1};
+  add_chart(reals, {gx(wa), gy(wa), wa, 0}, {gx(ws), gy(ws), ws, 0},
+            {gx(wa) - 1, -1, wa, -1, gx(ws) + 1, 1, ws, 1}, inverse);
+  add_chart(reals, {gx(ws), gy(ws), ws, 0}, {gx(we), gy(we), we, 0},
+            {gx(ws) - 1, -1, ws, -1, gx(we) + 1, 1, we, 1}, inverse);
+  const int32_t pcurve = m.add(PHX_MC_CAD_NODE_INTERSECTION,
+                               {plane, carrier, 2, 1, -1, -1, 0, 2, 2}, reals);
+  const double a[2] = {gx(wa + (1 - alpha) * dw0), 0.0}, b[2] = {gx(we), gy(we)}, cc[2] = {0, -1};
+  const int32_t bc = m.add_template("line2", {b[0], b[1], cc[0] - b[0], cc[1] - b[1]});
+  const int32_t ca = m.add_template("line2", {cc[0], cc[1], a[0] - cc[0], a[1] - cc[1]});
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(spline, 0, 0);
+  m.curve_ranges = {0.0, 2.0};
+  m.use(0, 0, 1 - alpha, 2.0, pcurve);
+  m.use(0, 0, 0.0, 1.0, bc);
+  m.use(0, 0, 0.0, 1.0, ca);
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  // The source boundary's distance to the triangle, by the closed form.
+  double worst = 0.0;
+  for (int i = 0; i <= 45000; ++i) {
+    const double t = (1 - alpha) + (1 + alpha) * i / 45000.0;
+    const double w = t <= 1.0 ? wa + t * (ws - wa) : ws + (t - 1.0) * (we - ws);
+    const double p[2] = {gx(w), gy(w)};
+    worst = std::max(worst, std::min({segment_distance(p, a, b), segment_distance(p, b, cc),
+                                      segment_distance(p, cc, a)}));
+  }
+  Mesh mesh;
+  mesh.points = {a[0], a[1], 0, b[0], b[1], 0, cc[0], cc[1], 0};
+  mesh.triangles = {0, 1, 2};
+  mesh.face_rows = {0};
+  mesh.uv = {a[0], a[1], b[0], b[1], cc[0], cc[1]};
+  mesh.mesh_triangles = {0, 1, 2};
+  mesh.chart_to_mesh = {0};
+  mesh.edge_chord = {0, 1, 2};
+  mesh.use_patch = {0, 0, 0};
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  mesh.chord_use = {0, 1, 2};
+  mesh.chord_loop = {0, 0, 0};
+  mesh.chord_uv = {a[0], a[1], b[0], b[1], b[0], b[1], cc[0], cc[1], cc[0], cc[1], a[0], a[1]};
+  mesh.chord_range = m.use_ranges;
+  const Verdict verdict = verify(m, mesh, 1e-2, 8);
+  std::printf("F1 lens (demo_c): status %d row %d upper %.6e; source boundary %.6e away\n",
+              verdict.status, verdict.item_status[0], verdict.upper[0], worst);
+  PHX_CHECK(worst > 6.29e-3 && verdict.findings.empty());
+  PHX_CHECK(verdict.item_status[0] != PHX_MC_OK || verdict.upper[0] >= worst);
+}
+
+// F2: the bilinear B-spline (u, v, 0) on [0, 1]^2 is clamped outside, so
+// u = 1 is a C0 line. The chart triangle (0.5, 0), (1.5, 0), (0.5, 1) has
+// sampled |S - I_T| = 0.25 at (1, 0). Fault caught: the clamped domain end
+// left out of the knot scan.
+void clamped_domain_end() {
+  Model m;
+  const int32_t surface = m.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 2, 2},
+                                {0, 0, 1, 1, 0, 0, 1, 1,
+                                 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1});
+  m.surface(surface);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  const double uv[6] = {0.5, 0.0, 1.5, 0.0, 0.5, 1.0};
+  const double points[9] = {0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0, 0.0};
+  const double truth = sampled_interpolation_error(uv, points, [](double u, double v) {
+    return std::array<double, 3>{std::min(u, 1.0), v, 0.0};
+  });
+  PHX_CHECK(truth >= 0.2499);
+  const auto result = fidelity_triangle(geometry, 0, points, uv, 1.0, 8, workspace);
+  std::printf("F2 clamp: status %d upper %.6e sampled %.6e\n", result.status, result.upper, truth);
+  PHX_CHECK(result.status == PHX_MC_OK && result.upper >= truth);
+}
+
+// MAC's demo_d: the plane z = 0 trimmed by the arc of radius 2.125 about
+// (0, -1.875) from A = (-1, 0) to B = (1, 0), which bulges 0.25 above the
+// chord AB into the polygon A B D (D = (0, 2)), then the lines B D and D A.
+// Rows: the owner sliver A B C of height 0.05 (C = (0, 0.05)), then A C D
+// and C B D.
+struct ArcFixture {
+  Model model;
+  Mesh mesh;
+};
+
+ArcFixture arc_fixture() {
+  ArcFixture f;
+  Model& m = f.model;
+  const double cy = -1.875, r = 2.125;
+  const std::array<double, 2> a{-1, 0}, b{1, 0}, c{0, 0.05}, d{0, 2};
+  const double ta = std::atan2(a[1] - cy, a[0]), tb = std::atan2(b[1] - cy, b[0]);
+  const int32_t plane = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  const int32_t arc = m.add_template("circle2", {0, cy, 1, 0, 0, 1, r});
+  const int32_t bd = m.add_template("line2", {b[0], b[1], d[0] - b[0], d[1] - b[1]});
+  const int32_t da = m.add_template("line2", {d[0], d[1], a[0] - d[0], a[1] - d[1]});
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(space, 0, 0);
+  m.use(0, 0, ta, tb, arc);
+  m.use(0, 0, 0.0, 1.0, bd);
+  m.use(0, 0, 0.0, 1.0, da);
+  m.close_loop(0);
+  Mesh& mesh = f.mesh;
+  const std::array<std::array<double, 2>, 4> vertex{a, b, c, d};
+  for (const auto& p : vertex) mesh.points.insert(mesh.points.end(), {p[0], p[1], 0.0});
+  mesh.triangles = {0, 1, 2, 0, 2, 3, 2, 1, 3};
+  mesh.face_rows.assign(3, 0);
+  for (int64_t id : mesh.triangles)
+    mesh.uv.insert(mesh.uv.end(), {vertex[static_cast<std::size_t>(id)][0],
+                                   vertex[static_cast<std::size_t>(id)][1]});
+  mesh.mesh_triangles = mesh.triangles;
+  mesh.chart_to_mesh = {0, 1, 2};
+  mesh.edge_chord = {0, -1, -1, -1, -1, 2, -1, 1, -1};
+  mesh.use_patch.assign(3, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  mesh.chord_use = {0, 1, 2};
+  mesh.chord_loop.assign(3, 0);
+  mesh.chord_uv = {a[0], a[1], b[0], b[1], b[0], b[1], d[0], d[1], d[0], d[1], a[0], a[1]};
+  mesh.chord_range = m.use_ranges;
+  return f;
+}
+
+// F4 (demo_d): the neighbour row A C D contains (-0.3, 0.15), inside the
+// arc's circle, so 2.125 - |(-0.3, 0.15) - (0, -1.875)| = 0.0779 from the
+// trimmed face; only the owner row has the chord (neighbour 2.4e-15
+// before). Fault caught: a lens charged to its owner row only.
+void lens_charged_to_neighbours() {
+  const ArcFixture f = arc_fixture();
+  const Verdict verdict = verify(f.model, f.mesh, 0.5, 8);
+  const double truth = 2.125 - std::hypot(-0.3, 0.15 + 1.875);
+  std::printf("F4 lens: status %d neighbour %.6e (status %d) owner %.6e true %.6e\n",
+              verdict.status, verdict.upper[1], verdict.item_status[1], verdict.upper[0], truth);
+  PHX_CHECK(verdict.findings.empty());
+  PHX_CHECK(verdict.item_status[1] != PHX_MC_OK || verdict.upper[1] >= truth);
+}
+
+// F5: use coverage, loop closure and the use/loop binding are checked, and
+// a refusal leaves every output unchanged. Faults caught: an empty mesh
+// certified with maximum 0; caller loop or use rows not bound to the model.
+void use_and_loop_preconditions() {
+  const ArcFixture f = arc_fixture();
+  const auto refused = [&](const Mesh& mesh) {
+    const Verdict verdict = verify(f.model, mesh, 0.5, 8);
+    bool unchanged = verdict.maximum == kSentinel;
+    for (std::size_t i = 0; i < verdict.upper.size(); ++i)
+      unchanged = unchanged && verdict.upper[i] == kSentinel && verdict.item_status[i] == -7 &&
+                  verdict.reasons[i] == -7 && verdict.subdivisions[i] == -7;
+    return verdict.status == PHX_MC_INVALID_INPUT && unchanged;
+  };
+  Mesh empty = f.mesh;
+  empty.triangles.clear(), empty.face_rows.clear(), empty.uv.clear();
+  empty.mesh_triangles.clear(), empty.chart_to_mesh.clear(), empty.edge_chord.clear();
+  empty.chord_use.clear(), empty.chord_loop.clear(), empty.chord_uv.clear();
+  empty.chord_range.clear();
+  const Verdict before = verify(f.model, empty, 0.5, 8);
+  std::printf("F5 empty: status %d maximum %.6e\n", before.status, before.maximum);
+  PHX_CHECK(before.status == PHX_MC_INVALID_INPUT);
+  Mesh loops = f.mesh;
+  loops.loop_count = 2;
+  PHX_CHECK(refused(loops));
+  Mesh range = f.mesh;
+  range.use_range[0] = std::nextafter(range.use_range[0], 1.0);
+  range.chord_range[0] = range.use_range[0];
+  PHX_CHECK(refused(range));
+  Mesh reversed = f.mesh;
+  std::swap(reversed.use_range[0], reversed.use_range[1]);
+  PHX_CHECK(refused(reversed));  // a reversed use range then needs reversed chords
+  Mesh gap = f.mesh;
+  gap.chord_range[1] = 0.5 * (gap.use_range[0] + gap.use_range[1]);  // the arc chord stops short
+  PHX_CHECK(refused(gap));
+  Mesh open = f.mesh;
+  open.chord_uv[0] = -0.75;  // the loop no longer closes bitwise
+  PHX_CHECK(refused(open));
+  PHX_CHECK(verify(f.model, f.mesh, 0.5, 8).status == PHX_MC_OK);
+  // A use's range must be directed and nonempty.
+  Mesh empty_range = f.mesh;
+  empty_range.use_range[3] = empty_range.use_range[2];
+  PHX_CHECK(verify(f.model, empty_range, 0.5, 8).status == PHX_MC_INVALID_ARGUMENT);
+  // Every mesh triangle has exactly one chart image.
+  Mesh twice = f.mesh;
+  twice.chart_to_mesh = {0, 0, 2};
+  const Verdict images = verify(f.model, twice, 0.5, 8);
+  bool link = false, missing = false;
+  for (const auto& finding : images.findings) {
+    link |= finding.kind == PHX_MC_FIDELITY_CHART_MESH_LINK && finding.triangle == 1;
+    missing |= finding.kind == PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE && finding.other_triangle == 1;
+  }
+  PHX_CHECK(images.status == PHX_MC_UNRESOLVED && link && missing);
+}
+
+// F3 and the sphere pole sliver: unit sphere, chart corners c0 = (0, pi/2 -
+// 1/8), c1 = (1, pi/2 - 1/8), pole c2 = (1, pi/2), c3 = (0, pi/2). The sliver
+// (Q, P, P) stands for the mesh edge P-Q. Fault caught: only the pole vertex
+// checked, so a sliver whose Q no mesh triangle uses is certified.
+void sliver_edge_in_mesh() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  const double top = M_PI / 2;
+  const std::array<std::array<double, 2>, 4> c{{{0, top - 0.125}, {1, top - 0.125}, {1, top},
+                                                {0, top}}};
+  m.surface(sphere);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 0), m.corner(0, 0, 0), m.corner(0, 0, 1);
+  m.curve(space, 0, 1), m.curve(space, 1, 2), m.curve(space, 2, 0);
+  const auto line = [&](int from, int to) {
+    return m.add_template("line2", {c[from][0], c[from][1], c[to][0] - c[from][0],
+                                    c[to][1] - c[from][1]});
+  };
+  m.use(0, 0, 0, 1, line(0, 1));
+  m.use(0, 1, 0, 1, line(1, 2));
+  m.use(1, 2, 0, 1, line(2, 3));
+  m.use(0, 2, 0, 1, line(3, 0));
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  Mesh mesh;
+  for (int k : {0, 1, 2, 0}) {
+    double xyz[3];
+    PHX_CHECK(geometry.jets(sphere, c[static_cast<std::size_t>(k)].data(), 0, xyz,
+                            point_workspace));
+    mesh.points.insert(mesh.points.end(), xyz, xyz + 3);
+  }
+  mesh.triangles = {0, 1, 2, 0, 2, 2};
+  mesh.face_rows = {0, 0};
+  for (int k : {0, 1, 2, 0, 2, 3})
+    mesh.uv.insert(mesh.uv.end(), c[static_cast<std::size_t>(k)].begin(),
+                   c[static_cast<std::size_t>(k)].end());
+  mesh.mesh_triangles = {0, 1, 2};
+  mesh.chart_to_mesh = {0, -1};
+  mesh.edge_chord = {0, 1, -1, -1, 2, 3};
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  mesh.chord_use = {0, 1, 2, 3};
+  mesh.chord_loop.assign(4, 0);
+  for (int k = 0; k < 4; ++k) {
+    const auto& from = c[static_cast<std::size_t>(k)];
+    const auto& to = c[static_cast<std::size_t>((k + 1) % 4)];
+    mesh.chord_uv.insert(mesh.chord_uv.end(), {from[0], from[1], to[0], to[1]});
+    mesh.chord_range.insert(mesh.chord_range.end(), {0.0, 1.0});
+  }
+  const Verdict good = verify(m, mesh, 0.1, 8);
+  std::printf("F3 sliver (edge in mesh): status %d sliver %.6e\n", good.status, good.upper[1]);
+  PHX_CHECK(good.status == PHX_MC_OK && good.findings.empty());
+  // Q = point 3 (the coordinates of point 0, used by no mesh triangle).
+  mesh.triangles[3] = 3;
+  const Verdict bad = verify(m, mesh, 0.1, 8);
+  std::printf("F3 sliver (edge not in mesh): status %d sliver %.6e findings %zu\n", bad.status,
+              bad.upper[1], bad.findings.size());
+  bool link = false;
+  for (const auto& finding : bad.findings)
+    link |= finding.kind == PHX_MC_FIDELITY_CHART_MESH_LINK && finding.triangle == 1;
+  PHX_CHECK(bad.status == PHX_MC_UNRESOLVED && link &&
+            bad.reasons[1] == PHX_MC_FIDELITY_EDGE_ASSOCIATION);
+}
+
+// F3, MAC's demo_e: unit sphere with the pole P = (0, 0, 1); the sliver
+// (P, P, Q) has the chart corners F = (0, pi/2), G = (0.5, pi/2), apex
+// (0.25, pi/2 - 0.3), and its third vertex Q = S(apex) is used by no mesh
+// triangle (the only one, on a second plane face, is P, (0,0,2), (-1,0,1)).
+// S(apex) is >= 0.286 from the mesh; V3 certified 2.70e-2 at tolerance 0.1
+// before. Fault caught: only the pole vertex checked, not the edge P-Q.
+void sliver_segment_in_mesh_demo() {
+  Model m;
+  const double vp = 0x1.921fb54442d18p+0;
+  const std::array<std::array<double, 2>, 3> sliver{{{0, vp}, {0.5, vp}, {0.25, vp - 0.3}}};
+  const std::array<std::array<double, 2>, 3> flat{{{0, 0}, {1, 0}, {0, 1}}};
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  const int32_t plane = m.add_template("plane", {0, 0, 1, 0, 0, 1, -1, 0, 0});
+  std::vector<int32_t> lines;
+  for (const auto* corners : {&sliver, &flat})
+    for (int k = 0; k < 3; ++k) {
+      const auto& from = (*corners)[static_cast<std::size_t>(k)];
+      const auto& to = (*corners)[static_cast<std::size_t>((k + 1) % 3)];
+      lines.push_back(m.add_template("line2", {from[0], from[1], to[0] - from[0],
+                                               to[1] - from[1]}));
+    }
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.surface(sphere);
+  m.surface(plane);
+  m.corner(0, 0, 1);
+  m.curve(space, 0, 0);
+  for (int k = 0; k < 6; ++k) {
+    m.use(k == 0 ? 1 : 0, 0, 0.0, 1.0, lines[static_cast<std::size_t>(k)]);
+    if (k % 3 == 2) m.close_loop(k / 3);
+  }
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  double apex[3];
+  PHX_CHECK(geometry.jets(sphere, sliver[2].data(), 0, apex, point_workspace));
+  Mesh mesh;
+  mesh.points = {0, 0, 1, apex[0], apex[1], apex[2], 0, 0, 2, -1, 0, 1};
+  mesh.triangles = {0, 0, 1, 0, 2, 3};
+  mesh.face_rows = {0, 1};
+  for (const auto* corners : {&sliver, &flat})
+    for (const auto& p : *corners) mesh.uv.insert(mesh.uv.end(), p.begin(), p.end());
+  mesh.mesh_triangles = {0, 2, 3};
+  mesh.chart_to_mesh = {-1, 0};
+  mesh.edge_chord = {0, 1, 2, 3, 4, 5};
+  mesh.use_patch = {0, 0, 0, 1, 1, 1};
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 2;
+  mesh.chord_use = {0, 1, 2, 3, 4, 5};
+  mesh.chord_loop = {0, 0, 0, 1, 1, 1};
+  for (const auto* corners : {&sliver, &flat})
+    for (int k = 0; k < 3; ++k) {
+      const auto& from = (*corners)[static_cast<std::size_t>(k)];
+      const auto& to = (*corners)[static_cast<std::size_t>((k + 1) % 3)];
+      mesh.chord_uv.insert(mesh.chord_uv.end(), {from[0], from[1], to[0], to[1]});
+      mesh.chord_range.insert(mesh.chord_range.end(), {0.0, 1.0});
+    }
+  const Verdict verdict = verify(m, mesh, 0.1, 8);
+  std::printf("F3 sliver (demo_e): status %d row 0 status %d upper %.6e; S(apex) x = %.6f\n",
+              verdict.status, verdict.item_status[0], verdict.upper[0], apex[0]);
+  bool link = false;
+  for (const auto& finding : verdict.findings)
+    link |= finding.kind == PHX_MC_FIDELITY_CHART_MESH_LINK && finding.triangle == 0;
+  PHX_CHECK(apex[0] >= 0.286 && verdict.status == PHX_MC_UNRESOLVED && link);
+}
+
+// F5, MAC's demo_f: a unit-square plane face with one loop of four line
+// uses; no chart triangles and no chords. V3 alone returned OK with maximum
+// 0 before. Fault caught: use coverage assumed, not checked.
+void empty_mesh_demo() {
+  Model m;
+  const double p[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+  const int32_t plane = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  std::vector<int32_t> lines;
+  for (int k = 0; k < 4; ++k)
+    lines.push_back(m.add_template("line2", {p[k][0], p[k][1], p[(k + 1) % 4][0] - p[k][0],
+                                             p[(k + 1) % 4][1] - p[k][1]}));
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(space, 0, 0);
+  for (int k = 0; k < 4; ++k) m.use(0, 0, 0.0, 1.0, lines[static_cast<std::size_t>(k)]);
+  m.close_loop(0);
+  Mesh mesh;
+  mesh.use_patch = {0, 0, 0, 0};
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  const Verdict verdict = verify(m, mesh, 1e-6, 8);
+  std::printf("F5 empty (demo_f): status %d maximum %g\n", verdict.status, verdict.maximum);
+  PHX_CHECK(verdict.status == PHX_MC_INVALID_INPUT && verdict.maximum == kSentinel);
+}
+
+// F6: the lens mean-value bound needs S Lipschitz on the padded box. The
+// degree-1 surface with the double knot u = 0.5 jumps in z there; a chord
+// across it is refused. Fault caught: |DS| over a box with a discontinuity.
+void lens_requires_lipschitz_surface() {
+  Model m;
+  const int32_t surface = m.add(
+      PHX_MC_CAD_NODE_BSPLINE_SURFACE, {1, 1, 4, 2},
+      {0, 0, 0.5, 0.5, 1, 1, 0, 0, 1, 1,
+       0, 0, 0, 0, 1, 0, 0.5, 0, 0, 0.5, 1, 0, 0.5, 0, 1, 0.5, 1, 1, 1, 0, 1, 1, 1, 1,
+       1, 1, 1, 1, 1, 1, 1, 1});
+  const int32_t pcurve = m.add_template("line2", {0.25, 0.5, 0.5, 0.0});
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.surface(surface);
+  m.corner(0, 0, 0);
+  m.curve(space, 0, 0);
+  m.use(0, 0, 0.0, 1.0, pcurve);
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  const double chord[4] = {0.25, 0.5, 0.75, 0.5}, parameters[2] = {0.0, 1.0};
+  double cap = 0.0, padded[4];
+  const int32_t status = fidelity_trim_lens(geometry, 0, 0, chord, parameters, workspace, &cap,
+                                            padded);
+  std::printf("F6 lens over a jump: status %d cap %.6e\n", status, cap);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+}
+}  // namespace
+
 int main() {
   using namespace phx::mc::cad;
+  intersection_seam_leaf();
+  intersection_seam_lens();
+  clamped_domain_end();
+  lens_charged_to_neighbours();
+  use_and_loop_preconditions();
+  sliver_edge_in_mesh();
+  lens_requires_lipschitz_surface();
+  intersection_seam_lens_demo();
+  sliver_segment_in_mesh_demo();
+  empty_mesh_demo();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
