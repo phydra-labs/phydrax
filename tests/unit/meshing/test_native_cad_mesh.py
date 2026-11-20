@@ -755,18 +755,108 @@ def test_unproved_cad_solid_takes_the_native_route(
     # twice the request) fails.
     from phydrax.meshing._sizing import (
         CAD_CHART_SURFACE_SIZE,
-        size_statistic,
         SizeCompliancePolicy,
-        triangle_circumradii,
+        triangle_circumradius_measures,
     )
 
     assert not [issue for issue in report.issues if issue.startswith("size:")]
     policy = SizeCompliancePolicy()
-    radii = triangle_circumradii(points, unique[counts == 1])
+    measures = triangle_circumradius_measures(points, unique[counts == 1])
+    for statistic in ("p50", "p95"):
+        assert not CAD_CHART_SURFACE_SIZE.exceeds(measures, statistic, size, policy)
+        assert CAD_CHART_SURFACE_SIZE.exceeds(measures, statistic, 0.5 * size, policy)
+
+
+def _right_triangles(legs: list[tuple[float, float]], /) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(
+        [
+            point
+            for row, (x, y) in enumerate(legs)
+            for point in ((0.0, 0.0, row), (x, 0.0, row), (0.0, y, row))
+        ],
+        dtype=np.float64,
+    )
+    return points, np.arange(points.shape[0], dtype=np.int64).reshape((-1, 3))
+
+
+def test_size_bound_ties_are_decided_exactly() -> None:
+    # A unit box face meshed at h = 0.5 has right triangles with legs h:
+    # R = h / sqrt(2) exactly, which the float statistic rounds above the
+    # float bound. Exactly R^2 = h^2 / 2 = t^2 passes; a leg one ulp longer
+    # fails, one ulp shorter passes, at either statistic.
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        edge_length_measures,
+        S3_BOUNDARY_EDGE_SIZE,
+        SizeCompliancePolicy,
+        triangle_circumradius_measures,
+    )
+
+    exact = SizeCompliancePolicy()
+    up, down = np.nextafter(0.5, 1.0), np.nextafter(0.5, 0.0)
+    for statistic in ("p50", "p95"):
+        for legs, exceeds in (
+            ([(0.5, 0.5)] * 4, False),
+            ([(0.5, up)] * 4, True),
+            ([(0.5, down)] * 4, False),
+            # One row above t: the p50 interpolates between t and above it.
+            ([(0.5, 0.5), (0.5, up)], True),
+            ([(0.5, down), (0.5, 0.5)], False),
+            # A degenerate row (R infinite) is above t.
+            ([(0.5, 0.5), (0.5, 0.0)], True),
+        ):
+            points, triangles = _right_triangles(legs)
+            measures = triangle_circumradius_measures(points, triangles)
+            assert (
+                CAD_CHART_SURFACE_SIZE.exceeds(measures, statistic, 0.5, exact) is exceeds
+            ), (legs, statistic)
+    # With an absolute tolerance d, t = h / sqrt(2) + d is irrational: the tie
+    # row stays below it, and a p50 between the tie row and R = sqrt(5) / 4
+    # (mean 0.4564) is decided exactly against t = 0.4786 and t = 0.4036.
+    points, triangles = _right_triangles([(0.5, 0.5)] * 3)
+    measures = triangle_circumradius_measures(points, triangles)
+    tolerant = SizeCompliancePolicy(absolute_tolerance=0.125)
+    assert not CAD_CHART_SURFACE_SIZE.exceeds(measures, "p50", 0.5, tolerant)
+    points, triangles = _right_triangles([(0.5, 0.5), (0.5, 1.0)])
+    measures = triangle_circumradius_measures(points, triangles)
+    assert not CAD_CHART_SURFACE_SIZE.exceeds(measures, "p50", 0.5, tolerant)
+    tight = SizeCompliancePolicy(absolute_tolerance=0.05)
+    assert CAD_CHART_SURFACE_SIZE.exceeds(measures, "p50", 0.5, tight)
+    # Edge rows compare exact squared lengths with (h (1 + rel) + abs)^2.
+    points = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, up, 0.0]])
+    tie = edge_length_measures(points, np.asarray([[0, 1]]))
+    above = edge_length_measures(points, np.asarray([[0, 2]]))
+    assert not S3_BOUNDARY_EDGE_SIZE.exceeds(tie, "p95", 0.5, exact)
+    assert S3_BOUNDARY_EDGE_SIZE.exceeds(above, "p95", 0.5, exact)
+
+
+def test_size_bound_decision_matches_the_float_statistic_away_from_ties() -> None:
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        size_statistic,
+        SizeCompliancePolicy,
+        triangle_circumradii,
+        triangle_circumradius_measures,
+    )
+
+    generator = np.random.default_rng(7)
+    points = generator.random((300, 3))
+    triangles = generator.integers(0, 300, (100, 3))
+    triangles = triangles[
+        (triangles[:, 0] != triangles[:, 1])
+        & (triangles[:, 1] != triangles[:, 2])
+        & (triangles[:, 2] != triangles[:, 0])
+    ]
+    policy = SizeCompliancePolicy(relative_tolerance=0.01)
+    radii = triangle_circumradii(points, triangles)
+    measures = triangle_circumradius_measures(points, triangles)
     for statistic in ("p50", "p95"):
         value = size_statistic(radii, statistic)
-        assert not CAD_CHART_SURFACE_SIZE.exceeds(value, size, policy)
-        assert CAD_CHART_SURFACE_SIZE.exceeds(value, 0.5 * size, policy)
+        bound = np.sqrt(0.5) * 1.01
+        for size in (0.5 * value / bound, 2.0 * value / bound, value / bound * 1.001):
+            assert CAD_CHART_SURFACE_SIZE.exceeds(measures, statistic, size, policy) is (
+                bool(value > bound * size)
+            )
 
 
 def test_triangle_circumradii_are_exact_and_refuse_degenerate_rows() -> None:
