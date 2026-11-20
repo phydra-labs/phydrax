@@ -746,3 +746,67 @@ def test_cad_volume_proof_preparation_runs_once_on_first_proof(
     assert len(calls) == 1
     assert first.certification is not None and first.certification.passed
     assert second.mesh.mesh_id == first.mesh.mesh_id
+
+
+def test_unproved_cad_solid_with_region_control_honours_it() -> None:
+    # The native candidate has no organization records, so a region control
+    # keeps the existing construction, whose candidate carries the control.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._controls import RegionControl, RegionSeed
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = _sphere_model()
+    domain = MeshingDomain.from_brep(model)
+    boundary = MeshingScope.whole(model, 2)
+    region_scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        3,
+        domain.scope_entity_set_id(3),
+        np.asarray(domain.scope_entity_ids(3)[:1], dtype=np.int64),
+    )
+    region_name = domain.regions[0].name
+    control = RegionControl(
+        region_scope, region_name, "controlled-solid", RegionRole.SOLID
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.3),),
+        region_controls=(control,),
+        region_seeds=(
+            RegionSeed(
+                np.zeros(3, dtype=np.float64),
+                region_name,
+                "seed-material",
+                RegionRole.SOLID,
+            ),
+        ),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
+        )
+    ).plan(model, specification)
+    candidate = plan.execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.mesh.blocks[0].name != "native-cad-tetrahedra"
+    (evidence,) = candidate._construction.organization.region_boundary_evidence
+    assert evidence.control_id == control.control_id
+    assert evidence.material_id == "controlled-solid"

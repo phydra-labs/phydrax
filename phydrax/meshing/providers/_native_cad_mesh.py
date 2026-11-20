@@ -55,8 +55,13 @@ def cad_solid_support_issues(
 ) -> tuple[str, ...]:
     """Why a prepared CAD volume cannot take the native unproved route."""
     issues: list[str] = []
-    if prepared.specification.layer_controls:
+    specification = prepared.specification
+    if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
+    # The native candidate carries no organization records: patch and region
+    # controls are honoured by the existing route only.
+    if specification.patch_controls or specification.region_controls:
+        issues.append("patch and region controls need source organization records")
     if prepared.boundary_request.selected_patches != tuple(
         range(len(prepared.domain.patches))
     ):
