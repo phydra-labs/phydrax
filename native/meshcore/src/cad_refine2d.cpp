@@ -15,16 +15,27 @@
 namespace phx::mc {
 namespace {
 
+// The geometric tie-break key is the triangle's vertices in lexicographic
+// coordinate order; vertices do not move while the queue is in use, so
+// entries carry vertex ids and compare their coordinates.
 struct Entry {
   double radius;
   int32_t slot;
-  uint64_t generation;
-  std::array<double,6> geometric_key;
+  uint32_t generation;
+  std::array<int32_t,3> key;
+  const std::vector<double>* coordinates;
 };
 struct Worse {
   bool operator()(const Entry& a, const Entry& b) const {
     if (a.radius != b.radius) return a.radius < b.radius;
-    return a.geometric_key > b.geometric_key;
+    const double* c=a.coordinates->data();
+    for (int k=0;k<3;++k) {
+      const double* p=c+2*static_cast<std::size_t>(a.key[k]);
+      const double* q=c+2*static_cast<std::size_t>(b.key[k]);
+      if (p[0]!=q[0]) return p[0]>q[0];
+      if (p[1]!=q[1]) return p[1]>q[1];
+    }
+    return false;
   }
 };
 using Queue = SpatialRefinementQueue<Entry, Worse>;
@@ -104,12 +115,14 @@ class Refinement {
     states_.resize(tri_.triangles.size(),0);
     queued_.resize(tri_.triangles.size(),0);
     radii_.resize(tri_.triangles.size(),0);
+    triangle_metrics_.resize(tri_.triangles.size());
+    angle_scores_.resize(tri_.triangles.size());
     for (std::size_t t=0;t<tri_.triangles.size();++t) if (inside(static_cast<int32_t>(t))) {
       classify_state(static_cast<int32_t>(t));
       if (status_!=PHX_MC_OK) return status_;
     }
     for (std::size_t t=0;t<tri_.triangles.size();++t)
-      if (inside(static_cast<int32_t>(t))) enqueue(static_cast<int32_t>(t));
+      if (inside(static_cast<int32_t>(t)) && states_[t]==2) enqueue(static_cast<int32_t>(t));
     Entry entry;
     while (queue_->pop_current(entry,[&](const Entry& e) {
       if (e.generation!=generations_[e.slot]) return false;
@@ -144,21 +157,23 @@ class Refinement {
     result_.stats.unresolved_angle=0;
     result_.stats.fixed_triangles_skipped=0;
     result_.unresolved.clear();
-    angle_scores_.assign(tri_.triangles.size(),INFINITY);
-    triangle_metrics_.assign(tri_.triangles.size(),CadMetric2D{});
+    angle_scores_.resize(tri_.triangles.size(),INFINITY);
+    triangle_metrics_.resize(tri_.triangles.size());
     for (std::size_t t=0;t<tri_.triangles.size();++t) {
-      if (!inside(static_cast<int32_t>(t))) continue;
+      if (!inside(static_cast<int32_t>(t))) { angle_scores_[t]=INFINITY; continue; }
       if (fixed_triangle(static_cast<int32_t>(t))) {
+        angle_scores_[t]=INFINITY;
         ++result_.stats.fixed_triangles_skipped;
         continue;
       }
+      // A triangle classified good holds its census values already.
+      if (states_[t]==1) continue;
       double radius=0.0, score=INFINITY;
       bool bad_size=false, bad_angle=false;
-      CadMetric2D m;
-      const bool bad=geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle,&m,&score);
+      const bool bad=geometry(static_cast<int32_t>(t),radius,nullptr,&bad_size,&bad_angle,nullptr,
+                              &score,&triangle_metrics_[t]);
       if (status_!=PHX_MC_OK) return status_;
       angle_scores_[t]=score;
-      triangle_metrics_[t]=m;
       if (bad) {
         ++result_.stats.unresolved_triangles;
         CadRefine2DUnresolved evidence;
@@ -183,13 +198,14 @@ class Refinement {
   std::vector<uint8_t> fixed_;
   std::vector<std::array<double,3>> physical_;
   std::vector<uint8_t> physical_valid_;
-  // Metric worst-angle cosine and centroid metric per live non-fixed
-  // triangle, from the census and kept current by the angle pass.
+  // Centroid metric and metric worst-angle cosine per classified non-fixed
+  // triangle (the cosine only once classified good); the census completes
+  // them, and the angle pass keeps them current.
   std::vector<double> angle_scores_;
   std::vector<CadMetric2D> triangle_metrics_;
   struct StarCell { double score; CadMetric2D metric; };
   std::optional<Queue> queue_;
-  std::vector<uint64_t> generations_;
+  std::vector<uint32_t> generations_;
   std::vector<uint8_t> states_;
   std::vector<uint8_t> queued_;
   std::vector<double> radii_;
@@ -587,10 +603,11 @@ class Refinement {
     }
   }
   // angle_cosine, when given, receives the metric cosine of the smallest
-  // angle (not written on the early oversized exit).
+  // angle (not written on the early oversized exit). A known centroid metric
+  // skips the callback.
   bool geometry(int32_t t, double& radius, double* center,
                 bool* size_reason=nullptr, bool* angle_reason=nullptr, CadMetric2D* center_metric=nullptr,
-                double* angle_cosine=nullptr) {
+                double* angle_cosine=nullptr, const CadMetric2D* known_metric=nullptr) {
     const Triangle2D& cell = tri_.triangles[static_cast<std::size_t>(t)];
     // Canonical geometric rotation keeps floating-point construction independent
     // of the triangle's cyclic vertex numbering.
@@ -604,7 +621,7 @@ class Refinement {
     const double* b = tri_.point(cell.v[next3(first)]);
     const double* c = tri_.point(cell.v[prev3(first)]);
     const double centroid[2] = {(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0};
-    const CadMetric2D m = metric(centroid);
+    const CadMetric2D m = known_metric ? *known_metric : metric(centroid);
     if (status_ != PHX_MC_OK) return false;
     if (center_metric) *center_metric=m;
     const double x = b[0] - a[0], y = b[1] - a[1];
@@ -618,7 +635,7 @@ class Refinement {
     radius = std::sqrt(dot(m,dx,dy,dx,dy));
     if (!std::isfinite(radius)) { status_ = PHX_MC_UNRESOLVED; return false; }
     double size_limit=0.70710678118654752440;
-    for (int k=0;k<3;++k) {
+    if (radius > size_limit) for (int k=0;k<3;++k) {
       if (tri_.constraint(t,k)==-1) continue;
       const double* e0=tri_.point(cell.v[next3(k)]); const double* e1=tri_.point(cell.v[prev3(k)]);
       const double ex=e1[0]-e0[0], ey=e1[1]-e0[1];
@@ -657,10 +674,12 @@ class Refinement {
       states_.resize(static_cast<std::size_t>(t)+1,0);
       queued_.resize(static_cast<std::size_t>(t)+1,0);
       radii_.resize(static_cast<std::size_t>(t)+1,0);
+      triangle_metrics_.resize(static_cast<std::size_t>(t)+1);
+      angle_scores_.resize(static_cast<std::size_t>(t)+1);
     }
     queued_[t]=0;
     if (fixed_triangle(t)) { states_[t]=1; return; }
-    states_[t]=geometry(t,radii_[t],nullptr) ? 2 : 1;
+    states_[t]=geometry(t,radii_[t],nullptr,nullptr,nullptr,&triangle_metrics_[t],&angle_scores_[t]) ? 2 : 1;
   }
   bool has_front(int32_t t) const {
     const auto& cell=tri_.triangles[t];
@@ -704,23 +723,26 @@ class Refinement {
     const double height=std::min(ideal,bound);
     center[0]=mx+height*nx; center[1]=my+height*ny;
   }
+  // Callers skip triangles that are not bad or already queued.
   void enqueue(int32_t t) {
-    if (states_[t]!=2 || queued_[t] || !has_front(t)) return;
+    if (!has_front(t)) return;
     const double radius=radii_[t];
     if (generations_.size()<=static_cast<std::size_t>(t)) generations_.resize(static_cast<std::size_t>(t)+1,0);
     const auto& cell=tri_.triangles[t];
-    std::array<std::array<double,2>,3> points;
-    for (int k=0;k<3;++k) {
-      const double* p=tri_.point(cell.v[k]);
-      points[k]={p[0],p[1]};
-    }
+    std::array<int32_t,3> key={cell.v[0],cell.v[1],cell.v[2]};
+    auto less=[&](int32_t u,int32_t v) {
+      const double* p=tri_.point(u); const double* q=tri_.point(v);
+      return p[0]<q[0] || (p[0]==q[0] && p[1]<q[1]);
+    };
     // Geometric ties remain stable when input vertex numbering changes.
-    std::sort(points.begin(),points.end());
-    const std::array<double,6> key={points[0][0],points[0][1],points[1][0],points[1][1],points[2][0],points[2][1]};
+    if (less(key[1],key[0])) std::swap(key[0],key[1]);
+    if (less(key[2],key[1])) std::swap(key[1],key[2]);
+    if (less(key[1],key[0])) std::swap(key[0],key[1]);
+    const double* p0=tri_.point(key[0]); const double* p1=tri_.point(key[1]);
+    const double* p2=tri_.point(key[2]);
     queued_[t]=1;
-    queue_->push({radius,t,++generations_[t],key},
-                 (points[0][0]+points[1][0]+points[2][0])/3,
-                 (points[0][1]+points[1][1]+points[2][1])/3);
+    queue_->push({radius,t,++generations_[t],key,&tri_.coordinates},
+                 (p0[0]+p1[0]+p2[0])/3,(p0[1]+p1[1]+p2[1])/3);
   }
   int32_t encroaches(const double* p, const CadMetric2D& m) {
     if (segment_nodes_.empty()) return -1;
@@ -839,7 +861,8 @@ class Refinement {
   void process(int32_t t) {
     double radius, p[2];
     CadMetric2D center_metric;
-    if (!geometry(t,radius,p,nullptr,nullptr,&center_metric) || status_ != PHX_MC_OK) return;
+    if (!geometry(t,radius,p,nullptr,nullptr,&center_metric,nullptr,&triangle_metrics_[t]) ||
+        status_ != PHX_MC_OK) return;
     const double circumcenter[2]={p[0],p[1]};
     frontal_point(t,p,center_metric);
     if (!std::isfinite(p[0]) || !std::isfinite(p[1])) { ++result_.stats.unresolved_triangles; return; }
@@ -989,17 +1012,18 @@ class Refinement {
     }
     ++result_.stats.insertions;
     for (int32_t t : created_) { classify_state(t); if (status_ != PHX_MC_OK) return true; }
-    for (int32_t t : created_) {
-      enqueue(t);
-      const auto cell=tri_.triangles[t];
-      for(int k=0;k<3;++k) {
-        const int32_t nb=cell.n[k];
-        if(inside(nb) && static_cast<std::size_t>(nb)<states_.size()) {
-          if(states_[nb]==3 && states_[t]==1) states_[nb]=2;
-          if(states_[nb]==2) enqueue(nb);
-        }
+    // Each new triangle is enqueued here at most once; among its neighbors
+    // only the one across the cavity boundary can gain a front (the others
+    // are new triangles, handled in turn; the pop order is independent of
+    // push order).
+    for (std::size_t i=0;i<created_.size();++i) {
+      const int32_t t=created_[i];
+      if (states_[t]==2 && !queued_[t]) enqueue(t);
+      const int32_t nb=boundary_[i].outside;
+      if(inside(nb) && static_cast<std::size_t>(nb)<states_.size()) {
+        if(states_[nb]==3 && states_[t]==1) states_[nb]=2;
+        if(states_[nb]==2 && !queued_[nb]) enqueue(nb);
       }
-      if (status_ != PHX_MC_OK) return true;
     }
     return true;
   }
