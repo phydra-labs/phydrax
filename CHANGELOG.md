@@ -1843,6 +1843,15 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- The surface certifiers refuse coordinates outside the exact predicates'
+  domain before contact classification, and the surface-remesh benchmark rows
+  run `zero_set_certify` in their untimed quality stage (a refusal or an
+  unresolved result is a miss).
+- The mesh-source distance certificate (`mesh_certify`) is rigorous: coverage
+  decisions use exact orientation tests, overlap vertices and crossing
+  parameters carry certified error enclosures, affine maps are formed only
+  when the stage-A determinant interval excludes zero (ill-conditioned maps
+  refuse), and every non-finite value refuses instead of being dropped.
 - Fixed spline source interpolation certificates at interior C0 knot lines:
   a chart triangle crossing a knot line of multiplicity at least the degree
   (rational: decided from knots and weights) is clipped exactly into smooth
