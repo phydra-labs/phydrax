@@ -327,16 +327,18 @@ void overlap_bound_refuses_an_ill_conditioned_map() {
 }
 
 // A slab (|x|, |y| <= 1, |z| <= 0.01) whose top face holds such a sliver
-// along y = 0. A flat triangle 0.01 above the top face crosses it: the
-// sliver's map is refused, and triangle_bound still returns the finite
-// height-gap bound for it, so the triangle is bounded by about 0.01, at
-// least its exact distance.
+// along y = 0, its corner at x = -1 lowered to z = 0.005. A flat triangle at
+// z = 0.02 over |x| <= 0.5 crosses the sliver: its height gap (0.015) is
+// the largest of the patch (the other top triangles stay within 0.01375 of
+// it over its footprint), so the sliver is evaluated, its map is refused,
+// and triangle_bound still returns the finite height-gap bound for it.
 void triangle_bound_falls_back_to_the_height_gap() {
   using phx::mc::remesh::Projection;
   constexpr double t = 0.01, delta = 0x1p-44;
   const std::vector<Point> points{
-      {-1, -1, t}, {1, -1, t},  {1, 1, t},   {-1, 1, t},  {-1, 0, t},  {1, 0, t},  {0, delta, t},
-      {-1, -1, -t}, {1, -1, -t}, {1, 1, -t}, {-1, 1, -t}, {-1, 0, -t}, {1, 0, -t}};
+      {-1, -1, t},  {1, -1, t},  {1, 1, t},    {-1, 1, t},   {-1, 0, t - 0.005}, {1, 0, t},
+      {0, delta, t}, {-1, -1, -t}, {1, -1, -t}, {1, 1, -t}, {-1, 1, -t},       {-1, 0, -t},
+      {1, 0, -t}};
   const std::vector<Triangle> triangles{
       {0, 1, 5},  {0, 5, 4},   {4, 5, 6},  {6, 5, 2},  {6, 2, 3},   {4, 6, 3},     // top
       {7, 12, 8}, {7, 11, 12}, {11, 9, 12}, {11, 10, 9},                          // bottom
@@ -348,7 +350,7 @@ void triangle_bound_falls_back_to_the_height_gap() {
   PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
   const double bound = source.triangle_bound({-0.5, -0.3, 2 * t}, {0.5, -0.3, 2 * t},
                                              {0.0, 0.4, 2 * t}, Projection::kOwnNormal);
-  PHX_CHECK(bound >= t && bound <= 1.001 * t);
+  PHX_CHECK(bound >= 1.5 * t && bound <= 1.501 * t);
 }
 
 // An open source or a nonfinite coordinate is refused at bind.
