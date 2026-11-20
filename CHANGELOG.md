@@ -348,6 +348,21 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Surface remeshing against a mesh source is 17-40 % faster with identical
+  output on the dense rows: own source vertices project onto themselves, the
+  collapse link test walks one ring, valences are kept by every edit, the
+  source grid uses cells of twice the mean triangle box and holds at most 16
+  cells per triangle, and `nearest` stops once the best distance lies inside
+  the scanned block. Zero-set certification also repairs once into 0.8 of the
+  tolerance when the forward proof needed no repair but the tube bounds the
+  zero set beyond the tolerance.
+- The native CAD volume route keeps plans with patch or region controls,
+  region or hole seeds, or protected features on the existing construction,
+  and evaluates size compliance natively; PLC source refusals during volume
+  recovery surface as `MeshingFailure` with the source reason; native boundary
+  curve sampling has a per-curve budget
+  (`NativeSurfaceSchedule.maximum_curve_samples`) and refuses unattainable
+  chord deviations with `COMPLIANCE_FAILED` instead of running unboundedly.
 - Native and JAX BVH point queries (closest point, signed distance, winding
   numbers, affine tetrahedron location) evaluate one fixed operation order
   (`phydrax._fixed_order`: products and roots kept separate, sums left to
