@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
+  a facet or segment vertex into a vertex on its carrier (in place or with a
+  moved survivor) and swap an exactly coplanar boundary edge between two
+  facets of one group, decided and committed on the cavity alone with the
+  same verdict and state as `apply_edit_batch` on the same single operation
+  (a randomized differential test, including boundary insertions in between)
+  at a per-edit cost that does not grow with the mesh; both refuse periodic
+  and implicit-bound meshes.
 - Native overset assembly `phx_mc_overset_assemble` for 3D affine-tetrahedron
   and trilinear-hexahedron parts: exact hole parity against walls,
   conservative cut cells, fringe layers, and donors certified after
