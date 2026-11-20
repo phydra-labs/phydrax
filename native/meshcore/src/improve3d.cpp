@@ -2860,10 +2860,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     });
 
     bool changed = false;
-    // Larger closed rings can repair a cavity that no 2-3 flip can improve.
-    // Try them first; a refused removal is memoized (edge_refusals).
+    // Cheapest edits first: removals of the cell's valence-3 and -4 edges
+    // (3-2 and 4-4 flips), then 2-3 flips of its faces, then removals of its
+    // larger closed rings, which can repair a cavity no small flip improves.
+    // A refused removal is memoized (edge_refusals).
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
+      if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, slot, affected);
@@ -2876,7 +2878,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       }
     }
     if (changed) return requeue_current();
-
     for (const FaceOrder& face : faces) {
       std::array<std::int32_t, 2> removed{};
       std::array<LocalCell, 3> replacements{};
@@ -2913,7 +2914,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (changed) return requeue_current();
 
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
+      if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, slot, affected);

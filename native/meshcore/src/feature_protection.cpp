@@ -6,6 +6,7 @@
 // schedule insertions; exact predicates, source witnesses, and cavity
 // transactions decide geometric validity.
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -382,27 +383,83 @@ std::vector<double> protection_radii(const double* points, int64_t point_count,
     std::nth_element(sample.begin(), middle, sample.end());
     side = 4.0 * *middle;
   }
-  ProtectionIndex point_index, segment_index, triangle_index;
-  point_index.build(points, count, {}, 1, side);
-  if (!edges.empty()) segment_index.build(points, 0, edges, 2, side);
+  // A triangle's distance from v is at most that of each of its corners and
+  // edges, so a point or edge on a triangle not incident to v never lowers
+  // v's reach: an edge of a triangle is dropped (the triangles on it that
+  // contain v hold it as v's opposite edge, measured first), and so is a
+  // vertex whose triangles share no vertex but itself (for every v some
+  // triangle at it excludes v).
+  std::vector<std::array<int32_t, 2>> shared(count, {-2, -2});
+  std::vector<std::uint64_t> triangle_edges;
+  triangle_edges.reserve(triangles.size());
+  const auto edge_key = [](int32_t a, int32_t b) {
+    return (static_cast<std::uint64_t>(static_cast<uint32_t>(std::min(a, b))) << 32) |
+           static_cast<uint32_t>(std::max(a, b));
+  };
+  for (std::size_t row = 0; row + 2 < triangles.size(); row += 3) {
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const int32_t vertex = triangles[row + corner];
+      const int32_t first = triangles[row + (corner + 1) % 3];
+      const int32_t second = triangles[row + (corner + 2) % 3];
+      triangle_edges.push_back(edge_key(first, second));
+      auto& common = shared[static_cast<std::size_t>(vertex)];
+      if (common[0] == -2) {
+        common = {first, second};
+      } else {
+        for (int32_t& other : common) {
+          if (other != first && other != second) other = -1;
+        }
+      }
+      if (acute[static_cast<std::size_t>(vertex)] != 0 && first != second && first != vertex &&
+          second != vertex) {
+        double& reach = reaches[static_cast<std::size_t>(vertex)];
+        reach = std::min(reach, 0.5 * point_segment_distance(
+                                    points + 3 * static_cast<std::size_t>(vertex),
+                                    points + 3 * static_cast<std::size_t>(std::min(first, second)),
+                                    points + 3 * static_cast<std::size_t>(std::max(first, second))));
+      }
+    }
+  }
+  std::sort(triangle_edges.begin(), triangle_edges.end());
+  std::vector<int32_t> lone_points;
+  std::vector<double> lone_coordinates;
+  for (std::size_t v = 0; v < count; ++v) {
+    if (shared[v][0] == -2 || shared[v][0] >= 0 || shared[v][1] >= 0) {
+      lone_points.push_back(static_cast<int32_t>(v));
+      lone_coordinates.insert(lone_coordinates.end(), points + 3 * v, points + 3 * v + 3);
+    }
+  }
+  std::vector<int32_t> lone_edges;
+  for (std::size_t e = 0; e + 1 < edges.size(); e += 2) {
+    if (!std::binary_search(triangle_edges.begin(), triangle_edges.end(),
+                            edge_key(edges[e], edges[e + 1]))) {
+      lone_edges.push_back(edges[e]);
+      lone_edges.push_back(edges[e + 1]);
+    }
+  }
+  ProtectionIndex point_index, segment_index, triangle_index, order_index;
+  order_index.build(points, count, {}, 1, side);
+  point_index.build(lone_coordinates.data(), lone_points.size(), {}, 1, side);
+  if (!lone_edges.empty()) segment_index.build(points, 0, lone_edges, 2, side);
   triangle_index.build(points, 0, triangles, 3, side);
   // Each radius depends only on its vertex; the vertices go cell by cell,
   // so consecutive queries read nearby cells.
-  for (const uint32_t vertex : point_index.order()) {
+  for (const uint32_t vertex : order_index.order()) {
     const std::size_t v = vertex;
     if (acute[v] == 0) continue;
     const double* p = points + 3 * v;
     double reach = reaches[v];
-    point_index.candidates(p, reach, [&](std::size_t u) {
+    point_index.candidates(p, reach, [&](std::size_t row) {
+      const std::size_t u = static_cast<std::size_t>(lone_points[row]);
       if (u != v) reach = std::min(reach, 0.5 * distance(p, points + 3 * u));
     });
     segment_index.candidates(p, reach, [&](std::size_t row) {
       const std::size_t e = 2 * row;
-      if (static_cast<std::size_t>(edges[e]) != v &&
-          static_cast<std::size_t>(edges[e + 1]) != v) {
+      if (static_cast<std::size_t>(lone_edges[e]) != v &&
+          static_cast<std::size_t>(lone_edges[e + 1]) != v) {
         reach = std::min(reach, 0.5 * point_segment_distance(
-                                    p, points + 3 * static_cast<std::size_t>(edges[e]),
-                                    points + 3 * static_cast<std::size_t>(edges[e + 1])));
+                                    p, points + 3 * static_cast<std::size_t>(lone_edges[e]),
+                                    points + 3 * static_cast<std::size_t>(lone_edges[e + 1])));
       }
     });
     // The minimum is independent of row order, so rows whose boxes are
