@@ -84,9 +84,11 @@ int32_t straddling(const IntervalProgramView& program, std::span<const double> b
 
 using Index = std::array<int64_t, 3>;
 
-// The kept leaves of the anchored lattice, level by level as discover_leaves.
+// The kept leaves of the anchored lattice, level by level as discover_leaves;
+// a kept box `accept` (if not null) accepts becomes an accepted leaf.
 int32_t possible_leaves(const IntervalProgramView& interval, const double* lower, const double* upper,
-                        int32_t target_level, std::vector<DyadicLeaf>& leaves) {
+                        int32_t target_level, const BoxAcceptance* accept,
+                        std::vector<DyadicLeaf>& leaves) {
   std::vector<Index> frontier{{0, 0, 0}}, children;
   std::vector<double> boxes;
   std::vector<char> valid, keep;
@@ -119,6 +121,10 @@ int32_t possible_leaves(const IntervalProgramView& interval, const double* lower
         continue;
       }
       if (!keep[evaluated++]) continue;
+      if (accept != nullptr && (*accept)(frontier_boxes[b])) {
+        leaves.push_back({level, index, frontier_boxes[b], false, true});
+        continue;
+      }
       if (level < target_level) {
         bool stalled = false;
         for (std::size_t d = 0; d < 3; ++d) {
@@ -159,7 +165,7 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
                             const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out) {
   if (target_level < 0 || target_level > kMaximumLevel) return PHX_MC_INVALID_ARGUMENT;
-  int32_t status = possible_leaves(interval, lower, upper, target_level, out.leaves);
+  int32_t status = possible_leaves(interval, lower, upper, target_level, nullptr, out.leaves);
   if (status != PHX_MC_OK) return status;
   // The lattice vertices of the leaves, each once, keyed by their index at
   // the target level, at their nearest binary64 coordinates.
@@ -229,6 +235,13 @@ int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramVi
     out.leaf_offsets.push_back(static_cast<int32_t>(out.leaf_roots.size()));
   }
   return PHX_MC_OK;
+}
+
+int32_t possible_zero_leaves(const IntervalProgramView& interval, const double* lower,
+                             const double* upper, int32_t target_level,
+                             const BoxAcceptance* accept, std::vector<DyadicLeaf>& leaves) {
+  if (target_level < 0 || target_level > kMaximumLevel) return PHX_MC_INVALID_ARGUMENT;
+  return possible_leaves(interval, lower, upper, target_level, accept, leaves);
 }
 
 }  // namespace phx::mc
