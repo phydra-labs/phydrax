@@ -1729,10 +1729,16 @@ class PlcRecoveryBuilder {
     }
     status_ = suppress_witnessed_vertices();
     if (status_ != PHX_MC_OK) return status_;
+    // Seeds on a face, edge or vertex read the cells around it (seed_tet).
+    bool tracked = !conforms;
+    if (!tracked && input_.seed_count > 0) {
+      track_complex();
+      tracked = true;
+    }
     status_ = classify_regions();
     if (status_ != PHX_MC_OK) return status_;
     if (!conforms || !conforming_embedded(conforming)) {
-      if (conforms) track_complex();
+      if (!tracked) track_complex();
       status_ = check_embedded_entities();
       if (status_ != PHX_MC_OK) return status_;
     }
