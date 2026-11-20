@@ -1125,11 +1125,13 @@ int32_t vertex_error(const CadGeometry& geometry, FaceKernel& kernel, const Vert
   return std::isfinite(error) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
-// corner_error: the vertex error at the original corners when known, else null.
+// corner_error: the vertex error at the original corners when known, else
+// null. A rational spline leaf whose net bound meets `tolerance` skips the
+// generic Hessian; otherwise the two enclosures are intersected.
 int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& leaf,
                    const double* vertices, const double* uv, const double* corner_error,
-                   IntervalEvaluationWorkspace& workspace, double& vertex_term,
-                   double& upper) {
+                   double tolerance, IntervalEvaluationWorkspace& workspace,
+                   double& vertex_term, double& upper) {
   const int32_t node = kernel.node;
   double box_lower[2] = {std::numeric_limits<double>::infinity(),
                          std::numeric_limits<double>::infinity()};
@@ -1159,7 +1161,22 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
   vertex_term = mismatch;
   const auto du = di::subtract(di::point(box_upper[0]), di::point(box_lower[0]));
   const auto dv = di::subtract(di::point(box_upper[1]), di::point(box_lower[1]));
-  // |H| magnitudes per term (uu, uv, vv) and component.
+  // Taylor remainder from |H| magnitudes per term (uu, uv, vv) and component.
+  const auto second_order = [&](const double (&hessian)[3][3]) {
+    double magnitude[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto huu = di::point(hessian[0][axis]);
+      const auto huv = di::point(hessian[1][axis]);
+      const auto hvv = di::point(hessian[2][axis]);
+      auto sum = di::multiply(huu, di::multiply(du, du));
+      const auto mixed = di::multiply(huv, di::multiply(du, dv));
+      sum = di::add(sum, di::add(mixed, mixed));
+      sum = di::add(sum, di::multiply(hvv, di::multiply(dv, dv)));
+      magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
+    }
+    return di::add(di::point(mismatch),
+                   di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
+  };
   double hessian[3][3];
   int regularity = 0;
   if (kernel.closed) {
@@ -1179,6 +1196,15 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
                              workspace, status, upper))
         return status;
     }
+    di::Interval nets[3][3];
+    const bool netted = regularity == 0 &&
+                        spline_net_hessian(kernel.nets, box_lower, box_upper, nets);
+    if (netted) {
+      for (int term = 0; term < 3; ++term)
+        for (int axis = 0; axis < 3; ++axis) hessian[term][axis] = di::magnitude(nets[term][axis]);
+      upper = second_order(hessian);
+      if (upper <= tolerance) return PHX_MC_OK;
+    }
     double lower[18], higher[18];
     const int32_t status = geometry.interval_jets(node, box_lower, box_upper,
                                                    regularity == 1 ? 1 : 2,
@@ -1195,30 +1221,15 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
                       di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
       return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
     }
-    for (int term = 0; term < 3; ++term)
-      for (int axis = 0; axis < 3; ++axis)
-        hessian[term][axis] =
-            di::magnitude({lower[9 + 3 * term + axis], higher[9 + 3 * term + axis]});
     // Both enclose the same Hessian: their intersection does too.
-    di::Interval nets[3][3];
-    if (spline_net_hessian(kernel.nets, box_lower, box_upper, nets))
-      for (int term = 0; term < 3; ++term)
-        for (int axis = 0; axis < 3; ++axis)
-          hessian[term][axis] = std::min(hessian[term][axis], di::magnitude(nets[term][axis]));
+    for (int term = 0; term < 3; ++term)
+      for (int axis = 0; axis < 3; ++axis) {
+        const double generic =
+            di::magnitude({lower[9 + 3 * term + axis], higher[9 + 3 * term + axis]});
+        hessian[term][axis] = netted ? std::min(hessian[term][axis], generic) : generic;
+      }
   }
-  double magnitude[3];
-  for (int axis = 0; axis < 3; ++axis) {
-    const auto huu = di::point(hessian[0][axis]);
-    const auto huv = di::point(hessian[1][axis]);
-    const auto hvv = di::point(hessian[2][axis]);
-    auto sum = di::multiply(huu, di::multiply(du, du));
-    const auto mixed = di::multiply(huv, di::multiply(du, dv));
-    sum = di::add(sum, di::add(mixed, mixed));
-    sum = di::add(sum, di::multiply(hvv, di::multiply(dv, dv)));
-    magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
-  }
-  upper = di::add(di::point(mismatch),
-                  di::point(phx::mc::geometry::norm_upper(magnitude))).upper;
+  upper = second_order(hessian);
   return std::isfinite(upper) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
@@ -1458,7 +1469,8 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
   while (size > 0) {
     const Leaf leaf = stack[--size];
     double bound = 0.0, vertex_term = 0.0;
-    result.status = leaf_bound(geometry, kernel, leaf, vertices, uv, corner_error, workspace,
+    result.status = leaf_bound(geometry, kernel, leaf, vertices, uv, corner_error,
+                               tight ? 0.0 : tolerance, workspace,
                                vertex_term, bound);
     if (result.status != PHX_MC_OK) {
       if (result.status == PHX_MC_INVALID_ARGUMENT || result.status == PHX_MC_INVALID_INPUT)
