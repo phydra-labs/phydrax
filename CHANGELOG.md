@@ -334,6 +334,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native CAD face smoothing searches for better vertex positions: below the
+  kernel's angle-pass target a compass search raises the star's worst 3D
+  angle (the fans at fixed curve vertices held the smallest angles), and an
+  edge longer than the face metric's unit is shortened by a step toward its
+  far end; every move keeps the chart star oriented and the kernel's metric
+  circumradius bound. On the quadric (tol = kappa_max h^2 / 4, theta = 1) the
+  minimum 3D angle and the mesh-to-surface distance beat Gmsh at the ledger's
+  four sizes with the same triangle count. Face meshes change.
 - Native CAD face meshing sizes faces with one meaning of `h`: the face
   metric is `I/h^2` intersected with the request's curvature tensor
   `|II| / (4 theta tol)` (the kernel accepts metric circumradius

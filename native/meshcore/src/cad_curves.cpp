@@ -1,5 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include "cad_curves.hpp"
+#include "cad_faces.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -106,12 +107,13 @@ struct Context {
         if (kappa>0 && 4*theta*tolerance<kappa*face_size*face_size)
           face_size=std::sqrt(4*theta*tolerance/kappa);
         resolved=std::isfinite(face_size) && face_size>0;
-        // Within three sizes of a pole of the face, the face stage seeds
-        // fixed rings there (spacing <= the request) and the kernel inserts no
-        // point, so no kernel triangle needs the curvature size; at a cone
-        // apex |k|max ~ 1/r would otherwise drive the size to zero.
+        // Within the pole ring zone of the face (pole_ring_width, the face
+        // stage's owner of it) the face stage seeds fixed rings (spacing <=
+        // the request) and the kernel inserts no point, so no kernel triangle
+        // needs the curvature size; at a cone apex |k|max ~ 1/r would
+        // otherwise drive the size to zero.
         if (resolved && face_size<controls.face_sizes[use.face] &&
-            pole_distance(use.face, jet)<3*face_size)
+            pole_distance(use.face, jet)<pole_ring_width(face_size))
           face_size=controls.face_sizes[use.face];
       }
       if (!resolved) {
