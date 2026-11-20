@@ -1016,6 +1016,52 @@ def _merge_duplicate_roots(
     return unique_roots, unresolved
 
 
+def _isolated_root_covers(
+    target: np.ndarray,
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    policy: MappedLocationPolicy,
+    box: _UnresolvedInverseBox,
+    roots: list[_InverseRoot],
+    /,
+) -> bool:
+    """Whether one Krawczyk hull with an isolated root proves ``box`` holds no other root.
+
+    Bisection cannot decide a box that touches an isolated root without
+    containing it: interval enclosures of a box beside the root can neither
+    exclude it nor isolate a root it lacks, down to the parameter resolution.
+    When the hull of the box and the root's enclosure is Krawczyk-isolated,
+    that root is the hull's only root, so the box holds no other one. A
+    certified rootless box is refused only for its tolerance-root witness; a
+    Krawczyk-isolated hull of that witness and the root attributes the witness
+    to the root.
+    """
+    if box.reason == "rootless-tolerance-root":
+        lower = tuple(min(values) for values in zip(*box.witness, strict=True))
+        upper = tuple(max(values) for values in zip(*box.witness, strict=True))
+    else:
+        lower, upper = box.lower, box.upper
+    for root in roots:
+        hull_lower = tuple(
+            min(first, second)
+            for first, second in zip(lower, root.enclosure_lower, strict=True)
+        )
+        hull_upper = tuple(
+            max(first, second)
+            for first, second in zip(upper, root.enclosure_upper, strict=True)
+        )
+        hull = _krawczyk_box(
+            target,
+            expressions,
+            hull_lower,
+            hull_upper,
+            policy,
+            selected_rows=root.selected_rows,
+        )
+        if hull.status == "isolated" and hull.rows == root.selected_rows:
+            return True
+    return False
+
+
 def _isolate_inverse_roots(
     target: np.ndarray,
     expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
@@ -1085,6 +1131,11 @@ def _isolate_inverse_roots(
         left, right = split
         stack.extend(((right, depth + 1), (left, depth + 1)))
     unique_roots, unmerged = _merge_duplicate_roots(target, expressions, policy, roots)
+    unresolved = [
+        box
+        for box in unresolved
+        if not _isolated_root_covers(target, expressions, policy, box, unique_roots)
+    ]
     unresolved.extend(unmerged)
     return _InverseIsolation(
         tuple(unique_roots),
