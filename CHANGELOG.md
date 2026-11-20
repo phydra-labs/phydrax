@@ -11,18 +11,23 @@
   receptors without a certified donor are reported as orphans.
   `prepare_overset_connectivity` uses it for serial 3D tetrahedral and
   hexahedral parts when meshcore loads (hexahedral walls now work; 2D,
-  polyhedral, curved and solid-query parts keep the existing path), with a new
-  `prove=` argument (an unproved connectivity is refused by `registration()`)
-  and `OversetPolicy(fringe_donors=...)`, which falls back to a fringe donor
-  only when no active cell contains the receptor. New benchmark rows
-  `overset-hex` and `overset-tet` (F13), run with `fringe_donors=True` (the
-  default policy still leaves 8 hex and 116 tetrahedral receptors without a
-  donor at 1e4, reported as excluded-donor evidence): the kernel takes 0.0017
-  / 0.011 / 0.088 s (hex) and 0.0010 / 0.0059 / 0.055 s (tet) at 1e4 / 1e5 /
-  1e6 cells with 0 orphans, against TIOGA's whole one-rank call of 0.263 /
-  0.434 / 1.364 and 0.053 / 0.500 / 0.863 s; the public call is still
-  dominated by Python geometry preparation (4.9 s for the 1e4 tetrahedral
-  case, 6.8 s hex; it took 72.9 s and left 116 orphans before).
+  polyhedral, curved and solid-query parts keep the existing path) without
+  preparing finite-element geometry (cell banks in bulk, donor measures from
+  the kernel; `evidence_id` may change by round-off), with a new `prove=`
+  argument (an unproved connectivity is refused by `registration()`) and
+  `OversetPolicy(fringe_donors=...)`, which falls back to a fringe donor only
+  when no active cell contains the receptor. Every route (native, Python,
+  partitioned) refuses 3D affine-tetrahedron or trilinear-hexahedron parts
+  whose audit did not certify every cell valid. New benchmark rows
+  `overset-hex` and `overset-tet` (F13) time the public
+  `prepare_overset_connectivity(prove=False)` on parts built beforehand under
+  `OversetPolicy(fringe_layers=1, fringe_donors=True)` and report the
+  certified time, the kernel time, an independent donor check and the orphan
+  counts under the default donor rule (8 hex and 116 tetrahedral at 1e4): 0
+  orphans, 0.009 / 0.038 / 0.30 s (hex) and 0.010 / 0.033 / 0.21 s (tet) at
+  1e4 / 1e5 / 1e6 cells on a loaded machine, against TIOGA's one-rank call of
+  0.26 / 0.43 / 1.42 and 0.053 / 0.49 / 0.90 s. The public call on the 1e4
+  tetrahedral case took 72.9 s and left 116 orphans before.
 - Native BVH point queries over the one packed `PackedBVH`
   (`phx_mc_bvh_triangle_nearest`, `phx_mc_bvh_triangle_signed_distance`,
   `phx_mc_bvh_triangle_winding`, `phx_mc_bvh_tetrahedron_locate`), batched and
