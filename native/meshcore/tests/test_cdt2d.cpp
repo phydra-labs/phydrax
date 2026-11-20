@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "cdt2d.hpp"
+#include "expansion.hpp"
 #include "check.hpp"
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
@@ -853,7 +854,8 @@ void test_dot_sign_against_integer_reference() {
   int zeros = 0;
   for (int trial = 0; trial < 20000; ++trial) {
     // Integer coordinates below 2^40: differences are exact doubles, the
-    // products (up to 2^82) round, and __int128 holds the exact dot product.
+    // products (up to 2^82) round, and an exact expansion holds the dot product
+    // (portable: no __int128, which MSVC lacks).
     int64_t a[2] = {next(), next()}, v[2] = {next(), next()}, b[2];
     const int64_t ax = a[0] - v[0], ay = a[1] - v[1];
     // b - v nearly perpendicular to a - v: (-ay, ax) / scale plus an offset.
@@ -861,9 +863,10 @@ void test_dot_sign_against_integer_reference() {
     b[0] = v[0] - ay / scale + (trial % 3) - 1;
     b[1] = v[1] + ax / scale + (trial % 5) - 2;
     if (std::llabs(b[0]) >= (int64_t{1} << 40) || std::llabs(b[1]) >= (int64_t{1} << 40)) continue;
-    const __int128 exact = static_cast<__int128>(ax) * (b[0] - v[0]) +
-                           static_cast<__int128>(ay) * (b[1] - v[1]);
-    const int expected = exact > 0 ? 1 : exact < 0 ? -1 : 0;
+    const phx::mc::Expansion exact =
+        phx::mc::Expansion::product(static_cast<double>(ax), static_cast<double>(b[0] - v[0])) +
+        phx::mc::Expansion::product(static_cast<double>(ay), static_cast<double>(b[1] - v[1]));
+    const int expected = exact.sign();
     zeros += expected == 0;
     const double pa[2] = {static_cast<double>(a[0]), static_cast<double>(a[1])};
     const double pb[2] = {static_cast<double>(b[0]), static_cast<double>(b[1])};
