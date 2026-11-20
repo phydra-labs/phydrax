@@ -1985,12 +1985,12 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * surface remeshed; a NULL carrier with zero counts accepts none) whose
  * witness box proves it: carrier_boxes holds, per carrier triangle, a box
  * (lower xyz, upper xyz) that contains the triangle's three corners (exact
- * comparisons) and has two corners at which the interval enclosures of f
- * have strictly opposite signs, so the box holds a zero of f on the segment
- * between them; such a triangle is accepted at the box diagonal (rounded
- * up). A carrier triangle whose box fails either check is never accepted
- * from the carrier. And a triangle is certified only when it is nondegenerate
- * with
+ * comparisons), over which the gradient enclosure is finite, and that has
+ * two corners at which the interval enclosures of f have strictly opposite
+ * signs, so the box holds a zero of f on the segment between them; such a
+ * triangle is accepted at the box diagonal (rounded up). A carrier triangle
+ * whose box fails a check is never accepted from the carrier.
+ * And a triangle is certified only when it is nondegenerate with
  * only legal contacts (disjoint, a shared vertex or a shared edge, exact)
  * with every triangle whose box meets its own. The surface must be a closed,
  * consistently oriented 2-manifold (else PHX_MC_INVALID_INPUT). Refused
@@ -2000,7 +2000,11 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh_i32(const phx_mc_zero_set_remesh_reque
  * diagonal steer the projection as carrier_distance does in
  * phx_mc_zero_set_remesh), Delaunay flips follow, and only
  * changed or refused triangles are decided again, for at most four rounds.
- * `value` has one output, `gradient` three. Once every triangle is
+ * `value` has one output, `gradient` three; the caller asserts that over any
+ * box where the gradient enclosure is finite, f is Lipschitz with its
+ * (Clarke) gradient in that enclosure: the entry does not check branch
+ * evidence, so a select whose branches jump, with a finite gradient program,
+ * breaks the proofs here. Once every triangle is
  * certified, the zero set -> surface direction is decided over the domain
  * box (lower xyz, upper xyz; finite, lower < upper): the tube of the surface
  * (zero_set_tube.hpp: segments y +- w(y) along interpolated vertex normals of
