@@ -25,8 +25,10 @@
 //    sign witness the adaptive scaffold carries per leaf cell: T is a local
 //    graph over Z along the gradient lines, with the carrier's orientation.
 // f and grad f are evaluated by the native straight-line interval executor
-// (interval_program.cpp) on one three-dimensional box per call; both are
-// assumed C^1 wherever the gradient enclosure is finite.
+// (interval_program.cpp) on one three-dimensional box per call; over any box
+// where the gradient enclosure is finite, f is assumed Lipschitz with its
+// (Clarke) gradient in that enclosure (the caller's assertion, see
+// phx_mc_zero_set_certify; kinks such as max qualify, jumps do not).
 // The admission is sound but incomplete: an undecided enclosure refuses.
 #pragma once
 
