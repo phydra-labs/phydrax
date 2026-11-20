@@ -314,6 +314,318 @@ int32_t spline_interval_jets(bool surface, const int64_t* ints, const double* lo
   return found ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
 
+// Normalized interval Taylor coefficients through total order three. This
+// evaluates the smooth value program directly, avoiding branch flags in the
+// generated derivative programs when an offset needs a certified normal.
+struct IntervalTaylor {
+  SplineInterval c[10]{};
+};
+
+IntervalTaylor interval_taylor_multiply(const IntervalTaylor& a, const IntervalTaylor& b,
+                                        const Truncation& truncation) {
+  using namespace phx::mc::remesh;
+  IntervalTaylor result;
+  for (int n = 0; n <= truncation.order; ++n)
+    for (int j = 0; j <= truncation.v_limit(n); ++j) {
+      const int i = n - j;
+      for (int u = 0; u <= i; ++u)
+        for (int v = 0; v <= j; ++v)
+          result.c[term(i, j)] = add(result.c[term(i, j)],
+              multiply(a.c[term(u, v)], b.c[term(i - u, j - v)]));
+    }
+  return result;
+}
+
+IntervalTaylor interval_taylor_compose(const IntervalTaylor& input,
+                                       const SplineInterval* derivatives,
+                                       const Truncation& truncation) {
+  using namespace phx::mc::remesh;
+  IntervalTaylor delta = input, result;
+  delta.c[0] = point(0);
+  result.c[0] = derivatives[truncation.order];
+  for (int n = truncation.order - 1; n >= 0; --n) {
+    result = interval_taylor_multiply(result, delta, truncation);
+    result.c[0] = add(result.c[0], derivatives[n]);
+  }
+  return result;
+}
+
+bool interval_taylor_inverse(const IntervalTaylor& input, const Truncation& truncation,
+                             IntervalTaylor& result) {
+  using namespace phx::mc::remesh;
+  const SplineInterval x = input.c[0];
+  if (!finite(x) || (x.lower <= 0 && x.upper >= 0)) return false;
+  const SplineInterval inverse{geometry::next_down(1.0 / x.upper),
+                               geometry::next_up(1.0 / x.lower)};
+  SplineInterval derivatives[4];
+  derivatives[0] = inverse;
+  for (int n = 1; n <= truncation.order; ++n)
+    derivatives[n] = subtract(point(0), multiply(derivatives[n - 1], inverse));
+  result = interval_taylor_compose(input, derivatives, truncation);
+  return true;
+}
+
+bool interval_taylor_unary(int64_t opcode, const IntervalTaylor& input,
+                           const Truncation& truncation, IntervalTaylor& result) {
+  using namespace phx::mc::remesh;
+  const SplineInterval x = input.c[0];
+  if (opcode == 12) {
+    result = interval_taylor_multiply(input, input, truncation);
+    return true;
+  }
+  if (opcode == 28) {
+    IntervalTaylor sine, cosine, inverse;
+    if (!interval_taylor_unary(8, input, truncation, sine) ||
+        !interval_taylor_unary(9, input, truncation, cosine) ||
+        !interval_taylor_inverse(cosine, truncation, inverse)) return false;
+    result = interval_taylor_multiply(sine, inverse, truncation);
+    return true;
+  }
+  SplineInterval sine{}, cosine{}, exponential{};
+  if (opcode == 17) {
+    const auto e = elementary::exp(x.lower, x.upper);
+    exponential = {e.lower, e.upper};
+  } else if (opcode == 8 || opcode == 9) {
+    const auto s = elementary::sin(x.lower, x.upper);
+    const auto c = elementary::cos(x.lower, x.upper);
+    sine = {s.lower, s.upper};
+    cosine = {c.lower, c.upper};
+  } else {
+    return false;
+  }
+  SplineInterval derivatives[4];
+  for (int n = 0; n <= truncation.order; ++n) {
+    SplineInterval value;
+    if (opcode == 17) value = exponential;
+    else if (opcode == 8)
+      value = n % 4 == 0 ? sine : n % 4 == 1 ? cosine
+              : n % 4 == 2 ? subtract(point(0), sine) : subtract(point(0), cosine);
+    else if (opcode == 9)
+      value = n % 4 == 0 ? cosine : n % 4 == 1 ? subtract(point(0), sine)
+              : n % 4 == 2 ? subtract(point(0), cosine) : sine;
+    else return false;
+    if (!spline_divide(value, point(factorial(n)), derivatives[n])) return false;
+  }
+  result = interval_taylor_compose(input, derivatives, truncation);
+  return true;
+}
+
+int32_t interval_template_jets(const CadGeometry& geometry, int32_t index,
+                               const double* input_lower, const double* input_upper, int order,
+                               double* output_lower, double* output_upper,
+                               IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const Node& node = geometry.node(index);
+  const ProgramData& program = node.definition->value;
+  const Truncation truncation{node.inputs, order};
+  const int64_t stride = 10, size = program.workspace_size * stride;
+  workspace.taylor_lower.assign(static_cast<std::size_t>(size), 0.0);
+  workspace.taylor_upper.assign(static_cast<std::size_t>(size), 0.0);
+  const auto store = [&](int64_t slot, const IntervalTaylor& value) {
+    for (int k = 0; k < stride; ++k) {
+      workspace.taylor_lower[static_cast<std::size_t>(slot * stride + k)] = value.c[k].lower;
+      workspace.taylor_upper[static_cast<std::size_t>(slot * stride + k)] = value.c[k].upper;
+    }
+  };
+  const auto load = [&](int64_t slot) {
+    IntervalTaylor value;
+    for (int k = 0; k < stride; ++k)
+      value.c[k] = {workspace.taylor_lower[static_cast<std::size_t>(slot * stride + k)],
+                    workspace.taylor_upper[static_cast<std::size_t>(slot * stride + k)]};
+    return value;
+  };
+  for (int64_t i = 0; i < program.workspace_size; ++i) {
+    IntervalTaylor seed;
+    seed.c[0] = point(program.seeds[i]);
+    store(i, seed);
+  }
+  for (int axis = 0; axis < node.inputs; ++axis) {
+    IntervalTaylor input;
+    input.c[0] = {input_lower[axis], input_upper[axis]};
+    if (order > 0) input.c[axis == 0 ? term(1, 0) : term(0, 1)] = point(1);
+    store(axis, input);
+  }
+  const int64_t offset = geometry.model().node_real_offsets[index];
+  for (int i = 0; i < node.definition->coefficient_count; ++i) {
+    IntervalTaylor coefficient;
+    coefficient.c[0] = {workspace.coefficient_lower[offset + i],
+                        workspace.coefficient_upper[offset + i]};
+    if (!phx::mc::remesh::finite(coefficient.c[0])) return PHX_MC_INVALID_ARGUMENT;
+    store(program.coefficients[i], coefficient);
+  }
+  for (int64_t row = 0; row < program.instruction_count; ++row) {
+    const int64_t* op = program.instructions + 8 * row;
+    for (int64_t lane = 0; lane < op[2]; ++lane) {
+      const auto operand = [&](int64_t base, int64_t indices) {
+        return load(base + (indices < 0 ? lane : program.indices[indices + lane]));
+      };
+      const IntervalTaylor a = operand(op[3], op[4]);
+      IntervalTaylor value;
+      if (op[0] == 2 || op[0] == 3) {
+        const IntervalTaylor b = operand(op[5], op[6]);
+        for (int k = 0; k < stride; ++k)
+          value.c[k] = op[0] == 2 ? add(a.c[k], b.c[k]) : subtract(a.c[k], b.c[k]);
+      } else if (op[0] == 5) {
+        value = interval_taylor_multiply(a, operand(op[5], op[6]), truncation);
+      } else if (op[0] == 6) {
+        for (int k = 0; k < stride; ++k) value.c[k] = subtract(point(0), a.c[k]);
+      } else if (op[0] == 25) {
+        IntervalTaylor inverse;
+        if (!interval_taylor_inverse(operand(op[5], op[6]), truncation, inverse))
+          return PHX_MC_UNRESOLVED;
+        value = interval_taylor_multiply(a, inverse, truncation);
+      } else if (!interval_taylor_unary(op[0], a, truncation, value)) {
+        return PHX_MC_UNRESOLVED;
+      }
+      store(op[1] + lane, value);
+    }
+  }
+  int slot = 0;
+  for (int n = 0; n <= order; ++n)
+    for (int j = 0; j <= truncation.v_limit(n); ++j)
+      for (int component = 0; component < node.outputs; ++component) {
+        const IntervalTaylor value = load(program.outputs[component]);
+        const SplineInterval derivative = multiply(value.c[term(n - j, j)],
+                                                    point(factorial(n - j) * factorial(j)));
+        if (!phx::mc::remesh::finite(derivative)) return PHX_MC_UNRESOLVED;
+        output_lower[slot] = derivative.lower;
+        output_upper[slot++] = derivative.upper;
+      }
+  return PHX_MC_OK;
+}
+
+int32_t offset_interval_jets(const CadGeometry& geometry, const Node& node,
+                             const SplineInterval* coefficients, const double* input_lower,
+                             const double* input_upper, int order, double* output_lower,
+                             double* output_upper, IntervalEvaluationWorkspace& workspace) {
+  using namespace phx::mc::remesh;
+  const bool surface = node.kind == PHX_MC_CAD_NODE_OFFSET_SURFACE;
+  const int dim = node.outputs, axes = surface ? 2 : 1;
+  for (int64_t i = 0; i < node.real_count; ++i)
+    if (!phx::mc::remesh::finite(coefficients[i])) return PHX_MC_INVALID_ARGUMENT;
+  double base_lower[30], base_upper[30];
+  const int32_t child = static_cast<int32_t>(node.integers[0]);
+  const bool previous_direct_template = workspace.direct_template;
+  workspace.direct_template = true;
+  const int32_t status = geometry.node(child).kind == PHX_MC_CAD_NODE_TEMPLATE
+      ? interval_template_jets(geometry, child, input_lower, input_upper, order + 1,
+                               base_lower, base_upper, workspace)
+      : order == 2 ? PHX_MC_UNRESOLVED
+      : geometry.interval_jets(child, input_lower, input_upper, order + 1,
+                               base_lower, base_upper, workspace);
+  workspace.direct_template = previous_direct_template;
+  if (status != PHX_MC_OK) return status;
+  const auto base = [&](int term, int coordinate) {
+    return SplineInterval{base_lower[term * dim + coordinate], base_upper[term * dim + coordinate]};
+  };
+  SplineInterval normal[3]{}, derivative[2][3]{}, second[3][3]{};
+  if (surface) {
+    for (int c = 0; c < 3; ++c) {
+      const int a = (c + 1) % 3, b = (c + 2) % 3;
+      normal[c] = subtract(multiply(base(1, a), base(2, b)),
+                           multiply(base(1, b), base(2, a)));
+      if (order >= 1) {
+        derivative[0][c] = add(subtract(multiply(base(3, a), base(2, b)),
+                                         multiply(base(3, b), base(2, a))),
+                                subtract(multiply(base(1, a), base(4, b)),
+                                         multiply(base(1, b), base(4, a))));
+        derivative[1][c] = add(subtract(multiply(base(4, a), base(2, b)),
+                                         multiply(base(4, b), base(2, a))),
+                                subtract(multiply(base(1, a), base(5, b)),
+                                         multiply(base(1, b), base(5, a))));
+      }
+      if (order == 2) {
+        const auto cross = [&](int first, int last) {
+          return subtract(multiply(base(first, a), base(last, b)),
+                          multiply(base(first, b), base(last, a)));
+        };
+        second[0][c] = add(add(cross(6, 2), multiply(point(2), cross(3, 4))), cross(1, 7));
+        second[1][c] = add(add(cross(7, 2), cross(3, 5)), cross(1, 8));
+        second[2][c] = add(add(cross(8, 2), multiply(point(2), cross(4, 5))), cross(1, 9));
+      }
+    }
+  } else if (dim == 2) {
+    normal[0] = base(1, 1);
+    normal[1] = subtract(point(0), base(1, 0));
+    if (order >= 1) {
+      derivative[0][0] = base(2, 1);
+      derivative[0][1] = subtract(point(0), base(2, 0));
+    }
+    if (order == 2) {
+      second[0][0] = base(3, 1);
+      second[0][1] = subtract(point(0), base(3, 0));
+    }
+  } else {
+    for (int c = 0; c < 3; ++c) {
+      const int a = (c + 1) % 3, b = (c + 2) % 3;
+      normal[c] = subtract(multiply(base(1, a), coefficients[1 + b]),
+                           multiply(base(1, b), coefficients[1 + a]));
+      if (order >= 1)
+        derivative[0][c] = subtract(multiply(base(2, a), coefficients[1 + b]),
+                                    multiply(base(2, b), coefficients[1 + a]));
+      if (order == 2)
+        second[0][c] = subtract(multiply(base(3, a), coefficients[1 + b]),
+                                multiply(base(3, b), coefficients[1 + a]));
+    }
+  }
+  double least[3]{}, most[3]{};
+  for (int c = 0; c < dim; ++c) {
+    least[c] = mignitude(normal[c]);
+    most[c] = magnitude(normal[c]);
+  }
+  const SplineInterval length{geometry::norm_lower(least), geometry::norm_upper(most)};
+  SplineInterval unit[3];
+  for (int c = 0; c < dim; ++c)
+    if (!spline_divide(normal[c], length, unit[c])) return PHX_MC_UNRESOLVED;
+  SplineInterval unit_derivative[2][3]{}, length_derivative[2]{};
+  if (order >= 1) {
+    for (int axis = 0; axis < axes; ++axis) {
+      for (int c = 0; c < dim; ++c)
+        length_derivative[axis] = add(length_derivative[axis],
+                                       multiply(unit[c], derivative[axis][c]));
+      for (int c = 0; c < dim; ++c) {
+        const SplineInterval tangent = subtract(derivative[axis][c],
+                                               multiply(unit[c], length_derivative[axis]));
+        if (!spline_divide(tangent, length, unit_derivative[axis][c])) return PHX_MC_UNRESOLVED;
+      }
+    }
+  }
+  for (int term = 0; term < 1 + (order >= 1 ? axes : 0); ++term)
+    for (int c = 0; c < dim; ++c) {
+      const SplineInterval direction = term == 0 ? unit[c] : unit_derivative[term - 1][c];
+      const SplineInterval value = add(base(term, c), multiply(coefficients[0], direction));
+      if (!phx::mc::remesh::finite(value)) return PHX_MC_UNRESOLVED;
+      output_lower[term * dim + c] = value.lower;
+      output_upper[term * dim + c] = value.upper;
+    }
+  if (order == 2) {
+    const int second_count = surface ? 3 : 1;
+    const int first_axis[3] = {0, 0, 1}, second_axis[3] = {0, 1, 1};
+    for (int k = 0; k < second_count; ++k) {
+      const int i = first_axis[k], j = second_axis[k];
+      SplineInterval length_second = point(0);
+      for (int c = 0; c < dim; ++c)
+        length_second = add(length_second,
+            add(multiply(unit_derivative[j][c], derivative[i][c]),
+                multiply(unit[c], second[k][c])));
+      for (int c = 0; c < dim; ++c) {
+        SplineInterval numerator = subtract(second[k][c],
+            multiply(unit_derivative[j][c], length_derivative[i]));
+        numerator = subtract(numerator, multiply(unit_derivative[i][c], length_derivative[j]));
+        numerator = subtract(numerator, multiply(unit[c], length_second));
+        SplineInterval direction;
+        if (!spline_divide(numerator, length, direction)) return PHX_MC_UNRESOLVED;
+        const int term = 1 + axes + k;
+        const SplineInterval value = add(base(term, c), multiply(coefficients[0], direction));
+        if (!phx::mc::remesh::finite(value)) return PHX_MC_UNRESOLVED;
+        output_lower[term * dim + c] = value.lower;
+        output_upper[term * dim + c] = value.upper;
+      }
+    }
+  }
+  return PHX_MC_OK;
+}
+
 // Bernstein cubic and its derivatives at t, as the T-spline realization.
 void bernstein_cubic(double t, int derivative, double* out) noexcept {
   const double s = 1.0 - t;
@@ -400,6 +712,18 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     if (!std::isfinite(input_lower[i]) || !std::isfinite(input_upper[i]) ||
         input_lower[i] > input_upper[i])
       return PHX_MC_INVALID_ARGUMENT;
+  if (current.kind == PHX_MC_CAD_NODE_OFFSET_SURFACE ||
+      current.kind == PHX_MC_CAD_NODE_OFFSET_CURVE) {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    const int64_t offset = model_.node_real_offsets[index];
+    SplineInterval coefficients[4];
+    for (int64_t i = 0; i < current.real_count; ++i)
+      coefficients[i] = {workspace.coefficient_lower[offset + i],
+                         workspace.coefficient_upper[offset + i]};
+    return offset_interval_jets(*this, current, coefficients, input_lower, input_upper, order,
+                                output_lower, output_upper, workspace);
+  }
   if (current.kind == PHX_MC_CAD_NODE_BSPLINE_CURVE ||
       current.kind == PHX_MC_CAD_NODE_BSPLINE_SURFACE) {
     const phx::mc::GradualNearestScope mode;
@@ -722,6 +1046,9 @@ int32_t CadGeometry::interval_jets(int32_t index, const double* input_lower,
     return PHX_MC_OK;
   }
   if (current.kind != PHX_MC_CAD_NODE_TEMPLATE) return PHX_MC_UNRESOLVED;
+  if (workspace.direct_template)
+    return interval_template_jets(*this, index, input_lower, input_upper, order,
+                                  output_lower, output_upper, workspace);
   const TemplateDefinition& definition = *current.definition;
   const ProgramData& data = order == 0 ? definition.value
                             : order == 1 ? definition.tangent : definition.hessian;

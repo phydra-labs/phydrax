@@ -70,6 +70,8 @@ struct IntervalEvaluationWorkspace {
   const ProgramData* bound_program[3] = {};
   PreparedIntervalProgram program[3];
   std::vector<double> lower, upper;
+  std::vector<double> taylor_lower, taylor_upper;
+  bool direct_template = false;
 };
 
 // Closed-form surface evaluators (decision D3) that stand in for a node's

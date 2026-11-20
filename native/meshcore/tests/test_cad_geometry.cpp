@@ -369,6 +369,7 @@ void composite_nodes() {
   // Fourth-order template jets: an offset of an offset.
   const int32_t nested = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {offset}, {0.5});
   const int32_t plane = b.add_template("plane", concat({v3(kOrigin), v3(kE1), v3(kE2)}));
+  const int32_t offset_plane = b.add(PHX_MC_CAD_NODE_OFFSET_SURFACE, {plane}, {0.25});
   const int32_t circle2 = b.add_template("circle2", {0.0, 0.0, 1.0, 0.0, 0.0, 1.0, radius});
   const int32_t mapped = b.add(PHX_MC_CAD_NODE_SURFACE_MAPPED, {plane, circle2}, {});
   const int32_t iso = b.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {sphere, 1}, {0.4});
@@ -382,6 +383,34 @@ void composite_nodes() {
   phx_mc_cad_model model = b.model();
   CadGeometry geometry;
   PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  phx::mc::cad::IntervalEvaluationWorkspace interval_workspace;
+  interval_workspace.coefficient_lower = b.reals.data();
+  interval_workspace.coefficient_upper = b.reals.data();
+  interval_workspace.coefficient_count = static_cast<int64_t>(b.reals.size());
+  EvaluationWorkspace point_workspace;
+  const double box_lo[2] = {0.1, 0.2}, box_hi[2] = {0.2, 0.3};
+  for (int32_t node : {offset, offset_plane, offset_curve}) {
+    const int dimension = node == offset_curve ? 2 : 3;
+    const int variables = node == offset_curve ? 1 : 2;
+    for (int order = 0; order <= 2; ++order) {
+      double lower[18], upper[18], jet[18];
+      const auto interval_status = geometry.interval_jets(node, box_lo, box_hi, order, lower, upper,
+                                                          interval_workspace);
+      PHX_CHECK(interval_status == PHX_MC_OK);
+      if (interval_status != PHX_MC_OK) continue;
+      for (int i = 0; i <= 10; ++i)
+        for (int j = 0; j <= (variables == 2 ? 10 : 0); ++j) {
+          const double point[2] = {box_lo[0] + (box_hi[0] - box_lo[0]) * i / 10,
+                                   box_lo[1] + (box_hi[1] - box_lo[1]) * j / 10};
+          PHX_CHECK(geometry.jets(node, point, order, jet, point_workspace));
+          const int terms = variables == 2 ? (order + 1) * (order + 2) / 2 : order + 1;
+          for (int k = 0; k < dimension * terms; ++k) {
+            PHX_CHECK(lower[k] <= jet[k]);
+            PHX_CHECK(jet[k] <= upper[k]);
+          }
+        }
+    }
+  }
   const auto cylinder = [&](double u, double v) {
     return add(kOrigin, add(scaled(radius, radial(u)), scaled(v, kAxis)));
   };

@@ -36,7 +36,7 @@ void chart_point(const Vertex& vertex, const double* uv, di::Interval* point) {
   }
 }
 
-// 0: C1, 1: continuous but possibly kinked, 2: possibly discontinuous.
+// 0: Hessian bound applicable, 1: use a first-order bound, 2: refuse.
 int spline_knot_regularity(const double* lower, const double* upper, int degree, int count,
                            double box_lower, double box_upper) {
   int result = 0;
@@ -82,8 +82,18 @@ int spline_regularity(const CadGeometry& geometry, int32_t index, const double* 
       return result;
     }
     case PHX_MC_CAD_NODE_AFFINE:
-    case PHX_MC_CAD_NODE_OFFSET_SURFACE:
       return child(0, box_lower, box_upper);
+    // An offset needs one more base derivative than its own jet: only template
+    // children provide third-order interval jets, so others get first order.
+    case PHX_MC_CAD_NODE_OFFSET_SURFACE:
+    case PHX_MC_CAD_NODE_OFFSET_CURVE: {
+      const auto base = static_cast<int32_t>(node.integers[0]);
+      const int regularity = node.kind == PHX_MC_CAD_NODE_OFFSET_SURFACE
+                                 ? child(0, box_lower, box_upper)
+                                 : child(0, all_lower, all_upper);
+      if (regularity != 0) return 2;
+      return geometry.node(base).kind == PHX_MC_CAD_NODE_TEMPLATE ? 0 : 1;
+    }
     case PHX_MC_CAD_NODE_EXTRUSION:
       return child(0, box_lower, box_upper);
     case PHX_MC_CAD_NODE_REVOLUTION:
@@ -91,7 +101,6 @@ int spline_regularity(const CadGeometry& geometry, int32_t index, const double* 
     case PHX_MC_CAD_NODE_RULED:
       return std::max(child(0, box_lower, box_upper), child(1, box_lower, box_upper));
     case PHX_MC_CAD_NODE_REPARAMETERIZED:
-    case PHX_MC_CAD_NODE_OFFSET_CURVE:
     case PHX_MC_CAD_NODE_ISOPARAMETRIC:
       return child(0, all_lower, all_upper);
     case PHX_MC_CAD_NODE_SURFACE_MAPPED:

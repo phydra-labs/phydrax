@@ -1036,6 +1036,187 @@ def cad_geometry_bundle(domain: MeshingDomain, /) -> CadGeometryBundle:
     return CadGeometryBundle(domain.domain_id, model, edge_curve_rows)
 
 
+_ExactInterval = tuple[ExactScalar, ExactScalar]
+
+
+def _float_interval(lower: object, upper: object, /) -> tuple[Fraction, Fraction]:
+    """Exact endpoints of an already outward binary64 enclosure."""
+    return Fraction.from_float(float(lower)), Fraction.from_float(float(upper))
+
+
+def _scale_interval(
+    scale: Fraction, value: tuple[Fraction, Fraction], /
+) -> tuple[Fraction, Fraction]:
+    first, second = scale * value[0], scale * value[1]
+    return (first, second) if first <= second else (second, first)
+
+
+def _unit_shift(
+    direction: tuple[Fraction, ...], distance: Fraction, /
+) -> tuple[tuple[Fraction, Fraction], ...] | None:
+    """Enclose ``distance * direction / |direction|`` from exact components."""
+    from ...linalg._hermitian_spectral import fraction_sqrt_interval
+
+    squared = sum((value * value for value in direction), Fraction(0))
+    norm_lower, norm_upper = fraction_sqrt_interval(squared)
+    if norm_lower <= 0:
+        return None
+    result = []
+    for component in direction:
+        candidates = (distance * component / norm_lower, distance * component / norm_upper)
+        result.append((min(candidates), max(candidates)))
+    return tuple(result)
+
+
+def _cross(
+    first: tuple[Fraction, ...], second: tuple[Fraction, ...], /
+) -> tuple[Fraction, ...]:
+    return tuple(
+        first[(i + 1) % 3] * second[(i + 2) % 3] - first[(i + 2) % 3] * second[(i + 1) % 3]
+        for i in range(3)
+    )
+
+
+def _stored(vector: object, /) -> tuple[Fraction, ...]:
+    """A stored binary64 constructor array: exact by the source contract."""
+    return tuple(Fraction.from_float(float(value)) for value in _host(vector).reshape((-1,)))
+
+
+def _computed_coefficient_intervals(
+    bank: _NodeBank, entity: object, index: int, /
+) -> dict[int, tuple[_ExactInterval, ...]] | None:
+    """Enclose bank coefficients that the bundle computed from exact inputs.
+
+    Each value is an outward enclosure of the exact expression of the source's
+    retained inputs (``*_exact`` fields, or stored binary64 constructor arrays
+    for kinds without them); transcendental parts use rigorous enclosures.
+    The result can bound child nodes that the bundle synthesized.
+    """
+    from ...geometry._interval_enclosure import interval_cos, interval_sin
+    from ...geometry.brep._patches import _conic_root_phase_enclosure
+    from ...geometry.brep._trim_helpers import period_offset, period_scalar_bounds
+
+    def same(values: tuple[ExactScalar, ...], /) -> tuple[_ExactInterval, ...]:
+        return tuple((value, value) for value in values)
+
+    def conic_angle(curve: ConicRootLinePCurve, /) -> _ExactInterval:
+        return _float_interval(*_conic_root_phase_enclosure(curve.root, curve.phase_shift_exact))
+
+    def two_pi_turns(turns: Fraction, /) -> _ExactInterval:
+        return _float_interval(*period_scalar_bounds(period_offset(Fraction(0), turns)))
+
+    if isinstance(entity, CurveTrimSegment) and (
+        entity.first_root is not None or entity.last_root is not None
+    ):
+        # A root endpoint is the source root, enclosed by its owner; the
+        # stored binary64 representative lies inside that enclosure.
+        def endpoint(root: object, value: float, /) -> _ExactInterval:
+            if root is None:
+                exact = Fraction.from_float(value)
+                return exact, exact
+            return _float_interval(*root.parameter_enclosure())  # type: ignore[attr-defined]
+
+        return {index: (endpoint(entity.first_root, entity.first),
+                        endpoint(entity.last_root, entity.last))}
+    if type(entity) is ConicRootLinePCurve:
+        return {index: (conic_angle(entity), *same((entity.height_origin_exact,
+                                                    entity.height_direction_exact)))}
+    if type(entity) is TorusRootedCirclePCurve:
+        return {index: (two_pi_turns(entity.turns), conic_angle(entity.root_line))}
+    if isinstance(entity, PeriodicPCurve):
+        identity = (Fraction(1), Fraction(0), Fraction(0), Fraction(1))
+        return {index: (*same(identity),
+                        *(two_pi_turns(Fraction(shift)) for shift in entity.period_shifts))}
+    if isinstance(entity, OffsetCurve):
+        layers: list[OffsetCurve] = []
+        line: AbstractCurve = entity
+        while type(line) is OffsetCurve:
+            layers.append(line)
+            line = line.base
+        if isinstance(line, ExactLineCurve):
+            origin, last = tuple(line.first_exact), tuple(line.last_exact)
+            tangent = tuple(b - a for a, b in zip(origin, last, strict=True))
+        elif type(line) is LineCurve:
+            origin, tangent = tuple(line.origin_exact), tuple(line.direction_exact)
+            last = origin
+        else:
+            return None
+        if not all(isinstance(value, Fraction) for value in (*origin, *tangent)):
+            return None
+        shift = [(Fraction(0), Fraction(0)) for _ in origin]
+        for layer in layers:
+            if len(origin) == 2:
+                normal: tuple[Fraction, ...] = (tangent[1], -tangent[0])
+            elif layer.direction is None:
+                return None
+            else:
+                normal = _cross(tangent, _stored(layer.direction))
+            part = _unit_shift(normal, layer.distance_exact)
+            if part is None:
+                return None
+            shift = [(a[0] + b[0], a[1] + b[1]) for a, b in zip(shift, part, strict=True)]
+        moved = tuple((value + lo, value + hi) for value, (lo, hi) in zip(origin, shift, strict=True))
+        if isinstance(line, ExactLineCurve):
+            moved_last = tuple(
+                (value + lo, value + hi) for value, (lo, hi) in zip(last, shift, strict=True)
+            )
+            return {index: (*moved, *moved_last)}
+        return {index: (*moved, *same(tangent))}
+    if not isinstance(entity, OffsetSurface):
+        return None
+    surface_layers: list[OffsetSurface] = []
+    base: AbstractSurfacePatch = entity
+    while type(base) is OffsetSurface:
+        surface_layers.append(base)
+        base = base.base
+    if type(base) is PlanePatch:
+        origin3, first, second = (_stored(v) for v in (base.origin, base.first_axis,
+                                                        base.second_axis))
+        distance = sum(
+            (layer.distance_exact * (layer.frame_sign or 1) for layer in surface_layers),
+            Fraction(0),
+        )
+        part = _unit_shift(_cross(first, second), distance)
+        if part is None:
+            return None
+        shifted = tuple((v + lo, v + hi) for v, (lo, hi) in zip(origin3, part, strict=True))
+        return {index: (*shifted, *same((*first, *second)))}
+    inner, sign = entity.base, entity.frame_sign
+    signed = entity.distance_exact * (sign or 1)
+    if isinstance(inner, ConePatch) and sign != 0:
+        # Offset cone: origin - s d sin(a) axis, reference radius r0 + s d cos(a).
+        angle = float(inner.semi_angle)
+        sine = _float_interval(*interval_sin((np.float64(angle), np.float64(angle))))
+        cosine = _float_interval(*interval_cos((np.float64(angle), np.float64(angle))))
+        axis = _stored(inner.axis)
+        moved_sine = _scale_interval(signed, sine)
+        origin3 = tuple(
+            (value - max(_scale_interval(a, moved_sine)), value - min(_scale_interval(a, moved_sine)))
+            for value, a in zip(_stored(inner.origin), axis, strict=True)
+        )
+        radius = Fraction.from_float(float(inner.reference_radius))
+        moved_cosine = _scale_interval(signed, cosine)
+        return {index: (
+            *origin3,
+            *same((*_stored(inner.first_axis), *_stored(inner.second_axis), *axis)),
+            (radius + moved_cosine[0], radius + moved_cosine[1]),
+            *same((Fraction.from_float(angle),)),
+        )}
+    if (
+        isinstance(inner, RevolutionSurface)
+        and entity.exact_sphere_revolution_witness() is not None
+        and isinstance(inner.curve, CircleCurve)
+    ):
+        profile = inner.curve
+        circle = bank.children[index][0]
+        return {
+            index: same((*_stored(inner.axis_origin), *_stored(inner.axis_direction))),
+            circle: same((*profile.center_exact, *profile.first_axis_exact,
+                          *profile.second_axis_exact, profile.radius_exact + sign * entity.distance_exact)),
+        }
+    return None
+
+
 def _coefficient_sources(
     entity: object, numeric: np.ndarray, /
 ) -> tuple[ExactScalar, ...] | None:
@@ -1053,6 +1234,34 @@ def _coefficient_sources(
             *(value for row in entity.exact_control_points for point in row for value in point),
             *(value for row in entity.exact_weights for value in row),
         )
+    if isinstance(entity, OffsetSurface):
+        base = entity.base
+        distance = entity.distance_exact * (entity.frame_sign or 1)
+        if numeric.size == 1:
+            return (distance,)
+        if isinstance(base, SpherePatch) and entity.frame_sign != 0:
+            vectors = (base.center, base.first_axis, base.second_axis, base.axis)
+            return (
+                *(Fraction.from_float(float(value)) for vector in vectors for value in _host(vector)),
+                Fraction.from_float(float(base.radius)) + distance,
+            )
+        if isinstance(base, CylinderPatch) and entity.frame_sign != 0:
+            return (*base.origin_exact, *base.first_axis_exact, *base.second_axis_exact,
+                    *base.axis_exact, base.radius_exact + distance)
+        if isinstance(base, TorusPatch) and entity.frame_sign != 0:
+            return (*base.center_exact, *base.first_axis_exact, *base.second_axis_exact,
+                    *base.axis_exact, base.major_radius_exact, base.minor_radius_exact + distance)
+        return None
+    if isinstance(entity, OffsetCurve):
+        base = entity.base
+        while isinstance(base, OffsetCurve):
+            base = base.base
+        if isinstance(base, (LineCurve, ExactLineCurve)):
+            return None
+        direction = () if entity.direction is None else tuple(
+            Fraction.from_float(float(value)) for value in _host(entity.direction)
+        )
+        return (entity.distance_exact, *direction)
     if isinstance(entity, CylinderPatch):
         return (*entity.origin_exact, *entity.first_axis_exact, *entity.second_axis_exact,
                 *entity.axis_exact, entity.radius_exact)
@@ -1085,8 +1294,6 @@ def _coefficient_sources(
         exact = entity.fixed_value_exact
         return (Fraction.from_float(entity.fixed_value) if exact is None else exact,)
     if isinstance(entity, CurveTrimSegment):
-        if entity.first_root is not None or entity.last_root is not None:
-            return None
         return (Fraction.from_float(entity.first), Fraction.from_float(entity.last))
     if type(entity) in (PlanePatch, SpherePatch, ConePatch, ParabolaCurve, HyperbolaCurve,
                         ExtrusionSurface, RevolutionSurface):
@@ -1127,8 +1334,15 @@ def _bound_symbolic_sphere_poles(
                         lower[position] = min(lower[position], float(lo))
                         upper[position] = max(upper[position], float(hi))
                     continue
-                # A pole p-curve whose source semantics are not represented by
-                # this path cannot safely inherit point-shadow coefficients.
+                # A rooted pole latitude is enclosed from its conic root, and
+                # rational affine or 2π-gauge wrappers are enclosed exactly.
+                rooted = curve
+                while isinstance(rooted, (AffinePCurve, PeriodicPCurve)):
+                    rooted = rooted.curve if isinstance(rooted, AffinePCurve) else rooted.source_curve
+                if type(rooted) is ConicRootLinePCurve:
+                    continue
+                # Any other pole p-curve's source semantics are not represented
+                # by this path; it cannot inherit point-shadow coefficients.
                 pending = [index]
                 while pending:
                     node = pending.pop()
@@ -1155,7 +1369,7 @@ def coefficient_bounds(
     edge_curve_rows = np.full(len(domain.curves), -1, dtype=np.int32)
     regular = np.flatnonzero(domain.curve_owners[:, 0] >= 0)
     edge_curve_rows[regular] = np.arange(regular.size, dtype=np.int32)
-    _curve_nodes(bank, domain, edge_curve_rows)
+    curve_nodes = _curve_nodes(bank, domain, edge_curve_rows)
     for patch in domain.patches:
         for loop in patch.loops:
             for use in loop:
@@ -1175,6 +1389,16 @@ def coefficient_bounds(
     for entity in bank._entities:
         index = bank._memo[id(entity)]
         first, last = real_offsets[index], real_offsets[index + 1]
+        computed = _computed_coefficient_intervals(bank, entity, index)
+        if computed is not None:
+            for node, intervals in computed.items():
+                node_first = real_offsets[node]
+                if len(intervals) != real_offsets[node + 1] - node_first:
+                    raise ValueError("CAD exact coefficient count does not match its native node.")
+                for offset, (lo, hi) in enumerate(intervals):
+                    lower[node_first + offset] = coefficient_endpoint(lo, upper=False, saturate=True)
+                    upper[node_first + offset] = coefficient_endpoint(hi, upper=True, saturate=True)
+            continue
         exact = _coefficient_sources(entity, reals[first:last])
         if exact is None:
             continue
@@ -1183,6 +1407,27 @@ def coefficient_bounds(
         for offset, value in enumerate(exact):
             lower[first + offset] = coefficient_endpoint(value, upper=False, saturate=True)
             upper[first + offset] = coefficient_endpoint(value, upper=True, saturate=True)
+    authority = domain.brep_authority
+    if authority is not None:
+        # Occurrence placements of edge carriers are bundle-synthesized affine
+        # nodes; their exact matrices are the assembly occurrence's own.
+        exact_placements = {
+            occurrence.path: occurrence.placement.matrix
+            for occurrence in authority.geometry.assembly_graph.iter_occurrences()
+        }
+        for node, curve in zip(curve_nodes, regular, strict=True):
+            path = domain.source_occurrences[1][curve]
+            if not path:
+                continue
+            matrix = exact_placements[path]
+            values = (*(matrix[row][column] for row in range(3) for column in range(3)),
+                      *(matrix[row][3] for row in range(3)))
+            first = real_offsets[node]
+            if len(values) != real_offsets[node + 1] - first:
+                raise ValueError("CAD exact coefficient count does not match its native node.")
+            for offset, value in enumerate(values):
+                lower[first + offset] = coefficient_endpoint(value, upper=False, saturate=True)
+                upper[first + offset] = coefficient_endpoint(value, upper=True, saturate=True)
     _bound_symbolic_sphere_poles(bank, domain, real_offsets, lower, upper)
     lower.setflags(write=False)
     upper.setflags(write=False)
