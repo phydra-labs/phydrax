@@ -9,7 +9,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
-from functools import cache
+from functools import cache, lru_cache
 from itertools import product
 from math import comb, lcm, prod
 from types import MappingProxyType
@@ -931,7 +931,7 @@ def _weight_column(weights: tuple[Fraction, ...], /) -> _WeightColumn:
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _simplex_weight_column(
     alpha: tuple[int, ...], degree: int, parts: int, /
 ) -> _WeightColumn:
@@ -943,7 +943,7 @@ def _simplex_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _box_weight_column(
     alpha: tuple[int, ...], degrees: tuple[int, ...], /
 ) -> _WeightColumn:
@@ -956,7 +956,7 @@ def _box_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _prism_weight_column(
     alpha: tuple[int, ...], triangle_degree: int, line_degree: int, /
 ) -> _WeightColumn:

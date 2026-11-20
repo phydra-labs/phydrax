@@ -12,6 +12,7 @@ from enum import Enum
 from fractions import Fraction
 from functools import reduce
 from typing import Any, cast, Literal, TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 import jax
 import numpy as np
@@ -1496,10 +1497,14 @@ def _bspline_jet_equation(
 
 type CustomIntervalExtension = Callable[[tuple[Interval, ...]], Interval]
 
-# Declared interval extensions of custom-JVP functions, keyed by their declared
-# JVP rule. Each owner registers the sound enclosure of the real function its
-# equation denotes; the interpreter then never walks the staged primal.
-_CUSTOM_EXTENSIONS: dict[object, CustomIntervalExtension] = {}
+# Declared interval extensions of custom-JVP functions, keyed weakly by their
+# declared JVP rule. Each owner registers the sound enclosure of the real function
+# its equation denotes; the interpreter then never walks the staged primal. An
+# extension never references its rule, so a rule (and the custom-JVP function
+# and data it closes over) is released once no owner or staged program holds it.
+_CUSTOM_EXTENSIONS: WeakKeyDictionary[object, CustomIntervalExtension] = (
+    WeakKeyDictionary()
+)
 
 
 def register_custom_jvp_interval_extension(
