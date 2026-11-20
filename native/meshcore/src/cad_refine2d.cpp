@@ -617,7 +617,14 @@ class Refinement {
     const double dy = (bx*cc - cx*bb) / (2*determinant);
     radius = std::sqrt(dot(m,dx,dy,dx,dy));
     if (!std::isfinite(radius)) { status_ = PHX_MC_UNRESOLVED; return false; }
-    if (!size_reason && !angle_reason && radius > 0.70710678118654752440) {
+    double size_limit=0.70710678118654752440;
+    for (int k=0;k<3;++k) {
+      if (tri_.constraint(t,k)==-1) continue;
+      const double* e0=tri_.point(cell.v[next3(k)]); const double* e1=tri_.point(cell.v[prev3(k)]);
+      const double ex=e1[0]-e0[0], ey=e1[1]-e0[1];
+      size_limit=std::max(size_limit,0.70710678118654752440*std::sqrt(dot(m,ex,ey,ex,ey)));
+    }
+    if (!size_reason && !angle_reason && radius > size_limit) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
       return true;
     }
@@ -639,7 +646,7 @@ class Refinement {
       *angle_cosine=(lengths[next3(shortest)]+lengths[prev3(shortest)]-lengths[shortest])/
                     (2*side_product);
     const bool bad_angle = !protected_angle && sine_ * side_product > area2;
-    const bool bad_size=radius > 0.70710678118654752440;
+    const bool bad_size=radius > size_limit;
     if (size_reason) *size_reason=bad_size;
     if (angle_reason) *angle_reason=bad_angle;
     if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }

@@ -80,6 +80,9 @@ struct CadRefine2DResult {
 // spacing (face stage, design B.2); boundary constraints are never split.
 // With graded metrics and boundary lengths <= 1, no refusal was observed on the
 // measured fixtures, but this is not a general no-refusal guarantee.
+// A triangle is oversized when its metric circumradius exceeds sqrt(1/2) of
+// the larger of one unit and the metric length (at its centroid) of each of
+// its fixed segments, since no insertion can shorten a segment.
 // On completed or point-cap exits, statistics count each unresolved triangle
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
