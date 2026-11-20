@@ -16,6 +16,7 @@
 #include "exact_scalar.hpp"
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
+#include "quadratic_validity_screen.hpp"
 #include "rounding.hpp"
 
 namespace {
@@ -585,7 +586,7 @@ int32_t validate_validity_inputs(std::int64_t count, const double* nodes,
     return PHX_MC_INVALID_ARGUMENT;
   }
   if (count > 0 && (nodes == nullptr || derivative_weights == nullptr || decisions == nullptr ||
-                    lower == nullptr || upper == nullptr)) {
+                    (lower == nullptr) != (upper == nullptr))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   for (std::int64_t scalar = 0; scalar < count * 30; ++scalar) {
@@ -733,6 +734,196 @@ int32_t validate_quadratic_bounds(int64_t count, int m, int components,
 
 }  // namespace
 
+namespace phx::mc {
+namespace {
+
+// Error analysis of the binary64 screen (round to nearest, u = 2^-53).
+// Every quantity is a polynomial in the node scalars x evaluated by the tree
+//   J      = sum over <= 10 nodes of fl(w * x)          (1 product, <= 9 sums)
+//   det    = a0 (b1 c2 - b2 c1) - a1 (...) + a2 (...)   (3 J factors + 5 ops)
+//   coef_b = sum of <= 6 det terms                       (<= 5 sums)
+//   ctrl_a = sum over <= 20 b of fl(m_ab * coef_b)       (1 product, <= 19 sums)
+// so the computed control expands to sum_t mono_t * prod (1 + d_i) with at
+// most k = 3 * 10 + 5 + 5 + 1 + 19 = 60 factors |d_i| <= u per monomial (the
+// first sum of a running total adds to zero and is exact, counted anyway).
+// Hence |fl(ctrl) - ctrl| <= gamma_60 * A with A = sum_t |mono_t|, the same
+// tree on |w x| with every subtraction replaced by an addition. Computing A in
+// binary64 only multiplies each nonnegative monomial by >= (1 - u)^60, so
+// A <= fl(A) / (1 - u)^60, and fl(2^-47 fl(A)) loses one more (1 - u):
+// 2^-47 = 64 u >= gamma_60 / (1 - u)^61 = 60 u (1 + O(120 u)). The power
+// coefficients use the same constant (k = 40 there).
+// Underflow would break the relative model, so every computed Jacobian entry
+// and its magnitude sum must be 0 or lie in [2^-300, 2^300]: w is a nonzero
+// integer, so fl(w x) is exact when subnormal; products of entries are normal
+// (>= 2^-600); a nonzero difference of such products is a multiple of
+// 2^-652, times a factor >= 2^-300 is >= 2^-952, and every later nonzero sum
+// of multiples of 2^-1004 stays normal; magnitudes stay below 2^906, so no
+// overflow. Sums of binary64 numbers are exact when subnormal.
+// The relative threshold is bounded above with next_up after every
+// nonnegative operation; a Jacobian corner J0 + Jv is a 10-node sum plus one
+// addition (k = 11), so |corner| <= |fl(J0 + Jv)| + 2^-47 fl(A0 + Av).
+// A control c is certified with c >= fl(c) - B > 0 and
+// c^2 >= next_down(L * L) for L = next_down(fl(c) - B). The exact path uses
+// the controls of the actual degree d; d is only known to lie between the
+// highest certified-nonzero and the highest nonzero-magnitude coefficient
+// degree, so the controls of every such degree must pass. Passing makes the
+// exact root cell VALID (corner and edge controls are among the controls).
+constexpr double kScreenRelative = 0x1p-47;
+constexpr double kScreenTiny = 0x1p-300;
+constexpr double kScreenHuge = 0x1p300;
+
+// Upper bound of |J0 + Jv| from the computed sum and its magnitude sum.
+double screen_corner_bound(double value, double magnitude) noexcept {
+  return next_up(std::fabs(value) + next_up(kScreenRelative * next_up(magnitude)));
+}
+
+bool screen_range(double value) noexcept {
+  const double magnitude = std::fabs(value);
+  return magnitude == 0.0 || (magnitude >= kScreenTiny && magnitude <= kScreenHuge);
+}
+
+struct ScreenTerm final {
+  int beta;
+  double multiplier;
+};
+
+// Bernstein controls (times 6) of degrees 0..3 as terms over the power
+// coefficients, the formula of determinant_bernstein_controls: the controls of
+// degree d are indexed by the alpha with |alpha| <= d (alpha_0 = d - |alpha|).
+struct ScreenTable final {
+  std::array<int, 5> control_offsets{};  // degree d: controls [offsets[d], offsets[d + 1])
+  std::array<int, 36> term_offsets{};
+  std::array<ScreenTerm, 35 * 20> terms{};
+};
+
+const ScreenTable& screen_table() {
+  static const ScreenTable table = [] {
+    ScreenTable built;
+    int control = 0;
+    int term = 0;
+    for (int degree = 0; degree <= 3; ++degree) {
+      built.control_offsets[degree] = control;
+      for (int alpha = 0; alpha < bernstein_count(degree); ++alpha) {
+        built.term_offsets[control++] = term;
+        for (int beta = 0; beta < bernstein_count(degree); ++beta) {
+          const Power& exponent = kPowers[beta];
+          const int multiplier = (6 / falling(degree, exponent.degree)) *
+                                 falling(kPowers[alpha].x, exponent.x) *
+                                 falling(kPowers[alpha].y, exponent.y) *
+                                 falling(kPowers[alpha].z, exponent.z);
+          if (multiplier != 0) built.terms[term++] = {beta, static_cast<double>(multiplier)};
+        }
+      }
+    }
+    built.control_offsets[4] = control;
+    built.term_offsets[control] = term;
+    return built;
+  }();
+  return table;
+}
+
+}  // namespace
+
+bool quadratic_validity_screen(const double* nodes, const std::int32_t* derivative_weights,
+                               double relative_floor) noexcept {
+  double value[9][4];
+  double magnitude[9][4];
+  for (int row = 0; row < 3; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      for (int power = 0; power < 4; ++power) {
+        double sum = 0.0;
+        double absolute = 0.0;
+        for (int node = 0; node < kNodeCount; ++node) {
+          const std::int32_t weight = derivative_weights[(column * 4 + power) * kNodeCount + node];
+          if (weight == 0) continue;
+          const double term = static_cast<double>(weight) * nodes[node * 3 + row];
+          sum += term;
+          absolute += std::fabs(term);
+        }
+        if (!screen_range(sum) || !screen_range(absolute)) return false;
+        value[row * 3 + column][power] = sum;
+        magnitude[row * 3 + column][power] = absolute;
+      }
+    }
+  }
+
+  double coefficient[20] = {};
+  double coefficient_magnitude[20] = {};
+  for (int first = 0; first < 4; ++first) {
+    for (int second = 0; second < 4; ++second) {
+      for (int third = 0; third < 4; ++third) {
+        const double a0 = value[0][first], a1 = value[1][second], a2 = value[2][third];
+        const double b0 = value[3][first], b1 = value[4][second], b2 = value[5][third];
+        const double c0 = value[6][first], c1 = value[7][second], c2 = value[8][third];
+        const double p0 = magnitude[0][first], p1 = magnitude[1][second], p2 = magnitude[2][third];
+        const double q0 = magnitude[3][first], q1 = magnitude[4][second], q2 = magnitude[5][third];
+        const double r0 = magnitude[6][first], r1 = magnitude[7][second], r2 = magnitude[8][third];
+        const int index = power_index(kPowers[first].x + kPowers[second].x + kPowers[third].x,
+                                      kPowers[first].y + kPowers[second].y + kPowers[third].y,
+                                      kPowers[first].z + kPowers[second].z + kPowers[third].z);
+        coefficient[index] +=
+            a0 * (b1 * c2 - b2 * c1) - a1 * (b0 * c2 - b2 * c0) + a2 * (b0 * c1 - b1 * c0);
+        coefficient_magnitude[index] +=
+            p0 * (q1 * r2 + q2 * r1) + p1 * (q0 * r2 + q2 * r0) + p2 * (q0 * r1 + q1 * r0);
+      }
+    }
+  }
+
+  int lowest = 0;
+  int highest = 0;
+  for (int index = 0; index < 20; ++index) {
+    if (coefficient_magnitude[index] != 0.0) highest = std::max(highest, kPowers[index].degree);
+    if (std::fabs(coefficient[index]) > kScreenRelative * coefficient_magnitude[index]) {
+      lowest = std::max(lowest, kPowers[index].degree);
+    }
+  }
+
+  double threshold = 0.0;
+  if (relative_floor > 0.0) {
+    double hadamard = 1.0;
+    for (int column = 0; column < 3; ++column) {
+      double norm = 0.0;
+      for (int row = 0; row < 3; ++row) {
+        const double* entry = value[row * 3 + column];
+        const double* entry_magnitude = magnitude[row * 3 + column];
+        double largest = screen_corner_bound(entry[0], entry_magnitude[0]);
+        for (int vertex = 1; vertex < 4; ++vertex) {
+          largest = std::max(largest, screen_corner_bound(entry[0] + entry[vertex],
+                                                          entry_magnitude[0] +
+                                                              entry_magnitude[vertex]));
+        }
+        norm = next_up(norm + next_up(largest * largest));
+      }
+      hadamard = next_up(hadamard * norm);
+    }
+    threshold = next_up(next_up(next_up(relative_floor * relative_floor) * 36.0) * hadamard);
+  }
+
+  const ScreenTable& table = screen_table();
+  for (int degree = lowest; degree <= highest; ++degree) {
+    for (int control = table.control_offsets[degree];
+         control < table.control_offsets[degree + 1]; ++control) {
+      double sum = 0.0;
+      double absolute = 0.0;
+      for (int term = table.term_offsets[control]; term < table.term_offsets[control + 1];
+           ++term) {
+        const ScreenTerm& entry = table.terms[term];
+        sum += entry.multiplier * coefficient[entry.beta];
+        absolute += entry.multiplier * coefficient_magnitude[entry.beta];
+      }
+      const double error = kScreenRelative * absolute;
+      if (!(sum > error)) return false;
+      if (threshold > 0.0) {
+        const double lower = next_down(sum - error);
+        if (!(next_down(lower * lower) > threshold)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  // namespace phx::mc
+
 extern "C" {
 
 int32_t phx_mc_simplex_quadratic_bounds(int64_t count, int32_t dimension, int32_t components,
@@ -780,14 +971,24 @@ int32_t phx_mc_quadratic_tetrahedron_validity(int64_t count, const double* nodes
     const int32_t validation = validate_validity_inputs(
         count, nodes, derivative_weights, relative_floor, decisions, lower, upper);
     if (validation != PHX_MC_OK) return validation;
+    // Without requested bounds only verdicts are produced, so the binary64
+    // screen may decide VALID; every other cell takes the exact path.
+    const bool bounds = lower != nullptr;
     std::vector<ValidityResult> staged;
     staged.reserve(static_cast<std::size_t>(count));
     for (int64_t cell = 0; cell < count; ++cell) {
-      staged.push_back(evaluate_validity_cell(nodes + 30 * cell, derivative_weights, relative_floor));
+      const double* cell_nodes = nodes + 30 * cell;
+      if (!bounds &&
+          phx::mc::quadratic_validity_screen(cell_nodes, derivative_weights, relative_floor)) {
+        staged.push_back({kValidityValid, 0.0, 0.0});
+      } else {
+        staged.push_back(evaluate_validity_cell(cell_nodes, derivative_weights, relative_floor));
+      }
     }
     for (int64_t cell = 0; cell < count; ++cell) {
       const ValidityResult& result = staged[static_cast<std::size_t>(cell)];
       decisions[cell] = result.decision;
+      if (!bounds) continue;
       lower[cell] = result.lower;
       upper[cell] = result.upper;
     }

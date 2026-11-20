@@ -1307,6 +1307,9 @@ PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
     int64_t count, int32_t dimension, int32_t components, const double* q_lower,
     const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,
     double* lower, double* upper);
+/* lower/upper may be null (both or neither); then only verdicts are produced,
+ * and cells may be decided by a rigorous binary64 screen; verdicts are
+ * identical either way. With bounds requested every cell takes the exact path. */
 PHX_MC_API int32_t phx_mc_quadratic_tetrahedron_validity(
     int64_t count, const double* nodes, const int32_t* derivative_weights, double relative_floor,
     int32_t* decisions, double* lower, double* upper);

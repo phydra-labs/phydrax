@@ -180,6 +180,7 @@ set(PHX_MC_HEADERS
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp
+  src/quadratic_validity_screen.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
