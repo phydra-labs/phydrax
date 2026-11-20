@@ -383,6 +383,8 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Certified bounded coverage must retain its source homotopy and finite distance bound."
                 )
+        # Identity carries content, controls, decisions and status; the float
+        # ``source_distance_upper`` is platform-rounded evidence kept beside it.
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "domain-coverage-certificate",
@@ -413,7 +415,6 @@ class DomainCoverageCertificate(StrictModule, NonTrainableState):
                 "chart_certificate": self.chart_certificate_id,
                 "coverage_method": self.coverage_method,
                 "source_coverage": self.source_coverage_id,
-                "source_distance_upper": self.source_distance_upper,
                 "source_region_degree_ids": self.source_region_degree_ids,
                 "source_coverage_witness": None
                 if self.source_coverage_witness is None
@@ -1412,6 +1413,7 @@ def _coverage_boundary_partition(
         else:
             # Exact source points decide the chain; the carriers round them, and
             # declared-plane charts identify source triangles with their plane.
+            # The rounded carrier distance is evidence, not identity.
             source_distance_upper = _upper_sum(
                 source_points.carrier_deviation_upper,
                 source_points.chart_deviation_upper,
@@ -1426,7 +1428,6 @@ def _coverage_boundary_partition(
                     "charts": tuple(sorted(source_points.charts)),
                     "overlaps": _overlap_payload(facet_overlaps),
                     "target_facet_count": target_facet_count,
-                    "distance_upper": source_distance_upper,
                 }
             )
         coverage_method = (
