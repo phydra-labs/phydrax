@@ -258,10 +258,30 @@ struct SurfaceArrays {
 void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& mesh,
                             double size) {
   std::vector<double> maximum(static_cast<std::size_t>(model.surface_count), 0.0);
+  const std::size_t vertex_count = mesh.points.size()/3;
+  std::vector<std::vector<double>> spacing(static_cast<std::size_t>(model.surface_count),
+      std::vector<double>(vertex_count, std::numeric_limits<double>::infinity()));
+  for (std::size_t t = 0; t < mesh.patches.size(); ++t) {
+    for (int k = 0; k < 3; ++k) {
+      if (mesh.uses[3*t+k] < 0) continue;
+      const int a = mesh.triangles[3*t+k], b = mesh.triangles[3*t+(k+1)%3];
+      const double* x = mesh.points.data()+3*a;
+      const double* y = mesh.points.data()+3*b;
+      const double length = std::hypot(std::hypot(x[0]-y[0],x[1]-y[1]),x[2]-y[2]);
+      if (!(length > 0.0)) continue;
+      auto& row = spacing[mesh.patches[t]];
+      row[a] = std::min(row[a],length);
+      row[b] = std::min(row[b],length);
+    }
+  }
   for (std::size_t t = 0; t < mesh.patches.size(); ++t) {
     const int face = mesh.patches[t];
     const int32_t node = model.surface_nodes[face];
     const bool quadric = model.node_kinds[node] != PHX_MC_CAD_NODE_TEMPLATE;
+    if (quadric) {
+      PHX_CHECK(model.node_count == static_cast<int64_t>(quadric_node_kinds.size()));
+      PHX_CHECK(model.surface_count == 3);
+    }
     const int kind = quadric ? -1 : static_cast<int>(model.node_integers[model.node_integer_offsets[node]]);
     const double* c = model.node_reals + model.node_real_offsets[node];
     for (int k = 0; k < 3; ++k) {
@@ -272,9 +292,18 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
       const double du = mesh.uv[6*t+2*k] - mesh.uv[6*t+2*next];
       const double dv = mesh.uv[6*t+2*k+1] - mesh.uv[6*t+2*next+1];
       double metric_length = 0.0;
+      std::array<double,3> midpoint{};
+      double curvature = 0.0;
       if (quadric) {
         const double e = face == 2 ? 0.36 : 1.0, g = face == 2 ? 9.0 : 5.76;
         metric_length = std::hypot(std::sqrt(e)*du, std::sqrt(g)*dv);
+        if (face == 2) {
+          midpoint = {-1.5+3*v,-0.6*std::sin(u),0.6*std::cos(u)};
+          curvature = 1.0/0.6;
+        } else {
+          midpoint = {-std::sin(u),std::cos(u),-1.2+2.4*v};
+          curvature = 1.0;
+        }
       } else {
         const bool plane = kind == phx::mc::cad::template_index("plane");
         const bool cylinder = kind == phx::mc::cad::template_index("cylinder");
@@ -282,11 +311,21 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
         const bool cone = kind == phx::mc::cad::template_index("cone");
         const bool torus = kind == phx::mc::cad::template_index("torus");
         PHX_CHECK(plane || cylinder || sphere || cone || torus);
+        if (sphere || cylinder) curvature = 1.0/c[12];
+        if (cone) curvature = std::cos(c[13])/std::abs(c[12]+v*std::tan(c[13]));
+        if (torus) curvature = std::max(1.0/c[13],
+            std::abs(std::cos(v)/(c[12]+c[13]*std::cos(v))));
         double sum = 0.0;
         for (int j = 0; j < 3; ++j) {
           const double radial = std::cos(u)*c[3+j] + std::sin(u)*c[6+j];
           const double tangent = -std::sin(u)*c[3+j] + std::cos(u)*c[6+j];
           double su = c[3+j], sv = c[6+j];
+          midpoint[j] = c[j]+u*c[3+j]+v*c[6+j];
+          if (cylinder) midpoint[j] = c[j]+c[12]*radial+v*c[9+j];
+          if (sphere) midpoint[j] = c[j]+c[12]*(std::cos(v)*radial+std::sin(v)*c[9+j]);
+          if (cone) midpoint[j] = c[j]+(c[12]+v*std::tan(c[13]))*radial+v*c[9+j];
+          if (torus) midpoint[j] = c[j]+(c[12]+c[13]*std::cos(v))*radial+
+                                        c[13]*std::sin(v)*c[9+j];
           if (cylinder) { su = c[12]*tangent; sv = c[9+j]; }
           if (sphere) { su = c[12]*std::cos(v)*tangent;
                         sv = c[12]*(-std::sin(v)*radial+std::cos(v)*c[9+j]); }
@@ -299,12 +338,22 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
         }
         metric_length = std::sqrt(sum);
       }
-      maximum[face] = std::max(maximum[face], metric_length/size);
+      double local_size = size;
+      if (curvature > 0.0) local_size = std::min(local_size,std::sqrt(1.2/curvature));
+      for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (!std::isfinite(spacing[face][vertex])) continue;
+        const double* p = mesh.points.data()+3*vertex;
+        const double distance = std::hypot(std::hypot(midpoint[0]-p[0],midpoint[1]-p[1]),
+                                           midpoint[2]-p[2]);
+        local_size = std::min(local_size,spacing[face][vertex]+0.3*distance);
+      }
+      maximum[face] = std::max(maximum[face], metric_length/local_size);
     }
   }
   for (std::size_t face = 0; face < maximum.size(); ++face) {
     std::fprintf(stderr, "assembly h=%.17g face=%zu max_boundary_metric_length=%.17g\n",
                  size, face, maximum[face]);
+    PHX_CHECK(maximum[face] > 0.0);
     PHX_CHECK(maximum[face] <= 1.0 + 1e-12);
   }
 }
