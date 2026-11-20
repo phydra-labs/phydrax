@@ -3638,6 +3638,32 @@ void implicit_source_binding_owns_programs_and_refuses_wrong_orientation() {
   PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&request, &source) == PHX_MC_UNRESOLVED);
   PHX_CHECK(restored == nullptr);
   value_workspace[3] = 0.0;
+  // A jump field on the implicit facet: f = z + select(z > 0, c, -c) has no
+  // zero, yet over the facet z = 0 its enclosure is [-c, c] with grad f =
+  // (0, 0, 1), so without branch evidence the facet is admitted. With f's
+  // jump event (the comparison undecided on the facet) the source refuses.
+  {
+    constexpr double c = 0.004;
+    std::array<int64_t, 24> jump_code{13, 6, 1, 2, -1, 3, -1, 0,   // z > 0
+                                      14, 7, 1, 6, -1, 4, -1, 1,   // select(-c, c)
+                                      2,  8, 1, 2, -1, 7, -1, 0};  // z + select
+    std::array<double, 9> jump_workspace{0, 0, 0, 0, -c, c, 0, 0, 0};
+    std::array<int64_t, 1> jump_outputs{8};
+    constexpr std::array<int64_t, 6> jump_events{1, 3, 1, 6, -1, -1};
+    auto jump = source;
+    jump.value = {jump_code.data(), 3, nullptr, 0, nullptr, 0, jump_workspace.data(),
+                  jump_workspace.data(), 9, jump_outputs.data(), 1, nullptr, 0};
+    phx_mc_tet_mesh* jumped = nullptr;
+    request.result = &jumped;
+    PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&request, &jump) == PHX_MC_OK);
+    phx_mc_tet_mesh_free(jumped);
+    jumped = nullptr;
+    jump.value_events = jump_events.data();
+    jump.value_event_count = 1;
+    PHX_CHECK(phx_mc_tet_mesh_create_with_implicit(&request, &jump) == PHX_MC_UNRESOLVED);
+    PHX_CHECK(jumped == nullptr);
+    request.result = &restored;
+  }
   constexpr std::array<double, 9> reflection{-1, 0, 0, 0, 1, 0, 0, 0, 1};
   PHX_CHECK(phx_mc_tet_mesh_create_with_affine_metric(&request, reflection.data()) == PHX_MC_OK);
   PHX_CHECK(phx_mc_tet_mesh_bind_implicit(restored, &source) == PHX_MC_INVALID_ARGUMENT);

@@ -523,6 +523,8 @@ class _TetImplicitSource(ctypes.Structure):
     _fields_ = (
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("groups", _P),
         ("group_count", _I64),
         ("tolerance", _F64),
@@ -4921,9 +4923,14 @@ class IntervalBranchProgram(NamedTuple):
 
 
 class TetMeshImplicitSource(NamedTuple):
-    """Source-bound native interval programs and exterior facet group rows."""
+    """Source-bound native interval programs and exterior facet group rows.
 
-    value: IntervalBoxProgram
+    ``value`` carries f's branch-evidence events: every enclosure a facet
+    admission reads is over a box on which they report f continuous (else the
+    facet is refused), and transversality also requires f smooth there.
+    """
+
+    value: IntervalBranchProgram
     gradient: IntervalBoxProgram
     group_rows: np.ndarray
     tolerance: float
@@ -5003,7 +5010,18 @@ def _tet_implicit_source_payload(
 ) -> tuple[_TetImplicitSource, tuple[object, ...]]:
     if not isinstance(source, TetMeshImplicitSource):
         raise TypeError("implicit_source must be TetMeshImplicitSource.")
-    value, value_banks = _interval_box_program(source.value, 1, "implicit_source.value")
+    if not isinstance(source.value, IntervalBranchProgram):
+        raise TypeError("implicit_source.value must be IntervalBranchProgram.")
+    value, value_banks = _interval_box_program(
+        source.value.program, 1, "implicit_source.value.program"
+    )
+    events = np.ascontiguousarray(
+        _native_integer_array(
+            source.value.events, "implicit_source.value.events", np.dtype(np.int64)
+        )
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("implicit_source.value.events must have shape (rows, 6).")
     gradient, gradient_banks = _interval_box_program(
         source.gradient, 3, "implicit_source.gradient"
     )
@@ -5031,6 +5049,8 @@ def _tet_implicit_source_payload(
     view = _TetImplicitSource(
         value,
         gradient,
+        events.ctypes.data,
+        events.shape[0],
         _tet_mesh_pointer(groups),
         groups.size,
         tolerance,
@@ -5046,7 +5066,7 @@ def _tet_implicit_source_payload(
         0,
         0,
     )
-    return view, (*value_banks, *gradient_banks, groups, *buffers)
+    return view, (*value_banks, *gradient_banks, events, groups, *buffers)
 
 
 def _tet_implicit_source_snapshot(
@@ -5101,7 +5121,11 @@ def _tet_implicit_source_snapshot(
         return ctypes.string_at(pointer, length).decode("utf-8", "strict")
 
     source = TetMeshImplicitSource(
-        copy_program(view.value),
+        IntervalBranchProgram(
+            copy_program(view.value),
+            copy_bank(view.value_events, 6 * view.value_event_count, np.dtype(np.int64))
+            .reshape(-1, 6),
+        ),
         copy_program(view.gradient),
         copy_bank(view.groups, view.group_count, np.dtype(np.int32)),
         float(view.tolerance),

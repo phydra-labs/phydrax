@@ -1899,13 +1899,13 @@ def _carrier_quality(
 
 
 def _implicit_field_programs(
-    geometry: CompiledGeometry, *, branches: bool
-) -> tuple[IntervalBoxProgram | IntervalBranchProgram, IntervalBoxProgram]:
-    """Lower f and grad f of the implicit source to one-box native interval programs.
+    geometry: CompiledGeometry, /
+) -> tuple[IntervalBranchProgram, IntervalBoxProgram]:
+    """Lower f, with its branch-evidence events, and grad f of the implicit source.
 
-    With ``branches`` f is lowered with its branch-evidence events (an
-    ``IntervalBranchProgram``), the one program a carrier witness's corner
-    signs and continuity are both decided by.
+    f's ``IntervalBranchProgram`` is the one program a carrier witness's
+    corner signs and continuity, and a tetrahedral source's facet admissions,
+    are all decided by.
     """
     kernel, state = geometry.kernel, geometry.state
 
@@ -1920,11 +1920,7 @@ def _implicit_field_programs(
         value_program, gradient_program = (program.native_program for program in programs)
         if value_program is None or gradient_program is None:
             raise RuntimeError("Native interval preparation returned no native program.")
-        lowered = (
-            programs[0].native_branches().branch_box_program()
-            if branches
-            else value_program.box_program()
-        )
+        lowered = programs[0].native_branches().branch_box_program()
     except IntervalExtensionError as error:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -1934,16 +1930,6 @@ def _implicit_field_programs(
             stage="source_inspection",
         ) from error
     return lowered, gradient_program.box_program()
-
-
-def _implicit_field_box_programs(
-    geometry: CompiledGeometry, /
-) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
-    """Lower f and grad f of the implicit source to one-box native interval programs."""
-    value, gradient = _implicit_field_programs(geometry, branches=False)
-    if not isinstance(value, IntervalBoxProgram):
-        raise RuntimeError("The plain lowering returned a branch program.")
-    return value, gradient
 
 
 def _carrier_edge_length(
@@ -2186,9 +2172,7 @@ def _remesh_implicit_carrier(
     construction and certification counters. The result must meet the
     FIXED-fill radius-edge bound or the route refuses.
     """
-    value, gradient = _implicit_field_programs(source.geometry, branches=True)
-    if not isinstance(value, IntervalBranchProgram):
-        raise RuntimeError("The branch lowering returned a plain program.")
+    value, gradient = _implicit_field_programs(source.geometry)
     edge_length = _carrier_edge_length(vertices, faces, specification)
     try:
         remeshed = zero_set_remesh(
