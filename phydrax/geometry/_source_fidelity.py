@@ -3872,7 +3872,55 @@ def _reverse_distance_upper(
     return result
 
 
+# Outcomes hold only the three exact distance bounds, never operands.
+_ANALYTIC_DISTANCE_EVIDENCE: LiveProofLedger[tuple[Fraction, Fraction, Fraction]] = (
+    LiveProofLedger()
+)
+
+
 def _analytic_profile_distance_evidence(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    witness: SourceBoundaryDistanceWitness,
+    /,
+) -> tuple[Fraction, Fraction, Fraction]:
+    """Mesh-to-profile lower/upper and profile-to-mesh upper distance bounds.
+
+    The bounds are always replayed on the canonical reconstruction of the
+    profile, whose identities must equal the given profile's. Witness
+    validation, the fidelity certificate and the tubular-projection coverage
+    premise all need them for the same mesh, map and witness; evidence this
+    process completed for those live, unchanged operands and that profile
+    identity is not recomputed.
+    """
+    from .implicit._analytic_profile import AnalyticImplicitProfile
+    from .implicit._tubular_projection_coverage import _canonical_analytic_profile
+
+    if not isinstance(source, AnalyticImplicitProfile):
+        raise TypeError(
+            "A distance-only analytic witness requires AnalyticImplicitProfile authority."
+        )
+    operands = (mesh, geometry, witness)
+    parameters = (
+        source.source_id,
+        source.source_revision,
+        source.profile_id,
+        source.domain_id,
+    )
+    evidence = _ANALYTIC_DISTANCE_EVIDENCE.find(operands, parameters=parameters)
+    if evidence is None:
+        fingerprint = live_content_fingerprint(operands)
+        evidence = _replayed_analytic_profile_distance_evidence(
+            mesh, geometry, _canonical_analytic_profile(source), witness
+        )
+        _ANALYTIC_DISTANCE_EVIDENCE.record(
+            operands, fingerprint, evidence, parameters=parameters
+        )
+    return evidence
+
+
+def _replayed_analytic_profile_distance_evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
