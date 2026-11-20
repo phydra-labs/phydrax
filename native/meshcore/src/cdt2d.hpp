@@ -850,8 +850,10 @@ class ConstrainedMesher {
     const int32_t d = oold.v[j];
     const int32_t n_bc = told.n[next3(k)], c_bc = tri_.constraint(t, next3(k));
     const int32_t n_ca = told.n[prev3(k)], c_ca = tri_.constraint(t, prev3(k));
-    const int ja = tri_.edge_index(o, a, d);
-    const int jd = tri_.edge_index(o, d, b);
+    // Edge j of o is b -> a with apex d = v[j]: a -> d is next3(j), d -> b
+    // is prev3(j).
+    const int ja = next3(j);
+    const int jd = prev3(j);
     const int32_t n_ad = oold.n[ja], c_ad = tri_.constraint(o, ja);
     const int32_t n_db = oold.n[jd], c_db = tri_.constraint(o, jd);
     const uint8_t region_t = tri_.region[static_cast<std::size_t>(t)];
@@ -958,8 +960,10 @@ class ConstrainedMesher {
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
       const int32_t n_wm = told.n[next3(i)], c_wm = tri_.constraint(t, next3(i));
       const int32_t n_mu = told.n[prev3(i)], c_mu = tri_.constraint(t, prev3(i));
-      const int jw = tri_.edge_index(o, u, x);
-      const int ju = tri_.edge_index(o, x, w);
+      // Edge j of o is w -> u with apex x = v[j], so u -> x is next3(j) and
+      // x -> w is prev3(j).
+      const int jw = next3(j);
+      const int ju = prev3(j);
       const int32_t n_ux = oold.n[jw], c_ux = tri_.constraint(o, jw);
       const int32_t n_xw = oold.n[ju], c_xw = tri_.constraint(o, ju);
       const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
