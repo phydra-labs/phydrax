@@ -163,7 +163,17 @@ int32_t MeshSource::bind(std::vector<Point> points, std::vector<Triangle> triang
   cell_ = 2.0 * extents / static_cast<double>(m);
   for (int d = 0; d < 3; ++d) cell_ = std::max(cell_, (top[d] - origin_[d]) * 0x1p-10);
   if (!(cell_ > 0)) cell_ = 1;
+  // The cells are a dense array over the bounding box: coarsened (doubled)
+  // until it holds at most kCellsPerTriangle cells per triangle, so a long
+  // thin or sparse surface cannot make it outgrow the triangles.
+  constexpr double kCellsPerTriangle = 16;
   int64_t total = 1;
+  for (;;) {
+    double cells = 1;
+    for (int d = 0; d < 3; ++d) cells *= std::floor((top[d] - origin_[d]) / cell_) + 1;
+    if (cells <= kCellsPerTriangle * static_cast<double>(m)) break;
+    cell_ *= 2;
+  }
   for (int d = 0; d < 3; ++d) {
     shape_[static_cast<size_t>(d)] = static_cast<int64_t>(std::floor((top[d] - origin_[d]) / cell_)) + 1;
     total *= shape_[static_cast<size_t>(d)];
