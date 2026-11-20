@@ -126,6 +126,9 @@ class NativeMeshConstruction:
         default=None, kw_only=True
     )
     planar_embedding: PlanarEmbedding | None = field(default=None, kw_only=True)
+    # Why acceptance has no certifier for this construction; acceptance
+    # refuses it with this reason instead of certifying a mesh without witness.
+    uncertifiable: str | None = field(default=None, kw_only=True)
     layer_curving_evidence: LayerCurvingSourceEvidence | None = field(
         default=None, kw_only=True
     )

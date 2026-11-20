@@ -75,6 +75,7 @@ from ._native_sources import (
     NativeStructuredSource,
     NativeSweepSource,
 )
+from ._native_surface import _PreparedNativeSurface, NativeSurfaceRequest
 
 
 if TYPE_CHECKING:
@@ -701,9 +702,33 @@ def _cad_boundary_specification(
     )
 
 
+class _BoundaryProofPreparation:
+    """The boundary charts only the proof consumes, prepared once on first use."""
+
+    __slots__ = ("_prepared", "request")
+
+    def __init__(self, request: NativeSurfaceRequest, /) -> None:
+        self.request = request
+        self._prepared: _PreparedNativeSurface | None = None
+
+    def get(self, /) -> _PreparedNativeSurface:
+        from ._native_surface import prepare_native_surface_proof
+
+        if self._prepared is None:
+            self._prepared = prepare_native_surface_proof(self.request)
+        return self._prepared
+
+
 @final
 class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
-    """Dependency preparation: accepted parametric boundary, then CAD fill."""
+    """Dependency preparation: accepted parametric boundary, then CAD fill.
+
+    Planning validates the request and its trims and sizes the boundary faces
+    (``boundary_request``). The trim cover and chart roots that only the
+    proved construction consumes are prepared on its first execution, so
+    their refusals (uncertifiable or incomplete trim cover, unrooted charts)
+    surface there, not at planning.
+    """
 
     domain: MeshingDomain
     specification: VolumeMeshingSpec
@@ -711,7 +736,8 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
     coordinate_contract: SpatialCoordinateContract
     boundary_specification: SurfaceMeshingSpec
     boundary_options: NativeMeshingOptions
-    boundary_preparation: _PreparedConstruction
+    boundary_request: NativeSurfaceRequest
+    boundary_proof: _BoundaryProofPreparation
     boundary_plan_id: str = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
@@ -724,7 +750,7 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         boundary_specification: SurfaceMeshingSpec,
         boundary_options: NativeMeshingOptions,
-        boundary_preparation: _PreparedConstruction,
+        boundary_request: NativeSurfaceRequest,
         boundary_plan_id: str,
         /,
     ) -> None:
@@ -734,7 +760,8 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.boundary_specification = boundary_specification
         self.boundary_options = boundary_options
-        self.boundary_preparation = boundary_preparation
+        self.boundary_request = boundary_request
+        self.boundary_proof = _BoundaryProofPreparation(boundary_request)
         self.boundary_plan_id = boundary_plan_id
         self.preparation_id = canonical_fingerprint(
             {
@@ -759,7 +786,7 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         return self._execute_python()
 
     def _execute_python(self, /) -> NativeMeshConstruction:
-        boundary_construction = self.boundary_preparation.execute()
+        boundary_construction = self.boundary_proof.get().execute()
         surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
             boundary_construction,
@@ -845,9 +872,9 @@ def _prepare_brep_volume(
     boundary_options = _options_for_route(
         requested_options, "parametric_surface", force=True
     )
-    from ._native_surface import prepare_native_surface
+    from ._native_surface import native_surface_request
 
-    boundary_preparation = prepare_native_surface(
+    boundary_request = native_surface_request(
         domain,
         boundary_specification,
         boundary_options,
@@ -870,7 +897,7 @@ def _prepare_brep_volume(
         coordinate_contract,
         boundary_specification,
         boundary_options,
-        boundary_preparation,
+        boundary_request,
         boundary_plan_id,
     )
 
