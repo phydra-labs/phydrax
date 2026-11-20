@@ -12,11 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "box_tree.hpp"
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
 #include "surface_adapt.hpp"
+#include "zero_set_tube.hpp"
 
 namespace phx::mc::remesh {
 namespace {
@@ -107,8 +109,11 @@ int32_t IntervalBoxProgram::bind(const int64_t* instructions, int64_t instructio
   return program_.execute(lower_.data(), upper_.data(), workspace_size);
 }
 
-bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
-                                  Interval* result) const {
+int32_t IntervalBoxProgram::bind_events(const int64_t* events, int64_t event_count) {
+  return program_.bind_events(events, event_count);
+}
+
+bool IntervalBoxProgram::load(const Point& lower, const Point& upper) const {
   for (int d = 0; d < 3; ++d)
     if (!(lower[d] <= upper[d]) || !std::isfinite(lower[d]) || !std::isfinite(upper[d]))
       return false;
@@ -118,9 +123,32 @@ bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
     lower_[static_cast<size_t>(d)] = lower[d];
     upper_[static_cast<size_t>(d)] = upper[d];
   }
-  const int32_t status = program_.execute(lower_.data(), upper_.data(),
-                                          static_cast<int64_t>(lower_.size()));
-  if (status != PHX_MC_OK) return false;
+  return true;
+}
+
+bool IntervalBoxProgram::flags(const Point& lower, const Point& upper, bool& smooth,
+                               bool& continuous) const {
+  return load(lower, upper) &&
+         program_.execute_branches(lower_.data(), upper_.data(),
+                                   static_cast<int64_t>(lower_.size()), smooth,
+                                   continuous) == PHX_MC_OK;
+}
+
+bool IntervalBoxProgram::evaluate(const Point& lower, const Point& upper,
+                                  Interval* result) const {
+  // A required continuity comes from the same execution when this program
+  // carries the evidence, else from one execution of the evidence program.
+  bool smooth = true, continuous = true;
+  if (evidence_ != nullptr && evidence_ != this &&
+      (!evidence_->flags(lower, upper, smooth, continuous) || !continuous))
+    return false;
+  if (!load(lower, upper)) return false;
+  const auto size = static_cast<int64_t>(lower_.size());
+  const int32_t status = evidence_ == this ? program_.execute_branches(lower_.data(),
+                                                                       upper_.data(), size,
+                                                                       smooth, continuous)
+                                           : program_.execute(lower_.data(), upper_.data(), size);
+  if (status != PHX_MC_OK || !continuous) return false;
   // A real-power base outside its nonnegative domain leaves f undefined there.
   for (int64_t guard : guards_)
     if (lower_[static_cast<size_t>(guard)] < 0.0) return false;
@@ -541,6 +569,12 @@ int ZeroSetBandAdmission::transversal_sign(const Point& a, const Point& b,
   Point lower{}, upper{};
   bounding_box(a, b, c, lower, upper);
   std::array<Interval, 3> gradient{};
+  // The certificate reads the gradient enclosure as grad f only where the
+  // value program's branch evidence reports f smooth over the box.
+  bool smooth = true, continuous = true;
+  if (value_.checks_branches() &&
+      (!value_.flags(lower, upper, smooth, continuous) || !smooth || !continuous))
+    return 0;
   if (!gradient_over(gradient_, lower, upper, gradient)) return 0;
   std::array<Interval, 3> first{}, second{};
   for (int d = 0; d < 3; ++d) {
@@ -845,10 +879,12 @@ class ZeroSetCertifier final : public TriangleCertifier {
 };
 
 // The distance bound a witness box proves for a carrier triangle (see
-// phx_mc_zero_set_certify): its corners lie in the box (exact comparisons)
-// and two box corners have value enclosures of strictly opposite sign, so a
-// zero of f lies in the box; every point of the triangle is then within the
-// box diagonal (rounded up) of it. +inf when a check fails.
+// phx_mc_zero_set_certify): its corners lie in the box (exact comparisons),
+// f is continuous on the box by the value program's branch evidence, and two
+// box corners have value enclosures of strictly opposite sign, so a zero of
+// f lies on the segment between them, in the box; every point of the
+// triangle is then within the box diagonal (rounded up) of it. +inf when a
+// check fails.
 double witness_bound(const Point& a, const Point& b, const Point& c, const Point& lower,
                      const Point& upper, const IntervalBoxProgram& value) {
   for (int d = 0; d < 3; ++d) {
@@ -857,6 +893,8 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
     for (const Point* p : {&a, &b, &c})
       if (!((*p)[d] >= lower[d] && (*p)[d] <= upper[d])) return kInfinity;
   }
+  bool smooth = false, continuous = false;
+  if (!value.flags(lower, upper, smooth, continuous) || !continuous) return kInfinity;
   bool negative = false, positive = false;
   for (int corner = 0; corner < 8 && !(negative && positive); ++corner) {
     Point at{};
@@ -869,6 +907,114 @@ double witness_bound(const Point& a, const Point& b, const Point& c, const Point
   if (!(negative && positive)) return kInfinity;
   const IntervalVector extent = enclosed_difference(upper, lower);
   return norm_upper(extent);
+}
+
+// The possible-zero cover of the request's domain (box_tree.hpp), each kept
+// box accepted at the first level where box_reach puts it within `radius` of
+// the surface, down to a target diameter of radius / 2, evaluating at most
+// request.cover_budget boxes. Every zero of f in the domain lies in a leaf
+// (the tree's inclusion), so when no leaf is left outside, every zero lies
+// within `bound` (the largest leaf reach, < radius) of the surface.
+// `outside` counts the leaves left outside, -1 when the target level exceeds
+// the tree's, -2 when the run would exceed the budget; `boxes` accumulates
+// the boxes evaluated.
+int32_t cover_within(const phx_mc_zero_set_certify_request& request, const MeshSource& surface,
+                     double radius, int64_t& outside, double& bound, int64_t& boxes) {
+  const double* lower = request.domain;
+  const double* upper = request.domain + 3;
+  const phx_mc_interval_box_program& field = request.value;
+  const phx::mc::IntervalProgramView interval{
+      field.instructions,    field.instruction_count, field.indices,
+      field.index_count,     field.parameters,        field.parameter_count,
+      field.workspace_lower, field.workspace_upper,   field.workspace_size,
+      field.outputs[0],      field.guards,            field.guard_count};
+  bound = 0;
+  const auto reach = [&](const std::array<double, 6>& box) {
+    return box_reach(surface, {box[0], box[1], box[2]}, {box[3], box[4], box[5]});
+  };
+  const phx::mc::BoxAcceptance accept = [&](const std::array<double, 6>& box) {
+    const double r = reach(box);
+    if (!(r < radius)) return false;
+    bound = std::max(bound, r);
+    return true;
+  };
+  // A radius whose target level exceeds the tree's limit cannot be covered.
+  const int32_t target = phx::mc::dyadic_target_level(lower, upper, 0.5 * radius);
+  if (target > phx::mc::kMaximumBoxTreeLevel) {
+    outside = -1;
+    return PHX_MC_OK;
+  }
+  std::vector<phx::mc::DyadicLeaf> leaves;
+  int64_t evaluated = 0;
+  const int32_t status = phx::mc::possible_zero_leaves(interval, lower, upper, target, &accept,
+                                                       request.cover_budget, evaluated, leaves);
+  boxes += evaluated;
+  if (status == PHX_MC_CAPACITY_EXCEEDED) {
+    outside = -2;
+    return PHX_MC_OK;
+  }
+  if (status != PHX_MC_OK) return status;
+  // Leaves the predicate did not accept: refused at the target level, or
+  // stopped at the representability limit before it was offered.
+  outside = 0;
+  for (const phx::mc::DyadicLeaf& leaf : leaves) {
+    if (leaf.accepted) continue;
+    const double r = reach(leaf.box);
+    if (r < radius)
+      bound = std::max(bound, r);
+    else
+      ++outside;
+  }
+  return PHX_MC_OK;
+}
+
+// Zero set -> surface (see phx_mc_zero_set_certify), by one of two proofs.
+// Tube: the tube of the surface (zero_set_tube.hpp) and the cover within its
+// rho, so every zero lies in the tube, within the tube's reverse bound, and
+// within the cover's bound: reverse = the smaller. Cover: when the tube
+// refuses or leaves a leaf outside rho, the cover within the tolerance
+// alone, reverse = its bound. Proof 1 stands only within the tolerance (else
+// the cover alone is tried). counters receives (tube triangles refused in
+// its last round; cover leaves left outside by the last cover run, -1 or -2
+// as cover_within, -3 when a surface vertex lies outside the domain; the
+// proof, 1 tube or 2 cover; boxes evaluated).
+int32_t zero_set_reverse(const phx_mc_zero_set_certify_request& request,
+                         const std::vector<Point>& points, const std::vector<Triangle>& triangles,
+                         const IntervalBoxProgram& value, const IntervalBoxProgram& gradient,
+                         double& reverse, int64_t* counters) {
+  // The cover proves every zero in the domain near the surface; a surface
+  // that leaves the domain is not what that proves.
+  const double* lower = request.domain;
+  const double* upper = request.domain + 3;
+  for (const Point& p : points)
+    for (int d = 0; d < 3; ++d)
+      if (!(p[d] >= lower[d] && p[d] <= upper[d])) {
+        counters[1] = -3;
+        return PHX_MC_UNRESOLVED;
+      }
+  TubeCertificate tube;
+  int32_t status = certify_tube(points, triangles, value, gradient, request.orientation,
+                                request.edge_length, request.tolerance, tube);
+  counters[0] = tube.refused;
+  if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+  MeshSource surface;
+  if (surface.bind(points, triangles) != PHX_MC_OK) return PHX_MC_INTERNAL_ERROR;
+  double bound = 0;
+  if (status == PHX_MC_OK) {
+    status = cover_within(request, surface, tube.rho, counters[1], bound, counters[3]);
+    if (status != PHX_MC_OK) return status;
+    if (counters[1] == 0 && std::min(tube.reverse, bound) <= request.tolerance) {
+      reverse = std::min(tube.reverse, bound);
+      counters[2] = 1;
+      return PHX_MC_OK;
+    }
+  }
+  status = cover_within(request, surface, request.tolerance, counters[1], bound, counters[3]);
+  if (status != PHX_MC_OK) return status;
+  if (counters[1] != 0) return PHX_MC_UNRESOLVED;
+  reverse = bound;
+  counters[2] = 2;
+  return PHX_MC_OK;
 }
 
 // Certification with local repair of a closed surface against the zero set
@@ -888,9 +1034,17 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
       (request.carrier_triangle_count > 0 && request.carrier_triangles == nullptr) ||
       (request.carrier_triangle_count > 0 && request.carrier_boxes == nullptr) ||
       !phx::mc::addressable(request.carrier_triangle_count, 6, sizeof(double)) ||
-      !(request.edge_length > 0) || !std::isfinite(request.edge_length) ||
-      !(request.minimum_angle_degrees > 0) || !(request.minimum_angle_degrees < 60))
+      request.value_event_count < 0 ||
+      (request.value_event_count > 0 && request.value_events == nullptr) ||
+      request.domain == nullptr || !(request.edge_length > 0) ||
+      !std::isfinite(request.edge_length) || !(request.minimum_angle_degrees > 0) ||
+      !(request.minimum_angle_degrees < 60) || request.cover_budget < 1)
     return PHX_MC_INVALID_ARGUMENT;
+  for (int d = 0; d < 3; ++d)
+    if (!std::isfinite(request.domain[d]) || !std::isfinite(request.domain[d + 3]) ||
+        !(request.domain[d] < request.domain[d + 3]))
+      return PHX_MC_INVALID_ARGUMENT;
+  std::fill(request.counters, request.counters + 10, 0);
   IntervalBoxProgram value, gradient;
   const auto bind = [](IntervalBoxProgram& program, const phx_mc_interval_box_program& source,
                        int64_t outputs) -> int32_t {
@@ -905,6 +1059,13 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   if (status != PHX_MC_OK) return status;
   status = bind(gradient, request.gradient, 3);
   if (status != PHX_MC_OK) return status;
+  // Every enclosure the proofs read holds only where f's branch evidence
+  // (the value program's own events) reports f continuous; transversality
+  // also requires smooth (ZeroSetBandAdmission::transversal_sign).
+  status = value.bind_events(request.value_events, request.value_event_count);
+  if (status != PHX_MC_OK) return status;
+  value.require_continuity(&value);
+  gradient.require_continuity(&value);
   ImplicitOracle oracle;
   status = oracle.bind(request.value);
   if (status != PHX_MC_OK) return status;
@@ -967,9 +1128,15 @@ int32_t certify_zero_set(const phx_mc_zero_set_certify_request& request,
   request.counters[4] = certified.repair_splits;
   request.counters[5] = certified.rounds;
   if (status != PHX_MC_OK) return status;
+  // Zero set -> surface over the domain (phx_mc_zero_set_certify).
+  double reverse = 0;
+  status = zero_set_reverse(request, points, triangles, value, gradient, reverse,
+                            request.counters + 6);
+  if (status != PHX_MC_OK) return status;
   // Proved triangles are within the tolerance; carried triangles keep their
   // witness bound, which the caller weighs against its request.
-  *request.distance = certified.distance;
+  request.distances[0] = certified.distance;
+  request.distances[1] = reverse;
   result.points = std::move(points);
   result.triangles = std::move(triangles);
   result.carried = std::move(certified.carried);
@@ -995,7 +1162,7 @@ PHX_MC_API int32_t phx_mc_zero_set_remesh(const phx_mc_zero_set_remesh_request* 
 }
 
 PHX_MC_API int32_t phx_mc_zero_set_certify(const phx_mc_zero_set_certify_request* request) {
-  if (request == nullptr || request->distance == nullptr || request->counters == nullptr ||
+  if (request == nullptr || request->distances == nullptr || request->counters == nullptr ||
       request->result == nullptr)
     return PHX_MC_INVALID_ARGUMENT;
   *request->result = nullptr;

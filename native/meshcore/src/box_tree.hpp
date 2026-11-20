@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "interval_program.hpp"
@@ -24,7 +25,10 @@
 namespace phx::mc {
 
 // An interval program of f over three inputs (workspace entries 0 to 2):
-// its validated bytecode, its interval workspace templates and f's entry.
+// its validated bytecode, its interval workspace templates and f's entry,
+// and its guard entries (real-power bases and their domain flags: where a
+// guard's lower end is negative, f is undefined somewhere in the box and its
+// output enclosure proves nothing, so the box is kept).
 struct IntervalProgramView {
   const int64_t* instructions;
   int64_t instruction_count;
@@ -36,6 +40,8 @@ struct IntervalProgramView {
   const double* seed_upper;
   int64_t workspace_size;
   int64_t output;
+  const int64_t* guards = nullptr;
+  int64_t guard_count = 0;
 };
 
 // A segment from `negative` (f < 0) to `positive` (f > 0 at its making) and
@@ -47,14 +53,20 @@ struct Bracket {
 };
 
 // A possible-zero leaf: its lattice level and integer index, its outward box
-// (lower then upper corner), and whether it stopped above the target level
-// at the representability limit.
+// (lower then upper corner), whether it stopped above the target level at
+// the representability limit, and whether an acceptance predicate stopped it.
 struct DyadicLeaf {
   int32_t level = 0;
   std::array<int64_t, 3> index{};
   std::array<double, 6> box{};
   bool representability = false;
+  bool accepted = false;
 };
+
+// A per-box acceptance predicate over outward boxes (lower then upper
+// corner). A kept box it accepts stops subdividing and becomes an accepted
+// leaf; the predicate must itself prove that the box needs no finer cover.
+using BoxAcceptance = std::function<bool(const std::array<double, 6>& box)>;
 
 // The possible-zero leaves and their sign-change roots: one bracket per leaf
 // edge whose binary64 values at its lattice vertices (the nearest binary64
@@ -89,5 +101,18 @@ int32_t dyadic_target_level(const double* lower, const double* upper, double dia
 int32_t possible_zero_boxes(const IntervalProgramView& interval, const ProgramView& point,
                             const double* lower, const double* upper, int32_t target_level,
                             PossibleZeroBoxes& out);
+
+// The possible-zero leaves alone (no lattice vertices, no roots), each kept
+// box first offered to `accept`, if not null, which may stop it at any level
+// up to target_level (at most kMaximumBoxTreeLevel). At most
+// `budget` (>= 1) boxes are evaluated over all levels: a level that would
+// exceed it is refused with PHX_MC_CAPACITY_EXCEEDED before it is evaluated.
+// `evaluated_boxes` receives the boxes evaluated. With a null predicate and
+// an unreached budget the leaves are possible_zero_boxes'. Returns a PHX_MC
+// status.
+int32_t possible_zero_leaves(const IntervalProgramView& interval, const double* lower,
+                             const double* upper, int32_t target_level,
+                             const BoxAcceptance* accept, int64_t budget,
+                             int64_t& evaluated_boxes, std::vector<DyadicLeaf>& leaves);
 
 }  // namespace phx::mc

@@ -39,7 +39,7 @@ from ._interval_enclosure import (
 
 
 if TYPE_CHECKING:
-    from .._meshcore import IntervalBoxProgram
+    from .._meshcore import IntervalBoxProgram, IntervalBranchProgram
 
 
 type _Interval = tuple[np.ndarray | np.generic, np.ndarray | np.generic]
@@ -403,9 +403,13 @@ class NativeIntervalProgram:
         construction: the result is a proposal certified afterwards.
         """
         if self.input_dimension != 3 or math.prod(self.output.shape) != 1:
-            raise ValueError("restricted Delaunay meshing requires one output of three inputs.")
+            raise ValueError(
+                "restricted Delaunay meshing requires one output of three inputs."
+            )
         if self.batch_capacity != 1 or not self.elementwise:
-            raise ValueError("restricted Delaunay meshing requires an elementwise one-box program.")
+            raise ValueError(
+                "restricted Delaunay meshing requires an elementwise one-box program."
+            )
         seed_lower = np.zeros((self.workspace_size,), dtype=np.float64)
         seed_upper = np.zeros_like(seed_lower)
         for seed in self.seeds:
@@ -499,6 +503,16 @@ class NativeIntervalProgram:
             outputs,
             self.domain_guards,
         )
+
+    def branch_box_program(self, /) -> IntervalBranchProgram:
+        """Return the one-box form with its branch-evidence events."""
+        if self.events is None:
+            raise IntervalExtensionError(
+                "native branch evidence requires a program lowered with box axes."
+            )
+        from .._meshcore import IntervalBranchProgram
+
+        return IntervalBranchProgram(self.box_program(), self.events)
 
 
 class _Builder:

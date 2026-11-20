@@ -23,6 +23,7 @@ from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     IntervalBoxProgram,
+    IntervalBranchProgram,
     MeshcoreError,
     zero_set_certify,
     zero_set_remesh,
@@ -1897,10 +1898,15 @@ def _carrier_quality(
     )
 
 
-def _implicit_field_box_programs(
-    geometry: CompiledGeometry, /
-) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
-    """Lower f and grad f of the implicit source to one-box native interval programs."""
+def _implicit_field_programs(
+    geometry: CompiledGeometry, *, branches: bool
+) -> tuple[IntervalBoxProgram | IntervalBranchProgram, IntervalBoxProgram]:
+    """Lower f and grad f of the implicit source to one-box native interval programs.
+
+    With ``branches`` f is lowered with its branch-evidence events (an
+    ``IntervalBranchProgram``), the one program a carrier witness's corner
+    signs and continuity are both decided by.
+    """
     kernel, state = geometry.kernel, geometry.state
 
     def value(point: Array) -> Array:
@@ -1911,6 +1917,14 @@ def _implicit_field_box_programs(
             prepare_interval_function(function, 3, batch_capacity=1, execution="native")
             for function in (value, jax.grad(value))
         )
+        value_program, gradient_program = (program.native_program for program in programs)
+        if value_program is None or gradient_program is None:
+            raise RuntimeError("Native interval preparation returned no native program.")
+        lowered = (
+            programs[0].native_branches().branch_box_program()
+            if branches
+            else value_program.box_program()
+        )
     except IntervalExtensionError as error:
         raise _failure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -1919,10 +1933,17 @@ def _implicit_field_box_programs(
             provider_code="native_implicit_carrier_remesh",
             stage="source_inspection",
         ) from error
-    value_program, gradient_program = (program.native_program for program in programs)
-    if value_program is None or gradient_program is None:
-        raise RuntimeError("Native interval preparation returned no native program.")
-    return value_program.box_program(), gradient_program.box_program()
+    return lowered, gradient_program.box_program()
+
+
+def _implicit_field_box_programs(
+    geometry: CompiledGeometry, /
+) -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+    """Lower f and grad f of the implicit source to one-box native interval programs."""
+    value, gradient = _implicit_field_programs(geometry, branches=False)
+    if not isinstance(value, IntervalBoxProgram):
+        raise RuntimeError("The plain lowering returned a branch program.")
+    return value, gradient
 
 
 def _carrier_edge_length(
@@ -2145,10 +2166,11 @@ def _remesh_implicit_carrier(
     vertices: np.ndarray,
     faces: np.ndarray,
     witness_boxes: np.ndarray,
+    domain: np.ndarray,
     carrier_distance: float,
     admission_tolerance: float,
     /,
-) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray, np.ndarray, float]:
     """Remesh the scaffold carrier natively and certify every resulting triangle.
 
     Construction is floating point; every triangle of the result is then
@@ -2157,18 +2179,22 @@ def _remesh_implicit_carrier(
     around creases, which are accepted at the diagonal of their scaffold cell
     box (``witness_boxes``, one per carrier face) when the certificate proves
     that box holds a zero of the field; refused triangles are repaired
-    locally. ``carrier_distance`` only steers the construction's projection
-    reach. Returns the certified surface, its distance, and the construction
-    and certification counters. The result must meet the FIXED-fill
-    radius-edge bound or the route refuses.
+    locally. The certificate also proves every zero of the field in
+    ``domain`` (the discovery's lattice domain) near the result, or refuses.
+    ``carrier_distance`` only steers the construction's projection reach.
+    Returns the certified surface, its surface-to-zero-set distance, and the
+    construction and certification counters. The result must meet the
+    FIXED-fill radius-edge bound or the route refuses.
     """
-    value, gradient = _implicit_field_box_programs(source.geometry)
+    value, gradient = _implicit_field_programs(source.geometry, branches=True)
+    if not isinstance(value, IntervalBranchProgram):
+        raise RuntimeError("The branch lowering returned a plain program.")
     edge_length = _carrier_edge_length(vertices, faces, specification)
     try:
         remeshed = zero_set_remesh(
             vertices,
             faces,
-            value,
+            value.program,
             admission_tolerance,
             carrier_distance,
             edge_length,
@@ -2184,6 +2210,7 @@ def _remesh_implicit_carrier(
             vertices,
             faces,
             witness_boxes,
+            domain,
             edge_length,
             _CARRIER_MINIMUM_ANGLE_DEGREES,
         )
@@ -2194,6 +2221,17 @@ def _remesh_implicit_carrier(
             provider_code="native_implicit_carrier_remesh",
             stage="surface_meshing",
         ) from error
+    # Both directions within the admission tolerance: the zero set ->
+    # surface bound is published with the certificate and gated here.
+    if not certified.reverse_distance <= admission_tolerance:
+        raise _failure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "The implicit carrier zero-set remesh certified the zero set only within "
+            f"{certified.reverse_distance:.6g} of the surface, above the admission "
+            f"tolerance {admission_tolerance:.6g}.",
+            provider_code="native_implicit_carrier_remesh",
+            stage="surface_meshing",
+        )
     worst = _maximum_face_radius_edge_ratio(certified.vertices, certified.triangles)
     if schedule.radius_edge_bound is None and not np.isfinite(worst):
         raise _failure(
@@ -2221,6 +2259,7 @@ def _remesh_implicit_carrier(
         certified.vertices,
         certified.triangles,
         certified.distance,
+        certified.reverse_distance,
         remeshed.counters,
         certified.counters,
         edge_length,
@@ -2406,17 +2445,24 @@ def _implicit_plc_carrier(
         witness_boxes = np.asarray(scaffold.cell_boxes, dtype=np.float64)[
             np.asarray(scaffold.triangle_cell_rows, dtype=np.int64)
         ]
-        vertices, triangles, carrier_distance, counters, certification, edge_length = (
-            _remesh_implicit_carrier(
-                source,
-                specification,
-                schedule,
-                vertices,
-                triangles,
-                witness_boxes,
-                scaffold_distance,
-                admission_tolerance,
-            )
+        (
+            vertices,
+            triangles,
+            carrier_distance,
+            reverse_distance,
+            counters,
+            certification,
+            edge_length,
+        ) = _remesh_implicit_carrier(
+            source,
+            specification,
+            schedule,
+            vertices,
+            triangles,
+            witness_boxes,
+            np.asarray(scaffold.domain, dtype=np.float64),
+            scaffold_distance,
+            admission_tolerance,
         )
         face_scaffold_rows = _nearest_scaffold_rows(
             scaffold_vertices, scaffold_triangles, vertices, triangles
@@ -2457,6 +2503,8 @@ def _implicit_plc_carrier(
             ("carrier_remesh_embedding_refusals", float(certification[2])),
             ("carrier_remesh_kept_carrier_triangles", float(certification[3])),
             ("carrier_remesh_repair_splits", float(certification[4])),
+            ("carrier_remesh_reverse_distance", reverse_distance),
+            ("carrier_remesh_reverse_proof", float(certification[8])),
         )
     carrier_revision = canonical_fingerprint(
         {

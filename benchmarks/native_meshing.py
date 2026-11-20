@@ -471,7 +471,11 @@ def _volume_rows() -> tuple[_Row, ...]:
         for vertices, faces in (_icosphere(5), _icosphere(6))
     )
     tori = (
-        ("surface-to-tets-torus", thousandths, _restricted_torus_surface(1e-3 * thousandths))
+        (
+            "surface-to-tets-torus",
+            thousandths,
+            _restricted_torus_surface(1e-3 * thousandths),
+        )
         for thousandths in (72, 25)
     )
     grids = (
@@ -570,7 +574,9 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 contract,
             )
             if not isinstance(prepared, PreparedRestrictedImplicitVolume):
-                raise TypeError("An analytic profile volume prepares the restricted route.")
+                raise TypeError(
+                    "An analytic profile volume prepares the restricted route."
+                )
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
@@ -592,21 +598,32 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return ring * ring + x[2] * x[2] - 0.16
 
+    # Per field: f and grad f as one-box programs (construction), and f with
+    # its branch-evidence events (the certificate's value program).
     programs = []
     for label, function in (("sphere", sphere), ("torus", torus)):
-        pair = []
-        for field in (function, jax.grad(function)):
-            program = prepare_interval_function(
-                field, 3, batch_capacity=1, execution="native"
-            ).native_program
-            if program is None:
-                raise RuntimeError(
-                    f"The {label} field and its gradient must lower to native "
-                    "interval programs."
-                )
-            pair.append(program.box_program())
-        programs.append(tuple(pair))
-    (sphere_value, sphere_gradient), (torus_value, torus_gradient) = programs
+        value_prepared = prepare_interval_function(
+            function, 3, batch_capacity=1, execution="native"
+        )
+        gradient_program = prepare_interval_function(
+            jax.grad(function), 3, batch_capacity=1, execution="native"
+        ).native_program
+        if value_prepared.native_program is None or gradient_program is None:
+            raise RuntimeError(
+                f"The {label} field and its gradient must lower to native "
+                "interval programs."
+            )
+        programs.append(
+            (
+                value_prepared.native_program.box_program(),
+                gradient_program.box_program(),
+                value_prepared.native_branches().branch_box_program(),
+            )
+        )
+    (
+        (sphere_value, sphere_gradient, sphere_certified),
+        (torus_value, torus_gradient, torus_certified),
+    ) = programs
     spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
     sphere_rows = (
         ("surface-remesh-sphere-1e3", 5, 1e3),
@@ -617,12 +634,22 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ("surface-remesh-sphere-1e5", 8, 1e5),
     )
     rows: list[_Row] = []
-    for name, value, gradient, distance, samples, area, (vertices, faces), target in (
+    # The certificate's domains: boxes holding each zero set with a margin.
+    sphere_domain = np.array(
+        [[-1.25, -1.25, -1.25], [1.25, 1.25, 1.25]], dtype=np.float64
+    )
+    torus_domain = np.array([[-1.5, -1.5, -0.5], [1.5, 1.5, 0.5]], dtype=np.float64)
+    for name, value, gradient, certified, domain, distance, samples, area, (
+        vertices,
+        faces,
+    ), target in (
         *(
             (
                 name,
                 sphere_value,
                 sphere_gradient,
+                sphere_certified,
+                sphere_domain,
                 _sphere_distance,
                 _sphere_samples,
                 4.0 * math.pi,
@@ -635,6 +662,8 @@ def _remesh_rows() -> tuple[_Row, ...]:
             "surface-remesh-torus",
             torus_value,
             torus_gradient,
+            torus_certified,
+            torus_domain,
             _torus_distance,
             _torus_samples,
             4.0 * math.pi**2 * 0.4,
@@ -655,11 +684,12 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                quality=lambda result, certified=certified, gradient=gradient, domain=domain, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
                     _zero_set_quality(
                         result,
-                        value,
+                        certified,
                         gradient,
+                        domain,
                         tolerance,
                         edge,
                         distance,
@@ -871,18 +901,20 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
 
 def _zero_set_quality(
     result: object,
-    value: _meshcore.IntervalBoxProgram,
+    value: _meshcore.IntervalBranchProgram,
     gradient: _meshcore.IntervalBoxProgram,
+    domain: np.ndarray,
     tolerance: float,
     edge: float,
     distance: Callable[[np.ndarray], np.ndarray],
     samples: Callable[[int], np.ndarray],
     /,
 ) -> tuple[int, dict[str, float]]:
-    # The certificate against the zero set (zero_set_certify at the tolerance,
-    # with no carrier: the rows hold no witness for their input; a refusal is
-    # one miss), then _surface_quality of the certified surface (of the
-    # constructed one when refused).
+    # The two-way certificate against the zero set in `domain`
+    # (zero_set_certify at the tolerance, with no carrier: the rows hold no
+    # witness for their input; a refusal is one miss, and so is a certified
+    # zero set -> surface bound above the tolerance), then _surface_quality
+    # of the certified surface (of the constructed one when refused).
     if not isinstance(result, _meshcore.ZeroSetRemeshResult):
         raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
     try:
@@ -896,6 +928,7 @@ def _zero_set_quality(
             np.empty((0, 3), dtype=np.float64),
             np.empty((0, 3), dtype=np.int64),
             np.empty((0, 2, 3), dtype=np.float64),
+            domain,
             edge,
             30.0,
         )
@@ -910,10 +943,13 @@ def _zero_set_quality(
     missed, measured = _surface_quality(
         certificate.vertices, certificate.triangles, distance, samples, tolerance
     )
-    return missed, {
+    return missed + int(certificate.reverse_distance > tolerance), {
         **measured,
         "certified": 1.0,
         "certified_distance": certificate.distance,
+        "certified_reverse_distance": certificate.reverse_distance,
+        "certified_reverse_proof": float(certificate.counters[8]),
+        "certified_cover_boxes": float(certificate.counters[9]),
     }
 
 
