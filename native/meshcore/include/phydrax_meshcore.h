@@ -2855,6 +2855,236 @@ PHX_MC_API int32_t phx_mc_verify_chart_partition(
     const int64_t* chord_use, const int64_t* chord_loop, const double* chord_uv,
     const double* chord_range, int64_t evidence_capacity,
     phx_mc_chart_failure* evidence, int64_t* evidence_count);
+/* One-call curve and surface construction; controls have physical units.
+   face_sizes are requested edge lengths h. Curves and faces use the internal
+   size h_t = h/sqrt(2): the chart size test R <= h_t/sqrt(2) gives every
+   edge <= 2R <= h. */
+typedef struct phx_mc_cad_surface_controls {
+  const double* face_sizes;
+  const double* face_tolerances;
+  const double* curve_tolerances;
+  double tolerance_fraction;
+  double grading;
+  double minimum_size;
+} phx_mc_cad_surface_controls;
+
+typedef struct phx_mc_cad_face_stats {
+  int64_t metric_evaluations, insertions, unresolved_size, unresolved_angle;
+  int64_t encroachment_refusals, nonstar_refusals, outside_refusals, proximity_refusals;
+  int64_t unresolved_triangles, excluded_refusals, fixed_triangles_skipped, omitted_pole_points;
+  int64_t periodic_corner_gaps;
+  uint64_t max_periodic_corner_gap_ulps;
+} phx_mc_cad_face_stats;
+
+/* A gap whose quotient by the period exceeds 2^52 in magnitude is refused
+ * as unrepresentable. */
+enum {
+  PHX_MC_CAD_FACE_SHEET_MISMATCH = 1,
+  PHX_MC_CAD_FACE_SHIFT_UNREPRESENTABLE = 2,
+  PHX_MC_CAD_FACE_PERIODIC_WRAP = 3
+};
+enum {
+  PHX_MC_CAD_FACE_REFINEMENT = 4
+};
+/* Refinement refusal kinds match the chart kernel's deterministic records. */
+enum {
+  PHX_MC_CAD_REFUSAL_NONE = 0,
+  PHX_MC_CAD_REFUSAL_ENCROACHMENT = 1,
+  PHX_MC_CAD_REFUSAL_OUTSIDE = 2,
+  PHX_MC_CAD_REFUSAL_PROXIMITY = 3,
+  PHX_MC_CAD_REFUSAL_NONSTAR = 4,
+  PHX_MC_CAD_REFUSAL_EXCLUDED = 5
+};
+typedef struct phx_mc_cad_face_failure {
+  int32_t face, loop, use, axis, reason;
+  int64_t turns;
+  double parameter;
+  /* Refinement-only fields: triangle is a pre-flip chart slot, not a global
+   * triangle index. Coordinates are in the face's native parameter chart.
+   * curve_segment is the zero-based segment in that curve's shared samples;
+   * curve and curve_segment are -1 when no curve segment is implicated.
+   * segment_parameters are normalized curve parameters, ordered along the use.
+   * candidate_uv is NaN when refusal_kind is NONE. */
+  int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
+  double candidate_uv[2], triangle_uv[6], segment_parameters[2];
+} phx_mc_cad_face_failure;
+
+typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
+typedef struct phx_mc_cad_surface_arrays {
+  int64_t vertex_capacity, triangle_capacity, sliver_capacity, curve_edge_capacity, face_capacity;
+  int64_t curve_capacity, parameter_capacity, failure_capacity, face_failure_capacity;
+  double* points; int8_t* vertex_dimensions; int32_t* vertex_entities; double* vertex_parameters;
+  int32_t* triangles; int32_t* triangle_patches; double* triangle_uv;
+  int32_t* triangle_edge_uses; int32_t* facet_regions;
+  double* sliver_uv; int32_t* sliver_patches;
+  int32_t* curve_edges; int32_t* curve_edge_curves; double* curve_edge_parameters;
+  phx_mc_cad_face_stats* face_stats;
+  int64_t* curve_offsets; double* curve_parameters; int64_t* curve_sag_splits;
+  phx_mc_cad_curve_failure* curve_failures;
+  phx_mc_cad_curve_statistics* curve_statistics;
+  phx_mc_cad_face_failure* face_failures;
+} phx_mc_cad_surface_arrays;
+
+/* OK returns a complete candidate. UNRESOLVED returns a handle with either a
+ * complete candidate or only findings (zero vertices and triangles); a curve
+ * failure without a complete proposal may return a null handle. Sizes are
+ * vertices, triangles, slivers, curve edges, faces, curves, curve parameters,
+ * unresolved curve intervals and face failures, respectively. Export validates
+ * every capacity and required output before writing anything. */
+PHX_MC_API int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
+                                    const phx_mc_cad_surface_controls* controls,
+                                    phx_mc_cad_surface_result** result);
+PHX_MC_API int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,
+                                                    int64_t sizes[9]);
+PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_result* result,
+                                                     const phx_mc_cad_surface_arrays* arrays);
+PHX_MC_API void phx_mc_cad_surface_result_free(phx_mc_cad_surface_result* result);
+
+/* Per-pole rows: face, pole use, protected sectors, free sectors. With
+ * capacity zero and rows null, only the required row count is returned. */
+PHX_MC_API int32_t phx_mc_cad_surface_pole_sectors(
+    const phx_mc_cad_surface_result* result, int64_t capacity,
+    int64_t* rows, int64_t* count);
+
+/* Chart rows include collapsed pole slivers; chart_to_mesh is -1 for those
+ * rows, otherwise the index in the exported physical triangle array.
+ * edge_chord is -1 for interior edges. Chord rows include pole uses. */
+typedef struct phx_mc_cad_chart_arrays {
+  int64_t triangle_capacity, use_capacity, chord_capacity;
+  int64_t* triangles; int32_t* patches; double* uv;
+  int64_t* chart_to_mesh; int64_t* edge_chord;
+  int64_t* use_patch; double* use_range;
+  int64_t* chord_use; int64_t* chord_loop; double* chord_uv; double* chord_range;
+} phx_mc_cad_chart_arrays;
+PHX_MC_API int32_t phx_mc_cad_chart_sizes(
+    const phx_mc_cad_surface_result* result, int64_t sizes[3]);
+PHX_MC_API int32_t phx_mc_cad_chart_export(
+    const phx_mc_cad_surface_result* result, const phx_mc_cad_chart_arrays* arrays);
+
+enum {
+  PHX_MC_FIDELITY_CERTIFIED = 0,
+  PHX_MC_FIDELITY_RESOLUTION = 1,
+  PHX_MC_FIDELITY_INTERVAL_REFUSAL = 2,
+  PHX_MC_FIDELITY_TRIM_REFUSAL = 3,
+  PHX_MC_FIDELITY_EDGE_ASSOCIATION = 4
+};
+enum {
+  PHX_MC_FIDELITY_BAD_CHORD_EDGE = 1,
+  PHX_MC_FIDELITY_DUPLICATE_CHORD = 2,
+  PHX_MC_FIDELITY_MISSING_CHORD = 3,
+  PHX_MC_FIDELITY_UNPAIRED_INTERIOR = 4,
+  PHX_MC_FIDELITY_CHART_MESH_LINK = 5,
+  PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE = 6
+};
+typedef struct phx_mc_fidelity_finding {
+  int32_t kind;
+  int64_t triangle, edge, other_triangle, other_edge, chord;
+} phx_mc_fidelity_finding;
+/* CAD fidelity verifier. UV triangles and trim chords are already in one
+ * lifted chart per patch; the producer refuses non-closing lifts. No periodic
+ * identification is performed. Each use belongs to a patch and has a directed
+ * nonempty range; each directed chord belongs to one use and numbered loop.
+ * Triangle UV is (triangle_count,3,2), chord UV (chord_count,2,2), and ranges
+ * are (count,2). The source must establish that its oriented trim cycles bound
+ * the patch. Endpoint and range joins compare bitwise, including signed zero.
+ * edge_chord (triangle_count,3) names the published chord row for each edge,
+ * or -1 for an interior edge. Use rows refer to model use rows. Chart
+ * triangles include collapsed pole slivers; mesh_triangles omit them and are
+ * the input of V2. chart_to_mesh maps each chart triangle to its oriented mesh
+ * triangle, or -1 exactly for a sliver with a pole-use chord whose physical
+ * vertex IDs coincide. Every mesh triangle must have exactly one chart image.
+ * Pole chart corners are binary64 and need not equal the exact pole parameter;
+ * the p-curve lens and interval endpoint mismatch enclose that difference.
+ * The exact-source coefficient bounds have model->node_reals layout.
+ * Certification is conditional on a separately verified chart partition.
+ *
+ * Outputs per triangle are upper distance bounds, status, reason and subdivision
+ * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
+ * the face's p-curve; unsupported interval nodes report
+ * PHX_MC_UNRESOLVED. Overall OK means all rows certified, UNRESOLVED means at
+ * least one row did not certify.
+ * Invalid input leaves outputs unchanged. max_depth is between 0 and 24. */
+/* Edge-association findings identify triangle and local edge; -1 means absent.
+ * evidence_count is required and reports the number of findings. Insufficient
+ * evidence_capacity reports PHX_MC_CAPACITY_EXCEEDED before evidence or row
+ * outputs are written. */
+PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
+    const phx_mc_cad_model* model, int64_t coefficient_count,
+    const double* coefficient_lower, const double* coefficient_upper,
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
+    int64_t use_count, const int64_t* use_patch, const double* use_range,
+    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
+    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
+    const int64_t* edge_chord, double tolerance, int32_t max_depth,
+    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
+    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
+    phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+
+/* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
+ * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the
+ * closed-curve unwrap; a surface edge (an edge of a surface triangle) takes
+ * S_f(uv_mid) from the lowest such triangle's UV record, a pole corner taking
+ * the free p-curve coordinate of the other corner; every other edge takes
+ * the straight midpoint. Surface triangles and curve edges index the first
+ * surface_point_count points (the face stage's exported vertices, with their
+ * dimensions and entities); later points are volume points. Tetrahedra are
+ * positively oriented (det[p1-p0, p2-p0, p3-p0] > 0); every surface triangle
+ * edge and curve edge must be a tet edge. Edges are the sorted (min, max)
+ * vertex pairs; cell_edges (T, 6) lists each cell's edges in the order
+ * 01 02 03 12 13 23, the quadratic node order of
+ * phx_mc_quadratic_tetrahedron_validity. Every cell is decided by that
+ * function at relative_floor; a cell that is not VALID is repaired in cell
+ * order: one Jacobi pass of harmonic extension moves the interior nodes of the
+ * failing cells and their edge neighbours, then every curved node of a cell
+ * still not VALID returns to its chord midpoint, each curved boundary edge
+ * so straightened recorded as one (edge, cell) row, until no cell with a
+ * curved node fails. cell_decisions are the final decisions. Counts are
+ * always written; a capacity below them is PHX_MC_CAPACITY_EXCEEDED before
+ * any other output is written. Output is independent of thread count. */
+enum {
+  PHX_MC_CAD_EDGE_INTERIOR = 0,
+  PHX_MC_CAD_EDGE_SURFACE = 1,
+  PHX_MC_CAD_EDGE_CURVE = 2
+};
+typedef struct phx_mc_cad_quadratic_stats {
+  int64_t curve_edges, surface_edges, interior_edges;
+  int64_t initial_invalid, initial_unresolved;
+  int64_t harmonic_nodes, harmonic_repaired_cells;
+  int64_t straightened_edges, final_invalid, final_unresolved;
+} phx_mc_cad_quadratic_stats;
+typedef struct phx_mc_cad_quadratic_request {
+  const phx_mc_cad_model* model;
+  int64_t point_count;
+  const double* points; /* (P, 3) */
+  int64_t surface_point_count;
+  const int8_t* vertex_dimensions; /* (surface_point_count,) */
+  const int32_t* vertex_entities;  /* (surface_point_count,) */
+  int64_t tetrahedron_count;
+  const int32_t* tetrahedra; /* (T, 4) */
+  int64_t triangle_count;
+  const int32_t* triangles;        /* (S, 3) */
+  const int32_t* triangle_patches; /* (S,) */
+  const double* triangle_uv;       /* (S, 3, 2) */
+  int64_t curve_edge_count;
+  const int32_t* curve_edges;            /* (E, 2) */
+  const int32_t* curve_edge_curves;      /* (E,) */
+  const double* curve_edge_parameters;   /* (E, 2) native curve parameters */
+  double relative_floor;
+  int64_t edge_capacity, record_capacity;
+  int32_t* edges;         /* (N, 2) */
+  double* nodes;          /* (N, 3) */
+  int8_t* edge_kinds;     /* (N,) PHX_MC_CAD_EDGE_* */
+  int32_t* edge_entities; /* (N,) face, curve, or -1 */
+  int64_t* cell_edges;    /* (T, 6) */
+  int32_t* cell_decisions; /* (T,) PHX_MC_QUADRATIC_VALIDITY_* */
+  int64_t* records;       /* (R, 2) straightened edge, cell */
+  int64_t* edge_count;
+  int64_t* record_count;
+  phx_mc_cad_quadratic_stats* stats;
+} phx_mc_cad_quadratic_request;
+PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
 
 #ifdef __cplusplus
 }

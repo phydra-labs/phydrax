@@ -572,6 +572,10 @@ def load_cuda_component(name: CudaNativeComponentName, /) -> CudaNativeComponent
             else:
                 dependencies = tuple(ctypes.CDLL(filename) for filename in preloaded)
                 library = ctypes.CDLL(str(path))
+        except CudaNativeUnavailableError:
+            # A specific refusal (e.g. native-dependency-missing) is an ImportError;
+            # keep it instead of rewrapping it as companion-invalid.
+            raise
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             raise _refuse(
                 "companion-invalid",
