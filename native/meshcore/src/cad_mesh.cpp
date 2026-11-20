@@ -577,11 +577,12 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     result.splits.push_back(split);
     ++stats.boundary_splits;
   }
-  // The request h is a target edge length (MAC 4176ab2, option (c)); until S3's
-  // edge-length size lands, S3's circumradius bound is set to h itself (option
-  // (b)): 1.3-1.4x Gmsh's tet count, against 4-5x with the regular-tet value
-  // h * sqrt(6) / 4. Each surface point takes the smallest h of its faces, the
-  // rest the smallest h overall; refinement interpolates inside.
+  // S3's size is an upper bound on each cell's circumradius; the request h is
+  // passed as that bound unchanged. Measured on Gmsh's own quadric surfaces (MAC
+  // 111e914), this reproduces Gmsh's interior edge distribution (median 1.34 h vs
+  // Gmsh's 1.37 h) at 1.08x its tet count, whereas the regular-tet value
+  // h * sqrt(6) / 4 gives 4-5x. Each surface point takes the smallest h of its
+  // faces, the rest the smallest h overall; refinement interpolates inside.
   const auto surface_points = surface.points.size();
   const auto& recovered = recovery->recovery;
   const std::size_t point_count = recovered.points.size() / 3;
