@@ -324,6 +324,24 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Analytic implicit profile volumes are meshed by restricted Delaunay
+  refinement, surface first (`implicit_restricted_delaunay`,
+  `phx_mc_implicit_restricted_delaunay`,
+  `NativeIntervalProgram.restricted_tetrahedra`). Seeds come from the
+  possible-zero cover of the interval program on the anchored dyadic lattice
+  of adaptive discovery (`box_tree.hpp`), facets are refined to the certified
+  facet bound, the interior in the same triangulation to radius-edge 2, and
+  slivers are removed to 15 degrees; a separation bound makes termination a
+  packing argument and a refused refinement is an `UNRESOLVED` construction
+  failure. Isosurface stuffing (`implicit_stuffing`,
+  `phx_mc_implicit_stuffing`, `stuff_tetrahedra`, `PreparedStuffed*`) is
+  removed: on every implicit model the restricted route is 2-10x faster with
+  4-9x fewer cells, and every model that certified before still certifies.
+  Declared identity change: route literal, prepared fingerprints (facet edge
+  and cell size instead of spacing and levels), and every analytic-profile
+  volume's mesh, result and certification ids; the S3 `surface-to-tets-torus`
+  benchmark inputs are the restricted torus surfaces of facet edge 0.072 and
+  0.025.
 - The certified PLC route is faster with identical mesh, certificate and
   result identities: host cell quality runs in cache-sized cell chunks on
   contiguous coordinate components (bitwise-identical values), simplex
@@ -1847,11 +1865,11 @@
   domain before contact classification, and the surface-remesh benchmark rows
   run `zero_set_certify` in their untimed quality stage (a refusal or an
   unresolved result is a miss).
-- The mesh-source distance certificate (`mesh_certify`) is rigorous: coverage
-  decisions use exact orientation tests, overlap vertices and crossing
-  parameters carry certified error enclosures, affine maps are formed only
-  when the stage-A determinant interval excludes zero (ill-conditioned maps
-  refuse), and every non-finite value refuses instead of being dropped.
+- The mesh-source distance certificate (`mesh_certify`) decides coverage with
+  exact orientation tests, encloses overlap vertices and crossing parameters
+  with error bounds, forms affine maps only when the stage-A determinant test
+  excludes zero (ill-conditioned maps refuse), and refuses every non-finite
+  value instead of dropping it.
 - Fixed spline source interpolation certificates at interior C0 knot lines:
   a chart triangle crossing a knot line of multiplicity at least the degree
   (rational: decided from knots and weights) is clipped exactly into smooth

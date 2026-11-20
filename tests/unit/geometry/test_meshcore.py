@@ -22,9 +22,9 @@ from benchmarks.native_meshing import (
     _facets,
     _icosphere,
     _recover,
+    _restricted_torus_surface,
     _sphere_distance,
     _sphere_samples,
-    _stuffed_torus_surface,
     _surface_quality,
     _uv_torus,
     _zero_set_quality,
@@ -3006,8 +3006,10 @@ def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None
 _BENCHMARK_SURFACES = {
     "sphere-5": lambda: _icosphere(5),
     "sphere-6": lambda: _icosphere(6),
-    "stuffed-torus-67": lambda: _stuffed_torus_surface(0.067),
-    "stuffed-torus-22": lambda: _stuffed_torus_surface(0.022),
+    # The restricted Delaunay torus surfaces of facet edge 0.072 and 0.025
+    # (14,010 and 123,098 triangles).
+    "restricted-torus-72": lambda: _restricted_torus_surface(0.072),
+    "restricted-torus-25": lambda: _restricted_torus_surface(0.025),
     "grid-torus-100": lambda: _uv_torus(100),
     "grid-torus-300": lambda: _uv_torus(300),
 }
@@ -3060,7 +3062,7 @@ def test_mesh_adopted_from_recovery_is_the_array_built_mesh(surface: str) -> Non
 def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
     # Ghost order and adjacency are not in the snapshot: refinement and
     # improvement, which walk them, end in the same mesh.
-    vertices, faces = _BENCHMARK_SURFACES["stuffed-torus-67"]()
+    vertices, faces = _BENCHMARK_SURFACES["restricted-torus-72"]()
     recovery = _recover(vertices, faces, _facets(vertices, faces))
     edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
     spacing = np.mean(

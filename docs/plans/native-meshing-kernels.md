@@ -159,26 +159,25 @@ tetrahedra, then implicit volumes, then the CAD solid.
   FIXED recoveries of small twisted prisms and towers (16-30 points) running past 60 s.
 
 ## Later slices (planned when S3 is accepted; same rules)
-- S1 implicit field to tetrahedra by isosurface stuffing on a graded body-centered cubic lattice
-  (`implicit_stuffing.cpp`; Labelle and Shewchuk 2007, with quadrilateral splits through the smallest
-  identity instead of the parity rule; red-green BCC grading after Molino et al. 2003): the band within
-  one spacing of the zero set is the uniform lattice, coarser cells away from it by Lipschitz clearance
-  bounds, red closure and green transitions (25 degrees or better); cut points by active-set regula
-  falsi, warping, conforming stencils. The analytic profile route takes the first spacing from the
-  certified facet bound d^2 / (6 (R - d)) with 1.5 spacings per stuffed triangle diameter (measured
-  maximum 1.41), stuffs the boundary's bounding box, accepts the lattice (exact volume certificate,
-  topology, certified facet deviation; a rejected lattice is repaired by a finer one) and runs the
-  native fixed-boundary quality pass (improvement, refinement only for what improvement leaves
-  unresolved) only when the stuffed cells miss the schedule with margin. `construct()` returns the
-  arrays; `execute()` publishes the `CellMesh` and certifies. Status (Nov 19): construction on the
-  ledger solids takes sphere 4.2 / 9.7 ms (CGAL opt=0 1.4 / 2.5 ms; NOT met) and torus 42 / 103 ms
-  (Gmsh 90 / 224 ms; met) with 2,400 / 5,736 and 22,856 / 50,576 cells, minimum dihedral 30.0 / 20.9 /
-  20.5 / 19.9 degrees; all four certify (fidelity sphere 0.0088 / 0.0047, torus 0.0086 / 0.0058),
-  acceptance with certification 9.6 / 35 s (sphere) and 74 / 197 s (torus). The sphere gap is cell
-  count: the stuffing kernel and the exact volume certificate alone exceed CGAL's time at the
-  certified spacing, and grading cannot coarsen a solid only four to five spacings thick. Remaining:
-  native certifiers (global embedding, validity, distance evidence once per acceptance) and fewer
-  boundary triangles per area at the same certified bound.
+- S1 implicit field to tetrahedra by restricted Delaunay refinement, surface first
+  (`restricted_delaunay.cpp`, `box_tree.cpp`; Boissonnat and Oudot 2005, Rineau and Yvinec 2007),
+  the analytic profile route `implicit_restricted_delaunay`. Seeds: the possible-zero box tree of the
+  interval program (`possible_zero_boxes`, the one subdivision owner) down to the facet edge bound,
+  one root per sign-change edge of a kept box, so every component is seeded by enclosure inclusion.
+  One S0-B Delaunay triangulation: restricted facets refined at their surface ball centers for edge
+  (the certified facet bound d^2 / (6 (R - d)) at 0.95 of the tolerance), 30 degree angle and ball
+  distance; inside cells at their circumcenters for radius-edge 1.98, redirected to the restricted
+  facet whose surface ball they encroach. Termination by packing: no insertion within a separation
+  bound (a quarter of min(e / 2, d, size)) of a vertex; a refused facet still violating the criteria is
+  PHX_MC_UNRESOLVED, a construction failure. Surface repair by failure kind (box roots of uncovered
+  boxes, ball centers at singular vertices, a finer edge bound), boundary vertices projected onto the
+  zero set, slivers removed by edge and face removal and relocation to 15.5 degrees, leftover
+  circumcenters inserted (three rounds), the S3 fixed-boundary improvement as last fallback.
+  `execute()` re-seeds facets above the certified deviation and certifies. Isosurface stuffing was
+  measured on every implicit model and test (restricted 2-10x faster with 4-9x fewer cells, all
+  certified) and deleted. Status (Nov 19, loaded): sphere 1.4 / 2.1 ms with 442 / 827 cells, torus
+  21 / 34 ms with 3,990 / 6,695 cells, minimum dihedral 15.5 degrees or better, all four certify;
+  quiet back-to-back run against CGAL opt=0 (sphere) and Gmsh (torus) pending.
 - S2 CAD solid to surface and volume, then P2 (design: `.tmp/S2_DESIGN.md` in `native-cad-meshing`):
   one native call `phx_mc_cad_mesh` on a flat geometry bundle; curves split once by integrating the
   size field and shared by every use; faces meshed in their native parameter chart by metric Delaunay

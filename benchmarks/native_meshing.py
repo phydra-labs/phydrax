@@ -426,9 +426,13 @@ def _surface_to_tets(
     return _VolumeResult(mesh.arrays().tetrahedra.shape[0], improved.unmet_cells)
 
 
-def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
-    # A well-shaped closed torus surface (R = 1, r = 0.4): the outward boundary
-    # of the isosurface-stuffed solid at the given lattice spacing.
+def _restricted_torus_surface(edge: float, /) -> tuple[np.ndarray, np.ndarray]:
+    # A well-shaped closed torus surface (R = 1, r = 0.4): the restricted
+    # Delaunay surface of the solid with facet edges at most `edge`, facet
+    # angles of at least 30 degrees and surface ball centers within edge / 8
+    # of the facets (the edge bound governs), without interior targets. Edges
+    # 0.072 and 0.025 give 14,010 and 123,098 triangles of mean edge 0.0524
+    # and 0.0177.
     def torus(x: Array) -> Array:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return jnp.stack((jnp.sqrt(ring * ring + x[2] * x[2]) - 0.4,))
@@ -438,23 +442,18 @@ def _stuffed_torus_surface(spacing: float, /) -> tuple[np.ndarray, np.ndarray]:
     ).native_program
     if program is None:
         raise RuntimeError("The torus rows need the native interval program.")
-    upper = np.asarray((1.5, 1.5, 0.5), dtype=np.float64)
-    stuffed = program.stuff_tetrahedra(-upper, upper, spacing)
-    cells = stuffed.cells
-    faces = np.concatenate(
-        (
-            cells[:, [1, 2, 3]],
-            cells[:, [0, 3, 2]],
-            cells[:, [0, 1, 3]],
-            cells[:, [0, 2, 1]],
-        )
+    upper = np.asarray((1.4, 1.4, 0.4), dtype=np.float64)
+    criteria = _meshcore.RestrictedDelaunayCriteria(
+        edge, edge / 8.0, 30.0, math.inf, None, 0.0, 0.0, 0.8
     )
-    _, inverse, counts = np.unique(
-        np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True
+    volume = program.restricted_tetrahedra(
+        -upper, upper, criteria, 1, 0, np.empty((0, 3), dtype=np.float64)
     )
-    boundary = faces[counts[inverse.reshape((-1,))] == 1]
+    if volume.status is not _meshcore.MeshcoreStatus.OK or not volume.topology_matched:
+        raise RuntimeError("The torus rows need a resolved restricted torus surface.")
+    boundary = volume.boundary_faces
     used, local = np.unique(boundary, return_inverse=True)
-    return stuffed.points[used], local.reshape(boundary.shape).astype(np.int64)
+    return volume.points[used], local.reshape(boundary.shape).astype(np.int64)
 
 
 def _volume_rows() -> tuple[_Row, ...]:
@@ -463,17 +462,17 @@ def _volume_rows() -> tuple[_Row, ...]:
     # export) with the boundary fixed, against Gmsh HXT generate(3) on the same
     # surface. The circumradius target 1.75 sqrt(3/8) h, h the mean surface
     # edge, matches HXT's element counts. The sphere and grid torus row sizes
-    # are the triangle counts, the stuffed torus row size the stuffing spacing
-    # in thousandths. The grid torus (cocircular rows, every edge constrained)
-    # is a hard input for both tools.
+    # are the triangle counts, the restricted torus row size its facet edge
+    # bound in thousandths. The grid torus (cocircular rows, every edge
+    # constrained) is a hard input for both tools.
     rows: list[_Row] = []
     shapes = (
         ("surface-to-tets-sphere", faces.shape[0], (vertices, faces))
         for vertices, faces in (_icosphere(5), _icosphere(6))
     )
     tori = (
-        ("surface-to-tets-torus", thousandths, _stuffed_torus_surface(1e-3 * thousandths))
-        for thousandths in (67, 22)
+        ("surface-to-tets-torus", thousandths, _restricted_torus_surface(1e-3 * thousandths))
+        for thousandths in (72, 25)
     )
     grids = (
         ("surface-to-tets-grid-torus", faces.shape[0], (vertices, faces))
@@ -515,12 +514,13 @@ def _volume_unmet(result: object, /) -> int:
 def _implicit_rows() -> tuple[_Row, ...]:
     # The external comparison's sphere (radius 0.371) and torus (major 0.742,
     # minor 0.371, i.e. inner 0.371 and outer 1.113) through the analytic
-    # profile route's construction: stuffing at the route's spacing, lattice
-    # acceptance (exact volume certificate, topology, certified facet
-    # deviation) and the fixed-boundary quality pass when the stuffed cells
-    # need it, ending at the constructed arrays as the references end at their
-    # native meshes. Publication as a CellMesh and certification are not
-    # timed. The row size is the tolerance in thousandths.
+    # profile route's construction: restricted Delaunay refinement of the zero
+    # set from the interval box tree's seeds to the certified facet bound, of
+    # the interior cells in the same triangulation to radius-edge 2, sliver
+    # removal to 15 degrees and the fixed-boundary quality fallback, ending at
+    # the constructed arrays as the references end at their native meshes.
+    # Publication as a CellMesh and certification are not timed. The row size
+    # is the tolerance in thousandths.
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.geometry import Sphere, Torus
     from phydrax.geometry.implicit import AnalyticImplicitProfile
@@ -530,7 +530,7 @@ def _implicit_rows() -> tuple[_Row, ...]:
         VolumeFillStrategy,
         VolumeMeshingSpec,
     )
-    from phydrax.meshing._implicit_volume import PreparedStuffedImplicitVolume
+    from phydrax.meshing._implicit_volume import PreparedRestrictedImplicitVolume
     from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_implicit import prepare_native_implicit
@@ -565,12 +565,12 @@ def _implicit_rows() -> tuple[_Row, ...]:
                 profile,
                 specification,
                 NativeMeshingOptions(
-                    "implicit_stuffing", volume_schedule=NativeVolumeSchedule()
+                    "implicit_restricted_delaunay", volume_schedule=NativeVolumeSchedule()
                 ),
                 contract,
             )
-            if not isinstance(prepared, PreparedStuffedImplicitVolume):
-                raise TypeError("An analytic profile volume prepares the stuffing route.")
+            if not isinstance(prepared, PreparedRestrictedImplicitVolume):
+                raise TypeError("An analytic profile volume prepares the restricted route.")
             rows.append(_Row(name, thousandths, prepared.construct, _constructed_cells))
     return tuple(rows)
 
@@ -972,10 +972,10 @@ def _surface_quality(
 
 
 def _constructed_cells(result: object, /) -> int:
-    from phydrax.meshing._implicit_volume import StuffedImplicitConstruction
+    from phydrax.meshing._implicit_volume import RestrictedImplicitConstruction
 
-    if not isinstance(result, StuffedImplicitConstruction):
-        raise TypeError("The stuffing construction returns its constructed arrays.")
+    if not isinstance(result, RestrictedImplicitConstruction):
+        raise TypeError("The restricted construction returns its constructed arrays.")
     return result.tetrahedra.shape[0]
 
 
