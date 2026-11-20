@@ -943,8 +943,12 @@ class SourcePreparer {
     std::nth_element(extents.begin(), middle, extents.end());
     const double size = *middle;
     if (!(size > 0.0) || !std::isfinite(size)) return false;
+    // kAxisCells for a quotient not below it (or not finite), checked as a
+    // double: a cast of an out-of-range quotient is undefined.
     const auto cell = [&](double value, int axis) {
-      return static_cast<int64_t>(std::floor((value - origin[axis]) / size));
+      const double quotient = std::floor((value - origin[axis]) / size);
+      return quotient < static_cast<double>(kAxisCells) ? static_cast<int64_t>(quotient)
+                                                         : kAxisCells;
     };
     // Lower and upper cells of every box (all below kAxisCells).
     std::vector<std::array<int64_t, 6>> spans(items.size());
