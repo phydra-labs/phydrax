@@ -2602,14 +2602,15 @@ def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> No
     # this tolerance every triangle is proved forward without a refusal, but
     # the tube bounds the zero set beyond the tolerance. One repair into 0.8
     # of the tolerance gives the reverse proof room, so both directions
-    # certify.
+    # certify. Measured window (steps of 5e-5): 0.00855 to 0.00930; below it
+    # the forward proof refuses, above it no repair is needed.
     value, gradient, branches = _unit_sphere_box_programs()
     vertices, faces = _icosphere(3)
     vertices = vertices * 0.996
     edge = float(
         np.mean(np.linalg.norm(vertices[faces[:, 1]] - vertices[faces[:, 0]], axis=1))
     )
-    tolerance = 0.0088
+    tolerance = 0.0089
     certificate = zero_set_certify(
         vertices,
         faces,
