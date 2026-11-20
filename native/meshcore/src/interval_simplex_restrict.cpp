@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <numeric>
@@ -38,17 +39,22 @@ uint64_t choose(uint64_t n, unsigned k) {
   return value;
 }
 
-void compositions(int32_t remaining, int position, int parts, Index& index,
-                  std::vector<Index>& result) {
-  if (position == parts - 1) {
-    index[position] = remaining;
-    result.push_back(index);
-    return;
+// Appends the compositions of `remaining` into parts - Position parts, filling
+// index[Position, parts). parts <= 4 = Index size, so the last slot of Index
+// always closes the recursion.
+template <std::size_t Position>
+void compositions(int32_t remaining, int parts, Index& index, std::vector<Index>& result) {
+  if constexpr (Position + 1 < std::tuple_size_v<Index>) {
+    if (static_cast<int>(Position) != parts - 1) {
+      for (int64_t first = remaining; first >= 0; --first) {
+        index[Position] = static_cast<int32_t>(first);
+        compositions<Position + 1>(remaining - static_cast<int32_t>(first), parts, index, result);
+      }
+      return;
+    }
   }
-  for (int64_t first = remaining; first >= 0; --first) {
-    index[position] = static_cast<int32_t>(first);
-    compositions(remaining - static_cast<int32_t>(first), position + 1, parts, index, result);
-  }
+  index[Position] = remaining;
+  result.push_back(index);
 }
 
 std::size_t rank(const Index& index, int32_t degree, int parts) {
@@ -173,7 +179,7 @@ extern "C" int32_t phx_mc_interval_simplex_restrict(
     for (int64_t n = 0; n <= degree; ++n) {
       auto& level = levels[static_cast<std::size_t>(n)];
       Index index{};
-      compositions(static_cast<int32_t>(n), 0, dimension + 1, index, level.indices);
+      compositions<0>(static_cast<int32_t>(n), dimension + 1, index, level.indices);
       if (n < degree) {
         level.children.resize(level.indices.size());
         for (std::size_t i = 0; i < level.indices.size(); ++i) {

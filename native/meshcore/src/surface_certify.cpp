@@ -239,12 +239,16 @@ int64_t refuse_illegal_contacts(const std::vector<Point>& points,
     ++counted;
   }
   if (counted == 0) return static_cast<int64_t>(m);
-  // Cell coordinates stay within 2^20 per axis.
+  // Cell coordinates stay within 2^20 per axis; a quotient that is not (a
+  // span or extent overflowing makes the cell infinite and the quotient of
+  // an overflowing difference NaN) takes 2^20, which keeps the coordinate
+  // monotone and the cast defined.
   double cell = extents / static_cast<double>(counted);
   for (int d = 0; d < 3; ++d) cell = std::max(cell, (top[d] - origin[d]) * 0x1p-20);
   if (!(cell > 0)) cell = 1;
   const auto coordinate = [&](double value, int d) {
-    return static_cast<int64_t>(std::floor((value - origin[d]) / cell));
+    const double quotient = std::floor((value - origin[d]) / cell);
+    return quotient <= 0x1p20 ? static_cast<int64_t>(quotient) : int64_t{1} << 20;
   };
   constexpr int64_t kGridCells = 64;
   std::vector<std::array<int64_t, 6>> ranges(m);

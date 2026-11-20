@@ -1039,7 +1039,6 @@ def _size_field(
                     winner = winner_by_sample[left]
                     source_supports[vertex].append((int(facet), float(value), winner))
         elif stratum == 2 and 0 <= entity < tables.faces.shape[0]:
-            triangle = tables.faces[entity]
             facet = int(tables.face_facets[entity])
             weights = (1.0 - parameters[0] - parameters[1], parameters[0], parameters[1])
             rows = (

@@ -376,7 +376,7 @@ class CoplanarClipper {
       vertices_[k] = {ClipVertex::kSubject, static_cast<int8_t>(k), -1,
                       static_cast<int8_t>(subject_count_ == 3 ? (k + 2) % 3 : 0)};
     }
-    for (int m = 0; m < 3 && count_ > 0; ++m) {
+    for (int m = 0; m < 3; ++m) {
       clip_line(m);
     }
   }
@@ -440,7 +440,10 @@ class CoplanarClipper {
     return {ClipVertex::kCrossing, static_cast<int8_t>(m), from.label, -1};
   }
 
+  // Clips the current polygon (a point, a segment or a cycle) by clip line m;
+  // an empty one stays empty.
   void clip_line(int m) {
+    if (count_ <= 0) return;
     ClipVertex out[kMaxContactPoints + 2];
     int emitted = 0;
     int sides[kMaxContactPoints + 2];
