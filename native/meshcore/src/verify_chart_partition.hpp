@@ -21,4 +21,12 @@ void check_uses(int64_t use_count, const int64_t* use_patch, const double* use_r
 void check_loops(int64_t loop_count, int64_t chord_count, const int64_t* chord_loop,
                  const int64_t* chord_use, const int64_t* use_patch, const double* uv,
                  std::vector<phx_mc_chart_failure>& failures);
+// Per patch: the chord cycles' signed UV area is nonzero, and every
+// triangle's orientation agrees with its sign (PHX_MC_CHART_ORIENTATION
+// otherwise); oriented[i] = 1 for the agreeing triangles.
+void check_orientation(int64_t patch_count, int64_t triangle_count,
+                       const int32_t* triangle_patch, const double* triangle_uv,
+                       int64_t chord_count, const int64_t* chord_use, const int64_t* use_patch,
+                       const double* chord_uv, std::vector<uint8_t>& oriented,
+                       std::vector<phx_mc_chart_failure>& failures);
 }  // namespace phx::mc::chart

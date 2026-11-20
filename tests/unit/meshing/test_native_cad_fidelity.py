@@ -839,7 +839,10 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
                 exact = _analytic_values(kind, sample_uv)
                 assert np.linalg.norm(exact - weights @ vertices) <= result.upper[row]
     print(f"{kind} native/Python adaptive bound ratios:", ratios)
-    assert all(0.99 <= ratio <= 1.01 for ratio in ratios)
+    # Native takes the Taylor remainder about the leaf box centre (one quarter
+    # of Python's box-extent remainder), so it is never looser than Python;
+    # the sampled check above keeps it an enclosure.
+    assert all(ratio <= 1.01 for ratio in ratios)
     assert np.all(result.item_status == MeshcoreStatus.OK)
 
 
@@ -901,8 +904,14 @@ def test_perturbed_vertex_and_uv_are_unresolved() -> None:
     assert _python_chart_decisions(domain, mesh._replace(points=points), interior, 0.1) == tuple(
         status == MeshcoreStatus.OK for status in moved.item_status[interior]
     )
+    # Moving vertex 4 by 0.75 flips its triangles: V4's orientation, checked
+    # by V3, refuses it as input; 0.45 keeps the orientation.
+    flipped = mesh.uv.copy()
+    flipped[:, :, 0][mesh.triangles == 4] += 0.75
+    with pytest.raises(ValueError, match="INVALID_INPUT"):
+        verify_cad_fidelity(bundle.model, lower, upper, mesh._replace(uv=flipped), chords, 0.1, 3)
     uv = mesh.uv.copy()
-    uv[:, :, 0][mesh.triangles == 4] += 0.75
+    uv[:, :, 0][mesh.triangles == 4] += 0.45
     perturbed = verify_cad_fidelity(
         bundle.model, lower, upper, mesh._replace(uv=uv), chords, 0.1, 3
     )
@@ -1507,10 +1516,15 @@ def test_intersection_pcurve_trimmed_face() -> None:
         points, cells, np.zeros(len(cells), dtype=np.int32), uv_points[cells], cells,
         np.arange(len(cells), dtype=np.int64), np.asarray(edge_chord, dtype=np.int64),
     )
-    # Only face 0 is meshed: V3 checks every model use is covered, so it is
-    # given the model of face 0's loop alone (same nodes and coefficients).
+    # Only face 0 is meshed: V3 checks every model use and surface is
+    # covered, so it is given the model of face 0 alone (same nodes and
+    # coefficients, no regions).
     count = int(bundle.model.loop_use_offsets[1])
     model = bundle.model._replace(
+        surface_nodes=bundle.model.surface_nodes[:1],
+        surface_orientations=bundle.model.surface_orientations[:1],
+        surface_periods=bundle.model.surface_periods[:1],
+        surface_parameter_domains=bundle.model.surface_parameter_domains[:1],
         loop_use_offsets=bundle.model.loop_use_offsets[:2],
         loop_surfaces=bundle.model.loop_surfaces[:1],
         use_kinds=bundle.model.use_kinds[:count],
@@ -1518,6 +1532,9 @@ def test_intersection_pcurve_trimmed_face() -> None:
         use_senses=bundle.model.use_senses[:count],
         use_ranges=bundle.model.use_ranges[:count],
         use_pcurve_nodes=bundle.model.use_pcurve_nodes[:count],
+        region_surface_offsets=bundle.model.region_surface_offsets[:1],
+        region_surfaces=bundle.model.region_surfaces[:0],
+        region_orientations=bundle.model.region_orientations[:0],
     )
     chords = CadFidelityChords(
         np.zeros(count, dtype=np.int64), model.use_ranges, 1,

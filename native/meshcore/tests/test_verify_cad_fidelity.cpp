@@ -700,6 +700,310 @@ void lens_requires_lipschitz_surface() {
   std::printf("F6 lens over a jump: status %d cap %.6e\n", status, cap);
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
 }
+
+// The plane z = 0.5 and the clamped B-spline S2(u, v) = (u, u^2, v) on [0,
+// 1]^2, one chart u in [ua, ub] (MAC's re-read demo_h / demo_h2): the
+// intersection stays strictly inside S2's domain.
+int32_t parabola_carrier(Model& m, int32_t& plane, double ua, double ub, int64_t output) {
+  plane = m.add_template("plane", {0, 0, 0.5, 1, 0, 0, 0, 1, 0});
+  std::vector<double> r = {0, 0, 0, 1, 1, 1, 0, 0, 1, 1};
+  const double cx[3] = {0, 0.5, 1}, cy[3] = {0, 0, 1};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 2; ++j) r.insert(r.end(), {cx[i], cy[i], double(j)});
+  r.insert(r.end(), 6, 1.0);
+  const int32_t spline = m.add(PHX_MC_CAD_NODE_BSPLINE_SURFACE, {2, 1, 3, 2}, r);
+  return m.add(PHX_MC_CAD_NODE_INTERSECTION, {plane, spline, 1, output, -1, -1, 0, 2},
+               {1.0, 0.0, 0, 0, ua, 0.5, 0, 0, ub, 0.5, -1, -1, ua, 0.25, 2, 2, ub, 0.75,
+                1, 0, 0, 0, 1, 0, 0, 0, -1});
+}
+
+// A (demo_h): the trim chord over u in [1/4, 1/4 + 1/32]; the arc is 2.16e-4
+// from it. Refused before (the clamped ends of S2 counted over (-inf, inf));
+// certified at 4.06e-4 originally. Fault caught: a carrier asked over the
+// whole parameter plane.
+void carrier_inside_domain_lens() {
+  Model m;
+  int32_t plane = -1;
+  const double ua = 0.25, ub = ua + 1.0 / 32;
+  const int32_t pc = parabola_carrier(m, plane, ua, ub, 1);
+  const double c[2] = {ub, ua * ua - 0.5};
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(m.add_template("line3", {0, 0, 0, 1, 0, 0}), 0, 0);
+  m.use(0, 0, 0, 1, pc);
+  CadGeometry geometry;
+  EvaluationWorkspace point_workspace;
+  // The p-curve ends, by point evaluation (the line uses join them).
+  double ends[4];
+  {
+    Model ends_model = m;
+    ends_model.close_loop(0);
+    const phx_mc_cad_model view = ends_model.view();
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    const double t0 = 0, t1 = 1;
+    PHX_CHECK(geometry.jets(pc, &t0, 0, ends, point_workspace));
+    PHX_CHECK(geometry.jets(pc, &t1, 0, ends + 2, point_workspace));
+  }
+  const double a[2] = {ends[0], ends[1]}, b[2] = {ends[2], ends[3]};
+  m.use(0, 0, 0, 1, m.add_template("line2", {ub, ub * ub, c[0] - ub, c[1] - ub * ub}));
+  m.use(0, 0, 0, 1, m.add_template("line2", {c[0], c[1], ua - c[0], ua * ua - c[1]}));
+  m.close_loop(0);
+  double worst = 0.0;  // the arc y = x^2 against its chord, closed form
+  for (int i = 0; i <= 2000; ++i) {
+    const double x = ua + (ub - ua) * i / 2000.0;
+    const double p[2] = {x, x * x};
+    worst = std::max(worst, segment_distance(p, a, b));
+  }
+  Mesh mesh;
+  mesh.points = {a[0], a[1], 0.5, b[0], b[1], 0.5, c[0], c[1], 0.5};
+  mesh.triangles = {0, 1, 2};
+  mesh.face_rows = {0};
+  mesh.uv = {a[0], a[1], b[0], b[1], c[0], c[1]};
+  mesh.mesh_triangles = {0, 1, 2};
+  mesh.chart_to_mesh = {0};
+  mesh.edge_chord = {0, 1, 2};
+  mesh.use_patch = {0, 0, 0};
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  mesh.chord_use = {0, 1, 2};
+  mesh.chord_loop = {0, 0, 0};
+  mesh.chord_uv = {a[0], a[1], b[0], b[1], b[0], b[1], c[0], c[1], c[0], c[1], a[0], a[1]};
+  mesh.chord_range = m.use_ranges;
+  const Verdict verdict = verify(m, mesh, 1e-3, 8);
+  std::printf("A lens (demo_h): status %d row %d reason %d upper %.6e; true %.6e\n",
+              verdict.status, verdict.item_status[0], verdict.reasons[0], verdict.upper[0], worst);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.upper[0] >= worst && verdict.upper[0] < 1e-3);
+}
+
+// A (demo_h2 and its family): the extrusion along z of a curve on S2 that
+// stays strictly inside S2's domain, reached through an intersection node
+// (MAC's demo_h2: x = 1/4 + t/2), an isoparametric node (v = 1/2) and a
+// surface-mapped node (p-curve (t, 1/2)); chart triangle (0.25, 0),
+// (0.5, 0), (0.25, 0.25). Each certifies at tolerance 1e-2 in at most a few
+// splits (demo_h2: 1,302 splits before). Fault caught: as above, on a leaf.
+void carrier_inside_domain_leaf() {
+  for (int kind = 0; kind < 3; ++kind) {
+    Model m;
+    int32_t plane = -1;
+    const int32_t intersection = parabola_carrier(m, plane, 0.25, 0.75, 0);
+    const int32_t spline = intersection - 1;
+    int32_t curve = intersection;
+    if (kind == 1) curve = m.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {spline, 1}, {0.5});
+    if (kind == 2)
+      curve = m.add(PHX_MC_CAD_NODE_SURFACE_MAPPED,
+                    {spline, m.add_template("line2", {0, 0.5, 1, 0})}, {});
+    const int32_t swept = m.add(PHX_MC_CAD_NODE_EXTRUSION, {curve}, {0, 0, 1});
+    m.surface(swept);
+    const phx_mc_cad_model view = m.view();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    IntervalEvaluationWorkspace workspace;
+    m.bind_bounds(workspace);
+    EvaluationWorkspace point_workspace;
+    const double uv[6] = {0.25, 0, 0.5, 0, 0.25, 0.25};
+    double points[9];
+    for (int i = 0; i < 3; ++i)
+      PHX_CHECK(geometry.jets(swept, uv + 2 * i, 0, points + 3 * i, point_workspace));
+    const double base = kind == 0 ? 0.5 : 0.0;  // the plane z = 0.5 carries the intersection
+    const double truth = sampled_interpolation_error(uv, points, [&](double t, double v) {
+      const double x = kind == 0 ? 0.25 + 0.5 * t : t;
+      return std::array<double, 3>{x, x * x, base + (kind == 0 ? 0.0 : 0.5) + v};
+    });
+    const char* name[3] = {"intersection", "isoparametric", "surface-mapped"};
+    for (const double factor : {4.0, 2.0, 1.25}) {
+      const double tolerance = factor * truth;
+      const auto result = fidelity_triangle(geometry, 0, points, uv, tolerance, 8, workspace);
+      std::printf("A leaf (%s) tolerance %.4g (x%g sampled): status %d upper %.6e splits %d "
+                  "(sampled %.6e)\n", name[kind], tolerance, factor, result.status, result.upper,
+                  result.subdivisions, truth);
+      PHX_CHECK(result.status != PHX_MC_OK || result.upper >= truth);
+      if (factor >= 2.0) PHX_CHECK(result.status == PHX_MC_OK && result.subdivisions <= 16);
+      // S is quadratic in t with a constant Hessian here: the remainder about
+      // the box centre (half_extent) is sharp (2x truth with box extents).
+      if (kind > 0) PHX_CHECK(result.status == PHX_MC_OK && result.upper <= 1.0625 * truth);
+    }
+  }
+}
+
+// A (demo_h family, trims): the faces of carrier_inside_domain_leaf trimmed
+// by the arc of the circle about (0.375, 0.025) of radius 1/8 from
+// A = (0.45, 0.125) to B = (0.3, 0.125) (chart sagitta 0.025, strictly
+// inside S2's domain), one chart triangle A B C with C = (0.375, 0). Each
+// certifies through the whole entry, the lens included, at tolerance 1/8 in
+// the splits of the first V3 (0186b551c and dd7715b2c: 0 per kind; c7a0e82fc:
+// 5, 14, 14, bounds 0.092 / 0.125 against 0.058 / 0.084). Fault caught: a
+// trim on an intersection, isoparametric or surface-mapped carrier asked
+// over the whole parameter plane.
+void carrier_inside_domain_trim() {
+  const double a[2] = {0.45, 0.125}, b[2] = {0.3, 0.125}, c[2] = {0.375, 0.0};
+  const double cx = 0.375, cy = 0.025, r = 0.125;
+  const double ta = std::atan2(a[1] - cy, a[0] - cx), tb = std::atan2(b[1] - cy, b[0] - cx);
+  for (int kind = 0; kind < 3; ++kind) {
+    Model m;
+    int32_t plane = -1;
+    const int32_t intersection = parabola_carrier(m, plane, 0.25, 0.75, 0);
+    const int32_t spline = intersection - 1;
+    int32_t curve = intersection;
+    if (kind == 1) curve = m.add(PHX_MC_CAD_NODE_ISOPARAMETRIC, {spline, 1}, {0.5});
+    if (kind == 2)
+      curve = m.add(PHX_MC_CAD_NODE_SURFACE_MAPPED,
+                    {spline, m.add_template("line2", {0, 0.5, 1, 0})}, {});
+    const int32_t swept = m.add(PHX_MC_CAD_NODE_EXTRUSION, {curve}, {0, 0, 1});
+    const int32_t arc = m.add_template("circle2", {cx, cy, 1, 0, 0, 1, r});
+    const int32_t bc = m.add_template("line2", {b[0], b[1], c[0] - b[0], c[1] - b[1]});
+    const int32_t ca = m.add_template("line2", {c[0], c[1], a[0] - c[0], a[1] - c[1]});
+    const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+    m.surface(swept);
+    m.corner(0, 0, 0);
+    m.curve(space, 0, 0);
+    m.use(0, 0, ta, tb, arc);
+    m.use(0, 0, 0.0, 1.0, bc);
+    m.use(0, 0, 0.0, 1.0, ca);
+    m.close_loop(0);
+    const phx_mc_cad_model view = m.view();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    EvaluationWorkspace point_workspace;
+    Mesh mesh;
+    mesh.uv = {a[0], a[1], b[0], b[1], c[0], c[1]};
+    mesh.points.resize(9);
+    for (int i = 0; i < 3; ++i)
+      PHX_CHECK(geometry.jets(swept, mesh.uv.data() + 2 * i, 0, mesh.points.data() + 3 * i,
+                              point_workspace));
+    // S on the arc against the mesh edge S(A) S(B): a lower bound of the row's distance.
+    double worst = 0.0;
+    const double* pa = mesh.points.data();
+    const double* pb = mesh.points.data() + 3;
+    for (int i = 0; i <= 2000; ++i) {
+      const double t = ta + (tb - ta) * i / 2000.0;
+      const double uv[2] = {cx + r * std::cos(t), cy + r * std::sin(t)};
+      double s[3];
+      PHX_CHECK(geometry.jets(swept, uv, 0, s, point_workspace));
+      double ab = 0.0, ap = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        ab += (pb[k] - pa[k]) * (pb[k] - pa[k]);
+        ap += (s[k] - pa[k]) * (pb[k] - pa[k]);
+      }
+      const double w = std::clamp(ap / ab, 0.0, 1.0);
+      double squared = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double d = s[k] - (pa[k] + w * (pb[k] - pa[k]));
+        squared += d * d;
+      }
+      worst = std::max(worst, std::sqrt(squared));
+    }
+    mesh.triangles = {0, 1, 2};
+    mesh.face_rows = {0};
+    mesh.mesh_triangles = {0, 1, 2};
+    mesh.chart_to_mesh = {0};
+    mesh.edge_chord = {0, 1, 2};
+    mesh.use_patch = {0, 0, 0};
+    mesh.use_range = m.use_ranges;
+    mesh.loop_count = 1;
+    mesh.chord_use = {0, 1, 2};
+    mesh.chord_loop = {0, 0, 0};
+    mesh.chord_uv = {a[0], a[1], b[0], b[1], b[0], b[1], c[0], c[1], c[0], c[1], a[0], a[1]};
+    mesh.chord_range = m.use_ranges;
+    const Verdict verdict = verify(m, mesh, 0.125, 8);
+    const char* name[3] = {"intersection", "isoparametric", "surface-mapped"};
+    std::printf("A trim (%s): status %d row %d reason %d upper %.6e splits %d; arc %.6e\n",
+                name[kind], verdict.status, verdict.item_status[0], verdict.reasons[0],
+                verdict.upper[0], verdict.subdivisions[0], worst);
+    // Lens cap from per-axis p-curve remainders and |S_u|, |S_v| (1.35x / 1.82x
+    // the sampled arc distance; 2.32x / 3.30x with one Frobenius |DS|).
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.upper[0] >= worst &&
+              verdict.upper[0] <= 2.0 * worst && verdict.subdivisions[0] <= 4);
+  }
+}
+
+// C (demo_g): the square [0, 4]^2 with the clockwise hole H; (a) the hole
+// filled by a clockwise triangle, (b) the hole loop's uses given reversed and
+// the hole covered by a counter-clockwise triangle. V3 certified both
+// (maximum 9.7e-15) while the hole triangle's centroid is 0.586 from the
+// face. Fault caught: orientation and per-face use direction unchecked.
+void hole_orientation_demo() {
+  const double o[4][2] = {{0, 0}, {4, 0}, {4, 4}, {0, 4}};
+  const double h[3][2] = {{1, 1}, {1, 3}, {3, 1}};
+  Model m;
+  const int32_t plane = m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0});
+  m.surface(plane);
+  m.corner(0, 0, 0);
+  m.curve(m.add_template("line3", {0, 0, 0, 1, 0, 0}), 0, 0);
+  for (int k = 0; k < 4; ++k)
+    m.use(0, 0, 0, 1, m.add_template("line2", {o[k][0], o[k][1], o[(k + 1) % 4][0] - o[k][0],
+                                               o[(k + 1) % 4][1] - o[k][1]}));
+  m.close_loop(0);
+  for (int k = 0; k < 3; ++k)
+    m.use(0, 0, 0, 1, m.add_template("line2", {h[k][0], h[k][1], h[(k + 1) % 3][0] - h[k][0],
+                                               h[(k + 1) % 3][1] - h[k][1]}));
+  m.close_loop(0);
+  Mesh base;
+  base.points = {0, 0, 0, 4, 0, 0, 4, 4, 0, 0, 4, 0, 1, 1, 0, 1, 3, 0, 3, 1, 0};
+  base.face_rows = {0, 0, 0};
+  base.chart_to_mesh = {0, 1, 2};
+  base.use_patch.assign(7, 0);
+  base.loop_count = 2;
+  base.chord_use = {0, 1, 2, 3, 4, 5, 6};
+  base.chord_loop = {0, 0, 0, 0, 1, 1, 1};
+  for (int k = 0; k < 4; ++k) {
+    base.chord_uv.insert(base.chord_uv.end(), {o[k][0], o[k][1], o[(k + 1) % 4][0],
+                                               o[(k + 1) % 4][1]});
+    base.chord_range.insert(base.chord_range.end(), {0, 1});
+  }
+  Mesh filled = base;
+  filled.use_range = m.use_ranges;
+  for (int k = 0; k < 3; ++k) {
+    filled.chord_uv.insert(filled.chord_uv.end(), {h[k][0], h[k][1], h[(k + 1) % 3][0],
+                                                   h[(k + 1) % 3][1]});
+    filled.chord_range.insert(filled.chord_range.end(), {0, 1});
+  }
+  filled.triangles = {0, 1, 2, 0, 2, 3, 4, 5, 6};
+  filled.uv = {0, 0, 4, 0, 4, 4, 0, 0, 4, 4, 0, 4, 1, 1, 1, 3, 3, 1};
+  filled.mesh_triangles = filled.triangles;
+  filled.edge_chord = {0, 1, -1, -1, 2, 3, 4, 5, 6};
+  const Verdict a = verify(m, filled, 1e-6, 8);
+  Mesh reversed = base;
+  reversed.use_range = m.use_ranges;
+  for (int k = 0; k < 3; ++k) {
+    reversed.chord_uv.insert(reversed.chord_uv.end(), {h[(k + 1) % 3][0], h[(k + 1) % 3][1],
+                                                       h[k][0], h[k][1]});
+    reversed.chord_range.insert(reversed.chord_range.end(), {1, 0});
+    std::swap(reversed.use_range[2 * (4 + k)], reversed.use_range[2 * (4 + k) + 1]);
+  }
+  reversed.triangles = {0, 1, 2, 0, 2, 3, 4, 6, 5};
+  reversed.uv = {0, 0, 4, 0, 4, 4, 0, 0, 4, 4, 0, 4, 1, 1, 3, 1, 1, 3};
+  reversed.mesh_triangles = reversed.triangles;
+  reversed.edge_chord = {0, 1, -1, -1, 2, 3, 6, 5, 4};
+  const Verdict b = verify(m, reversed, 1e-6, 8);
+  std::printf("C hole (demo_g): filled status %d maximum %g; reversed status %d maximum %g\n",
+              a.status, a.maximum, b.status, b.maximum);
+  PHX_CHECK(a.status == PHX_MC_INVALID_INPUT && a.maximum == kSentinel);
+  PHX_CHECK(b.status == PHX_MC_INVALID_INPUT && b.maximum == kSentinel);
+}
+
+// D (demo_i): a model surface on no loop and no rows; certified empty before.
+void surface_without_loop_demo() {
+  Model m;
+  m.surface(m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1}));
+  const Verdict verdict = verify(m, Mesh{}, 1e-6, 8);
+  std::printf("D surface on no loop (demo_i): status %d maximum %g\n", verdict.status,
+              verdict.maximum);
+  PHX_CHECK(verdict.status == PHX_MC_INVALID_INPUT && verdict.maximum == kSentinel);
+}
+
+// B (index_overflow): two point-like chords 1 apart with padded boxes of
+// 1e-12, and a row box over both: about 1e12 cells per axis, whose product
+// overflowed int64 (undefined; a 20 s hang). The charge is the larger cap.
+void lens_index_overflow() {
+  const int32_t faces[2] = {0, 0};
+  const double extent = 1e-12, spread = 1.0;
+  const double boxes[8] = {0, 0, extent, extent, spread, spread, spread + extent, spread + extent};
+  const double caps[2] = {0.25, 0.5};
+  const double row[4] = {0, 0, spread, spread};
+  const double charge = fidelity_lens_charge(1, 2, faces, boxes, caps, 0, row);
+  std::printf("B lens index (index_overflow): charge %.2f\n", charge);
+  PHX_CHECK(charge == 0.5);
+}
 }  // namespace
 
 int main() {
@@ -714,6 +1018,12 @@ int main() {
   intersection_seam_lens_demo();
   sliver_segment_in_mesh_demo();
   empty_mesh_demo();
+  carrier_inside_domain_lens();
+  carrier_inside_domain_leaf();
+  carrier_inside_domain_trim();
+  hole_orientation_demo();
+  surface_without_loop_demo();
+  lens_index_overflow();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,

@@ -43,7 +43,7 @@ T dot_value(const double* a, const double* b, const double* v, Difference differ
 
 // Exact sign of (a - v) . (b - v); negative iff v lies strictly inside the
 // circle with diameter ab.
-inline int dot_sign(const double* a, const double* b, const double* v) {
+inline int dot_sign_exact(const double* a, const double* b, const double* v) {
   const Approx filtered = dot_value<Approx>(
       a, b, v, [](double x, double y) { return Approx::exact(x) - Approx::exact(y); });
   const int sign = filtered.certified_sign();
@@ -53,6 +53,28 @@ inline int dot_sign(const double* a, const double* b, const double* v) {
   return dot_value<Expansion>(a, b, v, [](double x, double y) {
            return Expansion::difference(x, y);
          }).sign();
+}
+
+// Plain binary64 stage in front of dot_sign_exact (the same sign whenever it
+// decides): the dot product of the rounded differences is within
+// (3u + 16u^2) (|ax bx| + |ay by|) of the exact value, as for Shewchuk's
+// orient2d stage A (u = 2^-53). The magnitude floor keeps every rounding
+// relative (no underflow in the products); NaN and infinity fail the
+// comparisons and reach the exact stages. Small enough to inline at every
+// encroachment test with GCC and Clang alike.
+inline int dot_sign(const double* a, const double* b, const double* v) {
+  const double ax = a[0] - v[0], ay = a[1] - v[1];
+  const double bx = b[0] - v[0], by = b[1] - v[1];
+  const double xx = ax * bx, yy = ay * by;
+  const double dot = xx + yy;
+  const double magnitude = std::fabs(xx) + std::fabs(yy);
+  constexpr double kBound = (3.0 + 16.0 * 0x1p-53) * 0x1p-53;
+  if (magnitude > 0x1p-900 && magnitude < 0x1p+1000) {
+    const double bound = kBound * magnitude;
+    if (dot > bound) return 1;
+    if (-dot > bound) return -1;
+  }
+  return dot_sign_exact(a, b, v);
 }
 
 inline bool same_point(const double* a, const double* b) { return a[0] == b[0] && a[1] == b[1]; }
@@ -90,17 +112,29 @@ struct BadTriangle {
 
 struct BadOrder {
   bool operator()(const BadTriangle& left, const BadTriangle& right) const {
-    if (left.badness != right.badness) {
-      return left.badness < right.badness;
+    if (left.badness == right.badness) [[unlikely]] {
+      return std::lexicographical_compare(right.v, right.v + 3, left.v, left.v + 3);
     }
-    return std::lexicographical_compare(right.v, right.v + 3, left.v, left.v + 3);
+    return left.badness < right.badness;
   }
 };
-using BadQueue = SpatialRefinementQueue<BadTriangle, BadOrder>;
+// BadOrder is a strict total order up to the slot: entries it cannot order
+// carry the same badness and cyclic vertex triple. At most one live slot
+// holds a given triple, so of two such entries only that slot's can match;
+// they are popped back to back, the non-matching one is discarded and the
+// matching one processed either way. The pop sequence, and so the mesh, is
+// therefore independent of the heap layout, and a 4-ary heap is used.
+using BadQueue = SpatialRefinementQueue<BadTriangle, BadOrder, 4>;
 
-inline BadQueue make_bad_queue(const Triangulation2D& tri, int32_t input_count,
-                               double max_area) {
-  if (!std::isfinite(max_area)) return BadQueue(0.0, 0.0, 0.0, 0.0, 0.0, input_count);
+// Bounding box of the input points and the element count max_area implies
+// for it (zero when the area bound is infinite).
+struct AreaEstimate {
+  double xmin = 0.0, ymin = 0.0, xmax = 0.0, ymax = 0.0, elements = 0.0;
+};
+
+inline AreaEstimate estimate_elements(const Triangulation2D& tri, int32_t input_count,
+                                      double max_area) {
+  if (!std::isfinite(max_area)) return {};
   const double* first = tri.point(0);
   double xmin = first[0], xmax = first[0], ymin = first[1], ymax = first[1];
   for (int32_t v = 1; v < input_count; ++v) {
@@ -108,8 +142,7 @@ inline BadQueue make_bad_queue(const Triangulation2D& tri, int32_t input_count,
     xmin = std::min(xmin, p[0]); xmax = std::max(xmax, p[0]);
     ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]);
   }
-  return BadQueue(xmin, ymin, xmax, ymax, ((xmax - xmin) * (ymax - ymin)) / max_area,
-                  input_count);
+  return {xmin, ymin, xmax, ymax, ((xmax - xmin) * (ymax - ymin)) / max_area};
 }
 
 struct Quality {
@@ -121,13 +154,39 @@ class ConstrainedMesher {
  public:
   ConstrainedMesher(Triangulation2D& triangulation, int32_t input_count, double min_angle_degrees,
                     double max_area)
+      : ConstrainedMesher(triangulation, input_count, min_angle_degrees, max_area,
+                          estimate_elements(triangulation, input_count, max_area)) {}
+
+  ConstrainedMesher(Triangulation2D& triangulation, int32_t input_count, double min_angle_degrees,
+                    double max_area, const AreaEstimate& estimate)
       : tri_(triangulation),
         input_count_(input_count),
         max_area_(max_area),
         angle_enabled_(min_angle_degrees > 0.0),
         sin_min_angle_(
             angle::sine(min_angle_degrees * (3.14159265358979323846 / 180.0))),
-        bad_queue_(make_bad_queue(triangulation, input_count, max_area)) {
+        bad_queue_(estimate.xmin, estimate.ymin, estimate.xmax, estimate.ymax,
+                   estimate.elements, input_count) {
+    // Size the growing per-vertex and per-slot arrays once from the area
+    // bound (measured: about 0.8 Steiner vertices and 1.5 cells per estimated
+    // element on a convex domain; the bounding box over-estimates others).
+    // Only capacities change; refinement may still outgrow them. The cap
+    // keeps a degenerate estimate from reserving untouched gigabytes.
+    const double steiner = std::min(estimate.elements, 1048576.0);
+    const std::size_t vertices =
+        static_cast<std::size_t>(input_count) + static_cast<std::size_t>(steiner);
+    const std::size_t slots = 2 * vertices + 16;
+    tri_.coordinates.reserve(2 * vertices);
+    tri_.vertex_triangle.reserve(vertices);
+    tri_.triangles.reserve(slots);
+    tri_.constraints.reserve(3 * slots);
+    tri_.region.reserve(slots);
+    tri_.live.reserve(slots);
+    marks_.reserve(slots);
+    chain_ends_.reserve(static_cast<std::size_t>(steiner));
+    constraint_sources_.reserve(vertices);
+    constraint_parents_.reserve(2 * vertices);
+    constraint_ratios_.reserve(vertices);
     constraint_sources_.assign(static_cast<std::size_t>(input_count), -1);
     constraint_parents_.assign(2 * static_cast<std::size_t>(input_count), -1);
     constraint_ratios_.assign(static_cast<std::size_t>(input_count), 0.0);
@@ -525,7 +584,7 @@ class ConstrainedMesher {
     }
   }
 
-  bool shared_input_vertex(int32_t v) const {
+  [[gnu::always_inline]] bool shared_input_vertex(int32_t v) const {
     if (v < 0 || v >= input_count_) return false;
     const auto index = static_cast<std::size_t>(v);
     const int32_t degree = segment_degree_[index];
@@ -538,7 +597,9 @@ class ConstrainedMesher {
     return dot_sign(tri_.point(first), tri_.point(second), tri_.point(v)) > 0;
   }
 
-  Quality quality(int32_t t) const {
+  // Hot per-star helpers are force-inlined (as triangulation2d.hpp's conflict
+  // tests): measured 3-5% on GCC ring/square 1e4, 3% on Clang square.
+  [[gnu::always_inline]] Quality quality(int32_t t) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
                           tri_.point(triangle.v[2])};
@@ -594,7 +655,7 @@ class ConstrainedMesher {
     return result;
   }
 
-  BadTriangle make_entry(int32_t t, double badness) const {
+  [[gnu::always_inline]] BadTriangle make_entry(int32_t t, double badness) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     int first = 0;
     if (triangle.v[1] < triangle.v[first]) first = 1;
@@ -603,7 +664,7 @@ class ConstrainedMesher {
                        {triangle.v[first], triangle.v[next3(first)], triangle.v[prev3(first)]}, t};
   }
 
-  void enqueue_bad(const BadTriangle& entry) {
+  [[gnu::always_inline]] void enqueue_bad(const BadTriangle& entry) {
     if (!bad_queue_.spatial()) {
       bad_queue_.push(entry);
       return;
@@ -616,7 +677,7 @@ class ConstrainedMesher {
                     (a[1] + b[1] + c[1]) / 3.0);
   }
 
-  bool matches(const BadTriangle& entry) const {
+  [[gnu::always_inline]] bool matches(const BadTriangle& entry) const {
     if (tri_.live[static_cast<std::size_t>(entry.slot)] == 0 || tri_.is_ghost(entry.slot)) {
       return false;
     }
@@ -626,14 +687,14 @@ class ConstrainedMesher {
     return triangle.v[next3(first)] == entry.v[1] && triangle.v[prev3(first)] == entry.v[2];
   }
 
-  bool encroaches(int32_t t, int k, const double* v) const {
+  [[gnu::always_inline]] bool encroaches(int32_t t, int k, const double* v) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     return dot_sign(tri_.point(triangle.v[next3(k)]), tri_.point(triangle.v[prev3(k)]), v) < 0;
   }
 
   // Encroachment of constrained edge k of t by the apex of either domain
   // triangle adjacent to it.
-  bool subsegment_encroached(int32_t t, int k) const {
+  [[gnu::always_inline]] bool subsegment_encroached(int32_t t, int k) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     if (!tri_.is_ghost(t) && tri_.region[static_cast<std::size_t>(t)] != 0 &&
         encroaches(t, k, tri_.point(triangle.v[k]))) {
@@ -645,7 +706,7 @@ class ConstrainedMesher {
            encroaches(o, j, tri_.point(tri_.triangles[static_cast<std::size_t>(o)].v[j]));
   }
 
-  void enqueue_triangle_checks(int32_t t) {
+  [[gnu::always_inline]] void enqueue_triangle_checks(int32_t t) {
     const Quality q = quality(t);
     if (q.bad) {
       enqueue_bad(make_entry(t, q.badness));
@@ -733,6 +794,23 @@ class ConstrainedMesher {
 
   // --------------------------------------------------- Lawson primitives
 
+  // Edge k (u -> w) of t is adjacent to nb, whose twin edge w -> u is found;
+  // what Triangulation2D::link_edge does when k is already known.
+  [[gnu::always_inline]] void link_across(int32_t t, int k, int32_t u, int32_t w, int32_t nb) {
+    const int j = tri_.edge_index(nb, w, u);
+    if (j < 0) {
+      throw std::logic_error("cdt2d: inconsistent adjacency");
+    }
+    tri_.triangles[static_cast<std::size_t>(t)].n[k] = nb;
+    tri_.triangles[static_cast<std::size_t>(nb)].n[j] = t;
+  }
+
+  // Edge k of t and edge j of s are twins.
+  void link_inner(int32_t t, int k, int32_t s, int j) {
+    tri_.triangles[static_cast<std::size_t>(t)].n[k] = s;
+    tri_.triangles[static_cast<std::size_t>(s)].n[j] = t;
+  }
+
   // Splits t into three triangles around m (strictly inside t).
   void split_triangle(int32_t t, int32_t m) {
     const Triangle2D old = tri_.triangles[static_cast<std::size_t>(t)];
@@ -751,12 +829,15 @@ class ConstrainedMesher {
     for (int32_t s : {t0, t1, t2}) {
       tri_.region[static_cast<std::size_t>(s)] = region;
     }
-    tri_.link_edge(t0, b, c, old.n[0]);
-    tri_.link_edge(t1, c, a, old.n[1]);
-    tri_.link_edge(t2, a, b, old.n[2]);
-    tri_.link_edge(t0, c, m, t1);
-    tri_.link_edge(t1, a, m, t2);
-    tri_.link_edge(t2, b, m, t0);
+    // Edge k of (p0, p1, p2) runs p[k+1] -> p[k+2]: t0 = (b, c, m) has
+    // c -> m, m -> b, b -> c; t1 = (c, a, m) a -> m, m -> c, c -> a;
+    // t2 = (a, b, m) b -> m, m -> a, a -> b.
+    link_across(t0, 2, b, c, old.n[0]);
+    link_across(t1, 2, c, a, old.n[1]);
+    link_across(t2, 2, a, b, old.n[2]);
+    link_inner(t0, 0, t1, 1);
+    link_inner(t1, 0, t2, 1);
+    link_inner(t2, 0, t0, 1);
     flip_stack_.insert(flip_stack_.end(), {t0, t1, t2});
   }
 
@@ -771,8 +852,10 @@ class ConstrainedMesher {
     const int32_t d = oold.v[j];
     const int32_t n_bc = told.n[next3(k)], c_bc = tri_.constraint(t, next3(k));
     const int32_t n_ca = told.n[prev3(k)], c_ca = tri_.constraint(t, prev3(k));
-    const int ja = tri_.edge_index(o, a, d);
-    const int jd = tri_.edge_index(o, d, b);
+    // Edge j of o is b -> a with apex d = v[j]: a -> d is next3(j), d -> b
+    // is prev3(j).
+    const int ja = next3(j);
+    const int jd = prev3(j);
     const int32_t n_ad = oold.n[ja], c_ad = tri_.constraint(o, ja);
     const int32_t n_db = oold.n[jd], c_db = tri_.constraint(o, jd);
     const uint8_t region_t = tri_.region[static_cast<std::size_t>(t)];
@@ -796,14 +879,19 @@ class ConstrainedMesher {
     tri_.region[static_cast<std::size_t>(t2)] = region_t;
     tri_.region[static_cast<std::size_t>(o1)] = region_o;
     tri_.region[static_cast<std::size_t>(o2)] = region_o;
-    tri_.link_edge(t1, c, a, n_ca);
-    tri_.link_edge(t2, b, c, n_bc);
-    tri_.link_edge(o1, d, b, n_db);
-    tri_.link_edge(o2, a, d, n_ad);
-    tri_.link_edge(t1, m, c, t2);
-    tri_.link_edge(o1, m, d, o2);
-    tri_.link_edge(t1, a, m, o2);
-    tri_.link_edge(t2, m, b, o1);
+    // t1 = (c, a, m): a -> m, m -> c, c -> a; t2 = (c, m, b): m -> b, b -> c,
+    // c -> m. Finite d: o1 = (d, b, m): b -> m, m -> d, d -> b; o2 =
+    // (d, m, a): m -> a, a -> d, d -> m. Ghosts: o1 = (b, m, inf): m -> inf,
+    // inf -> b, b -> m; o2 = (m, a, inf): a -> inf, inf -> m, m -> a.
+    const bool finite = d != kInfiniteVertex;
+    link_across(t1, 2, c, a, n_ca);
+    link_across(t2, 1, b, c, n_bc);
+    link_across(o1, finite ? 2 : 1, d, b, n_db);
+    link_across(o2, finite ? 1 : 0, a, d, n_ad);
+    link_inner(t1, 1, t2, 2);
+    link_inner(o1, finite ? 1 : 0, o2, finite ? 2 : 1);
+    link_inner(t1, 0, o2, finite ? 0 : 2);
+    link_inner(t2, 0, o1, finite ? 0 : 2);
     flip_stack_.insert(flip_stack_.end(), {t1, t2, o1, o2});
   }
 
@@ -874,8 +962,10 @@ class ConstrainedMesher {
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
       const int32_t n_wm = told.n[next3(i)], c_wm = tri_.constraint(t, next3(i));
       const int32_t n_mu = told.n[prev3(i)], c_mu = tri_.constraint(t, prev3(i));
-      const int jw = tri_.edge_index(o, u, x);
-      const int ju = tri_.edge_index(o, x, w);
+      // Edge j of o is w -> u with apex x = v[j], so u -> x is next3(j) and
+      // x -> w is prev3(j).
+      const int jw = next3(j);
+      const int ju = prev3(j);
       const int32_t n_ux = oold.n[jw], c_ux = tri_.constraint(o, jw);
       const int32_t n_xw = oold.n[ju], c_xw = tri_.constraint(o, ju);
       const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
@@ -890,11 +980,13 @@ class ConstrainedMesher {
       tri_.set_triangle(second, m, x, w, c_xw, c_wm, kFree);
       tri_.region[static_cast<std::size_t>(first)] = region;
       tri_.region[static_cast<std::size_t>(second)] = region;
-      tri_.link_edge(first, u, x, n_ux);
-      tri_.link_edge(first, m, u, n_mu);
-      tri_.link_edge(second, x, w, n_xw);
-      tri_.link_edge(second, w, m, n_wm);
-      tri_.link_edge(first, x, m, second);
+      // first = (m, u, x): u -> x, x -> m, m -> u; second = (m, x, w):
+      // x -> w, w -> m, m -> x.
+      link_across(first, 0, u, x, n_ux);
+      link_across(first, 2, m, u, n_mu);
+      link_across(second, 0, x, w, n_xw);
+      link_across(second, 1, w, m, n_wm);
+      link_inner(first, 1, second, 2);
       flip_stack_.push_back(first);
       flip_stack_.push_back(second);
     }

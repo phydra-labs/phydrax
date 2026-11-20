@@ -9,10 +9,13 @@
 #include <cstdio>
 #include <limits>
 #include <map>
+#include <queue>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include "cdt2d.hpp"
+#include "expansion.hpp"
 #include "check.hpp"
 #include "fp_hazards.hpp"
 #include "phydrax_meshcore.h"
@@ -793,6 +796,87 @@ void test_floating_point_hazards() {
   });
 }
 
+// Fault caught: a wrong child bound or sift step in the 4-ary heap, or a free
+// block of one bucket handed to another while still in use, changes the pop
+// sequence against std::priority_queue under the same strict total order.
+void test_wide_heap_matches_binary_heap() {
+  struct Entry { int priority; int id; };
+  struct Worse {
+    bool operator()(const Entry& a, const Entry& b) const {
+      return a.priority != b.priority ? a.priority < b.priority : a.id > b.id;
+    }
+  };
+  for (const bool spatial : {false, true}) {
+    SpatialRefinementQueue<Entry, Worse, 4> wide(0.0, 0.0, 1.0, 1.0, spatial ? 1e6 : 1.0, 4);
+    PHX_CHECK(wide.spatial() == spatial);
+    std::array<std::priority_queue<Entry, std::vector<Entry>, Worse>, 2> reference;
+    std::uint64_t state = 12345;
+    auto next = [&state]() {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return static_cast<int>(state >> 33);
+    };
+    // Spatial grid row 0: bucket 0 (x = 0.01) pops before bucket 3 (x = 0.2).
+    int id = 0;
+    for (int round = 0; round < 3000; ++round) {
+      const int bucket = spatial ? next() % 2 : 0;
+      const int pushes = 1 + next() % 3;
+      for (int k = 0; k < pushes; ++k) {
+        const Entry entry{next() % 50, id++};
+        wide.push(entry, bucket == 0 ? 0.01 : 0.2, 0.01);
+        reference[bucket].push(entry);
+      }
+      for (int k = next() % 3; k > 0 && !wide.empty(); --k) {
+        auto& source = !reference[0].empty() ? reference[0] : reference[1];
+        PHX_CHECK(wide.top().id == source.top().id);
+        wide.pop();
+        source.pop();
+      }
+    }
+    while (!wide.empty()) {
+      auto& source = !reference[0].empty() ? reference[0] : reference[1];
+      PHX_CHECK(wide.top().id == source.top().id);
+      wide.pop();
+      source.pop();
+    }
+    PHX_CHECK(reference[0].empty() && reference[1].empty());
+  }
+}
+
+// Fault caught: a binary64 dot-product stage whose error bound is too small
+// (or whose sign is flipped) disagrees with the exact integer sign on
+// near-orthogonal configurations whose products round.
+void test_dot_sign_against_integer_reference() {
+  std::uint64_t state = 99;
+  auto next = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<int64_t>(state >> 24) - (int64_t{1} << 39);
+  };
+  int zeros = 0;
+  for (int trial = 0; trial < 20000; ++trial) {
+    // Integer coordinates below 2^40: differences are exact doubles, the
+    // products (up to 2^82) round, and an exact expansion holds the dot product
+    // (portable: no __int128, which MSVC lacks).
+    int64_t a[2] = {next(), next()}, v[2] = {next(), next()}, b[2];
+    const int64_t ax = a[0] - v[0], ay = a[1] - v[1];
+    // b - v nearly perpendicular to a - v: (-ay, ax) / scale plus an offset.
+    const int64_t scale = 1 + (trial % 7);
+    b[0] = v[0] - ay / scale + (trial % 3) - 1;
+    b[1] = v[1] + ax / scale + (trial % 5) - 2;
+    if (std::llabs(b[0]) >= (int64_t{1} << 40) || std::llabs(b[1]) >= (int64_t{1} << 40)) continue;
+    const phx::mc::Expansion exact =
+        phx::mc::Expansion::product(static_cast<double>(ax), static_cast<double>(b[0] - v[0])) +
+        phx::mc::Expansion::product(static_cast<double>(ay), static_cast<double>(b[1] - v[1]));
+    const int expected = exact.sign();
+    zeros += expected == 0;
+    const double pa[2] = {static_cast<double>(a[0]), static_cast<double>(a[1])};
+    const double pb[2] = {static_cast<double>(b[0]), static_cast<double>(b[1])};
+    const double pv[2] = {static_cast<double>(v[0]), static_cast<double>(v[1])};
+    PHX_CHECK(cdt2d_detail::dot_sign(pa, pb, pv) == expected);
+    PHX_CHECK(cdt2d_detail::dot_sign(pb, pa, pv) == expected);
+  }
+  PHX_CHECK(zeros > 0);
+}
+
 }  // namespace
 
 int main() {
@@ -804,6 +888,8 @@ int main() {
   test_cavity_legalization_predicate_order();
   test_refinement_determinism();
   test_spatial_queue_order();
+  test_wide_heap_matches_binary_heap();
+  test_dot_sign_against_integer_reference();
   test_ruppert_square();
   test_refinement_angle_thresholds();
   test_ruppert_l_shape();
