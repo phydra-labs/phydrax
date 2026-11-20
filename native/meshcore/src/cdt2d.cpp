@@ -125,6 +125,8 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
     return error.status;
   }
   result->points = std::move(triangulation.coordinates);
+  result->cells.reserve(3 * triangulation.triangles.size());
+  result->cell_segments.reserve(3 * triangulation.triangles.size());
   for (std::size_t t = 0; t < triangulation.triangles.size(); ++t) {
     if (triangulation.live[t] == 0 || triangulation.region[t] == 0 ||
         triangulation.is_ghost(static_cast<int32_t>(t))) {
