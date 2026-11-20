@@ -75,6 +75,9 @@ void check_edges(std::vector<Edge>& edges, std::vector<phx_mc_chart_failure>& fa
   }
 }
 
+}  // namespace
+
+namespace phx::mc::chart {
 void check_uses(int64_t use_count, const int64_t* use_patch, const double* use_range,
                 int64_t chord_count, const int64_t* chord_use, const int64_t* chord_loop,
                 const double* chord_uv, const double* chord_range,
@@ -146,6 +149,11 @@ void check_loops(int64_t loop_count, int64_t chord_count, const int64_t* chord_l
     begin = end;
   }
 }
+}  // namespace phx::mc::chart
+
+namespace {
+using phx::mc::chart::check_loops;
+using phx::mc::chart::check_uses;
 
 // Orientation agreement plus boundary = chord chain fixes the covering multiplicity
 // to the winding number of the chord cycles; it does not exclude multiplicity 2.
