@@ -113,6 +113,15 @@ class Triangulation2D {
     return slot;
   }
 
+  // Slot t is replaced in place by a new triangle (what release(t) and the
+  // allocate() that hands t back would do): t stays live and its old
+  // triangle's finite count is dropped; set_triangle writes the new one.
+  void recycle(int32_t t) {
+    if (!is_ghost(t)) {
+      --finite_count;
+    }
+  }
+
   void release(int32_t t) {
     if (!is_ghost(t)) {
       --finite_count;

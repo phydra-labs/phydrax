@@ -859,8 +859,9 @@ class ConstrainedMesher {
     const int32_t c2 = tri_.constraint(t, 2);
     const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
     const int32_t a = old.v[0], b = old.v[1], c = old.v[2];
-    tri_.release(t);
-    const int32_t t0 = tri_.allocate();
+    // release(t) then allocate() would return t: it is replaced in place.
+    tri_.recycle(t);
+    const int32_t t0 = t;
     const int32_t t1 = tri_.allocate();
     const int32_t t2 = tri_.allocate();
     tri_.set_triangle(t0, b, c, m, kFree, kFree, c0);
@@ -900,10 +901,11 @@ class ConstrainedMesher {
     const int32_t n_db = oold.n[jd], c_db = tri_.constraint(o, jd);
     const uint8_t region_t = tri_.region[static_cast<std::size_t>(t)];
     const uint8_t region_o = tri_.region[static_cast<std::size_t>(o)];
-    tri_.release(t);
-    tri_.release(o);
-    const int32_t t1 = tri_.allocate();
-    const int32_t t2 = tri_.allocate();
+    // release(t), release(o) then allocate() twice would return o, t.
+    tri_.recycle(t);
+    tri_.recycle(o);
+    const int32_t t1 = o;
+    const int32_t t2 = t;
     const int32_t o1 = tri_.allocate();
     const int32_t o2 = tri_.allocate();
     tri_.set_triangle(t1, c, a, m, id, kFree, c_ca);
@@ -944,8 +946,8 @@ class ConstrainedMesher {
     const int32_t ghost_q = old.n[0];
     const int32_t ghost_p = old.n[1];
     const uint8_t region = tri_.region[static_cast<std::size_t>(inner)];
-    tri_.release(g);
-    const int32_t f = tri_.allocate();
+    tri_.recycle(g);  // release(g) then allocate() would return g
+    const int32_t f = g;
     const int32_t h1 = tri_.allocate();
     const int32_t h2 = tri_.allocate();
     tri_.set_triangle(f, p, q, m, id, id, kFree);
@@ -1012,10 +1014,11 @@ class ConstrainedMesher {
       if (cavity_certificates && static_cast<std::size_t>(o) < marks_.size()) {
         marks_[static_cast<std::size_t>(o)] = 0;
       }
-      tri_.release(t);
-      tri_.release(o);
-      const int32_t first = tri_.allocate();
-      const int32_t second = tri_.allocate();
+      // release(t), release(o) then allocate() twice would return o, t.
+      tri_.recycle(t);
+      tri_.recycle(o);
+      const int32_t first = o;
+      const int32_t second = t;
       tri_.set_triangle(first, m, u, x, c_ux, kFree, c_mu);
       tri_.set_triangle(second, m, x, w, c_xw, c_wm, kFree);
       tri_.region[static_cast<std::size_t>(first)] = region;
