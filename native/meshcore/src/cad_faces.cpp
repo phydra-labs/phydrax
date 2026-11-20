@@ -1002,9 +1002,10 @@ double maximum_cosine(const SurfaceTriangulation& surface,
 }
 
 // Largest metric circumradius over cells (centroid metric, as the chart
-// kernel's size test); infinity on a degenerate or invalid cell.
+// kernel's size test); infinity on a degenerate or invalid cell. Stops at the
+// first cell past `bound`, returning that cell's radius.
 double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& surface,
-                             const std::vector<int32_t>& cells) {
+                             const std::vector<int32_t>& cells, double bound) {
   double maximum = 0.0;
   for (const int32_t cell : cells) {
     const auto& t = surface.cells[cell];
@@ -1023,6 +1024,7 @@ double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& sur
     const double radius2 = dx * (m.uu * dx + m.uv * dy) + dy * (m.uv * dx + m.vv * dy);
     if (!std::isfinite(radius2)) return std::numeric_limits<double>::infinity();
     maximum = std::max(maximum, radius2);
+    if (std::sqrt(radius2) > bound) break;
   }
   return std::sqrt(maximum);
 }
@@ -1053,12 +1055,40 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
   }
   const double target_cos =
       std::cos((min_angle_degrees + 60.0) * 3.14159265358979323846 / 360.0);
-  // Moves v to `chart` when the guards pass and the star's worst cosine is at
-  // most `limit`; returns the new worst cosine, or infinity (v unchanged).
-  // `previous_radius` (the star's radius at the visit's start) < 0 is
-  // computed on first use; infinity (a degenerate star) skips the size guard.
+  // The visited vertex's chart at the visit's start.
+  std::array<double, 2> visit_start{};
+  // The size guard for v at its current chart: false when the star's radius
+  // exceeds both the kernel's bound and the star's radius at the visit start.
+  // `previous_radius` (that start radius) < 0 is computed on first need;
+  // infinity (a degenerate star) skips the guard.
+  const auto fits = [&](std::size_t v, double& previous_radius) {
+    if (!std::isfinite(previous_radius)) return true;
+    constexpr double bound = 0.70710678118654752440;
+    // Within the kernel's bound the move passes whatever the start was, so
+    // the start radius is evaluated only past it.
+    double radius = maximum_metric_radius(
+        metric, surface, incident[v],
+        previous_radius < 0.0 ? bound : std::max(bound, previous_radius));
+    if (!(radius > bound)) return true;
+    if (previous_radius < 0.0) {
+      // The star's radius at the visit's start (no move is kept before the
+      // first size check).
+      const std::array<double, 2> chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
+      std::copy(visit_start.begin(), visit_start.end(), surface.charts.begin() + 2 * v);
+      previous_radius = maximum_metric_radius(metric, surface, incident[v],
+                                              std::numeric_limits<double>::infinity());
+      std::copy(chart.begin(), chart.end(), surface.charts.begin() + 2 * v);
+      if (!std::isfinite(previous_radius)) return true;
+      if (previous_radius > bound)
+        radius = maximum_metric_radius(metric, surface, incident[v], previous_radius);
+    }
+    return !(radius > std::max(bound, previous_radius));
+  };
+  // Moves v to `chart` when the orientation holds and the star's worst cosine
+  // is at most `limit` (and, with `sized`, the size guard holds); returns the
+  // new worst cosine, or infinity (v unchanged).
   const auto attempt = [&](std::size_t v, const double chart[2], double limit,
-                           double& previous_radius) {
+                           double& previous_radius, bool sized) {
     const std::array<double, 2> old_chart{surface.charts[2 * v], surface.charts[2 * v + 1]};
     const std::array<double, 3> old_point{surface.points[3 * v], surface.points[3 * v + 1],
                                           surface.points[3 * v + 2]};
@@ -1079,17 +1109,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
     const double quality = maximum_cosine(surface, incident[v]);
     if (!(quality <= limit)) return reject();
-    if (std::isfinite(previous_radius)) {
-      if (previous_radius < 0.0) {
-        // The star's radius before the first move of this visit.
-        std::copy(old_chart.begin(), old_chart.end(), surface.charts.begin() + 2 * v);
-        previous_radius = maximum_metric_radius(metric, surface, incident[v]);
-        std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
-      }
-      if (maximum_metric_radius(metric, surface, incident[v]) >
-          std::max(0.70710678118654752440, previous_radius))
-        return reject();
-    }
+    if (sized && !fits(v, previous_radius)) return reject();
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
   };
@@ -1112,6 +1132,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     for (std::size_t v = 0; v < vertices.size(); ++v) {
       if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty() || !active[v]) continue;
       const std::array<double, 2> start{surface.charts[2 * v], surface.charts[2 * v + 1]};
+      visit_start = start;
       [&] {
       neighbors.clear();
       for (const int32_t cell : incident[v])
@@ -1140,7 +1161,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       double previous_radius = -1.0;
       // The first two passes smooth every vertex; later passes only search.
       if (pass < 2) {
-        const double after = attempt(v, chart, quality, previous_radius);
+        const double after = attempt(v, chart, quality, previous_radius, true);
         if (after <= quality) quality = after;
       }
       // Compass search on the star's worst cosine from a quarter of the
@@ -1184,7 +1205,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
                 const double after = attempt(
                     v, probe,
                     std::min(limit, std::nextafter(best, -std::numeric_limits<double>::infinity())),
-                    previous_radius);
+                    previous_radius, true);
                 if (!std::isfinite(after)) continue;
                 best = after;
                 best_chart = {probe[0], probe[1]};
@@ -1230,7 +1251,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
         return maximum;
       };
       // A step toward the far end of the longest edge (1/4, 1/8, 1/16 of
-      // it), the first that shortens the longest edge.
+      // it), the first that shortens the longest edge (checked before the
+      // costlier size guard).
       const double current = longest();
       if (!(current > 1.0) || far < 0) return;
       limit = std::max(quality, target_cos);
@@ -1239,8 +1261,8 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       for (double fraction = 0.25; fraction >= 0.0625; fraction *= 0.5) {
         const double probe[2] = {saved_chart[0] + fraction * (target[0] - saved_chart[0]),
                                  saved_chart[1] + fraction * (target[1] - saved_chart[1])};
-        if (!std::isfinite(attempt(v, probe, limit, previous_radius))) continue;
-        if (longest() < current) break;
+        if (!std::isfinite(attempt(v, probe, limit, previous_radius, false))) continue;
+        if (longest() < current && fits(v, previous_radius)) break;
         restore();
       }
       }();
