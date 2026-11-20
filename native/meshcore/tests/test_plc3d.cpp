@@ -1310,6 +1310,137 @@ void test_nonrepresentable_split_is_suppressed_into_the_volume() {
   }
 }
 
+// FNV-1a over the published points (bit patterns) and cells.
+std::uint64_t recovery_hash(const PlcRecovery& result) {
+  std::uint64_t hash = 0xcbf29ce484222325ULL;
+  const auto mix = [&](const void* data, std::size_t bytes) {
+    const auto* byte = static_cast<const unsigned char*>(data);
+    for (std::size_t at = 0; at < bytes; ++at) hash = (hash ^ byte[at]) * 0x100000001b3ULL;
+  };
+  mix(result.points.data(), result.points.size() * sizeof(double));
+  mix(result.tets.data(), result.tets.size() * sizeof(int32_t));
+  return hash;
+}
+
+// Two small FIXED inputs whose source triangles are split thousands of
+// times (about 4000 and 9000 points before suppression): the children of a
+// split source triangle are legalized from the edges that can have changed,
+// not by rescanning every child edge after each flip (hundreds of seconds
+// before). The output is the rescanning legalization's (hash), and the
+// circle-test count stays near the flips' (it grew quadratically).
+void test_legalization_of_heavily_split_source_triangles() {
+  struct Case {
+    std::vector<double> points;
+    std::vector<int32_t> triangles;
+    std::size_t vertices;
+    std::size_t cells;
+    std::uint64_t hash;
+    int64_t max_tests;
+  };
+  const std::vector<Case> cases{
+      {{0x1.00000000001ddp+0, -0x1.58fbc01f1b1a8p-42, 0x1.8a68d4a88dc5dp-48,
+        -0x1.ffffffffffe79p-2, 0x1.bb67ae858466ep-1, -0x1.3a682b07ff0b4p-54,
+        -0x1.ffffffffff127p-2, -0x1.bb67ae8585a2bp-1, -0x1.28c6299fa595bp-42,
+        0x1.5ed142951e284p-1, 0x1.c81ab9ee6496ep-1, 0x1.b3fc33b5852adp-5,
+        -0x1.1d340f0160aacp+0, 0x1.2f0ef3494d2c4p-3, 0x1.b3fc33b5871f7p-5,
+        0x1.b72db6db44192p-2, -0x1.09ef3b605b4c9p+0, 0x1.b3fc33b59f611p-5},
+       {0, 1, 2, 3, 4, 5, 0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 2, 0, 3, 2, 3, 5},
+       453, 2659, 0x547535603f2f93beULL, 60000},
+      {{0x1.553ff62d971d4p+0, 0x1.1876b50522525p-47, -0x1.eff8eaa1badf6p-47,
+        0x1.8ad2fc39eb879p-47, 0x1.553ff62d971e4p+0, 0x1.db9450429eadcp-51,
+        -0x1.553ff62d9711dp+0, -0x1.a94707483317cp-46, -0x1.575f1d433f399p-46,
+        0x1.e78470cf87f11p-46, -0x1.553ff62d97222p+0, -0x1.308ed0c7a9edap-45,
+        0x1.20fc80572a656p+0, 0x1.cf7808a39b24ap-2, 0x1.a8e796bc368f5p-5,
+        -0x1.cf7808a39b2afp-2, 0x1.20fc80572a6d9p+0, 0x1.a8e796bc368b3p-5,
+        -0x1.20fc80572a6e9p+0, -0x1.cf7808a39b38bp-2, 0x1.a8e796bc37509p-5,
+        0x1.cf7808a39b2d3p-2, -0x1.20fc80572a657p+0, 0x1.a8e796bc3757bp-5,
+        0x1.2a484f07b265p+0, 0x1.4ad8a5601542p-47, 0x1.a8e796bc360f8p-4,
+        0x1.1ed91de94ca34p-45, 0x1.2a484f07b2643p+0, 0x1.a8e796bc36a57p-4,
+        -0x1.2a484f07b260dp+0, 0x1.d8990c8137628p-47, 0x1.a8e796bc36037p-4,
+        0x1.83e66b9506defp-47, -0x1.2a484f07b2718p+0, 0x1.a8e796bc364d2p-4,
+        0x1.06d63456cdd39p+0, 0x1.a587e44e3538fp-2, 0x1.3eadb10d28846p-3,
+        -0x1.a587e44e3574dp-2, 0x1.06d63456cdc27p+0, 0x1.3eadb10d2871bp-3,
+        -0x1.06d63456cdd03p+0, -0x1.a587e44e3580fp-2, 0x1.3eadb10d2873cp-3,
+        0x1.a587e44e35578p-2, -0x1.06d63456cdc2ap+0, 0x1.3eadb10d28715p-3,
+        0x1.8f1b48bd8b9b3p-1, 0x1.c8c24b453f229p-47, 0x1.a8e796bc35f68p-3,
+        0x1.855d3e95ee3f8p-47, 0x1.8f1b48bd8baedp-1, 0x1.a8e796bc35b39p-3,
+        -0x1.8f1b48bd8b879p-1, -0x1.a23fabde3573bp-47, 0x1.a8e796bc363fbp-3,
+        0x1.e146966d3f75cp-49, -0x1.8f1b48bd8ba0cp-1, 0x1.a8e796bc3606ep-3},
+       {0,  1,  2,  16, 17, 18, 0,  2,  3,  16, 18, 19, 0,  1,  5,  0,  5,  4,
+        1,  2,  6,  1,  6,  5,  2,  3,  7,  2,  7,  6,  3,  0,  4,  3,  4,  7,
+        4,  5,  8,  5,  9,  8,  5,  6,  9,  6,  10, 9,  6,  7,  10, 7,  11, 10,
+        7,  4,  11, 4,  8,  11, 8,  9,  13, 8,  13, 12, 9,  10, 14, 9,  14, 13,
+        10, 11, 15, 10, 15, 14, 11, 8,  12, 11, 12, 15, 12, 13, 16, 13, 17, 16,
+        13, 14, 17, 14, 18, 17, 14, 15, 18, 15, 19, 18, 15, 12, 19, 12, 16, 19},
+       985, 5743, 0x024cd66b0c0f974aULL, 120000}};
+  for (const Case& entry : cases) {
+    PlcRecovery result;
+    const int32_t status =
+        recover_closed_surface(entry.points, entry.triangles, BoundaryPolicy::kFixed, result);
+    PHX_CHECK(status == PHX_MC_OK);
+    if (status != PHX_MC_OK) continue;
+    std::printf("legalization: %zu points, %zu cells, hash %016llx, %lld circle tests\n",
+                result.points.size() / 3, result.tets.size() / 4,
+                static_cast<unsigned long long>(recovery_hash(result)),
+                static_cast<long long>(result.legalize_tests));
+    PHX_CHECK(result.points.size() / 3 == entry.vertices);
+    PHX_CHECK(result.tets.size() / 4 == entry.cells);
+    PHX_CHECK(recovery_hash(result) == entry.hash);
+    PHX_CHECK(result.legalize_tests > 0 && result.legalize_tests < entry.max_tests);
+    check_fixed_boundary(result, entry.points.size() / 3);
+  }
+}
+
+// A segment inside an interface facet, with volume segments ending just
+// above and below its midpoint on opposite sides of it (two boxes stacked
+// at z = 1, the interface triangulated through the segment's ends 8 and 9):
+// recovery splits interface boundary edges (split_source_edge marks the
+// subfaces through each old interval fresh) and publishes the segment and
+// every boundary edge as segments.
+void test_facet_segment_beside_volume_segments_recovers() {
+  const std::vector<double> points{
+      0, 0, 0,  1, 0, 0,  1, 1, 0,  0, 1, 0,  0, 0, 1,  1, 0, 1,  1, 1, 1,  0, 1, 1,
+      .1, .5, 1,  .9, .5, 1,  .5, .51, 1.01,  .5, .5, 1.8,  .5, .49, .99,  .5, .5, .2,
+      0, 0, 2,  1, 0, 2,  1, 1, 2,  0, 1, 2};
+  const std::vector<int32_t> vertices{
+      0, 3, 2, 1,                                                       // bottom
+      0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7,                   // lower walls
+      4, 5, 15, 14, 5, 6, 16, 15, 6, 7, 17, 16, 7, 4, 14, 17,           // upper walls
+      14, 15, 16, 17,                                                   // top
+      4, 5, 9, 4, 9, 8, 4, 8, 7, 5, 6, 9, 6, 7, 8, 6, 8, 9};           // interface
+  const std::vector<int64_t> offsets{0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40,
+                                     43, 46, 49, 52, 55, 58};
+  const std::vector<int32_t> facets{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 10, 10};
+  const std::vector<int32_t> regions{-1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 1,
+                                     -1, 1, -1, 1, -1, 1, -1, 1, 1, 0};
+  const std::vector<int32_t> segments{8, 9, 10, 11, 12, 13};
+  PlcInput input;
+  input.point_count = static_cast<int64_t>(points.size() / 3);
+  input.points = points.data();
+  input.polygon_count = static_cast<int64_t>(facets.size());
+  input.polygon_offsets = offsets.data();
+  input.polygon_vertices = vertices.data();
+  input.polygon_facets = facets.data();
+  input.facet_count = 11;
+  input.facet_regions = regions.data();
+  input.segment_count = 3;
+  input.segments = segments.data();
+  input.policy = BoundaryPolicy::kConforming;
+  PlcRecovery result;
+  const int32_t status = recover_plc(input, result);
+  PHX_CHECK(status == PHX_MC_OK);
+  if (status != PHX_MC_OK) return;
+  std::size_t pieces = 0;
+  for (std::size_t row = 0; row < result.segment_sources.size(); ++row) {
+    const auto source = static_cast<std::size_t>(result.segment_sources[row]);
+    const int32_t a = result.plc_edges[2 * source], b = result.plc_edges[2 * source + 1];
+    pieces += std::min(a, b) == 8 && std::max(a, b) == 9 ? 1 : 0;
+  }
+  PHX_CHECK(pieces >= 1);
+  PHX_CHECK(result.points.size() / 3 > points.size() / 3);
+  check_conforming_recovery(result, points.size() / 3, 11);
+}
+
 void test_bent_exterior_crease_edges_recover_under_both_policies() {
   // A hexagonal base in the plane x + y + 3z = 1 whose rounded vertices make
   // every fan diagonal a crease bent by rounding only, under an apex. The
@@ -4094,6 +4225,8 @@ int main() {
   test_conforming_missing_boundary_edges_recover_with_exact_witnesses();
   test_witnessed_segment_split_is_published_exactly();
   test_nonrepresentable_split_is_suppressed_into_the_volume();
+  test_legalization_of_heavily_split_source_triangles();
+  test_facet_segment_beside_volume_segments_recovers();
   test_bent_exterior_crease_edges_recover_under_both_policies();
   test_conforming_representable_segment_prefers_vertex_cavity();
   test_incremental_point_slot_reindexes_corners_and_rolls_back();

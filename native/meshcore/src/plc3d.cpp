@@ -1493,6 +1493,7 @@ class SourceFaceTable {
   bool emplace(const Triple& key, const PlcSourceFace& face) {
     if (!add(key, face)) return false;
     unverified_.insert(key);
+    fresh_.insert(key);
     return true;
   }
   // emplace for the initial faces, before any complex: track_complex marks
@@ -1513,6 +1514,7 @@ class SourceFaceTable {
       drop(by_triangle_, found->second.source_triangle, key);
     }
     unverified_.erase(key);
+    fresh_.erase(key);
     faces_.erase(found);
     return true;
   }
@@ -1523,6 +1525,7 @@ class SourceFaceTable {
     by_triangle_.clear();
     indexed_ = false;
     unverified_.clear();
+    fresh_.clear();
   }
 
   // Keys through `vertex`, and keys of source triangle `triangle`, in key order.
@@ -1544,6 +1547,13 @@ class SourceFaceTable {
       unverified_.insert(key);
     }
   }
+  // Faces added (or put back) since their source triangle was last
+  // legalized (legalize_source_children), whose edges it rechecks.
+  bool fresh(const Triple& key) const { return fresh_.contains(key); }
+  void mark_fresh(const Triple& key) {
+    if (contains(key)) fresh_.insert(key);
+  }
+  void settle(const Triple& key) { fresh_.erase(key); }
   std::set<Triple>& unverified() { return unverified_; }
   std::size_t size() const { return faces_.size(); }
 
@@ -1633,6 +1643,7 @@ class SourceFaceTable {
   mutable Index by_triangle_;
   mutable bool indexed_ = false;
   std::set<Triple> unverified_;
+  std::set<Triple> fresh_;
 };
 
 // The cube root of a positive finite value by Newton's iteration from a power
@@ -3730,6 +3741,13 @@ class PlcRecoveryBuilder {
         edge_chains_[edge].begin() + static_cast<std::ptrdiff_t>(interval + 1),
         {parameter, vertex});
     chain_intervals_.erase(topology::undirected_edge(first.vertex, second.vertex));
+    // The old interval is no chain interval any more: a subface edge along
+    // it (a segment inside a facet) is legalized again.
+    for (const Triple& key : source_faces_.keys_through(first.vertex)) {
+      if (std::find(key.begin(), key.end(), second.vertex) != key.end()) {
+        source_faces_.mark_fresh(key);
+      }
+    }
     chain_intervals_.emplace(topology::undirected_edge(first.vertex, vertex), edge);
     chain_intervals_.emplace(topology::undirected_edge(vertex, second.vertex), edge);
     vertex_rows_[static_cast<std::size_t>(vertex)].push_back(edge);
@@ -5366,40 +5384,58 @@ class PlcRecoveryBuilder {
       pe[2] = pa[2] + (u[0] * v[1] - u[1] * v[0]);
       return insphere_sign(pa, pb, pc, pe, pd) > 0;
     };
-    for (;;) {
-      // Directed child edge -> (child key, opposite vertex).
-      std::map<std::pair<int32_t, int32_t>, std::pair<Triple, int32_t>> edges;
-      for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
-        const PlcSourceFace& child = source_faces_.at(key);
-        for (int side = 0; side < 3; ++side) {
-          edges.emplace(std::pair{child.oriented[static_cast<std::size_t>(side)],
-                                  child.oriented[static_cast<std::size_t>((side + 1) % 3)]},
-                        std::pair{key, child.oriented[static_cast<std::size_t>((side + 2) % 3)]});
-        }
+    // Directed child edge -> (child key, opposite vertex), kept current
+    // across flips. Only edges that can have become illegal are checked: the
+    // edges of the children added since the last legalization of this
+    // source triangle (fresh), then the four outer edges of each flipped
+    // quadrilateral. Every other edge joins two children unchanged since
+    // that legalization left it legal (a split that frees a chain interval
+    // marks its children fresh, split_source_edge).
+    std::map<std::pair<int32_t, int32_t>, std::pair<Triple, int32_t>> edges;
+    std::set<std::pair<int32_t, int32_t>> work;
+    const auto add_child = [&](const Triple& key, const Triple& oriented, bool check) {
+      for (int side = 0; side < 3; ++side) {
+        const int32_t p = oriented[static_cast<std::size_t>(side)];
+        const int32_t q = oriented[static_cast<std::size_t>((side + 1) % 3)];
+        edges[{p, q}] = {key, oriented[static_cast<std::size_t>((side + 2) % 3)]};
+        if (check) work.insert({std::min(p, q), std::max(p, q)});
       }
-      bool flipped = false;
-      for (const auto& [edge, use] : edges) {
-        const auto [a, b] = edge;
-        if (a > b) continue;
-        const auto other = edges.find({b, a});
-        if (other == edges.end()) continue;
-        if (chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
-        const int32_t c = use.second;
-        const int32_t d = other->second.second;
-        if (!inside(a, b, c, d)) continue;
-        const PlcSourceFace template_face = source_faces_.at(use.first);
-        source_faces_.erase(use.first);
-        source_faces_.erase(other->second.first);
-        const Triple first{a, d, c};
-        const Triple second{d, b, c};
-        source_faces_.emplace(sorted_triple(first.data()),
-                              PlcSourceFace{first, template_face.facet, source_triangle});
-        source_faces_.emplace(sorted_triple(second.data()),
-                              PlcSourceFace{second, template_face.facet, source_triangle});
-        flipped = true;
-        break;
+    };
+    for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
+      add_child(key, source_faces_.at(key).oriented, source_faces_.fresh(key));
+    }
+    while (!work.empty()) {
+      const auto [a, b] = *work.begin();
+      work.erase(work.begin());
+      const auto use = edges.find({a, b});
+      const auto other = edges.find({b, a});
+      if (use == edges.end() || other == edges.end()) continue;
+      if (chain_intervals_.contains(topology::undirected_edge(a, b))) continue;
+      const int32_t c = use->second.second;
+      const int32_t d = other->second.second;
+      ++candidate_.legalize_tests;
+      if (!inside(a, b, c, d)) continue;
+      const Triple use_key = use->second.first;
+      const Triple other_key = other->second.first;
+      const int32_t facet = source_faces_.at(use_key).facet;
+      source_faces_.erase(use_key);
+      source_faces_.erase(other_key);
+      for (const auto& [p, q] : {std::pair{a, b}, std::pair{b, c}, std::pair{c, a},
+                                 std::pair{b, a}, std::pair{a, d}, std::pair{d, b}}) {
+        edges.erase({p, q});
       }
-      if (!flipped) return;
+      const Triple first{a, d, c};
+      const Triple second{d, b, c};
+      source_faces_.emplace(sorted_triple(first.data()),
+                            PlcSourceFace{first, facet, source_triangle});
+      source_faces_.emplace(sorted_triple(second.data()),
+                            PlcSourceFace{second, facet, source_triangle});
+      add_child(sorted_triple(first.data()), first, true);
+      add_child(sorted_triple(second.data()), second, true);
+      work.erase({std::min(c, d), std::max(c, d)});
+    }
+    for (const Triple& key : source_faces_.keys_of_triangle(source_triangle)) {
+      source_faces_.settle(key);
     }
   }
 
