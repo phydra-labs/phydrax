@@ -53,12 +53,21 @@ class NativeCurveSchedule(StrictModule, NonTrainableState):
         )
 
 
+# Samples of one source curve before its unmet chord fidelity is unresolved.
+DEFAULT_MAXIMUM_CURVE_SAMPLES = 1 << 14
+
+
 @final
 class NativeSurfaceSchedule(StrictModule, NonTrainableState):
     """Physical quality aim and spacing used to schedule surface refinement.
 
     The schedule contains no refinement-round ceiling: unresolved physical
     violations terminate through numerical stagnation/representability status.
+    Source-curve sampling is the exception: a curve whose chords cannot meet
+    its fidelity limit (a curved feature at zero or near-zero deviation)
+    approaches representability only through exponentially many samples, so
+    ``maximum_curve_samples`` bounds the samples of one curve and its excess
+    is an unresolved finding.
     ``normal_deviation_aim`` (radians) also refines cells whose facet turns from
     sampled source normals by more than the aim; it steers refinement only and
     is not a certified bound.
@@ -68,6 +77,7 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
     spacing_fraction: float = eqx.field(static=True)
     minimum_edge_samples: int = eqx.field(static=True)
     normal_deviation_aim: float | None = eqx.field(static=True)
+    maximum_curve_samples: int = eqx.field(static=True)
     curve_schedule: NativeCurveSchedule
     schedule_id: str = eqx.field(static=True)
 
@@ -79,6 +89,7 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
         spacing_fraction: float = 0.9,
         minimum_edge_samples: int = 2,
         normal_deviation_aim: float | None = None,
+        maximum_curve_samples: int = DEFAULT_MAXIMUM_CURVE_SAMPLES,
         curve_schedule: NativeCurveSchedule | None = None,
     ) -> None:
         angle = float(quality_angle_degrees)
@@ -101,6 +112,13 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
             raise ValueError(
                 "NativeSurfaceSchedule.normal_deviation_aim must lie in (0, pi]."
             )
+        curve_samples = positive_integer(
+            maximum_curve_samples, "NativeSurfaceSchedule.maximum_curve_samples"
+        )
+        if curve_samples < samples:
+            raise ValueError(
+                "maximum_curve_samples must be at least minimum_edge_samples."
+            )
         curves = NativeCurveSchedule() if curve_schedule is None else curve_schedule
         if not isinstance(curves, NativeCurveSchedule):
             raise TypeError("curve_schedule must be a NativeCurveSchedule.")
@@ -108,6 +126,7 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
         self.spacing_fraction = spacing
         self.minimum_edge_samples = samples
         self.normal_deviation_aim = aim
+        self.maximum_curve_samples = curve_samples
         self.curve_schedule = curves
         identity: dict[str, object] = {
             "kind": "native-surface-schedule",
@@ -118,6 +137,8 @@ class NativeSurfaceSchedule(StrictModule, NonTrainableState):
         }
         if aim is not None:
             identity["normal_deviation_aim"] = aim
+        if curve_samples != DEFAULT_MAXIMUM_CURVE_SAMPLES:
+            identity["maximum_curve_samples"] = curve_samples
         self.schedule_id = canonical_fingerprint(identity)
 
 

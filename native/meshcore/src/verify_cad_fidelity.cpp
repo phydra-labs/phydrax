@@ -1128,6 +1128,23 @@ bool split_piece(const Piece& piece, const KnotLine& line, Piece& below, Piece& 
   return below.size >= 3 && above.size >= 3;
 }
 
+// The interpolation remainder of a triangle t with vertices x_i in a box,
+// for one component with |H_uu|, |H_uv|, |H_vv| <= a, b, c over the box:
+// S(x) - I_t S(x) = -1/2 sum_i w_i (x_i - x)^T H(xi_i) (x_i - x), and
+// 2 |d_u d_v| <= s d_u^2 + d_v^2 / s (s > 0) dominates each quadratic form by
+// the diagonal D = diag(a + b s, c + b / s). For any centre m,
+// sum_i w_i |x_i - x|_D^2 = sum_i w_i |x_i - m|_D^2 - |x - m|_D^2
+// <= max_i |x_i - m|_D^2 <= D_u e_u^2 + D_v e_v^2, with e the box's largest
+// offsets from m; s = e_v / e_u turns this into a e_u^2 + 2 b e_u e_v + c e_v^2.
+// So the box extents of the Taylor remainder may be replaced by the offsets
+// from the box centre: one quarter of the remainder. Returns e for one axis,
+// rounded up (any binary64 centre is sound).
+di::Interval half_extent(double lower, double upper) {
+  const double centre = lower + 0.5 * (upper - lower);
+  return di::point(std::max(di::subtract(di::point(centre), di::point(lower)).upper,
+                            di::subtract(di::point(upper), di::point(centre)).upper));
+}
+
 // Piecewise rule at C0 knot lines (Python's _spline_piecewise_interpolation_bound).
 // The exact leaf polygon is split by every C0 line strictly inside its box;
 // clipping a convex polygon by the two closed half-planes of a line gives two
@@ -1210,8 +1227,8 @@ bool clipped_leaf_bound(const CadGeometry& geometry, int32_t node, const Leaf& l
       double jet_lower[18], jet_upper[18];
       status = geometry.interval_jets(node, lo, hi, 2, jet_lower, jet_upper, workspace);
       if (status != PHX_MC_OK) return true;
-      const auto du = di::subtract(di::point(hi[0]), di::point(lo[0]));
-      const auto dv = di::subtract(di::point(hi[1]), di::point(lo[1]));
+      const auto du = half_extent(lo[0], hi[0]);
+      const auto dv = half_extent(lo[1], hi[1]);
       double magnitude[3];
       for (int axis = 0; axis < 3; ++axis) {
         const auto huu = di::point(di::magnitude({jet_lower[9 + axis], jet_upper[9 + axis]}));
@@ -1320,17 +1337,20 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
   vertex_term = mismatch;
   const auto du = di::subtract(di::point(box_upper[0]), di::point(box_lower[0]));
   const auto dv = di::subtract(di::point(box_upper[1]), di::point(box_lower[1]));
-  // Taylor remainder from |H| magnitudes per term (uu, uv, vv) and component.
+  // Taylor remainder from |H| magnitudes per term (uu, uv, vv) and component,
+  // with the offsets from the box centre (half_extent).
+  const auto eu = half_extent(box_lower[0], box_upper[0]);
+  const auto ev = half_extent(box_lower[1], box_upper[1]);
   const auto second_order = [&](const double (&hessian)[3][3]) {
     double magnitude[3];
     for (int axis = 0; axis < 3; ++axis) {
       const auto huu = di::point(hessian[0][axis]);
       const auto huv = di::point(hessian[1][axis]);
       const auto hvv = di::point(hessian[2][axis]);
-      auto sum = di::multiply(huu, di::multiply(du, du));
-      const auto mixed = di::multiply(huv, di::multiply(du, dv));
+      auto sum = di::multiply(huu, di::multiply(eu, eu));
+      const auto mixed = di::multiply(huv, di::multiply(eu, ev));
       sum = di::add(sum, di::add(mixed, mixed));
-      sum = di::add(sum, di::multiply(hvv, di::multiply(dv, dv)));
+      sum = di::add(sum, di::multiply(hvv, di::multiply(ev, ev)));
       magnitude[axis] = di::multiply(di::point(0.5), sum).upper;
     }
     return di::add(di::point(mismatch),
@@ -1415,39 +1435,42 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
                                            regularity == 1 ? 1 : 2,
                                            pc_lower, pc_upper, workspace);
   if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
+  // Per chart axis a, w_a(t) = p_a(t) - (the chord's linear interpolant)_a is
+  // the p-curve's interpolation remainder plus the interpolated endpoint
+  // mismatch: |w_a| <= error[a]. The lens point between them is within
+  // error[a] of the chord per axis, so the padded box pads each axis by its own.
   const auto dt = di::subtract(di::point(high), di::point(low));
   const int derivative = regularity == 1 ? 2 : 4;
-  double derivative_magnitude[3] = {
-      di::magnitude({pc_lower[derivative], pc_upper[derivative]}),
-      di::magnitude({pc_lower[derivative + 1], pc_upper[derivative + 1]}), 0.0};
-  const double derivative_bound = phx::mc::geometry::norm_upper(derivative_magnitude);
-  double endpoint_error = 0.0;
+  double endpoint_error[2] = {0.0, 0.0};
   for (int endpoint = 0; endpoint < 2; ++endpoint) {
     double lo[2], hi[2];
     status = geometry.interval_jets(geometry.pcurve_node(use), parameters + endpoint,
                                     parameters + endpoint, 0, lo, hi, workspace);
     if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-    double magnitude[3] = {0.0, 0.0, 0.0};
     for (int axis = 0; axis < 2; ++axis) {
       const auto difference = di::subtract({lo[axis], hi[axis]},
                                            di::point(chord_uv[2 * endpoint + axis]));
       if (!di::finite(difference)) return PHX_MC_UNRESOLVED;
-      magnitude[axis] = di::magnitude(difference);
+      endpoint_error[axis] = std::max(endpoint_error[axis], di::magnitude(difference));
     }
-    endpoint_error = std::max(endpoint_error, phx::mc::geometry::norm_upper(magnitude));
   }
-  const auto remainder = regularity == 1
-      ? di::multiply(di::point(derivative_bound), dt)
-      : di::multiply(di::point(0.125),
-                     di::multiply(di::point(derivative_bound), di::multiply(dt, dt)));
-  const auto error = di::add(di::point(endpoint_error), remainder);
-  if (!di::finite(error)) return PHX_MC_UNRESOLVED;
+  double error[3] = {0.0, 0.0, 0.0};
+  for (int axis = 0; axis < 2; ++axis) {
+    const auto bound = di::point(
+        di::magnitude({pc_lower[derivative + axis], pc_upper[derivative + axis]}));
+    const auto remainder = regularity == 1
+        ? di::multiply(bound, dt)
+        : di::multiply(di::point(0.125), di::multiply(bound, di::multiply(dt, dt)));
+    const auto sum = di::add(di::point(endpoint_error[axis]), remainder);
+    if (!di::finite(sum)) return PHX_MC_UNRESOLVED;
+    error[axis] = sum.upper;
+  }
   double box_lower[2], box_upper[2];
   for (int axis = 0; axis < 2; ++axis) {
     box_lower[axis] = di::subtract(di::point(std::min(chord_uv[axis], chord_uv[2 + axis])),
-                                  di::point(error.upper)).lower;
+                                  di::point(error[axis])).lower;
     box_upper[axis] = di::add(di::point(std::max(chord_uv[axis], chord_uv[2 + axis])),
-                              di::point(error.upper)).upper;
+                              di::point(error[axis])).upper;
   }
   // The mean-value bound below needs S Lipschitz on the padded box: a
   // possible discontinuity there is refused, as in leaf_bound.
@@ -1458,17 +1481,16 @@ int32_t trim_lens_bound(const CadGeometry& geometry, int32_t face, int64_t use,
   status = geometry.interval_jets(geometry.surface_node(face), box_lower, box_upper, 1,
                                   surface_lower, surface_upper, workspace);
   if (status != PHX_MC_OK) return PHX_MC_UNRESOLVED;
-  double norms[3] = {};
-  for (int derivative = 0; derivative < 2; ++derivative) {
-    double magnitude[3];
-    for (int axis = 0; axis < 3; ++axis) {
-      const int index = 3 * (derivative + 1) + axis;
-      magnitude[axis] = di::magnitude({surface_lower[index], surface_upper[index]});
-    }
-    norms[derivative] = phx::mc::geometry::norm_upper(magnitude);
+  // S(x) - S(y) = integral of DS w along the segment (in the padded box);
+  // component k is at most |S_u,k| |w_u| + |S_v,k| |w_v| over the box.
+  double magnitude[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const auto su = di::point(di::magnitude({surface_lower[3 + axis], surface_upper[3 + axis]}));
+    const auto sv = di::point(di::magnitude({surface_lower[6 + axis], surface_upper[6 + axis]}));
+    magnitude[axis] = di::add(di::multiply(su, di::point(error[0])),
+                              di::multiply(sv, di::point(error[1]))).upper;
   }
-  cap = di::multiply(di::point(error.upper),
-                     di::point(phx::mc::geometry::norm_upper(norms))).upper;
+  cap = phx::mc::geometry::norm_upper(magnitude);
   padded[0] = box_lower[0], padded[1] = box_lower[1];
   padded[2] = box_upper[0], padded[3] = box_upper[1];
   return std::isfinite(cap) ? PHX_MC_OK : PHX_MC_UNRESOLVED;
@@ -1629,63 +1651,6 @@ void chart_mesh_findings(
       findings.push_back({PHX_MC_FIDELITY_MISSING_MESH_TRIANGLE, -1, -1, row, -1, -1});
 }
 
-// Tight mode (pole slivers): a leaf within tolerance is still split while
-// its bound exceeds kTightRatio times the largest vertex error seen so far
-// (a pointwise value of |S - I_T|, so the returned bound approaches the true
-// maximum), up to kTightDepth or kTightSplits; it never refuses for that.
-constexpr double kTightRatio = 1.25;
-constexpr int32_t kTightDepth = 12;
-constexpr int32_t kTightSplits = 4096;
-
-FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel& kernel,
-                                        const double* vertices, const double* uv,
-                                        const double* corner_error, double tolerance,
-                                        int32_t max_depth, bool tight,
-                                        IntervalEvaluationWorkspace& workspace) {
-  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
-                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
-  Leaf stack[73];
-  stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
-  int size = 1;
-  double maximum = 0.0, observed = 0.0;
-  while (size > 0) {
-    const Leaf leaf = stack[--size];
-    double bound = 0.0, vertex_term = 0.0;
-    result.status = leaf_bound(geometry, kernel, leaf, vertices, uv, corner_error,
-                               tight ? 0.0 : tolerance, workspace,
-                               vertex_term, bound);
-    if (result.status != PHX_MC_OK) {
-      if (result.status == PHX_MC_INVALID_ARGUMENT || result.status == PHX_MC_INVALID_INPUT)
-        result.status = PHX_MC_UNRESOLVED;
-      return result;
-    }
-    observed = std::max(observed, vertex_term);
-    if (bound <= tolerance &&
-        (!tight || bound <= kTightRatio * observed || leaf.depth >= kTightDepth ||
-         result.subdivisions >= kTightSplits)) {
-      maximum = std::max(maximum, bound);
-      continue;
-    }
-    if (bound > tolerance && (leaf.depth >= max_depth || result.subdivisions >= 1000000)) {
-      result.status = PHX_MC_UNRESOLVED;
-      result.reason = PHX_MC_FIDELITY_RESOLUTION;
-      return result;
-    }
-    ++result.subdivisions;
-    const Vertex ab = midpoint(leaf.vertices[0], leaf.vertices[1]);
-    const Vertex bc = midpoint(leaf.vertices[1], leaf.vertices[2]);
-    const Vertex ca = midpoint(leaf.vertices[2], leaf.vertices[0]);
-    const int32_t depth = leaf.depth + 1;
-    stack[size++] = {{leaf.vertices[0], ab, ca}, depth};
-    stack[size++] = {{ab, leaf.vertices[1], bc}, depth};
-    stack[size++] = {{ca, bc, leaf.vertices[2]}, depth};
-    stack[size++] = {{ab, bc, ca}, depth};
-  }
-  result.upper = maximum;
-  result.reason = PHX_MC_FIDELITY_CERTIFIED;
-  return result;
-}
-
 // Corner errors |S(uv_j) - X_j| of the original vertices, shared by every
 // chart row that has the same mesh vertex at bitwise the same chart point.
 struct CornerCache {
@@ -1693,13 +1658,18 @@ struct CornerCache {
   int32_t face = -1;
 };
 
-// Trim lens charges. The source boundary departs from a chord only inside
-// the chord's padded box (trim_lens_bound), so a point where the trimmed face
-// and the chord polygon differ lies in some chord's padded box, and a row
-// whose chart triangle contains it has a UV box meeting that padded box. A
-// row is charged its own chords' caps (summed) or the largest cap of any
-// chord of its face whose padded box meets the row's box, whichever is
-// larger. A refused cap has no box: every row of its face refuses. Chords are
+// Trim lens charges, per subdivision leaf. A point x where the trimmed face
+// and the chord polygon differ lies in the lens of one chord, inside that
+// chord's padded box (trim_lens_bound), within the cap's chart distance of a
+// point y of the chord and of a point z of the arc: |S(x) - S(y)| and
+// |S(x) - S(z)| are at most the cap. If x is outside the polygon (a face
+// point), the mesh point I_T(y) of the leaf holding y is within that leaf's
+// bound plus the cap; if x is inside it (a mesh point I_T(x)), the face point
+// S(z) is within the bound of the leaf holding x plus the cap. Both leaves'
+// chart boxes meet the padded box (y and x lie in it), so each leaf is
+// charged the largest cap of a chord of its face whose padded box meets the
+// leaf's box; a leaf away from every lens is charged nothing. A refused cap
+// has no box: every row of its face refuses. Chords are
 // binned per face on a grid whose cell is the face's largest padded-box
 // extent (a box meets at most 2 x 2 cells); one monotone cell map serves
 // boxes and rows, so meeting boxes share the cell of a common point.
@@ -1806,6 +1776,89 @@ class LensIndex {
   std::vector<Face> faces_;
   std::vector<Entry> entries_;
 };
+
+// Tight mode (pole slivers): a leaf within tolerance is still split while
+// its bound exceeds kTightRatio times the largest vertex error seen so far
+// (a pointwise value of |S - I_T|, so the returned bound approaches the true
+// maximum), up to kTightDepth or kTightSplits; it never refuses for that.
+constexpr double kTightRatio = 1.25;
+constexpr int32_t kTightDepth = 12;
+constexpr int32_t kTightSplits = 4096;
+
+// `lens` (or null): each leaf is charged lens->charge over its chart box
+// (LensIndex) and certifies when its bound plus that charge is within
+// `tolerance`; a leaf whose charge alone reaches it is split.
+FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel& kernel,
+                                        const double* vertices, const double* uv,
+                                        const double* corner_error, double tolerance,
+                                        int32_t max_depth, bool tight, const LensIndex* lens,
+                                        int32_t face, IntervalEvaluationWorkspace& workspace) {
+  FidelityTriangleResult result{std::numeric_limits<double>::infinity(), PHX_MC_UNRESOLVED,
+                                PHX_MC_FIDELITY_INTERVAL_REFUSAL, 0};
+  Leaf stack[73];
+  stack[0] = {{{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}, 0};
+  int size = 1;
+  double maximum = 0.0, observed = 0.0;
+  while (size > 0) {
+    const Leaf leaf = stack[--size];
+    double charge = 0.0, budget = tolerance;
+    if (lens != nullptr) {
+      double box[4] = {std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::infinity(),
+                       -std::numeric_limits<double>::infinity(),
+                       -std::numeric_limits<double>::infinity()};
+      for (const Vertex& vertex : leaf.vertices) {
+        di::Interval point[2];
+        exact_chart_point(vertex, uv, point);
+        for (int axis = 0; axis < 2; ++axis) {
+          box[axis] = std::min(box[axis], point[axis].lower);
+          box[2 + axis] = std::max(box[2 + axis], point[axis].upper);
+        }
+      }
+      charge = lens->charge(face, box);
+      budget = di::subtract(di::point(tolerance), di::point(charge)).lower;
+    }
+    double bound = 0.0, vertex_term = 0.0;
+    bool fits = false;
+    if (charge < tolerance) {
+      result.status = leaf_bound(geometry, kernel, leaf, vertices, uv, corner_error,
+                                 tight ? 0.0 : budget, workspace, vertex_term, bound);
+      if (result.status != PHX_MC_OK) {
+        if (result.status == PHX_MC_INVALID_ARGUMENT || result.status == PHX_MC_INVALID_INPUT)
+          result.status = PHX_MC_UNRESOLVED;
+        return result;
+      }
+      observed = std::max(observed, vertex_term);
+      fits = bound <= budget;
+    }
+    if (fits &&
+        (!tight || bound <= kTightRatio * observed || leaf.depth >= kTightDepth ||
+         result.subdivisions >= kTightSplits)) {
+      maximum = std::max(maximum, charge > 0.0
+                                      ? di::add(di::point(bound), di::point(charge)).upper
+                                      : bound);
+      continue;
+    }
+    if (!fits && (leaf.depth >= max_depth || result.subdivisions >= 1000000)) {
+      result.status = PHX_MC_UNRESOLVED;
+      result.reason = PHX_MC_FIDELITY_RESOLUTION;
+      return result;
+    }
+    ++result.subdivisions;
+    const Vertex ab = midpoint(leaf.vertices[0], leaf.vertices[1]);
+    const Vertex bc = midpoint(leaf.vertices[1], leaf.vertices[2]);
+    const Vertex ca = midpoint(leaf.vertices[2], leaf.vertices[0]);
+    const int32_t depth = leaf.depth + 1;
+    stack[size++] = {{leaf.vertices[0], ab, ca}, depth};
+    stack[size++] = {{ab, leaf.vertices[1], bc}, depth};
+    stack[size++] = {{ca, bc, leaf.vertices[2]}, depth};
+    stack[size++] = {{ab, bc, ca}, depth};
+  }
+  result.upper = maximum;
+  result.reason = PHX_MC_FIDELITY_CERTIFIED;
+  return result;
+}
+
 }  // namespace
 
 FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t face,
@@ -1824,7 +1877,7 @@ FidelityTriangleResult fidelity_triangle(const CadGeometry& geometry, int32_t fa
   FaceKernel kernel;
   prepare_face_kernel(geometry, face, workspace, kernel);
   return subdivided_bound(geometry, kernel, vertices, uv, nullptr, tolerance, max_depth, false,
-                          workspace);
+                          nullptr, face, workspace);
 }
 
 int32_t fidelity_anchored_sincos(double lower, double upper, double* out) {
@@ -2075,25 +2128,19 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     for (int64_t i = 0; i < triangle_count; ++i) {
       const auto row = static_cast<std::size_t>(i);
       bool trim_refused = face_refused[static_cast<std::size_t>(face_rows[i])] != 0;
-      double lens = 0.0;
+      // The leaves along an own chord pay its cap at every depth: a cap at or
+      // above tolerance refuses the row at once. Every other charge is the
+      // per-leaf one of subdivided_bound.
+      double own = 0.0;
       double vertices[9];
       for (int j = 0; j < 3; ++j) {
         const int64_t chord = edge_chord[3 * i + j];
-        if (chord >= 0)
-          lens = phx::mc::remesh::add(
-              phx::mc::remesh::point(lens),
-              phx::mc::remesh::point(lens_chords[static_cast<std::size_t>(chord)].cap)).upper;
+        if (chord >= 0) own = std::max(own, lens_chords[static_cast<std::size_t>(chord)].cap);
         const int64_t vertex = triangles[3 * i + j];
         for (int axis = 0; axis < 3; ++axis)
           vertices[3 * j + axis] = points[3 * vertex + axis];
       }
-      if (!trim_refused) {
-        const double* t = uv + 6 * i;
-        const double box[4] = {std::min({t[0], t[2], t[4]}), std::min({t[1], t[3], t[5]}),
-                               std::max({t[0], t[2], t[4]}), std::max({t[1], t[3], t[5]})};
-        lens = std::max(lens, lens_index.charge(face_rows[i], box));
-      }
-      if (trim_refused || !std::isfinite(lens) || lens >= tolerance) {
+      if (trim_refused || !std::isfinite(own) || own >= tolerance) {
         row_upper[row] = std::numeric_limits<double>::infinity();
         row_status[row] = PHX_MC_UNRESOLVED;
         row_reason[row] = trim_refused ? PHX_MC_FIDELITY_TRIM_REFUSAL : PHX_MC_FIDELITY_RESOLUTION;
@@ -2128,17 +2175,12 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
                                                    workspace, corner_error[j]) == PHX_MC_OK;
         if (corners_known) cached = {point_uv[0], point_uv[1], corner_error[j], face_rows[i]};
       }
-      const double budget = phx::mc::remesh::subtract(phx::mc::remesh::point(tolerance),
-                                                       phx::mc::remesh::point(lens)).lower;
       const auto result = phx::mc::cad::subdivided_bound(
-          geometry, kernel, vertices, uv + 6 * i, corners_known ? corner_error : nullptr, budget,
-          max_depth, pole_edge >= 0, workspace);
+          geometry, kernel, vertices, uv + 6 * i, corners_known ? corner_error : nullptr,
+          tolerance, max_depth, pole_edge >= 0, &lens_index, face_rows[i], workspace);
       if (result.status != PHX_MC_OK && result.status != PHX_MC_UNRESOLVED)
         return result.status;
-      row_upper[row] = result.status == PHX_MC_OK
-                           ? phx::mc::remesh::add(phx::mc::remesh::point(result.upper),
-                                                  phx::mc::remesh::point(lens)).upper
-                           : result.upper;
+      row_upper[row] = result.upper;
       row_status[row] = result.status;
       row_reason[row] = result.reason;
       row_splits[row] = result.subdivisions;
