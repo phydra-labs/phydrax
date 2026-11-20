@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- Native BVH point queries over the one packed `PackedBVH`
+  (`phx_mc_bvh_triangle_nearest`, `phx_mc_bvh_triangle_signed_distance`,
+  `phx_mc_bvh_triangle_winding`, `phx_mc_bvh_tetrahedron_locate`), batched and
+  single-threaded. `TriangleBVH.query`, `nearest_faces`, `winding_number`,
+  `fast_winding_number`, the new `signed_distance(points, sign=...)`
+  (`SignedDistanceSign`: `"pseudonormal"` or `"winding_number"`) and
+  affine-tetrahedron `PreparedSimplicialCellLocator.locate` run them for
+  concrete float64 inputs when the library is present. Single-thread
+  throughput on the ledger's F10 inputs at 1e5 / 1e6 queries: closest point
+  212k / 250k q/s, signed distance 217k / 254k, fast winding number 945k /
+  1.09M, point location in 930,942 tetrahedra 902k / 1.38M (libigl one
+  thread: 96k / 92k, 85k / 90k, 588k / 574k, 810k / 794k). `TriangleBVH`
+  prepares dipoles and angle-weighted feature pseudonormals once per
+  embedding (construction and `refit`).
 - Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
   per-triangle distance bounds between a finished CAD surface mesh and its
   exact source (interior, trim lens, pole and knot-line terms), with lazily
@@ -334,6 +348,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native and JAX BVH point queries (closest point, signed distance, winding
+  numbers, affine tetrahedron location) evaluate one fixed operation order
+  (`phydrax._fixed_order`: products and roots kept separate, sums left to
+  right, no fused multiply-add or reciprocal rewrites), so results are the
+  same bit for bit natively, jitted, or eagerly without the native library,
+  ties included. `PreparedSimplicialCellLocator` inverts affine tetrahedra
+  exactly by signed-volume ratios on every path (zero iterations; about 5x
+  faster). On the traced JAX path the fixed order costs about 22-31 % on
+  nearest-face and closest-point queries and about 28 % on the fast winding
+  number; other packed-BVH traversals are unchanged.
 - Analytic implicit certification takes the profile-to-mesh bound from the
   native zero-set certificate (normal tube or possible-zero cover over the
   profile's boundary box, proof kind recorded) instead of a sampled uniform
