@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,8 +51,10 @@ class LocalIncidence {
   };
 
   bool initialize(const TetMesh& mesh);
-  // The caller owns and updates this index after each constrained segment split.
-  void bind_segment_index(const TetSegmentIndex& index) noexcept { segment_index_ = &index; }
+  // The caller owns this index (segment vertex IDs -> segments_ row) and
+  // updates it after each constrained segment split; collapse_boundary keeps
+  // it current for the segments it retires, creates and moves.
+  void bind_segment_index(TetSegmentIndex& index) noexcept { segment_index_ = &index; }
 
   bool insert_logical(const TetMesh& mesh, std::int32_t cell,
                       const LocalCell& vertices);
@@ -95,11 +98,69 @@ class LocalIncidence {
                                       std::span<const std::size_t> facet_rows,
                                       std::span<const std::size_t> segment_rows,
                                       std::vector<std::uint64_t>& created_cells);
+  // Collapses the boundary vertex r into s (a kCollapse `operation` with the
+  // single pair (r, s)) through the cavity-local TetMesh route and updates
+  // this index. r has dimension 2 or 1; s lies on r's carrier (the support of
+  // its witness, after the move when s moves, is within the source points
+  // common to the groups of r's constrained facets and segments), and a
+  // segment vertex collapses only along the constrained segment rs.
+  // `removed_star` is this index's current star of r and, exactly when s moves
+  // (operation.changed_vertices is {s} with its new exact witness),
+  // `survivor_star` its current star of s (otherwise null); the removed cells
+  // are their union. The removed facets and segments are all of r's, the
+  // replacement ones their images under r -> s (same source, orientation and
+  // vertex order) except those through s. The verdict and the state equal
+  // TetMesh::apply_edit_batch on the single-operation batch, except that a
+  // periodic or implicit-bound mesh and an operation outside this contract
+  // are refused (kRejectedTopology) and the facet and segment banks are not
+  // kept in ID order (a removed row takes the bank's last row).
+  TetEditStatus collapse_boundary(TetMesh& mesh, const TetEdit& operation,
+                                  const Star& removed_star, const Star* survivor_star);
+  // Swaps the boundary edge ab for cd (a kRingReconnect `operation`): ab is
+  // no constrained segment and lies in exactly two constrained facets, abc
+  // and abd (operation.removed_facet_ids), of one source group and
+  // orientation; its cells (operation.removed_cell_ids) are an open fan from
+  // c to d; cd is not an edge. The replacement cells fill the fan and the
+  // replacement facets are acd and bcd with that group and orientation, each
+  // ordered so its exact normal points the way abc's does (a zero alignment
+  // is kInvalidGeometry). Verdict, state and refusals as collapse_boundary;
+  // apply_edit_batch's exact volume check refuses the swap (kRejectedTopology)
+  // unless a, b, c and d are exactly coplanar.
+  TetEditStatus swap_boundary_edge(TetMesh& mesh, const TetEdit& operation);
 
  private:
+  struct FaceIdHash {
+    std::size_t operator()(const std::array<std::uint64_t, 3>& face) const noexcept {
+      const std::uint64_t mixed = (face[0] * 0x9E3779B97F4A7C15ULL) ^
+                                  (face[1] + (face[1] << 21)) ^ (face[2] * 0xC2B2AE3D27D4EB4FULL);
+      return static_cast<std::size_t>((mixed ^ (mixed >> 29)) * 0xBF58476D1CE4E5B9ULL);
+    }
+  };
+  // The constrained facets and segments by sorted vertex IDs (bank rows) and
+  // the source points of every face and segment group (sorted point rows):
+  // built on the first boundary edit, then kept current by the edits that
+  // change the banks.
+  struct BoundaryIndex {
+    std::unordered_map<std::array<std::uint64_t, 3>, std::size_t, FaceIdHash> facets;
+    TetSegmentIndex segments;
+    std::unordered_map<std::int32_t, std::vector<std::int32_t>> face_group_points;
+    std::unordered_map<std::int32_t, std::vector<std::int32_t>> segment_group_points;
+    // Each side of each face group bounds one region (apply_edit_batch
+    // refuses every cell edit otherwise); accepted edits keep it so.
+    bool regions_consistent = true;
+  };
+  struct BoundaryEdit;
+
   // The finite cells containing both endpoints into `cells` (sorted slots).
   void collect_edge(std::int32_t first, std::int32_t second,
                     std::vector<std::int32_t>& cells) const;
+  bool current_star(const Star& star, std::int32_t vertex) const noexcept;
+  bool ensure_boundary_index(const TetMesh& mesh);
+  // Validates and commits a boundary edit resolved by collapse_boundary or
+  // swap_boundary_edge, in apply_edit_batch's refusal order, and updates
+  // this index and the bank indexes.
+  TetEditStatus commit_boundary_edit(TetMesh& mesh, const TetEdit& operation,
+                                     BoundaryEdit& edit);
 
   const TetMesh* mesh_ = nullptr;
   // Per vertex slot: one incident cell (a hint, checked before use) and the
@@ -111,7 +172,9 @@ class LocalIncidence {
   mutable std::vector<std::int32_t> stack_;
   mutable std::vector<std::int32_t> star_scratch_;
   mutable std::vector<std::int32_t> edge_scratch_;
-  const TetSegmentIndex* segment_index_ = nullptr;
+  TetSegmentIndex* segment_index_ = nullptr;
+  BoundaryIndex boundary_index_;
+  bool boundary_index_ready_ = false;
   std::uint64_t topology_revision_ = 0;
 };
 }  // namespace phx::mc::detail

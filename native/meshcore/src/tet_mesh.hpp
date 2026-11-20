@@ -782,6 +782,28 @@ class TetMesh {
   // collapse; validation and commit touch only the cavity and its boundary.
   TetEditStatus replace_local_cavity(const TetEdit& operation,
                                     const TetSegmentIndex* segment_index);
+  // A hull ghost cell a local boundary edit creates: {kGhostVertex, a, b, c}
+  // over the new hull face (a, b, c) (the oriented face of the finite cell
+  // below it), labeled with that face's source.
+  struct LocalGhostCell {
+    std::array<std::int32_t, 4> vertices{};
+    std::int32_t source = kNoConstraint;
+  };
+  // The commit shared by the cavity-local edits: stages the removal of
+  // `removed` (finite and hull ghost slots) and the creation of the
+  // operation's replacement cells (corner slots `replacement_vertices`, four
+  // per cell) then `ghosts`, clears the constraint labels of `cleared_sides`
+  // (cell, face) for the proof, validates exact positivity of every finite
+  // cell (moved vertices read from `overlay` when given) and commits, binding
+  // the replacement cell IDs and ancestry and retiring
+  // operation.removed_cell_ids. On refusal the complex, its labels and the
+  // cell records are unchanged.
+  TetEditStatus commit_local_cells(const TetEdit& operation,
+                                   std::span<const std::int32_t> replacement_vertices,
+                                   std::span<const std::int32_t> removed,
+                                   std::span<const LocalGhostCell> ghosts,
+                                   std::span<const std::pair<std::int32_t, int>> cleared_sides,
+                                   const RelocationOverlay* overlay);
   // Called by refinement and improvement: cones a star-shaped cavity to one
   // new interior vertex; created cell IDs are returned in cone order. The
   // cone buries exactly the cavity vertices `removed_vertices` (sorted

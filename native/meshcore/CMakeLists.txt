@@ -74,6 +74,7 @@ set(PHX_MC_SOURCES
   src/interval_basis_bounds.cpp
   src/intersections.cpp
   src/level_set.cpp
+  src/local_boundary_edit.cpp
   src/mixed_refinement.cpp
   src/parallel.cpp
   src/periodic.cpp
@@ -309,6 +310,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_box_tree)
   phx_mc_add_test(test_tet_mesh)
   phx_mc_add_test(test_tet_mesh_relocation)
+  phx_mc_add_test(test_local_boundary_edits)
   phx_mc_add_test(test_improve3d)
   phx_mc_add_test(test_hex_topology)
   phx_mc_add_test(test_surface_envelope)

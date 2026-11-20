@@ -842,80 +842,9 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
       return TetEditStatus::kIndexOverflow;
     }
 
-    edit_.begin();
-    for (std::int32_t slot : removed_slots) {
-      const EditStatus status = edit_.remove(slot);
-      if (status != EditStatus::kOk) {
-        edit_.rollback();
-        return translate_edit_status(status);
-      }
-    }
-    for (std::size_t row = 0; row < created; ++row) {
-      const EditStatus status =
-          edit_.add(replacement_vertices.data() + 4 * row,
-                    operation.replacement_cells[row].facet_sources.data(), region);
-      if (status != EditStatus::kOk) {
-        edit_.rollback();
-        return translate_edit_status(status);
-      }
-    }
-    const EditStatus validated = edit_.validate(
-        [this](const std::int32_t* vertices) { return positive(vertices); });
-    if (validated != EditStatus::kOk) {
-      edit_.rollback();
-      return translate_edit_status(validated);
-    }
-
-    // CavityEdit::commit reuses removed slots, then free slots, then appends.
-    const std::size_t extra = created > removed_slots.size() ? created - removed_slots.size() : 0;
-    const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
-    const std::size_t cell_id_count = cell_ids_.size();
-    // Rows below `staged` may hold staged ID records; replacement IDs were
-    // unused, so erasing a row's keys removes only what this edit inserted.
-    std::size_t staged = 0;
-    const auto unstage = [&]() noexcept {
-      for (std::size_t row = 0; row < staged; ++row) {
-        const std::uint64_t id = operation.replacement_cells[row].id;
-        cell_index_.forget(id);
-        cell_ancestry_.erase(id);
-      }
-      cell_ids_.resize(cell_id_count);
-    };
-    EditStatus committed = EditStatus::kInternal;
-    try {
-      cell_ids_.resize(complex_.tets.size() + fresh,
-                       std::numeric_limits<std::uint64_t>::max());
-      while (staged < created) {
-        const TetEditCell& cell = operation.replacement_cells[staged++];
-        cell_index_.bind(cell.id, TetIdIndex::kPending);
-        cell_ancestry_.emplace(
-            cell.id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
-                                           std::make_shared<const std::vector<std::uint64_t>>(cell.ancestor_cell_ids)});
-      }
-      committed = edit_.commit();
-    } catch (...) {
-      edit_.rollback();
-      unstage();
-      throw;
-    }
-    if (committed != EditStatus::kOk) {
-      edit_.rollback();
-      unstage();
-      return translate_edit_status(committed);
-    }
-
-    for (std::uint64_t id : operation.removed_cell_ids) cell_index_.retire(id);
-    for (std::int32_t slot : removed_slots) {
-      cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
-    }
-    const std::span<const std::int32_t> created_slots = edit_.created();
-    for (std::size_t row = 0; row < created; ++row) {
-      const std::uint64_t id = operation.replacement_cells[row].id;
-      const std::int32_t slot = created_slots[row];
-      cell_ids_[static_cast<std::size_t>(slot)] = id;
-      cell_index_.set_slot(id, slot);
-      if (id >= next_cell_id_) next_cell_id_ = id + 1;
-    }
+    const TetEditStatus committed =
+        commit_local_cells(operation, replacement_vertices, removed_slots, {}, {}, nullptr);
+    if (committed != TetEditStatus::kApplied) return committed;
     if (collapse) {
       const std::uint64_t id = vertex_id(removed_vertex);
       vertex_live_[static_cast<std::size_t>(removed_vertex)] = 0;
@@ -931,6 +860,122 @@ TetEditStatus TetMesh::replace_local_cavity(const TetEdit& operation,
   } catch (const std::length_error&) {
     return TetEditStatus::kIndexOverflow;
   }
+}
+
+TetEditStatus TetMesh::commit_local_cells(
+    const TetEdit& operation, std::span<const std::int32_t> replacement_vertices,
+    std::span<const std::int32_t> removed, std::span<const LocalGhostCell> ghosts,
+    std::span<const std::pair<std::int32_t, int>> cleared_sides,
+    const RelocationOverlay* overlay) {
+  const std::size_t created = operation.replacement_cells.size();
+  edit_.begin();
+  for (std::int32_t slot : removed) {
+    const EditStatus status = edit_.remove(slot);
+    if (status != EditStatus::kOk) {
+      edit_.rollback();
+      return translate_edit_status(status);
+    }
+  }
+  for (std::size_t row = 0; row < created; ++row) {
+    const TetEditCell& cell = operation.replacement_cells[row];
+    const EditStatus status =
+        edit_.add(replacement_vertices.data() + 4 * row, cell.facet_sources.data(), cell.region);
+    if (status != EditStatus::kOk) {
+      edit_.rollback();
+      return translate_edit_status(status);
+    }
+  }
+  for (const LocalGhostCell& ghost : ghosts) {
+    const std::int32_t constraints[4] = {ghost.source, kNoConstraint, kNoConstraint,
+                                         kNoConstraint};
+    const EditStatus status = edit_.add(ghost.vertices.data(), constraints, kNoRegion);
+    if (status != EditStatus::kOk) {
+      edit_.rollback();
+      return translate_edit_status(status);
+    }
+  }
+  // Retired constrained faces inside the cavity are not reproduced; their
+  // labels (both sides) are cleared for the proof and restored on refusal.
+  std::vector<std::tuple<std::int32_t, int, std::int32_t>> cleared;
+  cleared.reserve(cleared_sides.size());
+  for (const auto& [slot, face] : cleared_sides) {
+    cleared.emplace_back(slot, face, complex_.constraint(slot, face));
+  }
+  const auto restore = [&]() noexcept {
+    for (const auto& [slot, face, constraint] : cleared) {
+      complex_.set_facet_constraint(slot, face, constraint);
+    }
+  };
+  for (const auto& [slot, face] : cleared_sides) {
+    complex_.set_facet_constraint(slot, face, kNoConstraint);
+  }
+  const EditStatus validated = edit_.validate([&](const std::int32_t* vertices) {
+    return overlay == nullptr ? positive(vertices) : positive_with_relocation(vertices, *overlay);
+  });
+  if (validated != EditStatus::kOk) {
+    edit_.rollback();
+    restore();
+    return translate_edit_status(validated);
+  }
+
+  // CavityEdit::commit reuses removed slots, then free slots, then appends.
+  const std::size_t total = created + ghosts.size();
+  const std::size_t extra = total > removed.size() ? total - removed.size() : 0;
+  const std::size_t fresh = extra - std::min(extra, complex_.free_slots.size());
+  const std::size_t cell_id_count = cell_ids_.size();
+  // Rows below `staged` may hold staged ID records; replacement IDs were
+  // unused, so erasing a row's keys removes only what this edit inserted.
+  std::size_t staged = 0;
+  const auto unstage = [&]() noexcept {
+    for (std::size_t row = 0; row < staged; ++row) {
+      const std::uint64_t id = operation.replacement_cells[row].id;
+      cell_index_.forget(id);
+      cell_ancestry_.erase(id);
+    }
+    cell_ids_.resize(cell_id_count);
+  };
+  EditStatus committed = EditStatus::kInternal;
+  try {
+    cell_ids_.resize(complex_.tets.size() + fresh, std::numeric_limits<std::uint64_t>::max());
+    while (staged < created) {
+      const TetEditCell& cell = operation.replacement_cells[staged++];
+      cell_index_.bind(cell.id, TetIdIndex::kPending);
+      cell_ancestry_.emplace(
+          cell.id, TetCellAncestryRecord{static_cast<std::int32_t>(operation.kind),
+                                         std::make_shared<const std::vector<std::uint64_t>>(
+                                             cell.ancestor_cell_ids)});
+    }
+    committed = edit_.commit();
+  } catch (...) {
+    edit_.rollback();
+    unstage();
+    restore();
+    throw;
+  }
+  if (committed != EditStatus::kOk) {
+    edit_.rollback();
+    unstage();
+    restore();
+    return translate_edit_status(committed);
+  }
+
+  for (std::uint64_t id : operation.removed_cell_ids) cell_index_.retire(id);
+  for (std::int32_t slot : removed) {
+    cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
+  }
+  const std::span<const std::int32_t> created_slots = edit_.created();
+  for (std::size_t row = 0; row < created_slots.size(); ++row) {
+    const std::int32_t slot = created_slots[row];
+    if (row >= created) {
+      cell_ids_[static_cast<std::size_t>(slot)] = std::numeric_limits<std::uint64_t>::max();
+      continue;
+    }
+    const std::uint64_t id = operation.replacement_cells[row].id;
+    cell_ids_[static_cast<std::size_t>(slot)] = id;
+    cell_index_.set_slot(id, slot);
+    if (id >= next_cell_id_) next_cell_id_ = id + 1;
+  }
+  return TetEditStatus::kApplied;
 }
 
 bool TetMesh::removes_constrained_segment(std::span<const std::int32_t> removed_slots,
