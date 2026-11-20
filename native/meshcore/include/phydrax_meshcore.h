@@ -2648,7 +2648,12 @@ PHX_MC_API int32_t phx_mc_plc3d_sizes(const phx_mc_plc3d_result* result, int64_t
  * carrier banks: kSegment indexes plc_edges and kFacet indexes input_triangles;
  * kNone uses -1. Persistent TetMesh witnesses instead index canonical source
  * segments/faces. Failure returns authored entity locations and any certified
- * source-deviation refusal. */
+ * source-deviation refusal. A FIXED boundary refuses, before recovery, a
+ * source triangle whose smallest-angle sine 2A / (l_max l_mid) is below the
+ * kernels' relative-determinant floor 2^-22 (no cell on it can clear the
+ * floor): UNRESOLVED, reason INVALID_FACET, first FACET (input triangle row),
+ * second POLYGON (its authored polygon), and phx_mc_plc3d_failure's
+ * certified_deviation / declared_bound the sine and the floor. */
 PHX_MC_API int32_t phx_mc_plc3d_export(
     const phx_mc_plc3d_result* result, int64_t point_capacity, int64_t tetrahedron_capacity,
     int64_t face_capacity, int64_t segment_capacity, int64_t edge_capacity,
