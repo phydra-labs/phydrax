@@ -1,11 +1,13 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -471,6 +473,110 @@ void test_insphere_exact_paths() {
   PHX_CHECK(zeros > 100);
   std::printf("insphere exact paths: %d checked, %d exact zeros, %d mismatches\n", checked, zeros,
               mismatches);
+}
+
+// insphere's expansion stages (stage B on stack expansions of the rounded
+// differences, stage C with the first-order difference tails, stage D on
+// the exact differences) decide the sign of the unfiltered exact expansion
+// insphere_sign on near-cospherical inputs whose coordinates span too many
+// bits for the integer stage (a z coordinate below 1e-9 with a full
+// significand): rounded points of spheres about non-dyadic centers in the
+// plane z = 0 (inexact differences), small patches of a unit sphere at its
+// equator (five nearly coplanar and nearly cospherical surface points, as a
+// surface sample's Delaunay triangulation tests them), each with the query
+// moved by 1-4 ulps and by a relative 4e-15 to 4e-14 along its first axis
+// (determinants just above the stage-A and stage-B bounds), and spheres
+// through the origin queried at the origin (exact differences).
+void test_insphere_expansion_stages_agree() {
+  std::uint64_t seed = 4242;
+  int checked = 0, zeros = 0, mismatches = 0;
+  const auto compare = [&](const double (&points)[5][3]) {
+    Expansion e[5][3];
+    for (int k = 0; k < 5; ++k) {
+      for (int axis = 0; axis < 3; ++axis) e[k][axis] = Expansion(points[k][axis]);
+    }
+    const int expected = insphere_sign(e[0], e[1], e[2], e[3], e[4]);
+    const int actual = insphere(points[0], points[1], points[2], points[3], points[4]);
+    mismatches += expected == actual ? 0 : 1;
+    zeros += expected == 0 ? 1 : 0;
+    ++checked;
+  };
+  const auto compare_moved = [&](const double (&points)[5][3]) {
+    compare(points);
+    double moved[5][3];
+    for (int ulps = 1; ulps <= 4; ++ulps) {
+      for (const double direction : {-1.0, 1.0}) {
+        std::copy(&points[0][0], &points[0][0] + 15, &moved[0][0]);
+        double& value = moved[4][ulps % 2];
+        for (int step = 0; step < ulps; ++step) {
+          value = std::nextafter(value, direction * std::numeric_limits<double>::infinity());
+        }
+        compare(moved);
+      }
+    }
+    for (const double relative : {4e-15, -1e-14, 4e-14}) {
+      std::copy(&points[0][0], &points[0][0] + 15, &moved[0][0]);
+      moved[4][0] *= 1.0 + relative;
+      compare(moved);
+    }
+  };
+  // A unit vector near (x, y, 0) with a z component below 1e-9.
+  const auto unit = [&](double x, double y, double* v) {
+    v[0] = x;
+    v[1] = y;
+    v[2] = 1e-9 * (2.0 * uniform(seed) - 1.0);
+    const double norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (int axis = 0; axis < 3; ++axis) v[axis] /= norm;
+  };
+  for (const double radius : {1.0, 1e-3, 37.3}) {
+    for (const std::array<double, 2> center :
+         {std::array<double, 2>{0.1, 1.0 / 3.0}, std::array<double, 2>{1e3 / 7.0, -2.0}}) {
+      for (int trial = 0; trial < 1000; ++trial) {
+        double points[5][3];
+        for (auto& point : points) {
+          double v[3];
+          unit(2.0 * uniform(seed) - 1.0, 2.0 * uniform(seed) - 1.0, v);
+          point[0] = center[0] + radius * v[0];
+          point[1] = center[1] + radius * v[1];
+          point[2] = radius * v[2];
+        }
+        compare_moved(points);
+      }
+    }
+  }
+  for (const double patch : {0.05, 0.002}) {
+    for (int trial = 0; trial < 3000; ++trial) {
+      const double angle = 6.283185307179586 * uniform(seed);
+      double points[5][3];
+      for (auto& point : points) {
+        double v[3];
+        unit(std::cos(angle) + patch * (2.0 * uniform(seed) - 1.0),
+             std::sin(angle) + patch * (2.0 * uniform(seed) - 1.0), v);
+        point[0] = 0.25 + v[0];
+        point[1] = 0.25 + v[1];
+        point[2] = v[2];
+      }
+      compare_moved(points);
+    }
+  }
+  for (int trial = 0; trial < 20000; ++trial) {
+    double points[5][3];
+    for (int k = 0; k < 4; ++k) {
+      // Points of the unit sphere about (1, 0, 0) within about 1e-3 of the
+      // origin.
+      double v[3];
+      unit(-1.0, 1e-3 * (2.0 * uniform(seed) - 1.0), v);
+      points[k][0] = 1.0 + v[0];
+      points[k][1] = v[1];
+      points[k][2] = v[2];
+    }
+    for (double& c : points[4]) c = 0.0;
+    compare(points);
+  }
+  PHX_CHECK(checked >= 100000);
+  PHX_CHECK(mismatches == 0);
+  std::printf("insphere expansion stages: %d checked, %d exact zeros, %d mismatches\n", checked,
+              zeros, mismatches);
 }
 
 // power3d_stage decides only what power3d decides, with its sign: rounded
@@ -1093,6 +1199,7 @@ int main() {
   test_orientation_conventions();
   test_incircle_insphere_exact_zero_and_ulp();
   test_insphere_exact_paths();
+  test_insphere_expansion_stages_agree();
   test_power3d_stage_agrees();
   test_incircle_stages_agree();
   test_incircle_stage_thresholds();

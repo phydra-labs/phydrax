@@ -30,6 +30,7 @@ constexpr double kIccErrBoundC = (44.0 + 576.0 * kEpsilon) * kEpsilon * kEpsilon
 constexpr double kResultErrBound = (3.0 + 8.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundA = (16.0 + 224.0 * kEpsilon) * kEpsilon;
 constexpr double kIspErrBoundB = (5.0 + 72.0 * kEpsilon) * kEpsilon;
+constexpr double kIspErrBoundC = (71.0 + 1408.0 * kEpsilon) * kEpsilon * kEpsilon;
 
 inline int sign_of(double value) { return (value > 0.0) - (value < 0.0); }
 
@@ -615,27 +616,148 @@ int insphere_adapt(const double* const* p, double permanent) {
   return insphere_expansion(p, x, y, z, exact_differences, permanent);
 }
 
+// Component bounds of insphere's stage-B expansions (Shewchuk's
+// insphereadapt buffers): a 2x2 minor is a product difference of 4
+// components, a 3x3 minor the sum of three minors scaled by one coordinate
+// (3 * 2 * 4), a lifted term that minor scaled twice by each of the three
+// coordinates and summed (3 * 2 * 2 * 24), and the determinant the sum of
+// four lifted terms.
+constexpr int kInspherePairTerms = 4;
+constexpr int kInsphereTripleTerms = 3 * 2 * kInspherePairTerms;
+constexpr int kInsphereLiftedTerms = 3 * 2 * 2 * kInsphereTripleTerms;
+constexpr int kInsphereStageBTerms = 4 * kInsphereLiftedTerms;
+static_assert(kInsphereTripleTerms == 24 && kInsphereLiftedTerms == 288 &&
+              kInsphereStageBTerms == 1152);
+
+// Exact u p + v q + w r for the 2x2 minors p, q, r; `h` holds
+// kInsphereTripleTerms components.
+int insphere_triple(double u, const double* p, double v, const double* q, double w,
+                    const double* r, double* h) {
+  double up[2 * kInspherePairTerms], vq[2 * kInspherePairTerms], wr[2 * kInspherePairTerms];
+  double sum[4 * kInspherePairTerms];
+  const int uplen = scale_expansion_zeroelim(kInspherePairTerms, p, u, up);
+  const int vqlen = scale_expansion_zeroelim(kInspherePairTerms, q, v, vq);
+  const int wrlen = scale_expansion_zeroelim(kInspherePairTerms, r, w, wr);
+  const int sumlen = fast_expansion_sum_zeroelim(uplen, up, vqlen, vq, sum);
+  return fast_expansion_sum_zeroelim(sumlen, sum, wrlen, wr, h);
+}
+
+// Exact sign (x^2 + y^2 + z^2) m for the 3x3 minor m of `length` components
+// (sign +-1, so sign x is exact); `h` holds kInsphereLiftedTerms components.
+int insphere_lifted(double x, double y, double z, double sign, int length, const double* minor,
+                    double* h) {
+  double once[2 * kInsphereTripleTerms];
+  double xx[4 * kInsphereTripleTerms], yy[4 * kInsphereTripleTerms], zz[4 * kInsphereTripleTerms];
+  double xy[8 * kInsphereTripleTerms];
+  int oncelen = scale_expansion_zeroelim(length, minor, x, once);
+  const int xxlen = scale_expansion_zeroelim(oncelen, once, sign * x, xx);
+  oncelen = scale_expansion_zeroelim(length, minor, y, once);
+  const int yylen = scale_expansion_zeroelim(oncelen, once, sign * y, yy);
+  oncelen = scale_expansion_zeroelim(length, minor, z, once);
+  const int zzlen = scale_expansion_zeroelim(oncelen, once, sign * z, zz);
+  const int xylen = fast_expansion_sum_zeroelim(xxlen, xx, yylen, yy, xy);
+  return fast_expansion_sum_zeroelim(xylen, xy, zzlen, zz, h);
+}
+
 // The expansion stages of insphere_adapt (values whose bits span too much).
+// Shewchuk's insphereadapt from stage B on, on stack buffers. Stage B: the
+// exact determinant of the rounded differences, whose estimate decides
+// against isperrboundB and whose sign is exact when every difference is.
+// Stage C: that estimate plus the first-order terms in the difference
+// tails, against isperrboundC. Stage D: the exact determinant of the exact
+// differences. Every sign is exact.
 [[gnu::noinline, gnu::cold]]
 int insphere_expansion(const double* const* p, const double* x, const double* y,
                        const double* z, bool exact_differences, double permanent) {
   const double* e = p[4];
-  Expansion rx[4], ry[4], rz[4], lift[4];
-  for (int k = 0; k < 4; ++k) {
-    rx[k] = Expansion(x[k]);
-    ry[k] = Expansion(y[k]);
-    rz[k] = Expansion(z[k]);
-    lift[k] = rx[k] * rx[k] + ry[k] * ry[k] + rz[k] * rz[k];
-  }
-  const Expansion stage_b = lifted3_rows(rx, ry, rz, lift);
-  const double estimate = stage_b.estimate();
+  double ab[kInspherePairTerms], bc[kInspherePairTerms], cd[kInspherePairTerms];
+  double da[kInspherePairTerms], ac[kInspherePairTerms], bd[kInspherePairTerms];
+  product_difference(x[0], y[1], x[1], y[0], ab);
+  product_difference(x[1], y[2], x[2], y[1], bc);
+  product_difference(x[2], y[3], x[3], y[2], cd);
+  product_difference(x[3], y[0], x[0], y[3], da);
+  product_difference(x[0], y[2], x[2], y[0], ac);
+  product_difference(x[1], y[3], x[3], y[1], bd);
+  double minor[kInsphereTripleTerms];
+  double terms[4][kInsphereLiftedTerms];
+  int lengths[4];
+  // (lift3 abc - lift2 dab) + (lift1 cda - lift0 bcd), as lifted3_rows.
+  int length = insphere_triple(z[1], cd, -z[2], bd, z[3], bc, minor);
+  lengths[0] = insphere_lifted(x[0], y[0], z[0], -1.0, length, minor, terms[0]);
+  length = insphere_triple(z[2], da, z[3], ac, z[0], cd, minor);
+  lengths[1] = insphere_lifted(x[1], y[1], z[1], 1.0, length, minor, terms[1]);
+  length = insphere_triple(z[3], ab, z[0], bd, z[1], da, minor);
+  lengths[2] = insphere_lifted(x[2], y[2], z[2], -1.0, length, minor, terms[2]);
+  length = insphere_triple(z[0], bc, -z[1], ac, z[2], ab, minor);
+  lengths[3] = insphere_lifted(x[3], y[3], z[3], 1.0, length, minor, terms[3]);
+  double first[2 * kInsphereLiftedTerms], second[2 * kInsphereLiftedTerms];
+  double total[kInsphereStageBTerms];
+  const int firstlen =
+      fast_expansion_sum_zeroelim(lengths[0], terms[0], lengths[1], terms[1], first);
+  const int secondlen =
+      fast_expansion_sum_zeroelim(lengths[2], terms[2], lengths[3], terms[3], second);
+  const int totallen = fast_expansion_sum_zeroelim(firstlen, first, secondlen, second, total);
+  double estimate = 0.0;
+  for (int k = 0; k < totallen; ++k) estimate += total[k];
   const double errbound = kIspErrBoundB * permanent;
   if (estimate >= errbound || -estimate >= errbound) {
     return sign_of(estimate);
   }
   if (exact_differences) {
-    return stage_b.sign();
+    return sign_of(total[totallen - 1]);
   }
+  // Stage C: the stage-B estimate plus the first-order terms in the
+  // difference tails, against isperrboundC (Shewchuk's insphereadapt; ab3
+  // and so on are the leading components of the 2x2 minors).
+  const double aex = x[0], bex = x[1], cex = x[2], dex = x[3];
+  const double aey = y[0], bey = y[1], cey = y[2], dey = y[3];
+  const double aez = z[0], bez = z[1], cez = z[2], dez = z[3];
+  const double aextail = two_diff_tail(p[0][0], e[0], aex);
+  const double aeytail = two_diff_tail(p[0][1], e[1], aey);
+  const double aeztail = two_diff_tail(p[0][2], e[2], aez);
+  const double bextail = two_diff_tail(p[1][0], e[0], bex);
+  const double beytail = two_diff_tail(p[1][1], e[1], bey);
+  const double beztail = two_diff_tail(p[1][2], e[2], bez);
+  const double cextail = two_diff_tail(p[2][0], e[0], cex);
+  const double ceytail = two_diff_tail(p[2][1], e[1], cey);
+  const double ceztail = two_diff_tail(p[2][2], e[2], cez);
+  const double dextail = two_diff_tail(p[3][0], e[0], dex);
+  const double deytail = two_diff_tail(p[3][1], e[1], dey);
+  const double deztail = two_diff_tail(p[3][2], e[2], dez);
+  const double ab3 = ab[3], bc3 = bc[3], cd3 = cd[3], da3 = da[3], ac3 = ac[3], bd3 = bd[3];
+  const double abeps = (aex * beytail + bey * aextail) - (aey * bextail + bex * aeytail);
+  const double bceps = (bex * ceytail + cey * bextail) - (bey * cextail + cex * beytail);
+  const double cdeps = (cex * deytail + dey * cextail) - (cey * dextail + dex * ceytail);
+  const double daeps = (dex * aeytail + aey * dextail) - (dey * aextail + aex * deytail);
+  const double aceps = (aex * ceytail + cey * aextail) - (aey * cextail + cex * aeytail);
+  const double bdeps = (bex * deytail + dey * bextail) - (bey * dextail + dex * beytail);
+  const double errbound_c = kIspErrBoundC * permanent + kResultErrBound * std::fabs(estimate);
+  const double det =
+      estimate +
+      ((((bex * bex + bey * bey + bez * bez) *
+             ((cez * daeps + dez * aceps + aez * cdeps) +
+              (ceztail * da3 + deztail * ac3 + aeztail * cd3)) +
+         (dex * dex + dey * dey + dez * dez) *
+             ((aez * bceps - bez * aceps + cez * abeps) +
+              (aeztail * bc3 - beztail * ac3 + ceztail * ab3))) -
+        ((aex * aex + aey * aey + aez * aez) *
+             ((bez * cdeps - cez * bdeps + dez * bceps) +
+              (beztail * cd3 - ceztail * bd3 + deztail * bc3)) +
+         (cex * cex + cey * cey + cez * cez) *
+             ((dez * abeps + aez * bdeps + bez * daeps) +
+              (deztail * ab3 + aeztail * bd3 + beztail * da3)))) +
+       2.0 * (((bex * bextail + bey * beytail + bez * beztail) *
+                   (cez * da3 + dez * ac3 + aez * cd3) +
+               (dex * dextail + dey * deytail + dez * deztail) *
+                   (aez * bc3 - bez * ac3 + cez * ab3)) -
+              ((aex * aextail + aey * aeytail + aez * aeztail) *
+                   (bez * cd3 - cez * bd3 + dez * bc3) +
+               (cex * cextail + cey * ceytail + cez * ceztail) *
+                   (dez * ab3 + aez * bd3 + bez * da3))));
+  if (det >= errbound_c || -det >= errbound_c) {
+    return sign_of(det);
+  }
+  Expansion rx[4], ry[4], rz[4], lift[4];
   for (int k = 0; k < 4; ++k) {
     rx[k] = Expansion::difference(p[k][0], e[0]);
     ry[k] = Expansion::difference(p[k][1], e[1]);
