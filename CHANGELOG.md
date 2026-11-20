@@ -324,6 +324,21 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- The certified PLC route is faster with identical mesh, certificate and
+  result identities: host cell quality runs in cache-sized cell chunks on
+  contiguous coordinate components (bitwise-identical values), simplex
+  `CellMesh` topology takes its top incidence from the cell routes, PLC source
+  associations take cell-to-edge/face rows from the simplicial connectivity
+  once each routed row is checked to be the cell's face, size-control winners
+  are selected for all samples at once (same refusals, first failing sample
+  first), the audit's coincident-vertex search proposes pairs by a sorted
+  first-axis sweep, and organization checks skip work already established.
+  Certified icosphere (81,920 triangles) `execute`: 17.1 -> 10.3 s.
+- Representation change (declared; ids, codecs, archives and pickles
+  unchanged): `StaticRows`, the final tuple subclass held as one static PyTree
+  leaf, moved from `phydrax.meshing._association` to `phydrax._strict`;
+  `GeometryAssociation` row banks and `MeshingScope.unqualified_entity_ids`
+  use it, and a scope without sides no longer re-derives its ID bank.
 - Native periodic Delaunay triangulates directly on the flat torus: each point
   is one vertex, cells carry lattice offsets, walks and cavities run through
   the covering space, bootstrapped from the certified image triangulation of a
