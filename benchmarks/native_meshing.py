@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -560,9 +561,10 @@ def _remesh_rows() -> tuple[_Row, ...]:
     # target triangle count N, i.e. the edge h of an equilateral triangle of
     # area A/N, within tolerance h^2/4 and a 30 degree minimum angle. The row
     # name carries the target (no suffix: 1e4; `-1e3`, `-1e5`); the row size is
-    # the input triangle count. The row times the construction; certification
-    # (zero_set_certify) is a separate entry and is not timed. Quality is
-    # measured independently against the exact surface.
+    # the input triangle count. The row times the construction; the quality
+    # stage (untimed) certifies it with zero_set_certify, a refusal counting
+    # as a miss, and measures the certified surface independently against the
+    # exact surface.
     def sphere(x: Array) -> Array:
         return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
@@ -570,17 +572,21 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ring = jnp.sqrt(x[0] * x[0] + x[1] * x[1]) - 1.0
         return ring * ring + x[2] * x[2] - 0.16
 
-    values = []
+    programs = []
     for label, function in (("sphere", sphere), ("torus", torus)):
-        program = prepare_interval_function(
-            function, 3, batch_capacity=1, execution="native"
-        ).native_program
-        if program is None:
-            raise RuntimeError(
-                f"The {label} field must lower to a native interval program."
-            )
-        values.append(program.box_program())
-    sphere_value, torus_value = values
+        pair = []
+        for field in (function, jax.grad(function)):
+            program = prepare_interval_function(
+                field, 3, batch_capacity=1, execution="native"
+            ).native_program
+            if program is None:
+                raise RuntimeError(
+                    f"The {label} field and its gradient must lower to native "
+                    "interval programs."
+                )
+            pair.append(program.box_program())
+        programs.append(tuple(pair))
+    (sphere_value, sphere_gradient), (torus_value, torus_gradient) = programs
     spheres = {level: _icosphere(level) for level in (5, 6, 7, 8)}
     sphere_rows = (
         ("surface-remesh-sphere-1e3", 5, 1e3),
@@ -591,11 +597,12 @@ def _remesh_rows() -> tuple[_Row, ...]:
         ("surface-remesh-sphere-1e5", 8, 1e5),
     )
     rows: list[_Row] = []
-    for name, value, distance, samples, area, (vertices, faces), target in (
+    for name, value, gradient, distance, samples, area, (vertices, faces), target in (
         *(
             (
                 name,
                 sphere_value,
+                sphere_gradient,
                 _sphere_distance,
                 _sphere_samples,
                 4.0 * math.pi,
@@ -607,6 +614,7 @@ def _remesh_rows() -> tuple[_Row, ...]:
         (
             "surface-remesh-torus",
             torus_value,
+            torus_gradient,
             _torus_distance,
             _torus_samples,
             4.0 * math.pi**2 * 0.4,
@@ -627,9 +635,17 @@ def _remesh_rows() -> tuple[_Row, ...]:
                 ),
                 _remeshed_triangles,
                 _remesh_unmet,
-                quality=lambda result, distance=distance, samples=samples, tolerance=tolerance: (
-                    _surface_quality(
-                        *_zero_set_surface(result), distance, samples, tolerance
+                quality=lambda result, vertices=vertices, faces=faces, value=value, gradient=gradient, tolerance=tolerance, edge=edge, distance=distance, samples=samples: (
+                    _zero_set_quality(
+                        result,
+                        vertices,
+                        faces,
+                        value,
+                        gradient,
+                        tolerance,
+                        edge,
+                        distance,
+                        samples,
                     )
                 ),
             )
@@ -835,10 +851,55 @@ def _point_triangle_distances(point: np.ndarray, corners: np.ndarray, /) -> np.n
     return np.sqrt(squared)
 
 
-def _zero_set_surface(result: object, /) -> tuple[np.ndarray, np.ndarray]:
+def _zero_set_quality(
+    result: object,
+    carrier_vertices: np.ndarray,
+    carrier_faces: np.ndarray,
+    value: _meshcore.IntervalBoxProgram,
+    gradient: _meshcore.IntervalBoxProgram,
+    tolerance: float,
+    edge: float,
+    distance: Callable[[np.ndarray], np.ndarray],
+    samples: Callable[[int], np.ndarray],
+    /,
+) -> tuple[int, dict[str, float]]:
+    # The certificate against the zero set (zero_set_certify, the input as the
+    # carrier at the route's carrier distance, the tolerance; a refusal is one
+    # miss), then _surface_quality of the certified surface (of the
+    # constructed one when refused).
     if not isinstance(result, _meshcore.ZeroSetRemeshResult):
         raise TypeError("The remesh row returns a ZeroSetRemeshResult.")
-    return result.vertices, result.triangles
+    try:
+        certificate = _meshcore.zero_set_certify(
+            result.vertices,
+            result.triangles,
+            value,
+            gradient,
+            tolerance,
+            result.orientation,
+            carrier_vertices,
+            carrier_faces,
+            tolerance,
+            edge,
+            30.0,
+        )
+    except _meshcore.MeshcoreError as error:
+        # The refusal is the row's evidence; any other status is a failure.
+        if error.status is not _meshcore.MeshcoreStatus.UNRESOLVED:
+            raise
+        missed, measured = _surface_quality(
+            result.vertices, result.triangles, distance, samples, tolerance
+        )
+        return missed + 1, {**measured, "certified": 0.0}
+    missed, measured = _surface_quality(
+        certificate.vertices, certificate.triangles, distance, samples, tolerance
+    )
+    return missed, {
+        **measured,
+        "certified": 1.0,
+        "certified_distance": certificate.distance,
+        "carrier_triangles": float(certificate.counters[3]),
+    }
 
 
 def _surface_quality(
