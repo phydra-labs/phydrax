@@ -1879,8 +1879,11 @@ PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* reques
  * seeds about sharp edges, corner seeds, a body-centred cubic lattice) and
  * exterior ghosts (interior seeds reflected across the surface), all on a
  * dyadic grid, deterministically. The cells are the exact Voronoi cells of
- * the interior seeds in the diagram of all seeds: closed and convex. The
- * boundary is formed by the bisector faces towards ghosts; it lies exactly on
+ * the interior seeds in the diagram of all seeds: closed and convex. A seed
+ * of a nearly cospherical configuration (adjacent circumcentres within
+ * 2^-14 size) moves 2^-10 size off the other circumsphere and the diagram is
+ * rebuilt, so the cells carry no near-degenerate edges or faces. The boundary is
+ * formed by the bisector faces towards ghosts; it lies exactly on
  * axis-aligned planes and approximates curved surfaces.
  *
  * face_cells holds the owner whose outward normal the loop orientation gives
@@ -1899,14 +1902,17 @@ PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* reques
  * boundary faces, faces, repair rounds, certified (1/0, -1 without prove),
  * open cell edges and local Delaunay violations (-1 without prove), signed
  * relative volume error against the input regions, largest boundary vertex
- * distance / size, certified boundary distance bound / size (-1 without
- * prove), feature edges, size, surface spacing.
+ * distance / size, certified boundary-to-surface distance bound / size (-1
+ * without prove), feature edges, size, surface spacing, exact boundary (1
+ * when every vertex of a boundary or interface face lies exactly on the plane
+ * of its nearest triangle, else 0), and a bound of the absolute relative
+ * volume error including its rounding.
  *
  * Returns PHX_MC_OK; PHX_MC_UNRESOLVED (result set when cells exist) when a
  * cell still leaks after the repairs or certification failed, or when no seed
  * lies in the solid; PHX_MC_DEGENERATE_INPUT for a degenerate triangle. */
 #define PHX_MC_CONFORMING_VORONOI_SIZES 6
-#define PHX_MC_CONFORMING_VORONOI_STATS 24
+#define PHX_MC_CONFORMING_VORONOI_STATS 26
 typedef struct phx_mc_voronoi_cells phx_mc_voronoi_cells;
 typedef struct phx_mc_conforming_voronoi_request {
   int64_t vertex_count;

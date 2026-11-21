@@ -9,10 +9,18 @@ The route places conforming seeds for the requested cell size
 the surface by exterior ghosts, sector seeds about sharp edges, corner seeds
 and a body-centred cubic lattice. Every cell is the exact Voronoi cell of its
 seed in the diagram of all seeds, hence closed and convex; the boundary is
-formed by the bisector faces towards the ghosts. It lies exactly on
-axis-aligned planes and approximates other facets (the kernel reports the
-distance and volume error). The published geometry is the binary64 rounding
-of exact circumcentres; the combinatorics are decided by exact predicates.
+formed by the bisector faces towards the ghosts. The published geometry is
+the binary64 rounding of exact circumcentres; the combinatorics are decided
+by exact predicates.
+
+Certification contract. When every boundary vertex lies exactly on its
+facet's plane (axis-aligned facets), the cells cover the PLC exactly and the
+route requests ``volume_plc`` coverage. Otherwise the bisector boundary only
+approximates the PLC, and the route requests ``volume_plc_fidelity``: a
+certified two-sided distance bound between the cell union's exterior surface
+and the PLC's exterior facets (a ``SourceBoundaryDistanceWitness``), accepted
+against the request's ``maximum_deviation``, or the cell size h when none is
+given. The volume error and its bound are reported in either case.
 """
 
 from __future__ import annotations
@@ -30,10 +38,17 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._exact_voronoi_geometry import (
     ExactVoronoiCellGeometrySource,
 )
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
+from phydrax.geometry._piecewise_linear_boundary import (
+    PiecewiseLinearBoundarySource,
+    PiecewiseLinearDomainBoundaryOwner,
+)
 from phydrax.geometry._planar_chain_embedding import triangulate_planar_polygon
+from phydrax.geometry._source_boundary_records import SourceBoundaryDistanceWitness
 from phydrax.meshing._association import GeometryAssociation, GeometrySourceEntityRole
 from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
@@ -643,6 +658,8 @@ def _compliance(
                 issues.append(f"{name}_size:{control.control_id}")
     stats = np.asarray(published.cells.stats, dtype=np.float64)
     achieved.append(("voronoi:volume_error", float(stats[18])))
+    achieved.append(("voronoi:volume_error_bound", float(stats[25])))
+    achieved.append(("voronoi:exact_boundary", float(stats[24])))
     achieved.append(("voronoi:boundary_vertex_distance_over_size", float(stats[19])))
     achieved.append(("voronoi:repair_rounds", float(stats[14])))
     if stats[15] >= 0.0:
@@ -712,15 +729,27 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
         organization = _organization(
             self.source, self.specification, published, associations
         )
-        certification = NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc"),
-            self.source.source_id,
-            self.source.source_revision,
-            domain=declared_plc_domain(
-                complex_, triangles, polygons, self.source.source_id
+        geometry = CellGeometrySpec.power(
+            published.mesh,
+            ExactVoronoiCellGeometrySource(
+                cells.vertices,
+                cells.exact_offsets,
+                cells.exact_values,
+                source_id=self.source.source_id,
+                source_revision=self.source.source_revision,
             ),
-            cell_regions=published.cell_regions,
         )
+        domain = declared_plc_domain(complex_, triangles, polygons, self.source.source_id)
+        if cells.stats[24] == 1.0:
+            certification = NativeCertificationRequest(
+                MeshCertificationSchedule("volume_plc"),
+                self.source.source_id,
+                self.source.source_revision,
+                domain=domain,
+                cell_regions=published.cell_regions,
+            )
+        else:
+            certification = self._fidelity_request(published.mesh, geometry, domain)
         stages = (
             MeshingStageReport(
                 MeshingStageKind.VOLUME_FILL,
@@ -735,18 +764,49 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
             self.coordinate_contract,
             _compliance(self.source, self.specification, published),
             certification,
-            geometry=CellGeometrySpec.power(
-                published.mesh,
-                ExactVoronoiCellGeometrySource(
-                    cells.vertices,
-                    cells.exact_offsets,
-                    cells.exact_values,
-                    source_id=self.source.source_id,
-                    source_revision=self.source.source_revision,
-                ),
-            ),
+            geometry=geometry,
             organization=organization,
             stages=stages,
+        )
+
+    def _fidelity_request(
+        self, mesh: CellMesh, geometry: CellGeometrySpec, domain: PiecewiseLinearDomain, /
+    ) -> NativeCertificationRequest:
+        """The declared fidelity contract of a boundary that approximates the PLC."""
+        tolerance = self.specification.maximum_deviation
+        if tolerance is None:
+            tolerance = self.cell_size
+        if tolerance <= 0.0:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "The conforming Voronoi boundary approximates facets that are not "
+                "axis-aligned and cannot meet a zero maximum_deviation.",
+                provider_code="native_voronoi_certification",
+                stage="source_witness",
+            )
+        query = PiecewiseLinearBoundarySource(
+            PiecewiseLinearDomainBoundaryOwner(domain), 2
+        )
+        face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+        witness = SourceBoundaryDistanceWitness(
+            mesh_id=mesh.mesh_id,
+            geometry_id=cell_geometry_id(geometry),
+            topology_id=mesh.topology_id,
+            source_id=query.source_id,
+            source_revision=query.source_revision,
+            source_query_id=query.source_query_id,
+            reverse_tolerance=tolerance,
+            target_facet_global_ids=face_ids[
+                np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+            ],
+        )
+        return NativeCertificationRequest(
+            MeshCertificationSchedule("volume_plc_fidelity"),
+            query.source_id,
+            query.source_revision,
+            fidelity_source=query,
+            fidelity_tolerance=tolerance,
+            fidelity_witness=witness,
         )
 
 

@@ -2878,7 +2878,8 @@ class ConformingVoronoi(NamedTuple):
     # prove), open cell edges and local Delaunay violations (-1 without
     # prove), signed relative volume error, largest boundary vertex distance /
     # size, certified boundary distance bound / size (-1 without prove),
-    # feature edges, size, surface spacing.
+    # feature edges, size, surface spacing, exact boundary (1/0) and a bound
+    # of the absolute relative volume error.
     stats: np.ndarray
     exact_offsets: np.ndarray
     exact_values: np.ndarray
@@ -2969,7 +2970,7 @@ def conforming_voronoi(
             np.empty((cell_count, 3), dtype=np.float64),
             np.empty((seed_count, 3), dtype=np.float64),
             np.empty((seed_count,), dtype=np.int32),
-            np.empty((24,), dtype=np.float64),
+            np.empty((26,), dtype=np.float64),
             np.empty((4 * vertex_count + 1,), dtype=np.int64),
             np.empty((exact_count,), dtype=np.float64),
         )

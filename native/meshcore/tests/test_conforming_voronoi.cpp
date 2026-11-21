@@ -323,6 +323,9 @@ void test_cube_cells_match_brute_force_voronoi() {
   }
   PHX_CHECK(std::fabs(c.stats[18]) < 1e-14);
   PHX_CHECK(c.stats[19] < 1e-15);
+  // Every boundary vertex lies exactly on its facet; the volume bound is tight.
+  PHX_CHECK(c.stats[24] == 1.0);
+  PHX_CHECK(c.stats[25] >= std::fabs(c.stats[18]) && c.stats[25] < 1e-9);
 }
 
 Surface icosphere(int levels) {
@@ -386,6 +389,22 @@ void test_automatic_sphere_cells_are_closed_convex_and_deterministic() {
   PHX_CHECK_NEAR(c.stats[18], total / reference - 1.0, 1e-12);
   // The certified bound covers the vertex distances and stays below the size.
   PHX_CHECK(c.stats[20] >= c.stats[19] && c.stats[20] < 0.3);
+  // A curved boundary is not exact; the volume bound covers the error.
+  PHX_CHECK(c.stats[24] == 0.0);
+  PHX_CHECK(c.stats[25] >= std::fabs(c.stats[18]));
+  // Nearly cospherical configurations were resolved: no edge below 2^-14 h.
+  double shortest = HUGE_VAL;
+  for (std::size_t f = 0; f + 1 < c.face_offsets.size(); ++f) {
+    const int64_t begin = c.face_offsets[f], end = c.face_offsets[f + 1];
+    for (int64_t q = begin; q < end; ++q) {
+      const double* x = &c.vertices[3 * c.face_vertices[q]];
+      const double* y = &c.vertices[3 * c.face_vertices[q + 1 < end ? q + 1 : begin]];
+      shortest = std::min(shortest, std::sqrt((x[0] - y[0]) * (x[0] - y[0]) +
+                                              (x[1] - y[1]) * (x[1] - y[1]) +
+                                              (x[2] - y[2]) * (x[2] - y[2])));
+    }
+  }
+  PHX_CHECK(shortest > 0x1p-14 * 0.3);
   const Cells again = run(s, 0.3, 1);
   PHX_CHECK(again.vertices == c.vertices);
   PHX_CHECK(again.face_vertices == c.face_vertices);

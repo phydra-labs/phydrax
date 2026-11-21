@@ -41,7 +41,16 @@
 // the face of cell i towards seed j is the ring of Voronoi vertices around
 // Delaunay edge (i, j) with repeats removed, dropped when fewer than three
 // remain. Vertices are exact circumcentres (expansions); the published
-// coordinates are their nearest binary64 values.
+// coordinates are their nearest binary64 values. The boundary is exact when
+// every vertex of a boundary or interface face lies exactly (exact
+// orientation) on the plane of its nearest triangle.
+//
+// Resolution: nearly cospherical seeds (mirror pairs about planes that are
+// not axis-aligned, after the dyadic snap) give adjacent circumcentres within
+// 2^-14 h, hence edges and faces too small for a validity certificate (star
+// determinants scale with the squared edge). One apex seed of each such pair
+// (a ghost when there is one) moves 2^-10 h outward along the ray from the
+// other tet's circumcentre, and the diagram is rebuilt; every pair moves once.
 //
 // Repair: an interior cell meeting a box seed, or a boundary vertex farther
 // than 1.2 r from the surface, gets a ghost: its seed reflected across the
@@ -55,7 +64,7 @@
 // surface: the distance to one triangle is convex, so its maximum over a
 // piece of a face is attained at the piece's corners; pieces are split until
 // the bound meets the vertex maximum. The volume error against the input
-// solid is reported with or without prove.
+// solid, with a bound of its rounding, is reported with or without prove.
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -108,6 +117,8 @@ constexpr double kSpacing = 0.75;  // surface sample spacing r / h
 constexpr double kDepth = 0.3;     // seed depth d / r
 constexpr double kReach = 1.2;     // lattice clearance and reflection reach / r
 constexpr double kShift = 0.15;    // curvature shift of the mirror plane
+constexpr double kResolution = 0x1p-14;  // nearly cospherical circumcentres / h
+constexpr double kNudge = 0x1p-10;       // seed move off a circumsphere / h
 constexpr double kPi = 3.14159265358979323846;
 
 // Shewchuk's compress: the same value with few, nonadjacent components.
@@ -1107,6 +1118,13 @@ class Seeder {
 };
 
 // ------------------------------------------------------------------ builder
+// A seed to move to `point`, for the nearly cospherical apex pair (a, b).
+struct Perturbation {
+  int32_t seed;
+  int32_t a, b;
+  std::array<double, 3> point;
+};
+
 class Builder {
  public:
   Builder(const Surface& surface, const Seeder& seeder, const SeedSet& seeds, double h)
@@ -1127,6 +1145,8 @@ class Builder {
 
   // Interior seeds whose cells leak, with an offending point each.
   const std::vector<std::pair<int32_t, std::array<double, 3>>>& leaks() const { return leaks_; }
+  // Nearly cospherical configurations and the seed moves that resolve them.
+  const std::vector<Perturbation>& near() const { return near_; }
   void certify(const phx_mc_voronoi_cells& out);
   bool certified() const { return certified_; }
   int64_t open_edges() const { return open_edges_; }
@@ -1135,6 +1155,8 @@ class Builder {
   double vertex_distance() const { return vertex_distance_; }
   int32_t boundary_cells() const { return boundary_cells_; }
   int32_t boundary_faces() const { return boundary_faces_; }
+  bool boundary_exact() const { return boundary_exact_; }
+  double volume_magnitude() const { return volume_magnitude_; }
 
  private:
   const Surface& s_;
@@ -1142,6 +1164,9 @@ class Builder {
   std::vector<double> seeds_;
   std::vector<int32_t> regions_;  // -1 ghost, -2 box
   double h_;
+  bool boundary_exact_ = true;
+  double volume_magnitude_ = 0.0;  // sum of |fan volume| over the cells
+  std::vector<Perturbation> near_;
   int32_t count_ = 0;  // seeds before the box
   std::vector<int32_t> tets_;
   std::vector<int32_t> tet_neighbors_;
@@ -1279,6 +1304,31 @@ class Builder {
     for (int k = 0; k < 3; ++k) n[k] = compressed(d.scaled(p0[k]) + la * bc[k] + lb * ca[k] + lc * ab[k]);
   }
 
+  void rounded_circumcenter(int32_t t, double* out) const {
+    std::array<Expansion, 3> n;
+    Expansion d;
+    exact_circumcenter(t, n, d);
+    for (int k = 0; k < 3; ++k) out[k] = rounded_quotient(n[k], d);
+  }
+
+  // Whether the exact vertex v lies on the plane of input triangle t.
+  bool on_plane(int32_t v, int32_t t) const {
+    std::array<Expansion, 3> n;
+    Expansion d;
+    exact_circumcenter(vertex_tets_[v], n, d);
+    const double* a = s_.corner(t, 0);
+    std::array<Expansion, 3> u, w, x;
+    for (int k = 0; k < 3; ++k) {
+      u[k] = Expansion::difference(s_.corner(t, 1)[k], a[k]);
+      w[k] = Expansion::difference(s_.corner(t, 2)[k], a[k]);
+      x[k] = n[k] - d.scaled(a[k]);
+    }
+    const Expansion volume = (u[1] * w[2] - u[2] * w[1]) * x[0] +
+                             (u[2] * w[0] - u[0] * w[2]) * x[1] +
+                             (u[0] * w[1] - u[1] * w[0]) * x[2];
+    return volume.sign() == 0;
+  }
+
   int32_t apex(int32_t t, int slot) const {
     const int32_t u = tet_neighbors_[4 * static_cast<int64_t>(t) + slot];
     const int32_t* f = tets_.data() + 4 * static_cast<int64_t>(t);
@@ -1341,7 +1391,8 @@ class Builder {
 
   void cells() {
     const int64_t count = static_cast<int64_t>(tets_.size() / 4);
-    // Vertices: classes of adjacent, exactly cospherical relevant tets.
+    // Vertices: classes of adjacent relevant tets that are exactly
+    // cospherical or whose circumcentres round to within the merge radius.
     tet_root_.resize(count);
     std::iota(tet_root_.begin(), tet_root_.end(), 0);
     tet_vertex_.assign(count, -1);
@@ -1354,6 +1405,47 @@ class Builder {
         if (u <= t || !relevant_tet[u]) continue;
         if (insphere_of(static_cast<int32_t>(t), apex(static_cast<int32_t>(t), k)) == 0)
           unite(tet_root_, static_cast<int32_t>(t), u);
+      }
+    }
+    // Nearly cospherical seeds (mirror pairs about planes that are not
+    // axis-aligned, after the dyadic snap) put adjacent circumcentres within
+    // the resolution: such a pair is recorded so that build() moves one apex
+    // seed off the other tet's circumsphere and rebuilds.
+    const double resolution = kResolution * h_;
+    std::vector<std::array<double, 3>> centre(count);
+    for (int64_t t = 0; t < count; ++t)
+      if (relevant_tet[t]) circumcenter(static_cast<int32_t>(t), centre[t].data());
+    near_.clear();
+    for (int64_t t = 0; t < count; ++t) {
+      if (!relevant_tet[t]) continue;
+      for (int k = 0; k < 4; ++k) {
+        const int32_t u = tet_neighbors_[4 * t + k];
+        if (u <= t || !relevant_tet[u]) continue;
+        if (find_root(tet_root_, static_cast<int32_t>(t)) == find_root(tet_root_, u)) continue;
+        // The binary64 circumcentres screen; the rounded exact ones decide.
+        if (!(geometry::squared_distance(centre[t].data(), centre[u].data()) <=
+              16.0 * resolution * resolution))
+          continue;
+        double a[3], b[3];
+        rounded_circumcenter(static_cast<int32_t>(t), a);
+        rounded_circumcenter(u, b);
+        if (geometry::squared_distance(a, b) > resolution * resolution) continue;
+        const int32_t l = tets_[4 * t + k], m = apex(static_cast<int32_t>(t), k);
+        // Move a ghost when there is one; it leaves the other tet's sphere.
+        const bool move_l = regions_[l] == -1 && regions_[m] != -1 ? true
+                            : regions_[m] == -1                     ? false
+                                                                    : l > m;
+        const int32_t moved = move_l ? l : m;
+        if (regions_[moved] == -2) continue;
+        // kNudge h outward along the ray from the other tet's circumcentre.
+        const double* c = centre[move_l ? u : t].data();
+        double ray[3];
+        geometry::difference(seed(moved), c, ray);
+        const double length = geometry::length(ray);
+        if (!(length > 0.0)) continue;
+        Perturbation p{moved, std::min(l, m), std::max(l, m), {}};
+        for (int a = 0; a < 3; ++a) p.point[a] = seed(moved)[a] + kNudge * h_ * ray[a] / length;
+        near_.push_back(p);
       }
     }
     cell_of_seed_.assign(count_, -1);
@@ -1484,6 +1576,9 @@ void Builder::publish(phx_mc_voronoi_cells& out) {
     const int32_t t = grid.nearest(centroid, reach, foot, &d);
     out.face_facets[f] = t >= 0 ? s_.in->facets[t] : -1;
   }
+  boundary_exact_ = true;
+  for (int32_t v = 0; v < vertex_count && boundary_exact_; ++v)
+    if (out.vertex_triangles[v] >= 0 && !on_plane(v, out.vertex_triangles[v])) boundary_exact_ = false;
   boundary_cells_ = 0;
   for (const uint8_t b : boundary_cell) boundary_cells_ += b;
   const std::size_t cells = cell_seed_list_.size();
@@ -1511,6 +1606,7 @@ void Builder::publish(phx_mc_voronoi_cells& out) {
         geometry::cross(b, c, bc);
         const double volume = sign * geometry::dot(a, bc) / 6.0;
         out.cell_volumes[cell] += volume;
+        volume_magnitude_ += std::fabs(volume);
         for (int k = 0; k < 3; ++k) out.cell_centroids[3 * cell + k] += volume * (a[k] + b[k] + c[k]) / 4.0;
       }
     }
@@ -1632,7 +1728,8 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
   const double seeding = seconds_since(clock);
   double certification = 0.0;
   int32_t repairs = 0;
-  std::vector<std::pair<int32_t, int32_t>> used;  // (seed, triangle) repairs
+  std::vector<std::pair<int32_t, int32_t>> used;      // (seed, triangle) repairs
+  std::vector<std::pair<int32_t, int32_t>> resolved;  // nearly cospherical apex pairs
   while (true) {
     Builder builder(surface, seeder, seeds, h);
     out = phx_mc_voronoi_cells{};
@@ -1652,6 +1749,22 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
                     surface.corner(t, 1), surface.corner(t, 2), q);
       if (seeder.reflect(seeds, i, t, q, g) && seeder.add_ghost(seeds, ghost_grid, g)) ++added;
     }
+    // Nearly cospherical apex pairs: move one seed (each pair once, so the
+    // rebuilds terminate) and rebuild.
+    if (added == 0) {
+      std::vector<int32_t> moved;
+      for (const Perturbation& p : builder.near()) {
+        const std::pair<int32_t, int32_t> key{p.a, p.b};
+        if (std::find(resolved.begin(), resolved.end(), key) != resolved.end()) continue;
+        if (std::find(moved.begin(), moved.end(), p.seed) != moved.end()) continue;
+        resolved.push_back(key);
+        moved.push_back(p.seed);
+        double x[3] = {p.point[0], p.point[1], p.point[2]};
+        seeder.snap(x);
+        std::copy_n(x, 3, seeds.points.data() + 3 * static_cast<int64_t>(p.seed));
+        ++added;
+      }
+    }
     if (added > 0) {
       ++repairs;
       continue;
@@ -1659,8 +1772,10 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
     clock = Clock::now();
     if (in.prove) builder.certify(out);
     certification = seconds_since(clock);
-    // Signed volume error against the regions of the input.
+    // Signed volume error against the regions of the input, and its bound:
+    // the error of each rounded fan volume is far below 2^-40 of its magnitude.
     std::vector<double> expected(surface.region_count, 0.0);
+    double magnitude = builder.volume_magnitude();
     for (int64_t t = 0; t < in.triangle_count; ++t) {
       double a[3], b[3], c[3], bc[3];
       geometry::difference(surface.corner(t, 0), surface.lower, a);
@@ -1670,6 +1785,7 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
       const double volume = geometry::dot(a, bc) / 6.0;
       if (surface.back(t) >= 0) expected[surface.back(t)] += volume;
       if (surface.front(t) >= 0) expected[surface.front(t)] -= volume;
+      magnitude += std::fabs(volume);
     }
     double total = 0.0, achieved = 0.0;
     for (const double v : expected) total += v;
@@ -1699,6 +1815,9 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
     stats[21] = static_cast<double>(surface.feature_edges);
     stats[22] = h;
     stats[23] = seeder.spacing();
+    stats[24] = builder.boundary_exact() ? 1.0 : 0.0;
+    stats[25] = total != 0.0 ? (std::fabs(achieved - total) + 0x1p-40 * magnitude) / std::fabs(total)
+                             : HUGE_VAL;
     if (!builder.leaks().empty()) return PHX_MC_UNRESOLVED;
     return !in.prove || builder.certified() ? PHX_MC_OK : PHX_MC_UNRESOLVED;
   }

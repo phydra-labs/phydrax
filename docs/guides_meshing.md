@@ -3302,16 +3302,30 @@ by exterior ghost seeds, sector seeds about sharp edges (dihedral angle above
 20 degrees) and corners, and a body-centred cubic lattice inside. Every cell
 is the exact Voronoi cell of its seed in the diagram of all seeds, so cells
 are closed and convex, and the boundary is formed by the bisector faces
-towards the ghosts. Mirrored pairs put that boundary exactly on axis-aligned
-facets; other facets are approximated, and the route reports the signed
-volume error and the largest boundary vertex distance over h
-(`voronoi:volume_error`, `voronoi:boundary_vertex_distance_over_size`). The
+towards the ghosts. A seed of a nearly cospherical configuration (adjacent
+circumcentres within 2^-14 h) moves 2^-10 h off the other circumsphere before
+the final diagram, so no cell carries near-degenerate edges or faces. The
+route reports the signed volume error, a bound of its absolute value, whether
+the boundary is exact, and the largest boundary vertex distance over h
+(`voronoi:volume_error`, `voronoi:volume_error_bound`,
+`voronoi:exact_boundary`, `voronoi:boundary_vertex_distance_over_size`). The
 seeds lie on a dyadic grid and are a function of the input alone, so the mesh
 is deterministic. With `prove=True` the kernel certifies closure, the local
 Delaunay property of every interior seed's star and an upper bound on the
-boundary distance (`voronoi:boundary_distance_bound_over_size`). A polyhedral
-fill without a route still resolves to `plc_restricted_power`, which conforms
-exactly to every facet.
+boundary distance (`voronoi:boundary_distance_bound_over_size`).
+
+The certification contract follows the boundary. Mirrored pairs put it
+exactly on axis-aligned facets; when every boundary vertex lies exactly on its
+facet's plane, acceptance certifies exact `volume_plc` material coverage.
+Otherwise the bisector boundary approximates the PLC, and acceptance follows
+the `volume_plc_fidelity` schedule: in place of exact coverage, a certified
+two-sided distance bound between the cell union's exterior surface and the
+PLC's exterior facets (`certification.fidelity.mesh_to_source_upper` and
+`source_to_mesh_upper`, from a distance-only `SourceBoundaryDistanceWitness`)
+must lie within the request's `maximum_deviation`, or within h when the
+request sets none; a tighter request refuses. A polyhedral fill without a
+route still resolves to `plc_restricted_power`, which conforms exactly to
+every facet.
 
 ### Mixed and polyhedral adaptation
 

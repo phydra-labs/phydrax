@@ -20,7 +20,11 @@ from phydrax.meshing import (
     VolumeMeshingSpec,
 )
 from phydrax.meshing._plc_source import PiecewiseLinearComplex
-from phydrax.meshing.providers import NativeMeshingOptions, NativeMeshingProvider
+from phydrax.meshing.providers import (
+    NativeMeshingOptions,
+    NativeMeshingPlan,
+    NativeMeshingProvider,
+)
 from phydrax.meshing.providers._native_sources import NativePlcSource
 
 
@@ -152,7 +156,9 @@ def _plc_cube() -> NativePlcSource:
     return NativePlcSource(complex_, "voronoi-cube", "r1")
 
 
-def _specification(source: NativePlcSource, size: float) -> VolumeMeshingSpec:
+def _specification(
+    source: NativePlcSource, size: float, *, maximum_deviation: float | None = None
+) -> VolumeMeshingSpec:
     return VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
         MeshingScope.whole(source, 2),
@@ -162,6 +168,7 @@ def _specification(source: NativePlcSource, size: float) -> VolumeMeshingSpec:
                 MeshingScope.whole(source, 3), size, strength=SizeControlStrength.SOFT
             ),
         ),
+        maximum_deviation=maximum_deviation,
     )
 
 
@@ -202,9 +209,96 @@ def test_route_proves_a_small_cube() -> None:
         .execute()
     )
 
-    assert result.certification is not None and result.certification.passed
+    certification = result.certification
+    assert certification is not None and certification.passed
+    # Axis-aligned facets: the boundary is exact and coverage is certified.
+    assert certification.inputs.schedule.route == "volume_plc"
+    assert certification.coverage is not None
+    assert dict(result.compliance.achieved)["voronoi:exact_boundary"] == 1.0
     names = {attribute.name for attribute in result.attributes}
     assert {"voronoi_seed_index", "voronoi_seed"} <= names
+
+
+def _plc_sphere(levels: int) -> NativePlcSource:
+    """A unit icosphere: every facet off the axis planes."""
+    t = (1.0 + 5.0**0.5) / 2.0
+    points = [
+        np.asarray(p, dtype=np.float64) / np.linalg.norm(p)
+        for p in (
+            (-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0),
+            (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+            (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1),
+        )
+    ]  # fmt: skip
+    faces = [
+        (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
+        (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
+        (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
+        (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
+    ]  # fmt: skip
+    for _ in range(levels):
+        middles: dict[tuple[int, int], int] = {}
+
+        def middle(a: int, b: int) -> int:
+            key = (min(a, b), max(a, b))
+            if key not in middles:
+                point = points[a] + points[b]
+                points.append(point / np.linalg.norm(point))
+                middles[key] = len(points) - 1
+            return middles[key]
+
+        refined = []
+        for a, b, c in faces:
+            ab, bc, ca = middle(a, b), middle(b, c), middle(c, a)
+            refined += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        faces = refined
+    count = len(faces)
+    complex_ = PiecewiseLinearComplex(
+        np.asarray(points, dtype=np.float64),
+        tuple(np.asarray(face, dtype=np.int64) for face in faces),
+        np.arange(count, dtype=np.int64),
+        np.tile(np.asarray((-1, 0), dtype=np.int64), (count, 1)),
+        ("solid",),
+        vertex_ids=tuple(f"v{row}" for row in range(len(points))),
+        vertex_occurrence_paths=((),) * len(points),
+        facet_ids=tuple(f"f{row}" for row in range(count)),
+        facet_occurrence_paths=((),) * count,
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+    )
+    return NativePlcSource(complex_, "voronoi-sphere", "r1")
+
+
+def _sphere_plan(maximum_deviation: float | None) -> NativeMeshingPlan:
+    source = _plc_sphere(2)
+    specification = _specification(source, 0.5, maximum_deviation=maximum_deviation)
+    return NativeMeshingProvider(NativeMeshingOptions("plc_conforming_voronoi")).plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+
+
+def test_route_certifies_a_curved_plc_under_its_fidelity_contract() -> None:
+    result = _sphere_plan(0.05).execute()
+
+    certification = result.certification
+    assert certification is not None and certification.passed
+    # The bisector boundary approximates the sphere: a certified two-sided
+    # distance bound replaces exact coverage.
+    assert certification.inputs.schedule.route == "volume_plc_fidelity"
+    assert certification.coverage is None
+    fidelity = certification.fidelity
+    assert fidelity is not None and fidelity.status == "certified"
+    assert 0.0 < fidelity.mesh_to_source_lower <= fidelity.mesh_to_source_upper <= 0.05
+    assert 0.0 < fidelity.source_to_mesh_upper <= 0.05
+    achieved = dict(result.compliance.achieved)
+    assert achieved["voronoi:exact_boundary"] == 0.0
+    assert achieved["voronoi:volume_error_bound"] >= abs(achieved["voronoi:volume_error"])
+
+
+def test_route_refuses_a_tolerance_below_the_certified_bound() -> None:
+    with pytest.raises(MeshingFailure, match="source_fidelity_tolerance"):
+        _sphere_plan(1e-4).execute()
 
 
 def test_polyhedral_fill_of_a_plc_still_resolves_to_restricted_power() -> None:

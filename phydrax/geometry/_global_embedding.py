@@ -6975,6 +6975,21 @@ def _periodic_contacts(
     return findings, result.quotient_boundary, exterior_only
 
 
+# Integers beyond this many bits exceed Python's decimal conversion limit
+# (4300 digits); their identity text is hexadecimal instead.
+_DECIMAL_IDENTITY_BITS = 14000
+
+
+def _shell_measure_identity(value: ExactScalar, /) -> object:
+    """The exact identity of a shell measure, printable at any size."""
+    if isinstance(value, Fraction) and (
+        max(value.numerator.bit_length(), value.denominator.bit_length())
+        > _DECIMAL_IDENTITY_BITS
+    ):
+        return ("rational-hex", f"{value.numerator:#x}", f"{value.denominator:#x}")
+    return _coordinate_coefficient_identity(value)
+
+
 def _boundary_findings(
     mesh: CellMesh,
     cells: tuple[EmbeddingCell, ...],
@@ -7032,7 +7047,7 @@ def _boundary_findings(
     if boundary.status == "certified":
         values.extend(
             (
-                f"shell_measures:{tuple(_coordinate_coefficient_identity(value) for value in boundary.shell_signed_measures)}",
+                f"shell_measures:{tuple(_shell_measure_identity(value) for value in boundary.shell_signed_measures)}",
                 f"exterior_degrees:{boundary.shell_degrees}",
             )
         )
