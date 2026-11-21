@@ -1976,16 +1976,17 @@ def certify_source_face_pairs(model: BRepModel, /) -> tuple[str, ...] | None:
                 )
             )
             continue
-        pair = certify_retained_branch_pair(model, first, second)
-        if pair is not None and set(pair.shared_edges) == common:
-            pair_certificates.append(pair.certificate_id)
-            continue
-        # Rims stored as exact circles, not intersection branches, bind
-        # only through the coaxial meridian proof.
+        # Rims stored as exact circles bind through the exact coaxial meridian
+        # proof; it runs before the interval branch route, which never binds
+        # such a rim (its branch is not an intersection curve of the pair).
         rim = certify_revolution_rim_pair(model, first, second)
-        if rim is None:
+        if rim is not None:
+            pair_certificates.append(rim.certificate_id)
+            continue
+        pair = certify_retained_branch_pair(model, first, second)
+        if pair is None or set(pair.shared_edges) != common:
             return None
-        pair_certificates.append(rim.certificate_id)
+        pair_certificates.append(pair.certificate_id)
     return tuple(pair_certificates)
 
 

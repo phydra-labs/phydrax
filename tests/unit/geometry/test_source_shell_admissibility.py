@@ -2,6 +2,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep import brep_box
@@ -198,6 +199,39 @@ def test_revolution_rims_bind_exact_full_turn_circle_edges() -> None:
         model.geometry.edge_ranges.at[edge, 1].set(1.0),
     )
     assert certify_revolution_rim_pair(shortened, 0, 1) is None
+
+
+def test_face_pairs_bind_exact_rims_without_interval_branches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.geometry.brep import (
+        _source_shell_admissibility as admissibility,
+        brep_cylinder,
+    )
+    from phydrax.geometry.brep._model import BRepModel
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        SourceFaceBranchCoverage,
+    )
+
+    model = brep_cylinder(0.5, 1.0, coordinate_contract=SpatialCoordinateContract.si())
+    traced: list[tuple[int, int]] = []
+    branch_pair = admissibility.certify_retained_branch_pair
+
+    def counted(
+        model: BRepModel, first: int, second: int, /
+    ) -> SourceFaceBranchCoverage | None:
+        traced.append((first, second))
+        return branch_pair(model, first, second)
+
+    monkeypatch.setattr(admissibility, "certify_retained_branch_pair", counted)
+    certificates = admissibility.certify_source_face_pairs(model)
+    # Both side/cap rims bind through the exact meridian proof; the interval
+    # branch route (Krawczyk tracing of the rim circle) is never entered.
+    assert certificates is not None
+    for first, second in ((0, 1), (1, 2)):
+        rim = admissibility.certify_revolution_rim_pair(model, first, second)
+        assert rim is not None and rim.certificate_id in certificates
+    assert traced == []
 
 
 def _square(
