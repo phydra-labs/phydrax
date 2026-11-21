@@ -3932,6 +3932,55 @@ class IntersectionCurve(AbstractCurve):
         return {"kind": "intersection-curve", "branch_id": self.branch_id}
 
 
+# Static structure of one analytic orthogonal-cylinder chart: angle mode, angle
+# sign, angle turns, branch sign, large-cylinder index, reversal and side.
+type OrthogonalChartStructure = tuple[int, int, int, int, int, bool, IntersectionSide]
+
+
+def orthogonal_chart_parameters(
+    structure: OrthogonalChartStructure,
+    parameter: Array,
+    period: Array,
+    values: Array,
+    chart: Array | int,
+    /,
+) -> Array:
+    """Source parameters of an analytic orthogonal-cylinder chart point.
+
+    Depends on the chart's static ``structure`` alone; every exact source
+    coefficient arrives in ``values`` (see
+    ``IntersectionPCurve._parameterized_chart_evaluator_with_source_bounds``).
+    """
+    angle_mode, angle_sign, angle_turns, branch_sign, large_index, reversed_, side = (
+        structure
+    )
+    carrier = values[17] - parameter if reversed_ else parameter
+    theta = values[0] + (carrier - chart) * (values[1] - values[0])
+    cosine, sine = jnp.cos(theta), jnp.sin(theta)
+    radial_n = values[4] + values[3] * (values[7] * cosine + values[8] * sine)
+    axial_large = values[5] + values[3] * (values[9] * cosine + values[10] * sine)
+    axial_small = branch_sign * jnp.sqrt(values[2] * values[2] - radial_n * radial_n)
+    first_component = axial_small * values[11] + radial_n * values[12]
+    second_component = axial_small * values[13] + radial_n * values[14]
+    if angle_mode == 1:
+        angle = angle_sign * 0.25 * period - jnp.arctan(
+            first_component / second_component
+        )
+    else:
+        angle = jnp.arctan(second_component / first_component)
+        if angle_sign < 0:
+            angle = angle + 0.5 * period
+    angle = angle + angle_turns * period
+    large_profile = axial_large / values[15]
+    small_profile = (axial_small - values[6]) / values[16]
+    parameters = (
+        jnp.stack((angle, large_profile, theta, small_profile))
+        if large_index == 0
+        else jnp.stack((theta, small_profile, angle, large_profile))
+    )
+    return parameters[:2] if side == "first" else parameters[2:]
+
+
 class IntersectionPCurve(AbstractCurve):
     """Source p-curve coupled to the exact same implicit root as its 3D branch."""
 
@@ -3999,7 +4048,7 @@ class IntersectionPCurve(AbstractCurve):
         Callable[[Array, Array, Array, Array | int], Array],
         np.ndarray,
         np.ndarray,
-        tuple[int, int, int, int, int, bool, IntersectionSide],
+        OrthogonalChartStructure,
     ]:
         """Prepare a fixed analytic chart with directed exact-source inputs.
 
@@ -4061,38 +4110,7 @@ class IntersectionPCurve(AbstractCurve):
             [fraction_up(value) for value in coefficients], dtype=np.float64
         )
 
-        def evaluate(
-            parameter: Array, period: Array, values: Array, chart: Array | int, /
-        ) -> Array:
-            carrier = values[17] - parameter if self.reversed else parameter
-            theta = values[0] + (carrier - chart) * (values[1] - values[0])
-            cosine, sine = jnp.cos(theta), jnp.sin(theta)
-            radial_n = values[4] + values[3] * (values[7] * cosine + values[8] * sine)
-            axial_large = values[5] + values[3] * (values[9] * cosine + values[10] * sine)
-            axial_small = branch_sign * jnp.sqrt(
-                values[2] * values[2] - radial_n * radial_n
-            )
-            first_component = axial_small * values[11] + radial_n * values[12]
-            second_component = axial_small * values[13] + radial_n * values[14]
-            if angle_mode == 1:
-                angle = angle_sign * 0.25 * period - jnp.arctan(
-                    first_component / second_component
-                )
-            else:
-                angle = jnp.arctan(second_component / first_component)
-                if angle_sign < 0:
-                    angle = angle + 0.5 * period
-            angle = angle + angle_turns * period
-            large_profile = axial_large / values[15]
-            small_profile = (axial_small - values[6]) / values[16]
-            parameters = (
-                jnp.stack((angle, large_profile, theta, small_profile))
-                if family.large_index == 0
-                else jnp.stack((theta, small_profile, angle, large_profile))
-            )
-            return parameters[:2] if self.side == "first" else parameters[2:]
-
-        structure = (
+        structure: OrthogonalChartStructure = (
             angle_mode,
             angle_sign,
             angle_turns,
@@ -4101,7 +4119,7 @@ class IntersectionPCurve(AbstractCurve):
             self.reversed,
             self.side,
         )
-        return evaluate, lower, upper, structure
+        return partial(orthogonal_chart_parameters, structure), lower, upper, structure
 
     def _chart_evaluator_with_period(
         self, chart: int, /
