@@ -1334,6 +1334,32 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
     "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_polyhedral_declared_contacts": (
+        _I32,
+        (
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+        ),
+    ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
@@ -4817,6 +4843,132 @@ def face_triangulation(
     )
     _raise_for_call(result, "face_triangulation")
     return codes, triangle_offsets, triangles
+
+
+class PolyhedralContactBank(NamedTuple):
+    """Prepared operands of ``phx_mc_polyhedral_declared_contacts``."""
+
+    point_count: int
+    point_word_offsets: np.ndarray
+    point_words: np.ndarray
+    point_signs: np.ndarray
+    point_lower: np.ndarray
+    point_upper: np.ndarray
+    tet_points: np.ndarray
+    cell_tet_offsets: np.ndarray
+    cell_corner_offsets: np.ndarray
+    corner_points: np.ndarray
+    corner_vertices: np.ndarray
+    row_word_offsets: np.ndarray
+    row_words: np.ndarray
+    row_signs: np.ndarray
+    cell_face_offsets: np.ndarray
+    face_offsets: np.ndarray
+    face_corners: np.ndarray
+
+
+def polyhedral_contact_bank(
+    point_integers: Sequence[int],
+    point_lower: np.ndarray,
+    point_upper: np.ndarray,
+    tet_points: np.ndarray,
+    cell_tet_offsets: np.ndarray,
+    cell_corner_offsets: np.ndarray,
+    corner_points: np.ndarray,
+    corner_vertices: np.ndarray,
+    corner_integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_offsets: np.ndarray,
+    face_corners: np.ndarray,
+    /,
+) -> PolyhedralContactBank:
+    """Prepare star-decomposed cells for ``polyhedral_declared_contacts``.
+
+    ``point_integers`` holds the homogeneous integer row ``(X, W)`` of every
+    exact point ``X / W`` (``W > 0``), whose outward binary64 enclosures are
+    ``point_lower`` and ``point_upper``. Cell ``c`` owns the tetrahedra
+    ``[cell_tet_offsets[c], cell_tet_offsets[c + 1])`` of ``tet_points``
+    (four point indices each) and the corners ``[cell_corner_offsets[c],
+    cell_corner_offsets[c + 1])``: their point indices, mesh vertex
+    identifiers and integer rows (``corner_integers``: three per corner, cells
+    in order, then each cell's positive common denominator). Its face loops are
+    the local corner indices of faces ``[cell_face_offsets[c],
+    cell_face_offsets[c + 1])`` in ``face_offsets`` CSR. Every corner coordinate
+    is a ``Fraction``. A cell without tetrahedra is never proved.
+    """
+    point_word_offsets, point_words, point_signs = _integer_word_bank(point_integers)
+    row_word_offsets, row_words, row_signs = _integer_word_bank(corner_integers)
+    corner_offsets = np.ascontiguousarray(cell_corner_offsets, dtype=np.int64)
+    lower = np.ascontiguousarray(point_lower, dtype=np.float64)
+    if (
+        lower.ndim != 2
+        or lower.shape[1] != 3
+        or lower.shape != np.shape(point_upper)
+        or len(point_integers) != 4 * lower.shape[0]
+        or len(corner_integers) != 3 * int(corner_offsets[-1]) + corner_offsets.size - 1
+    ):
+        raise ValueError(
+            "Polyhedral contacts require four integers and an enclosure per point."
+        )
+    return PolyhedralContactBank(
+        int(lower.shape[0]),
+        point_word_offsets,
+        point_words,
+        point_signs,
+        lower,
+        np.ascontiguousarray(point_upper, dtype=np.float64),
+        np.ascontiguousarray(tet_points, dtype=np.int64),
+        np.ascontiguousarray(cell_tet_offsets, dtype=np.int64),
+        corner_offsets,
+        np.ascontiguousarray(corner_points, dtype=np.int64),
+        np.ascontiguousarray(corner_vertices, dtype=np.int64),
+        row_word_offsets,
+        row_words,
+        row_signs,
+        np.ascontiguousarray(cell_face_offsets, dtype=np.int64),
+        np.ascontiguousarray(face_offsets, dtype=np.int64),
+        np.ascontiguousarray(face_corners, dtype=np.int64),
+    )
+
+
+def polyhedral_declared_contacts(
+    bank: PolyhedralContactBank, first: np.ndarray, second: np.ndarray, /
+) -> np.ndarray:
+    """Pairs of ``bank`` cells whose every tetrahedron contact is proved to
+    lie in one convex piece of their declared shared stratum
+    (``phx_mc_polyhedral_declared_contacts``); ``False`` decides nothing."""
+    pairs = np.ascontiguousarray(
+        np.stack(
+            (np.asarray(first, dtype=np.int64), np.asarray(second, dtype=np.int64)),
+            axis=1,
+        )
+    )
+    declared = np.zeros((pairs.shape[0],), dtype=np.int8)
+    result = load_meshcore()["phx_mc_polyhedral_declared_contacts"](
+        bank.point_count,
+        bank.point_word_offsets.ctypes.data,
+        bank.point_words.ctypes.data,
+        bank.point_signs.ctypes.data,
+        bank.point_lower.ctypes.data,
+        bank.point_upper.ctypes.data,
+        bank.tet_points.ctypes.data,
+        bank.cell_tet_offsets.size - 1,
+        bank.cell_tet_offsets.ctypes.data,
+        bank.cell_corner_offsets.ctypes.data,
+        bank.corner_points.ctypes.data,
+        bank.corner_vertices.ctypes.data,
+        bank.row_word_offsets.ctypes.data,
+        bank.row_words.ctypes.data,
+        bank.row_signs.ctypes.data,
+        bank.cell_face_offsets.ctypes.data,
+        bank.face_offsets.ctypes.data,
+        bank.face_corners.ctypes.data,
+        pairs.shape[0],
+        pairs.ctypes.data,
+        declared.ctypes.data,
+    )
+    _raise_for_call(result, "polyhedral_declared_contacts")
+    return declared.astype(np.bool_)
 
 
 class CadEntityKind(IntEnum):

@@ -10,12 +10,14 @@ from itertools import product
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.geometry._global_embedding import certify_global_embedding
+from tests._support.declared_contacts import declared_contact_differential, non_dyadic
 
 
 # Plane z = 0: a, b, c, d the square corners, u on edge d-a; the notch under
@@ -147,3 +149,22 @@ def test_notch_fills_certify_exactly_when_they_conform(
     else:
         assert certificate.status == "violated", certificate.findings
         assert any(finding.check == "cell_contact" for finding in certificate.findings)
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="the native meshcore library is absent"
+)
+@pytest.mark.parametrize(("notch", "lower", "upper", "extra_edge", "nested"), _MATRIX)
+def test_native_declared_contacts_are_rational_verdicts(
+    notch: str, lower: str, upper: str, extra_edge: bool, nested: bool
+) -> None:
+    coordinates, cells = _mesh_case(notch, lower, upper, extra_edge, nested)
+    mesh = CellMesh.from_polyhedra(
+        coordinates,
+        [[np.asarray(loop, dtype=np.int32) for loop in cell] for cell in cells],
+    )
+    for corner_map in (None, non_dyadic):
+        native, rational = declared_contact_differential(mesh, corner_map)
+        assert native <= rational
+        if lower != upper:
+            assert not rational

@@ -3266,6 +3266,35 @@ PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
                                              const int8_t* signs, int32_t* codes,
                                              int32_t* triangles);
 
+/* Declared-stratum contacts of star-decomposed linear polyhedral cell pairs:
+ * declared[p] = 1 proves that every intersection of a tetrahedron of cell
+ * pairs[2p] with one of cell pairs[2p + 1] lies in one convex piece of the
+ * pair's declared shared stratum (phydrax `_declared_stratum`: shared vertex
+ * images, shared loop edges, shared face loops that are exactly convex, and
+ * the vertex-average fan triangles of non-planar shared loops, at the first
+ * cell's corner images); 0 decides nothing. Point v is X / W with integer
+ * values 4v..4v + 3 = (X, W), W > 0, of the point word bank and outward
+ * binary64 enclosure rows point_lower[v], point_upper[v]; tet_points holds
+ * four point indices per tetrahedron. Cell c owns tetrahedra
+ * [cell_tet_offsets[c], cell_tet_offsets[c + 1]) and corners
+ * [cell_corner_offsets[c], cell_corner_offsets[c + 1]) with point indices,
+ * mesh vertex identifiers and integer rows (values 3k..3k + 2 of the row
+ * bank) over the cell's positive common denominator (row bank value
+ * 3 K + c, K the corner count); its faces [cell_face_offsets[c],
+ * cell_face_offsets[c + 1]) are loops of local corner indices in
+ * face_offsets CSR. Every corner coordinate is a Fraction (the rational
+ * convex-loop decision requires it). Signs are decided in outward interval
+ * arithmetic, else exactly. */
+PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
+    int64_t point_count, const int64_t* point_word_offsets, const uint32_t* point_words,
+    const int8_t* point_signs, const double* point_lower, const double* point_upper,
+    const int64_t* tet_points, int64_t cell_count, const int64_t* cell_tet_offsets,
+    const int64_t* cell_corner_offsets, const int64_t* corner_points,
+    const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
+    const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
+    const int64_t* face_corners, int64_t pair_count,
+    const int64_t* pairs, int8_t* declared);
+
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its

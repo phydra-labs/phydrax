@@ -45,6 +45,7 @@ set(PHX_MC_SOURCES
   src/cell_map_validity.cpp
   src/welded_topology.cpp
   src/polyhedral_certificates.cpp
+  src/polyhedral_contacts.cpp
   src/tet_entities.cpp
   src/box_tree.cpp
   src/deterministic_float.cpp
