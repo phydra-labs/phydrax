@@ -267,12 +267,22 @@ def _local_strata(cell: EmbeddingCell, /) -> tuple[frozenset[int], ...]:
     return tuple(result)
 
 
+# A non-planar face's fan triangles and the set of their corners.
+type _Fan = tuple[tuple[tuple[Point3, Point3, Point3], ...], frozenset[Point3]]
+
+
 def _point_in_declared_stratum(
     point: tuple[ExactScalar, ...],
     shared_ids: tuple[int, ...],
     points_by_id: dict[int, tuple[ExactScalar, ...]],
     /,
+    fans: dict[tuple[Point3, ...], _Fan | None] | None = None,
 ) -> bool:
+    """Exact membership of ``point`` in the shared stratum ``shared_ids``.
+
+    ``fans`` memoizes, per spatial face loop, its fan (``None`` for a coplanar
+    loop) across the points of one stratum.
+    """
     if len(shared_ids) == 1:
         vertex = points_by_id[shared_ids[0]]
         # Planar contacts are computed in R3 with z = 0.
@@ -310,13 +320,32 @@ def _point_in_declared_stratum(
             return point_on_segment3(
                 spatial_point, spatial_vertices[0], spatial_vertices[1]
             )
-        if len(spatial_vertices) > 3 and _noncoplanar(spatial_vertices):
-            # A non-planar shared face, given as its loop, is its exact
-            # vertex-average fan (``polytope_face_triangles``).
-            return any(
-                point_in_triangle3(spatial_point, triangle)
-                for triangle in polytope_face_triangles(spatial_vertices)
-            )
+        if len(spatial_vertices) > 3:
+            if fans is not None and spatial_vertices in fans:
+                fan = fans[spatial_vertices]
+            else:
+                # A non-planar shared face, given as its loop, is its exact
+                # vertex-average fan (``polytope_face_triangles``).
+                triangles = (
+                    polytope_face_triangles(spatial_vertices)
+                    if _noncoplanar(spatial_vertices)
+                    else None
+                )
+                fan = (
+                    None
+                    if triangles is None
+                    else (
+                        triangles,
+                        frozenset(corner for row in triangles for corner in row),
+                    )
+                )
+                if fans is not None:
+                    fans[spatial_vertices] = fan
+            if fan is not None:
+                # A corner of a closed fan triangle lies in it.
+                return spatial_point in fan[1] or any(
+                    point_in_triangle3(spatial_point, triangle) for triangle in fan[0]
+                )
         return point_in_convex_planar_hull(spatial_point, spatial_vertices)
     raise ValueError(
         "Exact shared-stratum membership requires ambient dimension two or three."
@@ -514,16 +543,82 @@ def _shared_edge_chain(
     return endpoints
 
 
-def _contact_is_declared(
+class _DeclaredStratum:
+    """The exact shared stratum of one cell pair, prepared once for many contacts.
+
+    ``strata`` are its convex pieces: shared vertices, shared edges and shared
+    face loops (or the pair's one shared stratum). The exact intersection of
+    two convex pieces is the hull of its vertices, so a contact is declared
+    only when one stratum holds all of its vertices.
+    """
+
+    __slots__ = ("_fans", "_points_by_id", "_strata")
+
+    def __init__(
+        self,
+        strata: tuple[tuple[int, ...], ...],
+        points_by_id: dict[int, tuple[ExactScalar, ...]],
+        /,
+    ) -> None:
+        self._strata = strata
+        self._points_by_id = points_by_id
+        self._fans: dict[tuple[Point3, ...], _Fan | None] = {}
+
+    def contains(self, points: tuple[tuple[ExactScalar, ...], ...], /) -> bool | None:
+        """Whether every point lies in the stratum; ``None`` when undecided."""
+        try:
+            return any(
+                all(
+                    _point_in_declared_stratum(
+                        point, stratum, self._points_by_id, self._fans
+                    )
+                    for point in points
+                )
+                for stratum in self._strata
+            )
+        except (ValueError, ZeroDivisionError):
+            return None
+
+
+def _shared_strata_union(
     first: EmbeddingCell,
     second: EmbeddingCell,
-    points: tuple[tuple[ExactScalar, ...], ...],
+    first_ids: tuple[int, ...],
+    common: frozenset[int],
+    /,
+) -> tuple[tuple[int, ...], ...]:
+    """Every vertex, edge and face stratum both cells declare within ``common``.
+
+    Vertices come first, then edges, then faces in their loop order; their
+    union is the closed set both cells share by declaration.
+    """
+    shared = set(_local_strata(first)).intersection(_local_strata(second))
+    vertices = sorted(
+        tuple(stratum) for stratum in shared if len(stratum) == 1 and stratum <= common
+    )
+    edges = sorted(
+        tuple(sorted(stratum))
+        for stratum in shared
+        if len(stratum) == 2 and stratum <= common
+    )
+    faces = []
+    for route in first.facet_routes:
+        loop = tuple(first_ids[index] for index in route)
+        ids = frozenset(loop)
+        if len(ids) > 2 and ids <= common and ids in shared:
+            faces.append(loop)
+    return (*vertices, *edges, *faces)
+
+
+def _declared_stratum(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
     first_ids: tuple[int, ...],
     second_ids: tuple[int, ...],
     /,
-) -> bool | None:
-    if not points:
-        return True
+) -> _DeclaredStratum | bool | None:
+    """The declared shared stratum of a cell pair, or the verdict on every
+    nonempty contact when it has none: ``False`` (undeclared) or ``None``."""
     shared = tuple(sorted(set(first_ids).intersection(second_ids)))
     if not shared:
         return False
@@ -550,16 +645,75 @@ def _contact_is_declared(
             # face union, never the hull of disconnected shared vertices.
             faces = _shared_face_union(first, second, common)
             if faces is None:
-                return False
+                if first_ids != first.vertex_ids or second_ids != second.vertex_ids:
+                    return False
+                # No single shared stratum: the union of every shared vertex,
+                # edge and face, e.g. a bent edge chain through a hanging vertex.
+                strata = _shared_strata_union(first, second, first_ids, common)
+                return _DeclaredStratum(strata, point_by_id) if strata else False
             convex = _convex_planar_face_union(faces, point_by_id)
             if convex is not True:
                 return None
-    try:
-        return all(
-            _point_in_declared_stratum(point, shared, point_by_id) for point in points
-        )
-    except (ValueError, ZeroDivisionError):
-        return None
+    return _DeclaredStratum((shared,), point_by_id)
+
+
+def _contact_is_declared(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    points: tuple[tuple[ExactScalar, ...], ...],
+    first_ids: tuple[int, ...],
+    second_ids: tuple[int, ...],
+    /,
+) -> bool | None:
+    if not points:
+        return True
+    stratum = _declared_stratum(first, second, first_ids, second_ids)
+    if not isinstance(stratum, _DeclaredStratum):
+        return stratum
+    return stratum.contains(points)
+
+
+def _common_corner_keys(
+    first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
+) -> list[int]:
+    """Row-major per piece pair, an integer naming its set of common corner ids.
+
+    Equal integers name equal sets; corners are interned point identities.
+    """
+    left = np.asarray(first, dtype=np.int64)
+    right = np.asarray(second, dtype=np.int64)
+    member = np.any(left[:, None, :, None] == right[None, :, None, :], axis=3)
+    common = np.sort(np.where(member, left[:, None, :], -1), axis=2)
+    _, keys = np.unique(common.reshape((-1, left.shape[1])), axis=0, return_inverse=True)
+    return keys.reshape(-1).tolist()
+
+
+class _PairStratum:
+    """`_contact_is_declared` of one cell pair, its stratum prepared on first use."""
+
+    __slots__ = ("_first", "_second", "_stratum")
+
+    def __init__(self, first: EmbeddingCell, second: EmbeddingCell, /) -> None:
+        self._first = first
+        self._second = second
+        self._stratum: list[_DeclaredStratum | bool | None] = []
+
+    def declared(self, points: tuple[tuple[ExactScalar, ...], ...], /) -> bool | None:
+        if not points:
+            return True
+        if not self._stratum:
+            self._stratum.append(
+                _declared_stratum(
+                    self._first,
+                    self._second,
+                    self._first.vertex_ids,
+                    self._second.vertex_ids,
+                )
+            )
+        stratum = self._stratum[0]
+        if not isinstance(stratum, _DeclaredStratum):
+            return stratum
+        return stratum.contains(points)
 
 
 def _polygon_cycle(cell: EmbeddingCell, /) -> tuple[int, ...]:
@@ -6393,6 +6547,22 @@ def _nonperiodic_contacts(
     # The operands stay alive for this proof, so identity keys cannot be reused.
     vertex_sets = {id(cell): frozenset(cell.vertex_ids) for cell in original_cells}
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
+    # Exact piece corners interned once: common corners of two pieces are an
+    # integer set intersection, not pairwise exact comparisons.
+    point_ids: dict[tuple[ExactScalar, ...], int] = {}
+    piece_point_ids: dict[int, tuple[tuple[int, ...], ...]] = {}
+
+    def corner_ids(
+        pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        found = piece_point_ids.get(id(pieces))
+        if found is None:
+            found = tuple(
+                tuple(point_ids.setdefault(point, len(point_ids)) for point in piece)
+                for piece in pieces
+            )
+            piece_point_ids[id(pieces)] = found
+        return found
 
     def straight_polygon(
         index: int, /
@@ -6989,44 +7159,46 @@ def _nonperiodic_contacts(
             if first_pieces is None or second_pieces is None:
                 continue
             certified_pieces = piece_certificates.get((first_index, second_index))
-            declared_common: dict[frozenset[Point3], bool] = {}
+            declared_common: dict[int, bool] = {}
+            first_ids = corner_ids(first_pieces) if certified_pieces is not None else ()
+            second_ids = corner_ids(second_pieces) if certified_pieces is not None else ()
+            certified_flags, common_keys = (
+                (
+                    certified_pieces.reshape(-1).tolist(),
+                    _common_corner_keys(first_ids, second_ids),
+                )
+                if certified_pieces is not None
+                else ([], [])
+            )
+            right_count = len(second_pieces)
+            pair_stratum = _PairStratum(first_cell, second_cell)
             offending: tuple[tuple[ExactScalar, ...], ...] = ()
             contact_error: Exception | None = None
             for left_index, left in enumerate(first_pieces):
                 for right_index, right in enumerate(second_pieces):
-                    if (
-                        certified_pieces is not None
-                        and certified_pieces[left_index, right_index]
-                    ):
+                    flat = left_index * right_count + right_index
+                    if certified_flags and certified_flags[flat]:
                         # The certified intersection lies in the hull of the
                         # common corners; shared-stratum membership is convex.
-                        common = tuple(_point3(point) for point in left if point in right)
-                        key = frozenset(common)
+                        key = common_keys[flat]
                         if key not in declared_common:
-                            declared_common[key] = (
-                                _contact_is_declared(
-                                    first_cell,
-                                    second_cell,
-                                    common,
-                                    first_cell.vertex_ids,
-                                    second_cell.vertex_ids,
+                            right_ids = frozenset(second_ids[right_index])
+                            common = tuple(
+                                _point3(point)
+                                for point, point_id in zip(
+                                    left, first_ids[left_index], strict=True
                                 )
-                                is True
+                                if point_id in right_ids
                             )
+                            declared_common[key] = pair_stratum.declared(common) is True
                         if declared_common[key]:
                             continue
                     shared_contacts = _plane_side_shared_contacts(
                         left, right, first_cell.dimension, mesh.ambient_dimension
                     )
-                    if shared_contacts is not None and (
-                        _contact_is_declared(
-                            first_cell,
-                            second_cell,
-                            shared_contacts,
-                            first_cell.vertex_ids,
-                            second_cell.vertex_ids,
-                        )
-                        is True
+                    if (
+                        shared_contacts is not None
+                        and pair_stratum.declared(shared_contacts) is True
                     ):
                         continue
                     try:
@@ -7039,13 +7211,7 @@ def _nonperiodic_contacts(
                     except (ValueError, ZeroDivisionError) as error:
                         contact_error = error
                         break
-                    declared = _contact_is_declared(
-                        first_cell,
-                        second_cell,
-                        contacts,
-                        first_cell.vertex_ids,
-                        second_cell.vertex_ids,
-                    )
+                    declared = pair_stratum.declared(contacts)
                     if declared is None:
                         contact_error = UnsupportedEmbeddingMap(
                             "Exact intersection membership in the shared stratum was not decided."

@@ -106,24 +106,32 @@ def test_nonadjacent_shared_faces_are_not_a_declared_union() -> None:
     )
 
 
-def test_extra_shared_vertex_outside_face_union_is_not_declared() -> None:
+def test_extra_shared_vertex_declares_only_single_shared_strata() -> None:
     lower = _polyhedron(
         30,
         {**_INTERFACE, **_BOTTOM_APEX},
         ((1, 2, 3), (1, 3, 4), (5, 2, 1), (5, 3, 2), (5, 4, 3), (5, 1, 4)),
     )
     # The upper cell also names the lower apex through a face the lower cell
-    # lacks, so vertex 5 is shared outside every shared face.
+    # lacks, so vertex 5 is shared outside every shared face and the pair has
+    # no single shared stratum: each contact must lie in one shared vertex,
+    # edge or face.
     upper = _polyhedron(
         31,
         {**_INTERFACE, **_BOTTOM_APEX, **_TOP_APEX},
         ((1, 3, 2), (1, 4, 3), (6, 1, 2), (6, 2, 3), (6, 3, 4), (6, 4, 1), (5, 6, 1)),
     )
-    contacts = (_point(0, 0, 1),)
-    assert (
-        _contact_is_declared(lower, upper, contacts, lower.vertex_ids, upper.vertex_ids)
-        is False
-    )
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            lower, upper, points, lower.vertex_ids, upper.vertex_ids
+        )
+
+    assert declared((_point(0, 0, 1),)) is True
+    assert declared((_point(0, 0, 1), _point(1, 0, 1), _point(1, 1, 1))) is True
+    # Corners 2 and 4 share no face: their segment crosses two shared faces.
+    assert declared((_point(1, 0, 1), _point(0, 1, 1))) is False
+    assert declared((_point(0, 0, 2),)) is not True
 
 
 def _edge_touching_boxes(
@@ -214,3 +222,36 @@ def test_disconnected_shared_edges_do_not_declare_their_convex_hull() -> None:
         )
         is False
     )
+
+
+def test_bent_shared_edge_chain_declares_its_vertex_and_edge_union() -> None:
+    # Two pyramids on opposite sides of z = 0 share only the bent chain
+    # 1-2-3 (2 a hanging corner); their square bases have distinct far
+    # corners 4 and 7, so no face, and no straight chain, is shared.
+    chain = {1: _point(0, 0, 0), 2: _point(2, 0, 0), 3: _point(2, 2, 0)}
+    upper = _polyhedron(
+        50,
+        {**chain, 4: _point(0, 2, 0), 5: _point(1, 1, 2)},
+        ((1, 4, 3, 2), (5, 1, 2), (5, 2, 3), (5, 3, 4), (5, 4, 1)),
+    )
+    lower = _polyhedron(
+        51,
+        {**chain, 7: _point(0, 2, 0), 8: _point(1, 1, -2)},
+        ((1, 2, 3, 7), (8, 2, 1), (8, 3, 2), (8, 7, 3), (8, 1, 7)),
+    )
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            upper, lower, points, upper.vertex_ids, lower.vertex_ids
+        )
+
+    # Exactly the hanging corner, and contacts within one shared edge.
+    assert declared((_point(2, 0, 0),)) is True
+    assert declared((_point(0, 0, 0), _point(1, 0, 0), _point(2, 0, 0))) is True
+    assert declared((_point(2, 0, 0), _point(2, 1, 0))) is True
+    # Vertices on both edges span the triangle 1-2-3, which is not shared.
+    assert declared((_point(1, 0, 0), _point(2, 1, 0))) is False
+    # A genuine overlap next to the hanging corner, off the chain.
+    near = (Fraction(19, 10), Fraction(1, 10), Fraction(0))
+    assert declared((near,)) is False
+    assert declared((_point(2, 0, 0), _point(1, 1, 0))) is False
