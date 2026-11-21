@@ -2487,12 +2487,27 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // box), and an angle outside [u_min, u_max] is within r rho_strip (2 pi -
 // (u_max - u_min)) of the face (charged). Faces failing a condition keep
 // the uv chart for every row.
+//
+// Trimmed pole regions (a trim chord meets the strip, e.g. a sphere cap
+// above a latitude cut, a disk whose fan reaches the rim): every chord
+// meeting the strip that is not a pole or seam chord must be a latitude
+// circle (constant v, exactly) and an edge of a region row, and every region
+// corner must lie on the pole's side of it (exact comparisons of v), so the
+// ring is outer: rho_corner <= rho_ring. Such chords are boundary edges of R
+// and carry seam lenses like any other (surface -> mesh unchanged). Mesh ->
+// surface: a pole-chart triangle lies in the disk of its largest corner
+// (convex), so z in it has rho(z) <= rho_ring and P^{-1}(z), taken in the
+// full turn, lies in the face's cap (the trim lens between ring arc and
+// chord polygon is the trim-lens charge over the strip box). Faces whose
+// pole is trimmed away (an inner ring) keep the uv chart: there the
+// pole-chart chords of the ring leave the face.
 struct PoleRegion {
   int32_t face = -1;
   int sigma = 0;
   int64_t vertex = -1;
   double strip = 0.0;  // rho_strip
   double gap = 0.0;    // the angular charge r rho_strip (2 pi - (u_max - u_min))+
+  bool trimmed = false;  // a trim chord (a latitude circle) meets the strip
   pole::SphereFrame frame;
   std::vector<int64_t> rows;
   std::vector<int32_t> masks;
@@ -2530,6 +2545,13 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     }
   std::sort(candidates.begin(), candidates.end());
   candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+  struct Seed {
+    int32_t face;
+    int sigma;
+    int64_t vertex;
+    pole::SphereFrame frame;
+  };
+  std::vector<Seed> seeds;
   std::vector<PoleRegion> regions;
   for (std::size_t c = 0; c < candidates.size(); ++c) {
     const auto [face64, vertex, v_bits] = candidates[c];
@@ -2562,6 +2584,14 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     } else {
       continue;
     }
+    seeds.push_back({face, sigma, vertex, frame});
+  }
+  for (const Seed& seed : seeds) {
+    const int32_t face = seed.face;
+    const int sigma = seed.sigma;
+    const int64_t vertex = seed.vertex;
+    const pole::SphereFrame& frame = seed.frame;
+    auto& kernel = kernels[static_cast<std::size_t>(face)];
     PoleRegion region;
     region.face = face, region.sigma = sigma, region.vertex = vertex, region.frame = frame;
     bool valid = true;
@@ -2571,7 +2601,7 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       bool cap = false;
       for (int j = 0; j < 3; ++j) {
         const double v = uv[6 * i + 2 * j + 1];
-        if (triangles[3 * i + j] == vertex) {
+        if (vertex >= 0 && triangles[3 * i + j] == vertex) {
           if (!at_pole(frame, v, sigma)) valid = false;
           mask |= 1 << j;
         }
@@ -2594,8 +2624,10 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       region.corners.push_back(xy);
     }
     if (!valid || region.rows.empty()) continue;
-    // The strip lies in the face: every chord meeting it is a pole chord on
-    // this pole or a seam chord at the face's u ends.
+    // Chords meeting the strip: pole chords on this pole and seam chords at
+    // the face's u ends need nothing; any other chord there must be an edge
+    // of a region row (a trim chord on the region boundary), which makes the
+    // region trimmed (bulge charges and the orientation check below).
     double u_min = std::numeric_limits<double>::infinity(), u_max = -u_min;
     for (int64_t k = 0; k < chord_count; ++k)
       if (use_patch[chord_use[k]] == face)
@@ -2603,6 +2635,16 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
           u_min = std::min(u_min, chord_uv[4 * k + 2 * end]);
           u_max = std::max(u_max, chord_uv[4 * k + 2 * end]);
         }
+    std::vector<std::array<uint64_t, 4>> region_edges;
+    for (const int64_t row : region.rows)
+      for (int j = 0; j < 3; ++j) {
+        const double* a = uv + 6 * row + 2 * j;
+        const double* b = uv + 6 * row + 2 * ((j + 1) % 3);
+        std::array<uint64_t, 2> p{bits(a[0]), bits(a[1])}, q{bits(b[0]), bits(b[1])};
+        if (q < p) std::swap(p, q);
+        region_edges.push_back({p[0], p[1], q[0], q[1]});
+      }
+    std::sort(region_edges.begin(), region_edges.end());
     for (int64_t k = 0; k < chord_count && valid; ++k) {
       if (use_patch[chord_use[k]] != face) continue;
       const double* p = chord_uv + 4 * k;
@@ -2610,13 +2652,44 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
           at_pole(frame, p[3], sigma))
         continue;
       if (bits(p[0]) == bits(p[2]) && (p[0] == u_min || p[0] == u_max)) continue;
+      bool inside = false;
       for (int end = 0; end < 2; ++end) {
         di::Interval rho;
         if (!pole::colatitude(frame, p[2 * end + 1], sigma, rho) || !(rho.lower > region.strip))
-          valid = false;
+          inside = true;
       }
+      if (!inside) continue;
+      // A trim chord in the strip: a latitude circle (constant v, exactly)
+      // and an edge of a region row.
+      std::array<uint64_t, 2> a{bits(p[0]), bits(p[1])}, b{bits(p[2]), bits(p[3])};
+      if (b < a) std::swap(a, b);
+      if (bits(p[1]) != bits(p[3]) ||
+          !std::binary_search(region_edges.begin(), region_edges.end(),
+                              std::array<uint64_t, 4>{a[0], a[1], b[0], b[1]}))
+        valid = false;
+      region.trimmed = true;
     }
     if (!valid) continue;
+    // Every region corner lies inside each trim ring (exact comparisons of
+    // v; the rings are outer: rho_corner <= rho_ring), so the pole-chart
+    // triangles lie in the disk of their largest corner, inside the face.
+    if (region.trimmed) {
+      for (int64_t k = 0; k < chord_count && valid; ++k) {
+        const double* p = chord_uv + 4 * k;
+        if (use_patch[chord_use[k]] != face || model.use_kinds[chord_use[k]] == 1 ||
+            bits(p[1]) != bits(p[3]) || bits(p[0]) == bits(p[2]))
+          continue;
+        di::Interval rho;
+        if (pole::colatitude(frame, p[1], sigma, rho) && rho.lower > region.strip) continue;
+        for (const int64_t row : region.rows)
+          for (int j = 0; j < 3; ++j) {
+            const double w = sigma * uv[6 * row + 2 * j + 1], t = sigma * p[1];
+            // rho grows with sigma v at a disk centre, falls on a sphere.
+            if (frame.flat ? w > t : w < t) valid = false;
+          }
+      }
+      if (!valid) continue;
+    }
     // The strip must make a full turn: u_max - u_min >= 2 pi rounded down
     // (exact comparison); a face spanning less keeps the uv chart. The real
     // excess 2 pi - (u_max - u_min) (at most one rounding) is charged:
@@ -2706,7 +2779,6 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
                            std::numeric_limits<double>::max(), std::max(pole_v, far.upper)};
     const double fixed =
         di::add(di::point(lens.charge(region.face, box)), di::point(region.gap)).upper;
-    const double budget = di::subtract(di::point(tolerance), di::point(fixed)).lower;
     for (std::size_t k = 0; k < region.rows.size(); ++k) {
       const int64_t row = region.rows[k];
       double vertices[9];
@@ -2720,9 +2792,9 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
       }
       const int32_t mask = region.masks[k];
       const bool sliver = mask == 3 || mask == 5 || mask == 6;
-      const auto result = pole_subdivided_bound(frame, region.sigma, vertices,
-                                                region.corners[k].data(), budget, max_depth,
-                                                sliver);
+      const auto result = pole_subdivided_bound(
+          frame, region.sigma, vertices, region.corners[k].data(),
+          di::subtract(di::point(tolerance), di::point(fixed)).lower, max_depth, sliver);
       row_splits[static_cast<std::size_t>(row)] = result.subdivisions;
       if (result.status != PHX_MC_OK) {
         refuse(row, result.reason);

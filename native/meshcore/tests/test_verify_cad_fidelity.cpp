@@ -1261,9 +1261,11 @@ struct SphereGrid {
   int32_t sphere = -1;
 };
 
-// `middle` (two rows only): the latitude of the middle ring.
+// `middle` (two rows only): the latitude of the middle ring. `high` < pi/2:
+// the top side is a trim chord at that latitude (no north pole).
 SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0,
-                       double middle = std::numeric_limits<double>::quiet_NaN()) {
+                       double middle = std::numeric_limits<double>::quiet_NaN(),
+                       double high = 0x1.921fb54442d18p+0) {
   SphereGrid g;
   Model& m = g.model;
   const double top = 0x1.921fb54442d18p+0;
@@ -1271,17 +1273,18 @@ SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0,
   m.surface(g.sphere);
   const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
   // low == -top: the bottom side is the south pole line (a second pole use).
-  const bool south = low == -top;
+  const bool south = low == -top, north = high == top;
   m.corner(0, 0, 1);
   m.corner(0, 0, -1);
-  for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
-  const double ends[4][2] = {{0, low}, {span, low}, {span, top}, {0, top}};
+  for (int k = 0; k < 4; ++k) m.curve(space, 0, 0);
+  const double ends[4][2] = {{0, low}, {span, low}, {span, high}, {0, high}};
   for (int k = 0; k < 4; ++k) {
     const double* p = ends[k];
     const double* q = ends[(k + 1) % 4];
     const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
-    const bool pole_side = k == 2 || (k == 0 && south);
-    m.use(pole_side ? 1 : 0, k == 2 ? 0 : k == 0 && south ? 1 : (k < 2 ? k : 2), 0.0, 1.0, pcurve);
+    const bool pole_side = (k == 2 && north) || (k == 0 && south);
+    m.use(pole_side ? 1 : 0, k == 2 ? (north ? 0 : 3) : k == 0 && south ? 1 : (k < 2 ? k : 2),
+          0.0, 1.0, pcurve);
   }
   m.close_loop(0);
   const phx_mc_cad_model view = m.view();
@@ -1292,16 +1295,16 @@ SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0,
   const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
   const auto v = [&](int j) {
     if (rows == 2 && j == 1 && !std::isnan(middle)) return middle;
-    return j == rows ? top : j == 0 ? low : low + (top - low) * j / rows;
+    return j == rows ? high : j == 0 ? low : low + (high - low) * j / rows;
   };
   const auto id = [&](int i, int j) -> int64_t {
-    if (j == rows) return 0;
+    if (north && j == rows) return 0;
     if (south && j == 0) return 1;
     if (full && i == columns) i = 0;
     return 1 + static_cast<int64_t>(j) * (columns + 1) + i;
   };
   Mesh& mesh = g.mesh;
-  mesh.points.assign(3 * static_cast<std::size_t>(1 + rows * (columns + 1)), 0.0);
+  mesh.points.assign(3 * static_cast<std::size_t>(1 + (rows + 1) * (columns + 1)), 0.0);
   for (int j = 0; j <= rows; ++j)
     for (int i = 0; i <= columns; ++i) {
       const double point[2] = {u(i), v(j)};
@@ -1563,6 +1566,38 @@ void two_pole_regions() {
             tight.item_status[worst_other] != PHX_MC_OK);
 }
 
+// Trimmed pole regions (item B). (a) A cap above latitude 1.05 (60 deg): the
+// pole is kept and the trim chord at 1.05 (an outer ring) lies in the
+// region's strip; the region takes it (seam lens on the ring chords). (b) A
+// band between latitudes 0.3 and 1.35 (77 deg): the pole is trimmed away, so
+// the face keeps the uv chart. Both certify at 0.05; lifting the pole (a)
+// or a top-trim vertex (b) by 10% refuses its rows. Fault caught: a trimmed
+// cap left in uv (its fan bounds 4.15e-2 there, 1.72e-2 in the pole chart),
+// or a trimmed region accepting a displaced vertex.
+void trimmed_pole_regions() {
+  const double span = 2.0 * 0x1.921fb54442d18p+1;
+  struct Case { const char* name; double low, high; int64_t moved; };
+  for (const Case c : {Case{"cap above 60", 1.05, 0x1.921fb54442d18p+0, 0},
+                       Case{"band below 77", 0.3, 1.35, 1 + 4 * 13 + 5}}) {
+    SphereGrid g = sphere_grid(span, 12, 4, c.low, std::numeric_limits<double>::quiet_NaN(),
+                               c.high);
+    const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P trimmed %s: status %d max %.6e\n", c.name, verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+    if (c.moved == 0) PHX_CHECK(worst < 0.03);  // 4.15e-2 with the cap left in uv
+    Mesh lifted = g.mesh;
+    for (int axis = 0; axis < 3; ++axis)
+      lifted.points[3 * static_cast<std::size_t>(c.moved) + static_cast<std::size_t>(axis)] *= 1.1;
+    const Verdict moved = verify(g.model, lifted, 0.05, 8);
+    for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r)
+      for (int k = 0; k < 3; ++k)
+        if (g.mesh.triangles[3 * r + static_cast<std::size_t>(k)] == c.moved)
+          PHX_CHECK(moved.item_status[r] != PHX_MC_OK);
+  }
+}
+
 // A planar disk charted by the revolution of the radial line (0,0,0) + v
 // (1,0,0) about z, v in [0, 1], u in [0, 2 pi]: the chart is singular at the
 // centre v = 0 (a pole chord there). The centre's fan rows take the
@@ -1709,6 +1744,7 @@ int main() {
   pole_region_turns_and_charges();
   pole_row_disk_bound();
   disk_centre_rows();
+  trimmed_pole_regions();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
