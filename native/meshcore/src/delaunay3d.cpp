@@ -101,7 +101,10 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
   result->input_point_count = point_count;
   result->points.assign(points, points + 3 * point_count);
   result->vertex_map = std::move(vertex_map);
-  if (canonical) canonicalize_cells(*result);
+  if (canonical) {
+    status = canonicalize_cells(*result, parallelism);
+    if (status != PHX_MC_OK) return status;
+  }
   *mesh = result.release();
   return PHX_MC_OK;
 }
