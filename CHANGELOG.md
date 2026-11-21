@@ -334,16 +334,6 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
-- Native CAD meshing splits each face's `theta * tol` at its curves: a curve
-  chord's lens (the face's chart arc vs its chart chord at the same
-  parameter, mapped) gets `alpha theta tol` (curve sizing from
-  `|DS p''| / |DS p'|^2` and a midpoint lens check in the curve sag check),
-  and the face triangles next to a curve get `(1 - alpha) theta tol` (the
-  face metric's curvature size graded from that layer back to `theta` at
-  the boundary grading's rate; pole rings take the layer's size), so the
-  fidelity verifier's per-point sum of lens and own deviation holds there.
-  `alpha = 1/2` minimises the boundary layer's vertex count within 3 % for
-  the measured lens/surface curvature ratios. Curve and face meshes change.
 - Native CAD face smoothing searches for better vertex positions: below the
   kernel's angle-pass target a compass search raises the star's worst 3D
   angle (the fans at fixed curve vertices held the smallest angles), and an
@@ -1934,17 +1924,6 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
-- AT_MOST size compliance rows (CAD chart circumradius, S3 boundary edge)
-  are decided exactly at ties. A unit box meshed at h = 0.5 meets
-  R = h/sqrt(2) exactly, yet its float circumradius rounded above the float
-  bound and was refused. `SizeComplianceDeclaration.exceeds` now takes the
-  per-entity measures (`triangle_circumradius_measures`,
-  `edge_length_measures`): an entity farther from t^2 than a proved
-  forward error bound is decided in floats, otherwise exactly in the stored
-  coordinates (R^2 = a^2 b^2 c^2 / (16 A^2), squared lengths) against
-  t = sqrt(F) h (1 + rel) + abs, with `bound_factor_squared` exact (1/2 for
-  the chart rows). The quantile's order statistics and interpolation weight
-  are numpy's linear ones.
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.
