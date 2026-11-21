@@ -1223,6 +1223,33 @@ PHX_MC_API int32_t phx_mc_angle_between(int64_t count, const double* across,
                                         const double* along, double* results);
 PHX_MC_API int32_t phx_mc_angle_arctangent2(int64_t count, const double* ordinates,
                                             const double* abscissas, double* results);
+/* Host cell-quality kernels: the rounded binary64 operations of phydrax's
+ * host quality formulas, in their order, so every value is the same double.
+ * points holds cell_count cells of corner_count corners of 3 coordinates;
+ * index rows name corners; results are written to [cell * rows + row]. Sums
+ * run in axis order: norms from the first square, other dot products from
+ * +0; max(x, DBL_MIN) keeps a NaN x.
+ *
+ * phx_mc_quality_dihedral_angles: per sample row (origin, end, first,
+ * second), with e = end - origin, f = first - origin, s = second - origin
+ * and u = e / max(|e|, DBL_MIN), phx_mc_angle_arctangent2((f x s) . u,
+ * f . s - (f . u)(s . u)), plus 2 pi when negative.
+ *
+ * phx_mc_quality_solid_corners: per frame row (apex, n0, n1, n2), with the
+ * frame F whose column d is n_d - apex, its ideal inverse rows
+ * ideal_inverse[9 row ..] (I[i][c] at 3 i + c) and the target T = F I with
+ * Gram matrix G = T^T T: det F by first-row cofactors; det F over
+ * max(|F_0| |F_1| |F_2|, DBL_MIN) over ideal_scaled[row]; the shape ratio
+ * 3 cbrt(max(det G, DBL_MIN)) / max(tr G, DBL_MIN) (Newton cube root, 0 when
+ * det F <= 0); and the condition sqrt(tr G tr adj G / max(det G, DBL_MIN)) / 3
+ * (+inf when det F <= 0). */
+PHX_MC_API int32_t phx_mc_quality_dihedral_angles(int64_t cell_count, int64_t corner_count,
+                                                  const double* points, int64_t sample_count,
+                                                  const int64_t* samples, double* angles);
+PHX_MC_API int32_t phx_mc_quality_solid_corners(
+    int64_t cell_count, int64_t corner_count, const double* points, int64_t row_count,
+    const int64_t* frames, const double* ideal_inverse, const double* ideal_scaled,
+    double* determinants, double* scaled, double* ratios, double* conditions);
 /* Candidate positions of one relocated vertex, as a sequence.
  *
  * The star: row 0 of points and metrics is the vertex, rows 1.. its

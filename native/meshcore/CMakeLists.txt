@@ -116,6 +116,7 @@ set(PHX_MC_SOURCES
   src/planar_partition.cpp
   src/angle.cpp
   src/angle_capi.cpp
+  src/quality_capi.cpp
   src/metric_relocation.cpp
   src/cad_geometry.cpp
   src/cad_refine2d.cpp
