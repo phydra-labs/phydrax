@@ -3076,11 +3076,42 @@ class PolyhedralStarTables:
     edge_pairs: np.ndarray
 
 
+# Star tables of live connectivities whose every leaf is an immutable JAX
+# array, keyed by object identity (each entry dies with its connectivity).
+# Validity, decomposition, quality and audit of one mesh share one build.
+_STAR_TABLES: dict[
+    int, tuple[weakref.ref[PolyhedralConnectivity], PolyhedralStarTables]
+] = {}
+
+
 def polyhedral_star_tables(
     connectivity: PolyhedralConnectivity, /
 ) -> PolyhedralStarTables:
+    """Star tables of one connectivity (see `PolyhedralStarTables`).
+
+    Tables of a connectivity of immutable JAX arrays are built once per live
+    connectivity and shared read-only.
+    """
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("connectivity must be PolyhedralConnectivity.")
+    key = id(connectivity)
+    cached = _STAR_TABLES.get(key)
+    if cached is not None and cached[0]() is connectivity:
+        return cached[1]
+    tables = _build_polyhedral_star_tables(connectivity)
+    if all(isinstance(leaf, Array) for leaf in jax.tree_util.tree_leaves(connectivity)):
+        for value in vars(tables).values():
+            value.setflags(write=False)
+        _STAR_TABLES[key] = (
+            weakref.ref(connectivity, lambda _, key=key: _STAR_TABLES.pop(key, None)),
+            tables,
+        )
+    return tables
+
+
+def _build_polyhedral_star_tables(
+    connectivity: PolyhedralConnectivity, /
+) -> PolyhedralStarTables:
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)

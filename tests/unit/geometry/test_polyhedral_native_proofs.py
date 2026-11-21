@@ -255,6 +255,22 @@ def test_native_star_validity_equals_the_rational_one(
     assert set(native[0].tolist()) >= {0, 1}
 
 
+def test_star_tables_are_built_once_per_connectivity_and_read_only() -> None:
+    points, faces = _cube()
+    mesh = CellMesh.from_polyhedra(points, (faces,))
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
+    tables = polyhedral_star_tables(connectivity)
+    assert polyhedral_star_tables(connectivity) is tables
+    rebuilt = CellMesh.from_polyhedra(points, (faces,)).connectivity
+    assert isinstance(rebuilt, PolyhedralConnectivity)
+    fresh = polyhedral_star_tables(rebuilt)
+    assert fresh is not tables
+    for name, value in vars(tables).items():
+        np.testing.assert_array_equal(value, vars(fresh)[name])
+        assert not value.flags.writeable
+
+
 def _star_polygon(generator: random.Random) -> tuple[tuple[Fraction, ...], ...]:
     # A star-shaped (often nonconvex) loop with a collinear hanging vertex,
     # embedded in a random rational plane.
