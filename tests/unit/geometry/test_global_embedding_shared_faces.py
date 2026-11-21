@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.geometry._embedding_cells import EmbeddingCell
 from phydrax.geometry._global_embedding import (
     _contact_is_declared,
@@ -136,7 +137,7 @@ def test_off_plane_contact_against_a_convex_shared_face_is_refused() -> None:
 
 def test_star_loop_is_not_a_convex_face_union() -> None:
     # A pentagram turns forward at every corner but winds twice.
-    star = {
+    star: dict[int, tuple[ExactScalar, ...]] = {
         1: _point(0, 4, 0),
         2: (Fraction(-24, 10), Fraction(-32, 10), Fraction(0)),
         3: (Fraction(38, 10), Fraction(12, 10), Fraction(0)),
@@ -144,7 +145,13 @@ def test_star_loop_is_not_a_convex_face_union() -> None:
         5: (Fraction(24, 10), Fraction(-32, 10), Fraction(0)),
     }
     assert _convex_planar_face_union(((1, 2, 3, 4, 5),), star) is False
-    pentagon = {1: star[1], 2: star[4], 3: star[2], 4: star[5], 5: star[3]}
+    pentagon: dict[int, tuple[ExactScalar, ...]] = {
+        1: star[1],
+        2: star[4],
+        3: star[2],
+        4: star[5],
+        5: star[3],
+    }
     assert _convex_planar_face_union(((1, 2, 3, 4, 5),), pentagon) is True
 
 
