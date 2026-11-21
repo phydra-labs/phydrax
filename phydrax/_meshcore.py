@@ -12852,6 +12852,8 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
             ),
         ),
         ("failure_measure", np.float64),
+        ("unmet_forced_cells", np.int64),
+        ("unmet_unforced_cells", np.int64),
     ],
     align=True,
 )
@@ -12896,6 +12898,8 @@ class _CadVolumeArrays(ctypes.Structure):
                 "stats",
             )
         ),
+        ("curve_capacity", _I64),
+        ("curve_rim_wedges", _P),
     )
 
 
@@ -12920,6 +12924,9 @@ class CadVolumeResult(NamedTuple):
     records: np.ndarray
     splits: np.ndarray
     stats: np.ndarray
+    # Per model curve: the smallest true wedge (degrees) between its two
+    # faces, written when some unmet cell is not forced, else NaN.
+    curve_rim_wedges: np.ndarray
 
 
 class CadSolidResult(NamedTuple):
@@ -12997,7 +13004,9 @@ def cad_mesh_solid(
     return CadSolidResult(surface.status, surface, volume)
 
 
-def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeResult:
+def _cad_volume_export(
+    library: Any, handle: ctypes.c_void_p, curve_count: int, /
+) -> CadVolumeResult:
     counts = np.empty((6,), dtype=np.int64)
     _raise_for_call(
         library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
@@ -13020,12 +13029,15 @@ def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeRes
         np.empty((s,), dtype=_CAD_BOUNDARY_SPLIT_DTYPE),
         np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
     )
-    outputs = _CadVolumeArrays(p, m, t, n, r, s, *(a.ctypes.data for a in banks))
+    wedges = np.full((curve_count,), np.nan, dtype=np.float64)
+    outputs = _CadVolumeArrays(
+        p, m, t, n, r, s, *(a.ctypes.data for a in banks), curve_count, wedges.ctypes.data
+    )
     _raise_for_call(
         library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
         "cad_volume_export",
     )
-    return CadVolumeResult(*banks)
+    return CadVolumeResult(*banks, wedges)
 
 
 def _cad_mesh(
@@ -13188,6 +13200,8 @@ def _cad_mesh(
         surface = CadSurfaceResult(
             status, *banks, pole_sectors, CadChartResult(*chart_banks)
         )
-        return surface, None if volume is None else _cad_volume_export(library, handle)
+        if volume is None:
+            return surface, None
+        return surface, _cad_volume_export(library, handle, int(model.curve_nodes.size))
     finally:
         library["phx_mc_cad_surface_result_free"](handle)

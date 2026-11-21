@@ -76,6 +76,10 @@ struct CadVolumeMesh {
   CadQuadraticMesh quadratic;
   std::vector<phx_mc_cad_boundary_split> splits;
   phx_mc_cad_volume_stats stats{};
+  // Per model curve (empty when the volume stage stopped before quality):
+  // the smallest true wedge in degrees between its two faces, filled only
+  // when some unmet cell is not forced (count_forced_cells), else NaN.
+  std::vector<double> curve_rim_wedges;
 };
 
 // Test hook: refuse the first recovery as if it needed a boundary Steiner

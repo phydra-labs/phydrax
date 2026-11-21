@@ -3156,6 +3156,12 @@ typedef struct phx_mc_cad_volume_stats {
   /* The refused triangle's relative area with recovery_reason INVALID_FACET
    * before recovery (above), else 0. */
   double failure_measure;
+  /* Unmet cells (of unmet_cells) forced by the input: every record of the
+   * cell is a dihedral record and every edge below min_dihedral_degrees is a
+   * surface curve edge whose true wedge between its two faces is below it. */
+  int64_t unmet_forced_cells;
+  /* Unmet cells not forced; the status is UNRESOLVED iff this is nonzero. */
+  int64_t unmet_unforced_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
@@ -3179,6 +3185,13 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t* records;             /* (R, 2) */
   phx_mc_cad_boundary_split* splits;
   phx_mc_cad_volume_stats* stats;
+  /* Per model curve (curve_capacity >= the model's curve count; left
+   * untouched when the volume stage stopped before quality): the smallest
+   * true wedge in degrees between the curve's two faces, written when some
+   * unmet cell is not forced, else NaN. A wedge below min_dihedral_degrees
+   * makes that target unattainable near the curve for any mesh. */
+  int64_t curve_capacity;
+  double* curve_rim_wedges;
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,

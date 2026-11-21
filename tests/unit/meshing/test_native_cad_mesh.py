@@ -651,6 +651,51 @@ def test_rim_wedges_above_the_dihedral_target_resolve(name: str) -> None:
             assert ratio.max() <= 2.0 + 1e-9, (size, theta, ratio.max())
 
 
+def _rim_cells(
+    points: np.ndarray, cells: np.ndarray, rim_z: float, rim_radius: float
+) -> np.ndarray:
+    """Per cell: whether one of its edges has both ends on the rim circle."""
+    on_rim = (np.abs(points[:, 2] - rim_z) < 1e-12) & (
+        np.abs(np.hypot(points[:, 0], points[:, 1]) - rim_radius) < 1e-12
+    )
+    return on_rim[cells].sum(axis=1) >= 2
+
+
+def test_unmet_cells_split_into_forced_and_unforced_per_cell() -> None:
+    # Both kinds in one solid: the cone of height 0.25 (true rim wedge
+    # atan(0.25) = 14.0 deg, below the 15.5 deg target) at h 0.2. A rim cell
+    # whose only failure is its dihedral at the rim is forced (no mesh of
+    # that boundary meets the target there); a cell also failing
+    # radius-edge, which the wedge never forces (r/e = sqrt(1/2 +
+    # tan^2(w/2)/4) <= 2 is reachable), or failing off the rim is unforced.
+    # The decision is per cell: the run is UNRESOLVED because some unmet
+    # cell is unforced, and the closed forms bound both counts: forced cells
+    # number at most the rim cells below the dihedral target that meet the
+    # radius-edge bound, and the two counts cover every cell the closed forms
+    # find below a target (fails if a cell failing radius-edge or off the rim
+    # counts as forced, if no cell is forced, or if the counts miss cells).
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_rim_cone(0.25))).model
+    solid = _rim_solid(model, 0.2, 0.7)
+    stats = solid.volume.stats
+    forced = int(stats["unmet_forced_cells"][0])
+    unforced = int(stats["unmet_unforced_cells"][0])
+    assert solid.status is MeshcoreStatus.UNRESOLVED
+    assert forced > 0 and unforced > 0
+    points, cells = solid.volume.points, solid.volume.tetrahedra
+    dihedral, ratio = _cell_quality(points, cells)
+    rim = _rim_cells(points, cells, 0.0, 1.0)
+    assert forced <= int((rim & (dihedral < 15.5) & (ratio <= 2.0)).sum())
+    assert forced + unforced >= int(((dihedral < 15.5) | (ratio > 2.0)).sum())
+    # The input finding: the rim curve and its exact true wedge atan(0.25)
+    # (cone side against base disk), the only curve below the target (fails
+    # if the wedge is taken from the mesh instead of the faces, or a reflex
+    # or seam curve is reported).
+    wedges = solid.volume.curve_rim_wedges
+    below = np.flatnonzero(wedges < 15.5)
+    assert below.size == 1
+    assert abs(float(wedges[below[0]]) - np.degrees(np.arctan(0.25))) < 1e-9
+
+
 def _washer() -> phx.geometry.brep.BRepModel:
     brep = phx.geometry.brep
     return brep.brep_revolution(

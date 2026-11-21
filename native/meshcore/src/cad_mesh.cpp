@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <utility>
 #include <vector>
 
@@ -507,6 +508,240 @@ double squared_length(const Point& p, const Point& q) {
   return x * x + y * y + z * z;
 }
 
+// Unmet cells split by cause (stats.unmet_forced_cells and
+// unmet_unforced_cells), decided per unmet cell. A cell on a surface curve
+// edge AB lies in the meshed wedge between the edge's two boundary triangles
+// ABC, ABD, so its dihedral at AB is at most that wedge, which tends to the
+// true wedge w between the two faces at the curve as the mesh refines: when
+// w is below the minimum dihedral target, no tetrahedralization of a
+// boundary resolving that curve meets it there. w at an end point of AB is
+// the angle in the plane across the curve tangent T (the curve's own
+// derivative) between the face conormals m = n x T (n = Su x Sv of the face
+// at the triangle's uv), each turned toward its triangle's apex; it is the
+// reflex 2 pi - angle when the cell's centroid falls outside the cone of the
+// two conormals. An end where the tangent or a normal vanishes (a pole)
+// defines no wedge; a seam (both triangles on one face) has none. A curve
+// edge is a forced edge when w is below the target at each end that defines
+// it. An unmet cell is forced only when every one of its records is a
+// dihedral record and every edge of it whose dihedral is below the target is
+// a forced edge; any other failure (radius-edge, size, validity, a small
+// dihedral off the rim) leaves it unforced.
+// The radius-edge bound is never forced by the wedge: with AB = AC = BD = 1,
+// C on one face across A and D on the other across B, the circumcenter is
+// (1/2, 1/2, tan(w/2)/2) in the frame of A, AB, AC, so the radius-edge ratio
+// is sqrt(1/2 + tan^2(w/2)/4) <= 2 for every w up to 2 atan(sqrt 14) (150
+// deg): any wedge admits a cell meeting the radius-edge bound 2 there.
+// A rim below the target forces more than its own cells, which is why the
+// run stays UNRESOLVED and the rim is reported (curve_wedges): a cell on rim
+// edge AB (length L) meeting the radius-edge bound has circumradius >= L/2,
+// so every edge >= L/4 and its other corners C, D lie >= L/4 from the rim;
+// the cell across its face ACD lies in the solid within O(L) of the rim,
+// whose thickness there is O(w L), so its height over an edge >= L/4 is
+// O(w L) and one of its dihedrals, at an edge off the rim, is O(w): below
+// the target for a small w whatever the apex placement. Either the rim cells
+// fail radius-edge or their neighbours fail the dihedral off the rim, so the
+// dihedral target is unattainable in a neighbourhood of such a rim for any
+// mesh; only relaxing the target resolves it. That neighbourhood is not
+// decidable cell by cell, so its cells stay unforced.
+// curve_wedges (when given, one per model curve, NaN where undefined): the
+// smallest true wedge in degrees over the curve edges' defined ends, filled
+// only when some unmet cell is unforced.
+int32_t count_forced_cells(const cad::CadGeometry& geometry, const CadSurfaceMesh& surface,
+                           const TetMesh& state, const std::vector<TetUnmetRecord>& records,
+                           double target_degrees, int64_t& forced, int64_t& unforced,
+                           std::vector<double>* curve_wedges) {
+  forced = 0;
+  unforced = 0;
+  const double target = target_degrees * (std::numbers::pi / 180.0);
+  const auto surface_points = static_cast<int32_t>(surface.points.size());
+  using Edge = std::array<int32_t, 3>;  // low, high, row
+  std::vector<Edge> curve_edges;
+  curve_edges.reserve(surface.curve_edges.size());
+  for (std::size_t k = 0; k < surface.curve_edges.size(); ++k) {
+    const auto [a, b] = std::minmax(surface.curve_edges[k][0], surface.curve_edges[k][1]);
+    curve_edges.push_back({a, b, static_cast<int32_t>(k)});
+  }
+  std::sort(curve_edges.begin(), curve_edges.end());
+  const auto find_edge = [&](int32_t a, int32_t b) -> int32_t {
+    const auto [low, high] = std::minmax(a, b);
+    const auto it = std::lower_bound(curve_edges.begin(), curve_edges.end(), Edge{low, high, -1});
+    return it != curve_edges.end() && (*it)[0] == low && (*it)[1] == high ? (*it)[2] : -1;
+  };
+  // Surface triangles on each curve edge: (curve edge row, triangle).
+  std::vector<std::array<int32_t, 2>> sides;
+  for (std::size_t t = 0; t < surface.triangles.size(); ++t)
+    for (int k = 0; k < 3; ++k) {
+      const int32_t row = find_edge(surface.triangles[t][k], surface.triangles[t][(k + 1) % 3]);
+      if (row >= 0) sides.push_back({row, static_cast<int32_t>(t)});
+    }
+  std::sort(sides.begin(), sides.end());
+  cad::EvaluationWorkspace workspace;
+  const auto cross = [](const double* x, const double* y, double* z) {
+    z[0] = x[1] * y[2] - x[2] * y[1];
+    z[1] = x[2] * y[0] - x[0] * y[2];
+    z[2] = x[0] * y[1] - x[1] * y[0];
+  };
+  const auto dot = [](const double* x, const double* y) {
+    return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  };
+  // The true wedge at end `end` of curve edge `row` on the side of `inside`
+  // (a point of the cell), NaN where undefined; false when the geometry
+  // cannot be evaluated.
+  const auto wedge = [&](int32_t row, int end, const std::array<int32_t, 2>& triangles,
+                         const double* inside, double& angle) {
+    const auto& edge = surface.curve_edges[row];
+    const int32_t vertex = edge[end];
+    const double t = surface.curve_edge_parameters[row][end];
+    double curve[6];
+    if (!geometry.jets(geometry.curve_node(surface.curve_edge_curves[row]), &t, 1, curve,
+                       workspace))
+      return false;
+    double tangent[3] = {curve[3], curve[4], curve[5]};
+    const double speed = std::sqrt(dot(tangent, tangent));
+    angle = std::numeric_limits<double>::quiet_NaN();
+    if (!(speed > 0) || !std::isfinite(speed)) return true;
+    for (double& x : tangent) x /= speed;
+    const double* p = surface.points[vertex].data();
+    double conormals[2][3];
+    for (int side = 0; side < 2; ++side) {
+      const auto& triangle = surface.triangles[triangles[side]];
+      int corner = 0, apex = 0;
+      for (int k = 0; k < 3; ++k) {
+        if (triangle[k] == vertex) corner = k;
+        if (triangle[k] != edge[0] && triangle[k] != edge[1]) apex = triangle[k];
+      }
+      const auto& uv = surface.triangle_uv[triangles[side]];
+      const double parameters[2] = {uv[2 * corner], uv[2 * corner + 1]};
+      double jet[9], normal[3], m[3], toward[3];
+      if (!geometry.jets(geometry.surface_node(surface.triangle_patches[triangles[side]]),
+                         parameters, 1, jet, workspace))
+        return false;
+      cross(jet + 3, jet + 6, normal);
+      cross(normal, tangent, m);
+      for (int k = 0; k < 3; ++k) toward[k] = surface.points[apex][k] - p[k];
+      const double length = std::sqrt(dot(m, m)) * (dot(m, toward) < 0 ? -1.0 : 1.0);
+      if (!(std::abs(length) > 0) || !std::isfinite(length)) return true;
+      for (int k = 0; k < 3; ++k) conormals[side][k] = m[k] / length;
+    }
+    double g[3];
+    for (int k = 0; k < 3; ++k) g[k] = inside[k] - p[k];
+    const double along = dot(g, tangent);
+    for (int k = 0; k < 3; ++k) g[k] -= along * tangent[k];
+    const double c = std::clamp(dot(conormals[0], conormals[1]), -1.0, 1.0);
+    const double g0 = dot(g, conormals[0]), g1 = dot(g, conormals[1]);
+    const double determinant = 1.0 - c * c;
+    const bool within = determinant > 0 ? g0 - c * g1 >= 0 && g1 - c * g0 >= 0 : g0 > 0;
+    angle = within ? std::acos(c) : 2 * std::numbers::pi - std::acos(c);
+    return true;
+  };
+  // Records grouped by cell: a cell is forced only if all its records are
+  // dihedral records.
+  std::vector<std::pair<uint64_t, bool>> cells;
+  cells.reserve(records.size());
+  for (const TetUnmetRecord& record : records)
+    cells.push_back({record.cell_id, record.criterion == PHX_MC_TET_UNMET_DIHEDRAL});
+  std::sort(cells.begin(), cells.end());
+  std::size_t next = 0;
+  for (std::size_t first = 0; first < cells.size(); first = next) {
+    const uint64_t id = cells[first].first;
+    bool dihedral_only = true;
+    for (next = first; next < cells.size() && cells[next].first == id; ++next)
+      dihedral_only = dihedral_only && cells[next].second;
+    const int32_t slot = state.cell_slot(id);
+    bool is_forced = dihedral_only && slot >= 0;
+    const Tetrahedron* tet = is_forced ? &state.tet(slot) : nullptr;
+    const double* q[4] = {};
+    for (int k = 0; k < 4 && is_forced; ++k) {
+      q[k] = tet->v[k] == kDeadVertex ? nullptr : state.point(tet->v[k]);
+      is_forced = q[k] != nullptr;
+    }
+    double centroid[3] = {0, 0, 0};
+    for (int k = 0; k < 4 && is_forced; ++k)
+      for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * q[k][axis];
+    bool any_small = false;
+    for (int i = 0; i < 4 && is_forced; ++i)
+      for (int j = i + 1; j < 4 && is_forced; ++j) {
+        // Dihedral at edge ij: the angle between the face normals of
+        // (i, j, k) and (i, j, l) taken with the same edge vector.
+        int k = 0;
+        while (k == i || k == j) ++k;
+        const int l = 6 - i - j - k;
+        double e[3], f[3], g[3], nk[3], nl[3];
+        for (int axis = 0; axis < 3; ++axis) {
+          e[axis] = q[j][axis] - q[i][axis];
+          f[axis] = q[k][axis] - q[i][axis];
+          g[axis] = q[l][axis] - q[i][axis];
+        }
+        cross(e, f, nk);
+        cross(e, g, nl);
+        const double scale = std::sqrt(dot(nk, nk) * dot(nl, nl));
+        const double dihedral =
+            scale > 0 ? std::acos(std::clamp(dot(nk, nl) / scale, -1.0, 1.0)) : 0.0;
+        if (!(dihedral < target)) continue;
+        any_small = true;
+        is_forced = false;
+        if (tet->v[i] >= surface_points || tet->v[j] >= surface_points) continue;
+        const int32_t row = find_edge(tet->v[i], tet->v[j]);
+        if (row < 0) continue;
+        const auto side = std::lower_bound(sides.begin(), sides.end(),
+                                           std::array<int32_t, 2>{row, -1});
+        if (sides.end() - side < 2 || (*side)[0] != row || side[1][0] != row ||
+            (sides.end() - side > 2 && side[2][0] == row))
+          continue;
+        const std::array<int32_t, 2> triangles{(*side)[1], side[1][1]};
+        if (surface.triangle_patches[triangles[0]] == surface.triangle_patches[triangles[1]])
+          continue;
+        double at_start = 0, at_end = 0;
+        if (!wedge(row, 0, triangles, centroid, at_start) ||
+            !wedge(row, 1, triangles, centroid, at_end))
+          return PHX_MC_INVALID_INPUT;
+        // NaN compares false: an undefined end neither forces nor clears.
+        is_forced = (std::isnan(at_start) || at_start < target) &&
+                    (std::isnan(at_end) || at_end < target) &&
+                    !(std::isnan(at_start) && std::isnan(at_end));
+      }
+    // A dihedral record whose small angle this binary64 check does not see
+    // (at the threshold) is not explained by a forced edge.
+    is_forced = is_forced && any_small;
+    (is_forced ? forced : unforced) += 1;
+  }
+  if (unforced == 0 || !curve_wedges) return PHX_MC_OK;
+  // Every rim edge once, its side decided by the centroid of a cell on it.
+  std::vector<bool> seen(surface.curve_edges.size(), false);
+  const auto& complex = state.complex();
+  for (std::size_t slot = 0; slot < complex.tets.size(); ++slot) {
+    const Tetrahedron& tet = complex.tets[slot];
+    if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+    double centroid[3] = {0, 0, 0};
+    for (int k = 0; k < 4; ++k)
+      for (int axis = 0; axis < 3; ++axis) centroid[axis] += 0.25 * state.point(tet.v[k])[axis];
+    for (int i = 0; i < 4; ++i)
+      for (int j = i + 1; j < 4; ++j) {
+        if (tet.v[i] >= surface_points || tet.v[j] >= surface_points) continue;
+        const int32_t row = find_edge(tet.v[i], tet.v[j]);
+        if (row < 0 || seen[static_cast<std::size_t>(row)]) continue;
+        seen[static_cast<std::size_t>(row)] = true;
+        const auto side = std::lower_bound(sides.begin(), sides.end(),
+                                           std::array<int32_t, 2>{row, -1});
+        if (sides.end() - side < 2 || (*side)[0] != row || side[1][0] != row ||
+            (sides.end() - side > 2 && side[2][0] == row))
+          continue;
+        const std::array<int32_t, 2> triangles{(*side)[1], side[1][1]};
+        if (surface.triangle_patches[triangles[0]] == surface.triangle_patches[triangles[1]])
+          continue;
+        double& smallest = (*curve_wedges)[static_cast<std::size_t>(
+            surface.curve_edge_curves[static_cast<std::size_t>(row)])];
+        for (int end = 0; end < 2; ++end) {
+          double angle = 0;
+          if (!wedge(row, end, triangles, centroid, angle)) return PHX_MC_INVALID_INPUT;
+          const double degrees = angle * (180.0 / std::numbers::pi);
+          if (!std::isnan(degrees) && !(degrees >= smallest)) smallest = degrees;
+        }
+      }
+  }
+  return PHX_MC_OK;
+}
+
 }  // namespace
 
 int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretization& curves,
@@ -647,6 +882,19 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                                         stats.improve_collapsed, stats.improve_relocated,
                                         stats.unmet_cells);
   if (improved != PHX_MC_OK && improved != PHX_MC_UNRESOLVED) return improved;
+  result.curve_rim_wedges.assign(static_cast<std::size_t>(model.curve_count),
+                                 std::numeric_limits<double>::quiet_NaN());
+  if (stats.unmet_cells > 0) {
+    std::vector<TetUnmetRecord> records;
+    const int32_t evaluated = evaluate_mesh_quality(state, quality, records);
+    if (evaluated != PHX_MC_OK) return evaluated;
+    const int32_t counted = count_forced_cells(geometry, surface, state, records,
+                                               controls.minimum_dihedral_degrees,
+                                               stats.unmet_forced_cells,
+                                               stats.unmet_unforced_cells,
+                                               &result.curve_rim_wedges);
+    if (counted != PHX_MC_OK) return counted;
+  }
   // Live vertex slots in order; the surface keeps its rows.
   std::vector<int32_t> rows(state.vertex_slot_count(), -1);
   for (std::size_t slot = 0; slot < rows.size(); ++slot) {
@@ -706,7 +954,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     result.boundary_faces[t] = {it->cell, it->local};
   }
   stats.volume_ns = elapsed_ns(volume_start);
-  int32_t overall = stats.unmet_cells > 0 ? PHX_MC_UNRESOLVED : PHX_MC_OK;
+  // UNRESOLVED iff some unmet cell is not forced by the input
+  // (count_forced_cells); forced cells are reported, not unmet.
+  int32_t overall = stats.unmet_unforced_cells > 0 ? PHX_MC_UNRESOLVED : PHX_MC_OK;
   if (controls.geometry_order == 2) {
     const auto quadratic_start = std::chrono::steady_clock::now();
     const CadQuadraticInput input{

@@ -219,9 +219,26 @@ def execute_cad_solid(
     geometry = (
         CellGeometrySpec.affine(mesh) if order == 1 else _quadratic_geometry(mesh, solid)
     )
+    # Unmet cells split per cell: forced by the input (a rim wedge below the
+    # dihedral target explains every failure of the cell) or not; only the
+    # unforced ones are an issue.
+    forced = int(stats["unmet_forced_cells"])
+    unforced = int(stats["unmet_unforced_cells"])
     issues: list[str] = []
     if solid.status is MeshcoreStatus.UNRESOLVED:
-        issues.append(f"native_unmet_quality_cells:{int(stats['unmet_cells'])}")
+        issues.append(f"native_unmet_quality_cells:{unforced}")
+        # Input finding: a rim whose true wedge is below the dihedral target
+        # makes that target unattainable in a neighbourhood of the rim for
+        # any mesh (cad_mesh.cpp, count_forced_cells); relaxing
+        # minimum_dihedral_degrees below the wedge is the remedy.
+        target = float(schedule.minimum_dihedral_degrees)
+        wedges = solid.volume.curve_rim_wedges
+        for curve in np.flatnonzero(wedges < target):
+            issues.append(
+                f"input_rim_wedge_below_dihedral_target:curve={int(curve)}:"
+                f"wedge_degrees={float(wedges[curve])!r}:target_degrees={target!r}:"
+                "the dihedral target is unattainable near this rim for any mesh"
+            )
     requested: list[tuple[str, float]] = [
         ("maximum_deviation", float(deviation)),
         ("minimum_dihedral_degrees", float(schedule.minimum_dihedral_degrees)),
@@ -229,7 +246,9 @@ def execute_cad_solid(
     if schedule.radius_edge_bound is not None:
         requested.append(("radius_edge_bound", float(schedule.radius_edge_bound)))
     achieved: list[tuple[str, float]] = [
-        ("unmet_quality_cells", float(stats["unmet_cells"]))
+        ("unmet_quality_cells", float(int(stats["unmet_cells"]))),
+        ("unmet_forced_quality_cells", float(forced)),
+        ("unmet_unforced_quality_cells", float(unforced)),
     ]
     _size_compliance(prepared, solid, issues, requested, achieved)
     compliance = MeshingComplianceReport(

@@ -167,6 +167,13 @@ extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* res
   }
   copy_flat(q.straightened, a->records); copy_rows(v.splits, a->splits);
   *a->stats = v.stats;
+  // Optional: curve_rim_wedges null skips them.
+  if (a->curve_rim_wedges) {
+    if (a->curve_capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+    if (static_cast<uint64_t>(a->curve_capacity) < v.curve_rim_wedges.size())
+      return PHX_MC_CAPACITY_EXCEEDED;
+    copy_rows(v.curve_rim_wedges, a->curve_rim_wedges);
+  }
   return PHX_MC_OK;
 }
 
