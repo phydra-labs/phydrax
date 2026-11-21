@@ -183,4 +183,78 @@ def point_in_convex_planar_hull(
     return not (any(value > 0 for value in signs) and any(value < 0 for value in signs))
 
 
-__all__ = ["point_in_convex_planar_hull", "triangulate_planar_polygon"]
+def polytope_face_triangles(
+    points: tuple[Point3, ...], /
+) -> tuple[tuple[Point3, Point3, Point3], ...]:
+    """The exact triangles a polyhedron face loop represents.
+
+    An exactly coplanar loop is the simple polygon it bounds, triangulated
+    without changing it. A loop whose vertices are not coplanar is the fan of
+    triangles ``(c, P_i, P_{i+1})`` from its exact vertex average ``c`` (the
+    finite-volume face of OpenFOAM); a planar face's fan would be the same
+    polygon, so the two conventions agree wherever both apply. The triangles
+    keep the loop's orientation.
+    """
+    if len(points) < 3 or any(len(point) != 3 for point in points):
+        raise ValueError("A polyhedron face is a loop of at least three points in R3.")
+    origin = points[0]
+    normal = (
+        sum(
+            (
+                (points[i][1] - origin[1])
+                * (points[(i + 1) % len(points)][2] - origin[2])
+                - (points[i][2] - origin[2])
+                * (points[(i + 1) % len(points)][1] - origin[1])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+        sum(
+            (
+                (points[i][2] - origin[2])
+                * (points[(i + 1) % len(points)][0] - origin[0])
+                - (points[i][0] - origin[0])
+                * (points[(i + 1) % len(points)][2] - origin[2])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+        sum(
+            (
+                (points[i][0] - origin[0])
+                * (points[(i + 1) % len(points)][1] - origin[1])
+                - (points[i][1] - origin[1])
+                * (points[(i + 1) % len(points)][0] - origin[0])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+    )
+    planar = any(_sign(value) for value in normal) and not any(
+        _sign(
+            sum(
+                (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
+                Fraction(0),
+            )
+        )
+        for point in points
+    )
+    if planar:
+        return tuple(
+            (points[first], points[second], points[third])
+            for first, second, third in triangulate_planar_polygon(points)
+        )
+    count = len(points)
+    centre: Point3 = (
+        sum((point[0] for point in points), Fraction(0)) / count,
+        sum((point[1] for point in points), Fraction(0)) / count,
+        sum((point[2] for point in points), Fraction(0)) / count,
+    )
+    return tuple((centre, points[i], points[(i + 1) % count]) for i in range(count))
+
+
+__all__ = [
+    "point_in_convex_planar_hull",
+    "polytope_face_triangles",
+    "triangulate_planar_polygon",
+]

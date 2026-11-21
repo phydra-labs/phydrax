@@ -134,6 +134,7 @@ from ._periodic_restriction import (
 )
 from ._planar_chain_embedding import (
     point_in_convex_planar_hull,
+    polytope_face_triangles,
     triangulate_planar_polygon,
 )
 from ._planar_primitives import TriangleEnclosures
@@ -604,22 +605,21 @@ def _volume_tetrahedra(
         return (_tetrahedron3(cell.corner_images),)
     faces = _oriented_closed_faces(cell)
     points = tuple(_point3(point) for point in cell.corner_images)
-    planes = tuple(_face_plane(tuple(points[index] for index in face)) for face in faces)
+    triangles: list[tuple[Point3, Point3, Point3]] = []
+    for face in faces:
+        try:
+            triangles.extend(
+                polytope_face_triangles(tuple(points[index] for index in face))
+            )
+        except ValueError as error:
+            raise UnsupportedEmbeddingMap(str(error)) from error
+    # The star point lies strictly inside every face triangle's plane (one
+    # plane per planar face, one per fan triangle of a non-planar face).
+    planes = tuple(_face_plane(triangle) for triangle in triangles)
     center = _star_center(points, planes)
     if center is None:
         raise UnsupportedEmbeddingMap(
             "Polytope face planes do not admit an exact strictly interior star point."
-        )
-    triangles: list[tuple[Point3, Point3, Point3]] = []
-    for face in faces:
-        face_points = tuple(points[index] for index in face)
-        try:
-            local = triangulate_planar_polygon(face_points)
-        except ValueError as error:
-            raise UnsupportedEmbeddingMap(str(error)) from error
-        triangles.extend(
-            (face_points[first], face_points[second], face_points[third])
-            for first, second, third in local
         )
     if _star_ray_degree(center, tuple(triangles)) != 1:
         raise UnsupportedEmbeddingMap(
@@ -676,11 +676,11 @@ def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...
     origin = points[0]
     volume = sum(
         (
-            determinant3(
-                origin, points[face[0]], points[face[index]], points[face[index + 1]]
-            )
+            determinant3(origin, *triangle)
             for face in oriented
-            for index in range(1, len(face) - 1)
+            for triangle in polytope_face_triangles(
+                tuple(points[index] for index in face)
+            )
         ),
         Fraction(0),
     )

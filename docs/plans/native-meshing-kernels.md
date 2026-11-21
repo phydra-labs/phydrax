@@ -317,19 +317,21 @@ tetrahedra, then implicit volumes, then the CAD solid.
     projected back onto their patch or feature curve; a move is kept only when every incident cell
     keeps positive float corner and decomposition volumes; (8) layers: L thin hexahedra per
     projection column at the exact cumulative thicknesses from the wall (hex layers: the column is
-    split, so the hex fraction rises). Certification (prove): every hexahedron by the exact signs of
-    the 27 Bernstein coefficients of its triquadratic Jacobian determinant (float with a forward
-    error bound, expansions otherwise), every polyhedron by exact orient3d of its decomposition
-    tetrahedra (cell centre, face centre, edge) plus a closed genus-0 boundary, hence star-shaped and
-    embedded; a failing cell has its smoothing moves undone, then is published as a polyhedron when
-    only its trilinear map fails; anything left is UNRESOLVED. The boundary distance (vertices on the
-    surface, sampled face points) is reported; the route requests `volume_plc_fidelity` (the Voronoi
-    route's contract) against `maximum_deviation` or the boundary size.
+    split, so the hex fraction rises). Publication: every cell is a polyhedron with OpenFOAM face
+    semantics (a non-planar face is the fan from its exact vertex average; the certifier's
+    `polytope_face_triangles`), target `CellFamilyPolicy(required=("polyhedron",))`, hex fraction
+    by shape from the `cell_shape` marker (0 six quadrilaterals, 1 step prism, 2 other).
+    Certification (prove): every cell by exact orient3d of its fan decomposition tetrahedra (cell
+    centre, face vertex average, edge) plus a closed genus-0 boundary, hence star-shaped and
+    embedded; anything failing is UNRESOLVED. The boundary distance (vertices on the surface,
+    sampled face points) is reported; the route requests `volume_plc_fidelity` (the Voronoi
+    route's contract, over the exact fan wall) against `maximum_deviation` or the boundary size.
     Route: `plc_octree_hex_dominant` for `HEX_DOMINANT_POLYHEDRAL_TRANSITION` (sizes from a volume
     and a boundary uniform size control, layers from a PROVIDER `BoundaryLayerControl`). The
-    tet-to-hex split (`plc_hex_dominant`, `HEX_DOMINANT_SIMPLEX_TRANSITION`) stays: it is the only
-    route whose boundary conforms exactly to the PLC with region interfaces and simplex transitions,
-    which a snapped octree cannot offer by construction.
+    tet-to-hex split (`plc_hex_dominant`, `HEX_DOMINANT_SIMPLEX_TRANSITION`) stays: it is the
+    route for consumers needing trilinear hexahedra, and the only one whose boundary conforms
+    exactly to the PLC with region interfaces and simplex transitions, which a snapped octree
+    cannot offer by construction.
   - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
     every step runs on the original, refined and restored mesh and the archive is written twice).
 

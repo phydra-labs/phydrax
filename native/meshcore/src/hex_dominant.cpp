@@ -40,12 +40,10 @@
 //     decomposition volume.
 //  8. Layers: each projection column is split at the cumulative thicknesses
 //     from the wall, giving layer_count thin hexahedra and the remainder.
-// Certification (prove): every hexahedron by the exact signs of the 27
-// Bernstein coefficients of its triquadratic Jacobian determinant; every
-// polyhedron by the exact orientation of its decomposition tetrahedra (cell
-// centre, face centre, edge) and a closed genus-0 boundary. A failing cell has
-// the smoothing moves of its vertices undone; a hexahedron whose trilinear map
-// still fails but whose decomposition is valid is published as a polyhedron.
+// Certification (prove): every cell, published as a polyhedron with OpenFOAM
+// face semantics (a non-planar face is the fan from its vertex average), by
+// the exact orientation of its decomposition tetrahedra (cell centre, face
+// vertex average, edge) and a closed genus-0 boundary.
 #include "hex_dominant.hpp"
 
 #include <algorithm>
@@ -59,7 +57,6 @@
 #include <utility>
 #include <vector>
 
-#include "expansion.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -843,6 +840,12 @@ struct Builder {
     int32_t core_face;
   };
   std::vector<Piece> pieces;
+  // Pieces around every staircase vertex (with repeats) and the wall face of
+  // every piece; column points (level 0 the wall, `levels` the staircase).
+  std::vector<std::vector<int32_t>> row_pieces;
+  std::vector<int32_t> piece_wall_face;
+  int32_t levels = 1;
+  std::vector<int32_t> column;
 
   Builder(const Input& input, Surface& surface, Mesh& output) : in(input), s(surface), mesh(output) {}
 
@@ -873,7 +876,8 @@ struct Builder {
   int32_t staircase();
   void partition();
   int32_t project();
-  void emit_layers(int32_t levels);
+  void emit_layers();
+  void place_layers();
   void smooth();
   int32_t certify();
 };
@@ -1566,7 +1570,8 @@ int32_t Builder::project() {
   std::vector<std::array<int32_t, 2>> edge_pieces;
   std::vector<std::array<int32_t, 2>> edge_ends;
   const uint64_t n = static_cast<uint64_t>(core_points);
-  std::vector<std::vector<int32_t>> around(vertices);
+  row_pieces.assign(vertices, {});
+  auto& around = row_pieces;
   for (std::size_t p = 0; p < pieces.size(); ++p) {
     const Piece& piece = pieces[p];
     for (int e = 0; e < piece.count; ++e) {
@@ -1648,8 +1653,9 @@ int32_t Builder::project() {
 }
 
 // Projection cells (levels == 1) or columns split into levels cells: a
-// hexahedron per quadrilateral piece and level, a prism per triangle.
-void Builder::emit_layers(int32_t levels) {
+// hexahedron per quadrilateral piece and level, a prism per triangle. Layer
+// points are placed by place_layers.
+void Builder::emit_layers() {
   mesh.points.resize(3 * (core_points + static_cast<int64_t>(stair_vertices.size())));
   mesh.face_offsets.resize(core_faces + 1);
   mesh.face_vertices.resize(core_face_entries);
@@ -1660,19 +1666,11 @@ void Builder::emit_layers(int32_t levels) {
   mesh.cell_vertex_offsets.resize(core_cells + 1);
   mesh.cell_vertices.resize(core_cell_entries);
   const int64_t columns = static_cast<int64_t>(stair_vertices.size());
-  // Column points: level 0 the wall, level `levels` the staircase vertex.
-  std::vector<int32_t> column(static_cast<std::size_t>(columns) * (levels + 1));
+  column.assign(static_cast<std::size_t>(columns) * (levels + 1), -1);
   for (int64_t row = 0; row < columns; ++row) {
     column[row * (levels + 1)] = surface_vertex[row];
     column[row * (levels + 1) + levels] = stair_vertices[row];
-    const Vec wall = point(surface_vertex[row]), top = point(stair_vertices[row]);
-    const Vec d = sub(top, wall);
-    const double length = norm(d);
-    double height = 0.0;
-    for (int32_t k = 1; k < levels; ++k) {
-      height += in.layer_thicknesses[k - 1];
-      column[row * (levels + 1) + k] = add_point(add(wall, mul(d, height / length)));
-    }
+    for (int32_t k = 1; k < levels; ++k) column[row * (levels + 1) + k] = add_point(point(surface_vertex[row]));
   }
   auto at = [&](int32_t v, int32_t level) { return column[stair_vertex[v] * (levels + 1) + level]; };
   const int64_t count = static_cast<int64_t>(pieces.size());
@@ -1691,12 +1689,13 @@ void Builder::emit_layers(int32_t levels) {
     }
   }
   int32_t loop[4];
+  piece_wall_face.assign(count, -1);
   for (int64_t p = 0; p < count; ++p) {
     const Piece& piece = pieces[p];
     // The wall face (outward along the staircase normal) and the faces
     // between levels.
     for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], 0);
-    add_face(loop, piece.count, cell_of(p, 0), -1);
+    piece_wall_face[p] = add_face(loop, piece.count, cell_of(p, 0), -1);
     for (int32_t k = 1; k < levels; ++k) {
       for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], k);
       add_face(loop, piece.count, cell_of(p, k), cell_of(p, k - 1));
@@ -1819,21 +1818,15 @@ Vec cell_centroid(const Mesh& mesh, const Topology& t, int64_t c) {
   return volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
 }
 
-// Float screen of a cell: decomposition tetrahedra (centre, face average,
-// edge) above a relative margin, and for hexahedra the eight corner
-// Jacobians. Hexahedra take their vertex mean as centre and their reference
-// faces; polyhedra their OpenFOAM centroid and their face loops.
+// Float screen of a cell: its decomposition tetrahedra (OpenFOAM centroid,
+// face vertex average, edge; the certified decomposition) above a relative
+// margin, and for hexahedra also the eight corner Jacobians.
 bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
   const double* x = mesh.points.data();
   if (mesh.cell_kinds[c] == kHexahedron) {
     const int32_t* h = mesh.cell_vertices.data() + mesh.cell_vertex_offsets[c];
     Vec p[8];
-    Vec centre{0, 0, 0};
-    for (int i = 0; i < 8; ++i) {
-      p[i] = load(x + 3 * h[i]);
-      centre = add(centre, p[i]);
-    }
-    centre = mul(centre, 0.125);
+    for (int i = 0; i < 8; ++i) p[i] = load(x + 3 * h[i]);
     // Corner neighbors in the reference order (x, y, z directions).
     static constexpr int kCorner[8][3] = {{1, 3, 4}, {2, 0, 5}, {3, 1, 6}, {0, 2, 7},
                                           {7, 5, 0}, {4, 6, 1}, {5, 7, 2}, {6, 4, 3}};
@@ -1843,18 +1836,6 @@ bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
       const Vec d = sub(p[kCorner[i][2]], p[i]);
       if (!(dot(a, cross(b, d)) > 1e-6 * norm(a) * norm(b) * norm(d))) return false;
     }
-    static constexpr int kFaces[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4},
-                                         {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
-    for (const auto& face : kFaces) {
-      const Vec average = mul(add(add(p[face[0]], p[face[1]]), add(p[face[2]], p[face[3]])), 0.25);
-      const Vec out = sub(average, centre);
-      const double reach = norm(out);
-      for (int k = 0; k < 4; ++k) {
-        const double v = dot(cross(sub(p[face[k]], average), sub(p[face[(k + 1) % 4]], average)), out);
-        if (!(v > 1e-9 * reach * reach * reach)) return false;
-      }
-    }
-    return true;
   }
   const Vec centre = cell_centroid(mesh, t, c);
   for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
@@ -1872,105 +1853,6 @@ bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
       double v = dot(cross(sub(p, average), sub(n, average)), sub(average, centre));
       if (signed_face < 0) v = -v;
       if (!(v > 1e-9 * reach * reach * reach)) return false;
-    }
-  }
-  return true;
-}
-
-// Exact sign of the Bernstein coefficient (i, j, k) of a trilinear
-// hexahedron's Jacobian determinant (times 8): sum over a2 + a3 = i,
-// b1 + b3 = j, c1 + c2 = k of w w w det(A_{b1 c1}, B_{a2 c2}, C_{a3 b3}) with
-// w = 2 for equal indices and 1 otherwise; A, B, C the edge vectors along x,
-// y, z at the given transverse indices.
-int bernstein_sign(const double* const p[2][2][2], int i, int j, int k) {
-  struct Term {
-    int a2, a3, b1, b3, c1, c2;
-    double w;
-  };
-  Term terms[8];
-  int count = 0;
-  for (int a2 = 0; a2 < 2; ++a2) {
-    const int a3 = i - a2;
-    if (a3 < 0 || a3 > 1) continue;
-    for (int b1 = 0; b1 < 2; ++b1) {
-      const int b3 = j - b1;
-      if (b3 < 0 || b3 > 1) continue;
-      for (int c1 = 0; c1 < 2; ++c1) {
-        const int c2 = k - c1;
-        if (c2 < 0 || c2 > 1) continue;
-        const double w = (a2 == a3 ? 2.0 : 1.0) * (b1 == b3 ? 2.0 : 1.0) * (c1 == c2 ? 2.0 : 1.0);
-        terms[count++] = {a2, a3, b1, b3, c1, c2, w};
-      }
-    }
-  }
-  // Edge vector endpoints: A_{bc} = p[1][b][c] - p[0][b][c], etc.
-  auto ends = [&](const Term& t, int which, const double*& head, const double*& base) {
-    switch (which) {
-      case 0:
-        head = p[1][t.b1][t.c1];
-        base = p[0][t.b1][t.c1];
-        break;
-      case 1:
-        head = p[t.a2][1][t.c2];
-        base = p[t.a2][0][t.c2];
-        break;
-      default:
-        head = p[t.a3][t.b3][1];
-        base = p[t.a3][t.b3][0];
-        break;
-    }
-  };
-  double value = 0.0, magnitude = 0.0;
-  for (int n = 0; n < count; ++n) {
-    Vec e[3];
-    for (int which = 0; which < 3; ++which) {
-      const double *head, *base;
-      ends(terms[n], which, head, base);
-      e[which] = {head[0] - base[0], head[1] - base[1], head[2] - base[2]};
-    }
-    value += terms[n].w * dot(e[0], cross(e[1], e[2]));
-    for (int a = 0; a < 3; ++a) {
-      const int b = (a + 1) % 3, c = (a + 2) % 3;
-      magnitude += terms[n].w * std::fabs(e[0][a]) * (std::fabs(e[1][b] * e[2][c]) + std::fabs(e[1][c] * e[2][b]));
-    }
-  }
-  // Three rounded differences, two products per term and at most 48
-  // additions stay below 128 unit roundoffs of the absolute sum.
-  const double bound = 128.0 * std::numeric_limits<double>::epsilon() * magnitude +
-                       256.0 * std::numeric_limits<double>::denorm_min();
-  if (value > bound) return 1;
-  if (value < -bound) return -1;
-  Expansion total;
-  for (int n = 0; n < count; ++n) {
-    Expansion e[3][3];
-    for (int which = 0; which < 3; ++which) {
-      const double *head, *base;
-      ends(terms[n], which, head, base);
-      for (int a = 0; a < 3; ++a) e[which][a] = Expansion::difference(head[a], base[a]);
-    }
-    for (int a = 0; a < 3; ++a) {
-      const int b = (a + 1) % 3, c = (a + 2) % 3;
-      total = total + (e[0][a] * (e[1][b] * e[2][c] - e[1][c] * e[2][b])).scaled(terms[n].w);
-    }
-  }
-  return total.sign();
-}
-
-// Exact trilinear validity: all 27 Bernstein coefficients positive.
-bool hexahedron_certified(const Mesh& mesh, int64_t c) {
-  const int32_t* h = mesh.cell_vertices.data() + mesh.cell_vertex_offsets[c];
-  static constexpr int kIndex[2][2][2] = {{{0, 4}, {3, 7}}, {{1, 5}, {2, 6}}};
-  const double* p[2][2][2];
-  for (int a = 0; a < 2; ++a) {
-    for (int b = 0; b < 2; ++b) {
-      for (int d = 0; d < 2; ++d) p[a][b][d] = mesh.points.data() + 3 * h[kIndex[a][b][d]];
-    }
-  }
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      for (int k = 0; k < 3; ++k) {
-        if (bernstein_sign(p, i, j, k) <= 0) return false;
-      }
     }
   }
   return true;
@@ -2013,6 +1895,97 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
   return static_cast<int64_t>(vertices.size()) - edges + faces == 2;
 }
 
+// Layer points along the wall offset direction m of every column: with n_i
+// the unit outward normals of the patches around the wall vertex (area-
+// weighted over its wall faces, patches meeting below the feature angle
+// merged), m solves m . n_i = 1 (least squares beyond three), so the k-th
+// layer point lies at the cumulative thickness from every adjacent patch
+// plane: m = n on a patch, (n1 + n2) / (1 + n1 . n2) on a feature curve.
+void Builder::place_layers() {
+  if (levels == 1) return;
+  const int64_t columns = static_cast<int64_t>(stair_vertices.size());
+  std::vector<Vec> area(pieces.size());
+  for (std::size_t p = 0; p < pieces.size(); ++p) {
+    Vec centre, average;
+    face_geometry(mesh, piece_wall_face[p], centre, area[p], average);
+  }
+  const double feature_cos = std::cos(in.feature_angle_degrees * (3.14159265358979323846 / 180.0));
+  std::vector<std::pair<int32_t, Vec>> by_patch;
+  std::vector<Vec> normals, sums;
+  for (int64_t row = 0; row < columns; ++row) {
+    by_patch.clear();
+    for (const int32_t p : row_pieces[row]) {
+      const int32_t patch = pieces[p].patch;
+      auto it = std::find_if(by_patch.begin(), by_patch.end(), [&](const auto& e) { return e.first == patch; });
+      if (it == by_patch.end()) {
+        by_patch.emplace_back(patch, area[p]);
+      } else {
+        it->second = add(it->second, area[p]);
+      }
+    }
+    normals.clear();
+    sums.clear();
+    for (const auto& [patch, sum] : by_patch) {
+      const Vec n = mul(sum, 1.0 / norm(sum));
+      std::size_t g = 0;
+      while (g < normals.size() && dot(normals[g], n) <= feature_cos) ++g;
+      if (g == normals.size()) {
+        normals.push_back(n);
+        sums.push_back(sum);
+      } else {
+        sums[g] = add(sums[g], sum);
+        normals[g] = mul(sums[g], 1.0 / norm(sums[g]));
+      }
+    }
+    // The two most opposed normals: a feature curve, and the fallback of a
+    // rank-deficient corner.
+    auto pair = [&]() {
+      std::size_t i = 0, j = 1;
+      for (std::size_t a = 0; a < normals.size(); ++a) {
+        for (std::size_t c = a + 1; c < normals.size(); ++c) {
+          if (dot(normals[a], normals[c]) < dot(normals[i], normals[j])) i = a, j = c;
+        }
+      }
+      return mul(add(normals[i], normals[j]), 1.0 / (1.0 + dot(normals[i], normals[j])));
+    };
+    Vec m = normals[0];
+    if (normals.size() == 2) {
+      m = pair();
+    } else if (normals.size() > 2) {
+      double a[3][3] = {}, r[3] = {};
+      for (const Vec& n : normals) {
+        for (int i = 0; i < 3; ++i) {
+          r[i] += n[i];
+          for (int j = 0; j < 3; ++j) a[i][j] += n[i] * n[j];
+        }
+      }
+      auto det3 = [](const double (&q)[3][3]) {
+        return q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) +
+               q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
+      };
+      const double det = det3(a);
+      // Unit normals: det measures how far they are from one plane.
+      if (det > 1e-6) {
+        for (int i = 0; i < 3; ++i) {
+          double q[3][3];
+          for (int x = 0; x < 3; ++x) {
+            for (int y = 0; y < 3; ++y) q[x][y] = y == i ? r[x] : a[x][y];
+          }
+          m[i] = det3(q) / det;
+        }
+      } else {
+        m = pair();
+      }
+    }
+    const Vec wall = point(surface_vertex[row]);
+    double height = 0.0;
+    for (int32_t k = 1; k < levels; ++k) {
+      height += in.layer_thicknesses[k - 1];
+      set_point(column[row * (levels + 1) + k], sub(wall, mul(m, height)));
+    }
+  }
+}
+
 void Builder::smooth() {
   Topology t = topology(mesh);
   const int64_t points = static_cast<int64_t>(mesh.points.size() / 3);
@@ -2041,6 +2014,9 @@ void Builder::smooth() {
     if (surface_kind[row] != kCorner) role[surface_vertex[row]] = 2;
     column_of[surface_vertex[row]] = static_cast<int32_t>(row);
   }
+  // Layer points (role 3) are placed from the wall, never moved on their own.
+  const int64_t layer_first = core_points + columns;
+  for (int64_t v = layer_first; v < points; ++v) role[v] = 3;
   // Boundary faces incident to every surface vertex.
   std::vector<std::vector<int32_t>> wall_faces(columns);
   for (int64_t f = core_faces; f < faces; ++f) {
@@ -2120,6 +2096,9 @@ void Builder::smooth() {
   std::vector<double> previous(mesh.points);
   std::vector<uint8_t> moved(points, 0);
   int64_t reverted = 0;
+  // Cells valid so far: smoothing never makes one of them invalid.
+  std::vector<uint8_t> valid(cells);
+  for (int64_t c = 0; c < cells; ++c) valid[c] = cell_valid_float(mesh, t, c);
   // Surface vertex move: onto its patch or curve by a local walk.
   auto place_surface = [&](int64_t row, const Vec& target) {
     const int32_t v = surface_vertex[row];
@@ -2129,51 +2108,70 @@ void Builder::smooth() {
     set_point(v, hit.point);
   };
   // Columns keep room for the layer stack; cells keep positive float
-  // volumes: undo the moves around any that does not.
+  // volumes: undo the moves around any that does not. A wall vertex and its
+  // layer points move and revert together.
+  std::vector<int32_t> column_row(points, -1);
+  for (int64_t row = 0; row < columns; ++row) {
+    for (int32_t k = 0; k < levels; ++k) column_row[column[row * (levels + 1) + k]] = static_cast<int32_t>(row);
+  }
   std::vector<int32_t> stamp(cells, -1);
   int32_t epoch = 0;
-  auto settle = [&]() {
-    for (int64_t row = 0; row < columns; ++row) {
-      const double length = norm(sub(point(stair_vertices[row]), point(surface_vertex[row])));
-      if (length < layer_total + 0.25 * b) {
-        for (const int32_t v : {stair_vertices[row], surface_vertex[row]}) {
-          for (int a = 0; a < 3; ++a) mesh.points[3 * v + a] = previous[3 * v + a];
+  std::vector<int32_t> check, next;
+  auto revert = [&](int32_t v) {
+    const int32_t row = column_row[v];
+    const int32_t count = row >= 0 ? levels : 1;
+    for (int32_t k = 0; k < count; ++k) {
+      const int32_t u = row >= 0 ? column[row * (levels + 1) + k] : v;
+      if (!moved[u]) continue;
+      moved[u] = 0;
+      ++reverted;
+      for (int a = 0; a < 3; ++a) mesh.points[3 * u + a] = previous[3 * u + a];
+      for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
+        const int32_t c = t.vertex_cells[r];
+        if (stamp[c] != epoch) {
+          stamp[c] = epoch;
+          next.push_back(c);
         }
       }
     }
-    std::vector<int32_t> check, next;
+  };
+  auto settle = [&]() {
+    check.clear();
+    next.clear();
     ++epoch;
+    for (int64_t row = 0; row < columns; ++row) {
+      const double length = norm(sub(point(stair_vertices[row]), point(surface_vertex[row])));
+      if (length < layer_total + 0.25 * b) {
+        revert(stair_vertices[row]);
+        revert(surface_vertex[row]);
+      }
+    }
     for (int64_t v = 0; v < points; ++v) {
       if (!moved[v]) continue;
       for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
         const int32_t c = t.vertex_cells[r];
         if (stamp[c] != epoch) {
           stamp[c] = epoch;
-          check.push_back(c);
+          next.push_back(c);
         }
       }
     }
-    while (!check.empty()) {
+    while (!next.empty()) {
+      check.swap(next);
       next.clear();
       ++epoch;
       for (const int32_t c : check) {
-        if (cell_valid_float(mesh, t, c)) continue;
+        if (cell_valid_float(mesh, t, c)) {
+          valid[c] = 1;
+          continue;
+        }
+        // A cell invalid before smoothing may stay so while moves repair it.
+        if (!valid[c]) continue;
         for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
           const int32_t v = cell_vertex_list[slot];
-          if (!moved[v]) continue;
-          moved[v] = 0;
-          ++reverted;
-          for (int a = 0; a < 3; ++a) mesh.points[3 * v + a] = previous[3 * v + a];
-          for (int64_t r = t.vertex_cell_offsets[v]; r < t.vertex_cell_offsets[v + 1]; ++r) {
-            const int32_t k = t.vertex_cells[r];
-            if (stamp[k] != epoch) {
-              stamp[k] = epoch;
-              next.push_back(k);
-            }
-          }
+          if (moved[v]) revert(v);
         }
       }
-      check.swap(next);
     }
   };
   // Smoothing constants, tuned on the F8 sphere and checked on the quadric
@@ -2229,6 +2227,10 @@ void Builder::smooth() {
       place_surface(row, add(p, mul(sub(target, p), kRelax)));
       moved[v] = 1;
     }
+    // The layer stack follows the wall: its points move with their columns'
+    // offset directions, and a revert restores them with the wall.
+    place_layers();
+    for (int64_t v = layer_first; v < points; ++v) moved[v] = 1;
     settle();
   }
   // 2. Descent on E = sum over interior faces of (1 - cos) of the angle
@@ -2451,7 +2453,9 @@ void Builder::smooth() {
                 if (accept && stair >= 0) {
                   accept = norm(sub(trial, point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
                 }
-                for (std::size_t q = 0; q < nc && accept; ++q) accept = cell_valid_float(mesh, t, local_cells[q]);
+                for (std::size_t q = 0; q < nc && accept; ++q) {
+                  accept = !valid[local_cells[q]] || cell_valid_float(mesh, t, local_cells[q]);
+                }
                 if (accept) {
                   current = value;
                   improved = true;
@@ -2476,41 +2480,10 @@ void Builder::smooth() {
 int32_t Builder::certify() {
   const Topology t = topology(mesh);
   const int64_t cells = static_cast<int64_t>(mesh.cell_kinds.size());
-  int64_t hexes = 0, failed = 0, demoted = 0;
-  for (int64_t c = 0; c < cells; ++c) {
-    if (mesh.cell_kinds[c] == kHexahedron) {
-      if (hexahedron_certified(mesh, c)) {
-        ++hexes;
-        continue;
-      }
-      if (!polyhedron_certified(mesh, t, c)) {
-        ++failed;
-        continue;
-      }
-      // Valid decomposition, nonpositive trilinear map: a polyhedron.
-      mesh.cell_kinds[c] = kPolyhedron;
-      ++demoted;
-      continue;
-    }
-    if (!polyhedron_certified(mesh, t, c)) ++failed;
-  }
-  // Drop the vertex lists of demoted cells.
-  if (demoted > 0) {
-    std::vector<int64_t> offsets{0};
-    std::vector<int32_t> values;
-    for (int64_t c = 0; c < cells; ++c) {
-      if (mesh.cell_kinds[c] == kHexahedron) {
-        values.insert(values.end(), mesh.cell_vertices.begin() + mesh.cell_vertex_offsets[c],
-                      mesh.cell_vertices.begin() + mesh.cell_vertex_offsets[c + 1]);
-      }
-      offsets.push_back(static_cast<int64_t>(values.size()));
-    }
-    mesh.cell_vertices.swap(values);
-    mesh.cell_vertex_offsets.swap(offsets);
-  }
-  stats[10] = static_cast<double>(hexes);
+  int64_t failed = 0;
+  for (int64_t c = 0; c < cells; ++c) failed += !polyhedron_certified(mesh, t, c);
+  stats[10] = static_cast<double>(cells - failed);
   stats[23] = static_cast<double>(failed);
-  stats[24] = static_cast<double>(demoted);
   stats[22] = failed == 0 ? 1.0 : 0.0;
   return failed == 0 ? PHX_MC_OK : PHX_MC_UNRESOLVED;
 }
@@ -2549,11 +2522,12 @@ int32_t build(const Input& in, Mesh& mesh) {
   builder.split_core_faces();
   status = builder.project();
   if (status != PHX_MC_OK) return status;
-  builder.emit_layers(1);
+  builder.levels = in.layer_count + 1;
+  builder.emit_layers();
+  builder.place_layers();
   stats[4] = seconds(stage);
   stage = Clock::now();
   builder.smooth();
-  builder.emit_layers(in.layer_count + 1);
   stats[5] = seconds(stage);
   // Surface vertex ancestry and kinds: the triangle under a patch vertex and
   // a triangle on the feature edge under a curve vertex (walks from the item

@@ -334,9 +334,7 @@ def _rows(
         raise ValueError(
             "The voronoi rows read the ledger's F14 surfaces: pass --voronoi-inputs."
         )
-    hexdom_rows = frozenset(
-        f"hexdom-{model}-L{layers}" for model, layers, _ in _F8_CASES
-    )
+    hexdom_rows = frozenset(f"hexdom-{model}-L{layers}" for model, layers, _ in _F8_CASES)
     if hexdom_inputs is not None:
         families += ((hexdom_rows, lambda: _hexdom_rows(hexdom_inputs)),)
     elif names is not None and hexdom_rows & names:
@@ -2754,6 +2752,7 @@ def _voronoi_rows(inputs: Path, /) -> tuple[_Row, ...]:
             )
     return tuple(rows)
 
+
 # Ledger F8 (cad.md): cfMesh cartesianMesh (maxCellSize h, boundaryCellSize
 # h / 2, 45-degree feature edges on the quadric), the best measured reference
 # per row: hexahedron fraction (cells of six quadrilaterals), sampled Hausdorff
@@ -2808,7 +2807,9 @@ class _HexDominantCase(NamedTuple):
     plan: NativeMeshingPlan
 
 
-def _hexdom_case(inputs: Path, model: str, layers: int, size: float, /) -> _HexDominantCase:
+def _hexdom_case(
+    inputs: Path, model: str, layers: int, size: float, /
+) -> _HexDominantCase:
     from phydrax.meshing import (
         BoundaryLayerControl,
         BoundaryLayerRoute,
@@ -2850,15 +2851,7 @@ def _hexdom_case(inputs: Path, model: str, layers: int, size: float, /) -> _HexD
     solid = MeshingScope.whole(source, 3)
     boundary_size = size / 2.0
     specification = VolumeMeshingSpec(
-        CellMeshingTarget(
-            3,
-            3,
-            CellFamilyPolicy(
-                required=("hexahedron",),
-                allowed_transitions=("polyhedron",),
-                allow_mixed=True,
-            ),
-        ),
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
         wall,
         VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION,
         size_controls=(
@@ -2994,27 +2987,39 @@ def _hexdom_quality(
     if np.sum((area * sign[:, None] * centre)[~inner]) < 0.0:
         sign = -sign
     area *= sign[:, None]
-    counts = np.bincount(owner, minlength=cells) + np.bincount(neighbor[inner], minlength=cells)
-    estimate = np.stack(
-        [
-            np.bincount(owner, centre[:, k], cells)
-            + np.bincount(neighbor[inner], centre[inner, k], cells)
-            for k in range(3)
-        ],
-        axis=1,
-    ) / counts[:, None]
+    counts = np.bincount(owner, minlength=cells) + np.bincount(
+        neighbor[inner], minlength=cells
+    )
+    estimate = (
+        np.stack(
+            [
+                np.bincount(owner, centre[:, k], cells)
+                + np.bincount(neighbor[inner], centre[inner, k], cells)
+                for k in range(3)
+            ],
+            axis=1,
+        )
+        / counts[:, None]
+    )
     pyramid_owner = np.sum(area * (centre - estimate[owner]), axis=1) / 3.0
-    pyramid_neighbor = -np.sum(area[inner] * (centre[inner] - estimate[neighbor[inner]]), axis=1) / 3.0
+    pyramid_neighbor = (
+        -np.sum(area[inner] * (centre[inner] - estimate[neighbor[inner]]), axis=1) / 3.0
+    )
     volume = np.bincount(owner, pyramid_owner, cells) + np.bincount(
         neighbor[inner], pyramid_neighbor, cells
     )
     centroid = (
         np.stack(
             [
-                np.bincount(owner, pyramid_owner * (0.75 * centre[:, k] + 0.25 * estimate[owner, k]), cells)
+                np.bincount(
+                    owner,
+                    pyramid_owner * (0.75 * centre[:, k] + 0.25 * estimate[owner, k]),
+                    cells,
+                )
                 + np.bincount(
                     neighbor[inner],
-                    pyramid_neighbor * (0.75 * centre[inner, k] + 0.25 * estimate[neighbor[inner], k]),
+                    pyramid_neighbor
+                    * (0.75 * centre[inner, k] + 0.25 * estimate[neighbor[inner], k]),
                     cells,
                 )
                 for k in range(3)
@@ -3046,17 +3051,24 @@ def _hexdom_quality(
 
     def skewness(selected: np.ndarray, toward: np.ndarray, /) -> np.ndarray:
         offset = centre[selected] - centroid[owner[selected]]
-        sv = offset - (
-            np.sum(area[selected] * offset, axis=1)
-            / np.sum(area[selected] * toward, axis=1)
-        )[:, None] * toward
+        sv = (
+            offset
+            - (
+                np.sum(area[selected] * offset, axis=1)
+                / np.sum(area[selected] * toward, axis=1)
+            )[:, None]
+            * toward
+        )
         unit = sv / np.maximum(np.linalg.norm(sv, axis=1), 1e-300)[:, None]
         reach = 0.2 * np.linalg.norm(toward, axis=1)
         position = np.full((faces,), -1, dtype=np.int64)
         position[selected] = np.arange(selected.size, dtype=np.int64)
         member = position[rows] >= 0
         spread = np.abs(
-            np.sum(unit[position[rows][member]] * (first[member] - centre[rows][member]), axis=1)
+            np.sum(
+                unit[position[rows][member]] * (first[member] - centre[rows][member]),
+                axis=1,
+            )
         )
         np.maximum.at(reach, position[rows][member], spread)
         return np.linalg.norm(sv, axis=1) / reach
@@ -3068,7 +3080,10 @@ def _hexdom_quality(
             skewness(interior, join),
             skewness(
                 wall,
-                normal * np.sum(normal * (centre[wall] - centroid[owner[wall]]), axis=1)[:, None],
+                normal
+                * np.sum(normal * (centre[wall] - centroid[owner[wall]]), axis=1)[
+                    :, None
+                ],
             ),
         )
     )
@@ -3092,7 +3107,8 @@ def _hexdom_quality(
     for start in range(0, fan.shape[0], 20_000):
         block = lattice @ fan[start : start + 20_000]
         mesh_to_surface = max(
-            mesh_to_surface, float(np.max(_f8_distance(case.model, block.reshape((-1, 3)))))
+            mesh_to_surface,
+            float(np.max(_f8_distance(case.model, block.reshape((-1, 3))))),
         )
     samples = _f8_samples(case.model, 200_000)
     _, nearest = cKDTree(fan.mean(axis=1)).query(samples, k=16)
@@ -3113,7 +3129,9 @@ def _hexdom_quality(
         "hausdorff": max(mesh_to_surface, surface_to_mesh),
         "mesh_to_surface": mesh_to_surface,
         "surface_to_mesh": surface_to_mesh,
-        "wall_vertex_distance": float(np.max(_f8_distance(case.model, points[wall_vertices]))),
+        "wall_vertex_distance": float(
+            np.max(_f8_distance(case.model, points[wall_vertices]))
+        ),
         "nonorthogonality_maximum": float(np.max(angle)),
         "nonorthogonality_average": float(np.degrees(np.arccos(np.mean(cosine)))),
         "nonorthogonality_mean": float(np.mean(angle)),

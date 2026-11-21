@@ -15,19 +15,24 @@ curves (dihedral angle above 45 degrees or a facet change) and corners; the
 fine band, the 2:1 transitions and the wall are smoothed and then optimised for
 OpenFOAM's non-orthogonality and skewness. A PROVIDER boundary-layer control
 splits every projection column at its exact cumulative thicknesses from the
-wall into hexahedral layers. Hexahedra are published as a hexahedron block; the
-2:1 transition cells (hanging midpoints on their split faces) as polyhedra.
+wall into hexahedral layers. Every cell is published as a polyhedron with
+OpenFOAM face semantics: a non-planar face is the fan of triangles from its
+exact vertex average, so the target is ``CellFamilyPolicy(required=
+("polyhedron",))``; the ``cell_shape`` marker classifies the cells (0 six
+quadrilaterals, the hexahedra; 1 a prism of a feature-curve step; 2 other, the
+2:1 transitions with hanging midpoints). Consumers needing trilinear
+hexahedra use ``plc_hex_dominant`` (the tet-to-hex split).
 
 Certification contract. The wall approximates the PLC (its vertices lie on it,
 its faces are chords), so the route requests ``volume_plc_fidelity``: a
-certified two-sided distance bound between the mesh's exterior surface and the
-PLC's exterior facets within the request's ``maximum_deviation``, else the
+certified two-sided distance bound between the mesh's exterior fan surface and
+the PLC's exterior facets within the request's ``maximum_deviation``, else the
 boundary size. With ``prove=True`` the kernel also certifies every cell before
-publication: each hexahedron by the exact signs of the 27 Bernstein
-coefficients of its trilinear Jacobian determinant, each polyhedron by the
-exact orientation of its decomposition tetrahedra and a closed genus-0
-boundary; a hexahedron whose trilinear map fails but whose decomposition holds
-is published as a polyhedron, and an uncertified cell refuses the request.
+publication by the exact orientation of its fan decomposition tetrahedra and a
+closed genus-0 boundary; an uncertified cell refuses the request. With
+``prove=False`` neither the cells nor the PLC fidelity source are prepared, so
+the candidate refuses ``prove()``; the fidelity source is built on the plan's
+first proved execution and reused.
 """
 
 from __future__ import annotations
@@ -42,11 +47,11 @@ import phydrax._meshcore as meshcore
 from phydrax._physical import SpatialCoordinateContract
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
-from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
-from phydrax.discretization._cell_mesh import CellBlock
+from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from phydrax.meshing._association import GeometryAssociation
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
 from phydrax.meshing._contracts import (
     MeshingFailure,
     MeshingFailureCategory,
@@ -55,6 +60,7 @@ from phydrax.meshing._contracts import (
 )
 from phydrax.meshing._controls import BoundaryLayerRoute
 from phydrax.meshing._native_construction import (
+    NativeCertificationRequest,
     NativeMeshConstruction,
     NativeMeshOrganization,
 )
@@ -118,7 +124,8 @@ def _whole_scope(
         and specification_scope.entity_dimension == scope_dimension
         and (specification_scope.source_id, specification_scope.source_revision)
         == (source.source_id, source.source_revision)
-        and specification_scope.entity_set_id == source.scope_entity_set_id(scope_dimension)
+        and specification_scope.entity_set_id
+        == source.scope_entity_set_id(scope_dimension)
         and np.array_equal(
             np.sort(np.asarray(specification_scope.entity_ids, dtype=np.int64)),
             np.sort(source.scope_entity_ids(scope_dimension)),
@@ -180,11 +187,11 @@ def octree_hex_dominant_support_issues(
     ):
         issues.append("affine cells in three ambient dimensions")
     if (
-        "hexahedron" not in families.required
-        or not families.allow_mixed
-        or "polyhedron" not in families.allowed_transitions
+        families.required != ("polyhedron",)
+        or families.preferred
+        or families.allowed_transitions
     ):
-        issues.append("a mixed hexahedral target permitting polyhedron transitions")
+        issues.append("a polyhedral target (cells with OpenFOAM fan faces)")
     if (
         specification.fill_strategy
         is not VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION
@@ -198,7 +205,10 @@ def octree_hex_dominant_support_issues(
         issues.append("one solid region bounded by exterior facets")
     if not _whole_scope(source, 2, specification.boundary_scope):
         issues.append("the whole source PLC facet boundary on its bound revision")
-    if any(not isinstance(control, UniformSizeControl) for control in specification.size_controls):
+    if any(
+        not isinstance(control, UniformSizeControl)
+        for control in specification.size_controls
+    ):
         issues.append("uniform Euclidean size controls")
     volume, boundary = _size_controls(specification)
     if volume is None or not _whole_scope(source, 3, volume.scope):
@@ -215,7 +225,10 @@ def octree_hex_dominant_support_issues(
     for control in layers:
         if control.route is not BoundaryLayerRoute.PROVIDER:
             issues.append("a PROVIDER boundary-layer control (hexahedral layers)")
-        if not _whole_scope(source, 2, control.wall_scope) or control.cap_scope is not None:
+        if (
+            not _whole_scope(source, 2, control.wall_scope)
+            or control.cap_scope is not None
+        ):
             issues.append("layers grown from the whole boundary without caps")
     if specification.protected_features:
         issues.append("no protected features (feature curves follow the dihedral angle)")
@@ -240,46 +253,25 @@ class _Published:
 
 
 def _publish(native: meshcore.HexDominant, /) -> _Published:
+    """Every cell as a polyhedron over the native face loops (fan faces)."""
     kinds = np.asarray(native.cell_kinds, dtype=np.int64)
-    offsets = np.asarray(native.cell_vertex_offsets, dtype=np.int64)
-    values = np.asarray(native.cell_vertices, dtype=np.int32)
-    counts = np.diff(offsets)
-    hex_rows = np.flatnonzero(kinds == 0)
-    prism_rows = np.flatnonzero(kinds == 2)
-    if not (
-        np.all(counts[hex_rows] == 8)
-        and np.all(counts[prism_rows] == 6)
-        and np.all(counts[kinds == 1] == 0)
-    ):
-        raise RuntimeError(
-            "Native hexahedra and prisms must list eight and six vertices."
-        )
-    hexes = values[offsets[hex_rows][:, None] + np.arange(8)]
-    prisms = values[offsets[prism_rows][:, None] + np.arange(6)]
-    blocks = (CellBlock("hexahedra", "hexahedron", hexes, global_ids=hex_rows),) + (
-        (CellBlock("prisms", "prism", prisms, global_ids=prism_rows),)
-        if prism_rows.size
-        else ()
-    )
     face_offsets = np.asarray(native.face_offsets, dtype=np.int64)
     face_vertices = np.asarray(native.face_vertices, dtype=np.int32)
-    owner = np.asarray(native.face_owner, dtype=np.int64)
-    neighbor = np.asarray(native.face_neighbor, dtype=np.int64)
-    poly_rows = np.flatnonzero(kinds == 1)
-    loops: list[list[np.ndarray]] = [[] for _ in range(poly_rows.size)]
-    slot = np.full((kinds.size,), -1, dtype=np.int64)
-    slot[poly_rows] = np.arange(poly_rows.size, dtype=np.int64)
-    for face in np.flatnonzero((slot[owner] >= 0) | (slot[np.maximum(neighbor, 0)] >= 0) & (neighbor >= 0)).tolist():
-        loop = face_vertices[face_offsets[face] : face_offsets[face + 1]]
-        if slot[owner[face]] >= 0:
-            loops[slot[owner[face]]].append(loop)
-        if neighbor[face] >= 0 and slot[neighbor[face]] >= 0:
-            loops[slot[neighbor[face]]].append(loop[::-1])
+    owner = np.asarray(native.face_owner, dtype=np.int64).tolist()
+    neighbor = np.asarray(native.face_neighbor, dtype=np.int64).tolist()
+    loops: list[list[np.ndarray]] = [[] for _ in range(kinds.size)]
+    for face, (first, last) in enumerate(
+        zip(face_offsets[:-1].tolist(), face_offsets[1:].tolist(), strict=True)
+    ):
+        loop = face_vertices[first:last]
+        loops[owner[face]].append(loop)
+        if neighbor[face] >= 0:
+            loops[neighbor[face]].append(loop[::-1])
     mesh = CellMesh.from_mixed_3d(
         native.points,
-        blocks,
-        polyhedra={"polyhedra": loops} if loops else {},
-        polyhedral_cell_global_ids={"polyhedra": poly_rows} if loops else None,
+        (),
+        polyhedra={"cells": loops},
+        polyhedral_cell_global_ids={"cells": np.arange(kinds.size, dtype=np.int64)},
     )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
@@ -340,7 +332,9 @@ def _vertex_ancestry(
             np.sum((points[wall] - corners[:, 0]) * normal, axis=1)
         ) / np.linalg.norm(normal, axis=1)
         facet_regions = np.asarray(source.complex.facet_regions, dtype=np.int64)
-        sides[wall] = np.where(facet_regions[rows[wall]] < 0, -2, facet_regions[rows[wall]])
+        sides[wall] = np.where(
+            facet_regions[rows[wall]] < 0, -2, facet_regions[rows[wall]]
+        )
     return _Ancestry(codes, rows, sides, residuals)
 
 
@@ -368,16 +362,32 @@ def _associations(
     )
     return (
         _association_from(
-            source, mesh, 0, np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64), vertices
+            source,
+            mesh,
+            0,
+            np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64),
+            vertices,
         ),
         _association_from(
-            source, mesh, 1, np.asarray(connectivity.edge_global_ids, dtype=np.int64), edges
+            source,
+            mesh,
+            1,
+            np.asarray(connectivity.edge_global_ids, dtype=np.int64),
+            edges,
         ),
         _association_from(
-            source, mesh, 2, np.asarray(connectivity.face_global_ids, dtype=np.int64), faces
+            source,
+            mesh,
+            2,
+            np.asarray(connectivity.face_global_ids, dtype=np.int64),
+            faces,
         ),
         _association_from(
-            source, mesh, 3, np.asarray(connectivity.cell_global_ids, dtype=np.int64), cells
+            source,
+            mesh,
+            3,
+            np.asarray(connectivity.cell_global_ids, dtype=np.int64),
+            cells,
         ),
     )
 
@@ -409,7 +419,11 @@ def _organization(
             else None
         ),
         region_role=(
-            control.role if control is not None else seed.role if seed is not None else None
+            control.role
+            if control is not None
+            else seed.role
+            if seed is not None
+            else None
         ),
     )
     facets = published.face_facets
@@ -444,14 +458,37 @@ def _organization(
                 )
             )
     # Meshing scopes store sorted entity IDs; attribute values follow that order.
-    roles = np.asarray(published.native.cell_roles, dtype=np.int64)[published.cell_order]
+    native = published.native
+    order = published.cell_order[np.argsort(cell_ids, kind="stable")]
+    # Shape classes by face counts, as the ledger counts hexahedra: 0 six
+    # quadrilaterals, 1 two triangles and three quadrilaterals, 2 other.
+    owner = np.asarray(native.face_owner, dtype=np.int64)
+    neighbor = np.asarray(native.face_neighbor, dtype=np.int64)
+    inner = neighbor >= 0
+    sizes = np.diff(np.asarray(native.face_offsets, dtype=np.int64))
+    count = int(np.asarray(native.cell_kinds).size)
+
+    def per_cell(selected: np.ndarray) -> np.ndarray:
+        return np.bincount(owner[selected], minlength=count) + np.bincount(
+            neighbor[selected & inner], minlength=count
+        )
+
+    faces = per_cell(np.ones_like(inner))
+    quads, triangles = per_cell(sizes == 4), per_cell(sizes == 3)
+    shapes = np.where(
+        (faces == 6) & (quads == 6),
+        0,
+        np.where((faces == 5) & (quads == 3) & (triangles == 2), 1, 2),
+    )
+    scope = _mesh_scope(mesh, 3, cell_ids)
     attributes = (
         MeshAttribute(
             "octree_cell_role",
             MeshAttributeRole.MARKER,
-            _mesh_scope(mesh, 3, cell_ids),
-            roles[np.argsort(cell_ids, kind="stable")],
+            scope,
+            np.asarray(native.cell_roles, dtype=np.int64)[order],
         ),
+        MeshAttribute("cell_shape", MeshAttributeRole.MARKER, scope, shapes[order]),
     )
     return NativeMeshOrganization(
         patches=tuple(patches),
@@ -472,7 +509,9 @@ def _cell_volumes(native: meshcore.HexDominant, /) -> np.ndarray:
     following[offsets[1:] - 1] = offsets[:-1]
     first, second = points[values], points[values[following]]
     flux = np.bincount(
-        rows, np.einsum("ij,ij->i", first, np.cross(first, second)) / 6.0, minlength=sizes.size
+        rows,
+        np.einsum("ij,ij->i", first, np.cross(first, second)) / 6.0,
+        minlength=sizes.size,
     )
     owner = np.asarray(native.face_owner, dtype=np.int64)
     neighbor = np.asarray(native.face_neighbor, dtype=np.int64)
@@ -525,25 +564,46 @@ def _compliance(
             if hard and abs(value - control.target_size) > tolerance:
                 issues.append(f"size:{control.control_id}:{statistic}")
     stats = np.asarray(native.stats, dtype=np.float64)
+    cell_offsets = np.asarray(native.cell_vertex_offsets, dtype=np.int64)
+    cell_values = np.asarray(native.cell_vertices, dtype=np.int64)
+    counts = np.diff(cell_offsets)
+    core_count = int(np.count_nonzero(roles == _CORE))
     for layer in specification.layer_controls:
         thicknesses = np.asarray(layer.schedule.thicknesses, dtype=np.float64)
-        rows = np.flatnonzero(roles == _LAYER)
-        cell_offsets = np.asarray(native.cell_vertex_offsets, dtype=np.int64)
-        cell_values = np.asarray(native.cell_vertices, dtype=np.int64)
-        kinds = np.asarray(native.cell_kinds, dtype=np.int64)
-        hexes = rows[kinds[rows] == 0]
-        corners = np.stack([cell_values[cell_offsets[hexes] + k] for k in range(8)], axis=1)
-        heights = np.linalg.norm(points[corners[:, :4]] - points[corners[:, 4:]], axis=2)
         requested.append((f"layers:{layer.control_id}:count", float(thicknesses.size)))
-        achieved.append((f"layers:{layer.control_id}:cells", float(rows.size)))
-        if heights.size:
-            achieved.append((f"layers:{layer.control_id}:thickness_min", float(np.min(heights))))
-            achieved.append((f"layers:{layer.control_id}:thickness_max", float(np.max(heights))))
-            if not np.all(
-                np.isclose(np.min(heights), np.min(thicknesses), rtol=1e-9)
-                & np.isclose(np.max(heights), np.max(thicknesses), rtol=1e-9)
-            ):
-                issues.append(f"layers:{layer.control_id}:thickness")
+        # Column cells run from the wall, thicknesses.size + 1 per piece; a
+        # layer cell's thickness is the mean height of its upper corners over
+        # the plane of its wall-side face (its last half of corners).
+        rows = np.flatnonzero((roles == _LAYER) & (counts > 0))
+        level = (rows - core_count) % (thicknesses.size + 1)
+        achieved.append(
+            (f"layers:{layer.control_id}:cells", float(np.count_nonzero(roles == _LAYER)))
+        )
+        heights: list[np.ndarray] = []
+        levels: list[np.ndarray] = []
+        for size in (6, 8):
+            chosen = counts[rows] == size
+            corners = cell_values[cell_offsets[rows[chosen]][:, None] + np.arange(size)]
+            upper, lower = (
+                points[corners[:, : size // 2]],
+                points[corners[:, size // 2 :]],
+            )
+            normal = np.sum(np.cross(lower, np.roll(lower, -1, axis=1)), axis=1)
+            normal /= np.linalg.norm(normal, axis=1)[:, None]
+            heights.append(
+                np.abs(np.einsum("ckj,cj->c", upper - lower, normal)) / (size // 2)
+            )
+            levels.append(level[chosen])
+        height, height_level = np.concatenate(heights), np.concatenate(levels)
+        for index, thickness in enumerate(thicknesses):
+            values = height[height_level == index]
+            if not values.size:
+                continue
+            key = f"layers:{layer.control_id}:{index}"
+            achieved.append((f"{key}:thickness_min", float(np.min(values))))
+            achieved.append((f"{key}:thickness_max", float(np.max(values))))
+            if np.min(values) < layer.minimum_thickness_fraction * thickness:
+                issues.append(f"{key}:thickness")
     achieved.extend(
         (
             ("octree:cells", float(stats[7])),
@@ -558,8 +618,8 @@ def _compliance(
         achieved.extend(
             (
                 ("octree:certified", float(stats[22])),
-                ("octree:certified_hexahedra", float(stats[10])),
-                ("octree:hexahedra_published_as_polyhedra", float(stats[24])),
+                ("octree:certified_cells", float(stats[10])),
+                ("octree:uncertified_cells", float(stats[23])),
             )
         )
     return MeshingComplianceReport(
@@ -570,14 +630,40 @@ def _compliance(
     )
 
 
+_UNPROVED = (
+    "This hex-dominant mesh was constructed with prove=False: the kernel did "
+    "not certify its cells and the PLC fidelity source was not prepared; "
+    "execute(prove=True) constructs and proves it."
+)
+
+
+class _FidelityQueryPreparation:
+    """The PLC's exterior facets as the fidelity request's source: a property
+    of the source alone that only a proof consumes, prepared once on first use."""
+
+    __slots__ = ("_query", "source")
+
+    def __init__(self, source: NativePlcSource, /) -> None:
+        self.source = source
+        self._query: PiecewiseLinearBoundarySource | None = None
+
+    def get(self, /) -> PiecewiseLinearBoundarySource:
+        if self._query is None:
+            triangles, polygons = _plc_triangles(self.source)
+            self._query = plc_fidelity_query(
+                declared_plc_domain(
+                    self.source.complex, triangles, polygons, self.source.source_id
+                )
+            )
+        return self._query
+
+
 @final
 class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
     source: NativePlcSource
     specification: VolumeMeshingSpec
     coordinate_contract: SpatialCoordinateContract
-    # The PLC's exterior facets as the fidelity request's source: a property
-    # of the source alone, built once per plan.
-    fidelity_query: PiecewiseLinearBoundarySource
+    fidelity_query: _FidelityQueryPreparation
     core_size: float = eqx.field(static=True)
     boundary_size: float = eqx.field(static=True)
 
@@ -590,13 +676,10 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         boundary_size: float,
         /,
     ) -> None:
-        triangles, polygons = _plc_triangles(source)
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
-        self.fidelity_query = plc_fidelity_query(
-            declared_plc_domain(source.complex, triangles, polygons, source.source_id)
-        )
+        self.fidelity_query = _FidelityQueryPreparation(source)
         self.core_size = core_size
         self.boundary_size = boundary_size
 
@@ -643,11 +726,19 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         )
         geometry = CellGeometrySpec.affine(published.mesh)
         tolerance = self.specification.maximum_deviation
-        certification = plc_fidelity_request(
-            published.mesh,
-            geometry,
-            self.fidelity_query,
-            self.boundary_size if tolerance is None else tolerance,
+        certification = (
+            plc_fidelity_request(
+                published.mesh,
+                geometry,
+                self.fidelity_query.get(),
+                self.boundary_size if tolerance is None else tolerance,
+            )
+            if prove
+            else NativeCertificationRequest(
+                MeshCertificationSchedule("volume_plc_fidelity"),
+                self.source.source_id,
+                self.source.source_revision,
+            )
         )
         stages = (
             MeshingStageReport(
@@ -666,6 +757,7 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             geometry=geometry,
             organization=organization,
             stages=stages,
+            uncertifiable=None if prove else _UNPROVED,
         )
 
 
@@ -686,7 +778,10 @@ def prepare_native_octree_hex_dominant(
             provider_code="native_octree_hex_preflight",
             stage="source_inspection",
         )
-    if specification.maximum_deviation is not None and specification.maximum_deviation <= 0.0:
+    if (
+        specification.maximum_deviation is not None
+        and specification.maximum_deviation <= 0.0
+    ):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
             "A snapped hex-dominant wall approximates curved facets and cannot "

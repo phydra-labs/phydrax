@@ -1888,29 +1888,29 @@ PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* reques
  * nearest the face's vertex average (-1 inside). cell_kinds: 0 hexahedron
  * (cell_vertices lists its eight vertices in the reference order: bottom
  * counterclockwise about the direction to the top, then the top), 1
- * polyhedron (no vertex list). cell_roles: 0 core, 1 projection layer, 2
- * boundary layer. vertex_triangles is the nearest input triangle of a wall
- * vertex (-1 elsewhere); vertex_kinds: 0 interior, 1 on a patch, 2 on a
- * feature curve, 3 on a corner, 4 layer vertex.
+ * polyhedron (no vertex list), 2 prism (six vertices, bottom then top).
+ * cell_roles: 0 core, 1 projection layer, 2 boundary layer. vertex_triangles
+ * is the nearest input triangle of a wall vertex (-1 elsewhere);
+ * vertex_kinds: 0 interior, 1 on a patch, 2 on a feature curve, 3 on a
+ * corner, 4 layer vertex.
  *
- * prove certifies every cell after construction: a hexahedron by the exact
- * signs of the 27 Bernstein coefficients of its triquadratic Jacobian
- * determinant, a polyhedron by the exact orientation of its decomposition
- * tetrahedra (centroid, face vertex average, edge) and a closed genus-0
- * boundary. A failing hexahedron whose decomposition holds is published as a
- * polyhedron. PHX_MC_UNRESOLVED (result still set) reports a cell left
- * uncertified; PHX_MC_INVALID_INPUT a surface that is not a closed oriented
- * manifold enclosing positive volume; PHX_MC_DEGENERATE_INPUT a zero-area
- * triangle.
+ * prove certifies every cell after construction as a polyhedron with
+ * OpenFOAM face semantics (a non-planar face is the fan from its vertex
+ * average): by the exact orientation of its decomposition tetrahedra
+ * (centroid, face vertex average, edge) and a closed genus-0 boundary.
+ * PHX_MC_UNRESOLVED (result still set) reports a cell left uncertified;
+ * PHX_MC_INVALID_INPUT a surface that is not a closed oriented manifold
+ * enclosing positive volume; PHX_MC_DEGENERATE_INPUT a zero-area triangle.
  *
  * stats (28): seconds total, surface, octree and core, faces, projection,
  * smoothing and layers, certification; cells, hexahedra, polyhedra,
- * certified hexahedra, layer cells, staircase faces, feature edges, patches,
+ * certified cells, layer cells, staircase faces, feature edges, patches,
  * largest wall vertex distance to the surface, largest sampled boundary
  * distance (face averages and edge midpoints), staircase cells removed for
  * manifoldness, partition flips, curve vertices, corner vertices, smoothing
- * moves undone, certified (1, 0, or -1 without prove), uncertified cells,
- * hexahedra published as polyhedra, octree levels, then two reserved zeros. */
+ * moves undone, certified (1, 0, or -1 without prove), uncertified cells, a
+ * reserved zero, octree levels, cells invalid before smoothing that it made
+ * valid, a reserved zero. */
 typedef struct phx_mc_hex_dominant_mesh phx_mc_hex_dominant_mesh;
 typedef struct phx_mc_hex_dominant_request {
   int64_t vertex_count;
