@@ -156,7 +156,8 @@ struct Solid {
   phx_mc_cad_volume_stats stats{};
 };
 
-Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
+Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
+            double minimum_dihedral = 15.5) {
   Solid s;
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
@@ -164,7 +165,7 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
                                              std::numeric_limits<double>::infinity());
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
-  const phx_mc_cad_volume_controls volume{2.0, 15.5, 0.0, order};
+  const phx_mc_cad_volume_controls volume{2.0, minimum_dihedral, 0.0, order};
   phx_mc_cad_surface_result* handle = nullptr;
   s.status = phx_mc_cad_mesh_solid(&model, &controls, &volume, &handle);
   PHX_CHECK(handle != nullptr);
@@ -211,7 +212,8 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
   const phx_mc_cad_volume_arrays out{
       m[0], m[1], m[2], m[3], m[4], m[5], s.points.data(), s.tetrahedra.data(), s.regions.data(),
       s.boundary.data(), s.edges.data(), s.nodes.data(), s.kinds.data(), s.entities.data(),
-      s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats};
+      s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats,
+      0, nullptr};  // curve_rim_wedges skipped (optional)
   PHX_CHECK(phx_mc_cad_volume_export(handle, &out) == PHX_MC_OK);
   phx_mc_cad_volume_arrays small = out;
   small.point_capacity = m[0] - 1;
@@ -294,6 +296,11 @@ void solid_case(const char* name, const phx_mc_cad_model& model, double size, On
             first.stats.face_ns > 0 && first.stats.curve_ns > 0);
   std::printf("%s: unmet %" PRId64 ", refine +%" PRId64 ", improve +%" PRId64 "\n", name,
               first.stats.unmet_cells, first.stats.refine_inserted, first.stats.improve_inserted);
+  // One set: forced and unforced cells partition unmet_cells, and the
+  // status is UNRESOLVED exactly when some unmet cell is unforced.
+  PHX_CHECK(first.stats.unmet_forced_cells + first.stats.unmet_unforced_cells ==
+            first.stats.unmet_cells);
+  PHX_CHECK((first.status == PHX_MC_UNRESOLVED) == (first.stats.unmet_unforced_cells > 0));
   // Determinism: the same arrays bit for bit.
   const Solid second = solid(model, size, 2);
   PHX_CHECK(second.status == first.status);
@@ -443,6 +450,18 @@ void flat_surface_triangle() {
   PHX_CHECK(stats.volume_ns < 100000000);
 }
 
+// A dihedral target of 40 deg the interior cannot meet at h 0.2293: unmet
+// cells exist, and forced plus unforced is exactly unmet_cells (fails when
+// the split is taken from a different evaluation than the count, e.g. one
+// adding size records: 259 split cells for 256 unmet measured on a cone).
+void strict_schedule() {
+  const Solid strict = solid(quadric_model(), 0.2293, 1, 40.0);
+  PHX_CHECK(strict.stats.unmet_cells > 0);
+  PHX_CHECK(strict.stats.unmet_forced_cells + strict.stats.unmet_unforced_cells ==
+            strict.stats.unmet_cells);
+  PHX_CHECK(strict.stats.unmet_unforced_cells > 0 && strict.status == PHX_MC_UNRESOLVED);
+}
+
 // Invalid controls are refused before any work.
 void refusals() {
   const phx_mc_cad_model model = quadric_model();
@@ -474,6 +493,7 @@ int main() {
   forced_split("quadric face split", quadric, 0.2293, false, on_quadric);
   forced_split("quadric curve split", quadric, 0.2293, true, on_quadric);
   flat_surface_triangle();
+  strict_schedule();
   refusals();
   return phx::mc::test::finish("test_cad_volume");
 }
