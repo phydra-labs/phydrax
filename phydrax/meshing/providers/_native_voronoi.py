@@ -267,10 +267,7 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Conforming Voronoi publication must stay polyhedral.")
     cell_order = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
-    if (
-        np.unique(cell_order).size != cell_count
-        or face_order.size != offsets.size - 1
-    ):
+    if np.unique(cell_order).size != cell_count or face_order.size != offsets.size - 1:
         raise RuntimeError(
             "Canonical polyhedra must retain their native cells and faces."
         )
@@ -414,7 +411,9 @@ def _edge_ancestry(
         np.concatenate(
             (
                 face_edges * span + cell_regions[owner],
-                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[neighbor >= 0],
+                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[
+                    neighbor >= 0
+                ],
             )
         )
     )

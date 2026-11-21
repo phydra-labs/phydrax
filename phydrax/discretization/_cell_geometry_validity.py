@@ -2465,9 +2465,7 @@ def _native_cell_map_proofs(
         np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8),
     )
     family = reference_cell_topology(cell_kind).family
-    domain = {"tetrahedron": "simplex", "hexahedron": "box", "prism": "prism"}.get(
-        family
-    )
+    domain = {"tetrahedron": "simplex", "hexahedron": "box", "prism": "prism"}.get(family)
     if (
         not count
         or domain is None
