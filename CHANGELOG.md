@@ -146,6 +146,15 @@
   The host route now groups equal padded row keys correctly when a column
   spans both the padding sentinel and vertex 0, and an out-of-range lookup
   raises `ValueError`.
+- Host cell-quality dihedral angles and solid corner measures run in meshcore
+  (`phx_mc_quality_dihedral_angles`, `phx_mc_quality_solid_corners`) in the
+  host formulas' binary64 operation order, bit-identical to the NumPy path,
+  which remains without meshcore. Audit patch-zone adjacency, organization
+  entity-id checks and `resolve_mesh_scope_rows` search all scopes of an
+  entity set at once instead of per patch. Certified icosphere L6 (703k
+  cells) executes in 7.6-7.8 s instead of 8.1-8.5 s with one facet, and in
+  19.6-20.3 s instead of 23.4-25.7 s with one facet per triangle (81,920
+  facets); certificate, association and result identities are unchanged.
 - Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
   a facet or segment vertex into a vertex on its carrier (in place or with a
   moved survivor) and swap an exactly coplanar boundary edge between two
