@@ -16,6 +16,7 @@
 #include <new>
 #include <map>
 #include <numbers>
+#include <queue>
 #include <set>
 #include <utility>
 #include <unordered_map>
@@ -42,6 +43,7 @@ LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept
 bool LocalIncidence::initialize(const TetMesh& mesh) {
   mesh_ = &mesh;
   ++topology_revision_;
+  boundary_index_ready_ = false;
   const std::size_t vertex_count = mesh.vertex_ids_.size();
   vertex_cell_.assign(vertex_count, -1);
   vertex_degree_.assign(vertex_count, 0);
@@ -311,6 +313,8 @@ TetEditStatus LocalIncidence::relocate(
     previous_cell_id = cell_id;
     has_previous_cell = true;
   }
+  const std::int8_t dimension = mesh.vertex_dimension(slot);
+  if (dimension == 1 || dimension == 2) return relocate_boundary(mesh, moved, star);
   // Exact positivity of every moved star cell excludes a move onto another
   // vertex, so no position index is kept. A relocation moves a point, not
   // the topology: the star stays current.
@@ -433,9 +437,51 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
       removed_slots.push_back(slot);
       removed_cells.push_back(vertices);
     }
+    // The bank rows this insertion rewrites, by their current keys.
+    std::vector<std::array<std::uint64_t, 3>> old_facets;
+    std::array<std::uint64_t, 2> old_segment{};
+    const std::size_t facet_count = mesh.facets_.size();
+    const std::size_t segment_count = mesh.segments_.size();
+    if (boundary_index_ready_) {
+      for (std::size_t row : facet_rows) {
+        if (row >= facet_count) return TetEditStatus::kRejectedTopology;
+        std::array<std::uint64_t, 3> key = mesh.facets_[row].vertices;
+        std::sort(key.begin(), key.end());
+        old_facets.push_back(key);
+      }
+      if (!segment_rows.empty()) {
+        if (segment_rows.front() >= segment_count) return TetEditStatus::kRejectedTopology;
+        const auto& ends = mesh.segments_[segment_rows.front()].vertices;
+        old_segment = {std::min(ends[0], ends[1]), std::max(ends[0], ends[1])};
+      }
+    }
     const TetEditStatus status = mesh.insert_local_boundary_point(
         vertex, cavity, facet_rows, segment_rows, created_cells, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
+    if (boundary_index_ready_) {
+      try {
+        for (const auto& key : old_facets) boundary_index_.facets.erase(key);
+        if (!segment_rows.empty()) boundary_index_.segments.erase(old_segment);
+        const auto index_facet = [&](std::size_t row) {
+          std::array<std::uint64_t, 3> key = mesh.facets_[row].vertices;
+          std::sort(key.begin(), key.end());
+          boundary_index_.facets[key] = row;
+        };
+        for (std::size_t row : facet_rows) index_facet(row);
+        for (std::size_t row = facet_count; row < mesh.facets_.size(); ++row) index_facet(row);
+        const auto index_segment = [&](std::size_t row) {
+          const auto& ends = mesh.segments_[row].vertices;
+          boundary_index_.segments[{std::min(ends[0], ends[1]), std::max(ends[0], ends[1])}] = row;
+        };
+        if (!segment_rows.empty()) index_segment(segment_rows.front());
+        for (std::size_t row = segment_count; row < mesh.segments_.size(); ++row) {
+          index_segment(row);
+        }
+      } catch (const std::bad_alloc&) {
+        // The bank indexes are a cache: rebuilt by the next boundary edit.
+        boundary_index_ready_ = false;
+      }
+    }
     for (std::size_t index = 0; index < removed_slots.size(); ++index) {
       if (!erase(removed_slots[index], removed_cells[index])) {
         return TetEditStatus::kStaleGeneration;
@@ -838,24 +884,65 @@ bool admissible_cell(const FlipQuality& quality, double size_excess_bound) noexc
          quality.size_excess <= size_excess_bound;
 }
 
+// The residual measure every accepted edit strictly lowers, lexicographically:
+// (B, -m, c, D, N), B the cells below the determinant floor, m the lowest
+// score among the cells above it (the mesh minimum, `minimum_score`; 1 when
+// all meet the target), c the cells scoring m, D the total score deficit
+// sum(1 - min(s, 1)) of the cells above the floor, N the cell count. Over
+// the affected cells (all replacements admissible, so above the floor, and
+// none worse than the worst cell they replace, since the edit also improves
+// the worst-first order): an edit removing a below-floor cell lowers B; one
+// whose affected cells include the mesh minimum and leave fewer cells at it
+// raises m or lowers c; any other edit leaves (B, m, c) and must lower D, or
+// keep D and lower N. Scores are multiples of kTetScoreQuantum q = 2^-20 in
+// [0, 1], so each deficit is an exact multiple of q, the sums (below 2^33
+// terms) are exact in binary64, and a lowered D drops by at least q. The
+// worst-first order alone (quality_vector_less) admits, anywhere in the mesh,
+// an edit replacing one poor cell by many slightly better ones; on a hostile
+// boundary insertions and collapses then traded such cells back and forth
+// for tens of thousands of edits. The residual keeps that freedom only for
+// the mesh's worst cells (a cone clearing a fold may raise D) and requires
+// every other edit to lower D.
+bool reduces_residual(std::span<const FlipQuality> before, std::span<const FlipQuality> after,
+                      double minimum_score) {
+  std::size_t before_at_minimum = 0;
+  double before_deficit = 0.0;
+  for (const FlipQuality& quality : before) {
+    if (quality.validity_class == kBelowDeterminantFloor) return true;
+    if (quality.primary == minimum_score) ++before_at_minimum;
+    before_deficit += 1.0 - std::min(quality.primary, 1.0);
+  }
+  std::size_t after_at_minimum = 0;
+  double after_deficit = 0.0;
+  for (const FlipQuality& quality : after) {
+    if (quality.primary == minimum_score) ++after_at_minimum;
+    after_deficit += 1.0 - std::min(quality.primary, 1.0);
+  }
+  if (minimum_score < 1.0 && after_at_minimum < before_at_minimum) return true;
+  if (after_deficit != before_deficit) return after_deficit < before_deficit;
+  return after.size() < before.size();
+}
+
 // The single acceptance rule for every topology and vertex edit: all
-// replacement cells are admissible under `size_excess_bound` and the affected
-// cells' sorted score vector strictly increases in quality_vector_less.
+// replacement cells are admissible under `size_excess_bound`, the affected
+// cells' sorted score vector strictly increases in quality_vector_less, and
+// the residual measure strictly decreases (reduces_residual) for the mesh
+// minimum `minimum_score`.
 bool improves_quality_vector(std::span<const FlipQuality> before,
                              std::span<const FlipQuality> after,
-                             double size_excess_bound) {
+                             double size_excess_bound, double minimum_score) {
   if (before.empty() || after.empty()) return false;
   if (std::any_of(after.begin(), after.end(), [&](const FlipQuality& quality) {
         return !admissible_cell(quality, size_excess_bound);
       })) {
     return false;
   }
-  return quality_vector_less(before, after);
+  return quality_vector_less(before, after) && reduces_residual(before, after, minimum_score);
 }
 // Local edits: the gates admissible for the edit (above).
 bool improves_quality_vector(std::span<const FlipQuality> before,
-                             std::span<const FlipQuality> after) {
-  return improves_quality_vector(before, after, admissible_size_excess(before));
+                             std::span<const FlipQuality> after, double minimum_score) {
+  return improves_quality_vector(before, after, admissible_size_excess(before), minimum_score);
 }
 
 // A relocation is continuous: an arbitrarily small move can carry a score
@@ -1351,7 +1438,7 @@ bool make_face_removal_proposal(
       !quality_vector_for_cells(mesh, replacement_cells, request, after_quality)) {
     return false;
   }
-  return improves_quality_vector(before_quality, after_quality);
+  return improves_quality_vector(before_quality, after_quality, request.minimum_score);
 }
 
 TetEditStatus make_edge_removal_proposal(
@@ -1569,7 +1656,7 @@ TetEditStatus make_edge_removal_proposal(
   if (choices[count - 1] < 0) return TetEditStatus::kRejectedTopology;
   const std::span<const FlipQuality> after_quality(
       best_quality.data() + quality_offsets[count - 1], replacement_count);
-  if (!improves_quality_vector(scratch.before_quality, after_quality)) {
+  if (!improves_quality_vector(scratch.before_quality, after_quality, request.minimum_score)) {
     return TetEditStatus::kRejectedTopology;
   }
 
@@ -1601,8 +1688,8 @@ TetEditStatus make_edge_removal_proposal(
   if (replacement_cells.size() != replacement_count ||
       !quality_vector_for_cells(mesh, replacement_cells, request,
                                 scratch.reconstructed_quality) ||
-      !improves_quality_vector(scratch.before_quality,
-                              scratch.reconstructed_quality)) {
+      !improves_quality_vector(scratch.before_quality, scratch.reconstructed_quality,
+                               request.minimum_score)) {
     return TetEditStatus::kRejectedTopology;
   }
   return TetEditStatus::kApplied;
@@ -2193,8 +2280,16 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     }
     sort_quality_vector(after_cavity_quality);
     // This whole-mesh retessellation would discard every interior vertex,
-    // so it may create no cell beyond its size target at all.
-    if (!improves_quality_vector(before_cavity_quality, after_cavity_quality, 1.0)) {
+    // so it may create no cell beyond its size target at all. Its cavity is
+    // the whole mesh, whose minimum it therefore holds.
+    double whole_minimum = 1.0;
+    for (const FlipQuality& quality : before_cavity_quality) {
+      if (quality.validity_class == kAboveDeterminantFloor) {
+        whole_minimum = std::min(whole_minimum, quality.primary);
+      }
+    }
+    if (!improves_quality_vector(before_cavity_quality, after_cavity_quality, 1.0,
+                                 whole_minimum)) {
       return PHX_MC_OK;
     }
     TetEditBatch batch;
@@ -2374,6 +2469,10 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
   // vertex phase, the shape pass and the final records read only these.
   std::vector<std::uint8_t> violating_slots;
   std::vector<std::uint64_t> violating_ids;
+  // Scores below 1 of measured cells above the floor, lowest first, keyed by
+  // cell ID (refresh_minimum_score).
+  using ScoreEntry = std::pair<double, std::uint64_t>;
+  std::priority_queue<ScoreEntry, std::vector<ScoreEntry>, std::greater<>> unmet_scores;
   const double dihedral_sine =
       std::sin(request.minimum_dihedral_degrees * (std::numbers::pi / 180.0));
   const double dihedral_sine_squared = dihedral_sine * dihedral_sine;
@@ -2403,7 +2502,32 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       violating_ids.push_back(id);
     }
     if (quality.validity_class == kBelowDeterminantFloor) below_floor_cells.insert(id);
+    if (quality.validity_class == kAboveDeterminantFloor && quality.primary < 1.0) {
+      unmet_scores.push({quality.primary, id});
+    }
     return true;
+  };
+  // Sets request.minimum_score, the residual order's mesh minimum, from the
+  // heap: an entry is current while its cell lives with that cached score
+  // (every cell is measured when created or moved), and stale entries are
+  // dropped. Each topology and vertex step applies at most one edit and
+  // judges none after it, so refreshing before each step keeps the minimum
+  // current at every judgment.
+  const auto refresh_minimum_score = [&]() {
+    while (!unmet_scores.empty()) {
+      const auto [score, id] = unmet_scores.top();
+      const std::int32_t slot = mesh.cell_slot(id);
+      if (slot >= 0 && mesh.complex().live(slot) && !is_ghost(mesh.tet(slot)) &&
+          static_cast<std::size_t>(slot) < cell_quality.size()) {
+        const FlipQuality& quality = cell_quality[static_cast<std::size_t>(slot)];
+        if (quality.validity_class == kAboveDeterminantFloor && quality.primary == score) {
+          request.minimum_score = score;
+          return;
+        }
+      }
+      unmet_scores.pop();
+    }
+    request.minimum_score = 1.0;
   };
   const auto enqueue_violating_cell = [&](std::uint64_t id) {
     const std::int32_t slot = mesh.cell_slot(id);
@@ -2507,7 +2631,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
                                   return admissible_cell(quality, size_excess_bound);
                                 })
                  : !improves_quality_vector(insertion_before, insertion_after,
-                                            size_excess_bound)) {
+                                            size_excess_bound, request.minimum_score)) {
       return TetEditStatus::kRejectedTopology;
     }
     TetEditVertex inserted;
@@ -2860,10 +2984,12 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     });
 
     bool changed = false;
-    // Larger closed rings can repair a cavity that no 2-3 flip can improve.
-    // Try them first; a refused removal is memoized (edge_refusals).
+    // Cheapest edits first: removals of the cell's valence-3 and -4 edges
+    // (3-2 and 4-4 flips), then 2-3 flips of its faces, then removals of its
+    // larger closed rings, which can repair a cavity no small flip improves.
+    // A refused removal is memoized (edge_refusals).
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
+      if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, slot, affected);
@@ -2876,7 +3002,6 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
       }
     }
     if (changed) return requeue_current();
-
     for (const FaceOrder& face : faces) {
       std::array<std::int32_t, 2> removed{};
       std::array<LocalCell, 3> replacements{};
@@ -2913,7 +3038,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     if (changed) return requeue_current();
 
     for (const EdgeOrder& edge : edges) {
-      if (incidence.edge_valence(edge.first, edge.second, slot) > 4) continue;
+      if (incidence.edge_valence(edge.first, edge.second, slot) <= 4) continue;
       std::vector<std::uint64_t> affected;
       const TetEditStatus status =
           try_edge_removal(edge.first, edge.second, slot, affected);
@@ -3128,7 +3253,7 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     for (std::int32_t survivor : neighbors) {
       if (!collapsed_quality(mesh, star.cells(), removed, survivor, request,
                              after_quality, replacement_cells) ||
-          !improves_quality_vector(before_quality, after_quality) ||
+          !improves_quality_vector(before_quality, after_quality, request.minimum_score) ||
           mesh.next_cell_id_ > std::numeric_limits<std::uint64_t>::max() -
                                    replacement_cells.size()) {
         continue;
@@ -3206,7 +3331,8 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
         if (relocated_quality(mesh, relocation_plan, candidate, request,
                               before_quality.front().primary, size_excess_bound,
                               after_quality) &&
-            relocation_makes_progress(before_quality, after_quality)) {
+            relocation_makes_progress(before_quality, after_quality) &&
+            reduces_residual(before_quality, after_quality, request.minimum_score)) {
           TetEditVertex moved;
           moved.id = vertex_id;
           std::copy_n(candidate, 3, moved.carrier.begin());
@@ -3417,64 +3543,70 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     return PHX_MC_OK;
   };
 
-  // Termination. The measure is the pair (B, Q): B the number of cells below
-  // the determinant floor, Q the whole mesh's worst-first sorted score vector,
-  // ordered lexicographically (B first, Q in quality_vector_less). Every cell
-  // an accepted edit creates or moves is admissible, so no edit raises B. A
-  // clearing insertion replaces a below-floor cell and so lowers B. Every
-  // other accepted edit strictly increases Q in quality_vector_less: the edit
-  // improves its affected cells in that order, the order is invariant under
-  // adding the unchanged cells to both sides, and each cell's score is
+  // Termination and its bound. The measure is the tuple (B, -m, c, D, N) of
+  // reduces_residual, ordered lexicographically: B the number of cells below
+  // the determinant floor, m the mesh minimum score above it (one of the
+  // K = 2^20 + 1 multiples of q = kTetScoreQuantum = 2^-20 in [0, 1]), c the
+  // cells scoring m, D the total score deficit of the cells above the floor
+  // (an exact multiple of q), N the cell count. Each cell's score is
   // evaluated from its stored vertex order and coordinates by the same
-  // arithmetic before and after the edit. Scores lie in the finite alphabet
-  // s_1 < ... < s_K of quality_from_measure (multiples of 2^-20 in [0, 1]). A
-  // mesh state's score multiset is its count vector (c_1, ..., c_K) in N^K,
-  // c_k the number of cells scoring s_k, and quality_vector_less is exactly
-  // the lexicographic order on these count vectors with the smaller vector
-  // the better (at the smallest score whose count differs, more copies is
-  // worse). N^K under the lexicographic order is a well-order (order type
-  // omega^K), and so is N x N^K lexicographically (order type omega^(K+1)),
-  // so the pairs have no infinite strictly decreasing sequence: the accepted
-  // edits form a finite sequence (at most the initial B of them clearing
-  // insertions) even though insertion adds vertices and cells, collapse and
-  // clearing insertion remove vertices, and the vertex set is therefore not
-  // fixed. A pop without an
-  // accepted edit removes its entry, and entries return only after an
-  // accepted edit (finitely many, above); each phase therefore drains,
-  // and the run ends when a topology phase and a vertex phase leave both
-  // worklists empty. The admissibility gates (determinant floor, size excess
-  // bound) only discard edits, so they leave this argument intact; the size
-  // bound also keeps the largest size excess created by a non-degenerate
-  // repair at most the largest one it removed. Edge-ring and point
-  // insertions are accepted by the same rule as flips and collapses (a
+  // arithmetic before and after an edit, so the affected cells' change is
+  // the whole mesh's. Every cell an accepted edit creates or moves is
+  // admissible, so no edit raises B. A clearing insertion replaces a
+  // below-floor cell and so lowers B, as does any edit whose affected cells
+  // include one: at most B_0 (the initial B) edits, which may create cells
+  // below m. Every other accepted edit also improves the worst-first order,
+  // so it creates no cell below its worst affected cell and none at m beyond
+  // the ones it removes: it lowers c (raising m when c reaches 0) exactly
+  // when its affected cells hold the mesh minimum and fewer remain at it,
+  // and otherwise leaves (B, m, c) and must lower D by at least q or keep D
+  // and lower N (reduces_residual, part of the single acceptance rule
+  // improves_quality_vector and of every relocation). So between B-lowering
+  // edits m takes at most K values and c drops at most c times at each; and
+  // between two edits that change (B, m, c), whatever D and N they leave, at
+  // most D / q edits lower D and at most N plus the cells those create keep
+  // D and lower N. The accepted edits therefore form a finite sequence even
+  // though insertion adds vertices and cells, collapse and clearing
+  // insertion remove vertices, and the vertex set is therefore not fixed.
+  // Only an edit at the mesh minimum may raise D: the worst-first order Q
+  // (quality_vector_less) alone admitted, anywhere in the mesh, trading one
+  // poor cell for many slightly better ones, which on a fixed boundary flat
+  // to rounding kept insertions and collapses undoing each other for tens of
+  // thousands of edits. A pop
+  // without an accepted edit removes its entry, and entries return only
+  // after an accepted edit (finitely many, above); each phase therefore
+  // drains, and the run ends when a topology phase and a vertex phase leave
+  // both worklists empty, with every cell still missing a target reported
+  // below (UNRESOLVED). The admissibility gates (determinant floor, size
+  // excess bound) only discard edits, so they leave this argument intact;
+  // the size bound also keeps the largest size excess created by a
+  // non-degenerate repair at most the largest one it removed. Edge-ring and
+  // point insertions are accepted by the same rule as flips and collapses (a
   // clearing insertion's cavity growth itself ends within the finite mesh;
-  // try_clearing_insertion); relocations by the stricter sufficient-progress
-  // rule (relocation_makes_progress), which implies it. That rule
-  // also bounds the relocation work beyond mere termination: an accepted
-  // relocation closes at least kRelocationGapFraction of the gap to the target
-  // of its star's first changed score, so the relocations of a vertex whose
-  // surrounding does not otherwise change raise its star's worst score at most
-  // ceil(log(2^20) / log(8/7)) = 104 times before it meets the target, instead
-  // of up to 2^20 quantum-sized times. Each vertex step evaluates a bounded
-  // number of candidates (its star's collapses and at most 21 per relocation
-  // target). An accepted relocation re-queues every vertex of its star's
-  // cells, since each of their stars changed, so every vertex is last stepped
-  // on its final star (the evidence behind NO_IMPROVEMENT records); a rejected
-  // step re-queues nothing, and the gap rule alone bounds the accepted moves.
-  // No bound on the number of accepted topology edits is claimed; unmet
-  // targets are reported per cell below. When both worklists are empty, the
-  // clearing pass tries each remaining below-floor cell once
-  // (clearing_step), and when it accepts nothing, the shape pass tries each
-  // cell above the floor that misses a score target once (shape_step). A
-  // target-meeting relocation moves only admissible cells and strictly
-  // increases Q (the star's scores all reach 1 from a vector with one below
-  // it), so it is an edit of this measure too. The loop resumes only after an
-  // accepted clearing insertion or target-meeting relocation, each of which
-  // strictly decreases (B, Q), so the resumptions are finitely many; each
-  // pass makes finitely many attempts, each ending (try_clearing_insertion,
-  // target_meeting_relocation). An edit loop whose converged mesh meets every
-  // score target, or whose shape pass accepts nothing, ends exactly as before
-  // the pass existed.
+  // try_clearing_insertion); relocations also by the sufficient-progress
+  // rule (relocation_makes_progress). That rule bounds the relocation work
+  // further: an accepted relocation closes at least kRelocationGapFraction
+  // of the gap to the target of its star's first changed score, so the
+  // relocations of a vertex whose surrounding does not otherwise change
+  // raise its star's worst score at most ceil(log(2^20) / log(8/7)) = 104
+  // times before it meets the target, instead of up to 2^20 quantum-sized
+  // times. Each vertex step evaluates a bounded number of candidates (its
+  // star's collapses and at most 21 per relocation target). An accepted
+  // relocation re-queues every vertex of its star's cells, since each of
+  // their stars changed, so every vertex is last stepped on its final star
+  // (the evidence behind NO_IMPROVEMENT records); a rejected step re-queues
+  // nothing. When both worklists are empty, the clearing pass tries each
+  // remaining below-floor cell once (clearing_step), and when it accepts
+  // nothing, the shape pass tries each cell above the floor that misses a
+  // score target once (shape_step). A target-meeting relocation moves only
+  // admissible cells, all meeting the target, from a star with one below
+  // it, so it lowers D: it is an edit of this measure too. The loop resumes
+  // only after an accepted clearing insertion or target-meeting relocation,
+  // each of which strictly decreases (B, D, N), so the resumptions are
+  // finitely many; each pass makes finitely many attempts, each ending
+  // (try_clearing_insertion, target_meeting_relocation). An edit loop whose
+  // converged mesh meets every score target, or whose shape pass accepts
+  // nothing, ends exactly as before the pass existed.
   std::vector<std::uint64_t> clearing_order;
   std::vector<std::uint64_t> shape_order;
   // Compacts violating_ids to the live cells that miss a target now, sorted by
@@ -3493,12 +3625,14 @@ std::int32_t improve_mesh(TetMesh& mesh, const TetQualityRequest& requested,
     while (!pending_cells.empty() || !pending_vertices.empty()) {
       while (!pending_cells.empty()) {
         const std::uint64_t logical_id = pending_cells.pop();
+        refresh_minimum_score();
         const std::int32_t error = topology_step(logical_id);
         if (error != PHX_MC_OK) return error;
       }
       while (!pending_vertices.empty()) {
         const std::uint64_t vertex_id = pending_vertices.pop();
         shape_refused.erase(vertex_id);
+        refresh_minimum_score();
         const std::int32_t error = vertex_step(vertex_id);
         if (error != PHX_MC_OK) return error;
       }

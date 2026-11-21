@@ -734,6 +734,8 @@ def _validate_target_reference_piece_rows(
 ) -> None:
     if len(rows) != count:
         raise ValueError("Target face piece rows must align with association rows.")
+    if not has_present_rows(rows):
+        return
     for row, pieces in enumerate(rows):
         if pieces is None:
             continue
@@ -1008,18 +1010,30 @@ def has_present_rows(values: tuple[object, ...], /) -> bool:
 
 def _present_rows(values: tuple[object, ...], /) -> np.ndarray:
     """Per-row ``value is not None``."""
-    if not has_present_rows(values):
-        return np.zeros((len(values),), dtype=np.bool_)
+    absent = values.count(None)
+    if absent in (0, len(values)):
+        return np.full((len(values),), absent == 0, dtype=np.bool_)
     return np.fromiter(
         map(is_not, values, repeat(None)), dtype=np.bool_, count=len(values)
     )
 
 
 def _rows_are(values: tuple[object, ...], member: object, /) -> np.ndarray:
-    """Per-row ``value is member``."""
+    """Per-row ``value is member`` for an enum member (equal only to itself)."""
+    same = values.count(member)
+    if same in (0, len(values)):
+        return np.full((len(values),), same != 0, dtype=np.bool_)
     return np.fromiter(
         map(is_, values, repeat(member)), dtype=np.bool_, count=len(values)
     )
+
+
+def _rows_equal(values: tuple[object, ...], member: object, /) -> np.ndarray:
+    """Per-row ``value == member``; uniform tables count at C level."""
+    equal = values.count(member)
+    if equal in (0, len(values)):
+        return np.full((len(values),), equal != 0, dtype=np.bool_)
+    return np.fromiter(map(eq, values, repeat(member)), dtype=np.bool_, count=len(values))
 
 
 def _distinct(values: tuple[object, ...], /) -> tuple[object, ...] | None:
@@ -1134,6 +1148,8 @@ def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> n
 
 def _fraction_rows_fingerprint(rows: tuple[tuple[Fraction, ...] | None, ...], /) -> str:
     """Bind optional exact rational rows without serializing individual JSON tokens."""
+    if not has_present_rows(rows):
+        return rational_chart_bank_fingerprint(((),) * len(rows))
     tokens = {
         row: () if row is None else (tuple((v.numerator, v.denominator) for v in row),)
         for row in set(rows)
@@ -1353,7 +1369,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Target edge intervals must be exact increasing Fraction pairs in [0, 1]."
             )
         whole = (Fraction(0), Fraction(1))
-        if any(map(eq, target_intervals, repeat(whole))):
+        if target_intervals.count(whole):
             target_intervals = tuple(
                 None if interval == whole else interval for interval in target_intervals
             )
@@ -1395,9 +1411,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
             _present_rows(parameter_points),
             _present_rows(target_intervals),
         )
-        unsided = np.fromiter(
-            map(eq, region_sides, repeat((None, None))), dtype=np.bool_, count=count
-        )
+        unsided = _rows_equal(region_sides, (None, None))
         if association_kind is GeometryAssociationKind.PIECEWISE_LINEAR and np.any(
             resolved_ & facet & unsided
         ):

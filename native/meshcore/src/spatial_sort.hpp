@@ -95,11 +95,11 @@ struct SpatialKey {
 };
 
 // Keys of the candidates in [begin, end), at most Lanes of them, quantized
-// to Bits bits per axis in the box (lower, extent).
+// to Bits bits per axis in the box (lower, extent), into keys[begin, end).
 template <int Dimension, int Bits, int Lanes>
 void hilbert_key_block(const double* points, std::span<const int32_t> candidates,
                        std::size_t begin, std::size_t end, const double* lower,
-                       const double* extent, std::vector<SpatialKey>& keys) {
+                       const double* extent, SpatialKey* keys) {
   constexpr double kCells = static_cast<double>((std::uint64_t{1} << Bits) - 1);
   std::uint32_t x[Dimension][Lanes] = {};
   for (std::size_t at = begin; at < end; ++at) {
@@ -115,7 +115,7 @@ void hilbert_key_block(const double* points, std::span<const int32_t> candidates
   for (std::size_t at = begin; at < end; ++at) {
     std::uint32_t transposed[3] = {0, 0, 0};
     for (int axis = 0; axis < Dimension; ++axis) transposed[axis] = x[axis][at - begin];
-    keys.push_back({interleave_transpose(transposed, Dimension), candidates[at], 0U});
+    keys[at] = {interleave_transpose(transposed, Dimension), candidates[at], 0U};
   }
 }
 
@@ -141,13 +141,13 @@ inline void hilbert_keys(const double* points, int dimension, std::span<const in
   // Lanes are independent dependency chains through the transpose: enough
   // of them keep the vector units busy.
   constexpr std::size_t kLanes = 32;
-  keys.reserve(candidates.size());
+  keys.resize(candidates.size());
   for (std::size_t begin = 0; begin < candidates.size(); begin += kLanes) {
     const std::size_t end = std::min(candidates.size(), begin + kLanes);
     if (dimension == 2) {
-      hilbert_key_block<2, 31, kLanes>(points, candidates, begin, end, lower, extent, keys);
+      hilbert_key_block<2, 31, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
     } else {
-      hilbert_key_block<3, 21, kLanes>(points, candidates, begin, end, lower, extent, keys);
+      hilbert_key_block<3, 21, kLanes>(points, candidates, begin, end, lower, extent, keys.data());
     }
   }
 }
@@ -166,43 +166,88 @@ inline std::uint32_t brio_round(int32_t index, int rounds) {
   return static_cast<std::uint32_t>(rounds - 1 - level);
 }
 
-// Stable least-significant-digit radix sort by the key (`by_key`) and then
-// by the round (`by_round`, most significant). Six 11-bit digits cover the
-// key (at most 63 bits); rounds are below 62. Digits constant over all
-// entries are skipped. `scratch` is working storage.
+// Stable sort by the key (`by_key`) and then by the round (`by_round`, most
+// significant). The key is radix sorted (least significant digit first, 11
+// bits per digit) by its top bits only, enough to separate about 2^12 times
+// as many keys as there are entries; runs that tie on those bits are then
+// sorted stably by the whole key, which is the order of a full stable key
+// sort. The round (below 62) is one more radix pass. Digits constant over
+// all entries are skipped. `scratch` is working storage.
+// Few entries are sorted by std::stable_sort on the same fields instead (the
+// same stable order): the radix passes would clear and scan a 2048-bucket
+// histogram per digit.
 inline void radix_sort_keys(std::vector<SpatialKey>& keys, std::vector<SpatialKey>& scratch,
                             bool by_key, bool by_round) {
   constexpr int kDigitBits = 11;
   constexpr std::size_t kBuckets = std::size_t{1} << kDigitBits;
-  constexpr int kKeyDigits = 6;
+  constexpr std::size_t kRoundBuckets = 64;
   const std::size_t count = keys.size();
   if (count < 2) return;
-  const int first = by_key ? 0 : kKeyDigits;
-  const int last = by_round ? kKeyDigits : kKeyDigits - 1;
-  if (first > last) return;
-  const auto digit = [](const SpatialKey& entry, int d) -> std::size_t {
-    return d == kKeyDigits ? entry.round
-                           : static_cast<std::size_t>(entry.key >> (kDigitBits * d)) &
-                                 (kBuckets - 1);
+  if (count <= 256) {
+    std::stable_sort(keys.begin(), keys.end(),
+                     [by_key, by_round](const SpatialKey& left, const SpatialKey& right) {
+                       if (by_round && left.round != right.round) {
+                         return left.round < right.round;
+                       }
+                       return by_key && left.key < right.key;
+                     });
+    return;
+  }
+  std::uint64_t used = 0;
+  if (by_key) {
+    for (const SpatialKey& entry : keys) used |= entry.key;
+  }
+  const int width = std::bit_width(used);
+  const int separated = std::min(width, std::bit_width(count) + 12);
+  const int digits = (separated + kDigitBits - 1) / kDigitBits;
+  const int base = std::max(0, width - kDigitBits * digits);
+  const auto key_digit = [base](const SpatialKey& entry, int d) -> std::size_t {
+    return static_cast<std::size_t>(entry.key >> (base + kDigitBits * d)) & (kBuckets - 1);
   };
-  std::vector<std::size_t> histogram(static_cast<std::size_t>(last - first + 1) * kBuckets, 0);
+  const auto key_rows = static_cast<std::size_t>(digits);
+  std::vector<std::size_t> histogram(key_rows * kBuckets + (by_round ? kRoundBuckets : 0), 0);
+  std::size_t* round_offsets = histogram.data() + key_rows * kBuckets;
   for (const SpatialKey& entry : keys) {
-    for (int d = first; d <= last; ++d) {
-      ++histogram[static_cast<std::size_t>(d - first) * kBuckets + digit(entry, d)];
+    for (int d = 0; d < digits; ++d) {
+      ++histogram[static_cast<std::size_t>(d) * kBuckets + key_digit(entry, d)];
     }
+    if (by_round) ++round_offsets[entry.round];
   }
   scratch.resize(count);
-  for (int d = first; d <= last; ++d) {
-    std::size_t* offsets = histogram.data() + static_cast<std::size_t>(d - first) * kBuckets;
-    if (offsets[digit(keys.front(), d)] == count) continue;
+  const auto pass = [&](std::size_t* offsets, std::size_t buckets, auto digit) {
+    if (offsets[digit(keys.front())] == count) return;
     std::size_t total = 0;
-    for (std::size_t bucket = 0; bucket < kBuckets; ++bucket) {
+    for (std::size_t bucket = 0; bucket < buckets; ++bucket) {
       const std::size_t size = offsets[bucket];
       offsets[bucket] = total;
       total += size;
     }
-    for (const SpatialKey& entry : keys) scratch[offsets[digit(entry, d)]++] = entry;
+    for (const SpatialKey& entry : keys) scratch[offsets[digit(entry)]++] = entry;
     keys.swap(scratch);
+  };
+  for (int d = 0; d < digits; ++d) {
+    pass(histogram.data() + static_cast<std::size_t>(d) * kBuckets, kBuckets,
+         [&](const SpatialKey& entry) { return key_digit(entry, d); });
+  }
+  if (base > 0) {
+    const auto by_whole_key = [](const SpatialKey& left, const SpatialKey& right) {
+      return left.key < right.key;
+    };
+    std::size_t begin = 0;
+    while (begin < count) {
+      std::size_t end = begin + 1;
+      while (end < count && (keys[end].key >> base) == (keys[begin].key >> base)) ++end;
+      if (end - begin > 1) {
+        std::stable_sort(keys.begin() + static_cast<std::ptrdiff_t>(begin),
+                         keys.begin() + static_cast<std::ptrdiff_t>(end), by_whole_key);
+      }
+      begin = end;
+    }
+  }
+  if (by_round) {
+    pass(round_offsets, kRoundBuckets, [](const SpatialKey& entry) {
+      return static_cast<std::size_t>(entry.round);
+    });
   }
 }
 

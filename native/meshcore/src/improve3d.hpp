@@ -20,14 +20,17 @@ namespace phx::mc {
 // floored to multiples of kTetScoreQuantum. Every edit (reconnection,
 // collapse, relocation, circumsphere-cavity or edge-ring vertex insertion) is
 // accepted only if its affected cells' worst-first sorted scores strictly
-// improve, with the determinant floor and source constraints as hard gates
+// improve and the residual strictly drops (cells below the determinant floor,
+// then the mesh's lowest score and its multiplicity, then total score
+// deficit, then cell count), with the determinant floor
+// and source constraints as hard gates
 // (a relocation must also meet the target at, or close at least an eighth of
 // the gap to it of, the first sorted score it changes);
 // no created cell may exceed its circumradius size target by more than the
 // largest excess among the removed cells (at all, where they were within
 // target), except in an edit that removes a degenerate cell (below the
-// determinant floor or scoring 0), whose repair takes precedence. That one
-// order makes the run terminate. Final checks of the radius-edge, dihedral,
+// determinant floor or scoring 0), whose repair takes precedence. The residual
+// bounds the accepted edits (improve_mesh). Final checks of the radius-edge, dihedral,
 // and determinant targets, not the score, set status, and unmet cells are
 // reported individually.
 inline constexpr double kTetScoreQuantum = 0x1p-20;
@@ -51,6 +54,10 @@ struct TetQualityRequest {
   // Circumradius size target per local vertex slot (0: unconstrained); set by
   // improve_mesh from the mesh's retained size field.
   const std::vector<double>* slot_sizes = nullptr;
+  // Lowest score among the live cells above the determinant floor (1 when
+  // every such cell meets the score target); set by improve_mesh before each
+  // edit is judged, for its residual order.
+  double minimum_score = 1.0;
 };
 // Assess current cells without changing the mesh or its stored unmet records.
 std::int32_t evaluate_mesh_quality(const TetMesh& mesh, const TetQualityRequest& request,

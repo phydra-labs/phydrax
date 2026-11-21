@@ -206,13 +206,17 @@ inline std::vector<int32_t> deduplicated_insertion_order(const double* points, i
               });
     start = stop;
   }
-  kept.resize(written);
+  // A stable counting sort of the representatives by round (below 62),
+  // straight into the insertion order.
   const int rounds = brio_round_count(written);
-  for (SpatialKey& entry : kept) entry.round = brio_round(entry.index, rounds);
-  radix_sort_keys(kept, keys, false, true);
-  std::vector<int32_t> order;
-  order.reserve(kept.size());
-  for (const SpatialKey& entry : kept) order.push_back(entry.index);
+  std::array<std::size_t, 64> starts{};
+  for (std::size_t k = 0; k < written; ++k) {
+    kept[k].round = brio_round(kept[k].index, rounds);
+    ++starts[kept[k].round + 1];
+  }
+  std::partial_sum(starts.begin(), starts.end(), starts.begin());
+  std::vector<int32_t> order(written);
+  for (std::size_t k = 0; k < written; ++k) order[starts[kept[k].round]++] = kept[k].index;
   return order;
 }
 
@@ -277,69 +281,118 @@ void rank_sort_group(int32_t* rows, std::size_t count, std::size_t columns) {
   }
 }
 
-// Sorts the cells (with their segment rows, as `Width` values per record)
-// lexicographically by their vertices; vertex tuples are distinct, so this
-// is the lexicographic order of the records. A radix sort by the first
-// vertex groups the cells by it (a few per vertex, at most its degree);
-// each group is ordered by rank, or by radix sort when it is large, so the
-// time is linear in the cell count.
-template <std::size_t Width>
-void sort_cell_records(phx_mc_mesh& mesh) {
+// Sorts the tetrahedra lexicographically by their vertices (distinct
+// tuples). A radix sort by the first vertex groups the cells by it (a few
+// per vertex, at most its degree); each group is ordered by rank, or by
+// radix sort when it is large, so the time is linear in the cell count.
+inline void sort_tetrahedra(phx_mc_mesh& mesh) {
+  constexpr std::size_t kWidth = 4;
   constexpr std::size_t kRankGroup = 64;
-  const auto cell_width = static_cast<std::size_t>(mesh.dimension + 1);
   const auto count = static_cast<std::size_t>(mesh.cell_count());
-  const bool has_segments = Width > cell_width;
   // Vertices are point indices in [0, largest].
   int32_t largest = 1;
   for (int32_t vertex : mesh.cells) largest = std::max(largest, vertex);
   int bits = 1;
   while ((std::uint64_t{1} << bits) <= static_cast<std::uint64_t>(largest)) ++bits;
-  // Cells without segments sort in place; with segments, interleaved.
-  std::unique_ptr<int32_t[]> interleaved;
   int32_t* rows = mesh.cells.data();
-  if (has_segments) {
-    interleaved.reset(new int32_t[Width * count]);
-    for (std::size_t cell = 0; cell < count; ++cell) {
-      std::copy_n(mesh.cells.begin() + static_cast<std::ptrdiff_t>(cell * cell_width), cell_width,
-                  interleaved.get() + Width * cell);
-      std::copy_n(mesh.cell_segments.begin() + static_cast<std::ptrdiff_t>(cell * 3), 3,
-                  interleaved.get() + Width * cell + cell_width);
-    }
-    rows = interleaved.get();
-  }
-  const std::unique_ptr<int32_t[]> scratch(new int32_t[Width * count]);
+  const std::unique_ptr<int32_t[]> scratch(new int32_t[kWidth * count]);
   std::vector<std::size_t> offsets;
-  radix_sort_rows<Width>(rows, scratch.get(), count, 0, 1, bits, offsets);
+  radix_sort_rows<kWidth>(rows, scratch.get(), count, 0, 1, bits, offsets);
   std::size_t begin = 0;
   while (begin < count) {
     std::size_t end = begin + 1;
-    while (end < count && rows[Width * end] == rows[Width * begin]) ++end;
+    while (end < count && rows[kWidth * end] == rows[kWidth * begin]) ++end;
     const std::size_t size = end - begin;
     if (size > kRankGroup) {
-      radix_sort_rows<Width>(rows + Width * begin, scratch.get(), size, 1, cell_width, bits,
-                             offsets);
+      radix_sort_rows<kWidth>(rows + kWidth * begin, scratch.get(), size, 1, kWidth, bits,
+                              offsets);
     } else if (size > 1) {
-      rank_sort_group<Width, kRankGroup>(rows + Width * begin, size, cell_width);
+      rank_sort_group<kWidth, kRankGroup>(rows + kWidth * begin, size, kWidth);
     }
     begin = end;
   }
-  if (has_segments) {
-    for (std::size_t cell = 0; cell < count; ++cell) {
-      std::copy_n(rows + Width * cell, cell_width,
-                  mesh.cells.begin() + static_cast<std::ptrdiff_t>(cell * cell_width));
-      std::copy_n(rows + Width * cell + cell_width, 3,
-                  mesh.cell_segments.begin() + static_cast<std::ptrdiff_t>(cell * 3));
-    }
+}
+
+// Rotates every triangle to start at its smallest vertex while preserving
+// orientation (cell_segments, edge k opposite vertex k, rotate with it),
+// then sorts the triangles lexicographically: a counting sort of the cell
+// ids by their first vertex, the few cells of each first vertex ordered by
+// their other two vertices (distinct pairs), then one gather of the rows.
+inline void canonicalize_triangles(phx_mc_mesh& mesh) {
+  const auto count = static_cast<std::size_t>(mesh.cell_count());
+  const bool has_segments = !mesh.cell_segments.empty();
+  int32_t* cells = mesh.cells.data();
+  int32_t* segments = mesh.cell_segments.data();
+  int32_t largest = 0;
+  for (std::size_t k = 0; k < 3 * count; ++k) largest = std::max(largest, cells[k]);
+  // Group bounds fit 32 bits: there are at most 2 kMaxMeshPoints triangles.
+  std::vector<std::uint32_t> offsets(static_cast<std::size_t>(largest) + 2, 0);
+  // The rotation that brings the smallest of three distinct values first,
+  // by selects on loaded values (its place in a cell is unpredictable).
+  const auto rotate = [](int32_t* v, bool second, bool third) {
+    const int32_t a = v[0], b = v[1], c = v[2];
+    v[0] = second ? b : third ? c : a;
+    v[1] = second ? c : third ? a : b;
+    v[2] = second ? a : third ? b : c;
+  };
+  for (std::size_t cell = 0; cell < count; ++cell) {
+    int32_t* v = cells + 3 * cell;
+    const bool second = (v[1] < v[0]) & (v[1] < v[2]);
+    const bool third = (v[2] < v[0]) & (v[2] < v[1]);
+    rotate(v, second, third);
+    if (has_segments) rotate(segments + 3 * cell, second, third);
+    ++offsets[static_cast<std::size_t>(v[0]) + 1];
   }
+  std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+  std::vector<std::uint32_t> order(count);
+  for (std::size_t cell = 0; cell < count; ++cell) {
+    order[offsets[static_cast<std::size_t>(cells[3 * cell])]++] = static_cast<std::uint32_t>(cell);
+  }
+  const auto rest = [cells](std::uint32_t cell) {
+    const int32_t* v = cells + 3 * static_cast<std::size_t>(cell);
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(v[1])) << 32) |
+           static_cast<std::uint32_t>(v[2]);
+  };
+  constexpr std::size_t kInsertionGroup = 32;
+  // offsets[v] now ends the group of first vertex v.
+  std::size_t begin = 0;
+  for (std::size_t vertex = 0; vertex <= static_cast<std::size_t>(largest); ++vertex) {
+    const std::size_t end = offsets[vertex];
+    if (end - begin > kInsertionGroup) {
+      std::sort(order.begin() + static_cast<std::ptrdiff_t>(begin),
+                order.begin() + static_cast<std::ptrdiff_t>(end),
+                [&](std::uint32_t left, std::uint32_t right) { return rest(left) < rest(right); });
+    } else {
+      for (std::size_t at = begin + 1; at < end; ++at) {
+        const std::uint32_t cell = order[at];
+        const std::uint64_t key = rest(cell);
+        std::size_t to = at;
+        for (; to > begin && rest(order[to - 1]) > key; --to) order[to] = order[to - 1];
+        order[to] = cell;
+      }
+    }
+    begin = end;
+  }
+  const auto gather = [&](std::vector<int32_t>& rows) {
+    std::vector<int32_t> sorted(rows.size());
+    for (std::size_t at = 0; at < count; ++at) {
+      std::copy_n(rows.data() + 3 * static_cast<std::size_t>(order[at]), 3, sorted.data() + 3 * at);
+    }
+    rows.swap(sorted);
+  };
+  gather(mesh.cells);
+  if (has_segments) gather(mesh.cell_segments);
 }
 
 // Rotates every cell to start at its smallest vertex while preserving
 // orientation, then sorts cells lexicographically (cell_segments follow their
 // cells when present, with edge k opposite vertex k).
 inline void canonicalize_cells(phx_mc_mesh& mesh) {
-  const int width = mesh.dimension + 1;
+  if (mesh.dimension == 2) {
+    canonicalize_triangles(mesh);
+    return;
+  }
   const int64_t count = mesh.cell_count();
-  const bool has_segments = !mesh.cell_segments.empty();
   // The position of the smallest of `count` distinct values, by selects (its
   // place in a cell is unpredictable).
   const auto smallest = [](const int32_t* values, int size) {
@@ -348,37 +401,20 @@ inline void canonicalize_cells(phx_mc_mesh& mesh) {
     return position;
   };
   for (int64_t cell = 0; cell < count; ++cell) {
-    int32_t* v = mesh.cells.data() + cell * width;
-    if (width == 3) {
-      const int first = smallest(v, 3);
-      const int32_t rotated[3] = {v[first], v[(first + 1) % 3], v[(first + 2) % 3]};
-      std::copy_n(rotated, 3, v);
-      if (has_segments) {
-        int32_t* s = mesh.cell_segments.data() + cell * 3;
-        const int32_t moved[3] = {s[first], s[(first + 1) % 3], s[(first + 2) % 3]};
-        std::copy_n(moved, 3, s);
-      }
-    } else {
-      // Even permutations of a tetrahedron: the double transposition that
-      // brings the minimum to slot 0, then the rotation of the remaining
-      // three that brings their minimum to slot 1.
-      static constexpr int kLead[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
-      const int* lead = kLead[smallest(v, 4)];
-      const int32_t w[4] = {v[lead[0]], v[lead[1]], v[lead[2]], v[lead[3]]};
-      const int second = smallest(w + 1, 3);
-      v[0] = w[0];
-      v[1] = w[1 + second];
-      v[2] = w[1 + (second + 1) % 3];
-      v[3] = w[1 + (second + 2) % 3];
-    }
+    int32_t* v = mesh.cells.data() + cell * 4;
+    // Even permutations of a tetrahedron: the double transposition that
+    // brings the minimum to slot 0, then the rotation of the remaining
+    // three that brings their minimum to slot 1.
+    static constexpr int kLead[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+    const int* lead = kLead[smallest(v, 4)];
+    const int32_t w[4] = {v[lead[0]], v[lead[1]], v[lead[2]], v[lead[3]]};
+    const int second = smallest(w + 1, 3);
+    v[0] = w[0];
+    v[1] = w[1 + second];
+    v[2] = w[1 + (second + 1) % 3];
+    v[3] = w[1 + (second + 2) % 3];
   }
-  if (width == 4) {
-    sort_cell_records<4>(mesh);
-  } else if (has_segments) {
-    sort_cell_records<6>(mesh);
-  } else {
-    sort_cell_records<3>(mesh);
-  }
+  sort_tetrahedra(mesh);
 }
 
 // Point-set triangulations behind phx_mc_delaunay_2d/3d, phx_mc_regular_2d/3d

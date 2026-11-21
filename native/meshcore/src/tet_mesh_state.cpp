@@ -250,11 +250,20 @@ int32_t adopt_adjacency(std::vector<Tetrahedron>& tets, std::size_t cell_count,
                         std::span<const std::int32_t> neighbors,
                         std::vector<FaceSlot>& boundary, std::vector<FaceSlot>& face_cells) {
   if (neighbors.size() != 4 * cell_count) return PHX_MC_INVALID_ARGUMENT;
+  // The boundary faces keyed by their sorted vertices, bucketed by the
+  // smallest one (a counting sort) and ordered by the other two within it:
+  // face key order, without sorting every key.
   struct BoundaryFace {
-    std::array<std::int32_t, 3> key;
+    std::int32_t b;
+    std::int32_t c;
     FaceSlot face;
   };
-  std::vector<BoundaryFace> keyed;
+  struct Pending {
+    std::int32_t key[3];
+    FaceSlot face;
+  };
+  std::vector<Pending> pending;
+  std::vector<std::uint32_t> bucket(vertex_count + 1, 0U);
   for (std::size_t cell = 0; cell < cell_count; ++cell) {
     for (int slot = 0; slot < 4; ++slot) {
       const std::int32_t across = neighbors[4 * cell + static_cast<std::size_t>(slot)];
@@ -263,27 +272,43 @@ int32_t adopt_adjacency(std::vector<Tetrahedron>& tets, std::size_t cell_count,
       }
       tets[cell].n[slot] = across;
       if (across >= 0) continue;
-      BoundaryFace entry{{}, {static_cast<std::int32_t>(cell), slot}};
-      sorted_face_of(tets[cell], slot, entry.key.data());
-      keyed.push_back(entry);
+      Pending entry{{}, {static_cast<std::int32_t>(cell), slot}};
+      sorted_face_of(tets[cell], slot, entry.key);
+      ++bucket[static_cast<std::size_t>(entry.key[0]) + 1];
+      pending.push_back(entry);
     }
   }
-  if (keyed.empty()) return PHX_MC_INVALID_INPUT;
-  std::sort(keyed.begin(), keyed.end(),
-            [](const BoundaryFace& x, const BoundaryFace& y) { return x.key < y.key; });
+  if (pending.empty()) return PHX_MC_INVALID_INPUT;
+  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) bucket[vertex + 1] += bucket[vertex];
+  std::vector<BoundaryFace> keyed(pending.size());
+  {
+    std::vector<std::uint32_t> cursor(bucket.begin(), bucket.end() - 1);
+    for (const Pending& entry : pending) {
+      keyed[cursor[static_cast<std::size_t>(entry.key[0])]++] =
+          BoundaryFace{entry.key[1], entry.key[2], entry.face};
+    }
+  }
+  const auto before = [](const BoundaryFace& x, const BoundaryFace& y) {
+    return x.b < y.b || (x.b == y.b && x.c < y.c);
+  };
+  for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+    if (bucket[vertex + 1] - bucket[vertex] > 1) {
+      std::sort(keyed.begin() + bucket[vertex], keyed.begin() + bucket[vertex + 1], before);
+    }
+  }
   std::vector<std::uint8_t> claimed(keyed.size(), 0);
   std::vector<std::size_t> interior;
   for (std::size_t row = 0; row < face_cells.size(); ++row) {
     std::array<std::int32_t, 3> key;
     std::copy_n(faces.data() + 3 * row, 3, key.begin());
-    std::sort(key.begin(), key.end());
+    if (key[0] > key[1]) std::swap(key[0], key[1]);
+    if (key[1] > key[2]) std::swap(key[1], key[2]);
+    if (key[0] > key[1]) std::swap(key[0], key[1]);
     if (key[0] < 0 || static_cast<std::size_t>(key[2]) >= vertex_count) return PHX_MC_INVALID_INPUT;
-    const auto found = std::lower_bound(
-        keyed.begin(), keyed.end(), key,
-        [](const BoundaryFace& entry, const std::array<std::int32_t, 3>& wanted) {
-          return entry.key < wanted;
-        });
-    if (found == keyed.end() || found->key != key) {
+    const auto begin = keyed.begin() + bucket[static_cast<std::size_t>(key[0])];
+    const auto end = keyed.begin() + bucket[static_cast<std::size_t>(key[0]) + 1];
+    const auto found = std::lower_bound(begin, end, BoundaryFace{key[1], key[2], {}}, before);
+    if (found == end || found->b != key[1] || found->c != key[2]) {
       interior.push_back(row);
       continue;
     }
@@ -648,6 +673,11 @@ int32_t TetMesh::build_state(std::span<const double> points,
     }
   }
 
+  // What an adopted recovery proved (RecoveredTopology): its adjacency and
+  // segments and, for a Delaunay recovery that is its own source bank (every
+  // witness a source point), its cells' orientation.
+  const bool adopted = recovered != nullptr && !recovered->neighbors.empty();
+  const bool oriented = adopted && recovered->delaunay && recovered->self_covered;
   complex_.tets.reserve(cell_count + face_count + 8);
   complex_.tets.resize(cell_count);
   cell_ids_.reserve(cell_count + face_count + 8);
@@ -671,7 +701,7 @@ int32_t TetMesh::build_state(std::span<const double> points,
       corners[corner] = points_.data() + 3 * static_cast<std::size_t>(vertices[corner]);
       corner_witnesses[corner] = &witnesses_[static_cast<std::size_t>(vertices[corner])];
     }
-    if (!carriers_positive(corners, corner_witnesses)) return PHX_MC_INVALID_INPUT;
+    if (!oriented && !carriers_positive(corners, corner_witnesses)) return PHX_MC_INVALID_INPUT;
     complex_.tets[row] = Tetrahedron{{vertices[0], vertices[1], vertices[2], vertices[3]},
                                      {-1, -1, -1, -1}, 0, 0};
     cell_ids_[row] = static_cast<std::uint64_t>(row);
@@ -683,7 +713,7 @@ int32_t TetMesh::build_state(std::span<const double> points,
   std::vector<FaceSlot> boundary_faces;
   std::vector<FaceSlot> face_cells(face_count);
   const std::int32_t paired =
-      recovered != nullptr && !recovered->neighbors.empty()
+      adopted
           ? adopt_adjacency(complex_.tets, cell_count, vertex_count, faces, recovered->neighbors,
                             boundary_faces, face_cells)
           : pair_faces(complex_.tets, cell_count, vertex_count, faces, boundary_faces,
@@ -711,7 +741,7 @@ int32_t TetMesh::build_state(std::span<const double> points,
     facets_.push_back(face);
   }
 
-  if (segment_count != 0) {
+  if (segment_count != 0 && !adopted) {
     // A segment must be a cell edge (found among its first endpoint's cells,
     // listed by a counting sort), and each is constrained once.
     std::vector<std::uint32_t> starts(vertex_count + 1, 0U);

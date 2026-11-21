@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "bvh_query.hpp"
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
 #include "interval_arithmetic.hpp"
@@ -979,54 +980,6 @@ struct phx_mc_bvh_pair_stream {
   }
 };
 
-namespace {
-
-bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
-  if (tree == nullptr || tree->node_count < 1 || tree->leaf_count < 0 || tree->leaf_width < 1 ||
-      tree->item_count < 0 || tree->node_min == nullptr || tree->node_max == nullptr ||
-      tree->node_size == nullptr || tree->left == nullptr || tree->right == nullptr ||
-      tree->leaf == nullptr || (tree->leaf_count > 0 && tree->leaf_items == nullptr) ||
-      (tree->item_count > 0 && (tree->item_min == nullptr || tree->item_max == nullptr)) ||
-      !phx::mc::addressable(tree->node_count, dimension, sizeof(double)) ||
-      !phx::mc::addressable(tree->leaf_count, tree->leaf_width, sizeof(int64_t)) ||
-      !phx::mc::addressable(tree->item_count, dimension, sizeof(double))) {
-    return false;
-  }
-  for (int64_t node = 0; node < tree->node_count; ++node) {
-    const int64_t leaf = tree->leaf[node];
-    if (leaf >= tree->leaf_count) return false;
-    if (leaf < 0 && (tree->left[node] < 0 || tree->left[node] >= tree->node_count ||
-                     tree->right[node] < 0 || tree->right[node] >= tree->node_count)) {
-      return false;
-    }
-  }
-  // A rooted tree has exactly one incoming edge per reachable non-root node.
-  // Mark on discovery: this rejects cycles and shared children without recursion.
-  std::vector<uint8_t> seen(static_cast<std::size_t>(tree->node_count), 0);
-  std::vector<int64_t> pending{0};
-  seen[0] = 1;
-  while (!pending.empty()) {
-    const int64_t node = pending.back();
-    pending.pop_back();
-    if (tree->leaf[node] >= 0) {
-      if (tree->left[node] != -1 || tree->right[node] != -1) return false;
-      continue;
-    }
-    for (const int64_t child : {tree->left[node], tree->right[node]}) {
-      if (seen[static_cast<std::size_t>(child)]) return false;
-      seen[static_cast<std::size_t>(child)] = 1;
-      pending.push_back(child);
-    }
-  }
-  const int64_t entries = tree->leaf_count * tree->leaf_width;
-  for (int64_t entry = 0; entry < entries; ++entry) {
-    if (tree->leaf_items[entry] >= tree->item_count) return false;
-  }
-  return true;
-}
-
-}  // namespace
-
 extern "C" {
 
 int32_t phx_mc_interval_bernstein_restrict(int64_t count, int32_t degree, int64_t width,
@@ -1438,8 +1391,8 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
     if (dimension < 1 || item_block < 1 || node_block < 1 || parallelism < 1 ||
         (include_touching != 0 && include_touching != 1) || !std::isfinite(absolute_tolerance) ||
         !std::isfinite(relative_tolerance) || absolute_tolerance < 0.0 ||
-        relative_tolerance < 0.0 || !tree_valid(first, dimension) ||
-        !tree_valid(second, dimension)) {
+        relative_tolerance < 0.0 || !phx::mc::bvh::tree_valid(first, dimension) ||
+        !phx::mc::bvh::tree_valid(second, dimension)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     int64_t per_leaf = 0;

@@ -496,11 +496,9 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
     # another pole; ring points near a trim are omitted by the boundary
     # proximity rule. Over h/r 0.4-0.8 and theta 0.5-0.9: no surface edge is
     # shorter than h / 10, and the volume stage does bounded work (the sphere
-    # resolves without improvement; the thin caps and cones may leave
-    # coarse-quality targets unmet, promptly).
-    model = cad_geometry_bundle(
-        MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())
-    ).model
+    # resolves; the thin caps and cones may leave coarse-quality targets
+    # unmet, promptly).
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
     for size in (0.4, 0.6, 0.8):
         for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
@@ -524,7 +522,6 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
             assert work <= 4 * surface.triangles.shape[0], (size, theta, work)
             if name == "sphere":
                 assert solid.status is MeshcoreStatus.OK, (size, theta)
-                assert stats["improve_inserted"][0] == 0, (size, theta)
 
 
 def _washer() -> phx.geometry.brep.BRepModel:

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import cache
+from functools import lru_cache
 from itertools import combinations
 
 import numpy as np
@@ -142,7 +142,7 @@ def _is_zero(vector: _Vector, /) -> bool:
     return vector[0] == 0 and vector[1] == 0 and vector[2] == 0
 
 
-@cache
+@lru_cache(maxsize=64)
 def _target_cosine_bounds(target_degrees: float, /) -> tuple[Fraction, Fraction]:
     """Outward rational enclosure of ``cos(target_degrees)``."""
 

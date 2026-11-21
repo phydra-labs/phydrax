@@ -127,6 +127,36 @@ void nearest_matches_brute_force() {
   }
 }
 
+// Four small spheres at the corners of a cube of side 1000: cells of the
+// triangles' size over that box would number about 2^30 (the grid's per-axis
+// cap); the grid coarsens to a bounded size instead, and nearest() stays
+// exact.
+void spread_source_binds_a_bounded_grid() {
+  std::vector<Point> points;
+  std::vector<Triangle> triangles;
+  for (const Point& center : {Point{0, 0, 0}, Point{1000, 0, 0}, Point{0, 1000, 0},
+                              Point{0, 0, 1000}}) {
+    std::vector<Point> sphere_points;
+    std::vector<Triangle> sphere_triangles;
+    icosphere(2, 1.0, sphere_points, sphere_triangles);
+    const auto offset = static_cast<int64_t>(points.size());
+    for (const Point& p : sphere_points)
+      points.push_back({p[0] + center[0], p[1] + center[1], p[2] + center[2]});
+    for (const Triangle& f : sphere_triangles)
+      triangles.push_back({f[0] + offset, f[1] + offset, f[2] + offset});
+  }
+  MeshSource source;
+  PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
+  std::mt19937_64 generator(31);
+  std::uniform_real_distribution<double> coordinate(-1.5, 1.5);
+  for (int sample = 0; sample < 100; ++sample) {
+    const Point p{1000 * (sample % 2) + coordinate(generator), coordinate(generator),
+                  1000 * (sample % 3 == 0) + coordinate(generator)};
+    PHX_CHECK(std::abs(source.nearest(p).distance - mesh_distance(p, points, triangles)) <=
+              1e-9);
+  }
+}
+
 // Bound of triangle (a, b, c) and its largest sampled distance to the mesh.
 std::pair<double, double> bound_and_sample(const MeshSource& source, const Point& a,
                                            const Point& b, const Point& c,
@@ -327,16 +357,18 @@ void overlap_bound_refuses_an_ill_conditioned_map() {
 }
 
 // A slab (|x|, |y| <= 1, |z| <= 0.01) whose top face holds such a sliver
-// along y = 0. A flat triangle 0.01 above the top face crosses it: the
-// sliver's map is refused, and triangle_bound still returns the finite
-// height-gap bound for it, so the triangle is bounded by about 0.01, at
-// least its exact distance.
+// along y = 0, its corner at x = -1 lowered to z = 0.005. A flat triangle at
+// z = 0.02 over |x| <= 0.5 crosses the sliver: its height gap (0.015) is
+// the largest of the patch (the other top triangles stay within 0.01375 of
+// it over its footprint), so the sliver is evaluated, its map is refused,
+// and triangle_bound still returns the finite height-gap bound for it.
 void triangle_bound_falls_back_to_the_height_gap() {
   using phx::mc::remesh::Projection;
   constexpr double t = 0.01, delta = 0x1p-44;
   const std::vector<Point> points{
-      {-1, -1, t}, {1, -1, t},  {1, 1, t},   {-1, 1, t},  {-1, 0, t},  {1, 0, t},  {0, delta, t},
-      {-1, -1, -t}, {1, -1, -t}, {1, 1, -t}, {-1, 1, -t}, {-1, 0, -t}, {1, 0, -t}};
+      {-1, -1, t},  {1, -1, t},  {1, 1, t},    {-1, 1, t},   {-1, 0, t - 0.005}, {1, 0, t},
+      {0, delta, t}, {-1, -1, -t}, {1, -1, -t}, {1, 1, -t}, {-1, 1, -t},       {-1, 0, -t},
+      {1, 0, -t}};
   const std::vector<Triangle> triangles{
       {0, 1, 5},  {0, 5, 4},   {4, 5, 6},  {6, 5, 2},  {6, 2, 3},   {4, 6, 3},     // top
       {7, 12, 8}, {7, 11, 12}, {11, 9, 12}, {11, 10, 9},                          // bottom
@@ -348,7 +380,7 @@ void triangle_bound_falls_back_to_the_height_gap() {
   PHX_CHECK(source.bind(points, triangles) == PHX_MC_OK);
   const double bound = source.triangle_bound({-0.5, -0.3, 2 * t}, {0.5, -0.3, 2 * t},
                                              {0.0, 0.4, 2 * t}, Projection::kOwnNormal);
-  PHX_CHECK(bound >= t && bound <= 1.001 * t);
+  PHX_CHECK(bound >= 1.5 * t && bound <= 1.501 * t);
 }
 
 // An open source or a nonfinite coordinate is refused at bind.
@@ -468,6 +500,7 @@ void remesh_then_certify_round_trip() {
 
 int main() {
   nearest_matches_brute_force();
+  spread_source_binds_a_bounded_grid();
   triangle_bound_is_sound_and_tight();
   triangle_bound_refuses_without_coverage();
   triangle_bound_refuses_a_partly_uncovered_triangle();

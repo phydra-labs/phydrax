@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 from itertools import combinations, permutations, product
 from math import factorial
 from types import MappingProxyType
@@ -116,7 +117,16 @@ def facet_orientation_actions(
 ) -> tuple[FacetOrientationAction, ...]:
     if isinstance(shape, ReferenceCellTopology):
         return _generic_facet_actions(shape, maximum_actions)
-    shape = parse(shape, _NamedFacetShape, "shape")
+    if not isinstance(shape, str):
+        shape = parse(shape, _NamedFacetShape, "shape")
+    return _named_facet_actions(shape)
+
+
+@cache
+def _named_facet_actions(name: str, /) -> tuple[FacetOrientationAction, ...]:
+    # Immutable actions of a named shape are shared; parsing stays inside so
+    # an invalid name is refused on every call and never cached.
+    shape = parse(name, _NamedFacetShape, "shape")
     match shape:
         case "point":
             permutations = ((0,),)

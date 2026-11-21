@@ -160,7 +160,11 @@ while preserving electric, magnetic, and charge fields.
 multi-seed damped Newton reports reference coordinates, geometry residual,
 iterations, Jacobian condition, candidate exhaustion, and inverse-map exhaustion.
 Cell ownership and ties are discrete stopped decisions. Quadratic triangle and
-tetrahedron coordinate maps use the same path as affine maps.
+tetrahedron coordinate maps use the same path as affine maps, except affine
+tetrahedra: they are inverted exactly by signed-volume ratios (zero iterations, no
+seed fallback), every accepting cell is listed, and the lowest accepting cell owns
+the point. Concrete float64 queries on affine tetrahedra run natively when the
+meshcore library is present, bit for bit equal to the JAX route.
 
 `ALEFLIPPlan` consumes the canonical mesh splat and FE cell-map epochs. Fixed
 topology steps report physical and relative particle velocities, conservative

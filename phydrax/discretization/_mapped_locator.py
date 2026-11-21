@@ -1016,6 +1016,68 @@ def _merge_duplicate_roots(
     return unique_roots, unresolved
 
 
+def _isolated_root_covers(
+    target: np.ndarray,
+    expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
+    cell_kind: str,
+    policy: MappedLocationPolicy,
+    box: _UnresolvedInverseBox,
+    roots: list[_InverseRoot],
+    /,
+) -> bool:
+    """Whether Krawczyk hulls with isolated roots prove ``box`` holds no other root.
+
+    Bisection cannot decide a box that touches an isolated root without
+    containing it: interval enclosures of a box beside the root can neither
+    exclude it nor isolate a root it lacks, down to the parameter resolution.
+    When the hull of the box and the root's enclosure is Krawczyk-isolated,
+    that root is the hull's only root, so the box holds no other one. A
+    certified rootless box may still hold tolerance roots anywhere, not only at
+    its witness, so it is bisected again: each sub-box must lie outside the
+    reference margin, be Krawczyk-excluded, or have an isolated hull with a
+    root. A sub-box at the parameter resolution that is none of these keeps
+    the refusal.
+    """
+
+    def hull_isolates(lower: tuple[Fraction, ...], upper: tuple[Fraction, ...]) -> bool:
+        for root in roots:
+            hull = _krawczyk_box(
+                target,
+                expressions,
+                tuple(
+                    min(first, second)
+                    for first, second in zip(lower, root.enclosure_lower, strict=True)
+                ),
+                tuple(
+                    max(first, second)
+                    for first, second in zip(upper, root.enclosure_upper, strict=True)
+                ),
+                policy,
+                selected_rows=root.selected_rows,
+            )
+            if hull.status == "isolated" and hull.rows == root.selected_rows:
+                return True
+        return False
+
+    if box.reason != "rootless-tolerance-root":
+        return hull_isolates(box.lower, box.upper)
+    reference_tolerance = Fraction.from_float(policy.reference_tolerance)
+    stack = [(box.lower, box.upper)]
+    while stack:
+        lower, upper = stack.pop()
+        if _reference_margin_bounds(cell_kind, lower, upper)[1] < -reference_tolerance:
+            continue
+        if _krawczyk_box(target, expressions, lower, upper, policy).status == "excluded":
+            continue
+        if hull_isolates(lower, upper):
+            continue
+        split = _split_reference_box(lower, upper, policy)
+        if split is None:
+            return False
+        stack.extend(split)
+    return True
+
+
 def _isolate_inverse_roots(
     target: np.ndarray,
     expressions: tuple[tuple[Expression, tuple[Expression, ...]], ...],
@@ -1085,6 +1147,13 @@ def _isolate_inverse_roots(
         left, right = split
         stack.extend(((right, depth + 1), (left, depth + 1)))
     unique_roots, unmerged = _merge_duplicate_roots(target, expressions, policy, roots)
+    unresolved = [
+        box
+        for box in unresolved
+        if not _isolated_root_covers(
+            target, expressions, cell_kind, policy, box, unique_roots
+        )
+    ]
     unresolved.extend(unmerged)
     return _InverseIsolation(
         tuple(unique_roots),

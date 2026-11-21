@@ -37,7 +37,7 @@ def _reduced_turn(coordinate: Array, frequency: Array, quarter_turns: int, /) ->
     return phase - jnp.floor(phase)
 
 
-@functools.cache
+@functools.lru_cache(maxsize=16)
 def _harmonic_jet(order: int, /) -> jax.custom_jvp[Array]:
     @jax.custom_jvp
     def jet(coordinate: Array, frequency: Array) -> Array:

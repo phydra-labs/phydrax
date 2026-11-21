@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from fractions import Fraction
 from typing import assert_never, final, Literal, NoReturn, TypeAlias
@@ -476,8 +477,10 @@ def _table_derivative(
     return jnp.stack(entries, axis=-1).reshape(shape + (3,) * order)
 
 
-# Table jet functions keyed by (table identity, derivative order).
-_TABLE_JETS: dict[tuple[str, int], jax.custom_jvp[Array]] = {}
+# Table jet functions keyed by (table identity, derivative order), least recently
+# used first; a table's jets are rebuilt on demand after eviction.
+_TABLE_JETS: OrderedDict[tuple[str, int], jax.custom_jvp[Array]] = OrderedDict()
+_TABLE_JET_CAPACITY = 64
 # Orders whose interval programs use mean-value enclosures from the table.
 _ENCLOSED_TABLE_ORDERS = 3
 
@@ -492,6 +495,7 @@ def _table_jet(table: TrigonometricTable, order: int, /) -> jax.custom_jvp[Array
     key = (table.table_id, order)
     cached = _TABLE_JETS.get(key)
     if cached is not None:
+        _TABLE_JETS.move_to_end(key)
         return cached
 
     @jax.custom_jvp
@@ -516,6 +520,8 @@ def _table_jet(table: TrigonometricTable, order: int, /) -> jax.custom_jvp[Array
 
         register_custom_jvp_interval_extension(rule, extension)
     _TABLE_JETS[key] = jet
+    if len(_TABLE_JETS) > _TABLE_JET_CAPACITY:
+        _TABLE_JETS.popitem(last=False)
     return jet
 
 

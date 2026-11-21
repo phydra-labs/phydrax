@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -56,8 +57,10 @@ inline double effective_curvature(double first, double second) {
                   (2.0 / 3.0) * std::abs(first + second));
 }
 
-// Smallest angle of a triangle in degrees (0 for a degenerate one).
-double minimum_angle(const Point& a, const Point& b, const Point& c) {
+// Sine of the smallest angle of a triangle (0 for a degenerate one). Over a
+// star, the smallest angle is the angle of the smallest sine (asin is
+// monotone), so one asin serves the whole star.
+double minimum_sine(const Point& a, const Point& b, const Point& c) {
   const double ab = norm2(sub(b, a)), bc = norm2(sub(c, b)), ca = norm2(sub(a, c));
   const double twice_area = std::sqrt(norm2(cross(sub(b, a), sub(c, a))));
   // The smallest angle is opposite the shortest side, between the other two.
@@ -74,9 +77,16 @@ double minimum_angle(const Point& a, const Point& b, const Point& c) {
   }
   const double denominator = std::sqrt(l1 * l2);
   if (!(denominator > 0) || !(twice_area > 0)) return 0;
-  const double s = std::min(1.0, twice_area / denominator);
-  // The angle between the two longest sides is at most 60 degrees, so asin is exact here.
-  return std::asin(s) * (180.0 / 3.141592653589793);
+  return std::min(1.0, twice_area / denominator);
+}
+
+// The angle in degrees of a smallest-angle sine. The angle between the two
+// longest sides is at most 60 degrees, so asin is exact here.
+double sine_degrees(double s) { return std::asin(s) * (180.0 / 3.141592653589793); }
+
+// Smallest angle of a triangle in degrees (0 for a degenerate one).
+double minimum_angle(const Point& a, const Point& b, const Point& c) {
+  return sine_degrees(minimum_sine(a, b, c));
 }
 
 // Free vertices are projected, moved and removed; kept vertices (corners of
@@ -91,8 +101,9 @@ class Adapter {
 
   // `place` projects the free vertices onto the source; without it every
   // vertex keeps its position (a surface constructed before, to repair).
+  // `twins` (closed_manifold's, for these triangles) skips that check.
   int32_t load(const std::vector<Point>& points, const std::vector<Triangle>& triangles,
-               bool place);
+               bool place, const std::vector<int64_t>* twins = nullptr);
   void run();
   // Splits the longest edge that is not kept of every flagged triangle (rows
   // as loaded), then restores angles by Delaunay flips; returns the splits.
@@ -128,11 +139,7 @@ class Adapter {
       c = twin(prev(c));
     } while (c != first);
   }
-  int valence(int32_t v) const {
-    int count = 0;
-    for_ring(v, [&](int32_t) { ++count; });
-    return count;
-  }
+  int valence(int32_t v) const { return valences_[static_cast<size_t>(v)]; }
   int32_t new_vertex(const Point& p, const Point& normal, double size);
   int32_t new_triangle();
   // `kappa` is the effective curvature of a well-shaped triangle's sagitta
@@ -184,6 +191,8 @@ class Adapter {
   // ---- passes
   void split_long();
   void collapse_short();
+  // Staged endpoint collapses of a fine input before the size sweeps.
+  void coarsen();
   void flip_valence();
   void flip_delaunay();
   void smooth();
@@ -211,6 +220,12 @@ class Adapter {
   std::vector<uint8_t> kept_edges_;  // edges of kept triangles, per half-edge, equal on twins
   std::vector<int32_t> free_triangles_;
   std::vector<int32_t> free_vertices_;
+  // Outgoing half-edges of every vertex (its ring size), kept by every edit.
+  std::vector<int32_t> valences_;
+  // Per-vertex marks of the collapse link test; a vertex is marked when its
+  // mark equals stamp_.
+  std::vector<uint32_t> marks_;
+  uint32_t stamp_ = 0;
 };
 
 int32_t Adapter::new_vertex(const Point& p, const Point& normal, double size) {
@@ -228,6 +243,7 @@ int32_t Adapter::new_vertex(const Point& p, const Point& normal, double size) {
   sizes_.push_back(size);
   roles_.push_back(Role::kFree);
   vertex_corner_.push_back(-1);
+  valences_.push_back(0);
   return static_cast<int32_t>(positions_.size() - 1);
 }
 
@@ -244,20 +260,27 @@ int32_t Adapter::new_triangle() {
 }
 
 int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triangle>& triangles,
-                      bool place) {
+                      bool place, const std::vector<int64_t>* twins) {
   const size_t n = points.size(), m = triangles.size();
   if (n > static_cast<size_t>(INT32_MAX / 4) || m > static_cast<size_t>(INT32_MAX / 12))
     return PHX_MC_CAPACITY_EXCEEDED;
-  std::vector<int64_t> twins;
-  if (!closed_manifold(triangles, n, &twins)) return PHX_MC_INVALID_INPUT;
+  std::vector<int64_t> computed;
+  if (twins == nullptr) {
+    if (!closed_manifold(triangles, n, &computed)) return PHX_MC_INVALID_INPUT;
+    twins = &computed;
+  } else if (twins->size() != 3 * m) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
   corners_.resize(3 * m);
   opposite_.resize(3 * m);
   kept_edges_.assign(3 * m, 0);
   vertex_corner_.assign(n, -1);
+  valences_.assign(n, 0);
   for (size_t c = 0; c < 3 * m; ++c) {
     corners_[c] = static_cast<int32_t>(triangles[c / 3][c % 3]);
-    opposite_[c] = static_cast<int32_t>(twins[c]);
+    opposite_[c] = static_cast<int32_t>((*twins)[c]);
     vertex_corner_[static_cast<size_t>(corners_[c])] = static_cast<int32_t>(c);
+    ++valences_[static_cast<size_t>(corners_[c])];
   }
   positions_ = points;
   normals_.assign(n, Point{0, 0, 0});
@@ -293,16 +316,16 @@ int32_t Adapter::load(const std::vector<Point>& points, const std::vector<Triang
       kept_edges_[base + k] = kept_edges_[static_cast<size_t>(opposite_[base + k])] = 1;
     }
   }
+  for (size_t v = 0; v < n; ++v)
+    if (vertex_corner_[v] < 0) free_vertices_.push_back(static_cast<int32_t>(v));
+  // The used vertices in order: the points themselves when all are used.
   std::vector<Point> used;
-  for (size_t v = 0; v < n; ++v) {
-    if (vertex_corner_[v] < 0)
-      free_vertices_.push_back(static_cast<int32_t>(v));
-    else
-      used.push_back(points[v]);
-  }
+  if (!free_vertices_.empty())
+    for (size_t v = 0; v < n; ++v)
+      if (vertex_corner_[v] >= 0) used.push_back(points[v]);
   std::vector<SurfacePoint> projected;
   std::vector<uint8_t> found;
-  oracle_.project_all(used, projected, found);
+  oracle_.project_all(free_vertices_.empty() ? points : used, projected, found);
   size_t at = 0;
   for (size_t v = 0; v < n; ++v) {
     if (vertex_corner_[v] < 0) continue;
@@ -366,18 +389,21 @@ bool Adapter::split(int32_t h) {
   vertex_corner_[static_cast<size_t>(a)] = h;
   vertex_corner_[static_cast<size_t>(c)] = e + 2;
   vertex_corner_[static_cast<size_t>(d)] = f + 2;
+  valences_[static_cast<size_t>(m)] = 4;
+  ++valences_[static_cast<size_t>(c)];
+  ++valences_[static_cast<size_t>(d)];
   ++counters_.splits;
   return true;
 }
 
 double Adapter::star_minimum_angle(int32_t v) const {
-  double worst = 180;
+  double worst = kInfinity;
   for_ring(v, [&](int32_t c) {
     const size_t base = 3 * static_cast<size_t>(c / 3);
-    worst = std::min(worst, minimum_angle(position(corners_[base]), position(corners_[base + 1]),
-                                          position(corners_[base + 2])));
+    worst = std::min(worst, minimum_sine(position(corners_[base]), position(corners_[base + 1]),
+                                         position(corners_[base + 2])));
   });
-  return worst;
+  return worst < kInfinity ? sine_degrees(worst) : 180;
 }
 
 // Collapse half-edge h (a -> b), keeping vertex a: at the projected midpoint
@@ -392,23 +418,31 @@ bool Adapter::collapse(int32_t h, bool require_quality_gain, bool at_endpoint) {
   const int32_t c = corners_[static_cast<size_t>(prev(h))];
   const int32_t d = corners_[static_cast<size_t>(prev(g))];
   if (c == d) return false;
-  // Link condition: the rings of a and b share exactly c and d.
-  int shared = 0;
+  // Link condition: the rings of a and b share exactly c and d (b's ring
+  // marked once, a's ring tested against the marks).
+  if (++stamp_ == 0) {
+    std::fill(marks_.begin(), marks_.end(), 0);
+    stamp_ = 1;
+  }
+  if (marks_.size() < positions_.size()) marks_.resize(positions_.size(), 0);
+  int valence_b = 0;
+  for_ring(b, [&](int32_t cb) {
+    marks_[static_cast<size_t>(head(cb))] = stamp_;
+    ++valence_b;
+  });
+  int shared = 0, valence_a = 0;
   bool bad = false;
   for_ring(a, [&](int32_t ca) {
+    ++valence_a;
     const int32_t x = head(ca);
-    if (x == b) return;
-    for_ring(b, [&](int32_t cb) {
-      if (head(cb) == x) {
-        if (x == c || x == d)
-          ++shared;
-        else
-          bad = true;
-      }
-    });
+    if (x == b || marks_[static_cast<size_t>(x)] != stamp_) return;
+    if (x == c || x == d)
+      ++shared;
+    else
+      bad = true;
   });
   if (bad || shared != 2) return false;
-  if (valence(a) + valence(b) - 4 < 3 || valence(c) <= 3 || valence(d) <= 3) return false;
+  if (valence_a + valence_b - 4 < 3 || valence(c) <= 3 || valence(d) <= 3) return false;
   Point on{}, normal{};
   double kappa = 0;
   if (free) {
@@ -423,7 +457,7 @@ bool Adapter::collapse(int32_t h, bool require_quality_gain, bool at_endpoint) {
   const double before = !require_quality_gain ? 0
                         : free ? std::min(star_minimum_angle(a), star_minimum_angle(b))
                                : star_minimum_angle(b);
-  double after = 180;
+  double after_sine = kInfinity;
   // Every triangle around a or b except t0, t1 gets the merged vertex at `on`.
   const int32_t t0 = h / 3, t1 = g / 3;
   bool acceptable = true;
@@ -447,12 +481,13 @@ bool Adapter::collapse(int32_t h, bool require_quality_gain, bool at_endpoint) {
         acceptable = false;
         return;
       }
-      after = std::min(after, minimum_angle(p[0], p[1], p[2]));
+      after_sine = std::min(after_sine, minimum_sine(p[0], p[1], p[2]));
     });
   };
   if (free) check(a);
   if (acceptable) check(b);
   if (!acceptable) return false;
+  const double after = after_sine < kInfinity ? sine_degrees(after_sine) : 180;
   if (require_quality_gain ? !(after > before) : after < 0.5 * targets_.minimum_angle_degrees)
     return false;
   // Commit: b's corners become a; glue the outer edges of t0 and t1 (a glued
@@ -472,6 +507,10 @@ bool Adapter::collapse(int32_t h, bool require_quality_gain, bool at_endpoint) {
   vertex_corner_[static_cast<size_t>(c)] = o_hn;
   vertex_corner_[static_cast<size_t>(d)] = o_gn;
   vertex_corner_[static_cast<size_t>(b)] = -1;
+  valences_[static_cast<size_t>(a)] = valence_a + valence_b - 4;
+  --valences_[static_cast<size_t>(c)];
+  --valences_[static_cast<size_t>(d)];
+  valences_[static_cast<size_t>(b)] = 0;
   free_vertices_.push_back(b);
   for (const int32_t t : {t0, t1}) {
     for (size_t k = 0; k < 3; ++k) {
@@ -535,6 +574,10 @@ bool Adapter::flip(int32_t h) {
   vertex_corner_[static_cast<size_t>(a)] = s + 1;
   vertex_corner_[static_cast<size_t>(d)] = r;
   vertex_corner_[static_cast<size_t>(b)] = r + 1;
+  --valences_[static_cast<size_t>(a)];
+  --valences_[static_cast<size_t>(b)];
+  ++valences_[static_cast<size_t>(c)];
+  ++valences_[static_cast<size_t>(d)];
   ++counters_.flips;
   return true;
 }
@@ -786,22 +829,37 @@ std::vector<int32_t> Adapter::alive_triangles() const {
 }
 
 // Splits the longest edge of every triangle sampled above the repair margin
-// until none is, or no split helps.
+// until none is, or no split helps. No vertex moves or goes here (splits add
+// vertices, flips reconnect), so a triangle slot holding the same corners as
+// when it was sampled keeps its deviation; only changed slots are sampled.
 int64_t Adapter::repair_fidelity() {
   const double limit = kRepairMargin * targets_.tolerance;
   int64_t above = 0;
-  std::vector<double> deviation;
+  std::vector<std::array<int32_t, 3>> sampled_corners;
+  std::vector<double> sampled_deviation, deviation;
+  std::vector<int32_t> stale;
   for (int sweep = 0; sweep < kFidelitySweeps; ++sweep) {
     const std::vector<int32_t> alive = alive_triangles();
-    deviations(alive, deviation);
+    sampled_corners.resize(corners_.size() / 3, {-1, -1, -1});
+    sampled_deviation.resize(corners_.size() / 3, 0);
+    stale.clear();
+    for (const int32_t t : alive) {
+      const size_t base = 3 * static_cast<size_t>(t);
+      const std::array<int32_t, 3> now{corners_[base], corners_[base + 1], corners_[base + 2]};
+      if (sampled_corners[static_cast<size_t>(t)] == now) continue;
+      sampled_corners[static_cast<size_t>(t)] = now;
+      stale.push_back(t);
+    }
+    deviations(stale, deviation);
+    for (size_t i = 0; i < stale.size(); ++i)
+      sampled_deviation[static_cast<size_t>(stale[i])] = deviation[i];
     // Offenders with their corners as sampled: a split earlier in this sweep
     // may remove or reshape one, whose deviation is then unknown until the
     // next sweep.
     std::vector<std::pair<int32_t, std::array<int32_t, 3>>> offenders;
-    for (size_t i = 0; i < alive.size(); ++i) {
-      if (!(deviation[i] > limit)) continue;
-      const size_t base = 3 * static_cast<size_t>(alive[i]);
-      offenders.push_back({alive[i], {corners_[base], corners_[base + 1], corners_[base + 2]}});
+    for (const int32_t t : alive) {
+      if (!(sampled_deviation[static_cast<size_t>(t)] > limit)) continue;
+      offenders.push_back({t, sampled_corners[static_cast<size_t>(t)]});
     }
     above = static_cast<int64_t>(offenders.size());
     if (above == 0 || split_listed(offenders) == 0) break;
@@ -875,7 +933,41 @@ int64_t Adapter::relax() {
   return counters_.relocations - before;
 }
 
+// Coarsening a fine input in stages: while the stage size is below three
+// quarters of the target size, every edge shorter than kShort times the
+// stage size (and than its own size) collapses into an endpoint, then
+// valence flips restore the stars. The stage size starts at twice the
+// input's mean edge and doubles each pass, so each pass removes a bounded
+// share of vertices and the stars stay small, instead of one sweep absorbing
+// whole patches into single vertices; the size sweeps then finish at the
+// projected midpoints. It ends after at most log2(target size / mean edge)
+// passes, each one sweep over the corners.
+void Adapter::coarsen() {
+  double total = 0;
+  int64_t edges = 0;
+  for (size_t c = 0; c < corners_.size(); ++c) {
+    const auto h = static_cast<int32_t>(c);
+    if (!alive_triangle(h / 3) || twin(h) < h) continue;
+    total += std::sqrt(norm2(sub(position(tail(h)), position(head(h)))));
+    ++edges;
+  }
+  if (edges == 0 || !(total > 0) || !std::isfinite(total)) return;
+  for (double stage = 2 * total / static_cast<double>(edges);
+       stage < 0.75 * targets_.edge_length; stage *= 2) {
+    const size_t count = corners_.size();
+    for (size_t c = 0; c < count; ++c) {
+      const auto h = static_cast<int32_t>(c);
+      if (!alive_triangle(h / 3)) continue;
+      const int32_t a = tail(h), b = head(h);
+      const double limit = kShort * std::min(stage, edge_size(a, b));
+      if (norm2(sub(position(a), position(b))) < limit * limit) collapse(h, false, true);
+    }
+    flip_valence();
+  }
+}
+
 void Adapter::run() {
+  coarsen();
   for (int sweep = 0; sweep < kSizeSweeps; ++sweep) {
     split_long();
     collapse_short();
@@ -915,12 +1007,12 @@ void Adapter::store(std::vector<Point>& points, std::vector<Triangle>& triangles
 
 int32_t adapt_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                       const SurfaceOracle& oracle, const AdaptTargets& targets,
-                      AdaptCounters& counters) {
+                      const std::vector<int64_t>* twins, AdaptCounters& counters) {
   if (!(targets.edge_length > 0) || !(targets.tolerance > 0) ||
       !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
     return PHX_MC_INVALID_ARGUMENT;
   Adapter adapter(oracle, targets, counters);
-  const int32_t status = adapter.load(points, triangles, true);
+  const int32_t status = adapter.load(points, triangles, true, twins);
   if (status != PHX_MC_OK) {
     points.clear();
     triangles.clear();
@@ -962,6 +1054,7 @@ int32_t relax_surface(std::vector<Point>& points, std::vector<Triangle>& triangl
 int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& triangles,
                         const SurfaceOracle& oracle, const AdaptTargets& targets,
                         const TriangleCertifier& certifier, const CarrierEvidence& carrier,
+                        const TriangleCertifier* repair_certifier, bool margin_from_start,
                         CertifyCounters& counters) {
   if (!(targets.edge_length > 0) || !(targets.tolerance > 0) ||
       !(targets.minimum_angle_degrees > 0) || !(targets.minimum_angle_degrees < 60))
@@ -978,10 +1071,20 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
   };
   const auto by_key = [](const Decided& entry, const TriangleKey& key) { return entry.key < key; };
   std::vector<Decided> decided, next;
-  std::vector<uint8_t> refused, changed, illegal;
+  std::vector<uint8_t> refused, above, fresh, changed, illegal;
+  struct Standing {
+    std::vector<Point> points;
+    std::vector<Triangle> triangles;
+    std::vector<uint8_t> carried;
+    double distance;
+    int64_t carrier;
+  };
+  std::optional<Standing> last_standing;
   for (int round = 0;; ++round) {
     const size_t m = triangles.size();
     refused.assign(m, 0);
+    above.assign(m, 0);
+    fresh.assign(m, 0);
     changed.assign(m, 0);
     counters.carried.assign(m, 0);
     next.clear();
@@ -1011,33 +1114,61 @@ int32_t certify_surface(std::vector<Point>& points, std::vector<Triangle>& trian
           ++carried;
         }
       }
-      if (bound < kInfinity)
-        maximum = std::max(maximum, bound);
-      else
+      if (!(bound < kInfinity))
         refused[t] = 1;
+      else
+        maximum = std::max(maximum, bound);
+      fresh[t] = static_cast<uint8_t>(!known);
       next.push_back({key, proved, false});
     }
     counters.refused_embedding += refuse_illegal_contacts(
         points, triangles, round == 0 ? nullptr : &changed, illegal);
-    int64_t count = 0;
+    int64_t count = 0, margin = 0;
     for (size_t t = 0; t < m; ++t) {
       refused[t] = static_cast<uint8_t>(refused[t] | illegal[t]);
       next[t].refused = refused[t] != 0;
       count += refused[t];
     }
+    // Once the surface needs a repair (or from the start when asked), every
+    // triangle decided this round (all of them in the first) must also stand
+    // in the tighter band: one proved only by `certifier` is repaired too,
+    // not refused.
+    if (repair_certifier != nullptr && (margin_from_start || round > 0 || count > 0))
+      for (size_t t = 0; t < m; ++t) {
+        if (!fresh[t] || refused[t] || counters.carried[t]) continue;
+        const Point& a = points[static_cast<size_t>(triangles[t][0])];
+        const Point& b = points[static_cast<size_t>(triangles[t][1])];
+        const Point& c = points[static_cast<size_t>(triangles[t][2])];
+        if (repair_certifier->bound(a, b, c) < kInfinity) continue;
+        above[t] = 1;
+        ++margin;
+      }
     counters.rounds = round + 1;
     counters.carrier = carried;
     counters.distance = maximum;
-    if (count == 0) return PHX_MC_OK;
-    if (round + 1 == kRepairRounds) return PHX_MC_UNRESOLVED;
+    // A margin repair may break what already stood (a new contact): the
+    // last standing surface is kept to return instead.
+    if (count == 0 && margin > 0)
+      last_standing = Standing{points, triangles, counters.carried, maximum, carried};
+    const auto finish = [&]() {
+      if (count == 0 || !last_standing) return count == 0 ? PHX_MC_OK : PHX_MC_UNRESOLVED;
+      points = std::move(last_standing->points);
+      triangles = std::move(last_standing->triangles);
+      counters.carried = std::move(last_standing->carried);
+      counters.distance = last_standing->distance;
+      counters.carrier = last_standing->carrier;
+      return PHX_MC_OK;
+    };
+    if (count + margin == 0 || round + 1 == kRepairRounds) return finish();
     std::sort(next.begin(), next.end(),
               [](const Decided& x, const Decided& y) { return x.key < y.key; });
     decided.swap(next);
+    for (size_t t = 0; t < m; ++t) above[t] = static_cast<uint8_t>(above[t] | refused[t]);
     int64_t splits = 0;
-    const int32_t status = repair_surface(points, triangles, oracle, targets, refused, splits);
+    const int32_t status = repair_surface(points, triangles, oracle, targets, above, splits);
     if (status != PHX_MC_OK) return status;
     counters.repair_splits += splits;
-    if (splits == 0) return PHX_MC_UNRESOLVED;
+    if (splits == 0) return finish();
   }
 }
 

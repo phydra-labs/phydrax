@@ -518,35 +518,6 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   if (!sizes || (controls.geometry_order != 1 && controls.geometry_order != 2))
     return PHX_MC_INVALID_ARGUMENT;
   const auto volume_start = std::chrono::steady_clock::now();
-  // A fixed boundary triangle that is flat to rounding (a zero-length edge or
-  // a zero-area sliver) leaves no tetrahedron beside it that can meet the
-  // quality targets, and improvement then churns without end (measured: the
-  // sphere's coincident equator rings, 2 ulps apart, ran 115 s to 30k
-  // improvement insertions). Its relative area r = 2 A / l_max^2 (sqrt(3)/2
-  // for an equilateral triangle) is refused before recovery when r^2 is below
-  // the determinant floor 2^-22, the improvement's floor for cells.
-  for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
-    const auto& tri = surface.triangles[t];
-    const Point& a = surface.points[tri[0]];
-    const Point& b = surface.points[tri[1]];
-    const Point& c = surface.points[tri[2]];
-    const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-    const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const Point n{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
-    const double longest =
-        std::max({squared_length(a, b), squared_length(b, c), squared_length(c, a)});
-    const double area2 = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-    const double relative = longest > 0.0 ? area2 / longest : 0.0;
-    if (!(relative * relative >= kMetricDeterminantFloor)) {
-      stats.recovery_status = PHX_MC_UNRESOLVED;
-      stats.recovery_reason = PHX_MC_PLC_INVALID_FACET;
-      stats.failure_kind = PHX_MC_PLC_ENTITY_FACET;
-      stats.failure_entity = static_cast<int64_t>(t);
-      stats.failure_measure = relative;
-      stats.volume_ns = elapsed_ns(volume_start);
-      return PHX_MC_UNRESOLVED;
-    }
-  }
   PlcHandle recovery;
   for (int attempt = 0;; ++attempt) {
     phx_mc_cad_boundary_split split{};
@@ -570,6 +541,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
       stats.recovery_reason = reason;
       stats.failure_kind = first_kind;
       stats.failure_entity = first;
+      // S3 refuses a flat-to-rounding triangle (smallest-angle sine below the
+      // determinant floor) before recovery; its sine is the evidence.
+      if (reason == PHX_MC_PLC_INVALID_FACET) stats.failure_measure = deviation;
       if (reason == PHX_MC_PLC_FIXED_SEGMENT || reason == PHX_MC_PLC_FIXED_FACET ||
           reason == PHX_MC_PLC_STEINER_SUPPRESSION) {
         const auto& edges = recovery->recovery.plc_edges;
@@ -607,11 +581,13 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     ++stats.boundary_splits;
   }
   // S3's size is an upper bound on each cell's circumradius; the request h is
-  // passed as that bound unchanged. Measured on Gmsh's own quadric surfaces (MAC
-  // 111e914), this reproduces Gmsh's interior edge distribution (median 1.34 h vs
-  // Gmsh's 1.37 h) at 1.08x its tet count, whereas the regular-tet value
-  // h * sqrt(6) / 4 gives 4-5x. Each surface point takes the smallest h of its
-  // faces, the rest the smallest h overall; refinement interpolates inside.
+  // passed as that bound unchanged. Refinement seeds the interior with the
+  // coarsest lattice meeting it (refine3d.cpp): on Gmsh's quadric surface at
+  // h = 0.02286 every cell has circumradius at most h, interior edges median
+  // 1.52 h (HXT's 1.45 h), at 0.69x HXT's tet count; the regular-tet value
+  // h * sqrt(6) / 4 would give several times that. Each surface point takes
+  // the smallest h of its faces, the rest the smallest h overall; refinement
+  // interpolates inside.
   const auto surface_points = surface.points.size();
   const auto& recovered = recovery->recovery;
   const std::size_t point_count = recovered.points.size() / 3;
