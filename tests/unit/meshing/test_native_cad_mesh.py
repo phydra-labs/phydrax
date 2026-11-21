@@ -812,6 +812,45 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
         )
 
 
+def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(
+    domain: MeshingDomain,
+) -> None:
+    # Quadric at h 0.0998, theta 0.8, tolerance kappa h^2 / 4 per face (kappa
+    # the faces' curvature 1 / radius: 1 on the vertical cylinder's faces 0
+    # and 1, 5/3 on the transverse one), curves at their faces' smallest. The
+    # chart kernel left one triangle on each mirror face, on curve segment
+    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbour's vertex
+    # inserted under its own (smaller) metric sat 0.43 from the circumcenter
+    # in the triangle's centroid metric, every candidate was within 0.5 of a
+    # vertex and the long edge's midpoint encroached the segment, so the face
+    # stage returned UNRESOLVED with two encroachment refusals. Flipping the
+    # long unconstrained edge leaves both triangles under the bound. Fault
+    # caught: a refused triangle left in place instead of flipped.
+    model = cad_geometry_bundle(domain).model
+    size = 0.0998
+    curvature = np.asarray([1.0, 1.0, 5.0 / 3.0], dtype=np.float64)
+    face_tolerances = curvature * size * size / 4.0
+    curve_tolerances = np.full((model.curve_nodes.size,), np.inf, dtype=np.float64)
+    offsets = np.asarray(model.loop_use_offsets)
+    for loop, face in enumerate(np.asarray(model.loop_surfaces)):
+        for use in range(offsets[loop], offsets[loop + 1]):
+            if model.use_kinds[use] == 0:
+                curve = model.use_entities[use]
+                curve_tolerances[curve] = min(
+                    curve_tolerances[curve], face_tolerances[face]
+                )
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), size, dtype=np.float64),
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction=0.8,
+    )
+    assert result.status is MeshcoreStatus.OK
+    assert result.face_failures.size == 0
+    assert result.triangles.shape[0] > 0
+
+
 @pytest.mark.parametrize("order", [1, 2])
 def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
     model = cad_geometry_bundle(domain).model

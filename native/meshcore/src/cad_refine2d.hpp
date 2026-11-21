@@ -65,6 +65,7 @@ struct CadRefine2DStats {
   int64_t relocations_tried = 0;
   int64_t relocations_accepted = 0;
   int64_t relocations_failed = 0;
+  int64_t flips = 0;
 };
 
 enum class CadRefine2DRefusal : uint8_t {
@@ -109,7 +110,10 @@ struct CadRefine2DResult {
 // Encroachment and proximity refusals record that relocation was attempted
 // and failed (encroachment: ray, offcenter, circumcenter; proximity: the
 // circumcenter, then the midpoint of the longest unconstrained edge); each
-// outcome is also counted in the relocation statistics.
+// outcome is also counted in the relocation statistics. A failed relocation
+// first tries flipping one of the triangle's unconstrained edges, kept only
+// when the larger metric circumradius of the pair drops (counted in flips;
+// no refusal is recorded then).
 // Triangles with three fixed input vertices are neither refined nor scanned
 // while the queue drains. With fixed_region, those still left whose centroid
 // it declines are then refined like any other and judged by the census; the

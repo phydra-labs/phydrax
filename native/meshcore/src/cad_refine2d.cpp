@@ -1024,6 +1024,110 @@ class Refinement {
     return status_==PHX_MC_OK && encroaches(q,mq)<0 && !too_close(q,mq) &&
            insert(host,q,mq,t,true);
   }
+  // The metric circumradius of the counterclockwise chart triangle abc at
+  // its centroid metric, rotated canonically as in geometry(); NaN with
+  // status_ set when the metric evaluation fails.
+  double metric_radius(int32_t va,int32_t vb,int32_t vc) {
+    const int32_t ids[3]={va,vb,vc};
+    int first=0;
+    for (int i=1;i<3;++i) {
+      const double* candidate=tri_.point(ids[i]);
+      const double* best=tri_.point(ids[first]);
+      if (candidate[0]<best[0] || (candidate[0]==best[0] && candidate[1]<best[1])) first=i;
+    }
+    const double* a=tri_.point(ids[first]);
+    const double* b=tri_.point(ids[next3(first)]);
+    const double* c=tri_.point(ids[prev3(first)]);
+    const double centroid[2]={(a[0]+b[0]+c[0])/3.0,(a[1]+b[1]+c[1])/3.0};
+    const CadMetric2D m=metric(centroid);
+    if (status_!=PHX_MC_OK) return std::numeric_limits<double>::quiet_NaN();
+    const double x=b[0]-a[0], y=b[1]-a[1];
+    const double u=c[0]-a[0], v=c[1]-a[1];
+    const double bx=m.uu*x+m.uv*y, by=m.uv*x+m.vv*y;
+    const double cx=m.uu*u+m.uv*v, cy=m.uv*u+m.vv*v;
+    const double determinant=bx*cy-by*cx;
+    const double bb=dot(m,x,y,x,y), cc=dot(m,u,v,u,v);
+    const double dx=(bb*cy-cc*by)/(2*determinant);
+    const double dy=(bx*cc-cx*bb)/(2*determinant);
+    return std::sqrt(dot(m,dx,dy,dx,dy));
+  }
+  // A triangle whose every candidate point was refused (encroachment or
+  // proximity) loses its unconstrained edge to a flip when the pair that
+  // replaces it and its neighbour has a smaller larger metric circumradius
+  // than the pair it replaces (the smallest such, ties by the edge's
+  // canonical key). Insertion cavities judge conflict in the new point's
+  // metric and the size test in each triangle's centroid metric, so a
+  // varying metric leaves triangles that are not Delaunay in their own
+  // (measured, quadric h 0.0998 theta 0.8: the neighbour's vertex 0.43 from
+  // the circumcenter of a triangle of metric circumradius 0.78, both other
+  // candidates within 0.5 of a vertex and the edge midpoint encroaching the
+  // curve segment; the flip leaves both triangles under the bound). Each
+  // flip lowers the descending sequence of radii lexicographically on a
+  // fixed vertex set, so flips between insertions are finite.
+  bool flip_refused(int32_t t) {
+    const Triangle2D cell=tri_.triangles[t];
+    int best_edge=-1, best_twin=0;
+    double best=0;
+    std::array<double,4> best_key{};
+    for (int k=0;k<3;++k) {
+      const int32_t nb=cell.n[k];
+      if (tri_.constraint(t,k)!=-1 || !inside(nb) || fixed_triangle(nb)) continue;
+      const int32_t p=cell.v[k], u=cell.v[next3(k)], w=cell.v[prev3(k)];
+      const int j=tri_.edge_index(nb,w,u);
+      if (j<0) continue;
+      const int32_t q=tri_.triangles[nb].v[j];
+      if (orient2d(tri_.point(p),tri_.point(u),tri_.point(q))<=0 ||
+          orient2d(tri_.point(p),tri_.point(q),tri_.point(w))<=0) continue;
+      const double before=std::max(metric_radius(p,u,w),metric_radius(q,w,u));
+      const double after=std::max(metric_radius(p,u,q),metric_radius(p,q,w));
+      if (status_!=PHX_MC_OK) return false;
+      if (!(after<before)) continue;
+      std::array<double,2> x{tri_.point(u)[0],tri_.point(u)[1]},y{tri_.point(w)[0],tri_.point(w)[1]};
+      if (y<x) std::swap(x,y);
+      const std::array<double,4> key{x[0],x[1],y[0],y[1]};
+      if (best_edge<0 || after<best || (after==best && key<best_key)) {
+        best_edge=k; best_twin=j; best=after; best_key=key;
+      }
+    }
+    if (best_edge<0) return false;
+    const int k=best_edge;
+    const int32_t nb=cell.n[k];
+    const Triangle2D other=tri_.triangles[nb];
+    const int32_t p=cell.v[k], u=cell.v[next3(k)], w=cell.v[prev3(k)];
+    const int j=best_twin;
+    const int32_t q=other.v[j];
+    // Outer edges: p->u and w->p of t, u->q and q->w of nb.
+    const int32_t n_pu=cell.n[prev3(k)], n_wp=cell.n[next3(k)];
+    const int32_t n_uq=other.n[next3(j)], n_qw=other.n[prev3(j)];
+    const int32_t c_pu=tri_.constraint(t,prev3(k)), c_wp=tri_.constraint(t,next3(k));
+    const int32_t c_uq=tri_.constraint(nb,next3(j)), c_qw=tri_.constraint(nb,prev3(j));
+    for (const int32_t s : {t,nb}) {
+      if (static_cast<std::size_t>(s)<generations_.size()) ++generations_[s];
+      if (static_cast<std::size_t>(s)<last_refusals_.size()) last_refusals_[s]=CadRefine2DUnresolved{};
+      tri_.release(s);
+    }
+    const int32_t first=tri_.allocate(), second=tri_.allocate();
+    tri_.set_triangle(first,p,u,q,c_uq,-1,c_pu);
+    tri_.set_triangle(second,p,q,w,c_qw,c_wp,-1);
+    tri_.region[first]=tri_.region[second]=1;
+    tri_.link_edge(first,p,u,n_pu);
+    tri_.link_edge(first,u,q,n_uq);
+    tri_.link_edge(second,q,w,n_qw);
+    tri_.link_edge(second,w,p,n_wp);
+    tri_.link_edge(first,q,p,second);
+    ++result_.stats.flips;
+    const std::pair<int32_t,int32_t> outer[4]={{first,n_pu},{first,n_uq},{second,n_qw},{second,n_wp}};
+    for (const int32_t s : {first,second}) { classify_state(s); if (status_!=PHX_MC_OK) return true; }
+    // As after an insertion: a new triangle and a processed neighbour that
+    // gains a front from it are enqueued.
+    for (const int32_t s : {first,second}) if (states_[s]==2 && !queued_[s]) enqueue(s);
+    for (const auto& [s,nb_outer] : outer) {
+      if (!inside(nb_outer) || static_cast<std::size_t>(nb_outer)>=states_.size()) continue;
+      if (states_[nb_outer]==3 && states_[s]==1) states_[nb_outer]=2;
+      if (states_[nb_outer]==2 && !queued_[nb_outer]) enqueue(nb_outer);
+    }
+    return true;
+  }
   void process(int32_t t) {
     double radius, p[2];
     CadMetric2D center_metric;
@@ -1054,7 +1158,7 @@ class Refinement {
         return;
       }
       ++result_.stats.relocations_failed;
-      if (status_!=PHX_MC_OK) return;
+      if (status_!=PHX_MC_OK || flip_refused(t) || status_!=PHX_MC_OK) return;
       refuse(result_.stats.encroachment_refusals,CadRefine2DRefusal::encroachment,t,p,segment);
       return;
     }
@@ -1068,7 +1172,7 @@ class Refinement {
         return;
       }
       ++result_.stats.relocations_failed;
-      if (status_!=PHX_MC_OK) return;
+      if (status_!=PHX_MC_OK || flip_refused(t) || status_!=PHX_MC_OK) return;
       refuse(result_.stats.proximity_refusals,CadRefine2DRefusal::proximity,t,p);
       return;
     }
