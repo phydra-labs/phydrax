@@ -1297,6 +1297,34 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
         ),
     ),
+    "phx_mc_welded_topology": (
+        _I32,
+        (
+            _I32,
+            _I32,
+            _I32,
+            _I32,
+            _I64,
+            _I64,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _I64,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+        ),
+    ),
     "phx_mc_polyhedral_star_validity": (
         _I32,
         (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P),
@@ -4494,6 +4522,91 @@ def cell_map_validity(
     )
     _raise_for_call(result, "cell_map_validity")
     return decided.astype(np.bool_), status, lower, upper, digests
+
+
+def welded_topology(
+    dimension: int,
+    key_count: int,
+    cells: np.ndarray,
+    audited_cells: int,
+    facets: np.ndarray,
+    facet_cells: np.ndarray,
+    facet_signs: np.ndarray,
+    audited_facets: int,
+    audited_facet_width: int,
+    edges: np.ndarray,
+    edge_cells: np.ndarray,
+    scope: np.ndarray | None,
+    /,
+    *,
+    embedded: bool,
+    check_manifold: bool,
+    check_watertight: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Combinatorial welded-topology counts of one star complex.
+
+    The first ``audited_cells`` cells and ``audited_facets`` facets are the
+    audited mesh. Returns ``counts`` (collapsed cells, duplicate cells,
+    nonmanifold facets, inconsistent facets, open boundary, nonmanifold
+    vertices, nonmanifold edges) and the audited boundary-occurrence mask, as
+    ``phx_mc_welded_topology`` documents.
+    """
+    cell_array = np.ascontiguousarray(cells, dtype=np.int64)
+    facet_array = np.ascontiguousarray(facets, dtype=np.int64)
+    facet_cell_array = np.ascontiguousarray(facet_cells, dtype=np.int64)
+    sign_array = np.ascontiguousarray(facet_signs, dtype=np.int8)
+    edge_array = np.ascontiguousarray(edges, dtype=np.int64)
+    edge_cell_array = np.ascontiguousarray(edge_cells, dtype=np.int64)
+    scope_array = (
+        None if scope is None else np.ascontiguousarray(scope, dtype=np.int64).reshape(-1)
+    )
+    if (
+        cell_array.ndim != 2
+        or facet_array.ndim != 2
+        or facet_cell_array.shape != (facet_array.shape[0],)
+        or sign_array.shape != (facet_array.shape[0],)
+        or edge_array.ndim != 2
+        or edge_array.shape[1] != 2
+        or edge_cell_array.shape != (edge_array.shape[0],)
+    ):
+        raise ValueError("Welded topology requires padded cell, facet and edge rows.")
+    counts = np.zeros((7,), dtype=np.int64)
+    boundary = np.zeros((audited_facets,), dtype=np.int8)
+    status = load_meshcore()["phx_mc_welded_topology"](
+        dimension,
+        int(embedded),
+        int(check_manifold),
+        int(check_watertight),
+        key_count,
+        cell_array.shape[0],
+        audited_cells,
+        cell_array.shape[1],
+        cell_array.ctypes.data,
+        facet_array.shape[0],
+        audited_facets,
+        facet_array.shape[1],
+        audited_facet_width,
+        facet_array.ctypes.data,
+        facet_cell_array.ctypes.data,
+        sign_array.ctypes.data,
+        edge_array.shape[0],
+        edge_array.ctypes.data,
+        edge_cell_array.ctypes.data,
+        -1 if scope_array is None else scope_array.size,
+        None if scope_array is None else scope_array.ctypes.data,
+        counts.ctypes.data,
+        boundary.ctypes.data,
+    )
+    _raise_for_call(
+        status,
+        "welded_topology",
+        contracts={
+            MeshcoreStatus.INVALID_INPUT: (
+                "Welded star links reference unknown incidences."
+            )
+        },
+    )
+    return counts, boundary.astype(np.bool_)
 
 
 def common_denominator_rows(
