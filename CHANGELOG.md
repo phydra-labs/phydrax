@@ -15,7 +15,7 @@
   `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
   gives the hexahedron fraction by shape); `prove=True` certifies cell
   validity, the global embedding and the boundary fidelity (on curved inputs
-  such as the F8 quadric it currently refuses: neighbouring cells whose bent
+  such as the F8 quadric it currently refuses: neighboring cells whose bent
   faces share an edge chain overlap under fan semantics), the proof-only
   fidelity preparation built on the first proved execution. `plc_hex_dominant`
   remains the route for trilinear
