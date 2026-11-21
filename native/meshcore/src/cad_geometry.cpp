@@ -350,7 +350,7 @@ void restrict_bernstein(const SplineInterval* in, int degree, double a, double b
 // homogeneous Bernstein nets of the requested derivatives are restricted to
 // the box's local rectangle and their hulls bound the polynomial derivatives
 // (convex hull property). The local rectangle is clamped to [0, 1]: box points
-// outside a piece belong to a neighbour, which is visited as well. The
+// outside a piece belong to a neighbor, which is visited as well. The
 // source's passing ASTS certificate (required to build the surface) proves C2
 // trace continuity, so the hull of per-piece Hessians bounds the whole box.
 int32_t tspline_interval_jets(const int64_t* ints, const double* lower, const double* upper,
@@ -626,7 +626,7 @@ int32_t intersection_chart_jets(const CadGeometry& geometry, const Node& node,
     }
     return 1;
   };
-  // Non-rigorous Newton guesses at both fraction endpoints only centre the
+  // Non-rigorous Newton guesses at both fraction endpoints only center the
   // trial boxes; certification is the Krawczyk test above.
   double guess[2][3];
   for (int end = 0; end < 2; ++end) {

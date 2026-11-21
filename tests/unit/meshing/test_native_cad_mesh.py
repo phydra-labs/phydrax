@@ -165,8 +165,8 @@ def _assert_cad_fidelity(
                 measured[rows[local]] = np.max(
                     np.linalg.norm(pole_exact - linear[local], axis=2), axis=1
                 )
-            # A planar disk centre (pole chord at v = pole_v): rows touching
-            # it take the disk-centre chart (x, y) = |v - pole_v| (cos u,
+            # A planar disk center (pole chord at v = pole_v): rows touching
+            # it take the disk-center chart (x, y) = |v - pole_v| (cos u,
             # sin u), where S is affine.
             pole_chords = (chart.use_patch[chart.chord_use] == patch) & (
                 np.asarray(model.use_kinds)[chart.chord_use] == 1
@@ -682,32 +682,19 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
     # deviates there at most (A du^2 + 2 B du dv + C dv^2) / 8 (A, B, C the
     # bounds of |S_uu| = cos v, |S_uv| = |sin v|, |S_vv| <= |cos v| + |sin v|
     # over its latitudes, du, dv its chart extents; cad_faces.hpp). The trim
-    # circle's chords (curve stage) and the band before the first ring (face
-    # stage) are sized by that bound, so every row standing on a trim chord
-    # meets it within theta tol. A row with one corner on the trim (beside a
-    # trim vertex, or at a seam end, where the ring chain is open and the row
-    # reaches the seam's first vertex beyond the band) is outside the band's
-    # premise; its chart-linear deviation, sampled against the closed form
-    # S = (cos v cos u, cos v sin u, sin v) on a barycentric grid, stays
-    # within theta tol (measured worst 0.86 over 45 coarse caps and 400
-    # random ones). Fault caught: chords sized in 3D alone (the trim at 85
-    # deg in three chords, du = 2 pi / 3: bound and sampled deviation over
-    # theta tol, V3 refused those rows though the flat triangles lay within
-    # it).
+    # circle's chords and a seam vertex at the design band (curve stage), the
+    # band ring snapped to it and aligned to the trim's vertices (face stage)
+    # are sized by that bound, so every row with a corner on the trim meets
+    # it within theta tol. Faults caught: chords sized in 3D alone (the trim
+    # at 85 deg in three chords, du = 2 pi / 3: rows over the bound, V3
+    # refused them though the flat triangles lay within theta tol), and a
+    # band ring chain left open at the seam (the seam-end row reaching the
+    # seam's next vertex: up to 2.3 times the bound).
     trim = np.radians(float(latitude))
     model = cad_geometry_bundle(
         MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
     ).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
-    steps = 12
-    weights = np.asarray(
-        [
-            (1 - (i + j) / steps, i / steps, j / steps)
-            for i in range(steps + 1)
-            for j in range(steps + 1 - i)
-        ],
-        dtype=np.float64,
-    )
     for size in (0.4, 0.6, 0.8):
         for theta in (0.5, 0.7, 0.9):
             tolerance = size / 6.0
@@ -723,7 +710,7 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
             corners = result.points[np.asarray(result.chart.triangles)]
             dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
             on_trim = np.abs(uv[:, :, 1] - trim) < 1e-12
-            rows = dome & (on_trim.sum(axis=1) == 2)
+            rows = dome & on_trim.any(axis=1)
             assert rows.any(), (size, theta)
             latitudes = uv[rows, :, 1]
             du = np.ptp(uv[rows, :, 0], axis=1)
@@ -733,26 +720,132 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
             b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
             bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
             assert bound.max() <= theta * tolerance, (size, theta, bound.max())
-            touching = dome & on_trim.any(axis=1)
-            chart = np.einsum("kv,rvd->rkd", weights, uv[touching])
-            linear = np.einsum("kv,rvd->rkd", weights, corners[touching])
-            exact = np.stack(
-                (
-                    np.cos(chart[..., 1]) * np.cos(chart[..., 0]),
-                    np.cos(chart[..., 1]) * np.sin(chart[..., 0]),
-                    np.sin(chart[..., 1]),
-                ),
-                axis=-1,
-            )
-            deviation = np.linalg.norm(exact - linear, axis=2).max()
-            assert deviation <= theta * tolerance, (size, theta, deviation)
+
+
+@pytest.mark.parametrize(
+    ("latitude", "size", "theta"),
+    (
+        (55.02410624307131, 0.7399833208919971, 0.8262382502818686),
+        (84.90768372797963, 0.7379609933402859, 0.848268379781792),
+    ),
+)
+def test_polar_trim_zone_rows_meet_the_chart_linear_bound(
+    latitude: float, size: float, theta: float
+) -> None:
+    # A polar trim's zone has a ring at each seam vertex (the seam sized by
+    # the chart-linear bound (A du^2 + 2 B du dv + C dv^2) / 8 of the test
+    # above), each ring's stops the previous ring's cut or joined, pieces
+    # within the bound over the gap: every zone row meets it. The zone runs
+    # to the first seam vertex at or below latitude 45 deg (where |S_u|^2 =
+    # |S_v|^2 / 2), so every row with a corner above that is a zone row and
+    # meets the bound within theta tol. Faults caught (random coarse caps
+    # that resolved before the band sizing): rings placed by the spacing past
+    # the band ring, none after it beside a 31 deg seam segment (the cap below
+    # 55 deg: oversize refusal), and a band ring short of the seam's design
+    # band vertex, its chain open (the cap below 84.9 deg).
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_unit_cap(latitude, above=False))
+    ).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    tolerance = size / 6.0
+    result = cad_mesh(
+        model,
+        np.full((faces,), size, dtype=np.float64),
+        np.full((faces,), tolerance, dtype=np.float64),
+        np.full((curves,), tolerance, dtype=np.float64),
+        tolerance_fraction=theta,
+    )
+    assert result.status is MeshcoreStatus.OK
+    uv = np.asarray(result.chart.uv)
+    corners = result.points[np.asarray(result.chart.triangles)]
+    dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+    rows = dome & (uv[:, :, 1].max(axis=1) > np.pi / 4.0)
+    assert rows.any()
+    latitudes = uv[rows, :, 1]
+    du = np.ptp(uv[rows, :, 0], axis=1)
+    dv = np.ptp(latitudes, axis=1)
+    low, high = latitudes.min(axis=1), latitudes.max(axis=1)
+    a = np.maximum(np.abs(np.cos(low)), np.abs(np.cos(high)))
+    b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
+    bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
+    assert bound.max() <= theta * tolerance, bound.max() / (theta * tolerance)
+
+
+@pytest.mark.parametrize(
+    ("latitude", "size", "theta"),
+    (
+        (55.77753523254207, 0.5324148676759605, 0.8955251222934396),
+        (60.80933008398488, 0.7473363451869702, 0.7660372624808137),
+    ),
+)
+def test_pole_region_boundary_rows_certify(
+    latitude: float, size: float, theta: float
+) -> None:
+    # V3 certifies a pole's rows in the pole chart when a corner lies at
+    # |latitude| >= kCapLatitude (35.7 deg), the rest of the face in the
+    # (longitude, latitude) chart; an edge between the two sets is charged its
+    # seam lens on both rows. A face whose mesh has such a region-boundary
+    # edge over tol (pole_boundary_overruns) is meshed again with the kernel
+    # splitting those over theta tol (pole_boundary_split) and the moves after
+    # it kept within tol, so both rows of every such pair certify. Fault
+    # caught (random coarse caps below a polar trim, which resolved): without
+    # the splits V3 refused 2 and 6 rows beside the south pole's region.
+    model_domain = MeshingDomain.from_brep(_unit_cap(latitude, above=False))
+    bundle = cad_geometry_bundle(model_domain)
+    model = bundle.model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    tolerance = size / 6.0
+    result = cad_mesh(
+        model,
+        np.full((faces,), size, dtype=np.float64),
+        np.full((faces,), tolerance, dtype=np.float64),
+        np.full((curves,), tolerance, dtype=np.float64),
+        tolerance_fraction=theta,
+    )
+    assert result.status is MeshcoreStatus.OK
+    chart = result.chart
+    lower, upper = coefficient_bounds(bundle, model_domain)
+    verdict = verify_cad_fidelity(
+        model,
+        lower,
+        upper,
+        CadFidelityMesh(
+            result.points,
+            chart.triangles,
+            chart.patches,
+            chart.uv,
+            result.triangles.astype(np.int64),
+            chart.chart_to_mesh,
+            chart.edge_chord,
+        ),
+        CadFidelityChords(
+            chart.use_patch,
+            chart.use_range,
+            len(model.loop_surfaces),
+            chart.chord_use,
+            chart.chord_loop,
+            chart.chord_uv,
+            chart.chord_range,
+        ),
+        float(tolerance),
+        8,
+    )
+    uv = np.asarray(chart.uv)
+    corners = result.points[np.asarray(chart.triangles)]
+    dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+    cap = np.radians(35.7)
+    region = dome & (uv[:, :, 1] <= -cap).any(axis=1)
+    boundary = dome & ~region & (uv[:, :, 1] < 0.0).any(axis=1)
+    assert region.any() and boundary.any()
+    assert np.all(np.asarray(verdict.item_status)[region | boundary] == MeshcoreStatus.OK)
+    assert verdict.status == MeshcoreStatus.OK
 
 
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
 
     Closed forms: the dihedral at edge (i, j) is the angle between the other
-    two corners' offsets projected across the edge; the circumcentre solves
+    two corners' offsets projected across the edge; the circumcenter solves
     2 (p_k - p_0) . c = |p_k|^2 - |p_0|^2.
     """
     corners = points[cells]
@@ -777,8 +870,8 @@ def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np
         smallest = np.minimum(smallest, np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
     matrix = 2.0 * (corners[:, 1:] - corners[:, :1])
     rhs = np.sum(corners[:, 1:] ** 2, axis=2) - np.sum(corners[:, :1] ** 2, axis=2)
-    centre = np.linalg.solve(matrix, rhs[:, :, None])[:, :, 0]
-    radius = np.linalg.norm(centre - corners[:, 0], axis=1)
+    center = np.linalg.solve(matrix, rhs[:, :, None])[:, :, 0]
+    radius = np.linalg.norm(center - corners[:, 0], axis=1)
     edges = np.stack(
         [
             np.linalg.norm(corners[:, p] - corners[:, q], axis=1)
@@ -1020,7 +1113,7 @@ def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(
     # the faces' curvature 1 / radius: 1 on the vertical cylinder's faces 0
     # and 1, 5/3 on the transverse one), curves at their faces' smallest. The
     # chart kernel left one triangle on each mirror face, on curve segment
-    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbour's vertex
+    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbor's vertex
     # inserted under its own (smaller) metric sat 0.43 from the circumcenter
     # in the triangle's centroid metric, every candidate was within 0.5 of a
     # vertex and the long edge's midpoint encroached the segment, so the face
@@ -1449,7 +1542,7 @@ def test_native_box_faces_meet_the_stored_size_bound_without_splitting_ties(
     # keeps them (count unchanged from the metric-only kernel) and every
     # boundary triangle meets R^2 <= (h^2 / 2)(1 + tau) exactly. Fault
     # caught: an exact test without the allowance splitting ties (more
-    # triangles), or an allowance the route's check does not honour.
+    # triangles), or an allowance the route's check does not honor.
     from fractions import Fraction
 
     from phydrax.meshing._sizing import stored_circumradius_measures
@@ -1823,7 +1916,7 @@ def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
     assert again.certification is not None and again.certification.passed
 
 
-def test_unproved_cad_solid_with_region_control_honours_it() -> None:
+def test_unproved_cad_solid_with_region_control_honors_it() -> None:
     # The native candidate has no organization records, so a region control
     # keeps the existing construction, whose candidate carries the control.
     from phydrax.meshing import CellMeshingCandidate
@@ -2013,11 +2106,11 @@ _FIELD_OUTCOMES = (
     _FIELD_OUTCOMES,
     ids=[field for field, _ in _FIELD_OUTCOMES],
 )
-def test_unproved_cad_solid_honours_or_refuses_every_field(
+def test_unproved_cad_solid_honors_or_refuses_every_field(
     field: str, outcome: str
 ) -> None:
     # No specification field is silently dropped by the native route: it is
-    # honoured there (reported size statistics), the plan keeps the existing
+    # honored there (reported size statistics), the plan keeps the existing
     # construction, or planning/execution refuses it with a stated reason.
     from phydrax.meshing import CellMeshingCandidate
     from phydrax.meshing._contracts import MeshingFailure

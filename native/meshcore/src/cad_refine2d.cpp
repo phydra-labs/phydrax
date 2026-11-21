@@ -138,7 +138,7 @@ class Refinement {
       }
       return true;
     };
-    const bool drained=drain();
+    bool drained=drain();
     if (status_ != PHX_MC_OK) return status_;
     // Triangles of fixed points outside the caller's region that no
     // insertion's cavity removed are refined next, under the same rules,
@@ -154,7 +154,29 @@ class Refinement {
         if (status_!=PHX_MC_OK) return status_;
         if (states_[t]==2) enqueue(slot);
       }
-      if (drained) drain();
+      if (drained) drained=drain();
+      if (status_ != PHX_MC_OK) return status_;
+    }
+    // The caller's edge splits (edge_split) come once the passes above are
+    // drained: the mesh up to then is the one without the hook, and each
+    // split and the refinement it brings stay beside its edge (requested
+    // within the first pass, they reordered its queue, and kernel refusals
+    // far from any split edge appeared: random coarse caps, UNRESOLVED).
+    if (input_.edge_split && drained) {
+      split_phase_=true;
+      // Only a triangle asking a split changes state; the others keep the
+      // classification they hold.
+      for (std::size_t t=0;t<tri_.triangles.size();++t) {
+        const auto slot=static_cast<int32_t>(t);
+        if (!inside(slot) || t>=states_.size() || states_[t]!=1 || fixed_triangle(slot)) continue;
+        const auto& cell=tri_.triangles[t];
+        if (input_.edge_split(input_.edge_split_context,tri_.point(cell.v[0]),
+                              tri_.point(cell.v[1]),tri_.point(cell.v[2]))==0) continue;
+        classify_state(slot);
+        if (status_!=PHX_MC_OK) return status_;
+        if (states_[t]==2) enqueue(slot);
+      }
+      drain();
       if (status_ != PHX_MC_OK) return status_;
     }
     const int32_t initial=summarize();
@@ -220,6 +242,8 @@ class Refinement {
   int32_t status_ = PHX_MC_OK;
   std::vector<uint8_t> fixed_;
   bool region_only_ = false;
+  // Set once the passes before the caller's edge splits are drained.
+  bool split_phase_ = false;
   std::vector<std::array<double,3>> physical_;
   std::vector<uint8_t> physical_valid_;
   // The angle pass's moving vertex and its candidate position, which the
@@ -758,11 +782,13 @@ class Refinement {
     // them, and spends no metric evaluations on the confirmation there.
     bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
     if (status_ != PHX_MC_OK) return false;
-    // The stored test splits (refinement, angle-pass guard) but takes no
-    // part in the final verdict: the face stage's flips can resolve a
-    // stored failure the kernel could not split, and the face stage checks
-    // the emitted triangles itself.
+    // The stored and caller edge-split tests split (refinement, angle-pass
+    // guard) but take no part in the final verdict: the face stage's flips
+    // can resolve a stored failure the kernel could not split, and the face
+    // stage checks the emitted triangles itself.
     if (!oversized && !size_reason) oversized = stored_oversized(t);
+    if (!oversized && !size_reason && split_phase_)
+      oversized = input_.edge_split(input_.edge_split_context, a, b, c) != 0;
     if (status_ != PHX_MC_OK) return false;
     if (!size_reason && !angle_reason && oversized) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
@@ -1053,12 +1079,12 @@ class Refinement {
   }
   // A triangle whose every candidate point was refused (encroachment or
   // proximity) loses its unconstrained edge to a flip when the pair that
-  // replaces it and its neighbour has a smaller larger metric circumradius
+  // replaces it and its neighbor has a smaller larger metric circumradius
   // than the pair it replaces (the smallest such, ties by the edge's
   // canonical key). Insertion cavities judge conflict in the new point's
   // metric and the size test in each triangle's centroid metric, so a
   // varying metric leaves triangles that are not Delaunay in their own
-  // (measured, quadric h 0.0998 theta 0.8: the neighbour's vertex 0.43 from
+  // (measured, quadric h 0.0998 theta 0.8: the neighbor's vertex 0.43 from
   // the circumcenter of a triangle of metric circumradius 0.78, both other
   // candidates within 0.5 of a vertex and the edge midpoint encroaching the
   // curve segment; the flip leaves both triangles under the bound). Each
@@ -1118,7 +1144,7 @@ class Refinement {
     ++result_.stats.flips;
     const std::pair<int32_t,int32_t> outer[4]={{first,n_pu},{first,n_uq},{second,n_qw},{second,n_wp}};
     for (const int32_t s : {first,second}) { classify_state(s); if (status_!=PHX_MC_OK) return true; }
-    // As after an insertion: a new triangle and a processed neighbour that
+    // As after an insertion: a new triangle and a processed neighbor that
     // gains a front from it are enqueued.
     for (const int32_t s : {first,second}) if (states_[s]==2 && !queued_[s]) enqueue(s);
     for (const auto& [s,nb_outer] : outer) {
@@ -1128,12 +1154,32 @@ class Refinement {
     }
     return true;
   }
+  // The caller's requested edge (edge_split): its midpoint, when the edge is
+  // unconstrained, under the same checks as any candidate.
+  bool split_requested_edge(int32_t t) {
+    const auto& cell=tri_.triangles[t];
+    const double* p[3]={tri_.point(cell.v[0]),tri_.point(cell.v[1]),tri_.point(cell.v[2])};
+    const int32_t edge=input_.edge_split(input_.edge_split_context,p[0],p[1],p[2])-1;
+    // The edge from point k to k + 1 lies opposite point k + 2.
+    if (edge<0 || edge>2 || tri_.constraint(t,prev3(edge))!=-1) return false;
+    const double* a=p[edge]; const double* b=p[next3(edge)];
+    const double q[2]={(a[0]+b[0])/2,(a[1]+b[1])/2};
+    if (input_.admit_point && !input_.admit_point(input_.admit_context,q)) return false;
+    std::pair<int32_t,int> blocked{-1,-1};
+    const int32_t host=tri_.walk(t,q,&blocked);
+    if (!inside(host)) return false;
+    const CadMetric2D mq=metric(q);
+    return status_==PHX_MC_OK && encroaches(q,mq)<0 && !too_close(q,mq) &&
+           insert(host,q,mq,t,true);
+  }
   void process(int32_t t) {
     double radius, p[2];
     CadMetric2D center_metric;
     if (!geometry(t,radius,p,nullptr,nullptr,&center_metric,nullptr,&triangle_metrics_[t]) ||
         status_ != PHX_MC_OK) return;
     const double circumcenter[2]={p[0],p[1]};
+    if (split_phase_ && split_requested_edge(t)) return;
+    if (status_ != PHX_MC_OK) return;
     frontal_point(t,p,center_metric);
     if (!std::isfinite(p[0]) || !std::isfinite(p[1])) { ++result_.stats.unresolved_triangles; return; }
     if (input_.admit_point && !input_.admit_point(input_.admit_context,p)) {

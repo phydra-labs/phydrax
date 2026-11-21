@@ -540,9 +540,9 @@ double squared_length(const Point& p, const Point& q) {
 // whose thickness there is O(w L), so its height over an edge >= L/4 is
 // O(w L) and one of its dihedrals, at an edge off the rim, is O(w): below
 // the target for a small w whatever the apex placement. Either the rim cells
-// fail radius-edge or their neighbours fail the dihedral off the rim, so the
-// dihedral target is unattainable in a neighbourhood of such a rim for any
-// mesh; only relaxing the target resolves it. That neighbourhood is not
+// fail radius-edge or their neighbors fail the dihedral off the rim, so the
+// dihedral target is unattainable in a neighborhood of such a rim for any
+// mesh; only relaxing the target resolves it. That neighborhood is not
 // decidable cell by cell, so its cells stay unforced.
 // curve_wedges (when given, one per model curve, NaN where undefined): the
 // smallest true wedge in degrees over the curve edges' defined ends, filled

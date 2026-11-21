@@ -952,7 +952,7 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
                 exact = _analytic_values(kind, sample_uv)
                 assert np.linalg.norm(exact - weights @ vertices) <= result.upper[row]
     print(f"{kind} native/Python adaptive bound ratios:", ratios)
-    # Native takes the Taylor remainder about the leaf box centre (one quarter
+    # Native takes the Taylor remainder about the leaf box center (one quarter
     # of Python's box-extent remainder), so it is never looser than Python;
     # the sampled check above keeps it an enclosure.
     assert all(ratio <= 1.01 for ratio in ratios)
@@ -1313,7 +1313,7 @@ def _pole_chart_deviation(
     """Sampled sup |S - I_T| over the pole-chart triangle of one row.
 
     Corners map to rho (cos u, sin u), rho = pi/2 - sigma v on a sphere, or
-    rho = sigma (v - pole_v) at a disk centre (`pole_v` given); a pole corner
+    rho = sigma (v - pole_v) at a disk center (`pole_v` given); a pole corner
     maps to the origin. S at a pole-chart point is the surface at its chart
     point.
     """
@@ -1758,9 +1758,9 @@ def test_intersection_pcurve_trimmed_face() -> None:
     # Loop order: a reversed use runs the p-curve from last to first.
     parameters = parameters[::-1]
     boundary = np.asarray(use.pcurve.evaluate(jnp.asarray(parameters)))
-    centre = boundary.mean(axis=0)
-    inner = centre + 0.5 * (boundary - centre)
-    uv_points = np.vstack((centre[None], inner, boundary))
+    center = boundary.mean(axis=0)
+    inner = center + 0.5 * (boundary - center)
+    uv_points = np.vstack((center[None], inner, boundary))
     points = np.asarray(patch.surface.evaluate(jnp.asarray(uv_points)))
     triangles: list[tuple[int, int, int]] = []
     edge_chord: list[list[int]] = []
@@ -1923,9 +1923,9 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
                 evaluate, chart.uv[row], vertices, int(region[row]), n
             )
             continue
-        # A disk centre (planar face; V3 certifies the frame exactly): the
+        # A disk center (planar face; V3 certifies the frame exactly): the
         # sliver's two pole corners share v; its reference is the
-        # disk-centre chart, where the deviation is rounding only.
+        # disk-center chart, where the deviation is rounding only.
         ids = chart.triangles[row]
         pair = [(a, b) for a in range(3) for b in range(a + 1, 3) if ids[a] == ids[b]][0]
         pole_v = float(chart.uv[row, pair[0], 1])
@@ -1977,7 +1977,7 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
     result = verify_cad_fidelity(model, lower, upper, mesh, chords, 1.0, 8)
     assert result.status == MeshcoreStatus.OK
     assert np.all(result.upper[slivers] >= sampled)
-    # Disk-centre slivers are rounding-level both ways; the tightness check
+    # Disk-center slivers are rounding-level both ways; the tightness check
     # applies to curved slivers.
     ratio = result.upper[slivers][~flat] / sampled[~flat]
     assert np.all(ratio <= 1.5), ratio

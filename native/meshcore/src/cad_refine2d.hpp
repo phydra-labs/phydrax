@@ -47,6 +47,16 @@ struct CadRefine2DInput {
   // caller's (its centroid given); without it every such triangle is.
   int32_t (*fixed_region)(void* context, const double point[2]) = nullptr;
   void* fixed_region_context = nullptr;
+  // Optional: for a triangle (its three chart points given in order), k + 1
+  // when the caller asks its edge from point k to point k + 1 (mod 3) split,
+  // 0 otherwise. Asked once refinement is otherwise drained: such a triangle
+  // is then oversized like a stored size failure (refinement splits it, the
+  // angle pass keeps stars passing it, the census does not report it), and
+  // refinement inserts that edge's midpoint first, under the usual checks,
+  // when the edge is unconstrained.
+  int32_t (*edge_split)(void* context, const double a[2], const double b[2],
+                        const double c[2]) = nullptr;
+  void* edge_split_context = nullptr;
 };
 
 struct CadRefine2DStats {

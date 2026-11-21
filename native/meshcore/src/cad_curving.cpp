@@ -289,7 +289,7 @@ class Curving {
   }
 
   // One Jacobi pass of harmonic extension of the boundary displacement over
-  // the interior nodes of the failing cells and their edge neighbours: each
+  // the interior nodes of the failing cells and their edge neighbors: each
   // such node takes the mean displacement of the other edges of its cells.
   int32_t harmonic_pass(const std::vector<int64_t>& failing) {
     std::vector<int64_t> failing_edges;

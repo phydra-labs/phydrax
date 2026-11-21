@@ -105,14 +105,17 @@ bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
 //
 // The face's surface in its chart is S = o + r (cos v (cos u e1 + sin u e2) +
 // sin v a): a sphere template, a placement of one, or the revolution of a
-// circle3 whose centre and second axis lie on the revolution axis exactly
+// circle3 whose center and second axis lie on the revolution axis exactly
 // (V3's pole_sphere_frame families with a circle profile, in binary64).
 // equator = max_u |cos u e1 + sin u e2| (the Gram matrix's largest root),
-// pole = |a|.
+// pole = |a|, frame = max |x e1 + y e2 + z a| over unit (x, y, z), bounded
+// by the square root of the Gram matrix of e1, e2, a's largest absolute row
+// sum (Gershgorin; 1 for an orthonormal frame).
 struct SphereChart {
   double radius = 0.0;
   double equator = 0.0;
   double pole = 0.0;
+  double frame = 0.0;
 };
 bool sphere_chart(const cad::CadGeometry& geometry, int32_t face, SphereChart& chart);
 
@@ -140,6 +143,11 @@ void sphere_chart_hessian(const SphereChart& chart, double v0, double v1, double
 // budget).
 double polar_trim_band(const SphereChart& chart, double line, double direction, double span,
                        double budget);
+
+// polar_row_span: the largest free-axis extent D_u of a row between
+// latitudes v0 and v1 (D_v = |v1 - v0|) with that bound, the bounds over
+// [v0, v1], within `budget` / 8; 0 when none fits (C D_v^2 >= budget).
+double polar_row_span(const SphereChart& chart, double v0, double v1, double budget);
 
 // polar_trim_span: the trim chord span the curve stage takes. The trim's
 // own term A D_u^2 and the band's 2 B D_u D_v + C D_v^2 share one budget;

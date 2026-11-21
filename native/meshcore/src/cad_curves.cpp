@@ -20,6 +20,15 @@ struct Use { int32_t row, face; };
 // h: the size; corner: the size without a polar trim's chart-linear span
 // (the share of a corner's first segments, discretize_curves).
 struct Sample { double s, speed, h, corner = 0; };
+// An end of a seam (a p-curve constant in u) on a polar trim line
+// (cad_faces.hpp): the use, its u, the line, the face's side of it, the
+// face's chart and the use's v at its parameter's two ends.
+struct PolarSeam {
+  std::size_t use;
+  double u, line, direction;
+  SphereChart chart;
+  double v[2];
+};
 
 struct Context {
   const CadGeometry& geometry;
@@ -34,6 +43,31 @@ struct Context {
   // Per corner: the smallest end size of the curves meeting there (null
   // while those are measured).
   const std::vector<double>* corner_sizes = nullptr;
+  // The curve's polar seam ends (polar_seam_ends), found on first use.
+  std::vector<PolarSeam> polar_seams{};
+  bool polar_seams_found = false;
+
+  const std::vector<PolarSeam>& polar_seam_ends() {
+    if (polar_seams_found) return polar_seams;
+    polar_seams_found = true;
+    for (std::size_t i = 0; i < uses.size(); ++i) {
+      double ends[2][6];
+      bool evaluated = true;
+      for (int k = 0; k < 2; ++k) {
+        const double t = use_parameter(uses[i].row, k);
+        evaluated = evaluated && geometry.jets(geometry.pcurve_node(uses[i].row), &t, 1, ends[k],
+                                               workspace);
+      }
+      if (!evaluated || ends[0][2] != 0 || ends[1][2] != 0 || ends[0][1] == ends[1][1]) continue;
+      for (int k = 0; k < 2; ++k) {
+        PolarSeam seam{i, ends[k][0], ends[k][1], 0, {}, {ends[0][1], ends[1][1]}};
+        if (polar_trim_line(geometry, uses[i].face, seam.line, workspace, seam.chart,
+                            seam.direction))
+          polar_seams.push_back(seam);
+      }
+    }
+    return polar_seams;
+  }
 
   double parameter(double s) const {
     const double* r = geometry.model().curve_ranges + 2 * curve;
@@ -156,6 +190,35 @@ struct Context {
             const double speed_v=std::hypot(sj[6], sj[7], sj[8]);
             const double span=polar_trim_span(chart, pc[1], direction, speed_u/speed_v,
                                               8*theta*tolerance);
+            polar=std::min(polar, span*speed_u);
+          }
+        }
+        // A seam leaving a polar trim line sets the trim zone's rings: the
+        // face stage puts one at each of its vertices in the zone (seed_poles,
+        // cad_faces.cpp), so its segments are the gaps D_v of the zone's
+        // rows. They take the span at their own latitude v, polar_trim_span(v)
+        // |S_u|, the 3D size of the isotropic row within the chart-linear
+        // bound there, which leaves the rings' pieces room within the bound
+        // (C D_v^2 < budget, polar_row_span). It applies where the zone is:
+        // on the line's side of the equator (past it the size would shrink
+        // to 0 at the far pole, whose rows V3 certifies in its pole chart)
+        // where the chart is anisotropic (|S_u|^2 < |S_v|^2 / 2, the face
+        // stage's test that ends the zone at the first seam vertex past it);
+        // the size table's grading carries it over that vertex. Up to the
+        // equator it moved the seam's vertices by the far pole too (through
+        // that grading) where no ring stands (measured: a cap below 76 deg,
+        // h/r 0.78, a 32 deg seam segment beside the far pole's first ring,
+        // encroachment refusal, UNRESOLVED). It is not a corner's share
+        // either.
+        if (resolved && pc[2]==0 && pc[4]==0 && pc[3]!=0) {
+          const auto index=static_cast<std::size_t>(&use-uses.data());
+          const double speed_u=std::hypot(sj[3], sj[4], sj[5]);
+          const double speed_v=std::hypot(sj[6], sj[7], sj[8]);
+          for (const PolarSeam& seam : polar_seam_ends()) {
+            if (seam.use!=index || seam.direction*pc[1]>0 ||
+                !(2*speed_u*speed_u<speed_v*speed_v)) continue;
+            const double span=polar_trim_span(seam.chart, pc[1], seam.direction,
+                                              speed_u/speed_v, 8*theta*tolerance);
             polar=std::min(polar, span*speed_u);
           }
         }
@@ -283,6 +346,27 @@ bool discretize(Context& c, std::vector<double>& points) {
   for (const Use& u : c.uses) {
     const double* r = m.use_ranges + 2*u.row;
     c.geometry.curve_breakpoints(c.geometry.pcurve_node(u.row), r[0], r[1], fixed, degree);
+  }
+  // A seam (a p-curve constant in u) leaving a polar trim line (cad_faces.hpp)
+  // takes a vertex at the trim's design band, D_v = aspect * the trim's span
+  // (polar_trim_span): the face stage puts its band ring there, so the ring
+  // chain closes on the seam and the row at the seam end lies within the
+  // band (an open chain left that row reaching the seam's next vertex,
+  // outside the band's bound: measured up to 2.3 theta tol of it). The band
+  // height equals the trim's chord in 3D, so the segment is no shorter than
+  // the trim's.
+  for (const PolarSeam& seam : c.polar_seam_ends()) {
+    const Use& u=c.uses[seam.use];
+    const double at[2]={seam.u,seam.line};
+    double jet[9];
+    if (!c.geometry.jets(c.geometry.surface_node(u.face),at,1,jet,c.workspace)) continue;
+    const double aspect=std::hypot(jet[3],jet[4],jet[5])/std::hypot(jet[6],jet[7],jet[8]);
+    const double span=polar_trim_span(seam.chart,seam.line,seam.direction,aspect,
+        8*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face]);
+    if (!std::isfinite(span)) continue;
+    const double target=seam.line+seam.direction*aspect*span;
+    const double s=(target-seam.v[0])/(seam.v[1]-seam.v[0]);
+    if (s>0 && s<1) fixed.push_back(s);
   }
   std::sort(fixed.begin(), fixed.end()); fixed.erase(std::unique(fixed.begin(),fixed.end()),fixed.end());
   std::vector<Sample> table;
