@@ -789,6 +789,21 @@ class _PeriodBoundProgram:
 
 type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram | _BoundProgram
 type _Slice = tuple[int, int]
+type _ChartPoint = Callable[[Array, Array, Array], Array]
+
+
+@dataclass(frozen=True, slots=True)
+class _ChartInputs:
+    """Bound chart coefficients, the native period input and the chart point.
+
+    ``point`` is the static chart structure of a parameterized analytic chart
+    (the chart index is then the last coefficient input), or the folded chart
+    evaluator of the live p-curve, which a shared layout never holds.
+    """
+
+    values: _Slice
+    period: int
+    point: OrthogonalChartStructure | _ChartPoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -805,9 +820,7 @@ class _StripLayout:
     width: int
     cylinder: bool
     fourth: bool
-    chart: OrthogonalChartStructure | None
-    chart_slice: _Slice | None
-    period_index: int | None
+    chart: _ChartInputs | None
     section_slice: _Slice | None
     root_slice: _Slice | None
     line_slice: _Slice | None
@@ -819,8 +832,8 @@ class _StripLayout:
     @property
     def shared(self) -> bool:
         """Whether the integrand reads its bound inputs and this layout only."""
-        if self.chart_slice is not None:
-            located = self.chart is not None
+        if self.chart is not None:
+            located = isinstance(self.chart.point, tuple)
         else:
             located = any(
                 span is not None
@@ -833,35 +846,52 @@ class _StripLayout:
         return located and closed
 
 
-def _span(span: _Slice | None, /) -> slice:
-    assert span is not None
-    return slice(*span)
+@dataclass(frozen=True, slots=True)
+class _LiveStrip:
+    """The live carrier and p-curve that a non-shared strip integrand reads."""
+
+    patch: AbstractSurfacePatch
+    pcurve: AbstractCurve
+
+
+def _live_source(live: _LiveStrip | None, /) -> _LiveStrip:
+    if live is None:
+        raise RuntimeError("A shared Green strip layout read a live patch or curve.")
+    return live
+
+
+def _window(span: _Slice | None, /) -> slice | None:
+    return None if span is None else slice(*span)
 
 
 def _strip_integrand(
-    layout: _StripLayout,
-    patch: AbstractSurfacePatch | None,
-    pcurve: AbstractCurve | None,
-    folded_chart: Callable[[Array, Array, Array], Array] | None,
-    /,
+    layout: _StripLayout, live: _LiveStrip | None, /
 ) -> tuple[Callable[[Array, Array], Array], int]:
     """The strip integrand of ``(parameters, bound)`` and its integrated dimension.
 
-    ``patch`` and ``pcurve`` are read only by a layout that is not shared; a
-    folded chart evaluator, when given, replaces the parameterized chart.
+    ``live`` is read only by a layout that is not shared, which is prepared
+    without it (``None``) so no live source outlives the prepared program.
     """
     origin = float.fromhex(layout.origin)
+    chart = layout.chart
+    section_slice = _window(layout.section_slice)
+    root_slice = _window(layout.root_slice)
+    line_slice = _window(layout.line_slice)
+    shift_slice = _window(layout.shift_slice)
+    cylinder_slice = _window(layout.cylinder_slice)
+    revolution_slice = _window(layout.revolution_slice)
+    torus_slice = _window(layout.torus_slice)
 
     def evaluator(bound: Array) -> Callable[[Array], Array]:
-        if layout.chart_slice is not None:
-            assert layout.period_index is not None
-            period_index, chart_slice = layout.period_index, _span(layout.chart_slice)
-            if folded_chart is not None:
-                return lambda parameter: folded_chart(
-                    parameter, bound[period_index], bound[chart_slice]
+        if chart is not None:
+            period_index, values_slice = chart.period, slice(*chart.values)
+            point = chart.point
+            if not isinstance(point, tuple):
+                folded = point
+                return lambda parameter: folded(
+                    parameter, bound[period_index], bound[values_slice]
                 )
-            structure = layout.chart
-            assert structure is not None
+            structure = point
 
             def chart_point(parameter: Array, period: Array, values: Array, /) -> Array:
                 # The chart index is an exact, non-integrated singleton input.
@@ -870,46 +900,31 @@ def _strip_integrand(
                 )
 
             return lambda parameter: chart_point(
-                parameter, bound[period_index], bound[chart_slice]
+                parameter, bound[period_index], bound[values_slice]
             )
-        if layout.section_slice is not None:
-            section_slice = _span(layout.section_slice)
-            shift = (
-                bound[_span(layout.shift_slice)]
-                if layout.shift_slice is not None
-                else jnp.zeros((2,))
-            )
-            return lambda parameter: (
-                _section_point(parameter, bound[section_slice]) + shift
-            )
-        if layout.root_slice is not None:
-            root = bound[_span(layout.root_slice)]
-            shift = (
-                bound[_span(layout.shift_slice)]
-                if layout.shift_slice is not None
-                else jnp.zeros((2,))
-            )
+        if section_slice is not None:
+            window = section_slice
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
+            return lambda parameter: _section_point(parameter, bound[window]) + shift
+        if root_slice is not None:
+            root = bound[root_slice]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
             return lambda parameter: (
                 jnp.stack((root[0], root[1] + parameter * root[2])) + shift
             )
-        if layout.line_slice is not None:
-            line = bound[_span(layout.line_slice)]
-            shift = (
-                bound[_span(layout.shift_slice)]
-                if layout.shift_slice is not None
-                else jnp.zeros((2,))
-            )
+        if line_slice is not None:
+            line = bound[line_slice]
+            shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
             return lambda parameter: line[:2] + parameter * line[2:4] + shift
-        assert pcurve is not None
-        curve = pcurve
+        curve = _live_source(live).pcurve
         return lambda parameter: _pcurve_point(curve, parameter)
 
     if layout.cylinder:
 
         def cylinder_density(parameters: Array, bound: Array) -> Array:
             evaluate = evaluator(bound)
-            if layout.cylinder_slice is not None:
-                values = bound[_span(layout.cylinder_slice)]
+            if cylinder_slice is not None:
+                values = bound[cylinder_slice]
                 center, first_axis, second_axis, axis = (
                     values[:3],
                     values[3:6],
@@ -931,8 +946,8 @@ def _strip_integrand(
                             + sine * (1 - jnp.cos(angle))
                         )
                     )
-            elif layout.revolution_slice is not None:
-                values = bound[_span(layout.revolution_slice)]
+            elif revolution_slice is not None:
+                values = bound[revolution_slice]
                 center, radial, tangent_axis, axis = (
                     values[:3],
                     values[3:6],
@@ -956,8 +971,7 @@ def _strip_integrand(
                         )
                     )
             else:
-                assert patch is not None
-                surface = patch
+                surface = _live_source(live).patch
 
                 def flux_at(angle: Array, /) -> Array:
                     return _surface_flux(
@@ -981,11 +995,12 @@ def _strip_integrand(
             return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
 
         return cylinder_density, 1
-    if layout.torus_slice is not None:
+    if torus_slice is not None:
+        torus_window = torus_slice
 
         def torus_density(parameters: Array, bound: Array) -> Array:
             evaluate = evaluator(bound)
-            values = bound[_span(layout.torus_slice)]
+            values = bound[torus_window]
             center, first_axis, second_axis, axis = (
                 values[:3],
                 values[3:6],
@@ -1018,8 +1033,7 @@ def _strip_integrand(
             return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
 
         return torus_density, 1
-    assert patch is not None
-    surface = patch
+    surface = _live_source(live).patch
 
     def density(parameters: Array, bound: Array) -> Array:
         evaluate = evaluator(bound)
@@ -1078,26 +1092,25 @@ def _green_strip_program(
 
     lower: list[float] = []
     upper: list[float] = []
-    chart_structure = None
-    folded_chart = None
-    chart_slice = None
+    chart_point: OrthogonalChartStructure | _ChartPoint | None = None
+    chart_values = (0, 0)
     if chart is not None and isinstance(pcurve, IntersectionPCurve):
         if (
             parameterized_chart
             and orthogonal_cylinder_family(pcurve.curve.first, pcurve.curve.second)
             is not None
         ):
-            _, chart_lower, chart_upper, chart_structure = (
+            _, chart_lower, chart_upper, chart_point = (
                 pcurve._parameterized_chart_evaluator_with_source_bounds(chart)
             )
             # The chart index is an exact, non-integrated singleton input.
             chart_lower = np.append(chart_lower, np.float64(chart))
             chart_upper = np.append(chart_upper, np.float64(chart))
         else:
-            folded_chart, chart_lower, chart_upper = _intersection_chart_evaluator(
+            chart_point, chart_lower, chart_upper = _intersection_chart_evaluator(
                 pcurve, chart
             )
-        chart_slice = (len(lower), len(lower) + chart_lower.size)
+        chart_values = (len(lower), len(lower) + chart_lower.size)
         lower.extend(chart_lower.tolist())
         upper.extend(chart_upper.tolist())
 
@@ -1144,9 +1157,9 @@ def _green_strip_program(
         bind((line.height_origin_exact, line.height_direction_exact))
     elif section_slice is None:
         shifts = (0, 0)
-    period_index = None
-    if chart_slice is not None:
-        period_index = len(lower)
+    chart_inputs = None
+    if chart_point is not None:
+        chart_inputs = _ChartInputs(chart_values, len(lower), chart_point)
         period_low, period_high = period_scalar_bounds(
             PeriodOffset(Fraction(0), Fraction(1))
         )
@@ -1215,9 +1228,7 @@ def _green_strip_program(
             or line_slice is not None
             or section_slice is not None
         ),
-        chart=chart_structure,
-        chart_slice=chart_slice,
-        period_index=period_index,
+        chart=chart_inputs,
         section_slice=section_slice,
         root_slice=root_slice,
         line_slice=line_slice,
@@ -1231,15 +1242,13 @@ def _green_strip_program(
     if program is not None:
         _STRIP_PROGRAMS.move_to_end(layout)
     else:
-        integrand, dimension = (
-            _strip_integrand(layout, None, None, None)
-            if shared
-            else _strip_integrand(layout, patch, pcurve, folded_chart)
+        integrand, dimension = _strip_integrand(
+            layout, None if shared else _LiveStrip(patch, pcurve)
         )
         program = _cell_program(
             _strip_jet(layout, integrand, dimension), dimension + layout.width
         )
-        if chart_structure is not None and program.execution != "batched":
+        if isinstance(chart_point, tuple) and program.execution != "batched":
             # Only batched lowering is known to preserve endpoints when a
             # formerly folded chart constant becomes an interval input.
             return _green_strip_program(
