@@ -1445,6 +1445,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
     ),
+    "phx_mc_bvh_build": (
+        _I32,
+        (_I32, _I64, _I32, _P, _P, _P, _I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_bvh_pair_stream_create": (
         _I32,
         (_P, _P, _I32, _I32, _F64, _F64, _I64, _I64, _I32, _P),
@@ -13164,6 +13168,70 @@ def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
     return results
 
 
+BVH_BUILD_MEDIAN = 0
+BVH_BUILD_SAH = 1
+BVH_BUILD_MORTON = 2
+
+
+def bvh_build(
+    kind: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    codes: np.ndarray | None,
+    leaf_size: int,
+    sah_bins: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Level-ordered BVH topology over item boxes (``phx_mc_bvh_build``).
+
+    Returns the item order and, per node in breadth-first level order, its
+    item range ``[start, stop)`` and children (``-1`` at leaves), with the
+    node offsets of every level. ``codes`` (uint64 per item) are required
+    for ``BVH_BUILD_MORTON`` and unused otherwise.
+    """
+    low = np.ascontiguousarray(lower, dtype=np.float64)
+    high = np.ascontiguousarray(upper, dtype=np.float64)
+    if low.ndim != 2 or high.shape != low.shape:
+        raise ValueError("lower and upper must share shape (items, dimension).")
+    count, dimension = low.shape
+    keys = None if codes is None else np.ascontiguousarray(codes, dtype=np.uint64)
+    if keys is not None and keys.shape != (count,):
+        raise ValueError("codes must hold one value per item.")
+    capacity = max(2 * count - 1, 1)
+    order = np.empty((count,), dtype=np.int64)
+    start, stop, left, right = (np.empty((capacity,), dtype=np.int64) for _ in range(4))
+    level_offsets = np.empty((capacity + 1,), dtype=np.int64)
+    node_count, level_count = _I64(), _I64()
+    status = load_meshcore()["phx_mc_bvh_build"](
+        kind,
+        count,
+        dimension,
+        low.ctypes.data,
+        high.ctypes.data,
+        None if keys is None else keys.ctypes.data,
+        leaf_size,
+        sah_bins,
+        order.ctypes.data,
+        start.ctypes.data,
+        stop.ctypes.data,
+        left.ctypes.data,
+        right.ctypes.data,
+        level_offsets.ctypes.data,
+        ctypes.addressof(node_count),
+        ctypes.addressof(level_count),
+    )
+    _raise_for_call(status, "bvh_build")
+    nodes = int(node_count.value)
+    return (
+        order,
+        start[:nodes],
+        stop[:nodes],
+        left[:nodes],
+        right[:nodes],
+        level_offsets[: int(level_count.value) + 1],
+    )
+
+
 def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.ndarray:
     """``atan2(ordinates, abscissas)`` in ``[-pi, pi]``, the same binary64
     result on every platform (within 7 units in the last place).
@@ -14137,6 +14205,10 @@ class MetricRelocationSearch:
 
 
 __all__ = [
+    "BVH_BUILD_MEDIAN",
+    "BVH_BUILD_MORTON",
+    "BVH_BUILD_SAH",
+    "bvh_build",
     "angle_arccosine",
     "angle_arctangent2",
     "quality_dihedral_angles",

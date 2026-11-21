@@ -26,6 +26,7 @@ from phydrax._bvh import (
     ray_select_leaf_items,
     refit_packed_bvh_bounds,
 )
+from phydrax._meshcore import meshcore_available
 from phydrax.execution import default_device
 
 
@@ -399,3 +400,46 @@ def test_existing_nearest_distance_jvp() -> None:
         (jnp.ones_like(query),),
     )
     np.testing.assert_allclose(tangent, [-0.2, 1.8])
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+@pytest.mark.parametrize("kind", _KINDS)
+@pytest.mark.parametrize("leaf_size", (1, 3, 8))
+@pytest.mark.parametrize("dimension", (1, 2, 3))
+def test_native_build_matches_host_topology(
+    monkeypatch: pytest.MonkeyPatch, kind: BVHBuildKind, leaf_size: int, dimension: int
+) -> None:
+    import phydrax._bvh as bvh_module
+
+    rng = np.random.default_rng(11)
+    # Repeated boxes and coincident centers exercise every tie break.
+    lower = np.concatenate(
+        (
+            rng.standard_normal((300, dimension)),
+            np.repeat(rng.standard_normal((20, dimension)), 6, axis=0),
+        )
+    )
+    upper = lower + rng.uniform(0.0, 0.2, lower.shape)
+    policy = BVHBuildPolicy(kind=kind, leaf_size=leaf_size, sah_bins=7)
+    native = prepare_bvh(lower, upper, policy=policy, dtype=jnp.float64)
+    monkeypatch.setattr(bvh_module, "meshcore_available", lambda: False)
+    host = prepare_bvh(lower, upper, policy=policy, dtype=jnp.float64)
+    for name in (
+        "bbox_min",
+        "bbox_max",
+        "left",
+        "right",
+        "leaf_id",
+        "leaf_items",
+        "leaf_node",
+        "item_bbox_min",
+        "item_bbox_max",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(native, name)), np.asarray(getattr(host, name))
+        )
+    assert native.level_offsets == host.level_offsets
+    assert native.max_depth == host.max_depth

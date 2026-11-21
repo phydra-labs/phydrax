@@ -63,6 +63,7 @@ set(PHX_MC_SOURCES
   src/metric_source_capi.cpp
   src/bvh_query.cpp
   src/bvh_query_capi.cpp
+  src/bvh_build.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp

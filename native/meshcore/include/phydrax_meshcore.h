@@ -1623,8 +1623,8 @@ PHX_MC_API int32_t phx_mc_separation_screen(
  * leaf_width) with -1 padding, item bounds (items, dimension). Node 0 is the
  * root; reachable nodes must form a rooted tree (no cycles or shared
  * children); leaf nodes have left = right = -1. Every consumer validates the
- * view iteratively without a depth cap and only traverses it: the native side
- * never builds or changes a tree. */
+ * view iteratively without a depth cap and only traverses it; the topology
+ * comes from phx_mc_bvh_build. */
 typedef struct phx_mc_bvh_tree_view {
   int64_t node_count;
   int64_t leaf_count;
@@ -1640,6 +1640,29 @@ typedef struct phx_mc_bvh_tree_view {
   const double* item_min;
   const double* item_max;
 } phx_mc_bvh_tree_view;
+/* Level-ordered BVH topology over item_count boxes (lower, upper: items x
+ * dimension, row-major), a function of the boxes alone (ties break by item):
+ * order (item_count) the item order, and per node in breadth-first level
+ * order its item range [start, stop) of `order` and its children (left,
+ * right; -1 for a leaf of at most leaf_size items). node_count <= 2
+ * item_count - 1 nodes are written; level_offsets (capacity 2 item_count)
+ * receives level_count + 1 node offsets. MEDIAN splits at the middle by
+ * (center on the longest node-box axis, item); SAH by the binned
+ * surface-area heuristic over sah_bins center bins (first plane and axis on
+ * ties, the middle position when no plane separates), each side in item
+ * order; MORTON is the Karras radix tree over the items sorted by (codes,
+ * item), collapsed to leaves (lower and upper unused). */
+enum phx_mc_bvh_build_kind {
+  PHX_MC_BVH_BUILD_MEDIAN = 0,
+  PHX_MC_BVH_BUILD_SAH = 1,
+  PHX_MC_BVH_BUILD_MORTON = 2
+};
+PHX_MC_API int32_t phx_mc_bvh_build(int32_t kind, int64_t item_count, int32_t dimension,
+                                    const double* lower, const double* upper,
+                                    const uint64_t* codes, int64_t leaf_size, int32_t sah_bins,
+                                    int64_t* order, int64_t* start, int64_t* stop,
+                                    int64_t* left, int64_t* right, int64_t* level_offsets,
+                                    int64_t* node_count, int64_t* level_count);
 
 /* Simultaneous traversal of two views yielding overlapping item pairs in
  * bounded blocks. The caller keeps every array alive and unchanged until
