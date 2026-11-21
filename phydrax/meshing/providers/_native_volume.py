@@ -62,6 +62,7 @@ from .._organization import (
 from .._result import MeshingComplianceReport
 from .._scope import _SourceEntityScopes, MeshingEntityKind, MeshingScope
 from .._sizing import (
+    edge_length_measures,
     S3_BOUNDARY_EDGE_SIZE,
     size_statistic,
     SizeControlStrength,
@@ -1730,6 +1731,7 @@ def _volume_compliance(
             np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
         )
         lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        measures = edge_length_measures(points, edges)
         policy = specification.size_compliance
         declaration = S3_BOUNDARY_EDGE_SIZE
         for statistic in policy.target_statistics:
@@ -1738,7 +1740,7 @@ def _volume_compliance(
             requested.append((key, declaration.bound_factor * control.target_size))
             achieved.append((key, achieved_value))
             if control.strength is SizeControlStrength.HARD and declaration.exceeds(
-                achieved_value, control.target_size, policy
+                measures, statistic, control.target_size, policy
             ):
                 issues.append(key)
         if control.maximum_size is not None:

@@ -2265,6 +2265,17 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- AT_MOST size compliance rows (CAD chart circumradius, S3 boundary edge)
+  are decided exactly at ties. A unit box meshed at h = 0.5 meets
+  R = h/sqrt(2) exactly, yet its float circumradius rounded above the float
+  bound and was refused. `SizeComplianceDeclaration.exceeds` now takes the
+  per-entity measures (`triangle_circumradius_measures`,
+  `edge_length_measures`): an entity farther from t^2 than a proved
+  forward error bound is decided in floats, otherwise exactly in the stored
+  coordinates (R^2 = a^2 b^2 c^2 / (16 A^2), squared lengths) against
+  t = sqrt(F) h (1 + rel) + abs, with `bound_factor_squared` exact (1/2 for
+  the chart rows). The quantile's order statistics and interpolation weight
+  are numpy's linear ones.
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.
