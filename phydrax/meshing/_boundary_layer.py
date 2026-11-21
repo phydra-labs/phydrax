@@ -25,6 +25,7 @@ are relied on to add contributions sequentially in their input index order.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -41,6 +42,7 @@ from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, PackedBVH, prepar
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
+    canonical_json,
     plain_json_fingerprint,
 )
 from .._meshcore import (
@@ -2092,6 +2094,11 @@ def _corner_patches(
     return corners
 
 
+def _hex_json_array(values: list[str], /) -> str:
+    """Canonical JSON text of hex digest strings (nothing to escape)."""
+    return '["' + '","'.join(values) + '"]' if values else "[]"
+
+
 def _front_source_ancestry(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
@@ -2134,7 +2141,9 @@ def _front_source_ancestry(
             for slot in range(face_counts[column]):
                 key = (face_ids[face_rows[column][slot]], 1, 0)
                 records[key] = records.get(key, 0.0) + face_weights[column][slot]
-            for index in range(constraint_offsets[column], constraint_offsets[column + 1]):
+            for index in range(
+                constraint_offsets[column], constraint_offsets[column + 1]
+            ):
                 key = (
                     face_ids[constraint_rows[index]],
                     int(constraint_orientations[index]),
@@ -2190,11 +2199,31 @@ def _front_source_ancestry(
             if occurrence
             else vertex_keys[column]
         )
-        incident_faces = tuple(sorted({record[0] for record in face_records[column]}))
+        incident_faces = sorted({record[0] for record in face_records[column]})
         parents = parent_local[column]
         if column_kind[column] == _SECTOR:
-            recipe = {"kind": "sector", "incident_faces": incident_faces}
-        elif column_kind[column] == _FAN:
+            # plain_json_fingerprint of the sector column record: the source
+            # vertex is a hex digest and the faces are integers, so only the
+            # geometry entities need the encoder.
+            column_identities.append(
+                hashlib.sha256(
+                    (
+                        '{"geometry_entities":'
+                        + (
+                            canonical_json(geometry_entities)
+                            if geometry_entities
+                            else "[]"
+                        )
+                        + ',"kind":"boundary-layer-column","recipe":{"incident_faces":['
+                        + ",".join(map(str, incident_faces))
+                        + '],"kind":"sector"},"source_vertex":"'
+                        + source_vertex
+                        + '"}'
+                    ).encode("ascii")
+                ).hexdigest()
+            )
+            continue
+        if column_kind[column] == _FAN:
             fan_fraction = fan_fractions[column]
             if fan_fraction is None:
                 raise ValueError(
@@ -2280,40 +2309,53 @@ def _front_source_ancestry(
     face_columns = front_faces.tolist()
     orientations = row_orientations.tolist()
     pieces = row_pieces.tolist()
+    any_occurrence = any(column_occurrences)
     for row in range(row_count):
-        paths = tuple(
-            sorted(
-                {
-                    column_occurrences[column]
-                    for column in face_columns[row]
-                    if column >= 0 and column_occurrences[column]
-                }
+        row_columns_list = [column for column in face_columns[row] if column >= 0]
+        paths = (
+            tuple(
+                sorted(
+                    {
+                        column_occurrences[column]
+                        for column in row_columns_list
+                        if column_occurrences[column]
+                    }
+                )
             )
+            if any_occurrence
+            else ()
         )
         row_occurrences.append(paths)
-        path_keys = tuple(
-            source_entity_id(
-                source_wall.mesh_id,
-                revision,
-                f"mesh-{row_source_kinds[row]}",
-                int(row_source_global_ids[row]),
-                occurrence_path=path,
-            )
-            for path in paths
+        path_keys = (
+            [
+                source_entity_id(
+                    source_wall.mesh_id,
+                    revision,
+                    f"mesh-{row_source_kinds[row]}",
+                    int(row_source_global_ids[row]),
+                    occurrence_path=path,
+                )
+                for path in paths
+            ]
+            if paths
+            else [row_source_entity_ids[row]]
         )
+        # plain_json_fingerprint of {"source_entities", "columns", "orientation",
+        # "piece"}: every string is a hex digest, so the canonical text (sorted
+        # keys, no spaces) is written directly.
         row_digests.append(
-            plain_json_fingerprint(
-                {
-                    "source_entities": path_keys or (row_source_entity_ids[row],),
-                    "columns": tuple(
-                        column_identities[column]
-                        for column in face_columns[row]
-                        if column >= 0
-                    ),
-                    "orientation": int(orientations[row]),
-                    "piece": int(pieces[row]),
-                }
-            )
+            hashlib.sha256(
+                (
+                    '{"columns":'
+                    + _hex_json_array(
+                        [column_identities[column] for column in row_columns_list]
+                    )
+                    + f',"orientation":{int(orientations[row])},"piece":{int(pieces[row])}'
+                    + ',"source_entities":'
+                    + _hex_json_array(path_keys)
+                    + "}"
+                ).encode("ascii")
+            ).hexdigest()
         )
     row_identity_ids = list(
         source_entity_ids(source_wall.mesh_id, revision, "layer-front-row", row_digests)
@@ -4579,7 +4621,13 @@ def _grow_boundary_layers(
     if _native_route(wall, split, source_wall, obstacle_triangles, control):
         native = _native_columns(wall, sectors, control)
         front = _build_front(
-            wall, sectors, split, native.directions, control, source_wall, wall_association
+            wall,
+            sectors,
+            split,
+            native.directions,
+            control,
+            source_wall,
+            wall_association,
         )
         return _assemble(
             wall,

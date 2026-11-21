@@ -248,15 +248,27 @@ Big shift_right_magnitude(const Big& a, std::int64_t bits) {
   return out;
 }
 
-void append_unsigned(std::uint64_t value, std::string& out) {
-  char buffer[24];
-  const auto end = std::to_chars(buffer, buffer + sizeof(buffer), value).ptr;
-  out.append(buffer, end);
+// Decimal text writers advance a cursor into storage the caller sized.
+void put(const char* text, std::size_t length, char*& out) noexcept {
+  std::memcpy(out, text, length);
+  out += length;
 }
 
+template <std::size_t N>
+void put(const char (&text)[N], char*& out) noexcept {
+  put(text, N - 1, out);
+}
+
+void append_unsigned(std::uint64_t value, char*& out) noexcept {
+  out = std::to_chars(out, out + 24, value).ptr;
+}
+
+// Longest decimal text of a magnitude below 2^(64 kLimbs), sign included.
+constexpr std::size_t kDecimalCapacity = 20 * kLimbs + 2;
+
 // Python's int repr of a.
-void append_decimal(const Big& a, std::string& out) {
-  if (a.negative) out += '-';
+void append_decimal(const Big& a, char*& out) {
+  if (a.negative) *out++ = '-';
   if (a.size <= 1) {
     append_unsigned(a.zero() ? 0 : a.limb[0], out);
     return;
@@ -282,8 +294,10 @@ void append_decimal(const Big& a, std::string& out) {
   for (int index = count - 1; index-- > 0;) {
     char buffer[24];
     const auto end = std::to_chars(buffer, buffer + sizeof(buffer), chunks[index]).ptr;
-    out.append(19 - static_cast<std::size_t>(end - buffer), '0');
-    out.append(buffer, end);
+    const std::size_t digits = static_cast<std::size_t>(end - buffer);
+    std::memset(out, '0', 19 - digits);
+    out += 19 - digits;
+    put(buffer, digits, out);
   }
 }
 
@@ -377,14 +391,20 @@ class Blake2b128 {
     state_[0] ^= 0x01010000u ^ 16u;  // digest length 16, no key, fanout/depth 1
   }
 
-  void update(const std::string& data) {
-    const char* next = data.data();
-    std::size_t left = data.size();
+  void update(const char* next, std::size_t left) {
     while (left > 0) {
       if (filled_ == 128) {
         counter_ += 128;
-        compress(false);
+        compress(block_.data(), false);
         filled_ = 0;
+      }
+      if (filled_ == 0 && left > 128) {
+        // A full block followed by more input is not the last: hash it in place.
+        counter_ += 128;
+        compress(reinterpret_cast<const std::uint8_t*>(next), false);
+        next += 128;
+        left -= 128;
+        continue;
       }
       const std::size_t take = std::min<std::size_t>(left, 128 - filled_);
       std::memcpy(block_.data() + filled_, next, take);
@@ -397,7 +417,7 @@ class Blake2b128 {
   void finish(std::uint8_t* out) {
     counter_ += filled_;
     std::fill(block_.begin() + filled_, block_.end(), 0);
-    compress(true);
+    compress(block_.data(), true);
     for (int index = 0; index < 16; ++index) {
       out[index] = static_cast<std::uint8_t>(state_[index / 8] >> (8 * (index % 8)));
     }
@@ -436,16 +456,16 @@ class Blake2b128 {
     v[b] = std::rotr(v[b] ^ v[c], 63);
   }
 
-  void compress(bool last) noexcept {
-    std::array<std::uint64_t, 16> message{};
+  void compress(const std::uint8_t* block, bool last) noexcept {
+    std::array<std::uint64_t, 16> message;
     for (int word = 0; word < 16; ++word) {
       std::uint64_t value = 0;
       for (int byte = 0; byte < 8; ++byte) {
-        value |= static_cast<std::uint64_t>(block_[8 * word + byte]) << (8 * byte);
+        value |= static_cast<std::uint64_t>(block[8 * word + byte]) << (8 * byte);
       }
       message[word] = value;
     }
-    std::array<std::uint64_t, 16> v{};
+    std::array<std::uint64_t, 16> v;
     for (int index = 0; index < 8; ++index) {
       v[index] = state_[index];
       v[index + 8] = kIv[index];
@@ -522,24 +542,24 @@ void combine(const Basis& basis, const std::vector<Big>& values, Expression& out
 }
 
 // Exact rational T 2^shift in lowest terms, as Python's Fraction repr parts.
-void append_fraction(const Big& total, std::int64_t shift, std::string& out) {
+void append_fraction(const Big& total, std::int64_t shift, char*& out) {
   const std::int64_t zeros = trailing_zeros(total);
   const std::int64_t power = shift + zeros;
   if (total.size == 1 && power < 0 && power > -64) {
     // One-limb odd numerator over a one-limb power of two.
-    if (total.negative) out += '-';
+    if (total.negative) *out++ = '-';
     append_unsigned(total.limb[0] >> zeros, out);
-    out += ", ";
+    put(", ", out);
     append_unsigned(std::uint64_t{1} << -power, out);
     return;
   }
   const Big odd = shift_right_magnitude(total, zeros);
   if (power >= 0) {
     append_decimal(shift_left(odd, power), out);
-    out += ", 1";
+    put(", 1", out);
   } else {
     append_decimal(odd, out);
-    out += ", ";
+    put(", ", out);
     append_decimal(shift_left(from_int64(1), -power), out);
   }
 }
@@ -547,27 +567,35 @@ void append_fraction(const Big& total, std::int64_t shift, std::string& out) {
 // `record` is caller scratch storage reused across cells.
 void map_digest(const std::string& kind, const std::array<Expression, 3>& axes,
                 std::int64_t shift, std::string& record, std::uint8_t* digest) {
-  record.assign("['");
-  record += kind;
-  record += "', 3";
+  // Every term writes three one-digit exponents and two fraction parts.
+  std::size_t capacity = kind.size() + 8;
   for (const Expression& expression : axes) {
-    record += ", 'polynomial', ";
-    append_unsigned(expression.size(), record);
+    capacity += 40 + expression.size() * (24 + 2 * kDecimalCapacity);
+  }
+  if (record.size() < capacity) record.resize(capacity);
+  char* const start = record.data();
+  char* out = start;
+  put("['", out);
+  put(kind.data(), kind.size(), out);
+  put("', 3", out);
+  for (const Expression& expression : axes) {
+    put(", 'polynomial', ", out);
+    append_unsigned(expression.size(), out);
     for (const Term& term : expression) {
-      record += ", ((";
-      append_unsigned(static_cast<std::uint64_t>(term.exponent[0]), record);
-      record += ", ";
-      append_unsigned(static_cast<std::uint64_t>(term.exponent[1]), record);
-      record += ", ";
-      append_unsigned(static_cast<std::uint64_t>(term.exponent[2]), record);
-      record += "), ";
-      append_fraction(term.total, shift, record);
-      record += ")";
+      put(", ((", out);
+      *out++ = static_cast<char>('0' + term.exponent[0]);
+      put(", ", out);
+      *out++ = static_cast<char>('0' + term.exponent[1]);
+      put(", ", out);
+      *out++ = static_cast<char>('0' + term.exponent[2]);
+      put("), ", out);
+      append_fraction(term.total, shift, out);
+      *out++ = ')';
     }
   }
-  record += "]";
+  *out++ = ']';
   Blake2b128 hash;
-  hash.update(record);
+  hash.update(start, static_cast<std::size_t>(out - start));
   hash.finish(digest);
 }
 

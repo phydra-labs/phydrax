@@ -1189,6 +1189,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_polyhedral_mesh_entities": (
+        _I32,
+        (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_incidence_order": (_I32, (_I64, _I64, _I64, _P, _P, _P, _P)),
     "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_verify_chart_partition": (
         _I32,
@@ -3835,6 +3840,139 @@ def tet_mesh_entities(cells: object, vertex_count: int, /) -> TetMeshEntities:
             face_cell_order,
         ),
     )
+
+
+class PolyhedralMeshEntities(NamedTuple):
+    """Oriented entities of standard polyhedral cells, first-appearance numbered.
+
+    ``loop_faces`` and ``loop_signs`` route every cell-major face loop to its
+    face and orientation; ``face_owner_loops`` and ``face_neighbor_loops``
+    (``-1`` when unshared) are each face's first and second loop;
+    ``face_vertex_offsets`` / ``face_vertex_values`` hold the canonical face
+    loops; ``edges`` ``(e, 2)`` are increasing vertex pairs routed by
+    ``face_edge_values`` per face side, ``edge_first_sides`` their first
+    side; ``face_order`` and ``edge_order`` sort the faces and edges by
+    increasing vertex rows. All int32.
+    """
+
+    loop_faces: np.ndarray
+    loop_signs: np.ndarray
+    face_owner_loops: np.ndarray
+    face_neighbor_loops: np.ndarray
+    face_vertex_offsets: np.ndarray
+    face_vertex_values: np.ndarray
+    edges: np.ndarray
+    edge_first_sides: np.ndarray
+    face_edge_values: np.ndarray
+    face_order: np.ndarray
+    edge_order: np.ndarray
+
+
+# Face loops and summed loop sizes of tetrahedra, pyramids, prisms, hexahedra.
+_POLYHEDRAL_KIND_LOOPS = np.asarray((4, 5, 5, 6), dtype=np.int64)
+_POLYHEDRAL_KIND_SIDES = np.asarray((12, 16, 18, 24), dtype=np.int64)
+
+
+def polyhedral_mesh_entities(
+    cell_kinds: object, cells: object, vertex_count: int, /
+) -> PolyhedralMeshEntities | None:
+    """Entities of standard cells (kinds 0..3: tetrahedron, pyramid, prism,
+    hexahedron; ``cells`` their packed vertex rows), or ``None`` for a cell
+    set the generic construction rejects."""
+    kinds = _native_integer_array(cell_kinds, "cell_kinds", np.dtype(np.int32))
+    values = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if kinds.ndim != 1 or values.ndim != 1:
+        raise ValueError("cell_kinds and cells must be rank one.")
+    if np.any((kinds < 0) | (kinds > 3)):
+        raise ValueError("cell_kinds must lie in 0..3.")
+    if values.size != int(np.sum(np.asarray((4, 5, 6, 8))[kinds])):
+        raise ValueError("cells must pack one vertex row per cell kind.")
+    count = kinds.size
+    loops = int(np.sum(_POLYHEDRAL_KIND_LOOPS[kinds]))
+    sides = int(np.sum(_POLYHEDRAL_KIND_SIDES[kinds]))
+    loop_faces = np.empty((loops,), dtype=np.int32)
+    loop_signs = np.empty((loops,), dtype=np.int32)
+    owners = np.empty((loops,), dtype=np.int32)
+    neighbors = np.empty((loops,), dtype=np.int32)
+    face_offsets = np.empty((loops + 1,), dtype=np.int32)
+    face_values = np.empty((sides,), dtype=np.int32)
+    edges = np.empty((sides, 2), dtype=np.int32)
+    edge_first_sides = np.empty((sides,), dtype=np.int32)
+    face_edges = np.empty((sides,), dtype=np.int32)
+    face_order = np.empty((loops,), dtype=np.int32)
+    edge_order = np.empty((sides,), dtype=np.int32)
+    face_count = ctypes.c_int64()
+    edge_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_polyhedral_mesh_entities"](
+        int(vertex_count),
+        count,
+        kinds.ctypes.data,
+        values.ctypes.data,
+        loop_faces.ctypes.data,
+        loop_signs.ctypes.data,
+        ctypes.byref(face_count),
+        owners.ctypes.data,
+        neighbors.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        ctypes.byref(edge_count),
+        edges.ctypes.data,
+        edge_first_sides.ctypes.data,
+        face_edges.ctypes.data,
+        face_order.ctypes.data,
+        edge_order.ctypes.data,
+    )
+    if status == MeshcoreStatus.INVALID_INPUT:
+        return None
+    _raise_for_call(status, "polyhedral_mesh_entities")
+    faces = face_count.value
+    edge_total = edge_count.value
+    entries = int(face_offsets[faces])
+    return PolyhedralMeshEntities(
+        loop_faces,
+        loop_signs,
+        owners[:faces].copy(),
+        neighbors[:faces].copy(),
+        face_offsets[: faces + 1].copy(),
+        face_values[:entries].copy(),
+        edges[:edge_total].copy(),
+        edge_first_sides[:edge_total].copy(),
+        face_edges[:entries].copy(),
+        face_order[:faces].copy(),
+        edge_order[:edge_total].copy(),
+    )
+
+
+def incidence_order(
+    lower: object, upper: object, signs: object, lower_count: int, upper_count: int, /
+) -> np.ndarray:
+    """Stable order of routes sorting their ``(lower, upper, sign)`` rows.
+
+    ``lower`` and ``upper`` are dense entity ranks below ``lower_count`` and
+    ``upper_count``; ``signs`` are ±1. Linear time.
+    """
+    lower_array = _native_integer_array(lower, "lower", np.dtype(np.int32))
+    upper_array = _native_integer_array(upper, "upper", np.dtype(np.int32))
+    sign_array = _native_integer_array(signs, "signs", np.dtype(np.int8))
+    count = lower_array.size
+    if (
+        lower_array.ndim != 1
+        or upper_array.shape != lower_array.shape
+        or sign_array.shape != lower_array.shape
+    ):
+        raise ValueError("lower, upper and signs must be equal rank-one arrays.")
+    order = np.empty((count,), dtype=np.int32)
+    status = load_meshcore()["phx_mc_incidence_order"](
+        int(lower_count),
+        int(upper_count),
+        count,
+        lower_array.ctypes.data,
+        upper_array.ctypes.data,
+        sign_array.ctypes.data,
+        order.ctypes.data,
+    )
+    _raise_for_call(status, "incidence_order")
+    return order
 
 
 def validity_coordinates(values: object, /) -> np.ndarray:
