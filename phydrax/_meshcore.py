@@ -1940,6 +1940,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_quality_dihedral_angles": (_I32, (_I64, _I64, _P, _I64, _P, _P)),
+    "phx_mc_quality_solid_corners": (
+        _I32,
+        (_I64, _I64, _P, _I64, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_metric_relocation_create": (
         _I32,
         (
@@ -13181,6 +13186,74 @@ def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.nda
     return results
 
 
+def _quality_cells(
+    points: np.ndarray, rows: np.ndarray, width: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    corners = _real_array(points, "points")
+    table = np.ascontiguousarray(rows, dtype=np.int64)
+    if corners.ndim != 3 or corners.shape[2] != 3 or corners.shape[1] == 0:
+        raise ValueError("points must have shape (cells, corners, 3).")
+    if table.ndim != 2 or table.shape[1] != width:
+        raise ValueError(f"Corner index rows must have shape (rows, {width}).")
+    return corners, table
+
+
+def quality_dihedral_angles(points: np.ndarray, samples: np.ndarray, /) -> np.ndarray:
+    """Dihedral angles ``(cells, samples)`` of ``points`` ``(cells, corners,
+    3)`` with the host quality formula's rounded binary64 operations: per
+    sample row ``(origin, end, first, second)`` of corner indices, the angle
+    about the edge ``(origin, end)`` from the first to the second corner by
+    :func:`angle_arctangent2`, plus ``2 pi`` when negative.
+    """
+    corners, rows = _quality_cells(points, samples, 4)
+    angles = np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64)
+    status = load_meshcore()["phx_mc_quality_dihedral_angles"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        angles.ctypes.data,
+    )
+    _raise_for_call(status, "quality_dihedral_angles")
+    return angles
+
+
+def quality_solid_corners(
+    points: np.ndarray,
+    frames: np.ndarray,
+    ideal_inverse: np.ndarray,
+    ideal_scaled: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Corner measures ``(cells, rows)`` of ``points`` ``(cells, corners, 3)``
+    with the host quality formula's rounded binary64 operations: per frame
+    row ``(apex, n0, n1, n2)``, the frame determinant, the scaled Jacobian,
+    the shape ratio and the condition number against the row's ideal inverse
+    ``(3, 3)`` and ideal scaled Jacobian (``phx_mc_quality_solid_corners``).
+    """
+    corners, rows = _quality_cells(points, frames, 4)
+    inverse = np.ascontiguousarray(ideal_inverse, dtype=np.float64)
+    scale = np.ascontiguousarray(ideal_scaled, dtype=np.float64)
+    if inverse.shape != (rows.shape[0], 3, 3) or scale.shape != (rows.shape[0],):
+        raise ValueError("Ideal frames must align with the frame rows.")
+    results = tuple(
+        np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64) for _ in range(4)
+    )
+    status = load_meshcore()["phx_mc_quality_solid_corners"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        inverse.ctypes.data,
+        scale.ctypes.data,
+        *(result.ctypes.data for result in results),
+    )
+    _raise_for_call(status, "quality_solid_corners")
+    return results[0], results[1], results[2], results[3]
+
+
 def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Orthonormal basis and projector of the affine hull of 2 or 3 corners.
 
@@ -14066,6 +14139,8 @@ class MetricRelocationSearch:
 __all__ = [
     "angle_arccosine",
     "angle_arctangent2",
+    "quality_dihedral_angles",
+    "quality_solid_corners",
     "angle_arcsine",
     "angle_between",
     "angle_cosine",

@@ -20,6 +20,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 
 // Contraction is forbidden twice: by the build flags, which the build states
 // to the source as PHX_MC_FP_CONTRACT_OFF, and by the pragma below for every
@@ -57,6 +58,19 @@ double log1p(double x) noexcept;
 // [2^-128, 2^128]. +0 gives +0, +infinity gives +infinity, a negative x and
 // NaN give NaN.
 double pow_two_thirds(double x) noexcept;
+
+// The cube root of a positive finite value by Newton's iteration from a power
+// of two (frexp and ldexp are exact): eight steps from a start within a factor
+// of two reach the last places, not correctly rounded. Other values are
+// returned as given.
+inline double cube_root(double value) noexcept {
+  if (!(value > 0.0) || !std::isfinite(value)) return value;
+  int exponent = 0;
+  std::frexp(value, &exponent);
+  double root = std::ldexp(1.0, exponent / 3);
+  for (int step = 0; step < 8; ++step) root = (2.0 * root + value / (root * root)) / 3.0;
+  return root;
+}
 
 // Determinant of a row-major 3x3 matrix by cofactors of its first row, and
 // v^T M v for a row-major 3x3 matrix (M v by rows, then the dot product).

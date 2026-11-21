@@ -30,6 +30,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._host_table_cache import host_table_cache, logical_table_bytes
+from .._meshcore import meshcore_available, quality_dihedral_angles, quality_solid_corners
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, PolyhedralConnectivity
@@ -1011,7 +1012,23 @@ def _host_solid_corner_measures(
     operations in the same order (determinant cofactors, norms and matrix
     entries from the first product, traces and products from zero and one), so
     every value is bitwise identical; NumPy's loops run over all cells.
+    Binary64 points take the native kernel of the same operations when
+    meshcore is available (``quality_solid_corners``).
     """
+    if points.dtype == np.float64 and meshcore_available():
+        determinant, scaled, ratio, condition = quality_solid_corners(
+            points,
+            np.concatenate((table.vertices[:, None], table.neighbors), axis=1),
+            table.ideal_inverse,
+            table.ideal_scaled,
+        )
+        return (
+            determinant,
+            scaled,
+            ratio,
+            condition,
+            np.full(ratio.shape, np.nan, dtype=points.dtype),
+        )
     corners = np.ascontiguousarray(np.transpose(points, (2, 1, 0)))
     apex = corners[:, table.vertices]
     # frame[a][d]: component a of the edge to neighbor d, one row per corner.
@@ -1276,8 +1293,13 @@ def _host_dihedral_angles(points: np.ndarray, samples: np.ndarray, /) -> np.ndar
 
     The same rounded products, sums (norms from the first square, other sums
     from zero) and cross products as the vector form, so every angle is
-    bitwise identical; component arrays keep NumPy's loops long.
+    bitwise identical; component arrays keep NumPy's loops long. Binary64
+    points take the native kernel of the same operations when meshcore is
+    available (``quality_dihedral_angles``; ``binary64_arctangent2`` mirrors
+    its arctangent).
     """
+    if points.dtype == np.float64 and meshcore_available():
+        return quality_dihedral_angles(points, samples)
     components = np.moveaxis(points, -1, 0)
     origin = components[:, :, samples[:, 0]]
     edge = components[:, :, samples[:, 1]] - origin

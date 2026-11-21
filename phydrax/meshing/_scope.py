@@ -586,7 +586,10 @@ class MeshingScope(StrictModule, NonTrainableState):
         self.entity_kind = entity_kind
         self.entity_dimension = dimension
         self.entity_set_id = entity_set
-        self.entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
+        # jnp.array of the host int64 bank: the same device array as
+        # jnp.asarray at two thirds of its dispatch cost (a source facet per
+        # triangle builds tens of thousands of scopes).
+        self.entity_ids = jnp.array(identifiers, dtype=jnp.int64)
         # The unqualified IDs were validated above to be host integers.
         self.unqualified_entity_ids = StaticRows(unqualified)
         self.side_records = sides
@@ -993,26 +996,66 @@ def resolve_mesh_scope_rows(
     O(n log n + selected) time and O(n + selected) memory instead of O(n) each.
     """
 
-    tables: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-    resolved: list[np.ndarray] = []
-    for scope in scopes:
-        entities = _mesh_scope_entities(mesh, scope)
-        table = tables.get(entities.entity_set_id)
-        if table is None:
-            active_rows = np.flatnonzero(np.asarray(entities.active_mask, dtype=np.bool_))
-            active_ids = np.asarray(entities.entity_ids, dtype=np.int64)[active_rows]
-            order = np.argsort(active_ids, kind="stable")
-            table = (active_ids[order], active_rows[order])
-            tables[entities.entity_set_id] = table
-        sorted_ids, sorted_rows = table
-        requested = np.asarray(scope.entity_ids, dtype=np.int64).reshape((-1,))
+    # The binding checks are a function of a scope's binding fields, decided
+    # once per distinct tuple. A scope failing them raises only after every
+    # earlier scope resolved, as one scope at a time would.
+    bound: dict[tuple[object, ...], EntitySet] = {}
+    scope_entities: list[EntitySet] = []
+    for index, scope in enumerate(scopes):
+        if not isinstance(scope, MeshingScope):
+            resolve_mesh_scope_rows(mesh, scopes[:index])
+            raise TypeError("scope must be MeshingScope.")
+        key = (
+            scope.source_id,
+            scope.source_revision,
+            scope.entity_kind,
+            scope.entity_dimension,
+            scope.entity_set_id,
+        )
+        entities = bound.get(key)
+        if entities is None:
+            try:
+                entities = _mesh_scope_entities(mesh, scope)
+            except (TypeError, ValueError):
+                resolve_mesh_scope_rows(mesh, scopes[:index])
+                raise
+            bound[key] = entities
+        scope_entities.append(entities)
+    # One sorted active-ID table and one search per entity set, over the
+    # concatenated IDs of its scopes.
+    members: dict[str, list[int]] = {}
+    for index, entities in enumerate(scope_entities):
+        members.setdefault(entities.entity_set_id, []).append(index)
+    resolved: list[np.ndarray] = [np.zeros((0,), dtype=np.int64)] * len(scopes)
+    for indices in members.values():
+        entities = scope_entities[indices[0]]
+        active_rows = np.flatnonzero(np.asarray(entities.active_mask, dtype=np.bool_))
+        active_ids = np.asarray(entities.entity_ids, dtype=np.int64)[active_rows]
+        order = np.argsort(active_ids, kind="stable")
+        sorted_ids, sorted_rows = active_ids[order], active_rows[order]
+        parts = [
+            np.asarray(scopes[index].entity_ids, dtype=np.int64).reshape((-1,))
+            for index in indices
+        ]
+        counts = np.fromiter(map(len, parts), dtype=np.int64, count=len(parts))
+        requested = np.concatenate(parts)
+        owners = np.repeat(np.arange(len(parts), dtype=np.int64), counts)
         position = np.searchsorted(sorted_ids, requested)
         found = position < sorted_ids.size
         found[found] = sorted_ids[position[found]] == requested[found]
-        rows = np.unique(sorted_rows[position[found]])
-        if rows.size != requested.size:
+        rows = sorted_rows[position[found]]
+        owners = owners[found]
+        # Per scope, its distinct rows ascending (np.unique of each scope).
+        order = np.lexsort((rows, owners))
+        rows, owners = rows[order], owners[order]
+        distinct = np.ones((rows.size,), dtype=np.bool_)
+        distinct[1:] = (rows[1:] != rows[:-1]) | (owners[1:] != owners[:-1])
+        rows, owners = rows[distinct], owners[distinct]
+        if not np.array_equal(np.bincount(owners, minlength=len(parts)), counts):
             raise ValueError("Meshing scope contains undeclared mesh entity IDs.")
-        resolved.append(rows.astype(np.int64, copy=False))
+        bounds = np.concatenate((np.zeros((1,), dtype=np.int64), np.cumsum(counts)))
+        for part, index in enumerate(indices):
+            resolved[index] = rows[bounds[part] : bounds[part + 1]]
     return tuple(resolved)
 
 
