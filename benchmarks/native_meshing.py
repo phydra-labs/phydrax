@@ -18,6 +18,7 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple, TYPE_CHECKING
@@ -31,9 +32,13 @@ from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_complex import TetrahedralConnectivity
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._exact_power_geometry import ExactPoint3
+from phydrax.discretization._exact_voronoi_geometry import (
+    ExactVoronoiCellGeometrySource,
+)
 from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.geometry._interval_enclosure import prepare_interval_function
 from phydrax.meshing import certify_cell_mesh
@@ -2475,12 +2480,19 @@ def _voronoi_cells(result: object, /) -> int:
     return int(_voronoi_candidate(result).mesh.connectivity.cell_count)
 
 
+def _polyhedral_connectivity(mesh: CellMesh, /) -> PolyhedralConnectivity:
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError("A voronoi row publishes polyhedral connectivity.")
+    return connectivity
+
+
 def _voronoi_quality(
     case: _VoronoiCase, result: object, /
 ) -> tuple[int, dict[str, float]]:
     """Measure the published mesh independently and compare with VoroCrust."""
     mesh = _voronoi_candidate(result).mesh
-    connectivity = mesh.connectivity
+    connectivity = _polyhedral_connectivity(mesh)
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
@@ -2542,12 +2554,34 @@ def _voronoi_quality(
     )
     repeated = key_counts[np.searchsorted(unique_keys, keys)] > 1
     open_cells = np.unique(entry_cells[~paired | repeated]).size
-    # Convexity: every vertex of a cell behind each of its outward face planes
-    # (faces under (1e-6 h)^2 in area carry no reliable rounded plane).
+    # Convexity, decided exactly: every vertex of a cell on the inner side of
+    # each of its face planes, the plane through the exact vertices with their
+    # exact Newell normal. Binary64 only screens: the published vertices are
+    # the nearest values of the exact ones, so on a face of area over
+    # (1e-3 h)^2 the rounded unit normal is off by far under 1e-12 and a
+    # rounded distance below -1e-9 h is a certain inside; every other
+    # (vertex, face) pair is decided in rationals.
+    source_map = _voronoi_candidate(result).geometry.source_map
+    if not isinstance(source_map, ExactVoronoiCellGeometrySource):
+        raise TypeError("A voronoi row carries exact Voronoi vertices.")
+    exact_points = source_map.source_coordinates()
     scale = case.size
     norm = np.linalg.norm(area, axis=1)
-    usable = norm > (1e-6 * scale) ** 2
+    screened = norm > (1e-3 * scale) ** 2
     unit = area / np.maximum(norm, 1e-300)[:, None]
+    exact_planes: dict[int, tuple[ExactPoint3, ExactPoint3]] = {}
+
+    def exact_plane(face: int, /) -> tuple[ExactPoint3, ExactPoint3]:
+        if face not in exact_planes:
+            loop = [exact_points[v] for v in values[offsets[face] : offsets[face + 1]]]
+            normal = [Fraction(0), Fraction(0), Fraction(0)]
+            for p, q in zip(loop, loop[1:] + loop[:1]):
+                normal[0] += p[1] * q[2] - p[2] * q[1]
+                normal[1] += p[2] * q[0] - p[0] * q[2]
+                normal[2] += p[0] * q[1] - p[1] * q[0]
+            exact_planes[face] = ((normal[0], normal[1], normal[2]), loop[0])
+        return exact_planes[face]
+
     nonconvex = np.zeros((cells,), dtype=bool)
     entry_offsets = np.concatenate(([0], np.cumsum(sizes[cell_faces])))
     for cell in range(cells):
@@ -2557,27 +2591,45 @@ def _voronoi_quality(
             ]
         )
         for slot in range(cell_offsets[cell], cell_offsets[cell + 1]):
-            face = cell_faces[slot]
-            if not usable[face]:
+            face = int(cell_faces[slot])
+            orientation = 1 if cell_signs[slot] * outward > 0.0 else -1
+            doubtful = members
+            if screened[face]:
+                rounded = (points[members] - centroid[face]) @ (orientation * unit[face])
+                doubtful = members[rounded > -1e-9 * scale]
+            if doubtful.size == 0:
                 continue
-            normal = cell_signs[slot] * outward * unit[face]
-            if np.max((points[members] - centroid[face]) @ normal) > 1e-9 * scale:
+            normal, origin = exact_plane(face)
+            if any(
+                orientation
+                * sum(
+                    (
+                        normal[axis] * (exact_points[v][axis] - origin[axis])
+                        for axis in range(3)
+                    ),
+                    Fraction(0),
+                )
+                > 0
+                for v in doubtful.tolist()
+            ):
                 nonconvex[cell] = True
                 break
     reference_distance, reference_ratio, reference_volume, reference_faces = (
         case.reference
     )
-    digests = {
-        hash(
-            (
-                np.asarray(candidate.mesh.coordinates).tobytes(),
-                np.asarray(candidate.mesh.connectivity.face_vertex_values).tobytes(),
-                np.asarray(candidate.mesh.connectivity.face_owner).tobytes(),
-                np.asarray(candidate.mesh.connectivity.face_neighbor).tobytes(),
+    digests = set()
+    for candidate in case.results:
+        published = _polyhedral_connectivity(candidate.mesh)
+        digests.add(
+            hash(
+                (
+                    np.asarray(candidate.mesh.coordinates).tobytes(),
+                    np.asarray(published.face_vertex_values).tobytes(),
+                    np.asarray(published.face_owner).tobytes(),
+                    np.asarray(published.face_neighbor).tobytes(),
+                )
             )
         )
-        for candidate in case.results
-    }
     case.results.clear()
     measured = {
         "cells": float(cells),

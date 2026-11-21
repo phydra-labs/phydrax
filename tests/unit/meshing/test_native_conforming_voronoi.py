@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pytest
 from scipy.spatial import Voronoi
@@ -135,6 +137,52 @@ def test_kernel_cells_are_convex_and_deterministic() -> None:
         )
         heights = (vertices[loops] - 0.5 * (a + b)) @ (b - a) / np.linalg.norm(b - a)
         assert np.max(heights) <= 1e-12, face
+
+
+def _rotation() -> np.ndarray:
+    rotation = np.eye(3)
+    for axis, angle in enumerate((0.3, 0.5, 0.7)):
+        i, j = (k for k in range(3) if k != axis)
+        turn = np.eye(3)
+        turn[i, i] = turn[j, j] = np.cos(angle)
+        turn[i, j], turn[j, i] = -np.sin(angle), np.sin(angle)
+        rotation = rotation @ turn
+    return rotation
+
+
+def _shear() -> np.ndarray:
+    shear = np.eye(3)
+    shear[0, 2] = 0.3
+    return shear
+
+
+@pytest.mark.parametrize("transform", [_rotation, _shear], ids=["rotated", "sheared"])
+def test_kernel_resolves_oblique_facets_within_the_certified_bounds(
+    transform: Callable[[], np.ndarray],
+) -> None:
+    # Oblique facets (every facet of a rotated cube, two of a sheared one):
+    # snapped mirror reflections leave snap-level vertex clusters that rigid
+    # (mirror-preserving) seed moves keep; lone moves resolve them, so the
+    # boundary is certified within its fidelity bound instead of exact
+    # (measured: distance ~4e-3 h, volume error ~5e-4 against 1e-15 on the
+    # axis-aligned cube).
+    triangles, regions, facets = _cube_triangles()
+    for size in (0.25, 0.1):
+        cells = meshcore.conforming_voronoi(
+            _cube_vertices() @ transform().T,
+            triangles,
+            regions,
+            facets,
+            size=size,
+            feature_angle_degrees=20.0,
+            prove=True,
+        )
+        stats = cells.stats
+        assert cells.status is meshcore.MeshcoreStatus.OK
+        assert stats[15] == 1.0 and stats[16] == 0.0 and stats[17] == 0.0
+        assert stats[14] > 0.0 and stats[24] == 0.0
+        assert 0.0 < stats[19] <= min(stats[20], 1e-2)
+        assert abs(stats[18]) <= min(stats[25], 1e-3)
 
 
 def _plc_cube() -> NativePlcSource:

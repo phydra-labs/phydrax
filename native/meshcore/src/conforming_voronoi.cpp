@@ -48,9 +48,23 @@
 // Resolution: nearly cospherical seeds (mirror pairs about planes that are
 // not axis-aligned, after the dyadic snap) give adjacent circumcentres within
 // 2^-14 h, hence edges and faces too small for a validity certificate (star
-// determinants scale with the squared edge). One apex seed of each such pair
-// (a ghost when there is one) moves 2^-10 h outward along the ray from the
-// other tet's circumcentre, and the diagram is rebuilt; every pair moves once.
+// determinants scale as (edge / R)^2 / 6 and must clear 2^-35 with margin, so
+// edges under ~3e-5 R fail; detection at 2^-14 h covers them and a 2^-10 h move
+// clears it). Each such apex pair is resolved by rigid moves first, one per
+// rebuild while the pair persists, over the seeds of its two tets (apexes
+// first, unmirrored seeds before mirrored ones): an unmirrored seed moves
+// alone, a seed whose mirror pairs form a tree moves 2^-10 h outward along the
+// ray from a tet's circumcentre and the tree is reflected again outward from
+// it, so every facet between mirrors stays put. Mirror pairs across one plane
+// are always cocircular (isosceles trapezoids), so every facet vertex is
+// degenerate by construction:
+// exact reflections (axis-aligned planes) make it exactly cospherical and it
+// merges, but snapped reflections across oblique planes split it into a
+// snap-level cluster that rigid moves keep, and curved surfaces do the same
+// across neighbouring planes. A pair that persists after its rigid moves is
+// resolved by a lone move of one apex seed (a ghost when there is one), which
+// then leaves its mirror pairs and tilts their facets by up to 2^-10 h. Every
+// pair passes each stage at most once, so the rebuilds terminate.
 //
 // Repair: an interior cell meeting a box seed, or a boundary vertex farther
 // than 1.2 r from the surface, gets a ghost: its seed reflected across the
@@ -626,6 +640,9 @@ struct PointGrid {
 struct SeedSet {
   std::vector<double> points;
   std::vector<int32_t> regions;  // -1: ghost
+  // Mirror pairs (a, b, t): seeds reflected into each other across the
+  // (curvature-shifted) plane of triangle t.
+  std::vector<std::array<int32_t, 3>> mirrors;
   int32_t interior = 0;
   int32_t lattice = 0;
 };
@@ -663,24 +680,29 @@ class Seeder {
     curvature_shifts();
     std::vector<double> points;
     std::vector<int32_t> regions;
-    const auto add = [&](double* q, int32_t region) {
+    std::vector<std::array<int32_t, 3>> pairs;  // mirrored across triangle t
+    const auto add = [&](double* q, int32_t region) -> int64_t {
       snap(q);
-      if (region < 0 || region_at(s_, columns_, q) != region) return;
-      if (triangles_.any_within(q, 0.5 * depth_)) return;
+      if (region < 0 || region_at(s_, columns_, q) != region) return -1;
+      if (triangles_.any_within(q, 0.5 * depth_)) return -1;
       points.insert(points.end(), q, q + 3);
       regions.push_back(region);
+      return static_cast<int64_t>(regions.size()) - 1;
     };
     for (const Sample& sample : samples_) {
       switch (sample.kind) {
         case kSmooth: {
           const int32_t t = sample.element;
           const double* n = s_.normal(t);
+          int64_t sides[2];
           for (int side = 0; side < 2; ++side) {
             const double sign = side == 0 ? -1.0 : 1.0;
             double q[3];
             for (int k = 0; k < 3; ++k) q[k] = sample.p[k] + (shift_[t] + sign * depth_) * n[k];
-            add(q, side == 0 ? s_.back(t) : s_.front(t));
+            sides[side] = add(q, side == 0 ? s_.back(t) : s_.front(t));
           }
+          if (sides[0] >= 0 && sides[1] >= 0)
+            pairs.push_back({static_cast<int32_t>(sides[0]), static_cast<int32_t>(sides[1]), t});
           break;
         }
         case kEdge:
@@ -720,19 +742,26 @@ class Seeder {
       return x < y;
     });
     std::vector<uint8_t> keep(n, 1);
+    std::vector<int64_t> first(n);  // the kept copy of each seed
+    std::iota(first.begin(), first.end(), 0);
     for (int64_t k = 1; k < n; ++k) {
       const int64_t x = order[k - 1], y = order[k];
       if (points[3 * x] == points[3 * y] && points[3 * x + 1] == points[3 * y + 1] &&
           points[3 * x + 2] == points[3 * y + 2]) {
         keep[y] = 0;
+        first[y] = first[x];
       }
     }
+    std::vector<int32_t> index(n, -1);
     for (int64_t k = 0; k < n; ++k) {
       if (!keep[k]) continue;
+      index[k] = static_cast<int32_t>(out.regions.size());
       out.points.insert(out.points.end(), &points[3 * k], &points[3 * k] + 3);
       out.regions.push_back(regions[k]);
     }
     out.interior = static_cast<int32_t>(out.regions.size());
+    for (const auto& [a, b, t] : pairs)
+      out.mirrors.push_back({index[first[a]], index[first[b]], t});
   }
 
   // Ghost of seed i reflected across triangle t at the foot q (when valid).
@@ -756,6 +785,16 @@ class Seeder {
     double foot[3], distance = 0.0;
     triangles_.nearest(g, reach_, foot, &distance);
     return distance >= 0.5 * std::fabs(height);
+  }
+
+  // The mirror image g of p across the (shifted) plane of triangle t.
+  void mirror(const double* p, int32_t t, double* g) const {
+    const double* n = s_.normal(t);
+    double d[3];
+    geometry::difference(p, s_.corner(t, 0), d);
+    const double height = geometry::dot(d, n) - shift_[t];
+    for (int k = 0; k < 3; ++k) g[k] = p[k] - 2.0 * height * n[k];
+    snap(g);
   }
 
   // Ghosts of every interior seed near the surface, across each of its feet.
@@ -797,22 +836,29 @@ class Seeder {
         }
         if (dominated) continue;
         accepted.push_back(static_cast<int32_t>(k));
-        if (reflect(seeds, i, feet[k].t, feet[k].q, g)) add_ghost(seeds, ghost_grid, g);
+        if (reflect(seeds, i, feet[k].t, feet[k].q, g))
+          add_ghost(seeds, ghost_grid, i, feet[k].t, g);
       }
     }
   }
 
-  // Adds ghost g unless it repeats an existing ghost exactly.
-  bool add_ghost(SeedSet& seeds, PointGrid& ghost_grid, const double* g) const {
-    bool repeated = false;
+  // Adds ghost g of seed i across triangle t unless it repeats an existing
+  // ghost exactly (which then mirrors i as well).
+  bool add_ghost(SeedSet& seeds, PointGrid& ghost_grid, int32_t i, int32_t t,
+                 const double* g) const {
+    int32_t repeated = -1;
     ghost_grid.visit(g, [&](int32_t id) {
       const double* x = seeds.points.data() + 3 * static_cast<int64_t>(id);
-      repeated = repeated || (x[0] == g[0] && x[1] == g[1] && x[2] == g[2]);
+      if (x[0] == g[0] && x[1] == g[1] && x[2] == g[2]) repeated = id;
     });
-    if (repeated) return false;
+    if (repeated >= 0) {
+      seeds.mirrors.push_back({i, repeated, t});
+      return false;
+    }
     const int32_t id = static_cast<int32_t>(seeds.regions.size());
     seeds.points.insert(seeds.points.end(), g, g + 3);
     seeds.regions.push_back(-1);
+    seeds.mirrors.push_back({i, id, t});
     ghost_grid.add(g, id);
     return true;
   }
@@ -1118,17 +1164,41 @@ class Seeder {
 };
 
 // ------------------------------------------------------------------ builder
-// A seed to move to `point`, for the nearly cospherical apex pair (a, b).
+// A seed to move by `shift`, then its mirror images re-reflected in order
+// (child, parent, triangle): the child becomes the parent's mirror across the
+// plane of the triangle. For the nearly cospherical apex pair (a, b), applied
+// at its stage: the rigid moves (every mirror pair kept) of the seeds of the
+// two tets in turn while the pair persists, then the lone move (`lone`).
 struct Perturbation {
   int32_t seed;
+  std::array<double, 3> shift;
+  std::vector<std::array<int32_t, 3>> mirrors;
   int32_t a, b;
-  std::array<double, 3> point;
+  int32_t stage;
+  bool lone;
 };
 
 class Builder {
  public:
   Builder(const Surface& surface, const Seeder& seeder, const SeedSet& seeds, double h)
-      : s_(surface), seeder_(seeder), seeds_(seeds.points), regions_(seeds.regions), h_(h) {}
+      : s_(surface), seeder_(seeder), seeds_(seeds.points), regions_(seeds.regions), h_(h) {
+    // Mirror adjacency: (seed, triangle) partners of each seed, repeats dropped.
+    const std::size_t n = regions_.size();
+    std::vector<std::vector<std::pair<int32_t, int32_t>>> lists(n);
+    for (const auto& [a, b, t] : seeds.mirrors) {
+      if (a == b) continue;
+      for (const auto& [x, y] : {std::pair{a, b}, std::pair{b, a}}) {
+        auto& list = lists[x];
+        if (std::none_of(list.begin(), list.end(), [&](const auto& e) { return e.first == y; }))
+          list.emplace_back(y, t);
+      }
+    }
+    mirror_offsets_.assign(n + 1, 0);
+    for (std::size_t i = 0; i < n; ++i) {
+      mirror_offsets_[i + 1] = mirror_offsets_[i] + static_cast<int32_t>(lists[i].size());
+      mirror_items_.insert(mirror_items_.end(), lists[i].begin(), lists[i].end());
+    }
+  }
 
   void run(phx_mc_voronoi_cells& out, double* timings) {
     auto clock = Clock::now();
@@ -1159,10 +1229,31 @@ class Builder {
   double volume_magnitude() const { return volume_magnitude_; }
 
  private:
+  // The mirror pairs reachable from seed s as (child, parent, triangle) in
+  // breadth-first order; false when they close a cycle.
+  bool mirror_tree(int32_t s, std::vector<std::array<int32_t, 3>>& tree) const {
+    tree.clear();
+    std::vector<int32_t> nodes{s};
+    int64_t entries = 0;
+    for (std::size_t k = 0; k < nodes.size(); ++k) {
+      const int32_t parent = nodes[k];
+      for (int32_t e = mirror_offsets_[parent]; e < mirror_offsets_[parent + 1]; ++e) {
+        ++entries;
+        const auto [child, t] = mirror_items_[e];
+        if (std::find(nodes.begin(), nodes.end(), child) != nodes.end()) continue;
+        nodes.push_back(child);
+        tree.push_back({child, parent, t});
+      }
+    }
+    return entries == 2 * static_cast<int64_t>(tree.size());
+  }
+
   const Surface& s_;
   const Seeder& seeder_;
   std::vector<double> seeds_;
   std::vector<int32_t> regions_;  // -1 ghost, -2 box
+  std::vector<int32_t> mirror_offsets_;  // seeds before the box
+  std::vector<std::pair<int32_t, int32_t>> mirror_items_;  // (mirror seed, triangle)
   double h_;
   bool boundary_exact_ = true;
   double volume_magnitude_ = 0.0;  // sum of |fan volume| over the cells
@@ -1409,8 +1500,11 @@ class Builder {
     }
     // Nearly cospherical seeds (mirror pairs about planes that are not
     // axis-aligned, after the dyadic snap) put adjacent circumcentres within
-    // the resolution: such a pair is recorded so that build() moves one apex
-    // seed off the other tet's circumsphere and rebuilds.
+    // the resolution: such a pair is recorded so that build() moves an apex
+    // seed off the other tet's circumsphere and rebuilds. Thresholds: the
+    // validity certificate's star determinants scale as (edge / R)^2 / 6 and
+    // must clear 2^-35 with margin, so edges under ~3e-5 R are unresolved;
+    // detection at 2^-14 h covers them and a 2^-10 h move clears it.
     const double resolution = kResolution * h_;
     std::vector<std::array<double, 3>> centre(count);
     for (int64_t t = 0; t < count; ++t)
@@ -1431,21 +1525,39 @@ class Builder {
         rounded_circumcenter(u, b);
         if (geometry::squared_distance(a, b) > resolution * resolution) continue;
         const int32_t l = tets_[4 * t + k], m = apex(static_cast<int32_t>(t), k);
-        // Move a ghost when there is one; it leaves the other tet's sphere.
-        const bool move_l = regions_[l] == -1 && regions_[m] != -1 ? true
-                            : regions_[m] == -1                     ? false
-                                                                    : l > m;
-        const int32_t moved = move_l ? l : m;
-        if (regions_[moved] == -2) continue;
-        // kNudge h outward along the ray from the other tet's circumcentre.
-        const double* c = centre[move_l ? u : t].data();
-        double ray[3];
-        geometry::difference(seed(moved), c, ray);
-        const double length = geometry::length(ray);
-        if (!(length > 0.0)) continue;
-        Perturbation p{moved, std::min(l, m), std::max(l, m), {}};
-        for (int a = 0; a < 3; ++a) p.point[a] = seed(moved)[a] + kNudge * h_ * ray[a] / length;
-        near_.push_back(p);
+        // Rigid and lone moves, see the header (Resolution).
+        const auto shift_of = [&](int32_t s, std::array<double, 3>& shift) {
+          // kNudge h outward along the ray from the other tet's circumcentre.
+          const double* c = centre[s == l ? u : t].data();
+          double ray[3];
+          geometry::difference(seed(s), c, ray);
+          const double length = geometry::length(ray);
+          for (int k3 = 0; k3 < 3; ++k3) shift[k3] = kNudge * h_ * ray[k3] / length;
+          return length > 0.0;
+        };
+        const bool l_first = regions_[l] == -1 && regions_[m] != -1 ? true
+                             : regions_[m] == -1                     ? false
+                                                                     : l > m;
+        // The apex seeds (preferred order), then the seeds of the shared face.
+        int32_t candidates[5] = {l_first ? l : m, l_first ? m : l, -1, -1, -1};
+        for (int j = 0, n = 2; j < 4; ++j)
+          if (j != k) candidates[n++] = tets_[4 * t + j];
+        const int32_t lo = std::min(l, m), hi = std::max(l, m);
+        int32_t stage = 0;
+        std::vector<std::array<int32_t, 3>> tree;
+        for (int pass = 0; pass < 2; ++pass)
+          for (const int32_t s : candidates) {
+            if (regions_[s] == -2) continue;
+            const bool mirrored = mirror_offsets_[s + 1] > mirror_offsets_[s];
+            if ((pass == 0) == mirrored || (mirrored && !mirror_tree(s, tree))) continue;
+            Perturbation p{s, {}, pass == 0 ? decltype(tree){} : tree, lo, hi, stage, false};
+            if (!shift_of(s, p.shift)) continue;
+            near_.push_back(std::move(p));
+            ++stage;
+          }
+        if (regions_[candidates[0]] == -2) continue;
+        Perturbation p{candidates[0], {}, {}, lo, hi, stage, true};
+        if (shift_of(candidates[0], p.shift)) near_.push_back(std::move(p));
       }
     }
     cell_of_seed_.assign(count_, -1);
@@ -1729,7 +1841,8 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
   double certification = 0.0;
   int32_t repairs = 0;
   std::vector<std::pair<int32_t, int32_t>> used;      // (seed, triangle) repairs
-  std::vector<std::pair<int32_t, int32_t>> resolved;  // nearly cospherical apex pairs
+  // Nearly cospherical apex pairs and the stage of their next move.
+  std::vector<std::pair<std::pair<int32_t, int32_t>, int>> resolved;
   while (true) {
     Builder builder(surface, seeder, seeds, h);
     out = phx_mc_voronoi_cells{};
@@ -1747,21 +1860,47 @@ int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
       double q[3];
       closest_point(seeds.points.data() + 3 * static_cast<int64_t>(i), surface.corner(t, 0),
                     surface.corner(t, 1), surface.corner(t, 2), q);
-      if (seeder.reflect(seeds, i, t, q, g) && seeder.add_ghost(seeds, ghost_grid, g)) ++added;
+      if (seeder.reflect(seeds, i, t, q, g) && seeder.add_ghost(seeds, ghost_grid, i, t, g))
+        ++added;
     }
-    // Nearly cospherical apex pairs: move one seed (each pair once, so the
-    // rebuilds terminate) and rebuild.
+    // Nearly cospherical apex pairs: one staged move per pair and round (each
+    // pair passes every stage at most once, so the rebuilds terminate).
     if (added == 0) {
       std::vector<int32_t> moved;
+      std::vector<std::pair<int32_t, int32_t>> round;  // pairs moved this round
+      const auto taken = [&](int32_t s) {
+        return std::find(moved.begin(), moved.end(), s) != moved.end();
+      };
       for (const Perturbation& p : builder.near()) {
         const std::pair<int32_t, int32_t> key{p.a, p.b};
-        if (std::find(resolved.begin(), resolved.end(), key) != resolved.end()) continue;
-        if (std::find(moved.begin(), moved.end(), p.seed) != moved.end()) continue;
-        resolved.push_back(key);
-        moved.push_back(p.seed);
-        double x[3] = {p.point[0], p.point[1], p.point[2]};
+        if (std::find(round.begin(), round.end(), key) != round.end()) continue;
+        const auto found = std::find_if(resolved.begin(), resolved.end(),
+                                        [&](const auto& r) { return r.first == key; });
+        const int stage = found == resolved.end() ? 0 : found->second;
+        if (p.stage != stage) continue;
+        if (taken(p.seed) || std::any_of(p.mirrors.begin(), p.mirrors.end(),
+                                         [&](const auto& e) { return taken(e[0]); }))
+          continue;
+        const int next = stage + 1;
+        if (found == resolved.end())
+          resolved.emplace_back(key, next);
+        else
+          found->second = next;
+        round.push_back(key);
+        double* x = seeds.points.data() + 3 * static_cast<int64_t>(p.seed);
+        for (int a = 0; a < 3; ++a) x[a] += p.shift[a];
         seeder.snap(x);
-        std::copy_n(x, 3, seeds.points.data() + 3 * static_cast<int64_t>(p.seed));
+        moved.push_back(p.seed);
+        for (const auto& [child, parent, t] : p.mirrors) {
+          seeder.mirror(seeds.points.data() + 3 * static_cast<int64_t>(parent), t,
+                        seeds.points.data() + 3 * static_cast<int64_t>(child));
+          moved.push_back(child);
+        }
+        // A seed moved alone is no mirror any more: later rigid moves must not
+        // reflect it back onto the symmetry it was moved off.
+        if (p.lone)
+          std::erase_if(seeds.mirrors,
+                        [&](const auto& e) { return e[0] == p.seed || e[1] == p.seed; });
         ++added;
       }
     }

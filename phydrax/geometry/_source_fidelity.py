@@ -4088,7 +4088,11 @@ def _exterior_target_triangles(
     from the first vertex are then exact triangulations.
     """
     if any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
+        from ..discretization._cell_complex import PolyhedralConnectivity
+
         connectivity = mesh.connectivity
+        if not isinstance(connectivity, PolyhedralConnectivity):
+            raise TypeError("Polyhedral blocks require a PolyhedralConnectivity mesh.")
         offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
         values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
         face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
