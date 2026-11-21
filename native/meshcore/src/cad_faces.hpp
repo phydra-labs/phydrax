@@ -141,6 +141,11 @@ void sphere_chart_hessian(const SphereChart& chart, double v0, double v1, double
 double polar_trim_band(const SphereChart& chart, double line, double direction, double span,
                        double budget);
 
+// polar_row_span: the largest free-axis extent D_u of a row between
+// latitudes v0 and v1 (D_v = |v1 - v0|) with that bound, the bounds over
+// [v0, v1], within `budget` / 8; 0 when none fits (C D_v^2 >= budget).
+double polar_row_span(const SphereChart& chart, double v0, double v1, double budget);
+
 // polar_trim_span: the trim chord span the curve stage takes. The trim's
 // own term A D_u^2 and the band's 2 B D_u D_v + C D_v^2 share one budget;
 // the split takes the band triangle isotropic in 3D, its band height equal

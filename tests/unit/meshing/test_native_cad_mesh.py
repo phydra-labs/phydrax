@@ -672,6 +672,55 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
             assert bound.max() <= theta * tolerance, (size, theta, bound.max())
 
 
+@pytest.mark.parametrize(
+    ("latitude", "size", "theta"),
+    (
+        (55.02410624307131, 0.7399833208919971, 0.8262382502818686),
+        (84.90768372797963, 0.7379609933402859, 0.848268379781792),
+    ),
+)
+def test_polar_trim_zone_rows_meet_the_chart_linear_bound(
+    latitude: float, size: float, theta: float
+) -> None:
+    # A polar trim's zone has a ring at each seam vertex (the seam sized by
+    # the chart-linear bound (A du^2 + 2 B du dv + C dv^2) / 8 of the test
+    # above), each ring's stops the previous ring's cut or joined, pieces
+    # within the bound over the gap: every zone row meets it. The zone runs
+    # to the first seam vertex at or below latitude 45 deg (where |S_u|^2 =
+    # |S_v|^2 / 2), so every row with a corner above that is a zone row and
+    # meets the bound within theta tol. Faults caught (random coarse caps
+    # that resolved before the band sizing): rings placed by the spacing past
+    # the band ring, none after it beside a 31 deg seam segment (the cap below
+    # 55 deg: oversize refusal), and a band ring short of the seam's design
+    # band vertex, its chain open (the cap below 84.9 deg).
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_unit_cap(latitude, above=False))
+    ).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    tolerance = size / 6.0
+    result = cad_mesh(
+        model,
+        np.full((faces,), size, dtype=np.float64),
+        np.full((faces,), tolerance, dtype=np.float64),
+        np.full((curves,), tolerance, dtype=np.float64),
+        tolerance_fraction=theta,
+    )
+    assert result.status is MeshcoreStatus.OK
+    uv = np.asarray(result.chart.uv)
+    corners = result.points[np.asarray(result.chart.triangles)]
+    dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+    rows = dome & (uv[:, :, 1].max(axis=1) > np.pi / 4.0)
+    assert rows.any()
+    latitudes = uv[rows, :, 1]
+    du = np.ptp(uv[rows, :, 0], axis=1)
+    dv = np.ptp(latitudes, axis=1)
+    low, high = latitudes.min(axis=1), latitudes.max(axis=1)
+    a = np.maximum(np.abs(np.cos(low)), np.abs(np.cos(high)))
+    b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
+    bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
+    assert bound.max() <= theta * tolerance, bound.max() / (theta * tolerance)
+
+
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
 
