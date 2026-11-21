@@ -27,11 +27,26 @@
   is certified valid by its nine exact Jacobian terms and the top layer is
   certified not to self-intersect or meet the wall, with local thinning where
   a certificate fails; the core is meshed by the fixed-boundary tetrahedral
-  pipeline. New benchmark rows `layers-sphere` / `layers-quadric` (ledger F9,
-  surface in, layers plus core out): 0.052 / 0.232 / 0.041 / 0.187 s against
-  Gmsh 0.315 s and cfMesh's layer step 1.85 / 0.463 / 1.14 s, with full
-  true-distance depth, no thinning and no inverted cells. `prepare_boundary_layers`
-  does not use it yet.
+  pipeline. `prepare_boundary_layers` uses it for closed, fully grown triangle
+  walls without split ridges, obstacles or periodicity (`FAIL` /
+  `REDUCE_THICKNESS`; other walls keep the existing construction): level
+  heights are measured from the smooth surface the wall vertices sample (on
+  CAD walls the source surface to the fit's accuracy; on a coarse cylinder the
+  rim columns fall up to 2.7 % short), a sector fit whose normal leaves the
+  cone of its face normals falls back to the flat normal, and
+  `BoundaryLayerEvidence.maximum_level_deviations` reports each level's
+  largest departure from the wall triangles. Declared change to layer geometry
+  and identities on those walls. `phx_mc_cell_map_validity` certifies P1
+  prisms natively (same statuses, endpoints and digests as the rational
+  proof), `phx_mc_polyhedral_mesh_entities` / `phx_mc_incidence_order` build
+  tetrahedron, pyramid, prism and hexahedron `CellMesh` topology with the
+  generic numbering, and `phx_mc_point_triangle_nearest_distances` supplies
+  the layer thickness evidence. The F9 sphere at h 0.1 takes 0.26 s for the
+  public call instead of 126 s. Benchmark rows `layers-sphere` /
+  `layers-quadric` (ledger F9) time the public call plus the core, interleaved:
+  0.257 / 1.000 / 0.189 / 0.738 s against Gmsh 0.293 s and cfMesh 1.755 /
+  0.444 / 1.105 s, with full true-distance depth, no thinning and no inverted
+  cells.
 - Native `LocalIncidence::split_boundary_edge` splits a boundary edge lying in
   two hull facets at a new vertex (the edge star's halves and the four facet
   halves with source and orientation kept), and `LocalIncidence::relocate`
