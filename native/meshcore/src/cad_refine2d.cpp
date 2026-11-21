@@ -602,6 +602,43 @@ class Refinement {
       if(input_.surface_position) {physical_[v]=best_xyz; physical_valid_[v]=1;}
     }
   }
+  // The metric length of chart segment pq, integrated along it (two-point
+  // Gauss-Legendre at canonical endpoints); NaN with status_ set when a
+  // metric evaluation fails. The nodes are interior, so an edge ending at a
+  // chart pole is measured where the metric exists.
+  double integrated_length(const double* p,const double* q) {
+    if (q[0]<p[0] || (q[0]==p[0] && q[1]<p[1])) std::swap(p,q);
+    const double ex=q[0]-p[0], ey=q[1]-p[1];
+    constexpr double node=0.21132486540518711775;  // (1 - 1/sqrt(3)) / 2
+    double total=0;
+    for (const double s : {node, 1-node}) {
+      const double x[2]={p[0]+s*ex, p[1]+s*ey};
+      const CadMetric2D mx=metric(x);
+      if (status_!=PHX_MC_OK) return std::numeric_limits<double>::quiet_NaN();
+      total+=0.5*std::sqrt(dot(mx,ex,ey,ex,ey));
+    }
+    return total;
+  }
+  // Confirms a centroid-metric oversize with edge-integrated metric lengths:
+  // the circumradius of the triangle with those side lengths against
+  // sqrt(1/2) of the larger of one unit and each fixed side's length. Where
+  // the chart metric varies across a triangle (a latitude chart: cos(v)
+  // along u), the centroid metric misstates sides that run far from the
+  // centroid; the band between a sphere's pole rings and a trim circle at
+  // h/r 0.8 held a triangle of physical circumradius 0.64 h judged 0.71 h
+  // whose every split point lay in a trim chord's lens or by a ring point.
+  bool integrated_oversized(int32_t t) {
+    const auto& cell=tri_.triangles[t];
+    double side[3], limit=0.70710678118654752440;
+    for (int k=0;k<3;++k) {
+      side[k]=integrated_length(tri_.point(cell.v[next3(k)]),tri_.point(cell.v[prev3(k)]));
+      if (status_!=PHX_MC_OK) return false;
+      if (tri_.constraint(t,k)!=-1) limit=std::max(limit,0.70710678118654752440*side[k]);
+    }
+    const double heron=(side[0]+side[1]+side[2])*(side[1]+side[2]-side[0])*
+                       (side[0]+side[2]-side[1])*(side[0]+side[1]-side[2]);
+    return !(heron>0) || side[0]*side[1]*side[2] > limit*std::sqrt(heron);
+  }
   // angle_cosine, when given, receives the metric cosine of the smallest
   // angle (not written on the early oversized exit). A known centroid metric
   // skips the callback.
@@ -641,7 +678,15 @@ class Refinement {
       const double ex=e1[0]-e0[0], ey=e1[1]-e0[1];
       size_limit=std::max(size_limit,0.70710678118654752440*std::sqrt(dot(m,ex,ey,ex,ey)));
     }
-    if (!size_reason && !angle_reason && radius > size_limit) {
+    // Refinement splits by the centroid test alone; the final verdict (a
+    // caller asking for reasons: the census and classify) also asks the
+    // side-integrated lengths, so a triangle the kernel could not split is
+    // accepted when they clear it. Splitting every centroid-oversized
+    // triangle it can keeps the parent's meshes where the kernel resolves
+    // them, and spends no metric evaluations on the confirmation there.
+    const bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
+    if (status_ != PHX_MC_OK) return false;
+    if (!size_reason && !angle_reason && oversized) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
       return true;
     }
@@ -663,7 +708,7 @@ class Refinement {
       *angle_cosine=(lengths[next3(shortest)]+lengths[prev3(shortest)]-lengths[shortest])/
                     (2*side_product);
     const bool bad_angle = !protected_angle && sine_ * side_product > area2;
-    const bool bad_size=radius > size_limit;
+    const bool bad_size=oversized;
     if (size_reason) *size_reason=bad_size;
     if (angle_reason) *angle_reason=bad_angle;
     if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }

@@ -270,6 +270,10 @@ struct PoleZone {
   double direction;
   double width;
   double spacing;
+  // A pole's first band takes no kernel point (the fan owns it); a trim
+  // line's band is the kernel's where the ring chain leaves it open (at a
+  // seam, whose vertices need not lie on a ring).
+  bool pole;
 };
 
 struct FaceMetric {
@@ -744,7 +748,7 @@ int32_t admit_face_point(void* opaque, const double point[2]) {
   const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
   for (const PoleZone& zone : metric.poles) {
     const double distance = zone.direction * (uv[zone.axis] - zone.origin);
-    if (distance >= 0.0 && distance <= zone.spacing) return 0;
+    if (zone.pole && distance >= 0.0 && distance <= zone.spacing) return 0;
   }
   return 1;
 }
@@ -900,6 +904,33 @@ bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, 
   return found;
 }
 
+// A trim line's first ring takes the latitude of the boundary vertices next
+// to the line's corners off it (a seam's first vertex) when all lie at one
+// exact offset within a spacing, so the ring chain ends on them and closes
+// the band between ring and trim.
+bool trim_snap_latitude(const FaceBoundary& boundary, int axis, double origin, double direction,
+                        double spacing, double width, double& latitude) {
+  bool found = false;
+  Expansion common;
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    for (int k = 0; k < 2; ++k) {
+      const auto& corner = boundary.vertices[static_cast<std::size_t>(edge.vertices[k])];
+      const auto& adjacent = boundary.vertices[static_cast<std::size_t>(edge.vertices[1 - k])];
+      if (corner.dimension != 0 || corner.uv[axis] != origin || adjacent.uv[axis] == origin)
+        continue;
+      const double offset = direction * (adjacent.uv[axis] - origin);
+      if (!(offset > 0.0 && offset <= spacing && offset <= width)) return false;
+      const Expansion exact = Expansion::difference(adjacent.uv[axis], origin);
+      if (found && !(exact - common).is_zero()) return false;
+      common = exact;
+      latitude = adjacent.uv[axis];
+      found = true;
+    }
+  }
+  return found;
+}
+
 int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundary,
                    std::size_t outer, FaceMetric& metric, std::vector<double>& points,
                    std::vector<uint8_t>& fixed, std::vector<int32_t>& segments,
@@ -911,11 +942,69 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       low[axis] = std::min(low[axis], vertex.uv[axis]);
       high[axis] = std::max(high[axis], vertex.uv[axis]);
     }
+  // Zone anchors: each chart pole, and each polar trim line. A polar trim
+  // line is a face box side along a periodic free axis that boundary curve
+  // edges cover over one whole period and where the free axis's chart speed
+  // is under half the zone axis's (the ratio test that ends a zone): a trim
+  // circle near a sphere's cut-off pole. The chart there is as anisotropic
+  // as beside a pole, and the kernel met neither size nor encroachment rules
+  // in the band between the trim and the rest (measured: caps below 75-85
+  // deg, h/r 0.4-0.8, surface UNRESOLVED); its rings take over as at a pole.
+  struct Anchor {
+    const PoleBoundary* pole;  // nullptr: a polar trim line.
+    int axis;
+    std::array<double, 2> start;
+    std::array<double, 2> end;  // Trim line: the free axis's far end.
+  };
+  std::vector<Anchor> anchors;
   for (const PoleBoundary& pole : boundary.poles) {
     const auto& start = boundary.vertices[pole.first_vertex].uv;
     const auto& almost_end = boundary.vertices[pole.first_vertex + pole.count - 1].uv;
     const int axis = std::abs(start[0] - almost_end[0]) <
                              std::abs(start[1] - almost_end[1]) ? 0 : 1;
+    anchors.push_back({&pole, axis, start, start});
+  }
+  const auto& model = geometry.model();
+  for (int axis = 0; axis < 2; ++axis) {
+    const int free_axis = 1 - axis;
+    int64_t turns = 0;
+    if (exact_turn(low[free_axis], high[free_axis], model.surface_periods[2 * metric.face + free_axis],
+                   turns) != 1 || turns != 1) continue;
+    for (const double line : {low[axis], high[axis]}) {
+      std::vector<std::array<double, 2>> spans;
+      for (const CadFaceEdge& edge : boundary.edges) {
+        if (edge.curve < 0) continue;
+        const auto& a = boundary.vertices[static_cast<std::size_t>(edge.vertices[0])].uv;
+        const auto& b = boundary.vertices[static_cast<std::size_t>(edge.vertices[1])].uv;
+        if (a[axis] != line || b[axis] != line) continue;
+        spans.push_back({std::min(a[free_axis], b[free_axis]), std::max(a[free_axis], b[free_axis])});
+      }
+      std::sort(spans.begin(), spans.end());
+      double reach = low[free_axis];
+      for (const auto& span : spans)
+        if (span[0] == reach) reach = span[1];
+      if (spans.empty() || reach != high[free_axis]) continue;
+      double uv[2];
+      uv[axis] = line;
+      uv[free_axis] = 0.5 * (low[free_axis] + high[free_axis]);
+      double jet[18];
+      if (!surface_jet(metric, uv, jet)) return PHX_MC_INVALID_INPUT;
+      const double scale[2] = {metric.scale_u, metric.scale_v};
+      const auto speed2 = [&](int k) {
+        const double* d = jet + 3 + 3 * k;
+        return (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / (scale[k] * scale[k]);
+      };
+      if (!(speed2(free_axis) < 0.5 * speed2(axis))) continue;
+      std::array<double, 2> start{}, end{};
+      start[axis] = end[axis] = line;
+      start[free_axis] = low[free_axis];
+      end[free_axis] = high[free_axis];
+      anchors.push_back({nullptr, axis, start, end});
+    }
+  }
+  for (const Anchor& anchor : anchors) {
+    const auto& start = anchor.start;
+    const int axis = anchor.axis;
     const int free_axis = 1 - axis;
     const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
     double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
@@ -927,8 +1016,8 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // zero-area strip left a boundary that tetrahedral improvement churned
     // on for minutes.
     double half_gap = std::numeric_limits<double>::infinity();
-    for (const PoleBoundary& other : boundary.poles) {
-      const double gap = direction * (boundary.vertices[other.first_vertex].uv[axis] - start[axis]);
+    for (const Anchor& other : anchors) {
+      const double gap = direction * (other.start[axis] - start[axis]);
       if (gap > 0.0) half_gap = std::min(half_gap, 0.5 * gap);
     }
     limit = std::min(limit, half_gap);
@@ -948,19 +1037,23 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // kernel triangles between them unresolved; rings at the layer size
     // beside a chart-straight seam left a 16 deg fan triangle between the
     // first ring and the seam's request-sized pole segment).
-    const int32_t corner = boundary.vertices[pole.first_vertex].entity;
+    // A trim line's zone lies in the layer of its own chords.
     double lens = 0.0;
     for (std::size_t e = 0; e < boundary.edges.size(); ++e) {
       const CadFaceEdge& edge = boundary.edges[e];
       if (edge.curve < 0) continue;
-      bool at_pole = false;
+      bool at_anchor = !anchor.pole;
       for (const int32_t v : edge.vertices) {
         const CadFaceVertex& vertex = boundary.vertices[static_cast<std::size_t>(v)];
-        at_pole = at_pole || (vertex.dimension == 0 && vertex.entity == corner);
+        if (anchor.pole)
+          at_anchor = at_anchor || (vertex.dimension == 0 &&
+                                    vertex.entity == boundary.vertices[anchor.pole->first_vertex].entity);
+        else
+          at_anchor = at_anchor && vertex.uv[axis] == start[axis];
       }
       double edge_lens = 0.0;
-      if (at_pole && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
-                                 metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
+      if (at_anchor && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
+                                   metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
       lens = std::max(lens, edge_lens);
     }
     const double layer = metric.theta - std::min(lens / metric.tolerance,
@@ -995,16 +1088,20 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       width = next;
     }
     double latitude = 0.0;
-    const bool snapped = pole_snap_latitude(boundary, pole, axis, start[axis], direction,
-                                           spacing, width, latitude);
+    const bool snapped = anchor.pole
+        ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing, width,
+                             latitude)
+        : trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
     if (snapped) spacing = direction * (latitude - start[axis]);
-    metric.poles.push_back({axis, start[axis], direction, width, spacing});
-    const double first = geometry.model().use_ranges[2 * pole.use];
-    const double last = geometry.model().use_ranges[2 * pole.use + 1];
-    std::array<double, 2> end;
-    if (!chart_point(geometry, pole.use,
-                     geometry.model().use_senses[pole.use] > 0 ? last : first,
-                     metric.workspace, end)) return PHX_MC_INVALID_INPUT;
+    metric.poles.push_back({axis, start[axis], direction, width, spacing, anchor.pole != nullptr});
+    std::array<double, 2> end = anchor.end;
+    if (anchor.pole) {
+      const auto& pole = *anchor.pole;
+      const double first = model.use_ranges[2 * pole.use];
+      const double last = model.use_ranges[2 * pole.use + 1];
+      if (!chart_point(geometry, pole.use, model.use_senses[pole.use] > 0 ? last : first,
+                       metric.workspace, end)) return PHX_MC_INVALID_INPUT;
+    }
     for (double offset = spacing; offset <= width; offset += spacing) {
       std::array<double, 2> uv = start;
       uv[axis] = snapped && offset == spacing ? latitude : start[axis] + direction * offset;
@@ -1058,7 +1155,22 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         points.push_back(uv[1] * metric.scale_v);
         fixed.push_back(1);
       }
-      if (first_ring) {
+      if (first_ring && !anchor.pole) {
+        // A trim line's first ring chain closes the band between it and the
+        // trim, whose triangles then join fixed points only, as a pole's fan;
+        // open, triangles from the trim to kernel points beyond the ring
+        // asked for points in the band, which admission refuses.
+        for (int i = 0; i < count; ++i) {
+          const int32_t a = ring_rows[static_cast<std::size_t>(i)];
+          const int32_t b = ring_rows[static_cast<std::size_t>(i+1)];
+          if (a < 0 || b < 0 || chord_meets_segment(boundary, a, b, ring_uv[i], ring_uv[i+1]))
+            continue;
+          segments.push_back(a);
+          segments.push_back(b);
+          protected_edges.push_back({a, b});
+        }
+      } else if (first_ring) {
+        const PoleBoundary& pole = *anchor.pole;
         CadPoleSectors counts{static_cast<int32_t>(pole.use), 0, 0};
         const auto add_segment = [&](int32_t a, int32_t b) {
           for (std::size_t j = 0; j < segments.size(); j += 2)
