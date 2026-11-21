@@ -134,6 +134,7 @@ from ._periodic_restriction import (
 )
 from ._planar_chain_embedding import (
     point_in_convex_planar_hull,
+    polytope_face_triangles,
     triangulate_planar_polygon,
 )
 from ._planar_primitives import TriangleEnclosures
@@ -309,10 +310,26 @@ def _point_in_declared_stratum(
             return point_on_segment3(
                 spatial_point, spatial_vertices[0], spatial_vertices[1]
             )
+        if len(spatial_vertices) > 3 and _noncoplanar(spatial_vertices):
+            # A non-planar shared face, given as its loop, is its exact
+            # vertex-average fan (``polytope_face_triangles``).
+            return any(
+                point_in_triangle3(spatial_point, triangle)
+                for triangle in polytope_face_triangles(spatial_vertices)
+            )
         return point_in_convex_planar_hull(spatial_point, spatial_vertices)
     raise ValueError(
         "Exact shared-stratum membership requires ambient dimension two or three."
     )
+
+
+def _noncoplanar(points: tuple[Point3, ...], /) -> bool:
+    origin = points[0]
+    for second, third in combinations(points[1:], 2):
+        normal = _cross3(_sub3(second, origin), _sub3(third, origin))
+        if any(_sign(value) for value in normal):
+            return any(_sign(_dot3(normal, _sub3(point, origin))) for point in points)
+    return False
 
 
 def _shared_face_union(
@@ -514,6 +531,16 @@ def _contact_is_declared(
     point_by_id = dict(zip(first_ids, first.corner_images, strict=True))
     if any(identifier not in point_by_id for identifier in shared):
         return False
+    loops = tuple(
+        loop
+        for loop in (
+            tuple(first_ids[index] for index in route) for route in first.facet_routes
+        )
+        if len(loop) > 3 and frozenset(loop) == common
+    )
+    if loops:
+        # A shared face keeps its loop order: a non-planar face is its fan.
+        shared = loops[0]
     if common not in _local_strata(first) or common not in _local_strata(second):
         edge_chain = _shared_edge_chain(first, second, common, point_by_id)
         if edge_chain is not None:
@@ -602,24 +629,15 @@ def _volume_tetrahedra(
         )
     if cell.kind in ("tetrahedron", "simplex:3"):
         return (_tetrahedron3(cell.corner_images),)
-    faces = _oriented_closed_faces(cell)
     points = tuple(_point3(point) for point in cell.corner_images)
-    planes = tuple(_face_plane(tuple(points[index] for index in face)) for face in faces)
+    triangles = _oriented_face_triangles(cell, points)
+    # The star point lies strictly inside every face triangle's plane (one
+    # plane per planar face, one per fan triangle of a non-planar face).
+    planes = tuple(_face_plane(triangle) for triangle in triangles)
     center = _star_center(points, planes)
     if center is None:
         raise UnsupportedEmbeddingMap(
             "Polytope face planes do not admit an exact strictly interior star point."
-        )
-    triangles: list[tuple[Point3, Point3, Point3]] = []
-    for face in faces:
-        face_points = tuple(points[index] for index in face)
-        try:
-            local = triangulate_planar_polygon(face_points)
-        except ValueError as error:
-            raise UnsupportedEmbeddingMap(str(error)) from error
-        triangles.extend(
-            (face_points[first], face_points[second], face_points[third])
-            for first, second, third in local
         )
     if _star_ray_degree(center, tuple(triangles)) != 1:
         raise UnsupportedEmbeddingMap(
@@ -635,8 +653,8 @@ _STAR_DECOMPOSITION_REFUSALS = (
     "Polytope boundary is not a closed two-manifold face complex.",
     "Polytope boundary faces are not coherently orientable.",
     "A polytope boundary encloses zero exact volume.",
-    "A polytope face has zero exact area.",
-    "A polytope face is not exactly planar.",
+    "A polyhedron face loop has a zero exact area vector.",
+    "A non-planar polyhedron face folds its vertex-average fan.",
     "A polygon must have at least three distinct exact vertices.",
     "Planar polygon is exactly degenerate.",
     "Polygon vertices are not exactly coplanar.",
@@ -645,6 +663,7 @@ _STAR_DECOMPOSITION_REFUSALS = (
     "No exact simple-polygon ear is available for triangulation.",
     "Polygon triangulation produced a degenerate final triangle.",
     "The polytope boundary does not wrap its star point exactly once.",
+    "A non-planar polyhedron face loop winds more than once about its centre.",
 )
 
 
@@ -708,13 +727,15 @@ def _native_volume_tetrahedra(
             cell_faces.append(len(face_offsets) - 1)
     if not rows:
         return results
-    codes, face_reversed, triangle_offsets, triangles = polyhedral_star_decomposition(
-        np.asarray(point_offsets, dtype=np.int64),
-        integers + scales,
-        face_integers,
-        np.asarray(cell_faces, dtype=np.int64),
-        np.asarray(face_offsets, dtype=np.int64),
-        np.asarray(face_values, dtype=np.int64),
+    codes, face_reversed, triangle_offsets, triangle_counts, triangles = (
+        polyhedral_star_decomposition(
+            np.asarray(point_offsets, dtype=np.int64),
+            integers + scales,
+            face_integers,
+            np.asarray(cell_faces, dtype=np.int64),
+            np.asarray(face_offsets, dtype=np.int64),
+            np.asarray(face_values, dtype=np.int64),
+        )
     )
     for local, row in enumerate(rows):
         code = int(codes[local])
@@ -735,17 +756,32 @@ def _native_volume_tetrahedra(
                 strict=True,
             )
         )
+        start = int(triangle_offsets[local])
+        rows_of_cell = triangles[start : start + int(triangle_counts[local])].tolist()
+        # Local index -1 is a fan face's apex: its outward loop is extended by
+        # its exact vertex average.
+        fan_faces = {face for face, first, _, _ in rows_of_cell if first < 0}
+        faces = tuple(
+            (*loop, _vertex_centroid(loop)) if face in fan_faces else loop
+            for face, loop in enumerate(faces)
+        )
         results[row] = tuple(
             (center, faces[face][first], faces[face][second], faces[face][third])
-            for face, first, second, third in triangles[
-                triangle_offsets[local] : triangle_offsets[local + 1]
-            ].tolist()
+            for face, first, second, third in rows_of_cell
         )
     return results
 
 
-def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...]:
-    """Orient face loops coherently outward over a closed oriented edge cycle."""
+def _oriented_face_triangles(
+    cell: EmbeddingCell, points: tuple[Point3, ...], /
+) -> tuple[tuple[Point3, Point3, Point3], ...]:
+    """Outward face triangles over a closed oriented edge cycle.
+
+    Face loops are oriented coherently, each oriented loop is triangulated
+    (``polytope_face_triangles``), and when the exact enclosed volume is
+    negative every loop is reversed and triangulated again: a face's triangles
+    are always those of its outward loop.
+    """
     routes = cell.facet_routes
     if not routes:
         raise UnsupportedEmbeddingMap(
@@ -784,26 +820,27 @@ def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...
                         raise UnsupportedEmbeddingMap(
                             "Polytope boundary faces are not coherently orientable."
                         )
-    oriented = tuple(
-        route[::-1] if reversed_face[index] else route
-        for index, route in enumerate(routes)
-    )
-    points = tuple(_point3(point) for point in cell.corner_images)
+
+    def loop_triangles(flip_all: bool, /) -> list[tuple[Point3, Point3, Point3]]:
+        triangles: list[tuple[Point3, Point3, Point3]] = []
+        for index, route in enumerate(routes):
+            loop = route[::-1] if reversed_face[index] ^ flip_all else route
+            try:
+                triangles.extend(
+                    polytope_face_triangles(tuple(points[vertex] for vertex in loop))
+                )
+            except ValueError as error:
+                raise UnsupportedEmbeddingMap(str(error)) from error
+        return triangles
+
+    triangles = loop_triangles(False)
     origin = points[0]
-    volume = sum(
-        (
-            determinant3(
-                origin, points[face[0]], points[face[index]], points[face[index + 1]]
-            )
-            for face in oriented
-            for index in range(1, len(face) - 1)
-        ),
-        Fraction(0),
+    sign = _sign(
+        sum((determinant3(origin, *triangle) for triangle in triangles), Fraction(0))
     )
-    sign = _sign(volume)
     if sign == 0:
         raise UnsupportedEmbeddingMap("A polytope boundary encloses zero exact volume.")
-    return oriented if sign > 0 else tuple(face[::-1] for face in oriented)
+    return tuple(triangles if sign > 0 else loop_triangles(True))
 
 
 def _face_plane(points: tuple[Point3, ...], /) -> tuple[Point3, ExactScalar]:
@@ -7130,14 +7167,17 @@ def _boundary_findings(
     cells: tuple[EmbeddingCell, ...],
     /,
 ) -> tuple[
-    list[MeshCertificateFinding], int, int, list[str], bool, tuple[int, ...] | None
+    list[MeshCertificateFinding], int, int, list[str], str | None, tuple[int, ...] | None
 ]:
     """Oriented-boundary findings, inventory, proof values and degree premises.
 
-    The fifth value states the complete planar-exterior degree-one theorem. The
-    last is the rows of the exterior-facet cells when the complex has one
-    closed manifold shell whose exterior images are not all proved planar, so
-    their embedding is still owed; otherwise ``None``.
+    The fifth value names the complete exterior degree-one theorem when it
+    holds (``embedded_planar_exterior_boundary``, or
+    ``embedded_fan_exterior_boundary`` when an exterior face is the fan of a
+    non-planar loop), else ``None``. The last is the rows of the exterior-facet
+    cells when the complex has one closed manifold shell whose exterior images
+    are not all proved planar, so their embedding is still owed; otherwise
+    ``None``.
     """
     if (
         mesh.topological_dimension != 3
@@ -7145,7 +7185,7 @@ def _boundary_findings(
         or not cells
         or any(cell.kind == "polygon" for cell in cells)
     ):
-        return [], 0, 0, [], False, None
+        return [], 0, 0, [], None, None
     boundary = build_oriented_boundary(mesh, cells)
     unresolved_checks = {
         "boundary_degree_dimension",
@@ -7191,12 +7231,23 @@ def _boundary_findings(
             f"map_evidence:{face.map_evidence}"
             for face in boundary.faces
         )
+    degree_route: str | None = None
     if boundary.boundary_degree_one:
+        # A fan face triangle carries the synthetic negative centre identity.
+        fan = any(min(triangle.vertex_ids) < 0 for triangle in boundary.triangles)
+        degree_route = (
+            "embedded_fan_exterior_boundary"
+            if fan
+            else "embedded_planar_exterior_boundary"
+        )
+        facets = tuple(sorted(face.facet_id for face in boundary.faces))
         values.extend(
             (
                 "boundary_degree_one:single-connected-source-component",
                 "boundary_topology:one-embedded-closed-shell",
-                f"exterior_planar_embedded_facets:{tuple(sorted(face.facet_id for face in boundary.faces))}",
+                f"exterior_fan_embedded_facets:{facets}"
+                if fan
+                else f"exterior_planar_embedded_facets:{facets}",
                 f"embedded_exterior_triangles:{len(boundary.triangles)}",
             )
         )
@@ -7205,7 +7256,7 @@ def _boundary_findings(
         len(boundary.faces),
         len(boundary.shell_face_indices),
         values,
-        boundary.boundary_degree_one,
+        degree_route,
         boundary.exterior_cells
         if boundary.single_shell_topology and not boundary.boundary_degree_one
         else None,
@@ -7950,7 +8001,7 @@ def _proof(
     boundary_facet_count = 0
     shell_count = 0
     boundary_values: list[str] = []
-    degree_one_boundary = False
+    degree_one_boundary: str | None = None
     global_degree_route: str | None = None
     periodic_shell_degree_topology: str | None = None
     reference_chain_attempt = (
@@ -8177,7 +8228,7 @@ def _proof(
         # through its certified positive Jacobian.
         owing: NDArray[np.bool_] | None = None
         if not state_findings and not boundary:
-            if degree_one_boundary:
+            if degree_one_boundary is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
             elif exterior_cells is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
@@ -8191,8 +8242,8 @@ def _proof(
         local_premises = not state_findings
         contact_values: list[str] = []
         participants: NDArray[np.bool_] | None = None
-        if local_premises and degree_one_boundary:
-            degree_route = "embedded_planar_exterior_boundary"
+        if local_premises and degree_one_boundary is not None:
+            degree_route = degree_one_boundary
             participants = np.zeros((len(cells),), dtype=np.bool_)
         elif local_premises and exterior_cells is not None:
             # A shell whose facets are not all planar is embedded when the

@@ -189,14 +189,15 @@ def test_native_star_decomposition_equals_the_rational_one(
         expected = str(error)
     native = _native_volume_tetrahedra((cell,))[0]
 
-    if name in ("two-components", "self-intersecting"):
-        # A star point off the vertex average: the rational proof owns these.
+    if name == "two-components":
+        # A star point off the vertex average: the rational proof owns it.
         assert native is None
         assert isinstance(expected, str)
     else:
         assert native == expected
     if name == "bent":
-        assert expected == "A polytope face is not exactly planar."
+        # Its top face is non-planar: the fan from its exact vertex average.
+        assert isinstance(native, tuple) and len(native) == 4 + 5 * 2
 
 
 def _validity(

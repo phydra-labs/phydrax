@@ -67,18 +67,21 @@ Decomposition decompose(const std::vector<int64_t>& points,
   }
   std::vector<int64_t> point_offsets = {0, static_cast<int64_t>(points.size() / 3)};
   const Faces table = faces_of(faces);
-  int64_t triangles = 0;
-  for (const auto& face : faces) triangles += std::max<int64_t>(face.size(), 2) - 2;
-  std::vector<int64_t> triangle_offsets = {0, triangles};
+  // Rows sized by the face sizes: a fan face has one triangle per vertex.
+  int64_t capacity = 0;
+  for (const auto& face : faces) capacity += static_cast<int64_t>(face.size());
+  std::vector<int64_t> triangle_offsets = {0, capacity};
   Decomposition result;
   result.reversed.assign(faces.size(), -1);
-  result.triangles.assign(static_cast<std::size_t>(4 * triangles), -1);
+  result.triangles.assign(static_cast<std::size_t>(4 * capacity), -1);
+  int64_t count = -1;
   PHX_CHECK(phx_mc_polyhedral_star_decomposition(
                 1, point_offsets.data(), bank.offsets.data(), bank.words.data(),
                 bank.signs.data(), face_bank.offsets.data(), face_bank.words.data(),
                 face_bank.signs.data(), table.cells.data(), table.offsets.data(),
                 table.values.data(), triangle_offsets.data(), &result.code,
-                result.reversed.data(), result.triangles.data()) == PHX_MC_OK);
+                result.reversed.data(), result.triangles.data(), &count) == PHX_MC_OK);
+  result.triangles.resize(static_cast<std::size_t>(4 * std::max<int64_t>(count, 0)));
   return result;
 }
 
@@ -109,11 +112,19 @@ void test_refusals() {
   auto repeated = kFaces;
   repeated[0] = {0, 2, 2, 1};
   PHX_CHECK(decompose(kCube, repeated).code == 2);
-  // A vertex moved off its faces' planes.
+}
+
+void test_bent_cube_fans() {
+  // A vertex moved off the top face's plane (its side faces stay planar):
+  // the top face is the fan (apex -1, i, i + 1) from its exact vertex average.
   auto bent = kCube;
   for (auto& value : bent) value *= 4;
   bent[3 * 7 + 2] = 5;
-  PHX_CHECK(decompose(bent, kFaces).code == 7);
+  const Decomposition result = decompose(bent, kFaces);
+  PHX_CHECK(result.code == 0);
+  PHX_CHECK(result.triangles.size() == 4 * (4 + 5 * 2));
+  PHX_CHECK(result.triangles[8] == 1 && result.triangles[9] == -1 && result.triangles[10] == 0 &&
+            result.triangles[11] == 1);
 }
 
 void test_face_triangulation() {
@@ -187,6 +198,7 @@ int main() {
   test_cube_decomposition();
   test_inward_cube_is_reoriented();
   test_refusals();
+  test_bent_cube_fans();
   test_face_triangulation();
   test_cube_validity();
   return phx::mc::test::finish("test_polyhedral_certificates");

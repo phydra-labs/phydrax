@@ -351,6 +351,41 @@ class _ConformingVoronoiArrays(ctypes.Structure):
     )
 
 
+class _HexDominantRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("triangle_facets", _P),
+        ("core_size", _F64),
+        ("boundary_size", _F64),
+        ("feature_angle_degrees", _F64),
+        ("layer_count", _I32),
+        ("layer_thicknesses", _P),
+        ("prove", _I32),
+        ("result", ctypes.POINTER(ctypes.c_void_p)),
+    )
+
+
+class _HexDominantArrays(ctypes.Structure):
+    _fields_ = (
+        ("points", _P),
+        ("face_offsets", _P),
+        ("face_vertices", _P),
+        ("face_owner", _P),
+        ("face_neighbor", _P),
+        ("face_facets", _P),
+        ("cell_kinds", _P),
+        ("cell_roles", _P),
+        ("cell_vertex_offsets", _P),
+        ("cell_vertices", _P),
+        ("vertex_triangles", _P),
+        ("vertex_kinds", _P),
+        ("stats", _P),
+    )
+
+
 class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     _fields_ = (
         ("original_site_count", _I64),
@@ -1268,7 +1303,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_polyhedral_star_decomposition": (
         _I32,
-        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
     "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
@@ -1390,6 +1425,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         (_P, ctypes.POINTER(_ConformingVoronoiArrays)),
     ),
     "phx_mc_conforming_voronoi_free": (None, (_P,)),
+    "phx_mc_hex_dominant": (_I32, (ctypes.POINTER(_HexDominantRequest),)),
+    "phx_mc_hex_dominant_sizes": (_I32, (_P, _P)),
+    "phx_mc_hex_dominant_export": (_I32, (_P, ctypes.POINTER(_HexDominantArrays))),
+    "phx_mc_hex_dominant_free": (None, (_P,)),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_restricted_power_cells": (
@@ -3027,6 +3066,148 @@ def conforming_voronoi(
     return ConformingVoronoi(MeshcoreStatus(status), *arrays)
 
 
+class HexDominant(NamedTuple):
+    """Face-based mixed mesh of ``hex_dominant``.
+
+    Face ``f`` is the loop ``face_vertices[face_offsets[f]:face_offsets[f + 1]]``
+    oriented out of ``face_owner[f]``; ``face_neighbor[f]`` is ``-1`` on the
+    boundary, where ``face_facets[f]`` is the facet of the input triangle
+    nearest the face (``-1`` inside). ``cell_kinds``: 0 hexahedron (its eight
+    vertices ``cell_vertices[cell_vertex_offsets[c]:cell_vertex_offsets[c + 1]]``
+    in the reference order), 1 polyhedron (no vertex list). ``cell_roles``: 0
+    core, 1 projection layer, 2 boundary layer. ``vertex_triangles`` is the
+    nearest input triangle of a wall vertex (``-1`` elsewhere);
+    ``vertex_kinds``: 0 interior, 1 patch, 2 feature curve, 3 corner, 4 layer.
+    ``status`` is OK, or UNRESOLVED when a cell failed certification (the
+    arrays then hold the construction).
+    """
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    face_offsets: np.ndarray
+    face_vertices: np.ndarray
+    face_owner: np.ndarray
+    face_neighbor: np.ndarray
+    face_facets: np.ndarray
+    cell_kinds: np.ndarray
+    cell_roles: np.ndarray
+    cell_vertex_offsets: np.ndarray
+    cell_vertices: np.ndarray
+    vertex_triangles: np.ndarray
+    vertex_kinds: np.ndarray
+    # Seconds of the whole call, surface, octree and core, faces, projection,
+    # smoothing and layers, certification; cells, hexahedra, polyhedra,
+    # certified hexahedra, layer cells, staircase faces, feature edges,
+    # patches, largest wall vertex distance, largest sampled boundary
+    # distance, manifold removals, partition flips, curve vertices, corner
+    # vertices, undone smoothing moves, certified (1/0, -1 without prove),
+    # uncertified cells, hexahedra published as polyhedra, octree levels.
+    stats: np.ndarray
+
+
+def hex_dominant(
+    vertices: object,
+    triangles: object,
+    triangle_facets: object,
+    /,
+    *,
+    core_size: float,
+    boundary_size: float,
+    feature_angle_degrees: float,
+    layer_thicknesses: object,
+    prove: bool,
+) -> HexDominant:
+    """Hex-dominant mesh of a closed outward-oriented triangle surface.
+
+    Rows follow ``phx_mc_hex_dominant``: ``core_size`` is ``boundary_size``
+    times a power of two; ``layer_thicknesses`` (possibly empty) are the
+    hexahedral layer thicknesses from the wall outward.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    facets = _native_integer_array(triangle_facets, "triangle_facets", np.dtype(np.int32))
+    layers = np.ascontiguousarray(layer_thicknesses, dtype=np.float64)
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or facets.shape != (rows.shape[0],)
+        or layers.ndim != 1
+    ):
+        raise ValueError(
+            "hex_dominant takes (m, 3) triangles, (m,) facets and a thickness vector."
+        )
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    for name, value in (
+        ("core_size", core_size),
+        ("boundary_size", boundary_size),
+        ("feature_angle_degrees", feature_angle_degrees),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
+            raise TypeError(f"{name} must be a real number.")
+    handle = ctypes.c_void_p()
+    request = _HexDominantRequest(
+        vertex_count=points.shape[0],
+        vertices=points.ctypes.data,
+        triangle_count=rows.shape[0],
+        triangles=rows.ctypes.data,
+        triangle_facets=facets.ctypes.data,
+        core_size=float(core_size),
+        boundary_size=float(boundary_size),
+        feature_angle_degrees=float(feature_angle_degrees),
+        layer_count=_int32_argument(layers.shape[0], "layer_count"),
+        layer_thicknesses=layers.ctypes.data,
+        prove=1 if prove else 0,
+        result=ctypes.pointer(handle),
+    )
+    library = load_meshcore()
+    status = library["phx_mc_hex_dominant"](ctypes.byref(request))
+    if not handle.value:
+        _raise_for_call(
+            status,
+            "hex_dominant",
+            contracts={
+                MeshcoreStatus.INVALID_INPUT: "the surface must be a closed, "
+                "consistently outward-oriented triangle manifold using every vertex.",
+                MeshcoreStatus.DEGENERATE_INPUT: "a surface triangle has zero area.",
+            },
+        )
+        raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "missing hex-dominant result")
+    try:
+        sizes = np.empty((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_hex_dominant_sizes"](handle, sizes.ctypes.data),
+            "hex_dominant_sizes",
+        )
+        point_count, face_count, entry_count, cell_count, cell_entry_count = (
+            int(value) for value in sizes
+        )
+        arrays = (
+            np.empty((point_count, 3), dtype=np.float64),
+            np.empty((face_count + 1,), dtype=np.int64),
+            np.empty((entry_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.uint8),
+            np.empty((cell_count,), dtype=np.uint8),
+            np.empty((cell_count + 1,), dtype=np.int64),
+            np.empty((cell_entry_count,), dtype=np.int32),
+            np.empty((point_count,), dtype=np.int32),
+            np.empty((point_count,), dtype=np.uint8),
+            np.empty((28,), dtype=np.float64),
+        )
+        outputs = _HexDominantArrays(*(array.ctypes.data for array in arrays))
+        _raise_for_call(
+            library["phx_mc_hex_dominant_export"](handle, ctypes.byref(outputs)),
+            "hex_dominant_export",
+        )
+    finally:
+        library["phx_mc_hex_dominant_free"](handle)
+    return HexDominant(MeshcoreStatus(status), *arrays)
+
+
 def _int32_argument(value: object, name: str, /) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{name} must be an integer.")
@@ -4422,16 +4603,18 @@ def polyhedral_star_decomposition(
     face_vertex_offsets: np.ndarray,
     face_vertex_values: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact star decompositions of linear polytopes.
 
     ``integers`` holds every cell's integer point rows ``X = L x`` (three per
     point, cells in order) followed by each cell's ``L``; ``face_integers``
     every face-loop entry's row over its own face's common denominator.
-    Returns ``(codes, face_reversed, triangle_offsets, triangles)`` of
-    ``phx_mc_polyhedral_star_decomposition``: per cell 0 (decomposed), -1
-    (undecided) or the first refusal code; per face its outward reversal; per
-    cell the rows ``(face, i, j, k)`` of its oriented face triangles.
+    Returns ``(codes, face_reversed, triangle_offsets, triangle_counts,
+    triangles)`` of ``phx_mc_polyhedral_star_decomposition``: per cell 0
+    (decomposed), -1 (undecided) or the first refusal code; per face its
+    outward reversal; per cell the ``triangle_counts`` rows ``(face, i, j, k)``
+    from ``triangle_offsets`` of its oriented face triangles, local index -1
+    being the face's exact vertex average (a fan apex).
     """
     point_offset_array = np.ascontiguousarray(point_offsets, dtype=np.int64)
     cell_faces = np.ascontiguousarray(cell_face_offsets, dtype=np.int64)
@@ -4450,13 +4633,12 @@ def polyhedral_star_decomposition(
     word_offsets, words, signs = _integer_word_bank(integers)
     face_word_offsets, face_words, face_signs = _integer_word_bank(face_integers)
     count = point_offset_array.size - 1
-    sizes = np.maximum(np.diff(face_offsets) - 2, 0)
-    face_triangles = np.zeros((face_offsets.size,), dtype=np.int64)
-    np.cumsum(sizes, out=face_triangles[1:])
-    triangle_offsets = np.ascontiguousarray(face_triangles[cell_faces])
+    # A face has at most as many triangles as vertices (its fan).
+    triangle_offsets = np.ascontiguousarray(face_offsets[cell_faces])
     codes = np.zeros((count,), dtype=np.int32)
     face_reversed = np.zeros((face_offsets.size - 1,), dtype=np.int8)
     triangles = np.zeros((int(triangle_offsets[-1]), 4), dtype=np.int32)
+    triangle_counts = np.zeros((count,), dtype=np.int64)
     result = load_meshcore()["phx_mc_polyhedral_star_decomposition"](
         count,
         point_offset_array.ctypes.data,
@@ -4473,9 +4655,16 @@ def polyhedral_star_decomposition(
         codes.ctypes.data,
         face_reversed.ctypes.data,
         triangles.ctypes.data,
+        triangle_counts.ctypes.data,
     )
     _raise_for_call(result, "polyhedral_star_decomposition")
-    return codes, face_reversed.astype(np.bool_), triangle_offsets, triangles
+    return (
+        codes,
+        face_reversed.astype(np.bool_),
+        triangle_offsets,
+        triangle_counts,
+        triangles,
+    )
 
 
 def face_triangulation(
@@ -13749,6 +13938,7 @@ __all__ = [
 ]
 
 __all__ += ["ConformingVoronoi", "conforming_voronoi"]
+__all__ += ["HexDominant", "hex_dominant"]
 
 __all__ += [
     "CadFidelityChords",

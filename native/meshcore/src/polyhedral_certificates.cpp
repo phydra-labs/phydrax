@@ -453,7 +453,7 @@ enum DecompositionCode : int32_t {
   kNotOrientable = 4,
   kZeroVolume = 5,
   kFaceZeroArea = 6,
-  kFaceNotPlanar = 7,
+  kFaceFanFolded = 7,
   kPolygonVertices = 8,
   kPolygonDegenerate = 9,
   kPolygonNotCoplanar = 10,
@@ -462,6 +462,7 @@ enum DecompositionCode : int32_t {
   kPolygonNoEar = 13,
   kPolygonDegenerateFinal = 14,
   kStarDegree = 15,
+  kFaceFanWinding = 16,
   kUndecided = -1,
 };
 
@@ -605,17 +606,19 @@ bool on_segment(const Vec& point, const Vec& first, const Vec& second) {
 
 enum class RayHit { kMiss, kCross, kDegenerate };
 
-// One triangle of `_star_ray_degree` in exact arithmetic, everything scaled
-// by n * denominator > 0: the hit point center + (normal . (a - center) /
-// denominator) direction against the closed triangle and its edges.
+// One triangle of `_star_ray_degree` in exact arithmetic. The corners are
+// a, b, c / weight (weight > 0; a fan apex is its face's vertex sum over the
+// face size) and the star point center_sum / n; everything is scaled by
+// weight * n * denominator > 0: the hit point center + (normal . (a - center)
+// / denominator) direction against the closed triangle and its edges.
 RayHit exact_ray_hit(const Vec& center_sum, const Dyadic& n, const Vec& direction, const Vec& a,
-                     const Vec& b, const Vec& c) {
+                     const Vec& b, const Vec& c, const Dyadic& weight) {
   const Vec normal = cross(sub(b, a), sub(c, a));
   const Dyadic denominator = dot(normal, direction);
   if (denominator.sign() <= 0) return RayHit::kMiss;
   const Dyadic factor = denominator * n;
-  const Dyadic numerator = dot(normal, sub(scale(a, n), center_sum));
-  const Vec hit = add(scale(center_sum, denominator), scale(direction, numerator));
+  const Dyadic numerator = dot(normal, sub(scale(a, n), scale(center_sum, weight)));
+  const Vec hit = add(scale(center_sum, denominator * weight), scale(direction, numerator));
   const std::array<Vec, 3> corners = {scale(a, factor), scale(b, factor), scale(c, factor)};
   int u = 0, v = 0;
   projection_axes(dominant_axis(normal), u, v);
@@ -678,14 +681,19 @@ int interval_ray_hit(const Box& center, const Box& direction, const Box& a, cons
   return 0;
 }
 
+// A face triangle: exact corners over the cell scale times `weight` > 0 (the
+// fan apex of a face of m vertices is its exact vertex sum, weight m) and the
+// enclosures of the rational corners.
 struct Triangle {
-  int32_t corners[3];
+  std::array<Vec, 3> exact;
+  std::array<Box, 3> boxes;
+  Dyadic weight;
 };
 
 // `_star_ray_degree` about the star point center_sum / n over the same ray
 // family; -1 when no direction of the family is generic.
-int64_t star_ray_degree(const CellPoints& cell, const Vec& center_sum, const Box& center,
-                        const Dyadic& n, const std::vector<Triangle>& triangles) {
+int64_t star_ray_degree(const Vec& center_sum, const Box& center, const Dyadic& n,
+                        const std::vector<Triangle>& triangles) {
   const int64_t attempts = 8 * static_cast<int64_t>(triangles.size()) + 1;
   for (int64_t exponent = 0; exponent < attempts; ++exponent) {
     const double k = static_cast<double>(exponent);
@@ -696,11 +704,10 @@ int64_t star_ray_degree(const CellPoints& cell, const Vec& center_sum, const Box
     bool generic = true;
     for (const Triangle& triangle : triangles) {
       RayHit hit = RayHit::kMiss;
-      const auto& boxes = cell.boxes;
-      if (interval_ray_hit(center, direction_box, boxes[triangle.corners[0]],
-                           boxes[triangle.corners[1]], boxes[triangle.corners[2]], hit) != 0) {
-        hit = exact_ray_hit(center_sum, n, direction, cell.exact[triangle.corners[0]],
-                            cell.exact[triangle.corners[1]], cell.exact[triangle.corners[2]]);
+      if (interval_ray_hit(center, direction_box, triangle.boxes[0], triangle.boxes[1],
+                           triangle.boxes[2], hit) != 0) {
+        hit = exact_ray_hit(center_sum, n, direction, triangle.exact[0], triangle.exact[1],
+                            triangle.exact[2], triangle.weight);
       }
       if (hit == RayHit::kDegenerate) {
         generic = false;
@@ -737,11 +744,66 @@ Box newell(const std::vector<const Box*>& loop) {
   return normal;
 }
 
+// polytope_face_routes / polytope_face_triangles of one oriented loop: rows
+// are the loop over the cell scale, face_rows the same loop over its own
+// face's scale. Planar loops get their ear triangulation, others the fan
+// (kApex, i, i + 1) from the exact vertex average, after the fold and
+// single-winding checks; local triangles or the refusal.
+constexpr int32_t kApex = -1;
+
+int32_t polytope_face(const std::vector<Vec>& rows, const std::vector<Vec>& face_rows,
+                      std::vector<std::array<int32_t, 3>>& triangles, bool& fan) {
+  triangles.clear();
+  fan = false;
+  const Vec normal = newell(rows);
+  if (!nonzero(normal)) return kFaceZeroArea;
+  for (const Vec& row : rows) {
+    if (dot(normal, sub(row, rows[0])).sign()) {
+      fan = true;
+      break;
+    }
+  }
+  if (!fan) return face_triangles(face_rows, triangles);
+  const std::size_t count = rows.size();
+  const Dyadic m = count_value(static_cast<int64_t>(count));
+  Vec sum;
+  for (const Vec& row : rows) sum = add(sum, row);
+  // Spokes m (P_i - c): positive multiples of the rational ones.
+  std::vector<Vec> spokes;
+  spokes.reserve(count);
+  for (const Vec& row : rows) spokes.push_back(sub(scale(row, m), sum));
+  const auto turn = [&](const Vec& u, const Vec& w) { return dot(normal, cross(u, w)).sign(); };
+  for (std::size_t i = 0; i < count; ++i) {
+    if (turn(spokes[i], spokes[(i + 1) % count]) <= 0) return kFaceFanFolded;
+  }
+  const Vec& first = spokes[0];
+  const Dyadic norm2 = dot(normal, normal);
+  const auto half = [&](const Vec& u) {
+    const int side = turn(first, u);
+    if (side) return side > 0 ? 0 : 1;
+    const int along = (dot(first, u) * norm2 - dot(first, normal) * dot(u, normal)).sign();
+    return along > 0 ? 0 : 1;
+  };
+  int64_t wraps = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const Vec& u = spokes[i];
+    const Vec& w = spokes[(i + 1) % count];
+    const int hu = half(u), hw = half(w);
+    if (!(hu < hw || (hu == hw && turn(u, w) > 0))) ++wraps;
+  }
+  if (wraps != 1) return kFaceFanWinding;
+  for (std::size_t i = 0; i < count; ++i) {
+    triangles.push_back(
+        {kApex, static_cast<int32_t>(i), static_cast<int32_t>((i + 1) % count)});
+  }
+  return kDecomposed;
+}
+
 // One cell. face_points[f] are the rows of face f over its own common scale,
 // in the given loop order.
 int32_t decompose(const CellPoints& cell, const int64_t* face_offsets, const int64_t* face_values,
                   int64_t face_count, const std::vector<std::vector<Vec>>& face_points,
-                  int8_t* reversed_out, int32_t* triangles_out) {
+                  int8_t* reversed_out, int32_t* triangles_out, int64_t& triangle_count) {
   const int64_t point_count = static_cast<int64_t>(cell.exact.size());
   if (point_count > kMaximumCount) return kUndecided;
   if (face_count == 0) return kNoFaces;
@@ -792,62 +854,127 @@ int32_t decompose(const CellPoints& cell, const int64_t* face_offsets, const int
       }
     }
   }
+  // Oriented loops (cell rows, face rows) and their polytope_face triangles.
   std::vector<std::vector<int64_t>> local(static_cast<std::size_t>(face_count));
-  for (int64_t face = 0; face < face_count; ++face) {
-    auto& route = local[static_cast<std::size_t>(face)];
-    route.assign(face_values + face_offsets[face], face_values + face_offsets[face + 1]);
-    if (reversed[static_cast<std::size_t>(face)]) std::reverse(route.begin(), route.end());
-  }
-  // Signed volume about the first point, enclosed first.
-  Interval volume_box;
-  const Box& origin_box = cell.boxes[0];
-  for (const auto& route : local) {
-    const Box base = sub(cell.boxes[static_cast<std::size_t>(route[0])], origin_box);
-    for (std::size_t index = 1; index + 1 < route.size(); ++index) {
-      volume_box =
-          volume_box +
-          dot(cross(base, sub(cell.boxes[static_cast<std::size_t>(route[index])], origin_box)),
-              sub(cell.boxes[static_cast<std::size_t>(route[index + 1])], origin_box));
-    }
-  }
-  int orientation = sign_of(volume_box);
-  if (orientation == kUnknown) {
-    const Vec& origin = cell.exact[0];
-    Dyadic volume;
-    for (const auto& route : local) {
-      const Vec base = sub(cell.exact[static_cast<std::size_t>(route[0])], origin);
-      for (std::size_t index = 1; index + 1 < route.size(); ++index) {
-        volume = volume +
-                 dot(cross(base, sub(cell.exact[static_cast<std::size_t>(route[index])], origin)),
-                     sub(cell.exact[static_cast<std::size_t>(route[index + 1])], origin));
+  std::vector<std::vector<Vec>> rows(local.size()), loops(local.size());
+  std::vector<std::vector<std::array<int32_t, 3>>> face_triangles_of(local.size());
+  std::vector<char> fans(local.size(), 0);
+  const auto triangulate = [&]() -> int32_t {
+    for (std::size_t face = 0; face < local.size(); ++face) {
+      auto& route = local[face];
+      route.assign(face_values + face_offsets[face], face_values + face_offsets[face + 1]);
+      loops[face] = face_points[face];
+      if (reversed[face]) {
+        std::reverse(route.begin(), route.end());
+        std::reverse(loops[face].begin(), loops[face].end());
       }
+      rows[face].clear();
+      for (const int64_t index : route) {
+        rows[face].push_back(cell.exact[static_cast<std::size_t>(index)]);
+      }
+      bool fan = false;
+      const int32_t code = polytope_face(rows[face], loops[face], face_triangles_of[face], fan);
+      if (code != kDecomposed) return code;
+      fans[face] = fan ? 1 : 0;
+    }
+    return kDecomposed;
+  };
+  if (const int32_t code = triangulate(); code != kDecomposed) return code;
+  // Sign of the exact volume about the first point. A planar face's part is
+  // that of its loop's fan from its first vertex; a fan face of m vertices
+  // contributes (1 / m) sum (S - m O) . ((P_i - O) x (P_{i+1} - O)), so every
+  // part is scaled by the product of the fan sizes.
+  const Vec& origin = cell.exact[0];
+  const bool any_fan = std::any_of(fans.begin(), fans.end(), [](char fan) { return fan != 0; });
+  int orientation = kUnknown;
+  if (!any_fan) {
+    Interval volume_box;
+    const Box& origin_box = cell.boxes[0];
+    for (const auto& route : local) {
+      const Box base = sub(cell.boxes[static_cast<std::size_t>(route[0])], origin_box);
+      for (std::size_t index = 1; index + 1 < route.size(); ++index) {
+        volume_box =
+            volume_box +
+            dot(cross(base, sub(cell.boxes[static_cast<std::size_t>(route[index])], origin_box)),
+                sub(cell.boxes[static_cast<std::size_t>(route[index + 1])], origin_box));
+      }
+    }
+    orientation = sign_of(volume_box);
+  }
+  if (orientation == kUnknown) {
+    Dyadic volume;
+    for (std::size_t face = 0; face < local.size(); ++face) {
+      const auto& loop = rows[face];
+      Dyadic part;
+      if (fans[face]) {
+        const Dyadic m = count_value(static_cast<int64_t>(loop.size()));
+        Vec sum;
+        for (const Vec& row : loop) sum = add(sum, row);
+        const Vec apex = sub(sum, scale(origin, m));
+        for (std::size_t i = 0; i < loop.size(); ++i) {
+          part = part + dot(apex, cross(sub(loop[i], origin),
+                                        sub(loop[(i + 1) % loop.size()], origin)));
+        }
+      } else {
+        const Vec base = sub(loop[0], origin);
+        for (std::size_t index = 1; index + 1 < loop.size(); ++index) {
+          part = part + dot(cross(base, sub(loop[index], origin)), sub(loop[index + 1], origin));
+        }
+      }
+      // Scale by the fan sizes of every other fan face (all of them for a
+      // planar face).
+      for (std::size_t other = 0; other < local.size(); ++other) {
+        if (other != face && fans[other]) {
+          part = part * count_value(static_cast<int64_t>(rows[other].size()));
+        }
+      }
+      volume = volume + part;
     }
     orientation = volume.sign();
   }
   if (orientation == 0) return kZeroVolume;
   if (orientation < 0) {
-    for (auto& route : local) std::reverse(route.begin(), route.end());
+    // Every loop reversed and triangulated again: the outward loops.
     for (auto& flag : reversed) flag = static_cast<int8_t>(flag ^ 1);
+    if (const int32_t code = triangulate(); code != kDecomposed) return code;
   }
-  // Oriented face rows over each face's own scale.
-  std::vector<std::vector<Vec>> loops(local.size());
+  // The face triangles, a fan apex carried exactly as (vertex sum, size).
+  std::vector<Triangle> triangles;
   for (std::size_t face = 0; face < local.size(); ++face) {
-    loops[face] = face_points[face];
-    if (reversed[face]) std::reverse(loops[face].begin(), loops[face].end());
-  }
-  // _face_plane of every oriented face: exact on the face rows. A non-planar
-  // face loop is refused here; vertex-average fan faces replace this refusal
-  // when admitted.
-  for (const auto& loop : loops) {
-    const Vec normal = newell(loop);
-    if (!nonzero(normal)) return kFaceZeroArea;
-    const Dyadic offset = dot(normal, loop[0]);
-    for (const Vec& vertex : loop) {
-      if (compare(dot(normal, vertex), offset)) return kFaceNotPlanar;
+    const auto& loop = rows[face];
+    const auto& route = local[face];
+    const Dyadic m = count_value(static_cast<int64_t>(loop.size()));
+    Vec sum;
+    Box apex_box;
+    if (fans[face]) {
+      for (const Vec& row : loop) sum = add(sum, row);
+      for (const int64_t index : route) {
+        apex_box = add(apex_box, cell.boxes[static_cast<std::size_t>(index)]);
+      }
+      const Interval size = exact_interval(static_cast<double>(loop.size()));
+      apex_box = {divide(apex_box[0], size), divide(apex_box[1], size),
+                  divide(apex_box[2], size)};
+    }
+    for (const auto& local_triangle : face_triangles_of[face]) {
+      Triangle triangle;
+      triangle.weight = fans[face] ? m : Dyadic(1.0);
+      for (std::size_t k = 0; k < 3; ++k) {
+        const int32_t corner = local_triangle[k];
+        if (corner == kApex) {
+          triangle.exact[k] = sum;
+          triangle.boxes[k] = apex_box;
+        } else {
+          const auto index = static_cast<std::size_t>(route[static_cast<std::size_t>(corner)]);
+          triangle.exact[k] = fans[face] ? scale(cell.exact[index], m) : cell.exact[index];
+          triangle.boxes[k] = cell.boxes[index];
+        }
+      }
+      triangles.push_back(std::move(triangle));
     }
   }
-  // _star_center: the vertex average, strictly inside every face plane. The
-  // kernel-polytope fallback stays with the rational proof.
+  // _star_center: the vertex average, strictly inside every face triangle's
+  // plane (one plane per planar face). The kernel-polytope fallback stays
+  // with the rational proof.
   const Dyadic n = count_value(point_count);
   const double count = static_cast<double>(point_count);
   Box center;
@@ -856,37 +983,49 @@ int32_t decompose(const CellPoints& cell, const int64_t* face_offsets, const int
             divide(center[2], exact_interval(count))};
   Vec center_sum;
   for (const Vec& point : cell.exact) center_sum = add(center_sum, point);
-  for (const auto& route : local) {
-    std::vector<const Box*> boxes;
-    for (const int64_t index : route) boxes.push_back(&cell.boxes[static_cast<std::size_t>(index)]);
-    const Box normal = newell(boxes);
-    int side = sign_of(dot(normal, sub(center, *boxes[0])));
-    if (side == kUnknown) {
-      std::vector<Vec> rows;
-      for (const int64_t index : route) rows.push_back(cell.exact[static_cast<std::size_t>(index)]);
-      const Vec exact_normal = newell(rows);
-      side = compare(dot(exact_normal, center_sum), dot(exact_normal, rows[0]) * n);
+  std::size_t next = 0;
+  for (std::size_t face = 0; face < local.size(); ++face) {
+    const std::size_t face_size = face_triangles_of[face].size();
+    if (!fans[face]) {
+      std::vector<const Box*> boxes;
+      for (const int64_t index : local[face]) {
+        boxes.push_back(&cell.boxes[static_cast<std::size_t>(index)]);
+      }
+      const Box normal = newell(boxes);
+      int side = sign_of(dot(normal, sub(center, *boxes[0])));
+      if (side == kUnknown) {
+        const Vec exact_normal = newell(rows[face]);
+        side = compare(dot(exact_normal, center_sum), dot(exact_normal, rows[face][0]) * n);
+      }
+      if (side >= 0) return kUndecided;
+    } else {
+      for (std::size_t k = next; k < next + face_size; ++k) {
+        const Triangle& triangle = triangles[k];
+        const Box normal_box = cross(sub(triangle.boxes[1], triangle.boxes[0]),
+                                     sub(triangle.boxes[2], triangle.boxes[0]));
+        int side = sign_of(dot(normal_box, sub(center, triangle.boxes[0])));
+        if (side == kUnknown) {
+          const Vec normal = cross(sub(triangle.exact[1], triangle.exact[0]),
+                                   sub(triangle.exact[2], triangle.exact[0]));
+          side = compare(dot(normal, scale(center_sum, triangle.weight)),
+                         dot(normal, triangle.exact[0]) * n);
+        }
+        if (side >= 0) return kUndecided;
+      }
     }
-    if (side >= 0) return kUndecided;
+    next += face_size;
   }
-  std::vector<Triangle> triangles;
+  if (star_ray_degree(center_sum, center, n, triangles) != 1) return kStarDegree;
   int32_t* out = triangles_out;
-  for (std::size_t face = 0; face < loops.size(); ++face) {
-    std::vector<std::array<int32_t, 3>> local_triangles;
-    const int32_t code = face_triangles(loops[face], local_triangles);
-    if (code != kDecomposed) return code;
-    for (const auto& triangle : local_triangles) {
-      const auto& route = local[face];
-      triangles.push_back({{static_cast<int32_t>(route[static_cast<std::size_t>(triangle[0])]),
-                            static_cast<int32_t>(route[static_cast<std::size_t>(triangle[1])]),
-                            static_cast<int32_t>(route[static_cast<std::size_t>(triangle[2])])}});
+  for (std::size_t face = 0; face < local.size(); ++face) {
+    for (const auto& triangle : face_triangles_of[face]) {
       *out++ = static_cast<int32_t>(face);
       *out++ = triangle[0];
       *out++ = triangle[1];
       *out++ = triangle[2];
     }
   }
-  if (star_ray_degree(cell, center_sum, center, n, triangles) != 1) return kStarDegree;
+  triangle_count = static_cast<int64_t>(triangles.size());
   std::copy(reversed.begin(), reversed.end(), reversed_out);
   return kDecomposed;
 }
@@ -898,11 +1037,13 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
     const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
     const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
-    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles) {
+    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
+    int64_t* triangle_counts) {
   return phx::mc::guarded([&]() -> int32_t {
     if (cell_count < 0 || point_offsets == nullptr || cell_face_offsets == nullptr ||
         face_vertex_offsets == nullptr || triangle_offsets == nullptr ||
-        (cell_count > 0 && codes == nullptr) || triangle_offsets[0] != 0 ||
+        (cell_count > 0 && (codes == nullptr || triangle_counts == nullptr)) ||
+        triangle_offsets[0] != 0 ||
         !valid_bank(3 * point_offsets[cell_count] + cell_count, word_offsets, words, signs) ||
         !valid_bank(3 * face_vertex_offsets[cell_face_offsets[cell_count]], face_word_offsets,
                     face_words, face_signs) ||
@@ -916,7 +1057,7 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
     for (int64_t cell = 0; cell < cell_count; ++cell) {
       int64_t expected = 0;
       for (int64_t face = cell_face_offsets[cell]; face < cell_face_offsets[cell + 1]; ++face) {
-        expected += std::max<int64_t>(face_vertex_offsets[face + 1] - face_vertex_offsets[face] - 2, 0);
+        expected += face_vertex_offsets[face + 1] - face_vertex_offsets[face];
       }
       if (triangle_offsets[cell + 1] - triangle_offsets[cell] != expected) {
         return PHX_MC_INVALID_INPUT;
@@ -927,6 +1068,7 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
       return PHX_MC_INVALID_ARGUMENT;
     }
     const phx::mc::GradualNearestScope mode;
+    std::fill(triangle_counts, triangle_counts + cell_count, int64_t{0});
     const IntegerBank bank{word_offsets, words, signs};
     const IntegerBank face_bank{face_word_offsets, face_words, face_signs};
     const int64_t scale_base = 3 * point_offsets[cell_count];
@@ -960,7 +1102,7 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
       codes[cell] = decompose(cell_points, offsets.data(),
                               face_vertex_values + face_vertex_offsets[first_face], face_count,
                               face_points, face_reversed + first_face,
-                              triangles + 4 * triangle_offsets[cell]);
+                              triangles + 4 * triangle_offsets[cell], triangle_counts[cell]);
     }
     return PHX_MC_OK;
   });
