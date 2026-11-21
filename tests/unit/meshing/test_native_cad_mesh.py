@@ -19,6 +19,7 @@ from phydrax._meshcore import (
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
+    CadProximityControl,
     CadSolidResult,
     CadSurfaceResult,
     load_meshcore,
@@ -1195,6 +1196,7 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
         min_dihedral_degrees: float,
         min_relative_determinant: float,
         geometry_order: int,
+        proximity_controls: tuple[CadProximityControl, ...],
     ) -> CadSolidResult:
         assert min_relative_determinant < 0.9
         return construct(
@@ -1206,6 +1208,7 @@ def test_soft_shape_keeps_a_determinant_failure_hard(
             min_dihedral_degrees=min_dihedral_degrees,
             min_relative_determinant=0.9,
             geometry_order=geometry_order,
+            proximity_controls=proximity_controls,
         )
 
     monkeypatch.setattr(native_cad_mesh, "cad_mesh_solid", strict)
