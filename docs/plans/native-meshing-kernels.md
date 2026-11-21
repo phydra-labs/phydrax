@@ -356,8 +356,12 @@ tetrahedra, then implicit volumes, then the CAD solid.
     faces near the curve whose two vertices project to one wall point (collapsed wall pairs,
     sideways projection columns) that smoothing cannot separate at b / 2 with the layer stack;
     leaning patch-column layer directions towards curve columns did not change that.
-  - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
-    every step runs on the original, refined and restored mesh and the archive is written twice).
+  - Closed debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata`. Not a BVH
+    rebuild (column certification already prepares one wall and one query tree per bank). The
+    exact refine / restore / replay / acceptance pipeline is linear, about 75 ms and 0.5 MB
+    retained per cell (1,280 → 5,120 cells: refinement 96 → 372 s, +0.8 → +2.5 GB), so the
+    archived 0.03-offset ridge (20,480 cells) needs over 16 GB. The fixture now uses a 0.12
+    offset (8x8 cap, 1,280 cells, same topology classes): 447 s, 3.3 GB peak.
 
 ## Row ownership (every ledger row; `.tmp/ledger/`)
 

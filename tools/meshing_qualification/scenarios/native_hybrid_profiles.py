@@ -512,8 +512,14 @@ def _archived_ridge_source(
     *,
     cap_refinement: Literal["fixed", "conforming"] = "fixed",
     noncap_refinement: Literal["fixed", "conforming"] = "fixed",
+    core_offset: float = 0.03,
 ) -> tuple[NativeLayerCoreSource, Any, Any]:
-    """Reconstruct the original two-material ridge and fixed 0.03 core offset."""
+    """Reconstruct the original two-material ridge and its core offset.
+
+    The archived profile uses 0.03. Conforming caps divide dyadically down to
+    twice the core offset, so a thicker core gives the same topology classes
+    on a coarser cap.
+    """
     wall, _ = _ridge_wall()
     schedule = phx.meshing.LayerSchedule.geometric(2, 0.01, growth_rate=1.0)
     control = _control(
@@ -549,7 +555,7 @@ def _archived_ridge_source(
     )
     cap_points = np.asarray(cap.coordinates, dtype=np.float64)
     count = len(cap_points)
-    upper = cap_points + np.asarray((0.0, 0.0, 0.03), dtype=np.float64)
+    upper = cap_points + np.asarray((0.0, 0.0, core_offset), dtype=np.float64)
     roots = np.asarray(cap.periodic_topology.vertex_representatives, dtype=np.int64)
     shifts = np.asarray(cap.periodic_topology.vertex_shifts, dtype=np.int64)
     edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
@@ -626,7 +632,7 @@ def _archived_ridge_source(
             "layer_policy": policy.policy_id,
             "regions": ("wall-material", "core-material"),
             "period": (1.0, 0.0, 0.0),
-            "core_offset": 0.03,
+            "core_offset": core_offset,
         }
     )
     from phydrax.meshing import _layer_core_topology as topology
