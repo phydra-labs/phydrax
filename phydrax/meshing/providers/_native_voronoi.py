@@ -192,20 +192,6 @@ class _Published:
     face_facets: np.ndarray
 
 
-def _sorted_loop_table(
-    offsets: np.ndarray, values: np.ndarray, width: int, /
-) -> np.ndarray:
-    """Rows (size, sorted vertices padded with -1) identifying each face."""
-    sizes = np.diff(offsets)
-    rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
-    columns = np.arange(values.size, dtype=np.int64) - np.repeat(offsets[:-1], sizes)
-    table = np.full((sizes.size, width + 1), -1, dtype=np.int64)
-    table[rows, columns + 1] = values
-    table[:, 1:] = -np.sort(-table[:, 1:], axis=1)
-    table[:, 0] = sizes
-    return table
-
-
 def _native_face_mesh(
     points: np.ndarray,
     offsets: np.ndarray,
@@ -215,10 +201,12 @@ def _native_face_mesh(
     cell_count: int,
     block_name: str,
     /,
-) -> CellMesh:
+) -> tuple[CellMesh, np.ndarray]:
     """``CellMesh.from_polyhedra`` over native faces with their two cells:
     every cell's loops in face order, the owner's as stored and the
-    neighbor's reversed (packed, without per-loop arrays)."""
+    neighbor's reversed (packed, without per-loop arrays). Returns the mesh
+    and the native face of every canonical face, read off the canonical
+    cells' face lists (each a source cell's loops in their packed order)."""
     inner = np.flatnonzero(neighbor >= 0)
     cells = np.concatenate((owner, neighbor[inner]))
     faces = np.concatenate((np.arange(owner.size, dtype=np.int64), inner))
@@ -233,9 +221,10 @@ def _native_face_mesh(
         np.cumsum(sizes) - sizes, sizes
     )
     position = np.where(reversed_[loops], sizes[loops] - 1 - position, position)
-    return CellMesh._from_packed_polyhedra(
+    counts = np.bincount(cells, minlength=cell_count)
+    mesh = CellMesh._from_packed_polyhedra(
         np.asarray(points, dtype=np.float64),
-        np.bincount(cells, minlength=cell_count),
+        counts,
         sizes,
         np.ones((faces.size,), dtype=np.bool_),
         vertices[offsets[faces][loops] + position],
@@ -244,6 +233,20 @@ def _native_face_mesh(
         cell_global_ids=None,
         numeric_version="0",
     )
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError("Native face publication must carry polyhedral connectivity.")
+    sources = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+    starts = (np.cumsum(counts) - counts)[sources]
+    ends = np.cumsum(counts[sources])
+    slots = np.arange(faces.size, dtype=np.int64) + np.repeat(
+        starts - (ends - counts[sources]), counts[sources]
+    )
+    face_order = np.full(
+        (np.asarray(connectivity.face_vertex_offsets).size - 1,), -1, dtype=np.int64
+    )
+    face_order[np.asarray(connectivity.cell_face_values, dtype=np.int64)] = faces[slots]
+    return mesh, face_order
 
 
 def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
@@ -251,7 +254,7 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     vertices = np.asarray(cells.face_vertices, dtype=np.int32)
     sides = np.asarray(cells.face_cells, dtype=np.int64)
     cell_count = cells.cell_seeds.shape[0]
-    mesh = _native_face_mesh(
+    mesh, face_order = _native_face_mesh(
         cells.vertices,
         offsets,
         vertices,
@@ -264,26 +267,10 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Conforming Voronoi publication must stay polyhedral.")
     cell_order = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
-    canonical_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-    width = int(max(np.max(np.diff(offsets)), np.max(np.diff(canonical_offsets))))
-    native = _sorted_loop_table(offsets, vertices.astype(np.int64), width)
-    canonical = _sorted_loop_table(
-        canonical_offsets,
-        np.asarray(connectivity.face_vertex_values, dtype=np.int64),
-        width,
-    )
-    native_rows = np.lexsort(native.T[::-1])
-    canonical_rows = np.lexsort(canonical.T[::-1])
-    if (
-        np.unique(cell_order).size != cell_count
-        or native.shape != canonical.shape
-        or not np.array_equal(native[native_rows], canonical[canonical_rows])
-    ):
+    if np.unique(cell_order).size != cell_count or face_order.size != offsets.size - 1:
         raise RuntimeError(
             "Canonical polyhedra must retain their native cells and faces."
         )
-    face_order = np.empty((native.shape[0],), dtype=np.int64)
-    face_order[canonical_rows] = native_rows
     return _Published(
         cells,
         mesh,
@@ -424,7 +411,9 @@ def _edge_ancestry(
         np.concatenate(
             (
                 face_edges * span + cell_regions[owner],
-                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[neighbor >= 0],
+                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[
+                    neighbor >= 0
+                ],
             )
         )
     )

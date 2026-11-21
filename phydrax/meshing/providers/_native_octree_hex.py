@@ -100,7 +100,6 @@ from phydrax.meshing.providers._native_voronoi import (
     _native_face_mesh,
     _plc_triangles,
     _REGION,
-    _sorted_loop_table,
     plc_fidelity_query,
     plc_fidelity_request,
 )
@@ -257,11 +256,10 @@ def _publish(native: meshcore.HexDominant, /) -> _Published:
     """Every cell as a polyhedron over the native face loops (fan faces)."""
     kinds = np.asarray(native.cell_kinds, dtype=np.int64)
     face_offsets = np.asarray(native.face_offsets, dtype=np.int64)
-    face_vertices = np.asarray(native.face_vertices, dtype=np.int32)
-    mesh = _native_face_mesh(
+    mesh, face_order = _native_face_mesh(
         native.points,
         face_offsets,
-        face_vertices,
+        np.asarray(native.face_vertices, dtype=np.int32),
         np.asarray(native.face_owner, dtype=np.int64),
         np.asarray(native.face_neighbor, dtype=np.int64),
         kinds.size,
@@ -271,22 +269,8 @@ def _publish(native: meshcore.HexDominant, /) -> _Published:
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Hex-dominant publication must carry polyhedral connectivity.")
     cell_order = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
-    canonical_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-    width = int(max(np.max(np.diff(face_offsets)), np.max(np.diff(canonical_offsets))))
-    native_table = _sorted_loop_table(face_offsets, face_vertices.astype(np.int64), width)
-    canonical_table = _sorted_loop_table(
-        canonical_offsets,
-        np.asarray(connectivity.face_vertex_values, dtype=np.int64),
-        width,
-    )
-    native_rows = np.lexsort(native_table.T[::-1])
-    canonical_rows = np.lexsort(canonical_table.T[::-1])
-    if native_table.shape != canonical_table.shape or not np.array_equal(
-        native_table[native_rows], canonical_table[canonical_rows]
-    ):
+    if face_order.size != face_offsets.size - 1:
         raise RuntimeError("Canonical cells must retain the native faces.")
-    face_order = np.empty((native_table.shape[0],), dtype=np.int64)
-    face_order[canonical_rows] = native_rows
     face_facets = np.asarray(native.face_facets, dtype=np.int64)
     return _Published(
         native,

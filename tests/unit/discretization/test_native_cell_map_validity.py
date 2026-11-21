@@ -139,7 +139,9 @@ def _decided(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return decided
 
 
-def _assert_same(native: CellValidityCertificate, rational: CellValidityCertificate) -> None:
+def _assert_same(
+    native: CellValidityCertificate, rational: CellValidityCertificate
+) -> None:
     assert native.certificate_id == rational.certificate_id
     assert native.cell_map_digests == rational.cell_map_digests
     assert _same_tree_content(native, rational)
@@ -151,7 +153,9 @@ def test_native_root_proof_reproduces_the_rational_certificate(
     monkeypatch: pytest.MonkeyPatch, build: Any, floor: float | None
 ) -> None:
     mesh = build()
-    policy = None if floor is None else CellValidityPolicy(relative_determinant_floor=floor)
+    policy = (
+        None if floor is None else CellValidityPolicy(relative_determinant_floor=floor)
+    )
     with monkeypatch.context() as patch:
         _python_only(patch)
         rational = certify_cell_geometry_validity(mesh, policy=policy)

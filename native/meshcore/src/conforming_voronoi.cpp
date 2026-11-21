@@ -23,7 +23,7 @@
 //   and more seeds inside so that they are at most 90 deg apart.
 // - Corner: the sector seeds of every incident feature edge, placed at
 //   distance d from the corner along that edge.
-// - Body-centred cubic lattice of cell volume h^3 beyond 1.2 r of the surface.
+// - Body-centered cubic lattice of cell volume h^3 beyond 1.2 r of the surface.
 // - Ghosts: every interior seed s within 1.2 r of the surface is reflected
 //   across the shifted tangent plane of each of its feet: a foot is the
 //   nearest point of the surface among triangles whose normals lie within the
@@ -40,13 +40,13 @@
 // exactly cospherical vertices (exact insphere = 0) share one Voronoi vertex;
 // the face of cell i towards seed j is the ring of Voronoi vertices around
 // Delaunay edge (i, j) with repeats removed, dropped when fewer than three
-// remain. Vertices are exact circumcentres (expansions); the published
+// remain. Vertices are exact circumcenters (expansions); the published
 // coordinates are their nearest binary64 values. The boundary is exact when
 // every vertex of a boundary or interface face lies exactly (exact
 // orientation) on the plane of its nearest triangle.
 //
 // Resolution: nearly cospherical seeds (mirror pairs about planes that are
-// not axis-aligned, after the dyadic snap) give adjacent circumcentres within
+// not axis-aligned, after the dyadic snap) give adjacent circumcenters within
 // 2^-14 h, hence edges and faces too small for a validity certificate (star
 // determinants scale as (edge / R)^2 / 6 and must clear 2^-35 with margin, so
 // edges under ~3e-5 R fail; detection at 2^-14 h covers them and a 2^-10 h move
@@ -54,7 +54,7 @@
 // rebuild while the pair persists, over the seeds of its two tets (apexes
 // first, unmirrored seeds before mirrored ones): an unmirrored seed moves
 // alone, a seed whose mirror pairs form a tree moves 2^-10 h outward along the
-// ray from a tet's circumcentre and the tree is reflected again outward from
+// ray from a tet's circumcenter and the tree is reflected again outward from
 // it, so every facet between mirrors stays put. Mirror pairs across one plane
 // are always cocircular (isosceles trapezoids), so every facet vertex is
 // degenerate by construction:
@@ -131,7 +131,7 @@ constexpr double kSpacing = 0.75;  // surface sample spacing r / h
 constexpr double kDepth = 0.3;     // seed depth d / r
 constexpr double kReach = 1.2;     // lattice clearance and reflection reach / r
 constexpr double kShift = 0.15;    // curvature shift of the mirror plane
-constexpr double kResolution = 0x1p-14;  // nearly cospherical circumcentres / h
+constexpr double kResolution = 0x1p-14;  // nearly cospherical circumcenters / h
 constexpr double kNudge = 0x1p-10;       // seed move off a circumsphere / h
 constexpr double kPi = 3.14159265358979323846;
 
@@ -713,7 +713,7 @@ class Seeder {
           break;
       }
     }
-    // Body-centred cubic lattice of cell volume h^3 beyond the reach.
+    // Body-centered cubic lattice of cell volume h^3 beyond the reach.
     const double a = std::cbrt(2.0) * h_;
     int64_t counts[3];
     for (int k = 0; k < 3; ++k)
@@ -1368,7 +1368,7 @@ class Builder {
     for (int k = 0; k < 3; ++k) out[k] = p0[k] + (la * bc[k] + lb * ca[k] + lc * ab[k]) / det;
   }
 
-  // Exact circumcentre p0 + (|a|^2 b x c + |b|^2 c x a + |c|^2 a x b) / (2 a . b x c).
+  // Exact circumcenter p0 + (|a|^2 b x c + |b|^2 c x a + |c|^2 a x b) / (2 a . b x c).
   void exact_circumcenter(int32_t t, std::array<Expansion, 3>& n, Expansion& d) const {
     const int32_t* tet = tets_.data() + 4 * static_cast<int64_t>(t);
     const double* p0 = seed(tet[0]);
@@ -1483,7 +1483,7 @@ class Builder {
   void cells() {
     const int64_t count = static_cast<int64_t>(tets_.size() / 4);
     // Vertices: classes of adjacent relevant tets that are exactly
-    // cospherical or whose circumcentres round to within the merge radius.
+    // cospherical or whose circumcenters round to within the merge radius.
     tet_root_.resize(count);
     std::iota(tet_root_.begin(), tet_root_.end(), 0);
     tet_vertex_.assign(count, -1);
@@ -1499,16 +1499,16 @@ class Builder {
       }
     }
     // Nearly cospherical seeds (mirror pairs about planes that are not
-    // axis-aligned, after the dyadic snap) put adjacent circumcentres within
+    // axis-aligned, after the dyadic snap) put adjacent circumcenters within
     // the resolution: such a pair is recorded so that build() moves an apex
     // seed off the other tet's circumsphere and rebuilds. Thresholds: the
     // validity certificate's star determinants scale as (edge / R)^2 / 6 and
     // must clear 2^-35 with margin, so edges under ~3e-5 R are unresolved;
     // detection at 2^-14 h covers them and a 2^-10 h move clears it.
     const double resolution = kResolution * h_;
-    std::vector<std::array<double, 3>> centre(count);
+    std::vector<std::array<double, 3>> center(count);
     for (int64_t t = 0; t < count; ++t)
-      if (relevant_tet[t]) circumcenter(static_cast<int32_t>(t), centre[t].data());
+      if (relevant_tet[t]) circumcenter(static_cast<int32_t>(t), center[t].data());
     near_.clear();
     for (int64_t t = 0; t < count; ++t) {
       if (!relevant_tet[t]) continue;
@@ -1516,8 +1516,8 @@ class Builder {
         const int32_t u = tet_neighbors_[4 * t + k];
         if (u <= t || !relevant_tet[u]) continue;
         if (find_root(tet_root_, static_cast<int32_t>(t)) == find_root(tet_root_, u)) continue;
-        // The binary64 circumcentres screen; the rounded exact ones decide.
-        if (!(geometry::squared_distance(centre[t].data(), centre[u].data()) <=
+        // The binary64 circumcenters screen; the rounded exact ones decide.
+        if (!(geometry::squared_distance(center[t].data(), center[u].data()) <=
               16.0 * resolution * resolution))
           continue;
         double a[3], b[3];
@@ -1527,8 +1527,8 @@ class Builder {
         const int32_t l = tets_[4 * t + k], m = apex(static_cast<int32_t>(t), k);
         // Rigid and lone moves, see the header (Resolution).
         const auto shift_of = [&](int32_t s, std::array<double, 3>& shift) {
-          // kNudge h outward along the ray from the other tet's circumcentre.
-          const double* c = centre[s == l ? u : t].data();
+          // kNudge h outward along the ray from the other tet's circumcenter.
+          const double* c = center[s == l ? u : t].data();
           double ray[3];
           geometry::difference(seed(s), c, ray);
           const double length = geometry::length(ray);
@@ -1582,7 +1582,7 @@ class Builder {
         }
       }
       if (leak) {
-        // The farthest circumcentre of the star shows where the cell escapes.
+        // The farthest circumcenter of the star shows where the cell escapes.
         std::array<double, 3> far{};
         double best = -1.0;
         for (int64_t k = star_offsets_[i]; k < star_offsets_[i + 1]; ++k) {

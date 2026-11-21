@@ -584,6 +584,12 @@ class TetMesh {
   const std::string& source_map_id() const noexcept { return source_map_id_; }
   BoundaryPolicy policy() const noexcept { return policy_; }
   const TetrahedralComplex& complex() const noexcept { return complex_; }
+  // Reserve storage for `extra` more cells so the next edits that add cells
+  // do not grow the cell arrays. No other effect.
+  void reserve_cells(std::size_t extra) {
+    complex_.reserve(extra, 0);
+    cell_ids_.reserve(complex_.tets.size() + extra);
+  }
 
   // Protect all current facets in the named source groups and their edges and
   // vertices. Returns false without mutation if a group is absent.

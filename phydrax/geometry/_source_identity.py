@@ -89,6 +89,8 @@ def source_entity_ids(
         else:
             text = str(nonnegative_integer(entity_id, "entity_id"))
         keys.append(
-            hashlib.sha256(('{"entity":' + text + "," + suffix).encode("ascii")).hexdigest()
+            hashlib.sha256(
+                ('{"entity":' + text + "," + suffix).encode("ascii")
+            ).hexdigest()
         )
     return tuple(keys)

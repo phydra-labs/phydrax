@@ -1912,7 +1912,9 @@ def test_restricted_construction_resolves_the_ring_torus(tolerance: float) -> No
     # end in a construction of the requested fidelity and shape.
     contract = SpatialCoordinateContract.si()
     profile = AnalyticImplicitProfile(
-        Torus((0.0, 0.0, 0.0), 0.371, 1.113, feature_id="restricted-ring-torus").compile(),
+        Torus(
+            (0.0, 0.0, 0.0), 0.371, 1.113, feature_id="restricted-ring-torus"
+        ).compile(),
         contract,
         source_id="restricted-ring-torus",
     )
