@@ -444,6 +444,16 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Certified polyhedral meshes (`prove=True`): exact star validity and star
+  decomposition of vertex-defined polyhedra run natively
+  (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)
+  on exact rational vertices (integer rows over each cell's common
+  denominator, interval filter with exact big-integer fallback) with identical
+  certificates, the Python proofs remaining for meshes without meshcore and
+  undecided cells; domain-coverage source matching is screened by outward
+  boxes and binary64 separation before the exact overlap test, and contained
+  triangle overlaps are taken directly. Conforming Voronoi at ~1e3 cells
+  certifies about 9x (cube) and 4x (sphere) faster, certificates unchanged.
 - Native prism layers on CAD walls are measured from the source surface:
   `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
   into the layer domain, shape operator); a smooth sector framed at every
