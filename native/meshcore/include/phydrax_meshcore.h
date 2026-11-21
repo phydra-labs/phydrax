@@ -3086,6 +3086,58 @@ PHX_MC_API int32_t phx_mc_cell_map_validity(
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests);
 
+/* Polyhedral cells for the two exact star proofs below. Cell k has local
+ * points [point_offsets[k], ...+1) given as integer rows X = L x over one
+ * positive common denominator L of its rational vertices x, and faces
+ * [cell_face_offsets[k], ...+1), each a loop of local point indices in
+ * face_vertex_values. Integers live in a word bank: value v is the
+ * little-endian 32-bit magnitude words [word_offsets[v], word_offsets[v + 1])
+ * negated when signs[v] < 0; point p's coordinates are values 3p, 3p + 1,
+ * 3p + 2, and L of cell k is value 3 point_offsets[cell_count] + k. Signs
+ * the outward binary64 enclosures of the rational points decide are taken
+ * from them; every other statement is decided in exact integer arithmetic.
+ *
+ * Exact star validity, identical to phydrax's rational polyhedral validity
+ * proof: with c the vertex average of cell k, rows [star_offsets[k], ...+1)
+ * of stars hold (local face, first point, second point), the tetrahedron
+ * (c, face vertex average, first, second) of signed volume v_s and scale
+ * product w_s (product of its three squared edge-from-c lengths). status[k]
+ * is 0 (certified: every v_s > 0 and v_s^2 > floor^2 w_s), 1 (invalid: the
+ * total volume is negative or, for floor > 0, below floor sqrt(max w_s)) or
+ * 2 (unresolved);
+ * lower[k], upper[k] are the directed binary64 endpoints of min v_s and max
+ * v_s (NaN without star rows). decided[k] = 0 leaves a cell with more than
+ * 4096 vertices or face sizes of least common multiple above 2^40 to the
+ * rational proof. */
+PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
+    int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
+    const uint32_t* words, const int8_t* signs, const int64_t* cell_face_offsets,
+    const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
+    const int64_t* star_offsets, const int64_t* stars, double floor, int8_t* decided,
+    int32_t* status, double* lower, double* upper);
+
+/* Exact star decomposition of linear polytopes, identical to phydrax's
+ * rational `_volume_tetrahedra`. Face-loop entry e (in face_vertex_values
+ * order) has its integer row over the common denominator of its own face's
+ * vertices as values 3e, 3e + 1, 3e + 2 of the face word bank. codes[k]: 0
+ * decomposed, -1 undecided (left to the rational proof: more than 4096
+ * points, or a vertex average not strictly inside every face plane), or the
+ * first refusal: 1 no faces, 2 invalid face incidence, 3 not a closed
+ * two-manifold, 4 not coherently orientable, 5 zero volume, 6 zero-area face,
+ * 7 non-planar face, 8-14 the face polygon refusals (vertices, degenerate,
+ * not coplanar, zero area, self contact, no ear, degenerate final triangle),
+ * 15 boundary degree about the star point not one. On 0, face_reversed marks
+ * the faces whose outward loop is reversed and rows
+ * [triangle_offsets[k], ...+1) of triangles hold (face, i, j, k): oriented
+ * local loop indices of the faces' ear-clipping triangles (triangle_offsets
+ * must count sum(face size - 2) per cell). */
+PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
+    int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
+    const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
+    const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
+    const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
+    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles);
+
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its

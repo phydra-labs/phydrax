@@ -622,6 +622,43 @@ def _bank_pair_separation(
 
 
 @dataclass(frozen=True, slots=True)
+class PlanarOverlapScreen:
+    """One exact planar polygon bank prepared for repeated overlap queries.
+
+    A query keeps, in row order, every polygon whose closed outward box meets
+    the query's and whose interior `triangle_pair_separation` does not prove
+    separated from the query's; every positive-area overlap survives.
+    """
+
+    polygons: tuple[Polygon, ...]
+    boxes: PolygonBoxes | None
+    bank: _TriangleBank
+    identities: dict[Point, int]
+
+    @classmethod
+    def prepare(cls, polygons: Sequence[Polygon], /) -> PlanarOverlapScreen:
+        identities: dict[Point, int] = {}
+        bank = _triangle_bank(polygons, identities)
+        return cls(tuple(polygons), polygon_boxes(polygons), bank, identities)
+
+    def possibly_overlapping(self, polygon: Polygon, /) -> np.ndarray:
+        """Rows, in order, whose exact overlap with ``polygon`` may be positive."""
+        rows = np.arange(len(self.polygons), dtype=np.int64)
+        query_boxes = polygon_boxes((polygon,))
+        if self.boxes is not None and query_boxes is not None:
+            lower, upper = self.boxes
+            query_lower, query_upper = query_boxes
+            rows = rows[np.all((lower <= query_upper) & (query_lower <= upper), axis=1)]
+        if not rows.size:
+            return rows
+        query = _triangle_bank((polygon,), self.identities)
+        decisions = _bank_pair_separation(
+            query, np.zeros(rows.shape, dtype=np.int64), self.bank, rows
+        )
+        return rows[decisions != 1]
+
+
+@dataclass(frozen=True, slots=True)
 class TriangleEnclosures:
     """Outward binary64 enclosures and exact corner identities of planar triangles.
 
@@ -687,6 +724,7 @@ __all__ = [
     "line_key",
     "oriented_polygon",
     "partition_verdict",
+    "PlanarOverlapScreen",
     "plane_key",
     "plane_orientation",
     "polygon_boxes",

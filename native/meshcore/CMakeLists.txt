@@ -43,6 +43,7 @@ set(PHX_MC_SOURCES
   src/delaunay3d.cpp
   src/verify_volume.cpp
   src/cell_map_validity.cpp
+  src/polyhedral_certificates.cpp
   src/tet_entities.cpp
   src/box_tree.cpp
   src/deterministic_float.cpp
@@ -277,6 +278,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_cell_map_validity)
+  phx_mc_add_test(test_polyhedral_certificates)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_bvh_query)
   phx_mc_add_test(test_overset)
