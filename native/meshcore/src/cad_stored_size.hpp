@@ -114,4 +114,13 @@ inline bool stored_size_exceeds(const double* p, const double* q, const double* 
   return (numerator - bound * area).sign() > 0;
 }
 
+// The face stage's test: stored_size_exceeds at half the allowance (so that
+// compliance, computing tau in its own rounding, accepts what this accepts).
+// The allowance only raises the limit, so a triangle within h^2 / 2 passes
+// without computing it.
+inline bool stored_size_fails(const double* p, const double* q, const double* r, double h) {
+  if (!stored_size_exceeds(p, q, r, h, 0.0)) return false;
+  return stored_size_exceeds(p, q, r, h, 0.5 * stored_size_allowance(p, q, r));
+}
+
 }  // namespace phx::mc

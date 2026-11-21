@@ -43,6 +43,10 @@ struct CadRefine2DInput {
   // it, but the census does not report it (a caller checks its emitted
   // triangles).
   double stored_size = 0.0;
+  // Optional: nonzero where a triangle with three fixed vertices is the
+  // caller's (its centroid given); without it every such triangle is.
+  int32_t (*fixed_region)(void* context, const double point[2]) = nullptr;
+  void* fixed_region_context = nullptr;
 };
 
 struct CadRefine2DStats {
@@ -106,7 +110,10 @@ struct CadRefine2DResult {
 // and failed (encroachment: ray, offcenter, circumcenter; proximity: the
 // circumcenter, then the midpoint of the longest unconstrained edge); each
 // outcome is also counted in the relocation statistics.
-// Triangles with three fixed input vertices are neither refined nor scanned;
+// Triangles with three fixed input vertices are neither refined nor scanned
+// while the queue drains. With fixed_region, those still left whose centroid
+// it declines are then refined like any other and judged by the census; the
+// rest (and, without it, all of them) stay the caller's;
 // fixed_triangles_skipped counts them in the final mesh. The optional admission
 // callback rejects candidate points before their metric is evaluated.
 // The caller must ensure all other evaluated triangle centroids are in the

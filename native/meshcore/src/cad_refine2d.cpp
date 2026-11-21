@@ -124,15 +124,37 @@ class Refinement {
     }
     for (std::size_t t=0;t<tri_.triangles.size();++t)
       if (inside(static_cast<int32_t>(t)) && states_[t]==2) enqueue(static_cast<int32_t>(t));
-    Entry entry;
-    while (queue_->pop_current(entry,[&](const Entry& e) {
-      if (e.generation!=generations_[e.slot]) return false;
-      queued_[e.slot]=0;
-      return inside(e.slot) && states_[e.slot]==2 && has_front(e.slot);
-    })) {
-      if (tri_.vertex_count() >= input_.point_cap) break;
-      states_[entry.slot]=3;
-      process(entry.slot);
+    const auto drain=[&]() {
+      Entry entry;
+      while (queue_->pop_current(entry,[&](const Entry& e) {
+        if (e.generation!=generations_[e.slot]) return false;
+        queued_[e.slot]=0;
+        return inside(e.slot) && states_[e.slot]==2 && has_front(e.slot);
+      })) {
+        if (tri_.vertex_count() >= input_.point_cap) return false;
+        states_[entry.slot]=3;
+        process(entry.slot);
+        if (status_ != PHX_MC_OK) return false;
+      }
+      return true;
+    };
+    const bool drained=drain();
+    if (status_ != PHX_MC_OK) return status_;
+    // Triangles of fixed points outside the caller's region that no
+    // insertion's cavity removed are refined next, under the same rules,
+    // and judged by the census; until then every triangle of fixed points
+    // is left alone, so meshes where none survives are unchanged.
+    if (input_.fixed_region) {
+      region_only_=true;
+      for (std::size_t t=0;t<tri_.triangles.size();++t) {
+        const auto slot=static_cast<int32_t>(t);
+        if (!inside(slot) || t>=states_.size() || states_[t]!=1 || !all_fixed(slot) ||
+            fixed_triangle(slot)) continue;
+        classify_state(slot);
+        if (status_!=PHX_MC_OK) return status_;
+        if (states_[t]==2) enqueue(slot);
+      }
+      if (drained) drain();
       if (status_ != PHX_MC_OK) return status_;
     }
     const int32_t initial=summarize();
@@ -197,6 +219,7 @@ class Refinement {
   double sine_;
   int32_t status_ = PHX_MC_OK;
   std::vector<uint8_t> fixed_;
+  bool region_only_ = false;
   std::vector<std::array<double,3>> physical_;
   std::vector<uint8_t> physical_valid_;
   // The angle pass's moving vertex and its candidate position, which the
@@ -265,7 +288,7 @@ class Refinement {
     return index;
   }
 
-  bool fixed_triangle(int32_t t) const {
+  bool all_fixed(int32_t t) const {
     if (fixed_.empty()) return false;
     const auto& cell=tri_.triangles[t];
     for (int k=0;k<3;++k) {
@@ -273,6 +296,17 @@ class Refinement {
       if (v>=fixed_.size() || !fixed_[v]) return false;
     }
     return true;
+  }
+  // A triangle of fixed points is the caller's, except, once the first
+  // pass is drained (region_only_), where fixed_region declines its centroid.
+  bool fixed_triangle(int32_t t) const {
+    if (!all_fixed(t)) return false;
+    if (!region_only_) return true;
+    const auto& cell=tri_.triangles[t];
+    const double* a=tri_.point(cell.v[0]); const double* b=tri_.point(cell.v[1]);
+    const double* c=tri_.point(cell.v[2]);
+    const double centroid[2]={(a[0]+b[0]+c[0])/3,(a[1]+b[1]+c[1])/3};
+    return input_.fixed_region(input_.fixed_region_context,centroid)!=0;
   }
   bool inside(int32_t t) const {
     return t >= 0 && tri_.live[static_cast<std::size_t>(t)] &&
@@ -388,9 +422,11 @@ class Refinement {
   }
   void improve_worst_angles() {
     const auto vertex_count=static_cast<std::size_t>(tri_.vertex_count());
+    // Vertices move only here (which refreshes the cache on a move), so
+    // positions the stored size test cached during refinement stay valid.
     if(input_.surface_position) {
       physical_.resize(vertex_count);
-      physical_valid_.assign(vertex_count,0);
+      physical_valid_.resize(vertex_count,0);
     }
     std::vector<int32_t> offsets(vertex_count+1,0);
     std::vector<uint8_t> immovable(vertex_count,0);
@@ -653,8 +689,7 @@ class Refinement {
       for (int i=0;i<3;++i) length2+=(b[i]-a[i])*(b[i]-a[i]);
       if (length2>=2*h*h) return false;
     }
-    const double tau=0.5*stored_size_allowance(xyz[0].data(),xyz[1].data(),xyz[2].data());
-    return stored_size_exceeds(xyz[0].data(),xyz[1].data(),xyz[2].data(),h,tau);
+    return stored_size_fails(xyz[0].data(),xyz[1].data(),xyz[2].data(),h);
   }
   // Confirms a centroid-metric oversize with edge-integrated metric lengths:
   // the circumradius of the triangle with those side lengths against

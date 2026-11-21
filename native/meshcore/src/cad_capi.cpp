@@ -31,15 +31,18 @@ void copy_flat(const std::vector<std::array<T, N>>& source, T* destination) {
 bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
 
 // Curve and face stages into `candidate` (faces at the request's size h,
-// refined where its tolerance needs it), with their stage times. Returns
-// OK/UNRESOLVED with a candidate, else the failure.
+// refined where its tolerance needs it), with their stage times. A solid
+// passes its minimum dihedral target as rim_dihedral_degrees (CurveControls;
+// 0 for a surface), which also grades its pole rings (cad_mesh_face).
+// Returns OK/UNRESOLVED with a candidate, else the failure.
 int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
-                     const phx_mc_cad_surface_controls& controls,
+                     const phx_mc_cad_surface_controls& controls, double rim_dihedral_degrees,
                      phx_mc_cad_surface_result& candidate) {
   const double* face_sizes = controls.face_sizes;
-  const phx::mc::cad::CurveControls curve_controls{
+  phx::mc::cad::CurveControls curve_controls{
       face_sizes, controls.face_tolerances, controls.curve_tolerances,
       controls.tolerance_fraction, controls.grading, controls.minimum_size};
+  curve_controls.rim_dihedral_degrees = rim_dihedral_degrees;
   const auto start = std::chrono::steady_clock::now();
   const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
                                                                candidate.curves);
@@ -50,7 +53,7 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
   const int32_t surface_status = phx::mc::cad_mesh_surface(
       geometry, candidate.curves.view(), face_sizes, controls.face_tolerances,
-      controls.tolerance_fraction, candidate.mesh);
+      controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0);
   candidate.volume.stats.face_ns = candidate.mesh.face_ns;
   candidate.volume.stats.assembly_ns = candidate.mesh.assembly_ns;
   if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
@@ -70,7 +73,7 @@ extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    const int32_t status = mesh_surface(geometry, *model, *controls, 0.0, *candidate);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     *result = candidate.release();
     return status;
@@ -92,7 +95,8 @@ extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    const int32_t status =
+        mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     if (status == PHX_MC_OK) {
       const phx::mc::CadVolumeControls volume_controls{
@@ -163,6 +167,13 @@ extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* res
   }
   copy_flat(q.straightened, a->records); copy_rows(v.splits, a->splits);
   *a->stats = v.stats;
+  // Optional: curve_rim_wedges null skips them.
+  if (a->curve_rim_wedges) {
+    if (a->curve_capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+    if (static_cast<uint64_t>(a->curve_capacity) < v.curve_rim_wedges.size())
+      return PHX_MC_CAPACITY_EXCEEDED;
+    copy_rows(v.curve_rim_wedges, a->curve_rim_wedges);
+  }
   return PHX_MC_OK;
 }
 

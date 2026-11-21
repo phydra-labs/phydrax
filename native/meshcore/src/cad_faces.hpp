@@ -100,11 +100,14 @@ bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
 // the classified corner/curve point at an input boundary chart and the face's
 // order-0 evaluation elsewhere; every final face vertex position comes from it.
 // position_calls, when given, records each hook result as {u, v, x, y, z}.
+// graded_pole_rings (solid route) starts pole rings at the graded base size
+// and grows them ring by ring (seed_poles).
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result,
                       std::vector<std::array<double, 2>>* metric_points = nullptr,
-                      std::vector<std::array<double, 5>>* position_calls = nullptr);
+                      std::vector<std::array<double, 5>>* position_calls = nullptr,
+                      bool graded_pole_rings = false);
 
 }  // namespace phx::mc
