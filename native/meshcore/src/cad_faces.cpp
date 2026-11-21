@@ -6,9 +6,12 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <numeric>
+#include <utility>
 #include <vector>
 
+#include "cad_stored_size.hpp"
 #include "chart_surface.hpp"
 #include "expansion.hpp"
 #include "predicates.hpp"
@@ -248,6 +251,9 @@ struct BoundaryChord {
   std::array<double, 3> a;
   std::array<double, 3> b;
   double length;
+  // The chart chord's lens: the face's chart arc at the middle of the curve
+  // segment vs the chart chord's middle, mapped (0 off a curve).
+  double lens;
 };
 
 struct BoundaryNode {
@@ -267,6 +273,10 @@ struct PoleZone {
   double direction;
   double width;
   double spacing;
+  // A pole's first band takes no kernel point (the fan owns it); a trim
+  // line's band is the kernel's where the ring chain leaves it open (at a
+  // seam, whose vertices need not lie on a ring).
+  bool pole;
 };
 
 struct FaceMetric {
@@ -290,6 +300,10 @@ struct FaceMetric {
   // by chart, so the position hook agrees with assembly bit for bit.
   std::vector<std::pair<std::array<double, 2>, std::array<double, 3>>> boundary_positions;
   std::vector<std::array<double, 5>>* position_calls;
+  // Solid route: pole rings follow the graded base size (seed_poles).
+  bool graded_pole_rings = false;
+  // Solid route: the proximity size field (null: none).
+  const cad::ProximityField* proximity = nullptr;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -384,19 +398,55 @@ int32_t build_chord_tree(FaceMetric& context, int32_t begin, int32_t end) {
   return index;
 }
 
-// Raises h toward the chord floor max_s(L_s - g d(x, s)), capped by cap.
-void floor_chords(const FaceMetric& context, int32_t index, const double* point, double cap,
-                  double& h) {
+void chord_distance(const FaceMetric& context, int32_t index, const double* point,
+                    double& best, const BoundaryChord*& nearest);
+
+// Isotropic base size at a face point: the request h, graded from the
+// boundary samples and floored on the nearest fixed chord. Grading from the
+// nearby sample spacing asks for small triangles around a short boundary
+// segment, but a neighbouring long chord is fixed: every triangle on it has
+// circumradius >= L/2 and no vertex may enter its diametral disk, so a size
+// below L there cannot be met. The floor L - g d comes from the chord nearest
+// the point only (the one a triangle there stands on, at its centroid): a
+// floor taken from every chord lifted the size over a short lens-limited
+// chord beside a longer one, and the kernel accepted the stretched triangle
+// on it (measured: a 35.4 deg apex on a 0.35 h chord at h = 0.02286). It
+// overrides the grading, never the request or the curvature sizes.
+// A proximity control scoping the face lowers the request to its size at the
+// point first (cad_proximity.hpp); grading and the chord floor then apply to
+// that local request.
+double base_size(const FaceMetric& context, const double* jet) {
+  double h = context.size;
+  if (context.proximity) h = std::min(h, context.proximity->size(context.face, jet));
+  const double ungraded = h;
+  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
+  // A chord farther than (L_max - h) / g cannot raise h, so the search for
+  // the nearest chord stops there (none found: no floor).
+  if (!context.chord_tree.empty() && context.chord_tree[0].spacing > h) {
+    double distance = (context.chord_tree[0].spacing - h) / kBoundaryGrading;
+    const BoundaryChord* nearest = nullptr;
+    chord_distance(context, 0, jet, distance, nearest);
+    if (nearest)
+      h = std::max(h, std::min(ungraded, nearest->length - kBoundaryGrading * distance));
+  }
+  return h;
+}
+
+// Lowers `best` to the distance from point to the nearest boundary chord
+// when nearer and sets `nearest` to that chord (the longest among equally
+// near ones).
+void chord_distance(const FaceMetric& context, int32_t index, const double* point,
+                    double& best, const BoundaryChord*& nearest) {
   const BoundaryNode& node = context.chord_tree[index];
   double box_distance2 = 0.0;
   for (int k = 0; k < 3; ++k) {
     const double delta = std::max({node.low[k] - point[k], 0.0, point[k] - node.high[k]});
     box_distance2 += delta * delta;
   }
-  if (std::min(cap, node.spacing - kBoundaryGrading * std::sqrt(box_distance2)) <= h) return;
+  if (box_distance2 > best * best) return;
   if (node.left >= 0) {
-    floor_chords(context, node.left, point, cap, h);
-    floor_chords(context, node.right, point, cap, h);
+    chord_distance(context, node.left, point, best, nearest);
+    chord_distance(context, node.right, point, best, nearest);
     return;
   }
   for (int32_t i = node.begin; i < node.end; ++i) {
@@ -414,24 +464,38 @@ void floor_chords(const FaceMetric& context, int32_t index, const double* point,
       const double e = ap[k] - t * ab[k];
       distance2 += e * e;
     }
-    h = std::max(h, std::min(cap, chord.length - kBoundaryGrading * std::sqrt(distance2)));
+    const double distance = std::sqrt(distance2);
+    if (distance < best || (distance == best && nearest && chord.length > nearest->length))
+      nearest = &chord;
+    best = std::min(best, distance);
   }
 }
 
-// Isotropic base size at a face point: the request h, graded from the
-// boundary samples and floored on fixed chords. Grading from the nearby
-// sample spacing asks for small triangles around a short boundary segment, but
-// a neighbouring long chord is fixed: every triangle on it has circumradius
-// >= L/2 and no vertex may enter its diametral disk, so a size below L there
-// cannot be met. The chord floor is the smallest g-Lipschitz field that is
-// >= L on every chord; it overrides the grading, never the request or the
-// curvature sizes.
-double base_size(const FaceMetric& context, const double* jet) {
-  double h = context.size;
-  const double ungraded = h;
-  if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
-  if (!context.chord_tree.empty()) floor_chords(context, 0, jet, ungraded, h);
-  return h;
+// The fraction of tol a face point's triangles get: the boundary layer's
+// theta - lens / tol next to a curve chord (the nearest chord's own lens,
+// at most kLensShare theta tol, takes the rest; cad_faces.hpp), theta away
+// from it. The curvature size sqrt(4 theta' tol / |k|max) is the layer's
+// s_l within s_l of a chord (which holds the centroid and circumcentre of a
+// triangle on it) and grows from there at the boundary grading's rate up to
+// theta's s_f: a stepped size left triangles across the step whose split
+// points were all too close (measured: a proximity refusal on the quadric
+// at h = 0.04925). The search stops at the smallest layer's reach.
+double local_theta(const FaceMetric& context, const double* jet,
+                   const cad::SurfaceDifferential& differential) {
+  const double kappa = std::max(std::abs(differential.curvatures[0]),
+                                std::abs(differential.curvatures[1]));
+  if (context.chord_tree.empty() || !(kappa > 0.0)) return context.theta;
+  const double outer = std::sqrt(4.0 * context.theta * context.tolerance / kappa);
+  const double smallest = std::sqrt(1.0 - kLensShare) * outer;
+  double distance = smallest + (outer - smallest) / kBoundaryGrading;
+  const BoundaryChord* nearest = nullptr;
+  chord_distance(context, 0, jet, distance, nearest);
+  if (!nearest || !(nearest->lens > 0.0)) return context.theta;
+  const double layer = context.theta -
+      std::min(nearest->lens / context.tolerance, kLensShare * context.theta);
+  const double inner = std::sqrt(4.0 * layer * context.tolerance / kappa);
+  const double size = inner + kBoundaryGrading * std::max(0.0, distance - inner);
+  return size >= outer ? context.theta : context.theta * (size * size) / (outer * outer);
 }
 
 CadMetric2D face_metric(const double chart[2], void* opaque) {
@@ -445,10 +509,12 @@ CadMetric2D face_metric(const double chart[2], void* opaque) {
     return {invalid, invalid, invalid};
   }
   // Fidelity: the isotropic size intersected with the request's curvature
-  // tensor (cad::fidelity_metric).
+  // tensor (cad::fidelity_metric), at the boundary layer's share near a
+  // curve.
   double m[3];
-  cad::fidelity_metric(differential, base_size(context, jet), context.theta, context.tolerance, m,
-                       nullptr);
+  const double h = base_size(context, jet);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, nullptr);
   return {m[0] / (context.scale_u * context.scale_u), m[1] / (context.scale_u * context.scale_v),
           m[2] / (context.scale_v * context.scale_v)};
 }
@@ -464,7 +530,8 @@ bool vertex_metric(FaceMetric& context, const double chart[2], double tensor[9])
   if (!surface_jet(context, uv, jet) || !cad::surface_differential(jet, differential)) return false;
   double m[3], lambda[2];
   const double h = base_size(context, jet);
-  cad::fidelity_metric(differential, h, context.theta, context.tolerance, m, lambda);
+  cad::fidelity_metric(differential, h, local_theta(context, jet, differential),
+                       context.tolerance, m, lambda);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) tensor[3 * i + j] = i == j ? lambda[0] : 0.0;
   const double base = 1.0 / (h * h);
@@ -597,6 +664,28 @@ double distance(const std::array<double, 3>& a, const std::array<double, 3>& b) 
   return std::hypot(std::hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]);
 }
 
+// The lens of boundary edge `edge` (its chart chord vs the face's chart arc
+// at the middle of its curve segment, mapped; the quantity the curve stage
+// bounds by kLensShare theta tol); 0 for a pole edge.
+bool chord_lens(const cad::CadGeometry& geometry, const FaceBoundary& boundary, int32_t face,
+                int32_t edge, cad::EvaluationWorkspace& workspace, double& lens) {
+  const CadFaceEdge& e = boundary.edges[static_cast<std::size_t>(edge)];
+  lens = 0.0;
+  if (e.curve < 0) return true;
+  const auto& a = boundary.vertices[static_cast<std::size_t>(e.vertices[0])].uv;
+  const auto& b = boundary.vertices[static_cast<std::size_t>(e.vertices[1])].uv;
+  std::array<double, 2> arc;
+  const std::array<double, 2> chord{0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])};
+  std::array<double, 3> x, y;
+  if (!chart_point(geometry, e.use,
+                   use_parameter(geometry.model(), e.use, 0.5 * (e.parameters[0] + e.parameters[1])),
+                   workspace, arc) ||
+      !evaluate_position(geometry, face, arc, workspace, x) ||
+      !evaluate_position(geometry, face, chord, workspace, y)) return false;
+  lens = distance(x, y);
+  return std::isfinite(lens);
+}
+
 int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                        int32_t face, const FaceBoundary& boundary, FaceMetric& metric) {
   std::array<double, 2> low = boundary.vertices.front().uv;
@@ -623,12 +712,31 @@ int32_t prepare_metric(const cad::CadGeometry& geometry, const CadCurveDiscretiz
       }
       metric.boundary[a].spacing = std::min(metric.boundary[a].spacing, length);
       metric.boundary[b].spacing = std::min(metric.boundary[b].spacing, length);
-      metric.chords.push_back({metric.boundary[a].xyz, metric.boundary[b].xyz, length});
+      double lens = 0.0;
+      if (!chord_lens(geometry, boundary, face, a, metric.workspace, lens))
+        return PHX_MC_INVALID_INPUT;
+      metric.chords.push_back({metric.boundary[a].xyz, metric.boundary[b].xyz, length, lens});
     }
+  }
+  // A polar trim line's vertices (polar_trim_line) do not grade the face:
+  // its chords take the chart-linear span (polar_trim_span), far below the
+  // face's size in 3D where the chart is anisotropic, and the trim zone's
+  // rings own the face beside it at the zone spacing (measured with them
+  // grading: caps below 75-85 deg 1.6-2.4x the triangles, kernel points
+  // between the band ring and the next ring refused by encroachment,
+  // surface UNRESOLVED).
+  std::vector<double> polar_lines;
+  for (const double line : {low[1], high[1]}) {
+    SphereChart chart;
+    double direction = 0.0;
+    if (polar_trim_line(geometry, face, line, metric.workspace, chart, direction))
+      polar_lines.push_back(line);
   }
   metric.boundary_order.reserve(metric.boundary.size());
   for (std::size_t i = 0; i < metric.boundary.size(); ++i)
-    if (std::isfinite(metric.boundary[i].spacing))
+    if (std::isfinite(metric.boundary[i].spacing) &&
+        std::find(polar_lines.begin(), polar_lines.end(), boundary.vertices[i].uv[1]) ==
+            polar_lines.end())
       metric.boundary_order.push_back(static_cast<int32_t>(i));
   if (!metric.boundary_order.empty())
     build_boundary_tree(metric, 0, static_cast<int32_t>(metric.boundary_order.size()));
@@ -662,12 +770,22 @@ bool in_pole_zone(const FaceMetric& metric, const double uv[2]) {
   return false;
 }
 
+// The kernel leaves a triangle of fixed points alone inside a zone only: a
+// sphere cap's pole and trim zones face each other on one axis, and the
+// triangles from one's last ring to the other's (edges to 1.44 h at cap
+// below 85 deg, h/r 0.6, theta 0.9) are no zone's construction.
+int32_t in_fixed_zone(void* opaque, const double point[2]) {
+  const auto& metric = *static_cast<FaceMetric*>(opaque);
+  const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
+  return in_pole_zone(metric, uv) ? 1 : 0;
+}
+
 int32_t admit_face_point(void* opaque, const double point[2]) {
   const auto& metric = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
   for (const PoleZone& zone : metric.poles) {
     const double distance = zone.direction * (uv[zone.axis] - zone.origin);
-    if (distance >= 0.0 && distance <= zone.spacing) return 0;
+    if (zone.pole && distance >= 0.0 && distance <= zone.spacing) return 0;
   }
   return 1;
 }
@@ -799,9 +917,11 @@ bool chord_meets_segment(const FaceBoundary& boundary, int32_t a, int32_t b,
   return false;
 }
 
+// `upper` bounds the snap offset (the zone spacing on the surface route; on
+// the solid route the ungraded spacing, see seed_poles).
 bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, int axis,
-                        double origin, double direction, double spacing, double width,
-                        double& latitude) {
+                        double origin, double direction, double spacing, double upper,
+                        double width, double& latitude) {
   const int32_t corner = boundary.vertices[pole.first_vertex].entity;
   bool found = false;
   Expansion common;
@@ -812,11 +932,38 @@ bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, 
       if (endpoint.dimension != 0 || endpoint.entity != corner) continue;
       const double adjacent = boundary.vertices[edge.vertices[1-k]].uv[axis];
       const double offset = direction * (adjacent - origin);
-      if (!(offset >= 0.5 * spacing && offset <= spacing && offset <= width)) return false;
+      if (!(offset >= 0.5 * spacing && offset <= upper && offset <= width)) return false;
       const Expansion exact = Expansion::difference(adjacent, origin);
       if (found && !(exact - common).is_zero()) return false;
       common = exact;
       latitude = adjacent;
+      found = true;
+    }
+  }
+  return found;
+}
+
+// A trim line's first ring takes the latitude of the boundary vertices next
+// to the line's corners off it (a seam's first vertex) when all lie at one
+// exact offset within a spacing, so the ring chain ends on them and closes
+// the band between ring and trim.
+bool trim_snap_latitude(const FaceBoundary& boundary, int axis, double origin, double direction,
+                        double spacing, double width, double& latitude) {
+  bool found = false;
+  Expansion common;
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    for (int k = 0; k < 2; ++k) {
+      const auto& corner = boundary.vertices[static_cast<std::size_t>(edge.vertices[k])];
+      const auto& adjacent = boundary.vertices[static_cast<std::size_t>(edge.vertices[1 - k])];
+      if (corner.dimension != 0 || corner.uv[axis] != origin || adjacent.uv[axis] == origin)
+        continue;
+      const double offset = direction * (adjacent.uv[axis] - origin);
+      if (!(offset > 0.0 && offset <= spacing && offset <= width)) return false;
+      const Expansion exact = Expansion::difference(adjacent.uv[axis], origin);
+      if (found && !(exact - common).is_zero()) return false;
+      common = exact;
+      latitude = adjacent.uv[axis];
       found = true;
     }
   }
@@ -834,15 +981,87 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       low[axis] = std::min(low[axis], vertex.uv[axis]);
       high[axis] = std::max(high[axis], vertex.uv[axis]);
     }
+  // Zone anchors: each chart pole, and each polar trim line. A polar trim
+  // line is a face box side along a periodic free axis that boundary curve
+  // edges cover over one whole period and where the free axis's chart speed
+  // is under half the zone axis's (the ratio test that ends a zone): a trim
+  // circle near a sphere's cut-off pole. The chart there is as anisotropic
+  // as beside a pole, and the kernel met neither size nor encroachment rules
+  // in the band between the trim and the rest (measured: caps below 75-85
+  // deg, h/r 0.4-0.8, surface UNRESOLVED); its rings take over as at a pole.
+  struct Anchor {
+    const PoleBoundary* pole;  // nullptr: a polar trim line.
+    int axis;
+    std::array<double, 2> start;
+    std::array<double, 2> end;  // Trim line: the free axis's far end.
+    // Trim line: its chords' chart spans on the free axis, sorted.
+    std::vector<std::array<double, 2>> spans;
+  };
+  std::vector<Anchor> anchors;
   for (const PoleBoundary& pole : boundary.poles) {
     const auto& start = boundary.vertices[pole.first_vertex].uv;
     const auto& almost_end = boundary.vertices[pole.first_vertex + pole.count - 1].uv;
     const int axis = std::abs(start[0] - almost_end[0]) <
                              std::abs(start[1] - almost_end[1]) ? 0 : 1;
+    anchors.push_back({&pole, axis, start, start, {}});
+  }
+  const auto& model = geometry.model();
+  for (int axis = 0; axis < 2; ++axis) {
+    const int free_axis = 1 - axis;
+    int64_t turns = 0;
+    if (exact_turn(low[free_axis], high[free_axis], model.surface_periods[2 * metric.face + free_axis],
+                   turns) != 1 || turns != 1) continue;
+    for (const double line : {low[axis], high[axis]}) {
+      std::vector<std::array<double, 2>> spans;
+      for (const CadFaceEdge& edge : boundary.edges) {
+        if (edge.curve < 0) continue;
+        const auto& a = boundary.vertices[static_cast<std::size_t>(edge.vertices[0])].uv;
+        const auto& b = boundary.vertices[static_cast<std::size_t>(edge.vertices[1])].uv;
+        if (a[axis] != line || b[axis] != line) continue;
+        spans.push_back({std::min(a[free_axis], b[free_axis]), std::max(a[free_axis], b[free_axis])});
+      }
+      std::sort(spans.begin(), spans.end());
+      double reach = low[free_axis];
+      for (const auto& span : spans)
+        if (span[0] == reach) reach = span[1];
+      if (spans.empty() || reach != high[free_axis]) continue;
+      double uv[2];
+      uv[axis] = line;
+      uv[free_axis] = 0.5 * (low[free_axis] + high[free_axis]);
+      double jet[18];
+      if (!surface_jet(metric, uv, jet)) return PHX_MC_INVALID_INPUT;
+      const double scale[2] = {metric.scale_u, metric.scale_v};
+      const auto speed2 = [&](int k) {
+        const double* d = jet + 3 + 3 * k;
+        return (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / (scale[k] * scale[k]);
+      };
+      if (!(speed2(free_axis) < 0.5 * speed2(axis))) continue;
+      std::array<double, 2> start{}, end{};
+      start[axis] = end[axis] = line;
+      start[free_axis] = low[free_axis];
+      end[free_axis] = high[free_axis];
+      anchors.push_back({nullptr, axis, start, end, spans});
+    }
+  }
+  for (const Anchor& anchor : anchors) {
+    const auto& start = anchor.start;
+    const int axis = anchor.axis;
     const int free_axis = 1 - axis;
     const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
-    const double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
+    double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
     if (!(limit > 0.0)) return PHX_MC_INVALID_INPUT;
+    // Half the distance to the nearest pole ahead on this axis (a sphere's
+    // other pole). Both zones extend toward each other, and without this bound
+    // each could end with a ring at the common midline: on the sphere at
+    // h/r = 0.6 and theta 0.8, two rings 2 ulps apart at the equator, whose
+    // zero-area strip left a boundary that tetrahedral improvement churned
+    // on for minutes.
+    double half_gap = std::numeric_limits<double>::infinity();
+    for (const Anchor& other : anchors) {
+      const double gap = direction * (other.start[axis] - start[axis]);
+      if (gap > 0.0) half_gap = std::min(half_gap, 0.5 * gap);
+    }
+    limit = std::min(limit, half_gap);
     const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
     double jet[18];
     if (!surface_jet(metric, middle, jet)) return PHX_MC_INVALID_INPUT;
@@ -851,17 +1070,106 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
                                     jet[derivative + 2]);
     if (!(speed > 0.0)) return PHX_MC_INVALID_INPUT;
     // The rings are isotropic: their spacing is the face metric's smallest
-    // size, the request h or the fidelity size sqrt(4 theta tol / |k|max).
-    cad::SurfaceDifferential differential;
-    if (!cad::surface_differential(jet, differential)) return PHX_MC_INVALID_INPUT;
-    const double curvature = std::max(std::abs(differential.curvatures[0]),
-                                      std::abs(differential.curvatures[1]));
+    // size, the request h or the boundary layer's fidelity size
+    // sqrt(4 (theta - lens / tol) tol / |k|max) (local_theta) with the
+    // largest lens of the curve chords at the pole: the curves that end at
+    // the pole converge there, so its zone lies in their layer (measured:
+    // rings at theta's size beside lens-carrying chords left the sphere's
+    // kernel triangles between them unresolved; rings at the layer size
+    // beside a chart-straight seam left a 16 deg fan triangle between the
+    // first ring and the seam's request-sized pole segment).
+    // A trim line's zone lies in the layer of its own chords.
+    double lens = 0.0;
+    for (std::size_t e = 0; e < boundary.edges.size(); ++e) {
+      const CadFaceEdge& edge = boundary.edges[e];
+      if (edge.curve < 0) continue;
+      bool at_anchor = !anchor.pole;
+      for (const int32_t v : edge.vertices) {
+        const CadFaceVertex& vertex = boundary.vertices[static_cast<std::size_t>(v)];
+        if (anchor.pole)
+          at_anchor = at_anchor || (vertex.dimension == 0 &&
+                                    vertex.entity == boundary.vertices[anchor.pole->first_vertex].entity);
+        else
+          at_anchor = at_anchor && vertex.uv[axis] == start[axis];
+      }
+      double edge_lens = 0.0;
+      if (at_anchor && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
+                                   metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
+      lens = std::max(lens, edge_lens);
+    }
+    const double layer = metric.theta - std::min(lens / metric.tolerance,
+                                                 kLensShare * metric.theta);
+    double curvature = 0.0;
+    if (!pole_zone_curvature(geometry, metric.face, metric.workspace, curvature))
+      return PHX_MC_INVALID_INPUT;
+    // Solid route (graded_pole_rings): a pole's rings start from the face's
+    // graded base size at the pole (base_size), not the bare request: a
+    // boundary there finer than h (a seam graded from a wedge-graded rim,
+    // cad_curves.cpp) otherwise left a zone as wide as the face with no
+    // ring, a fan of the boundary (measured: cap above 70 deg, h/r 0.4: a
+    // pole triangle across two seam points, flat). A trim line keeps the
+    // request: its first ring snaps to the seam's first vertex off the line
+    // (trim_snap_latitude), and rings at the trim's own spacing left the dome
+    // of caps below 80-85 deg UNRESOLVED. The surface route has no
+    // wedge-graded rim and keeps the request.
     double size = metric.size;
-    if (curvature > 0.0)
-      size = std::min(size, std::sqrt(4.0 * metric.theta * metric.tolerance / curvature));
+    double ungraded = metric.size;
+    if (anchor.pole && metric.graded_pole_rings) {
+      double pole_jet[18];
+      if (!surface_jet(metric, start.data(), pole_jet)) return PHX_MC_INVALID_INPUT;
+      size = std::min(size, base_size(metric, pole_jet));
+    }
+    if (curvature > 0.0) {
+      const double cap = std::sqrt(4.0 * layer * metric.tolerance / curvature);
+      size = std::min(size, cap);
+      ungraded = std::min(ungraded, cap);
+    }
     double spacing = std::min(limit, size / speed);
+    double ungraded_spacing = std::min(limit, ungraded / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
+    // The last ring stays half a spacing short of the midline, so the two
+    // zones' last rings are at least a spacing apart; a spacing of at most
+    // 2/3 of the half gap keeps one ring.
+    if (std::isfinite(half_gap)) {
+      spacing = std::min(spacing, half_gap * (2.0 / 3.0));
+      ungraded_spacing = std::min(ungraded_spacing, half_gap * (2.0 / 3.0));
+      limit = half_gap - 0.5 * spacing;
+    }
     double width = std::min(limit, pole_ring_width(spacing));
+    // Length of the ring at uv[axis] (16 chords over the free axis).
+    const auto ring_length = [&](std::array<double, 2> uv, const std::array<double, 2>& to,
+                                 double& length) {
+      std::array<double, 3> previous;
+      if (!evaluate_position(geometry, metric.face, uv, metric.workspace, previous)) return false;
+      length = 0.0;
+      for (int i = 1; i <= 16; ++i) {
+        uv[free_axis] = start[free_axis] + (to[free_axis] - start[free_axis]) * i / 16.0;
+        std::array<double, 3> next;
+        if (!evaluate_position(geometry, metric.face, uv, metric.workspace, next)) return false;
+        length += distance(previous, next);
+        previous = next;
+      }
+      return true;
+    };
+    // A trimmed pole has no pole chart: V3 associates the band between the
+    // trim line and the first ring in the uv chart, where the chart-linear
+    // map deviates from the surface by far more than the flat triangle does
+    // (measured: band rows of caps below 50-85 deg at 0.6-0.97 theta tol of
+    // true deviation, refused). On a sphere chart the band ring sits at the
+    // largest band within the layer's share of tol by the chart-linear bound
+    // (polar_trim_band, cad_faces.hpp) for the trim's longest chord: the
+    // band ring is aligned to the trim's vertices (below), so a band
+    // triangle spans one trim chord on the free axis. The ring is added
+    // ahead of the zone's rings, which keep their places.
+    double band = std::numeric_limits<double>::infinity();
+    SphereChart sphere;
+    if (!anchor.pole && direction * start[axis] < 0.0 && axis == 1 &&
+        sphere_chart(geometry, metric.face, sphere)) {
+      double extent = 0.0;
+      for (const auto& span : anchor.spans) extent = std::max(extent, span[1] - span[0]);
+      band = polar_trim_band(sphere, start[axis], direction, extent,
+                             8.0 * layer * metric.tolerance);
+    }
     while (width < limit) {
       double uv[2] = {middle[0], middle[1]};
       uv[axis] = start[axis] + direction * width;
@@ -875,38 +1183,92 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       if (!(next > width)) return PHX_MC_RANGE_ERROR;
       width = next;
     }
+    // Graded rings: the base size at the pole is the chord of the seam's
+    // first segment (plus grading), and its latitude offset is that
+    // segment's arc, longer by O(kappa^2 L^3): a first ring at the chord
+    // spacing sat 2e-4 short of the seam's first vertex (h 0.2 below), the ring
+    // points beside the seam were omitted by the proximity rule, and the
+    // pole fan reached the second ring (measured: unit sphere, h 0.2, tol
+    // 0.01: 8 oversize pole triangles, surface UNRESOLVED). The snap to that
+    // vertex therefore accepts offsets up to the ungraded spacing; the ring
+    // then sits on the seam vertex exactly, as on the surface route.
+    // A trim line snaps its first zone ring to the seam like a pole; the
+    // band ring is added when the band is within the (snapped) spacing, else
+    // the first ring is already as close to the trim.
     double latitude = 0.0;
-    const bool snapped = pole_snap_latitude(boundary, pole, axis, start[axis], direction,
-                                           spacing, width, latitude);
+    const bool snapped = anchor.pole
+        ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing,
+                             metric.graded_pole_rings ? ungraded_spacing : spacing, width,
+                             latitude)
+        : trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
     if (snapped) spacing = direction * (latitude - start[axis]);
-    metric.poles.push_back({axis, start[axis], direction, width, spacing});
-    const double first = geometry.model().use_ranges[2 * pole.use];
-    const double last = geometry.model().use_ranges[2 * pole.use + 1];
-    std::array<double, 2> end;
-    if (!chart_point(geometry, pole.use,
-                     geometry.model().use_senses[pole.use] > 0 ? last : first,
-                     metric.workspace, end)) return PHX_MC_INVALID_INPUT;
-    for (double offset = spacing; offset <= width; offset += spacing) {
+    // The band ring's latitude, one ulp outward when rounding left it short.
+    double ring = start[axis] + direction * band;
+    if (direction * (ring - start[axis]) < band)
+      ring = std::nextafter(ring, direction > 0.0 ? std::numeric_limits<double>::infinity()
+                                                  : -std::numeric_limits<double>::infinity());
+    const bool chart_band = band < spacing;
+    metric.poles.push_back({axis, start[axis], direction, width, spacing, anchor.pole != nullptr});
+    std::array<double, 2> end = anchor.end;
+    if (anchor.pole) {
+      const auto& pole = *anchor.pole;
+      const double first = model.use_ranges[2 * pole.use];
+      const double last = model.use_ranges[2 * pole.use + 1];
+      if (!chart_point(geometry, pole.use, model.use_senses[pole.use] > 0 ? last : first,
+                       metric.workspace, end)) return PHX_MC_INVALID_INPUT;
+    }
+    // Solid route: each ring's point count and the step to the next ring
+    // follow the graded base size at the ring, at most the zone's spacing:
+    // rings beside a boundary finer than the request (a wedge-graded rim)
+    // start as fine and grow at the grading rate instead of joining a fine
+    // side to a coarse ring (measured: caps above 45-65 deg, solid scan 90
+    // of 195 runs UNRESOLVED with rings at the zone spacing, 15 with graded
+    // rings).
+    double step = spacing;
+    bool band_ring = chart_band;
+    for (double offset = band_ring ? band : spacing; offset <= width;
+         offset = std::exchange(band_ring, false) ? spacing : offset + step) {
       std::array<double, 2> uv = start;
-      uv[axis] = snapped && offset == spacing ? latitude : start[axis] + direction * offset;
-      if (!snapped && offset == spacing && direction * (uv[axis] - start[axis]) < spacing)
+      uv[axis] = band_ring ? ring
+                 : snapped && offset == spacing ? latitude : start[axis] + direction * offset;
+      if (!band_ring && !snapped && offset == spacing &&
+          direction * (uv[axis] - start[axis]) < spacing)
         uv[axis] = std::nextafter(uv[axis], direction > 0.0
                                   ? std::numeric_limits<double>::infinity()
                                   : -std::numeric_limits<double>::infinity());
-      std::array<double, 3> previous;
-      if (!evaluate_position(geometry, metric.face, uv, metric.workspace, previous))
-        return PHX_MC_INVALID_INPUT;
-      double length = 0.0;
-      for (int i = 1; i <= 16; ++i) {
-        uv[free_axis] = start[free_axis] + (end[free_axis] - start[free_axis]) * i / 16.0;
-        std::array<double, 3> next;
-        if (!evaluate_position(geometry, metric.face, uv, metric.workspace, next))
-          return PHX_MC_INVALID_INPUT;
-        length += distance(previous, next);
-        previous = next;
+      if (metric.graded_pole_rings) {
+        double ring_middle[2];
+        ring_middle[axis] = uv[axis];
+        ring_middle[free_axis] = middle[free_axis];
+        if (!surface_jet(metric, ring_middle, jet)) return PHX_MC_INVALID_INPUT;
+        step = std::min(spacing, base_size(metric, jet) / speed);
       }
-      const int count = std::max(8, static_cast<int>(std::ceil(length / (spacing * speed))));
-      const bool first_ring = offset == spacing;
+      double length = 0.0;
+      if (!ring_length(uv, end, length)) return PHX_MC_INVALID_INPUT;
+      const int uniform = std::max(8, static_cast<int>(std::ceil(length / (step * speed))));
+      // Free-axis stops: uniform, or for the band ring every trim vertex with
+      // each trim chord cut into pieces no longer than the uniform step, so
+      // a band triangle stands on one trim chord and the ring piece across
+      // it (unaligned stops left obtuse band slivers over the stored size).
+      std::vector<double> stops;
+      if (band_ring) {
+        const double piece = (end[free_axis] - start[free_axis]) / uniform;
+        for (const auto& span : anchor.spans) {
+          const int pieces = std::max(1, static_cast<int>(std::ceil((span[1] - span[0]) / piece)));
+          for (int j = 0; j < pieces; ++j)
+            stops.push_back(span[0] + (span[1] - span[0]) * j / pieces);
+        }
+        stops.push_back(end[free_axis]);
+      } else {
+        for (int i = 0; i <= uniform; ++i)
+          stops.push_back(i == uniform ? end[free_axis] :
+              start[free_axis] + (end[free_axis] - start[free_axis]) * i / uniform);
+      }
+      const int count = static_cast<int>(stops.size()) - 1;
+      // The ring chain closes the band nearest the anchor: the band ring's
+      // when there is one.
+      const bool first_ring = band_ring || (!chart_band && offset == spacing);
+      const bool snapped_ring = snapped && !band_ring && offset == spacing;
       std::vector<std::array<double, 2>> ring_uv;
       std::vector<int32_t> ring_rows;
       if (first_ring) {
@@ -914,11 +1276,10 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         ring_rows.assign(static_cast<std::size_t>(count + 1), -1);
       }
       for (int i = 0; i <= count; ++i) {
-        uv[free_axis] = i == count ? end[free_axis] :
-            start[free_axis] + (end[free_axis] - start[free_axis]) * i / count;
+        uv[free_axis] = stops[static_cast<std::size_t>(i)];
         if (first_ring) ring_uv[static_cast<std::size_t>(i)] = uv;
         if (i == 0 || i == count) {
-          if (first_ring && snapped) {
+          if (first_ring && snapped_ring) {
             for (std::size_t j = 0; j < boundary.vertices.size(); ++j)
               if (boundary.vertices[j].uv == uv) {
                 ring_rows[static_cast<std::size_t>(i)] = static_cast<int32_t>(j);
@@ -928,7 +1289,10 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
           continue;
         }
         if (!in_trim(boundary, outer, uv)) continue;
-        const int proximity = near_boundary(boundary, metric, uv);
+        // The band ring stands within the face metric's proximity of the
+        // trim by construction (its band is the chart bound's, finer than
+        // the metric); it is not dropped for it.
+        const int proximity = band_ring ? 0 : near_boundary(boundary, metric, uv);
         if (proximity < 0) return PHX_MC_INVALID_INPUT;
         if (proximity > 0) {
           ++omitted;
@@ -939,7 +1303,22 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         points.push_back(uv[1] * metric.scale_v);
         fixed.push_back(1);
       }
-      if (first_ring) {
+      if (first_ring && !anchor.pole) {
+        // A trim line's first ring chain closes the band between it and the
+        // trim, whose triangles then join fixed points only, as a pole's fan;
+        // open, triangles from the trim to kernel points beyond the ring
+        // asked for points in the band, which admission refuses.
+        for (int i = 0; i < count; ++i) {
+          const int32_t a = ring_rows[static_cast<std::size_t>(i)];
+          const int32_t b = ring_rows[static_cast<std::size_t>(i+1)];
+          if (a < 0 || b < 0 || chord_meets_segment(boundary, a, b, ring_uv[i], ring_uv[i+1]))
+            continue;
+          segments.push_back(a);
+          segments.push_back(b);
+          protected_edges.push_back({a, b});
+        }
+      } else if (first_ring) {
+        const PoleBoundary& pole = *anchor.pole;
         CadPoleSectors counts{static_cast<int32_t>(pole.use), 0, 0};
         const auto add_segment = [&](int32_t a, int32_t b) {
           for (std::size_t j = 0; j < segments.size(); j += 2)
@@ -999,6 +1378,31 @@ double maximum_cosine(const SurfaceTriangulation& surface,
     }
   }
   return maximum;
+}
+
+// Cells among `cells` whose stored triangle fails the kernel's stored size
+// test (cad_refine2d.hpp, stored_size: half the rounding allowance, a
+// constrained side of length >= sqrt(2) h exempt).
+int32_t stored_size_failures(const SurfaceTriangulation& surface,
+                             const std::vector<int32_t>& cells, double h) {
+  int32_t failures = 0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    const double* p[3] = {surface.points.data() + 3 * t[0], surface.points.data() + 3 * t[1],
+                          surface.points.data() + 3 * t[2]};
+    bool exempt = false;
+    for (int k = 0; k < 3 && !exempt; ++k) {
+      if (!surface.constrained[cell][k]) continue;
+      const double* a = p[(k + 1) % 3];
+      const double* b = p[(k + 2) % 3];
+      double length2 = 0.0;
+      for (int i = 0; i < 3; ++i) length2 += (b[i] - a[i]) * (b[i] - a[i]);
+      exempt = length2 >= 2 * h * h;
+    }
+    if (exempt) continue;
+    failures += stored_size_fails(p[0], p[1], p[2], h);
+  }
+  return failures;
 }
 
 // Largest metric circumradius over cells (centroid metric, as the chart
@@ -1110,6 +1514,14 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     const double quality = maximum_cosine(surface, incident[v]);
     if (!(quality <= limit)) return reject();
     if (sized && !fits(v, previous_radius)) return reject();
+    // The stored size test may not fail on more star cells than before.
+    const int32_t failures = stored_size_failures(surface, incident[v], metric.size);
+    if (failures > 0) {
+      std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
+      const int32_t before = stored_size_failures(surface, incident[v], metric.size);
+      std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
+      if (failures > before) return reject();
+    }
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
   };
@@ -1281,11 +1693,211 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
 
 }  // namespace
 
+bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
+                         cad::EvaluationWorkspace& workspace, double& kappa) {
+  const auto& model = geometry.model();
+  const double inf = std::numeric_limits<double>::infinity();
+  double low[2] = {inf, inf}, high[2] = {-inf, -inf};
+  for (int64_t loop = 0; loop < model.loop_count; ++loop) {
+    if (model.loop_surfaces[loop] != face) continue;
+    for (int64_t use = model.loop_use_offsets[loop]; use < model.loop_use_offsets[loop + 1]; ++use)
+      for (int k = 0; k < 2; ++k) {
+        std::array<double, 2> uv;
+        if (!chart_point(geometry, use, model.use_ranges[2 * use + k], workspace, uv)) return false;
+        for (int axis = 0; axis < 2; ++axis) {
+          low[axis] = std::min(low[axis], uv[axis]);
+          high[axis] = std::max(high[axis], uv[axis]);
+        }
+      }
+  }
+  const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!geometry.jets(geometry.surface_node(face), middle, 2, jet, workspace) ||
+      !cad::surface_differential(jet, differential)) return false;
+  kappa = std::max(std::abs(differential.curvatures[0]), std::abs(differential.curvatures[1]));
+  return std::isfinite(kappa);
+}
+
+namespace {
+
+// The frame vectors e1, e2, a and radius r of a sphere chart node
+// (SphereChart's families), or false.
+bool sphere_frame(const cad::CadGeometry& geometry, int32_t index, double e1[3], double e2[3],
+                  double a[3], double& radius) {
+  static const int32_t kSphere = cad::template_index("sphere");
+  static const int32_t kCircle = cad::template_index("circle3");
+  const cad::Node& node = geometry.node(index);
+  if (node.kind == PHX_MC_CAD_NODE_TEMPLATE) {
+    if (node.integers[0] != kSphere || node.real_count != 13) return false;
+    for (int i = 0; i < 3; ++i) {
+      e1[i] = node.reals[3 + i];
+      e2[i] = node.reals[6 + i];
+      a[i] = node.reals[9 + i];
+    }
+    radius = node.reals[12];
+    return true;
+  }
+  if (node.kind == PHX_MC_CAD_NODE_AFFINE && node.integers[1] == 3) {
+    double x[3][3];
+    if (!sphere_frame(geometry, static_cast<int32_t>(node.integers[0]), x[0], x[1], x[2], radius))
+      return false;
+    double* out[3] = {e1, e2, a};
+    for (int v = 0; v < 3; ++v)
+      for (int r = 0; r < 3; ++r)
+        out[v][r] = node.reals[3 * r] * x[v][0] + node.reals[3 * r + 1] * x[v][1] +
+                    node.reals[3 * r + 2] * x[v][2];
+    return true;
+  }
+  if (node.kind != PHX_MC_CAD_NODE_REVOLUTION) return false;
+  const cad::Node& curve = geometry.node(static_cast<int32_t>(node.integers[0]));
+  if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
+      curve.real_count != 10)
+    return false;
+  const double *origin = node.reals, *axis = node.reals + 3, *centre = curve.reals;
+  const double *first = curve.reals + 3, *second = curve.reals + 6;
+  int k = -1;
+  for (int i = 0; i < 3; ++i)
+    if (std::abs(axis[i]) == 1.0) k = i;
+  if (k < 0 || first[k] != 0.0) return false;
+  for (int i = 0; i < 3; ++i)
+    if (i != k && (axis[i] != 0.0 || second[i] != 0.0 || centre[i] != origin[i])) return false;
+  for (int i = 0; i < 3; ++i) {
+    e1[i] = i == k ? 0.0 : first[i];
+    e2[i] = 0.0;
+    a[i] = i == k ? second[i] : 0.0;
+  }
+  const int p = (k + 1) % 3, q = (k + 2) % 3;
+  e2[q] = axis[k] * first[p];
+  e2[p] = -axis[k] * first[q];
+  radius = curve.reals[9];
+  return true;
+}
+
+// max |cos v| and max |sin v| over v between v0 and v1.
+void trig_maxima(double v0, double v1, double& cosine, double& sine) {
+  const double lo = std::min(v0, v1), hi = std::max(v0, v1);
+  const double pi = std::numbers::pi;
+  cosine = std::max(std::abs(std::cos(lo)), std::abs(std::cos(hi)));
+  sine = std::max(std::abs(std::sin(lo)), std::abs(std::sin(hi)));
+  if (std::ceil(lo / pi) * pi <= hi) cosine = 1.0;
+  if (std::ceil((lo - 0.5 * pi) / pi) * pi + 0.5 * pi <= hi) sine = 1.0;
+}
+
+}  // namespace
+
+bool sphere_chart(const cad::CadGeometry& geometry, int32_t face, SphereChart& chart) {
+  double e1[3], e2[3], a[3], radius = 0.0;
+  if (!sphere_frame(geometry, geometry.surface_node(face), e1, e2, a, radius)) return false;
+  const auto dot = [](const double* x, const double* y) {
+    return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  };
+  const double g11 = dot(e1, e1), g12 = dot(e1, e2), g22 = dot(e2, e2);
+  chart.radius = std::abs(radius);
+  chart.equator = std::sqrt(0.5 * (g11 + g22) + std::hypot(0.5 * (g11 - g22), g12));
+  chart.pole = std::sqrt(dot(a, a));
+  return std::isfinite(chart.radius) && std::isfinite(chart.equator) &&
+         std::isfinite(chart.pole) && chart.radius > 0.0;
+}
+
+void sphere_chart_hessian(const SphereChart& chart, double v0, double v1, double bound[3]) {
+  double cosine = 0.0, sine = 0.0;
+  trig_maxima(v0, v1, cosine, sine);
+  bound[0] = chart.radius * chart.equator * cosine;
+  bound[1] = chart.radius * chart.equator * sine;
+  bound[2] = chart.radius * (chart.equator * cosine + chart.pole * sine);
+}
+
+double polar_trim_band(const SphereChart& chart, double line, double direction, double span,
+                       double budget) {
+  double band = 0.0, bound[3];
+  for (int pass = 0; pass < 2; ++pass) {
+    sphere_chart_hessian(chart, line, line + direction * band, bound);
+    const double room = budget - bound[0] * span * span;
+    if (!(room > 0.0)) return std::numeric_limits<double>::infinity();
+    const double linear = bound[1] * span;
+    // The cancellation-free root of C b^2 + 2 B span b - room = 0.
+    band = room / (linear + std::sqrt(linear * linear + bound[2] * room));
+  }
+  return band;
+}
+
+double polar_trim_span(const SphereChart& chart, double line, double direction, double aspect,
+                       double budget) {
+  double bound[3];
+  // The span with D_v = aspect D_u at the bound.
+  const auto span = [&]() {
+    return std::sqrt(budget /
+                     (bound[0] + 2.0 * bound[1] * aspect + bound[2] * aspect * aspect));
+  };
+  sphere_chart_hessian(chart, line, line, bound);
+  if (!(bound[0] > 0.0) || !(aspect > 0.0)) return std::numeric_limits<double>::infinity();
+  const double span0 = span();
+  sphere_chart_hessian(chart, line, line + direction * aspect * span0, bound);
+  return span();
+}
+
+bool polar_trim_line(const cad::CadGeometry& geometry, int32_t face, double line,
+                     cad::EvaluationWorkspace& workspace, SphereChart& chart,
+                     double& direction) {
+  if (!sphere_chart(geometry, face, chart)) return false;
+  const auto& model = geometry.model();
+  const double inf = std::numeric_limits<double>::infinity();
+  double low[2] = {inf, inf}, high[2] = {-inf, -inf};
+  std::vector<int64_t> poles;
+  for (int64_t loop = 0; loop < model.loop_count; ++loop) {
+    if (model.loop_surfaces[loop] != face) continue;
+    for (int64_t use = model.loop_use_offsets[loop]; use < model.loop_use_offsets[loop + 1];
+         ++use) {
+      if (model.use_kinds[use] == 1) poles.push_back(use);
+      for (int k = 0; k < 2; ++k) {
+        std::array<double, 2> uv;
+        if (!chart_point(geometry, use, model.use_ranges[2 * use + k], workspace, uv))
+          return false;
+        for (int axis = 0; axis < 2; ++axis) {
+          low[axis] = std::min(low[axis], uv[axis]);
+          high[axis] = std::max(high[axis], uv[axis]);
+        }
+      }
+    }
+  }
+  int64_t turns = 0;
+  const double period = model.surface_periods[2 * face];
+  if (!(period > 0.0) || exact_turn(low[0], high[0], period, turns) != 1 || turns != 1 ||
+      (line != low[1] && line != high[1]))
+    return false;
+  // A chart pole on the line (a pole use there) is a pole, not a trim.
+  for (const int64_t use : poles) {
+    std::array<double, 2> uv;
+    if (!chart_point(geometry, use, model.use_ranges[2 * use], workspace, uv) || uv[1] == line)
+      return false;
+  }
+  direction = 0.5 * (low[1] + high[1]) > line ? 1.0 : -1.0;
+  if (!(direction * line < 0.0)) return false;
+  // The face stage's ratio test, in its scaled chart (prepare_metric's
+  // power-of-two scale of u from the first form at the box middle).
+  const double middle[2] = {0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])};
+  double jet[18];
+  cad::SurfaceDifferential differential;
+  if (!geometry.jets(geometry.surface_node(face), middle, 2, jet, workspace) ||
+      !cad::surface_differential(jet, differential))
+    return false;
+  const int exponent = static_cast<int>(
+      std::nearbyint(std::log2(std::sqrt(differential.first_form[0] / differential.first_form[2]))));
+  const double scale = std::ldexp(1.0, exponent);
+  const double at[2] = {middle[0], line};
+  if (!geometry.jets(geometry.surface_node(face), at, 1, jet, workspace)) return false;
+  const double su = (jet[3] * jet[3] + jet[4] * jet[4] + jet[5] * jet[5]) / (scale * scale);
+  const double sv = jet[6] * jet[6] + jet[7] * jet[7] + jet[8] * jet[8];
+  return su < 0.5 * sv;
+}
+
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
-                      std::vector<std::array<double, 5>>* position_calls) {
+                      std::vector<std::array<double, 5>>* position_calls,
+                      bool graded_pole_rings, const cad::ProximityField* proximity) {
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
@@ -1295,7 +1907,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
   FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, {},
-                    {}, {}, metric_points, {}, position_calls};
+                    {}, {}, metric_points, {}, position_calls, graded_pole_rings, proximity};
   if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);
@@ -1371,8 +1983,15 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.fixed_vertices = fixed.data();
   input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
   input.admit_context = &metric;
+  input.fixed_region = in_fixed_zone;
+  input.fixed_region_context = &metric;
   input.surface_position = face_position;
   input.surface_context = &metric;
+  // The stored size guarantee: R <= h/sqrt(2) on the emitted triangle up to
+  // the rounding allowance, h the face's request size (the base size's
+  // ungraded value: grading lowers the metric's size, a chord floor never
+  // lifts it past this).
+  input.stored_size = size;
   CadRefine2DResult refined;
   status = cad_refine2d(input, refined);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
@@ -1498,6 +2117,37 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
       }
     }
     result.refinement_failures.push_back(record);
+  }
+  // The stored size guarantee on the emitted triangles (pole slivers aside,
+  // fixed like the kernel's pole fans): a failure the kernel and the guarded
+  // moves left (the 3D flips are not guarded) is a size refusal with its
+  // chart triangle, and the face is unresolved.
+  for (std::size_t c = 0; c < surface.cells.size(); ++c) {
+    const auto& cell = surface.cells[c];
+    bool sliver = false;
+    for (int i = 0; i < 3; ++i) {
+      const int32_t a = cell[i], b = cell[(i + 1) % 3];
+      sliver |= std::binary_search(pole_edges.begin(), pole_edges.end(),
+                                   std::make_pair(std::min(a, b), std::max(a, b)));
+    }
+    if (sliver ||
+        stored_size_failures(surface, {static_cast<int32_t>(c)}, metric.size) == 0) continue;
+    phx_mc_cad_face_failure record{};
+    record.face = face;
+    record.loop = record.use = record.axis = -1;
+    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
+    record.triangle = -1;
+    record.bad_size = 1;
+    record.refusal_kind = static_cast<int32_t>(CadRefine2DRefusal::none);
+    record.curve = record.curve_segment = -1;
+    record.candidate_uv[0] = record.candidate_uv[1] = nan;
+    record.segment_parameters[0] = record.segment_parameters[1] = nan;
+    for (int k = 0; k < 3; ++k) {
+      record.triangle_uv[2*k] = surface.chart(cell[k])[0] / metric.scale_u;
+      record.triangle_uv[2*k+1] = surface.chart(cell[k])[1] / metric.scale_v;
+    }
+    result.refinement_failures.push_back(record);
+    status = PHX_MC_UNRESOLVED;
   }
   result.vertices = std::move(vertices);
   result.boundary_edges = std::move(boundary.edges);

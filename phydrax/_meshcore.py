@@ -12800,13 +12800,44 @@ class CadSurfaceResult(NamedTuple):
     chart: CadChartResult
 
 
+class _CadProximityControl(ctypes.Structure):
+    _fields_ = (
+        ("source_count", _I64),
+        ("source_faces", ctypes.c_void_p),
+        ("target_count", _I64),
+        ("target_faces", ctypes.c_void_p),
+        ("elements_per_gap", _I32),
+        ("opposite_normals_only", _I32),
+        ("minimum_size", ctypes.c_double),
+        ("maximum_size", ctypes.c_double),
+    )
+
+
 class _CadVolumeControls(ctypes.Structure):
     _fields_ = (
         ("radius_edge_bound", ctypes.c_double),
         ("min_dihedral_degrees", ctypes.c_double),
         ("min_relative_determinant", ctypes.c_double),
         ("geometry_order", _I32),
+        ("proximity_count", _I64),
+        ("proximity_controls", ctypes.c_void_p),
     )
+
+
+class CadProximityControl(NamedTuple):
+    """A proximity size control of ``cad_mesh_solid`` over model face rows.
+
+    At a point of a scoped face the size is the local gap to the other
+    scope's faces over ``elements_per_gap``, clamped to ``minimum_size`` and
+    ``maximum_size`` (``None``: no bound); see ``phx_mc_cad_proximity_control``.
+    """
+
+    source_faces: tuple[int, ...]
+    target_faces: tuple[int, ...]
+    elements_per_gap: int
+    minimum_size: float | None = None
+    maximum_size: float | None = None
+    opposite_normals_only: bool = True
 
 
 _CAD_QUADRATIC_STATS_FIELDS = (
@@ -12851,6 +12882,9 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
                 [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
             ),
         ),
+        ("failure_measure", np.float64),
+        ("unmet_forced_cells", np.int64),
+        ("unmet_unforced_cells", np.int64),
     ],
     align=True,
 )
@@ -12895,6 +12929,8 @@ class _CadVolumeArrays(ctypes.Structure):
                 "stats",
             )
         ),
+        ("curve_capacity", _I64),
+        ("curve_rim_wedges", _P),
     )
 
 
@@ -12919,6 +12955,9 @@ class CadVolumeResult(NamedTuple):
     records: np.ndarray
     splits: np.ndarray
     stats: np.ndarray
+    # Per model curve: the smallest true wedge (degrees) between its two
+    # faces, written when some unmet cell is not forced, else NaN.
+    curve_rim_wedges: np.ndarray
 
 
 class CadSolidResult(NamedTuple):
@@ -12929,6 +12968,19 @@ class CadSolidResult(NamedTuple):
     volume: CadVolumeResult
 
 
+# Default share theta of each face's tolerance the construction may use (the
+# rest is the fidelity certificate's margin): the largest theta at which every
+# row of every measured mesh certified (V3, pole chart switch at latitude
+# 0.6230). Measured at tol = kappa_max h^2 / 4 on spheres of radius 0.5 and
+# 1.7 and on the quadric fixture, each at the 20 sizes
+# h = 0.02 ... 0.25: 0 refused rows at theta 0.8, 0.75 and 0.7; at 0.85 four
+# rows refused (radius 1.7, h 0.0229 and 0.25), at 0.9 nine, at 1 over 16000.
+# At 0.8 the largest exact sphere sag is 0.8045 tol (the kernel's
+# kappa R^2 / 2 omits the exact sag's relative theta h^2 / (8 R^2) term) and
+# the quadric's largest certified bound is 0.826 tol.
+CAD_TOLERANCE_FRACTION = 0.8
+
+
 def cad_mesh(
     model: CadModel,
     face_sizes: object,
@@ -12936,7 +12988,7 @@ def cad_mesh(
     curve_tolerances: object,
     /,
     *,
-    tolerance_fraction: float = 0.5,
+    tolerance_fraction: float = CAD_TOLERANCE_FRACTION,
     grading: float = 1.3,
     minimum_size: float = 1e-12,
 ) -> CadSurfaceResult:
@@ -12960,26 +13012,52 @@ def cad_mesh_solid(
     curve_tolerances: object,
     /,
     *,
-    tolerance_fraction: float = 0.5,
+    tolerance_fraction: float = CAD_TOLERANCE_FRACTION,
     grading: float = 1.3,
     minimum_size: float = 1e-12,
     radius_edge_bound: float = 2.0,
     min_dihedral_degrees: float = 15.5,
     min_relative_determinant: float = 0.0,
     geometry_order: int = 1,
+    proximity_controls: tuple[CadProximityControl, ...] = (),
 ) -> CadSolidResult:
     """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
 
     ``face_sizes`` are the requested edge lengths h; the volume is sized from
-    them. UNRESOLVED returns the result with unmet quality targets, unresolved
-    P2 cells, or no cells when recovery still refused after the one boundary
-    split (``volume.stats``).
+    them. ``proximity_controls`` lower the size near thin regions (a first
+    surface pass at h is their distance proxy). UNRESOLVED returns the result
+    with unmet quality targets, unresolved P2 cells, or no cells when recovery
+    still refused after the one boundary split (``volume.stats``).
     """
+    faces = [
+        (
+            np.ascontiguousarray(control.source_faces, dtype=np.int32),
+            np.ascontiguousarray(control.target_faces, dtype=np.int32),
+        )
+        for control in proximity_controls
+    ]
+    rows = (_CadProximityControl * max(len(faces), 1))(
+        *(
+            _CadProximityControl(
+                source.size,
+                source.ctypes.data,
+                target.size,
+                target.ctypes.data,
+                int(control.elements_per_gap),
+                int(bool(control.opposite_normals_only)),
+                0.0 if control.minimum_size is None else float(control.minimum_size),
+                np.inf if control.maximum_size is None else float(control.maximum_size),
+            )
+            for control, (source, target) in zip(proximity_controls, faces, strict=True)
+        )
+    )
     controls = _CadVolumeControls(
         radius_edge_bound,
         min_dihedral_degrees,
         min_relative_determinant,
         geometry_order,
+        len(faces),
+        ctypes.addressof(rows),
     )
     surface, volume = _cad_mesh(
         model,
@@ -12996,7 +13074,9 @@ def cad_mesh_solid(
     return CadSolidResult(surface.status, surface, volume)
 
 
-def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeResult:
+def _cad_volume_export(
+    library: Any, handle: ctypes.c_void_p, curve_count: int, /
+) -> CadVolumeResult:
     counts = np.empty((6,), dtype=np.int64)
     _raise_for_call(
         library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
@@ -13019,12 +13099,15 @@ def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeRes
         np.empty((s,), dtype=_CAD_BOUNDARY_SPLIT_DTYPE),
         np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
     )
-    outputs = _CadVolumeArrays(p, m, t, n, r, s, *(a.ctypes.data for a in banks))
+    wedges = np.full((curve_count,), np.nan, dtype=np.float64)
+    outputs = _CadVolumeArrays(
+        p, m, t, n, r, s, *(a.ctypes.data for a in banks), curve_count, wedges.ctypes.data
+    )
     _raise_for_call(
         library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
         "cad_volume_export",
     )
-    return CadVolumeResult(*banks)
+    return CadVolumeResult(*banks, wedges)
 
 
 def _cad_mesh(
@@ -13187,6 +13270,8 @@ def _cad_mesh(
         surface = CadSurfaceResult(
             status, *banks, pole_sectors, CadChartResult(*chart_banks)
         )
-        return surface, None if volume is None else _cad_volume_export(library, handle)
+        if volume is None:
+            return surface, None
+        return surface, _cad_volume_export(library, handle, int(model.curve_nodes.size))
     finally:
         library["phx_mc_cad_surface_result_free"](handle)

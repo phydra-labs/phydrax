@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -31,15 +32,21 @@ void copy_flat(const std::vector<std::array<T, N>>& source, T* destination) {
 bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
 
 // Curve and face stages into `candidate` (faces at the request's size h,
-// refined where its tolerance needs it), with their stage times. Returns
-// OK/UNRESOLVED with a candidate, else the failure.
+// refined where its tolerance needs it), with their stage times. A solid
+// passes its minimum dihedral target as rim_dihedral_degrees (CurveControls;
+// 0 for a surface), which also grades its pole rings (cad_mesh_face).
+// Returns OK/UNRESOLVED with a candidate, else the failure. proximity (solid
+// route, null: none) is the proximity size field of both stages.
 int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
-                     const phx_mc_cad_surface_controls& controls,
-                     phx_mc_cad_surface_result& candidate) {
+                     const phx_mc_cad_surface_controls& controls, double rim_dihedral_degrees,
+                     phx_mc_cad_surface_result& candidate,
+                     const phx::mc::cad::ProximityField* proximity = nullptr) {
   const double* face_sizes = controls.face_sizes;
-  const phx::mc::cad::CurveControls curve_controls{
+  phx::mc::cad::CurveControls curve_controls{
       face_sizes, controls.face_tolerances, controls.curve_tolerances,
       controls.tolerance_fraction, controls.grading, controls.minimum_size};
+  curve_controls.rim_dihedral_degrees = rim_dihedral_degrees;
+  curve_controls.proximity = proximity;
   const auto start = std::chrono::steady_clock::now();
   const int32_t curve_status = phx::mc::cad::discretize_curves(geometry, curve_controls,
                                                                candidate.curves);
@@ -50,11 +57,86 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
   const int32_t surface_status = phx::mc::cad_mesh_surface(
       geometry, candidate.curves.view(), face_sizes, controls.face_tolerances,
-      controls.tolerance_fraction, candidate.mesh);
+      controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity);
   candidate.volume.stats.face_ns = candidate.mesh.face_ns;
   candidate.volume.stats.assembly_ns = candidate.mesh.assembly_ns;
   if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
   return curve_status == PHX_MC_UNRESOLVED ? curve_status : surface_status;
+}
+
+// The proximity field of a solid's controls over a first surface pass at the
+// request (`proxy`, OK or UNRESOLVED with its triangles), each proxy
+// triangle's deviation bound from its circumradius and the largest
+// principal curvature at its corners (cad::proxy_deviation; the face's
+// tolerance where a corner does not evaluate): PHX_MC_OK, or
+// INVALID_ARGUMENT/INVALID_INPUT for malformed controls or a scope without
+// proxy triangles.
+int32_t proximity_field(const phx::mc::cad::CadGeometry& geometry,
+                        const phx_mc_cad_model& model, const phx_mc_cad_surface_controls& controls,
+                        const phx_mc_cad_volume_controls& volume,
+                        const phx::mc::CadSurfaceMesh& proxy,
+                        phx::mc::cad::ProximityField& field) {
+  if (volume.proximity_count < 0 || !present(volume.proximity_controls,
+                                             static_cast<std::size_t>(volume.proximity_count)))
+    return PHX_MC_INVALID_ARGUMENT;
+  std::vector<phx::mc::cad::ProximityControl> controls_list;
+  for (int64_t i = 0; i < volume.proximity_count; ++i) {
+    const phx_mc_cad_proximity_control& c = volume.proximity_controls[i];
+    if (c.source_count < 0 || c.target_count < 0 ||
+        !present(c.source_faces, static_cast<std::size_t>(c.source_count)) ||
+        !present(c.target_faces, static_cast<std::size_t>(c.target_count)) ||
+        !std::isfinite(c.minimum_size) || std::isnan(c.maximum_size))
+      return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::cad::ProximityControl control;
+    control.source_faces.assign(c.source_faces, c.source_faces + c.source_count);
+    control.target_faces.assign(c.target_faces, c.target_faces + c.target_count);
+    control.elements_per_gap = c.elements_per_gap;
+    control.minimum_size = c.minimum_size;
+    control.maximum_size = std::isfinite(c.maximum_size) ? c.maximum_size : 0.0;
+    control.opposite_normals_only = c.opposite_normals_only != 0;
+    controls_list.push_back(std::move(control));
+  }
+  std::vector<double> deviations(proxy.triangles.size());
+  phx::mc::cad::EvaluationWorkspace workspace;
+  for (std::size_t t = 0; t < proxy.triangles.size(); ++t) {
+    const int32_t face = proxy.triangle_patches[t];
+    const double tolerance = controls.face_tolerances[face];
+    // A corner where the jet or its differential is undefined (a pole)
+    // takes no part; a triangle with no defined corner takes the tolerance.
+    double kappa = 0.0;
+    bool evaluated = false;
+    for (int k = 0; k < 3; ++k) {
+      double jet[18];
+      phx::mc::cad::SurfaceDifferential differential;
+      if (!geometry.jets(geometry.surface_node(face), proxy.triangle_uv[t].data() + 2 * k, 2,
+                         jet, workspace) ||
+          !phx::mc::cad::surface_differential(jet, differential))
+        continue;
+      evaluated = true;
+      kappa = std::max({kappa, std::abs(differential.curvatures[0]),
+                        std::abs(differential.curvatures[1])});
+    }
+    const auto& p = proxy.points;
+    const auto& tri = proxy.triangles[t];
+    double a = 0, b = 0, c = 0, cross2 = 0, u[3], v[3];
+    for (int k = 0; k < 3; ++k) {
+      u[k] = p[tri[1]][k] - p[tri[0]][k];
+      v[k] = p[tri[2]][k] - p[tri[0]][k];
+      a += u[k] * u[k];
+      b += v[k] * v[k];
+      c += (u[k] - v[k]) * (u[k] - v[k]);
+    }
+    const double n[3] = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
+                         u[0] * v[1] - u[1] * v[0]};
+    cross2 = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+    // R = |u| |v| |u - v| / (2 |u x v|).
+    const double radius = std::sqrt(a * b * c / (4.0 * cross2));
+    deviations[t] = evaluated && std::isfinite(radius)
+                        ? phx::mc::cad::proxy_deviation(radius, kappa, tolerance)
+                        : tolerance;
+  }
+  return field.build(controls_list, proxy.points, proxy.triangles, proxy.triangle_patches,
+                     deviations, model.surface_count);
 }
 }  // namespace
 
@@ -70,7 +152,7 @@ extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    const int32_t status = mesh_surface(geometry, *model, *controls, 0.0, *candidate);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     *result = candidate.release();
     return status;
@@ -92,12 +174,31 @@ extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    const int32_t status = mesh_surface(geometry, *model, *controls, *candidate);
+    int32_t status =
+        mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+    // Proximity controls: the first pass at the request is the field's proxy
+    // (cad_proximity.hpp); the solid is the second pass under the field, and
+    // its stage times include the first pass.
+    phx::mc::cad::ProximityField field;
+    if (volume->proximity_count != 0 && !candidate->mesh.triangles.empty()) {
+      const int32_t built =
+          proximity_field(geometry, *model, *controls, *volume, candidate->mesh, field);
+      if (built != PHX_MC_OK) return built;
+      const phx_mc_cad_volume_stats first = candidate->volume.stats;
+      candidate = std::make_unique<phx_mc_cad_surface_result>();
+      status = mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate,
+                            &field);
+      if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+      candidate->volume.stats.curve_ns += first.curve_ns;
+      candidate->volume.stats.face_ns += first.face_ns;
+      candidate->volume.stats.assembly_ns += first.assembly_ns;
+    }
     if (status == PHX_MC_OK) {
-      const phx::mc::CadVolumeControls volume_controls{
+      phx::mc::CadVolumeControls volume_controls{
           volume->radius_edge_bound, volume->min_dihedral_degrees,
           volume->min_relative_determinant, volume->geometry_order};
+      if (!field.empty()) volume_controls.proximity = &field;
       const phx_mc_cad_volume_stats timings = candidate->volume.stats;
       const int32_t solid = phx::mc::cad_mesh_volume(geometry, candidate->curves, candidate->mesh,
                                                      controls->face_sizes, volume_controls,
@@ -163,6 +264,13 @@ extern "C" int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* res
   }
   copy_flat(q.straightened, a->records); copy_rows(v.splits, a->splits);
   *a->stats = v.stats;
+  // Optional: curve_rim_wedges null skips them.
+  if (a->curve_rim_wedges) {
+    if (a->curve_capacity < 0) return PHX_MC_INVALID_ARGUMENT;
+    if (static_cast<uint64_t>(a->curve_capacity) < v.curve_rim_wedges.size())
+      return PHX_MC_CAPACITY_EXCEEDED;
+    copy_rows(v.curve_rim_wedges, a->curve_rim_wedges);
+  }
   return PHX_MC_OK;
 }
 

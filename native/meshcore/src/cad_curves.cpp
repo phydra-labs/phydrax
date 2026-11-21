@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <vector>
 
 namespace phx::mc::cad {
@@ -16,7 +17,9 @@ constexpr int kSagDepth = 12;
 constexpr std::size_t kMaxPoints = 1000000;
 
 struct Use { int32_t row, face; };
-struct Sample { double s, speed, h; };
+// h: the size; corner: the size without a polar trim's chart-linear span
+// (the share of a corner's first segments, discretize_curves).
+struct Sample { double s, speed, h, corner = 0; };
 
 struct Context {
   const CadGeometry& geometry;
@@ -28,6 +31,9 @@ struct Context {
   double feature_size = std::numeric_limits<double>::infinity();
   bool failed = false;
   int32_t failure_status = PHX_MC_UNRESOLVED;
+  // Per corner: the smallest end size of the curves meeting there (null
+  // while those are measured).
+  const std::vector<double>* corner_sizes = nullptr;
 
   double parameter(double s) const {
     const double* r = geometry.model().curve_ranges + 2 * curve;
@@ -78,13 +84,24 @@ struct Context {
     const double theta = controls.tolerance_fraction;
     const double ct = controls.curve_tolerances[curve];
     if (curvature > 0 && std::isfinite(ct)) h = std::min(h, std::sqrt(8 * theta * ct / curvature));
+    // Per face use with a jet: its normal oriented by the model (both faces
+    // alike, so -n1.n2 is the wedge cosine whatever the common sense) and its
+    // normal curvatures across (kappa_n) and along (kappa_t) the curve.
+    double rim_normals[2][3]{}, rim_across[2]{}, rim_along[2]{};
+    int rim_faces = 0;
+    double polar = std::numeric_limits<double>::infinity();
     for (const Use& use : uses) {
-      // The curve takes each face's smallest metric size, min(h, sqrt(4
-      // theta tol / |k|max)) (cad::fidelity_metric): its segments are fixed,
-      // and a segment longer than the face's unit across the curvature leaves
-      // the kernel triangles it can neither split nor meet (measured on the
-      // quadric with the tangent's size instead: proximity refusals where the
-      // intersection curve runs along the cylinder axis).
+      // The curve takes each face's boundary-layer size: its segments are
+      // fixed, and a segment longer than the face's unit across the
+      // curvature leaves the kernel triangles it can neither split nor meet
+      // (measured on the quadric with the tangent's size instead: proximity
+      // refusals where the intersection curve runs along the cylinder axis).
+      // A chord of length L has the lens kappa_l L^2 / 8 (the face's chart
+      // arc vs the chart chord, mapped), and the layer triangles on it keep
+      // their own error within the rest of theta tol (cad_faces.hpp); with
+      // layer edges L as well, kappa L^2 / 4 + kappa_l L^2 / 8 <= theta tol:
+      // L <= sqrt(4 theta tol / (kappa + kappa_l / 2)). The lens share stays
+      // at most kLensShare: L <= sqrt(8 alpha theta tol / kappa_l).
       double face_size=0;
       bool resolved=false, evaluated=false;
       for (int attempt=0; attempt<9 && !resolved; ++attempt) {
@@ -92,9 +109,9 @@ struct Context {
         const double delta=std::ldexp(std::sqrt(std::numeric_limits<double>::epsilon()),attempt-1);
         const double sample_s=attempt ? (s==0 ? delta : 1-delta) : s;
         const double u=use_parameter(use.row,sample_s);
-        double pc[4], sj[18];
-        ++stats.first_order_evaluations;
-        if (!geometry.jets(geometry.pcurve_node(use.row), &u, 1, pc, workspace)) continue;
+        double pc[6], sj[18];
+        ++stats.second_order_evaluations;
+        if (!geometry.jets(geometry.pcurve_node(use.row), &u, 2, pc, workspace)) continue;
         ++stats.second_order_evaluations;
         if (!geometry.jets(geometry.surface_node(use.face), pc, 2, sj, workspace)) continue;
         evaluated=true;
@@ -104,17 +121,90 @@ struct Context {
         const double kappa=std::max(std::abs(differential.curvatures[0]),
                                     std::abs(differential.curvatures[1]));
         const double tolerance=controls.face_tolerances[use.face];
-        if (kappa>0 && 4*theta*tolerance<kappa*face_size*face_size)
-          face_size=std::sqrt(4*theta*tolerance/kappa);
+        // kappa_l: the mapped chart arc's acceleration |DS p''| over
+        // |DS p'|^2. The chord point is taken at the same parameter, so the
+        // arc's deviation p - chord ~ p'' (t - a)(b - t) / 2 counts whole.
+        double tangent[3], acceleration[3];
+        for (int k=0;k<3;++k) {
+          tangent[k]=sj[3+k]*pc[2]+sj[6+k]*pc[3];
+          acceleration[k]=sj[3+k]*pc[4]+sj[6+k]*pc[5];
+        }
+        double kappa_l=std::hypot(acceleration[0],acceleration[1],acceleration[2])/
+            (tangent[0]*tangent[0]+tangent[1]*tangent[1]+tangent[2]*tangent[2]);
+        if (!std::isfinite(kappa_l)) kappa_l=0;
+        const double share=kappa+0.5*kappa_l;
+        if (share>0 && 4*theta*tolerance<share*face_size*face_size)
+          face_size=std::sqrt(4*theta*tolerance/share);
+        if (kappa_l>0 && 8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
+          face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
+        // A polar trim line (a latitude circle cutting a sphere face's pole
+        // away, cad_faces.hpp): V3 certifies the band beside it in the uv
+        // chart, by the chart-linear deviation, so the trim's chords take the
+        // span polar_trim_span gives in that chart, the face stage then the
+        // band (polar_trim_band). The budget is the layer's, 8 theta tol: the
+        // p-curve is chart-straight (no lens). The span is not a corner's
+        // share: the triangles at the trim's corners are the band's, built
+        // by the face stage on the trim's own chords, and a seam starting at
+        // it would grade the face from the chart's anisotropy (measured: kernel
+        // angle refusals beside the seam, caps below 85 deg UNRESOLVED).
+        if (resolved && pc[3]==0 && pc[5]==0 && pc[2]!=0) {
+          SphereChart chart;
+          double direction=0;
+          if (polar_trim_line(geometry, use.face, pc[1], workspace, chart, direction)) {
+            const double speed_u=std::hypot(sj[3], sj[4], sj[5]);
+            const double speed_v=std::hypot(sj[6], sj[7], sj[8]);
+            const double span=polar_trim_span(chart, pc[1], direction, speed_u/speed_v,
+                                              8*theta*tolerance);
+            polar=std::min(polar, span*speed_u);
+          }
+        }
+        if (resolved && rim_faces < 2 && uses.size() == 2 && uses[0].face != uses[1].face) {
+          const double* I = differential.first_form;
+          const double* II = differential.second_form;
+          const double a[2] = {pc[2], pc[3]};
+          // The conormal in the chart: I-orthogonal to the tangent a.
+          const double b[2] = {-(I[1] * a[0] + I[2] * a[1]), I[0] * a[0] + I[1] * a[1]};
+          const auto normal_curvature = [&](const double* d) {
+            return (II[0] * d[0] * d[0] + 2 * II[1] * d[0] * d[1] + II[2] * d[1] * d[1]) /
+                   (I[0] * d[0] * d[0] + 2 * I[1] * d[0] * d[1] + I[2] * d[1] * d[1]);
+          };
+          const double sense = geometry.model().surface_orientations[use.face];
+          for (int k = 0; k < 3; ++k) rim_normals[rim_faces][k] = sense * differential.normal[k];
+          rim_across[rim_faces] = std::abs(normal_curvature(b));
+          rim_along[rim_faces] = std::abs(normal_curvature(a));
+          ++rim_faces;
+        }
         // Within the pole ring zone of the face (pole_ring_width, the face
-        // stage's owner of it) the face stage seeds fixed rings (spacing <=
-        // the request) and the kernel inserts no point, so no kernel triangle
-        // needs the curvature size; at a cone apex |k|max ~ 1/r would
-        // otherwise drive the size to zero.
-        if (resolved && face_size<controls.face_sizes[use.face] &&
-            pole_distance(use.face, jet)<pole_ring_width(face_size))
-          face_size=controls.face_sizes[use.face];
+        // stage's owner of it) the face stage seeds fixed rings and the
+        // kernel inserts no point, so no kernel triangle needs the local
+        // curvature size (at a cone apex |k|max ~ 1/r would drive it to
+        // zero): the curve takes the rings' size there, the request or
+        // sqrt(4 theta tol / |k|max) at the face's chart middle
+        // (pole_zone_curvature). The request alone left a step of 1/sqrt(theta)
+        // at the zone's edge that the size table cannot resolve (measured:
+        // radius-1.7 sphere, theta 0.5, h 0.02) and a seam segment longer
+        // than the ring spacing beside the first ring.
+        if (resolved && pole_distance(use.face, jet)<pole_ring_width(face_size)) {
+          double ring=controls.face_sizes[use.face], zone_kappa=0;
+          if (!pole_zone_curvature(geometry, use.face, workspace, zone_kappa)) {
+            failure_status=PHX_MC_INVALID_INPUT;
+            failed=true; return {s,0,0};
+          }
+          if (zone_kappa>0 && 4*theta*tolerance<zone_kappa*ring*ring)
+            ring=std::sqrt(4*theta*tolerance/zone_kappa);
+          face_size=std::max(face_size,ring);
+        }
+        // A proximity control scoping the face bounds it at the curve point
+        // too (cad_proximity.hpp); a zero bound (a gap reaching zero without
+        // a minimum_size) is refused.
+        if (resolved && controls.proximity) {
+          face_size = std::min(face_size, controls.proximity->size(use.face, jet));
+          if (!(face_size > 0)) {
+            failure_status=PHX_MC_INVALID_INPUT;
+            failed=true; return {s,0,0};
+          }
+        }
       }
       if (!resolved) {
         if (!evaluated) failure_status=PHX_MC_INVALID_INPUT;
@@ -122,8 +212,36 @@ struct Context {
       }
       h = std::min(h, face_size);
     }
+    // Rim size (solid route). The tets on a curve edge AB lie in the meshed
+    // wedge between its two boundary triangles ABC, ABD, and each such tet's
+    // dihedral at AB is at most that wedge. A triangle plane leaves its
+    // face's tangent plane at the curve by its chords' tilt: the chord to
+    // the apex at distance s across the curve tilts by kappa_n s / 2 (a
+    // normal section of curvature kappa_n), and the curve chord AB of
+    // length L sits kappa_t L^2 / 8 off the face, which tilts a plane
+    // reaching the apex by kappa_t L^2 / (8 s). With the first row of
+    // triangles at s <= L (the face size grades from the curve spacing L),
+    // a face's tilt is at most L (kappa_n / 2 + kappa_t / 8) for s near L.
+    // The true wedge w (from the outward normals: cos w = -n1.n2; a reflex
+    // edge reads as 2 pi - w and only refines) exceeds the target w* by the
+    // margin w - w*; each face spends at most a quarter of it, so the meshed
+    // wedge keeps w* + (w - w*) / 2 and the half left over is the room the
+    // volume stage has to place a wedge tet that meets the target:
+    // L <= (w - w*) / (2 (kappa_n + kappa_t / 4)). A wedge at or below w*
+    // cannot be helped (the volume stage reports its cells as forced).
+    if (controls.rim_dihedral_degrees > 0 && rim_faces == 2) {
+      const double cosine = -(rim_normals[0][0] * rim_normals[1][0] +
+                              rim_normals[0][1] * rim_normals[1][1] +
+                              rim_normals[0][2] * rim_normals[1][2]);
+      const double margin = std::acos(std::clamp(cosine, -1.0, 1.0)) -
+                            controls.rim_dihedral_degrees * (std::numbers::pi / 180.0);
+      for (int f = 0; f < 2 && margin > 0; ++f) {
+        const double tilt = rim_across[f] + 0.25 * rim_along[f];
+        if (std::isfinite(tilt) && tilt > 0) h = std::min(h, margin / (2 * tilt));
+      }
+    }
     if (!(h > 0) || !std::isfinite(h) || !(speed > 0) || !std::isfinite(speed)) failed = true;
-    return {s, speed, h};
+    return {s, speed, std::min(h, polar), h};
   }
 };
 
@@ -189,6 +307,11 @@ bool discretize(Context& c, std::vector<double>& points) {
       if (c.failed) return false;
     }
     borders.push_back(table.size()-1);
+  }
+  if (c.corner_sizes) {
+    const auto& corners=*c.corner_sizes;
+    table.front().h=std::min(table.front().h,corners[static_cast<std::size_t>(m.curve_corners[2*c.curve])]);
+    table.back().h=std::min(table.back().h,corners[static_cast<std::size_t>(m.curve_corners[2*c.curve+1])]);
   }
   // Equal-integral steps in a linearly graded field can differ by exp(slope);
   // use log(g), which is also no larger than the requested Lipschitz g-1.
@@ -451,7 +574,35 @@ bool sag(Context& c, double a, double b, const double* x, const double* y,
     const double t=length2>0 ? std::clamp((px*dx+py*dy+pz*dz)/length2,0.0,1.0) : 0.0;
     return std::hypot(px-t*dx,py-t*dy,pz-t*dz);
   };
-  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol)) {
+  // Each use's lens at the segment's middle: the face's chart arc vs its
+  // chart chord at the same parameter, mapped, within the lens share
+  // kLensShare of the face's theta tol (both are quadratic in the segment
+  // and largest about its middle). -1: an evaluation failed.
+  const auto lens = [&]() -> int {
+    const double mid=(a+b)*0.5;
+    for (const Use& u:c.uses) {
+      double ends[3][2], xyz[2][3];
+      const double at[3]={a,b,mid};
+      for (int k=0;k<3;++k) {
+        const double t=c.use_parameter(u.row,at[k]);
+        ++c.stats.value_evaluations;
+        if (!c.geometry.jets(c.geometry.pcurve_node(u.row),&t,0,ends[k],c.workspace)) return -1;
+      }
+      const double chord[2]={(ends[0][0]+ends[1][0])*0.5,(ends[0][1]+ends[1][1])*0.5};
+      c.stats.value_evaluations+=2;
+      if (!c.geometry.jets(c.geometry.surface_node(u.face),ends[2],0,xyz[0],c.workspace) ||
+          !c.geometry.jets(c.geometry.surface_node(u.face),chord,0,xyz[1],c.workspace)) return -1;
+      if (std::hypot(xyz[0][0]-xyz[1][0],xyz[0][1]-xyz[1][1],xyz[0][2]-xyz[1][2]) >
+          kLensShare*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face]) return 0;
+    }
+    return 1;
+  };
+  int lens_ok=1;
+  if (c.controls.sag_check && deviation(p)<=tol && deviation(r)<=tol) {
+    lens_ok=lens();
+    if (lens_ok<0) return false;
+  }
+  if (!c.controls.sag_check || (deviation(p)<=tol && deviation(r)<=tol && lens_ok)) {
     out.push_back(b); return true;
   }
   const double mid=(a+b)*0.5;
@@ -542,8 +693,25 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
   CurveDiscretization output; output.offsets.push_back(0);
   output.statistics.sag_splits_per_curve.resize(static_cast<std::size_t>(m.curve_count),0);
   std::vector<std::vector<double>> all_points(static_cast<std::size_t>(m.curve_count));
+  // A corner's first segments share one size: the smallest end size of the
+  // curves meeting there, graded into each curve. Unequal first segments
+  // leave a corner triangle on two fixed chords that no kernel point can
+  // improve (measured: 0.99 h and 0.73 h chords at an 89 deg corner of the
+  // quadric, a 36.3 deg triangle at h = 0.02286).
+  std::vector<double> corner_sizes(static_cast<std::size_t>(m.corner_count),
+                                   std::numeric_limits<double>::infinity());
   for (int32_t e=0;e<m.curve_count;++e) {
     Context c{geometry,controls,output.statistics,e,uses[e]};
+    for (int k=0;k<2;++k) {
+      const Sample end=c.sample(k);
+      if (c.failed) return c.failure_status;
+      double& size=corner_sizes[static_cast<std::size_t>(m.curve_corners[2*e+k])];
+      size=std::min(size,end.corner);
+    }
+  }
+  for (int32_t e=0;e<m.curve_count;++e) {
+    Context c{geometry,controls,output.statistics,e,uses[e]};
+    c.corner_sizes=&corner_sizes;
     if (!discretize(c,all_points[e])) return c.failure_status;
   }
   std::vector<double> limits(static_cast<std::size_t>(m.curve_count),std::numeric_limits<double>::infinity());
@@ -551,6 +719,7 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
     return PHX_MC_INVALID_INPUT;
   for (int32_t e=0;e<m.curve_count;++e) {
     Context c{geometry,controls,output.statistics,e,uses[e]};
+    c.corner_sizes=&corner_sizes;
     auto& points=all_points[e];
     if (std::isfinite(limits[e])) {
       c.feature_size=limits[e];

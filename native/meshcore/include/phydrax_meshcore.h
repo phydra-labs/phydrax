@@ -2836,8 +2836,9 @@ PHX_MC_API int32_t phx_mc_verify_surface_embedding(
  * On OK evidence_count gives the failures (zero certifies). Insufficient
  * capacity reports the required count without writing evidence. Consecutive
  * chords of a use must join bitwise in UV and share one loop (USE_COVERAGE).
- * OVERLAP: two correctly oriented triangles of one patch whose UV interiors
- * meet other than along a shared vertex or edge (row/other: triangle rows). */
+ * OVERLAP: two correctly oriented triangles of one patch whose UV closures
+ * touch other than along a bitwise-shared vertex or edge, including a contact
+ * at points equal in value but not bitwise (-0.0 vs 0.0) (row/other: rows). */
 enum phx_mc_chart_failure_kind {
   PHX_MC_CHART_ORIENTATION = 1,
   PHX_MC_CHART_EDGE = 2,
@@ -2911,6 +2912,10 @@ typedef struct phx_mc_cad_face_failure {
   int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
   double candidate_uv[2], triangle_uv[6], segment_parameters[2];
 } phx_mc_cad_face_failure;
+/* A REFINEMENT record with triangle -1, bad_size 1 and refusal NONE is an
+ * emitted triangle (after the face stage's flips and moves) whose stored
+ * circumradius fails the stored size test (cad_stored_size.hpp); its
+ * triangle_uv are the emitted triangle's charts. */
 
 typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
 typedef struct phx_mc_cad_surface_arrays {
@@ -3133,7 +3138,7 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
 /* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
  * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
  * triangle, curve segments as protected edges; refinement to the request h
- * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * (h passed unchanged as the circumradius target at every surface point, S3's graded field
  * inside); improvement to the quality targets) and, with geometry_order 2,
  * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
  * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has
@@ -3142,12 +3147,39 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * midpoint) and is retried once; each split is reported, and the surface
  * export of the same handle shows the split surface. Returns the handle on
  * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
- * recovery still refused: zero cells, stats name the refusal). */
+ * recovery still refused: zero cells, stats name the refusal). A surface
+ * triangle whose relative area 2 A / l_max^2 has a square below the
+ * determinant floor 2^-22 (zero-length edges included) is refused before
+ * recovery: UNRESOLVED, zero cells, recovery_status UNRESOLVED,
+ * recovery_reason INVALID_FACET, failure_kind FACET, failure_entity the
+ * first such triangle row and failure_measure its relative area. */
+/* Proximity size control (ProximitySizeControl) of the CAD solid: two
+ * disjoint face-row sets. At a point of a scoped face the size is the local
+ * gap (its distance to the other set's faces) over elements_per_gap,
+ * clamped to [minimum_size, maximum_size] (0: no bound); the gap is a lower
+ * bound from a first surface pass at the request (the proxy distance less
+ * the nearest proxy face's tolerance), and with opposite_normals_only it is
+ * infinite where the nearest proxy triangle of the other set does not face
+ * the point. Curves, faces and the volume's surface size targets take it
+ * where it is below the face size. A zero size (a gap bound reaching zero
+ * without minimum_size) is PHX_MC_INVALID_INPUT. */
+typedef struct phx_mc_cad_proximity_control {
+  int64_t source_count;
+  const int32_t* source_faces;
+  int64_t target_count;
+  const int32_t* target_faces;
+  int32_t elements_per_gap;
+  int32_t opposite_normals_only;
+  double minimum_size;
+  double maximum_size;
+} phx_mc_cad_proximity_control;
 typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
   double min_relative_determinant; /* 0; also the P2 relative floor */
   int32_t geometry_order;          /* 1 or 2 */
+  int64_t proximity_count;         /* 0: no proximity controls */
+  const phx_mc_cad_proximity_control* proximity_controls;
 } phx_mc_cad_volume_controls;
 typedef struct phx_mc_cad_volume_stats {
   /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
@@ -3159,6 +3191,15 @@ typedef struct phx_mc_cad_volume_stats {
   int32_t recovery_status, recovery_reason, failure_kind;
   int64_t failure_entity;
   phx_mc_cad_quadratic_stats quadratic;
+  /* The refused triangle's relative area with recovery_reason INVALID_FACET
+   * before recovery (above), else 0. */
+  double failure_measure;
+  /* Unmet cells (of unmet_cells) forced by the input: every record of the
+   * cell is a dihedral record and every edge below min_dihedral_degrees is a
+   * surface curve edge whose true wedge between its two faces is below it. */
+  int64_t unmet_forced_cells;
+  /* Unmet cells not forced; the status is UNRESOLVED iff this is nonzero. */
+  int64_t unmet_unforced_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
@@ -3182,6 +3223,13 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t* records;             /* (R, 2) */
   phx_mc_cad_boundary_split* splits;
   phx_mc_cad_volume_stats* stats;
+  /* Per model curve (curve_capacity >= the model's curve count; left
+   * untouched when the volume stage stopped before quality): the smallest
+   * true wedge in degrees between the curve's two faces, written when some
+   * unmet cell is not forced, else NaN. A wedge below min_dihedral_degrees
+   * makes that target unattainable near the curve for any mesh. */
+  int64_t curve_capacity;
+  double* curve_rim_wedges;
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,

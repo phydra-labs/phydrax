@@ -451,6 +451,34 @@ canonical `spacing_fraction=0.9` default. The fraction scales resolved physical
 size controls; it is not a source-fidelity tolerance. Explicit caller schedules,
 size controls, and deviation bounds remain unchanged.
 
+### Size compliance
+
+A hard `UniformSizeControl` of target size h is judged on the quantity its
+producing kernel bounds. The route takes the p50 and/or p95 of a per-entity
+statistic (`SizeCompliancePolicy.target_statistics`) and compares it with
+`bound_factor * h`. The tolerance is `relative_tolerance` times the bound plus
+`absolute_tolerance`, in length units. The declarations live in one table,
+`SIZE_COMPLIANCE_DECLARATIONS` in `phydrax/meshing/_sizing.py`:
+
+| Route | Statistic | Comparison | Bound | Guarantee |
+| --- | --- | --- | --- | --- |
+| native CAD solid boundary triangles | triangle circumradius | at most | h/sqrt(2) | chart kernel: metric circumradius <= sqrt(1/2) under I/h^2 |
+| S3/PLC volume boundary faces | edge length | at most | h | S3 splits boundary edges above 4/sqrt(6) of the stored sqrt(6)/4 h |
+| implicit volume carrier, implicit surface | edge length | two-sided | h | octree cell diagonal <= h(1+rel)+abs |
+| restricted implicit volume facets | edge length | at most | h | facet longest edge <= min(h, reach diameter) |
+| point-cloud reconstruction | edge length | two-sided | h | red refinement until the statistic is met |
+| planar triangles | edge length | two-sided | h | free edges <= local size |
+| curves | arc length | two-sided | h | ceil(length / h) equidistributed intervals |
+| Gmsh | edge length | report only | h | Gmsh size fields are target edge lengths |
+| structured and mapped surface quads | edge length | two-sided | h | none; the user's divisions are checked |
+| dual quads, balanced/frame/mapped grid hexes | edge length | two-sided | h | scaffold edges <= h, grid spacing h, ceil(length / h) divisions |
+| polyhedral cells | edge length | two-sided | h | cell diameter <= maximum_size or h(1+rel)+abs |
+| periodic quotient edges (serial and owner-local) | edge length | two-sided | h | periodic metric I/h^2, exact at zero tolerance |
+| periodic algebraic carrier | edge length | construction objective | h | the edge search targets the quantile |
+
+The native CAD route reports `size:<control>:p50_circumradius` and
+`size:<control>:p95_circumradius` with the requested bound h/sqrt(2).
+
 ### Native trimmed-chart surfaces
 
 The native `parametric_surface` route accepts affine as well as rational and
@@ -1043,6 +1071,23 @@ audit report records the selection (`tetrahedral_degree`). A mesh these
 theorems do not decide (a boundary that subdivides the source triangles,
 coordinates outside the exact predicate domain) takes the rational proofs. The
 certificates record which proof ran, and restore reproves the same one.
+
+The native CAD solid (`cad_tetrahedral`, `prove=False`) keeps the requested size
+h and refines only where fidelity or the rim rule needs it. `ProximitySizeControl`
+on source faces is its thickness sizing: at a point of a scoped face the size is
+the gap to the other scope over `elements_per_gap`, clamped to the control's
+bounds. The gap is a lower bound taken from a first surface pass at h (proxy
+distance less each proxy triangle's circumcircle sag on the osculating sphere of
+its largest corner curvature, at most the deviation). Scopes that touch need
+`minimum_size`. The compliance rows state the control's request, the smallest
+gap estimate (`gap_estimate`) and the largest ratio of a scoped triangle's
+circumradius to size/√2. The sag bound uses corner curvatures only, so the gap
+is not certified on curved scopes. The rows are therefore report-only and raise
+no issue, even for a HARD control. Without such a control, an UNRESOLVED solid reports
+`input_thin_region_below_volume_targets` for a face pair whose unmet cells lie
+where the faces are closer than h/(√2·k), k = min(√(4B²−1), 2/tan θ) for
+radius-edge bound B and dihedral target θ (h/√30 at 2 and 15.5°): the best
+layer cell on a boundary triangle of circumradius h/√2 misses a target there.
 
 PLC-backed sources scope dimension-1 entities by stable source identity: explicit
 segments and original polygon-loop edges, including shared seams between polygons

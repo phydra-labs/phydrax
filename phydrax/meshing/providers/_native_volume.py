@@ -58,7 +58,13 @@ from .._organization import (
 )
 from .._result import MeshingComplianceReport
 from .._scope import _SourceEntityScopes, MeshingEntityKind, MeshingScope
-from .._sizing import SizeControlStrength, UniformSizeControl
+from .._sizing import (
+    edge_length_measures,
+    S3_BOUNDARY_EDGE_SIZE,
+    size_statistic,
+    SizeControlStrength,
+    UniformSizeControl,
+)
 from .._volume_generation import (
     _shape_targets_gated,
     _soft_shape_target_evidence,
@@ -1717,18 +1723,17 @@ def _volume_compliance(
             np.sort(faces[:, ((0, 1), (1, 2), (2, 0))], axis=2).reshape((-1, 2))
         )
         lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        measures = edge_length_measures(points, edges)
         policy = specification.size_compliance
+        declaration = S3_BOUNDARY_EDGE_SIZE
         for statistic in policy.target_statistics:
-            quantile = 0.5 if statistic == "p50" else 0.95
-            achieved_value = float(np.quantile(lengths, quantile))
+            achieved_value = size_statistic(lengths, statistic)
             key = f"size:{control.control_id}:{statistic}"
-            requested.append((key, control.target_size))
+            requested.append((key, declaration.bound_factor * control.target_size))
             achieved.append((key, achieved_value))
-            allowed = (
-                control.target_size * (1.0 + policy.relative_tolerance)
-                + policy.absolute_tolerance
-            )
-            if control.strength is SizeControlStrength.HARD and achieved_value > allowed:
+            if control.strength is SizeControlStrength.HARD and declaration.exceeds(
+                measures, statistic, control.target_size, policy
+            ):
                 issues.append(key)
         if control.maximum_size is not None:
             achieved_maximum = float(np.max(lengths, initial=0.0))

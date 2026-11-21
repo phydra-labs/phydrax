@@ -55,12 +55,15 @@ struct CadSurfaceMesh {
   int64_t face_ns = 0, assembly_ns = 0;
 };
 
-// Volume stage controls: S3 quality targets and the geometry order (1 or 2).
+// Volume stage controls: S3 quality targets and the geometry order (1 or 2);
+// proximity (null: none) bounds each surface point's S3 size target by the
+// proximity size field at it (cad_proximity.hpp).
 struct CadVolumeControls {
   double radius_edge_bound = 2.0;
   double minimum_dihedral_degrees = 15.5;
   double minimum_relative_determinant = 0.0;
   int32_t geometry_order = 1;
+  const cad::ProximityField* proximity = nullptr;
 };
 
 // The fixed-boundary tetrahedralization of the assembled surface. Points
@@ -76,6 +79,10 @@ struct CadVolumeMesh {
   CadQuadraticMesh quadratic;
   std::vector<phx_mc_cad_boundary_split> splits;
   phx_mc_cad_volume_stats stats{};
+  // Per model curve (empty when the volume stage stopped before quality):
+  // the smallest true wedge in degrees between its two faces, filled only
+  // when some unmet cell is not forced (count_forced_cells), else NaN.
+  std::vector<double> curve_rim_wedges;
 };
 
 // Test hook: refuse the first recovery as if it needed a boundary Steiner
@@ -94,15 +101,20 @@ int32_t cad_split_surface_edge(const cad::CadGeometry& geometry, cad::CurveDiscr
 // Volume stage (design B.7) and, for geometry order 2, P2 nodes (B.8).
 // `sizes` are the requested face edge lengths h. OK: tetrahedra meeting
 // every target; UNRESOLVED: a complete mesh with unmet quality targets or
-// P2 cells, or no mesh when recovery refused after the one boundary-split
-// retry (stats.recovery_status, recovery_reason, failure_kind/entity).
+// P2 cells, or no mesh when a surface triangle is flat to rounding (refused
+// before recovery: reason INVALID_FACET, the triangle row and its relative
+// area in failure_entity/failure_measure) or recovery refused after the one
+// boundary-split retry (stats.recovery_status, recovery_reason,
+// failure_kind/entity).
 int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretization& curves,
                         CadSurfaceMesh& surface, const double* sizes,
                         const CadVolumeControls& controls, CadVolumeMesh& result,
                         const CadForcedRefusal* forced = nullptr);
 
+// graded_pole_rings and proximity (null: none): solid route (cad_mesh_face).
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& result);
+                         CadSurfaceMesh& result, bool graded_pole_rings = false,
+                         const cad::ProximityField* proximity = nullptr);
 
 }  // namespace phx::mc
