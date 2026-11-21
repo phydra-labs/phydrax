@@ -26,7 +26,10 @@ from phydrax._meshcore import (
     verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.meshing import CellMeshingCandidate
 from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._scope import MeshingScope
+from phydrax.meshing._sizing import ProximitySizeControl
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
     coefficient_bounds,
@@ -1533,7 +1536,7 @@ _FIELD_OUTCOMES = (
     ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
     ("size_maximum", "native"),
     ("size_compliance", "native"),
-    ("size_curvature", "supports uniform size controls on source faces only"),
+    ("size_curvature", "supports uniform and proximity size controls on source faces"),
     ("size_growth", "patch-size growth controls without a source geodesic"),
     ("size_volume_scope", "size controls must bind source face occurrences"),
     ("periodic_constraints", "does not support periodic constraints"),
@@ -1744,3 +1747,127 @@ def test_curve_sample_budget_of_a_surface_schedule_bounds_curve_sampling() -> No
     assert requested == {"maximum_curve_samples": 256.0, "maximum_deviation": 1e-12}
     assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > 1e-12
     assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
+
+
+def _face_scope(model: phx.geometry.brep.BRepModel, row: int) -> MeshingScope:
+    """The face scope of one model face row (cad_geometry_bundle's surface row)."""
+    from phydrax.meshing._scope import MeshingEntityKind
+    from phydrax.meshing.providers._native_cad_volume import _domain_scope_rows
+
+    domain = MeshingDomain.from_brep(model)
+    identifiers = np.asarray(domain.scope_entity_ids(2), dtype=np.int64)
+    rows = _domain_scope_rows(domain, MeshingScope.whole(model, 2), 2)
+    (index,) = np.flatnonzero(rows == row)
+    return MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        identifiers[index : index + 1],
+    )
+
+
+def _thin_solid_candidate(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    proximity: tuple[ProximitySizeControl, ...] = (),
+) -> CellMeshingCandidate:
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, size), *proximity),
+        maximum_deviation=0.01,
+    )
+    candidate = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=2.0, minimum_dihedral_degrees=15.5
+                ),
+            )
+        )
+        .plan(model, specification)
+        .execute(prove=False)
+    )
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+    return candidate
+
+
+def _thin_disk() -> phx.geometry.brep.BRepModel:
+    # A unit disk 0.06 thick: face rows 0 (z = 0), 1 (side), 2 (z = 0.06).
+    return phx.geometry.brep.brep_cylinder(
+        1.0, 0.06, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+
+
+@pytest.mark.parametrize("size", [0.4, 0.8])
+def test_thin_solid_without_proximity_control_reports_the_thin_region(
+    size: float,
+) -> None:
+    # The request's size is kept: a disk 0.06 thick at h >= 0.4 is thinner
+    # than the volume targets allow at h (t >= h / (sqrt(2) sqrt(15)) =
+    # 0.073 h / 0.4; _thin_region_findings), so the run is UNRESOLVED and the
+    # finding names the two disk faces, the certified thickness (two planes:
+    # exactly 0.06) and the thickness h needs (fails if the route refines
+    # implicitly or the finding is missing).
+    candidate = _thin_solid_candidate(_thin_disk(), size)
+    issues = candidate._construction.compliance.issues
+    (finding,) = (x for x in issues if x.startswith("input_thin_region"))
+    fields = dict(part.split("=") for part in finding.split(":")[1:5])
+    assert fields["faces"] == "0,2"
+    assert float(fields["thickness_at_most"]) == pytest.approx(0.06, abs=1e-12)
+    needed = size / np.sqrt(2.0) / np.sqrt(15.0)
+    assert float(fields["thickness_needed"]) == pytest.approx(needed, rel=1e-12)
+    assert any(x.startswith("native_unmet_quality_cells:") for x in issues)
+
+
+@pytest.mark.parametrize("size", [0.4, 0.8])
+def test_thin_solid_with_proximity_control_resolves(size: float) -> None:
+    # A ProximitySizeControl between the disk faces (one element per gap)
+    # sizes them at the local gap 0.06: every cell meets the targets, and
+    # the control's rows state its request and the achieved circumradius
+    # ratio R / (gap / sqrt(2)) <= 1 on every scoped triangle (fails if the
+    # native route ignores the control or reports no rows).
+    model = _thin_disk()
+    control = ProximitySizeControl(_face_scope(model, 0), _face_scope(model, 2), 1)
+    candidate = _thin_solid_candidate(model, size, (control,))
+    report = candidate._construction.compliance
+    assert report.issues == ()
+    requested, achieved = dict(report.requested), dict(report.achieved)
+    key = f"proximity:{control.control_id}"
+    assert requested[f"{key}:elements_per_gap"] == 1.0
+    assert achieved[f"{key}:gap"] == pytest.approx(0.06, abs=1e-12)
+    assert achieved[f"{key}:maximum_circumradius_ratio"] <= 1.0
+    assert achieved[f"{key}:minimum_elements_per_gap"] >= 1.0
+    assert achieved["unmet_quality_cells"] == 0.0
+    points = np.asarray(candidate.mesh.coordinates, dtype=np.float64)
+    cells = np.asarray(candidate.mesh.blocks[0].vertices, dtype=np.int64)
+    dihedral, ratio = _cell_quality(points, cells)
+    assert dihedral.min() >= 15.5 - 1e-9
+    assert ratio.max() <= 2.0 + 1e-9
+
+
+def test_touching_proximity_scopes_need_a_minimum_size() -> None:
+    # The cap's disk and sphere meet at the rim, so their gap reaches zero:
+    # without minimum_size the control is refused (as Gmsh refuses touching
+    # scopes), naming the remedy.
+    from phydrax.meshing._contracts import MeshingFailure
+
+    model = _unit_cap(70.0, above=True)
+    control = ProximitySizeControl(_face_scope(model, 0), _face_scope(model, 1), 1)
+    with pytest.raises(MeshingFailure, match="declare minimum_size"):
+        _thin_solid_candidate(model, 0.4, (control,))

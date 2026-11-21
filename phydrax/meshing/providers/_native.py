@@ -59,7 +59,7 @@ from .._controls import BoundaryLayerRoute
 from .._native_construction import NativeMeshConstruction
 from .._result import CellMeshingResult
 from .._scope import MeshingEntityKind, MeshingScope
-from .._sizing import UniformSizeControl
+from .._sizing import ProximitySizeControl, UniformSizeControl
 from .._surface_envelope import SurfaceEnvelopeSource
 from ._native_options import NativeMeshingOptions, NativeMeshingRoute
 from ._native_periodic import NativePeriodicSource, PreparedNativePeriodic
@@ -632,22 +632,48 @@ def _cad_boundary_specification(
             "Native CAD volume meshing requires a boundary scope containing every "
             "source face occurrence.",
         )
-    for control in specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Native CAD volume meshing supports uniform size controls on "
-                "source faces only.",
-            )
-        size_scope = control.scope
-        if (
+
+    def face_scope(size_scope: MeshingScope, /) -> bool:
+        return not (
             size_scope.source_id != domain.source_id
             or size_scope.source_revision != domain.source_revision
             or size_scope.entity_kind is not MeshingEntityKind.GEOMETRY
             or size_scope.entity_dimension != 2
             or size_scope.entity_set_id != domain.scope_entity_set_id(2)
             or np.setdiff1d(size_scope.entity_ids, all_faces).size
-        ):
+        )
+
+    for control in specification.size_controls:
+        # A proximity control is the native CAD solid's own (its face size
+        # field, _native_cad_mesh); the boundary preparation sizes the faces
+        # from the uniform controls only.
+        if isinstance(control, ProximitySizeControl):
+            if specification.layer_controls:
+                raise _failure(
+                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    "The native CAD layer/core route does not support proximity "
+                    "size controls.",
+                )
+            scopes = (control.source_scope, control.target_scope)
+            if not all(face_scope(scope) for scope in scopes):
+                raise _failure(
+                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    "Native CAD volume proximity controls must bind source face "
+                    "occurrences.",
+                )
+            if np.intersect1d(scopes[0].entity_ids, scopes[1].entity_ids).size:
+                raise _failure(
+                    MeshingFailureCategory.INVALID_SPECIFICATION,
+                    "ProximitySizeControl source and target scopes must be disjoint.",
+                )
+            continue
+        if not isinstance(control, UniformSizeControl):
+            raise _failure(
+                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "Native CAD volume meshing supports uniform and proximity size "
+                "controls on source faces only.",
+            )
+        if not face_scope(control.scope):
             raise _failure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
                 "Native CAD volume size controls must bind source face occurrences.",
@@ -682,7 +708,11 @@ def _cad_boundary_specification(
     return SurfaceMeshingSpec(
         target,
         scope,
-        size_controls=specification.size_controls,
+        size_controls=tuple(
+            control
+            for control in specification.size_controls
+            if not isinstance(control, ProximitySizeControl)
+        ),
         protected_features=specification.protected_features,
         size_combination=specification.size_combination,
         size_compliance=specification.size_compliance,
