@@ -2193,6 +2193,86 @@ void pole_region_checks() {
     PHX_CHECK(same);
   }
 }
+
+// MAC 35a31ae P3: the strip's trim-lens charge (pole_region_bounds' `fixed`).
+// A unit-sphere cap above latitude 1.0, 16 columns, rings at 1.2 and 1.4
+// (every row is in the north pole's region), each rim arc bumped inward
+// (toward the pole) by 0.35 to latitude 1.35: the arc crosses the middle
+// ring's rows, which have no rim edge, so mesh points of theirs beyond the
+// arc are off the face and only the strip lens charge covers them. Every
+// certified row's bound must be at least the distance from its mesh points
+// (barycentric grid of 16) to the face: off the face, to the boundary arcs
+// sampled at 4097 points each (sampled minimum less half the largest sample
+// spacing); on it, | |p| - 1 |. Fault caught: the lens part of the strip
+// charge dropped.
+void strip_lens_inward_bump() {
+  constexpr int kColumns = 16, kGrid = 16, kSamples = 4097;
+  const double rim = 1.0, delta = -0.35;
+  VertexIds id{kTurn, kNorth, {}};
+  std::vector<ChartTriangle> rows;
+  ring_rows(rows, id, kColumns, {rim, 1.2, 1.4, kNorth});
+  const Revolved g = revolved(unit_sphere, kNorth, rows, rim, delta);
+  const Verdict verdict = verify(g.model, g.mesh, 0.5, 8);
+  const auto u = [](int i) { return i == kColumns ? kTurn : kTurn * i / kColumns; };
+  // The rim (dir = -1, away from the north pole): v(s) = rim - delta (1 -
+  // 4 s^2), u = u_mid + s du, s in [-1/2, 1/2].
+  const auto arc = [&](double s) { return rim - delta * (1.0 - 4.0 * s * s); };
+  const auto sphere_point = [](double angle, double latitude) {
+    return std::array<double, 3>{std::cos(latitude) * std::cos(angle),
+                                 std::cos(latitude) * std::sin(angle), std::sin(latitude)};
+  };
+  std::vector<std::array<double, 3>> boundary;
+  for (int c = 0; c < kColumns; ++c)
+    for (int i = 0; i < kSamples; ++i) {
+      const double s = -0.5 + static_cast<double>(i) / (kSamples - 1);
+      boundary.push_back(sphere_point(0.5 * (u(c) + u(c + 1)) + s * (u(c + 1) - u(c)), arc(s)));
+    }
+  const auto distance = [](const double* p, const double* q) {
+    return std::sqrt((p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) +
+                     (p[2] - q[2]) * (p[2] - q[2]));
+  };
+  double spacing = 0.0;
+  for (std::size_t i = 1; i < boundary.size(); ++i)
+    spacing = std::max(spacing, distance(boundary[i].data(), boundary[i - 1].data()));
+  int certified = 0, outside = 0, below = 0;
+  double min_ratio = std::numeric_limits<double>::infinity();
+  for (std::size_t r = 0; r < rows.size(); ++r) {
+    if (g.mesh.chart_to_mesh[r] < 0 || verdict.item_status[r] != PHX_MC_OK) continue;
+    ++certified;
+    double truth = 0.0;
+    bool off = false;
+    for (int a = 0; a <= kGrid; ++a)
+      for (int b = 0; a + b <= kGrid; ++b) {
+        const double w[3] = {static_cast<double>(a) / kGrid, static_cast<double>(b) / kGrid,
+                             static_cast<double>(kGrid - a - b) / kGrid};
+        double p[3] = {0.0, 0.0, 0.0};
+        for (std::size_t k = 0; k < 3; ++k)
+          for (std::size_t axis = 0; axis < 3; ++axis)
+            p[axis] += w[k] * g.mesh.points[3 * static_cast<std::size_t>(rows[r].ids[k]) + axis];
+        double angle = std::atan2(p[1], p[0]);
+        if (angle < 0.0) angle += kTurn;
+        const double latitude = std::atan2(p[2], std::hypot(p[0], p[1]));
+        const int c = std::min(kColumns - 1, static_cast<int>(angle / (kTurn / kColumns)));
+        const double s = (angle - 0.5 * (u(c) + u(c + 1))) / (u(c + 1) - u(c));
+        if (latitude >= arc(s)) {
+          truth = std::max(truth, std::fabs(std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) - 1.0));
+          continue;
+        }
+        off = true;
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto& q : boundary) nearest = std::min(nearest, distance(p, q.data()));
+        truth = std::max(truth, nearest - 0.5 * spacing);
+      }
+    if (!off) continue;
+    ++outside;
+    min_ratio = std::min(min_ratio, verdict.upper[r] / truth);
+    if (verdict.upper[r] < truth) ++below;
+  }
+  std::printf("P strip lens inward bump: status %d certified %d off-face rows %d below %d min ratio "
+              "%.4f\n",
+              verdict.status, certified, outside, below, min_ratio);
+  PHX_CHECK(outside > 0 && below == 0);
+}
 }  // namespace
 
 int main() {
@@ -2221,6 +2301,7 @@ int main() {
   trimmed_pole_regions();
   bumped_ring_chords();
   pole_region_checks();
+  strip_lens_inward_bump();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
