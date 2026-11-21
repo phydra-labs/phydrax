@@ -827,11 +827,31 @@ thicknesses measured as exact distances to the wall. Per-layer statistics cover
 the surviving columns that carry each layer; `layer_active[k]` is `True` iff at
 least one column carries requested layer `k`. A layer carried by no column (for
 example after `TERMINATE_LOCALLY` stops every column early) has
-`layer_active[k] == False`, NaN achieved, minimum, and maximum thickness, and NaN
-for every growth rate touching it (`achieved_growth_rates[k]` is the ratio of
-achieved thicknesses `k + 1` and `k`). Read layer support from `layer_active`,
-not from NaNs; `terminated_vertex_count`, `reduced_vertex_count`, and
-`merged_vertex_count` state why columns stopped short of or shrank the schedule.
+`layer_active[k] == False`, NaN achieved, minimum, and maximum thickness, NaN
+maximum level deviation, and NaN for every growth rate touching it
+(`achieved_growth_rates[k]` is the ratio of achieved thicknesses `k + 1` and
+`k`). Read layer support from `layer_active`, not from NaNs;
+`terminated_vertex_count`, `reduced_vertex_count`, and `merged_vertex_count`
+state why columns stopped short of or shrank the schedule.
+`maximum_level_deviations[k]` is the largest `|d - s h|` over the columns
+carrying layer `k`, with `d` the distance of the column's level `k + 1` vertex to
+the wall triangles, `h` that level's scheduled height and `s` the column scale.
+
+Closed, fully grown triangle walls without split ridges, obstacles or
+periodicity, under `FAIL` or `REDUCE_THICKNESS`, grow on the native prism layers
+(`phx_mc_prism_layers`): one straight column per wall vertex, every prism
+certified by the exact signs of its nine Bernstein Jacobian controls and the top
+level by exact triangle contacts. Their level heights are measured from the
+smooth surface the wall vertices sample, not from the triangles: a quadratic fit
+per smooth sector gives each column's normal and curvature, and ridge columns
+reach the scheduled height from every sector. On a CAD wall, whose vertices lie
+on the source surface, this is that surface to the fit's accuracy (within
+1e-5 of each level on a sphere; a few percent short beside the edges of a coarsely meshed
+cylinder, where a sector sees only a few one-sided facets); on a bare triangle
+wall it is the fitted surface. `maximum_level_deviations` reports the levels'
+departure from the triangles. Every other wall takes the advancing-front route,
+whose probed column stretch measures levels from the triangles.
+
 The result retains the original obstacle surface (or its absence) and the actual
 final column scales, layer counts, stretches, merge targets, and level coordinates,
 including coordinates not present in the compacted cell mesh. These are source

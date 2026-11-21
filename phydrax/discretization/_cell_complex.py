@@ -1233,8 +1233,13 @@ def polyhedral_connectivity(
         and entry[1] is not None
         for entry in entries
     )
-    standard = (
-        tuple((entry[0], np.asarray(entry[1], dtype=np.int32)) for entry in entries)
+    # ``native_entries`` already proved every kind a string; the filter narrows.
+    standard: tuple[tuple[str, np.ndarray], ...] = (
+        tuple(
+            (kind, np.asarray(entry[1], dtype=np.int32))
+            for entry in entries
+            if isinstance(kind := entry[0], str)
+        )
         if native_entries
         else ()
     )

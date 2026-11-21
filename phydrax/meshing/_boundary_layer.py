@@ -209,7 +209,13 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     Thicknesses are increments of the minimum specified point-triangle distance
     from each column's layer vertices to the wall surface. These binary64
     distances are approximations; per-layer statistics cover every column that
-    carries the layer.
+    carries the layer. ``maximum_level_deviations[k]`` is the largest
+    ``|d - s h_(k+1)|`` over the columns carrying layer ``k``: ``d`` the distance
+    of the column's level ``k + 1`` vertex to the wall triangles, ``h_(k+1)``
+    the scheduled level height and ``s`` the column's thickness scale: small on
+    the advancing-front route, whose probed column stretch measures levels
+    from the wall triangles, and the departure of the triangles from the
+    fitted smooth surface the native route measures levels from.
     ``layer_active[k]`` is ``True`` iff at least one surviving column carries
     requested layer ``k``. A requested layer carried by no surviving column has
     ``layer_active[k] == False`` and NaN achieved, minimum, and maximum
@@ -224,6 +230,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     achieved_thicknesses: Array
     minimum_thicknesses: Array
     maximum_thicknesses: Array
+    maximum_level_deviations: Array
     achieved_growth_rates: Array
     layer_active: Array
     column_count: int = eqx.field(static=True)
@@ -263,21 +270,24 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
                 "achieved_thicknesses",
                 "minimum_thicknesses",
                 "maximum_thicknesses",
+                "maximum_level_deviations",
                 "achieved_growth_rates",
             )
         }
         layer_shape = (len(requested),)
-        if any(arrays[name].shape != layer_shape for name in tuple(arrays)[:3]) or arrays[
+        layered = (
+            "achieved_thicknesses",
+            "minimum_thicknesses",
+            "maximum_thicknesses",
+            "maximum_level_deviations",
+        )
+        if any(arrays[name].shape != layer_shape for name in layered) or arrays[
             "achieved_growth_rates"
         ].shape != (len(requested) - 1,):
             raise ValueError(
                 "Boundary-layer thickness and growth arrays have invalid shapes."
             )
-        for name in (
-            "achieved_thicknesses",
-            "minimum_thicknesses",
-            "maximum_thicknesses",
-        ):
+        for name in layered:
             array = arrays[name]
             if np.any(~np.isfinite(array[layer_active])) or np.any(
                 ~np.isnan(array[~layer_active])
@@ -3818,16 +3828,22 @@ def _measured_thicknesses(
     )
     active = np.any(carried, axis=1)
     increments = np.diff(distance, axis=0)
+    deviation = np.abs(
+        distance[1:]
+        - columns.levels[1:, None] * columns.scale[front.column_vertex][None, :]
+    )
     mean = np.full((layers,), np.nan)
     minimum = np.full((layers,), np.nan)
     maximum = np.full((layers,), np.nan)
+    level_deviation = np.full((layers,), np.nan)
     for layer in range(layers):
         if active[layer]:
             values = increments[layer, carried[layer]]
             mean[layer] = binary64_sum(values, axis=0) / values.size
             minimum[layer] = np.min(values)
             maximum[layer] = np.max(values)
-    return mean, minimum, maximum, active
+            level_deviation[layer] = np.max(deviation[layer, carried[layer]])
+    return mean, minimum, maximum, level_deviation, active
 
 
 # ---------------------------------------------------------------- entry points
@@ -4339,7 +4355,7 @@ def _reprove_retained_boundary_layers(
             else actual == expected
         ):
             raise ValueError(f"Retained vertex ancestry differs in {name}.")
-    mean, minimum, maximum, active = _measured_thicknesses(
+    mean, minimum, maximum, deviation, active = _measured_thicknesses(
         wall, front, columns, points[:point_count]
     )
     evidence = retained.evidence
@@ -4347,6 +4363,7 @@ def _reprove_retained_boundary_layers(
         ("achieved_thicknesses", mean),
         ("minimum_thicknesses", minimum),
         ("maximum_thicknesses", maximum),
+        ("maximum_level_deviations", deviation),
         ("layer_active", active),
         ("achieved_growth_rates", mean[1:] / mean[:-1]),
     ):
@@ -4941,7 +4958,7 @@ def _assemble(
         cap_mesh = _bind_layer_periodic_mesh(
             source_wall, cap_mesh, cap_vertices, *periodic_vertices
         )
-    mean, minimum, maximum, active = _measured_thicknesses(
+    mean, minimum, maximum, deviation, active = _measured_thicknesses(
         wall, front, columns, resolution.points
     )
     wall_scale = columns.scale[wall.wall_vertices]
@@ -4950,6 +4967,7 @@ def _assemble(
         achieved_thicknesses=mean,
         minimum_thicknesses=minimum,
         maximum_thicknesses=maximum,
+        maximum_level_deviations=deviation,
         achieved_growth_rates=mean[1:] / mean[:-1],
         layer_active=active,
         column_count=front.column_vertex.size,
@@ -5063,6 +5081,19 @@ def prepare_boundary_layers(
     its cells; unselected cells are fixed adjacent surfaces along which rim
     columns slide. ``obstacles`` are further fixed surfaces the layers must not
     cross (their orientation is irrelevant).
+
+    A closed, fully grown triangle wall without split ridges, obstacles or
+    periodicity under a FAIL or REDUCE_THICKNESS collision policy grows on the
+    native prism layers (``phx_mc_prism_layers``). There level heights are
+    measured from the smooth surface the wall vertices sample, not from the
+    triangles: per smooth sector, a quadratic fit through the vertex gives the
+    normal and curvature, and ridge columns reach the scheduled height from
+    every sector. On a CAD wall, whose vertices lie on the source surface,
+    this is that surface to the fit's accuracy; on a bare triangle wall it is
+    the fitted surface. ``evidence.maximum_level_deviations`` reports the
+    levels' departure from the wall triangles. Every other wall takes the
+    advancing-front route, whose column stretch measures levels from the
+    triangles.
     """
     if not isinstance(wall, CellMesh):
         raise TypeError("wall must be CellMesh.")

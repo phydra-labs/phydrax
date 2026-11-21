@@ -185,8 +185,20 @@ def _distances(points: np.ndarray, corners: np.ndarray) -> np.ndarray:
     return np.sqrt(squared[:count])
 
 
-def _assert_layered(result: Any, on_wall: Any, *, tolerance: float) -> int:
-    """Check physical layer heights, layer count, and cap conformity; return wall size."""
+def _assert_layered(
+    result: Any,
+    on_wall: Any,
+    *,
+    tolerance: float,
+    surface: Any = None,
+    relative: float = 0.0,
+) -> int:
+    """Check physical layer heights, layer count, and cap conformity; return wall size.
+
+    Heights are distances to the wall triangles, or to the true source surface
+    when ``surface`` (its closed-form distance) is given, within ``tolerance``
+    plus ``relative`` times the level height.
+    """
     mesh = result.mesh
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     exterior = _exterior_triangles(mesh)
@@ -197,18 +209,19 @@ def _assert_layered(result: Any, on_wall: Any, *, tolerance: float) -> int:
     assert prisms.shape[0] > 0 and tetrahedra.shape[0] > 0
     assert {block.cell_kind for block in mesh.blocks} <= {"prism", "simplex:3", "pyramid"}
     # Prism vertices 0-2 are the lower and 3-5 the upper triangle of one layer.
-    lower = _distances(points[prisms[:, :3].reshape(-1)], points[wall]).reshape(-1, 3)
-    upper = _distances(points[prisms[:, 3:].reshape(-1)], points[wall]).reshape(-1, 3)
+    if surface is None:
+        lower = _distances(points[prisms[:, :3].reshape(-1)], points[wall])
+        upper = _distances(points[prisms[:, 3:].reshape(-1)], points[wall])
+    else:
+        lower = surface(points[prisms[:, :3].reshape(-1)])
+        upper = surface(points[prisms[:, 3:].reshape(-1)])
+    lower, upper = lower.reshape(-1, 3), upper.reshape(-1, 3)
     level = np.argmin(np.abs(lower[:, :1] - LEVELS[None, :-1]), axis=1)
-    np.testing.assert_allclose(
-        lower, np.repeat(LEVELS[level][:, None], 3, axis=1), rtol=0.0, atol=tolerance
-    )
-    np.testing.assert_allclose(
-        upper,
-        np.repeat(LEVELS[level + 1][:, None], 3, axis=1),
-        rtol=0.0,
-        atol=tolerance,
-    )
+    for heights, expected in ((lower, LEVELS[level]), (upper, LEVELS[level + 1])):
+        assert np.all(
+            np.abs(heights - expected[:, None])
+            <= tolerance + relative * expected[:, None]
+        )
     # Every wall triangle carries one prism per scheduled layer.
     np.testing.assert_array_equal(
         np.bincount(level, minlength=len(SCHEDULE)), wall.shape[0]
@@ -420,7 +433,14 @@ def test_sphere_whole_wall_grows_smooth_layers_without_ridges() -> None:
 
     _assert_certified_core(result)
     on_sphere = lambda corners: np.abs(np.linalg.norm(corners, axis=-1) - 0.5) <= 1e-9
-    _assert_layered(result, on_sphere, tolerance=1.0e-9)
+    # Levels are measured from the true sphere, not from its facets.
+    _assert_layered(
+        result,
+        on_sphere,
+        tolerance=1.0e-12,
+        surface=lambda points: 0.5 - np.linalg.norm(points, axis=-1),
+        relative=1.0e-5,
+    )
     enclosed = _enclosed_volume(result.mesh)
     assert _finite_element_volume(result.mesh) == pytest.approx(enclosed, abs=1.0e-12)
     # The faceted surface lies within the requested deviation of the sphere.
@@ -448,7 +468,14 @@ def test_cylinder_whole_wall_layers_close_at_its_circular_edges() -> None:
         height = corners[..., 2]
         return (np.abs(radius - 0.5) <= 1e-9) | (height == 0.0) | (height == 1.0)
 
-    _assert_layered(result, on_cylinder, tolerance=1.0e-9)
+    def depth(points: np.ndarray) -> np.ndarray:
+        radial = 0.5 - np.linalg.norm(points[..., :2], axis=-1)
+        return np.minimum(radial, np.minimum(points[..., 2], 1.0 - points[..., 2]))
+
+    # Levels are measured from the true cylinder. Beside the circular edges a
+    # side sector sees two or three coarse facets on one side only; its column
+    # follows their normals, a few percent short of the true depth there.
+    _assert_layered(result, on_cylinder, tolerance=1.0e-12, surface=depth, relative=0.03)
     enclosed = _enclosed_volume(result.mesh)
     assert _finite_element_volume(result.mesh) == pytest.approx(enclosed, abs=1.0e-12)
     exact = np.pi * 0.5**2
