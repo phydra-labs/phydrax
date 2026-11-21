@@ -444,6 +444,20 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native prism layers on CAD walls are measured from the source surface:
+  `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
+  into the layer domain, shape operator); a smooth sector framed at every
+  corner takes its normal and curvature from them instead of the vertex fit.
+  `brep_layer_core_source` evaluates the frames from the source patches
+  (`inward_source_frames`; corners at singular chart points such as cap
+  centers and poles carry none and are fitted) and passes them to
+  `prepare_boundary_layers(..., source_frames=)`. Levels on a coarse CAD
+  cylinder now lie within 1e-5 of the closed form, rims included (previously
+  up to 2.7 % short); bare STL walls are unchanged. Declared representation
+  change: `BoundaryLayerMesh` gains `source_frames` (validated, in
+  `result_id`, archived; field order, PyTree structure and result ids change),
+  and cold restore reproves the columns from the retained frames, so forged
+  frames are refused.
 - Size compliance judges the quantity each producing kernel bounds, declared
   once per route in `SIZE_COMPLIANCE_DECLARATIONS` (`phydrax/meshing/_sizing.py`,
   documented under "Size compliance" in the meshing guide). The native CAD
