@@ -206,17 +206,60 @@ def _sorted_loop_table(
     return table
 
 
+def _native_face_mesh(
+    points: np.ndarray,
+    offsets: np.ndarray,
+    vertices: np.ndarray,
+    owner: np.ndarray,
+    neighbor: np.ndarray,
+    cell_count: int,
+    block_name: str,
+    /,
+) -> CellMesh:
+    """``CellMesh.from_polyhedra`` over native faces with their two cells:
+    every cell's loops in face order, the owner's as stored and the
+    neighbor's reversed (packed, without per-loop arrays)."""
+    inner = np.flatnonzero(neighbor >= 0)
+    cells = np.concatenate((owner, neighbor[inner]))
+    faces = np.concatenate((np.arange(owner.size, dtype=np.int64), inner))
+    reversed_ = np.concatenate(
+        (np.zeros((owner.size,), dtype=np.bool_), np.ones((inner.size,), dtype=np.bool_))
+    )
+    order = np.lexsort((faces, cells))
+    faces, reversed_ = faces[order], reversed_[order]
+    sizes = np.diff(offsets)[faces]
+    loops = np.repeat(np.arange(faces.size, dtype=np.int64), sizes)
+    position = np.arange(loops.size, dtype=np.int64) - np.repeat(
+        np.cumsum(sizes) - sizes, sizes
+    )
+    position = np.where(reversed_[loops], sizes[loops] - 1 - position, position)
+    return CellMesh._from_packed_polyhedra(
+        np.asarray(points, dtype=np.float64),
+        np.bincount(cells, minlength=cell_count),
+        sizes,
+        np.ones((faces.size,), dtype=np.bool_),
+        vertices[offsets[faces][loops] + position],
+        block_name=block_name,
+        vertex_global_ids=None,
+        cell_global_ids=None,
+        numeric_version="0",
+    )
+
+
 def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     offsets = np.asarray(cells.face_offsets, dtype=np.int64)
     vertices = np.asarray(cells.face_vertices, dtype=np.int32)
     sides = np.asarray(cells.face_cells, dtype=np.int64)
-    loops: list[list[np.ndarray]] = [[] for _ in range(cells.cell_seeds.shape[0])]
-    for face, (left, right) in enumerate(sides.tolist()):
-        loop = vertices[offsets[face] : offsets[face + 1]]
-        loops[left].append(loop)
-        if right >= 0:
-            loops[right].append(loop[::-1])
-    mesh = CellMesh.from_polyhedra(cells.vertices, loops, block_name="conforming-voronoi")
+    cell_count = cells.cell_seeds.shape[0]
+    mesh = _native_face_mesh(
+        cells.vertices,
+        offsets,
+        vertices,
+        sides[:, 0],
+        sides[:, 1],
+        cell_count,
+        "conforming-voronoi",
+    )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Conforming Voronoi publication must stay polyhedral.")
@@ -232,7 +275,7 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     native_rows = np.lexsort(native.T[::-1])
     canonical_rows = np.lexsort(canonical.T[::-1])
     if (
-        np.unique(cell_order).size != len(loops)
+        np.unique(cell_order).size != cell_count
         or native.shape != canonical.shape
         or not np.array_equal(native[native_rows], canonical[canonical_rows])
     ):

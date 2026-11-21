@@ -472,7 +472,20 @@ struct Hit {
   Vec point{0, 0, 0};
 };
 
-// Nearest triangle (of patch `patch`, any when -1) by shell search.
+// Squared distance from p to the box [lo, hi].
+inline double box_distance2(const Vec& p, const Vec& lo, const Vec& hi) {
+  double d2 = 0.0;
+  for (int a = 0; a < 3; ++a) {
+    const double d = std::max({lo[a] - p[a], 0.0, p[a] - hi[a]});
+    d2 += d * d;
+  }
+  return d2;
+}
+
+// Nearest triangle (of patch `patch`, any when -1) by shell search. A bin or
+// triangle box farther than the best distance so far holds no nearer point
+// (the nearest point of a triangle lies in its box and in a bin it is filed
+// under).
 Hit nearest_triangle(const Surface& s, const Vec& p, int32_t patch) {
   const Bins& bins = s.triangle_bins;
   const auto c = bins.cell(p);
@@ -483,11 +496,19 @@ Hit nearest_triangle(const Surface& s, const Vec& p, int32_t patch) {
         const bool face = std::max(std::llabs(di), std::llabs(dj)) == r;
         for (int64_t dk = -r; dk <= r; dk += (face ? 1 : std::max<int64_t>(1, 2 * r))) {
           const auto [first, last] = bins.range(c[0] + di, c[1] + dj, c[2] + dk);
+          if (first == last) continue;
+          const Vec lo{bins.lo[0] + static_cast<double>(c[0] + di) * bins.g,
+                       bins.lo[1] + static_cast<double>(c[1] + dj) * bins.g,
+                       bins.lo[2] + static_cast<double>(c[2] + dk) * bins.g};
+          if (box_distance2(p, lo, add(lo, {bins.g, bins.g, bins.g})) > best.d2) continue;
           for (int32_t slot = first; slot < last; ++slot) {
             const int32_t t = bins.items[slot];
             if (patch >= 0 && s.patch[t] != patch) continue;
-            const Vec q = closest_on_triangle(p, s.corner_point(t, 0), s.corner_point(t, 1),
-                                              s.corner_point(t, 2));
+            const Vec a = s.corner_point(t, 0), b = s.corner_point(t, 1), e = s.corner_point(t, 2);
+            const Vec tlo{std::min({a[0], b[0], e[0]}), std::min({a[1], b[1], e[1]}), std::min({a[2], b[2], e[2]})};
+            const Vec thi{std::max({a[0], b[0], e[0]}), std::max({a[1], b[1], e[1]}), std::max({a[2], b[2], e[2]})};
+            if (box_distance2(p, tlo, thi) > best.d2) continue;
+            const Vec q = closest_on_triangle(p, a, b, e);
             const Vec d = sub(q, p);
             const double d2 = dot(d, d);
             if (d2 < best.d2 || (d2 == best.d2 && t < best.item)) best = {d2, t, q};
@@ -513,9 +534,11 @@ bool triangle_within(const Surface& s, const Vec& p, double radius) {
         const auto [first, last] = bins.range(i, j, k);
         for (int32_t slot = first; slot < last; ++slot) {
           const int32_t t = bins.items[slot];
-          const Vec d = sub(closest_on_triangle(p, s.corner_point(t, 0), s.corner_point(t, 1),
-                                                s.corner_point(t, 2)),
-                            p);
+          const Vec u = s.corner_point(t, 0), v = s.corner_point(t, 1), w = s.corner_point(t, 2);
+          const Vec lo{std::min({u[0], v[0], w[0]}), std::min({u[1], v[1], w[1]}), std::min({u[2], v[2], w[2]})};
+          const Vec hi{std::max({u[0], v[0], w[0]}), std::max({u[1], v[1], w[1]}), std::max({u[2], v[2], w[2]})};
+          if (box_distance2(p, lo, hi) >= r2) continue;
+          const Vec d = sub(closest_on_triangle(p, u, v, w), p);
           if (dot(d, d) < r2) return true;
         }
       }
@@ -2134,9 +2157,10 @@ void Builder::smooth() {
   std::vector<double> previous(mesh.points);
   std::vector<uint8_t> moved(points, 0);
   int64_t reverted = 0;
-  // Cells valid so far: smoothing never makes one of them invalid.
-  std::vector<uint8_t> valid(cells);
-  for (int64_t c = 0; c < cells; ++c) valid[c] = cell_valid_float(mesh, t, c);
+  // Cells valid so far: smoothing never makes one of them invalid (only the
+  // active cells change shape).
+  std::vector<uint8_t> valid(cells, 1);
+  for (const int32_t c : active_cells) valid[c] = cell_valid_float(mesh, t, c);
   // Surface vertex move: onto its patch or curve by a local walk.
   auto place_surface = [&](int64_t row, const Vec& target) {
     const int32_t v = surface_vertex[row];

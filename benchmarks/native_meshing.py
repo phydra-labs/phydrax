@@ -2919,8 +2919,15 @@ def _f8_distance(model: str, points: np.ndarray, /) -> np.ndarray:
     for sx in (-1.0, 1.0):
         z = 0.6 * np.cos(np.linspace(0.0, 2.0 * np.pi, 500_000, endpoint=False))
         curve.append(np.stack((sx * np.sqrt(1.0 - y * y), y, z), axis=1))
-    to_curve, _ = cKDTree(np.concatenate(curve)).query(points)
-    return np.minimum(np.minimum(to_z, to_x), to_curve)
+    # The curve lies on both cylinders, so it is no nearer than either radial
+    # gap; only points where that bound is below the foot distance query it
+    # (a nearest-point search far from a sampled curve is slow).
+    distance = np.minimum(to_z, to_x)
+    closer = np.maximum(np.abs(around_z - 1.0), np.abs(around_x - 0.6)) < distance
+    distance[closer] = np.minimum(
+        distance[closer], cKDTree(np.concatenate(curve)).query(points[closer])[0]
+    )
+    return distance
 
 
 def _f8_samples(model: str, count: int, /) -> np.ndarray:

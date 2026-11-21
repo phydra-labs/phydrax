@@ -97,6 +97,7 @@ from phydrax.meshing.providers._native_voronoi import (
     _edge_ancestry,
     _face_ancestry,
     _FACET,
+    _native_face_mesh,
     _plc_triangles,
     _REGION,
     _sorted_loop_table,
@@ -257,21 +258,14 @@ def _publish(native: meshcore.HexDominant, /) -> _Published:
     kinds = np.asarray(native.cell_kinds, dtype=np.int64)
     face_offsets = np.asarray(native.face_offsets, dtype=np.int64)
     face_vertices = np.asarray(native.face_vertices, dtype=np.int32)
-    owner = np.asarray(native.face_owner, dtype=np.int64).tolist()
-    neighbor = np.asarray(native.face_neighbor, dtype=np.int64).tolist()
-    loops: list[list[np.ndarray]] = [[] for _ in range(kinds.size)]
-    for face, (first, last) in enumerate(
-        zip(face_offsets[:-1].tolist(), face_offsets[1:].tolist(), strict=True)
-    ):
-        loop = face_vertices[first:last]
-        loops[owner[face]].append(loop)
-        if neighbor[face] >= 0:
-            loops[neighbor[face]].append(loop[::-1])
-    mesh = CellMesh.from_mixed_3d(
+    mesh = _native_face_mesh(
         native.points,
-        (),
-        polyhedra={"cells": loops},
-        polyhedral_cell_global_ids={"cells": np.arange(kinds.size, dtype=np.int64)},
+        face_offsets,
+        face_vertices,
+        np.asarray(native.face_owner, dtype=np.int64),
+        np.asarray(native.face_neighbor, dtype=np.int64),
+        kinds.size,
+        "cells",
     )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):

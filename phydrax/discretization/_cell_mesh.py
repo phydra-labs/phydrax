@@ -21,8 +21,11 @@ from ..sparse import EdgeRelation
 from ..typing import checked, ConvertibleToArray, Dim, Int32
 from ._cell_complex import (
     _canonical_entity_ids,
+    _csr_offsets,
     _interval_complex,
     _polygonal_complex,
+    _polyhedral_face_loops,
+    _polyhedral_loop_connectivity,
     _simplicial_incidence_routes,
     _tetrahedral_complex,
     interval_connectivity,
@@ -1474,6 +1477,15 @@ def _rebuild_polyhedral_connectivity_from_stored(
     return rebuilt
 
 
+def _packed_ranges(starts: np.ndarray, counts: np.ndarray, /) -> np.ndarray:
+    """The ranges ``starts[i] : starts[i] + counts[i]``, concatenated."""
+    counts = counts.astype(np.int64)
+    ends = np.cumsum(counts)
+    return np.arange(int(ends[-1]) if ends.size else 0, dtype=np.int64) + np.repeat(
+        starts.astype(np.int64) - (ends - counts), counts
+    )
+
+
 class CellMesh(StrictModule, NonTrainableState):
     """Canonical computational mesh shared by unstructured discretizations."""
 
@@ -2027,32 +2039,64 @@ class CellMesh(StrictModule, NonTrainableState):
         normalized_cells = tuple(tuple(cell) for cell in cells)
         if not normalized_cells:
             raise ValueError("At least one polyhedral cell is required.")
+        return cls._from_packed_polyhedra(
+            points,
+            *_polyhedral_face_loops(normalized_cells, points.shape[0]),
+            block_name=block_name,
+            vertex_global_ids=vertex_global_ids,
+            cell_global_ids=cell_global_ids,
+            numeric_version=numeric_version,
+        )
+
+    @classmethod
+    def _from_packed_polyhedra(
+        cls,
+        points: np.ndarray,
+        cell_face_counts: np.ndarray,
+        loop_lengths: np.ndarray,
+        explicit_loops: np.ndarray,
+        loop_values: np.ndarray,
+        /,
+        *,
+        block_name: str,
+        vertex_global_ids: ArrayLike | None,
+        cell_global_ids: ArrayLike | None,
+        numeric_version: str,
+    ) -> CellMesh:
+        """``from_polyhedra`` over packed face loops: cell ``c`` owns the next
+        ``cell_face_counts[c]`` loops, loop ``i`` the next ``loop_lengths[i]``
+        entries of ``loop_values`` (``-1``: a malformed loop without entries),
+        ``explicit_loops`` as ``_polyhedral_face_loops`` returns them."""
+
+        cell_count = cell_face_counts.size
         source_ids = (
-            np.arange(len(normalized_cells), dtype=np.int64)
+            np.arange(cell_count, dtype=np.int64)
             if cell_global_ids is None
             else np.asarray(cell_global_ids, dtype=np.int64)
         )
-        if source_ids.shape != (len(normalized_cells),):
+        if source_ids.shape != (cell_count,):
             raise ValueError("cell_global_ids must match the polyhedral cell count.")
-        vertex_counts = np.asarray(
-            [
-                len(
-                    {
-                        int(vertex)
-                        for face in cell
-                        for vertex in np.asarray(face, dtype=np.int32)
-                    }
-                )
-                for cell in normalized_cells
-            ],
-            dtype=np.int32,
-        )
+        sizes = np.maximum(loop_lengths, 0)
+        loop_cells = np.repeat(np.arange(cell_count, dtype=np.int64), cell_face_counts)
+        # Distinct (cell, vertex) keys; malformed vertex rows are refused by
+        # the connectivity below.
+        span = max(points.shape[0], int(np.max(loop_values, initial=0)) + 1)
+        keys = np.unique(np.repeat(loop_cells, sizes) * span + loop_values)
+        vertex_counts = np.bincount(keys // span, minlength=cell_count)
+        # Cells in stable order of their distinct vertex counts, their loops
+        # and loop entries gathered along.
         order = np.argsort(vertex_counts, kind="stable")
-        ordered_cells = tuple(normalized_cells[int(index)] for index in order)
+        loop_rows = _packed_ranges(
+            _csr_offsets(cell_face_counts)[:-1][order], cell_face_counts[order]
+        )
+        entry_rows = _packed_ranges(_csr_offsets(sizes)[:-1][loop_rows], sizes[loop_rows])
         ordered_ids = source_ids[order]
         ordered_counts = vertex_counts[order]
-        connectivity = _build_polyhedral_connectivity(
-            ordered_cells,
+        connectivity = _polyhedral_loop_connectivity(
+            cell_face_counts[order],
+            loop_lengths[loop_rows],
+            explicit_loops[loop_rows],
+            loop_values[entry_rows],
             points.shape[0],
             vertex_global_ids=vertex_global_ids,
             cell_global_ids=ordered_ids,
