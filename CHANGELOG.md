@@ -68,6 +68,13 @@
   shared read-only by validity, quality and audit. Hex-dominant rows certify
   in 220 to 285 s instead of 1,220 to 1,500 s; conforming Voronoi with about
   1e4 cells in about 96 s.
+- Native certification kernels (cell-map validity, polyhedral star validity
+  and decomposition, declared contacts, welded topology) run on meshcore's
+  deterministic worker pool: a `parallelism` argument (from Python, the
+  existing `exact_kernel_parallelism()` control) splits cells and pairs into
+  fixed chunks whose size does not depend on the worker count, and results
+  are byte-identical for every worker count. `PHX_MC_THREAD_SANITIZE` builds
+  meshcore and its tests with ThreadSanitizer.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the
