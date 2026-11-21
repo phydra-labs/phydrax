@@ -29,6 +29,7 @@ namespace di = phx::mc::remesh;
 // Truncation order of the g, h series and the largest q they accept.
 inline constexpr int kSeriesTerms = 12;
 inline constexpr double kMaximumSquaredRadius = 4.0;
+inline constexpr double kCapLatitude = 0x1.3f004dc9db074p-1;
 
 // pi/2 lies in [kHalfPiLower, di::kHalfPiUpper] (binary64 neighbors).
 inline constexpr double kHalfPiLower = 0x1.921fb54442d18p+0;

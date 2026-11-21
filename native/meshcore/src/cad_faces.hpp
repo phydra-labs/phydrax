@@ -108,11 +108,14 @@ bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
 // circle3 whose centre and second axis lie on the revolution axis exactly
 // (V3's pole_sphere_frame families with a circle profile, in binary64).
 // equator = max_u |cos u e1 + sin u e2| (the Gram matrix's largest root),
-// pole = |a|.
+// pole = |a|, frame = max |x e1 + y e2 + z a| over unit (x, y, z), bounded
+// by the square root of the Gram matrix of e1, e2, a's largest absolute row
+// sum (Gershgorin; 1 for an orthonormal frame).
 struct SphereChart {
   double radius = 0.0;
   double equator = 0.0;
   double pole = 0.0;
+  double frame = 0.0;
 };
 bool sphere_chart(const cad::CadGeometry& geometry, int32_t face, SphereChart& chart);
 

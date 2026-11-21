@@ -15,6 +15,7 @@
 #include "chart_surface.hpp"
 #include "expansion.hpp"
 #include "predicates.hpp"
+#include "verify_cad_pole_chart.hpp"
 
 #include "phydrax_meshcore.h"
 
@@ -304,6 +305,14 @@ struct FaceMetric {
   bool graded_pole_rings = false;
   // Solid route: the proximity size field (null: none).
   const cad::ProximityField* proximity = nullptr;
+  // Sphere chart faces with a pole whose chords span a whole turn: the
+  // pole sides sigma (+1 north, -1 south) of V3's pole regions and the
+  // chart (pole_boundary_split); empty otherwise.
+  std::vector<double> cap_sigmas = {};
+  SphereChart cap_chart = {};
+  // The moves keep pole_boundary_overruns (smooth); set for a face meshed
+  // again with the kernel's pole-boundary splits.
+  bool pole_guard = false;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -788,6 +797,193 @@ int32_t admit_face_point(void* opaque, const double point[2]) {
     if (zone.pole && distance >= 0.0 && distance <= zone.spacing) return 0;
   }
   return 1;
+}
+
+// max |cos v| and max |sin v| over v between v0 and v1.
+void trig_maxima(double v0, double v1, double& cosine, double& sine) {
+  const double lo = std::min(v0, v1), hi = std::max(v0, v1);
+  const double pi = std::numbers::pi;
+  cosine = std::max(std::abs(std::cos(lo)), std::abs(std::cos(hi)));
+  sine = std::max(std::abs(std::sin(lo)), std::abs(std::sin(hi)));
+  if (std::ceil(lo / pi) * pi <= hi) cosine = 1.0;
+  if (std::ceil((lo - 0.5 * pi) / pi) * pi + 0.5 * pi <= hi) sine = 1.0;
+}
+
+// V3 associates a pole's rows in the pole chart (x, y) = rho (cos u, sin u),
+// rho = pi/2 - sigma v, when a corner lies at sigma v >= kCapLatitude (or
+// at the pole), the rest of the face in uv (PoleRegion,
+// verify_cad_fidelity.cpp). An edge of such a row with both corners below
+// the cap is shared with a uv row, and V3 charges both rows its seam lens
+// (seam_lens_bound)
+//   cap = max(A, B) + |D^2 S_xy| W^2 / 8,
+// A the uv-straight edge's deviation from the mesh edge, B the pole-chart-
+// straight edge's, W the gap between the two edges' pole-chart images. On
+// a sphere chart (cad_faces.hpp, S = o + r (cos v R(u) + sin v a)) for an
+// edge of chart extents du, dv and colatitudes up to rho:
+// - A <= |D^2 S[delta, delta]| / 8, delta = (du, dv) (a chart-straight
+//   segment's interpolation remainder), where D^2 S[delta, delta] = -r (cos
+//   v (du^2 + dv^2) R + 2 sin v du dv R' + sin v dv^2 a), R' = dR/du: with
+//   R, R', a a rotation of e1, e2, a, |D^2 S| <= r f hypot(C (du^2 + dv^2),
+//   2 S du dv, S dv^2), C, S the largest |cos v|, |sin v| over the edge's
+//   latitudes and f as below (the per-entry bounds, |S_uu| du^2 + 2 |S_uv|
+//   du dv + |S_vv| dv^2, were up to 1.5 times larger and split edges V3
+//   certified on the unit sphere at h 0.2).
+// - B <= |D^2 S_xy[d, d]| |c_b - c_a|^2 / 8 along the pole-chart segment,
+//   d its unit direction (the same remainder for a straight segment). With
+//   p = (x, y), rho = |p|, g = sin rho / rho = int_0^1 cos(rho t) dt,
+//   S_xy = o + r (g(rho) (x e1 + y e2) + sigma cos rho a), so per unit d
+//   with c = (p / rho) . d (the cosine to the radial direction), s^2 = 1 -
+//   c^2 and t the unit normal to p:
+//     D^2 (g p)[d, d] = (rho g'' c^2 + g' (1 + c^2)) p / rho + 2 g' c s t,
+//     D^2 cos rho [d, d] = -(cos rho c^2 + g s^2).
+//   g' = -int_0^1 t sin(rho t) dt <= 0 and g'' = -int_0^1 t^2 cos(rho t)
+//   dt; for rho <= 2 (< 2.08, the first zero of g'') g'' <= 0 and g''' =
+//   int_0^1 t^3 sin(rho t) dt >= 0, so |g'| grows with rho (its derivative
+//   is -g'' >= 0) and |g''| falls: over the segment |g'| <= |g'(rho1)|,
+//   |g''| <= |g''(rho0)|, rho0 and rho1 the least and largest colatitude
+//   on it (rho1 an endpoint's, the disk being convex; rho0 the distance
+//   from the pole to the segment). For any rho, |g'| <= rho / 3 and |g''|
+//   <= 1 / 3 instead. The radial term is then at most rho1 G2 c^2 + G1 (1
+//   + c^2) and the normal one 2 G1 c s, with c^2 at most its largest on
+//   the segment (an endpoint's: along a line p0 + t d, p0 . d = 0, c = t /
+//   |p0 + t d| is monotone in |t|) and c s at most 1/2. The second term is
+//   at most max(|cos rho|, g) over [rho0, rho1]: |cos| at an end of it, g
+//   (decreasing up to 4.49) at rho0. The two parts are the e1, e2 and a
+//   coordinates of one vector (X, Y, Z), so |D^2 S_xy[d, d]| <= r f |(X, Y,
+//   Z)| <= r f hypot(the first, the second), f^2 the largest eigenvalue of
+//   the Gram matrix of e1, e2, a (SphereChart::frame; 1 for an orthonormal
+//   frame, where the triangle inequality r (e |the first| + |a| |the
+//   second|) was up to 41 % larger and split edges V3 certified). Azimuthal
+//   edges (c near 0) get about a third of the bound by the largest
+//   direction, r (e rho + |a|).
+// - V3 bounds |D^2 S_xy[Delta, Delta]| by (|S_xx| + 2 |S_xy| + |S_yy|) W^2
+//   per component over the disk of the largest colatitude; each entry is
+//   at most K = r (e rho + |a|) (c = 1 above; S_xy by polarization), so
+//   that term is at most 4 K W^2 / 8, with W <= sup |(P o gamma)''| / 8 =
+//   sqrt(rho^2 du^4 + 4 dv^2 du^2) / 8 (V3's own expression; the endpoint
+//   mismatch is zero in exact arithmetic).
+double pole_seam_cap(const SphereChart& chart, double sigma, const double* p, const double* q) {
+  const double du = std::abs(q[0] - p[0]), dv = std::abs(q[1] - p[1]);
+  double cosine = 0.0, sine = 0.0;
+  trig_maxima(p[1], q[1], cosine, sine);
+  const double a = chart.radius * chart.frame *
+                   std::hypot(cosine * (du * du + dv * dv), 2.0 * sine * du * dv, sine * dv * dv) /
+                   8.0;
+  const double half_pi = 0.5 * std::numbers::pi;
+  const double rp = half_pi - sigma * p[1], rq = half_pi - sigma * q[1];
+  const double rho = std::max(rp, rq);
+  const double cp[2] = {rp * std::cos(p[0]), rp * std::sin(p[0])};
+  const double cq[2] = {rq * std::cos(q[0]), rq * std::sin(q[0])};
+  const double delta[2] = {cq[0] - cp[0], cq[1] - cp[1]};
+  const double length2 = delta[0] * delta[0] + delta[1] * delta[1];
+  // The least colatitude on the segment: the pole's distance to it.
+  const double t = std::clamp(-(cp[0] * delta[0] + cp[1] * delta[1]) / length2, 0.0, 1.0);
+  const double rho0 = std::hypot(cp[0] + t * delta[0], cp[1] + t * delta[1]);
+  // The largest squared cosine to the radial direction, at an endpoint (1
+  // at the pole).
+  double cosine2 = 0.0;
+  for (const auto& [c, r] : {std::pair{cp, rp}, std::pair{cq, rq}}) {
+    const double along = c[0] * delta[0] + c[1] * delta[1];
+    cosine2 = r > 0.0 ? std::max(cosine2, along * along / (r * r * length2)) : 1.0;
+  }
+  cosine2 = std::min(cosine2, 1.0);
+  double g1 = rho / 3.0, g2 = 1.0 / 3.0;
+  if (rho <= 2.0) {
+    g1 = std::abs(rho * std::cos(rho) - std::sin(rho)) / (rho * rho);
+    // g'' by its series below 1/8 (the closed form cancels there).
+    const double r2 = rho0 * rho0;
+    g2 = rho0 < 0.125 ? 1.0 / 3.0 - r2 / 10.0 + r2 * r2 / 168.0
+                      : std::abs(-std::sin(rho0) / rho0 - 2.0 * std::cos(rho0) / r2 +
+                                 2.0 * std::sin(rho0) / (r2 * rho0));
+  }
+  const double radial = rho * g2 * cosine2 + g1 * (1.0 + cosine2);
+  // c s over c^2 in [0, cosine2]: largest at c^2 = min(cosine2, 1/2).
+  const double normal =
+      2.0 * g1 * (cosine2 < 0.5 ? std::sqrt(cosine2 * (1.0 - cosine2)) : 0.5);
+  const double axial = std::max({std::abs(std::cos(rho0)), std::abs(std::cos(rho)),
+                                 rho0 > 0.0 ? std::sin(rho0) / rho0 : 1.0});
+  const double directional = chart.radius * chart.frame * std::hypot(radial, normal, axial);
+  const double b = directional * length2 / 8.0;
+  const double k = chart.radius * (chart.equator * rho + chart.pole);
+  const double w = std::sqrt(rho * rho * du * du * du * du + 4.0 * dv * dv * du * du) / 8.0;
+  return std::max(a, b) + 4.0 * k * w * w / 8.0;
+}
+
+// An upper bound of pole_seam_cap without transcendental functions: C, S <=
+// 1 in A; |c_b - c_a|^2 = (rho_a - rho_b)^2 + 2 rho_a rho_b (1 - cos du) <=
+// (rho_a - rho_b)^2 + rho_a rho_b du^2, |g'| <= rho / 3, |g''| <= 1 / 3,
+// c^2 <= 1 and the second term <= 1 in B (radial <= rho, normal <= rho /
+// 3); the W term as there. Edges it clears skip the exact evaluation.
+double pole_seam_cap_coarse(const SphereChart& chart, double sigma, const double* p,
+                            const double* q) {
+  const double du = std::abs(q[0] - p[0]), dv = std::abs(q[1] - p[1]);
+  const double scale = chart.radius * chart.frame;
+  const double a = scale * std::hypot(du * du + dv * dv, 2.0 * du * dv, dv * dv) / 8.0;
+  const double half_pi = 0.5 * std::numbers::pi;
+  const double rp = half_pi - sigma * p[1], rq = half_pi - sigma * q[1];
+  const double rho = std::max(rp, rq);
+  const double length2 = (rp - rq) * (rp - rq) + rp * rq * du * du;
+  const double b = scale * std::sqrt(rho * rho * (10.0 / 9.0) + 1.0) * length2 / 8.0;
+  const double k = chart.radius * (chart.equator * rho + chart.pole);
+  const double w = std::sqrt(rho * rho * du * du * du * du + 4.0 * dv * dv * du * du) / 8.0;
+  return std::max(a, b) + 4.0 * k * w * w / 8.0;
+}
+
+// A row of a V3 pole region (a corner at sigma v >= kCapLatitude, the exact
+// binary64 predicate V3 applies): k + 1 for its region-boundary edge (both
+// corners below the cap) from corner k with the largest seam cap over
+// `budget`, 0 when none exceeds it (chart points a, b, c).
+int32_t pole_boundary_edge(const FaceMetric& metric, const double a[2], const double b[2],
+                           const double c[2], double budget) {
+  const double uv[3][2] = {{a[0] / metric.scale_u, a[1] / metric.scale_v},
+                           {b[0] / metric.scale_u, b[1] / metric.scale_v},
+                           {c[0] / metric.scale_u, c[1] / metric.scale_v}};
+  double worst = budget;
+  int32_t edge = 0;
+  for (const double sigma : metric.cap_sigmas) {
+    bool in_cap[3], region = false;
+    for (int k = 0; k < 3; ++k) {
+      in_cap[k] = sigma * uv[k][1] >= cad::pole::kCapLatitude;
+      region = region || in_cap[k];
+    }
+    if (!region) continue;
+    for (int k = 0; k < 3; ++k) {
+      const int j = (k + 1) % 3;
+      if (in_cap[k] || in_cap[j]) continue;
+      if (pole_seam_cap_coarse(metric.cap_chart, sigma, uv[k], uv[j]) <= worst) continue;
+      const double cap = pole_seam_cap(metric.cap_chart, sigma, uv[k], uv[j]);
+      if (cap > worst) {
+        worst = cap;
+        edge = k + 1;
+      }
+    }
+  }
+  return edge;
+}
+
+// The kernel's edge test (CadRefine2DInput::edge_split): the edge over
+// theta tol, the face stage's design budget; only those edges are split,
+// not the rows (measured with whole-row refinement: +3.0-3.6 % triangles,
+// cases UNRESOLVED). Kernel edges carry no trim lens.
+int32_t pole_boundary_split(void* opaque, const double a[2], const double b[2],
+                            const double c[2]) {
+  const auto& metric = *static_cast<FaceMetric*>(opaque);
+  return pole_boundary_edge(metric, a, b, c, metric.theta * metric.tolerance);
+}
+
+// The cells among `cells` with a region-boundary edge over tol, V3's own
+// limit, which the moves after the kernel keep (held to theta tol, 7.5 % of
+// the guarded moves on a cap below 50 deg, h/r 0.6, theta 0.9, were refused
+// and its smoothing took 1.2 times as long).
+int32_t pole_boundary_overruns(const FaceMetric& metric, const SurfaceTriangulation& surface,
+                               const std::vector<int32_t>& cells) {
+  int32_t overruns = 0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    overruns += pole_boundary_edge(metric, surface.chart(t[0]), surface.chart(t[1]),
+                                   surface.chart(t[2]), metric.tolerance) != 0;
+  }
+  return overruns;
 }
 
 bool in_trim(const FaceBoundary& boundary, std::size_t outer,
@@ -1614,6 +1810,9 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       std::cos((min_angle_degrees + 60.0) * 3.14159265358979323846 / 360.0);
   // The visited vertex's chart at the visit's start.
   std::array<double, 2> visit_start{};
+  // The visited star's pole_boundary_overruns at the visit's start (-1: not
+  // computed yet).
+  int32_t star_overruns = -1;
   // The size guard for v at its current chart: false when the star's radius
   // exceeds both the kernel's bound and the star's radius at the visit start.
   // `previous_radius` (that start radius) < 0 is computed on first need;
@@ -1675,6 +1874,19 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
       if (failures > before) return reject();
     }
+    // Nor may more star cells have a pole-region boundary edge over tol
+    // (pole_boundary_overruns) than at the visit's start: moves after the
+    // kernel's splits made new ones (measured: a cap below 55.8 deg, h/r
+    // 0.53, theta 0.9, two rows V3 refused).
+    if (metric.pole_guard) {
+      const int32_t overruns = pole_boundary_overruns(metric, surface, incident[v]);
+      if (overruns > 0 && star_overruns < 0) {
+        std::copy(visit_start.begin(), visit_start.end(), surface.charts.begin() + 2 * v);
+        star_overruns = pole_boundary_overruns(metric, surface, incident[v]);
+        std::copy_n(chart, 2, surface.charts.begin() + 2 * v);
+      }
+      if (overruns > 0 && overruns > star_overruns) return reject();
+    }
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
   };
@@ -1698,6 +1910,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
       if (vertices[v].dimension != 2 || fixed[v] || incident[v].empty() || !active[v]) continue;
       const std::array<double, 2> start{surface.charts[2 * v], surface.charts[2 * v + 1]};
       visit_start = start;
+      star_overruns = -1;
       [&] {
       neighbors.clear();
       for (const int32_t cell : incident[v])
@@ -1927,16 +2140,6 @@ bool sphere_frame(const cad::CadGeometry& geometry, int32_t index, double e1[3],
   return true;
 }
 
-// max |cos v| and max |sin v| over v between v0 and v1.
-void trig_maxima(double v0, double v1, double& cosine, double& sine) {
-  const double lo = std::min(v0, v1), hi = std::max(v0, v1);
-  const double pi = std::numbers::pi;
-  cosine = std::max(std::abs(std::cos(lo)), std::abs(std::cos(hi)));
-  sine = std::max(std::abs(std::sin(lo)), std::abs(std::sin(hi)));
-  if (std::ceil(lo / pi) * pi <= hi) cosine = 1.0;
-  if (std::ceil((lo - 0.5 * pi) / pi) * pi + 0.5 * pi <= hi) sine = 1.0;
-}
-
 }  // namespace
 
 bool sphere_chart(const cad::CadGeometry& geometry, int32_t face, SphereChart& chart) {
@@ -1949,8 +2152,11 @@ bool sphere_chart(const cad::CadGeometry& geometry, int32_t face, SphereChart& c
   chart.radius = std::abs(radius);
   chart.equator = std::sqrt(0.5 * (g11 + g22) + std::hypot(0.5 * (g11 - g22), g12));
   chart.pole = std::sqrt(dot(a, a));
+  const double g13 = std::abs(dot(e1, a)), g23 = std::abs(dot(e2, a));
+  chart.frame = std::sqrt(std::max({g11 + std::abs(g12) + g13, std::abs(g12) + g22 + g23,
+                                    g13 + g23 + dot(a, a)}));
   return std::isfinite(chart.radius) && std::isfinite(chart.equator) &&
-         std::isfinite(chart.pole) && chart.radius > 0.0;
+         std::isfinite(chart.pole) && std::isfinite(chart.frame) && chart.radius > 0.0;
 }
 
 void sphere_chart_hessian(const SphereChart& chart, double v0, double v1, double bound[3]) {
@@ -2149,6 +2355,22 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.admit_context = &metric;
   input.fixed_region = in_fixed_zone;
   input.fixed_region_context = &metric;
+  // V3's pole regions (pole_boundary_split): a sphere chart face whose
+  // chords span a whole turn on u, one per pole.
+  if (!boundary.poles.empty() && sphere_chart(geometry, face, metric.cap_chart)) {
+    double low = boundary.vertices.front().uv[0], high = low;
+    for (const CadFaceVertex& vertex : boundary.vertices) {
+      low = std::min(low, vertex.uv[0]);
+      high = std::max(high, vertex.uv[0]);
+    }
+    int64_t turns = 0;
+    const double period = geometry.model().surface_periods[2 * face];
+    if (period > 0.0 && exact_turn(low, high, period, turns) == 1 && turns == 1)
+      for (const PoleBoundary& pole : boundary.poles)
+        metric.cap_sigmas.push_back(boundary.vertices[pole.first_vertex].uv[1] > 0.0 ? 1.0
+                                                                                     : -1.0);
+  }
+  input.edge_split_context = &metric;
   input.surface_position = face_position;
   input.surface_context = &metric;
   // The stored size guarantee: R <= h/sqrt(2) on the emitted triangle up to
@@ -2157,62 +2379,88 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   // lifts it past this).
   input.stored_size = size;
   CadRefine2DResult refined;
-  status = cad_refine2d(input, refined);
-  if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
-
-  auto& tri = refined.triangulation;
   SurfaceTriangulation surface;
-  surface.charts = tri.coordinates;
-  surface.points.resize(3 * static_cast<std::size_t>(tri.vertex_count()));
-  surface.normals.resize(3 * static_cast<std::size_t>(tri.vertex_count()), 0.0);
-  std::vector<CadFaceVertex> vertices(static_cast<std::size_t>(tri.vertex_count()));
-  std::vector<uint8_t> mapped_fixed(static_cast<std::size_t>(tri.vertex_count()), 0);
-  for (std::size_t i = 0; i < fixed.size(); ++i) {
-    const int32_t mapped = refined.vertex_map[i];
-    if (mapped < 0 || mapped >= tri.vertex_count()) return PHX_MC_INVALID_INPUT;
-    mapped_fixed[mapped] |= fixed[i];
-  }
-  for (int32_t i = 0; i < tri.vertex_count(); ++i) {
-    const double* p = tri.point(i);
-    vertices[i] = {{p[0] / metric.scale_u, p[1] / metric.scale_v}, 2, face, -1};
-    if (!face_position(&metric, p, surface.points.data() + 3 * i)) return PHX_MC_INVALID_INPUT;
-  }
-  for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
-    const int32_t mapped = refined.vertex_map[i];
-    if (mapped < 0 || mapped >= tri.vertex_count() || vertices[mapped].dimension != 2)
-      return PHX_MC_INVALID_INPUT;
-    // The hook's classified lookup is keyed by the input chart point.
-    const double* p = tri.point(mapped);
-    if (p[0] != points[2 * i] || p[1] != points[2 * i + 1]) return PHX_MC_INTERNAL_ERROR;
-    vertices[mapped] = boundary.vertices[i];
-  }
-  for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
-    if (!tri.live[t] || !tri.region[t] || tri.is_ghost(static_cast<int32_t>(t))) continue;
-    const auto& cell = tri.triangles[t];
-    surface.cells.push_back({cell.v[0], cell.v[1], cell.v[2]});
-    surface.constrained.push_back({static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 0) != -1),
-                                   static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 1) != -1),
-                                   static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 2) != -1)});
-  }
-  const int32_t prepare_status = surface.prepare();
-  if (prepare_status != PHX_MC_OK) return prepare_status;
-  // Where the fidelity tensor binds, the flips judge Delaunay in the face
-  // metric (vertex tensors averaged by the sweep), so they keep the metric
-  // shape the kernel built instead of undoing it in 3D (measured: plain 3D
-  // flips left interior triangles past the theta * tol sag bound).
-  {
-    std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
-    bool binding = false;
-    const double isotropic = 1.0 / (metric.size * metric.size);
-    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
-      double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
-      for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
-      binding |= vertex_metric(metric, tri.point(i), tensor);
+  std::vector<CadFaceVertex> vertices;
+  std::vector<uint8_t> mapped_fixed;
+  // The kernel, the face-metric flips and the moves; with `split`, the
+  // kernel's pole-boundary splits and the moves' guard (pole_guard).
+  const auto build = [&](bool split) -> int32_t {
+    input.edge_split = split ? pole_boundary_split : nullptr;
+    metric.pole_guard = split;
+    refined = CadRefine2DResult{};
+    const int32_t refined_status = cad_refine2d(input, refined);
+    if (refined_status != PHX_MC_OK && refined_status != PHX_MC_UNRESOLVED) return refined_status;
+    const auto& tri = refined.triangulation;
+    surface = SurfaceTriangulation{};
+    surface.charts = tri.coordinates;
+    surface.points.resize(3 * static_cast<std::size_t>(tri.vertex_count()));
+    surface.normals.resize(3 * static_cast<std::size_t>(tri.vertex_count()), 0.0);
+    vertices.assign(static_cast<std::size_t>(tri.vertex_count()), CadFaceVertex{});
+    mapped_fixed.assign(static_cast<std::size_t>(tri.vertex_count()), 0);
+    for (std::size_t i = 0; i < fixed.size(); ++i) {
+      const int32_t mapped = refined.vertex_map[i];
+      if (mapped < 0 || mapped >= tri.vertex_count()) return PHX_MC_INVALID_INPUT;
+      mapped_fixed[mapped] |= fixed[i];
     }
-    if (binding) surface.metrics = std::move(tensors);
+    for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+      const double* p = tri.point(i);
+      vertices[i] = {{p[0] / metric.scale_u, p[1] / metric.scale_v}, 2, face, -1};
+      if (!face_position(&metric, p, surface.points.data() + 3 * i)) return PHX_MC_INVALID_INPUT;
+    }
+    for (std::size_t i = 0; i < boundary.vertices.size(); ++i) {
+      const int32_t mapped = refined.vertex_map[i];
+      if (mapped < 0 || mapped >= tri.vertex_count() || vertices[mapped].dimension != 2)
+        return PHX_MC_INVALID_INPUT;
+      // The hook's classified lookup is keyed by the input chart point.
+      const double* p = tri.point(mapped);
+      if (p[0] != points[2 * i] || p[1] != points[2 * i + 1]) return PHX_MC_INTERNAL_ERROR;
+      vertices[mapped] = boundary.vertices[i];
+    }
+    for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
+      if (!tri.live[t] || !tri.region[t] || tri.is_ghost(static_cast<int32_t>(t))) continue;
+      const auto& cell = tri.triangles[t];
+      surface.cells.push_back({cell.v[0], cell.v[1], cell.v[2]});
+      surface.constrained.push_back({static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 0) != -1),
+                                     static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 1) != -1),
+                                     static_cast<int8_t>(tri.constraint(static_cast<int32_t>(t), 2) != -1)});
+    }
+    const int32_t prepare_status = surface.prepare();
+    if (prepare_status != PHX_MC_OK) return prepare_status;
+    // Where the fidelity tensor binds, the flips judge Delaunay in the face
+    // metric (vertex tensors averaged by the sweep), so they keep the metric
+    // shape the kernel built instead of undoing it in 3D (measured: plain 3D
+    // flips left interior triangles past the theta * tol sag bound).
+    {
+      std::vector<double> tensors(9 * static_cast<std::size_t>(tri.vertex_count()));
+      bool binding = false;
+      const double isotropic = 1.0 / (metric.size * metric.size);
+      for (int32_t i = 0; i < tri.vertex_count(); ++i) {
+        double* tensor = tensors.data() + 9 * static_cast<std::size_t>(i);
+        for (int k = 0; k < 9; ++k) tensor[k] = k % 4 == 0 ? isotropic : 0.0;
+        binding |= vertex_metric(metric, tri.point(i), tensor);
+      }
+      if (binding) surface.metrics = std::move(tensors);
+    }
+    surface.sweep();
+    smooth(metric, mapped_fixed, input.min_angle_degrees, vertices, surface);
+    return refined_status;
+  };
+  status = build(false);
+  if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+  // A mesh with a pole-region boundary edge over tol (V3 would charge its
+  // rows that seam cap) is built again with the splits: the kernel's mesh
+  // before the flips and moves has edges over the budget that they remove
+  // (measured: the unit sphere at h 0.2, theta 1; splitting them changed
+  // meshes V3 certified), so only the final mesh decides.
+  if (!metric.cap_sigmas.empty()) {
+    std::vector<int32_t> cells(surface.cells.size());
+    std::iota(cells.begin(), cells.end(), 0);
+    if (pole_boundary_overruns(metric, surface, cells) > 0) {
+      status = build(true);
+      if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
+    }
   }
-  surface.sweep();
-  smooth(metric, mapped_fixed, input.min_angle_degrees, vertices, surface);
+  auto& tri = refined.triangulation;
   result.slivers.clear();
   result.triangles.clear();
   std::vector<std::pair<int32_t, int32_t>> pole_edges;

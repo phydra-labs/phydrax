@@ -2517,7 +2517,7 @@ struct PoleRegion {
   std::vector<std::array<double, 6>> corners;  // pole-chart corners per row
 };
 
-constexpr double kCapLatitude = 0x1.3f004dc9db074p-1;
+using pole::kCapLatitude;
 
 // The regions of every eligible pole; row_region[i] is the index of the
 // region holding row i, or -1.

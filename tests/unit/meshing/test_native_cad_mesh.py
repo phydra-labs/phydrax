@@ -769,6 +769,76 @@ def test_polar_trim_zone_rows_meet_the_chart_linear_bound(
     assert bound.max() <= theta * tolerance, bound.max() / (theta * tolerance)
 
 
+@pytest.mark.parametrize(
+    ("latitude", "size", "theta"),
+    (
+        (55.77753523254207, 0.5324148676759605, 0.8955251222934396),
+        (60.80933008398488, 0.7473363451869702, 0.7660372624808137),
+    ),
+)
+def test_pole_region_boundary_rows_certify(
+    latitude: float, size: float, theta: float
+) -> None:
+    # V3 certifies a pole's rows in the pole chart when a corner lies at
+    # |latitude| >= kCapLatitude (35.7 deg), the rest of the face in the
+    # (longitude, latitude) chart; an edge between the two sets is charged its
+    # seam lens on both rows. A face whose mesh has such a region-boundary
+    # edge over tol (pole_boundary_overruns) is meshed again with the kernel
+    # splitting those over theta tol (pole_boundary_split) and the moves after
+    # it kept within tol, so both rows of every such pair certify. Fault
+    # caught (random coarse caps below a polar trim, which resolved): without
+    # the splits V3 refused 2 and 6 rows beside the south pole's region.
+    model_domain = MeshingDomain.from_brep(_unit_cap(latitude, above=False))
+    bundle = cad_geometry_bundle(model_domain)
+    model = bundle.model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    tolerance = size / 6.0
+    result = cad_mesh(
+        model,
+        np.full((faces,), size, dtype=np.float64),
+        np.full((faces,), tolerance, dtype=np.float64),
+        np.full((curves,), tolerance, dtype=np.float64),
+        tolerance_fraction=theta,
+    )
+    assert result.status is MeshcoreStatus.OK
+    chart = result.chart
+    lower, upper = coefficient_bounds(bundle, model_domain)
+    verdict = verify_cad_fidelity(
+        model,
+        lower,
+        upper,
+        CadFidelityMesh(
+            result.points,
+            chart.triangles,
+            chart.patches,
+            chart.uv,
+            result.triangles.astype(np.int64),
+            chart.chart_to_mesh,
+            chart.edge_chord,
+        ),
+        CadFidelityChords(
+            chart.use_patch,
+            chart.use_range,
+            len(model.loop_surfaces),
+            chart.chord_use,
+            chart.chord_loop,
+            chart.chord_uv,
+            chart.chord_range,
+        ),
+        float(tolerance),
+        8,
+    )
+    uv = np.asarray(chart.uv)
+    corners = result.points[np.asarray(chart.triangles)]
+    dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+    cap = np.radians(35.7)
+    region = dome & (uv[:, :, 1] <= -cap).any(axis=1)
+    boundary = dome & ~region & (uv[:, :, 1] < 0.0).any(axis=1)
+    assert region.any() and boundary.any()
+    assert np.all(np.asarray(verdict.item_status)[region | boundary] == MeshcoreStatus.OK)
+    assert verdict.status == MeshcoreStatus.OK
+
+
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
 
