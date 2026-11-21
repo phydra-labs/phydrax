@@ -459,7 +459,31 @@ def _convex_planar_face_union(
         )
         if dot(turn, normal) < 0:
             return False
+    # Every turn is forward; the fan from one corner then has no backward
+    # triangle exactly when the boundary winds once (a star loop does not).
+    origin_point = points[loop[0]]
+    for current, following in zip(loop[1:-1], loop[2:], strict=True):
+        fan = cross(
+            difference(points[current], origin_point),
+            difference(points[following], origin_point),
+        )
+        if dot(fan, normal) < 0:
+            return False
     return True
+
+
+def _off_hull_plane(
+    points: tuple[tuple[ExactScalar, ...], ...],
+    vertices: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> bool:
+    """Whether some spatial point lies off the plane of coplanar ``vertices``."""
+    if any(len(point) != 3 for point in (*points, *vertices)):
+        return False
+    spatial = tuple(_point3(vertex) for vertex in vertices)
+    if _noncoplanar(spatial):
+        return False
+    return any(_noncoplanar((*spatial, _point3(point))) for point in points)
 
 
 def _shared_edge_chain(
@@ -547,6 +571,11 @@ class _DeclaredStratum:
         undecided = self._undecided
         for hull in self._hulls:
             try:
+                if len(hull) > 2 and _off_hull_plane(
+                    points, tuple(self._points_by_id[vertex] for vertex in hull)
+                ):
+                    # A coplanar convex face holds no point off its plane.
+                    continue
                 if all(
                     _point_in_declared_stratum(point, hull, self._points_by_id)
                     for point in points

@@ -3,7 +3,10 @@ from __future__ import annotations
 from fractions import Fraction
 
 from phydrax.geometry._embedding_cells import EmbeddingCell
-from phydrax.geometry._global_embedding import _contact_is_declared
+from phydrax.geometry._global_embedding import (
+    _contact_is_declared,
+    _convex_planar_face_union,
+)
 
 
 type _Point = tuple[Fraction, Fraction, Fraction]
@@ -94,17 +97,55 @@ def test_nonadjacent_shared_faces_are_not_a_declared_union() -> None:
         {**first_face, **second_face},
         ((1, 2, 3), (7, 8, 9), (1, 7, 2), (2, 8, 3), (3, 9, 1)),
     )
+    # Distinct side faces: only the two triangles and their edges are shared.
     second = _polyhedron(
         21,
         {**first_face, **second_face},
-        ((1, 3, 2), (7, 9, 8), (1, 2, 7), (2, 3, 8), (3, 1, 9)),
+        ((1, 3, 2), (7, 9, 8), (1, 8, 2), (2, 9, 3), (3, 7, 1)),
     )
-    # Off every shared vertex, edge and face (edge 1-7 is shared by both).
+    # Off every shared vertex, edge and face.
     contact = ((Fraction(1, 4), Fraction(1, 4), Fraction(1)),)
     assert (
         _contact_is_declared(first, second, contact, first.vertex_ids, second.vertex_ids)
-        is not True
+        is False
     )
+
+
+def test_off_plane_contact_against_a_convex_shared_face_is_refused() -> None:
+    lower = _polyhedron(
+        90,
+        {**_INTERFACE, **_BOTTOM_APEX},
+        ((1, 2, 3, 4), (5, 2, 1), (5, 3, 2), (5, 4, 3), (5, 1, 4)),
+    )
+    upper = _polyhedron(
+        91,
+        {**_INTERFACE, **_TOP_APEX},
+        ((1, 4, 3, 2), (6, 1, 2), (6, 2, 3), (6, 3, 4), (6, 4, 1)),
+    )
+    off_plane = ((Fraction(1, 2), Fraction(1, 2), Fraction(3, 2)),)
+    assert (
+        _contact_is_declared(lower, upper, off_plane, lower.vertex_ids, upper.vertex_ids)
+        is False
+    )
+    inside = ((Fraction(1, 2), Fraction(1, 2), Fraction(1)),)
+    assert (
+        _contact_is_declared(lower, upper, inside, lower.vertex_ids, upper.vertex_ids)
+        is True
+    )
+
+
+def test_star_loop_is_not_a_convex_face_union() -> None:
+    # A pentagram turns forward at every corner but winds twice.
+    star = {
+        1: _point(0, 4, 0),
+        2: (Fraction(-24, 10), Fraction(-32, 10), Fraction(0)),
+        3: (Fraction(38, 10), Fraction(12, 10), Fraction(0)),
+        4: (Fraction(-38, 10), Fraction(12, 10), Fraction(0)),
+        5: (Fraction(24, 10), Fraction(-32, 10), Fraction(0)),
+    }
+    assert _convex_planar_face_union(((1, 2, 3, 4, 5),), star) is False
+    pentagon = {1: star[1], 2: star[4], 3: star[2], 4: star[5], 5: star[3]}
+    assert _convex_planar_face_union(((1, 2, 3, 4, 5),), pentagon) is True
 
 
 def test_extra_shared_vertex_declares_only_single_shared_strata() -> None:
