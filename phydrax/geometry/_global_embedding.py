@@ -713,17 +713,16 @@ def _contact_is_declared(
 
 def _common_corner_keys(
     first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
-) -> list[int]:
-    """Row-major per piece pair, an integer naming its set of common corner ids.
+) -> list[tuple[int, ...]]:
+    """Row-major per piece pair, its sorted common corner ids (``-1`` padded).
 
-    Equal integers name equal sets; corners are interned point identities.
+    Equal keys name equal sets; corners are interned point identities.
     """
     left = np.asarray(first, dtype=np.int64)
     right = np.asarray(second, dtype=np.int64)
     member = np.any(left[:, None, :, None] == right[None, :, None, :], axis=3)
     common = np.sort(np.where(member, left[:, None, :], -1), axis=2)
-    _, keys = np.unique(common.reshape((-1, left.shape[1])), axis=0, return_inverse=True)
-    return keys.reshape(-1).tolist()
+    return list(map(tuple, common.reshape((-1, left.shape[1])).tolist()))
 
 
 class _PairStratum:
@@ -7197,7 +7196,7 @@ def _nonperiodic_contacts(
             if first_pieces is None or second_pieces is None:
                 continue
             certified_pieces = piece_certificates.get((first_index, second_index))
-            declared_common: dict[int, bool] = {}
+            declared_common: dict[tuple[int, ...], bool] = {}
             first_ids = corner_ids(first_pieces) if certified_pieces is not None else ()
             second_ids = corner_ids(second_pieces) if certified_pieces is not None else ()
             certified_flags, common_keys = (
