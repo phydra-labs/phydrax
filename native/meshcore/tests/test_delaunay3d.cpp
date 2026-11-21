@@ -56,13 +56,15 @@ struct Result {
 
 // Runs the triangulation and checks the mesh handle contract (dimension, points
 // copied unchanged, NULL handle on failure).
-Result run(const std::vector<double>& points, const std::vector<double>* weights) {
+Result run(const std::vector<double>& points, const std::vector<double>* weights,
+           int32_t parallelism = 1) {
   phx_mc_mesh* mesh = nullptr;
   const int64_t count = static_cast<int64_t>(points.size() / 3);
   Result result;
   result.status = weights == nullptr
-                      ? phx_mc_delaunay_3d(count, points.data(), &mesh)
-                      : phx_mc_regular_3d(count, points.data(), weights->data(), &mesh);
+                      ? phx_mc_delaunay_3d(count, points.data(), &mesh, parallelism)
+                      : phx_mc_regular_3d(count, points.data(), weights->data(), &mesh,
+                                          parallelism);
   if (result.status != PHX_MC_OK) {
     PHX_CHECK(mesh == nullptr);
     return result;
@@ -432,7 +434,7 @@ void test_degenerate_inputs() {
   }
   PHX_CHECK(run(same, nullptr).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(phx_mc_delaunay_3d(0, nullptr, &mesh) == PHX_MC_DEGENERATE_INPUT);
+  PHX_CHECK(phx_mc_delaunay_3d(0, nullptr, &mesh, 1) == PHX_MC_DEGENERATE_INPUT);
   PHX_CHECK(mesh == nullptr);
   std::vector<double> weights(plane.size() / 3, 0.0);
   PHX_CHECK(run(plane, &weights).status == PHX_MC_DEGENERATE_INPUT);
@@ -618,13 +620,13 @@ void test_status_codes() {
   const std::vector<double> points = random_points(10, 1);
   const std::vector<double> weights(10, 0.0);
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(phx_mc_delaunay_3d(10, points.data(), nullptr) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_3d(10, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(10, points.data(), nullptr, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(10, nullptr, &mesh, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
-  PHX_CHECK(phx_mc_delaunay_3d(-1, points.data(), &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_3d(int64_t{1} << 31, points.data(), &mesh) ==
+  PHX_CHECK(phx_mc_delaunay_3d(-1, points.data(), &mesh, 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_3d(int64_t{1} << 31, points.data(), &mesh, 1) ==
             PHX_MC_INDEX_RANGE_ERROR);
-  PHX_CHECK(phx_mc_regular_3d(10, points.data(), nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_regular_3d(10, points.data(), nullptr, &mesh, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
 
   std::vector<double> bad(points);
@@ -866,8 +868,9 @@ void test_triangulate_options() {
                      : phx_mc_regular_2d(count, random.data(), weight_data, &reference_mesh);
       } else {
         status = weighting == nullptr
-                     ? phx_mc_delaunay_3d(count, random.data(), &reference_mesh)
-                     : phx_mc_regular_3d(count, random.data(), weight_data, &reference_mesh);
+                     ? phx_mc_delaunay_3d(count, random.data(), &reference_mesh, 1)
+                     : phx_mc_regular_3d(count, random.data(), weight_data, &reference_mesh,
+                                         1);
       }
       PHX_CHECK(status == PHX_MC_OK);
       const int64_t reference_count = phx_mc_mesh_cell_count(reference_mesh);
@@ -912,6 +915,66 @@ void test_triangulate_options() {
             PHX_MC_INVALID_ARGUMENT);
 }
 
+// Rounds of conflict-free cavities give the sequential triangulation. Its
+// uniqueness on degenerate inputs rests on the symbolic perturbation ordered
+// by each vertex's input index, which rounds never renumber: a 30^3 integer
+// lattice (cospherical and coplanar everywhere, with a duplicate), the
+// integer points of the concentric spheres of squared radius 2000..2100
+// (each sphere exactly cospherical), points on three planes, random points,
+// and weighted random and lattice points (equal weights: every lattice cell
+// degenerate) give the same canonical cells and vertex map at every
+// parallelism and on repeated runs. Every set exceeds the sequential prefix
+// of the rounds.
+void test_parallelism() {
+  std::uint64_t state = 11;
+  std::vector<double> random;
+  for (int i = 0; i < 3 * 40000; ++i) random.push_back(uniform(state));
+  std::vector<double> lattice;
+  for (int i = 0; i < 30; ++i)
+    for (int j = 0; j < 30; ++j)
+      for (int k = 0; k < 30; ++k) lattice.insert(lattice.end(), {1.0 * i, 1.0 * j, 1.0 * k});
+  lattice.insert(lattice.end(), {3.0, 4.0, 5.0});
+  std::vector<double> sphere{0.0, 0.0, 0.0};
+  for (int i = -46; i <= 46; ++i)
+    for (int j = -46; j <= 46; ++j)
+      for (int k = -46; k <= 46; ++k) {
+        const int squared = i * i + j * j + k * k;
+        if (squared >= 2000 && squared <= 2100) {
+          sphere.insert(sphere.end(), {1.0 * i, 1.0 * j, 1.0 * k});
+        }
+      }
+  std::vector<double> planes;
+  for (int plane = 0; plane < 3; ++plane)
+    for (int i = 0; i < 100; ++i)
+      for (int j = 0; j < 100; ++j) {
+        const double u = 0.25 * i, v = 0.25 * j;
+        if (plane == 0) planes.insert(planes.end(), {u, v, 0.0});
+        if (plane == 1) planes.insert(planes.end(), {u, v, 5.0});
+        if (plane == 2) planes.insert(planes.end(), {u, 12.5, 0.05 * j});
+      }
+  std::vector<double> weights(random.size() / 3);
+  for (double& weight : weights) weight = 1e-4 * uniform(state);
+  const std::vector<double> equal(lattice.size() / 3, 0.25);
+  PHX_CHECK(sphere.size() / 3 > 20000 && planes.size() / 3 == 30000);
+  for (const auto& [points, weighting] :
+       {std::pair{&random, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&lattice, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&sphere, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&planes, static_cast<const std::vector<double>*>(nullptr)},
+        std::pair{&random, static_cast<const std::vector<double>*>(&weights)},
+        std::pair{&lattice, static_cast<const std::vector<double>*>(&equal)}}) {
+    const Result serial = run(*points, weighting, 1);
+    PHX_CHECK(serial.status == PHX_MC_OK);
+    for (const int32_t parallelism : {2, 3, 4, 8, 8, 8}) {
+      const Result parallel = run(*points, weighting, parallelism);
+      PHX_CHECK(parallel.status == PHX_MC_OK && parallel.cells == serial.cells &&
+                parallel.vertex_map == serial.vertex_map);
+    }
+  }
+  phx_mc_mesh* mesh = nullptr;
+  PHX_CHECK(phx_mc_delaunay_3d(4, random.data(), &mesh, 0) == PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
@@ -931,5 +994,6 @@ int main() {
   test_performance();
   test_floating_point_hazards();
   test_triangulate_options();
+  test_parallelism();
   return phx::mc::test::finish("test_delaunay3d");
 }

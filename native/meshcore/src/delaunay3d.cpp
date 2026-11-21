@@ -37,7 +37,7 @@
 namespace phx::mc {
 
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, bool canonical, phx_mc_mesh** mesh) {
+                       bool weighted, bool canonical, phx_mc_mesh** mesh, int32_t parallelism) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -81,7 +81,7 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
                                   weighted ? local_weights.data() : nullptr,
                                   static_cast<int64_t>(count));
     triangulation.set_identities(order.data());
-    status = triangulation.build(local_order, alive);
+    status = triangulation.build(local_order, alive, canonical ? parallelism : 1);
     if (status != PHX_MC_OK) {
       return status;
     }
@@ -110,20 +110,23 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
 
 extern "C" {
 
-int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points, phx_mc_mesh** mesh) {
+int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points, phx_mc_mesh** mesh,
+                           int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    return phx::mc::triangulate_3d(point_count, points, nullptr, false, true, mesh);
+    return phx::mc::triangulate_3d(point_count, points, nullptr, false, true, mesh, parallelism);
   });
 }
 
 int32_t phx_mc_regular_3d(int64_t point_count, const double* points, const double* weights,
-                          phx_mc_mesh** mesh) {
+                          phx_mc_mesh** mesh, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
+    if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
-    return phx::mc::triangulate_3d(point_count, points, weights, true, true, mesh);
+    return phx::mc::triangulate_3d(point_count, points, weights, true, true, mesh, parallelism);
   });
 }
 
@@ -141,7 +144,8 @@ int32_t phx_mc_triangulate(int32_t dimension, int64_t point_count, const double*
     const bool weighted = weights != nullptr;
     return dimension == 2
                ? phx::mc::triangulate_2d(point_count, points, weights, weighted, canonical, mesh)
-               : phx::mc::triangulate_3d(point_count, points, weights, weighted, canonical, mesh);
+               : phx::mc::triangulate_3d(point_count, points, weights, weighted, canonical, mesh,
+                                         1);
   });
 }
 
