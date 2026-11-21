@@ -17,10 +17,14 @@
   and the boundary fidelity, the proof-only fidelity preparation built on the
   first proved execution. `plc_hex_dominant` remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
-  faces (also for conforming Voronoi). New benchmark rows `hexdom-{sphere,
-  quadric}-{L0,L2}` (ledger F8, cfMesh `cartesianMesh` ceilings): sphere L0 /
-  L2 and quadric L0 are faster than cfMesh with every quality field better;
-  quadric L2 does not pass yet (Hausdorff and skew at the feature curve).
+  faces (also for conforming Voronoi) and maps each published face to its
+  native face through the cell's own face list; smoothing reuses the face and
+  centroid geometry it has computed and the final repair search stops scoring
+  a move that cannot improve (about 25 % faster, identical meshes). New
+  benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
+  `cartesianMesh` ceilings): sphere L0 / L2 and quadric L0 are faster than
+  cfMesh with every quality field better; quadric L2 is faster but does not
+  pass yet (Hausdorff and skew at the feature curve).
 - Polyhedron faces that are not planar are certified as the fan of triangles
   from their exact vertex average (`polytope_face_triangles`,
   `polytope_face_routes`): validity, global embedding (degree routes with fan
