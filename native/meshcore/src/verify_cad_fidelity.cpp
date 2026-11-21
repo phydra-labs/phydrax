@@ -2518,10 +2518,22 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       }
     }
     if (!valid) continue;
+    // The strip must make a full turn: u_max - u_min >= 2 pi rounded down
+    // (exact comparison); a face spanning less keeps the uv chart. The real
+    // excess 2 pi - (u_max - u_min) (at most one rounding) is charged:
+    // |S(u, v) - S(u', v)| <= r max(|e1|, |e2|) rho |u - u'|.
+    if (!(u_max - u_min >= 2.0 * 0x1.921fb54442d18p+1)) continue;
     const di::Interval span = di::subtract(di::point(u_max), di::point(u_min));
     const di::Interval gap = di::subtract(di::point(2.0 * di::kPiUpper), span);
+    const auto norm = [](const di::Interval* e) {
+      double m[3];
+      for (int i = 0; i < 3; ++i) m[i] = di::magnitude(e[i]);
+      return phx::mc::geometry::norm_upper(m);
+    };
+    const double scale = di::multiply(di::point(frame.r.upper),
+                                      di::point(std::max(norm(frame.e1), norm(frame.e2)))).upper;
     region.gap = gap.upper > 0.0
-                     ? di::multiply(di::point(frame.r.upper),
+                     ? di::multiply(di::point(scale),
                                     di::multiply(di::point(region.strip), di::point(gap.upper)))
                            .upper
                      : 0.0;
@@ -2584,7 +2596,6 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
   for (std::size_t r = 0; r < regions.size(); ++r) {
     const PoleRegion& region = regions[r];
     if (region.rows.empty()) continue;
-    const int32_t node = kernels[static_cast<std::size_t>(region.face)].node;
     const pole::SphereFrame& frame = region.frame;
     const double rim = di::subtract(di::point(pole::kHalfPiLower), di::point(region.strip)).lower;
     const double box[4] = {-std::numeric_limits<double>::max(),
@@ -2620,6 +2631,14 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
       row_status[static_cast<std::size_t>(row)] = PHX_MC_OK;
       row_reason[static_cast<std::size_t>(row)] = PHX_MC_FIDELITY_CERTIFIED;
     }
+  }
+  // Charges only after every region's rows are bounded, so no region's
+  // bounding overwrites another's seam charge or refusal.
+  for (std::size_t r = 0; r < regions.size(); ++r) {
+    const PoleRegion& region = regions[r];
+    if (region.rows.empty()) continue;
+    const int32_t node = kernels[static_cast<std::size_t>(region.face)].node;
+    const pole::SphereFrame& frame = region.frame;
     // Boundary edges: no other row of the region shares them bitwise.
     std::vector<std::pair<Key, int64_t>> inside, outside;
     for (std::size_t k = 0; k < region.rows.size(); ++k)

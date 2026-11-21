@@ -1199,6 +1199,214 @@ void seam_lens_charge() {
       PHX_CHECK(out[0] >= lens && out[0] >= distance && out[1] <= out[0] && out[2] < distance);
     }
 }
+
+// A chart grid of the unit sphere's upper hemisphere over u in [0, span],
+// v in [0, pi/2] (pole line collapsed, slivers there), with chords on the
+// equator, the two meridians and the pole line.
+struct SphereGrid {
+  Model model;
+  Mesh mesh;
+  int32_t sphere = -1;
+};
+
+SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0) {
+  SphereGrid g;
+  Model& m = g.model;
+  const double top = 0x1.921fb54442d18p+0;
+  g.sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(g.sphere);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 1);
+  for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
+  const double ends[4][2] = {{0, low}, {span, low}, {span, top}, {0, top}};
+  for (int k = 0; k < 4; ++k) {
+    const double* p = ends[k];
+    const double* q = ends[(k + 1) % 4];
+    const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
+    m.use(k == 2 ? 1 : 0, k == 2 ? 0 : (k < 2 ? k : 2), 0.0, 1.0, pcurve);
+  }
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  const bool full = span >= 2.0 * 0x1.921fb54442d18p+1;
+  const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
+  const auto v = [&](int j) { return j == rows ? top : j == 0 ? low : low + (top - low) * j / rows; };
+  const auto id = [&](int i, int j) -> int64_t {
+    if (j == rows) return 0;
+    if (full && i == columns) i = 0;
+    return 1 + static_cast<int64_t>(j) * (columns + 1) + i;
+  };
+  Mesh& mesh = g.mesh;
+  mesh.points.assign(3 * static_cast<std::size_t>(1 + rows * (columns + 1)), 0.0);
+  for (int j = 0; j <= rows; ++j)
+    for (int i = 0; i <= columns; ++i) {
+      const double point[2] = {u(i), v(j)};
+      double xyz[3];
+      PHX_CHECK(geometry.jets(g.sphere, point, 0, xyz, point_workspace));
+      std::copy(xyz, xyz + 3, mesh.points.begin() + 3 * id(i, j));
+    }
+  // Boundary side of a grid edge: 0 equator, 1 meridian at span, 2 pole, 3 meridian at 0.
+  const auto side = [&](int i0, int j0, int i1, int j1) {
+    if (j0 == 0 && j1 == 0) return 0;
+    if (i0 == columns && i1 == columns) return 1;
+    if (j0 == rows && j1 == rows) return 2;
+    if (i0 == 0 && i1 == 0) return 3;
+    return -1;
+  };
+  const auto parameter = [&](int s, int i, int j) {
+    return s == 0 ? static_cast<double>(i) / columns
+         : s == 1 ? static_cast<double>(j) / rows
+         : s == 2 ? static_cast<double>(columns - i) / columns
+                  : static_cast<double>(rows - j) / rows;
+  };
+  for (int j = 0; j < rows; ++j)
+    for (int i = 0; i < columns; ++i) {
+      const int cell[4][2] = {{i, j}, {i + 1, j}, {i + 1, j + 1}, {i, j + 1}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        int64_t ids[3];
+        for (int k = 0; k < 3; ++k) {
+          const int* c = cell[local[static_cast<std::size_t>(k)]];
+          ids[k] = id(c[0], c[1]);
+          mesh.triangles.push_back(ids[k]);
+          mesh.uv.insert(mesh.uv.end(), {u(c[0]), v(c[1])});
+        }
+        for (int k = 0; k < 3; ++k) {
+          const int* a = cell[local[static_cast<std::size_t>(k)]];
+          const int* b = cell[local[static_cast<std::size_t>((k + 1) % 3)]];
+          const int s = side(a[0], a[1], b[0], b[1]);
+          if (s < 0) {
+            mesh.edge_chord.push_back(-1);
+            continue;
+          }
+          mesh.edge_chord.push_back(static_cast<int64_t>(mesh.chord_use.size()));
+          mesh.chord_use.push_back(s);
+          mesh.chord_loop.push_back(0);
+          mesh.chord_uv.insert(mesh.chord_uv.end(), {u(a[0]), v(a[1]), u(b[0]), v(b[1])});
+          mesh.chord_range.insert(mesh.chord_range.end(),
+                                  {parameter(s, a[0], a[1]), parameter(s, b[0], b[1])});
+        }
+        mesh.face_rows.push_back(0);
+        const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+        mesh.chart_to_mesh.push_back(
+            sliver ? -1 : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+        if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids, ids + 3);
+      }
+    }
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  return g;
+}
+
+// MAC 69172b0 P2: a sphere face spanning less than a full turn of u (octant,
+// half turn, 6.2 rad) keeps the uv chart and certifies as before. Fault
+// caught: an angular charge r rho (2 pi - span) refusing every region row.
+// P3: on a full hemisphere, every boundary edge of the pole region carries
+// the seam lens cap, and both adjacent rows' bounds are at least it. Fault
+// caught: either charge call dropped (or overwritten by a later region).
+void full_turn_charges(int columns, int rows_count, double tolerance, double low = 0.0);
+
+void pole_region_turns_and_charges() {
+  for (const double span : {0x1.921fb54442d18p+0, 0x1.921fb54442d18p+1, 6.2}) {
+    SphereGrid g = sphere_grid(span, 8, 8);
+    const Verdict verdict = verify(g.model, g.mesh, 0.1, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P partial turn %.4f: status %d max %.6e\n", span, verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  }
+  full_turn_charges(8, 8, 0.1);
+  // Coarse in u: the uv edge sag A exceeds the pole row's own bound, so the
+  // row charge decides (mutation check: dropping it fails here).
+  full_turn_charges(3, 8, 1.0);
+  full_turn_charges(4, 3, 1.0);
+  // Interface ring at latitude 0.25 (rho 1.32, pole-chart sag factor 1.52 vs
+  // the uv chart's 1.03): the neighbour charge decides.
+  full_turn_charges(4, 3, 1.0, -0.409);
+}
+
+// Every boundary edge of the pole region of a full-turn hemisphere grid:
+// both adjacent rows' bounds are at least the edge's seam lens cap.
+void full_turn_charges(int columns, int rows_count, double tolerance, double low) {
+  SphereGrid g = sphere_grid(2.0 * 0x1.921fb54442d18p+1, columns, rows_count, low);
+  const Verdict verdict = verify(g.model, g.mesh, tolerance, 8);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  g.model.bind_bounds(workspace);
+  const Mesh& mesh = g.mesh;
+  const auto rows = mesh.face_rows.size();
+  const double top = 0x1.921fb54442d18p+0, cap_latitude = 0x1.3f004dc9db074p-1;
+  std::vector<int> region(rows, 0);
+  for (std::size_t r = 0; r < rows; ++r)
+    for (int k = 0; k < 3; ++k) {
+      const double lat = mesh.uv[6 * r + 2 * static_cast<std::size_t>(k) + 1];
+      region[r] |= lat == top || lat >= cap_latitude;
+    }
+  const auto same = [&](std::size_t r, int a, std::size_t s, int b) {
+    return mesh.uv[6 * r + 2 * static_cast<std::size_t>(a)] == mesh.uv[6 * s + 2 * static_cast<std::size_t>(b)] &&
+           mesh.uv[6 * r + 2 * static_cast<std::size_t>(a) + 1] ==
+               mesh.uv[6 * s + 2 * static_cast<std::size_t>(b) + 1];
+  };
+  int interface_edges = 0;
+  double row_ratio = std::numeric_limits<double>::infinity(), neighbour_ratio = row_ratio;
+  double largest_cap = 0.0;
+  std::size_t cap_row = 0, cap_neighbour = 0;
+  for (std::size_t r = 0; r < rows; ++r) {
+    if (!region[r]) continue;
+    for (int k = 0; k < 3; ++k) {
+      const int a = k, b = (k + 1) % 3;
+      std::size_t neighbour = rows;
+      bool inside = false;
+      for (std::size_t s = 0; s < rows; ++s) {
+        if (s == r) continue;
+        for (int l = 0; l < 3; ++l)
+          if (same(r, a, s, (l + 1) % 3) && same(r, b, s, l)) {
+            if (region[s]) inside = true;
+            else neighbour = s;
+          }
+      }
+      if (inside || neighbour == rows) continue;
+      double uv_a[2], uv_b[2], c[2][2], out[3];
+      for (int axis = 0; axis < 2; ++axis) {
+        uv_a[axis] = mesh.uv[6 * r + 2 * static_cast<std::size_t>(a) + static_cast<std::size_t>(axis)];
+        uv_b[axis] = mesh.uv[6 * r + 2 * static_cast<std::size_t>(b) + static_cast<std::size_t>(axis)];
+      }
+      for (int end = 0; end < 2; ++end) {
+        double image[4];
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, 1, end == 0 ? uv_a : uv_b, image) ==
+                  PHX_MC_OK);
+        c[end][0] = image[0] + 0.5 * (image[1] - image[0]);
+        c[end][1] = image[2] + 0.5 * (image[3] - image[2]);
+      }
+      const double* x_a = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(a)];
+      const double* x_b = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(b)];
+      PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, 1, uv_a, uv_b, c[0], c[1], x_a, x_b, out) ==
+                PHX_MC_OK);
+      PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[neighbour] >= out[0]);
+      row_ratio = std::min(row_ratio, verdict.upper[r] / out[0]);
+      neighbour_ratio = std::min(neighbour_ratio, verdict.upper[neighbour] / out[0]);
+      ++interface_edges;
+      if (out[0] > largest_cap) largest_cap = out[0], cap_row = r, cap_neighbour = neighbour;
+    }
+  }
+  std::printf("P full turn %dx%d: status %d interface edges %d min upper/cap row %.6f "
+              "neighbour %.6f\n",
+              columns, rows_count, verdict.status, interface_edges, row_ratio, neighbour_ratio);
+  PHX_CHECK(interface_edges > 0);
+  // Just below the largest cap both adjacent rows must refuse: the cap is
+  // charged to each, whatever their own bounds (the uv neighbour's own bound
+  // can be well below a cap set by the pole-chart edge).
+  const Verdict tight = verify(g.model, g.mesh, 0.999 * largest_cap, 12);
+  std::printf("P full turn %dx%d at 0.999 cap: row status %d neighbour status %d\n", columns,
+              rows_count, tight.item_status[cap_row], tight.item_status[cap_neighbour]);
+  PHX_CHECK(tight.item_status[cap_row] != PHX_MC_OK &&
+            tight.item_status[cap_neighbour] != PHX_MC_OK);
+}
 }  // namespace
 
 int main() {
@@ -1221,6 +1429,7 @@ int main() {
   lens_index_overflow();
   pole_chart_rows();
   seam_lens_charge();
+  pole_region_turns_and_charges();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
