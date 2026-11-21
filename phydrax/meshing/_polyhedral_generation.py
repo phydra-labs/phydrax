@@ -48,10 +48,7 @@ from phydrax.meshing._volume_generation import (
     NativeVolumeSchedule,
     VolumeConstruction,
 )
-from phydrax.meshing.providers._native_sources import (
-    NativePlcSource,
-    NativePolyhedralSource,
-)
+from phydrax.meshing.providers._native_sources import NativePolyhedralSource
 
 
 type _ExactAffineTransform = tuple[tuple[Fraction, ...], ...]
@@ -967,7 +964,7 @@ def _publish_power_topology(
 class PolyhedralConstruction:
     """Restricted-power candidate plus its carrier and source ancestry."""
 
-    source: NativePlcSource | NativePolyhedralSource
+    source: NativePolyhedralSource
     carrier: VolumeConstruction
     mesh: CellMesh
     geometry: CellGeometrySpec
@@ -1007,8 +1004,6 @@ def _source_sites(
     tuple[str, ...],
     tuple[str | None, ...],
 ]:
-    if not isinstance(source, NativePolyhedralSource):
-        raise TypeError("Restricted-power generation requires authored power sites.")
     sites = np.asarray(source.sites, dtype=np.float64)
     weights = np.asarray(source.weights, dtype=np.float64)
     site_ids = source.site_ids
@@ -1035,7 +1030,7 @@ def _refined_site_id(
 
 
 def _source_split_flags(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     site_count: int,
     /,
@@ -1084,7 +1079,7 @@ def _source_split_flags(
 
 def _mapped_face_ancestry(
     carrier: VolumeConstruction,
-    source: NativePlcSource | NativePolyhedralSource,
+    source: NativePolyhedralSource,
     restricted: meshcore.RestrictedPowerCells,
     native_face_order: np.ndarray,
     /,
@@ -1221,7 +1216,7 @@ def _mapped_power_source(
 
 
 def _construct_polyhedral(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: NativePolyhedralSource,
     carrier: VolumeConstruction,
     schedule: NativePolyhedralSchedule,
     sites: np.ndarray,
@@ -1633,7 +1628,7 @@ def _periodic_vertex_orbits(
 
 
 def _bind_periodic_polyhedral_quotient(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     construction: PolyhedralConstruction,
     /,
@@ -1720,7 +1715,7 @@ def _clipping_carrier_specification(
 
 
 def generate_polyhedral_volume(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     schedule: NativePolyhedralSchedule,
     /,
@@ -1765,28 +1760,7 @@ def generate_polyhedral_volume(
     tetrahedra, tet_face_facets, _ = _carrier_tetrahedralization(carrier)
     carrier_points = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
     carrier_regions = np.asarray(carrier.cell_regions, dtype=np.int32)
-    if isinstance(source, NativePolyhedralSource):
-        sites, weights, site_parents, site_ids, site_parent_ids = _source_sites(source)
-    else:
-        if not tetrahedra.shape[0]:
-            raise ValueError(
-                "Automatic power-site placement requires a recovered carrier cell."
-            )
-        sites = np.mean(carrier_points[tetrahedra[0]], axis=0, dtype=np.float64)[None, :]
-        weights = np.zeros((1,), dtype=np.float64)
-        site_parents = np.zeros((1,), dtype=np.int64)
-        site_ids = (
-            canonical_fingerprint(
-                {
-                    "kind": "plc-first-carrier-tetrahedron-centroid-site",
-                    "source_binding": source.binding_id,
-                    "carrier_mesh": carrier.mesh.mesh_id,
-                    "carrier_cell_id": int(carrier.mesh.blocks[0].global_ids[0]),
-                    "coordinates": array_tree_fingerprint(sites),
-                }
-            ),
-        )
-        site_parent_ids = (None,)
+    sites, weights, site_parents, site_ids, site_parent_ids = _source_sites(source)
     if set(schedule.protected_site_ids) - set(site_ids):
         raise ValueError(
             "protected_site_ids must identify an authored source power site."

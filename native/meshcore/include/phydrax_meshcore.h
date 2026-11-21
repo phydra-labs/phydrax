@@ -1867,6 +1867,82 @@ typedef struct phx_mc_prism_layers_result {
 PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* request,
                                        const phx_mc_prism_layers_result* result);
 
+/* ------------------------------------------------ conforming Voronoi cells
+ * Voronoi cells of seeds clipped exactly to a triangulated solid. Triangle t
+ * separates region triangle_regions[2t] (in front, along the normal of
+ * (a, b, c)) from triangle_regions[2t + 1] (behind); -1 is the exterior and
+ * the two differ. triangle_facets[t] >= 0 names the source facet: surface
+ * pieces of one cell merge within a facet. With seed_count 0 the seeds are
+ * placed for the cell size `size` (feature corners and edges, a surface
+ * sample offset inwards by size / 2, a body-centred cubic interior lattice);
+ * otherwise the given seeds are used as they are.
+ *
+ * A cell is a connected component of a seed's Voronoi cell in one region.
+ * face_cells holds the owner whose outward normal the loop orientation gives
+ * (counterclockwise) and the neighbour (-1 on the exterior); face_facets is
+ * the source facet of a surface face, -1 for a bisector face. vertex_kinds:
+ * 0 Voronoi vertex, 1 surface vertex (sources: vertex, -1), 2 point of a
+ * surface edge (sources: its two vertices), 3 point inside a triangle
+ * (sources: triangle, -1). cell_convex is the exact convexity verdict.
+ * Every vertex is exact: exact_values[exact_offsets[4 v + k] ..
+ * exact_offsets[4 v + k + 1]) is the expansion (increasing nonoverlapping
+ * components) of N_k for k < 3 and of D for k = 3, x_k = N_k / D; `vertices`
+ * holds its nearest binary64 values (ties to even).
+ *
+ * stats: seconds of seeding, Delaunay, restricted surface, regions, faces,
+ * publication, certification and total; seeds, surface seeds, lattice seeds,
+ * cells, boundary cells, repair rounds, degenerate events, certified (1/0,
+ * -1 without prove), open cell edges, coverage residual, volume residual
+ * (-1 without prove), nonconvex cells, bisector planarity residual / h,
+ * feature edges, faces, h.
+ *
+ * Returns PHX_MC_OK; PHX_MC_UNRESOLVED (result set when cells exist) when
+ * certification failed after the repairs automatic seeds allow, or when no
+ * seed lies in the solid; PHX_MC_DEGENERATE_INPUT for a degenerate triangle,
+ * duplicate seeds or given seeds meeting a degenerate predicate. */
+#define PHX_MC_CONFORMING_VORONOI_SIZES 6
+#define PHX_MC_CONFORMING_VORONOI_STATS 24
+typedef struct phx_mc_voronoi_cells phx_mc_voronoi_cells;
+typedef struct phx_mc_conforming_voronoi_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  const int32_t* triangle_regions;
+  const int32_t* triangle_facets;
+  int64_t seed_count;
+  const double* seeds;
+  double size;
+  double feature_angle_degrees;
+  int32_t prove;
+  phx_mc_voronoi_cells** result;
+} phx_mc_conforming_voronoi_request;
+typedef struct phx_mc_conforming_voronoi_arrays {
+  double* vertices;
+  int8_t* vertex_kinds;
+  int32_t* vertex_sources;
+  int64_t* face_offsets;
+  int32_t* face_vertices;
+  int32_t* face_cells;
+  int32_t* face_facets;
+  int32_t* cell_seeds;
+  int32_t* cell_regions;
+  double* cell_volumes;
+  double* cell_centroids;
+  uint8_t* cell_convex;
+  double* seeds;
+  double* stats;
+  int64_t* exact_offsets;
+  double* exact_values;
+} phx_mc_conforming_voronoi_arrays;
+PHX_MC_API int32_t phx_mc_conforming_voronoi(const phx_mc_conforming_voronoi_request* request);
+/* vertices, faces, face vertex entries, cells, seeds, exact components. */
+PHX_MC_API int32_t phx_mc_conforming_voronoi_sizes(const phx_mc_voronoi_cells* result,
+                                                   int64_t* sizes);
+PHX_MC_API int32_t phx_mc_conforming_voronoi_export(
+    const phx_mc_voronoi_cells* result, const phx_mc_conforming_voronoi_arrays* arrays);
+PHX_MC_API void phx_mc_conforming_voronoi_free(phx_mc_voronoi_cells* result);
+
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
 enum phx_mc_power_failure_reason {

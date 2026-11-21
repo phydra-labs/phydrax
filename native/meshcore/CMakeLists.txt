@@ -82,6 +82,7 @@ set(PHX_MC_SOURCES
   src/parallel.cpp
   src/periodic.cpp
   src/plc3d.cpp
+  src/conforming_voronoi.cpp
   src/power_diagram.cpp
   src/predicates.cpp
   src/quadratic_bounds.cpp
@@ -280,6 +281,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_bvh_query)
   phx_mc_add_test(test_overset)
   phx_mc_add_test(test_prism_layers)
+  phx_mc_add_test(test_conforming_voronoi)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)

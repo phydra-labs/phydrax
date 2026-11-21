@@ -323,7 +323,7 @@ def _resolve_plc_route(
     ):
         return "plc_hex_dominant"
     if strategy is VolumeFillStrategy.POLYHEDRAL:
-        return "plc_restricted_power"
+        return "plc_conforming_voronoi"
     if strategy in (VolumeFillStrategy.SWEEP, VolumeFillStrategy.MULTIZONE):
         _unsupported(
             "plc_tetrahedral",
@@ -1098,10 +1098,25 @@ def _prepare_route(
             return prepare_native_periodic(
                 source, specification, options, coordinate_contract
             )
-        case "plc_restricted_power":
-            if not isinstance(source, (NativePlcSource, NativePolyhedralSource)):
+        case "plc_conforming_voronoi":
+            if not isinstance(source, NativePlcSource):
+                _unsupported(route, source, specification, "a NativePlcSource is required")
+            if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(
-                    route, source, specification, "a PLC or polyhedral source is required"
+                    route, source, specification, "a VolumeMeshingSpec is required"
+                )
+            from ._native_voronoi import prepare_native_voronoi
+
+            return prepare_native_voronoi(
+                source, specification, options, coordinate_contract
+            )
+        case "plc_restricted_power":
+            if not isinstance(source, NativePolyhedralSource):
+                _unsupported(
+                    route,
+                    source,
+                    specification,
+                    "a NativePolyhedralSource with authored power sites is required",
                 )
             if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(
@@ -1448,6 +1463,7 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         if not isinstance(prove, bool):
             raise TypeError("prove must be bool.")
         from ._native_implicit import _PreparedFixedImplicitRoute
+        from ._native_voronoi import _PreparedNativeVoronoi
 
         if isinstance(self.prepared, _PreparedFixedImplicitRoute):
             _require_fixed_plan_current(self, check_prepared=False)
@@ -1490,6 +1506,9 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                 if cad_solid_support_issues(self.prepared)
                 else execute_cad_solid(self.prepared)
             )
+        elif isinstance(self.prepared, _PreparedNativeVoronoi):
+            # The native call certifies its cells only for a proved result.
+            construction = self.prepared.execute(prove=prove)
         else:
             construction = self.prepared.execute()
         if not isinstance(construction, NativeMeshConstruction):

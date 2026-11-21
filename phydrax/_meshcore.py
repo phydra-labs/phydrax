@@ -313,6 +313,44 @@ class _PrismLayersResult(ctypes.Structure):
         ("stats", _P),
     )
 
+class _ConformingVoronoiRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("triangle_regions", _P),
+        ("triangle_facets", _P),
+        ("seed_count", _I64),
+        ("seeds", _P),
+        ("size", _F64),
+        ("feature_angle_degrees", _F64),
+        ("prove", _I32),
+        ("result", ctypes.POINTER(ctypes.c_void_p)),
+    )
+
+
+class _ConformingVoronoiArrays(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_kinds", _P),
+        ("vertex_sources", _P),
+        ("face_offsets", _P),
+        ("face_vertices", _P),
+        ("face_cells", _P),
+        ("face_facets", _P),
+        ("cell_seeds", _P),
+        ("cell_regions", _P),
+        ("cell_volumes", _P),
+        ("cell_centroids", _P),
+        ("cell_convex", _P),
+        ("seeds", _P),
+        ("stats", _P),
+        ("exact_offsets", _P),
+        ("exact_values", _P),
+    )
+
+
 
 class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     _fields_ = (
@@ -1332,6 +1370,13 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_PrismLayersRequest), ctypes.POINTER(_PrismLayersResult)),
     ),
+    "phx_mc_conforming_voronoi": (_I32, (ctypes.POINTER(_ConformingVoronoiRequest),)),
+    "phx_mc_conforming_voronoi_sizes": (_I32, (_P, _P)),
+    "phx_mc_conforming_voronoi_export": (
+        _I32,
+        (_P, ctypes.POINTER(_ConformingVoronoiArrays)),
+    ),
+    "phx_mc_conforming_voronoi_free": (None, (_P,)),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_restricted_power_cells": (
@@ -2795,6 +2840,166 @@ def prism_layers(
             },
         )
     return PrismLayers(MeshcoreStatus(status), *arrays)
+
+class ConformingVoronoi(NamedTuple):
+    """Cells of ``conforming_voronoi``: seed Voronoi cells clipped to a solid.
+
+    Face ``f`` is the counterclockwise loop
+    ``face_vertices[face_offsets[f]:face_offsets[f + 1]]`` whose normal points
+    out of cell ``face_cells[f, 0]`` into ``face_cells[f, 1]`` (``-1`` on the
+    exterior); ``face_facets[f]`` is the source facet of a surface face and
+    ``-1`` for a bisector face. ``vertex_kinds``: 0 Voronoi vertex, 1 surface
+    vertex (``vertex_sources`` row: vertex, -1), 2 point on a surface edge (its
+    two vertices), 3 point inside a surface triangle (triangle, -1).
+    ``cell_convex`` is the exact convexity verdict of each cell. Vertex ``v``
+    is exact: ``x_k = N_k / D`` with ``N_0, N_1, N_2, D`` the expansions
+    ``exact_values[exact_offsets[4 v + k]:exact_offsets[4 v + k + 1]]``
+    (sums of their components); ``vertices`` holds the nearest binary64
+    values. ``status`` is OK, or UNRESOLVED when certification failed (the
+    arrays then hold the last construction). ``stats`` follows
+    ``phx_mc_conforming_voronoi``.
+    """
+
+    status: MeshcoreStatus
+    vertices: np.ndarray
+    vertex_kinds: np.ndarray
+    vertex_sources: np.ndarray
+    face_offsets: np.ndarray
+    face_vertices: np.ndarray
+    face_cells: np.ndarray
+    face_facets: np.ndarray
+    cell_seeds: np.ndarray
+    cell_regions: np.ndarray
+    cell_volumes: np.ndarray
+    cell_centroids: np.ndarray
+    cell_convex: np.ndarray
+    seeds: np.ndarray
+    # Seconds of seeding, Delaunay, restricted surface, regions, faces,
+    # publication, certification and total; seeds, surface seeds, lattice
+    # seeds, cells, boundary cells, repair rounds, degenerate events,
+    # certified (1/0, -1 without prove), open cell edges, coverage residual,
+    # volume residual (-1 without prove), nonconvex cells, bisector planarity
+    # residual / h, feature edges, faces, h.
+    stats: np.ndarray
+    exact_offsets: np.ndarray
+    exact_values: np.ndarray
+
+
+def conforming_voronoi(
+    vertices: object,
+    triangles: object,
+    triangle_regions: object,
+    triangle_facets: object,
+    /,
+    *,
+    size: float | None,
+    feature_angle_degrees: float,
+    prove: bool,
+    seeds: object | None = None,
+) -> ConformingVoronoi:
+    """Voronoi cells clipped exactly to a triangulated solid.
+
+    Rows follow ``phx_mc_conforming_voronoi``: triangle ``t`` separates region
+    ``triangle_regions[t, 0]`` in front (along its normal) from
+    ``triangle_regions[t, 1]`` behind, ``-1`` the exterior. Without ``seeds``
+    the kernel places seeds for the cell size ``size``.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    sides = _native_integer_array(triangle_regions, "triangle_regions", np.dtype(np.int32))
+    facets = _native_integer_array(triangle_facets, "triangle_facets", np.dtype(np.int32))
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or sides.shape != (rows.shape[0], 2)
+        or facets.shape != (rows.shape[0],)
+    ):
+        raise ValueError(
+            "conforming_voronoi takes (m, 3) triangles, (m, 2) regions and (m,) facets."
+        )
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    if isinstance(feature_angle_degrees, bool) or not isinstance(
+        feature_angle_degrees, (int, float, np.floating)
+    ):
+        raise TypeError("feature_angle_degrees must be a real number.")
+    if seeds is None:
+        if size is None or isinstance(size, bool):
+            raise TypeError("Automatic seeding requires a real cell size.")
+        given = np.empty((0, 3), dtype=np.float64)
+    else:
+        if size is not None:
+            raise ValueError("Give either seeds or a cell size, not both.")
+        given = _points(seeds, "seeds", 3)
+    handle = ctypes.c_void_p()
+    request = _ConformingVoronoiRequest(
+        vertex_count=points.shape[0],
+        vertices=points.ctypes.data,
+        triangle_count=rows.shape[0],
+        triangles=rows.ctypes.data,
+        triangle_regions=sides.ctypes.data,
+        triangle_facets=facets.ctypes.data,
+        seed_count=given.shape[0],
+        seeds=given.ctypes.data if given.size else None,
+        size=0.0 if size is None else float(size),
+        feature_angle_degrees=float(feature_angle_degrees),
+        prove=1 if prove else 0,
+        result=ctypes.pointer(handle),
+    )
+    library = load_meshcore()
+    status = library["phx_mc_conforming_voronoi"](ctypes.byref(request))
+    if not handle.value:
+        _raise_for_call(
+            status,
+            "conforming_voronoi",
+            contracts={
+                MeshcoreStatus.DEGENERATE_INPUT: "a zero-area triangle, duplicate seeds, "
+                "or given seeds meeting a degenerate predicate.",
+                MeshcoreStatus.UNRESOLVED: "no seed lies in the solid, or a box seed "
+                "reaches it.",
+            },
+        )
+        raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "missing Voronoi result")
+    try:
+        sizes = np.empty((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_conforming_voronoi_sizes"](handle, sizes.ctypes.data),
+            "conforming_voronoi_sizes",
+        )
+        vertex_count, face_count, entry_count, cell_count, seed_count, exact_count = (
+            int(value) for value in sizes
+        )
+        arrays = (
+            np.empty((vertex_count, 3), dtype=np.float64),
+            np.empty((vertex_count,), dtype=np.int8),
+            np.empty((vertex_count, 2), dtype=np.int32),
+            np.empty((face_count + 1,), dtype=np.int64),
+            np.empty((entry_count,), dtype=np.int32),
+            np.empty((face_count, 2), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.float64),
+            np.empty((cell_count, 3), dtype=np.float64),
+            np.empty((cell_count,), dtype=np.uint8),
+            np.empty((seed_count, 3), dtype=np.float64),
+            np.empty((24,), dtype=np.float64),
+            np.empty((4 * vertex_count + 1,), dtype=np.int64),
+            np.empty((exact_count,), dtype=np.float64),
+        )
+        outputs = _ConformingVoronoiArrays(*(array.ctypes.data for array in arrays))
+        _raise_for_call(
+            library["phx_mc_conforming_voronoi_export"](handle, ctypes.byref(outputs)),
+            "conforming_voronoi_export",
+        )
+    finally:
+        library["phx_mc_conforming_voronoi_free"](handle)
+    convex = arrays[11].astype(np.bool_)
+    return ConformingVoronoi(
+        MeshcoreStatus(status), *arrays[:11], convex, *arrays[12:]
+    )
+
 
 
 def _int32_argument(value: object, name: str, /) -> int:
@@ -13156,6 +13361,8 @@ __all__ = [
     "CadSurfaceResult",
     "cad_mesh",
 ]
+
+__all__ += ["ConformingVoronoi", "conforming_voronoi"]
 
 __all__ += [
     "CadFidelityChords",
