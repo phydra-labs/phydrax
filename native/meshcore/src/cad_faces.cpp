@@ -1245,11 +1245,17 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // its largest stop gap as D_u: the next ring, longer, is no coarser)
     // beyond the ring before it (measured with the spacing alone: rows from
     // the band ring to the next ring 34 deg away at 1.01 tol of sampled
-    // chart-linear deviation, refused).
+    // chart-linear deviation, refused). They end at the zone's last ring
+    // without the band (the spacing's last multiple within the width):
+    // shorter gaps otherwise added a ring by the equator, beside the seam's
+    // graded vertices and the other pole's zone (measured: caps below 48-50
+    // deg, h/r 0.6-0.8, angle refusals at the seam, UNRESOLVED).
     double step = spacing;
     double gap = std::numeric_limits<double>::infinity();
+    const double last = spacing * std::floor(width / spacing);
     bool band_ring = chart_band;
-    for (double offset = band_ring ? band : spacing; offset <= width;
+    for (double offset = band_ring ? band : spacing;
+         offset <= width && (!chart_band || band_ring || offset <= last);
          offset = std::exchange(band_ring, false) ? band + std::min(spacing, gap)
                                                   : offset + std::min(step, gap)) {
       std::array<double, 2> uv = start;
