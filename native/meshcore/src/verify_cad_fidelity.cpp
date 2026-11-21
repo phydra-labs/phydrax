@@ -2079,40 +2079,40 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
       frame.flat = true;
       frame.pole_v = pole_v;
     } else {
-    if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
-        curve.real_count != 10)
-      return false;
-    double origin[3], axis[3], centre[3], first[3], second[3], radius = 0.0;
-    const auto exact = [&](int32_t at, int64_t i, double& value) {
-      const di::Interval x = coefficient(at, i);
-      value = x.lower;
-      return x.lower == x.upper && std::isfinite(x.lower);
-    };
-    for (int i = 0; i < 3; ++i)
-      if (!exact(index, i, origin[i]) || !exact(index, 3 + i, axis[i]) ||
-          !exact(profile, i, centre[i]) || !exact(profile, 3 + i, first[i]) ||
-          !exact(profile, 6 + i, second[i]))
+      if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
+          curve.real_count != 10)
         return false;
-    if (!exact(profile, 9, radius)) return false;
-    int k = -1;
-    for (int i = 0; i < 3; ++i)
-      if (std::fabs(axis[i]) == 1.0) k = i;
-    if (k < 0 || first[k] != 0.0) return false;
-    for (int i = 0; i < 3; ++i)
-      if (i != k && (axis[i] != 0.0 || second[i] != 0.0 ||
-                     std::bit_cast<uint64_t>(centre[i]) != std::bit_cast<uint64_t>(origin[i])))
-        return false;
-    for (int i = 0; i < 3; ++i) {
-      frame.o[i] = di::point(i == k ? centre[i] : origin[i]);
-      frame.e1[i] = di::point(i == k ? 0.0 : first[i]);
-      frame.a[i] = di::point(i == k ? second[i] : 0.0);
-    }
-    // e2 = a x e1_r: a has the single entry axis[k].
-    for (int i = 0; i < 3; ++i) frame.e2[i] = di::point(0.0);
-    const int p = (k + 1) % 3, q = (k + 2) % 3;
-    frame.e2[q] = di::point(axis[k] * first[p]);
-    frame.e2[p] = di::point(-axis[k] * first[q]);
-    frame.r = di::point(radius);
+      double origin[3], axis[3], centre[3], first[3], second[3], radius = 0.0;
+      const auto exact = [&](int32_t at, int64_t i, double& value) {
+        const di::Interval x = coefficient(at, i);
+        value = x.lower;
+        return x.lower == x.upper && std::isfinite(x.lower);
+      };
+      for (int i = 0; i < 3; ++i)
+        if (!exact(index, i, origin[i]) || !exact(index, 3 + i, axis[i]) ||
+            !exact(profile, i, centre[i]) || !exact(profile, 3 + i, first[i]) ||
+            !exact(profile, 6 + i, second[i]))
+          return false;
+      if (!exact(profile, 9, radius)) return false;
+      int k = -1;
+      for (int i = 0; i < 3; ++i)
+        if (std::fabs(axis[i]) == 1.0) k = i;
+      if (k < 0 || first[k] != 0.0) return false;
+      for (int i = 0; i < 3; ++i)
+        if (i != k && (axis[i] != 0.0 || second[i] != 0.0 ||
+                       std::bit_cast<uint64_t>(centre[i]) != std::bit_cast<uint64_t>(origin[i])))
+          return false;
+      for (int i = 0; i < 3; ++i) {
+        frame.o[i] = di::point(i == k ? centre[i] : origin[i]);
+        frame.e1[i] = di::point(i == k ? 0.0 : first[i]);
+        frame.a[i] = di::point(i == k ? second[i] : 0.0);
+      }
+      // e2 = a x e1_r: a has the single entry axis[k].
+      for (int i = 0; i < 3; ++i) frame.e2[i] = di::point(0.0);
+      const int p = (k + 1) % 3, q = (k + 2) % 3;
+      frame.e2[q] = di::point(axis[k] * first[p]);
+      frame.e2[p] = di::point(-axis[k] * first[q]);
+      frame.r = di::point(radius);
     }
   } else {
     return false;
