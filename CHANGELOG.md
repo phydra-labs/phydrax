@@ -122,6 +122,14 @@
   remains the only path without meshcore and for subdivision, expanded
   margins or out-of-range values. `certify_cell_mesh` on a 967k-tetrahedron
   cube takes 17 s instead of 79 s, on the 1e6-cell F13 hexahedral parts 43 s.
+- Welded-topology audit counts (facet grouping, orientation, open boundary,
+  collapsed and duplicate cells, vertex and edge star manifoldness) run in the
+  native `phx_mc_welded_topology` kernel when meshcore is loaded, with results
+  identical to the host route (a 68-case differential on adversarial meshes);
+  on a 1e6-tetrahedron cube `certify_cell_mesh` takes 7.8 s instead of 13.1 s.
+  The host route now groups equal padded row keys correctly when a column
+  spans both the padding sentinel and vertex 0, and an out-of-range lookup
+  raises `ValueError`.
 - Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
   a facet or segment vertex into a vertex on its carrier (in place or with a
   moved survivor) and swap an exactly coplanar boundary edge between two
