@@ -102,6 +102,34 @@ Surface box(double l, int n) {
   return s;
 }
 
+// Closed cylinder of radius r over [0, h] (n segments, m rings, caps fanned
+// to their centers), outward: two closed convex feature curves.
+Surface cylinder(double radius, double height, int n, int m) {
+  Surface s;
+  const double pi = 3.14159265358979323846;
+  for (int k = 0; k <= m; ++k) {
+    for (int i = 0; i < n; ++i) {
+      const double a = 2.0 * pi * i / n;
+      s.x.insert(s.x.end(), {radius * std::cos(a), radius * std::sin(a), height * k / m});
+    }
+  }
+  auto ring = [&](int k, int i) { return static_cast<int32_t>(k * n + (i % n)); };
+  for (int k = 0; k < m; ++k) {
+    for (int i = 0; i < n; ++i) {
+      s.f.insert(s.f.end(), {ring(k, i), ring(k, i + 1), ring(k + 1, i + 1), ring(k, i), ring(k + 1, i + 1), ring(k + 1, i)});
+    }
+  }
+  const int32_t bottom = static_cast<int32_t>(s.x.size() / 3);
+  s.x.insert(s.x.end(), {0.0, 0.0, 0.0});
+  const int32_t top = bottom + 1;
+  s.x.insert(s.x.end(), {0.0, 0.0, height});
+  for (int i = 0; i < n; ++i) {
+    s.f.insert(s.f.end(), {bottom, ring(0, i + 1), ring(0, i)});
+    s.f.insert(s.f.end(), {top, ring(m, i), ring(m, i + 1)});
+  }
+  return s;
+}
+
 struct Result {
   int32_t status = -1;
   std::vector<double> points;
@@ -339,6 +367,54 @@ void layers_sit_at_their_thicknesses() {
   PHX_CHECK(checked > 0);
 }
 
+// At a convex feature curve the layers do not wrap the curve: corner
+// hexahedra own one wall strip per patch, every cell is certified and every
+// wall vertex lies on the surface.
+void convex_curve_layers_split() {
+  const Surface s = cylinder(0.5, 0.8, 96, 16);
+  const Result r = mesh(s, 0.16, 0.08, {0.01, 0.012});
+  PHX_CHECK(r.status == PHX_MC_OK);
+  check_cells(r);
+  std::vector<int> walls(r.cell_kinds.size(), 0);
+  for (size_t f = 0; f < r.face_owner.size(); ++f) walls[r.face_owner[f]] += r.face_neighbor[f] < 0;
+  int64_t corners = 0;
+  for (size_t c = 0; c < walls.size(); ++c) {
+    if (walls[c] < 2) continue;
+    PHX_CHECK(r.cell_kinds[c] == 0 && r.cell_roles[c] == 2);
+    ++corners;
+  }
+  PHX_CHECK(corners > 0);
+  double worst = 0.0;
+  for (size_t v = 0; v < r.vertex_kinds.size(); ++v) {
+    if (r.vertex_kinds[v] == 0 || r.vertex_kinds[v] == 4) continue;
+    double best = 1e300;
+    for (size_t i = 0; i < s.f.size(); i += 3) {
+      best = std::min(best, point_triangle_distance(at(r.points, static_cast<int64_t>(v)), at(s.x, s.f[i]),
+                                                    at(s.x, s.f[i + 1]), at(s.x, s.f[i + 2])));
+    }
+    worst = std::max(worst, best);
+  }
+  PHX_CHECK(worst < 1e-12);
+}
+
+// The split and segment-midpoint decisions are scale-free: a surface scaled
+// by a power of two with sizes and layers scaled alike (every floating
+// operation then scales exactly) gives the same mesh, scaled.
+void convex_curve_split_is_scale_free() {
+  const Surface s = cylinder(0.5, 0.8, 96, 16);
+  Surface big = s;
+  for (double& x : big.x) x *= 8.0;
+  const Result r = mesh(s, 0.16, 0.08, {0.01, 0.012});
+  const Result q = mesh(big, 1.28, 0.64, {0.08, 0.096});
+  PHX_CHECK(r.status == PHX_MC_OK && q.status == PHX_MC_OK);
+  PHX_CHECK(r.face_offsets == q.face_offsets && r.face_vertices == q.face_vertices);
+  PHX_CHECK(r.face_owner == q.face_owner && r.face_neighbor == q.face_neighbor && r.cell_kinds == q.cell_kinds);
+  PHX_CHECK(r.points.size() == q.points.size());
+  bool scaled = r.points.size() == q.points.size();
+  for (size_t i = 0; i < r.points.size() && scaled; ++i) scaled = q.points[i] == 8.0 * r.points[i];
+  PHX_CHECK(scaled);
+}
+
 void invalid_input_is_refused() {
   Surface open = icosphere(2);
   open.f.resize(open.f.size() - 3);
@@ -355,6 +431,8 @@ int main() {
   sphere_is_certified_and_on_the_surface();
   box_corners_and_volume_are_exact();
   layers_sit_at_their_thicknesses();
+  convex_curve_layers_split();
+  convex_curve_split_is_scale_free();
   invalid_input_is_refused();
   return phx::mc::test::finish("test_hex_dominant");
 }
