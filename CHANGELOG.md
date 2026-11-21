@@ -3,15 +3,6 @@
 ## Unreleased
 
 ### Added
-- The native CAD solid route honours `ProximitySizeControl` on source faces
-  (`cad_mesh_solid(proximity_controls=)`, C `phx_mc_cad_proximity_control`):
-  curves, faces and the volume's surface size targets take the gap to the
-  other scope over `elements_per_gap`, the gap a lower bound from a first
-  surface pass at the request. Compliance reports the control's rows. Without
-  it the request's size is kept and an UNRESOLVED solid reports
-  `input_thin_region_below_volume_targets` where the faces are closer than the
-  volume targets allow at h. A 0.06-thick unit disk at h 0.4-0.8 resolves with
-  one element per gap (45/45 runs) and reports the finding without it.
 - Native CAD fidelity verifier `phx_mc_verify_cad_fidelity`: directed
   per-triangle distance bounds between a finished CAD surface mesh and its
   exact source (interior, trim lens, pole and knot-line terms), with lazily

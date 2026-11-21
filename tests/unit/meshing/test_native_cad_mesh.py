@@ -1850,7 +1850,7 @@ def test_thin_solid_with_proximity_control_resolves(size: float) -> None:
     requested, achieved = dict(report.requested), dict(report.achieved)
     key = f"proximity:{control.control_id}"
     assert requested[f"{key}:elements_per_gap"] == 1.0
-    assert achieved[f"{key}:gap"] == pytest.approx(0.06, abs=1e-12)
+    assert achieved[f"{key}:gap_estimate"] == pytest.approx(0.06, abs=1e-12)
     assert achieved[f"{key}:maximum_circumradius_ratio"] <= 1.0
     assert achieved[f"{key}:minimum_elements_per_gap"] >= 1.0
     assert achieved["unmet_quality_cells"] == 0.0

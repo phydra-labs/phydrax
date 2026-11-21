@@ -355,11 +355,9 @@ def _proximity_controls(
 
 
 def _proximity_compliance(
-    prepared: _PreparedDirectBRepCadVolume,
     solid: CadSolidResult,
     controls: tuple[tuple[ProximitySizeControl, CadProximityControl], ...],
     deviations: np.ndarray,
-    issues: list[str],
     requested: list[tuple[str, float]],
     achieved: list[tuple[str, float]],
     /,
@@ -372,11 +370,13 @@ def _proximity_compliance(
     clamped to its bounds; the CAD face stage's statement is the
     circumradius bound R <= size / sqrt(2) (``CAD_CHART_SURFACE_SIZE``), so a
     triangle's ratio is R over that bound. Rows: the requested
-    elements_per_gap and bounds; the smallest gap, the largest ratio and the
-    elements per gap it achieves. A HARD control is an issue when a ratio
-    exceeds the policy's tolerance.
+    elements_per_gap and bounds; the smallest gap estimate, the largest ratio
+    and the elements per gap it achieves. The gap is an estimate, not a
+    certified bound: the sag bound takes the curvature at the proxy
+    triangle's corners only, so on a curved scope it can understate the
+    deviation. The rows are therefore report-only and raise no issue, even
+    for a HARD control.
     """
-    policy = prepared.specification.size_compliance
     factor = CAD_CHART_SURFACE_SIZE.bound_factor
     points = np.asarray(solid.volume.points, dtype=np.float64)
     triangles = np.asarray(solid.surface.triangles, dtype=np.int64)
@@ -418,7 +418,7 @@ def _proximity_compliance(
         largest = float(np.nanmax(ratio)) if ratio.size else 0.0
         achieved.extend(
             (
-                (f"{key}:gap", float(gap.min())),
+                (f"{key}:gap_estimate", float(gap.min())),
                 (f"{key}:maximum_circumradius_ratio", largest),
                 (
                     f"{key}:minimum_elements_per_gap",
@@ -426,9 +426,6 @@ def _proximity_compliance(
                 ),
             )
         )
-        allowed = 1.0 + policy.relative_tolerance
-        if control.strength is SizeControlStrength.HARD and largest > allowed:
-            issues.append(key)
 
 
 def _cell_quality(points: np.ndarray, cells: np.ndarray, /) -> tuple[np.ndarray, ...]:
@@ -681,9 +678,7 @@ def execute_cad_solid(
     _size_compliance(prepared, solid, issues, requested, achieved)
     if proximity:
         assert deviations is not None
-        _proximity_compliance(
-            prepared, solid, proximity, deviations, issues, requested, achieved
-        )
+        _proximity_compliance(solid, proximity, deviations, requested, achieved)
     compliance = MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),

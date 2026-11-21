@@ -1080,8 +1080,10 @@ bounds. The gap is a lower bound taken from a first surface pass at h (proxy
 distance less each proxy triangle's circumcircle sag on the osculating sphere of
 its largest corner curvature, at most the deviation). Scopes that touch need
 `minimum_size`. The compliance rows state the control's request, the smallest
-gap and the largest ratio of a scoped triangle's circumradius to
-size/√2. Without such a control, an UNRESOLVED solid reports
+gap estimate (`gap_estimate`) and the largest ratio of a scoped triangle's
+circumradius to size/√2. The sag bound uses corner curvatures only, so the gap
+is not certified on curved scopes. The rows are therefore report-only and raise
+no issue, even for a HARD control. Without such a control, an UNRESOLVED solid reports
 `input_thin_region_below_volume_targets` for a face pair whose unmet cells lie
 where the faces are closer than h/(√2·k), k = min(√(4B²−1), 2/tan θ) for
 radius-edge bound B and dihedral target θ (h/√30 at 2 and 15.5°): the best
