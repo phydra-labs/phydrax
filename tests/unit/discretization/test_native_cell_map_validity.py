@@ -1,4 +1,4 @@
-"""The native root proof of P1 tetrahedra and Q1 hexahedra in the rational proof.
+"""The native root proof of P1 tetrahedra, Q1 hexahedra and P1 prisms.
 
 ``phx_mc_cell_map_validity`` decides the per-cell proof of
 ``certify_cell_geometry_validity`` where its root proof suffices; the reference
@@ -90,6 +90,42 @@ def _python_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(meshcore_module, "meshcore_available", lambda: False)
 
 
+_WEDGE = np.asarray(
+    [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [0, 1, 1]], dtype=np.float64
+)
+
+
+def _prisms() -> CellMesh:
+    # Perturbed (nonaffine) wedges, thin layer-like wedges over a curved
+    # wall, an exact translate (affine), an inverted, a collapsed and a
+    # twisted wedge needing subdivision.
+    generator = np.random.default_rng(7)
+    cells = [_WEDGE + generator.normal(size=(6, 3)) * 0.08 for _ in range(16)]
+    cells.extend(_WEDGE + generator.normal(size=(6, 3)) * 0.35 for _ in range(8))
+    for _ in range(8):
+        bottom = generator.normal(size=(3, 3))
+        bottom /= np.linalg.norm(bottom, axis=1, keepdims=True)
+        if np.linalg.det(bottom) < 0.0:
+            bottom = bottom[::-1]
+        cells.append(np.concatenate((bottom, bottom * (1.0 - 0.0123))))
+    cells.append(_WEDGE * np.asarray((2.0, 0.5, 0.25)) + np.asarray((0.1, 0.0, 0.3)))
+    inverted = _WEDGE.copy()
+    inverted[:, 2] = 1.0 - inverted[:, 2]
+    cells.append(inverted)
+    collapsed = _WEDGE.copy()
+    collapsed[3] = collapsed[0]
+    cells.append(collapsed)
+    twisted = _WEDGE.copy()
+    angle = 2.4 * twisted[:, 2]
+    x, y = twisted[:, 0] - 1.0 / 3.0, twisted[:, 1] - 1.0 / 3.0
+    twisted[:, 0] = x * np.cos(angle) - y * np.sin(angle) + 1.0 / 3.0
+    twisted[:, 1] = x * np.sin(angle) + y * np.cos(angle) + 1.0 / 3.0
+    cells.append(twisted)
+    points = np.concatenate(cells)
+    routes = np.arange(points.shape[0], dtype=np.int32).reshape(-1, 6)
+    return CellMesh(points, (CellBlock("cells", "prism", routes),))
+
+
 def _decided(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     decided = [0]
     original = validity_module._native_cell_map_proofs
@@ -109,7 +145,7 @@ def _assert_same(native: CellValidityCertificate, rational: CellValidityCertific
     assert _same_tree_content(native, rational)
 
 
-@pytest.mark.parametrize("build", (_tetrahedra, _hexahedra))
+@pytest.mark.parametrize("build", (_tetrahedra, _hexahedra, _prisms))
 @pytest.mark.parametrize("floor", (None, 0.3))
 def test_native_root_proof_reproduces_the_rational_certificate(
     monkeypatch: pytest.MonkeyPatch, build: Any, floor: float | None

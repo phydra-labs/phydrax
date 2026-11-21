@@ -1834,13 +1834,14 @@ PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
  * corner Jacobians); displacement (vertex_count, 3): the full-depth column
  * vector at scale 1; scale (vertex_count): the thinning factor;
  * vertex_kind (vertex_count): 0 smooth, 1 ridge, 2 corner.
- * stats (20): seconds of topology, jets, directions, relaxation,
+ * stats (21): seconds of topology, jets, directions, relaxation,
  * construction, certification and total; then ridge vertices, corner
  * vertices, relaxed vertices, thinned vertices, thinned ridge/corner
  * vertices, minimum scale, repair rounds, invalid prisms (exact with prove,
  * else float), top-level contacts (-1 without prove), certified (1/0),
  * minimum float corner ratio (min / max |corner Jacobian| per prism),
- * feature edges and relaxation updates.
+ * feature edges, relaxation updates and the failures (invalid prisms and
+ * top-level contacts) detected over every repair round.
  * Returns PHX_MC_OK, PHX_MC_UNRESOLVED when a failure remains at the minimum
  * scale (outputs hold the last construction), PHX_MC_INVALID_INPUT for a
  * wall that is not a closed oriented manifold, PHX_MC_DEGENERATE_INPUT for a
@@ -2593,6 +2594,14 @@ PHX_MC_API int32_t phx_mc_point_triangle_locations(
  * these observations are not a bound. */
 PHX_MC_API int32_t phx_mc_point_triangle_distances(
     int64_t count, const double* points, const double* triangles, double* distances);
+/* distances[k] = the least phx_mc_point_triangle_distances value of point k
+ * over every triangle (triangle_count >= 1 rows of nine coordinates), found
+ * by a box tree that skips only subtrees whose ordered box distance exceeds
+ * the best value, so the result equals the exhaustive minimum. Nonfinite
+ * input returns PHX_MC_NONFINITE_INPUT, a nonfinite value PHX_MC_RANGE_ERROR. */
+PHX_MC_API int32_t phx_mc_point_triangle_nearest_distances(
+    int64_t count, const double* points, int64_t triangle_count, const double* triangles,
+    double* distances);
 PHX_MC_API int32_t phx_mc_arrange_triangles(
     int64_t vertex_count, const double* vertices, int64_t triangle_count,
     const int64_t* triangles, const int32_t* surfaces, int64_t pair_count,
@@ -2985,6 +2994,43 @@ PHX_MC_API int32_t phx_mc_tet_mesh_entities(int64_t vertex_count, int64_t cell_c
                                             int32_t* edge_face_order,
                                             int32_t* face_cell_order);
 
+/* Oriented entities of m standard polyhedral cells, numbered exactly as the
+ * generic polyhedral connectivity numbers them. cell_kinds[k] in 0..3 is a
+ * tetrahedron, pyramid, prism or hexahedron (4, 5, 6, 8 vertices; 4, 5, 5, 6
+ * outward face loops: the phydrax reference loops); cells packs their
+ * vertex rows. Each face loop (L in all, cell-major) is canonicalized to
+ * start at its smallest vertex toward the smaller neighbor: loop_signs[l] is
+ * +1 when that keeps the loop's direction, else -1. Distinct canonical loops
+ * are the faces in first-appearance order: loop_faces (L) routes each loop,
+ * face_owner_loops / face_neighbor_loops its first and second loop (or -1),
+ * face_vertex_offsets (face_count + 1) / face_vertex_values the canonical
+ * vertices. The distinct sides of the face loops, in face-vertex order, are
+ * the edges (increasing vertex pairs) in first-appearance order:
+ * face_edge_values routes each face side, edge_first_sides each edge's first
+ * side. face_order and edge_order list the faces and edges in the
+ * lexicographic order of their increasing vertex rows (a triangle precedes
+ * the quadrilaterals it prefixes). Capacities: L loops and faces, S = the
+ * summed loop sizes for face vertices, face sides, edge_first_sides and
+ * edge_order, 2S for edges. An unknown kind or m above INT32_MAX / 24 is
+ * PHX_MC_INVALID_ARGUMENT; a vertex outside [0, vertex_count), a cell
+ * repeating a vertex, a face used thrice or twice with one orientation, or
+ * two faces on one vertex set is PHX_MC_INVALID_INPUT. */
+PHX_MC_API int32_t phx_mc_polyhedral_mesh_entities(
+    int64_t vertex_count, int64_t cell_count, const int32_t* cell_kinds, const int32_t* cells,
+    int32_t* loop_faces, int32_t* loop_signs, int64_t* face_count, int32_t* face_owner_loops,
+    int32_t* face_neighbor_loops, int32_t* face_vertex_offsets, int32_t* face_vertex_values,
+    int64_t* edge_count, int32_t* edges, int32_t* edge_first_sides, int32_t* face_edge_values,
+    int32_t* face_order, int32_t* edge_order);
+
+/* The stable order of n incidence routes sorting their (lower, upper, sign)
+ * rows: lower[k] in [0, lower_count), upper[k] in [0, upper_count) are
+ * dense entity ranks and signs[k] is -1 or +1 (otherwise
+ * PHX_MC_INVALID_INPUT). order receives n route indices, in linear time. */
+PHX_MC_API int32_t phx_mc_incidence_order(int64_t lower_count, int64_t upper_count,
+                                          int64_t count, const int32_t* lower,
+                                          const int32_t* upper, const int8_t* signs,
+                                          int32_t* order);
+
 /* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
  * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
  * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive
@@ -2999,7 +3045,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double* upper);
 
 /* Exact validity proof of dof-linear polynomial cell maps in three dimensions
- * (domain 0: affine simplices; 1: affine or multilinear boxes), identical to
+ * (domain 0: affine simplices; 1: affine or multilinear boxes; 2: affine or
+ * P1 prisms, triangle-linear times interval-linear), identical to
  * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
  * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
  * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
@@ -3010,7 +3057,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * three). decided[k] = 1 when the root proof decides the cell: status[k] 0
  * (certified) or 1 (invalid) and lower[k], upper[k] the directed binary64
  * endpoints of the determinant (affine) or of the least and greatest
- * least-degree Bernstein control of det J (multilinear). digests[k] (16
+ * least-degree Bernstein control of det J on its support (multilinear,
+ * prism). digests[k] (16
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
  * ASCII without quote or backslash). Undecided cells (subdivision, the
  * expanded Hadamard margin, values beyond the exact range) are left to the

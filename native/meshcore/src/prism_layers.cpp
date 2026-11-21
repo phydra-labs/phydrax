@@ -13,7 +13,8 @@
 //     fit over the sector's faces and their smooth neighbors gives the
 //     surface normal at the vertex and its second fundamental form, so a
 //     sector seen from one side of a ridge is not biased by its one-sided
-//     fan.
+//     fan. A fit whose normal leaves the cone of the sector's face normals
+//     (few one-sided samples) is dropped for the flat angle-weighted normal.
 //  3. Directions: a smooth vertex grows along its normal by the total height
 //     D. A ridge or corner vertex grows by the minimum-norm w with
 //     w . g_i = a_i for every sector normal g_i (the medial direction of its
@@ -283,6 +284,12 @@ Jet fit_jet(const Wall& w, int64_t v, const Sector& sector, std::vector<int32_t>
   scratch.erase(std::unique(scratch.begin(), scratch.end()), scratch.end());
   g0 = unit(g0);
   jet.g = g0;
+  // The sector's face normals bound where its smooth surface normal can lie.
+  double spread = 1.0;
+  for (int64_t j = sector.begin; j < sector.end; ++j) {
+    const int64_t t = w.fan[static_cast<size_t>(b + j % size)] / 3;
+    spread = std::min(spread, dot(w.normal[static_cast<size_t>(t)], g0));
+  }
   const Vec helper = std::fabs(g0[0]) < 0.6 ? Vec{1.0, 0.0, 0.0} : Vec{0.0, 1.0, 0.0};
   jet.t1 = unit(tangential(helper, g0));
   jet.t2 = cross(g0, jet.t1);
@@ -327,8 +334,14 @@ Jet fit_jet(const Wall& w, int64_t v, const Sector& sector, std::vector<int32_t>
     return jet;
   }
   const Vec g = unit(sub(g0, add(mul(jet.t1, c1), mul(jet.t2, c2))));
-  // Keep the fitted normal only where it stays visible from the sector.
-  if (dot(g, g0) > 0.5) jet.g = g;
+  // Keep the fit only where its normal stays inside the sector's normal cone:
+  // a one-sided sector (beside a ridge) with few samples can tilt the fitted
+  // plane far off the surface, and its curvatures with it.
+  if (dot(g, g0) >= spread) {
+    jet.g = g;
+  } else {
+    jet.a = jet.b = jet.c = 0.0;
+  }
   return jet;
 }
 
@@ -611,6 +624,7 @@ int32_t grow(const Input& in, const Output& out) {
     return any;
   };
   int64_t float_invalid = 0;
+  int64_t detected = 0;  // failures over every construction and certification round
   double minimum_ratio = std::numeric_limits<double>::infinity();
   while (true) {
     float_invalid = 0;
@@ -624,6 +638,7 @@ int32_t grow(const Input& in, const Output& out) {
       const int64_t t = prism % m;
       for (int c = 0; c < 3; ++c) marked[static_cast<size_t>(w.f[3 * t + c])] = 1;
     }
+    detected += float_invalid;
     if (float_invalid == 0 || !thin()) break;
     ++rounds;
   }
@@ -747,6 +762,7 @@ int32_t grow(const Input& in, const Output& out) {
         }
         s = e;
       }
+      detected += invalid + crossings;
       if ((invalid == 0 && crossings == 0) || !thin()) break;
       ++rounds;
       // Thinning may invert a prism in float again; the exact pass decides.
@@ -783,6 +799,7 @@ int32_t grow(const Input& in, const Output& out) {
   stats[15] = static_cast<double>(crossings);
   stats[16] = certified ? 1.0 : 0.0;
   stats[17] = minimum_ratio;
+  stats[20] = static_cast<double>(detected);
   stats[6] = seconds(start);
   if (invalid != 0 || crossings > 0) return PHX_MC_UNRESOLVED;
   return PHX_MC_OK;
