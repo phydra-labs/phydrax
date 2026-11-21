@@ -3,6 +3,24 @@
 ## Unreleased
 
 ### Added
+- Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
+  restricted-power route stays the default polyhedral fill for PLCs): one
+  native call places conforming seeds (interior seeds mirrored across the
+  surface by exterior ghosts, sharp-edge sector and corner seeds, a
+  body-centered cubic interior, on a dyadic grid, deterministic) and returns
+  the exact Voronoi cells of the interior seeds (closed, convex, exact
+  circumcenter vertices). Nearly cospherical configurations are resolved by
+  mirror-preserving seed moves first and a lone move only when those fail.
+  Certification follows the boundary: exact `volume_plc` coverage when every
+  boundary vertex lies on its facet (axis-aligned planes stay exact),
+  otherwise the new `volume_plc_fidelity` schedule certifies a two-sided
+  distance bound against `maximum_deviation` (default the cell size) through a
+  distance-only `SourceBoundaryDistanceWitness` that accepts PLC sources;
+  global-embedding identities write exact shell volumes beyond Python's
+  decimal limit in hex. New benchmark rows `voronoi-{sphere,cube,torus,
+  steinmetz}` (ledger F14, public `execute(prove=False)`): 1.5-8.2x faster
+  than VoroCrust with smaller boundary distance and volume error on every row
+  (cube rows exact), convexity decided exactly.
 - Native prism layers `phx_mc_prism_layers` (`_meshcore.prism_layers`) grow
   layers from a closed oriented triangle wall, one column per vertex, with
   fitted normals and curvature-corrected columns at sharp edges; every prism
