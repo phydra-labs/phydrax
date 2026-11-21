@@ -634,14 +634,30 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
     # over its latitudes, du, dv its chart extents; cad_faces.hpp). The trim
     # circle's chords (curve stage) and the band before the first ring (face
     # stage) are sized by that bound, so every row standing on a trim chord
-    # meets it within theta tol. Fault caught: chords sized in 3D alone (the
-    # trim at 85 deg in three chords, du = 2 pi / 3: bound over theta tol,
-    # V3 refused those rows though the flat triangles lay within it).
+    # meets it within theta tol. A row with one corner on the trim (beside a
+    # trim vertex, or at a seam end, where the ring chain is open and the row
+    # reaches the seam's first vertex beyond the band) is outside the band's
+    # premise; its chart-linear deviation, sampled against the closed form
+    # S = (cos v cos u, cos v sin u, sin v) on a barycentric grid, stays
+    # within theta tol (measured worst 0.86 over 45 coarse caps and 400
+    # random ones). Fault caught: chords sized in 3D alone (the trim at 85
+    # deg in three chords, du = 2 pi / 3: bound and sampled deviation over
+    # theta tol, V3 refused those rows though the flat triangles lay within
+    # it).
     trim = np.radians(float(latitude))
     model = cad_geometry_bundle(
         MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
     ).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    steps = 12
+    weights = np.asarray(
+        [
+            (1 - (i + j) / steps, i / steps, j / steps)
+            for i in range(steps + 1)
+            for j in range(steps + 1 - i)
+        ],
+        dtype=np.float64,
+    )
     for size in (0.4, 0.6, 0.8):
         for theta in (0.5, 0.7, 0.9):
             tolerance = size / 6.0
@@ -667,6 +683,19 @@ def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None
             b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
             bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
             assert bound.max() <= theta * tolerance, (size, theta, bound.max())
+            touching = dome & on_trim.any(axis=1)
+            chart = np.einsum("kv,rvd->rkd", weights, uv[touching])
+            linear = np.einsum("kv,rvd->rkd", weights, corners[touching])
+            exact = np.stack(
+                (
+                    np.cos(chart[..., 1]) * np.cos(chart[..., 0]),
+                    np.cos(chart[..., 1]) * np.sin(chart[..., 0]),
+                    np.sin(chart[..., 1]),
+                ),
+                axis=-1,
+            )
+            deviation = np.linalg.norm(exact - linear, axis=2).max()
+            assert deviation <= theta * tolerance, (size, theta, deviation)
 
 
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
