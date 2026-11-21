@@ -307,14 +307,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
     index for closest points; (2) inside/outside of lattice vertices by +x ray parity per lattice
     line with exact orient2d/orient3d and symbolic perturbation; (3) a balanced octree from size h:
     a cell whose L-infinity distance to a triangle box is below its size is split down to the
-    boundary size (this alone gives 2:1 balance over all 26 neighbours); (4) core cells: inside and,
+    boundary size (this alone gives 2:1 balance over all 26 neighbors); (4) core cells: inside and,
     at the finest level, every corner at least half a boundary cell (plus the layer stack) from the
     surface and no triangle in the box; manifold repair of the staircase by removing finest cells at
     non-manifold edges and vertices; (5) the face-based mesh with hanging nodes: same-level faces
-    carry the midpoints of finer neighbours, so 2:1 coarse cells become polyhedra (OpenFOAM's
+    carry the midpoints of finer neighbors, so 2:1 coarse cells become polyhedra (OpenFOAM's
     convention, as cfMesh's); (6) one projection layer of hexahedra between the staircase and its
     closest-point image: staircase faces are assigned to patches, the partition is cleaned
-    (faces with three or four foreign edge neighbours flip, non-manifold chain vertices merge) and
+    (faces with three or four foreign edge neighbors flip, non-manifold chain vertices merge) and
     chain vertices snap to the feature curve between their two patches, corner vertices to feature
     corners; (7) smoothing: interior vertices of the fine band move to the mean of their cells'
     centroids (this tilts the hanging faces towards the fine cells, the mechanism that lowers
@@ -344,7 +344,7 @@ tetrahedra, then implicit volumes, then the CAD solid.
     certified on quadric L0 but cost +13 % cells and left uncertified collapsed wall pairs on
     L2). Adopted, after cfMesh's `boundaryLayers` (studied stage by stage): at a convex feature
     curve the wall layers do not wrap the curve; each side's layer points slide along the other
-    patch (t at most 0.9 of the distance to the far edge of the neighbouring wall faces), each
+    patch (t at most 0.9 of the distance to the far edge of the neighboring wall faces), each
     side's columns reattach to its slid points, and one corner hexahedron column per curve
     segment carries a wall strip on each patch. With layers, staircase steps split along their
     corner's own diagonal so the curve keeps every staircase vertex; a curve segment whose chord
