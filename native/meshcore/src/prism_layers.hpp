@@ -23,6 +23,8 @@ struct Input {
   double feature_angle_degrees;
   double minimum_scale;
   int32_t prove;
+  const double* source_normals;          // (m, 3, 3) per triangle corner, or null
+  const double* source_shape_operators;  // (m, 3, 6) per triangle corner, or null
 };
 
 struct Output {

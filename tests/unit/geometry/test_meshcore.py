@@ -3456,7 +3456,9 @@ def test_fixed_boundary_lattice_reaches_a_non_convex_interior() -> None:
     depth = 0.4 - np.hypot(np.hypot(inserted[:, 0], inserted[:, 1]) - 1.0, inserted[:, 2])
     deep = inserted[depth > 0.5 * lattice]
     angle = np.arctan2(deep[:, 1], deep[:, 0]) + np.pi
-    sectors = np.bincount(np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8)
+    sectors = np.bincount(
+        np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8
+    )
     assert sectors.max() <= 1.1 * sectors.min()
 
 
@@ -3545,7 +3547,9 @@ print(growth if sys.platform == "darwin" else 1024 * growth)
     return int(completed.stdout.split()[-1])
 
 
-def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: Path) -> None:
+def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(
+    tmp_path: Path,
+) -> None:
     # A 100:1:1 bar at h = 0.2: the lattice sites are listed sparsely (the
     # box's rows, or per recovered cell), so seeding costs the bar's box or
     # volume, not its bounding box's diagonal cubed (a dense site table over
@@ -3556,7 +3560,9 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: P
     surface = _box_surface(
         (np.linspace(0.0, 100.0, 501), np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6))
     )
-    growth = _refine_peak_growth(tmp_path, surface, f"np.full((points.shape[0],), {size})")
+    growth = _refine_peak_growth(
+        tmp_path, surface, f"np.full((points.shape[0],), {size})"
+    )
     assert growth < 64 * 2**20
     recovery = _recover(*surface)
     mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
@@ -3573,7 +3579,9 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: P
     inserted = np.asarray(mesh.arrays().points)[recovery.points.shape[0] :]
     depth = np.min(np.minimum(inserted, [100.0, 1.0, 1.0] - inserted), axis=1)
     deep = inserted[depth > lattice]
-    stretches = np.bincount(np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10)
+    stretches = np.bincount(
+        np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10
+    )
     assert stretches.max() <= 1.15 * stretches.min()
 
 

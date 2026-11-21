@@ -103,7 +103,7 @@ Surface box(double l, int n) {
 }
 
 // Closed cylinder of radius r over [0, h + slope x] (n segments, m rings,
-// caps fanned to their centres), outward: two closed convex feature curves,
+// caps fanned to their centers), outward: two closed convex feature curves,
 // the top one elliptic when the cap is oblique.
 Surface cylinder(double radius, double height, int n, int m, double slope = 0.0) {
   Surface s;
@@ -196,7 +196,7 @@ V cross3(const V& a, const V& b) {
 }
 
 // Independent checks: closed cells (every directed edge paired), positive
-// decomposition tetrahedra (centre, face vertex average, edge) about the
+// decomposition tetrahedra (center, face vertex average, edge) about the
 // distinct-vertex average (the published local map) and about the OpenFOAM
 // centroid, positive hexahedron corner Jacobians; returns the mesh volume.
 double check_cells(const Result& r) {
@@ -211,9 +211,9 @@ double check_cells(const Result& r) {
   int64_t open = 0, negative = 0, inverted = 0;
   for (int64_t c = 0; c < cells; ++c) {
     std::vector<std::pair<int32_t, int32_t>> directed;
-    // Distinct-vertex average; face vertex averages, centres and areas.
+    // Distinct-vertex average; face vertex averages, centers and areas.
     std::vector<int32_t> vertices;
-    std::vector<V> averages, centres, areas;
+    std::vector<V> averages, centers, areas;
     for (const auto& [f, sign] : of[c]) {
       const int64_t first = r.face_offsets[f], last = r.face_offsets[f + 1];
       V average{0, 0, 0};
@@ -222,7 +222,7 @@ double check_cells(const Result& r) {
         const V p = at(r.points, r.face_vertices[q]);
         for (int a = 0; a < 3; ++a) average[a] += p[a] / static_cast<double>(last - first);
       }
-      V centre{0, 0, 0}, area{0, 0, 0};
+      V center{0, 0, 0}, area{0, 0, 0};
       double weight = 0.0;
       for (int64_t q = first; q < last; ++q) {
         const V p = at(r.points, r.face_vertices[q]);
@@ -231,13 +231,13 @@ double check_cells(const Result& r) {
         const double m = std::sqrt(dot3(a, a));
         for (int k = 0; k < 3; ++k) {
           area[k] += 0.5 * sign * a[k];
-          centre[k] += m * (p[k] + n[k] + average[k]) / 3.0;
+          center[k] += m * (p[k] + n[k] + average[k]) / 3.0;
         }
         weight += m;
       }
-      for (int k = 0; k < 3; ++k) centre[k] /= weight;
+      for (int k = 0; k < 3; ++k) center[k] /= weight;
       averages.push_back(average);
-      centres.push_back(centre);
+      centers.push_back(center);
       areas.push_back(area);
     }
     std::sort(vertices.begin(), vertices.end());
@@ -247,17 +247,17 @@ double check_cells(const Result& r) {
       const V p = at(r.points, v);
       for (int a = 0; a < 3; ++a) vertex_average[a] += p[a] / static_cast<double>(vertices.size());
     }
-    // OpenFOAM centroid: pyramids about the mean of the face centres.
+    // OpenFOAM centroid: pyramids about the mean of the face centers.
     V estimate{0, 0, 0};
-    for (const V& centre : centres) {
-      for (int a = 0; a < 3; ++a) estimate[a] += centre[a] / static_cast<double>(centres.size());
+    for (const V& center : centers) {
+      for (int a = 0; a < 3; ++a) estimate[a] += center[a] / static_cast<double>(centers.size());
     }
     V centroid{0, 0, 0};
     double pyramids = 0.0;
-    for (size_t i = 0; i < centres.size(); ++i) {
-      const double v = dot3(areas[i], minus(centres[i], estimate)) / 3.0;
+    for (size_t i = 0; i < centers.size(); ++i) {
+      const double v = dot3(areas[i], minus(centers[i], estimate)) / 3.0;
       pyramids += v;
-      for (int a = 0; a < 3; ++a) centroid[a] += v * (0.75 * centres[i][a] + 0.25 * estimate[a]);
+      for (int a = 0; a < 3; ++a) centroid[a] += v * (0.75 * centers[i][a] + 0.25 * estimate[a]);
     }
     for (int a = 0; a < 3; ++a) centroid[a] /= pyramids;
     double volume = 0.0;

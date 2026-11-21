@@ -3,6 +3,42 @@
 ## Unreleased
 
 ### Added
+- Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
+  `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
+  core refined to half size at the boundary with exact inside/outside, one
+  projected wall layer snapped to feature edges and corners, smoothing with a
+  non-orthogonality and skewness descent and local repair, optional wall
+  layers along wall normals (never thinner than requested, deeper along
+  feature-curve columns where that lowers skewness). Every cell is published
+  as a polyhedron with OpenFOAM face semantics (a non-planar face is the fan
+  from its exact vertex average; requests use
+  `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
+  gives the hexahedron fraction by shape); `prove=True` certifies cell
+  validity, the global embedding and the boundary fidelity (on curved inputs
+  such as the F8 quadric it currently refuses: neighboring cells whose bent
+  faces share an edge chain overlap under fan semantics), the proof-only
+  fidelity preparation built on the first proved execution. `plc_hex_dominant`
+  remains the route for trilinear
+  hexahedra. Publication builds polyhedral connectivity from packed native
+  faces (also for conforming Voronoi) and maps each published face to its
+  native face through the cell's own face list; smoothing reuses the face and
+  centroid geometry it has computed and the final repair search stops scoring
+  a move that cannot improve (about 25 % faster, identical meshes). New
+  benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
+  `cartesianMesh` ceilings): sphere L0 / L2 and quadric L0 are faster than
+  cfMesh with every quality field better; quadric L2 is faster but does not
+  pass yet (Hausdorff and skew at the feature curve).
+- Polyhedron faces that are not planar are certified as the fan of triangles
+  from their exact vertex average (`polytope_face_triangles`,
+  `polytope_face_routes`): validity, global embedding (degree routes with fan
+  exterior faces, shared-face contact on the fan) and PLC fidelity use the
+  same triangles, and folded fans, loops winding more than once and zero-area
+  loops are refused. The native star proofs decide fan faces too (apex carried
+  exactly), with results identical to the rational proof. Declared identity
+  change: PLC fidelity triangulates planar exterior faces by ear clipping
+  instead of a fan from the first vertex, so fidelity-route certificates (for
+  example curved conforming Voronoi) change; witnesses name a fan exterior
+  boundary only when one is present.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the
@@ -444,6 +480,32 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Certified polyhedral meshes (`prove=True`): exact star validity and star
+  decomposition of vertex-defined polyhedra run natively
+  (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)
+  on exact rational vertices (integer rows over each cell's common
+  denominator, interval filter with exact big-integer fallback) with identical
+  certificates, the Python proofs remaining for meshes without meshcore and
+  undecided cells; domain-coverage source matching is screened by outward
+  boxes and binary64 separation before the exact overlap test, and contained
+  triangle overlaps are taken directly; coverage overlaps, shell measures and
+  face triangulation are batched with identical results. Certified conforming
+  Voronoi at ~1e3 cells: cube 18.9 s, sphere 27.0 s (from several minutes),
+  certificates unchanged.
+- Native prism layers on CAD walls are measured from the source surface:
+  `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
+  into the layer domain, shape operator); a smooth sector framed at every
+  corner takes its normal and curvature from them instead of the vertex fit.
+  `brep_layer_core_source` evaluates the frames from the source patches
+  (`inward_source_frames`; corners at singular chart points such as cap
+  centers and poles carry none and are fitted) and passes them to
+  `prepare_boundary_layers(..., source_frames=)`. Levels on a coarse CAD
+  cylinder now lie within 1e-5 of the closed form, rims included (previously
+  up to 2.7 % short); bare STL walls are unchanged. Declared representation
+  change: `BoundaryLayerMesh` gains `source_frames` (validated, in
+  `result_id`, archived; field order, PyTree structure and result ids change),
+  and cold restore reproves the columns from the retained frames, so forged
+  frames are refused.
 - Size compliance judges the quantity each producing kernel bounds, declared
   once per route in `SIZE_COMPLIANCE_DECLARATIONS` (`phydrax/meshing/_sizing.py`,
   documented under "Size compliance" in the meshing guide). The native CAD
@@ -2210,6 +2272,17 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- AT_MOST size compliance rows (CAD chart circumradius, S3 boundary edge)
+  are decided exactly at ties. A unit box meshed at h = 0.5 meets
+  R = h/sqrt(2) exactly, yet its float circumradius rounded above the float
+  bound and was refused. `SizeComplianceDeclaration.exceeds` now takes the
+  per-entity measures (`triangle_circumradius_measures`,
+  `edge_length_measures`): an entity farther from t^2 than a proved
+  forward error bound is decided in floats, otherwise exactly in the stored
+  coordinates (R^2 = a^2 b^2 c^2 / (16 A^2), squared lengths) against
+  t = sqrt(F) h (1 + rel) + abs, with `bound_factor_squared` exact (1/2 for
+  the chart rows). The quantile's order statistics and interpolation weight
+  are numpy's linear ones.
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.

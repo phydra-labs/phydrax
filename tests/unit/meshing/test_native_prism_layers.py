@@ -218,6 +218,96 @@ def test_coarse_cylinder_rims_grow_certified_columns_at_true_depth() -> None:
     assert np.all(np.abs(depth - heights[:, None]) <= 0.03 * heights[:, None])
 
 
+def test_exact_cylinder_frames_place_every_level_at_its_true_depth() -> None:
+    # The same CAD cylinder wall with its closed-form source frames: side
+    # corners grow toward the axis and curve by 1 / r around it, cap corners
+    # grow along the axis and are flat. Rim sectors no longer see their
+    # one-sided facets, so every level, rims included, lies at its true depth.
+    data = np.load(
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "meshing"
+        / "cad_cylinder_layer_wall.npz"
+    )
+    vertices = data["vertices"]
+    triangles = data["triangles"]
+    corners = vertices[triangles]
+    facet = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    cap = np.abs(facet[:, 2]) > 0.99 * np.linalg.norm(facet, axis=-1)
+    # Cap corners may sit on the axis; only side corners use the radial frame.
+    length = np.linalg.norm(corners[..., :2], axis=-1)
+    radial = corners[..., :2] / np.where(length > 0.0, length, 1.0)[..., None]
+    around = np.stack((-radial[..., 1], radial[..., 0]), axis=-1)
+    normals = np.zeros(corners.shape, dtype=np.float64)
+    normals[~cap, :, :2] = -radial[~cap]
+    normals[cap, :, 2] = np.sign(facet[cap, 2])[:, None]
+    shapes = np.zeros((*corners.shape[:2], 6), dtype=np.float64)
+    shapes[~cap, :, 0] = around[~cap, :, 0] ** 2 / 0.5
+    shapes[~cap, :, 1] = around[~cap, :, 0] * around[~cap, :, 1] / 0.5
+    shapes[~cap, :, 3] = around[~cap, :, 1] ** 2 / 0.5
+    heights = np.asarray((0.01, 0.025))
+    layers = _meshcore.prism_layers(
+        vertices,
+        triangles,
+        heights,
+        feature_angle_degrees=30.0,
+        minimum_scale=1.0,
+        prove=True,
+        source_normals=normals,
+        source_shape_operators=shapes,
+    )
+
+    assert layers.status is _meshcore.MeshcoreStatus.OK
+    assert layers.stats[16] == 1.0 and layers.stats[14] == 0.0
+    assert np.count_nonzero(layers.vertex_kind == 1) == 64
+    assert all(
+        _least_bernstein_control(layers.points, prism) > 0 for prism in layers.prisms
+    )
+    levels = layers.points.reshape((3, vertices.shape[0], 3))[1:]
+    radial_depth = 0.5 - np.linalg.norm(levels[..., :2], axis=-1)
+    depth = np.minimum(radial_depth, np.minimum(levels[..., 2], 1.0 - levels[..., 2]))
+    assert np.all(np.abs(depth - heights[:, None]) <= 1.0e-5 * heights[:, None])
+
+
+def test_malformed_source_frames_are_refused() -> None:
+    vertices, faces = _sphere()
+    corners = vertices[faces[:, ::-1]]
+    normals = -corners / np.linalg.norm(corners, axis=-1)[..., None]
+    shapes = np.zeros((*corners.shape[:2], 6), dtype=np.float64)
+    with pytest.raises(ValueError, match="together"):
+        _meshcore.prism_layers(
+            vertices,
+            faces[:, ::-1],
+            _HEIGHTS,
+            feature_angle_degrees=30.0,
+            minimum_scale=0.05,
+            prove=True,
+            source_normals=normals,
+        )
+    with pytest.raises(ValueError, match="shape operators"):
+        _meshcore.prism_layers(
+            vertices,
+            faces[:, ::-1],
+            _HEIGHTS,
+            feature_angle_degrees=30.0,
+            minimum_scale=0.05,
+            prove=True,
+            source_normals=normals,
+            source_shape_operators=shapes[:, :, :3],
+        )
+    with pytest.raises(ValueError):
+        _meshcore.prism_layers(
+            vertices,
+            faces[:, ::-1],
+            _HEIGHTS,
+            feature_angle_degrees=30.0,
+            minimum_scale=0.05,
+            prove=True,
+            source_normals=1.001 * normals,
+            source_shape_operators=shapes,
+        )
+
+
 def test_an_open_wall_is_refused() -> None:
     vertices, faces = _sphere()
     with pytest.raises(ValueError, match="closed"):

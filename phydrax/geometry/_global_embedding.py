@@ -646,14 +646,141 @@ def _volume_tetrahedra(
     return tuple((center, *triangle) for triangle in triangles)
 
 
+_STAR_DECOMPOSITION_REFUSALS = (
+    "",
+    "A linear polytope has no exact face triangulation.",
+    "A polytope face has invalid vertex incidence.",
+    "Polytope boundary is not a closed two-manifold face complex.",
+    "Polytope boundary faces are not coherently orientable.",
+    "A polytope boundary encloses zero exact volume.",
+    "A polyhedron face loop has a zero exact area vector.",
+    "A non-planar polyhedron face folds its vertex-average fan.",
+    "A polygon must have at least three distinct exact vertices.",
+    "Planar polygon is exactly degenerate.",
+    "Polygon vertices are not exactly coplanar.",
+    "A planar polygon has zero exact area.",
+    "Polygon boundary self-intersects or self-touches.",
+    "No exact simple-polygon ear is available for triangulation.",
+    "Polygon triangulation produced a degenerate final triangle.",
+    "The polytope boundary does not wrap its star point exactly once.",
+    "A non-planar polyhedron face loop winds more than once about its centre.",
+)
+
+
+def _native_volume_tetrahedra(
+    cells: Sequence[EmbeddingCell], /
+) -> list[tuple[tuple[Point3, Point3, Point3, Point3], ...] | str | None]:
+    """`_volume_tetrahedra` of non-simplex cells by the native exact proof.
+
+    Each entry is the identical exact decomposition, the identical refusal
+    message, or ``None`` when the native proof leaves the cell (or a corner is
+    not rational) to the rational one.
+    """
+    from .._meshcore import (
+        common_denominator_rows,
+        meshcore_available,
+        polyhedral_star_decomposition,
+    )
+
+    results: list[tuple[tuple[Point3, Point3, Point3, Point3], ...] | str | None] = [
+        None for _ in cells
+    ]
+    if not cells or not meshcore_available():
+        return results
+    rows: list[int] = []
+    integers: list[int] = []
+    scales: list[int] = []
+    face_integers: list[int] = []
+    point_offsets = [0]
+    cell_faces = [0]
+    face_offsets = [0]
+    face_values: list[int] = []
+    for row, cell in enumerate(cells):
+        count = len(cell.corner_images)
+        integer_rows = (
+            common_denominator_rows(cell.corner_images)
+            if all(len(point) == 3 for point in cell.corner_images)
+            else None
+        )
+        if integer_rows is None or any(
+            index < 0 or index >= count for route in cell.facet_routes for index in route
+        ):
+            continue
+        face_rows: list[int] = []
+        for route in cell.facet_routes:
+            # Each face is decided again over its own vertices' denominator.
+            local_rows = common_denominator_rows(
+                tuple(cell.corner_images[index] for index in route)
+            )
+            if local_rows is None:
+                break
+            face_rows.extend(local_rows[0])
+        else:
+            rows.append(row)
+            integers.extend(integer_rows[0])
+            scales.append(integer_rows[1])
+            face_integers.extend(face_rows)
+            point_offsets.append(point_offsets[-1] + count)
+            for route in cell.facet_routes:
+                face_values.extend(route)
+                face_offsets.append(len(face_values))
+            cell_faces.append(len(face_offsets) - 1)
+    if not rows:
+        return results
+    codes, face_reversed, triangle_offsets, triangle_counts, triangles = (
+        polyhedral_star_decomposition(
+            np.asarray(point_offsets, dtype=np.int64),
+            integers + scales,
+            face_integers,
+            np.asarray(cell_faces, dtype=np.int64),
+            np.asarray(face_offsets, dtype=np.int64),
+            np.asarray(face_values, dtype=np.int64),
+        )
+    )
+    for local, row in enumerate(rows):
+        code = int(codes[local])
+        if code < 0:
+            continue
+        if code:
+            results[row] = _STAR_DECOMPOSITION_REFUSALS[code]
+            continue
+        cell = cells[row]
+        corner_points = tuple(_point3(point) for point in cell.corner_images)
+        center = _vertex_centroid(corner_points)
+        first_face = cell_faces[local]
+        faces = tuple(
+            tuple(corner_points[index] for index in (route[::-1] if flip else route))
+            for route, flip in zip(
+                cell.facet_routes,
+                face_reversed[first_face : cell_faces[local + 1]].tolist(),
+                strict=True,
+            )
+        )
+        start = int(triangle_offsets[local])
+        rows_of_cell = triangles[start : start + int(triangle_counts[local])].tolist()
+        # Local index -1 is a fan face's apex: its outward loop is extended by
+        # its exact vertex average.
+        fan_faces = {face for face, first, _, _ in rows_of_cell if first < 0}
+        faces = tuple(
+            (*loop, _vertex_centroid(loop)) if face in fan_faces else loop
+            for face, loop in enumerate(faces)
+        )
+        results[row] = tuple(
+            (center, faces[face][first], faces[face][second], faces[face][third])
+            for face, first, second, third in rows_of_cell
+        )
+    return results
+
+
 def _oriented_face_triangles(
     cell: EmbeddingCell, points: tuple[Point3, ...], /
 ) -> tuple[tuple[Point3, Point3, Point3], ...]:
     """Outward face triangles over a closed oriented edge cycle.
 
-    Face loops are oriented coherently, each triangulated once
-    (``polytope_face_triangles``), and the whole boundary turned outward by the
-    sign of its exact enclosed volume.
+    Face loops are oriented coherently, each oriented loop is triangulated
+    (``polytope_face_triangles``), and when the exact enclosed volume is
+    negative every loop is reversed and triangulated again: a face's triangles
+    are always those of its outward loop.
     """
     routes = cell.facet_routes
     if not routes:
@@ -693,27 +820,27 @@ def _oriented_face_triangles(
                         raise UnsupportedEmbeddingMap(
                             "Polytope boundary faces are not coherently orientable."
                         )
-    triangles: list[tuple[Point3, Point3, Point3]] = []
-    for index, route in enumerate(routes):
-        try:
-            face = polytope_face_triangles(tuple(points[vertex] for vertex in route))
-        except ValueError as error:
-            raise UnsupportedEmbeddingMap(str(error)) from error
-        triangles.extend(
-            (first, third, second) if reversed_face[index] else (first, second, third)
-            for first, second, third in face
-        )
+
+    def loop_triangles(flip_all: bool, /) -> list[tuple[Point3, Point3, Point3]]:
+        triangles: list[tuple[Point3, Point3, Point3]] = []
+        for index, route in enumerate(routes):
+            loop = route[::-1] if reversed_face[index] ^ flip_all else route
+            try:
+                triangles.extend(
+                    polytope_face_triangles(tuple(points[vertex] for vertex in loop))
+                )
+            except ValueError as error:
+                raise UnsupportedEmbeddingMap(str(error)) from error
+        return triangles
+
+    triangles = loop_triangles(False)
     origin = points[0]
     sign = _sign(
         sum((determinant3(origin, *triangle) for triangle in triangles), Fraction(0))
     )
     if sign == 0:
         raise UnsupportedEmbeddingMap("A polytope boundary encloses zero exact volume.")
-    return (
-        tuple(triangles)
-        if sign > 0
-        else tuple((first, third, second) for first, second, third in triangles)
-    )
+    return tuple(triangles if sign > 0 else loop_triangles(True))
 
 
 def _face_plane(points: tuple[Point3, ...], /) -> tuple[Point3, ExactScalar]:
@@ -6165,6 +6292,22 @@ def _nonperiodic_contacts(
     # Preserve the first source of each stratum, not its expensive derived
     # polynomial. Rebuilding from that source gives the identical residual.
     stratum_sources: dict[tuple[int, ...], int] = {}
+    # Straight non-simplex solids decomposed below share one native exact pass.
+    native_rows = tuple(
+        index
+        for index, cell in enumerate(cells)
+        if cell.dimension == 3
+        and cell.kind not in ("tetrahedron", "simplex:3")
+        and (cell.affine or not cell.coordinates)
+        and (participants is None or participants[index] or cell.kind == "polyhedron")
+    )
+    native_tetrahedra = dict(
+        zip(
+            native_rows,
+            _native_volume_tetrahedra(tuple(cells[index] for index in native_rows)),
+            strict=True,
+        )
+    )
     for index, cell in enumerate(cells):
         if (
             participants is not None
@@ -6202,8 +6345,11 @@ def _nonperiodic_contacts(
         if not cell.affine and cell.coordinates:
             simplices.append(None)
             continue
+        native = native_tetrahedra.get(index)
         try:
-            simplices.append(_cell_simplices(cell))
+            if isinstance(native, str):
+                raise UnsupportedEmbeddingMap(native)
+            simplices.append(native if native is not None else _cell_simplices(cell))
         except (ValueError, ZeroDivisionError) as error:
             simplices.append(None)
             # A vertex-defined polyhedron has no Jacobian; its exact star

@@ -843,15 +843,20 @@ periodicity, under `FAIL` or `REDUCE_THICKNESS`, grow on the native prism layers
 (`phx_mc_prism_layers`): one straight column per wall vertex, every prism
 certified by the exact signs of its nine Bernstein Jacobian controls and the top
 level by exact triangle contacts. Their level heights are measured from the
-smooth surface the wall vertices sample, not from the triangles: a quadratic fit
-per smooth sector gives each column's normal and curvature, and ridge columns
-reach the scheduled height from every sector. On a CAD wall, whose vertices lie
-on the source surface, this is that surface to the fit's accuracy (within
-1e-5 of each level on a sphere; a few percent short beside the edges of a coarsely meshed
-cylinder, where a sector sees only a few one-sided facets); on a bare triangle
-wall it is the fitted surface. `maximum_level_deviations` reports the levels'
-departure from the triangles. Every other wall takes the advancing-front route,
-whose probed column stretch measures levels from the triangles.
+smooth surface the wall samples, not from the triangles, and ridge columns reach
+the scheduled height from every smooth sector. A CAD wall (a source-face layer
+control on a BRep volume) passes its per-corner source frames, the source
+patch's inward normal and shape operator at each corner's chart point, as
+`source_frames`: its levels are measured from the source surface itself (within
+1e-5 of each level on a sphere and on a coarsely meshed cylinder, rims
+included). A corner at a singular chart point (a cap center, a pole) carries no
+frame, and its sectors, like every sector of a bare triangle wall, take normal
+and curvature from a weighted quadratic fit through the wall vertices. The
+result retains the frames as `source_frames`, fingerprinted and archived, and a
+cold restore reruns the kernel on them to reprove the columns.
+`maximum_level_deviations` reports the levels' departure from the triangles.
+Every other wall takes the advancing-front route, whose probed column stretch
+measures levels from the triangles.
 
 The result retains the original obstacle surface (or its absence) and the actual
 final column scales, layer counts, stretches, merge targets, and level coordinates,

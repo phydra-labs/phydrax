@@ -54,7 +54,7 @@ from ._exact_polyhedral_geometry import tetrahedron_contact_points
 from ._mapped_reference_domain import MappedReferenceDomain
 from ._mesh_certificates import _same_tree_content
 from ._planar_coverage import FacetOverlap, partition_overlaps
-from ._planar_primitives import _float_down, _float_up, area2, intersection
+from ._planar_primitives import _float_down, _float_up, overlap_area2
 
 
 if TYPE_CHECKING:
@@ -230,7 +230,7 @@ def _positive_simplex_intersection(
             return True
         first_2d = tuple((point[0], point[1]) for point in first)
         second_2d = tuple((point[0], point[1]) for point in second)
-        return area2(intersection(first_2d, second_2d)) > 0
+        return overlap_area2(first_2d, second_2d) > 0
     if (
         dimension != 3
         or len(first) != 4

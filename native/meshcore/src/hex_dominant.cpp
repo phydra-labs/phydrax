@@ -27,14 +27,14 @@
 //     neighbors' corners on its edges; a 2:1 coarse leaf becomes a polyhedron.
 //  6. Projection layer: one hexahedron between every staircase face and the
 //     closest-point images of its vertices. Staircase faces take the patch of
-//     their centre's nearest triangle; the partition is cleaned (flips of faces
+//     their center's nearest triangle; the partition is cleaned (flips of faces
 //     with three foreign neighbors, of faces whose curve vertices are not one
 //     run along their loop and of faces at non-manifold chain vertices); chain
 //     vertices snap to the feature curve between their two patches, corner
 //     vertices to the nearest feature corner, the others onto their patch.
 //  7. Smoothing (Jacobi, relaxed): fine-band and transition vertices move to
 //     the mean of their cells' centroids, surface vertices to the mean of their
-//     boundary faces' centres (curve vertices to the mean of their two chain
+//     boundary faces' centers (curve vertices to the mean of their two chain
 //     neighbors) and back onto their patch or curve by a local walk; a move is
 //     undone when an incident cell loses a positive float corner or
 //     decomposition volume.
@@ -55,7 +55,7 @@
 //     skewness or their wall faces' deviation from the surface.
 // Certification (prove): every cell, published as a polyhedron with OpenFOAM
 // face semantics (a non-planar face is the fan from its vertex average), by
-// the exact orientation of its decomposition tetrahedra (centre, face vertex
+// the exact orientation of its decomposition tetrahedra (center, face vertex
 // average, edge) about both the OpenFOAM centroid (OpenFOAM's decomposition)
 // and the vertex average of its distinct vertices (the published local map),
 // and a closed genus-0 boundary; smoothing screens both stars.
@@ -212,9 +212,9 @@ Vec closest_on_segment(const Vec& p, const Vec& a, const Vec& b) {
 
 // Separating-axis triangle/box overlap (Akenine-Moller) on a box grown by
 // `pad`; conservative: touching counts as overlap.
-bool triangle_box_overlap(const Vec& centre, double half, const Vec& a0, const Vec& b0,
+bool triangle_box_overlap(const Vec& center, double half, const Vec& a0, const Vec& b0,
                           const Vec& c0) {
-  const Vec v0 = sub(a0, centre), v1 = sub(b0, centre), v2 = sub(c0, centre);
+  const Vec v0 = sub(a0, center), v1 = sub(b0, center), v2 = sub(c0, center);
   const Vec e[3] = {sub(v1, v0), sub(v2, v1), sub(v0, v2)};
   for (int axis = 0; axis < 3; ++axis) {
     const double lo = std::min({v0[axis], v1[axis], v2[axis]});
@@ -1098,10 +1098,10 @@ int32_t Builder::octree_and_core() {
     }
     for (int c = 0; c < 8 && core; ++c) core = clear(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1));
     if (core) {
-      const Vec centre = lattice_point(i, j, k);
-      const Vec mid = add(centre, {0.5 * b, 0.5 * b, 0.5 * b});
+      const Vec center = lattice_point(i, j, k);
+      const Vec mid = add(center, {0.5 * b, 0.5 * b, 0.5 * b});
       const Bins& bins = s.triangle_bins;
-      const auto a0 = bins.cell(centre), a1 = bins.cell(lattice_point(i + 1, j + 1, k + 1));
+      const auto a0 = bins.cell(center), a1 = bins.cell(lattice_point(i + 1, j + 1, k + 1));
       for (int64_t bi = a0[0]; bi <= a1[0] && core; ++bi) {
         for (int64_t bj = a0[1]; bj <= a1[1] && core; ++bj) {
           for (int64_t bk = a0[2]; bk <= a1[2] && core; ++bk) {
@@ -1118,7 +1118,7 @@ int32_t Builder::octree_and_core() {
     leaf.core = core;
   }
   // Manifold staircase: remove finest core cells at non-manifold edges and
-  // vertices (the involved core cell whose centre is nearest the surface).
+  // vertices (the involved core cell whose center is nearest the surface).
   auto occupied = [&](int64_t i, int64_t j, int64_t k) { return tree.occupied(i, j, k); };
   auto nearest_distance = [&](int64_t i, int64_t j, int64_t k) {
     return nearest_triangle(s, add(lattice_point(i, j, k), {0.5 * b, 0.5 * b, 0.5 * b}), -1).d2;
@@ -1772,7 +1772,7 @@ void Builder::classify_splits() {
     if (surface_kind[row] != kFeature || chain_neighbors[row][0] < 0) continue;
     const auto& pair = surface_pair[row];
     const Vec p = point(surface_vertex[row]);
-    Vec area[2] = {{0, 0, 0}, {0, 0, 0}}, centre[2] = {{0, 0, 0}, {0, 0, 0}};
+    Vec area[2] = {{0, 0, 0}, {0, 0, 0}}, center[2] = {{0, 0, 0}, {0, 0, 0}};
     for (const int32_t q : row_pieces[row]) {
       const Piece& piece = pieces[q];
       const int side = piece.patch == pair[0] ? 0 : 1;
@@ -1783,11 +1783,11 @@ void Builder::classify_splits() {
         area[side] = add(area[side], cross(u, w));
         mid = add(mid, u);
       }
-      centre[side] = add(centre[side], mul(mid, 1.0 / piece.count));
+      center[side] = add(center[side], mul(mid, 1.0 / piece.count));
     }
     if (!(norm(area[0]) > 0.0) || !(norm(area[1]) > 0.0)) continue;
     const Vec n0 = mul(area[0], 1.0 / norm(area[0])), n1 = mul(area[1], 1.0 / norm(area[1]));
-    candidate[row] = dot(n0, n1) <= feature_cos && dot(centre[0], n1) < 0.0 && dot(centre[1], n0) < 0.0;
+    candidate[row] = dot(n0, n1) <= feature_cos && dot(center[0], n1) < 0.0 && dot(center[1], n0) < 0.0;
   }
   for (bool again = true; again;) {
     again = false;
@@ -2095,8 +2095,8 @@ Topology topology(const Mesh& mesh) {
   return t;
 }
 
-// OpenFOAM face centre and area vector (triangles about the vertex average).
-void face_geometry(const Mesh& mesh, int64_t f, Vec& centre, Vec& area, Vec& average) {
+// OpenFOAM face center and area vector (triangles about the vertex average).
+void face_geometry(const Mesh& mesh, int64_t f, Vec& center, Vec& area, Vec& average) {
   const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
   const double count = static_cast<double>(last - first);
   average = {0, 0, 0};
@@ -2115,7 +2115,7 @@ void face_geometry(const Mesh& mesh, int64_t f, Vec& centre, Vec& area, Vec& ave
     weighted = add(weighted, mul(add(add(p, n), average), magnitude / 3.0));
     total += magnitude;
   }
-  centre = total > 0.0 ? mul(weighted, 1.0 / total) : average;
+  center = total > 0.0 ? mul(weighted, 1.0 / total) : average;
 }
 
 // A face's vertex-average fan does not fold: every fan triangle's area
@@ -2142,26 +2142,26 @@ bool fan_unfolded(const Mesh& mesh, int64_t f) {
   return true;
 }
 
-// OpenFOAM cell centroid (pyramids about the mean of the face centres).
+// OpenFOAM cell centroid (pyramids about the mean of the face centers).
 Vec cell_centroid(const Mesh& mesh, const Topology& t, int64_t c) {
   Vec estimate{0, 0, 0};
   const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
-  Vec centres[64], areas[64];
+  Vec centers[64], areas[64];
   const int64_t count = std::min<int64_t>(last - first, 64);
   for (int64_t slot = 0; slot < count; ++slot) {
     const int32_t signed_face = t.cell_faces[first + slot];
     Vec average;
-    face_geometry(mesh, std::abs(signed_face) - 1, centres[slot], areas[slot], average);
+    face_geometry(mesh, std::abs(signed_face) - 1, centers[slot], areas[slot], average);
     if (signed_face < 0) areas[slot] = mul(areas[slot], -1.0);
-    estimate = add(estimate, centres[slot]);
+    estimate = add(estimate, centers[slot]);
   }
   estimate = mul(estimate, 1.0 / static_cast<double>(count));
   double volume = 0.0;
   Vec moment{0, 0, 0};
   for (int64_t slot = 0; slot < count; ++slot) {
-    const double v = dot(areas[slot], sub(centres[slot], estimate)) / 3.0;
+    const double v = dot(areas[slot], sub(centers[slot], estimate)) / 3.0;
     volume += v;
-    moment = add(moment, mul(add(mul(centres[slot], 0.75), mul(estimate, 0.25)), v));
+    moment = add(moment, mul(add(mul(centers[slot], 0.75), mul(estimate, 0.25)), v));
   }
   return volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
 }
@@ -2184,7 +2184,7 @@ bool hexahedron_corners_positive(const Mesh& mesh, int64_t c) {
   return true;
 }
 
-// The vertex average of a cell's distinct vertices: the centre of the
+// The vertex average of a cell's distinct vertices: the center of the
 // certified decomposition (the published cell's local map is the star from
 // it to every face's fan triangles).
 Vec cell_vertex_average(const Mesh& mesh, const Topology& t, int64_t c) {
@@ -2202,7 +2202,7 @@ Vec cell_vertex_average(const Mesh& mesh, const Topology& t, int64_t c) {
 }
 
 // Float screen of a cell: unfolded face fans, its decomposition tetrahedra
-// (centre, face vertex average, edge) about both centres above a relative
+// (center, face vertex average, edge) about both centers above a relative
 // margin: the OpenFOAM centroid (OpenFOAM's decomposition) and the vertex
 // average of the distinct vertices (the published cell's local map, the
 // star the certification checks); for hexahedra also the eight corner
@@ -2220,13 +2220,13 @@ bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& cent
     const Vec average = face(f, unfolded);
     if (!unfolded) return false;
     const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-    for (const Vec* centre : {&centroid, &vertex_average}) {
-      const double reach = norm(sub(average, *centre));
+    for (const Vec* center : {&centroid, &vertex_average}) {
+      const double reach = norm(sub(average, *center));
       for (int64_t q = first; q < last; ++q) {
         const int64_t r = q + 1 < last ? q + 1 : first;
         const Vec p = load(x + 3 * mesh.face_vertices[q]);
         const Vec n = load(x + 3 * mesh.face_vertices[r]);
-        double v = dot(cross(sub(p, average), sub(n, average)), sub(average, *centre));
+        double v = dot(cross(sub(p, average), sub(n, average)), sub(average, *center));
         if (signed_face < 0) v = -v;
         if (!(v > 1e-9 * reach * reach * reach)) return false;
       }
@@ -2275,7 +2275,7 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
       if (signed_face < 0) std::swap(u, w);
       directed.emplace_back(u, w);
       vertices.push_back(u);
-      // Outward triangle (average, u, w): the centre lies on its inner side.
+      // Outward triangle (average, u, w): the center lies on its inner side.
       if (orient3d(ap, mesh.points.data() + 3 * u, mesh.points.data() + 3 * w, cp) >= 0) return false;
       if (orient3d(ap, mesh.points.data() + 3 * u, mesh.points.data() + 3 * w, vp) >= 0) return false;
     }
@@ -2385,8 +2385,8 @@ void Builder::place_layers() {
   curve_column.resize(columns);
   std::vector<Vec> area(pieces.size());
   for (std::size_t p = 0; p < pieces.size(); ++p) {
-    Vec centre, average;
-    face_geometry(mesh, piece_wall_face[p], centre, area[p], average);
+    Vec center, average;
+    face_geometry(mesh, piece_wall_face[p], center, area[p], average);
   }
   const double feature_cos = std::cos(in.feature_angle_degrees * (3.14159265358979323846 / 180.0));
   std::vector<std::pair<int32_t, Vec>> by_patch;
@@ -2565,28 +2565,28 @@ void Builder::smooth() {
     }
     std::sort(active_faces.begin(), active_faces.end());
   }
-  // Face centres, area vectors, vertex averages and unfolded fans, and cell
+  // Face centers, area vectors, vertex averages and unfolded fans, and cell
   // centroids: refreshed for the active faces and cells by geometry() and by
   // settle(), which leaves them current for the next pass.
-  std::vector<Vec> centroid(cells), face_centre(faces), face_area(faces), face_average(faces);
+  std::vector<Vec> centroid(cells), face_center(faces), face_area(faces), face_average(faces);
   std::vector<uint8_t> face_unfolded(faces, 0);
   auto face_update = [&](int64_t f) {
-    face_geometry(mesh, f, face_centre[f], face_area[f], face_average[f]);
+    face_geometry(mesh, f, face_center[f], face_area[f], face_average[f]);
     face_unfolded[f] = fan_unfolded(mesh, f);
   };
   auto cell_geometry = [&](int64_t c) {
     const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
     Vec estimate{0, 0, 0};
-    for (int64_t slot = first; slot < last; ++slot) estimate = add(estimate, face_centre[std::abs(t.cell_faces[slot]) - 1]);
+    for (int64_t slot = first; slot < last; ++slot) estimate = add(estimate, face_center[std::abs(t.cell_faces[slot]) - 1]);
     estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
     double volume = 0.0;
     Vec moment{0, 0, 0};
     for (int64_t slot = first; slot < last; ++slot) {
       const int32_t signed_face = t.cell_faces[slot];
       const int64_t f = std::abs(signed_face) - 1;
-      const double v = (signed_face > 0 ? 1.0 : -1.0) * dot(face_area[f], sub(face_centre[f], estimate)) / 3.0;
+      const double v = (signed_face > 0 ? 1.0 : -1.0) * dot(face_area[f], sub(face_center[f], estimate)) / 3.0;
       volume += v;
-      moment = add(moment, mul(add(mul(face_centre[f], 0.75), mul(estimate, 0.25)), v));
+      moment = add(moment, mul(add(mul(face_center[f], 0.75), mul(estimate, 0.25)), v));
     }
     centroid[c] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
   };
@@ -2597,7 +2597,7 @@ void Builder::smooth() {
     for (const int32_t c : active_cells) cell_geometry(c);
   };
   // The vertex average of a cell's distinct vertices (the certified
-  // decomposition's centre) at the current positions.
+  // decomposition's center) at the current positions.
   auto vertex_average = [&](int64_t c) {
     Vec average{0, 0, 0};
     for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
@@ -2770,7 +2770,7 @@ void Builder::smooth() {
         double weight = 0.0;
         for (const int32_t f : wall_faces[row]) {
           const double area = norm(face_area[f]);
-          target = add(target, mul(face_centre[f], area));
+          target = add(target, mul(face_center[f], area));
           weight += area;
         }
         target = mul(target, 1.0 / weight);
@@ -2814,11 +2814,11 @@ void Builder::smooth() {
         gradient[mesh.face_vertices[q]] = add(gradient[mesh.face_vertices[q]], mul(cross(gs, diff), 0.5));
       }
       // Skewness s = |sv| / fd, sv = Cf - (Co + alpha d) the offset of the
-      // face centre from where the centroid join meets the face plane
+      // face center from where the centroid join meets the face plane
       // (OpenFOAM's measure); E += w (s^2 + mu s^4) with the face normal
-      // and fd frozen, the face centre moving with its vertex mean.
+      // and fd frozen, the face center moving with its vertex mean.
       {
-        const Vec cpf = sub(face_centre[f], centroid[o]);
+        const Vec cpf = sub(face_center[f], centroid[o]);
         const double nd = dot(sh, d);
         if (!(std::fabs(nd) > 0.0)) continue;
         const double alpha = dot(sh, cpf) / nd;
@@ -2828,7 +2828,7 @@ void Builder::smooth() {
         if (length > 0.0) {
           const Vec unit = mul(sv, 1.0 / length);
           for (int64_t q = first; q < last; ++q) {
-            fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), face_centre[f]))));
+            fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), face_center[f]))));
           }
         }
         const double skew = length / fd;
@@ -2877,11 +2877,11 @@ void Builder::smooth() {
   // Badness of face f; a non-orthogonality term at most `floor` (its cosine
   // at least floor_cosine = cos(floor a0)) is not evaluated, as callers only
   // compare the result with values of at least floor.
-  auto face_badness = [&](int64_t f, const Vec& centre, const Vec& area, const Vec& co, const Vec* cn,
+  auto face_badness = [&](int64_t f, const Vec& center, const Vec& area, const Vec& co, const Vec* cn,
                           double floor_cosine) {
     const double ls = norm(area);
     if (!(ls > 0.0)) return std::numeric_limits<double>::infinity();
-    const Vec cpf = sub(centre, co);
+    const Vec cpf = sub(center, co);
     const Vec d = cn != nullptr ? sub(*cn, co) : mul(area, dot(area, cpf) / (ls * ls));
     const double ld = norm(d);
     if (!(ld > 0.0)) return std::numeric_limits<double>::infinity();
@@ -2897,7 +2897,7 @@ void Builder::smooth() {
     if (length > 0.0) {
       const Vec unit = mul(sv, 1.0 / length);
       for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
-        fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), centre))));
+        fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), center))));
       }
     }
     return std::max(length / fd / kSkewGoal, angle / kAngleGoal);
@@ -2909,7 +2909,7 @@ void Builder::smooth() {
   // checked only for an improving move.
   std::vector<int32_t> face_slot(faces, -1);
   std::vector<int32_t> local_cells, local_faces;
-  std::vector<Vec> local_centroid, local_centre, local_area, local_average;
+  std::vector<Vec> local_centroid, local_center, local_area, local_average;
   // Per local face: moves with the movers; fan unfolded (2: not yet known).
   std::vector<uint8_t> local_moving, local_unfolded;
   std::vector<int32_t> movers;
@@ -2922,7 +2922,7 @@ void Builder::smooth() {
     for (const int64_t f : active_faces) {
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
       const double value =
-          face_badness(f, face_centre[f], face_area[f], centroid[o], n >= 0 ? &centroid[n] : nullptr, goal_cosine);
+          face_badness(f, face_center[f], face_area[f], centroid[o], n >= 0 ? &centroid[n] : nullptr, goal_cosine);
       if (value > 1.0) bad.emplace_back(-value, static_cast<int32_t>(f));
     }
     if (bad.empty()) break;
@@ -3009,7 +3009,7 @@ void Builder::smooth() {
             }
           }
           const std::size_t nf = local_faces.size(), nc = local_cells.size();
-          local_centre.resize(nf);
+          local_center.resize(nf);
           local_area.resize(nf);
           local_average.resize(nf);
           local_moving.assign(nf, 0);
@@ -3020,7 +3020,7 @@ void Builder::smooth() {
             for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !local_moving[q]; ++e) {
               local_moving[q] = std::find(movers.begin(), movers.end(), mesh.face_vertices[e]) != movers.end();
             }
-            face_geometry(mesh, g, local_centre[q], local_area[q], local_average[q]);
+            face_geometry(mesh, g, local_center[q], local_area[q], local_average[q]);
           }
           auto centroid_of = [&](int32_t k) -> const Vec& {
             for (std::size_t q = 0; q < nc; ++q) {
@@ -3035,14 +3035,14 @@ void Builder::smooth() {
           auto evaluate = [&](double bound) {
             for (std::size_t q = 0; q < nf; ++q) {
               if (!local_moving[q]) continue;
-              face_geometry(mesh, local_faces[q], local_centre[q], local_area[q], local_average[q]);
+              face_geometry(mesh, local_faces[q], local_center[q], local_area[q], local_average[q]);
             }
             for (std::size_t q = 0; q < nc; ++q) {
               const int32_t k = local_cells[q];
               const int64_t first = t.cell_face_offsets[k], last = t.cell_face_offsets[k + 1];
               Vec estimate{0, 0, 0};
               for (int64_t s2 = first; s2 < last; ++s2) {
-                estimate = add(estimate, local_centre[face_slot[std::abs(t.cell_faces[s2]) - 1]]);
+                estimate = add(estimate, local_center[face_slot[std::abs(t.cell_faces[s2]) - 1]]);
               }
               estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
               double volume = 0.0;
@@ -3051,9 +3051,9 @@ void Builder::smooth() {
                 const int32_t signed_face = t.cell_faces[s2];
                 const int32_t slot_q = face_slot[std::abs(signed_face) - 1];
                 const double w = (signed_face > 0 ? 1.0 : -1.0) *
-                                 dot(local_area[slot_q], sub(local_centre[slot_q], estimate)) / 3.0;
+                                 dot(local_area[slot_q], sub(local_center[slot_q], estimate)) / 3.0;
                 volume += w;
-                moment = add(moment, mul(add(mul(local_centre[slot_q], 0.75), mul(estimate, 0.25)), w));
+                moment = add(moment, mul(add(mul(local_center[slot_q], 0.75), mul(estimate, 0.25)), w));
               }
               local_centroid[q] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
             }
@@ -3065,7 +3065,7 @@ void Builder::smooth() {
               const std::size_t q = r == 0 ? start : r == start ? 0 : r;
               const int32_t g = local_faces[q];
               const int32_t n = mesh.face_neighbor[g];
-              const double value = face_badness(g, local_centre[q], local_area[q], centroid_of(mesh.face_owner[g]),
+              const double value = face_badness(g, local_center[q], local_area[q], centroid_of(mesh.face_owner[g]),
                                                 n >= 0 ? &centroid_of(n) : nullptr, worst_cosine);
               if (value > worst) {
                 worst = value;
@@ -3084,7 +3084,7 @@ void Builder::smooth() {
             for (std::size_t q = 0; q < nf; ++q) {
               const int32_t g = local_faces[q];
               const int32_t n = mesh.face_neighbor[g];
-              worst = std::max(worst, face_badness(g, local_centre[q], local_area[q], centroid_of(mesh.face_owner[g]),
+              worst = std::max(worst, face_badness(g, local_center[q], local_area[q], centroid_of(mesh.face_owner[g]),
                                                    n >= 0 ? &centroid_of(n) : nullptr, -1.0));
             }
             return worst;
@@ -3296,8 +3296,8 @@ int32_t build(const Input& in, Mesh& mesh) {
     }
   }
   // Boundary faces: the facet of their patch, read from a patch vertex's
-  // triangle (a face without one: the nearest triangle of its centre). The
-  // sampled distance of centres and edge midpoints is to the face's patch
+  // triangle (a face without one: the nearest triangle of its center). The
+  // sampled distance of centers and edge midpoints is to the face's patch
   // (a walk from that triangle), an upper bound on the distance to the
   // surface.
   const int64_t faces = static_cast<int64_t>(mesh.face_owner.size());
@@ -3305,8 +3305,8 @@ int32_t build(const Input& in, Mesh& mesh) {
   double sampled = 0.0;
   for (int64_t f = 0; f < faces; ++f) {
     if (mesh.face_neighbor[f] >= 0) continue;
-    Vec centre, area, average;
-    face_geometry(mesh, f, centre, area, average);
+    Vec center, area, average;
+    face_geometry(mesh, f, center, area, average);
     int32_t seed = -1;
     for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1] && seed < 0; ++q) {
       const int32_t v = mesh.face_vertices[q];

@@ -300,6 +300,8 @@ class _PrismLayersRequest(ctypes.Structure):
         ("feature_angle_degrees", _F64),
         ("minimum_scale", _F64),
         ("prove", _I32),
+        ("source_normals", _P),
+        ("source_shape_operators", _P),
     )
 
 
@@ -1295,6 +1297,15 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
         ),
     ),
+    "phx_mc_polyhedral_star_validity": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P),
+    ),
+    "phx_mc_polyhedral_star_decomposition": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
@@ -2825,12 +2836,18 @@ def prism_layers(
     feature_angle_degrees: float,
     minimum_scale: float,
     prove: bool,
+    source_normals: object | None = None,
+    source_shape_operators: object | None = None,
 ) -> PrismLayers:
     """Grow prism layers from a closed oriented triangle wall.
 
     Rows follow ``phx_mc_prism_layers``: triangles oriented so their normals
     point into the layer domain, ``heights`` the increasing cumulative level
-    heights.
+    heights. ``source_normals`` (m, 3, 3) and ``source_shape_operators``
+    (m, 3, 6), given together, are the per-corner source-surface frames
+    (unit normal into the layer domain, or zero where the chart is singular;
+    shape-operator entries xx, xy, xz, yy, yz, zz) from which the levels are
+    measured; without them the kernel fits the surface through the vertices.
     """
 
     points = _points(vertices, "vertices", 3)
@@ -2847,6 +2864,24 @@ def prism_layers(
         if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
             raise TypeError(f"{name} must be a real number.")
     vertex_count, triangle_count = points.shape[0], rows.shape[0]
+    if (source_normals is None) != (source_shape_operators is None):
+        raise ValueError(
+            "source_normals and source_shape_operators are given together or not at all."
+        )
+    frames = None
+    if source_normals is not None:
+        frames = (
+            _real_array(source_normals, "source_normals"),
+            _real_array(source_shape_operators, "source_shape_operators"),
+        )
+        if frames[0].shape != (triangle_count, 3, 3) or frames[1].shape != (
+            triangle_count,
+            3,
+            6,
+        ):
+            raise ValueError(
+                "source frames take (m, 3, 3) normals and (m, 3, 6) shape operators."
+            )
     layer_count = levels.shape[0]
     arrays = (
         np.empty(((layer_count + 1) * vertex_count, 3), dtype=np.float64),
@@ -2866,6 +2901,8 @@ def prism_layers(
         feature_angle_degrees=float(feature_angle_degrees),
         minimum_scale=float(minimum_scale),
         prove=1 if prove else 0,
+        source_normals=None if frames is None else frames[0].ctypes.data,
+        source_shape_operators=None if frames is None else frames[1].ctypes.data,
     )
     outputs = _PrismLayersResult(*(array.ctypes.data for array in arrays))
     status = load_meshcore()["phx_mc_prism_layers"](
@@ -4457,6 +4494,216 @@ def cell_map_validity(
     )
     _raise_for_call(result, "cell_map_validity")
     return decided.astype(np.bool_), status, lower, upper, digests
+
+
+def common_denominator_rows(
+    points: Sequence[Sequence[object]], /
+) -> tuple[list[int], int] | None:
+    """Integer rows ``X = L x`` of rational points over their least common ``L``.
+
+    Flattened row-major; ``None`` when a coordinate is not rational.
+    """
+    values: list[Fraction] = []
+    for point in points:
+        for value in point:
+            if not isinstance(value, (Fraction, int)) or isinstance(value, bool):
+                return None
+            values.append(Fraction(value))
+    common = lcm(*(value.denominator for value in values)) if values else 1
+    return [value.numerator * (common // value.denominator) for value in values], common
+
+
+def _integer_word_bank(
+    values: Sequence[int], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Little-endian 32-bit magnitude words, offsets and signs of integers."""
+    counts = np.asarray(
+        [(abs(value).bit_length() + 31) // 32 for value in values], dtype=np.int64
+    )
+    offsets = np.zeros((counts.size + 1,), dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    payload = b"".join(
+        abs(value).to_bytes(4 * int(count), "little")
+        for value, count in zip(values, counts.tolist(), strict=True)
+    )
+    words = np.frombuffer(payload, dtype="<u4").astype(np.uint32)
+    signs = np.asarray([-1 if value < 0 else 1 for value in values], dtype=np.int8)
+    return offsets, np.ascontiguousarray(words), signs
+
+
+def polyhedral_star_validity(
+    point_offsets: np.ndarray,
+    integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_vertex_offsets: np.ndarray,
+    face_vertex_values: np.ndarray,
+    star_offsets: np.ndarray,
+    stars: np.ndarray,
+    floor: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact star validity of polyhedra (``phx_mc_polyhedral_star_validity``).
+
+    ``integers`` holds every cell's integer point rows ``X = L x`` (three per
+    point, cells in order) followed by each cell's common denominator ``L``;
+    ``stars`` rows are ``(local face, first point, second point)``. Returns
+    ``(decided, status, lower, upper)`` per cell, equal to the rational
+    polyhedral star proof where decided.
+    """
+    point_offset_array = np.ascontiguousarray(point_offsets, dtype=np.int64)
+    cell_faces = np.ascontiguousarray(cell_face_offsets, dtype=np.int64)
+    face_offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    face_values = np.ascontiguousarray(face_vertex_values, dtype=np.int64)
+    star_offset_array = np.ascontiguousarray(star_offsets, dtype=np.int64)
+    star_array = np.ascontiguousarray(stars, dtype=np.int64)
+    if (
+        point_offset_array.ndim != 1
+        or point_offset_array.size < 1
+        or cell_faces.shape != point_offset_array.shape
+        or star_offset_array.shape != point_offset_array.shape
+        or face_offsets.ndim != 1
+        or face_offsets.size < 1
+        or star_array.ndim != 2
+        or star_array.shape[1] != 3
+        or len(integers) != 3 * int(point_offset_array[-1]) + point_offset_array.size - 1
+    ):
+        raise ValueError("Polyhedral star validity requires CSR cells, faces and stars.")
+    word_offsets, words, signs = _integer_word_bank(integers)
+    count = point_offset_array.size - 1
+    decided = np.zeros((count,), dtype=np.int8)
+    status = np.zeros((count,), dtype=np.int32)
+    lower = np.zeros((count,), dtype=np.float64)
+    upper = np.zeros((count,), dtype=np.float64)
+    result = load_meshcore()["phx_mc_polyhedral_star_validity"](
+        count,
+        point_offset_array.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        cell_faces.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        star_offset_array.ctypes.data,
+        star_array.ctypes.data,
+        float(floor),
+        decided.ctypes.data,
+        status.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+    )
+    _raise_for_call(result, "polyhedral_star_validity")
+    return decided.astype(np.bool_), status, lower, upper
+
+
+def polyhedral_star_decomposition(
+    point_offsets: np.ndarray,
+    integers: Sequence[int],
+    face_integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_vertex_offsets: np.ndarray,
+    face_vertex_values: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact star decompositions of linear polytopes.
+
+    ``integers`` holds every cell's integer point rows ``X = L x`` (three per
+    point, cells in order) followed by each cell's ``L``; ``face_integers``
+    every face-loop entry's row over its own face's common denominator.
+    Returns ``(codes, face_reversed, triangle_offsets, triangle_counts,
+    triangles)`` of ``phx_mc_polyhedral_star_decomposition``: per cell 0
+    (decomposed), -1 (undecided) or the first refusal code; per face its
+    outward reversal; per cell the ``triangle_counts`` rows ``(face, i, j, k)``
+    from ``triangle_offsets`` of its oriented face triangles, local index -1
+    being the face's exact vertex average (a fan apex).
+    """
+    point_offset_array = np.ascontiguousarray(point_offsets, dtype=np.int64)
+    cell_faces = np.ascontiguousarray(cell_face_offsets, dtype=np.int64)
+    face_offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    face_values = np.ascontiguousarray(face_vertex_values, dtype=np.int64)
+    if (
+        point_offset_array.ndim != 1
+        or point_offset_array.size < 1
+        or cell_faces.shape != point_offset_array.shape
+        or face_offsets.ndim != 1
+        or face_offsets.size < 1
+        or len(integers) != 3 * int(point_offset_array[-1]) + point_offset_array.size - 1
+        or len(face_integers) != 3 * int(face_offsets[-1])
+    ):
+        raise ValueError("Polyhedral star decomposition requires CSR cells and faces.")
+    word_offsets, words, signs = _integer_word_bank(integers)
+    face_word_offsets, face_words, face_signs = _integer_word_bank(face_integers)
+    count = point_offset_array.size - 1
+    # A face has at most as many triangles as vertices (its fan).
+    triangle_offsets = np.ascontiguousarray(face_offsets[cell_faces])
+    codes = np.zeros((count,), dtype=np.int32)
+    face_reversed = np.zeros((face_offsets.size - 1,), dtype=np.int8)
+    triangles = np.zeros((int(triangle_offsets[-1]), 4), dtype=np.int32)
+    triangle_counts = np.zeros((count,), dtype=np.int64)
+    result = load_meshcore()["phx_mc_polyhedral_star_decomposition"](
+        count,
+        point_offset_array.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        face_word_offsets.ctypes.data,
+        face_words.ctypes.data,
+        face_signs.ctypes.data,
+        cell_faces.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        triangle_offsets.ctypes.data,
+        codes.ctypes.data,
+        face_reversed.ctypes.data,
+        triangles.ctypes.data,
+        triangle_counts.ctypes.data,
+    )
+    _raise_for_call(result, "polyhedral_star_decomposition")
+    return (
+        codes,
+        face_reversed.astype(np.bool_),
+        triangle_offsets,
+        triangle_counts,
+        triangles,
+    )
+
+
+def face_triangulation(
+    face_vertex_offsets: np.ndarray, face_integers: Sequence[int], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact ear-clipping triangulations of planar face loops.
+
+    ``face_integers`` holds every loop entry's integer row over its own face's
+    common denominator. Returns ``(codes, triangle_offsets, triangles)`` of
+    ``phx_mc_face_triangulation``: per face 0 or its polygon refusal code, and
+    rows ``[triangle_offsets[f], triangle_offsets[f + 1])`` of local loop
+    index triples (``-1`` on refusal), those of ``triangulate_planar_polygon``.
+    """
+    offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    if (
+        offsets.ndim != 1
+        or offsets.size < 1
+        or offsets[0] != 0
+        or np.any(np.diff(offsets) < 0)
+        or len(face_integers) != 3 * int(offsets[-1])
+    ):
+        raise ValueError("Face triangulation requires CSR face loops and integer rows.")
+    word_offsets, words, signs = _integer_word_bank(face_integers)
+    count = offsets.size - 1
+    triangle_offsets = np.zeros((offsets.size,), dtype=np.int64)
+    np.cumsum(np.maximum(np.diff(offsets) - 2, 0), out=triangle_offsets[1:])
+    codes = np.zeros((count,), dtype=np.int32)
+    triangles = np.zeros((int(triangle_offsets[-1]), 3), dtype=np.int32)
+    result = load_meshcore()["phx_mc_face_triangulation"](
+        count,
+        offsets.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        codes.ctypes.data,
+        triangles.ctypes.data,
+    )
+    _raise_for_call(result, "face_triangulation")
+    return codes, triangle_offsets, triangles
 
 
 class CadEntityKind(IntEnum):
