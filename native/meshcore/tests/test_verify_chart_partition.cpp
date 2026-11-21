@@ -124,7 +124,7 @@ int main() {
       return e.patch == 0 && e.row < e.other && e.row < 2 && e.other >= 2;
     }));
   }
-  // A single vertex-simple pentagram loop fanned from its centre winds twice.
+  // A single vertex-simple pentagram loop fanned from its center winds twice.
   {
     constexpr double pi = 3.14159265358979323846;
     double star[10];

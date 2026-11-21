@@ -3013,8 +3013,19 @@ typedef struct phx_mc_fidelity_finding {
  * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
  * the triangle's linear map taken there; each edge where that region meets a
  * uv row (or a seam or pole chord) carries a seam lens bound charged to both
- * adjacent rows. Faces whose pole cap is not free of other trim chords keep
- * the uv chart.
+ * adjacent rows. Faces whose pole cap is not free of other trim chords, or
+ * whose u range spans less than a full turn (u_max - u_min < 2 pi rounded
+ * down), keep the uv chart; the remaining rounding excess of a full turn is
+ * charged to the region's rows.
+ * Disk centres (a line perpendicular to an axis revolved about it, meeting it
+ * at the degenerate chord's v, certified exactly): rows touching the centre
+ * vertex take the Cartesian chart (x, y) = |v - v_centre| (cos u, sin u),
+ * where the disk is affine, under the same region, seam and turn rules.
+ * A pole region may also reach outer trim rings (chords whose endpoints share
+ * v, with every region corner on the pole's side, checked exactly): those
+ * chords carry seam lenses like the uv interface, plus their own trim-lens
+ * cap (the p-curve need not stay on the chord). Faces whose pole is
+ * trimmed away keep the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
