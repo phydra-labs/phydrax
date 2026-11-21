@@ -291,6 +291,45 @@ tetrahedra, then implicit volumes, then the CAD solid.
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than
     cfMesh's. The tet-to-hex split route stays only if a row needs it.
+    Design (Nov 20). One call, `phx_mc_hex_dominant` (`_meshcore.hex_dominant`), on a closed
+    oriented triangle surface with its facet rows, the core size h, the boundary size h / 2^k, the
+    feature angle and an optional exact layer thickness schedule. The measured reference is cfMesh
+    `cartesianMesh`: its 77,896-cell sphere has every non-hexahedron in the h / (h/2) transition shell
+    (9-, 12- and 15-face cells) and reaches 18.7 degrees there only because it smooths; an unsmoothed
+    2:1 octree face has 25.2 degrees. Construction (floating point, exact predicates):
+    (1) surface topology (closed oriented manifold), feature edges by dihedral angle and facet
+    change, smooth patches between them, feature curves and corners; a transient triangle bin
+    index for closest points; (2) inside/outside of lattice vertices by +x ray parity per lattice
+    line with exact orient2d/orient3d and symbolic perturbation; (3) a balanced octree from size h:
+    a cell whose L-infinity distance to a triangle box is below its size is split down to the
+    boundary size (this alone gives 2:1 balance over all 26 neighbours); (4) core cells: inside and,
+    at the finest level, every corner at least half a boundary cell (plus the layer stack) from the
+    surface and no triangle in the box; manifold repair of the staircase by removing finest cells at
+    non-manifold edges and vertices; (5) the face-based mesh with hanging nodes: same-level faces
+    carry the midpoints of finer neighbours, so 2:1 coarse cells become polyhedra (OpenFOAM's
+    convention, as cfMesh's); (6) one projection layer of hexahedra between the staircase and its
+    closest-point image: staircase faces are assigned to patches, the partition is cleaned
+    (faces with three or four foreign edge neighbours flip, non-manifold chain vertices merge) and
+    chain vertices snap to the feature curve between their two patches, corner vertices to feature
+    corners; (7) smoothing: interior vertices of the fine band move to the mean of their cells'
+    centroids (this tilts the hanging faces towards the fine cells, the mechanism that lowers
+    cfMesh's transition non-orthogonality), surface vertices to the mean of their faces' centroids
+    projected back onto their patch or feature curve; a move is kept only when every incident cell
+    keeps positive float corner and decomposition volumes; (8) layers: L thin hexahedra per
+    projection column at the exact cumulative thicknesses from the wall (hex layers: the column is
+    split, so the hex fraction rises). Certification (prove): every hexahedron by the exact signs of
+    the 27 Bernstein coefficients of its triquadratic Jacobian determinant (float with a forward
+    error bound, expansions otherwise), every polyhedron by exact orient3d of its decomposition
+    tetrahedra (cell centre, face centre, edge) plus a closed genus-0 boundary, hence star-shaped and
+    embedded; a failing cell has its smoothing moves undone, then is published as a polyhedron when
+    only its trilinear map fails; anything left is UNRESOLVED. The boundary distance (vertices on the
+    surface, sampled face points) is reported; the route requests `volume_plc_fidelity` (the Voronoi
+    route's contract) against `maximum_deviation` or the boundary size.
+    Route: `plc_octree_hex_dominant` for `HEX_DOMINANT_POLYHEDRAL_TRANSITION` (sizes from a volume
+    and a boundary uniform size control, layers from a PROVIDER `BoundaryLayerControl`). The
+    tet-to-hex split (`plc_hex_dominant`, `HEX_DOMINANT_SIMPLEX_TRANSITION`) stays: it is the only
+    route whose boundary conforms exactly to the PLC with region interfaces and simplex transitions,
+    which a snapped octree cannot offer by construction.
   - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
     every step runs on the original, refined and restored mesh and the archive is written twice).
 

@@ -2676,6 +2676,407 @@ def _voronoi_rows(inputs: Path, /) -> tuple[_Row, ...]:
             )
     return tuple(rows)
 
+# Ledger F8 (cad.md): cfMesh cartesianMesh (maxCellSize h, boundaryCellSize
+# h / 2, 45-degree feature edges on the quadric), the best measured reference
+# per row: hexahedron fraction (cells of six quadrilaterals), sampled Hausdorff
+# distance to the closed-form surface, checkMesh non-orthogonality maximum and
+# average (acos of the mean cosine) and skewness maximum.
+_F8_REFERENCE: dict[tuple[str, int], dict[str, float]] = {
+    ("sphere", 0): {
+        "hexahedron_fraction": 0.945,
+        "hausdorff": 2.15e-4,
+        "nonorthogonality_maximum": 18.7,
+        "nonorthogonality_average": 5.53,
+        "skewness_maximum": 0.486,
+    },
+    ("sphere", 2): {
+        "hexahedron_fraction": 0.959,
+        "hausdorff": 2.73e-4,
+        "nonorthogonality_maximum": 26.4,
+        "nonorthogonality_average": 7.06,
+        "skewness_maximum": 0.737,
+    },
+    ("quadric", 0): {
+        "hexahedron_fraction": 0.911,
+        "hausdorff": 2.50e-4,
+        "nonorthogonality_maximum": 49.4,
+        "nonorthogonality_average": 5.37,
+        "skewness_maximum": 0.764,
+    },
+    ("quadric", 2): {
+        "hexahedron_fraction": 0.928,
+        "hausdorff": 1.97e-4,
+        "nonorthogonality_maximum": 50.5,
+        "nonorthogonality_average": 6.32,
+        "skewness_maximum": 0.807,
+    },
+}
+# Core size h per row (boundary size h / 2) and the first of two layers
+# (growth 1.2) as a fraction of the boundary size.
+_F8_CASES: tuple[tuple[str, int, float], ...] = (
+    ("sphere", 0, 0.05464),
+    ("sphere", 2, 0.05464),
+    ("quadric", 0, 0.04597),
+    ("quadric", 2, 0.04597),
+)
+_F8_FIRST_LAYER = 0.2
+
+
+class _HexDominantCase(NamedTuple):
+    model: str
+    layers: int
+    plan: NativeMeshingPlan
+
+
+def _hexdom_case(inputs: Path, model: str, layers: int, size: float, /) -> _HexDominantCase:
+    from phydrax.meshing import (
+        BoundaryLayerControl,
+        BoundaryLayerRoute,
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        LayerSchedule,
+        MeshingScope,
+        PiecewiseLinearComplex,
+        SizeControlStrength,
+        UniformSizeControl,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing.providers import (
+        NativeMeshingOptions,
+        NativeMeshingProvider,
+        NativePlcSource,
+    )
+
+    surface = np.load(inputs / f"{model}-stl.npz")
+    vertices = np.asarray(surface["X"], dtype=np.float64)
+    faces = np.asarray(surface["F"], dtype=np.int64)
+    complex_ = PiecewiseLinearComplex(
+        vertices,
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int64),
+        np.asarray([[-1, 0]], dtype=np.int64),
+        ("solid",),
+        vertex_ids=tuple(f"v{row}" for row in range(vertices.shape[0])),
+        vertex_occurrence_paths=((),) * vertices.shape[0],
+        facet_ids=("boundary",),
+        facet_occurrence_paths=((),),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+    )
+    source = NativePlcSource(complex_, f"f8-{model}", "r1")
+    wall = MeshingScope.whole(source, 2)
+    solid = MeshingScope.whole(source, 3)
+    boundary_size = size / 2.0
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(
+            3,
+            3,
+            CellFamilyPolicy(
+                required=("hexahedron",),
+                allowed_transitions=("polyhedron",),
+                allow_mixed=True,
+            ),
+        ),
+        wall,
+        VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION,
+        size_controls=(
+            UniformSizeControl(solid, size, strength=SizeControlStrength.SOFT),
+            UniformSizeControl(wall, boundary_size, strength=SizeControlStrength.SOFT),
+        ),
+        layer_controls=(
+            (
+                BoundaryLayerControl(
+                    wall,
+                    LayerSchedule.geometric(
+                        layers, _F8_FIRST_LAYER * boundary_size, growth_rate=1.2
+                    ),
+                    route=BoundaryLayerRoute.PROVIDER,
+                    volume_scope=solid,
+                ),
+            )
+            if layers
+            else ()
+        ),
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions()).plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    if plan.route != "plc_octree_hex_dominant":
+        raise RuntimeError("The F8 rows run the plc_octree_hex_dominant route.")
+    return _HexDominantCase(model, layers, plan)
+
+
+def _hexdom_mesh(case: _HexDominantCase, /) -> CellMeshingCandidate:
+    # The public route without acceptance (as the voronoi rows).
+    return case.plan.execute(prove=False)
+
+
+def _hexdom_candidate(result: object, /) -> CellMeshingCandidate:
+    from phydrax.meshing import CellMeshingCandidate
+
+    if not isinstance(result, CellMeshingCandidate):
+        raise TypeError("A hexdom row returns CellMeshingCandidate.")
+    return result
+
+
+def _hexdom_cells(result: object, /) -> int:
+    return int(_hexdom_candidate(result).mesh.connectivity.cell_count)
+
+
+def _f8_distance(model: str, points: np.ndarray, /) -> np.ndarray:
+    # Unsigned distance to the closed-form surface: the unit sphere, or the
+    # boundary of {x^2 + y^2 <= 1} n {y^2 + z^2 <= 0.36}: the radial foot on
+    # either cylinder when it lies in the other, else the intersection curve
+    # (sampled at 2e6 points, spacing below 1e-5).
+    if model == "sphere":
+        return np.abs(np.linalg.norm(points, axis=1) - 1.0)
+    from scipy.spatial import cKDTree
+
+    around_z = np.hypot(points[:, 0], points[:, 1])
+    around_x = np.hypot(points[:, 1], points[:, 2])
+    far = np.full((points.shape[0],), np.inf)
+    foot_z = points[:, 1] / np.maximum(around_z, 1e-300)
+    foot_x = points[:, 1] * 0.6 / np.maximum(around_x, 1e-300)
+    to_z = np.where(foot_z**2 + points[:, 2] ** 2 <= 0.36, np.abs(around_z - 1.0), far)
+    to_x = np.where(points[:, 0] ** 2 + foot_x**2 <= 1.0, np.abs(around_x - 0.6), far)
+    y = 0.6 * np.sin(np.linspace(0.0, 2.0 * np.pi, 500_000, endpoint=False))
+    curve = []
+    for sx in (-1.0, 1.0):
+        z = 0.6 * np.cos(np.linspace(0.0, 2.0 * np.pi, 500_000, endpoint=False))
+        curve.append(np.stack((sx * np.sqrt(1.0 - y * y), y, z), axis=1))
+    to_curve, _ = cKDTree(np.concatenate(curve)).query(points)
+    return np.minimum(np.minimum(to_z, to_x), to_curve)
+
+
+def _f8_samples(model: str, count: int, /) -> np.ndarray:
+    # Uniform points of the closed-form surface (the cylinder pieces by
+    # rejection, in proportion to their bounding areas).
+    generator = np.random.default_rng(8)
+    if model == "sphere":
+        points = generator.normal(size=(count, 3))
+        return points / np.linalg.norm(points, axis=1)[:, None]
+    pieces = []
+    while sum(piece.shape[0] for piece in pieces) < count:
+        angle = generator.uniform(0.0, 2.0 * np.pi, count)
+        z = generator.uniform(-0.6, 0.6, count)
+        on_z = np.stack((np.cos(angle), np.sin(angle), z), axis=1)
+        pieces.append(on_z[on_z[:, 1] ** 2 + z**2 <= 0.36])
+        angle = generator.uniform(0.0, 2.0 * np.pi, count)
+        x = generator.uniform(-1.0, 1.0, count)
+        on_x = np.stack((x, 0.6 * np.cos(angle), 0.6 * np.sin(angle)), axis=1)
+        pieces.append(on_x[x**2 + on_x[:, 1] ** 2 <= 1.0])
+    return np.concatenate(pieces)[:count]
+
+
+def _hexdom_quality(
+    case: _HexDominantCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    """OpenFOAM's checkMesh measures and the ledger's distances, from the
+    published mesh alone."""
+    from scipy.spatial import cKDTree
+
+    mesh = _hexdom_candidate(result).mesh
+    connectivity = _polyhedral_connectivity(mesh)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    owner = np.asarray(connectivity.face_owner, dtype=np.int64)
+    neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
+    faces, cells = offsets.size - 1, cell_offsets.size - 1
+    sizes = np.diff(offsets)
+    rows = np.repeat(np.arange(faces, dtype=np.int64), sizes)
+    following = np.arange(1, values.size + 1, dtype=np.int64)
+    following[offsets[1:] - 1] = offsets[:-1]
+    first, second = points[values], points[values[following]]
+    # OpenFOAM face centres and area vectors: triangles about the vertex mean.
+    average = np.zeros((faces, 3))
+    np.add.at(average, rows, first)
+    average /= sizes[:, None]
+    triangle = 0.5 * np.cross(first - average[rows], second - average[rows])
+    magnitude = np.linalg.norm(triangle, axis=1)
+    area = np.zeros((faces, 3))
+    np.add.at(area, rows, triangle)
+    centre = np.zeros((faces, 3))
+    np.add.at(centre, rows, (first + second + average[rows]) / 3.0 * magnitude[:, None])
+    centre /= np.bincount(rows, magnitude, minlength=faces)[:, None]
+    # Orient every area vector out of its owner: the cell-face signs, and the
+    # overall convention from the enclosed volume (wall faces only).
+    incidence = np.repeat(np.arange(cells, dtype=np.int64), np.diff(cell_offsets))
+    owner_entry = incidence == owner[cell_faces]
+    sign = np.zeros((faces,))
+    sign[cell_faces[owner_entry]] = cell_signs[owner_entry]
+    inner = neighbor >= 0
+    if np.sum((area * sign[:, None] * centre)[~inner]) < 0.0:
+        sign = -sign
+    area *= sign[:, None]
+    counts = np.bincount(owner, minlength=cells) + np.bincount(neighbor[inner], minlength=cells)
+    estimate = np.stack(
+        [
+            np.bincount(owner, centre[:, k], cells)
+            + np.bincount(neighbor[inner], centre[inner, k], cells)
+            for k in range(3)
+        ],
+        axis=1,
+    ) / counts[:, None]
+    pyramid_owner = np.sum(area * (centre - estimate[owner]), axis=1) / 3.0
+    pyramid_neighbor = -np.sum(area[inner] * (centre[inner] - estimate[neighbor[inner]]), axis=1) / 3.0
+    volume = np.bincount(owner, pyramid_owner, cells) + np.bincount(
+        neighbor[inner], pyramid_neighbor, cells
+    )
+    centroid = (
+        np.stack(
+            [
+                np.bincount(owner, pyramid_owner * (0.75 * centre[:, k] + 0.25 * estimate[owner, k]), cells)
+                + np.bincount(
+                    neighbor[inner],
+                    pyramid_neighbor * (0.75 * centre[inner, k] + 0.25 * estimate[neighbor[inner], k]),
+                    cells,
+                )
+                for k in range(3)
+            ],
+            axis=1,
+        )
+        / volume[:, None]
+    )
+    # Bad cells: a nonpositive decomposition tetrahedron (centroid, face
+    # vertex mean, edge) seen from either side.
+    spoke = np.cross(first - average[rows], second - average[rows]) * sign[rows, None]
+    bad = np.zeros((cells,), dtype=bool)
+    from_owner = np.einsum("ij,ij->i", spoke, average[rows] - centroid[owner[rows]])
+    bad[owner[rows][from_owner <= 0.0]] = True
+    inner_rows = inner[rows]
+    from_neighbor = -np.einsum(
+        "ij,ij->i",
+        spoke[inner_rows],
+        average[rows][inner_rows] - centroid[neighbor[rows][inner_rows]],
+    )
+    bad[neighbor[rows][inner_rows][from_neighbor <= 0.0]] = True
+    # Non-orthogonality and skewness (primitiveMeshTools).
+    interior = np.flatnonzero(inner)
+    join = centroid[neighbor[interior]] - centroid[owner[interior]]
+    cosine = np.sum(join * area[interior], axis=1) / (
+        np.linalg.norm(join, axis=1) * np.linalg.norm(area[interior], axis=1)
+    )
+    angle = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+    def skewness(selected: np.ndarray, toward: np.ndarray, /) -> np.ndarray:
+        offset = centre[selected] - centroid[owner[selected]]
+        sv = offset - (
+            np.sum(area[selected] * offset, axis=1)
+            / np.sum(area[selected] * toward, axis=1)
+        )[:, None] * toward
+        unit = sv / np.maximum(np.linalg.norm(sv, axis=1), 1e-300)[:, None]
+        reach = 0.2 * np.linalg.norm(toward, axis=1)
+        position = np.full((faces,), -1, dtype=np.int64)
+        position[selected] = np.arange(selected.size, dtype=np.int64)
+        member = position[rows] >= 0
+        spread = np.abs(
+            np.sum(unit[position[rows][member]] * (first[member] - centre[rows][member]), axis=1)
+        )
+        np.maximum.at(reach, position[rows][member], spread)
+        return np.linalg.norm(sv, axis=1) / reach
+
+    wall = np.flatnonzero(~inner)
+    normal = area[wall] / np.linalg.norm(area[wall], axis=1)[:, None]
+    skew = np.concatenate(
+        (
+            skewness(interior, join),
+            skewness(
+                wall,
+                normal * np.sum(normal * (centre[wall] - centroid[owner[wall]]), axis=1)[:, None],
+            ),
+        )
+    )
+    # Hexahedra: six faces, all quadrilateral (checkMesh's shape count).
+    quads = np.bincount(owner, sizes == 4, cells) + np.bincount(
+        neighbor[inner], (sizes == 4)[inner], cells
+    )
+    hexahedra = int(np.count_nonzero((counts == 6) & (quads == 6)))
+    # Distances (the ledger's meas.py): wall faces fanned about their vertex
+    # mean; mesh -> surface at 28 lattice points per triangle, surface ->
+    # mesh at 2e5 surface points against their 16 nearest triangles.
+    wall_rows = np.flatnonzero(~inner[rows])
+    fan = np.stack(
+        (first[wall_rows], second[wall_rows], average[rows[wall_rows]]), axis=1
+    )
+    lattice = np.asarray(
+        [(i / 6, j / 6, 1 - (i + j) / 6) for i in range(7) for j in range(7 - i)],
+        dtype=np.float64,
+    )
+    mesh_to_surface = 0.0
+    for start in range(0, fan.shape[0], 20_000):
+        block = lattice @ fan[start : start + 20_000]
+        mesh_to_surface = max(
+            mesh_to_surface, float(np.max(_f8_distance(case.model, block.reshape((-1, 3)))))
+        )
+    samples = _f8_samples(case.model, 200_000)
+    _, nearest = cKDTree(fan.mean(axis=1)).query(samples, k=16)
+    surface_to_mesh = float(
+        np.max(
+            np.min(
+                _point_triangle_distances(
+                    np.repeat(samples, 16, axis=0), fan[nearest.reshape(-1)]
+                ).reshape((-1, 16)),
+                axis=1,
+            )
+        )
+    )
+    wall_vertices = np.unique(values[np.flatnonzero(~inner[rows])])
+    measured = {
+        "cells": float(cells),
+        "hexahedron_fraction": hexahedra / cells,
+        "hausdorff": max(mesh_to_surface, surface_to_mesh),
+        "mesh_to_surface": mesh_to_surface,
+        "surface_to_mesh": surface_to_mesh,
+        "wall_vertex_distance": float(np.max(_f8_distance(case.model, points[wall_vertices]))),
+        "nonorthogonality_maximum": float(np.max(angle)),
+        "nonorthogonality_average": float(np.degrees(np.arccos(np.mean(cosine)))),
+        "nonorthogonality_mean": float(np.mean(angle)),
+        "skewness_maximum": float(np.max(skew)),
+        "bad_cells": float(np.count_nonzero(bad)),
+        "minimum_volume": float(np.min(volume)),
+    }
+    reference = _F8_REFERENCE[(case.model, case.layers)]
+    missed = int(np.count_nonzero(bad)) + int(
+        measured["hexahedron_fraction"] < reference["hexahedron_fraction"]
+    )
+    missed += sum(
+        int(measured[name] > reference[name])
+        for name in (
+            "hausdorff",
+            "nonorthogonality_maximum",
+            "nonorthogonality_average",
+            "skewness_maximum",
+        )
+    )
+    return missed, {
+        **measured,
+        **{f"reference_{name}": value for name, value in reference.items()},
+    }
+
+
+def _hexdom_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row size: the ledger's rung (~1e5 cells).
+    rows: list[_Row] = []
+    for model, layers, size in _F8_CASES:
+        case = _hexdom_case(inputs, model, layers, size)
+        rows.append(
+            _Row(
+                f"hexdom-{model}-L{layers}",
+                100_000,
+                partial(_hexdom_mesh, case),
+                _hexdom_cells,
+                quality=partial(_hexdom_quality, case),
+            )
+        )
+    return tuple(rows)
+
+
 
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /

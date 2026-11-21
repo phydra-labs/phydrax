@@ -355,8 +355,14 @@ def _vertex_ancestry(
     return _Ancestry(codes, rows, sides, residuals)
 
 
-def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
-    connectivity = published.connectivity
+def _edge_ancestry(
+    connectivity: PolyhedralConnectivity,
+    face_facets: np.ndarray,
+    cell_regions: np.ndarray,
+    vertices: _Ancestry,
+    /,
+) -> _Ancestry:
+    """Facet of the faces around each edge, else the region of its cells."""
     edges = np.asarray(connectivity.edges, dtype=np.int64)
     count = edges.shape[0]
     # Facets and regions of the faces around each edge.
@@ -366,15 +372,13 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
         np.arange(face_offsets.size - 1, dtype=np.int64), np.diff(face_offsets)
     )
     edge_facet = np.full((count,), -1, dtype=np.int64)
-    np.maximum.at(edge_facet, face_edges, published.face_facets[edge_faces])
+    np.maximum.at(edge_facet, face_edges, face_facets[edge_faces])
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)[edge_faces]
     region_rows = np.concatenate(
         (
-            np.stack((face_edges, published.cell_regions[owner]), axis=1),
-            np.stack((face_edges, published.cell_regions[neighbor]), axis=1)[
-                neighbor >= 0
-            ],
+            np.stack((face_edges, cell_regions[owner]), axis=1),
+            np.stack((face_edges, cell_regions[neighbor]), axis=1)[neighbor >= 0],
         )
     )
     region_rows = np.unique(region_rows, axis=0)
@@ -389,7 +393,7 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
     if np.any((codes == _REGION) & (counts != 1)):
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
-            "A conforming Voronoi edge off the PLC lies on a region interface.",
+            "A cell edge off the PLC lies on a region interface.",
             provider_code="native_voronoi_association",
             stage="geometry_association",
         )
@@ -399,13 +403,17 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
 
 
 def _face_ancestry(
-    source: NativePlcSource, published: _Published, vertices: _Ancestry, /
+    source: NativePlcSource,
+    connectivity: PolyhedralConnectivity,
+    face_facets: np.ndarray,
+    cell_regions: np.ndarray,
+    vertices: _Ancestry,
+    /,
 ) -> _Ancestry:
-    connectivity = published.connectivity
-    facets = published.face_facets
+    facets = face_facets
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
-    regions = published.cell_regions.astype(np.int64)
+    regions = cell_regions.astype(np.int64)
     bisector = facets < 0
     if np.any(
         bisector & (neighbor >= 0) & (regions[owner] != regions[np.maximum(neighbor, 0)])
@@ -442,8 +450,12 @@ def _associations(
 ) -> tuple[GeometryAssociation, ...]:
     mesh, connectivity = published.mesh, published.connectivity
     vertices = _vertex_ancestry(source, published, triangles, triangle_facets)
-    edges = _edge_ancestry(published, vertices)
-    faces = _face_ancestry(source, published, vertices)
+    edges = _edge_ancestry(
+        connectivity, published.face_facets, published.cell_regions, vertices
+    )
+    faces = _face_ancestry(
+        source, connectivity, published.face_facets, published.cell_regions, vertices
+    )
     regions = published.cell_regions.astype(np.int64)
     cells = _Ancestry(
         np.full(regions.shape, _REGION, dtype=np.int64),
@@ -784,30 +796,40 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
                 provider_code="native_voronoi_certification",
                 stage="source_witness",
             )
-        query = PiecewiseLinearBoundarySource(
-            PiecewiseLinearDomainBoundaryOwner(domain), 2
-        )
-        face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
-        witness = SourceBoundaryDistanceWitness(
-            mesh_id=mesh.mesh_id,
-            geometry_id=cell_geometry_id(geometry),
-            topology_id=mesh.topology_id,
-            source_id=query.source_id,
-            source_revision=query.source_revision,
-            source_query_id=query.source_query_id,
-            reverse_tolerance=tolerance,
-            target_facet_global_ids=face_ids[
-                np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
-            ],
-        )
-        return NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc_fidelity"),
-            query.source_id,
-            query.source_revision,
-            fidelity_source=query,
-            fidelity_tolerance=tolerance,
-            fidelity_witness=witness,
-        )
+        return plc_fidelity_request(mesh, geometry, domain, tolerance)
+
+
+def plc_fidelity_request(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: PiecewiseLinearDomain,
+    tolerance: float,
+    /,
+) -> NativeCertificationRequest:
+    """``volume_plc_fidelity``: a two-sided distance bound between the mesh's
+    exterior surface and the PLC's exterior facets within ``tolerance``."""
+    query = PiecewiseLinearBoundarySource(PiecewiseLinearDomainBoundaryOwner(domain), 2)
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    witness = SourceBoundaryDistanceWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source_query_id=query.source_query_id,
+        reverse_tolerance=tolerance,
+        target_facet_global_ids=face_ids[
+            np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+        ],
+    )
+    return NativeCertificationRequest(
+        MeshCertificationSchedule("volume_plc_fidelity"),
+        query.source_id,
+        query.source_revision,
+        fidelity_source=query,
+        fidelity_tolerance=tolerance,
+        fidelity_witness=witness,
+    )
 
 
 @checked
