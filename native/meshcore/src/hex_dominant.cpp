@@ -42,6 +42,10 @@
 //     from the wall, giving layer_count thin hexahedra and the remainder; the
 //     final repair search moves a feature-curve column's layer points (with
 //     those above them) deeper along its offset direction, never thinner.
+//     At a convex feature curve the layers do not wrap the curve: each
+//     side's columns reattach to layer points slid along the other side's
+//     patch, and a corner hexahedron column per curve segment fills the gap
+//     (L x L for L layers), its two wall strips one per patch.
 // Certification (prove): every cell, published as a polyhedron with OpenFOAM
 // face semantics (a non-planar face is the fan from its vertex average), by
 // the exact orientation of its decomposition tetrahedra (cell centre, face
@@ -875,6 +879,22 @@ struct Builder {
   // its wall vertex lies on a feature curve (two patch normals).
   std::vector<Vec> layer_direction;
   std::vector<uint8_t> curve_column;
+  // Convex feature-curve columns split per side (cfMesh's extrusion edge):
+  // the grid g(i, j) = grid[i (L + 1) + j] of L = levels - 1 layers, g(0, 0)
+  // the curve vertex, g(i, 0) on the first patch of the pair and g(0, j) on
+  // the second at the cumulative thicknesses from the curve, g(i, j) =
+  // g(i, 0) + g(0, j) - g(0, 0). The first patch's pieces take the column
+  // g(L, k), the second's g(k, L); a corner hex column per curve segment
+  // fills the grid. item: the triangle under g(i, 0) (i - 1) and g(0, j)
+  // (L + j - 1).
+  struct Split {
+    int32_t row;
+    std::array<int32_t, 2> pair;
+    std::vector<int32_t> grid;
+    std::vector<int32_t> item;
+  };
+  std::vector<Split> splits;
+  std::vector<int32_t> split_of;  // per staircase vertex row, -1
 
   Builder(const Input& input, Surface& surface, Mesh& output) : in(input), s(surface), mesh(output) {}
 
@@ -905,8 +925,26 @@ struct Builder {
   int32_t staircase();
   void partition();
   int32_t project();
-  void emit_layers();
+  void classify_splits();
+  int32_t emit_layers();
   void place_layers();
+  void place_split(int64_t row, const std::vector<std::pair<int32_t, Vec>>& by_patch);
+  // The points carried by a column's wall vertex (its layer stack, or a
+  // split column's grid).
+  std::pair<const int32_t*, int32_t> carried(int64_t row) const {
+    if (split_of[row] >= 0) {
+      const auto& grid = splits[split_of[row]].grid;
+      return {grid.data(), static_cast<int32_t>(grid.size())};
+    }
+    return {column.data() + row * (levels + 1), levels};
+  }
+  // Least staircase-to-wall distance of a column: room for its layer stack
+  // and a quarter boundary cell.
+  double room(int64_t row) const {
+    if (split_of[row] < 0) return layer_total + 0.25 * b;
+    const auto& grid = splits[split_of[row]].grid;
+    return norm(sub(point(grid.back()), point(grid[0]))) + 0.25 * b;
+  }
   void smooth();
   int32_t certify();
 };
@@ -1681,10 +1719,64 @@ int32_t Builder::project() {
   return PHX_MC_OK;
 }
 
+// Convex feature-curve columns to split: a curve vertex with two chain
+// neighbors between two patches whose normals (area-weighted over its wall
+// pieces) differ by more than the feature angle, each side's pieces behind
+// the other side's plane; and only while both chain neighbors split too, so
+// every split vertex has two corner segments.
+void Builder::classify_splits() {
+  const int64_t rows = static_cast<int64_t>(stair_vertices.size());
+  split_of.assign(rows, -1);
+  splits.clear();
+  if (levels == 1) return;
+  const double feature_cos = std::cos(in.feature_angle_degrees * (3.14159265358979323846 / 180.0));
+  std::vector<uint8_t> candidate(rows, 0);
+  for (int64_t row = 0; row < rows; ++row) {
+    if (surface_kind[row] != kFeature || chain_neighbors[row][0] < 0) continue;
+    const auto& pair = surface_pair[row];
+    const Vec p = point(surface_vertex[row]);
+    Vec area[2] = {{0, 0, 0}, {0, 0, 0}}, centre[2] = {{0, 0, 0}, {0, 0, 0}};
+    for (const int32_t q : row_pieces[row]) {
+      const Piece& piece = pieces[q];
+      const int side = piece.patch == pair[0] ? 0 : 1;
+      Vec mid{0, 0, 0};
+      for (int c = 0; c < piece.count; ++c) {
+        const Vec u = sub(point(surface_vertex[stair_vertex[piece.loop[c]]]), p);
+        const Vec w = sub(point(surface_vertex[stair_vertex[piece.loop[(c + 1) % piece.count]]]), p);
+        area[side] = add(area[side], cross(u, w));
+        mid = add(mid, u);
+      }
+      centre[side] = add(centre[side], mul(mid, 1.0 / piece.count));
+    }
+    if (!(norm(area[0]) > 0.0) || !(norm(area[1]) > 0.0)) continue;
+    const Vec n0 = mul(area[0], 1.0 / norm(area[0])), n1 = mul(area[1], 1.0 / norm(area[1]));
+    candidate[row] = dot(n0, n1) <= feature_cos && dot(centre[0], n1) < 0.0 && dot(centre[1], n0) < 0.0;
+  }
+  for (bool again = true; again;) {
+    again = false;
+    for (int64_t row = 0; row < rows; ++row) {
+      if (!candidate[row]) continue;
+      for (const int32_t other : chain_neighbors[row]) {
+        if (candidate[other]) continue;
+        candidate[row] = 0;
+        again = true;
+        break;
+      }
+    }
+  }
+  for (int64_t row = 0; row < rows; ++row) {
+    if (!candidate[row]) continue;
+    split_of[row] = static_cast<int32_t>(splits.size());
+    splits.push_back({static_cast<int32_t>(row), surface_pair[row], {}, {}});
+  }
+}
+
 // Projection cells (levels == 1) or columns split into levels cells: a
-// hexahedron per quadrilateral piece and level, a prism per triangle. Layer
-// points are placed by place_layers.
-void Builder::emit_layers() {
+// hexahedron per quadrilateral piece and level, a prism per triangle. At a
+// split curve vertex each side's pieces take their own column of the grid,
+// and every curve segment between split vertices gets L x L corner
+// hexahedra. Layer points are placed by place_layers.
+int32_t Builder::emit_layers() {
   mesh.points.resize(3 * (core_points + static_cast<int64_t>(stair_vertices.size())));
   mesh.face_offsets.resize(core_faces + 1);
   mesh.face_vertices.resize(core_face_entries);
@@ -1694,14 +1786,37 @@ void Builder::emit_layers() {
   mesh.cell_roles.resize(core_cells);
   mesh.cell_vertex_offsets.resize(core_cells + 1);
   mesh.cell_vertices.resize(core_cell_entries);
+  classify_splits();
+  const int32_t layers = levels - 1;
   const int64_t columns = static_cast<int64_t>(stair_vertices.size());
   column.assign(static_cast<std::size_t>(columns) * (levels + 1), -1);
   for (int64_t row = 0; row < columns; ++row) {
     column[row * (levels + 1)] = surface_vertex[row];
     column[row * (levels + 1) + levels] = stair_vertices[row];
+    if (split_of[row] >= 0) {
+      Split& split = splits[split_of[row]];
+      split.grid.assign(static_cast<std::size_t>((layers + 1) * (layers + 1)), surface_vertex[row]);
+      for (std::size_t q = 1; q < split.grid.size(); ++q) split.grid[q] = add_point(point(surface_vertex[row]));
+      split.item.assign(static_cast<std::size_t>(2 * layers), -1);
+      // The diagonal stands in for the column's layer points.
+      for (int32_t k = 1; k < levels; ++k) column[row * (levels + 1) + k] = split.grid[k * (layers + 2)];
+      continue;
+    }
     for (int32_t k = 1; k < levels; ++k) column[row * (levels + 1) + k] = add_point(point(surface_vertex[row]));
   }
-  auto at = [&](int32_t v, int32_t level) { return column[stair_vertex[v] * (levels + 1) + level]; };
+  // Column point of staircase vertex v at level for a piece of patch.
+  auto at = [&](int32_t v, int32_t level, int32_t patch) {
+    const int32_t row = stair_vertex[v];
+    if (split_of[row] < 0 || level == levels) return column[row * (levels + 1) + level];
+    const Split& split = splits[split_of[row]];
+    return patch == split.pair[0] ? split.grid[layers * (layers + 1) + level] : split.grid[level * (layers + 1) + layers];
+  };
+  // A curve segment between split vertices.
+  auto segment = [&](int32_t a, int32_t c) {
+    const int32_t ra = stair_vertex[a], rc = stair_vertex[c];
+    return split_of[ra] >= 0 && split_of[rc] >= 0 &&
+           (chain_neighbors[ra][0] == rc || chain_neighbors[ra][1] == rc);
+  };
   const int64_t count = static_cast<int64_t>(pieces.size());
   const int32_t first_cell = static_cast<int32_t>(core_cells);
   // Cell of piece p at level k (k = 0 at the wall).
@@ -1712,8 +1827,8 @@ void Builder::emit_layers() {
     for (int32_t k = 0; k < levels; ++k) {
       mesh.cell_kinds.push_back(piece.count == 4 ? kHexahedron : kPrism);
       mesh.cell_roles.push_back(levels > 1 && k < levels - 1 ? kLayer : kProjection);
-      for (int c = 0; c < piece.count; ++c) mesh.cell_vertices.push_back(at(piece.loop[c], k + 1));
-      for (int c = 0; c < piece.count; ++c) mesh.cell_vertices.push_back(at(piece.loop[c], k));
+      for (int c = 0; c < piece.count; ++c) mesh.cell_vertices.push_back(at(piece.loop[c], k + 1, piece.patch));
+      for (int c = 0; c < piece.count; ++c) mesh.cell_vertices.push_back(at(piece.loop[c], k, piece.patch));
       mesh.cell_vertex_offsets.push_back(static_cast<int64_t>(mesh.cell_vertices.size()));
     }
   }
@@ -1723,15 +1838,16 @@ void Builder::emit_layers() {
     const Piece& piece = pieces[p];
     // The wall face (outward along the staircase normal) and the faces
     // between levels.
-    for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], 0);
+    for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], 0, piece.patch);
     piece_wall_face[p] = add_face(loop, piece.count, cell_of(p, 0), -1);
     for (int32_t k = 1; k < levels; ++k) {
-      for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], k);
+      for (int c = 0; c < piece.count; ++c) loop[c] = at(piece.loop[c], k, piece.patch);
       add_face(loop, piece.count, cell_of(p, k), cell_of(p, k - 1));
     }
   }
   // Side faces, owned by the piece whose loop runs a -> b at the second
-  // sighting of the edge (the first runs b -> a).
+  // sighting of the edge (the first runs b -> a); the layer levels of a
+  // curve segment face the corner column instead.
   KeyMap seen(static_cast<std::size_t>(2 * count + 16));
   const uint64_t n = static_cast<uint64_t>(core_points);
   for (int64_t p = 0; p < count; ++p) {
@@ -1741,15 +1857,86 @@ void Builder::emit_layers() {
       const uint64_t key = static_cast<uint64_t>(std::min(a, c)) * n + static_cast<uint64_t>(std::max(a, c));
       const int32_t other = seen.emplace(key, static_cast<int32_t>(p));
       if (other == static_cast<int32_t>(p)) continue;
-      for (int32_t k = 0; k < levels; ++k) {
-        loop[0] = at(a, k + 1);
-        loop[1] = at(c, k + 1);
-        loop[2] = at(c, k);
-        loop[3] = at(a, k);
+      for (int32_t k = segment(a, c) ? layers : 0; k < levels; ++k) {
+        loop[0] = at(a, k + 1, piece.patch);
+        loop[1] = at(c, k + 1, piece.patch);
+        loop[2] = at(c, k, piece.patch);
+        loop[3] = at(a, k, piece.patch);
         add_face(loop, 4, cell_of(p, k), cell_of(other, k));
       }
     }
   }
+  if (splits.empty()) return PHX_MC_OK;
+  // Corner columns and the faces around them: every face as seen from its
+  // cell (outward loop), matched by vertex set; an unmatched face is a wall
+  // strip of a corner cell.
+  struct Sighting {
+    std::array<int32_t, 4> key;
+    int32_t cell;
+    std::array<int32_t, 4> loop;
+    bool wall;
+  };
+  std::vector<Sighting> sightings;
+  auto sight = [&](int32_t cell, const std::array<int32_t, 4>& face, bool wall) {
+    std::array<int32_t, 4> key = face;
+    std::sort(key.begin(), key.end());
+    sightings.push_back({key, cell, face, wall});
+  };
+  // Outward faces of a hexahedron in the reference order: bottom, top,
+  // then the sides from edge 01 on.
+  static constexpr int kFaces[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
+  for (int64_t p = 0; p < count; ++p) {
+    const Piece& piece = pieces[p];
+    for (int e = 0; e < piece.count; ++e) {
+      const int32_t a = piece.loop[e], c = piece.loop[(e + 1) % piece.count];
+      if (!segment(a, c)) continue;
+      for (int32_t k = 0; k < layers; ++k) {
+        sight(cell_of(p, k), {at(a, k + 1, piece.patch), at(c, k + 1, piece.patch), at(c, k, piece.patch), at(a, k, piece.patch)},
+              false);
+      }
+      const Split& sa = splits[split_of[stair_vertex[a]]];
+      if (piece.patch != sa.pair[0]) continue;
+      // The first patch's piece runs a -> c: with g(i + 1, j) - g(i, j)
+      // into the first patch and g(i, j + 1) - g(i, j) into the second, the
+      // corner hexahedron is positive with c's quadrilateral first.
+      const auto& ga = sa.grid;
+      const auto& gc = splits[split_of[stair_vertex[c]]].grid;
+      for (int32_t i = 0; i < layers; ++i) {
+        for (int32_t j = 0; j < layers; ++j) {
+          const int32_t q[4] = {i * (layers + 1) + j, (i + 1) * (layers + 1) + j, (i + 1) * (layers + 1) + j + 1,
+                                i * (layers + 1) + j + 1};
+          const int32_t h[8] = {gc[q[0]], gc[q[1]], gc[q[2]], gc[q[3]], ga[q[0]], ga[q[1]], ga[q[2]], ga[q[3]]};
+          const int32_t cell = static_cast<int32_t>(mesh.cell_kinds.size());
+          mesh.cell_kinds.push_back(kHexahedron);
+          mesh.cell_roles.push_back(kLayer);
+          mesh.cell_vertices.insert(mesh.cell_vertices.end(), h, h + 8);
+          mesh.cell_vertex_offsets.push_back(static_cast<int64_t>(mesh.cell_vertices.size()));
+          for (int f = 0; f < 6; ++f) {
+            const bool wall = (f == 2 && j == 0) || (f == 5 && i == 0);
+            sight(cell, {h[kFaces[f][0]], h[kFaces[f][1]], h[kFaces[f][2]], h[kFaces[f][3]]}, wall);
+          }
+        }
+      }
+    }
+  }
+  std::sort(sightings.begin(), sightings.end(), [](const Sighting& x, const Sighting& y) {
+    return x.key != y.key ? x.key < y.key : x.cell < y.cell;
+  });
+  for (std::size_t q = 0; q < sightings.size();) {
+    const Sighting& first = sightings[q];
+    if (q + 1 < sightings.size() && sightings[q + 1].key == first.key) {
+      if (first.wall || sightings[q + 1].wall || (q + 2 < sightings.size() && sightings[q + 2].key == first.key)) {
+        return PHX_MC_INTERNAL_ERROR;
+      }
+      add_face(first.loop.data(), 4, first.cell, sightings[q + 1].cell);
+      q += 2;
+      continue;
+    }
+    if (!first.wall) return PHX_MC_INTERNAL_ERROR;
+    add_face(first.loop.data(), 4, first.cell, -1);
+    ++q;
+  }
+  return PHX_MC_OK;
 }
 
 // ---------------------------------------------------------- cell geometry
@@ -1968,12 +2155,64 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
   return static_cast<int64_t>(vertices.size()) - edges + faces == 2;
 }
 
+void Builder::place_split(int64_t row, const std::vector<std::pair<int32_t, Vec>>& by_patch) {
+  Split& split = splits[split_of[row]];
+  const int32_t layers = levels - 1;
+  Vec n[2];
+  for (int side = 0; side < 2; ++side) {
+    const auto it = std::find_if(by_patch.begin(), by_patch.end(), [&](const auto& e) { return e.first == split.pair[side]; });
+    n[side] = mul(it->second, 1.0 / norm(it->second));
+  }
+  // w[side]: the direction into that side's patch, away from the curve.
+  Vec w[2];
+  for (int side = 0; side < 2; ++side) {
+    const Vec& other = n[1 - side];
+    const Vec u = sub(other, mul(n[side], dot(other, n[side])));
+    w[side] = mul(u, -1.0 / norm(u));
+  }
+  const Vec p = point(surface_vertex[row]);
+  double extent = std::numeric_limits<double>::infinity();
+  for (const int32_t q : row_pieces[row]) {
+    const Piece& piece = pieces[q];
+    const int side = piece.patch == split.pair[0] ? 0 : 1;
+    double far = 0.0;
+    for (int c = 0; c < piece.count; ++c) {
+      const int32_t other = stair_vertex[piece.loop[c]];
+      if (other == row) continue;
+      far = std::max(far, dot(sub(point(surface_vertex[other]), p), w[side]));
+    }
+    extent = std::min(extent, far);
+  }
+  const double scale = std::min(1.0, 0.9 * extent / layer_total);
+  double height = 0.0;
+  for (int32_t k = 1; k <= layers; ++k) {
+    height += scale * in.layer_thicknesses[k - 1];
+    for (int side = 0; side < 2; ++side) {
+      int32_t& item = split.item[side * layers + k - 1];
+      const Vec target = add(p, mul(w[side], height));
+      const Hit hit = item < 0 ? nearest_triangle(s, target, split.pair[side]) : walk_triangle(s, target, item);
+      item = hit.item;
+      set_point(split.grid[side == 0 ? k * (layers + 1) : k], hit.point);
+    }
+  }
+  for (int32_t i = 1; i <= layers; ++i) {
+    for (int32_t j = 1; j <= layers; ++j) {
+      set_point(split.grid[i * (layers + 1) + j], sub(add(point(split.grid[i * (layers + 1)]), point(split.grid[j])), p));
+    }
+  }
+}
+
 // Layer points along the wall offset direction m of every column: with n_i
 // the unit outward normals of the patches around the wall vertex (area-
 // weighted over its wall faces, patches meeting below the feature angle
 // merged), m solves m . n_i = 1 (least squares beyond three), so the k-th
 // layer point lies at the cumulative thickness from every adjacent patch
 // plane: m = n on a patch, (n1 + n2) / (1 + n1 . n2) on a feature curve.
+// A split curve column instead slides its layer points along each patch:
+// g(i, 0) = p - h_i w1 projected onto the first patch, w1 the second
+// patch's normal without its first-normal part (unit), g(0, j) likewise,
+// with h scaled to at most 0.9 of the least extent of the adjacent wall
+// pieces away from the curve (cfMesh's limit).
 void Builder::place_layers() {
   if (levels == 1) return;
   const int64_t columns = static_cast<int64_t>(stair_vertices.size());
@@ -1997,6 +2236,12 @@ void Builder::place_layers() {
       } else {
         it->second = add(it->second, area[p]);
       }
+    }
+    if (split_of[row] >= 0) {
+      place_split(row, by_patch);
+      layer_direction[row] = {0, 0, 0};
+      curve_column[row] = 0;
+      continue;
     }
     normals.clear();
     sums.clear();
@@ -2099,7 +2344,18 @@ void Builder::smooth() {
   for (int64_t f = core_faces; f < faces; ++f) {
     if (mesh.face_neighbor[f] >= 0) continue;
     for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
-      wall_faces[column_of[mesh.face_vertices[q]]].push_back(static_cast<int32_t>(f));
+      // Split columns' slid wall points carry no column of their own.
+      const int32_t row = column_of[mesh.face_vertices[q]];
+      if (row >= 0) wall_faces[row].push_back(static_cast<int32_t>(f));
+    }
+  }
+  // Patch vertices sharing a wall face with a split column's slid points.
+  std::vector<uint8_t> near_split(columns, 0);
+  for (int64_t row = 0; row < columns; ++row) {
+    for (const int32_t f : wall_faces[row]) {
+      for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
+        near_split[row] = near_split[row] || column_of[mesh.face_vertices[q]] < 0;
+      }
     }
   }
   // Distinct vertices of every cell.
@@ -2199,16 +2455,17 @@ void Builder::smooth() {
   // layer points move and revert together.
   std::vector<int32_t> column_row(points, -1);
   for (int64_t row = 0; row < columns; ++row) {
-    for (int32_t k = 0; k < levels; ++k) column_row[column[row * (levels + 1) + k]] = static_cast<int32_t>(row);
+    const auto [stack, size] = carried(row);
+    for (int32_t k = 0; k < size; ++k) column_row[stack[k]] = static_cast<int32_t>(row);
   }
   std::vector<int32_t> stamp(cells, -1);
   int32_t epoch = 0;
   std::vector<int32_t> check, next;
   auto revert = [&](int32_t v) {
     const int32_t row = column_row[v];
-    const int32_t count = row >= 0 ? levels : 1;
-    for (int32_t k = 0; k < count; ++k) {
-      const int32_t u = row >= 0 ? column[row * (levels + 1) + k] : v;
+    const auto [stack, size] = row >= 0 ? carried(row) : std::pair<const int32_t*, int32_t>{&v, 1};
+    for (int32_t k = 0; k < size; ++k) {
+      const int32_t u = stack[k];
       if (!moved[u]) continue;
       moved[u] = 0;
       ++reverted;
@@ -2228,7 +2485,7 @@ void Builder::smooth() {
     ++epoch;
     for (int64_t row = 0; row < columns; ++row) {
       const double length = norm(sub(point(stair_vertices[row]), point(surface_vertex[row])));
-      if (length < layer_total + 0.25 * b) {
+      if (length < room(row)) {
         revert(stair_vertices[row]);
         revert(surface_vertex[row]);
       }
@@ -2314,6 +2571,19 @@ void Builder::smooth() {
         if (chain_neighbors[row][0] < 0) continue;
         for (const int32_t other : chain_neighbors[row]) target = add(target, load(previous.data() + 3 * surface_vertex[other]));
         target = mul(target, 0.5);
+      } else if (near_split[row]) {
+        double weight = 0.0;
+        for (const int32_t f : wall_faces[row]) {
+          const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+          for (int64_t q = first; q < last; ++q) {
+            if (mesh.face_vertices[q] != v) continue;
+            for (const int64_t r : {q > first ? q - 1 : last - 1, q + 1 < last ? q + 1 : first}) {
+              target = add(target, load(previous.data() + 3 * mesh.face_vertices[r]));
+              weight += 1.0;
+            }
+          }
+        }
+        target = mul(target, 1.0 / weight);
       } else {
         double weight = 0.0;
         for (const int32_t f : wall_faces[row]) {
@@ -2617,7 +2887,7 @@ void Builder::smooth() {
                 }
                 // The staircase vertex keeps room for the layer stack.
                 if (accept && stair >= 0) {
-                  accept = norm(sub(point(v), point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
+                  accept = norm(sub(point(v), point(surface_vertex[stair]))) >= room(stair);
                 }
                 // The validity screen on the geometry evaluate() left: the
                 // trial's faces and centroids.
@@ -2701,7 +2971,8 @@ int32_t build(const Input& in, Mesh& mesh) {
   status = builder.project();
   if (status != PHX_MC_OK) return status;
   builder.levels = in.layer_count + 1;
-  builder.emit_layers();
+  status = builder.emit_layers();
+  if (status != PHX_MC_OK) return status;
   builder.place_layers();
   stats[4] = seconds(stage);
   stage = Clock::now();
@@ -2735,6 +3006,19 @@ int32_t build(const Input& in, Mesh& mesh) {
     }
     mesh.vertex_triangles[v] = hit.item;
     vertex_distance = std::max(vertex_distance, norm(sub(hit.point, p)));
+  }
+  // Slid wall points of split curve columns: on their patch.
+  const int32_t layers = builder.levels - 1;
+  for (const auto& split : builder.splits) {
+    for (int32_t q = 0; q < 2 * layers; ++q) {
+      const int32_t k = q % layers + 1;
+      const int32_t v = split.grid[q < layers ? k * (layers + 1) : k];
+      const Vec p = builder.point(v);
+      const Hit hit = walk_triangle(surface, p, split.item[q]);
+      mesh.vertex_kinds[v] = kPatch;
+      mesh.vertex_triangles[v] = hit.item;
+      vertex_distance = std::max(vertex_distance, norm(sub(hit.point, p)));
+    }
   }
   // Boundary faces: the facet of their patch, read from a patch vertex's
   // triangle (a face without one: the nearest triangle of its centre). The
