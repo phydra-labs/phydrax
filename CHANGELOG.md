@@ -75,6 +75,17 @@
   fixed chunks whose size does not depend on the worker count, and results
   are byte-identical for every worker count. `PHX_MC_THREAD_SANITIZE` builds
   meshcore and its tests with ThreadSanitizer.
+- `delaunay_3d` / `regular_3d` (`phx_mc_delaunay_3d` / `phx_mc_regular_3d`)
+  take a `parallelism` argument: beyond a sequential prefix, points are
+  inserted by grid regions of one color at a time on the native worker pool,
+  with border points deferred to shifted passes. The canonical output is
+  byte-identical for every parallelism and insertion order (the symbolic
+  perturbation is ordered by input index); parallelism 1 runs the sequential
+  build unchanged.
+- `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
+  (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
+  builders, which remain the path without meshcore; building over 1e6
+  tetrahedra takes 0.5 to 1.2 s instead of 5.4 to 8.3 s.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the
