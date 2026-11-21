@@ -1967,6 +1967,19 @@ def _prism_layer(level: int) -> np.ndarray:
 def test_layer_assembly_reuses_layer_proofs_by_exact_map(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Native P1 prism root proofs decide every cell directly with the same
+    # records; the exact-map reuse under test is the rational proof's.
+    monkeypatch.setattr(
+        validity_module,
+        "_native_cell_map_proofs",
+        lambda cell_kind, basis, coordinates, routes, policy: (
+            np.zeros(routes.shape[0], dtype=np.bool_),
+            np.zeros(routes.shape[0], dtype=np.int32),
+            np.zeros(routes.shape[0]),
+            np.zeros(routes.shape[0]),
+            np.zeros((routes.shape[0], 16), dtype=np.uint8),
+        ),
+    )
     points = _prism_layer_points(2)
     # The accepted first layer is certified on its own, renumbered vertex set.
     order = np.arange(8, dtype=np.int32)[::-1]
@@ -1989,6 +2002,9 @@ def test_layer_assembly_reuses_layer_proofs_by_exact_map(
 
     assert full.all_certified
     assert proofs == 2
+    # The helper restored the native proofs; they reproduce the certificate.
+    native = D.certify_cell_geometry_validity(assembled)
+    assert native.certificate_id == full.certificate_id
 
 
 def _curved_triangle_pair(

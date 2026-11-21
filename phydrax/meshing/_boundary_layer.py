@@ -25,6 +25,7 @@ are relied on to add contributions sequentially in their input index order.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -38,13 +39,19 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    canonical_json,
+    plain_json_fingerprint,
+)
 from .._meshcore import (
     angle_arccosine,
     angle_cosine,
     angle_sine,
     load_meshcore,
     point_triangle_distances,
+    point_triangle_nearest_distances,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -70,7 +77,7 @@ from ..geometry._rational import (
     binary64_norm,
     binary64_sum,
 )
-from ..geometry._source_identity import source_entity_id
+from ..geometry._source_identity import source_entity_id, source_entity_ids
 from ..typing import checked
 from ._association import _incidence_pairs, GeometryAssociation
 from ._audit_topology import _orient3d, _triangle_pairs_intersect
@@ -202,7 +209,13 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     Thicknesses are increments of the minimum specified point-triangle distance
     from each column's layer vertices to the wall surface. These binary64
     distances are approximations; per-layer statistics cover every column that
-    carries the layer.
+    carries the layer. ``maximum_level_deviations[k]`` is the largest
+    ``|d - s h_(k+1)|`` over the columns carrying layer ``k``: ``d`` the distance
+    of the column's level ``k + 1`` vertex to the wall triangles, ``h_(k+1)``
+    the scheduled level height and ``s`` the column's thickness scale: small on
+    the advancing-front route, whose probed column stretch measures levels
+    from the wall triangles, and the departure of the triangles from the
+    fitted smooth surface the native route measures levels from.
     ``layer_active[k]`` is ``True`` iff at least one surviving column carries
     requested layer ``k``. A requested layer carried by no surviving column has
     ``layer_active[k] == False`` and NaN achieved, minimum, and maximum
@@ -217,6 +230,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     achieved_thicknesses: Array
     minimum_thicknesses: Array
     maximum_thicknesses: Array
+    maximum_level_deviations: Array
     achieved_growth_rates: Array
     layer_active: Array
     column_count: int = eqx.field(static=True)
@@ -256,21 +270,24 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
                 "achieved_thicknesses",
                 "minimum_thicknesses",
                 "maximum_thicknesses",
+                "maximum_level_deviations",
                 "achieved_growth_rates",
             )
         }
         layer_shape = (len(requested),)
-        if any(arrays[name].shape != layer_shape for name in tuple(arrays)[:3]) or arrays[
+        layered = (
+            "achieved_thicknesses",
+            "minimum_thicknesses",
+            "maximum_thicknesses",
+            "maximum_level_deviations",
+        )
+        if any(arrays[name].shape != layer_shape for name in layered) or arrays[
             "achieved_growth_rates"
         ].shape != (len(requested) - 1,):
             raise ValueError(
                 "Boundary-layer thickness and growth arrays have invalid shapes."
             )
-        for name in (
-            "achieved_thicknesses",
-            "minimum_thicknesses",
-            "maximum_thicknesses",
-        ):
+        for name in layered:
             array = arrays[name]
             if np.any(~np.isfinite(array[layer_active])) or np.any(
                 ~np.isnan(array[~layer_active])
@@ -609,15 +626,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         ):
             raise ValueError("Column parent ancestry CSR is invalid.")
         has_parents = np.diff(parent_offsets) > 0
-        parent_sums = np.asarray(
-            [
-                binary64_sum(parent_weights[start:stop], axis=0)
-                for start, stop in zip(
-                    parent_offsets[:-1], parent_offsets[1:], strict=True
-                )
-            ],
-            dtype=np.float64,
-        )
+        parent_sums = _segment_sums(parent_weights, parent_offsets)
         if np.any(np.abs(parent_sums[has_parents] - 1.0) > 64.0 * np.finfo(float).eps):
             raise ValueError("Column parent interpolation weights must sum to one.")
         row_ids = np.asarray(front_row_ids)
@@ -669,27 +678,31 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             "edge": np.asarray(source_wall.entity_set(1).entity_ids, dtype=np.int64),
             "vertex": source_vertex_ids,
         }
-        for kind, identifier, entity_key, orientation in zip(
-            row_kinds, row_global_ids, row_source_ids, row_orientations, strict=True
-        ):
-            if int(identifier) not in entity_ids_by_kind[kind]:
+        row_kind_array = np.asarray(row_kinds, dtype=object)
+        for kind, known in entity_ids_by_kind.items():
+            rows = np.flatnonzero(row_kind_array == kind)
+            identifiers = row_global_ids[rows].astype(np.int64)
+            if not np.all(np.isin(identifiers, known)):
                 raise ValueError(
                     "Front-row source IDs must resolve in the exact source-wall entity set."
                 )
-            expected_key = source_entity_id(
+            expected_keys = source_entity_ids(
                 source_wall.mesh_id,
                 str(source_wall.numeric_version),
                 f"mesh-{kind}",
-                int(identifier),
+                identifiers.tolist(),
             )
-            if entity_key != expected_key:
+            if any(
+                row_source_ids[row] != key
+                for row, key in zip(rows.tolist(), expected_keys, strict=True)
+            ):
                 raise ValueError(
                     "Front-row source entity IDs must bind the exact source-wall entity."
                 )
-            if (kind == "vertex") != (int(orientation) == 0):
-                raise ValueError(
-                    "Front-row orientations must be defined only for face/edge sources."
-                )
+        if np.any((row_kind_array == "vertex") != (row_orientations == 0)):
+            raise ValueError(
+                "Front-row orientations must be defined only for face/edge sources."
+            )
         if any(
             any(not isinstance(part, str) or not part for part in path)
             for row in row_occurrences
@@ -781,15 +794,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         vertex_parent_counts = np.diff(vertex_parent_offsets)
         if np.any((vertex_columns >= 0) & (vertex_parent_counts == 0)):
             raise ValueError("Every generated layer vertex must name its source columns.")
-        vertex_parent_sums = np.asarray(
-            [
-                binary64_sum(vertex_parent_weights[start:stop], axis=0)
-                for start, stop in zip(
-                    vertex_parent_offsets[:-1], vertex_parent_offsets[1:], strict=True
-                )
-            ],
-            dtype=np.float64,
-        )
+        vertex_parent_sums = _segment_sums(vertex_parent_weights, vertex_parent_offsets)
         if np.any(
             np.abs(vertex_parent_sums[vertex_parent_counts > 0] - 1.0)
             > 64.0 * np.finfo(float).eps
@@ -941,6 +946,19 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
 
 
 # ---------------------------------------------------------------- failures
+
+
+def _segment_sums(values: np.ndarray, offsets: np.ndarray, /) -> np.ndarray:
+    """Left-to-right binary64 sums of the CSR segments ``offsets`` of ``values``.
+
+    Shorter segments are padded with trailing zeros, which leave every sum
+    unchanged; an empty segment sums to zero.
+    """
+    counts = np.diff(offsets)
+    rows = np.repeat(np.arange(counts.size), counts)
+    table = np.zeros((counts.size, int(counts.max(initial=0))), dtype=np.float64)
+    table[rows, np.arange(rows.size) - offsets[:-1][rows]] = values
+    return binary64_sum(table, axis=1)
 
 
 def _failure(
@@ -2086,6 +2104,11 @@ def _corner_patches(
     return corners
 
 
+def _hex_json_array(values: list[str], /) -> str:
+    """Canonical JSON text of hex digest strings (nothing to escape)."""
+    return '["' + '","'.join(values) + '"]' if values else "[]"
+
+
 def _front_source_ancestry(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
@@ -2113,23 +2136,27 @@ def _front_source_ancestry(
     column_count = column_vertex.size
     root_ids = source_vertex_ids[column_vertex]
     face_records: list[list[tuple[int, int, int, float]]] = []
+    # Plain lists: per-element numpy scalar access dominates this loop.
+    face_ids = source_face_ids.tolist()
+    kinds = column_kind.tolist()
+    face_counts = directions.source_face_counts.tolist()
+    face_rows = directions.source_face_rows.tolist()
+    face_weights = directions.source_face_weights.tolist()
+    constraint_offsets = directions.constraint_face_offsets.tolist()
+    constraint_rows = directions.constraint_face_rows.tolist()
+    constraint_orientations = directions.constraint_face_orientations.tolist()
     for column in range(column_count):
         records: dict[tuple[int, int, int], float] = {}
-        if column_kind[column] == _SECTOR:
-            for slot in range(int(directions.source_face_counts[column])):
-                face_row = int(directions.source_face_rows[column, slot])
-                face_id = int(source_face_ids[face_row])
-                key = (face_id, 1, 0)
-                records[key] = records.get(key, 0.0) + float(
-                    directions.source_face_weights[column, slot]
-                )
-            start = int(directions.constraint_face_offsets[column])
-            stop = int(directions.constraint_face_offsets[column + 1])
-            for index in range(start, stop):
-                face_row = int(directions.constraint_face_rows[index])
+        if kinds[column] == _SECTOR:
+            for slot in range(face_counts[column]):
+                key = (face_ids[face_rows[column][slot]], 1, 0)
+                records[key] = records.get(key, 0.0) + face_weights[column][slot]
+            for index in range(
+                constraint_offsets[column], constraint_offsets[column + 1]
+            ):
                 key = (
-                    int(source_face_ids[face_row]),
-                    int(directions.constraint_face_orientations[index]),
+                    face_ids[constraint_rows[index]],
+                    int(constraint_orientations[index]),
                     1,
                 )
                 records.setdefault(key, 0.0)
@@ -2157,6 +2184,10 @@ def _front_source_ancestry(
     column_geometry_entities: list[tuple[str, ...]] = []
     column_occurrences: list[tuple[str, ...]] = []
     column_identities: list[str] = []
+    revision = str(source_wall.numeric_version)
+    vertex_keys = source_entity_ids(
+        source_wall.mesh_id, revision, "mesh-vertex", root_ids.tolist()
+    )
     for column in range(column_count):
         association_row = association_rows.get(int(root_ids[column]))
         if association_row is None or wall_association is None:
@@ -2167,18 +2198,42 @@ def _front_source_ancestry(
             occurrence = wall_association.source_occurrence_paths[association_row]
         column_geometry_entities.append(geometry_entities)
         column_occurrences.append(occurrence)
-        source_vertex = source_entity_id(
-            source_wall.mesh_id,
-            str(source_wall.numeric_version),
-            "mesh-vertex",
-            int(root_ids[column]),
-            occurrence_path=occurrence,
+        source_vertex = (
+            source_entity_id(
+                source_wall.mesh_id,
+                revision,
+                "mesh-vertex",
+                int(root_ids[column]),
+                occurrence_path=occurrence,
+            )
+            if occurrence
+            else vertex_keys[column]
         )
-        incident_faces = tuple(sorted({record[0] for record in face_records[column]}))
+        incident_faces = sorted({record[0] for record in face_records[column]})
         parents = parent_local[column]
         if column_kind[column] == _SECTOR:
-            recipe = {"kind": "sector", "incident_faces": incident_faces}
-        elif column_kind[column] == _FAN:
+            # plain_json_fingerprint of the sector column record: the source
+            # vertex is a hex digest and the faces are integers, so only the
+            # geometry entities need the encoder.
+            column_identities.append(
+                hashlib.sha256(
+                    (
+                        '{"geometry_entities":'
+                        + (
+                            canonical_json(geometry_entities)
+                            if geometry_entities
+                            else "[]"
+                        )
+                        + ',"kind":"boundary-layer-column","recipe":{"incident_faces":['
+                        + ",".join(map(str, incident_faces))
+                        + '],"kind":"sector"},"source_vertex":"'
+                        + source_vertex
+                        + '"}'
+                    ).encode("ascii")
+                ).hexdigest()
+            )
+            continue
+        if column_kind[column] == _FAN:
             fan_fraction = fan_fractions[column]
             if fan_fraction is None:
                 raise ValueError(
@@ -2203,7 +2258,7 @@ def _front_source_ancestry(
                 "parents": tuple(sorted(column_identities[parent] for parent in parents)),
             }
         column_identities.append(
-            canonical_fingerprint(
+            plain_json_fingerprint(
                 {
                     "kind": "boundary-layer-column",
                     "source_vertex": source_vertex,
@@ -2245,60 +2300,85 @@ def _front_source_ancestry(
         parent_offsets.append(len(flat_parent_ids))
 
     row_count = front_faces.shape[0]
+    row_source_entity_ids: list[str] = [""] * row_count
+    for kind in sorted(set(row_source_kinds)):
+        rows = [row for row in range(row_count) if row_source_kinds[row] == kind]
+        for row, key in zip(
+            rows,
+            source_entity_ids(
+                source_wall.mesh_id,
+                revision,
+                f"mesh-{kind}",
+                (int(row_source_global_ids[row]) for row in rows),
+            ),
+            strict=True,
+        ):
+            row_source_entity_ids[row] = key
     row_occurrences: list[tuple[tuple[str, ...], ...]] = []
-    row_source_entity_ids: list[str] = []
-    row_identity_ids: list[str] = []
+    row_digests: list[str] = []
+    face_columns = front_faces.tolist()
+    orientations = row_orientations.tolist()
+    pieces = row_pieces.tolist()
+    any_occurrence = any(column_occurrences)
     for row in range(row_count):
-        paths = tuple(
-            sorted(
-                {
-                    column_occurrences[column]
-                    for column in front_faces[row]
-                    if column >= 0 and column_occurrences[column]
-                }
+        row_columns_list = [column for column in face_columns[row] if column >= 0]
+        paths = (
+            tuple(
+                sorted(
+                    {
+                        column_occurrences[column]
+                        for column in row_columns_list
+                        if column_occurrences[column]
+                    }
+                )
             )
+            if any_occurrence
+            else ()
         )
         row_occurrences.append(paths)
-        row_kind = f"mesh-{row_source_kinds[row]}"
-        entity_id = int(row_source_global_ids[row])
-        row_source_entity_ids.append(
-            source_entity_id(
-                source_wall.mesh_id,
-                str(source_wall.numeric_version),
-                row_kind,
-                entity_id,
-            )
+        path_keys = (
+            [
+                source_entity_id(
+                    source_wall.mesh_id,
+                    revision,
+                    f"mesh-{row_source_kinds[row]}",
+                    int(row_source_global_ids[row]),
+                    occurrence_path=path,
+                )
+                for path in paths
+            ]
+            if paths
+            else [row_source_entity_ids[row]]
         )
-        path_keys = tuple(
-            source_entity_id(
-                source_wall.mesh_id,
-                str(source_wall.numeric_version),
-                row_kind,
-                entity_id,
-                occurrence_path=path,
-            )
-            for path in paths
+        # plain_json_fingerprint of {"source_entities", "columns", "orientation",
+        # "piece"}: every string is a hex digest, so the canonical text (sorted
+        # keys, no spaces) is written directly.
+        row_digests.append(
+            hashlib.sha256(
+                (
+                    '{"columns":'
+                    + _hex_json_array(
+                        [column_identities[column] for column in row_columns_list]
+                    )
+                    + f',"orientation":{int(orientations[row])},"piece":{int(pieces[row])}'
+                    + ',"source_entities":'
+                    + _hex_json_array(path_keys)
+                    + "}"
+                ).encode("ascii")
+            ).hexdigest()
         )
-        row_identity_ids.append(
-            source_entity_id(
+    row_identity_ids = list(
+        source_entity_ids(source_wall.mesh_id, revision, "layer-front-row", row_digests)
+    )
+    for row, paths in enumerate(row_occurrences):
+        if len(paths) == 1:
+            row_identity_ids[row] = source_entity_id(
                 source_wall.mesh_id,
-                str(source_wall.numeric_version),
+                revision,
                 "layer-front-row",
-                canonical_fingerprint(
-                    {
-                        "source_entities": path_keys or row_source_entity_ids[-1:],
-                        "columns": tuple(
-                            column_identities[column]
-                            for column in front_faces[row]
-                            if column >= 0
-                        ),
-                        "orientation": int(row_orientations[row]),
-                        "piece": int(row_pieces[row]),
-                    }
-                ),
-                occurrence_path=paths[0] if len(paths) == 1 else (),
+                row_digests[row],
+                occurrence_path=paths[0],
             )
-        )
     row_order = np.argsort(np.asarray(row_identity_ids), kind="stable")
     row_ids = np.empty((row_count,), dtype=np.int64)
     row_ids[row_order] = np.arange(row_count, dtype=np.int64)
@@ -2442,16 +2522,7 @@ def _distances_within(
 
 def _nearest_distances(triangles: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
     """Minimum specified point-triangle distance over every triangle."""
-    bvh = prepare_bvh(
-        np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=jnp.float64
-    )
-    proposal = np.asarray(
-        bvh_nearest_items(bvh, jnp.asarray(queries), k=1).items, dtype=np.int64
-    )[:, 0]
-    if np.any((proposal < 0) | (proposal >= triangles.shape[0])):
-        raise ValueError("Boundary-layer distance search did not propose a triangle.")
-    radius = point_triangle_distances(queries, triangles[proposal])
-    return _distances_within(triangles, queries, radius, bvh)
+    return point_triangle_nearest_distances(queries, triangles)
 
 
 def _parallel_attached_wall_mask(
@@ -3757,16 +3828,22 @@ def _measured_thicknesses(
     )
     active = np.any(carried, axis=1)
     increments = np.diff(distance, axis=0)
+    deviation = np.abs(
+        distance[1:]
+        - columns.levels[1:, None] * columns.scale[front.column_vertex][None, :]
+    )
     mean = np.full((layers,), np.nan)
     minimum = np.full((layers,), np.nan)
     maximum = np.full((layers,), np.nan)
+    level_deviation = np.full((layers,), np.nan)
     for layer in range(layers):
         if active[layer]:
             values = increments[layer, carried[layer]]
             mean[layer] = binary64_sum(values, axis=0) / values.size
             minimum[layer] = np.min(values)
             maximum[layer] = np.max(values)
-    return mean, minimum, maximum, active
+            level_deviation[layer] = np.max(deviation[layer, carried[layer]])
+    return mean, minimum, maximum, level_deviation, active
 
 
 # ---------------------------------------------------------------- entry points
@@ -3779,7 +3856,7 @@ def _reprove_retained_front(
     policy: BoundaryLayerPolicy,
     wall_association: GeometryAssociation | None,
     /,
-) -> tuple[_Wall, _Front, _Directions]:
+) -> tuple[_Wall, _Front, _Directions, _NativeColumns | None]:
     """Reprove source binding and front ancestry, without accepting the layers.
 
     This is only the front portion of retained-state reproof.  In particular,
@@ -3842,11 +3919,24 @@ def _reprove_retained_front(
         sectors, rotations = _periodic_sectors(
             source_wall, wall, sectors, split, control.feature_angle
         )
-    directions = _sector_directions(wall, sectors, control)
-    if rotations is not None:
-        directions = _synchronize_periodic_directions(
-            wall, directions, sectors, rotations
-        )
+    obstacle_triangles = (
+        np.empty((0, 3), dtype=np.int64)
+        if retained.obstacles is None
+        else _split_polygons(*_mesh_faces(retained.obstacles))[0]
+    )
+    native = (
+        _native_columns(wall, sectors, control)
+        if _native_route(wall, split, source_wall, obstacle_triangles, control)
+        else None
+    )
+    if native is not None:
+        directions = native.directions
+    else:
+        directions = _sector_directions(wall, sectors, control)
+        if rotations is not None:
+            directions = _synchronize_periodic_directions(
+                wall, directions, sectors, rotations
+            )
     front = _build_front(
         wall, sectors, split, directions, control, source_wall, wall_association
     )
@@ -3861,7 +3951,7 @@ def _reprove_retained_front(
             equal = actual == expected
         if not equal:
             raise ValueError(f"Retained layer front ancestry differs in {name}.")
-    return wall, front, directions
+    return wall, front, directions, native
 
 
 def _reprove_retained_cell_intersections(
@@ -3947,54 +4037,21 @@ def _reprove_retained_cell_intersections(
     return certificate
 
 
-def _reprove_retained_boundary_layers(
-    retained: BoundaryLayerMesh,
+def _reprove_advancing_parameters(
+    wall: _Wall,
+    front: _Front,
+    columns: _Columns,
+    stretch: np.ndarray,
+    obstacles: CellMesh | None,
     source_wall: CellMesh,
     control: BoundaryLayerControl,
+    policy_: BoundaryLayerPolicy,
     /,
-    *,
-    obstacles: CellMesh | None = None,
-    wall_association: GeometryAssociation | None = None,
-    policy: BoundaryLayerPolicy | None = None,
-) -> BoundaryLayerMesh:
-    """Reprove retained cells against their actual source; never grow replacement layers."""
-    policy_ = BoundaryLayerPolicy() if policy is None else policy
-    if not bool(eqx.tree_equal(retained.obstacles, obstacles)):
-        raise ValueError("Retained layers do not bind the actual obstacles.")
-    wall, front, directions = _reprove_retained_front(
-        retained, source_wall, control, policy_, wall_association
-    )
+) -> None:
+    """Check advancing-front column parameters against the collision policy."""
     thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
-    levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
-    count = np.asarray(retained.column_layer_count, dtype=np.int64)
-    scale = np.asarray(retained.column_scale, dtype=np.float64)
-    # The column stretch is stored evidence: the generator's acceptance
-    # (``stretch <= maximum_corner_stretch``, periodic orbit synchronization) is
-    # decided exactly on the stored array, never on a float re-derivation of the
-    # probe, which depends on the host's floating-point kernels.
-    realized_stretch = np.asarray(retained.column_stretch, dtype=np.float64)
-    if realized_stretch.shape != front.column_vertex.shape:
-        raise ValueError("Retained column stretch does not match the source front.")
-    if np.any(realized_stretch > control.maximum_corner_stretch):
-        raise ValueError("Retained layer front exceeds maximum_corner_stretch.")
-    if source_wall.periodic_topology is None:
-        # The generator's collision predictor read exactly this stretch.
-        stretch = realized_stretch
-    else:
-        synchronized = np.zeros_like(realized_stretch)
-        np.maximum.at(synchronized, front.column_orbits, realized_stretch)
-        if not np.array_equal(realized_stretch, synchronized[front.column_orbits]):
-            raise ValueError("Retained periodic column stretch is not synchronized.")
-        # The generator's collision predictor read the unsynchronized probe,
-        # which the archive does not store; only the predictor consumes it.
-        stretch = _probe_stretch(wall, front)
-    columns = _Columns(
-        levels,
-        realized_stretch,
-        scale,
-        count,
-        np.asarray(retained.column_merged_top, dtype=np.int64),
-    )
+    scale = columns.scale
+    count = columns.count
     obstacle_points = (
         np.empty((0, 3), dtype=np.float64)
         if obstacles is None
@@ -4056,6 +4113,67 @@ def _reprove_retained_boundary_layers(
         )
     if not valid_parameters:
         raise ValueError("Retained column parameters violate the collision policy.")
+
+
+def _reprove_retained_boundary_layers(
+    retained: BoundaryLayerMesh,
+    source_wall: CellMesh,
+    control: BoundaryLayerControl,
+    /,
+    *,
+    obstacles: CellMesh | None = None,
+    wall_association: GeometryAssociation | None = None,
+    policy: BoundaryLayerPolicy | None = None,
+) -> BoundaryLayerMesh:
+    """Reprove retained cells against their actual source; never grow replacement layers."""
+    policy_ = BoundaryLayerPolicy() if policy is None else policy
+    if not bool(eqx.tree_equal(retained.obstacles, obstacles)):
+        raise ValueError("Retained layers do not bind the actual obstacles.")
+    wall, front, directions, native = _reprove_retained_front(
+        retained, source_wall, control, policy_, wall_association
+    )
+    thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
+    levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
+    count = np.asarray(retained.column_layer_count, dtype=np.int64)
+    scale = np.asarray(retained.column_scale, dtype=np.float64)
+    # The column stretch is stored evidence: the generator's acceptance
+    # (``stretch <= maximum_corner_stretch``, periodic orbit synchronization) is
+    # decided exactly on the stored array, never on a float re-derivation of the
+    # probe, which depends on the host's floating-point kernels.
+    realized_stretch = np.asarray(retained.column_stretch, dtype=np.float64)
+    if realized_stretch.shape != front.column_vertex.shape:
+        raise ValueError("Retained column stretch does not match the source front.")
+    if np.any(realized_stretch > control.maximum_corner_stretch):
+        raise ValueError("Retained layer front exceeds maximum_corner_stretch.")
+    if source_wall.periodic_topology is None:
+        # The generator's collision predictor read exactly this stretch.
+        stretch = realized_stretch
+    else:
+        synchronized = np.zeros_like(realized_stretch)
+        np.maximum.at(synchronized, front.column_orbits, realized_stretch)
+        if not np.array_equal(realized_stretch, synchronized[front.column_orbits]):
+            raise ValueError("Retained periodic column stretch is not synchronized.")
+        # The generator's collision predictor read the unsynchronized probe,
+        # which the archive does not store; only the predictor consumes it.
+        stretch = _probe_stretch(wall, front)
+    columns = _Columns(
+        levels,
+        realized_stretch,
+        scale,
+        count,
+        np.asarray(retained.column_merged_top, dtype=np.int64),
+    )
+    if native is None:
+        _reprove_advancing_parameters(
+            wall, front, columns, stretch, obstacles, source_wall, control, policy_
+        )
+    elif not (
+        np.array_equal(realized_stretch, native.columns.stretch)
+        and np.array_equal(scale, native.columns.scale)
+        and np.array_equal(count, native.columns.count)
+        and np.array_equal(columns.merged_top, native.columns.merged_top)
+    ):
+        raise ValueError("Retained columns differ from the certified native columns.")
     base = wall.points.shape[0]
     rows, arity, source_rows = _front_rows(front, columns)
     by_level = []
@@ -4139,7 +4257,11 @@ def _reprove_retained_boundary_layers(
             "Retained mesh vertices differ from their actual column coordinates."
         )
     points[used[~ordinary_mask]] = actual_points[~ordinary_mask]
-    expected_points = _positions(front, columns, wall.points)
+    expected_points = (
+        _positions(front, columns, wall.points)
+        if native is None
+        else np.array(native.points, dtype=np.float64)
+    )
     periodic_vertices = None
     if source_wall.periodic_topology is not None:
         roots, shifts = _periodic_layer_vertices(
@@ -4233,7 +4355,7 @@ def _reprove_retained_boundary_layers(
             else actual == expected
         ):
             raise ValueError(f"Retained vertex ancestry differs in {name}.")
-    mean, minimum, maximum, active = _measured_thicknesses(
+    mean, minimum, maximum, deviation, active = _measured_thicknesses(
         wall, front, columns, points[:point_count]
     )
     evidence = retained.evidence
@@ -4241,6 +4363,7 @@ def _reprove_retained_boundary_layers(
         ("achieved_thicknesses", mean),
         ("minimum_thicknesses", minimum),
         ("maximum_thicknesses", maximum),
+        ("maximum_level_deviations", deviation),
         ("layer_active", active),
         ("achieved_growth_rates", mean[1:] / mean[:-1]),
     ):
@@ -4312,6 +4435,174 @@ def _reprove_retained_boundary_layers(
     return retained
 
 
+def _native_route(
+    wall: _Wall,
+    split: np.ndarray,
+    source_wall: CellMesh,
+    obstacle_triangles: np.ndarray,
+    control: BoundaryLayerControl,
+    /,
+) -> bool:
+    """Whether ``phx_mc_prism_layers`` realizes the request.
+
+    The native route takes a closed, fully grown triangle wall with one column
+    per vertex (no split ridge: SMOOTH, REJECT without features, or FAN
+    without convex ridges), no obstacles, no periodic topology and a FAIL or
+    REDUCE_THICKNESS collision policy. Rims, quadrilateral faces, split
+    columns with fans and corner patches, obstacles, periodic walls, local
+    termination and merging stay on the advancing-front route.
+    """
+    return bool(
+        control.collision
+        in (
+            BoundaryLayerCollisionPolicy.FAIL,
+            BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+        )
+        and source_wall.periodic_topology is None
+        and not obstacle_triangles.size
+        and not np.any(split)
+        and np.all(wall.grow)
+        and np.all(wall.arity == 3)
+        and np.all(wall.interior)
+        and wall.wall_vertices.size == wall.points.shape[0]
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeColumns:
+    """Certified columns of ``phx_mc_prism_layers`` in front layout."""
+
+    points: np.ndarray
+    columns: _Columns
+    directions: _Directions
+    iterations: int
+    detected: int
+
+
+def _native_columns(
+    wall: _Wall, sectors: _Sectors, control: BoundaryLayerControl, /
+) -> _NativeColumns:
+    """Grow and certify one column per wall vertex natively.
+
+    Level ``k`` of vertex ``v`` is row ``k n + v`` (level 0 the wall bitwise),
+    the front layout of one sector column per vertex. The kernel certifies
+    every prism by the exact signs of its nine Bernstein Jacobian controls
+    and the top level embedded and disjoint from the wall by exact triangle
+    contacts; with a positive Jacobian everywhere and an embedded boundary the
+    layer map is injective, so no layer face meets another or the wall.
+    REDUCE_THICKNESS thins failing columns down to the minimum thickness
+    fraction; FAIL admits no thinning. Directions are the unit displacement,
+    and each column records its incident faces with equal weights.
+    """
+    from .._meshcore import MeshcoreStatus, prism_layers
+
+    thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
+    levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
+    total = float(levels[-1])
+    reduce = control.collision is BoundaryLayerCollisionPolicy.REDUCE_THICKNESS
+    layers = prism_layers(
+        wall.points,
+        wall.faces[:, :3],
+        levels[1:],
+        feature_angle_degrees=float(np.degrees(control.feature_angle)),
+        minimum_scale=control.minimum_thickness_fraction if reduce else 1.0,
+        prove=True,
+    )
+    if layers.status is not MeshcoreStatus.OK:
+        thinned = np.flatnonzero(layers.scale < 1.0)
+        raise _failure(
+            MeshingFailureCategory.CONTROL_CONFLICT,
+            (
+                "Certified collisions persist at the minimum thickness fraction"
+                if reduce
+                else "Layer cells intersect or are not certified valid"
+            )
+            + f" ({int(layers.stats[14])} invalid prisms, "
+            f"{max(int(layers.stats[15]), 0)} top-level contacts).",
+            thinned if thinned.size else wall.wall_vertices,
+            wall.points,
+        )
+    count = wall.points.shape[0]
+    direction, length = _unit(layers.displacement)
+    stretch = length / total
+    too_stretched = stretch > control.maximum_corner_stretch
+    if np.any(too_stretched):
+        raise _failure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "Concave corner columns need a height stretch of "
+            f"{float(np.max(stretch)):.6g} > maximum_corner_stretch "
+            f"{control.maximum_corner_stretch:.6g}.",
+            np.flatnonzero(too_stretched),
+            wall.points,
+        )
+    faces = sectors.incidence_keys % sectors.face_count
+    padded, face_counts = _padded_groups(sectors.incidence_sector, faces, count)
+    normals = wall.normals[padded]
+    visibility = np.min(np.sum(normals * direction[:, None, :], axis=-1), axis=1)
+    if np.any(visibility <= 0.0):
+        raise _failure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "No visible column direction exists at concave corners or folds "
+            f"(minimum visibility {float(np.min(visibility)):.6g}).",
+            np.flatnonzero(visibility <= 0.0),
+            wall.points,
+        )
+    weights = np.where(
+        np.arange(padded.shape[1])[None, :] < face_counts[:, None],
+        1.0 / face_counts[:, None],
+        0.0,
+    )
+    directions = _Directions(
+        direction,
+        visibility,
+        normals,
+        padded,
+        face_counts,
+        weights,
+        *_constraint_face_ancestry(wall, sectors, count),
+    )
+    columns = _Columns(
+        levels,
+        stretch,
+        np.array(layers.scale, dtype=np.float64),
+        np.full((count,), thicknesses.size, dtype=np.int64),
+        np.full((count,), -1, dtype=np.int64),
+    )
+    return _NativeColumns(
+        layers.points, columns, directions, int(layers.stats[13]), int(layers.stats[20])
+    )
+
+
+def _native_resolution(
+    wall: _Wall, front: _Front, native: _NativeColumns, /
+) -> _Resolution:
+    if not np.array_equal(front.column_vertex, np.arange(wall.points.shape[0])):
+        raise ValueError("Native layers require one front column per wall vertex.")
+    rows, arity, source_columns = _front_rows(front, native.columns)
+    base = wall.points.shape[0]
+    cells = []
+    cell_columns = []
+    for layer in range(native.columns.levels.size - 1):
+        values, owners = _layer_cells(
+            rows,
+            arity,
+            _level_ids(front, native.columns, base, layer),
+            _level_ids(front, native.columns, base, layer + 1),
+            source_columns,
+        )
+        cells.append(values)
+        cell_columns.append(owners)
+    return _Resolution(
+        native.columns,
+        cells,
+        cell_columns,
+        native.points,
+        native.detected,
+        native.iterations,
+        (),
+    )
+
+
 def _grow_boundary_layers(
     points: np.ndarray,
     faces: np.ndarray,
@@ -4339,6 +4630,36 @@ def _grow_boundary_layers(
         sectors, rotations = _periodic_sectors(
             source_wall, wall, sectors, split, control.feature_angle
         )
+    wall_triangles, _ = _split_polygons(faces, arity)
+    grown = np.concatenate((grow[arity == 3], np.repeat(grow[arity == 4], 2)))
+    environment = _Environment(
+        wall_triangles, ~grown, obstacle_points, obstacle_triangles
+    )
+    if _native_route(wall, split, source_wall, obstacle_triangles, control):
+        native = _native_columns(wall, sectors, control)
+        front = _build_front(
+            wall,
+            sectors,
+            split,
+            native.directions,
+            control,
+            source_wall,
+            wall_association,
+        )
+        return _assemble(
+            wall,
+            front,
+            native.directions,
+            native.columns.stretch,
+            0,
+            _native_resolution(wall, front, native),
+            environment,
+            control,
+            policy,
+            source_wall,
+            wall_association,
+            obstacle_source,
+        )
     directions = _sector_directions(wall, sectors, control)
     if rotations is not None:
         directions = _synchronize_periodic_directions(
@@ -4365,11 +4686,6 @@ def _grow_boundary_layers(
     graph = _vertex_graph(wall)
     columns, predicted = _initial_columns(
         wall, front, stretch, limits, medial, curvature_limited, control, graph
-    )
-    wall_triangles, _ = _split_polygons(faces, arity)
-    grown = np.concatenate((grow[arity == 3], np.repeat(grow[arity == 4], 2)))
-    environment = _Environment(
-        wall_triangles, ~grown, obstacle_points, obstacle_triangles
     )
     periodic_source = source_wall if source_wall.periodic_topology is not None else None
     resolution = _grow_layers(
@@ -4457,28 +4773,28 @@ def _output_vertex_ancestry(
     point_source_ids = np.full((point_count,), -1, dtype=np.int64)
     point_column_ids = np.full((point_count,), -1, dtype=np.int64)
     point_parents: list[tuple[tuple[int, float], ...]] = [() for _ in range(point_count)]
-    for row, source_id in enumerate(source_vertex_ids):
-        point_source_ids[row] = source_id
+    point_source_ids[:base_count] = source_vertex_ids
+    # A layer vertex descends from its own column, except a merged top.
+    layer_columns = np.tile(np.arange(column_count), layer_count)
+    layer_points = base_count + np.arange(layer_columns.size)
+    point_source_ids[layer_points] = roots[layer_columns]
+    point_column_ids[layer_points] = column_ids[layer_columns]
+    for point, identifier in zip(
+        layer_points.tolist(), column_ids[layer_columns].tolist(), strict=True
+    ):
+        point_parents[point] = ((identifier, 1.0),)
     merged: dict[int, list[int]] = {}
     for partner, lower in enumerate(columns.merged_top):
         if lower >= 0:
             merged.setdefault(int(lower), [int(lower)]).append(partner)
-    for level in range(layer_count):
-        for column in range(column_count):
-            point = base_count + level * column_count + column
-            members = (
-                merged.get(column, [column]) if level == layer_count - 1 else [column]
-            )
-            member_ids = sorted(int(column_ids[member]) for member in members)
-            source_ids = {int(roots[member]) for member in members}
-            point_source_ids[point] = (
-                next(iter(source_ids)) if len(source_ids) == 1 else -1
-            )
-            point_column_ids[point] = member_ids[0]
-            weight = 1.0 / len(member_ids)
-            point_parents[point] = tuple(
-                (identifier, weight) for identifier in member_ids
-            )
+    for column, members in merged.items():
+        point = base_count + (layer_count - 1) * column_count + column
+        member_ids = sorted(int(column_ids[member]) for member in members)
+        source_ids = {int(roots[member]) for member in members}
+        point_source_ids[point] = next(iter(source_ids)) if len(source_ids) == 1 else -1
+        point_column_ids[point] = member_ids[0]
+        weight = 1.0 / len(member_ids)
+        point_parents[point] = tuple((identifier, weight) for identifier in member_ids)
     for apex, front_row in enumerate(pyramid_front_rows):
         point = base_count + layer_count * column_count + apex
         parent_ids = tuple(
@@ -4523,9 +4839,13 @@ def _output_vertex_ancestry(
                         occurrences.add(path)
         return tuple(sorted(entities)), tuple(sorted(occurrences))
 
-    vertex_source_entities = []
-    vertex_occurrences = []
-    for point in used:
+    vertex_source_entities: list[tuple[str, ...]] = []
+    vertex_occurrences: list[tuple[tuple[str, ...], ...]] = []
+    if wall_association is None:
+        # Without an association every vertex has no source entities.
+        vertex_source_entities = [()] * used.size
+        vertex_occurrences = [()] * used.size
+    for point in used if wall_association is not None else ():
         source_id = int(point_source_ids[point])
         if source_id >= 0:
             source_ids = {source_id}
@@ -4638,7 +4958,7 @@ def _assemble(
         cap_mesh = _bind_layer_periodic_mesh(
             source_wall, cap_mesh, cap_vertices, *periodic_vertices
         )
-    mean, minimum, maximum, active = _measured_thicknesses(
+    mean, minimum, maximum, deviation, active = _measured_thicknesses(
         wall, front, columns, resolution.points
     )
     wall_scale = columns.scale[wall.wall_vertices]
@@ -4647,6 +4967,7 @@ def _assemble(
         achieved_thicknesses=mean,
         minimum_thicknesses=minimum,
         maximum_thicknesses=maximum,
+        maximum_level_deviations=deviation,
         achieved_growth_rates=mean[1:] / mean[:-1],
         layer_active=active,
         column_count=front.column_vertex.size,
@@ -4760,6 +5081,19 @@ def prepare_boundary_layers(
     its cells; unselected cells are fixed adjacent surfaces along which rim
     columns slide. ``obstacles`` are further fixed surfaces the layers must not
     cross (their orientation is irrelevant).
+
+    A closed, fully grown triangle wall without split ridges, obstacles or
+    periodicity under a FAIL or REDUCE_THICKNESS collision policy grows on the
+    native prism layers (``phx_mc_prism_layers``). There level heights are
+    measured from the smooth surface the wall vertices sample, not from the
+    triangles: per smooth sector, a quadratic fit through the vertex gives the
+    normal and curvature, and ridge columns reach the scheduled height from
+    every sector. On a CAD wall, whose vertices lie on the source surface,
+    this is that surface to the fit's accuracy; on a bare triangle wall it is
+    the fitted surface. ``evidence.maximum_level_deviations`` reports the
+    levels' departure from the wall triangles. Every other wall takes the
+    advancing-front route, whose column stretch measures levels from the
+    triangles.
     """
     if not isinstance(wall, CellMesh):
         raise TypeError("wall must be CellMesh.")

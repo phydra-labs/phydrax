@@ -14,6 +14,7 @@ box), and the slab's top levels are compared column against column.
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -182,6 +183,39 @@ def test_a_slab_without_room_to_thin_is_reported_unresolved() -> None:
 
     assert layers.status is _meshcore.MeshcoreStatus.UNRESOLVED
     assert layers.stats[16] == 0.0
+
+
+def test_coarse_cylinder_rims_grow_certified_columns_at_true_depth() -> None:
+    # The CAD cylinder wall (r 0.5, height 1, size 0.3), inward oriented. Its
+    # rim side sectors hold two or three one-sided facets, whose quadratic fit
+    # once tilted the side normal toward the cap and inverted six prisms.
+    data = np.load(
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "meshing"
+        / "cad_cylinder_layer_wall.npz"
+    )
+    vertices = data["vertices"]
+    heights = np.asarray((0.01, 0.025))
+    layers = _meshcore.prism_layers(
+        vertices,
+        data["triangles"],
+        heights,
+        feature_angle_degrees=30.0,
+        minimum_scale=1.0,
+        prove=True,
+    )
+
+    assert layers.status is _meshcore.MeshcoreStatus.OK
+    assert layers.stats[16] == 1.0 and layers.stats[14] == 0.0
+    assert np.count_nonzero(layers.vertex_kind == 1) == 64
+    assert all(
+        _least_bernstein_control(layers.points, prism) > 0 for prism in layers.prisms
+    )
+    levels = layers.points.reshape((3, vertices.shape[0], 3))[1:]
+    radial = 0.5 - np.linalg.norm(levels[..., :2], axis=-1)
+    depth = np.minimum(radial, np.minimum(levels[..., 2], 1.0 - levels[..., 2]))
+    assert np.all(np.abs(depth - heights[:, None]) <= 0.03 * heights[:, None])
 
 
 def test_an_open_wall_is_refused() -> None:
