@@ -13,9 +13,12 @@
   as a polyhedron with OpenFOAM face semantics (a non-planar face is the fan
   from its exact vertex average; requests use
   `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
-  gives the hexahedron fraction by shape); `prove=True` certifies every cell
-  and the boundary fidelity, the proof-only fidelity preparation built on the
-  first proved execution. `plc_hex_dominant` remains the route for trilinear
+  gives the hexahedron fraction by shape); `prove=True` certifies cell
+  validity, the global embedding and the boundary fidelity (on curved inputs
+  such as the F8 quadric it currently refuses: neighbouring cells whose bent
+  faces share an edge chain overlap under fan semantics), the proof-only
+  fidelity preparation built on the first proved execution. `plc_hex_dominant`
+  remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
   faces (also for conforming Voronoi) and maps each published face to its
   native face through the cell's own face list; smoothing reuses the face and
