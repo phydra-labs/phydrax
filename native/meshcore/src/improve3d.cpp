@@ -42,6 +42,7 @@ LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept
 bool LocalIncidence::initialize(const TetMesh& mesh) {
   mesh_ = &mesh;
   ++topology_revision_;
+  boundary_index_ready_ = false;
   const std::size_t vertex_count = mesh.vertex_ids_.size();
   vertex_cell_.assign(vertex_count, -1);
   vertex_degree_.assign(vertex_count, 0);
@@ -433,9 +434,51 @@ TetEditStatus LocalIncidence::insert_boundary_point(TetMesh& mesh, const TetEdit
       removed_slots.push_back(slot);
       removed_cells.push_back(vertices);
     }
+    // The bank rows this insertion rewrites, by their current keys.
+    std::vector<std::array<std::uint64_t, 3>> old_facets;
+    std::array<std::uint64_t, 2> old_segment{};
+    const std::size_t facet_count = mesh.facets_.size();
+    const std::size_t segment_count = mesh.segments_.size();
+    if (boundary_index_ready_) {
+      for (std::size_t row : facet_rows) {
+        if (row >= facet_count) return TetEditStatus::kRejectedTopology;
+        std::array<std::uint64_t, 3> key = mesh.facets_[row].vertices;
+        std::sort(key.begin(), key.end());
+        old_facets.push_back(key);
+      }
+      if (!segment_rows.empty()) {
+        if (segment_rows.front() >= segment_count) return TetEditStatus::kRejectedTopology;
+        const auto& ends = mesh.segments_[segment_rows.front()].vertices;
+        old_segment = {std::min(ends[0], ends[1]), std::max(ends[0], ends[1])};
+      }
+    }
     const TetEditStatus status = mesh.insert_local_boundary_point(
         vertex, cavity, facet_rows, segment_rows, created_cells, segment_index_);
     if (status != TetEditStatus::kApplied) return status;
+    if (boundary_index_ready_) {
+      try {
+        for (const auto& key : old_facets) boundary_index_.facets.erase(key);
+        if (!segment_rows.empty()) boundary_index_.segments.erase(old_segment);
+        const auto index_facet = [&](std::size_t row) {
+          std::array<std::uint64_t, 3> key = mesh.facets_[row].vertices;
+          std::sort(key.begin(), key.end());
+          boundary_index_.facets[key] = row;
+        };
+        for (std::size_t row : facet_rows) index_facet(row);
+        for (std::size_t row = facet_count; row < mesh.facets_.size(); ++row) index_facet(row);
+        const auto index_segment = [&](std::size_t row) {
+          const auto& ends = mesh.segments_[row].vertices;
+          boundary_index_.segments[{std::min(ends[0], ends[1]), std::max(ends[0], ends[1])}] = row;
+        };
+        if (!segment_rows.empty()) index_segment(segment_rows.front());
+        for (std::size_t row = segment_count; row < mesh.segments_.size(); ++row) {
+          index_segment(row);
+        }
+      } catch (const std::bad_alloc&) {
+        // The bank indexes are a cache: rebuilt by the next boundary edit.
+        boundary_index_ready_ = false;
+      }
+    }
     for (std::size_t index = 0; index < removed_slots.size(); ++index) {
       if (!erase(removed_slots[index], removed_cells[index])) {
         return TetEditStatus::kStaleGeneration;

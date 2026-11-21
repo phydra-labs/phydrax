@@ -504,7 +504,6 @@ def _canonical_analytic_profile(
             profile.geometry,
             profile.coordinate_contract,
             tube_radius=profile.tube_radius,
-            cover_radius=profile.cover_radius,
             source_id=profile.source_id,
             source_revision=profile.source_revision,
         )
@@ -1197,19 +1196,12 @@ def validate_tubular_projection_boundary_witness(
             status="violated",
         )
 
-    requested_radius = float(distance_witness.cover_radius)
-    if not math.isfinite(requested_radius) or requested_radius <= 0.0:
-        raise _unavailable(
-            "analytic_source_cover",
-            "Distance witness must retain a positive physical source-cover radius.",
-            status="violated",
-        )
     # A mesh with exactly its canonical reconstruction's content gives the
     # same distance evidence; passing it shares the evidence the fidelity
     # certificate already completed for that live mesh.
     evidence_mesh = input_mesh if _same_tree_content(input_mesh, mesh) else mesh
     try:
-        mesh_to_source_lower, mesh_to_source_upper, source_to_mesh_upper = (
+        _, mesh_to_source_upper, source_to_mesh_upper, reverse_proof = (
             _analytic_profile_distance_evidence(
                 evidence_mesh, geometry, profile, distance_witness
             )
@@ -1217,10 +1209,9 @@ def validate_tubular_projection_boundary_witness(
     except (TypeError, ValueError, IndexError, ArithmeticError, OverflowError) as error:
         raise _unavailable(
             "analytic_distance_premise",
-            f"Analytic source distance and complete-cover evidence does not revalidate: {error}",
+            f"Analytic source distance and zero-set certificate evidence does not revalidate: {error}",
             status="violated",
         ) from error
-    del mesh_to_source_lower
     tube_radius = Fraction.from_float(profile.reach_lower)
     distance_upper = max(mesh_to_source_upper, source_to_mesh_upper)
     if distance_upper >= tube_radius:
@@ -1513,6 +1504,7 @@ def validate_tubular_projection_boundary_witness(
             "witness": witness.witness_id,
             "distance_witness": distance_witness.witness_id,
             "distance_upper": str(distance_upper),
+            "reverse_proof": reverse_proof,
             "source_family": (profile.family, profile.component_count, profile.genus),
             "target_boundary": (
                 tuple(sorted(int(value) for value in boundary_ids)),
@@ -2021,8 +2013,7 @@ def validate_tubular_projection_coverage_transport_witness(
                 source_id=profile.source_id,
                 source_revision=profile.source_revision,
                 source_query_id=profile.profile_id,
-                sample_count=witness.root_distance_witness.sample_count,
-                cover_radius=witness.root_distance_witness.cover_radius,
+                reverse_tolerance=witness.root_distance_witness.reverse_tolerance,
                 target_facet_global_ids=stage_face_ids[stage_boundary_mask],
             )
         stage_witness = TubularProjectionBoundaryWitness(

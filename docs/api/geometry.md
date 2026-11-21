@@ -564,6 +564,17 @@ sum triangle solid angles and every other subtree is replaced by the closing fan
 its boundary (Jacobson et al. 2013). `fast_winding_number(points, opening_angle=beta)`
 is the approximate first-order dipole route of Barill et al. (2018); both return a
 `WindingNumberResult` whose `route` and `approximate` fields name the evaluation.
+`signed_distance(points, sign="pseudonormal")` signs the closest distance by the
+angle-weighted pseudonormal of the closest face, edge, or corner (Baerentzen and
+Aanaes 2005), exact for closed oriented surfaces; `sign="winding_number"` signs by
+the exact winding number instead (`|w| > 0.5` is inside, as `MeshRegion`). Closing
+fans, dipoles, and pseudonormals are prepared once per embedding (construction or
+`refit`). Concrete float64 queries run in the native meshcore library when it is
+present, batched and single-threaded over the same packed tree; traced queries and
+builds without the library use the JAX route. Both evaluate one fixed operation
+schedule (products rounded on their own, sums left to right, no fused
+multiply-add), so every route returns identical bits, including faces chosen on
+exact ties (lowest face index) and winding decisions.
 `MeshRegion` and `PlanarMeshRegion` lower watertight 3D meshes and planar
 triangulations to the common geometry kernel; `MeshRegion` refits its prepared
 `TriangleBVH` to the current design vertices for distance, closest-point, and
@@ -615,6 +626,8 @@ ties have false flags and zero margin, not a regular projection certificate.
 ::: phydrax.geometry.SegmentBVH
 
 ::: phydrax.geometry.SegmentQueryExecution
+
+::: phydrax.geometry.SignedDistanceSign
 
 ::: phydrax.geometry.segment_query_evidence
 

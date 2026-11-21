@@ -3406,6 +3406,24 @@ coefficients and transpose contributions follow the execution-group halo plan.
 Owners with no field rows still participate in search with an empty, valid halo
 partition, and each process supplies only its owned donor/receptor arrays.
 
+Serial 3D parts of affine tetrahedra and trilinear hexahedra without a source
+solid query assemble in one native meshcore call (`phx_mc_overset_assemble`)
+when the library loads; the Python owner above is the path for 2D, polyhedral,
+curved and solid-query parts and when meshcore is missing. The call classifies
+each vertex against every other part's closed wall by exact ray parity (a
+vertex in the corner tetrahedron of a nonplanar wall quad is wall contact, hence
+a hole), cuts every cell that no exact separating plane proves clear of the
+wall, grows `fringe_layers` receptor layers, and certifies each chosen donor
+after construction: exact orientation signs for tetrahedra, a Krawczyk
+enclosure of the trilinear inverse for hexahedra (a straddled face decided by
+the exact side of its bilinear surface, and a receptor on a shared face, edge
+or corner taken by the closed union of the cells around it). A float candidate
+that fails is replaced by the next; a receptor without a certified donor is an
+orphan with its status. `OversetPolicy(fringe_donors=True)` admits fringe cells
+as donors where no active cell contains a receptor (serial only; such routes
+stay packets, not explicit overlays). `prove=False` stops after construction
+and the connectivity then reads donor coverage as unproved.
+
 Moving connectivity consumes accepted, source-bound `MeshMotionAdvance` results
 through `connectivity.moved_from_advances(...)`; it does not recertify arbitrary
 vertex arrays or infer a curved coordinate-map update. The candidate rebuilds

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from benchmarks.native_meshing import _icosphere
+from benchmarks._meshing_surfaces import icosphere as _icosphere
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellGeometrySpec, CellMesh
 from phydrax.meshing import CellMeshingCandidate, CellMeshingResult

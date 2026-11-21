@@ -42,6 +42,7 @@ set(PHX_MC_SOURCES
   src/delaunay2d.cpp
   src/delaunay3d.cpp
   src/verify_volume.cpp
+  src/tet_entities.cpp
   src/box_tree.cpp
   src/deterministic_float.cpp
   src/deterministic_float_capi.cpp
@@ -53,6 +54,8 @@ set(PHX_MC_SOURCES
   src/metric_carrier.cpp
   src/metric_collapse.cpp
   src/metric_source_capi.cpp
+  src/bvh_query.cpp
+  src/bvh_query_capi.cpp
   src/exact_kernels.cpp
   src/exact_polynomial_kernels.cpp
   src/exact_polynomial_integral.cpp
@@ -61,6 +64,8 @@ set(PHX_MC_SOURCES
   src/feature_protection.cpp
   src/graph_partition.cpp
   src/hex_topology.cpp
+  src/overset.cpp
+  src/overset_capi.cpp
   src/implicit_polygon.cpp
   src/implicit_face_proposals.cpp
   src/quad_topology.cpp
@@ -69,6 +74,7 @@ set(PHX_MC_SOURCES
   src/interval_basis_bounds.cpp
   src/intersections.cpp
   src/level_set.cpp
+  src/local_boundary_edit.cpp
   src/mixed_refinement.cpp
   src/parallel.cpp
   src/periodic.cpp
@@ -121,6 +127,7 @@ set(PHX_MC_HEADERS
   src/cavity.hpp
   src/clip3d.hpp
   src/clip_common.hpp
+  src/overset.hpp
   src/dyadic.hpp
   src/exact_line.hpp
   src/exact_scalar.hpp
@@ -182,6 +189,7 @@ set(PHX_MC_HEADERS
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp
+  src/quadratic_validity_screen.hpp
 )
 
 # Content identity of the library sources; CMake re-configures when any listed
@@ -264,6 +272,8 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_exact_kernels)
+  phx_mc_add_test(test_bvh_query)
+  phx_mc_add_test(test_overset)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)
@@ -300,6 +310,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_box_tree)
   phx_mc_add_test(test_tet_mesh)
   phx_mc_add_test(test_tet_mesh_relocation)
+  phx_mc_add_test(test_local_boundary_edits)
   phx_mc_add_test(test_improve3d)
   phx_mc_add_test(test_hex_topology)
   phx_mc_add_test(test_surface_envelope)
@@ -318,4 +329,5 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_verify_cad_fidelity)
   phx_mc_add_test(test_cad_mesh)
   phx_mc_add_test(test_cad_curving)
+  phx_mc_add_test(test_cad_volume)
 endif()

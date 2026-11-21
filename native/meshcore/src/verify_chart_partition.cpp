@@ -75,6 +75,9 @@ void check_edges(std::vector<Edge>& edges, std::vector<phx_mc_chart_failure>& fa
   }
 }
 
+}  // namespace
+
+namespace phx::mc::chart {
 void check_uses(int64_t use_count, const int64_t* use_patch, const double* use_range,
                 int64_t chord_count, const int64_t* chord_use, const int64_t* chord_loop,
                 const double* chord_uv, const double* chord_range,
@@ -146,6 +149,35 @@ void check_loops(int64_t loop_count, int64_t chord_count, const int64_t* chord_l
     begin = end;
   }
 }
+void check_orientation(int64_t patch_count, int64_t triangle_count,
+                       const int32_t* triangle_patch, const double* triangle_uv,
+                       int64_t chord_count, const int64_t* chord_use, const int64_t* use_patch,
+                       const double* chord_uv, std::vector<uint8_t>& oriented,
+                       std::vector<phx_mc_chart_failure>& failures) {
+  std::vector<Expansion> area(static_cast<size_t>(patch_count));
+  for (int64_t i = 0; i < chord_count; ++i) {
+    Point a = point(chord_uv + 4*i), b = point(chord_uv + 4*i + 2);
+    int64_t patch = use_patch[chord_use[i]];
+    area[patch] = area[patch] + Expansion::product(a[0], b[1]) - Expansion::product(a[1], b[0]);
+  }
+  for (int64_t p = 0; p < patch_count; ++p)
+    if (area[p].sign() == 0) failures.push_back({PHX_MC_CHART_ORIENTATION, p, -1, -1});
+  oriented.assign(static_cast<size_t>(triangle_count), 0);
+  for (int64_t i = 0; i < triangle_count; ++i) {
+    const double* uv = triangle_uv + 6*i;
+    int64_t patch = triangle_patch[i];
+    if (phx::mc::orient2d(uv, uv+2, uv+4) != area[patch].sign() || area[patch].sign() == 0)
+      failures.push_back({PHX_MC_CHART_ORIENTATION, patch, i, -1});
+    else
+      oriented[i] = 1;
+  }
+}
+}  // namespace phx::mc::chart
+
+namespace {
+using phx::mc::chart::check_loops;
+using phx::mc::chart::check_uses;
+using phx::mc::chart::check_orientation;
 
 // Orientation agreement plus boundary = chord chain fixes the covering multiplicity
 // to the winding number of the chord cycles; it does not exclude multiplicity 2.
@@ -245,27 +277,18 @@ extern "C" int32_t phx_mc_verify_chart_partition(
         return PHX_MC_INVALID_INPUT;
     phx::mc::GradualNearestScope scope;
     if (!scope.established()) return PHX_MC_INTERNAL_ERROR;
-    std::vector<Expansion> area(static_cast<size_t>(patch_count));
     std::vector<Edge> edges;
     std::vector<phx_mc_chart_failure> failures;
-    for (int64_t i = 0; i < chord_count; ++i) {
-      Point a = point(chord_uv + 4*i), b = point(chord_uv + 4*i + 2);
-      int64_t patch = use_patch[chord_use[i]];
-      area[patch] = area[patch] + Expansion::product(a[0], b[1]) - Expansion::product(a[1], b[0]);
-      edges.push_back(edge(patch, a, b, i, true));
-    }
-    for (int64_t p = 0; p < patch_count; ++p)
-      if (area[p].sign() == 0) failures.push_back({PHX_MC_CHART_ORIENTATION, p, -1, -1});
-    std::vector<uint8_t> oriented(static_cast<size_t>(triangle_count), 0);
+    for (int64_t i = 0; i < chord_count; ++i)
+      edges.push_back(edge(use_patch[chord_use[i]], point(chord_uv + 4*i),
+                           point(chord_uv + 4*i + 2), i, true));
+    std::vector<uint8_t> oriented;
+    check_orientation(patch_count, triangle_count, triangle_patch, triangle_uv, chord_count,
+                      chord_use, use_patch, chord_uv, oriented, failures);
     for (int64_t i = 0; i < triangle_count; ++i) {
       const double* uv = triangle_uv + 6*i;
-      int64_t patch = triangle_patch[i];
-      if (phx::mc::orient2d(uv, uv+2, uv+4) != area[patch].sign() || area[patch].sign() == 0)
-        failures.push_back({PHX_MC_CHART_ORIENTATION, patch, i, -1});
-      else
-        oriented[i] = 1;
       for (int k = 0; k < 3; ++k)
-        edges.push_back(edge(patch, point(uv+2*k), point(uv+2*((k+1)%3)), i, false));
+        edges.push_back(edge(triangle_patch[i], point(uv+2*k), point(uv+2*((k+1)%3)), i, false));
     }
     check_edges(edges, failures);
     check_uses(use_count, use_patch, use_range, chord_count, chord_use, chord_loop, chord_uv,

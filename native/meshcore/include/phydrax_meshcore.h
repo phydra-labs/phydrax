@@ -819,7 +819,11 @@ PHX_MC_API int32_t phx_mc_tet_mesh_clear_implicit_facet_refusal(phx_mc_tet_mesh*
  * snapshot order, 0 = unconstrained; empty keeps the mesh's retained field)
  * becomes the mesh's retained size field; inserted vertices receive
  * interpolated targets. radius_edge_bound == 0 omits the radius-edge target;
- * retained size and validity obligations remain active. */
+ * retained size and validity obligations remain active. A fixed boundary
+ * whose vertices all carry targets (no metric, no embedded segments, every
+ * cell measurably positive) is first seeded with the body-centered cubic
+ * lattice whose cells meet the smallest target, where the target is that
+ * smallest value within 2 % and at least half a lattice spacing inside. */
 PHX_MC_API int32_t phx_mc_tet_mesh_refine(
     phx_mc_tet_mesh* mesh, uint64_t expected_generation, int32_t identity_bound,
     const char* source_id, int64_t source_id_length,
@@ -1307,6 +1311,9 @@ PHX_MC_API int32_t phx_mc_simplex_quadratic_bounds(
     int64_t count, int32_t dimension, int32_t components, const double* q_lower,
     const double* q_upper, const double* barycentric_lower, const double* barycentric_upper,
     double* lower, double* upper);
+/* lower/upper may be null (both or neither); then only verdicts are produced,
+ * and cells may be decided by a rigorous binary64 screen; verdicts are
+ * identical either way. With bounds requested every cell takes the exact path. */
 PHX_MC_API int32_t phx_mc_quadratic_tetrahedron_validity(
     int64_t count, const double* nodes, const int32_t* derivative_weights, double relative_floor,
     int32_t* decisions, double* lower, double* upper);
@@ -1572,21 +1579,16 @@ PHX_MC_API int32_t phx_mc_separation_screen(
     const double* first_lower, const double* first_upper, const int64_t* second_offsets,
     const double* second_lower, const double* second_upper, const double* normals,
     int8_t* decisions, int32_t parallelism);
-/* Simultaneous traversal of two packed bounding-volume hierarchies yielding
- * overlapping item pairs in bounded blocks. Arrays follow PackedBVH: node
+
+/* ------------------------------------------------------- BVH tree view */
+/* One packed bounding-volume hierarchy built by the caller (PackedBVH): node
  * bounds (nodes, dimension), node_size (nodes) the descent key (the caller's
  * sum of node extents), left/right/leaf (nodes), leaf items (leaves,
- * leaf_width) with -1 padding, item bounds (items, dimension). The caller keeps
- * every array alive and unchanged until phx_mc_bvh_pair_stream_free.
- * Reachable nodes must form a rooted tree (no cycles or shared children);
- * leaf nodes have left = right = -1. Validation is iterative without a depth cap.
- * Blocks follow the LIFO node-block traversal of the host reference: node blocks are
- * split at node_block pairs, leaf pairs are tested in chunks of
- * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
- * is one block. A non-leaf node of the first tree descends when the second
- * node is a leaf or node_size is not smaller. Boxes overlap when
- * min(max) - max(min) > 0 on every axis or, with include_touching,
- * >= -(atol + rtol * max(1, |bounds|)). */
+ * leaf_width) with -1 padding, item bounds (items, dimension). Node 0 is the
+ * root; reachable nodes must form a rooted tree (no cycles or shared
+ * children); leaf nodes have left = right = -1. Every consumer validates the
+ * view iteratively without a depth cap and only traverses it: the native side
+ * never builds or changes a tree. */
 typedef struct phx_mc_bvh_tree_view {
   int64_t node_count;
   int64_t leaf_count;
@@ -1602,6 +1604,17 @@ typedef struct phx_mc_bvh_tree_view {
   const double* item_min;
   const double* item_max;
 } phx_mc_bvh_tree_view;
+
+/* Simultaneous traversal of two views yielding overlapping item pairs in
+ * bounded blocks. The caller keeps every array alive and unchanged until
+ * phx_mc_bvh_pair_stream_free.
+ * Blocks follow the LIFO node-block traversal of the host reference: node blocks are
+ * split at node_block pairs, leaf pairs are tested in chunks of
+ * max(1, item_block / (leaf_width_a * leaf_width_b)), and every chunk with a hit
+ * is one block. A non-leaf node of the first tree descends when the second
+ * node is a leaf or node_size is not smaller. Boxes overlap when
+ * min(max) - max(min) > 0 on every axis or, with include_touching,
+ * >= -(atol + rtol * max(1, |bounds|)). */
 typedef struct phx_mc_bvh_pair_stream phx_mc_bvh_pair_stream;
 PHX_MC_API int32_t phx_mc_bvh_pair_stream_create(
     const phx_mc_bvh_tree_view* first, const phx_mc_bvh_tree_view* second, int32_t dimension,
@@ -1620,6 +1633,171 @@ PHX_MC_API int32_t phx_mc_bvh_pair_stream_next(
     phx_mc_bvh_pair_stream* stream, int64_t pair_capacity, int64_t block_capacity,
     int64_t* first_items, int64_t* second_items, int64_t* block_ends, int64_t* blocks);
 PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
+
+/* ---------------------------------------------------- BVH point queries */
+/* Batched single-threaded point queries over one three-dimensional view whose
+ * items are triangles (faces, int32 (items, 3) into vertices (vertex_count, 3))
+ * or tetrahedra (cells, int32 (items, 4)). Item bounds must enclose their
+ * items. Every output is caller-owned with one row per query; an invalid view,
+ * index or argument returns PHX_MC_INVALID_ARGUMENT before writing.
+ *
+ * Arithmetic: every query evaluates the expressions of the JAX owners
+ * (phydrax._fixed_order: products rounded on their own, sums left to right,
+ * no contraction), so each result equals the jitted JAX route bit for bit.
+ *
+ * Closest features: 0 the face interior, 1/2/3 the edges (a,b) (b,c) (c,a),
+ * 4/5/6 the corners a/b/c of the face's vertex order. */
+#define PHX_MC_BVH_FEATURE_COUNT 7
+/* The k nearest faces per point, ordered by (squared distance, face index):
+ * depth-first branch and bound visiting the nearer child first and every node
+ * whose box distance does not exceed the current k-th distance, so exact ties
+ * resolve to the lower index. A face's distance is that of its closest point
+ * (the projection when its barycentrics are nonnegative, else the nearest
+ * clamped edge point, first minimum in face/(a,b)/(b,c)/(c,a) order). Rows with
+ * fewer than k finite distances are padded with -1, +inf, and feature -1.
+ * faces_out/distance_squared/features are (count, k); closest (count, k, 3). */
+PHX_MC_API int32_t phx_mc_bvh_triangle_nearest(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int64_t count, const double* points, int32_t k,
+    int32_t* faces_out, double* distance_squared, double* closest, int8_t* features);
+/* Signed distance by angle-weighted pseudonormals: the nearest face (k = 1 as
+ * above), and the sign of dot(point - closest, feature_normals[face, feature])
+ * with feature_normals (items, 7, 3) indexed by closest feature; a zero dot is
+ * outside (positive). distance (count), faces_out (count), closest (count, 3);
+ * a point without a finite nearest face gets NaN, -1 and NaN. */
+PHX_MC_API int32_t phx_mc_bvh_triangle_signed_distance(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, const double* feature_normals, int64_t count,
+    const double* points, double* distance, int32_t* faces_out, double* closest);
+/* Generalized winding numbers by a hierarchical cut from the root (children
+ * visited left first). EXACT (route 0): a node whose closed box excludes the
+ * point contributes the solid angle of its closing fan, the boundary edges
+ * [boundary_offsets[node], boundary_offsets[node + 1]) of boundary_edges
+ * (edges, 2) joined to the box center; an opened leaf sums its triangles' solid
+ * angles. FAST_DIPOLE (route 1): a node whose dipole center lies farther than
+ * opening_angle times its radius contributes dot(normal, center - point) /
+ * |center - point|^3 with dipoles (nodes, 7) = (area normal, center, radius).
+ * Solid angles are Van Oosterom-Strackee, 2 atan2(numerator, denominator); an
+ * opened leaf sums every slot left to right (padding adds zero), a closing fan
+ * sums chunks of PHX_MC_WINDING_FAN_CHUNK edges the same way and adds each
+ * chunk to its total, and the cut adds contributions in visiting order; values
+ * are sums over 4 pi. The arrays of the other route may be null. */
+#define PHX_MC_WINDING_EXACT 0
+#define PHX_MC_WINDING_FAST_DIPOLE 1
+#define PHX_MC_WINDING_FAN_CHUNK 8
+PHX_MC_API int32_t phx_mc_bvh_triangle_winding(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int32_t route, const int64_t* boundary_offsets,
+    int64_t boundary_edge_count, const int32_t* boundary_edges, const double* dipoles,
+    double opening_angle, int64_t count, const double* points, double* values);
+/* Point location in positively oriented affine tetrahedra. Candidates are the
+ * cells (with a nonzero cell_mask entry; cell_mask may be null) whose item box
+ * padded by tolerance contains the point, reached through node boxes padded
+ * alike. A candidate with a finite positive Jacobian determinant accepts the
+ * point when its reference coordinates r (signed-volume ratios,
+ * x = v0 + [v1 - v0, v2 - v0, v3 - v0] r) satisfy r >= -tolerance and
+ * sum(r) <= 1 + tolerance. cells_out is the lowest accepting cell (or -1),
+ * reference (count, 3) its r, residual |x(r) - point| and condition
+ * |J|_F |J^-1|_F; status follows phx_mc_locate_status; containing (count) the
+ * number of accepting cells, of which the lowest min(containing, capacity) go
+ * ascending into candidates (count, capacity) with their r in
+ * candidate_reference (count, capacity, 3), -1 / 0 padded. */
+enum phx_mc_locate_status {
+  PHX_MC_LOCATE_LOCATED = 0,
+  PHX_MC_LOCATE_OUTSIDE = 1,
+  PHX_MC_LOCATE_DEGENERATE_CELL = 2,
+  PHX_MC_LOCATE_NONFINITE = 3
+};
+PHX_MC_API int32_t phx_mc_bvh_tetrahedron_locate(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
+    const double* points, int32_t capacity, int32_t* cells_out, double* reference,
+    double* residual, double* condition, int32_t* status, int32_t* containing,
+    int32_t* candidates, double* candidate_reference);
+
+/* ------------------------------------------------------ overset assembly */
+/* Overset assembly of P three-dimensional parts in one call. Vertices are
+ * world-frame rows (V, 3); part p owns vertices [vertex_offsets[p],
+ * vertex_offsets[p + 1]), cells [cell_offsets[p], ...) and exterior faces
+ * [face_offsets[p], ...). Cell rows (C, 8) index global vertices of their
+ * own part: an affine tetrahedron is four corners then four -1, a trilinear
+ * hexahedron eight corners in reference order (0,0,0) (1,0,0) (1,1,0)
+ * (0,1,0) then the same at z = 1. Face rows (F, 4) are corner cycles
+ * (triangles end with -1) with face_roles 0 (other exterior face), 1 (wall:
+ * a closed surface whose enclosed region blanks the other parts; its
+ * vertices are never receptors) or 2 (receptor boundary). cell_excluded
+ * marks hole cells by declaration; cell_ids, priorities and name_ranks
+ * order equal donors. donor_priority 0 prefers the finest donor (measure,
+ * then higher priority), 1 the higher priority (then measure); ties go to
+ * the lower name rank, then the lower cell ID.
+ *
+ * Vertex status 0 active, 1 receptor, 2 hole (inside or touching another
+ * part's wall by exact +x ray parity; a vertex in the corner tetrahedron of a
+ * nonplanar wall quad touches it). A cell is a hole when declared, when a
+ * vertex is a hole, or when it is cut: no exact separating plane proves it
+ * misses a wall element (conservative). Fringe layer 1 holds the non-hole
+ * vertices of hole cells and receptor-boundary vertices; layer k + 1 the new
+ * vertices of non-hole cells touching layer k, up to fringe_layers; wall
+ * vertices are never receptors (protected_conflict marks a wall vertex that
+ * is not active). Cell status 0 active, 1 fringe (a receptor vertex), 2 hole.
+ * A cut cell with no hole vertex is ambiguous unless a vertex lies
+ * (certified) in the cutting part and its bounds miss that part's non-wall
+ * exterior faces.
+ *
+ * Every receptor gets donor_status FOUND 0, OUTSIDE 1, EXCLUDED_DONOR 2 (only
+ * excluded cells contain it) or UNRESOLVED 5; other vertices -1. Donors are
+ * unambiguous active cells of other parts, then (with fringe_donors != 0)
+ * fringe cells, never hole cells; with prove != 0 the chosen donor contains
+ * the receptor exactly (tetrahedron orientation signs; hexahedron Krawczyk
+ * enclosure of the trilinear inverse in the closed unit cube, a straddled
+ * face bound decided by the exact side of its bilinear surface), and a
+ * candidate that fails is replaced by the next in order. When every
+ * candidate leaves only face sides open and each open face is open in
+ * another candidate sharing it, the receptor lies in their closed union and
+ * the first takes it with its root clamped onto the face (a shared-face
+ * donor). donor_reference is the barycentric (l1, l2, l3) of a tetrahedron
+ * (l0 = 1 - sum) or the trilinear (xi, eta, zeta); donor_residual the float
+ * mapping residual, donor_measure the donor's volume, candidate_parts the
+ * number of parts with a valid candidate. stats (16): seconds of hole map,
+ * cut cells, fringe, donor index, coverage, donor construction,
+ * certification and total; then hole vertices, receptors, orphans, rejected
+ * candidates, located candidates, ambiguous cells, fringe donors and
+ * shared-face donors. */
+typedef struct phx_mc_overset_parts {
+  int32_t part_count;
+  const int64_t* vertex_offsets;
+  const double* vertices;
+  const int64_t* cell_offsets;
+  const int32_t* cells;
+  const int64_t* cell_ids;
+  const uint8_t* cell_excluded;
+  const int64_t* face_offsets;
+  const int32_t* faces;
+  const uint8_t* face_roles;
+  const int32_t* priorities;
+  const int32_t* name_ranks;
+  int32_t fringe_layers;
+  int32_t donor_priority;
+  int32_t fringe_donors;
+  int32_t prove;
+} phx_mc_overset_parts;
+typedef struct phx_mc_overset_result {
+  int8_t* vertex_status;
+  int32_t* fringe_layer;
+  uint8_t* wall_contact;
+  uint8_t* protected_conflict;
+  int8_t* cell_status;
+  uint8_t* ambiguous;
+  int32_t* donor_status;
+  int64_t* donor_cell;
+  double* donor_reference;
+  double* donor_residual;
+  double* donor_measure;
+  int32_t* candidate_parts;
+  double* stats;
+} phx_mc_overset_result;
+PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
+                                           const phx_mc_overset_result* result);
 
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
@@ -1913,10 +2091,18 @@ typedef struct phx_mc_interval_box_program {
  * bind. Zero orientation asks the owner to derive the common certified sign;
  * a nonzero sign must agree. A view returned by `implicit_source` borrows
  * immutable banks until the mesh is freed. Refusal counts are diagnostic and
- * restart at zero on a new binding. */
+ * restart at zero on a new binding. `value_events` (rows of kind, test, size,
+ * a, a_index, boxes over value's own workspace; see
+ * phx_mc_interval_program_branches) are f's complete branch evidence, checked
+ * for validity only (no events means continuous everywhere): every enclosure
+ * of f or grad f that a facet admission reads is over a box on which they
+ * report f continuous (else the facet is refused), and the transversality
+ * step also requires f smooth there, as in phx_mc_zero_set_certify. */
 typedef struct phx_mc_tet_implicit_source {
   phx_mc_interval_box_program value;
   phx_mc_interval_box_program gradient;
+  const int64_t* value_events;
+  int64_t value_event_count;
   const int32_t* groups;
   int64_t group_count;
   double tolerance;
@@ -2619,6 +2805,29 @@ PHX_MC_API int32_t phx_mc_verify_volume(int64_t point_count, const double* point
                                         const int32_t* surface, const int32_t* surface_regions,
                                         phx_mc_volume_verdict* verdict);
 
+/* Sorted unique entities of a tetrahedral mesh (src/tet_entities.cpp). Every
+ * entity is the increasing row of its vertex indices; edges (edge_count, 2)
+ * and faces (face_count, 3) are the distinct such rows in lexicographic order.
+ * cell_edges (m, 6) and cell_faces (m, 4) route each cell's local edges
+ * (0,1) (0,2) (0,3) (1,2) (1,3) (2,3) and faces (0,1,2) (0,1,3) (0,2,3)
+ * (1,2,3) to their rows; face_edges (face_count, 3) routes each face's edges
+ * opposite its vertices in turn. The incidence orders sort each degree's
+ * flat face routes (simplex-major, opposite each local vertex in turn; a
+ * cell's faces opposite its stably sorted vertices) stably by face row:
+ * vertex_edge_order (2 edge_count), edge_face_order (3 face_count),
+ * face_cell_order (4m). Capacities: edges, vertex_edge_order and
+ * edge_face_order 12m items, faces and face_edges 4m rows. A vertex index
+ * outside [0, vertex_count) is PHX_MC_INVALID_INPUT; m above INT32_MAX / 12
+ * is PHX_MC_INVALID_ARGUMENT. */
+PHX_MC_API int32_t phx_mc_tet_mesh_entities(int64_t vertex_count, int64_t cell_count,
+                                            const int32_t* cells, int32_t* edges,
+                                            int64_t* edge_count, int32_t* faces,
+                                            int64_t* face_count, int32_t* cell_edges,
+                                            int32_t* cell_faces, int32_t* face_edges,
+                                            int32_t* vertex_edge_order,
+                                            int32_t* edge_face_order,
+                                            int32_t* face_cell_order);
+
 /* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
  * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
  * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive
@@ -2635,7 +2844,10 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its
- * interval workspace templates (the point executor uses their midpoints).
+ * interval workspace templates (the point executor uses their midpoints) and
+ * guards its entries whose lower bound must be >= 0 (domain guards such as
+ * real-power bases): a box on which a guard may fail is kept by the seed
+ * cover, since f may be undefined there and its enclosure is no evidence.
  * The box [lower, upper] contains the zero set. Seeds: the possible-zero cover
  * of f on the anchored dyadic lattice of the box grown by 1/16 of its largest
  * extent (box_tree.hpp, the cover of the adaptive discovery), down to cells of
@@ -2672,7 +2884,8 @@ PHX_MC_API int32_t phx_mc_implicit_restricted_delaunay(
     const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
     int64_t index_count, const double* parameters, int64_t parameter_count,
     const double* seed_lower, const double* seed_upper, int64_t workspace_size,
-    int64_t output_entry, const double* lower, const double* upper, const double* criteria,
+    int64_t output_entry, const int64_t* guards, int64_t guard_count, const double* lower,
+    const double* upper, const double* criteria,
     const int64_t* topology, int64_t extra_seed_count, const double* extra_seeds,
     phx_mc_restricted_volume** volume);
 /* sizes receives the point, cell and boundary face counts; report receives
@@ -3073,6 +3286,26 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+/* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
+ * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
+ * every surface is on a loop; use_patch is the model's loop surface of each
+ * use; use_range is the model's use range bitwise, in its sense-directed
+ * order (first, last for sense +1) or reversed, one direction for all uses
+ * of a face; chord_loop is the model loop of the chord's use; V4's
+ * use-coverage, loop-closure and orientation checks hold on these rows
+ * (every use covered by chords chaining bitwise from its first to its last
+ * range value; every loop one closed bitwise UV cycle; every chart triangle
+ * oriented as its face's chord cycles). A sliver (chart_to_mesh -1) needs a
+ * mesh triangle with the edge from its pole vertex to its third vertex (else
+ * a CHART_MESH_LINK finding). Interior edge pairing is the association
+ * check; with it, one direction per face and the model's loop nesting, the
+ * chart triangles cover each trimmed face once (V4's overlap enumeration is
+ * not repeated).
+ * Trusted, not re-established natively: T-spline C2 continuity and partition
+ * of unity (Python's ASTS certificate of the exported pieces); continuity of
+ * an intersection root across chart seams and the terminal threshold (the
+ * chart constructor; V3 treats each break as a C0 line); the source model's
+ * 3D edge / face consistency. Rows are written only when the call completes. */
 
 /* P2 curving from stored parameters (S2-G). One quadratic node per tet edge:
  * a curve edge (a curve_edges row) takes C((t_a + t_b) / 2) with the
@@ -3137,6 +3370,69 @@ typedef struct phx_mc_cad_quadratic_request {
   phx_mc_cad_quadratic_stats* stats;
 } phx_mc_cad_quadratic_request;
 PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
+
+/* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
+ * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
+ * triangle, curve segments as protected edges; refinement to the request h
+ * (circumradius target h*sqrt(6)/4 at every surface point, S3's graded field
+ * inside); improvement to the quality targets) and, with geometry_order 2,
+ * phx_mc_cad_quadratic_nodes on the final cells. A recovery refusing for a
+ * boundary Steiner point (FIXED_SEGMENT/FIXED_FACET/STEINER_SUPPRESSION) has
+ * its surface edge (the refused PLC edge, else the facet triangle's longest
+ * edge) split on the source in both incident faces (curve parameter or UV
+ * midpoint) and is retried once; each split is reported, and the surface
+ * export of the same handle shows the split surface. Returns the handle on
+ * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
+ * recovery still refused: zero cells, stats name the refusal). */
+typedef struct phx_mc_cad_volume_controls {
+  double radius_edge_bound;        /* 2 */
+  double min_dihedral_degrees;     /* 15.5 */
+  double min_relative_determinant; /* 0; also the P2 relative floor */
+  int32_t geometry_order;          /* 1 or 2 */
+} phx_mc_cad_volume_controls;
+typedef struct phx_mc_cad_volume_stats {
+  /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
+  int64_t curve_ns, face_ns, assembly_ns, volume_ns, quadratic_ns;
+  int64_t recovery_attempts, boundary_splits;
+  int64_t refine_inserted, refine_unmet;
+  int64_t improve_inserted, improve_collapsed, improve_relocated, unmet_cells;
+  /* Last recovery: status and phx_mc_plc3d_failure fields. */
+  int32_t recovery_status, recovery_reason, failure_kind;
+  int64_t failure_entity;
+  phx_mc_cad_quadratic_stats quadratic;
+} phx_mc_cad_volume_stats;
+typedef struct phx_mc_cad_boundary_split {
+  int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
+  int64_t entity;
+  int32_t vertices[2];         /* the split surface edge */
+  int32_t vertex;              /* the new surface vertex */
+  int32_t dimension, carrier;  /* 1: curve row, 2: face row */
+  double parameters[2];        /* curve parameter (t, NaN) or face (u, v) */
+} phx_mc_cad_boundary_split;
+typedef struct phx_mc_cad_volume_arrays {
+  int64_t point_capacity, tetrahedron_capacity, triangle_capacity;
+  int64_t edge_capacity, record_capacity, split_capacity;
+  double* points;               /* (P, 3), surface points first */
+  int32_t* tetrahedra;          /* (M, 4), det[b-a, c-a, d-a] > 0 */
+  int32_t* tetrahedron_regions; /* (M,) */
+  int32_t* boundary_faces;      /* (T, 2): cell and local face (opposite vertex) per surface triangle */
+  /* geometry_order 2 (else N = R = 0): as phx_mc_cad_quadratic_nodes. */
+  int32_t* edges; double* nodes; int8_t* edge_kinds; int32_t* edge_entities;
+  int64_t* cell_edges;          /* (M, 6), null when N = 0 */
+  int32_t* cell_decisions;      /* (M,), null when N = 0 */
+  int64_t* records;             /* (R, 2) */
+  phx_mc_cad_boundary_split* splits;
+  phx_mc_cad_volume_stats* stats;
+} phx_mc_cad_volume_arrays;
+PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
+                                         const phx_mc_cad_surface_controls* controls,
+                                         const phx_mc_cad_volume_controls* volume,
+                                         phx_mc_cad_surface_result** result);
+/* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits. */
+PHX_MC_API int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
+                                           int64_t sizes[6]);
+PHX_MC_API int32_t phx_mc_cad_volume_export(const phx_mc_cad_surface_result* result,
+                                            const phx_mc_cad_volume_arrays* arrays);
 
 #ifdef __cplusplus
 }

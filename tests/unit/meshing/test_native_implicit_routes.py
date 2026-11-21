@@ -1113,7 +1113,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
         assert isinstance(coverage_witness, TubularProjectionBoundaryWitness)
         assert distance_witness.source_id == source.source_id
         assert distance_witness.source_revision == source.source_revision
-        assert distance_witness.cover_radius < source.tube_radius
+        assert distance_witness.reverse_tolerance <= source.tube_radius
         proof = validate_tubular_projection_boundary_witness(
             construction.mesh,
             construction.geometry,
@@ -1210,8 +1210,7 @@ def test_native_implicit_volume_route_builds_region_mesh(
             source_id=source.source_id,
             source_revision=source.source_revision,
             source_query_id=source.profile_id,
-            sample_count=distance_witness.sample_count,
-            cover_radius=distance_witness.cover_radius,
+            reverse_tolerance=distance_witness.reverse_tolerance,
             target_facet_global_ids=off_source_boundary_ids,
         )
         off_source_coverage = TubularProjectionBoundaryWitness(
@@ -1233,7 +1232,9 @@ def test_native_implicit_volume_route_builds_region_mesh(
                 off_source_distance,
                 off_source_coverage,
             )
-        assert off_source.value.check == "analytic_projection_tube"
+        # The zero-set certificate refuses facets three radii off the source
+        # before any tube comparison.
+        assert off_source.value.check == "analytic_distance_premise"
     else:
         assert isinstance(source, NativeImplicitSource)
         assert discovery is not None
@@ -2247,7 +2248,7 @@ def test_restricted_acceptance_replays_analytic_distance_evidence_once(
         source: AnalyticImplicitProfile,
         witness: SourceBoundaryDistanceWitness,
         /,
-    ) -> tuple[Fraction, Fraction, Fraction]:
+    ) -> tuple[Fraction, Fraction, Fraction, str]:
         replays.append(witness.witness_id)
         return replay(mesh, geometry, source, witness)
 

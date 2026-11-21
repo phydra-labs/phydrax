@@ -30,6 +30,8 @@ class PreparedIntervalProgram {
   const std::vector<int64_t>& instructions() const noexcept { return instructions_; }
   const std::vector<int64_t>& indices() const noexcept { return indices_; }
   const std::vector<double>& parameters() const noexcept { return parameters_; }
+  // The bound branch-evidence events, flat (six entries per row).
+  const std::vector<int64_t>& events() const noexcept { return events_; }
   void reset() noexcept {
     workspace_size_ = -1;
     events_.clear();

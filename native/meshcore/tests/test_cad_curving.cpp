@@ -15,6 +15,7 @@
 #include "cad_geometry.hpp"
 #include "improve3d.hpp"
 #include "refine3d.hpp"
+#include "quadratic_validity_screen.hpp"
 #include "tet_mesh_handle.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
@@ -515,6 +516,69 @@ void check_deterministic(const Quadratic& a, const Quadratic& b) {
             std::memcmp(a.nodes.data(), b.nodes.data(), a.nodes.size() * sizeof(double)) == 0);
 }
 
+// P2 Jacobian weights in the node order of phx_mc_quadratic_tetrahedron_validity
+// (corners, then edges 01 02 03 12 13 23), written from the P2 shape functions.
+std::array<int32_t, 120> p2_derivative_weights() {
+  constexpr int corners[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+  const int linear[4][4] = {{1, -1, -1, -1}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+  std::array<int32_t, 120> values{};
+  for (int c = 0; c < 3; ++c) {
+    const auto gradient = [c](int i) { return i == 0 ? -1 : (i == c + 1 ? 1 : 0); };
+    for (int p = 0; p < 4; ++p) {
+      for (int i = 0; i < 4; ++i)
+        values[(c * 4 + p) * 10 + i] = gradient(i) * (4 * linear[i][p] - (p == 0 ? 1 : 0));
+      for (int e = 0; e < 6; ++e) {
+        const int i = corners[e][0], j = corners[e][1];
+        values[(c * 4 + p) * 10 + 4 + e] =
+            4 * (gradient(i) * linear[j][p] + gradient(j) * linear[i][p]);
+      }
+    }
+  }
+  return values;
+}
+
+// The binary64 screen on the final P2 cells: verdicts without bounds (screen
+// enabled) equal verdicts with bounds (exact path only), and every screened
+// cell is exactly VALID. Catches an error constant too small for the
+// operation tree (a screened cell whose exact control is not positive).
+void check_screen(const TetMesh& mesh, const Quadratic& q, const char* name, bool quality) {
+  const auto weights = p2_derivative_weights();
+  const std::size_t cells = mesh.tetrahedra.size() / 4;
+  std::vector<double> nodes(30 * cells);
+  for (std::size_t k = 0; k < cells; ++k) {
+    double* row = nodes.data() + 30 * k;
+    for (int i = 0; i < 4; ++i)
+      for (int c = 0; c < 3; ++c)
+        row[3 * i + c] = mesh.points[3 * static_cast<std::size_t>(mesh.tetrahedra[4 * k + i]) + c];
+    for (int e = 0; e < 6; ++e)
+      for (int c = 0; c < 3; ++c)
+        row[12 + 3 * e + c] = q.nodes[3 * static_cast<std::size_t>(q.cell_edges[6 * k + e]) + c];
+  }
+  const auto count = static_cast<int64_t>(cells);
+  for (double floor : {0.0, 1e-3, 0.05}) {
+    std::vector<int32_t> screened_verdicts(cells, -1), exact_verdicts(cells, -1);
+    std::vector<double> lower(cells), upper(cells);
+    PHX_CHECK(phx_mc_quadratic_tetrahedron_validity(count, nodes.data(), weights.data(), floor,
+                                                    screened_verdicts.data(), nullptr,
+                                                    nullptr) == PHX_MC_OK);
+    PHX_CHECK(phx_mc_quadratic_tetrahedron_validity(count, nodes.data(), weights.data(), floor,
+                                                    exact_verdicts.data(), lower.data(),
+                                                    upper.data()) == PHX_MC_OK);
+    PHX_CHECK(screened_verdicts == exact_verdicts);
+    int64_t screened = 0, valid = 0;
+    for (std::size_t k = 0; k < cells; ++k) {
+      valid += exact_verdicts[k] == PHX_MC_QUADRATIC_VALIDITY_VALID;
+      if (!phx::mc::quadratic_validity_screen(nodes.data() + 30 * k, weights.data(), floor))
+        continue;
+      ++screened;
+      PHX_CHECK(exact_verdicts[k] == PHX_MC_QUADRATIC_VALIDITY_VALID);
+    }
+    std::printf("%s%s screen: floor=%g cells=%zu exactly_valid=%lld screened=%lld exact_path=%lld\n",
+                name, quality ? "" : " (raw fill)", floor, cells, static_cast<long long>(valid),
+                static_cast<long long>(screened), static_cast<long long>(count - screened));
+  }
+}
+
 void sphere(bool quality) {
   const Bank bank = sphere_bank();
   const phx_mc_cad_model model = bank.model();
@@ -522,6 +586,7 @@ void sphere(bool quality) {
   TetMesh mesh;
   if (!surface_mesh(model, 0.35, s) || !fill(s, mesh, quality)) return;
   const Quadratic q = curve(model, s, mesh);
+  check_screen(mesh, q, "sphere", quality);
   check_quadratic(s, mesh, q, [](const double* x, int, int32_t) {
     return std::abs(std::hypot(std::hypot(x[0], x[1]), x[2]) - 1.0);
   }, "sphere", quality);
@@ -560,6 +625,7 @@ void torus(bool quality) {
   TetMesh mesh;
   if (!surface_mesh(model, 0.3, s) || !fill(s, mesh, quality)) return;
   const Quadratic q = curve(model, s, mesh);
+  check_screen(mesh, q, "torus", quality);
   check_quadratic(s, mesh, q, [](const double* x, int, int32_t) {
     const double radial = std::hypot(x[0], x[1]);
     return std::abs(std::hypot(radial - 2.0, x[2]) - 0.5);
@@ -582,6 +648,7 @@ void quadric(bool quality) {
   TetMesh mesh;
   if (!surface_mesh(model, 0.12, s) || !fill(s, mesh, quality)) return;
   const Quadratic q = curve(model, s, mesh);
+  check_screen(mesh, q, "quadric", quality);
   check_quadratic(s, mesh, q, [](const double* x, int, int32_t) {
     const double first = std::abs(x[0] * x[0] + x[1] * x[1] - 1.0);
     const double second = std::abs(x[1] * x[1] + x[2] * x[2] - 0.36);

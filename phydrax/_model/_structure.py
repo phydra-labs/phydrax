@@ -889,7 +889,6 @@ class AnalyticImplicitProfileArchiveRecipe(NamedTuple):
     geometry: object
     coordinate_contract: object
     tube_radius: float
-    cover_radius: float
     source_id: str
     source_revision: str
     expected_profile_id: str
@@ -1467,7 +1466,6 @@ def _source_query_archive_recipe(value: Any, /) -> object | None:
             value.geometry,
             value.coordinate_contract,
             value.tube_radius,
-            value.cover_radius,
             value.source_id,
             value.source_revision,
             value.profile_id,

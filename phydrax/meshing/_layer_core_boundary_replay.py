@@ -709,6 +709,8 @@ def replay_core_interface_faces(
     }
     rows: dict[int, tuple[str, tuple[str, ...], tuple[str | None, str | None], int]] = {}
     coverage: dict[tuple[int, int], Fraction] = {}
+    # Several cap faces of one fine cell share its exact reference corners.
+    exact_corners: dict[tuple[int, int], tuple[tuple[Fraction, ...], ...]] = {}
     for item in replay.containment:
         if item.fine_dimension != 2 or item.coarse_dimension != 2:
             continue
@@ -719,8 +721,11 @@ def replay_core_interface_faces(
         fine_key, coarse_key = fine_keys[item.fine_id], coarse_keys[item.coarse_id]
         if len(fine_key) != 3 or len(coarse_key) != 3:
             raise ValueError("Core cap replay requires triangular face restrictions.")
-        witness = maps[(item.fine_cell_id, item.coarse_cell_id)]
-        exact = exact_reference_cell_vertices(witness)[0]
+        map_key = (item.fine_cell_id, item.coarse_cell_id)
+        exact = exact_corners.get(map_key)
+        if exact is None:
+            exact = exact_reference_cell_vertices(maps[map_key])[0]
+            exact_corners[map_key] = exact
         coarse_topology = reference_cell_topology(coarse_kind)
         coarse_corners = tuple(
             tuple(
@@ -755,11 +760,11 @@ def replay_core_interface_faces(
         if previous != value:
             raise ValueError("A core cap has conflicting exact source orientations.")
     if require_coverage:
+        covered: dict[int, Fraction] = {}
+        for (owner, _), value in coverage.items():
+            covered[owner] = covered.get(owner, Fraction(0)) + value
         for coarse_id in cap_faces:
-            area = sum(
-                (value for (owner, _), value in coverage.items() if owner == coarse_id),
-                Fraction(0),
-            )
+            area = covered.get(coarse_id, Fraction(0))
             if area != 1:
                 raise ValueError(
                     "Target facets do not exactly cover an authored cap facet."

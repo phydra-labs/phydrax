@@ -220,6 +220,60 @@ def test_overlapping_union_regions_agree_beyond_the_certified_band(
     assert np.all(_union_distance(samples[differ]) <= delta)
 
 
+def test_sign_coverage_identity_survives_a_platform_widened_target_bound(
+    overlapping_union: AdaptiveImplicitSurface,
+) -> None:
+    surface = overlapping_union
+    points, triangulation, kept = _tetrahedra(surface, _union_inside)
+    tetrahedra = triangulation.simplices[kept]
+    triangles = points[_boundary(tetrahedra)]
+    epsilon = _mesh_to_source(surface, triangles)
+    widened = epsilon
+    for _ in range(4):
+        widened = math.nextafter(widened, math.inf)
+    first, second = (
+        certify_implicit_sign_coverage(
+            surface,
+            triangles,
+            points[tetrahedra],
+            mesh_to_source=bound,
+            tolerance=_TOLERANCE,
+        )
+        for bound in (epsilon, widened)
+    )
+    assert first.status == second.status == "certified"
+    # The distance is re-derived from each bound; the identity is the decision.
+    assert second.distance_upper >= first.distance_upper
+    assert second.evidence_id == first.evidence_id
+
+
+def test_sign_coverage_identity_changes_with_the_leaf_structure_or_decision(
+    overlapping_union: AdaptiveImplicitSurface,
+) -> None:
+    surface = overlapping_union
+    points, triangulation, kept = _tetrahedra(surface, _union_inside)
+    tetrahedra = triangulation.simplices[kept]
+    triangles = points[_boundary(tetrahedra)]
+    epsilon = _mesh_to_source(surface, triangles)
+    results = [
+        certify_implicit_sign_coverage(
+            surface,
+            triangles,
+            points[tetrahedra],
+            mesh_to_source=bound,
+            tolerance=_TOLERANCE,
+        )
+        for bound in (epsilon, _TOLERANCE * (1.0 - 2.0**-20), _TOLERANCE)
+    ]
+    # A bound that moves the band resolution changes the leaves it decides; a
+    # bound at the tolerance no longer certifies at all.
+    assert results[1].status == "certified"
+    assert results[1].band_leaf_count != results[0].band_leaf_count
+    assert results[1].evidence_id != results[0].evidence_id
+    assert results[2].status == "unresolved"
+    assert results[2].evidence_id not in (results[0].evidence_id, results[1].evidence_id)
+
+
 def test_missing_component_is_a_violated_region() -> None:
     first = (np.asarray((-0.37, 0.013, -0.017)), 0.19)
     second = (np.asarray((0.36, -0.019, 0.021)), 0.14)

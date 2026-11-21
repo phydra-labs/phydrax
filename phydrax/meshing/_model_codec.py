@@ -2187,7 +2187,6 @@ def restore_model_archive_value(
                 geometry,
                 contract,
                 tube_radius=item.tube_radius,
-                cover_radius=item.cover_radius,
                 source_id=item.source_id,
                 source_revision=item.source_revision,
             )
@@ -3363,6 +3362,7 @@ def restore_model_archive_value(
                 spacing_fraction=item.spacing_fraction,
                 minimum_edge_samples=item.minimum_edge_samples,
                 normal_deviation_aim=item.normal_deviation_aim,
+                maximum_curve_samples=item.maximum_curve_samples,
                 curve_schedule=restore(item.curve_schedule),
             )
             if schedule.schedule_id != item.schedule_id:

@@ -226,6 +226,7 @@ _P = ctypes.c_void_p
 _I32 = ctypes.c_int32
 _I64 = ctypes.c_int64
 _U64 = ctypes.c_uint64
+_INTP_MAX = int(np.iinfo(np.intp).max)
 _F64 = ctypes.c_double
 _ParallelChunkCallback = ctypes.CFUNCTYPE(_I32, _P, _I64, _I64, _I64)
 PHX_MC_TET_MESH_SNAPSHOT_SIZES = 19
@@ -246,6 +247,45 @@ class _RestrictedPowerCellsRequest(ctypes.Structure):
         ("tet_regions", _P),
         ("tet_face_facets", _P),
         ("result", _P),
+    )
+
+
+class _OversetParts(ctypes.Structure):
+    _fields_ = (
+        ("part_count", _I32),
+        ("vertex_offsets", _P),
+        ("vertices", _P),
+        ("cell_offsets", _P),
+        ("cells", _P),
+        ("cell_ids", _P),
+        ("cell_excluded", _P),
+        ("face_offsets", _P),
+        ("faces", _P),
+        ("face_roles", _P),
+        ("priorities", _P),
+        ("name_ranks", _P),
+        ("fringe_layers", _I32),
+        ("donor_priority", _I32),
+        ("fringe_donors", _I32),
+        ("prove", _I32),
+    )
+
+
+class _OversetResult(ctypes.Structure):
+    _fields_ = (
+        ("vertex_status", _P),
+        ("fringe_layer", _P),
+        ("wall_contact", _P),
+        ("protected_conflict", _P),
+        ("cell_status", _P),
+        ("ambiguous", _P),
+        ("donor_status", _P),
+        ("donor_cell", _P),
+        ("donor_reference", _P),
+        ("donor_residual", _P),
+        ("donor_measure", _P),
+        ("candidate_parts", _P),
+        ("stats", _P),
     )
 
 
@@ -523,6 +563,8 @@ class _TetImplicitSource(ctypes.Structure):
     _fields_ = (
         ("value", _IntervalBoxProgram),
         ("gradient", _IntervalBoxProgram),
+        ("value_events", _P),
+        ("value_event_count", _I64),
         ("groups", _P),
         ("group_count", _I64),
         ("tolerance", _F64),
@@ -1118,6 +1160,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_verify_tetrahedra": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_verify_volume": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
+    "phx_mc_tet_mesh_entities": (
+        _I32,
+        (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_verify_chart_partition": (
         _I32,
@@ -1132,9 +1178,32 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
+    "phx_mc_cad_mesh_solid": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_cad_volume_sizes": (_I32, (_P, _P)),
+    "phx_mc_cad_volume_export": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
         _I32,
-        (_P, _I64, _P, _I64, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
+        (
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+        ),
     ),
     "phx_mc_restricted_volume_sizes": (_I32, (_P, _P, _P)),
     "phx_mc_restricted_volume_copy": (_I32, (_P, _P, _P, _P)),
@@ -1189,6 +1258,26 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_bvh_pair_stream_next": (_I32, (_P, _I64, _I64, _P, _P, _P, _P)),
     "phx_mc_bvh_pair_stream_free": (None, (_P,)),
+    "phx_mc_bvh_triangle_nearest": (
+        _I32,
+        (_P, _I64, _P, _P, _I64, _P, _I32, _P, _P, _P, _P),
+    ),
+    "phx_mc_bvh_triangle_signed_distance": (
+        _I32,
+        (_P, _I64, _P, _P, _P, _I64, _P, _P, _P, _P),
+    ),
+    "phx_mc_bvh_triangle_winding": (
+        _I32,
+        (_P, _I64, _P, _P, _I32, _P, _I64, _P, _P, _F64, _I64, _P, _P),
+    ),
+    "phx_mc_bvh_tetrahedron_locate": (
+        _I32,
+        (_P, _I64, _P, _P, _P, _F64, _I64, _P, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_overset_assemble": (
+        _I32,
+        (ctypes.POINTER(_OversetParts), ctypes.POINTER(_OversetResult)),
+    ),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_restricted_power_cells": (
@@ -2425,6 +2514,140 @@ def graph_partition(
     return parts
 
 
+class OversetAssembly(NamedTuple):
+    """Per-vertex and per-cell records of ``overset_assemble`` (global rows)."""
+
+    vertex_status: np.ndarray
+    fringe_layer: np.ndarray
+    wall_contact: np.ndarray
+    protected_conflict: np.ndarray
+    cell_status: np.ndarray
+    ambiguous: np.ndarray
+    donor_status: np.ndarray
+    donor_cell: np.ndarray
+    donor_reference: np.ndarray
+    donor_residual: np.ndarray
+    donor_measure: np.ndarray
+    candidate_parts: np.ndarray
+    # Seconds of hole map, cut cells, fringe, donor index, coverage, donor
+    # construction, certification and total; then hole vertices, receptors,
+    # orphans, rejected candidates, located candidates, ambiguous cells,
+    # fringe donors and shared-face donors.
+    stats: np.ndarray
+
+
+def overset_assemble(
+    vertex_offsets: object,
+    vertices: object,
+    cell_offsets: object,
+    cells: object,
+    cell_ids: object,
+    cell_excluded: object,
+    face_offsets: object,
+    faces: object,
+    face_roles: object,
+    priorities: object,
+    name_ranks: object,
+    /,
+    *,
+    fringe_layers: int,
+    donor_priority: int,
+    fringe_donors: bool,
+    prove: bool,
+) -> OversetAssembly:
+    """Assemble overset blanking and certified donors of 3D tet/hex parts.
+
+    Rows follow ``phx_mc_overset_assemble``: world-frame vertices, cells as
+    rows of eight global vertex indices (tetrahedra padded with -1), exterior
+    faces as rows of four (triangles padded with -1) with roles 0 other,
+    1 wall, 2 receptor boundary.
+    """
+
+    vertex_bounds = _native_integer_array(
+        vertex_offsets, "vertex_offsets", np.dtype(np.int64)
+    )
+    points = _points(vertices, "vertices", 3)
+    cell_bounds = _native_integer_array(cell_offsets, "cell_offsets", np.dtype(np.int64))
+    cell_rows = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    identifiers = _native_integer_array(cell_ids, "cell_ids", np.dtype(np.int64))
+    excluded = np.ascontiguousarray(cell_excluded, dtype=np.uint8)
+    face_bounds = _native_integer_array(face_offsets, "face_offsets", np.dtype(np.int64))
+    face_rows = _native_integer_array(faces, "faces", np.dtype(np.int32))
+    roles = np.ascontiguousarray(face_roles, dtype=np.uint8)
+    part_priorities = _native_integer_array(priorities, "priorities", np.dtype(np.int32))
+    ranks = _native_integer_array(name_ranks, "name_ranks", np.dtype(np.int32))
+    part_count = part_priorities.shape[0]
+    vertex_count, cell_count, face_count = (
+        points.shape[0],
+        cell_rows.shape[0],
+        face_rows.shape[0],
+    )
+    if (
+        part_priorities.ndim != 1
+        or ranks.shape != part_priorities.shape
+        or any(
+            bounds.shape != (part_count + 1,)
+            for bounds in (vertex_bounds, cell_bounds, face_bounds)
+        )
+        or cell_rows.shape != (cell_count, 8)
+        or face_rows.shape != (face_count, 4)
+        or identifiers.shape != (cell_count,)
+        or excluded.shape != (cell_count,)
+        or roles.shape != (face_count,)
+        or int(vertex_bounds[-1]) != vertex_count
+        or int(cell_bounds[-1]) != cell_count
+        or int(face_bounds[-1]) != face_count
+    ):
+        raise ValueError("Overset part arrays have inconsistent shapes or offsets.")
+    for name, value in (
+        ("fringe_layers", fringe_layers),
+        ("donor_priority", donor_priority),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise TypeError(f"{name} must be an integer.")
+    if not isinstance(prove, bool) or not isinstance(fringe_donors, bool):
+        raise TypeError("prove and fringe_donors must be bools.")
+    result = OversetAssembly(
+        np.empty((vertex_count,), dtype=np.int8),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((cell_count,), dtype=np.int8),
+        np.empty((cell_count,), dtype=np.uint8),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((vertex_count,), dtype=np.int64),
+        np.empty((vertex_count, 3), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.int32),
+        np.empty((16,), dtype=np.float64),
+    )
+    parts = _OversetParts(
+        part_count=part_count,
+        vertex_offsets=vertex_bounds.ctypes.data,
+        vertices=points.ctypes.data,
+        cell_offsets=cell_bounds.ctypes.data,
+        cells=cell_rows.ctypes.data,
+        cell_ids=identifiers.ctypes.data,
+        cell_excluded=excluded.ctypes.data,
+        face_offsets=face_bounds.ctypes.data,
+        faces=face_rows.ctypes.data,
+        face_roles=roles.ctypes.data,
+        priorities=part_priorities.ctypes.data,
+        name_ranks=ranks.ctypes.data,
+        fringe_layers=_int32_argument(fringe_layers, "fringe_layers"),
+        donor_priority=_int32_argument(donor_priority, "donor_priority"),
+        fringe_donors=1 if fringe_donors else 0,
+        prove=1 if prove else 0,
+    )
+    outputs = _OversetResult(*(array.ctypes.data for array in result))
+    status = load_meshcore()["phx_mc_overset_assemble"](
+        ctypes.byref(parts), ctypes.byref(outputs)
+    )
+    _raise_for_call(status, "overset_assemble")
+    return result
+
+
 def _int32_argument(value: object, name: str, /) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{name} must be an integer.")
@@ -3418,6 +3641,74 @@ def verify_volume(
     )
 
 
+class TetMeshEntities(NamedTuple):
+    """Sorted unique edges and faces of a tetrahedral mesh with their routes.
+
+    ``edges`` ``(e, 2)`` and ``faces`` ``(f, 3)`` are the distinct increasing
+    vertex rows in lexicographic order; ``cell_edges`` ``(m, 6)`` and
+    ``cell_faces`` ``(m, 4)`` route each cell's local edges and faces in
+    combination order; ``face_edges`` ``(f, 3)`` routes each face's edges
+    opposite its vertices in turn. ``incidence_orders`` sort each degree's
+    flat face routes (simplex-major; a cell's faces opposite its stably sorted
+    vertices) stably by face row. All int32.
+    """
+
+    edges: np.ndarray
+    faces: np.ndarray
+    cell_edges: np.ndarray
+    cell_faces: np.ndarray
+    face_edges: np.ndarray
+    incidence_orders: tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+def tet_mesh_entities(cells: object, vertex_count: int, /) -> TetMeshEntities:
+    """Sorted unique edges and faces of ``(m, 4)`` tetrahedra and their routes."""
+    cell_array = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if cell_array.ndim != 2 or cell_array.shape[1] != 4:
+        raise ValueError("cells must have shape (m, 4).")
+    count = cell_array.shape[0]
+    edges = np.empty((6 * count, 2), dtype=np.int32)
+    faces = np.empty((4 * count, 3), dtype=np.int32)
+    face_edges = np.empty((4 * count, 3), dtype=np.int32)
+    cell_edges = np.empty((count, 6), dtype=np.int32)
+    cell_faces = np.empty((count, 4), dtype=np.int32)
+    vertex_edge_order = np.empty((12 * count,), dtype=np.int32)
+    edge_face_order = np.empty((12 * count,), dtype=np.int32)
+    face_cell_order = np.empty((4 * count,), dtype=np.int32)
+    edge_count = ctypes.c_int64()
+    face_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_tet_mesh_entities"](
+        int(vertex_count),
+        count,
+        cell_array.ctypes.data,
+        edges.ctypes.data,
+        ctypes.byref(edge_count),
+        faces.ctypes.data,
+        ctypes.byref(face_count),
+        cell_edges.ctypes.data,
+        cell_faces.ctypes.data,
+        face_edges.ctypes.data,
+        vertex_edge_order.ctypes.data,
+        edge_face_order.ctypes.data,
+        face_cell_order.ctypes.data,
+    )
+    _raise_for_call(status, "tet_mesh_entities")
+    edge_total = edge_count.value
+    face_total = face_count.value
+    return TetMeshEntities(
+        edges[:edge_total].copy(),
+        faces[:face_total].copy(),
+        cell_edges,
+        cell_faces,
+        face_edges[:face_total].copy(),
+        (
+            vertex_edge_order[: 2 * edge_total].copy(),
+            edge_face_order[: 3 * face_total].copy(),
+            face_cell_order,
+        ),
+    )
+
+
 def validity_coordinates(values: object, /) -> np.ndarray:
     """Which values ``tetrahedra_validity`` decides exactly (elementwise mask).
 
@@ -3856,6 +4147,7 @@ def implicit_restricted_delaunay(
     seed_lower: np.ndarray,
     seed_upper: np.ndarray,
     output_entry: int,
+    guards: np.ndarray,
     lower: object,
     upper: object,
     criteria: RestrictedDelaunayCriteria,
@@ -3868,8 +4160,10 @@ def implicit_restricted_delaunay(
 
     ``instructions``, ``indices`` and ``parameters`` are a validated native
     interval program with three inputs; ``seed_lower`` and ``seed_upper`` its
-    interval workspace templates and ``output_entry`` the workspace entry of
-    f. The box ``[lower, upper]`` contains the zero set, whose restricted
+    interval workspace templates, ``output_entry`` the workspace entry of f
+    and ``guards`` the workspace entries whose lower bound must be ``>= 0``
+    (the program's domain guards: a box on which one may fail is kept by the
+    seed cover). The box ``[lower, upper]`` contains the zero set, whose restricted
     surface should have ``components`` edge-connected components and Euler
     characteristic ``euler_characteristic``. ``extra_seeds`` ``(n, 3)`` are
     points near the zero set added to the box-tree seeds. The result is a
@@ -3879,6 +4173,11 @@ def implicit_restricted_delaunay(
     upper_array = _real_array(upper, "upper")
     if lower_array.shape != (3,) or upper_array.shape != (3,):
         raise ValueError("lower and upper must have shape (3,).")
+    guard_array = np.ascontiguousarray(
+        _native_integer_array(guards, "guards", np.dtype(np.int64))
+    )
+    if guard_array.ndim != 1:
+        raise ValueError("guards must be one-dimensional.")
     seeds = np.ascontiguousarray(extra_seeds, dtype=np.float64)
     if seeds.ndim != 2 or seeds.shape[1] != 3:
         raise ValueError("extra_seeds must have shape (n, 3).")
@@ -3910,6 +4209,8 @@ def implicit_restricted_delaunay(
             seed_upper.ctypes.data,
             seed_lower.size,
             output_entry,
+            guard_array.ctypes.data,
+            guard_array.size,
             lower_array.ctypes.data,
             upper_array.ctypes.data,
             values.ctypes.data,
@@ -4921,9 +5222,14 @@ class IntervalBranchProgram(NamedTuple):
 
 
 class TetMeshImplicitSource(NamedTuple):
-    """Source-bound native interval programs and exterior facet group rows."""
+    """Source-bound native interval programs and exterior facet group rows.
 
-    value: IntervalBoxProgram
+    ``value`` carries f's branch-evidence events: every enclosure a facet
+    admission reads is over a box on which they report f continuous (else the
+    facet is refused), and transversality also requires f smooth there.
+    """
+
+    value: IntervalBranchProgram
     gradient: IntervalBoxProgram
     group_rows: np.ndarray
     tolerance: float
@@ -5003,7 +5309,18 @@ def _tet_implicit_source_payload(
 ) -> tuple[_TetImplicitSource, tuple[object, ...]]:
     if not isinstance(source, TetMeshImplicitSource):
         raise TypeError("implicit_source must be TetMeshImplicitSource.")
-    value, value_banks = _interval_box_program(source.value, 1, "implicit_source.value")
+    if not isinstance(source.value, IntervalBranchProgram):
+        raise TypeError("implicit_source.value must be IntervalBranchProgram.")
+    value, value_banks = _interval_box_program(
+        source.value.program, 1, "implicit_source.value.program"
+    )
+    events = np.ascontiguousarray(
+        _native_integer_array(
+            source.value.events, "implicit_source.value.events", np.dtype(np.int64)
+        )
+    )
+    if events.ndim != 2 or events.shape[1] != 6:
+        raise ValueError("implicit_source.value.events must have shape (rows, 6).")
     gradient, gradient_banks = _interval_box_program(
         source.gradient, 3, "implicit_source.gradient"
     )
@@ -5031,6 +5348,8 @@ def _tet_implicit_source_payload(
     view = _TetImplicitSource(
         value,
         gradient,
+        events.ctypes.data,
+        events.shape[0],
         _tet_mesh_pointer(groups),
         groups.size,
         tolerance,
@@ -5046,7 +5365,7 @@ def _tet_implicit_source_payload(
         0,
         0,
     )
-    return view, (*value_banks, *gradient_banks, groups, *buffers)
+    return view, (*value_banks, *gradient_banks, events, groups, *buffers)
 
 
 def _tet_implicit_source_snapshot(
@@ -5101,7 +5420,12 @@ def _tet_implicit_source_snapshot(
         return ctypes.string_at(pointer, length).decode("utf-8", "strict")
 
     source = TetMeshImplicitSource(
-        copy_program(view.value),
+        IntervalBranchProgram(
+            copy_program(view.value),
+            copy_bank(
+                view.value_events, 6 * view.value_event_count, np.dtype(np.int64)
+            ).reshape(-1, 6),
+        ),
         copy_program(view.gradient),
         copy_bank(view.groups, view.group_count, np.dtype(np.int32)),
         float(view.tolerance),
@@ -8892,21 +9216,115 @@ def _source_group_labels(
     ``groups`` and ``labels`` give each source row's group and source ID; a
     group carries one source ID. A value naming no group is kept.
     """
-    unique_groups, first_rows, inverse = np.unique(
-        groups, return_index=True, return_inverse=True
-    )
-    unique_labels = labels[first_rows]
-    if np.any(labels != unique_labels[inverse.reshape((-1,))]):
+    result = values.astype(np.int64)
+    if groups.size == 0 or np.array_equal(groups, labels):
+        # Every group is labelled by its own row: the map is the identity.
+        return result
+    # Groups are source rows (nonnegative and below the row count), so a
+    # dense table maps them; any row whose label differs from its group's
+    # table entry (whichever row wrote it) proves a group with two labels.
+    if groups.min() < 0:
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, f"a {kind} source group row is negative"
+        )
+    span = int(groups.max()) + 1
+    present = np.zeros((span,), dtype=bool)
+    present[groups] = True
+    table = np.empty((span,), dtype=labels.dtype)
+    table[groups] = labels
+    if np.any(labels != table[groups]):
         raise MeshcoreError(
             MeshcoreStatus.INTERNAL_ERROR, f"one {kind} group has multiple source IDs"
         )
-    result = values.astype(np.int64)
-    if unique_groups.size == 0:
-        return result
-    positions = np.minimum(np.searchsorted(unique_groups, values), unique_groups.size - 1)
-    named = unique_groups[positions] == values
-    result[named] = unique_labels[positions[named]]
+    named = (values >= 0) & (values < span)
+    named[named] = present[values[named]]
+    result[named] = table[values[named]]
     return result
+
+
+# The flat banks of a TetMesh snapshot: request field, dtype, row shape, the
+# PHX_MC_TET_MESH_SNAPSHOT_SIZES entry counting its rows, the extra rows (an
+# offsets bank closes its last row) and the bytes per row.
+_TET_SNAPSHOT_BANKS: tuple[
+    tuple[str, np.dtype[Any], tuple[int, ...], int, int, int], ...
+] = tuple(
+    (
+        name,
+        np.dtype(dtype),
+        shape,
+        count,
+        extra,
+        np.dtype(dtype).itemsize * int(np.prod(shape)),
+    )
+    for name, dtype, shape, count, extra in (
+        ("vertex_ids", np.uint64, (), 0, 0),
+        ("points", np.float64, (3,), 0, 0),
+        ("vertex_size_targets", np.float64, (), 0, 0),
+        ("witness_strata", np.int8, (), 0, 0),
+        ("witness_entities", np.int32, (), 0, 0),
+        ("witness_parameters", np.float64, (2,), 0, 0),
+        ("witness_deviations", np.float64, (), 0, 0),
+        ("vertex_dimensions", np.int8, (), 0, 0),
+        ("protection_radii", np.float64, (), 0, 0),
+        ("protected_vertices", np.int8, (), 0, 0),
+        ("vertex_edge_witness_present", np.int8, (), 0, 0),
+        ("vertex_edge_witness_endpoints", np.uint64, (2,), 0, 0),
+        ("vertex_edge_parameters", np.float64, (), 0, 0),
+        ("vertex_ancestry_offsets", np.int64, (), 0, 1),
+        ("vertex_ancestor_ids", np.uint64, (), 17, 0),
+        ("vertex_ancestor_winding", np.int64, (3,), 17, 0),
+        ("vertex_ancestry_weights", np.float64, (), 17, 0),
+        ("cell_ancestry_offsets", np.int64, (), 1, 1),
+        ("cell_ancestor_ids", np.uint64, (), 18, 0),
+        ("cell_ancestry_edit_kinds", np.int32, (), 1, 0),
+        ("cell_ids", np.uint64, (), 1, 0),
+        ("cell_vertex_rows", np.int64, (4,), 1, 0),
+        ("cell_regions", np.int32, (), 1, 0),
+        ("cell_size_targets", np.float64, (), 1, 0),
+        ("facet_ids", np.uint64, (), 2, 0),
+        ("facet_vertex_rows", np.int64, (3,), 2, 0),
+        ("facet_sources", np.int32, (), 2, 0),
+        ("facet_orientations", np.int8, (), 2, 0),
+        ("protected_facets", np.int8, (), 2, 0),
+        ("segment_ids", np.uint64, (), 3, 0),
+        ("segment_vertex_rows", np.int64, (2,), 3, 0),
+        ("segment_sources", np.int32, (), 3, 0),
+        ("protected_segments", np.int8, (), 3, 0),
+        ("source_points", np.float64, (3,), 4, 0),
+        ("source_faces", np.int32, (3,), 5, 0),
+        ("source_face_groups", np.int32, (), 5, 0),
+        ("source_face_ids", np.int64, (), 5, 0),
+        ("source_face_tolerances", np.float64, (), 5, 0),
+        ("source_segments", np.int32, (2,), 6, 0),
+        ("source_segment_groups", np.int32, (), 6, 0),
+        ("source_segment_ids", np.int64, (), 6, 0),
+        ("source_segment_tolerances", np.float64, (), 6, 0),
+        ("source_face_planes", np.float64, (3, 3), 5, 0),
+        ("source_face_plane_tolerances", np.float64, (), 5, 0),
+        ("periodic_quotient_lifted_cell_ids", np.uint64, (), 10, 0),
+        ("periodic_entity_lifted_ids", np.uint64, (), 12, 0),
+        ("periodic_entity_quotient_ids", np.uint64, (), 13, 0),
+        ("periodic_entity_lifted_to_quotient", np.int32, (), 12, 0),
+        ("periodic_entity_orientation_signs", np.int32, (), 12, 0),
+        ("periodic_entity_winding_shifts", np.int64, (), 14, 0),
+        ("periodic_entity_corner_permutations", np.int32, (), 15, 0),
+        ("periodic_entity_representative_rows", np.int32, (), 16, 0),
+    )
+)
+
+
+def _source_id_bank(ids: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """The sorted distinct source IDs and each row's index into them (int32)."""
+    if ids.size == 0 or not np.all(ids[1:] >= ids[:-1]):
+        bank, rows = np.unique(ids, return_inverse=True)
+        return bank, rows.astype(np.int32)
+    # Already sorted: a row opens a new ID where it differs from its predecessor.
+    opens = np.empty(ids.shape, dtype=bool)
+    opens[0] = True
+    np.not_equal(ids[1:], ids[:-1], out=opens[1:])
+    rows = np.cumsum(opens, dtype=np.int32)
+    rows -= 1
+    return ids[opens], rows
 
 
 def _tet_radius_target(value: float | None, /) -> float | None:
@@ -9220,7 +9638,7 @@ class TetMesh3D:
         )
         if face_orientation_bank is not None and (
             face_orientation_bank.shape != (face_array.shape[0],)
-            or np.any(~np.isin(face_orientation_bank, (-1, 1)))
+            or np.any(np.abs(face_orientation_bank) != 1)
         ):
             raise ValueError(
                 "face_orientations must contain one signed orientation per face."
@@ -9579,13 +9997,17 @@ class TetMesh3D:
     def _identity(self, /) -> TetMeshIdentity:
         generation = _U64()
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(4))
+        lengths = (_I64 * 4)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_identity_sizes"](
                 self._live(),
                 ctypes.addressof(generation),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                base,
+                base + 8,
+                base + 16,
+                base + 24,
             ),
             "tet_mesh_identity_sizes",
         )
@@ -9593,8 +10015,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh identity byte length"
             )
@@ -9636,12 +10058,13 @@ class TetMesh3D:
 
     def _periodic_identity_strings(self, /) -> tuple[str, str, str, str, str, str] | None:
         bound = _I32()
-        lengths = tuple(_I64() for _ in range(6))
+        lengths = (_I64 * 6)()
+        base = ctypes.addressof(lengths)
         _raise_for_call(
             self._library["phx_mc_tet_mesh_periodic_identity_sizes"](
                 self._live(),
                 ctypes.addressof(bound),
-                *(ctypes.addressof(value) for value in lengths),
+                *range(base, base + 48, 8),
             ),
             "tet_mesh_periodic_identity_sizes",
         )
@@ -9649,8 +10072,8 @@ class TetMesh3D:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity-bound status"
             )
-        byte_lengths = tuple(int(value.value) for value in lengths)
-        if any(value < 0 or value >= np.iinfo(np.intp).max for value in byte_lengths):
+        byte_lengths = tuple(lengths)
+        if min(byte_lengths) < 0 or max(byte_lengths) >= _INTP_MAX:
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "invalid periodic identity byte length"
             )
@@ -9793,225 +10216,43 @@ class TetMesh3D:
                 ),
                 "tet_mesh_snapshot_sizes",
             )
-            if np.any(sizes < 0):
+            counts = sizes.tolist()
+            if min(counts) < 0:
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "negative tetrahedral snapshot size"
                 )
-            (
-                vertex_count,
-                cell_count,
-                facet_count,
-                segment_count,
-                source_point_count,
-                source_face_count,
-                source_segment_count,
-                periodic_orbit_count,
-                periodic_member_count,
-                periodic_quotient_cell_count,
-                periodic_quotient_lifted_count,
-                periodic_entity_map_count,
-                periodic_entity_lifted_count,
-                periodic_entity_quotient_count,
-                periodic_entity_winding_count,
-                periodic_entity_corner_count,
-                periodic_entity_representative_count,
-                vertex_ancestry_count,
-                cell_ancestor_count,
-            ) = map(int, sizes.tolist())
-            vertex_ids = np.empty((vertex_count,), dtype=np.uint64)
-            points = np.empty((vertex_count, 3), dtype=np.float64)
-            vertex_size_targets = np.empty((vertex_count,), dtype=np.float64)
-            witness_strata = np.empty((vertex_count,), dtype=np.int8)
-            witness_entities = np.empty((vertex_count,), dtype=np.int32)
-            witness_parameters = np.empty((vertex_count, 2), dtype=np.float64)
-            witness_deviations = np.empty((vertex_count,), dtype=np.float64)
-            dimensions = np.empty((vertex_count,), dtype=np.int8)
-            radii = np.empty((vertex_count,), dtype=np.float64)
-            protected_vertices = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_present = np.empty((vertex_count,), dtype=np.int8)
-            edge_witness_endpoints = np.empty((vertex_count, 2), dtype=np.uint64)
-            edge_parameters = np.empty((vertex_count,), dtype=np.float64)
-            vertex_ancestry_offsets = np.empty((vertex_count + 1,), dtype=np.int64)
-            vertex_ancestor_ids = np.empty((vertex_ancestry_count,), dtype=np.uint64)
-            vertex_ancestor_winding = np.empty((vertex_ancestry_count, 3), dtype=np.int64)
-            vertex_ancestry_weights = np.empty((vertex_ancestry_count,), dtype=np.float64)
-            cell_ancestry_offsets = np.empty((cell_count + 1,), dtype=np.int64)
-            cell_ancestor_ids = np.empty((cell_ancestor_count,), dtype=np.uint64)
-            cell_ancestry_edit_kinds = np.empty((cell_count,), dtype=np.int32)
-            cell_ids = np.empty((cell_count,), dtype=np.uint64)
-            cell_vertices = np.empty((cell_count, 4), dtype=np.int64)
-            regions = np.empty((cell_count,), dtype=np.int32)
-            cell_size_targets = np.empty((cell_count,), dtype=np.float64)
-            facet_ids = np.empty((facet_count,), dtype=np.uint64)
-            facet_vertices = np.empty((facet_count, 3), dtype=np.int64)
-            facet_sources = np.empty((facet_count,), dtype=np.int32)
-            facet_orientations = np.empty((facet_count,), dtype=np.int8)
-            protected_facets = np.empty((facet_count,), dtype=np.int8)
-            segment_ids = np.empty((segment_count,), dtype=np.uint64)
-            segment_vertices = np.empty((segment_count, 2), dtype=np.int64)
-            segment_sources = np.empty((segment_count,), dtype=np.int32)
-            protected_segments = np.empty((segment_count,), dtype=np.int8)
-            source_points = np.empty((source_point_count, 3), dtype=np.float64)
-            source_faces = np.empty((source_face_count, 3), dtype=np.int32)
-            source_face_groups = np.empty((source_face_count,), dtype=np.int32)
-            source_face_ids = np.empty((source_face_count,), dtype=np.int64)
-            source_face_tolerances = np.empty((source_face_count,), dtype=np.float64)
-            source_segments = np.empty((source_segment_count, 2), dtype=np.int32)
-            source_segment_groups = np.empty((source_segment_count,), dtype=np.int32)
-            source_segment_ids = np.empty((source_segment_count,), dtype=np.int64)
-            source_segment_tolerances = np.empty(
-                (source_segment_count,), dtype=np.float64
-            )
-            source_face_planes = np.empty((source_face_count, 3, 3), dtype=np.float64)
-            source_face_plane_tolerances = np.empty(
-                (source_face_count,), dtype=np.float64
-            )
-            periodic_orbits = (_TetPeriodicOrbit * periodic_orbit_count)()
-            periodic_members = (_TetPeriodicVertexMember * periodic_member_count)()
-            periodic_quotient_cells = (
-                _TetPeriodicQuotientCell * periodic_quotient_cell_count
-            )()
-            periodic_quotient_lifted_cell_ids = np.empty(
-                (periodic_quotient_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_maps = (
-                _TetPeriodicEntityOrbitMap * periodic_entity_map_count
-            )()
-            periodic_entity_lifted_ids = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.uint64
-            )
-            periodic_entity_quotient_ids = np.empty(
-                (periodic_entity_quotient_count,), dtype=np.uint64
-            )
-            periodic_entity_lifted_to_quotient = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_orientation_signs = np.empty(
-                (periodic_entity_lifted_count,), dtype=np.int32
-            )
-            periodic_entity_winding_shifts = np.empty(
-                (periodic_entity_winding_count,), dtype=np.int64
-            )
-            periodic_entity_corner_permutations = np.empty(
-                (periodic_entity_corner_count,), dtype=np.int32
-            )
-            periodic_entity_representative_rows = np.empty(
-                (periodic_entity_representative_count,), dtype=np.int32
-            )
+            # One buffer holds every flat bank (in 8-byte aligned slices); the
+            # returned banks are views of it.
+            extents = []
+            total = 0
+            for _name, _dtype, _shape, count, extra, row_bytes in _TET_SNAPSHOT_BANKS:
+                rows = counts[count] + extra
+                extents.append((rows, total))
+                total += (rows * row_bytes + 7) & ~7
+            buffer = np.empty((total,), dtype=np.uint8)
+            address = buffer.ctypes.data
+            # The capacity fields lead the request, in snapshot-size order.
+            request = _TetMeshSnapshotRequest(*counts)
+            b: dict[str, np.ndarray] = {}
+            for (name, dtype, shape, _count, _extra, _row_bytes), (rows, offset) in zip(
+                _TET_SNAPSHOT_BANKS, extents, strict=True
+            ):
+                b[name] = np.ndarray((rows, *shape), dtype, buffer, offset)
+                if rows:
+                    setattr(request, name, address + offset)
+            periodic_orbits = (_TetPeriodicOrbit * counts[7])()
+            periodic_members = (_TetPeriodicVertexMember * counts[8])()
+            periodic_quotient_cells = (_TetPeriodicQuotientCell * counts[9])()
+            periodic_entity_maps = (_TetPeriodicEntityOrbitMap * counts[11])()
+            if counts[7]:
+                request.periodic_orbits = ctypes.cast(periodic_orbits, _P)
+            if counts[8]:
+                request.periodic_members = ctypes.cast(periodic_members, _P)
+            if counts[9]:
+                request.periodic_quotient_cells = ctypes.cast(periodic_quotient_cells, _P)
+            if counts[11]:
+                request.periodic_entity_maps = ctypes.cast(periodic_entity_maps, _P)
             generation = _U64()
-            request = _TetMeshSnapshotRequest()
-            for name, value in (
-                ("vertex_capacity", vertex_count),
-                ("cell_capacity", cell_count),
-                ("facet_capacity", facet_count),
-                ("segment_capacity", segment_count),
-                ("source_point_capacity", source_point_count),
-                ("source_face_capacity", source_face_count),
-                ("source_segment_capacity", source_segment_count),
-                ("periodic_orbit_capacity", periodic_orbit_count),
-                ("periodic_member_capacity", periodic_member_count),
-                ("periodic_quotient_cell_capacity", periodic_quotient_cell_count),
-                ("periodic_quotient_lifted_capacity", periodic_quotient_lifted_count),
-                ("periodic_entity_map_capacity", periodic_entity_map_count),
-                ("periodic_entity_lifted_capacity", periodic_entity_lifted_count),
-                ("periodic_entity_quotient_capacity", periodic_entity_quotient_count),
-                ("periodic_entity_winding_capacity", periodic_entity_winding_count),
-                ("periodic_entity_corner_capacity", periodic_entity_corner_count),
-                (
-                    "periodic_entity_representative_capacity",
-                    periodic_entity_representative_count,
-                ),
-                ("vertex_ancestry_capacity", vertex_ancestry_count),
-                ("cell_ancestor_capacity", cell_ancestor_count),
-            ):
-                setattr(request, name, value)
-            for name, array in (
-                ("vertex_ids", vertex_ids),
-                ("points", points),
-                ("vertex_size_targets", vertex_size_targets),
-                ("witness_strata", witness_strata),
-                ("witness_entities", witness_entities),
-                ("witness_parameters", witness_parameters),
-                ("witness_deviations", witness_deviations),
-                ("vertex_dimensions", dimensions),
-                ("protection_radii", radii),
-                ("protected_vertices", protected_vertices),
-                ("cell_ids", cell_ids),
-                ("vertex_edge_witness_present", edge_witness_present),
-                ("vertex_edge_witness_endpoints", edge_witness_endpoints),
-                ("vertex_edge_parameters", edge_parameters),
-                ("vertex_ancestry_offsets", vertex_ancestry_offsets),
-                ("vertex_ancestor_ids", vertex_ancestor_ids),
-                ("vertex_ancestor_winding", vertex_ancestor_winding),
-                ("vertex_ancestry_weights", vertex_ancestry_weights),
-                ("cell_ancestry_offsets", cell_ancestry_offsets),
-                ("cell_ancestor_ids", cell_ancestor_ids),
-                ("cell_ancestry_edit_kinds", cell_ancestry_edit_kinds),
-                ("cell_vertex_rows", cell_vertices),
-                ("cell_regions", regions),
-                ("cell_size_targets", cell_size_targets),
-                ("facet_ids", facet_ids),
-                ("facet_vertex_rows", facet_vertices),
-                ("facet_sources", facet_sources),
-                ("facet_orientations", facet_orientations),
-                ("protected_facets", protected_facets),
-                ("segment_ids", segment_ids),
-                ("segment_vertex_rows", segment_vertices),
-                ("segment_sources", segment_sources),
-                ("protected_segments", protected_segments),
-                ("source_points", source_points),
-                ("source_faces", source_faces),
-                ("source_face_groups", source_face_groups),
-                ("source_face_ids", source_face_ids),
-                ("source_face_tolerances", source_face_tolerances),
-                ("source_segments", source_segments),
-                ("source_segment_groups", source_segment_groups),
-                ("source_segment_ids", source_segment_ids),
-                ("source_segment_tolerances", source_segment_tolerances),
-                ("source_face_planes", source_face_planes),
-                ("source_face_plane_tolerances", source_face_plane_tolerances),
-            ):
-                setattr(request, name, _tet_mesh_pointer(array) if array.size else None)
-            request.periodic_orbits = (
-                ctypes.cast(periodic_orbits, _P) if periodic_orbit_count else None
-            )
-            request.periodic_members = (
-                ctypes.cast(periodic_members, _P) if periodic_member_count else None
-            )
-            request.periodic_quotient_cells = (
-                ctypes.cast(periodic_quotient_cells, _P)
-                if periodic_quotient_cell_count
-                else None
-            )
-            request.periodic_quotient_lifted_cell_ids = _tet_mesh_pointer(
-                periodic_quotient_lifted_cell_ids
-            )
-            request.periodic_entity_maps = (
-                ctypes.cast(periodic_entity_maps, _P)
-                if periodic_entity_map_count
-                else None
-            )
-            request.periodic_entity_lifted_ids = _tet_mesh_pointer(
-                periodic_entity_lifted_ids
-            )
-            request.periodic_entity_quotient_ids = _tet_mesh_pointer(
-                periodic_entity_quotient_ids
-            )
-            request.periodic_entity_lifted_to_quotient = _tet_mesh_pointer(
-                periodic_entity_lifted_to_quotient
-            )
-            request.periodic_entity_orientation_signs = _tet_mesh_pointer(
-                periodic_entity_orientation_signs
-            )
-            request.periodic_entity_winding_shifts = _tet_mesh_pointer(
-                periodic_entity_winding_shifts
-            )
-            request.periodic_entity_corner_permutations = _tet_mesh_pointer(
-                periodic_entity_corner_permutations
-            )
-            request.periodic_entity_representative_rows = _tet_mesh_pointer(
-                periodic_entity_representative_rows
-            )
             request.generation = ctypes.addressof(generation)
             _raise_for_call(
                 self._library["phx_mc_tet_mesh_snapshot"](
@@ -10030,29 +10271,31 @@ class TetMesh3D:
                 periodic_orbits,
                 periodic_members,
                 periodic_quotient_cells,
-                periodic_quotient_lifted_cell_ids,
+                b["periodic_quotient_lifted_cell_ids"],
                 periodic_entity_maps,
-                periodic_entity_lifted_ids,
-                periodic_entity_quotient_ids,
-                periodic_entity_lifted_to_quotient,
-                periodic_entity_orientation_signs,
-                periodic_entity_winding_shifts,
-                periodic_entity_corner_permutations,
-                periodic_entity_representative_rows,
+                b["periodic_entity_lifted_ids"],
+                b["periodic_entity_quotient_ids"],
+                b["periodic_entity_lifted_to_quotient"],
+                b["periodic_entity_orientation_signs"],
+                b["periodic_entity_winding_shifts"],
+                b["periodic_entity_corner_permutations"],
+                b["periodic_entity_representative_rows"],
             )
-            if np.any(~np.isfinite(vertex_size_targets)) or np.any(
-                vertex_size_targets < 0.0
-            ):
+            vertex_size_targets = b["vertex_size_targets"]
+            # NaN fails both comparisons.
+            if not np.all((vertex_size_targets >= 0.0) & (vertex_size_targets < np.inf)):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR, "invalid TetMesh vertex size targets"
                 )
+            vertex_ancestry_offsets = b["vertex_ancestry_offsets"]
+            cell_ancestry_offsets = b["cell_ancestry_offsets"]
             if (
                 vertex_ancestry_offsets[0] != 0
-                or vertex_ancestry_offsets[-1] != vertex_ancestry_count
-                or np.any(np.diff(vertex_ancestry_offsets) < 0)
-                or np.any(~np.isfinite(vertex_ancestry_weights))
+                or vertex_ancestry_offsets[-1] != counts[17]
+                or np.any(vertex_ancestry_offsets[1:] < vertex_ancestry_offsets[:-1])
+                or not np.all(np.isfinite(b["vertex_ancestry_weights"]))
                 or cell_ancestry_offsets[0] != 0
-                or cell_ancestry_offsets[-1] != cell_ancestor_count
+                or cell_ancestry_offsets[-1] != counts[18]
             ):
                 raise MeshcoreError(
                     MeshcoreStatus.INTERNAL_ERROR,
@@ -10060,58 +10303,57 @@ class TetMesh3D:
                 )
             # Native writes cells, facets and segments in ID order with their
             # corners as vertex rows, and every cell's size target and lineage.
-            face_id_bank, face_group_rows = np.unique(
-                source_face_ids, return_inverse=True
-            )
-            segment_id_bank, segment_group_rows = np.unique(
-                source_segment_ids, return_inverse=True
-            )
-            face_group_rows = face_group_rows.astype(np.int32)
-            segment_group_rows = segment_group_rows.astype(np.int32)
+            source_face_ids = b["source_face_ids"]
+            source_segment_ids = b["source_segment_ids"]
+            face_id_bank, face_group_rows = _source_id_bank(source_face_ids)
+            segment_id_bank, segment_group_rows = _source_id_bank(source_segment_ids)
             vertex_size_targets.setflags(write=False)
-            cell_size_targets.setflags(write=False)
+            b["cell_size_targets"].setflags(write=False)
             return TetMeshArrays(
-                points,
+                b["points"],
                 vertex_size_targets,
-                cell_vertices,
-                regions,
-                cell_size_targets,
-                facet_vertices,
+                b["cell_vertex_rows"],
+                b["cell_regions"],
+                b["cell_size_targets"],
+                b["facet_vertex_rows"],
                 _source_group_labels(
-                    source_face_groups, source_face_ids, facet_sources, "face"
+                    b["source_face_groups"], source_face_ids, b["facet_sources"], "face"
                 ),
-                segment_vertices,
+                b["segment_vertex_rows"],
                 _source_group_labels(
-                    source_segment_groups, source_segment_ids, segment_sources, "segment"
+                    b["source_segment_groups"],
+                    source_segment_ids,
+                    b["segment_sources"],
+                    "segment",
                 ),
-                dimensions,
-                radii,
-                protected_vertices,
-                edge_witness_present,
-                edge_witness_endpoints,
-                edge_parameters,
-                vertex_ids,
-                cell_ids,
-                facet_ids,
-                facet_orientations,
-                protected_facets,
-                segment_ids,
-                protected_segments,
-                source_points,
-                source_faces,
+                b["vertex_dimensions"],
+                b["protection_radii"],
+                b["protected_vertices"],
+                b["vertex_edge_witness_present"],
+                b["vertex_edge_witness_endpoints"],
+                b["vertex_edge_parameters"],
+                b["vertex_ids"],
+                b["cell_ids"],
+                b["facet_ids"],
+                b["facet_orientations"],
+                b["protected_facets"],
+                b["segment_ids"],
+                b["protected_segments"],
+                b["source_points"],
+                b["source_faces"],
                 face_group_rows,
                 face_id_bank,
-                source_face_tolerances,
-                source_segments,
+                b["source_face_tolerances"],
+                b["source_segments"],
                 segment_group_rows,
                 segment_id_bank,
-                source_segment_tolerances,
-                source_face_planes,
-                source_face_plane_tolerances,
-                witness_strata,
-                witness_entities,
-                witness_parameters,
-                witness_deviations,
+                b["source_segment_tolerances"],
+                b["source_face_planes"],
+                b["source_face_plane_tolerances"],
+                b["witness_strata"],
+                b["witness_entities"],
+                b["witness_parameters"],
+                b["witness_deviations"],
                 identity.generation,
                 identity.identity_bound,
                 identity.source_id,
@@ -10119,12 +10361,12 @@ class TetMesh3D:
                 identity.source_map_id,
                 identity.frame_id,
                 vertex_ancestry_offsets,
-                vertex_ancestor_ids,
-                vertex_ancestor_winding,
-                vertex_ancestry_weights,
+                b["vertex_ancestor_ids"],
+                b["vertex_ancestor_winding"],
+                b["vertex_ancestry_weights"],
                 cell_ancestry_offsets,
-                cell_ancestor_ids,
-                cell_ancestry_edit_kinds,
+                b["cell_ancestor_ids"],
+                b["cell_ancestry_edit_kinds"],
                 periodic_snapshot,
                 _tet_implicit_source_snapshot(self._library, self._live()),
             )
@@ -11101,7 +11343,11 @@ class TetMesh3D:
         ``radius_edge_bound=None`` requests no radius-edge target.
 
         ``sizes`` (one circumradius target per current vertex, 0 for none) becomes
-        the mesh's retained size field; ``None`` keeps the retained field.
+        the mesh's retained size field; ``None`` keeps the retained field. On a
+        fixed boundary with a target at every vertex, the interior is first
+        seeded with the body-centered cubic lattice whose cells meet the
+        smallest target (where the target is within 2 % of it, at least half a
+        lattice spacing from the boundary), then refined as above.
         """
         radius_edge = _tet_radius_target(radius_edge_bound)
         with self._lock:
@@ -12891,6 +13137,135 @@ class CadSurfaceResult(NamedTuple):
     chart: CadChartResult
 
 
+class _CadVolumeControls(ctypes.Structure):
+    _fields_ = (
+        ("radius_edge_bound", ctypes.c_double),
+        ("min_dihedral_degrees", ctypes.c_double),
+        ("min_relative_determinant", ctypes.c_double),
+        ("geometry_order", _I32),
+    )
+
+
+_CAD_QUADRATIC_STATS_FIELDS = (
+    "curve_edges",
+    "surface_edges",
+    "interior_edges",
+    "initial_invalid",
+    "initial_unresolved",
+    "harmonic_nodes",
+    "harmonic_repaired_cells",
+    "straightened_edges",
+    "final_invalid",
+    "final_unresolved",
+)
+_CAD_VOLUME_STATS_DTYPE = np.dtype(
+    [
+        (name, np.int64)
+        for name in (
+            "curve_ns",
+            "face_ns",
+            "assembly_ns",
+            "volume_ns",
+            "quadratic_ns",
+            "recovery_attempts",
+            "boundary_splits",
+            "refine_inserted",
+            "refine_unmet",
+            "improve_inserted",
+            "improve_collapsed",
+            "improve_relocated",
+            "unmet_cells",
+        )
+    ]
+    + [
+        ("recovery_status", np.int32),
+        ("recovery_reason", np.int32),
+        ("failure_kind", np.int32),
+        ("failure_entity", np.int64),
+        (
+            "quadratic",
+            np.dtype(
+                [(name, np.int64) for name in _CAD_QUADRATIC_STATS_FIELDS], align=True
+            ),
+        ),
+    ],
+    align=True,
+)
+_CAD_BOUNDARY_SPLIT_DTYPE = np.dtype(
+    [
+        ("reason", np.int32),
+        ("entity_kind", np.int32),
+        ("entity", np.int64),
+        ("vertices", np.int32, (2,)),
+        ("vertex", np.int32),
+        ("dimension", np.int32),
+        ("carrier", np.int32),
+        ("parameters", np.float64, (2,)),
+    ],
+    align=True,
+)
+
+
+class _CadVolumeArrays(ctypes.Structure):
+    _fields_ = (
+        ("point_capacity", _I64),
+        ("tetrahedron_capacity", _I64),
+        ("triangle_capacity", _I64),
+        ("edge_capacity", _I64),
+        ("record_capacity", _I64),
+        ("split_capacity", _I64),
+        *(
+            (name, _P)
+            for name in (
+                "points",
+                "tetrahedra",
+                "tetrahedron_regions",
+                "boundary_faces",
+                "edges",
+                "nodes",
+                "edge_kinds",
+                "edge_entities",
+                "cell_edges",
+                "cell_decisions",
+                "records",
+                "splits",
+                "stats",
+            )
+        ),
+    )
+
+
+class CadVolumeResult(NamedTuple):
+    """Fixed-boundary tetrahedra of a CAD surface candidate and its P2 nodes.
+
+    Points begin with the surface points; cells are right-handed;
+    ``boundary_faces[t]`` is the (cell, local face opposite that vertex) of
+    surface triangle ``t``. P2 arrays are empty for geometry order 1.
+    """
+
+    points: np.ndarray
+    tetrahedra: np.ndarray
+    tetrahedron_regions: np.ndarray
+    boundary_faces: np.ndarray
+    edges: np.ndarray
+    nodes: np.ndarray
+    edge_kinds: np.ndarray
+    edge_entities: np.ndarray
+    cell_edges: np.ndarray
+    cell_decisions: np.ndarray
+    records: np.ndarray
+    splits: np.ndarray
+    stats: np.ndarray
+
+
+class CadSolidResult(NamedTuple):
+    """The surface (after any boundary split) and the volume of a CAD solid."""
+
+    status: MeshcoreStatus
+    surface: CadSurfaceResult
+    volume: CadVolumeResult
+
+
 def cad_mesh(
     model: CadModel,
     face_sizes: object,
@@ -12903,6 +13278,103 @@ def cad_mesh(
     minimum_size: float = 1e-12,
 ) -> CadSurfaceResult:
     """Discretize the curves and assemble a native CAD surface candidate."""
+    return _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        None,
+    )[0]
+
+
+def cad_mesh_solid(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    /,
+    *,
+    tolerance_fraction: float = 0.5,
+    grading: float = 1.3,
+    minimum_size: float = 1e-12,
+    radius_edge_bound: float = 2.0,
+    min_dihedral_degrees: float = 15.5,
+    min_relative_determinant: float = 0.0,
+    geometry_order: int = 1,
+) -> CadSolidResult:
+    """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
+
+    ``face_sizes`` are the requested edge lengths h; the volume is sized from
+    them. UNRESOLVED returns the result with unmet quality targets, unresolved
+    P2 cells, or no cells when recovery still refused after the one boundary
+    split (``volume.stats``).
+    """
+    controls = _CadVolumeControls(
+        radius_edge_bound,
+        min_dihedral_degrees,
+        min_relative_determinant,
+        geometry_order,
+    )
+    surface, volume = _cad_mesh(
+        model,
+        face_sizes,
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction,
+        grading,
+        minimum_size,
+        controls,
+    )
+    if volume is None:
+        raise MeshcoreError(surface.status, "cad_mesh_solid: no volume")
+    return CadSolidResult(surface.status, surface, volume)
+
+
+def _cad_volume_export(library: Any, handle: ctypes.c_void_p, /) -> CadVolumeResult:
+    counts = np.empty((6,), dtype=np.int64)
+    _raise_for_call(
+        library["phx_mc_cad_volume_sizes"](handle, counts.ctypes.data),
+        "cad_volume_sizes",
+    )
+    p, m, t, n, r, s = (int(c) for c in counts)
+    cells = m if n else 0
+    banks = (
+        np.empty((p, 3), dtype=np.float64),
+        np.empty((m, 4), dtype=np.int32),
+        np.empty((m,), dtype=np.int32),
+        np.empty((t, 2), dtype=np.int32),
+        np.empty((n, 2), dtype=np.int32),
+        np.empty((n, 3), dtype=np.float64),
+        np.empty((n,), dtype=np.int8),
+        np.empty((n,), dtype=np.int32),
+        np.empty((cells, 6), dtype=np.int64),
+        np.empty((cells,), dtype=np.int32),
+        np.empty((r, 2), dtype=np.int64),
+        np.empty((s,), dtype=_CAD_BOUNDARY_SPLIT_DTYPE),
+        np.empty((1,), dtype=_CAD_VOLUME_STATS_DTYPE),
+    )
+    outputs = _CadVolumeArrays(p, m, t, n, r, s, *(a.ctypes.data for a in banks))
+    _raise_for_call(
+        library["phx_mc_cad_volume_export"](handle, ctypes.addressof(outputs)),
+        "cad_volume_export",
+    )
+    return CadVolumeResult(*banks)
+
+
+def _cad_mesh(
+    model: CadModel,
+    face_sizes: object,
+    face_tolerances: object,
+    curve_tolerances: object,
+    tolerance_fraction: float,
+    grading: float,
+    minimum_size: float,
+    volume: _CadVolumeControls | None,
+    /,
+) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
     sizes = _real_array(face_sizes, "face_sizes")
     tolerances = _real_array(face_tolerances, "face_tolerances")
     curve_tols = _real_array(curve_tolerances, "curve_tolerances")
@@ -12925,6 +13397,13 @@ def cad_mesh(
         library["phx_mc_cad_mesh"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
+            ctypes.addressof(handle),
+        )
+        if volume is None
+        else library["phx_mc_cad_mesh_solid"](
+            ctypes.addressof(structure),
+            ctypes.addressof(controls),
+            ctypes.addressof(volume),
             ctypes.addressof(handle),
         )
     )
@@ -13042,8 +13521,9 @@ def cad_mesh(
             library["phx_mc_cad_chart_export"](handle, ctypes.addressof(chart_outputs)),
             "cad_chart_export",
         )
-        return CadSurfaceResult(
+        surface = CadSurfaceResult(
             status, *banks, pole_sectors, CadChartResult(*chart_banks)
         )
+        return surface, None if volume is None else _cad_volume_export(library, handle)
     finally:
         library["phx_mc_cad_surface_result_free"](handle)

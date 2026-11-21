@@ -21,7 +21,10 @@ from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellMesh
-from ...discretization._cell_mesh import SimplicialConnectivity
+from ...discretization._cell_mesh import (
+    SimplicialConnectivity,
+    sorted_tetrahedron_faces,
+)
 from ...discretization._topology import _row_order, row_positions, sorted_unique_rows
 from ...geometry._affine_plc_boundary import AffinePlcBoundarySource
 from ...geometry._affine_plc_domain import AffinePlcDomain
@@ -113,6 +116,8 @@ def _rows_from_stable_ids(
 def _target_support(
     specification: VolumeMeshingSpec,
     /,
+    *,
+    maximum_geometry_order: int = 1,
 ) -> list[str]:
     target = specification.target
     families = target.cell_families
@@ -122,11 +127,16 @@ def _target_support(
     if (
         target.topological_dimension != 3
         or target.ambient_dimension != 3
-        or target.geometry_order != 1
+        or not 1 <= target.geometry_order <= maximum_geometry_order
         or families.allowed_transitions
         or families.allow_mixed
     ):
-        issues.append("affine tetrahedra in ambient dimension three")
+        issues.append(
+            "affine tetrahedra in ambient dimension three"
+            if maximum_geometry_order == 1
+            else f"tetrahedra of geometry order at most {maximum_geometry_order} "
+            "in ambient dimension three"
+        )
     if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
         issues.append("the simplex volume-fill strategy")
     return issues
@@ -795,16 +805,21 @@ def _cell_entity_rows(
 ) -> np.ndarray:
     """Row of ``entities`` of every cell's ``degree`` faces, cell-major, or -1.
 
-    A simplicial connectivity's cell routes are taken once every routed row is
-    checked to be exactly the cell's sorted face; other connectivities search.
+    A mesh's simplicial connectivity routes its own cells into its own entity
+    rows (``CellMesh`` builds them from its blocks), so they are taken when
+    ``cells`` and ``entities`` are exactly those banks; otherwise rows are
+    searched.
     """
-    local = np.asarray(tuple(combinations(range(4), degree + 1)), dtype=np.int64)
-    faces = np.sort(cells[:, local], axis=-1)
     connectivity = mesh.connectivity
-    if isinstance(connectivity, SimplicialConnectivity):
-        routes = np.asarray(connectivity.cell_entities[degree], dtype=np.int64)
-        if routes.shape == faces.shape[:2] and np.array_equal(entities[routes], faces):
-            return routes.reshape((-1,))
+    if (
+        isinstance(connectivity, SimplicialConnectivity)
+        and np.array_equal(np.asarray(connectivity.cells), cells)
+        and np.array_equal(np.asarray(connectivity.entities[degree]), entities)
+    ):
+        return np.asarray(connectivity.cell_entities[degree], dtype=np.int64).reshape(
+            (-1,)
+        )
+    faces = np.stack(sorted_tetrahedron_faces(cells, degree), axis=-1)
     return _rows_of_simplices(entities, faces.reshape((-1, degree + 1)))
 
 

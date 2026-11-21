@@ -6,14 +6,21 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry import BVHBuildKind, BVHBuildPolicy
 from phydrax.geometry.simplicial import (
     TriangleBVH,
     TriangleMesh,
     WindingNumberRoute,
+)
+
+
+_requires_meshcore = pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
 )
 
 
@@ -181,3 +188,154 @@ def test_nearest_faces_orders_exact_geometric_ties_by_original_index() -> None:
     ).nearest_faces(np.asarray(((0.25, 0.25, 2.0),), dtype=np.float64), k=2)
     np.testing.assert_array_equal(nearest.items, ((0, 1),))
     np.testing.assert_array_equal(nearest.distance_squared, ((4.0, 4.0),))
+
+
+def _sphere_case() -> tuple[TriangleBVH, Any]:
+    vertices, faces = _sphere(32, 20)
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
+    points = np.random.default_rng(8).uniform(-1.3, 1.3, (400, 3))
+    # Corners and edge midpoints off the surface are equidistant from the faces
+    # sharing them: ties at the vertex and edge features.
+    edge_points = 0.5 * (vertices[faces[:, 0]] + vertices[faces[:, 1]])
+    points = np.concatenate(
+        (points, 1.05 * vertices, 0.97 * vertices, 1.03 * edge_points, 0.97 * edge_points)
+    )
+    return index, points
+
+
+def _grid_case() -> tuple[TriangleBVH, Any]:
+    # A structured plane z = 0 with grid-aligned queries: corners, edge
+    # midpoints, and cell centers above, below, and on it tie between faces.
+    n = 8
+    axis = np.arange(n + 1, dtype=np.float64) / n
+    vertices = np.stack(
+        (*np.meshgrid(axis, axis, indexing="ij"), np.zeros((n + 1, n + 1))), axis=-1
+    ).reshape((-1, 3))
+    i, j = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    a = (i * (n + 1) + j).reshape((-1,))
+    faces = np.concatenate(
+        (np.stack((a, a + n + 1, a + n + 2), 1), np.stack((a, a + n + 2, a + 1), 1))
+    )
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=2))
+    planar = np.arange(-1, 2 * n + 2, dtype=np.float64) / (2 * n)
+    x, y, z = np.meshgrid(planar, planar, np.asarray((-0.25, 0.0, 0.5)), indexing="ij")
+    return index, np.stack((x, y, z), axis=-1).reshape((-1, 3))
+
+
+_NATIVE_CASES = pytest.mark.parametrize(
+    "case", (_sphere_case, _grid_case), ids=("sphere-features", "grid-ties")
+)
+
+
+def _assert_identical(native: Any, traced: Any) -> None:
+    """Equal shapes, dtypes, and bits (signed zeros and NaN payloads included)."""
+    first, second = np.asarray(native), np.asarray(traced)
+    assert first.shape == second.shape and first.dtype == second.dtype
+    np.testing.assert_array_equal(
+        first.view(np.uint8).reshape(first.shape + (-1,)),
+        second.view(np.uint8).reshape(second.shape + (-1,)),
+    )
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+@_NATIVE_CASES
+def test_native_nearest_and_query_equal_traced_route(case: Any) -> None:
+    index, points = case()
+    native = index.nearest_faces(points, k=2)
+    traced = jax.jit(lambda values: index.nearest_faces(values, k=2))(points)
+    _assert_identical(native.items, traced.items)
+    _assert_identical(native.distance_squared, traced.distance_squared)
+    query = index.query(points)
+    traced_query = jax.jit(lambda values: index.query(values))(points)
+    for field in ("face_index", "closest_point", "distance", "normal"):
+        _assert_identical(getattr(query, field), getattr(traced_query, field))
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+@_NATIVE_CASES
+def test_native_winding_numbers_equal_traced_route(case: Any) -> None:
+    index, points = case()
+    exact = index.winding_number(points)
+    assert exact.route is WindingNumberRoute.EXACT
+    _assert_identical(
+        exact.values, jax.jit(lambda values: index.winding_number(values).values)(points)
+    )
+    fast = index.fast_winding_number(points, opening_angle=2.0)
+    assert fast.route is WindingNumberRoute.FAST_DIPOLE and fast.opening_angle == 2.0
+    _assert_identical(
+        fast.values,
+        jax.jit(lambda values: index.fast_winding_number(values).values)(points),
+    )
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+@_NATIVE_CASES
+def test_native_signed_distance_equals_traced_route(case: Any) -> None:
+    index, points = case()
+    for sign in ("pseudonormal", "winding_number"):
+        _assert_identical(
+            index.signed_distance(points, sign=sign),
+            jax.jit(lambda values, sign=sign: index.signed_distance(values, sign=sign))(
+                points
+            ),
+        )
+
+
+@_NATIVE_CASES
+def test_queries_without_native_library_equal_traced_route(
+    case: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Builds without the native library answer eagerly through JAX, bit for
+    # bit as under tracing.
+    from phydrax import _bvh_native
+
+    index, points = case()
+    monkeypatch.setattr(_bvh_native, "meshcore_available", lambda: False)
+    calls = {
+        "nearest": lambda values: index.nearest_faces(values, k=2).distance_squared,
+        "distance": lambda values: index.query(values).distance,
+        "signed": lambda values: index.signed_distance(values),
+        "winding": lambda values: index.winding_number(values).values,
+        "fast": lambda values: index.fast_winding_number(values).values,
+    }
+    for call in calls.values():
+        _assert_identical(call(points), jax.jit(call)(points))
+
+
+def test_prepared_tables_are_independent_of_tracing() -> None:
+    vertices, faces = _sphere()
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
+    moved = vertices * np.asarray((1.2, 0.9, 1.1))
+    eager = index.refit(moved)
+    traced = jax.jit(lambda values: index.refit(values))(moved)
+    _assert_identical(eager.dipoles, traced.dipoles)
+    _assert_identical(eager.feature_normals, traced.feature_normals)
+
+
+@pytest.mark.meshcore
+@_requires_meshcore
+def test_signed_distance_sign_matches_the_sphere() -> None:
+    index, points = _sphere_case()
+    radius = np.linalg.norm(points, axis=-1)
+    outside_band = np.abs(radius - 1.0) > 0.02
+    for sign in ("pseudonormal", "winding_number"):
+        distance = np.asarray(index.signed_distance(points, sign=sign))
+        np.testing.assert_array_equal(
+            (distance < 0.0)[outside_band], (radius < 1.0)[outside_band]
+        )
+        _assert_identical(np.abs(distance), index.query(points).distance)
+    with pytest.raises(ValueError, match="sign"):
+        index.signed_distance(points, sign="nearest")  # ty: ignore[invalid-argument-type]
+
+
+def test_pseudonormal_sign_holds_beside_corners() -> None:
+    # Radial points just outside and inside each corner of a coarse sphere have
+    # the corner (or an incident edge) as closest feature.
+    vertices, faces = _sphere(6, 4)
+    index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=2))
+    points = np.concatenate((1.01 * vertices, 0.99 * vertices))
+    distance = np.asarray(jax.jit(lambda values: index.signed_distance(values))(points))
+    np.testing.assert_array_equal(distance < 0.0, np.repeat((False, True), len(vertices)))

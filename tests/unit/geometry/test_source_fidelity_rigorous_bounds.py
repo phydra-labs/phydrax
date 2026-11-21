@@ -164,44 +164,6 @@ def _perturb_libm(monkeypatch: pytest.MonkeyPatch, /) -> None:
 
 
 @pytest.mark.parametrize("family", ("sphere", "ring-torus"))
-def test_analytic_profile_cover_ignores_platform_libm(
-    family: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    geometry = (
-        phx.geometry.Sphere((0.013, -0.021, 0.007), 0.4)
-        if family == "sphere"
-        else phx.geometry.Torus((0.012, -0.007, 0.017), 0.3, 0.9)
-    ).compile()
-    profile = _analytic_profile.AnalyticImplicitProfile(
-        geometry, phx.SpatialCoordinateContract.si()
-    )
-    here = profile.boundary_cover(0.2)
-    _perturb_libm(monkeypatch)
-    there = profile.boundary_cover(0.2)
-    for name in ("points", "covering_radius", "point_error"):
-        assert np.array_equal(getattr(here, name), getattr(there, name)), name
-    monkeypatch.undo()
-    # mpmath oracle: each sample is within its certified error of the surface.
-    center = np.asarray(profile.center, dtype=np.float64)
-    with mp.workdps(60):
-        for row in range(0, here.points.shape[0], 7):
-            delta = [
-                mp.mpf(float(here.points[row, axis])) - mp.mpf(float(center[axis]))
-                for axis in range(3)
-            ]
-            if family == "sphere":
-                distance = abs(
-                    mp.sqrt(sum(value**2 for value in delta)) - mp.mpf(profile.radius)
-                )
-            else:
-                ring = mp.sqrt(delta[0] ** 2 + delta[1] ** 2) - mp.mpf(
-                    profile.major_radius
-                )
-                distance = abs(mp.sqrt(ring**2 + delta[2] ** 2) - mp.mpf(profile.radius))
-            assert distance <= mp.mpf(float(here.point_error[row]))
-
-
-@pytest.mark.parametrize("family", ("sphere", "ring-torus"))
 def test_analytic_projection_representatives_and_identity_ignore_libm(
     family: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

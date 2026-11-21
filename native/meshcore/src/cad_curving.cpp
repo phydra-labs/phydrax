@@ -264,11 +264,9 @@ class Curving {
         for (int c = 0; c < 3; ++c) row[12 + 3 * e + c] = result_.nodes[edges[e]][c];
     }
     decisions_.resize(cells.size());
-    lower_.resize(cells.size());
-    upper_.resize(cells.size());
     const int32_t status = phx_mc_quadratic_tetrahedron_validity(
         static_cast<int64_t>(cells.size()), buffer_.data(), weights.values.data(),
-        input_.relative_floor, decisions_.data(), lower_.data(), upper_.data());
+        input_.relative_floor, decisions_.data(), nullptr, nullptr);
     if (status != PHX_MC_OK) return status;
     for (std::size_t k = 0; k < cells.size(); ++k)
       result_.cell_decisions[static_cast<std::size_t>(cells[k])] = decisions_[k];
@@ -397,7 +395,7 @@ class Curving {
   std::vector<uint64_t> keys_;
   std::vector<int64_t> cell_offsets_, edge_cells_;
   std::vector<uint8_t> curved_;
-  std::vector<double> buffer_, lower_, upper_;
+  std::vector<double> buffer_;
   std::vector<int32_t> decisions_;
 };
 

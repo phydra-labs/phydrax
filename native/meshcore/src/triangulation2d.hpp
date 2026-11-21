@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -31,7 +32,6 @@
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
-#include "prefetch.hpp"
 #include "spatial_sort.hpp"
 
 namespace phx::mc {
@@ -81,14 +81,13 @@ class Triangulation2D {
   }
 
   // Index k of the edge u -> w in triangle t (v[k+1] == u, v[k+2] == w), or -1.
+  // Written as selects (the lowest matching k wins, as a scan would return),
+  // which Apple clang compiles without data-dependent branches.
   int edge_index(int32_t t, int32_t u, int32_t w) const {
     const Triangle2D& tri = triangles[t];
-    for (int k = 0; k < 3; ++k) {
-      if (tri.v[next3(k)] == u && tri.v[prev3(k)] == w) {
-        return k;
-      }
-    }
-    return -1;
+    int k = (tri.v[0] == u && tri.v[1] == w) ? 2 : -1;
+    k = (tri.v[2] == u && tri.v[0] == w) ? 1 : k;
+    return (tri.v[1] == u && tri.v[2] == w) ? 0 : k;
   }
 
   int32_t allocate() {
@@ -191,6 +190,10 @@ class Triangulation2D {
     region.reserve(reserve);
     live.reserve(reserve);
     marks_.reserve(reserve);
+    // Room for the cavities of typical insertions (grown when exceeded).
+    stack_.resize(std::max<std::size_t>(stack_.size(), 64));
+    cavity_.resize(std::max<std::size_t>(cavity_.size(), 64));
+    boundary_.resize(std::max<std::size_t>(boundary_.size(), 128));
   }
 
   // Appends a vertex (constructed Steiner point); returns its index.
@@ -266,21 +269,26 @@ class Triangulation2D {
       t = triangles[t].n[2];
     }
     int32_t previous = -1;
+    // The step counter lives in a register for the walk.
+    std::uint64_t step = walk_step;
+    const Triangle2D* slots = triangles.data();
     for (;;) {
-      const Triangle2D& tri = triangles[t];
-      const int first = static_cast<int>(splitmix64(walk_step++) % 3U);
+      const Triangle2D& tri = slots[t];
+      const int first = static_cast<int>(splitmix64(step++) % 3U);
       const int crossed = exit_edge(tri, q, previous, first);
       if (crossed < 0) {
+        walk_step = step;
         return t;
       }
       if (blocked != nullptr && constraint(t, crossed) != -1) {
+        walk_step = step;
         *blocked = {t, crossed};
         return -1;
       }
       previous = t;
       t = tri.n[crossed];
-      prefetch(&triangles[static_cast<std::size_t>(t)]);
-      if (is_ghost(t)) {
+      if (slots[t].v[2] == kInfiniteVertex) {
+        walk_step = step;
         return t;
       }
     }
@@ -292,7 +300,8 @@ class Triangulation2D {
   // orientations are evaluated at once (each exactly as orient2d_filtered
   // does; exact predicates have no side effects), so the choice costs no
   // data-dependent branch.
-  int exit_edge(const Triangle2D& tri, const double* q, int32_t previous, int first) const {
+  [[gnu::always_inline]] int exit_edge(const Triangle2D& tri, const double* q, int32_t previous,
+                                       int first) const {
     const double* a = point(tri.v[0]);
     const double* b = point(tri.v[1]);
     const double* c = point(tri.v[2]);
@@ -352,17 +361,22 @@ class Triangulation2D {
     int32_t* stack = stack_.data();
     int32_t* cavity = cavity_.data();
     BoundaryEdge* boundary = boundary_.data();
+    // Further calls the scratch has room for (the first pushes the start,
+    // each later one precedes a pop, which adds one cavity entry, at most
+    // three boundary edges and, net, at most two stack entries); counted
+    // down, recomputed after growth.
+    std::size_t pops = std::min({stack_.size() / 4, cavity_.size(), boundary_.size() / 3});
     const auto reserve_scratch = [&]() {
-      if (top + 4 <= stack_.size() && removed + 1 <= cavity_.size() &&
-          edges + 3 <= boundary_.size()) [[likely]] {
+      if (pops != 0) [[likely]] {
+        --pops;
         return;
       }
-      stack_.resize(std::max(stack_.size(), 2 * (top + 4)));
-      cavity_.resize(std::max(cavity_.size(), 2 * (removed + 1)));
-      boundary_.resize(std::max(boundary_.size(), 2 * (edges + 3)));
+      grow_scratch(top, removed, edges);
       stack = stack_.data();
       cavity = cavity_.data();
       boundary = boundary_.data();
+      pops = std::min({(stack_.size() - top) / 4, cavity_.size() - removed,
+                       (boundary_.size() - edges) / 3}) - 1;
     };
     reserve_scratch();
     stack[top++] = start;
@@ -382,13 +396,6 @@ class Triangulation2D {
         }
         if (mark != outside && conflict(nb, q, p)) {
           marks_[nb] = inside;
-          // Its neighbors are read when it leaves the stack.
-          for (int32_t next : triangles[nb].n) {
-            if (static_cast<std::size_t>(next) < triangles.size()) {
-              prefetch(&triangles[static_cast<std::size_t>(next)]);
-              prefetch(&marks_[static_cast<std::size_t>(next)]);
-            }
-          }
           stack[top++] = nb;
         } else {
           marks_[nb] = outside;
@@ -485,6 +492,37 @@ class Triangulation2D {
     }
   }
 
+  // Renames vertex k to names[k] (distinct names below vertex_total) after a
+  // build whose vertex k is input vertex names[k] (`identities` == names),
+  // and installs `renamed` (2 * vertex_total), the coordinates by new name.
+  // The state is the one a build on the renamed vertices leaves: the same
+  // slots, epochs and walk steps, vertices named by their identities.
+  void rename_vertices(std::span<const int32_t> names, std::vector<double>&& renamed,
+                       int64_t vertex_total) {
+    for (Triangle2D& tri : triangles) {
+      for (int32_t& vertex : tri.v) {
+        if (vertex != kInfiniteVertex) vertex = names[static_cast<std::size_t>(vertex)];
+      }
+    }
+    const auto total = static_cast<std::size_t>(vertex_total);
+    std::vector<int32_t> vertex_triangles(total, -1);
+    std::vector<std::uint64_t> vertex_marks(total + 1, 0);
+    std::vector<int32_t> vertex_slots(total + 1, -1);
+    vertex_marks[0] = vertex_marks_[0];
+    vertex_slots[0] = vertex_slots_[0];
+    for (std::size_t k = 0; k < names.size(); ++k) {
+      const auto name = static_cast<std::size_t>(names[k]);
+      vertex_triangles[name] = vertex_triangle[k];
+      vertex_marks[name + 1] = vertex_marks_[k + 1];
+      vertex_slots[name + 1] = vertex_slots_[k + 1];
+    }
+    vertex_triangle = std::move(vertex_triangles);
+    vertex_marks_ = std::move(vertex_marks);
+    vertex_slots_ = std::move(vertex_slots);
+    coordinates = std::move(renamed);
+    identities = nullptr;
+  }
+
  private:
   struct BoundaryEdge {
     int32_t u;
@@ -492,6 +530,14 @@ class Triangulation2D {
     int32_t outside;
     int32_t back;  // slot of `outside` across the edge
   };
+
+  // Grows the insertion scratch so that one more pop fits (stack top + 4,
+  // cavity removed + 1, boundary edges + 3), doubling.
+  [[gnu::noinline]] void grow_scratch(std::size_t top, std::size_t removed, std::size_t edges) {
+    if (top + 4 > stack_.size()) stack_.resize(2 * (top + 4));
+    if (removed + 1 > cavity_.size()) cavity_.resize(2 * (removed + 1));
+    if (edges + 3 > boundary_.size()) boundary_.resize(2 * (edges + 3));
+  }
 
   std::vector<std::uint64_t> marks_;         // per slot, cavity epochs
   std::vector<std::uint64_t> vertex_marks_;  // per vertex + 1 (slot 0 = infinite vertex)
@@ -548,7 +594,25 @@ inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* p
                                  std::vector<int32_t>& vertex_map) {
   const std::vector<int32_t> order =
       deduplicated_insertion_order(points, point_count, 2, weights, vertex_map);
-  return build_ordered_delaunay_2d(triangulation, order);
+  if (weights != nullptr) return build_ordered_delaunay_2d(triangulation, order);
+  // Unweighted, build on the representatives stored in insertion order (so
+  // walks and cavities touch nearby memory) with their input indices as
+  // identities, then rename them to those indices: the same triangulation
+  // and state as a build in place.
+  const auto count = order.size();
+  std::vector<double> input = std::move(triangulation.coordinates);
+  triangulation.coordinates.resize(2 * count);
+  for (std::size_t k = 0; k < count; ++k) {
+    const auto source = 2 * static_cast<std::size_t>(order[k]);
+    triangulation.coordinates[2 * k] = input[source];
+    triangulation.coordinates[2 * k + 1] = input[source + 1];
+  }
+  triangulation.identities = order.data();
+  std::vector<int32_t> local(count);
+  std::iota(local.begin(), local.end(), 0);
+  const int32_t status = build_ordered_delaunay_2d(triangulation, local);
+  triangulation.rename_vertices(order, std::move(input), point_count);
+  return status;
 }
 
 }  // namespace phx::mc

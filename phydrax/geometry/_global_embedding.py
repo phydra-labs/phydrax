@@ -7217,14 +7217,14 @@ def _periodic_scalar_record(value: ExactScalar, /) -> tuple[tuple[int, int, int]
 
 
 def _periodic_quotient_face_key(
-    topology: PeriodicMeshTopology,
+    quotient_offsets: np.ndarray,
+    key_offsets: np.ndarray,
+    key_values: np.ndarray,
     quotient_face: int,
     orders: np.ndarray,
     /,
 ) -> tuple[tuple[int, tuple[int, ...]], ...] | None:
-    quotient_offsets = np.asarray(topology.quotient_offsets, dtype=np.int64)
-    key_offsets = np.asarray(topology.entity_key_offsets, dtype=np.int64)
-    key_values = np.asarray(topology.entity_key_values, dtype=np.int64)
+    # The caller reads the topology's host key tables once per proof.
     row = int(quotient_offsets[2]) + quotient_face
     if row < 0 or row + 1 >= len(key_offsets):
         return None
@@ -7562,8 +7562,12 @@ def _current_periodic_facet_trace_id(
     for face_row, orbit in enumerate(orbit_indices):
         quotient_rows[int(orbit)].append(face_row)
     face_trace_records = []
+    key_offsets = np.asarray(topology.entity_key_offsets, dtype=np.int64)
+    key_values = np.asarray(topology.entity_key_values, dtype=np.int64)
     for quotient_face, lifted_face_rows in enumerate(quotient_rows):
-        face_key = _periodic_quotient_face_key(topology, quotient_face, orders)
+        face_key = _periodic_quotient_face_key(
+            quotient_offsets, key_offsets, key_values, quotient_face, orders
+        )
         if face_key is None:
             return None
         occurrences: list[

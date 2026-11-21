@@ -15,6 +15,7 @@ import phydrax as phx
 from phydrax._meshcore import (
     _CAD_FACE_FAILURE_DTYPE,
     cad_mesh,
+    cad_mesh_solid,
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
@@ -24,6 +25,7 @@ from phydrax._meshcore import (
     verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.meshing._contracts import VolumeMeshingSpec
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
     coefficient_bounds,
@@ -484,3 +486,650 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
             np.sort(failure["segment_parameters"]),
             result.curve_parameters[start : start + 2],
         )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
+    model = cad_geometry_bundle(domain).model
+    arguments = (
+        model,
+        np.full((model.surface_nodes.size,), 0.3, dtype=np.float64),
+        np.full((model.surface_nodes.size,), 0.4, dtype=np.float64),
+        np.full((model.curve_nodes.size,), np.inf, dtype=np.float64),
+    )
+    result = cad_mesh_solid(*arguments, geometry_order=order)
+    assert result.status is MeshcoreStatus.OK
+    surface, volume = result.surface, result.volume
+    stats = volume.stats[0]
+    assert stats["recovery_status"] == 0 and stats["boundary_splits"] == 0
+    assert stats["unmet_cells"] == 0
+    assert all(stats[f"{s}_ns"] > 0 for s in ("curve", "face", "volume"))
+    count = surface.points.shape[0]
+    np.testing.assert_array_equal(volume.points[:count], surface.points)
+    cells = volume.tetrahedra
+    corners = volume.points[cells]
+    determinant = np.linalg.det(corners[:, 1:] - corners[:, :1])
+    assert np.all(determinant > 0.0)
+    assert np.all(volume.tetrahedron_regions == 0)
+    # Each surface triangle is the face its boundary row names.
+    cell, local = volume.boundary_faces[:, 0], volume.boundary_faces[:, 1]
+    faces = np.stack([cells[cell, (local + k) % 4] for k in (1, 2, 3)], axis=1)
+    np.testing.assert_array_equal(
+        np.sort(faces, axis=1), np.sort(surface.triangles, axis=1)
+    )
+    if order == 1:
+        assert volume.edges.shape[0] == 0 and volume.cell_edges.shape[0] == 0
+        assert stats["quadratic_ns"] == 0
+    else:
+        assert np.all(volume.cell_decisions == 0)
+        curved = volume.edge_kinds != 0
+        nodes = volume.nodes[curved]
+        # On the z cylinder (r 1), the x cylinder (r 0.6) or a planar cap.
+        residual = np.min(
+            np.stack(
+                [
+                    np.abs(np.hypot(nodes[:, 0], nodes[:, 1]) - 1.0),
+                    np.abs(np.hypot(nodes[:, 1], nodes[:, 2]) - 0.6),
+                    np.abs(np.abs(nodes[:, 2]) - 1.2),
+                    np.abs(np.abs(nodes[:, 0]) - 1.5),
+                ]
+            ),
+            axis=0,
+        )
+        assert curved.any() and np.max(residual) < 1e-12
+    again = cad_mesh_solid(*arguments, geometry_order=order)
+    np.testing.assert_array_equal(again.volume.points, volume.points)
+    np.testing.assert_array_equal(again.volume.tetrahedra, cells)
+    np.testing.assert_array_equal(again.volume.nodes, volume.nodes)
+
+
+def _cad_volume_plan(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    order: int,
+    /,
+    *,
+    radius_edge: float = 2.0,
+    dihedral: float = 15.5,
+) -> phx.meshing.NativeMeshingPlan:
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(
+            3, 3, CellFamilyPolicy(required=("tetrahedron",)), geometry_order=order
+        ),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, size),),
+        maximum_deviation=0.05,
+    )
+    return phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=radius_edge, minimum_dihedral_degrees=dihedral
+            ),
+        )
+    ).plan(model, specification)
+
+
+def _sphere_model() -> phx.geometry.brep.BRepModel:
+    return phx.geometry.brep.brep_sphere(
+        0.5,
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="native-cad-route-sphere",
+    )
+
+
+@pytest.mark.parametrize("order", [1, 2])
+@pytest.mark.parametrize(
+    ("name", "size", "radius"),
+    [("quadric", 0.3, None), ("sphere", 0.2, 0.5)],
+)
+def test_unproved_cad_solid_takes_the_native_route(
+    name: str, size: float, radius: float | None, order: int
+) -> None:
+    from phydrax.meshing import CellMeshingCandidate
+
+    model = _quadric_model() if name == "quadric" else _sphere_model()
+    candidate = _cad_volume_plan(model, size, order).execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.route == "cad_tetrahedral"
+    mesh = candidate.mesh
+    assert mesh.topological_dimension == 3 and len(mesh.blocks) == 1
+    cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    corners = points[cells]
+    assert np.all(np.linalg.det(corners[:, 1:] - corners[:, :1]) > 0.0)
+    # The boundary is closed: every boundary face occurs once.
+    faces = np.sort(
+        np.concatenate(
+            [
+                cells[:, [1, 2, 3]],
+                cells[:, [0, 2, 3]],
+                cells[:, [0, 1, 3]],
+                cells[:, [0, 1, 2]],
+            ]
+        ),
+        axis=1,
+    )
+    unique, counts = np.unique(faces, axis=0, return_counts=True)
+    assert set(counts.tolist()) == {1, 2}
+    boundary = np.unique(unique[counts == 1])
+    if radius is not None:
+        np.testing.assert_allclose(
+            np.linalg.norm(points[boundary], axis=1), radius, atol=1e-12
+        )
+    # Volume of the native mesh is the solid's within its deviation.
+    volume = float(np.sum(np.linalg.det(corners[:, 1:] - corners[:, :1])) / 6.0)
+    expected = 4.0 / 3.0 * np.pi * radius**3 if radius is not None else None
+    if expected is not None:
+        assert 0.9 * expected < volume < expected
+    geometry = candidate.geometry
+    assert geometry.elements[0].local_dof_count == (4 if order == 1 else 10)
+    report = candidate._construction.compliance
+    assert "maximum_deviation" not in dict(report.achieved)
+
+
+def test_proved_cad_solid_keeps_the_python_route() -> None:
+    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+    from phydrax.meshing._result import CellMeshingResult
+
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    assert isinstance(result, CellMeshingResult)
+    assert result.certification is not None and result.certification.passed
+    witness = result.certification.inputs.fidelity_witness
+    # The Python construction's CAD ancestry, absent from the native route.
+    assert isinstance(witness, SourceBoundaryChartWitness)
+    assert witness.cad_plc is not None
+    assert result.mesh.blocks[0].name != "native-cad-tetrahedra"
+
+
+def test_proved_quadratic_cad_solid_is_refused() -> None:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
+    with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
+        plan.execute()
+
+
+@pytest.mark.parametrize("order", [1, 2])
+def test_native_cad_candidate_prove_is_refused(order: int) -> None:
+    # Until the native verifiers are accepted, a native candidate has no
+    # witness: prove() refuses it rather than certify it or rebuild the
+    # Python mesh.
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing.providers._native_cad_mesh import (
+        NATIVE_CAD_SOLID_UNCERTIFIABLE,
+    )
+
+    candidate = _cad_volume_plan(_sphere_model(), 0.3, order).execute(prove=False)
+    with pytest.raises(MeshingFailure) as failure:
+        candidate.prove()
+    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
+    assert str(failure.value) == NATIVE_CAD_SOLID_UNCERTIFIABLE
+    assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
+
+
+def test_invalid_trim_cad_solid_is_refused_at_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A p-curve without a chart enclosure is invalid source for every proof
+    # level: planning refuses it before any construction.
+    from phydrax.geometry._meshing_domain import SourcePreparation
+    from phydrax.meshing._contracts import MeshingFailure
+
+    def no_enclosure(*_: object) -> np.ndarray:
+        raise ValueError("p-curve enclosure diverges")
+
+    monkeypatch.setattr(SourcePreparation, "curve_box", no_enclosure)
+    with pytest.raises(MeshingFailure, match="requires a continuous p-curve enclosure"):
+        _cad_volume_plan(_sphere_model(), 0.3, 1)
+
+
+def test_incomplete_trim_cover_is_refused_at_proof_not_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Trim cover coverage is proof preparation: the plan and the unproved
+    # native candidate do not consume it; the proved execution refuses.
+    from types import SimpleNamespace
+
+    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import MeshingFailure
+
+    monkeypatch.setattr(
+        MeshingDomainBoundarySource,
+        "boundary_chart_cover",
+        lambda *_, **__: SimpleNamespace(complete=False),
+    )
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
+    assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
+    with pytest.raises(
+        MeshingFailure,
+        match="does not provide complete selected-patch coverage",
+    ):
+        plan.execute()
+
+
+def test_cad_volume_proof_preparation_runs_once_on_first_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing.providers._native_surface as native_surface
+
+    calls: list[native_surface.NativeSurfaceRequest] = []
+    prepare = native_surface.prepare_native_surface_proof
+
+    def counted(
+        request: native_surface.NativeSurfaceRequest,
+    ) -> native_surface._PreparedNativeSurface:
+        calls.append(request)
+        return prepare(request)
+
+    monkeypatch.setattr(native_surface, "prepare_native_surface_proof", counted)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
+    plan.execute(prove=False)
+    assert not calls
+    first = plan.execute()
+    second = plan.execute()
+    assert len(calls) == 1
+    assert first.certification is not None and first.certification.passed
+    assert second.mesh.mesh_id == first.mesh.mesh_id
+
+
+def test_unproved_cad_solid_with_region_control_honours_it() -> None:
+    # The native candidate has no organization records, so a region control
+    # keeps the existing construction, whose candidate carries the control.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing._controls import RegionControl, RegionSeed
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = _sphere_model()
+    domain = MeshingDomain.from_brep(model)
+    boundary = MeshingScope.whole(model, 2)
+    region_scope = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        3,
+        domain.scope_entity_set_id(3),
+        np.asarray(domain.scope_entity_ids(3)[:1], dtype=np.int64),
+    )
+    region_name = domain.regions[0].name
+    control = RegionControl(
+        region_scope, region_name, "controlled-solid", RegionRole.SOLID
+    )
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.3),),
+        region_controls=(control,),
+        region_seeds=(
+            RegionSeed(
+                np.zeros(3, dtype=np.float64),
+                region_name,
+                "seed-material",
+                RegionRole.SOLID,
+            ),
+        ),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
+        )
+    ).plan(model, specification)
+    candidate = plan.execute(prove=False)
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.mesh.blocks[0].name != "native-cad-tetrahedra"
+    (evidence,) = candidate._construction.organization.region_boundary_evidence
+    assert evidence.control_id == control.control_id
+    assert evidence.material_id == "controlled-solid"
+
+
+def _field_specification(
+    field: str, model: phx.geometry.brep.BRepModel
+) -> VolumeMeshingSpec:
+    """A coarse sphere specification that sets only ``field``."""
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._controls import (
+        FeatureKind,
+        HoleSeed,
+        PeriodicConstraint,
+        ProtectedFeature,
+        RegionSeed,
+    )
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import (
+        CurvatureSizeControl,
+        SizeCompliancePolicy,
+        SizeControl,
+        UniformSizeControl,
+    )
+
+    boundary = MeshingScope.whole(model, 2)
+    solid = MeshingScope.whole(model, 3)
+    tetrahedra = CellFamilyPolicy(required=("tetrahedron",))
+    size = UniformSizeControl(boundary, 0.3)
+
+    def build(
+        *,
+        families: CellFamilyPolicy = tetrahedra,
+        fill: VolumeFillStrategy = VolumeFillStrategy.SIMPLEX,
+        size_controls: tuple[SizeControl, ...] = (size,),
+        protected_features: tuple[ProtectedFeature, ...] = (),
+        region_seeds: tuple[RegionSeed, ...] = (),
+        hole_seeds: tuple[HoleSeed, ...] = (),
+        periodic_constraints: tuple[PeriodicConstraint, ...] = (),
+        size_compliance: SizeCompliancePolicy | None = None,
+        maximum_deviation: float | None = 0.05,
+    ) -> VolumeMeshingSpec:
+        return VolumeMeshingSpec(
+            CellMeshingTarget(3, 3, families),
+            boundary,
+            fill,
+            size_controls=size_controls,
+            protected_features=protected_features,
+            region_seeds=region_seeds,
+            hole_seeds=hole_seeds,
+            periodic_constraints=periodic_constraints,
+            size_compliance=size_compliance,
+            maximum_deviation=maximum_deviation,
+        )
+
+    match field:
+        case "protected_features":
+            return build(
+                protected_features=(
+                    ProtectedFeature(
+                        boundary, FeatureKind.SURFACE, maximum_deviation=0.05
+                    ),
+                )
+            )
+        case "region_seeds":
+            region = MeshingDomain.from_brep(model).regions[0].name
+            return build(
+                region_seeds=(
+                    RegionSeed(np.zeros(3), region, "seeded", RegionRole.SOLID),
+                )
+            )
+        case "hole_seeds":
+            return build(hole_seeds=(HoleSeed(np.zeros(3), solid),))
+        case "size_maximum":
+            return build(
+                size_controls=(UniformSizeControl(boundary, 0.2, maximum_size=0.2),)
+            )
+        case "size_compliance":
+            return build(
+                size_controls=(UniformSizeControl(boundary, 0.2),),
+                size_compliance=SizeCompliancePolicy(target_statistics=("p95",)),
+            )
+        case "size_curvature":
+            return build(size_controls=(size, CurvatureSizeControl(boundary, 0.5)))
+        case "size_growth":
+            return build(
+                size_controls=(
+                    UniformSizeControl(boundary, 0.3, maximum_growth_rate=1.2),
+                )
+            )
+        case "size_volume_scope":
+            return build(size_controls=(UniformSizeControl(solid, 0.3),))
+        case "periodic_constraints":
+            return build(
+                periodic_constraints=(PeriodicConstraint(boundary, boundary, np.eye(4)),)
+            )
+        case "maximum_deviation":
+            return build(maximum_deviation=None)
+        case "cell_families":
+            return build(families=CellFamilyPolicy(required=("hexahedron",)))
+        case "fill_strategy":
+            return build(fill=VolumeFillStrategy.POLYHEDRAL)
+    raise AssertionError(field)
+
+
+_FIELD_OUTCOMES = (
+    ("protected_features", "existing"),
+    ("region_seeds", "existing"),
+    ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
+    ("size_maximum", "native"),
+    ("size_compliance", "native"),
+    ("size_curvature", "supports uniform size controls on source faces only"),
+    ("size_growth", "patch-size growth controls without a source geodesic"),
+    ("size_volume_scope", "size controls must bind source face occurrences"),
+    ("periodic_constraints", "does not support periodic constraints"),
+    ("maximum_deviation", "requires an explicit maximum_deviation"),
+    ("cell_families", "a tetrahedral volume target"),
+    ("fill_strategy", "the simplex volume-fill strategy"),
+)
+
+
+@pytest.mark.parametrize(
+    ("field", "outcome"),
+    _FIELD_OUTCOMES,
+    ids=[field for field, _ in _FIELD_OUTCOMES],
+)
+def test_unproved_cad_solid_honours_or_refuses_every_field(
+    field: str, outcome: str
+) -> None:
+    # No specification field is silently dropped by the native route: it is
+    # honoured there (reported size statistics), the plan keeps the existing
+    # construction, or planning/execution refuses it with a stated reason.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import MeshingFailure
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = _sphere_model()
+
+    def execute() -> CellMeshingCandidate:
+        specification = _field_specification(field, model)
+        candidate = (
+            phx.meshing.NativeMeshingProvider(
+                NativeMeshingOptions(
+                    "cad_tetrahedral",
+                    volume_schedule=NativeVolumeSchedule(
+                        radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+                    ),
+                )
+            )
+            .plan(model, specification)
+            .execute(prove=False)
+        )
+        assert isinstance(candidate, CellMeshingCandidate)
+        return candidate
+
+    if outcome not in {"native", "existing"}:
+        with pytest.raises(MeshingFailure, match=re.escape(outcome)):
+            execute()
+        return
+    candidate = execute()
+    native = candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+    assert native == (outcome == "native")
+    specification = _field_specification(field, model)
+    report = candidate._construction.compliance
+    if field == "region_seeds":
+        organization = candidate._construction.organization
+        assert organization is not None
+        assert [zone.material_id for zone in organization.zones] == ["seeded"]
+    if field == "protected_features":
+        (feature,) = specification.protected_features
+        key = f"protected:{feature.feature_id}:maximum_deviation"
+        assert dict(report.requested)[key] == 0.05
+        assert key in dict(report.achieved)
+    if not native:
+        return
+    (control,) = specification.size_controls
+    assert isinstance(control, UniformSizeControl)
+    policy = specification.size_compliance
+    requested, achieved = dict(report.requested), dict(report.achieved)
+    # Requested value and the bound its row is an issue above.
+    bounds = {
+        name: (
+            control.target_size,
+            control.target_size * (1.0 + policy.relative_tolerance)
+            + policy.absolute_tolerance,
+        )
+        for name in policy.target_statistics
+    }
+    if control.maximum_size is not None:
+        bounds["maximum"] = (control.maximum_size, control.maximum_size)
+    rows = {key for key in achieved if key.startswith("size:")}
+    assert rows == {f"size:{control.control_id}:{name}" for name in bounds}
+    for name, (target, allowed) in bounds.items():
+        key = f"size:{control.control_id}:{name}"
+        assert requested[key] == target
+        assert (key in report.issues) == (achieved[key] > allowed)
+
+
+@pytest.mark.parametrize(
+    ("shape", "deviation"),
+    [("sphere", 0.0), ("box", 1e-12)],
+    ids=["curved-zero", "planar-tiny"],
+)
+def test_unattainable_protected_surface_deviation_is_refused_promptly(
+    shape: str, deviation: float
+) -> None:
+    # A curved feature never meets a zero (or near-zero) chord deviation: its
+    # curve sampling stops at the surface schedule's sample budget with the
+    # unmet deviation and the feature that set it. The same tiny bound on a
+    # planar feature is met (straight chords certify at rounding level), so
+    # the refusal is the budget, not the requested value.
+    from phydrax.meshing import CellMeshingCandidate
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingFailure,
+        MeshingFailureCategory,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    model = (
+        _sphere_model()
+        if shape == "sphere"
+        else phx.geometry.brep.brep_box(
+            (0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0),
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+    )
+    boundary = MeshingScope.whole(model, 2)
+    feature = ProtectedFeature(boundary, FeatureKind.SURFACE, maximum_deviation=deviation)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, 0.5),),
+        protected_features=(feature,),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions(
+            "cad_tetrahedral",
+            volume_schedule=NativeVolumeSchedule(
+                radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
+            ),
+        )
+    ).plan(model, specification)
+    if shape == "box":
+        assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
+        return
+    with pytest.raises(
+        MeshingFailure, match="did not meet its chord deviation"
+    ) as raised:
+        plan.execute(prove=False)
+    failure = raised.value
+    assert failure.category is MeshingFailureCategory.COMPLIANCE_FAILED
+    evidence = failure.evidence
+    assert dict(evidence.requested_quantities)["maximum_deviation"] == deviation
+    assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > deviation
+    assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
+
+
+def test_curve_sample_budget_of_a_surface_schedule_bounds_curve_sampling() -> None:
+    # A non-default sample budget bounds the same unmet curved chord limit
+    # (a hard protected surface at 1e-12) in fewer samples; the budget enters
+    # the schedule identity only when it differs from the default.
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingFailure,
+        MeshingFailureCategory,
+        SurfaceMeshingSpec,
+    )
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._scope import MeshingScope
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+    from phydrax.meshing.providers._native_schedules import (
+        DEFAULT_MAXIMUM_CURVE_SAMPLES,
+        NativeSurfaceSchedule,
+    )
+
+    default = NativeSurfaceSchedule()
+    assert (
+        NativeSurfaceSchedule(
+            maximum_curve_samples=DEFAULT_MAXIMUM_CURVE_SAMPLES
+        ).schedule_id
+        == default.schedule_id
+    )
+    schedule = NativeSurfaceSchedule(maximum_curve_samples=256)
+    assert schedule.schedule_id != default.schedule_id
+    model = _sphere_model()
+    scope = MeshingScope.whole(model, 2)
+    feature = ProtectedFeature(scope, FeatureKind.SURFACE, maximum_deviation=1e-12)
+    specification = SurfaceMeshingSpec(
+        CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
+        scope,
+        size_controls=(UniformSizeControl(scope, 0.5),),
+        protected_features=(feature,),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions("parametric_surface", surface_schedule=schedule)
+    ).plan(model, specification)
+    with pytest.raises(MeshingFailure, match="within 256 samples") as raised:
+        plan.execute(prove=False)
+    failure = raised.value
+    assert failure.category is MeshingFailureCategory.COMPLIANCE_FAILED
+    evidence = failure.evidence
+    requested = dict(evidence.requested_quantities)
+    assert requested == {"maximum_curve_samples": 256.0, "maximum_deviation": 1e-12}
+    assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > 1e-12
+    assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
