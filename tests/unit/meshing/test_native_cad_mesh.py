@@ -129,25 +129,36 @@ def _assert_cad_fidelity(
         measured[rows] = np.max(np.linalg.norm(exact - linear, axis=2), axis=1)
         # V3 associates sphere pole-region rows in the pole chart
         # (x, y) = rho (cos u, sin u): their reference is sampled there.
-        poles = np.asarray(model.use_kinds)[chart.chord_use[chart.use_patch[chart.chord_use] == patch]]
+        poles = np.asarray(model.use_kinds)[
+            chart.chord_use[chart.use_patch[chart.chord_use] == patch]
+        ]
         if np.any(poles == 1):
             half = np.float64(np.pi / 2)
             for sigma in (1.0, -1.0):
-                local = np.flatnonzero((uv[:, :, 1] == sigma * half).any(axis=1)
-                                       | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(axis=1))
+                local = np.flatnonzero(
+                    (uv[:, :, 1] == sigma * half).any(axis=1)
+                    | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(
+                        axis=1
+                    )
+                )
                 if local.size == 0 or not np.any(uv[:, :, 1] == sigma * half):
                     continue
                 rho = half - sigma * uv[local, :, 1]
                 pole = uv[local, :, 1] == sigma * half
                 x = np.where(pole, 0.0, rho * np.cos(uv[local, :, 0])) @ weights.T
                 y = np.where(pole, 0.0, rho * np.sin(uv[local, :, 0])) @ weights.T
-                chart_points = np.stack((np.arctan2(y, x), sigma * (half - np.hypot(x, y))), axis=-1)
+                chart_points = np.stack(
+                    (np.arctan2(y, x), sigma * (half - np.hypot(x, y))), axis=-1
+                )
                 pole_exact = np.asarray(
-                    surface.evaluate(jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)),
+                    surface.evaluate(
+                        jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)
+                    ),
                     dtype=np.float64,
                 ).reshape((local.size, len(weights), 3))
                 measured[rows[local]] = np.max(
-                    np.linalg.norm(pole_exact - linear[local], axis=2), axis=1)
+                    np.linalg.norm(pole_exact - linear[local], axis=2), axis=1
+                )
     lower, upper = coefficient_bounds(cad_geometry_bundle(domain), domain)
     mesh = CadFidelityMesh(
         result.points,
@@ -485,7 +496,9 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
     # shorter than h / 10, and the volume stage does bounded work (the sphere
     # resolves without improvement; the thin caps and cones may leave
     # coarse-quality targets unmet, promptly).
-    model = cad_geometry_bundle(MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())).model
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())
+    ).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
     for size in (0.4, 0.6, 0.8):
         for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
