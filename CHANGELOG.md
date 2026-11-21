@@ -452,8 +452,10 @@
   certificates, the Python proofs remaining for meshes without meshcore and
   undecided cells; domain-coverage source matching is screened by outward
   boxes and binary64 separation before the exact overlap test, and contained
-  triangle overlaps are taken directly. Conforming Voronoi at ~1e3 cells
-  certifies about 9x (cube) and 4x (sphere) faster, certificates unchanged.
+  triangle overlaps are taken directly; coverage overlaps, shell measures and
+  face triangulation are batched with identical results. Certified conforming
+  Voronoi at ~1e3 cells: cube 18.9 s, sphere 27.0 s (from several minutes),
+  certificates unchanged.
 - Native prism layers on CAD walls are measured from the source surface:
   `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
   into the layer domain, shape operator); a smooth sector framed at every
