@@ -14,8 +14,10 @@
   from its exact vertex average; requests use
   `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
   gives the hexahedron fraction by shape); `prove=True` certifies cell
-  validity, the global embedding and the boundary fidelity (quadric without
-  layers, 77k cells: about 23 min and 14 GB), the proof-only fidelity
+  validity (every cell a star about both its centroid and its exact vertex
+  average, which smoothing and repair maintain), the global embedding and the
+  boundary fidelity (20 to 25 min and 14 to 22 GB on the 77k to 98k cell
+  rows, against about 5 s for `prove=False`), the proof-only fidelity
   preparation built on the first proved execution. `plc_hex_dominant`
   remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
@@ -24,10 +26,9 @@
   centroid geometry it has computed and the final repair search stops scoring
   a move that cannot improve (about 25 % faster, identical meshes). New
   benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
-  `cartesianMesh` ceilings, measured with `prove=False`): all four are faster
-  than cfMesh with every quality field at least as good; with wall layers
-  `prove=True` currently refuses on the quadric (a few cells are not
-  star-shaped about their vertex average). At convex feature curves wall layers do not
+  `cartesianMesh` ceilings, timed with `prove=False`): all four are faster
+  than cfMesh with every quality field at least as good, and each row's mesh
+  certifies with `prove=True`. At convex feature curves wall layers do not
   wrap the curve: each side's layers stop at a corner hexahedron column along
   the curve, a curve segment whose chord lies farther from the curve than any
   wall edge from its patch gains a midpoint on the exact curve, and patch
