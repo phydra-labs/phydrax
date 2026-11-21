@@ -3102,8 +3102,8 @@ def _hexdom_quality(
     # Distances (the ledger's meas.py): wall faces fanned about their vertex
     # mean; mesh -> surface at 28 lattice points per triangle, surface ->
     # mesh at 2e5 surface points, exact: the 16 nearest triangles bound the
-    # distance, then every triangle whose centroid distance minus its
-    # circumradius about the centroid is within the bound is checked.
+    # distance, then every triangle whose centroid distance minus its largest
+    # vertex distance from the centroid is within the bound is checked.
     wall_rows = np.flatnonzero(~inner[rows])
     fan = np.stack(
         (first[wall_rows], second[wall_rows], average[rows[wall_rows]]), axis=1
@@ -3120,9 +3120,9 @@ def _hexdom_quality(
             float(np.max(_f8_distance(case.model, block.reshape((-1, 3))))),
         )
     samples = _f8_samples(case.model, 200_000)
-    centres = fan.mean(axis=1)
-    radius = np.max(np.linalg.norm(fan - centres[:, None, :], axis=2), axis=1)
-    tree = cKDTree(centres)
+    centers = fan.mean(axis=1)
+    radius = np.max(np.linalg.norm(fan - centers[:, None, :], axis=2), axis=1)
+    tree = cKDTree(centers)
     _, nearest = tree.query(samples, k=16)
     best = np.min(
         _point_triangle_distances(
@@ -3144,7 +3144,7 @@ def _hexdom_quality(
             count=sample_rows.size,
         )
         keep = (
-            np.linalg.norm(samples[sample_rows] - centres[candidates], axis=1)
+            np.linalg.norm(samples[sample_rows] - centers[candidates], axis=1)
             - radius[candidates]
             <= best[sample_rows]
         )

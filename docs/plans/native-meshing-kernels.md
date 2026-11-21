@@ -353,7 +353,8 @@ tetrahedra, then implicit volumes, then the CAD solid.
     patch vertices next to the curve slide along their patch only when local skewness and wall
     deviation do not increase. Quadric L2: Hausdorff 2.83e-4 to 1.905e-4, skewness 0.992 to
     0.745. The benchmark's surface-to-mesh distance is exact (16 nearest centroids give a bound,
-    every triangle within centroid distance minus circumradius is checked), equal to brute force
+    every triangle within centroid distance minus its largest vertex distance from the centroid
+    is checked), equal to brute force
     bitwise; the F8 cfMesh values did not move.
     Accepted rows (prove=False, three interleaved rounds against cfMesh; seconds ours / cfMesh):
     sphere L0 5.05-5.36 / 8.96-9.17, sphere L2 5.35-5.68 / 8.45-8.76, quadric L0 4.55-4.67 /
