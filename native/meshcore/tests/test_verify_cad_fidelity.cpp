@@ -446,15 +446,15 @@ ArcFixture arc_fixture() {
   return f;
 }
 
-// F4 (demo_d): the neighbour row A C D contains (-0.3, 0.15), inside the
+// F4 (demo_d): the neighbor row A C D contains (-0.3, 0.15), inside the
 // arc's circle, so 2.125 - |(-0.3, 0.15) - (0, -1.875)| = 0.0779 from the
-// trimmed face; only the owner row has the chord (neighbour 2.4e-15
+// trimmed face; only the owner row has the chord (neighbor 2.4e-15
 // before). Fault caught: a lens charged to its owner row only.
-void lens_charged_to_neighbours() {
+void lens_charged_to_neighbors() {
   const ArcFixture f = arc_fixture();
   const Verdict verdict = verify(f.model, f.mesh, 0.5, 8);
   const double truth = 2.125 - std::hypot(-0.3, 0.15 + 1.875);
-  std::printf("F4 lens: status %d neighbour %.6e (status %d) owner %.6e true %.6e\n",
+  std::printf("F4 lens: status %d neighbor %.6e (status %d) owner %.6e true %.6e\n",
               verdict.status, verdict.upper[1], verdict.item_status[1], verdict.upper[0], truth);
   PHX_CHECK(verdict.findings.empty());
   PHX_CHECK(verdict.item_status[1] != PHX_MC_OK || verdict.upper[1] >= truth);
@@ -822,7 +822,7 @@ void carrier_inside_domain_leaf() {
       PHX_CHECK(result.status != PHX_MC_OK || result.upper >= truth);
       if (factor >= 2.0) PHX_CHECK(result.status == PHX_MC_OK && result.subdivisions <= 16);
       // S is quadratic in t with a constant Hessian here: the remainder about
-      // the box centre (half_extent) is sharp (2x truth with box extents).
+      // the box center (half_extent) is sharp (2x truth with box extents).
       if (kind > 0) PHX_CHECK(result.status == PHX_MC_OK && result.upper <= 1.0625 * truth);
     }
   }
@@ -1018,10 +1018,10 @@ void lens_index_overflow() {
 // sampled deviation or the jets miss S); a displaced pole or band vertex
 // must refuse at the tolerance; a non-sphere face is refused.
 void pole_chart_rows() {
-  const double r = 2.0, centre[3] = {0.5, -0.25, 1.0}, top = M_PI / 2;
+  const double r = 2.0, center[3] = {0.5, -0.25, 1.0}, top = M_PI / 2;
   Model m;
   const int32_t sphere =
-      m.add_template("sphere", {centre[0], centre[1], centre[2], 1, 0, 0, 0, 1, 0, 0, 0, 1, r});
+      m.add_template("sphere", {center[0], center[1], center[2], 1, 0, 0, 0, 1, 0, 0, 0, 1, r});
   m.surface(sphere);
   m.surface(m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0}));
   const phx_mc_cad_model view = m.view();
@@ -1032,8 +1032,8 @@ void pole_chart_rows() {
   EvaluationWorkspace point_workspace;
   const auto reference = [&](double x, double y, int sigma) {
     const double rho = std::hypot(x, y), g = rho == 0.0 ? 1.0 : std::sin(rho) / rho;
-    return std::array<double, 3>{centre[0] + r * g * x, centre[1] + r * g * y,
-                                 centre[2] + sigma * r * std::cos(rho)};
+    return std::array<double, 3>{center[0] + r * g * x, center[1] + r * g * y,
+                                 center[2] + sigma * r * std::cos(rho)};
   };
   // Jets enclose the source map at the matching chart point.
   for (int sigma : {1, -1})
@@ -1099,7 +1099,7 @@ void pole_chart_rows() {
           for (int axis = 0; axis < 3; ++axis) {
             const double p = w[0] * points[axis] + w[1] * points[3 + axis] + w[2] * points[6 + axis];
             deviation += (s[static_cast<std::size_t>(axis)] - p) * (s[static_cast<std::size_t>(axis)] - p);
-            radius += (p - centre[axis]) * (p - centre[axis]);
+            radius += (p - center[axis]) * (p - center[axis]);
           }
           sampled = std::max(sampled, std::sqrt(deviation));
           distance = std::max(distance, std::fabs(std::sqrt(radius) - r));
@@ -1119,7 +1119,7 @@ void pole_chart_rows() {
       double shifted[9];
       std::copy(points, points + 9, shifted);
       for (int axis = 0; axis < 3; ++axis)
-        shifted[3 * moved + axis] += 0.05 * (points[3 * moved + axis] - centre[axis]);
+        shifted[3 * moved + axis] += 0.05 * (points[3 * moved + axis] - center[axis]);
       const auto refused = fidelity_pole_triangle(geometry, 0, shifted, uv, sigma, row.mask,
                                                   tolerance, 12, workspace);
       PHX_CHECK(refused.status == PHX_MC_UNRESOLVED);
@@ -1392,7 +1392,7 @@ void pole_region_turns_and_charges() {
   full_turn_charges(3, 8, 1.0);
   full_turn_charges(4, 3, 1.0);
   // Interface ring at latitude 0.25 (rho 1.32, pole-chart sag factor 1.52 vs
-  // the uv chart's 1.03): the neighbour charge decides.
+  // the uv chart's 1.03): the neighbor charge decides.
   full_turn_charges(4, 3, 1.0, -0.409);
   // MAC 69172b0's witness: the octant, 4 x 4 grid, tol 7.711e-2 certified
   // with max 7.468e-2 before the angular charge refused 24 of its 32 rows.
@@ -1433,24 +1433,24 @@ void full_turn_charges(int columns, int rows_count, double tolerance, double low
                mesh.uv[6 * s + 2 * static_cast<std::size_t>(b) + 1];
   };
   int interface_edges = 0;
-  double row_ratio = std::numeric_limits<double>::infinity(), neighbour_ratio = row_ratio;
+  double row_ratio = std::numeric_limits<double>::infinity(), neighbor_ratio = row_ratio;
   double largest_cap = 0.0;
-  std::size_t cap_row = 0, cap_neighbour = 0;
+  std::size_t cap_row = 0, cap_neighbor = 0;
   for (std::size_t r = 0; r < rows; ++r) {
     if (!region[r]) continue;
     for (int k = 0; k < 3; ++k) {
       const int a = k, b = (k + 1) % 3;
-      std::size_t neighbour = rows;
+      std::size_t neighbor = rows;
       bool inside = false;
       for (std::size_t s = 0; s < rows; ++s) {
         if (s == r) continue;
         for (int l = 0; l < 3; ++l)
           if (same(r, a, s, (l + 1) % 3) && same(r, b, s, l)) {
             if (region[s]) inside = true;
-            else neighbour = s;
+            else neighbor = s;
           }
       }
-      if (inside || neighbour == rows) continue;
+      if (inside || neighbor == rows) continue;
       double uv_a[2], uv_b[2], c[2][2], out[3];
       for (int axis = 0; axis < 2; ++axis) {
         uv_a[axis] = mesh.uv[6 * r + 2 * static_cast<std::size_t>(a) + static_cast<std::size_t>(axis)];
@@ -1467,25 +1467,25 @@ void full_turn_charges(int columns, int rows_count, double tolerance, double low
       const double* x_b = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(b)];
       PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, 1, uv_a, uv_b, c[0], c[1], x_a, x_b, out) ==
                 PHX_MC_OK);
-      PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[neighbour] >= out[0]);
+      PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[neighbor] >= out[0]);
       row_ratio = std::min(row_ratio, verdict.upper[r] / out[0]);
-      neighbour_ratio = std::min(neighbour_ratio, verdict.upper[neighbour] / out[0]);
+      neighbor_ratio = std::min(neighbor_ratio, verdict.upper[neighbor] / out[0]);
       ++interface_edges;
-      if (out[0] > largest_cap) largest_cap = out[0], cap_row = r, cap_neighbour = neighbour;
+      if (out[0] > largest_cap) largest_cap = out[0], cap_row = r, cap_neighbor = neighbor;
     }
   }
   std::printf("P full turn %dx%d: status %d interface edges %d min upper/cap row %.6f "
-              "neighbour %.6f\n",
-              columns, rows_count, verdict.status, interface_edges, row_ratio, neighbour_ratio);
+              "neighbor %.6f\n",
+              columns, rows_count, verdict.status, interface_edges, row_ratio, neighbor_ratio);
   PHX_CHECK(interface_edges > 0);
   // Just below the largest cap both adjacent rows must refuse: the cap is
-  // charged to each, whatever their own bounds (the uv neighbour's own bound
+  // charged to each, whatever their own bounds (the uv neighbor's own bound
   // can be well below a cap set by the pole-chart edge).
   const Verdict tight = verify(g.model, g.mesh, 0.999 * largest_cap, 12);
-  std::printf("P full turn %dx%d at 0.999 cap: row status %d neighbour status %d\n", columns,
-              rows_count, tight.item_status[cap_row], tight.item_status[cap_neighbour]);
+  std::printf("P full turn %dx%d at 0.999 cap: row status %d neighbor status %d\n", columns,
+              rows_count, tight.item_status[cap_row], tight.item_status[cap_neighbor]);
   PHX_CHECK(tight.item_status[cap_row] != PHX_MC_OK &&
-            tight.item_status[cap_neighbour] != PHX_MC_OK);
+            tight.item_status[cap_neighbor] != PHX_MC_OK);
 }
 
 // Both poles of one full sphere face, two latitude bands meeting at latitude
@@ -1603,14 +1603,14 @@ void trimmed_pole_regions() {
 
 // A planar disk charted by the revolution of the radial line (0,0,0) + v
 // (1,0,0) about z, v in [0, 1], u in [0, 2 pi]: the chart is singular at the
-// centre v = 0 (a pole chord there). The centre's fan rows take the
-// disk-centre chart (x, y) = v (cos u, sin u), where S is affine: their own
+// center v = 0 (a pole chord there). The center's fan rows take the
+// disk-center chart (x, y) = v (cos u, sin u), where S is affine: their own
 // deviation is rounding only, and they carry the seam lens of their ring
 // edges. Certifies at 0.05 with every fan row's bound below 1e-2 (4.5e-2 in
-// the uv chart); the centre vertex lifted by 0.1 refuses every fan row. Fault
-// caught: a disk centre left in the uv chart, or a centre frame accepting a
+// the uv chart); the center vertex lifted by 0.1 refuses every fan row. Fault
+// caught: a disk center left in the uv chart, or a center frame accepting a
 // displaced vertex.
-void disk_centre_rows() {
+void disk_center_rows() {
   Model m;
   const int32_t radial = m.add_template("line3", {0, 0, 0, 1, 0, 0});
   const int32_t disk = m.add(PHX_MC_CAD_NODE_REVOLUTION, {radial}, {0, 0, 0, 0, 0, 1});
@@ -1620,7 +1620,7 @@ void disk_centre_rows() {
   for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
   const double span = 2.0 * 0x1.921fb54442d18p+1;
   const int columns = 16, rows = 3;
-  // Loop: centre (pole, v = 0), meridian at span, rim v = 1, meridian at 0.
+  // Loop: center (pole, v = 0), meridian at span, rim v = 1, meridian at 0.
   const double ends[4][2] = {{0, 0}, {span, 0}, {span, 1}, {0, 1}};
   for (int k = 0; k < 4; ++k) {
     const double* p = ends[k];
@@ -1649,7 +1649,7 @@ void disk_centre_rows() {
       PHX_CHECK(geometry.jets(disk, point, 0, xyz, point_workspace));
       std::copy(xyz, xyz + 3, mesh.points.begin() + 3 * id(i, j));
     }
-  // Boundary side: 0 centre, 1 meridian at span, 2 rim, 3 meridian at 0.
+  // Boundary side: 0 center, 1 meridian at span, 2 rim, 3 meridian at 0.
   const auto side = [&](int i0, int j0, int i1, int j1) {
     if (j0 == 0 && j1 == 0) return 0;
     if (i0 == columns && i1 == columns) return 1;
@@ -1711,11 +1711,11 @@ void disk_centre_rows() {
         break;
       }
   }
-  std::printf("P disk centre: status %d fan rows %zu fan max %.6e max %.6e\n", verdict.status,
+  std::printf("P disk center: status %d fan rows %zu fan max %.6e max %.6e\n", verdict.status,
               fan.size(), fan_worst, worst);
   PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty() && !fan.empty());
   // In the uv chart (d502b7f0b) the fan rows bound 4.53e-2; in the
-  // disk-centre chart only the ring-edge seam caps remain (6.44e-3).
+  // disk-center chart only the ring-edge seam caps remain (6.44e-3).
   PHX_CHECK(fan_worst < 1e-2);
   Mesh lifted = mesh;
   lifted.points[2] = 0.1;
@@ -2063,8 +2063,8 @@ double fan_bound(const Revolved& g, const Verdict& verdict, int64_t pole) {
 
 // MAC 0ca3a9a finding 3: one test per region/frame check, each failing with
 // that check removed (deliberate-fault runs in the commit message). The disk
-// of disk_centre_rows (16 columns, rings 1/3, 2/3, rim 1; tol 0.05) has fan
-// rows bounded 6.44e-3 in the disk-centre chart and >= 4.5e-2 in the uv
+// of disk_center_rows (16 columns, rings 1/3, 2/3, rim 1; tol 0.05) has fan
+// rows bounded 6.44e-3 in the disk-center chart and >= 4.5e-2 in the uv
 // chart, so "fan bound > 1e-2" says "uv chart".
 void pole_region_checks() {
   const auto disk_rows = [](int columns, const std::vector<double>& levels) {
@@ -2142,9 +2142,9 @@ void pole_region_checks() {
   }
   // Region edge: per pair of columns (64 columns) the fan rows reach the rim
   // at the pair's ends only; the rim chords between are edges of rows off
-  // the centre (via a vertex at v = 1/2), so they lie in the strip without
+  // the center (via a vertex at v = 1/2), so they lie in the strip without
   // being region edges: the fan keeps the uv chart (fan bound 2.70e-2;
-  // 1.24e-2 in the disk-centre chart).
+  // 1.24e-2 in the disk-center chart).
   {
     VertexIds id{kTurn, 0.0, {}};
     std::vector<ChartTriangle> sectors;
@@ -2280,7 +2280,7 @@ int main() {
   intersection_seam_leaf();
   intersection_seam_lens();
   clamped_domain_end();
-  lens_charged_to_neighbours();
+  lens_charged_to_neighbors();
   use_and_loop_preconditions();
   sliver_edge_in_mesh();
   lens_requires_lipschitz_surface();
@@ -2297,7 +2297,7 @@ int main() {
   seam_lens_charge();
   pole_region_turns_and_charges();
   pole_row_disk_bound();
-  disk_centre_rows();
+  disk_center_rows();
   trimmed_pole_regions();
   bumped_ring_chords();
   pole_region_checks();

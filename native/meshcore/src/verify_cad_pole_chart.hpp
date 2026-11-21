@@ -30,7 +30,7 @@ namespace di = phx::mc::remesh;
 inline constexpr int kSeriesTerms = 12;
 inline constexpr double kMaximumSquaredRadius = 4.0;
 
-// pi/2 lies in [kHalfPiLower, di::kHalfPiUpper] (binary64 neighbours).
+// pi/2 lies in [kHalfPiLower, di::kHalfPiUpper] (binary64 neighbors).
 inline constexpr double kHalfPiLower = 0x1.921fb54442d18p+0;
 
 inline di::Interval square(const di::Interval& x) {
@@ -85,7 +85,7 @@ inline bool series(const di::Interval& q, int offset, int order, di::Interval& o
 }
 
 // Pole frame: o, e1, e2, a (3 each) and r, as enclosures. `flat`: a disk
-// centre (the revolution of a line perpendicular to the axis, meeting it at
+// center (the revolution of a line perpendicular to the axis, meeting it at
 // the chart parameter v = pole_v): S(u, v) = o + (v - pole_v)(cos u e1 +
 // sin u e2), so in the Cartesian chart (x, y) = rho (cos u, sin u), rho =
 // sigma (v - pole_v) >= 0 on the face's side sigma, S(x, y) = o + sigma (x e1
@@ -177,7 +177,7 @@ inline bool jets(const SphereFrame& frame, int sigma, const di::Interval& x,
 
 // Colatitude enclosure rho of a chart parameter v on side sigma: pi/2 -
 // sigma v on a sphere (false unless sigma v <= kHalfPiLower), sigma (v -
-// pole_v) at a disk centre (false unless it is >= 0); rho >= 0 either way.
+// pole_v) at a disk center (false unless it is >= 0); rho >= 0 either way.
 inline bool colatitude(const SphereFrame& frame, double v, int sigma, di::Interval& rho) {
   if (frame.flat) {
     rho = di::subtract(di::point(v), di::point(frame.pole_v));

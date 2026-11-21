@@ -1133,17 +1133,17 @@ bool split_piece(const Piece& piece, const KnotLine& line, Piece& below, Piece& 
 // for one component with |H_uu|, |H_uv|, |H_vv| <= a, b, c over the box:
 // S(x) - I_t S(x) = -1/2 sum_i w_i (x_i - x)^T H(xi_i) (x_i - x), and
 // 2 |d_u d_v| <= s d_u^2 + d_v^2 / s (s > 0) dominates each quadratic form by
-// the diagonal D = diag(a + b s, c + b / s). For any centre m,
+// the diagonal D = diag(a + b s, c + b / s). For any center m,
 // sum_i w_i |x_i - x|_D^2 = sum_i w_i |x_i - m|_D^2 - |x - m|_D^2
 // <= max_i |x_i - m|_D^2 <= D_u e_u^2 + D_v e_v^2, with e the box's largest
 // offsets from m; s = e_v / e_u turns this into a e_u^2 + 2 b e_u e_v + c e_v^2.
 // So the box extents of the Taylor remainder may be replaced by the offsets
-// from the box centre: one quarter of the remainder. Returns e for one axis,
-// rounded up (any binary64 centre is sound).
+// from the box center: one quarter of the remainder. Returns e for one axis,
+// rounded up (any binary64 center is sound).
 di::Interval half_extent(double lower, double upper) {
-  const double centre = lower + 0.5 * (upper - lower);
-  return di::point(std::max(di::subtract(di::point(centre), di::point(lower)).upper,
-                            di::subtract(di::point(upper), di::point(centre)).upper));
+  const double center = lower + 0.5 * (upper - lower);
+  return di::point(std::max(di::subtract(di::point(center), di::point(lower)).upper,
+                            di::subtract(di::point(upper), di::point(center)).upper));
 }
 
 // Piecewise rule at C0 knot lines (Python's _spline_piecewise_interpolation_bound).
@@ -1339,7 +1339,7 @@ int32_t leaf_bound(const CadGeometry& geometry, FaceKernel& kernel, const Leaf& 
   const auto du = di::subtract(di::point(box_upper[0]), di::point(box_lower[0]));
   const auto dv = di::subtract(di::point(box_upper[1]), di::point(box_lower[1]));
   // Taylor remainder from |H| magnitudes per term (uu, uv, vv) and component,
-  // with the offsets from the box centre (half_extent).
+  // with the offsets from the box center (half_extent).
   const auto eu = half_extent(box_lower[0], box_upper[0]);
   const auto ev = half_extent(box_lower[1], box_upper[1]);
   const auto second_order = [&](const double (&hessian)[3][3]) {
@@ -1974,7 +1974,7 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
 //   e2 := a x e1_r, a := (a.e2) a, r = R. "Exactly": point enclosures, a a
 //   signed coordinate unit vector, e1 off the axis (its axis coordinate 0),
 //   the off-axis coordinates of e2 zero and of center and O bitwise equal.
-// - (disk centre, `pole_v` given: the chart parameter of the degenerate pole
+// - (disk center, `pole_v` given: the chart parameter of the degenerate pole
 //   chord) the revolution about (O, a) of a line p(v) = p0 + v d (line3:
 //   point, direction; exact_line3: first, last with d = last - first)
 //   perpendicular to the axis (d's axis coordinate 0) through the axis at
@@ -2082,7 +2082,7 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
       if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
           curve.real_count != 10)
         return false;
-      double origin[3], axis[3], centre[3], first[3], second[3], radius = 0.0;
+      double origin[3], axis[3], center[3], first[3], second[3], radius = 0.0;
       const auto exact = [&](int32_t at, int64_t i, double& value) {
         const di::Interval x = coefficient(at, i);
         value = x.lower;
@@ -2090,7 +2090,7 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
       };
       for (int i = 0; i < 3; ++i)
         if (!exact(index, i, origin[i]) || !exact(index, 3 + i, axis[i]) ||
-            !exact(profile, i, centre[i]) || !exact(profile, 3 + i, first[i]) ||
+            !exact(profile, i, center[i]) || !exact(profile, 3 + i, first[i]) ||
             !exact(profile, 6 + i, second[i]))
           return false;
       if (!exact(profile, 9, radius)) return false;
@@ -2100,10 +2100,10 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
       if (k < 0 || first[k] != 0.0) return false;
       for (int i = 0; i < 3; ++i)
         if (i != k && (axis[i] != 0.0 || second[i] != 0.0 ||
-                       std::bit_cast<uint64_t>(centre[i]) != std::bit_cast<uint64_t>(origin[i])))
+                       std::bit_cast<uint64_t>(center[i]) != std::bit_cast<uint64_t>(origin[i])))
           return false;
       for (int i = 0; i < 3; ++i) {
-        frame.o[i] = di::point(i == k ? centre[i] : origin[i]);
+        frame.o[i] = di::point(i == k ? center[i] : origin[i]);
         frame.e1[i] = di::point(i == k ? 0.0 : first[i]);
         frame.a[i] = di::point(i == k ? second[i] : 0.0);
       }
@@ -2175,7 +2175,7 @@ int32_t pole_vertex_error(const pole::SphereFrame& frame, int sigma, const Verte
 }
 
 // leaf_bound in the pole chart: S - I_L by the Taylor remainder of the
-// pole-chart Hessian over the leaf box (offsets from the box centre), plus
+// pole-chart Hessian over the leaf box (offsets from the box center), plus
 // the affine I_L - I_T, maximal at a leaf vertex.
 int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& leaf,
                         const double* vertices, const double* xy, double& vertex_term,
@@ -2573,8 +2573,8 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       sigma = pole_v > 0.0 ? 1 : -1;
       if (!at_pole(frame, pole_v, sigma)) continue;
     } else if (pole_sphere_frame(geometry, workspace, kernel.node, frame, pole_v) && frame.flat) {
-      // The face's side of the disk centre: any corner of a row touching it
-      // off the centre parameter.
+      // The face's side of the disk center: any corner of a row touching it
+      // off the center parameter.
       for (int64_t i = 0; i < triangle_count && sigma == 0; ++i)
         if (face_rows[i] == face)
           for (int j = 0; j < 3; ++j)
@@ -2687,7 +2687,7 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
         for (const int64_t row : region.rows)
           for (int j = 0; j < 3; ++j) {
             const double w = sigma * uv[6 * row + 2 * j + 1], t = sigma * p[1];
-            // rho grows with sigma v at a disk centre, falls on a sphere.
+            // rho grows with sigma v at a disk center, falls on a sphere.
             if (frame.flat ? w > t : w < t) valid = false;
           }
       }
@@ -2777,7 +2777,7 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
     if (region.rows.empty()) continue;
     const pole::SphereFrame& frame = region.frame;
     // The strip's v range: from the pole parameter to rho = strip (v grows
-    // with rho at a disk centre on side sigma, falls on a sphere's north).
+    // with rho at a disk center on side sigma, falls on a sphere's north).
     const double pole_v = pole::pole_value(frame, region.sigma);
     const int toward = frame.flat ? region.sigma : -region.sigma;
     const di::Interval far = di::add(di::point(pole_v),
@@ -3224,7 +3224,7 @@ extern "C" int32_t phx_mc_verify_cad_fidelity(
     }
     const phx::mc::cad::LensIndex lens_index(model->surface_count, std::move(lens_pieces));
     // Pole regions take the pole chart (phx::mc::cad::PoleRegion); their
-    // rows are bounded after the uv rows, whose seam neighbours they charge.
+    // rows are bounded after the uv rows, whose seam neighbors they charge.
     std::vector<int32_t> row_region(static_cast<std::size_t>(triangle_count), -1);
     const auto regions = phx::mc::cad::pole_regions(
         geometry, *model, kernels, workspace, triangle_count, triangles, face_rows, uv,
