@@ -3016,9 +3016,10 @@ typedef struct phx_mc_fidelity_finding {
  * at the degenerate chord's v, certified exactly): rows touching the centre
  * vertex take the Cartesian chart (x, y) = |v - v_centre| (cos u, sin u),
  * where the disk is affine, under the same region, seam and turn rules.
- * A pole region may also reach outer trim rings (latitude-circle chords
- * with every region corner on the pole's side, checked exactly): those
- * chords carry seam lenses like the uv interface. Faces whose pole is
+ * A pole region may also reach outer trim rings (chords whose endpoints share
+ * v, with every region corner on the pole's side, checked exactly): those
+ * chords carry seam lenses like the uv interface, plus their own trim-lens
+ * cap (the p-curve need not stay on the chord). Faces whose pole is
  * trimmed away keep the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision

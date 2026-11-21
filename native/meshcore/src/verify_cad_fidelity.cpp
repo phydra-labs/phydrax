@@ -2494,12 +2494,15 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
 // circle (constant v, exactly) and an edge of a region row, and every region
 // corner must lie on the pole's side of it (exact comparisons of v), so the
 // ring is outer: rho_corner <= rho_ring. Such chords are boundary edges of R
-// and carry seam lenses like any other (surface -> mesh unchanged). Mesh ->
-// surface: a pole-chart triangle lies in the disk of its largest corner
+// and carry seam lenses like any other; their trim lens (the p-curve arc
+// beyond the chord: constant v at the ends is checked, not along the arc) is
+// added to the edge's seam cap, since a face point in it is within the
+// lens cap of a chord point, itself within the seam cap of the mesh. Mesh
+// -> surface: a pole-chart triangle lies in the disk of its largest corner
 // (convex), so z in it has rho(z) <= rho_ring and P^{-1}(z), taken in the
-// full turn, lies in the face's cap (the trim lens between ring arc and
-// chord polygon is the trim-lens charge over the strip box). Faces whose
-// pole is trimmed away (an inner ring) keep the uv chart: there the
+// full turn, lies in the chord polygon's cap (the polygon vs the face is the
+// trim-lens charge over the strip box). Faces whose pole is trimmed away
+// (an inner ring) keep the uv chart: there the
 // pole-chart chords of the ring leave the face.
 struct PoleRegion {
   int32_t face = -1;
@@ -2627,7 +2630,7 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     // Chords meeting the strip: pole chords on this pole and seam chords at
     // the face's u ends need nothing; any other chord there must be an edge
     // of a region row (a trim chord on the region boundary), which makes the
-    // region trimmed (bulge charges and the orientation check below).
+    // region trimmed (checked below).
     double u_min = std::numeric_limits<double>::infinity(), u_max = -u_min;
     for (int64_t k = 0; k < chord_count; ++k)
       if (use_patch[chord_use[k]] == face)
@@ -2693,7 +2696,9 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     // The strip must make a full turn: u_max - u_min >= 2 pi rounded down
     // (exact comparison); a face spanning less keeps the uv chart. The real
     // excess 2 pi - (u_max - u_min) (at most one rounding) is charged:
-    // |S(u, v) - S(u', v)| <= r max(|e1|, |e2|) rho |u - u'|.
+    // |S(u, v) - S(u', v)| <= |r| (|e1| + |e2|) rho |u - u'| (|dS/du| = |r|
+    // rho_s |-sin u e1 + cos u e2|, rho_s = sin rho or rho; e1, e2 need not
+    // be orthogonal).
     if (!(u_max - u_min >= 2.0 * 0x1.921fb54442d18p+1)) continue;
     const di::Interval span = di::subtract(di::point(u_max), di::point(u_min));
     const di::Interval gap = di::subtract(di::point(2.0 * di::kPiUpper), span);
@@ -2702,8 +2707,10 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       for (int i = 0; i < 3; ++i) m[i] = di::magnitude(e[i]);
       return phx::mc::geometry::norm_upper(m);
     };
-    const double scale = di::multiply(di::point(frame.r.upper),
-                                      di::point(std::max(norm(frame.e1), norm(frame.e2)))).upper;
+    const double scale =
+        di::multiply(di::point(di::magnitude(frame.r)),
+                     di::add(di::point(norm(frame.e1)), di::point(norm(frame.e2))))
+            .upper;
     region.gap = gap.upper > 0.0
                      ? di::multiply(di::point(scale),
                                     di::multiply(di::point(region.strip), di::point(gap.upper)))
@@ -2838,6 +2845,17 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
                            points + 3 * triangles[3 * row + a],
                            points + 3 * triangles[3 * row + b], cap))
         cap = std::numeric_limits<double>::infinity();
+      // The edge's own trim lens (a ring chord whose p-curve leaves the
+      // chord): a face point beyond it is within that lens cap of a chord
+      // point, which is within the seam cap of the mesh. LensIndex charges
+      // every lens piece whose box meets the edge's uv box.
+      {
+        const double* p = uv + 6 * row + 2 * a;
+        const double* q = uv + 6 * row + 2 * b;
+        const double edge_box[4] = {std::min(p[0], q[0]), std::min(p[1], q[1]),
+                                    std::max(p[0], q[0]), std::max(p[1], q[1])};
+        cap = di::add(di::point(cap), di::point(lens.charge(region.face, edge_box))).upper;
+      }
       charge(row, cap);
       const auto first = std::lower_bound(outside.begin(), outside.end(),
                                           std::pair<Key, int64_t>{inside[e].first, -1});

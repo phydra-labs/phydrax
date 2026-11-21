@@ -1,11 +1,14 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cinttypes>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <limits>
+#include <map>
 #include <vector>
 
 #include "cad_geometry.hpp"
@@ -1719,6 +1722,477 @@ void disk_centre_rows() {
   const Verdict moved = verify(m, lifted, 0.05, 8);
   for (const std::size_t r : fan) PHX_CHECK(moved.item_status[r] != PHX_MC_OK);
 }
+
+// A chart triangle: corner parameters and physical vertex ids.
+struct ChartTriangle {
+  std::array<double, 6> uv;
+  std::array<int64_t, 3> ids;
+};
+
+// Vertex ids of a full-turn chart: u = span folds onto u = 0, and every
+// corner at the pole parameter is the one pole vertex.
+struct VertexIds {
+  double span, pole_v;
+  std::map<std::pair<uint64_t, uint64_t>, int64_t> ids;
+  int64_t operator()(double u, double v) {
+    if (v == pole_v || u == span) u = 0.0;
+    const auto key = std::make_pair(std::bit_cast<uint64_t>(u), std::bit_cast<uint64_t>(v));
+    const auto it = ids.find(key);
+    if (it != ids.end()) return it->second;
+    const auto id = static_cast<int64_t>(ids.size());
+    ids.emplace(key, id);
+    return id;
+  }
+};
+
+constexpr double kTurn = 2.0 * 0x1.921fb54442d18p+1;
+constexpr double kNorth = 0x1.921fb54442d18p+0;
+
+// Grid rows between ascending levels (counter-clockwise in uv).
+void ring_rows(std::vector<ChartTriangle>& out, VertexIds& id, int columns,
+               const std::vector<double>& levels) {
+  const auto u = [&](int i) { return i == columns ? id.span : id.span * i / columns; };
+  for (std::size_t j = 0; j + 1 < levels.size(); ++j)
+    for (int i = 0; i < columns; ++i) {
+      const double c[4][2] = {{u(i), levels[j]}, {u(i + 1), levels[j]},
+                              {u(i + 1), levels[j + 1]}, {u(i), levels[j + 1]}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        ChartTriangle t{};
+        for (std::size_t k = 0; k < 3; ++k) {
+          const double* p = c[local[k]];
+          t.uv[2 * k] = p[0], t.uv[2 * k + 1] = p[1];
+          t.ids[k] = id(p[0], p[1]);
+        }
+        out.push_back(t);
+      }
+    }
+}
+
+struct Revolved {
+  Model model;
+  Mesh mesh;
+  int32_t surface = -1;
+};
+
+int32_t disk_surface(Model& m, double x0, double dz) {
+  const int32_t radial = m.add_template("line3", {x0, 0, 0, 1, 0, dz});
+  return m.add(PHX_MC_CAD_NODE_REVOLUTION, {radial}, {0, 0, 0, 0, 0, 1});
+}
+
+int32_t unit_sphere(Model& m) {
+  return m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+}
+
+// One face over the given chart rows; its loops are the chains of boundary
+// uv edges (edges used once), one use per edge: a pole use on edges at
+// pole_v, else a line2 p-curve, or, for edges at constant v == bump_v, the
+// parabola2 p-curve v(s) = bump_v + dir delta (1 - 4 s^2), s in [-1/2, 1/2],
+// dir pointing away from the pole (its ends lie on the chord up to
+// rounding). Mesh points are S at each vertex's first chart corner.
+Revolved revolved(const std::function<int32_t(Model&)>& make_surface, double pole_v,
+                  const std::vector<ChartTriangle>& rows,
+                  double bump_v = std::numeric_limits<double>::quiet_NaN(), double delta = 0.0) {
+  Revolved g;
+  Model& m = g.model;
+  g.surface = make_surface(m);
+  m.surface(g.surface);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 0);
+  using Point = std::array<uint64_t, 2>;
+  const auto at = [&](std::size_t r, int k) { return rows[r].uv.data() + 2 * k; };
+  const auto key = [](const double* p) {
+    return Point{std::bit_cast<uint64_t>(p[0]), std::bit_cast<uint64_t>(p[1])};
+  };
+  std::map<std::pair<Point, Point>, int> count;
+  for (std::size_t r = 0; r < rows.size(); ++r)
+    for (int k = 0; k < 3; ++k) {
+      Point a = key(at(r, k)), b = key(at(r, (k + 1) % 3));
+      if (b < a) std::swap(a, b);
+      ++count[{a, b}];
+    }
+  std::map<Point, std::pair<std::size_t, int>> next;
+  for (std::size_t r = 0; r < rows.size(); ++r)
+    for (int k = 0; k < 3; ++k) {
+      Point a = key(at(r, k)), b = key(at(r, (k + 1) % 3));
+      const Point start = a;
+      if (b < a) std::swap(a, b);
+      if (count[{a, b}] == 1) next[start] = {r, k};
+    }
+  Mesh& mesh = g.mesh;
+  mesh.edge_chord.assign(3 * rows.size(), -1);
+  int64_t loops = 0;
+  while (!next.empty()) {
+    auto it = next.begin();
+    while (it != next.end()) {
+      const auto [r, k] = it->second;
+      next.erase(it);
+      const double* a = at(r, k);
+      const double* b = at(r, (k + 1) % 3);
+      const auto use = static_cast<int64_t>(m.use_kinds.size());
+      const auto chord = static_cast<int64_t>(mesh.chord_use.size());
+      double first = 0.0, last = 1.0;
+      if (a[1] == pole_v && b[1] == pole_v) {
+        m.use(1, 0, first, last, m.add_template("line2", {a[0], a[1], b[0] - a[0], 0.0}));
+      } else {
+        const auto curve = static_cast<int32_t>(m.curves.size());
+        m.curve(space, 0, 0);
+        int32_t pcurve;
+        if (delta != 0.0 && a[1] == bump_v && b[1] == bump_v && a[0] != b[0]) {
+          const double dir = a[1] > pole_v ? 1.0 : -1.0, sign = delta > 0.0 ? 1.0 : -1.0;
+          pcurve = m.add_template("parabola2", {0.5 * (a[0] + b[0]), a[1] + dir * delta, 0.0,
+                                                -dir * sign, b[0] - a[0], 0.0,
+                                                1.0 / (16.0 * std::fabs(delta))});
+          first = -0.5, last = 0.5;
+        } else {
+          pcurve = m.add_template("line2", {a[0], a[1], b[0] - a[0], b[1] - a[1]});
+        }
+        m.use(0, curve, first, last, pcurve);
+      }
+      mesh.edge_chord[3 * r + static_cast<std::size_t>(k)] = chord;
+      mesh.chord_use.push_back(use);
+      mesh.chord_loop.push_back(loops);
+      mesh.chord_uv.insert(mesh.chord_uv.end(), {a[0], a[1], b[0], b[1]});
+      mesh.chord_range.insert(mesh.chord_range.end(), {first, last});
+      it = next.find(key(b));
+    }
+    m.close_loop(0);
+    ++loops;
+  }
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  int64_t vertex_count = 0;
+  for (const ChartTriangle& t : rows)
+    for (const int64_t id : t.ids) vertex_count = std::max(vertex_count, id + 1);
+  mesh.points.assign(3 * static_cast<std::size_t>(vertex_count), 0.0);
+  std::vector<bool> seen(static_cast<std::size_t>(vertex_count), false);
+  for (const ChartTriangle& t : rows) {
+    for (int k = 0; k < 3; ++k) {
+      const auto id = static_cast<std::size_t>(t.ids[static_cast<std::size_t>(k)]);
+      if (!seen[id]) {
+        PHX_CHECK(geometry.jets(g.surface, t.uv.data() + 2 * k, 0, mesh.points.data() + 3 * id,
+                                workspace));
+        seen[id] = true;
+      }
+      mesh.triangles.push_back(t.ids[static_cast<std::size_t>(k)]);
+    }
+    mesh.uv.insert(mesh.uv.end(), t.uv.begin(), t.uv.end());
+    mesh.face_rows.push_back(0);
+    const auto& ids = t.ids;
+    const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+    mesh.chart_to_mesh.push_back(sliver ? -1
+                                        : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+    if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids.begin(), ids.end());
+  }
+  mesh.use_patch.assign(m.use_kinds.size(), 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = loops;
+  return g;
+}
+
+double point_triangle_distance(const double* p, const double* a, const double* b,
+                               const double* c) {
+  // Ericson, Real-Time Collision Detection 5.1.5 (closest point on a triangle).
+  double ab[3], ac[3], ap[3], q[3];
+  for (int i = 0; i < 3; ++i) ab[i] = b[i] - a[i], ac[i] = c[i] - a[i], ap[i] = p[i] - a[i];
+  const auto dot = [](const double* x, const double* y) {
+    return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  };
+  const auto distance = [&](double s, double t) {
+    for (int i = 0; i < 3; ++i) q[i] = a[i] + s * ab[i] + t * ac[i] - p[i];
+    return std::sqrt(dot(q, q));
+  };
+  const double d1 = dot(ab, ap), d2 = dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return distance(0, 0);
+  double bp[3], cp[3];
+  for (int i = 0; i < 3; ++i) bp[i] = p[i] - b[i], cp[i] = p[i] - c[i];
+  const double d3 = dot(ab, bp), d4 = dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return distance(1, 0);
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) return distance(d1 / (d1 - d3), 0);
+  const double d5 = dot(ab, cp), d6 = dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return distance(0, 1);
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) return distance(0, d2 / (d2 - d6));
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    return distance(1 - w, w);
+  }
+  const double denominator = 1.0 / (va + vb + vc);
+  return distance(vb * denominator, vc * denominator);
+}
+
+double mesh_distance(const Mesh& mesh, const double* p) {
+  double best = std::numeric_limits<double>::infinity();
+  const auto vertex = [&](std::size_t t, int k) {
+    return mesh.points.data() + 3 * mesh.mesh_triangles[3 * t + static_cast<std::size_t>(k)];
+  };
+  for (std::size_t t = 0; t < mesh.mesh_triangles.size() / 3; ++t)
+    best = std::min(best, point_triangle_distance(p, vertex(t, 0), vertex(t, 1), vertex(t, 2)));
+  return best;
+}
+
+// Rows with an edge at constant v == bump_v: each must bound the distance
+// from the mesh of the face points S(p(s)) on its own (bumped) trim arc.
+struct RingCheck {
+  int rows = 0, certified = 0, below = 0;
+  double min_ratio = std::numeric_limits<double>::infinity(), worst = 0.0;
+};
+
+RingCheck check_bumped_ring(const Revolved& g, double pole_v, double bump_v, double delta,
+                            double tolerance) {
+  const Verdict verdict = verify(g.model, g.mesh, tolerance, 8);
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  RingCheck result;
+  const double dir = bump_v > pole_v ? 1.0 : -1.0;
+  for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r) {
+    double truth = 0.0;
+    bool ring = false;
+    for (int k = 0; k < 3; ++k) {
+      const double* a = g.mesh.uv.data() + 6 * r + 2 * k;
+      const double* b = g.mesh.uv.data() + 6 * r + 2 * ((k + 1) % 3);
+      if (!(a[1] == bump_v && b[1] == bump_v && a[0] != b[0])) continue;
+      ring = true;
+      for (int i = 0; i <= 64; ++i) {
+        const double s = -0.5 + i / 64.0;
+        const double point[2] = {a[0] + (s + 0.5) * (b[0] - a[0]),
+                                 bump_v + dir * delta * (1.0 - 4.0 * s * s)};
+        double xyz[3];
+        PHX_CHECK(geometry.jets(g.surface, point, 0, xyz, workspace));
+        truth = std::max(truth, mesh_distance(g.mesh, xyz));
+      }
+    }
+    if (!ring) continue;
+    ++result.rows;
+    if (verdict.item_status[r] != PHX_MC_OK) continue;
+    ++result.certified;
+    result.worst = std::max(result.worst, verdict.upper[r]);
+    if (truth > 0.0) result.min_ratio = std::min(result.min_ratio, verdict.upper[r] / truth);
+    if (verdict.upper[r] < truth) ++result.below;
+  }
+  return result;
+}
+
+// MAC 0ca3a9a finding 1: a pole region's ring chord with bitwise-equal end
+// v whose p-curve is not a latitude circle. The face points on the arc
+// beyond the chord are seam cap + lens cap from the mesh; the region used
+// max(seam cap, own + lens) before. Witnesses (MAC): a disk with 16 fan rows
+// and parabola2 rim arcs bulging 0.01 (tol 0.05: certified 1.930878e-2,
+// true 2.921472e-2), a unit-sphere cap at colatitude 0.05 bulging 5e-4
+// (9.652698e-4 vs 1.459921e-3); then 200 seeded bumped rings (disk or
+// sphere, 6-32 columns, bumps either way), 0 certified rows below their arc's
+// distance. Fault caught: the edge's trim lens not added to its seam cap.
+void bumped_ring_chords() {
+  {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, 16, {0.0, 1.0});
+    const Revolved g =
+        revolved([](Model& m) { return disk_surface(m, 0.0, 0.0); }, 0.0, rows, 1.0, 0.01);
+    const RingCheck c = check_bumped_ring(g, 0.0, 1.0, 0.01, 0.05);
+    std::printf("P bumped disk rim: rows %d certified %d below %d worst %.6e min ratio %.4f\n",
+                c.rows, c.certified, c.below, c.worst, c.min_ratio);
+    PHX_CHECK(c.rows == 16 && c.below == 0);
+  }
+  {
+    const double ring = kNorth - 0.05;
+    VertexIds id{kTurn, kNorth, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, 16, {ring, kNorth});
+    const Revolved g = revolved(unit_sphere, kNorth, rows, ring, 5e-4);
+    const RingCheck c = check_bumped_ring(g, kNorth, ring, 5e-4, 0.05);
+    std::printf("P bumped sphere ring: rows %d certified %d below %d worst %.6e min ratio %.4f\n",
+                c.rows, c.certified, c.below, c.worst, c.min_ratio);
+    PHX_CHECK(c.rows == 16 && c.below == 0);
+  }
+  uint64_t state = 20261121;
+  const auto uniform = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<double>(state >> 11) * 0x1p-53;
+  };
+  RingCheck total;
+  for (int trial = 0; trial < 200; ++trial) {
+    const bool sphere = trial % 2 == 1;
+    const int columns = 6 + static_cast<int>(27.0 * uniform());
+    const double angle = kTurn / columns;
+    double radius, pole_v, ring;
+    if (sphere) {
+      const double colatitude = 0.02 + 0.58 * uniform();
+      pole_v = kNorth, ring = kNorth - colatitude, radius = std::sin(colatitude);
+    } else {
+      pole_v = 0.0, ring = 0.2 + 1.8 * uniform(), radius = ring;
+    }
+    const double delta = (2.0 * uniform() - 1.0) * 0.1 * std::fabs(ring - pole_v) * angle;
+    const double sagitta = radius * (1.0 - std::cos(0.5 * angle));
+    const double tolerance = (0.25 + 2.0 * uniform()) * (sagitta + std::fabs(delta));
+    VertexIds id{kTurn, pole_v, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, columns, sphere ? std::vector<double>{ring, pole_v}
+                                        : std::vector<double>{pole_v, ring});
+    const Revolved g =
+        sphere ? revolved(unit_sphere, pole_v, rows, ring, delta)
+               : revolved([](Model& m) { return disk_surface(m, 0.0, 0.0); }, pole_v, rows, ring,
+                          delta);
+    const RingCheck c = check_bumped_ring(g, pole_v, ring, delta, tolerance);
+    total.rows += c.rows, total.certified += c.certified, total.below += c.below;
+    total.min_ratio = std::min(total.min_ratio, c.min_ratio);
+  }
+  std::printf("P bumped ring fuzz: rows %d certified %d below %d min ratio %.4f\n", total.rows,
+              total.certified, total.below, total.min_ratio);
+  PHX_CHECK(total.below == 0 && total.certified > 0);
+}
+
+// The largest bound over fan rows (rows with a corner on the pole vertex);
+// +inf when any fan row is refused.
+double fan_bound(const Revolved& g, const Verdict& verdict, int64_t pole) {
+  double worst = 0.0;
+  for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r)
+    for (int k = 0; k < 3; ++k)
+      if (g.mesh.triangles[3 * r + static_cast<std::size_t>(k)] == pole) {
+        if (verdict.item_status[r] != PHX_MC_OK) return std::numeric_limits<double>::infinity();
+        worst = std::max(worst, verdict.upper[r]);
+        break;
+      }
+  return worst;
+}
+
+// MAC 0ca3a9a finding 3: one test per region/frame check, each failing with
+// that check removed (deliberate-fault runs in the commit message). The disk
+// of disk_centre_rows (16 columns, rings 1/3, 2/3, rim 1; tol 0.05) has fan
+// rows bounded 6.44e-3 in the disk-centre chart and >= 4.5e-2 in the uv
+// chart, so "fan bound > 1e-2" says "uv chart".
+void pole_region_checks() {
+  const auto disk_rows = [](int columns, const std::vector<double>& levels) {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, columns, levels);
+    return rows;
+  };
+  const auto flat = [](Model& m) { return disk_surface(m, 0.0, 0.0); };
+  const std::vector<ChartTriangle> rows = disk_rows(16, {0.0, 1.0 / 3, 2.0 / 3, 1.0});
+  const Revolved disk = revolved(flat, 0.0, rows);
+  const Verdict base = verify(disk.model, disk.mesh, 0.05, 8);
+  const double base_fan = fan_bound(disk, base, 0);
+  std::printf("P checks disk: status %d fan %.6e\n", base.status, base_fan);
+  PHX_CHECK(base.status == PHX_MC_OK && base_fan < 1e-2);
+  // Lower bound (catches a dropped row charge): each fan row with a ring
+  // edge bounds the distance from the mesh of its arc midpoint S(u_mid,
+  // 1/3), the ring's sagitta.
+  {
+    const phx_mc_cad_model view = disk.model.view();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    EvaluationWorkspace workspace;
+    int checked = 0;
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+      const auto& ids = rows[r].ids;
+      if (ids[0] != 0 && ids[1] != 0 && ids[2] != 0) continue;
+      for (int k = 0; k < 3; ++k) {
+        const double* a = rows[r].uv.data() + 2 * k;
+        const double* b = rows[r].uv.data() + 2 * ((k + 1) % 3);
+        if (!(a[1] == 1.0 / 3 && b[1] == 1.0 / 3)) continue;
+        const double point[2] = {0.5 * (a[0] + b[0]), 1.0 / 3};
+        double xyz[3];
+        PHX_CHECK(geometry.jets(disk.surface, point, 0, xyz, workspace));
+        const double truth = mesh_distance(disk.mesh, xyz);
+        PHX_CHECK(base.item_status[r] == PHX_MC_OK && base.upper[r] >= truth);
+        ++checked;
+      }
+    }
+    std::printf("P checks disk fan sagitta rows %d\n", checked);
+    PHX_CHECK(checked == 16);
+  }
+  // Perpendicularity (d_k = 0) and axis crossing (p(pole_v) = O exactly):
+  // a cone of slope 2^-40 and a line 2^-40 off the axis, with the disk's
+  // chart and mesh bitwise, keep the uv chart.
+  struct Profile {
+    const char* name;
+    double x0, dz;
+  };
+  for (const Profile p : {Profile{"cone", 0.0, 0x1p-40}, Profile{"off axis", 0x1p-40, 0.0}}) {
+    Revolved other = revolved([p](Model& m) { return disk_surface(m, p.x0, p.dz); }, 0.0, rows);
+    other.mesh.points = disk.mesh.points;
+    const Verdict verdict = verify(other.model, other.mesh, 0.05, 8);
+    const double fan = fan_bound(other, verdict, 0);
+    std::printf("P checks %s: status %d fan %.6e\n", p.name, verdict.status, fan);
+    PHX_CHECK(fan > 1e-2);
+  }
+  // A ring one ulp off constant v (the rim at 1 bounds the fan rows; one rim
+  // vertex at 1 - ulp, inside): the fan keeps the uv chart.
+  {
+    const std::vector<ChartTriangle> exact = disk_rows(16, {0.0, 1.0});
+    std::vector<ChartTriangle> off = exact;
+    const double u5 = kTurn * 5 / 16;
+    for (ChartTriangle& t : off)
+      for (int k = 0; k < 3; ++k)
+        if (t.uv[2 * k] == u5 && t.uv[2 * k + 1] == 1.0) t.uv[2 * k + 1] = std::nextafter(1.0, 0.0);
+    for (const bool shifted : {false, true}) {
+      const Revolved g = revolved(flat, 0.0, shifted ? off : exact);
+      const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+      const double fan = fan_bound(g, verdict, 0);
+      std::printf("P checks rim %s: status %d fan %.6e\n", shifted ? "one ulp off" : "exact",
+                  verdict.status, fan);
+      PHX_CHECK(shifted ? fan > 3e-2 : fan < 3e-2);
+    }
+  }
+  // Region edge: per pair of columns (64 columns) the fan rows reach the rim
+  // at the pair's ends only; the rim chords between are edges of rows off
+  // the centre (via a vertex at v = 1/2), so they lie in the strip without
+  // being region edges: the fan keeps the uv chart (fan bound 2.70e-2;
+  // 1.24e-2 in the disk-centre chart).
+  {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> sectors;
+    const auto add = [&](std::array<double, 6> uv) {
+      ChartTriangle t{uv, {}};
+      for (std::size_t k = 0; k < 3; ++k) t.ids[k] = id(uv[2 * k], uv[2 * k + 1]);
+      sectors.push_back(t);
+    };
+    constexpr int kColumns = 64;
+    const auto u = [](int i) { return i == kColumns ? kTurn : kTurn * i / kColumns; };
+    for (int s = 0; s < kColumns / 2; ++s) {
+      const double a = u(2 * s), mid = u(2 * s + 1), b = u(2 * s + 2);
+      add({a, 0.0, b, 0.0, mid, 0.5});
+      add({b, 0.0, b, 1.0, mid, 0.5});
+      add({b, 1.0, mid, 1.0, mid, 0.5});
+      add({mid, 1.0, a, 1.0, mid, 0.5});
+      add({a, 1.0, a, 0.0, mid, 0.5});
+    }
+    const Revolved g = revolved(flat, 0.0, sectors);
+    const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+    const double fan = fan_bound(g, verdict, 0);
+    std::printf("P checks region edge: status %d fan %.6e\n", verdict.status, fan);
+    PHX_CHECK(fan > 2e-2);
+  }
+  // A region row with a corner past a ring: a sphere face of two loops, the
+  // band 0.3-0.7 (its rows reach the cap latitude, so they join the north
+  // pole's region) and the cap above 0.8. The ring at 0.8 has band corners
+  // below it: the face keeps the uv chart, and the band rows' outputs equal
+  // those of the band alone (no pole) bitwise.
+  {
+    VertexIds id{kTurn, kNorth, {}};
+    std::vector<ChartTriangle> band;
+    ring_rows(band, id, 12, {0.3, 0.5, 0.7});
+    std::vector<ChartTriangle> both = band;
+    ring_rows(both, id, 12, {0.8, 1.2, kNorth});
+    const Revolved alone = revolved(unit_sphere, kNorth, band);
+    const Revolved two = revolved(unit_sphere, kNorth, both);
+    const Verdict a = verify(alone.model, alone.mesh, 0.05, 8);
+    const Verdict b = verify(two.model, two.mesh, 0.05, 8);
+    bool same = true;
+    for (std::size_t r = 0; r < band.size(); ++r)
+      same = same && a.item_status[r] == b.item_status[r] &&
+             std::bit_cast<uint64_t>(a.upper[r]) == std::bit_cast<uint64_t>(b.upper[r]);
+    std::printf("P checks corner past ring: status %d / %d band rows same %d\n", a.status,
+                b.status, same ? 1 : 0);
+    PHX_CHECK(same);
+  }
+}
 }  // namespace
 
 int main() {
@@ -1745,6 +2219,8 @@ int main() {
   pole_row_disk_bound();
   disk_centre_rows();
   trimmed_pole_regions();
+  bumped_ring_chords();
+  pole_region_checks();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
