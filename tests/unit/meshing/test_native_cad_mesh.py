@@ -569,10 +569,15 @@ def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
             assert edges.min() > 0.1 * size, (size, theta)
             sides = edges.prod(axis=1)
             area2 = np.linalg.norm(
-                np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
+                np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
+                axis=1,
             )
             circumradius = sides / (2.0 * area2)
-            assert circumradius.max() <= size / np.sqrt(2.0), (size, theta, circumradius.max())
+            assert circumradius.max() <= size / np.sqrt(2.0), (
+                size,
+                theta,
+                circumradius.max(),
+            )
             radius = np.linalg.norm(corners, axis=2)
             dome = np.all(np.abs(radius - 1.0) < 1e-12, axis=1)
             assert np.any(dome) and not np.all(dome)
