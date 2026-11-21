@@ -284,6 +284,38 @@ bool discretize(Context& c, std::vector<double>& points) {
     const double* r = m.use_ranges + 2*u.row;
     c.geometry.curve_breakpoints(c.geometry.pcurve_node(u.row), r[0], r[1], fixed, degree);
   }
+  // A seam (a p-curve constant in u) leaving a polar trim line (cad_faces.hpp)
+  // takes a vertex at the trim's design band, D_v = aspect * the trim's span
+  // (polar_trim_span): the face stage puts its band ring there, so the ring
+  // chain closes on the seam and the row at the seam end lies within the
+  // band (an open chain left that row reaching the seam's next vertex,
+  // outside the band's bound: measured up to 2.3 theta tol of it). The band
+  // height equals the trim's chord in 3D, so the segment is no shorter than
+  // the trim's.
+  for (const Use& u : c.uses) {
+    double ends[2][6];
+    bool evaluated=true;
+    for (int k=0;k<2;++k) {
+      const double t=c.use_parameter(u.row,k);
+      evaluated=evaluated && c.geometry.jets(c.geometry.pcurve_node(u.row),&t,1,ends[k],c.workspace);
+    }
+    if (!evaluated || ends[0][2]!=0 || ends[1][2]!=0 || ends[0][1]==ends[1][1]) continue;
+    for (int k=0;k<2;++k) {
+      const double line=ends[k][1];
+      SphereChart chart;
+      double direction=0, jet[9];
+      if (!polar_trim_line(c.geometry,u.face,line,c.workspace,chart,direction)) continue;
+      const double at[2]={ends[k][0],line};
+      if (!c.geometry.jets(c.geometry.surface_node(u.face),at,1,jet,c.workspace)) continue;
+      const double aspect=std::hypot(jet[3],jet[4],jet[5])/std::hypot(jet[6],jet[7],jet[8]);
+      const double span=polar_trim_span(chart,line,direction,aspect,
+          8*c.controls.tolerance_fraction*c.controls.face_tolerances[u.face]);
+      if (!std::isfinite(span)) continue;
+      const double target=line+direction*aspect*span;
+      const double s=(target-ends[0][1])/(ends[1][1]-ends[0][1]);
+      if (s>0 && s<1) fixed.push_back(s);
+    }
+  }
   std::sort(fixed.begin(), fixed.end()); fixed.erase(std::unique(fixed.begin(),fixed.end()),fixed.end());
   std::vector<Sample> table;
   std::vector<std::size_t> begins, borders;

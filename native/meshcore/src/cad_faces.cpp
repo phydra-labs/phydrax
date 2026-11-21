@@ -1159,8 +1159,8 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // largest band within the layer's share of tol by the chart-linear bound
     // (polar_trim_band, cad_faces.hpp) for the trim's longest chord: the
     // band ring is aligned to the trim's vertices (below), so a band
-    // triangle spans one trim chord on the free axis. The ring is added
-    // ahead of the zone's rings, which keep their places.
+    // triangle spans one trim chord on the free axis. The zone's rings
+    // follow it (below).
     double band = std::numeric_limits<double>::infinity();
     SphereChart sphere;
     if (!anchor.pole && direction * start[axis] < 0.0 && axis == 1 &&
@@ -1192,22 +1192,38 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // 0.01: 8 oversize pole triangles, surface UNRESOLVED). The snap to that
     // vertex therefore accepts offsets up to the ungraded spacing; the ring
     // then sits on the seam vertex exactly, as on the surface route.
-    // A trim line snaps its first zone ring to the seam like a pole; the
-    // band ring is added when the band is within the (snapped) spacing, else
-    // the first ring is already as close to the trim.
+    // A trim line without a chart band snaps its first zone ring to the seam
+    // like a pole. With one (band within the spacing) a band ring is added,
+    // on the seam's vertex within the band when there is one (the curve
+    // stage places one at the design band, so the ring chain closes on the
+    // seam), and the zone's rings continue from it at the spacing, unsnapped:
+    // rings kept at their own places left a strip a fraction of the spacing
+    // wide between the band ring and the first zone ring, whose misaligned
+    // points the kernel could not join (measured: caps below 45-50 deg, h/r
+    // 0.53-0.67: band ring 9 deg above the first ring, angle refusals,
+    // surface UNRESOLVED where the meshes before the band resolved).
+    const bool chart_band = band < spacing;
     double latitude = 0.0;
     const bool snapped = anchor.pole
         ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing,
                              metric.graded_pole_rings ? ungraded_spacing : spacing, width,
                              latitude)
-        : trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
+        : !chart_band &&
+              trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
     if (snapped) spacing = direction * (latitude - start[axis]);
     // The band ring's latitude, one ulp outward when rounding left it short.
     double ring = start[axis] + direction * band;
     if (direction * (ring - start[axis]) < band)
       ring = std::nextafter(ring, direction > 0.0 ? std::numeric_limits<double>::infinity()
                                                   : -std::numeric_limits<double>::infinity());
-    const bool chart_band = band < spacing;
+    double seam_latitude = 0.0;
+    const bool band_snapped =
+        chart_band && trim_snap_latitude(boundary, axis, start[axis], direction, band, width,
+                                         seam_latitude);
+    if (band_snapped) {
+      ring = seam_latitude;
+      band = direction * (seam_latitude - start[axis]);
+    }
     metric.poles.push_back({axis, start[axis], direction, width, spacing, anchor.pole != nullptr});
     std::array<double, 2> end = anchor.end;
     if (anchor.pole) {
@@ -1224,10 +1240,18 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // side to a coarse ring (measured: caps above 45-65 deg, solid scan 90
     // of 195 runs UNRESOLVED with rings at the zone spacing, 15 with graded
     // rings).
+    // With a chart band the zone's rows are the uv chart's too: each next
+    // ring is at most the chart-linear gap (polar_trim_band from the ring,
+    // its largest stop gap as D_u: the next ring, longer, is no coarser)
+    // beyond the ring before it (measured with the spacing alone: rows from
+    // the band ring to the next ring 34 deg away at 1.01 tol of sampled
+    // chart-linear deviation, refused).
     double step = spacing;
+    double gap = std::numeric_limits<double>::infinity();
     bool band_ring = chart_band;
     for (double offset = band_ring ? band : spacing; offset <= width;
-         offset = std::exchange(band_ring, false) ? spacing : offset + step) {
+         offset = std::exchange(band_ring, false) ? band + std::min(spacing, gap)
+                                                  : offset + std::min(step, gap)) {
       std::array<double, 2> uv = start;
       uv[axis] = band_ring ? ring
                  : snapped && offset == spacing ? latitude : start[axis] + direction * offset;
@@ -1245,7 +1269,22 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       }
       double length = 0.0;
       if (!ring_length(uv, end, length)) return PHX_MC_INVALID_INPUT;
-      const int uniform = std::max(8, static_cast<int>(std::ceil(length / (step * speed))));
+      int uniform = std::max(8, static_cast<int>(std::ceil(length / (step * speed))));
+      // A zone ring after a chart band takes at most the trim's design span
+      // at its own latitude (polar_trim_span, rows isotropic in 3D): with the
+      // spacing's count alone the chart gap left rows 45 deg wide and 6 deg
+      // high that the kernel could not join (measured: cap below 78 deg, h/r
+      // 0.77, angle refusals, UNRESOLVED).
+      if (chart_band && !band_ring) {
+        if (!surface_jet(metric, uv.data(), jet)) return PHX_MC_INVALID_INPUT;
+        const double aspect = std::hypot(std::hypot(jet[3], jet[4]), jet[5]) /
+                              std::hypot(std::hypot(jet[6], jet[7]), jet[8]);
+        const double span = polar_trim_span(sphere, uv[axis], direction, aspect,
+                                            8.0 * layer * metric.tolerance);
+        if (std::isfinite(span))
+          uniform = std::max(uniform, static_cast<int>(std::ceil(
+                                          (end[free_axis] - start[free_axis]) / span)));
+      }
       // Free-axis stops: uniform, or for the band ring every trim vertex with
       // each trim chord cut into pieces no longer than the uniform step, so
       // a band triangle stands on one trim chord and the ring piece across
@@ -1265,10 +1304,17 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
               start[free_axis] + (end[free_axis] - start[free_axis]) * i / uniform);
       }
       const int count = static_cast<int>(stops.size()) - 1;
+      if (chart_band) {
+        double widest = 0.0;
+        for (int i = 0; i < count; ++i) widest = std::max(widest, stops[i + 1] - stops[i]);
+        gap = polar_trim_band(sphere, uv[axis], direction, widest,
+                              8.0 * layer * metric.tolerance);
+      }
       // The ring chain closes the band nearest the anchor: the band ring's
       // when there is one.
       const bool first_ring = band_ring || (!chart_band && offset == spacing);
-      const bool snapped_ring = snapped && !band_ring && offset == spacing;
+      const bool snapped_ring =
+          band_ring ? band_snapped : snapped && offset == spacing;
       std::vector<std::array<double, 2>> ring_uv;
       std::vector<int32_t> ring_rows;
       if (first_ring) {
