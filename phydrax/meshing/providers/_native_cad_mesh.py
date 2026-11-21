@@ -20,7 +20,16 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..._meshcore import cad_mesh_solid, CadSolidResult, MeshcoreStatus
+from ..._meshcore import (
+    cad_geometry_evaluate,
+    cad_mesh_solid,
+    CadEntityKind,
+    CadGeometryQuantity,
+    CadModel,
+    CadProximityControl,
+    CadSolidResult,
+    MeshcoreStatus,
+)
 from ...discretization._cell_geometry import CellGeometrySpec
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
@@ -32,6 +41,7 @@ from .._native_construction import NativeCertificationRequest, NativeMeshConstru
 from .._result import MeshingComplianceReport
 from .._sizing import (
     CAD_CHART_SURFACE_SIZE,
+    ProximitySizeControl,
     size_statistic,
     SizeControlStrength,
     stored_circumradius_measures,
@@ -140,6 +150,9 @@ def _size_compliance(
     patches = np.asarray(surface.triangle_patches, dtype=np.int64)
     declaration = CAD_CHART_SURFACE_SIZE
     for control in specification.size_controls:
+        # Proximity controls report their own rows (_proximity_compliance).
+        if isinstance(control, ProximitySizeControl):
+            continue
         if not isinstance(control, UniformSizeControl):
             issues.append(f"size_control:{control.control_id}:unsupported")
             continue
@@ -175,6 +188,367 @@ def _size_compliance(
                 issues.append(key)
 
 
+def _triangle_distances(
+    queries: np.ndarray, corners: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Distance from each query to the nearest triangle and that triangle's row.
+
+    The closest point of each triangle by its Voronoi region (Ericson,
+    Real-Time Collision Detection 5.1.5), queries in blocks.
+    """
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+    ab, ac, bc = b - a, c - a, c - b
+    distance = np.empty((queries.shape[0],), dtype=np.float64)
+    nearest = np.empty((queries.shape[0],), dtype=np.int64)
+    block = max(1, 2**22 // max(1, corners.shape[0]))
+    for start in range(0, queries.shape[0], block):
+        p = queries[start : start + block, None, :]
+        ap, bp, cp = p - a, p - b, p - c
+        d1, d2 = np.sum(ab * ap, axis=2), np.sum(ac * ap, axis=2)
+        d3, d4 = np.sum(ab * bp, axis=2), np.sum(ac * bp, axis=2)
+        d5, d6 = np.sum(ab * cp, axis=2), np.sum(ac * cp, axis=2)
+        va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+        with np.errstate(divide="ignore", invalid="ignore"):
+            total = va + vb + vc
+            v, w = vb / total, vc / total
+            closest = a + v[..., None] * ab + w[..., None] * ac
+            edge_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+            closest = np.where(
+                ((va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0))[..., None],
+                b + edge_bc[..., None] * bc,
+                closest,
+            )
+            closest = np.where(
+                ((vb <= 0) & (d2 >= 0) & (d6 <= 0))[..., None],
+                a + (d2 / (d2 - d6))[..., None] * ac,
+                closest,
+            )
+            closest = np.where(
+                ((vc <= 0) & (d1 >= 0) & (d3 <= 0))[..., None],
+                a + (d1 / (d1 - d3))[..., None] * ab,
+                closest,
+            )
+        closest = np.where(((d6 >= 0) & (d5 <= d6))[..., None], c, closest)
+        closest = np.where(((d3 >= 0) & (d4 <= d3))[..., None], b, closest)
+        closest = np.where(((d1 <= 0) & (d2 <= 0))[..., None], a, closest)
+        lengths = np.linalg.norm(p - closest, axis=2)
+        rows = np.argmin(lengths, axis=1)
+        nearest[start : start + block] = rows
+        distance[start : start + block] = lengths[np.arange(rows.size), rows]
+    return distance, nearest
+
+
+def _triangle_normals(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
+    corners = points[triangles]
+    return np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+
+
+def _proxy_deviations(
+    model: CadModel, solid: CadSolidResult, tolerance: float, /
+) -> np.ndarray:
+    """Each boundary triangle's deviation bound from its face.
+
+    The sag of its circumcircle (radius R) on the osculating sphere of the
+    largest principal curvature kappa at its defined corners,
+    kappa R^2 / (1 + sqrt(1 - kappa^2 R^2)), at most the tolerance
+    (cad_proximity.hpp, proxy_deviation): the native field's own bound.
+    """
+    surface = solid.surface
+    points = np.asarray(solid.volume.points, dtype=np.float64)
+    triangles = np.asarray(surface.triangles, dtype=np.int64)
+    patches = np.asarray(surface.triangle_patches, dtype=np.int64)
+    uv = np.asarray(surface.triangle_uv, dtype=np.float64).reshape((-1, 3, 2))
+    kappa = np.zeros((triangles.shape[0],), dtype=np.float64)
+    defined = np.zeros((triangles.shape[0],), dtype=bool)
+    for face in np.unique(patches):
+        rows = np.flatnonzero(patches == face)
+        corners = uv[rows].reshape((-1, 2))
+
+        def evaluate(parameters: np.ndarray, face: int = int(face)) -> np.ndarray:
+            return cad_geometry_evaluate(
+                model,
+                CadEntityKind.SURFACE,
+                face,
+                parameters,
+                CadGeometryQuantity.DIFFERENTIAL,
+            )
+
+        # Model corners (dimension 0, poles among them) are evaluated one by
+        # one: one the evaluation refuses (a pole's chart edge) is undefined,
+        # like a non-finite curvature.
+        single = np.asarray(surface.vertex_dimensions)[triangles[rows]].reshape(-1) == 0
+        differential = np.full((corners.shape[0], 8), np.nan)
+        if (~single).any():
+            differential[~single] = evaluate(corners[~single])
+        for row in np.flatnonzero(single):
+            try:
+                differential[row] = evaluate(corners[row : row + 1])[0]
+            except ValueError:
+                continue
+        curvature = np.abs(differential[:, 6:8]).max(axis=1).reshape((-1, 3))
+        finite = np.isfinite(curvature)
+        kappa[rows] = np.where(finite, curvature, 0.0).max(axis=1)
+        defined[rows] = finite.any(axis=1)
+    radius = triangle_circumradii(points, triangles)
+    kr = kappa * radius
+    with np.errstate(invalid="ignore"):
+        sag = kappa * radius**2 / (1.0 + np.sqrt(1.0 - kr**2))
+    return np.where(defined & (kr < 1.0), np.minimum(sag, tolerance), tolerance)
+
+
+def _face_corners(model: CadModel, rows: np.ndarray, /) -> set[int]:
+    """The model corners on the given faces (curve ends and poles)."""
+    corners: set[int] = set()
+    offsets = np.asarray(model.loop_use_offsets, dtype=np.int64)
+    for loop, face in enumerate(np.asarray(model.loop_surfaces, dtype=np.int64)):
+        if face not in rows:
+            continue
+        for use in range(int(offsets[loop]), int(offsets[loop + 1])):
+            entity = int(model.use_entities[use])
+            if int(model.use_kinds[use]) == 0:
+                corners.update(int(x) for x in model.curve_corners[entity])
+            else:
+                corners.add(entity)
+    return corners
+
+
+def _proximity_controls(
+    prepared: _PreparedDirectBRepCadVolume, model: CadModel, /
+) -> tuple[tuple[ProximitySizeControl, CadProximityControl], ...]:
+    """The specification's proximity controls over model face rows.
+
+    Scopes that touch (share a corner or curve) have a gap reaching zero, so
+    a control on them must declare ``minimum_size`` (Gmsh refuses touching
+    scopes outright).
+    """
+    from ._native_cad_volume import _domain_scope_rows
+
+    result = []
+    for control in prepared.specification.size_controls:
+        if not isinstance(control, ProximitySizeControl):
+            continue
+        source = _domain_scope_rows(prepared.domain, control.source_scope, 2)
+        target = _domain_scope_rows(prepared.domain, control.target_scope, 2)
+        if control.minimum_size is None and _face_corners(model, source) & _face_corners(
+            model, target
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.INVALID_SPECIFICATION,
+                "ProximitySizeControl scopes touch, so their gap reaches zero; "
+                "declare minimum_size for the native CAD solid route.",
+                stage="size_field_resolution",
+            )
+        result.append(
+            (
+                control,
+                CadProximityControl(
+                    tuple(int(x) for x in source),
+                    tuple(int(x) for x in target),
+                    control.elements_per_gap,
+                    control.minimum_size,
+                    control.maximum_size,
+                    control.opposite_normals_only,
+                ),
+            )
+        )
+    return tuple(result)
+
+
+def _proximity_compliance(
+    solid: CadSolidResult,
+    controls: tuple[tuple[ProximitySizeControl, CadProximityControl], ...],
+    deviations: np.ndarray,
+    requested: list[tuple[str, float]],
+    achieved: list[tuple[str, float]],
+    /,
+) -> None:
+    """Each proximity control's statement on its scoped boundary triangles.
+
+    The control's size at a triangle is the local gap at its centroid (the
+    distance to the other scope's boundary triangles less that triangle's
+    deviation bound, the native field's lower bound) over elements_per_gap,
+    clamped to its bounds; the CAD face stage's statement is the
+    circumradius bound R <= size / sqrt(2) (``CAD_CHART_SURFACE_SIZE``), so a
+    triangle's ratio is R over that bound. Rows: the requested
+    elements_per_gap and bounds; the smallest gap estimate, the largest ratio
+    and the elements per gap it achieves. The gap is an estimate, not a
+    certified bound: the sag bound takes the curvature at the proxy
+    triangle's corners only, so on a curved scope it can understate the
+    deviation. The rows are therefore report-only and raise no issue, even
+    for a HARD control.
+    """
+    factor = CAD_CHART_SURFACE_SIZE.bound_factor
+    points = np.asarray(solid.volume.points, dtype=np.float64)
+    triangles = np.asarray(solid.surface.triangles, dtype=np.int64)
+    patches = np.asarray(solid.surface.triangle_patches, dtype=np.int64)
+    normals = _triangle_normals(points, triangles)
+    radii = triangle_circumradii(points, triangles)
+    for control, native in controls:
+        key = f"proximity:{control.control_id}"
+        requested.append((f"{key}:elements_per_gap", float(control.elements_per_gap)))
+        for name, bound in (
+            ("minimum_size", control.minimum_size),
+            ("maximum_size", control.maximum_size),
+        ):
+            if bound is not None:
+                requested.append((f"{key}:{name}", bound))
+        gaps, ratios = [], []
+        for own, other in (
+            (native.source_faces, native.target_faces),
+            (native.target_faces, native.source_faces),
+        ):
+            mine = np.flatnonzero(np.isin(patches, own))
+            theirs = np.flatnonzero(np.isin(patches, other))
+            centroids = points[triangles[mine]].mean(axis=1)
+            distance, nearest = _triangle_distances(centroids, points[triangles[theirs]])
+            gap = np.maximum(0.0, distance - deviations[theirs[nearest]])
+            if control.opposite_normals_only:
+                facing = np.sum(normals[mine] * normals[theirs[nearest]], axis=1) < 0.0
+                gap = np.where(facing, gap, np.inf)
+            size = np.clip(
+                gap / control.elements_per_gap,
+                0.0 if control.minimum_size is None else control.minimum_size,
+                np.inf if control.maximum_size is None else control.maximum_size,
+            )
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratios.append(radii[mine] / (factor * size))
+            gaps.append(gap)
+        gap = np.concatenate(gaps)
+        ratio = np.concatenate(ratios)
+        largest = float(np.nanmax(ratio)) if ratio.size else 0.0
+        achieved.extend(
+            (
+                (f"{key}:gap_estimate", float(gap.min())),
+                (f"{key}:maximum_circumradius_ratio", largest),
+                (
+                    f"{key}:minimum_elements_per_gap",
+                    control.elements_per_gap / largest if largest > 0 else np.inf,
+                ),
+            )
+        )
+
+
+def _cell_quality(points: np.ndarray, cells: np.ndarray, /) -> tuple[np.ndarray, ...]:
+    """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio."""
+    corners = points[cells]
+    smallest = np.full((cells.shape[0],), np.inf)
+    for i, j in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
+        k, m = (x for x in range(4) if x not in (i, j))
+        e = corners[:, j] - corners[:, i]
+        e /= np.linalg.norm(e, axis=1, keepdims=True)
+        u = corners[:, k] - corners[:, i]
+        v = corners[:, m] - corners[:, i]
+        u -= np.sum(u * e, axis=1, keepdims=True) * e
+        v -= np.sum(v * e, axis=1, keepdims=True) * e
+        cosine = np.sum(u * v, axis=1) / (
+            np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1)
+        )
+        smallest = np.minimum(smallest, np.degrees(np.arccos(np.clip(cosine, -1, 1))))
+    edges = corners[:, 1:] - corners[:, :1]
+    rhs = 0.5 * np.sum(edges**2, axis=2)
+    centre = np.linalg.solve(edges, rhs[..., None])[..., 0]
+    radius = np.linalg.norm(centre, axis=1)
+    shortest = np.min(
+        np.linalg.norm(
+            corners[:, (0, 0, 0, 1, 1, 2)] - corners[:, (1, 2, 3, 2, 3, 3)], axis=2
+        ),
+        axis=1,
+    )
+    return smallest, radius / shortest
+
+
+def _thin_region_findings(
+    model: CadModel,
+    solid: CadSolidResult,
+    sizes: np.ndarray,
+    deviations: np.ndarray,
+    radius_edge_bound: float | None,
+    minimum_dihedral_degrees: float,
+    /,
+) -> list[str]:
+    """Input findings: unmet cells in a region thinner than the targets allow at h.
+
+    A cell in a slab of thickness t that stands on a boundary triangle of
+    circumradius rho has its apex within t of the triangle's plane. Its best
+    placement, an equilateral triangle with the apex over its circumcentre
+    at height t, has radius-edge ratio sqrt(rho^2 + t^2) / (2 t) and
+    dihedral atan(2 t / rho) at the base edges; the radius-edge bound B and
+    the dihedral target theta then need rho <= t sqrt(4 B^2 - 1) and
+    rho <= 2 t / tan(theta), i.e. t >= rho / k with
+    k = min(sqrt(4 B^2 - 1), 2 / tan(theta)) (B = 2, theta = 15.5 deg: k =
+    sqrt(15)). At the requested size h the face stage's triangles reach
+    rho = h / sqrt(2) (``CAD_CHART_SURFACE_SIZE``), so the targets allow a
+    thickness t >= h / (sqrt(2) k) at h. An unmet cell's thickness is taken
+    through its centroid c: with A the nearest boundary face and B the
+    nearest other face whose nearest triangle faces A's, the two faces come
+    within d(c, A) + d(c, B) of each other plus the two triangles' deviation
+    bounds (_proxy_deviations), an upper bound t+ of the local thickness. A
+    face pair is reported when some unmet cell there has t+ below the
+    thickness its faces' smaller h allows.
+    """
+    bound = np.inf if radius_edge_bound is None else float(radius_edge_bound)
+    theta = np.radians(float(minimum_dihedral_degrees))
+    k = min(
+        np.sqrt(4.0 * bound**2 - 1.0),
+        2.0 / np.tan(theta) if theta > 0.0 else np.inf,
+    )
+    if not np.isfinite(k):
+        return []
+    volume = solid.volume
+    points = np.asarray(volume.points, dtype=np.float64)
+    cells = np.asarray(volume.tetrahedra, dtype=np.int64)
+    dihedral, ratio = _cell_quality(points, cells)
+    unmet = (dihedral < float(minimum_dihedral_degrees)) | (ratio > bound)
+    if not unmet.any():
+        return []
+    centroids = points[cells[unmet]].mean(axis=1)
+    triangles = np.asarray(solid.surface.triangles, dtype=np.int64)
+    patches = np.asarray(solid.surface.triangle_patches, dtype=np.int64)
+    normals = _triangle_normals(points, triangles)
+    factor = float(CAD_CHART_SURFACE_SIZE.bound_factor)
+    faces = np.unique(patches)
+    distance = np.empty((centroids.shape[0], faces.size))
+    nearest = np.empty((centroids.shape[0], faces.size), dtype=np.int64)
+    for column, face in enumerate(faces):
+        rows = np.flatnonzero(patches == face)
+        found, row = _triangle_distances(centroids, points[triangles[rows]])
+        distance[:, column], nearest[:, column] = found, rows[row]
+    regions: dict[tuple[int, int], list[float]] = {}
+    for cell in range(centroids.shape[0]):
+        order = np.argsort(distance[cell], kind="stable")
+        first = nearest[cell, order[0]]
+        for column in order[1:]:
+            other = nearest[cell, column]
+            if np.dot(normals[first], normals[other]) >= 0.0:
+                continue
+            thickness = (
+                distance[cell, order[0]]
+                + distance[cell, column]
+                + deviations[first]
+                + deviations[other]
+            )
+            low, high = sorted((int(faces[order[0]]), int(faces[column])))
+            pair = (low, high)
+            needed = factor * float(min(sizes[pair[0]], sizes[pair[1]])) / k
+            if thickness < needed:
+                entry = regions.setdefault(pair, [0.0, 0.0, needed])
+                entry[0] += 1.0
+                entry[1] = max(entry[1], thickness)
+            break
+    findings = []
+    for (a, b), (count, thickness, required) in sorted(regions.items()):
+        findings.append(
+            f"input_thin_region_below_volume_targets:faces={a},{b}:"
+            f"unmet_cells={int(count)}:thickness_at_most={float(thickness)!r}:"
+            f"thickness_needed={float(required)!r}:"
+            f"size={float(min(sizes[a], sizes[b]))!r}:"
+            "the volume targets are unattainable in this region at the requested "
+            "size; a ProximitySizeControl on these faces or relaxed targets "
+            "resolve it"
+        )
+    return findings
+
+
 def execute_cad_solid(
     prepared: _PreparedDirectBRepCadVolume, /
 ) -> NativeMeshConstruction:
@@ -197,18 +571,36 @@ def execute_cad_solid(
     sizes = np.asarray(boundary.size_values, dtype=np.float64)
     model = cad_geometry_bundle(domain).model
     order = specification.target.geometry_order
-    solid = cad_mesh_solid(
-        model,
-        sizes,
-        np.full(sizes.shape, deviation, dtype=np.float64),
-        np.full((model.curve_nodes.size,), deviation, dtype=np.float64),
-        radius_edge_bound=(
-            np.inf if schedule.radius_edge_bound is None else schedule.radius_edge_bound
-        ),
-        min_dihedral_degrees=schedule.minimum_dihedral_degrees,
-        min_relative_determinant=schedule.minimum_relative_determinant,
-        geometry_order=order,
-    )
+    proximity = _proximity_controls(prepared, model)
+    try:
+        solid = cad_mesh_solid(
+            model,
+            sizes,
+            np.full(sizes.shape, deviation, dtype=np.float64),
+            np.full((model.curve_nodes.size,), deviation, dtype=np.float64),
+            radius_edge_bound=(
+                np.inf
+                if schedule.radius_edge_bound is None
+                else schedule.radius_edge_bound
+            ),
+            min_dihedral_degrees=schedule.minimum_dihedral_degrees,
+            min_relative_determinant=schedule.minimum_relative_determinant,
+            geometry_order=order,
+            proximity_controls=tuple(native for _, native in proximity),
+        )
+    except ValueError as error:
+        if not proximity:
+            raise
+        # The native field refuses a zero size: a gap lower bound reaching
+        # zero (the scopes within the deviation of each other) without a
+        # minimum_size.
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SPECIFICATION,
+            "The native CAD solid refused its proximity size field (a "
+            "ProximitySizeControl gap bound reaches zero without minimum_size): "
+            f"{error}",
+            stage="size_field_resolution",
+        ) from error
     volume = solid.volume
     stats = volume.stats[0]
     if volume.tetrahedra.shape[0] == 0:
@@ -239,7 +631,13 @@ def execute_cad_solid(
     forced = int(stats["unmet_forced_cells"])
     unforced = int(stats["unmet_unforced_cells"])
     issues: list[str] = []
+    deviations = (
+        _proxy_deviations(model, solid, float(deviation))
+        if proximity or solid.status is MeshcoreStatus.UNRESOLVED
+        else None
+    )
     if solid.status is MeshcoreStatus.UNRESOLVED:
+        assert deviations is not None
         issues.append(f"native_unmet_quality_cells:{unforced}")
         # Input finding: a rim whose true wedge is below the dihedral target
         # makes that target unattainable in a neighbourhood of the rim for
@@ -253,6 +651,19 @@ def execute_cad_solid(
                 f"wedge_degrees={float(wedges[curve])!r}:target_degrees={target!r}:"
                 "the dihedral target is unattainable near this rim for any mesh"
             )
+        # Input finding: unmet cells where the solid is thinner than the
+        # targets allow at its boundary size (_thin_region_findings); the
+        # request's size is kept, a ProximitySizeControl is the remedy.
+        issues.extend(
+            _thin_region_findings(
+                model,
+                solid,
+                sizes,
+                deviations,
+                schedule.radius_edge_bound,
+                target,
+            )
+        )
     requested: list[tuple[str, float]] = [
         ("maximum_deviation", float(deviation)),
         ("minimum_dihedral_degrees", float(schedule.minimum_dihedral_degrees)),
@@ -265,6 +676,9 @@ def execute_cad_solid(
         ("unmet_unforced_quality_cells", float(unforced)),
     ]
     _size_compliance(prepared, solid, issues, requested, achieved)
+    if proximity:
+        assert deviations is not None
+        _proximity_compliance(solid, proximity, deviations, requested, achieved)
     compliance = MeshingComplianceReport(
         specification.specification_id,
         issues=tuple(issues),

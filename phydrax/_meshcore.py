@@ -12800,13 +12800,44 @@ class CadSurfaceResult(NamedTuple):
     chart: CadChartResult
 
 
+class _CadProximityControl(ctypes.Structure):
+    _fields_ = (
+        ("source_count", _I64),
+        ("source_faces", ctypes.c_void_p),
+        ("target_count", _I64),
+        ("target_faces", ctypes.c_void_p),
+        ("elements_per_gap", _I32),
+        ("opposite_normals_only", _I32),
+        ("minimum_size", ctypes.c_double),
+        ("maximum_size", ctypes.c_double),
+    )
+
+
 class _CadVolumeControls(ctypes.Structure):
     _fields_ = (
         ("radius_edge_bound", ctypes.c_double),
         ("min_dihedral_degrees", ctypes.c_double),
         ("min_relative_determinant", ctypes.c_double),
         ("geometry_order", _I32),
+        ("proximity_count", _I64),
+        ("proximity_controls", ctypes.c_void_p),
     )
+
+
+class CadProximityControl(NamedTuple):
+    """A proximity size control of ``cad_mesh_solid`` over model face rows.
+
+    At a point of a scoped face the size is the local gap to the other
+    scope's faces over ``elements_per_gap``, clamped to ``minimum_size`` and
+    ``maximum_size`` (``None``: no bound); see ``phx_mc_cad_proximity_control``.
+    """
+
+    source_faces: tuple[int, ...]
+    target_faces: tuple[int, ...]
+    elements_per_gap: int
+    minimum_size: float | None = None
+    maximum_size: float | None = None
+    opposite_normals_only: bool = True
 
 
 _CAD_QUADRATIC_STATS_FIELDS = (
@@ -12988,19 +13019,45 @@ def cad_mesh_solid(
     min_dihedral_degrees: float = 15.5,
     min_relative_determinant: float = 0.0,
     geometry_order: int = 1,
+    proximity_controls: tuple[CadProximityControl, ...] = (),
 ) -> CadSolidResult:
     """Curves, faces and the fixed-boundary volume of a CAD solid in one call.
 
     ``face_sizes`` are the requested edge lengths h; the volume is sized from
-    them. UNRESOLVED returns the result with unmet quality targets, unresolved
-    P2 cells, or no cells when recovery still refused after the one boundary
-    split (``volume.stats``).
+    them. ``proximity_controls`` lower the size near thin regions (a first
+    surface pass at h is their distance proxy). UNRESOLVED returns the result
+    with unmet quality targets, unresolved P2 cells, or no cells when recovery
+    still refused after the one boundary split (``volume.stats``).
     """
+    faces = [
+        (
+            np.ascontiguousarray(control.source_faces, dtype=np.int32),
+            np.ascontiguousarray(control.target_faces, dtype=np.int32),
+        )
+        for control in proximity_controls
+    ]
+    rows = (_CadProximityControl * max(len(faces), 1))(
+        *(
+            _CadProximityControl(
+                source.size,
+                source.ctypes.data,
+                target.size,
+                target.ctypes.data,
+                int(control.elements_per_gap),
+                int(bool(control.opposite_normals_only)),
+                0.0 if control.minimum_size is None else float(control.minimum_size),
+                np.inf if control.maximum_size is None else float(control.maximum_size),
+            )
+            for control, (source, target) in zip(proximity_controls, faces, strict=True)
+        )
+    )
     controls = _CadVolumeControls(
         radius_edge_bound,
         min_dihedral_degrees,
         min_relative_determinant,
         geometry_order,
+        len(faces),
+        ctypes.addressof(rows),
     )
     surface, volume = _cad_mesh(
         model,

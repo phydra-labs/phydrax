@@ -171,6 +171,16 @@ struct Context {
             ring=std::sqrt(4*theta*tolerance/zone_kappa);
           face_size=std::max(face_size,ring);
         }
+        // A proximity control scoping the face bounds it at the curve point
+        // too (cad_proximity.hpp); a zero bound (a gap reaching zero without
+        // a minimum_size) is refused.
+        if (resolved && controls.proximity) {
+          face_size = std::min(face_size, controls.proximity->size(use.face, jet));
+          if (!(face_size > 0)) {
+            failure_status=PHX_MC_INVALID_INPUT;
+            failed=true; return {s,0,0};
+          }
+        }
       }
       if (!resolved) {
         if (!evaluated) failure_status=PHX_MC_INVALID_INPUT;

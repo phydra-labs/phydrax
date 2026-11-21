@@ -300,6 +300,8 @@ struct FaceMetric {
   std::vector<std::array<double, 5>>* position_calls;
   // Solid route: pole rings follow the graded base size (seed_poles).
   bool graded_pole_rings = false;
+  // Solid route: the proximity size field (null: none).
+  const cad::ProximityField* proximity = nullptr;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -408,8 +410,12 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // chord beside a longer one, and the kernel accepted the stretched triangle
 // on it (measured: a 35.4 deg apex on a 0.35 h chord at h = 0.02286). It
 // overrides the grading, never the request or the curvature sizes.
+// A proximity control scoping the face lowers the request to its size at the
+// point first (cad_proximity.hpp); grading and the chord floor then apply to
+// that local request.
 double base_size(const FaceMetric& context, const double* jet) {
   double h = context.size;
+  if (context.proximity) h = std::min(h, context.proximity->size(context.face, jet));
   const double ungraded = h;
   if (!context.boundary_tree.empty()) grade_boundary(context, 0, jet, h);
   // A chord farther than (L_max - h) / g cannot raise h, so the search for
@@ -1637,7 +1643,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
                       std::vector<std::array<double, 5>>* position_calls,
-                      bool graded_pole_rings) {
+                      bool graded_pole_rings, const cad::ProximityField* proximity) {
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
@@ -1647,7 +1653,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
   FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, {},
-                    {}, {}, metric_points, {}, position_calls, graded_pole_rings};
+                    {}, {}, metric_points, {}, position_calls, graded_pole_rings, proximity};
   if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);

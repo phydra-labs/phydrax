@@ -481,6 +481,70 @@ void refusals() {
   PHX_CHECK(phx_mc_cad_volume_export(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
+// The proximity field over two parallel unit squares 0.25 apart (face 0 at
+// z = 0 facing -z, face 1 at z = 0.25 facing +z; face 2 unscoped): a point's
+// size is its gap to the other square less that square's deviation bound,
+// over elements_per_gap, clamped; a face no control scopes is unbounded.
+void proximity_field() {
+  using phx::mc::cad::ProximityControl;
+  using phx::mc::cad::ProximityField;
+  const std::vector<std::array<double, 3>> points{
+      {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+      {0, 0, 0.25}, {1, 0, 0.25}, {1, 1, 0.25}, {0, 1, 0.25}};
+  const std::vector<std::array<int32_t, 3>> facing{{0, 2, 1}, {0, 3, 2}, {4, 5, 6}, {4, 6, 7}};
+  const std::vector<int32_t> faces{0, 0, 1, 1};
+  const std::vector<double> deviations{0.0, 0.0, 0.05, 0.05};
+  const double bottom[3] = {0.5, 0.5, 0.0}, top[3] = {0.5, 0.5, 0.25};
+  ProximityControl control;
+  control.source_faces = {0};
+  control.target_faces = {1};
+  ProximityField field;
+  PHX_CHECK(field.build({control}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(0, bottom) - 0.20) < 1e-15);
+  PHX_CHECK(std::abs(field.size(1, top) - 0.25) < 1e-15);
+  PHX_CHECK(std::isinf(field.size(2, top)));
+  ProximityControl halved = control;
+  halved.elements_per_gap = 2;
+  ProximityControl clamped = control;
+  clamped.maximum_size = 0.1;
+  PHX_CHECK(field.build({halved}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(1, top) - 0.125) < 1e-15);
+  PHX_CHECK(field.build({halved, clamped}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(1, top) == 0.1);
+  // The top square turned to face -z no longer faces the bottom one: no gap.
+  const std::vector<std::array<int32_t, 3>> turned{{0, 2, 1}, {0, 3, 2}, {4, 6, 5}, {4, 7, 6}};
+  PHX_CHECK(field.build({control}, points, turned, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::isinf(field.size(0, bottom)));
+  control.opposite_normals_only = false;
+  PHX_CHECK(field.build({control}, points, turned, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(0, bottom) - 0.20) < 1e-15);
+  // A gap bound reaching zero gives zero without minimum_size.
+  const std::vector<double> loose{0.0, 0.0, 0.3, 0.3};
+  PHX_CHECK(field.build({control}, points, turned, faces, loose, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(0, bottom) == 0.0);
+  control.minimum_size = 0.01;
+  PHX_CHECK(field.build({control}, points, turned, faces, loose, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(0, bottom) == 0.01);
+  // Overlapping scopes, an out-of-range face and an empty scope are refused.
+  ProximityControl overlapping = control;
+  overlapping.target_faces = {0, 1};
+  PHX_CHECK(field.build({overlapping}, points, facing, faces, deviations, 3) ==
+            PHX_MC_INVALID_INPUT);
+  ProximityControl outside = control;
+  outside.target_faces = {3};
+  PHX_CHECK(field.build({outside}, points, facing, faces, deviations, 3) == PHX_MC_INVALID_INPUT);
+  ProximityControl empty = control;
+  empty.target_faces = {2};
+  PHX_CHECK(field.build({empty}, points, facing, faces, deviations, 3) == PHX_MC_INVALID_INPUT);
+  // The deviation bound: zero on a plane, the cap sag 1 - sqrt(1 - R^2) on a
+  // unit sphere, the tolerance beyond it.
+  PHX_CHECK(phx::mc::cad::proxy_deviation(0.3, 0.0, 1.0) == 0.0);
+  PHX_CHECK(std::abs(phx::mc::cad::proxy_deviation(0.3, 1.0, 1.0) -
+                     (1.0 - std::sqrt(1.0 - 0.09))) < 1e-15);
+  PHX_CHECK(phx::mc::cad::proxy_deviation(0.3, 1.0, 0.01) == 0.01);
+  PHX_CHECK(phx::mc::cad::proxy_deviation(2.0, 1.0, 0.5) == 0.5);
+}
+
 }  // namespace
 
 int main() {
@@ -495,5 +559,6 @@ int main() {
   flat_surface_triangle();
   strict_schedule();
   refusals();
+  proximity_field();
   return phx::mc::test::finish("test_cad_volume");
 }

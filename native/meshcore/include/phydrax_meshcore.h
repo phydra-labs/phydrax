@@ -3142,11 +3142,33 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * recovery: UNRESOLVED, zero cells, recovery_status UNRESOLVED,
  * recovery_reason INVALID_FACET, failure_kind FACET, failure_entity the
  * first such triangle row and failure_measure its relative area. */
+/* Proximity size control (ProximitySizeControl) of the CAD solid: two
+ * disjoint face-row sets. At a point of a scoped face the size is the local
+ * gap (its distance to the other set's faces) over elements_per_gap,
+ * clamped to [minimum_size, maximum_size] (0: no bound); the gap is a lower
+ * bound from a first surface pass at the request (the proxy distance less
+ * the nearest proxy face's tolerance), and with opposite_normals_only it is
+ * infinite where the nearest proxy triangle of the other set does not face
+ * the point. Curves, faces and the volume's surface size targets take it
+ * where it is below the face size. A zero size (a gap bound reaching zero
+ * without minimum_size) is PHX_MC_INVALID_INPUT. */
+typedef struct phx_mc_cad_proximity_control {
+  int64_t source_count;
+  const int32_t* source_faces;
+  int64_t target_count;
+  const int32_t* target_faces;
+  int32_t elements_per_gap;
+  int32_t opposite_normals_only;
+  double minimum_size;
+  double maximum_size;
+} phx_mc_cad_proximity_control;
 typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
   double min_relative_determinant; /* 0; also the P2 relative floor */
   int32_t geometry_order;          /* 1 or 2 */
+  int64_t proximity_count;         /* 0: no proximity controls */
+  const phx_mc_cad_proximity_control* proximity_controls;
 } phx_mc_cad_volume_controls;
 typedef struct phx_mc_cad_volume_stats {
   /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */

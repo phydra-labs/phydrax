@@ -7,6 +7,7 @@
 
 #include "cad_curve_discretization.hpp"
 #include "cad_geometry.hpp"
+#include "cad_proximity.hpp"
 #include "cad_refine2d.hpp"
 
 namespace phx::mc {
@@ -101,13 +102,15 @@ bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
 // order-0 evaluation elsewhere; every final face vertex position comes from it.
 // position_calls, when given, records each hook result as {u, v, x, y, z}.
 // graded_pole_rings (solid route) starts pole rings at the graded base size
-// and grows them ring by ring (seed_poles).
+// and grows them ring by ring (seed_poles). proximity (solid route, null:
+// none) bounds the base size at each face point (cad_proximity.hpp).
 int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result,
                       std::vector<std::array<double, 2>>* metric_points = nullptr,
                       std::vector<std::array<double, 5>>* position_calls = nullptr,
-                      bool graded_pole_rings = false);
+                      bool graded_pole_rings = false,
+                      const cad::ProximityField* proximity = nullptr);
 
 }  // namespace phx::mc

@@ -11,6 +11,7 @@
 
 #include "cad_curve_discretization.hpp"
 #include "cad_geometry.hpp"
+#include "cad_proximity.hpp"
 
 namespace phx::mc::cad {
 
@@ -27,6 +28,9 @@ struct CurveControls {
   // degrees. A curve between two faces whose true wedge exceeds it takes the
   // rim size of discretize_curves so the meshed wedge keeps a margin above it.
   double rim_dihedral_degrees = 0.0;
+  // Solid route only (null: none): the proximity size field
+  // (ProximitySizeControl), which bounds a scoped face's size at each point.
+  const ProximityField* proximity = nullptr;
 };
 
 struct CurveFailure {
