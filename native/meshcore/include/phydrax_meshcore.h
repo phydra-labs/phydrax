@@ -1973,11 +1973,11 @@ PHX_MC_API void phx_mc_hex_dominant_free(phx_mc_hex_dominant_mesh* result);
  * features.
  *
  * The kernel places interior seeds (mirrored pairs about the surface, sector
- * seeds about sharp edges, corner seeds, a body-centred cubic lattice) and
+ * seeds about sharp edges, corner seeds, a body-centered cubic lattice) and
  * exterior ghosts (interior seeds reflected across the surface), all on a
  * dyadic grid, deterministically. The cells are the exact Voronoi cells of
  * the interior seeds in the diagram of all seeds: closed and convex. A seed
- * of a nearly cospherical configuration (adjacent circumcentres within
+ * of a nearly cospherical configuration (adjacent circumcenters within
  * 2^-14 size) moves 2^-10 size off the other circumsphere and the diagram is
  * rebuilt, so the cells carry no near-degenerate edges or faces. The boundary is
  * formed by the bisector faces towards ghosts; it lies exactly on

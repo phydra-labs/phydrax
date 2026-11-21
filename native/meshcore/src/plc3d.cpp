@@ -3676,9 +3676,9 @@ class PlcRecoveryBuilder {
   }
 
   // True when a vertex other than a, b, c lies in the closed diametral ball
-  // of triangle abc (the smallest ball through a, b, c, centred on its
+  // of triangle abc (the smallest ball through a, b, c, centered on its
   // plane), decided exactly on witnessed positions: with u = b - a,
-  // v = c - a, m = u x v and x = w - a, the centre is a + o with
+  // v = c - a, m = u x v and x = w - a, the center is a + o with
   // 2 |m|^2 o = |u|^2 (v x m) + |v|^2 (m x u), and w lies in the closed ball
   // iff |x - o|^2 <= |o|^2, i.e. |x|^2 |m|^2 - x . (2 |m|^2 o) <= 0. A
   // subface whose ball holds no other vertex is strongly Delaunay: it is a
@@ -3727,31 +3727,31 @@ class PlcRecoveryBuilder {
     const auto dot = [](const Expansion* p, const Expansion* q) {
       return p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
     };
-    Expansion m[3], vm[3], mu[3], centre[3];
+    Expansion m[3], vm[3], mu[3], center[3];
     cross(u, v, m);
     cross(v, m, vm);
     cross(m, u, mu);
     const Expansion uu = dot(u, u), vv = dot(v, v), mm = dot(m, m);
-    for (int axis = 0; axis < 3; ++axis) centre[axis] = uu * vm[axis] + vv * mu[axis];
+    for (int axis = 0; axis < 3; ++axis) center[axis] = uu * vm[axis] + vv * mu[axis];
     // Carrier box of the ball, widened for the roundings of witnessed carriers.
-    double carrier_centre[3], lower[3], upper[3];
+    double carrier_center[3], lower[3], upper[3];
     const double scale = 2.0 * mm.estimate();
     if (!(scale > 0.0)) return true;
     for (int axis = 0; axis < 3; ++axis) {
-      carrier_centre[axis] = point(a)[axis] + centre[axis].estimate() / scale;
+      carrier_center[axis] = point(a)[axis] + center[axis].estimate() / scale;
     }
-    const double radius = std::sqrt(geometry::squared_distance(carrier_centre, point(a)));
+    const double radius = std::sqrt(geometry::squared_distance(carrier_center, point(a)));
     for (int axis = 0; axis < 3; ++axis) {
       const double margin =
-          radius * (1.0 + 0x1p-20) + 0x1p-40 * (radius + std::fabs(carrier_centre[axis]));
-      lower[axis] = carrier_centre[axis] - margin;
-      upper[axis] = carrier_centre[axis] + margin;
+          radius * (1.0 + 0x1p-20) + 0x1p-40 * (radius + std::fabs(carrier_center[axis]));
+      lower[axis] = carrier_center[axis] - margin;
+      upper[axis] = carrier_center[axis] + margin;
     }
     return any_live_vertex_in_box(lower, upper, [&](int32_t vertex) {
       if (vertex == a || vertex == b || vertex == c) return false;
       Expansion x[3];
       for (int axis = 0; axis < 3; ++axis) x[axis] = coordinate(ref(vertex), axis) - pa[axis];
-      return (dot(x, x) * mm - dot(x, centre)).sign() <= 0;
+      return (dot(x, x) * mm - dot(x, center)).sign() <= 0;
     });
   }
 

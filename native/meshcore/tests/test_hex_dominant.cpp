@@ -180,16 +180,16 @@ double check_cells(const Result& r) {
   int64_t open = 0, negative = 0, inverted = 0;
   for (int64_t c = 0; c < cells; ++c) {
     std::vector<std::pair<int32_t, int32_t>> directed;
-    V centre{0, 0, 0};
+    V center{0, 0, 0};
     int64_t count = 0;
     for (const auto& [f, sign] : of[c]) {
       for (int64_t q = r.face_offsets[f]; q < r.face_offsets[f + 1]; ++q) {
         const V p = at(r.points, r.face_vertices[q]);
-        for (int a = 0; a < 3; ++a) centre[a] += p[a];
+        for (int a = 0; a < 3; ++a) center[a] += p[a];
         ++count;
       }
     }
-    for (int a = 0; a < 3; ++a) centre[a] /= static_cast<double>(count);
+    for (int a = 0; a < 3; ++a) center[a] /= static_cast<double>(count);
     double volume = 0.0;
     for (const auto& [f, sign] : of[c]) {
       const int64_t first = r.face_offsets[f], last = r.face_offsets[f + 1];
@@ -204,7 +204,7 @@ double check_cells(const Result& r) {
         if (sign < 0) std::swap(u, w);
         directed.push_back({u, w});
         const double tet = dot3(cross3(minus(at(r.points, u), average), minus(at(r.points, w), average)),
-                                minus(average, centre)) / 6.0;
+                                minus(average, center)) / 6.0;
         if (!(tet > 0.0)) ++negative;
         volume += tet;
       }
