@@ -3167,6 +3167,34 @@ PHX_MC_API int32_t phx_mc_cell_map_validity(
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests);
 
+/* Combinatorial counts of phydrax's welded-topology audit, identical to its
+ * host route. Rows hold vertex keys in [0, key_count) padded with negative
+ * entries; a row's key is the multiset of its nonnegative entries. The star
+ * complex has cells (cell_count, cell_width), oriented facet occurrences
+ * (facet_count, facet_width) of cells facet_cells with dimension-1 signs
+ * facet_signs, and (dimension 3) nonnegative cell edges (edge_count, 2) of
+ * cells edge_cells; its first audited_cell_count cells and audited_facet_count
+ * facets (whose entries fit in audited_facet_width leading columns) are the
+ * audited mesh (dimension 2 requires facet_width >= 2). Outputs: counts[0..6] =
+ * collapsed audited cells, duplicate
+ * audited cells, audited facet keys of more than two occurrences,
+ * two-occurrence keys with inconsistent orientation, open boundary (when
+ * check_watertight: one-occurrence keys if embedded, else boundary ridges not
+ * shared by exactly two boundary facets), vertices and (dimension 3) edges
+ * whose star cells split into several components linked through shared star
+ * facets (when check_manifold and dimension >= 2, restricted to entities with
+ * a vertex among the scope_count keys of scope unless scope_count is -1);
+ * boundary[f] = 1 when audited facet f's key occurs once among the audited
+ * facets. A facet link without its incidence yields PHX_MC_INVALID_INPUT. */
+PHX_MC_API int32_t phx_mc_welded_topology(
+    int32_t dimension, int32_t embedded, int32_t check_manifold, int32_t check_watertight,
+    int64_t key_count, int64_t cell_count, int64_t audited_cell_count, int64_t cell_width,
+    const int64_t* cells, int64_t facet_count, int64_t audited_facet_count, int64_t facet_width,
+    int64_t audited_facet_width, const int64_t* facets, const int64_t* facet_cells,
+    const int8_t* facet_signs, int64_t edge_count, const int64_t* edges,
+    const int64_t* edge_cells, int64_t scope_count, const int64_t* scope, int64_t* counts,
+    int8_t* boundary);
+
 /* Polyhedral cells for the two exact star proofs below. Cell k has local
  * points [point_offsets[k], ...+1) given as integer rows X = L x over one
  * positive common denominator L of its rational vertices x, and faces

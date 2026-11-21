@@ -47,6 +47,20 @@ def _column_extremes(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return lows.astype(np.int64), highs.astype(np.int64)
 
 
+def _exact_spans(lows: np.ndarray, highs: np.ndarray, /) -> np.ndarray | None:
+    """Per-column value spans, or ``None`` when their product exceeds int64.
+
+    The spans are formed in Python integers: ``high - low + 1`` wraps in int64
+    for columns reaching both a padding sentinel near the int64 maximum and
+    small values.
+    """
+
+    exact = [int(high) - int(low) + 1 for low, high in zip(lows, highs, strict=True)]
+    if math.prod(exact) > np.iinfo(np.int64).max:
+        return None
+    return np.asarray(exact, dtype=np.int64)
+
+
 def _row_value_keys(
     rows: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int] | None:
@@ -57,10 +71,10 @@ def _row_value_keys(
     """
 
     lows, highs = _column_extremes(rows)
-    spans = highs - lows + 1
-    span_product = math.prod(int(span) for span in spans)
-    if span_product > np.iinfo(np.int64).max:
+    spans = _exact_spans(lows, highs)
+    if spans is None:
         return None
+    span_product = math.prod(int(span) for span in spans)
     key = np.zeros((rows.shape[0],), dtype=np.int64)
     for column, low, span in zip(rows.T, lows, spans, strict=True):
         key *= span
@@ -222,8 +236,8 @@ def _row_keys(
     query_lows, query_highs = _column_extremes(query)
     lows = np.minimum(table_lows, query_lows)
     highs = np.maximum(table_highs, query_highs)
-    spans = highs - lows + 1
-    if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
+    spans = _exact_spans(lows, highs)
+    if spans is None:
         return None
     table_key = np.zeros((table.shape[0],), dtype=np.int64)
     query_key = np.zeros((query.shape[0],), dtype=np.int64)
