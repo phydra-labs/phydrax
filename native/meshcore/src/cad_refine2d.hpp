@@ -35,6 +35,14 @@ struct CadRefine2DInput {
   // nonzero on success and write three finite coordinates.
   int32_t (*surface_position)(void* context, const double point[2], double xyz[3]) = nullptr;
   void* surface_context = nullptr;
+  // With surface_position, a positive stored_size h also makes a triangle
+  // oversized when its stored (surface_position) triangle fails
+  // stored_size_exceeds (cad_stored_size.hpp) against h at half the rounding
+  // allowance, unless a constrained side's stored length is at least
+  // sqrt(2) h; refinement splits it and the angle pass keeps stars passing
+  // it, but the census does not report it (a caller checks its emitted
+  // triangles).
+  double stored_size = 0.0;
 };
 
 struct CadRefine2DStats {

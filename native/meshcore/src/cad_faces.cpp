@@ -9,6 +9,7 @@
 #include <numeric>
 #include <vector>
 
+#include "cad_stored_size.hpp"
 #include "chart_surface.hpp"
 #include "expansion.hpp"
 #include "predicates.hpp"
@@ -1232,6 +1233,32 @@ double maximum_cosine(const SurfaceTriangulation& surface,
   return maximum;
 }
 
+// Cells among `cells` whose stored triangle fails the kernel's stored size
+// test (cad_refine2d.hpp, stored_size: half the rounding allowance, a
+// constrained side of length >= sqrt(2) h exempt).
+int32_t stored_size_failures(const SurfaceTriangulation& surface,
+                             const std::vector<int32_t>& cells, double h) {
+  int32_t failures = 0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    const double* p[3] = {surface.points.data() + 3 * t[0], surface.points.data() + 3 * t[1],
+                          surface.points.data() + 3 * t[2]};
+    bool exempt = false;
+    for (int k = 0; k < 3 && !exempt; ++k) {
+      if (!surface.constrained[cell][k]) continue;
+      const double* a = p[(k + 1) % 3];
+      const double* b = p[(k + 2) % 3];
+      double length2 = 0.0;
+      for (int i = 0; i < 3; ++i) length2 += (b[i] - a[i]) * (b[i] - a[i]);
+      exempt = length2 >= 2 * h * h;
+    }
+    if (exempt) continue;
+    const double tau = 0.5 * stored_size_allowance(p[0], p[1], p[2]);
+    failures += stored_size_exceeds(p[0], p[1], p[2], h, tau);
+  }
+  return failures;
+}
+
 // Largest metric circumradius over cells (centroid metric, as the chart
 // kernel's size test); infinity on a degenerate or invalid cell. Stops at the
 // first cell past `bound`, returning that cell's radius.
@@ -1341,6 +1368,14 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     const double quality = maximum_cosine(surface, incident[v]);
     if (!(quality <= limit)) return reject();
     if (sized && !fits(v, previous_radius)) return reject();
+    // The stored size test may not fail on more star cells than before.
+    const int32_t failures = stored_size_failures(surface, incident[v], metric.size);
+    if (failures > 0) {
+      std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
+      const int32_t before = stored_size_failures(surface, incident[v], metric.size);
+      std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
+      if (failures > before) return reject();
+    }
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
   };
@@ -1630,6 +1665,11 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.admit_context = &metric;
   input.surface_position = face_position;
   input.surface_context = &metric;
+  // The stored size guarantee: R <= h/sqrt(2) on the emitted triangle up to
+  // the rounding allowance, h the face's request size (the base size's
+  // ungraded value: grading lowers the metric's size, a chord floor never
+  // lifts it past this).
+  input.stored_size = size;
   CadRefine2DResult refined;
   status = cad_refine2d(input, refined);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
@@ -1755,6 +1795,37 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
       }
     }
     result.refinement_failures.push_back(record);
+  }
+  // The stored size guarantee on the emitted triangles (pole slivers aside,
+  // fixed like the kernel's pole fans): a failure the kernel and the guarded
+  // moves left (the 3D flips are not guarded) is a size refusal with its
+  // chart triangle, and the face is unresolved.
+  for (std::size_t c = 0; c < surface.cells.size(); ++c) {
+    const auto& cell = surface.cells[c];
+    bool sliver = false;
+    for (int i = 0; i < 3; ++i) {
+      const int32_t a = cell[i], b = cell[(i + 1) % 3];
+      sliver |= std::binary_search(pole_edges.begin(), pole_edges.end(),
+                                   std::make_pair(std::min(a, b), std::max(a, b)));
+    }
+    if (sliver ||
+        stored_size_failures(surface, {static_cast<int32_t>(c)}, metric.size) == 0) continue;
+    phx_mc_cad_face_failure record{};
+    record.face = face;
+    record.loop = record.use = record.axis = -1;
+    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
+    record.triangle = -1;
+    record.bad_size = 1;
+    record.refusal_kind = static_cast<int32_t>(CadRefine2DRefusal::none);
+    record.curve = record.curve_segment = -1;
+    record.candidate_uv[0] = record.candidate_uv[1] = nan;
+    record.segment_parameters[0] = record.segment_parameters[1] = nan;
+    for (int k = 0; k < 3; ++k) {
+      record.triangle_uv[2*k] = surface.chart(cell[k])[0] / metric.scale_u;
+      record.triangle_uv[2*k+1] = surface.chart(cell[k])[1] / metric.scale_v;
+    }
+    result.refinement_failures.push_back(record);
+    status = PHX_MC_UNRESOLVED;
   }
   result.vertices = std::move(vertices);
   result.boundary_edges = std::move(boundary.edges);

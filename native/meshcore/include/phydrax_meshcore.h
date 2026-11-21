@@ -2912,6 +2912,10 @@ typedef struct phx_mc_cad_face_failure {
   int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
   double candidate_uv[2], triangle_uv[6], segment_parameters[2];
 } phx_mc_cad_face_failure;
+/* A REFINEMENT record with triangle -1, bad_size 1 and refusal NONE is an
+ * emitted triangle (after the face stage's flips and moves) whose stored
+ * circumradius fails the stored size test (cad_stored_size.hpp); its
+ * triangle_uv are the emitted triangle's charts. */
 
 typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
 typedef struct phx_mc_cad_surface_arrays {

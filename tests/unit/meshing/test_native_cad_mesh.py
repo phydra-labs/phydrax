@@ -889,6 +889,127 @@ def test_size_bound_ties_are_decided_exactly() -> None:
     assert S3_BOUNDARY_EDGE_SIZE.exceeds(above, "p95", 0.5, exact)
 
 
+def test_stored_size_allowance_passes_rounded_ties_and_refuses_real_excess() -> None:
+    # Fault caught: an allowance missing (a leg one ulp past the tie fails)
+    # or too wide (a leg 1e-9 past the tie passes).
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        SizeCompliancePolicy,
+        stored_circumradius_measures,
+    )
+
+    exact = SizeCompliancePolicy()
+    for size in (0.5, 0.15, 0.1):
+        up = np.nextafter(np.nextafter(size, 1.0), 1.0)
+        for legs, exceeds in (
+            ([(size, size)] * 4, False),
+            ([(up, up)] * 4, False),
+            ([(size, size * (1.0 + 1e-9))] * 4, True),
+        ):
+            points, triangles = _right_triangles(legs)
+            measures = stored_circumradius_measures(points, triangles)
+            assert (
+                CAD_CHART_SURFACE_SIZE.exceeds(measures, "p95", size, exact) is exceeds
+            ), (legs, size)
+
+
+def test_stored_size_allowance_bounds_vertex_perturbations() -> None:
+    # Independent reference: R^2 of triangles whose vertices are moved by at
+    # most eps = sqrt(3) 4u M (the allowance's perturbation radius), computed
+    # in exact rationals, stays within (1 + tau) of the stored R^2 both ways.
+    # Fault caught: a sensitivity term dropped from tau (an obtuse triangle's
+    # area term dominates).
+    from fractions import Fraction
+
+    from phydrax.meshing._sizing import stored_size_allowance
+
+    def squared(corners: list[tuple[Fraction, ...]]) -> Fraction:
+        p, q, r = corners
+        e0 = [b - a for a, b in zip(q, r, strict=True)]
+        e1 = [b - a for a, b in zip(r, p, strict=True)]
+        e2 = [b - a for a, b in zip(p, q, strict=True)]
+        normal = (
+            e0[1] * e1[2] - e0[2] * e1[1],
+            e0[2] * e1[0] - e0[0] * e1[2],
+            e0[0] * e1[1] - e0[1] * e1[0],
+        )
+        product = Fraction(1)
+        for side in (e0, e1, e2):
+            product *= sum(value * value for value in side)
+        return product / (4 * sum(value * value for value in normal))
+
+    generator = np.random.default_rng(3)
+    unit = float(np.finfo(np.float64).eps) / 2.0
+    for corners in (
+        np.asarray([[0.0, 0.0, 0.0], [0.15, 0.0, 0.0], [0.0, 0.15, 0.0]]),
+        np.asarray([[0.3, 0.1, 0.2], [0.45, 0.1, 0.2], [0.375, 0.13, 0.25]]),
+        np.asarray([[1.0, 2.0, 3.0], [1.5, 2.0, 3.0], [1.25, 2.02, 3.0]]),
+    ):
+        tau = Fraction(float(stored_size_allowance(corners, np.asarray([[0, 1, 2]]))[0]))
+        assert tau > 0
+        eps = np.sqrt(3.0) * 4.0 * unit * float(np.max(np.abs(corners)))
+        stored = squared([tuple(Fraction(float(x)) for x in row) for row in corners])
+        for _ in range(50):
+            directions = generator.normal(size=(3, 3))
+            directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+            moved = [
+                tuple(
+                    Fraction(float(x)) + Fraction(float(eps)) * Fraction(float(d))
+                    for x, d in zip(row, direction, strict=True)
+                )
+                for row, direction in zip(
+                    corners.tolist(), directions.tolist(), strict=True
+                )
+            ]
+            ratio = squared(moved) / stored
+            assert 1 / (1 + tau) <= ratio <= 1 + tau
+
+
+@pytest.mark.parametrize(
+    ("side", "size", "count"), [(1.0, 0.5, 48), (0.3, 0.1, 144), (0.3, 0.15, 48)]
+)
+def test_native_box_faces_meet_the_stored_size_bound_without_splitting_ties(
+    side: float, size: float, count: int
+) -> None:
+    # Every box face is commensurate with h, so its right triangles sit at
+    # R = h / sqrt(2) up to coordinate rounding (0.49999999999999994 for a
+    # face center at h 0.5; 0.15 is not representable): the stored test
+    # keeps them (count unchanged from the metric-only kernel) and every
+    # boundary triangle meets R^2 <= (h^2 / 2)(1 + tau) exactly. Fault
+    # caught: an exact test without the allowance splitting ties (more
+    # triangles), or an allowance the route's check does not honour.
+    from fractions import Fraction
+
+    from phydrax.meshing._sizing import stored_circumradius_measures
+
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(
+            phx.geometry.brep.brep_box(
+                (0.0, 0.0, 0.0),
+                (side, side, side),
+                coordinate_contract=phx.SpatialCoordinateContract.si(),
+            )
+        )
+    ).model
+    solid = cad_mesh_solid(
+        model,
+        np.full(6, size),
+        np.full(6, 0.05),
+        np.full(model.curve_nodes.size, 0.05),
+        radius_edge_bound=8.0,
+        min_dihedral_degrees=0.0,
+    )
+    assert solid.status is MeshcoreStatus.OK
+    points = np.asarray(solid.volume.points, dtype=np.float64)
+    triangles = np.asarray(solid.surface.triangles, dtype=np.int64)
+    assert triangles.shape[0] == count
+    measures = stored_circumradius_measures(points, triangles)
+    bound = Fraction(size) ** 2 / 2
+    for row in range(triangles.shape[0]):
+        value = measures.exact(row)
+        assert value is not None and value <= bound, row
+
+
 def test_size_bound_decision_matches_the_float_statistic_away_from_ties() -> None:
     from phydrax.meshing._sizing import (
         CAD_CHART_SURFACE_SIZE,

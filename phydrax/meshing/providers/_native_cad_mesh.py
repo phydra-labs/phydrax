@@ -34,8 +34,8 @@ from .._sizing import (
     CAD_CHART_SURFACE_SIZE,
     size_statistic,
     SizeControlStrength,
+    stored_circumradius_measures,
     triangle_circumradii,
-    triangle_circumradius_measures,
     UniformSizeControl,
 )
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
@@ -125,9 +125,10 @@ def _size_compliance(
 ) -> None:
     """Size statistics of each face size control on its boundary triangles.
 
-    The target statistics judge the circumradius the chart kernel bounds
-    (``CAD_CHART_SURFACE_SIZE``: R <= h / sqrt(2)); ``maximum_size`` bounds
-    the longest boundary edge.
+    The target statistics judge the circumradius the CAD face stage bounds
+    on the stored coordinates (``CAD_CHART_SURFACE_SIZE``: R <= h / sqrt(2)
+    up to the rounding allowance); ``maximum_size`` bounds the longest
+    boundary edge.
     """
     from ._native_cad_volume import _domain_scope_rows
 
@@ -148,7 +149,7 @@ def _size_compliance(
             issues.append(f"size_control:{control.control_id}:no_boundary_faces")
             continue
         radii = triangle_circumradii(points, faces)
-        measures = triangle_circumradius_measures(points, faces)
+        measures = stored_circumradius_measures(points, faces)
         for statistic in policy.target_statistics:
             value = size_statistic(radii, statistic)
             key = f"size:{control.control_id}:{statistic}_circumradius"

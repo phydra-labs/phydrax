@@ -8,6 +8,7 @@
 #include <optional>
 #include <utility>
 
+#include "cad_stored_size.hpp"
 #include "cdt2d.hpp"
 #include "predicates.hpp"
 #include "refine_queue.hpp"
@@ -198,6 +199,10 @@ class Refinement {
   std::vector<uint8_t> fixed_;
   std::vector<std::array<double,3>> physical_;
   std::vector<uint8_t> physical_valid_;
+  // The angle pass's moving vertex and its candidate position, which the
+  // stored size test reads in place of the cached one (-1: none).
+  int32_t moving_vertex_ = -1;
+  std::array<double,3> moving_xyz_{};
   // Centroid metric and metric worst-angle cosine per classified non-fixed
   // triangle (the cosine only once classified good); the census completes
   // them, and the angle pass keeps them current.
@@ -289,6 +294,10 @@ class Refinement {
   }
   struct PhysicalQuality { double worst=-1; double max_edge2=0; };
   const std::array<double,3>& physical_position(int32_t vertex) {
+    if(physical_valid_.size()<=static_cast<std::size_t>(vertex)) {
+      physical_.resize(static_cast<std::size_t>(vertex)+1);
+      physical_valid_.resize(static_cast<std::size_t>(vertex)+1,0);
+    }
     if(!physical_valid_[vertex]) {
       auto& xyz=physical_[vertex];
       if(!input_.surface_position(input_.surface_context,tri_.point(vertex),xyz.data()) ||
@@ -579,7 +588,9 @@ class Refinement {
         for(auto candidate:candidates) {
           do {
             p[0]=candidate.point[0]; p[1]=candidate.point[1];
+            moving_vertex_=v; moving_xyz_=candidate.xyz;
             const double score=star_score(star,scores);
+            moving_vertex_=-1;
             if(status_!=PHX_MC_OK) return;
             if(score<best) {
               best=score; best_point[0]=p[0]; best_point[1]=p[1]; best_xyz=candidate.xyz;
@@ -618,6 +629,32 @@ class Refinement {
       total+=0.5*std::sqrt(dot(mx,ex,ey,ex,ey));
     }
     return total;
+  }
+  // The stored size test (cad_stored_size.hpp) on the surface positions of
+  // t's vertices against input_.stored_size, at half the rounding allowance
+  // so that compliance, computing the allowance in its own rounding,
+  // accepts every triangle the kernel does. A triangle on a constrained
+  // side of stored length >= sqrt(2) h is exempt: its circumradius is at
+  // least half that side and no insertion shortens it.
+  bool stored_oversized(int32_t t) {
+    if (!(input_.stored_size > 0.0) || !input_.surface_position) return false;
+    const auto& cell=tri_.triangles[t];
+    std::array<double,3> xyz[3];
+    for (int k=0;k<3;++k) {
+      xyz[k]=cell.v[k]==moving_vertex_ ? moving_xyz_ : physical_position(cell.v[k]);
+      if (status_!=PHX_MC_OK) return false;
+    }
+    const double h=input_.stored_size;
+    for (int k=0;k<3;++k) {
+      if (tri_.constraint(t,k)==-1) continue;
+      const auto& a=xyz[next3(k)];
+      const auto& b=xyz[prev3(k)];
+      double length2=0;
+      for (int i=0;i<3;++i) length2+=(b[i]-a[i])*(b[i]-a[i]);
+      if (length2>=2*h*h) return false;
+    }
+    const double tau=0.5*stored_size_allowance(xyz[0].data(),xyz[1].data(),xyz[2].data());
+    return stored_size_exceeds(xyz[0].data(),xyz[1].data(),xyz[2].data(),h,tau);
   }
   // Confirms a centroid-metric oversize with edge-integrated metric lengths:
   // the circumradius of the triangle with those side lengths against
@@ -684,7 +721,13 @@ class Refinement {
     // accepted when they clear it. Splitting every centroid-oversized
     // triangle it can keeps the parent's meshes where the kernel resolves
     // them, and spends no metric evaluations on the confirmation there.
-    const bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
+    bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
+    if (status_ != PHX_MC_OK) return false;
+    // The stored test splits (refinement, angle-pass guard) but takes no
+    // part in the final verdict: the face stage's flips can resolve a
+    // stored failure the kernel could not split, and the face stage checks
+    // the emitted triangles itself.
+    if (!oversized && !size_reason) oversized = stored_oversized(t);
     if (status_ != PHX_MC_OK) return false;
     if (!size_reason && !angle_reason && oversized) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
