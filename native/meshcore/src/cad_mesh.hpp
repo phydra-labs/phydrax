@@ -104,8 +104,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                         const CadVolumeControls& controls, CadVolumeMesh& result,
                         const CadForcedRefusal* forced = nullptr);
 
+// graded_pole_rings: solid route (cad_mesh_face).
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& result);
+                         CadSurfaceMesh& result, bool graded_pole_rings = false);
 
 }  // namespace phx::mc

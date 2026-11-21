@@ -125,7 +125,7 @@ void morton_reorder(CadSurfaceMesh& mesh) {
 
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& output) {
+                         CadSurfaceMesh& output, bool graded_pole_rings) {
   const auto& model = geometry.model();
   if ((model.surface_count && (!sizes || !tolerances)) || !(theta > 0.0) || !std::isfinite(theta))
     return PHX_MC_INVALID_ARGUMENT;
@@ -186,7 +186,8 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
   for (int32_t face = 0; face < model.surface_count; ++face) {
     CadFaceMesh local;
     const auto face_start = std::chrono::steady_clock::now();
-    status = cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta, local);
+    status = cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta, local,
+                           nullptr, nullptr, graded_pole_rings);
     mesh.face_ns += elapsed_ns(face_start);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     if (local.failure.reason != 0) {
