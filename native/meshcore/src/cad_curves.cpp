@@ -17,7 +17,9 @@ constexpr int kSagDepth = 12;
 constexpr std::size_t kMaxPoints = 1000000;
 
 struct Use { int32_t row, face; };
-struct Sample { double s, speed, h; };
+// h: the size; corner: the size without a polar trim's chart-linear span
+// (the share of a corner's first segments, discretize_curves).
+struct Sample { double s, speed, h, corner = 0; };
 
 struct Context {
   const CadGeometry& geometry;
@@ -87,6 +89,7 @@ struct Context {
     // normal curvatures across (kappa_n) and along (kappa_t) the curve.
     double rim_normals[2][3]{}, rim_across[2]{}, rim_along[2]{};
     int rim_faces = 0;
+    double polar = std::numeric_limits<double>::infinity();
     for (const Use& use : uses) {
       // The curve takes each face's boundary-layer size: its segments are
       // fixed, and a segment longer than the face's unit across the
@@ -135,6 +138,27 @@ struct Context {
         if (kappa_l>0 && 8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
           face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
+        // A polar trim line (a latitude circle cutting a sphere face's pole
+        // away, cad_faces.hpp): V3 certifies the band beside it in the uv
+        // chart, by the chart-linear deviation, so the trim's chords take the
+        // span polar_trim_span gives in that chart, the face stage then the
+        // band (polar_trim_band). The budget is the layer's, 8 theta tol: the
+        // p-curve is chart-straight (no lens). The span is not a corner's
+        // share: the triangles at the trim's corners are the band's, built
+        // by the face stage on the trim's own chords, and a seam starting at
+        // it would grade the face from the chart's anisotropy (measured: kernel
+        // angle refusals beside the seam, caps below 85 deg UNRESOLVED).
+        if (resolved && pc[3]==0 && pc[5]==0 && pc[2]!=0) {
+          SphereChart chart;
+          double direction=0;
+          if (polar_trim_line(geometry, use.face, pc[1], workspace, chart, direction)) {
+            const double speed_u=std::hypot(sj[3], sj[4], sj[5]);
+            const double speed_v=std::hypot(sj[6], sj[7], sj[8]);
+            const double span=polar_trim_span(chart, pc[1], direction, speed_u/speed_v,
+                                              8*theta*tolerance);
+            polar=std::min(polar, span*speed_u);
+          }
+        }
         if (resolved && rim_faces < 2 && uses.size() == 2 && uses[0].face != uses[1].face) {
           const double* I = differential.first_form;
           const double* II = differential.second_form;
@@ -217,7 +241,7 @@ struct Context {
       }
     }
     if (!(h > 0) || !std::isfinite(h) || !(speed > 0) || !std::isfinite(speed)) failed = true;
-    return {s, speed, h};
+    return {s, speed, std::min(h, polar), h};
   }
 };
 
@@ -682,7 +706,7 @@ int32_t discretize_curves(const CadGeometry& geometry, const CurveControls& cont
       const Sample end=c.sample(k);
       if (c.failed) return c.failure_status;
       double& size=corner_sizes[static_cast<std::size_t>(m.curve_corners[2*e+k])];
-      size=std::min(size,end.h);
+      size=std::min(size,end.corner);
     }
   }
   for (int32_t e=0;e<m.curve_count;++e) {

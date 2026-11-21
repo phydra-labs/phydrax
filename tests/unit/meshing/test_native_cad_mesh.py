@@ -624,6 +624,51 @@ def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
             assert distance.max() <= theta * tolerance, (size, theta, distance.max())
 
 
+@pytest.mark.parametrize("latitude", (50, 65, 85))
+def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None:
+    # The unit ball below a latitude cut: its north pole is trimmed away, so
+    # V3 certifies the rows beside the trim in the (longitude, latitude)
+    # chart, by the chart-linear deviation |S - I_T|. A row with corners x_i
+    # deviates there at most (A du^2 + 2 B du dv + C dv^2) / 8 (A, B, C the
+    # bounds of |S_uu| = cos v, |S_uv| = |sin v|, |S_vv| <= |cos v| + |sin v|
+    # over its latitudes, du, dv its chart extents; cad_faces.hpp). The trim
+    # circle's chords (curve stage) and the band before the first ring (face
+    # stage) are sized by that bound, so every row standing on a trim chord
+    # meets it within theta tol. Fault caught: chords sized in 3D alone (the
+    # trim at 85 deg in three chords, du = 2 pi / 3: bound over theta tol,
+    # V3 refused those rows though the flat triangles lay within it).
+    trim = np.radians(float(latitude))
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
+    ).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.7, 0.9):
+            tolerance = size / 6.0
+            result = cad_mesh(
+                model,
+                np.full((faces,), size, dtype=np.float64),
+                np.full((faces,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert result.status is MeshcoreStatus.OK, (size, theta)
+            uv = np.asarray(result.chart.uv)
+            corners = result.points[np.asarray(result.chart.triangles)]
+            dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+            on_trim = np.abs(uv[:, :, 1] - trim) < 1e-12
+            rows = dome & (on_trim.sum(axis=1) == 2)
+            assert rows.any(), (size, theta)
+            latitudes = uv[rows, :, 1]
+            du = np.ptp(uv[rows, :, 0], axis=1)
+            dv = np.ptp(latitudes, axis=1)
+            low, high = latitudes.min(axis=1), latitudes.max(axis=1)
+            a = np.maximum(np.abs(np.cos(low)), np.abs(np.cos(high)))
+            b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
+            bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
+            assert bound.max() <= theta * tolerance, (size, theta, bound.max())
+
+
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
 
