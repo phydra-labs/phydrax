@@ -1079,12 +1079,12 @@ class Refinement {
   }
   // A triangle whose every candidate point was refused (encroachment or
   // proximity) loses its unconstrained edge to a flip when the pair that
-  // replaces it and its neighbour has a smaller larger metric circumradius
+  // replaces it and its neighbor has a smaller larger metric circumradius
   // than the pair it replaces (the smallest such, ties by the edge's
   // canonical key). Insertion cavities judge conflict in the new point's
   // metric and the size test in each triangle's centroid metric, so a
   // varying metric leaves triangles that are not Delaunay in their own
-  // (measured, quadric h 0.0998 theta 0.8: the neighbour's vertex 0.43 from
+  // (measured, quadric h 0.0998 theta 0.8: the neighbor's vertex 0.43 from
   // the circumcenter of a triangle of metric circumradius 0.78, both other
   // candidates within 0.5 of a vertex and the edge midpoint encroaching the
   // curve segment; the flip leaves both triangles under the bound). Each
@@ -1144,7 +1144,7 @@ class Refinement {
     ++result_.stats.flips;
     const std::pair<int32_t,int32_t> outer[4]={{first,n_pu},{first,n_uq},{second,n_qw},{second,n_wp}};
     for (const int32_t s : {first,second}) { classify_state(s); if (status_!=PHX_MC_OK) return true; }
-    // As after an insertion: a new triangle and a processed neighbour that
+    // As after an insertion: a new triangle and a processed neighbor that
     // gains a front from it are enqueued.
     for (const int32_t s : {first,second}) if (states_[s]==2 && !queued_[s]) enqueue(s);
     for (const auto& [s,nb_outer] : outer) {

@@ -163,8 +163,8 @@ def _assert_cad_fidelity(
                 measured[rows[local]] = np.max(
                     np.linalg.norm(pole_exact - linear[local], axis=2), axis=1
                 )
-            # A planar disk centre (pole chord at v = pole_v): rows touching
-            # it take the disk-centre chart (x, y) = |v - pole_v| (cos u,
+            # A planar disk center (pole chord at v = pole_v): rows touching
+            # it take the disk-center chart (x, y) = |v - pole_v| (cos u,
             # sin u), where S is affine.
             pole_chords = (chart.use_patch[chart.chord_use] == patch) & (
                 np.asarray(model.use_kinds)[chart.chord_use] == 1
@@ -843,7 +843,7 @@ def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np
     """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
 
     Closed forms: the dihedral at edge (i, j) is the angle between the other
-    two corners' offsets projected across the edge; the circumcentre solves
+    two corners' offsets projected across the edge; the circumcenter solves
     2 (p_k - p_0) . c = |p_k|^2 - |p_0|^2.
     """
     corners = points[cells]
@@ -868,8 +868,8 @@ def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np
         smallest = np.minimum(smallest, np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
     matrix = 2.0 * (corners[:, 1:] - corners[:, :1])
     rhs = np.sum(corners[:, 1:] ** 2, axis=2) - np.sum(corners[:, :1] ** 2, axis=2)
-    centre = np.linalg.solve(matrix, rhs[:, :, None])[:, :, 0]
-    radius = np.linalg.norm(centre - corners[:, 0], axis=1)
+    center = np.linalg.solve(matrix, rhs[:, :, None])[:, :, 0]
+    radius = np.linalg.norm(center - corners[:, 0], axis=1)
     edges = np.stack(
         [
             np.linalg.norm(corners[:, p] - corners[:, q], axis=1)
@@ -1069,7 +1069,7 @@ def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(
     # the faces' curvature 1 / radius: 1 on the vertical cylinder's faces 0
     # and 1, 5/3 on the transverse one), curves at their faces' smallest. The
     # chart kernel left one triangle on each mirror face, on curve segment
-    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbour's vertex
+    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbor's vertex
     # inserted under its own (smaller) metric sat 0.43 from the circumcenter
     # in the triangle's centroid metric, every candidate was within 0.5 of a
     # vertex and the long edge's midpoint encroached the segment, so the face
@@ -1421,7 +1421,7 @@ def test_native_box_faces_meet_the_stored_size_bound_without_splitting_ties(
     # keeps them (count unchanged from the metric-only kernel) and every
     # boundary triangle meets R^2 <= (h^2 / 2)(1 + tau) exactly. Fault
     # caught: an exact test without the allowance splitting ties (more
-    # triangles), or an allowance the route's check does not honour.
+    # triangles), or an allowance the route's check does not honor.
     from fractions import Fraction
 
     from phydrax.meshing._sizing import stored_circumradius_measures
@@ -1608,7 +1608,7 @@ def test_cad_volume_proof_preparation_runs_once_on_first_proof(
     assert second.mesh.mesh_id == first.mesh.mesh_id
 
 
-def test_unproved_cad_solid_with_region_control_honours_it() -> None:
+def test_unproved_cad_solid_with_region_control_honors_it() -> None:
     # The native candidate has no organization records, so a region control
     # keeps the existing construction, whose candidate carries the control.
     from phydrax.meshing import CellMeshingCandidate
@@ -1798,11 +1798,11 @@ _FIELD_OUTCOMES = (
     _FIELD_OUTCOMES,
     ids=[field for field, _ in _FIELD_OUTCOMES],
 )
-def test_unproved_cad_solid_honours_or_refuses_every_field(
+def test_unproved_cad_solid_honors_or_refuses_every_field(
     field: str, outcome: str
 ) -> None:
     # No specification field is silently dropped by the native route: it is
-    # honoured there (reported size statistics), the plan keeps the existing
+    # honored there (reported size statistics), the plan keeps the existing
     # construction, or planning/execution refuses it with a stated reason.
     from phydrax.meshing import CellMeshingCandidate
     from phydrax.meshing._contracts import MeshingFailure

@@ -413,7 +413,7 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // Isotropic base size at a face point: the request h, graded from the
 // boundary samples and floored on the nearest fixed chord. Grading from the
 // nearby sample spacing asks for small triangles around a short boundary
-// segment, but a neighbouring long chord is fixed: every triangle on it has
+// segment, but a neighboring long chord is fixed: every triangle on it has
 // circumradius >= L/2 and no vertex may enter its diametral disk, so a size
 // below L there cannot be met. The floor L - g d comes from the chord nearest
 // the point only (the one a triangle there stands on, at its centroid): a
@@ -484,7 +484,7 @@ void chord_distance(const FaceMetric& context, int32_t index, const double* poin
 // theta - lens / tol next to a curve chord (the nearest chord's own lens,
 // at most kLensShare theta tol, takes the rest; cad_faces.hpp), theta away
 // from it. The curvature size sqrt(4 theta' tol / |k|max) is the layer's
-// s_l within s_l of a chord (which holds the centroid and circumcentre of a
+// s_l within s_l of a chord (which holds the centroid and circumcenter of a
 // triangle on it) and grows from there at the boundary grading's rate up to
 // theta's s_f: a stepped size left triangles across the step whose split
 // points were all too close (measured: a proximity refusal on the quadric
@@ -1785,7 +1785,7 @@ double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& sur
 // Moves of free interior vertices, each guarded: the chart star stays
 // positively oriented and keeps the kernel's size bound (metric circumradius
 // <= 1/sqrt(2), on which the fidelity bound rests, or a star already past it).
-// 1. The inverse-distance neighbour centroid (first two passes), kept when
+// 1. The inverse-distance neighbor centroid (first two passes), kept when
 //    the star's worst 3D angle does not drop.
 // 2. Below the kernel's angle-pass target (halfway between
 //    min_angle_degrees and 60), a compass search on the star's worst 3D
@@ -1798,7 +1798,7 @@ double maximum_metric_radius(FaceMetric& metric, const SurfaceTriangulation& sur
 //    size h; its sag is the mesh-to-surface distance), a step of 1/4, 1/8 or
 //    1/16 toward its far end, the first that shortens it without the worst
 //    angle dropping below the target or its current value.
-// Passes revisit the vertices that moved or neighbour a move, until none
+// Passes revisit the vertices that moved or neighbor a move, until none
 // moves (at most eight).
 void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_angle_degrees,
             std::vector<CadFaceVertex>& vertices, SurfaceTriangulation& surface) {
@@ -1901,7 +1901,7 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
   };
   for (std::size_t v = 0; v < vertices.size(); ++v) refresh(v);
   std::vector<int32_t> neighbors;
-  // A vertex is visited while it or a neighbour moved in the previous pass.
+  // A vertex is visited while it or a neighbor moved in the previous pass.
   std::vector<uint8_t> active(vertices.size(), 1), next(vertices.size(), 0);
   for (int pass = 0; pass < 8; ++pass) {
     bool moved = false;
@@ -2120,14 +2120,14 @@ bool sphere_frame(const cad::CadGeometry& geometry, int32_t index, double e1[3],
   if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
       curve.real_count != 10)
     return false;
-  const double *origin = node.reals, *axis = node.reals + 3, *centre = curve.reals;
+  const double *origin = node.reals, *axis = node.reals + 3, *center = curve.reals;
   const double *first = curve.reals + 3, *second = curve.reals + 6;
   int k = -1;
   for (int i = 0; i < 3; ++i)
     if (std::abs(axis[i]) == 1.0) k = i;
   if (k < 0 || first[k] != 0.0) return false;
   for (int i = 0; i < 3; ++i)
-    if (i != k && (axis[i] != 0.0 || second[i] != 0.0 || centre[i] != origin[i])) return false;
+    if (i != k && (axis[i] != 0.0 || second[i] != 0.0 || center[i] != origin[i])) return false;
   for (int i = 0; i < 3; ++i) {
     e1[i] = i == k ? 0.0 : first[i];
     e2[i] = 0.0;

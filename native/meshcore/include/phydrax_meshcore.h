@@ -3017,9 +3017,9 @@ typedef struct phx_mc_fidelity_finding {
  * whose u range spans less than a full turn (u_max - u_min < 2 pi rounded
  * down), keep the uv chart; the remaining rounding excess of a full turn is
  * charged to the region's rows.
- * Disk centres (a line perpendicular to an axis revolved about it, meeting it
- * at the degenerate chord's v, certified exactly): rows touching the centre
- * vertex take the Cartesian chart (x, y) = |v - v_centre| (cos u, sin u),
+ * Disk centers (a line perpendicular to an axis revolved about it, meeting it
+ * at the degenerate chord's v, certified exactly): rows touching the center
+ * vertex take the Cartesian chart (x, y) = |v - v_center| (cos u, sin u),
  * where the disk is affine, under the same region, seam and turn rules.
  * A pole region may also reach outer trim rings (chords whose endpoints share
  * v, with every region corner on the pole's side, checked exactly): those
@@ -3086,7 +3086,7 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
  * phx_mc_quadratic_tetrahedron_validity. Every cell is decided by that
  * function at relative_floor; a cell that is not VALID is repaired in cell
  * order: one Jacobi pass of harmonic extension moves the interior nodes of the
- * failing cells and their edge neighbours, then every curved node of a cell
+ * failing cells and their edge neighbors, then every curved node of a cell
  * still not VALID returns to its chord midpoint, each curved boundary edge
  * so straightened recorded as one (edge, cell) row, until no cell with a
  * curved node fails. cell_decisions are the final decisions. Counts are

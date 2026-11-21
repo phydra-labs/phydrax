@@ -78,12 +78,12 @@ def cad_solid_support_issues(
     if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
     # The native candidate carries no organization records: patch and region
-    # controls are honoured by the existing route only.
+    # controls are honored by the existing route only.
     if specification.patch_controls or specification.region_controls:
         issues.append("patch and region controls need source organization records")
     # The native call has no seeded region classification, and one deviation
     # on every face and curve: seeds and protected features (their own
-    # deviation bounds and feature evidence) are honoured by the existing route.
+    # deviation bounds and feature evidence) are honored by the existing route.
     if specification.region_seeds or specification.hole_seeds:
         issues.append("region and hole seeds need seeded region classification")
     if specification.protected_features:
@@ -446,8 +446,8 @@ def _cell_quality(points: np.ndarray, cells: np.ndarray, /) -> tuple[np.ndarray,
         smallest = np.minimum(smallest, np.degrees(np.arccos(np.clip(cosine, -1, 1))))
     edges = corners[:, 1:] - corners[:, :1]
     rhs = 0.5 * np.sum(edges**2, axis=2)
-    centre = np.linalg.solve(edges, rhs[..., None])[..., 0]
-    radius = np.linalg.norm(centre, axis=1)
+    center = np.linalg.solve(edges, rhs[..., None])[..., 0]
+    radius = np.linalg.norm(center, axis=1)
     shortest = np.min(
         np.linalg.norm(
             corners[:, (0, 0, 0, 1, 1, 2)] - corners[:, (1, 2, 3, 2, 3, 3)], axis=2
@@ -470,7 +470,7 @@ def _thin_region_findings(
 
     A cell in a slab of thickness t that stands on a boundary triangle of
     circumradius rho has its apex within t of the triangle's plane. Its best
-    placement, an equilateral triangle with the apex over its circumcentre
+    placement, an equilateral triangle with the apex over its circumcenter
     at height t, has radius-edge ratio sqrt(rho^2 + t^2) / (2 t) and
     dihedral atan(2 t / rho) at the base edges; the radius-edge bound B and
     the dihedral target theta then need rho <= t sqrt(4 B^2 - 1) and
@@ -640,7 +640,7 @@ def execute_cad_solid(
         assert deviations is not None
         issues.append(f"native_unmet_quality_cells:{unforced}")
         # Input finding: a rim whose true wedge is below the dihedral target
-        # makes that target unattainable in a neighbourhood of the rim for
+        # makes that target unattainable in a neighborhood of the rim for
         # any mesh (cad_mesh.cpp, count_forced_cells); relaxing
         # minimum_dihedral_degrees below the wedge is the remedy.
         target = float(schedule.minimum_dihedral_degrees)

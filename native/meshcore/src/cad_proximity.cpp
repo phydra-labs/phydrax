@@ -86,12 +86,12 @@ int32_t ProximityField::Set::build_node(int32_t begin, int32_t end) {
     for (int k = 1; k < 3; ++k)
       if (node.high[k] - node.low[k] > node.high[axis] - node.low[axis]) axis = k;
     const int32_t middle = begin + (end - begin) / 2;
-    const auto centre = [&](int32_t row) {
+    const auto center = [&](int32_t row) {
       return triangles[row][axis] + triangles[row][3 + axis] + triangles[row][6 + axis];
     };
     std::nth_element(order.begin() + begin, order.begin() + middle, order.begin() + end,
                      [&](int32_t x, int32_t y) {
-                       return centre(x) < centre(y) || (centre(x) == centre(y) && x < y);
+                       return center(x) < center(y) || (center(x) == center(y) && x < y);
                      });
     node.left = build_node(begin, middle);
     node.right = build_node(middle, end);

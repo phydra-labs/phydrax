@@ -391,7 +391,7 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
   for (const auto& t : surface.triangles) faces.insert(faces.end(), t.begin(), t.end());
   for (const auto& b : volume.boundary_faces) boundary.insert(boundary.end(), b.begin(), b.end());
   check_volume(name, flat_points, flat_surface, cells, faces, boundary);
-  // The new vertex's P2 neighbours stay on the source.
+  // The new vertex's P2 neighbors stay on the source.
   for (std::size_t e = 0; e < volume.quadratic.edges.size(); ++e)
     if (volume.quadratic.edge_kinds[e] != PHX_MC_CAD_EDGE_INTERIOR)
       PHX_CHECK(on_surface(volume.quadratic.nodes[e].data()));

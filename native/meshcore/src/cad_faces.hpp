@@ -105,7 +105,7 @@ bool pole_zone_curvature(const cad::CadGeometry& geometry, int32_t face,
 //
 // The face's surface in its chart is S = o + r (cos v (cos u e1 + sin u e2) +
 // sin v a): a sphere template, a placement of one, or the revolution of a
-// circle3 whose centre and second axis lie on the revolution axis exactly
+// circle3 whose center and second axis lie on the revolution axis exactly
 // (V3's pole_sphere_frame families with a circle profile, in binary64).
 // equator = max_u |cos u e1 + sin u e2| (the Gram matrix's largest root),
 // pole = |a|, frame = max |x e1 + y e2 + z a| over unit (x, y, z), bounded
