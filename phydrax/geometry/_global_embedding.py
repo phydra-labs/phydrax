@@ -6394,8 +6394,8 @@ def _polyhedral_contact_bank(
 
     `corner_ids` are the identities of the filtered cells' three-dimensional
     corner images in order.  A cell keeps its tetrahedra only when all its
-    corners are distinct rational vertices in R3, so every point it names is
-    rational; points of other cells stay unbounded placeholders.
+    corners are distinct rational vertices in R3 and every point it names is
+    rational and binary64-bounded; points of other cells stay placeholders.
     """
     point_integers: list[int] = []
     rational = np.zeros((len(points),), dtype=np.bool_)
@@ -6405,6 +6405,9 @@ def _polyhedral_contact_bank(
         point_integers.extend(
             (*integer_row[0], integer_row[1]) if integer_row is not None else (0, 0, 0, 1)
         )
+    # Rational points with finite enclosures: the rational pass orders contact
+    # vertices by their binary64 values.
+    bounded = rational & np.all(np.isfinite(lower) & np.isfinite(upper), axis=1)
     tet_rows: list[NDArray[np.int64]] = []
     tet_offsets = [0]
     corner_offsets = [0]
@@ -6431,8 +6434,9 @@ def _polyhedral_contact_bank(
         )
         if (
             integer_rows is None
+            or len(cell.vertex_ids) != size
             or len(set(cell.vertex_ids)) != size
-            or not bool(np.all(rational[tets]))
+            or not bool(np.all(bounded[tets]))
             or any(
                 corner < 0 or corner >= size
                 for route in cell.facet_routes

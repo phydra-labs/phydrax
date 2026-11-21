@@ -8,12 +8,17 @@ adversarial polyhedral meshes, and decide every pair of a conforming grid."""
 from __future__ import annotations
 
 import random
+from dataclasses import replace
+from fractions import Fraction
 
 import numpy as np
 import pytest
 
 from phydrax._meshcore import meshcore_available
+from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.geometry._embedding_cells import prepare_embedding_cells
+from phydrax.geometry._global_embedding import _cell_simplices, _VolumePieceFilter
 from tests._support.declared_contacts import declared_contact_differential, non_dyadic
 
 
@@ -148,4 +153,30 @@ def test_native_contacts_refuse_a_hanging_vertex_interface() -> None:
     mesh = CellMesh.from_polyhedra(points, [cells[0], second])
     native, rational = declared_contact_differential(mesh)
     assert native <= rational
+    assert not native
+
+
+def test_native_contacts_refuse_a_flat_simplex_piece() -> None:
+    mesh = _two_cubes((3.0, 0.0, 0.0))
+    cube = prepare_embedding_cells(mesh, CellGeometrySpec.affine(mesh))[1]
+    # Far from the cube, yet the rational pass refuses its zero-volume piece.
+    flat = replace(
+        cube,
+        kind="tetrahedron",
+        vertex_ids=(100, 101, 102, 103),
+        corner_images=tuple(
+            (Fraction(x), Fraction(y), Fraction(0))
+            for x, y in ((9, 0), (10, 0), (9, 1), (10, 1))
+        ),
+        facet_routes=(),
+    )
+    cells = (flat, cube)
+    piece_filter = _VolumePieceFilter.prepare(
+        mesh, cells, [_cell_simplices(cell) for cell in cells]
+    )
+    if piece_filter is None:
+        raise AssertionError("Both cells are straight cells in R3.")
+    _, _, native = piece_filter.certify(
+        np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
+    )
     assert not native

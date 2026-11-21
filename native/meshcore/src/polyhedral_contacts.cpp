@@ -747,10 +747,12 @@ struct Tetrahedron {
   std::array<std::array<double, 3>, 4> centers;
   // Unit estimates of the face normals pointing away from the omitted corner.
   std::array<std::array<double, 3>, 4> outward;
+  // A nonzero exact orientation.
+  bool nondegenerate;
 };
 
-Tetrahedron prepared_tetrahedron(const PointTable& points, const int64_t* corners) {
-  Tetrahedron tet{corners, {}, {}, {}, {}};
+Tetrahedron prepared_tetrahedron(PointTable& points, const int64_t* corners) {
+  Tetrahedron tet{corners, {}, {}, {}, {}, false};
   for (std::size_t axis = 0; axis < 3; ++axis) {
     tet.box[axis] = std::numeric_limits<double>::infinity();
     tet.box[axis + 3] = -std::numeric_limits<double>::infinity();
@@ -779,6 +781,10 @@ Tetrahedron prepared_tetrahedron(const PointTable& points, const int64_t* corner
     const double scale = (apex > 0.0 ? -1.0 : 1.0) / std::sqrt(norm);
     for (std::size_t axis = 0; axis < 3; ++axis) tet.outward[face][axis] = normal[axis] * scale;
   }
+  Plane base = Plane::face(corners[1], corners[2], corners[3], tet.normals[0]);
+  int orientation = base.enclosed_side(points, corners[0]);
+  if (orientation == kUnknown) orientation = base.exact_side(points, corners[0]);
+  tet.nondegenerate = orientation != 0;
   return tet;
 }
 
@@ -854,8 +860,7 @@ bool declared_tetrahedron_contact(PointTable& points, const Tetrahedron& first,
 // Prepared tetrahedra of the cells one call visits.
 class TetrahedronCache {
  public:
-  const std::vector<Tetrahedron>& of(const PointTable& points, int64_t cell,
-                                     const CellView& view) {
+  const std::vector<Tetrahedron>& of(PointTable& points, int64_t cell, const CellView& view) {
     auto found = cells_.find(cell);
     if (found == cells_.end()) {
       std::vector<Tetrahedron> tets;
@@ -874,6 +879,13 @@ class TetrahedronCache {
 bool declared_pair(PointTable& points, const IntegerBank& rows, const CellView& first,
                    const CellView& second, const std::vector<Tetrahedron>& first_tets,
                    const std::vector<Tetrahedron>& second_tets) {
+  // The rational contact pass refuses a zero-volume piece of either cell.
+  for (const auto* tets : {&first_tets, &second_tets}) {
+    if (std::any_of(tets->begin(), tets->end(),
+                    [](const Tetrahedron& tet) { return !tet.nondegenerate; })) {
+      return false;
+    }
+  }
   Stratum stratum;
   bool prepared = false;
   for (const Tetrahedron& left : first_tets) {
