@@ -1814,7 +1814,7 @@ PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
  * vertex used and manifold); triangles are oriented so their right-hand
  * normals point into the layer domain. heights are the cumulative heights of
  * the layer_count levels (strictly increasing, positive); D = heights[last].
- * One straight column per wall vertex: smooth vertices grow along the fitted
+ * One straight column per wall vertex: smooth vertices grow along the
  * surface normal, vertices where two or more feature edges meet (adjacent
  * normals differ by more than feature_angle_degrees) along the medial
  * direction of their smooth sectors with curvature-corrected heights, and
@@ -1845,7 +1845,20 @@ PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
  * Returns PHX_MC_OK, PHX_MC_UNRESOLVED when a failure remains at the minimum
  * scale (outputs hold the last construction), PHX_MC_INVALID_INPUT for a
  * wall that is not a closed oriented manifold, PHX_MC_DEGENERATE_INPUT for a
- * zero-area triangle, or the argument and domain errors. */
+ * zero-area triangle, or the argument and domain errors.
+ * Source frames (optional, both or neither): source_normals (triangle_count,
+ * 3, 3) and source_shape_operators (triangle_count, 3, 6) give, per triangle
+ * corner, the unit normal of the source surface the wall samples, pointing
+ * into the layer domain, and its shape operator S (symmetric; entries xx, xy,
+ * xz, yy, yz, zz) with normal curvature s.S.s / |s|^2 positive where the
+ * surface bends toward the normal. A sector whose corners all carry a frame
+ * takes its normal (the mean of the corner normals) and curvature from them,
+ * so its levels lie at their heights from the source surface. A corner with
+ * a zero normal and zero S (a singular chart point) carries none; a sector
+ * with such a corner, like every sector of a wall without frames, takes its
+ * normal and curvature from a weighted quadratic fit through the wall
+ * vertices. Nonzero normals must be unit to 1e-10 (else
+ * PHX_MC_INVALID_ARGUMENT). */
 typedef struct phx_mc_prism_layers_request {
   int64_t vertex_count;
   const double* vertices;
@@ -1856,6 +1869,8 @@ typedef struct phx_mc_prism_layers_request {
   double feature_angle_degrees;
   double minimum_scale;
   int32_t prove;
+  const double* source_normals;
+  const double* source_shape_operators;
 } phx_mc_prism_layers_request;
 typedef struct phx_mc_prism_layers_result {
   double* points;

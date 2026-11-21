@@ -15,6 +15,9 @@
 //     sector seen from one side of a ridge is not biased by its one-sided
 //     fan. A fit whose normal leaves the cone of the sector's face normals
 //     (few one-sided samples) is dropped for the flat angle-weighted normal.
+//     A sector whose corners all carry source frames skips the fit: its
+//     normal is the mean corner normal and its curvatures are the source
+//     shape operator's, so levels are measured from the source surface.
 //  3. Directions: a smooth vertex grows along its normal by the total height
 //     D. A ridge or corner vertex grows by the minimum-norm w with
 //     w . g_i = a_i for every sector normal g_i (the medial direction of its
@@ -138,6 +141,8 @@ struct Wall {
   int64_t n = 0, m = 0;
   const double* x = nullptr;
   const int32_t* f = nullptr;
+  const double* source_normal = nullptr;  // per half-edge 3 t + i (corner i of t)
+  const double* source_shape = nullptr;
   std::vector<int64_t> opposite;       // half-edge 3 f + k (F[k] -> F[k+1]) -> opposite half-edge
   std::vector<uint8_t> feature;        // per half-edge
   std::vector<Vec> normal;             // unit, growth side
@@ -261,11 +266,45 @@ void vertex_sectors(const Wall& w, int64_t v, std::vector<Sector>& sectors) {
   }
 }
 
+// The jet of a sector from the source frames of its corners at v: the mean
+// corner normal and shape operator (equal on a smooth source surface); false
+// without frames or when a corner has none (a singular chart point).
+bool source_jet(const Wall& w, int64_t v, const Sector& sector, Jet& jet) {
+  if (w.source_normal == nullptr) return false;
+  const int64_t b = w.fan_offsets[static_cast<size_t>(v)];
+  const int64_t size = w.fan_offsets[static_cast<size_t>(v) + 1] - b;
+  Vec g{0.0, 0.0, 0.0};
+  double s[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  for (int64_t j = sector.begin; j < sector.end; ++j) {
+    const int64_t h = w.fan[static_cast<size_t>(b + j % size)];
+    const double* n = w.source_normal + 3 * h;
+    if (n[0] == 0.0 && n[1] == 0.0 && n[2] == 0.0) return false;
+    g = add(g, Vec{n[0], n[1], n[2]});
+    for (int k = 0; k < 6; ++k) s[k] += w.source_shape[6 * h + k];
+  }
+  const double corners = static_cast<double>(sector.end - sector.begin);
+  jet.g = unit(g);
+  const Vec helper = std::fabs(jet.g[0]) < 0.6 ? Vec{1.0, 0.0, 0.0} : Vec{0.0, 1.0, 0.0};
+  jet.t1 = unit(tangential(helper, jet.g));
+  jet.t2 = cross(jet.g, jet.t1);
+  auto form = [&](const Vec& x, const Vec& y) {
+    return (x[0] * (s[0] * y[0] + s[1] * y[1] + s[2] * y[2]) +
+            x[1] * (s[1] * y[0] + s[3] * y[1] + s[4] * y[2]) +
+            x[2] * (s[2] * y[0] + s[4] * y[1] + s[5] * y[2])) /
+           corners;
+  };
+  jet.a = form(jet.t1, jet.t1);
+  jet.b = form(jet.t1, jet.t2);
+  jet.c = form(jet.t2, jet.t2);
+  return true;
+}
+
 Jet fit_jet(const Wall& w, int64_t v, const Sector& sector, std::vector<int32_t>& scratch) {
   const int64_t b = w.fan_offsets[static_cast<size_t>(v)];
   const int64_t size = w.fan_offsets[static_cast<size_t>(v) + 1] - b;
   const double* p = w.x + 3 * v;
   Jet jet;
+  if (source_jet(w, v, sector, jet)) return jet;
   Vec g0{0.0, 0.0, 0.0};
   scratch.clear();
   for (int64_t j = sector.begin; j < sector.end; ++j) {
@@ -430,6 +469,8 @@ int32_t grow(const Input& in, const Output& out) {
   w.m = in.triangle_count;
   w.x = in.vertices;
   w.f = in.triangles;
+  w.source_normal = in.source_normals;
+  w.source_shape = in.source_shape_operators;
   const double kPi = 3.14159265358979323846;
   int32_t status = build_wall(w, std::cos(in.feature_angle_degrees * kPi / 180.0));
   if (status != PHX_MC_OK) return status;

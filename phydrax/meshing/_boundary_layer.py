@@ -35,6 +35,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
@@ -215,7 +216,8 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     the scheduled level height and ``s`` the column's thickness scale: small on
     the advancing-front route, whose probed column stretch measures levels
     from the wall triangles, and the departure of the triangles from the
-    fitted smooth surface the native route measures levels from.
+    smooth surface the native route measures levels from: the source surface
+    of a CAD wall's frames, else the surface fitted through the wall vertices.
     ``layer_active[k]`` is ``True`` iff at least one surviving column carries
     requested layer ``k``. A requested layer carried by no surviving column has
     ``layer_active[k] == False`` and NaN achieved, minimum, and maximum
@@ -359,8 +361,11 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     from the layers, or ``None`` when merged fronts leave no free front. A core
     fill must keep it fixed. ``wall_vertices`` is exact row ancestry from the
     input wall; ``source_wall`` and ``wall_association`` retain its authoritative
-    source binding. ``layer_index`` and ``column_index`` identify every output
-    cell's schedule interval and front-row column in global cell-ID order.
+    source binding, and ``source_frames`` the per-corner source-surface frames
+    the native route measured the levels from (``None`` for a bare wall; see
+    :func:`prepare_boundary_layers`). ``layer_index`` and ``column_index``
+    identify every output cell's schedule interval and front-row column in
+    global cell-ID order.
     """
 
     mesh: CellMesh
@@ -413,6 +418,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     source_wall: CellMesh
     obstacles: CellMesh | None
     wall_association: GeometryAssociation | None
+    source_frames: Array | None
     validity: CellValidityCertificate
     evidence: BoundaryLayerEvidence
     control_id: str = eqx.field(static=True)
@@ -433,6 +439,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         *,
         source_wall: CellMesh,
         wall_association: GeometryAssociation | None,
+        source_frames: Any,
         obstacles: CellMesh | None,
         column_index: Any,
         column_scale: Any,
@@ -485,6 +492,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             )
         if source_wall.topological_dimension != 2 or source_wall.ambient_dimension != 3:
             raise ValueError("source_wall must be an ambient-3 surface mesh.")
+        frames = _wall_source_frames(source_frames, source_wall)
         cell_count = sum(block.cell_count for block in mesh.blocks)
         cell_global_ids = np.concatenate(
             tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
@@ -869,6 +877,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         self.source_wall = source_wall
         self.obstacles = obstacles
         self.wall_association = wall_association
+        self.source_frames = None if frames is None else jnp.asarray(frames)
         self.validity = validity
         self.evidence = evidence
         self.control_id = str(control_id)
@@ -890,6 +899,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
                 "source_wall_revision": source_wall.numeric_version,
                 "wall_association": (
                     None if wall_association is None else wall_association.association_id
+                ),
+                "source_frames": (
+                    None if frames is None else array_tree_fingerprint(frames)
                 ),
                 "column_vertex_sources": array_tree_fingerprint(column_sources),
                 "column_vertex_ids": array_tree_fingerprint(column_ids),
@@ -943,6 +955,42 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         faces, arity = _mesh_faces(self.cap)
         _, counts = _edge_table(faces, arity)[1:3]
         return bool(np.all(counts == 2))
+
+
+# ---------------------------------------------------------------- source frames
+
+
+def _wall_source_frames(frames: Any, wall: CellMesh, /) -> np.ndarray | None:
+    """Validated per-corner source-surface frames of a triangle wall, or ``None``.
+
+    Row ``t`` is the wall's ``t``-th cell in global-ID order, corner ``i`` its
+    ``i``-th vertex: the unit source normal pointing into the layer domain,
+    then the shape operator entries (xx, xy, xz, yy, yz, zz), whose normal
+    curvature is positive where the surface bends toward that normal. A zero
+    row is a singular chart point that carries no frame.
+    """
+    if frames is None:
+        return None
+    values = np.asarray(frames)
+    if not np.issubdtype(values.dtype, np.floating):
+        raise TypeError("source_frames must be a floating array or None.")
+    values = values.astype(np.float64, copy=False)
+    if any(block.cell_kind != "triangle" for block in wall.blocks):
+        raise ValueError("source_frames require a triangle wall.")
+    count = sum(block.cell_count for block in wall.blocks)
+    if values.shape != (count, 3, 9) or not np.all(np.isfinite(values)):
+        raise ValueError(
+            "source_frames must hold finite (triangle_count, 3, 9) corner frames."
+        )
+    length = np.sum(values[..., :3] ** 2, axis=-1)
+    framed = length > 0.0
+    if np.any(framed & (np.abs(length - 1.0) > 2.0e-10)) or np.any(
+        ~framed & np.any(values[..., 3:] != 0.0, axis=-1)
+    ):
+        raise ValueError(
+            "source_frames normals must be unit, or zero with a zero shape operator."
+        )
+    return values
 
 
 # ---------------------------------------------------------------- failures
@@ -3925,7 +3973,14 @@ def _reprove_retained_front(
         else _split_polygons(*_mesh_faces(retained.obstacles))[0]
     )
     native = (
-        _native_columns(wall, sectors, control)
+        _native_columns(
+            wall,
+            sectors,
+            control,
+            None
+            if retained.source_frames is None
+            else np.asarray(retained.source_frames, dtype=np.float64),
+        )
         if _native_route(wall, split, source_wall, obstacle_triangles, control)
         else None
     )
@@ -4480,7 +4535,11 @@ class _NativeColumns:
 
 
 def _native_columns(
-    wall: _Wall, sectors: _Sectors, control: BoundaryLayerControl, /
+    wall: _Wall,
+    sectors: _Sectors,
+    control: BoundaryLayerControl,
+    source_frames: np.ndarray | None,
+    /,
 ) -> _NativeColumns:
     """Grow and certify one column per wall vertex natively.
 
@@ -4493,6 +4552,8 @@ def _native_columns(
     REDUCE_THICKNESS thins failing columns down to the minimum thickness
     fraction; FAIL admits no thinning. Directions are the unit displacement,
     and each column records its incident faces with equal weights.
+    ``source_frames`` (see :func:`_wall_source_frames`) give the kernel the
+    source surface's normals and curvatures in place of its fit.
     """
     from .._meshcore import MeshcoreStatus, prism_layers
 
@@ -4507,6 +4568,8 @@ def _native_columns(
         feature_angle_degrees=float(np.degrees(control.feature_angle)),
         minimum_scale=control.minimum_thickness_fraction if reduce else 1.0,
         prove=True,
+        source_normals=None if source_frames is None else source_frames[..., :3],
+        source_shape_operators=None if source_frames is None else source_frames[..., 3:],
     )
     if layers.status is not MeshcoreStatus.OK:
         thinned = np.flatnonzero(layers.scale < 1.0)
@@ -4615,6 +4678,7 @@ def _grow_boundary_layers(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
     obstacle_source: CellMesh | None = None,
+    source_frames: np.ndarray | None = None,
     /,
 ) -> BoundaryLayerMesh:
     """Grow certified layers from ``grow`` faces of one oriented surface mesh."""
@@ -4636,7 +4700,7 @@ def _grow_boundary_layers(
         wall_triangles, ~grown, obstacle_points, obstacle_triangles
     )
     if _native_route(wall, split, source_wall, obstacle_triangles, control):
-        native = _native_columns(wall, sectors, control)
+        native = _native_columns(wall, sectors, control, source_frames)
         front = _build_front(
             wall,
             sectors,
@@ -4659,6 +4723,7 @@ def _grow_boundary_layers(
             source_wall,
             wall_association,
             obstacle_source,
+            source_frames,
         )
     directions = _sector_directions(wall, sectors, control)
     if rotations is not None:
@@ -4704,6 +4769,7 @@ def _grow_boundary_layers(
         source_wall,
         wall_association,
         obstacle_source,
+        source_frames,
     )
 
 
@@ -4889,6 +4955,7 @@ def _assemble(
     source_wall: CellMesh,
     wall_association: GeometryAssociation | None,
     obstacle_source: CellMesh | None,
+    source_frames: np.ndarray | None,
     /,
 ) -> BoundaryLayerMesh:
     columns = resolution.columns
@@ -5017,6 +5084,7 @@ def _assemble(
         evidence,
         source_wall=source_wall,
         wall_association=wall_association,
+        source_frames=source_frames,
         obstacles=obstacle_source,
         column_index=np.concatenate(column_index),
         column_scale=columns.scale,
@@ -5073,6 +5141,7 @@ def prepare_boundary_layers(
     obstacles: CellMesh | None = None,
     wall_association: GeometryAssociation | None = None,
     policy: BoundaryLayerPolicy | None = None,
+    source_frames: ArrayLike | None = None,
 ) -> BoundaryLayerMesh:
     """Grow the ADVANCING layers of ``control`` from an oriented surface mesh.
 
@@ -5085,15 +5154,21 @@ def prepare_boundary_layers(
     A closed, fully grown triangle wall without split ridges, obstacles or
     periodicity under a FAIL or REDUCE_THICKNESS collision policy grows on the
     native prism layers (``phx_mc_prism_layers``). There level heights are
-    measured from the smooth surface the wall vertices sample, not from the
-    triangles: per smooth sector, a quadratic fit through the vertex gives the
-    normal and curvature, and ridge columns reach the scheduled height from
-    every sector. On a CAD wall, whose vertices lie on the source surface,
-    this is that surface to the fit's accuracy; on a bare triangle wall it is
-    the fitted surface. ``evidence.maximum_level_deviations`` reports the
-    levels' departure from the wall triangles. Every other wall takes the
-    advancing-front route, whose column stretch measures levels from the
-    triangles.
+    measured from the smooth surface the wall samples, not from the
+    triangles, and ridge columns reach the scheduled height from every smooth
+    sector. ``source_frames`` (triangle_count, 3, 9), for a triangle wall
+    sampled from a known source surface, give per wall cell (global-ID order)
+    and corner the unit source normal into the layer domain followed by the
+    shape operator entries (xx, xy, xz, yy, yz, zz), normal curvature
+    positive where the surface bends toward that normal; a zero row marks a
+    singular chart point. Sectors framed at every corner take their normal
+    and curvature from the source surface itself, so levels lie at their
+    heights from it (a CAD wall). Other sectors, and every sector of a bare
+    wall, take them from a weighted quadratic fit through the wall vertices.
+    The frames are retained as ``source_frames`` of the result.
+    ``evidence.maximum_level_deviations`` reports the levels' departure from
+    the wall triangles. Every other wall takes the advancing-front route,
+    whose column stretch measures levels from the triangles.
     """
     if not isinstance(wall, CellMesh):
         raise TypeError("wall must be CellMesh.")
@@ -5134,6 +5209,7 @@ def prepare_boundary_layers(
     if np.setdiff1d(selected, identifiers).size:
         raise ValueError("control.wall_scope selects cells absent from the wall mesh.")
     faces, arity = _mesh_faces(wall)
+    frames = _wall_source_frames(source_frames, wall)
     grow = np.isin(identifiers, selected)
     if obstacles is None:
         obstacle_points = np.empty((0, 3))
@@ -5156,6 +5232,7 @@ def prepare_boundary_layers(
         wall,
         wall_association,
         obstacles,
+        frames,
     )
 
 

@@ -300,6 +300,8 @@ class _PrismLayersRequest(ctypes.Structure):
         ("feature_angle_degrees", _F64),
         ("minimum_scale", _F64),
         ("prove", _I32),
+        ("source_normals", _P),
+        ("source_shape_operators", _P),
     )
 
 
@@ -2786,12 +2788,18 @@ def prism_layers(
     feature_angle_degrees: float,
     minimum_scale: float,
     prove: bool,
+    source_normals: object | None = None,
+    source_shape_operators: object | None = None,
 ) -> PrismLayers:
     """Grow prism layers from a closed oriented triangle wall.
 
     Rows follow ``phx_mc_prism_layers``: triangles oriented so their normals
     point into the layer domain, ``heights`` the increasing cumulative level
-    heights.
+    heights. ``source_normals`` (m, 3, 3) and ``source_shape_operators``
+    (m, 3, 6), given together, are the per-corner source-surface frames
+    (unit normal into the layer domain, or zero where the chart is singular;
+    shape-operator entries xx, xy, xz, yy, yz, zz) from which the levels are
+    measured; without them the kernel fits the surface through the vertices.
     """
 
     points = _points(vertices, "vertices", 3)
@@ -2808,6 +2816,24 @@ def prism_layers(
         if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
             raise TypeError(f"{name} must be a real number.")
     vertex_count, triangle_count = points.shape[0], rows.shape[0]
+    if (source_normals is None) != (source_shape_operators is None):
+        raise ValueError(
+            "source_normals and source_shape_operators are given together or not at all."
+        )
+    frames = None
+    if source_normals is not None:
+        frames = (
+            _real_array(source_normals, "source_normals"),
+            _real_array(source_shape_operators, "source_shape_operators"),
+        )
+        if frames[0].shape != (triangle_count, 3, 3) or frames[1].shape != (
+            triangle_count,
+            3,
+            6,
+        ):
+            raise ValueError(
+                "source frames take (m, 3, 3) normals and (m, 3, 6) shape operators."
+            )
     layer_count = levels.shape[0]
     arrays = (
         np.empty(((layer_count + 1) * vertex_count, 3), dtype=np.float64),
@@ -2827,6 +2853,8 @@ def prism_layers(
         feature_angle_degrees=float(feature_angle_degrees),
         minimum_scale=float(minimum_scale),
         prove=1 if prove else 0,
+        source_normals=None if frames is None else frames[0].ctypes.data,
+        source_shape_operators=None if frames is None else frames[1].ctypes.data,
     )
     outputs = _PrismLayersResult(*(array.ctypes.data for array in arrays))
     status = load_meshcore()["phx_mc_prism_layers"](

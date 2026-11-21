@@ -260,9 +260,14 @@ tetrahedra, then implicit volumes, then the CAD solid.
     Design and result (Nov 20). One call, `phx_mc_prism_layers` (`_meshcore.prism_layers`), on a
     closed oriented triangle wall and cumulative heights: one straight column per wall vertex (the
     SMOOTH topology). Construction in floating point: feature edges by dihedral angle split vertex
-    fans into smooth sectors; a weighted quadratic jet per vertex and sector gives the normal and
-    second fundamental form (no one-sided bias at a ridge); smooth columns grow along the normal by
-    D, ridge and corner columns along the minimum-norm medial w with w . g_i = a_i, a_i the
+    fans into smooth sectors; per vertex and sector, the normal and second fundamental form come from
+    the source surface where the wall carries per-corner source frames (a CAD wall: the patch's
+    inward normal and shape operator at each corner's chart point, so levels are measured from the
+    source surface itself, 1e-5 of each level on the coarse CAD cylinder, rims included; the frames
+    are retained, fingerprinted and archived, and a cold restore reruns the kernel on them), else
+    from a weighted quadratic jet through the wall vertices (no one-sided bias at a ridge); smooth
+    columns grow along the normal by D, ridge and corner columns along the minimum-norm medial w
+    with w . g_i = a_i, a_i the
     curvature-corrected height of sector i (the inward offset of a convex ridge is exact); a
     screened Laplacian (decay four times the largest ridge offset, Gauss-Seidel worklist to 1e-4 D)
     carries ridge offsets into neighboring smooth columns, each corrected for curvature along its

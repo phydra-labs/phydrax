@@ -1,7 +1,9 @@
 """Source-face boundary layers grown on native BRep volumes around a fixed core."""
 
+from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -472,12 +474,131 @@ def test_cylinder_whole_wall_layers_close_at_its_circular_edges() -> None:
         radial = 0.5 - np.linalg.norm(points[..., :2], axis=-1)
         return np.minimum(radial, np.minimum(points[..., 2], 1.0 - points[..., 2]))
 
-    # Levels are measured from the true cylinder. Beside the circular edges a
-    # side sector sees two or three coarse facets on one side only; its column
-    # follows their normals, a few percent short of the true depth there.
-    _assert_layered(result, on_cylinder, tolerance=1.0e-12, surface=depth, relative=0.03)
+    # Levels are measured from the true cylinder, rims included: every sector
+    # takes its normal and curvature from the source surface, not from its
+    # coarse facets.
+    _assert_layered(
+        result, on_cylinder, tolerance=1.0e-12, surface=depth, relative=1.0e-5
+    )
     enclosed = _enclosed_volume(result.mesh)
     assert _finite_element_volume(result.mesh) == pytest.approx(enclosed, abs=1.0e-12)
     exact = np.pi * 0.5**2
     area = 2.0 * np.pi * 0.5 * (0.5 + 1.0)
     assert abs(enclosed - exact) <= area * 0.05
+
+
+def test_cylinder_layer_source_frames_are_retained_through_a_cold_restore(
+    tmp_path: Path,
+) -> None:
+    from phydrax.lifecycle import Composition, CompositionEntry
+    from phydrax.meshing._layer_core_brep import brep_layer_core_source
+    from phydrax.meshing._model_codec import (
+        layer_core_authoring_recipe,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_boundary_layer_state,
+        restore_layer_core_authoring,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+
+    model = _cylinder()
+    domain = MeshingDomain.from_brep(model)
+    whole = MeshingScope.whole(model, 2)
+    surface_plan = phx.meshing.NativeMeshingProvider(
+        NativeMeshingOptions("parametric_surface")
+    ).plan(
+        domain,
+        phx.meshing.SurfaceMeshingSpec(
+            phx.meshing.CellMeshingTarget(
+                2, 3, phx.meshing.CellFamilyPolicy(required=("triangle",))
+            ),
+            whole,
+            size_controls=(
+                phx.meshing.UniformSizeControl(
+                    whole, 0.3, strength=phx.meshing.SizeControlStrength.SOFT
+                ),
+            ),
+            maximum_deviation=0.05,
+        ),
+        coordinate_contract=CONTRACT,
+    )
+    schedule = surface_plan.route_options.surface_schedule
+    assert schedule is not None
+    specification = _specification(
+        model, whole, size=0.3, deviation=0.05, schedule=SCHEDULE
+    )
+    source = brep_layer_core_source(
+        domain, surface_plan.execute(), specification, schedule
+    )
+    layers = source.layers
+    assert source.layer_control is not None and source.layer_policy is not None
+    # Every corner carries a unit source normal pointing into the solid,
+    # except at the cap centers, the singular points of the caps' polar
+    # charts, which carry none (the layer kernel fits those flat sectors).
+    assert layers.source_frames is not None
+    frames = np.asarray(layers.source_frames, dtype=np.float64)
+    wall = layers.source_wall
+    triangles = np.concatenate([np.asarray(block.vertices) for block in wall.blocks])
+    triangles = triangles[
+        np.argsort(
+            np.concatenate([np.asarray(block.global_ids) for block in wall.blocks])
+        )
+    ]
+    corners = np.asarray(wall.coordinates, dtype=np.float64)[triangles]
+    facets = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    framed = np.any(frames != 0.0, axis=-1)
+    np.testing.assert_array_equal(framed, np.linalg.norm(corners[..., :2], axis=-1) > 0.0)
+    np.testing.assert_allclose(
+        np.linalg.norm(frames[framed, :3], axis=-1), 1.0, atol=1e-14
+    )
+    assert np.all(np.sum(frames[..., :3] * facets[:, None, :], axis=-1)[framed] > 0.0)
+
+    recipe = layer_core_authoring_recipe(
+        source, source.layer_control, source.layer_policy
+    )
+    archive = write_model_artifact(
+        tmp_path / "cylinder-layers.phx",
+        Composition(
+            (
+                CompositionEntry(
+                    recipe,
+                    entry_id="source",
+                    role="topology",
+                    owner_id="phydrax.meshing",
+                    structure_id=source.binding_id,
+                    revision_id=source.binding_id,
+                    semantics_id="cad-cylinder-layers",
+                ),
+            ),
+            boundary_id="cad-cylinder-layers",
+        ),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    stored = read_model_artifact(
+        archive,
+        expected_type=Composition,
+        restore=restore_model_archive_value,
+        limits=MODEL_ARCHIVE_LIMITS,
+    ).value("source")
+    # The cold restore reruns the native kernel on the retained frames and
+    # reproves the columns against it.
+    cold = restore_layer_core_authoring(stored, specification=specification)
+    assert cold.layers.result_id == layers.result_id
+    assert cold.layers.source_frames is not None
+    np.testing.assert_array_equal(np.asarray(cold.layers.source_frames), frames)
+
+    # A frame forged in the archive (one corner normal turned by 1e-3 rad,
+    # still unit) no longer reproduces the retained columns.
+    normal = frames[0, 0, :3]
+    turn = np.cross(normal, (0.0, 0.0, 1.0) if abs(normal[2]) < 0.9 else (1.0, 0.0, 0.0))
+    turn /= np.linalg.norm(turn)
+    forged_frames = frames.copy()
+    forged_frames[0, 0, :3] = np.cos(1.0e-3) * normal + np.sin(1.0e-3) * turn
+    forged = eqx.tree_at(
+        lambda value: value.source_frames,
+        stored.layers,
+        jnp.asarray(forged_frames),
+    )
+    with pytest.raises(ValueError, match="differ|column"):
+        restore_boundary_layer_state(forged, stored.control, stored.policy)

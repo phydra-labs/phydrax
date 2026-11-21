@@ -178,6 +178,7 @@ def _bind_periodic_layer_identity(
         layers.evidence,
         source_wall=layers.source_wall,
         wall_association=layers.wall_association,
+        source_frames=layers.source_frames,
         obstacles=layers.obstacles,
         column_index=layers.column_index,
         column_scale=layers.column_scale,

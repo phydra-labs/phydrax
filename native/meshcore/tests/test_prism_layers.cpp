@@ -114,8 +114,14 @@ struct Layers {
   std::vector<uint8_t> kind;
 };
 
+// Source frames per triangle corner (normals (m, 3, 3), shape operators
+// (m, 3, 6)), or empty for none.
+struct Frames {
+  std::vector<double> normals, shapes;
+};
+
 Layers grow(const Surface& s, const std::vector<double>& heights, int prove,
-            double minimum_scale = 0.05) {
+            double minimum_scale = 0.05, const Frames& frames = {}) {
   Layers r;
   const int64_t n = static_cast<int64_t>(s.x.size() / 3), m = static_cast<int64_t>(s.f.size() / 3);
   const int32_t layers = static_cast<int32_t>(heights.size());
@@ -125,8 +131,10 @@ Layers grow(const Surface& s, const std::vector<double>& heights, int prove,
   r.scale.assign(static_cast<size_t>(n), 0.0);
   r.kind.assign(static_cast<size_t>(n), 9);
   r.stats.assign(21, 0.0);
-  const phx_mc_prism_layers_request request{n,       s.x.data(), m,  s.f.data(), layers,
-                                            heights.data(), 30.0,       minimum_scale, prove};
+  const phx_mc_prism_layers_request request{
+      n,      s.x.data(), m,  s.f.data(), layers, heights.data(), 30.0, minimum_scale, prove,
+      frames.normals.empty() ? nullptr : frames.normals.data(),
+      frames.shapes.empty() ? nullptr : frames.shapes.data()};
   const phx_mc_prism_layers_result result{r.points.data(), r.prisms.data(), r.displacement.data(),
                                           r.scale.data(),  r.kind.data(),   r.stats.data()};
   r.status = phx_mc_prism_layers(&request, &result);
@@ -190,6 +198,53 @@ void sphere_levels_at_true_distance() {
   PHX_CHECK(u.points == r.points);
 }
 
+// Exact frames of the unit sphere grown inward: normal -x, S the tangent
+// projector (curvature 1 toward the normal).
+Frames inward_sphere_frames(const Surface& s) {
+  Frames frames;
+  for (const int32_t v : s.f) {
+    const double* x = &s.x[3 * static_cast<size_t>(v)];
+    frames.normals.insert(frames.normals.end(), {-x[0], -x[1], -x[2]});
+    frames.shapes.insert(frames.shapes.end(), {1.0 - x[0] * x[0], -x[0] * x[1], -x[0] * x[2],
+                                               1.0 - x[1] * x[1], -x[1] * x[2], 1.0 - x[2] * x[2]});
+  }
+  return frames;
+}
+
+void sphere_frames_place_levels_on_the_source() {
+  // A coarse icosphere: the fitted normals are off, the source ones exact.
+  Surface s = icosphere(1);
+  flip(s);
+  const Frames frames = inward_sphere_frames(s);
+  const Layers r = grow(s, kHeights, 1, 0.05, frames);
+  PHX_CHECK(r.status == PHX_MC_OK);
+  PHX_CHECK(r.stats[16] == 1.0 && r.stats[10] == 0.0);
+  const size_t n = s.x.size() / 3;
+  double worst = 0.0;
+  for (size_t k = 1; k <= kHeights.size(); ++k) {
+    for (size_t v = 0; v < n; ++v) {
+      const double* p = &r.points[3 * (k * n + v)];
+      const double radius = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+      worst = std::max(worst, std::fabs(1.0 - radius - kHeights[k - 1]));
+    }
+  }
+  PHX_CHECK(worst < 1e-14);
+  // Malformed frames are refused: one array alone, a non-unit normal, a
+  // zero normal with a nonzero shape operator, a nonfinite entry.
+  Frames half = frames;
+  half.shapes.clear();
+  PHX_CHECK(grow(s, kHeights, 1, 0.05, half).status == PHX_MC_INVALID_ARGUMENT);
+  Frames scaled = frames;
+  scaled.normals[0] *= 1.001;
+  PHX_CHECK(grow(s, kHeights, 1, 0.05, scaled).status == PHX_MC_INVALID_ARGUMENT);
+  Frames dangling = frames;
+  dangling.normals[0] = dangling.normals[1] = dangling.normals[2] = 0.0;
+  PHX_CHECK(grow(s, kHeights, 1, 0.05, dangling).status == PHX_MC_INVALID_ARGUMENT);
+  Frames nonfinite = frames;
+  nonfinite.shapes[4] = std::nan("");
+  PHX_CHECK(grow(s, kHeights, 1, 0.05, nonfinite).status == PHX_MC_NONFINITE_INPUT);
+}
+
 void box_tops_at_offset() {
   Surface s = box(1.0, 0.8, 0.6, 4);
   flip(s);
@@ -250,6 +305,7 @@ void invalid_walls_are_refused() {
 
 int main() {
   sphere_levels_at_true_distance();
+  sphere_frames_place_levels_on_the_source();
   box_tops_at_offset();
   slab_is_thinned_until_embedded();
   invalid_walls_are_refused();
