@@ -267,7 +267,7 @@ def _local_strata(cell: EmbeddingCell, /) -> tuple[frozenset[int], ...]:
     return tuple(result)
 
 
-# A non-planar face's fan triangles and the set of their corners.
+# A face's exact triangles and the set of their corners.
 type _Fan = tuple[tuple[tuple[Point3, Point3, Point3], ...], frozenset[Point3]]
 
 
@@ -276,12 +276,15 @@ def _point_in_declared_stratum(
     shared_ids: tuple[int, ...],
     points_by_id: dict[int, tuple[ExactScalar, ...]],
     /,
-    fans: dict[tuple[Point3, ...], _Fan | None] | None = None,
+    fans: dict[tuple[bool, tuple[Point3, ...]], _Fan | None] | None = None,
+    *,
+    loop: bool = False,
 ) -> bool:
     """Exact membership of ``point`` in the shared stratum ``shared_ids``.
 
-    ``fans`` memoizes, per spatial face loop, its fan (``None`` for a coplanar
-    loop) across the points of one stratum.
+    With ``loop``, ``shared_ids`` is a face loop, decided as its exact polygon;
+    otherwise a coplanar vertex set is its convex hull. ``fans`` memoizes each
+    face's triangles (``None`` for a hull) across the points of one stratum.
     """
     if len(shared_ids) == 1:
         vertex = points_by_id[shared_ids[0]]
@@ -320,15 +323,17 @@ def _point_in_declared_stratum(
             return point_on_segment3(
                 spatial_point, spatial_vertices[0], spatial_vertices[1]
             )
-        if len(spatial_vertices) > 3:
-            if fans is not None and spatial_vertices in fans:
-                fan = fans[spatial_vertices]
+        if len(spatial_vertices) > 3 or loop:
+            if fans is not None and (loop, spatial_vertices) in fans:
+                fan = fans[loop, spatial_vertices]
             else:
-                # A non-planar shared face, given as its loop, is its exact
-                # vertex-average fan (``polytope_face_triangles``).
+                # A shared face given as its loop is its exact polygon: the
+                # ear-clipped polygon of a coplanar loop, the vertex-average
+                # fan of a non-planar one (``polytope_face_triangles``). An
+                # unordered coplanar vertex set is its convex hull.
                 triangles = (
                     polytope_face_triangles(spatial_vertices)
-                    if _noncoplanar(spatial_vertices)
+                    if loop or _noncoplanar(spatial_vertices)
                     else None
                 )
                 fan = (
@@ -340,9 +345,9 @@ def _point_in_declared_stratum(
                     )
                 )
                 if fans is not None:
-                    fans[spatial_vertices] = fan
+                    fans[loop, spatial_vertices] = fan
             if fan is not None:
-                # A corner of a closed fan triangle lies in it.
+                # A corner of a closed triangle lies in it.
                 return spatial_point in fan[1] or any(
                     point_in_triangle3(spatial_point, triangle) for triangle in fan[0]
                 )
@@ -546,38 +551,41 @@ def _shared_edge_chain(
 class _DeclaredStratum:
     """The exact shared stratum of one cell pair, prepared once for many contacts.
 
-    ``strata`` are its convex pieces: shared vertices, shared edges and shared
-    face loops (or the pair's one shared stratum). The exact intersection of
-    two convex pieces is the hull of its vertices, so a contact is declared
-    only when one stratum holds all of its vertices.
+    ``strata`` are its convex pieces with whether each is a face loop: shared
+    vertices, shared edges and shared face loops (or the pair's one shared
+    stratum). The exact intersection of two convex pieces is the hull of its
+    vertices, so a contact is declared only when one stratum holds all of its
+    vertices.
     """
 
     __slots__ = ("_fans", "_points_by_id", "_strata")
 
     def __init__(
         self,
-        strata: tuple[tuple[int, ...], ...],
+        strata: tuple[tuple[tuple[int, ...], bool], ...],
         points_by_id: dict[int, tuple[ExactScalar, ...]],
         /,
     ) -> None:
         self._strata = strata
         self._points_by_id = points_by_id
-        self._fans: dict[tuple[Point3, ...], _Fan | None] = {}
+        self._fans: dict[tuple[bool, tuple[Point3, ...]], _Fan | None] = {}
 
     def contains(self, points: tuple[tuple[ExactScalar, ...], ...], /) -> bool | None:
-        """Whether every point lies in the stratum; ``None`` when undecided."""
-        try:
-            return any(
-                all(
+        """Whether one stratum holds every point; ``None`` when none is proved
+        to and some stratum was undecided."""
+        undecided = False
+        for stratum, loop in self._strata:
+            try:
+                if all(
                     _point_in_declared_stratum(
-                        point, stratum, self._points_by_id, self._fans
+                        point, stratum, self._points_by_id, self._fans, loop=loop
                     )
                     for point in points
-                )
-                for stratum in self._strata
-            )
-        except (ValueError, ZeroDivisionError):
-            return None
+                ):
+                    return True
+            except (ValueError, ZeroDivisionError):
+                undecided = True
+        return None if undecided else False
 
 
 def _shared_strata_union(
@@ -586,11 +594,11 @@ def _shared_strata_union(
     first_ids: tuple[int, ...],
     common: frozenset[int],
     /,
-) -> tuple[tuple[int, ...], ...]:
+) -> tuple[tuple[tuple[int, ...], bool], ...]:
     """Every vertex, edge and face stratum both cells declare within ``common``.
 
-    Vertices come first, then edges, then faces in their loop order; their
-    union is the closed set both cells share by declaration.
+    Vertices come first, then edges, then face loops; each is flagged whether
+    it is a face loop.
     """
     shared = set(_local_strata(first)).intersection(_local_strata(second))
     vertices = sorted(
@@ -607,7 +615,11 @@ def _shared_strata_union(
         ids = frozenset(loop)
         if len(ids) > 2 and ids <= common and ids in shared:
             faces.append(loop)
-    return (*vertices, *edges, *faces)
+    return (
+        *((vertex, False) for vertex in vertices),
+        *((edge, False) for edge in edges),
+        *((face, True) for face in faces),
+    )
 
 
 def _declared_stratum(
@@ -636,6 +648,7 @@ def _declared_stratum(
     if loops:
         # A shared face keeps its loop order: a non-planar face is its fan.
         shared = loops[0]
+    convex_union = False
     if common not in _local_strata(first) or common not in _local_strata(second):
         edge_chain = _shared_edge_chain(first, second, common, point_by_id)
         if edge_chain is not None:
@@ -652,9 +665,13 @@ def _declared_stratum(
                 strata = _shared_strata_union(first, second, first_ids, common)
                 return _DeclaredStratum(strata, point_by_id) if strata else False
             convex = _convex_planar_face_union(faces, point_by_id)
+            convex_union = True
             if convex is not True:
                 return None
-    return _DeclaredStratum((shared,), point_by_id)
+    # A shared face loop is decided as its exact polygon; a proved convex
+    # face union or straight edge chain by its hull.
+    face_loop = bool(loops) and shared == loops[0] and convex_union is False
+    return _DeclaredStratum(((shared, face_loop),), point_by_id)
 
 
 def _contact_is_declared(

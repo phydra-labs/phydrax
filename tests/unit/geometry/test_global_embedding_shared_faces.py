@@ -131,7 +131,7 @@ def test_extra_shared_vertex_declares_only_single_shared_strata() -> None:
     assert declared((_point(0, 0, 1), _point(1, 0, 1), _point(1, 1, 1))) is True
     # Corners 2 and 4 share no face: their segment crosses two shared faces.
     assert declared((_point(1, 0, 1), _point(0, 1, 1))) is False
-    assert declared((_point(0, 0, 2),)) is not True
+    assert declared((_point(0, 0, 2),)) is False
 
 
 def _edge_touching_boxes(
@@ -255,3 +255,134 @@ def test_bent_shared_edge_chain_declares_its_vertex_and_edge_union() -> None:
     near = (Fraction(19, 10), Fraction(1, 10), Fraction(0))
     assert declared((near,)) is False
     assert declared((_point(2, 0, 0), _point(1, 1, 0))) is False
+
+
+# A non-convex pentagon 1-2-3-4-5 in z = 0, reflex at 2: its notch is the
+# triangle 1-3-2, with 6 the midpoint of edge 1-3.
+_NOTCHED = {
+    1: _point(0, 0, 0),
+    2: (Fraction(2), Fraction(1, 2), Fraction(0)),
+    3: _point(4, 0, 0),
+    4: _point(4, 4, 0),
+    5: _point(0, 4, 0),
+    6: _point(2, 0, 0),
+}
+_BELOW = {
+    11: _point(0, 0, -1),
+    12: _point(4, 0, -1),
+    13: _point(4, 4, -1),
+    14: _point(0, 4, -1),
+}
+_ABOVE = {
+    21: _point(0, 0, 1),
+    22: _point(4, 0, 1),
+    23: _point(4, 4, 1),
+    24: _point(0, 4, 1),
+}
+_NOTCH_POINT = (Fraction(2), Fraction(1, 4), Fraction(0))
+
+
+def _upper_with_quad_notch() -> EmbeddingCell:
+    return _polyhedron(
+        71,
+        {**_NOTCHED, **_ABOVE},
+        (
+            (5, 4, 3, 2, 1),
+            (1, 2, 3, 6),
+            (21, 22, 23, 24),
+            (1, 6, 3, 22, 21),
+            (3, 4, 23, 22),
+            (4, 5, 24, 23),
+            (5, 1, 21, 24),
+        ),
+    )
+
+
+def test_nonconvex_shared_face_is_its_polygon_not_its_hull() -> None:
+    # One shared stratum, the notched pentagon: the notch is not shared.
+    lower = _polyhedron(
+        72,
+        {**{k: v for k, v in _NOTCHED.items() if k != 6}, **_BELOW},
+        (
+            (1, 2, 3, 4, 5),
+            (1, 3, 2),
+            (14, 13, 12, 11),
+            (1, 11, 12, 3),
+            (3, 12, 13, 4),
+            (4, 13, 14, 5),
+            (5, 14, 11, 1),
+        ),
+    )
+    upper = _upper_with_quad_notch()
+    assert (
+        _contact_is_declared(
+            lower, upper, (_NOTCH_POINT,), lower.vertex_ids, upper.vertex_ids
+        )
+        is False
+    )
+    assert (
+        _contact_is_declared(
+            lower, upper, (_point(2, 2, 0),), lower.vertex_ids, upper.vertex_ids
+        )
+        is True
+    )
+
+
+def test_notch_split_differently_is_not_a_declared_union() -> None:
+    # The notch is split at the shared hanging vertex 6 differently in each
+    # cell: no single shared stratum, and the notch interior is in none.
+    lower = _polyhedron(
+        70,
+        {**_NOTCHED, **_BELOW},
+        (
+            (1, 2, 3, 4, 5),
+            (1, 6, 2),
+            (6, 3, 2),
+            (14, 13, 12, 11),
+            (1, 11, 12, 3, 6),
+            (3, 12, 13, 4),
+            (4, 13, 14, 5),
+            (5, 14, 11, 1),
+        ),
+    )
+    upper = _upper_with_quad_notch()
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            lower, upper, points, lower.vertex_ids, upper.vertex_ids
+        )
+
+    assert declared((_NOTCH_POINT,)) is False
+    assert declared((_point(2, 2, 0),)) is True
+    assert declared((_NOTCHED[1], _NOTCHED[6])) is True
+
+
+def test_one_undecided_shared_stratum_does_not_hide_another() -> None:
+    # Shared triangles in z = 0 and y = 0 plus a shared vertex outside both.
+    shared = {
+        1: _point(0, 0, 0),
+        2: _point(2, 0, 0),
+        3: _point(0, 2, 0),
+        4: _point(0, 0, 2),
+        9: _point(5, 5, 5),
+    }
+    first = _polyhedron(
+        60,
+        {**shared, 10: _point(-1, -1, -1)},
+        ((1, 2, 3), (1, 4, 2), (10, 1, 3), (10, 9, 1)),
+    )
+    second = _polyhedron(
+        61,
+        {**shared, 11: _point(3, 3, 3)},
+        ((1, 3, 2), (1, 2, 4), (11, 2, 3), (11, 9, 2)),
+    )
+    for one, other in ((first, second), (second, first)):
+        for points in (
+            (shared[1], shared[2], shared[3]),
+            (shared[1], shared[2], shared[4]),
+            ((Fraction(1, 2), Fraction(0), Fraction(1, 2)),),
+        ):
+            assert (
+                _contact_is_declared(one, other, points, one.vertex_ids, other.vertex_ids)
+                is True
+            )
