@@ -520,10 +520,14 @@ def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
     # side-integrated size confirmation, 55 of these 135 runs returned the
     # face stage UNRESOLVED (refusals beside the trim; with the confirmation
     # alone most runs at 75-85 deg still did, with the zones alone one at 45
-    # deg). Each run must resolve, keep every edge over h / 10 and stay within
+    # deg). Each run must resolve, keep every edge over h / 10, keep every
+    # triangle's circumradius within h / sqrt(2) and stay within theta times
     # the requested tolerance of the sphere: the distance of a flat
     # triangle's point x to the unit sphere is |1 - |x||, sampled on a
-    # barycentric grid.
+    # barycentric grid. Fault caught: triangles from the pole zone's last
+    # ring to the trim zone's, all of fixed points and never refined (cap
+    # below 85 deg, h/r 0.6, theta 0.9: circumradius 1.026 h / sqrt(2),
+    # distance 0.99 tol).
     domain = MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
     model = cad_geometry_bundle(domain).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
@@ -550,12 +554,18 @@ def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
             corners = result.points[result.triangles]
             edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
             assert edges.min() > 0.1 * size, (size, theta)
+            sides = edges.prod(axis=1)
+            area2 = np.linalg.norm(
+                np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
+            )
+            circumradius = sides / (2.0 * area2)
+            assert circumradius.max() <= size / np.sqrt(2.0), (size, theta, circumradius.max())
             radius = np.linalg.norm(corners, axis=2)
             dome = np.all(np.abs(radius - 1.0) < 1e-12, axis=1)
             assert np.any(dome) and not np.all(dome)
             samples = np.einsum("kv,rvd->rkd", weights, corners[dome])
             distance = np.abs(1.0 - np.linalg.norm(samples, axis=2))
-            assert distance.max() <= tolerance, (size, theta, distance.max())
+            assert distance.max() <= theta * tolerance, (size, theta, distance.max())
 
 
 def _washer() -> phx.geometry.brep.BRepModel:
