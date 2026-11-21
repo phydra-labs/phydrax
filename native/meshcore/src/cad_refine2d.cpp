@@ -678,7 +678,13 @@ class Refinement {
       const double ex=e1[0]-e0[0], ey=e1[1]-e0[1];
       size_limit=std::max(size_limit,0.70710678118654752440*std::sqrt(dot(m,ex,ey,ex,ey)));
     }
-    const bool oversized = radius > size_limit && integrated_oversized(t);
+    // Refinement splits by the centroid test alone; the final verdict (a
+    // caller asking for reasons: the census and classify) also asks the
+    // side-integrated lengths, so a triangle the kernel could not split is
+    // accepted when they clear it. Splitting every centroid-oversized
+    // triangle it can keeps the parent's meshes where the kernel resolves
+    // them, and spends no metric evaluations on the confirmation there.
+    const bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
     if (status_ != PHX_MC_OK) return false;
     if (!size_reason && !angle_reason && oversized) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
