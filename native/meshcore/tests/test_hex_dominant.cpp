@@ -102,15 +102,17 @@ Surface box(double l, int n) {
   return s;
 }
 
-// Closed cylinder of radius r over [0, h] (n segments, m rings, caps fanned
-// to their centres), outward: two closed convex feature curves.
-Surface cylinder(double radius, double height, int n, int m) {
+// Closed cylinder of radius r over [0, h + slope x] (n segments, m rings,
+// caps fanned to their centres), outward: two closed convex feature curves,
+// the top one elliptic when the cap is oblique.
+Surface cylinder(double radius, double height, int n, int m, double slope = 0.0) {
   Surface s;
   const double pi = 3.14159265358979323846;
   for (int k = 0; k <= m; ++k) {
     for (int i = 0; i < n; ++i) {
       const double a = 2.0 * pi * i / n;
-      s.x.insert(s.x.end(), {radius * std::cos(a), radius * std::sin(a), height * k / m});
+      const double x = radius * std::cos(a);
+      s.x.insert(s.x.end(), {x, radius * std::sin(a), (height + slope * x) * k / m});
     }
   }
   auto ring = [&](int k, int i) { return static_cast<int32_t>(k * n + (i % n)); };
@@ -397,16 +399,58 @@ void convex_curve_layers_split() {
   PHX_CHECK(worst < 1e-12);
 }
 
-// The split and segment-midpoint decisions are scale-free: a surface scaled
-// by a power of two with sizes and layers scaled alike (every floating
-// operation then scales exactly) gives the same mesh, scaled.
+// Layer cells that hold a curve-segment midpoint: polyhedra outside the core.
+int64_t midpoint_cells(const Result& r) {
+  int64_t count = 0;
+  for (size_t c = 0; c < r.cell_kinds.size(); ++c) count += r.cell_roles[c] != 0 && r.cell_kinds[c] == 1;
+  return count;
+}
+
+// An oblique top cap (elliptic rim, like the F8 quadric's curves): curve
+// segments whose chord deviates from the rim more than any patch wall edge
+// from its patch gain a midpoint; every cell is valid and every curve
+// vertex, midpoints included, lies on the rim polyline.
+void oblique_curve_segments_gain_midpoints() {
+  const int n = 96, m = 16;
+  const Surface s = cylinder(0.5, 0.8, n, m, 0.6);
+  const Result r = mesh(s, 0.16, 0.08, {0.01, 0.012});
+  PHX_CHECK(r.status == PHX_MC_OK);
+  check_cells(r);
+  PHX_CHECK(midpoint_cells(r) > 0);
+  double worst = 0.0;
+  int64_t curve = 0;
+  for (size_t v = 0; v < r.vertex_kinds.size(); ++v) {
+    if (r.vertex_kinds[v] != 2) continue;
+    ++curve;
+    const V p = at(r.points, static_cast<int64_t>(v));
+    double best = 1e300;
+    for (const int k : {0, m}) {
+      for (int i = 0; i < n; ++i) {
+        const V a = at(s.x, k * n + i), b = at(s.x, k * n + (i + 1) % n);
+        const V d = minus(b, a);
+        const double t = std::clamp(dot3(minus(p, a), d) / dot3(d, d), 0.0, 1.0);
+        const V e = {a[0] + t * d[0] - p[0], a[1] + t * d[1] - p[1], a[2] + t * d[2] - p[2]};
+        best = std::min(best, std::sqrt(dot3(e, e)));
+      }
+    }
+    worst = std::max(worst, best);
+  }
+  PHX_CHECK(curve > 0);
+  PHX_CHECK(worst < 1e-12);
+}
+
+// The split and segment-midpoint decisions are scale-free: the oblique
+// fixture scaled by a power of two with sizes and layers scaled alike
+// (every floating operation then scales exactly) gives the same mesh,
+// scaled, midpoints included.
 void convex_curve_split_is_scale_free() {
-  const Surface s = cylinder(0.5, 0.8, 96, 16);
+  const Surface s = cylinder(0.5, 0.8, 96, 16, 0.6);
   Surface big = s;
   for (double& x : big.x) x *= 8.0;
   const Result r = mesh(s, 0.16, 0.08, {0.01, 0.012});
   const Result q = mesh(big, 1.28, 0.64, {0.08, 0.096});
   PHX_CHECK(r.status == PHX_MC_OK && q.status == PHX_MC_OK);
+  PHX_CHECK(midpoint_cells(r) > 0);
   PHX_CHECK(r.face_offsets == q.face_offsets && r.face_vertices == q.face_vertices);
   PHX_CHECK(r.face_owner == q.face_owner && r.face_neighbor == q.face_neighbor && r.cell_kinds == q.cell_kinds);
   PHX_CHECK(r.points.size() == q.points.size());
@@ -432,6 +476,7 @@ int main() {
   box_corners_and_volume_are_exact();
   layers_sit_at_their_thicknesses();
   convex_curve_layers_split();
+  oblique_curve_segments_gain_midpoints();
   convex_curve_split_is_scale_free();
   invalid_input_is_refused();
   return phx::mc::test::finish("test_hex_dominant");
