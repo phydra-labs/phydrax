@@ -98,20 +98,25 @@ def verify_cad_fidelity(
         count = offsets[loop + 1] - offsets[loop]
         node = model.surface_nodes[model.loop_surfaces[loop]]
         source = next(
-            other for other in covered
+            other
+            for other in covered
             if offsets[other + 1] - offsets[other] == count
             and model.surface_nodes[model.loop_surfaces[other]] == node
         )
         selected = np.flatnonzero(chords.chord_loop == source)
         mirrored = np.full(chord_count, -1, dtype=np.int64)
         mirrored[selected] = chord_count + np.arange(selected.size, dtype=np.int64)
-        uses = offsets[loop] + (count - 1 - (chords.chord_use[selected] - offsets[source]))
+        uses = offsets[loop] + (
+            count - 1 - (chords.chord_use[selected] - offsets[source])
+        )
         chord_use.append(uses.astype(np.int64))
         chord_loop.append(np.full(selected.size, loop, dtype=np.int64))
         chord_uv.append(chords.chord_uv[selected][:, ::-1])
         chord_range.append(chords.chord_range[selected][:, ::-1])
         for use in np.unique(uses):
-            use_range[use] = use_range[offsets[source] + count - 1 - (use - offsets[loop])][::-1]
+            use_range[use] = use_range[
+                offsets[source] + count - 1 - (use - offsets[loop])
+            ][::-1]
         chord_count += selected.size
         patch = model.loop_surfaces[source]
         own = np.flatnonzero(mesh.face_rows == patch)
@@ -124,23 +129,37 @@ def verify_cad_fidelity(
         physical = mapped >= 0
         mesh_triangles.append(mesh.mesh_triangles[mapped[physical]][:, [0, 2, 1]])
         image = np.full(own.size, -1, dtype=np.int64)
-        image[physical] = mesh_count + np.arange(np.count_nonzero(physical), dtype=np.int64)
+        image[physical] = mesh_count + np.arange(
+            np.count_nonzero(physical), dtype=np.int64
+        )
         chart_to_mesh.append(image)
         mesh_count += int(np.count_nonzero(physical))
     completed = CadFidelityMesh(
-        mesh.points, np.concatenate(triangles), np.concatenate(faces), np.concatenate(uv),
-        np.concatenate(mesh_triangles), np.concatenate(chart_to_mesh), np.concatenate(edge_chord),
+        mesh.points,
+        np.concatenate(triangles),
+        np.concatenate(faces),
+        np.concatenate(uv),
+        np.concatenate(mesh_triangles),
+        np.concatenate(chart_to_mesh),
+        np.concatenate(edge_chord),
     )
     table = CadFidelityChords(
-        chords.use_patch, use_range, chords.loop_count, np.concatenate(chord_use),
-        np.concatenate(chord_loop), np.concatenate(chord_uv), np.concatenate(chord_range),
+        chords.use_patch,
+        use_range,
+        chords.loop_count,
+        np.concatenate(chord_use),
+        np.concatenate(chord_loop),
+        np.concatenate(chord_uv),
+        np.concatenate(chord_range),
     )
     result = native_verify_cad_fidelity(
         model, lower, upper, completed, table, tolerance, max_depth
     )
     return result._replace(
-        upper=result.upper[:rows], item_status=result.item_status[:rows],
-        reasons=result.reasons[:rows], subdivisions=result.subdivisions[:rows],
+        upper=result.upper[:rows],
+        item_status=result.item_status[:rows],
+        reasons=result.reasons[:rows],
+        subdivisions=result.subdivisions[:rows],
     )
 
 
@@ -167,8 +186,10 @@ def _surface_domain(surface: AbstractSurfacePatch) -> MeshingDomain:
         return uses if sense > 0 else tuple(reversed(uses))
 
     domain = MeshingDomain(
-        (MeshingSurfacePatch(surface, (loop(1),)),
-         MeshingSurfacePatch(surface, (loop(-1),), orientation=-1)),
+        (
+            MeshingSurfacePatch(surface, (loop(1),)),
+            MeshingSurfacePatch(surface, (loop(-1),), orientation=-1),
+        ),
         tuple(MeshingDomainCurve(first, last) for first, last in pairs),
         4,
         source_id="qualification:native-fidelity-cylinder",
@@ -179,8 +200,12 @@ def _surface_domain(surface: AbstractSurfacePatch) -> MeshingDomain:
 
 def _cylinder_domain() -> MeshingDomain:
     surface = CylinderPatch(
-        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0),
-        (0.0, 0.0, 1.0), float(Fraction(1, 3)), radius_exact=Fraction(1, 3),
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        float(Fraction(1, 3)),
+        radius_exact=Fraction(1, 3),
     )
     return _surface_domain(surface)
 
@@ -244,8 +269,17 @@ def test_offset_plane_irrational_normal_coefficients() -> None:
     with localcontext() as context:
         context.prec = 100
         shift = Decimal(surface.frame_sign or 1) / (Decimal(7) * Decimal(3).sqrt())
-        expected = (shift, -shift, shift, Decimal(1), Decimal(1), Decimal(0),
-                    Decimal(0), Decimal(1), Decimal(1))
+        expected = (
+            shift,
+            -shift,
+            shift,
+            Decimal(1),
+            Decimal(1),
+            Decimal(0),
+            Decimal(0),
+            Decimal(1),
+            Decimal(1),
+        )
         for index, exact in enumerate(expected):
             assert Decimal.from_float(float(lower[start + index])) <= exact
             assert exact <= Decimal.from_float(float(upper[start + index]))
@@ -285,10 +319,15 @@ def test_generic_extrusion_offset_fidelity(distance: Fraction) -> None:
         if broken:
             candidate_points[4, 2] += 1000.0
         candidate = mesh._replace(points=candidate_points)
-        result = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords, 100.0, 4)
+        result = verify_cad_fidelity(
+            bundle.model, lower, upper, candidate, chords, 100.0, 4
+        )
         native = tuple(status == MeshcoreStatus.OK for status in result.item_status[rows])
         python = _python_chart_decisions(
-            domain, candidate, rows, 100.0,
+            domain,
+            candidate,
+            rows,
+            100.0,
             refusal=None if dyadic else _EXACT_CARRIER_REFUSAL,
         )
         expected = tuple(not (broken and 4 in candidate.triangles[row]) for row in rows)
@@ -312,15 +351,24 @@ def test_generic_extrusion_offset_fidelity(distance: Fraction) -> None:
                 )
                 assert tight.item_status[row] == MeshcoreStatus.OK
                 assert tight.upper[row] <= float(reference)
-                print("extrusion offset native/Python", tight.upper[row] / float(reference),
-                      "subdivisions", tight.subdivisions[row])
+                print(
+                    "extrusion offset native/Python",
+                    tight.upper[row] / float(reference),
+                    "subdivisions",
+                    tight.subdivisions[row],
+                )
             for i in range(11):
                 for j in range(11 - i):
                     barycentric = np.asarray((1 - (i + j) / 10, i / 10, j / 10))
                     uv = barycentric @ candidate.uv[row]
-                    exact = float(radius) * np.asarray((np.cos(uv[0]), np.sin(uv[0]), 0.0))
+                    exact = float(radius) * np.asarray(
+                        (np.cos(uv[0]), np.sin(uv[0]), 0.0)
+                    )
                     exact[2] = uv[1]
-                    assert np.linalg.norm(exact - barycentric @ vertices) <= result.upper[row]
+                    assert (
+                        np.linalg.norm(exact - barycentric @ vertices)
+                        <= result.upper[row]
+                    )
 
 
 def _rational_spline_surface() -> BSplineSurfacePatch:
@@ -403,13 +451,16 @@ def _analytic_values(kind: str, uv: np.ndarray) -> np.ndarray:
             )
         case "torus":
             radius = 0.7 + 0.2 * np.cos(v)
-            return np.stack((radius * np.cos(u), radius * np.sin(u), 0.2 * np.sin(v)), axis=-1)
+            return np.stack(
+                (radius * np.cos(u), radius * np.sin(u), 0.2 * np.sin(v)), axis=-1
+            )
         case _:
             raise ValueError(f"Unknown analytic fixture {kind}.")
 
 
 def _cylinder_mesh(
-    domain: MeshingDomain, kind: str = "cylinder",
+    domain: MeshingDomain,
+    kind: str = "cylinder",
 ) -> tuple[CadFidelityMesh, CadFidelityChords]:
     uv_points = np.asarray(
         [(0.5 * i, 0.5 * j) for j in range(3) for i in range(3)], dtype=np.float64
@@ -450,7 +501,12 @@ def _cylinder_mesh(
         chord_uv.append(np.stack((start, end)))
         chord_range.append((float(first), float(first + 0.5)))
     mesh = CadFidelityMesh(
-        points, cells, rows, uv_points[cells], cells, np.arange(len(cells), dtype=np.int64),
+        points,
+        cells,
+        rows,
+        uv_points[cells],
+        cells,
+        np.arange(len(cells), dtype=np.int64),
         edge_rows,
     )
     bundle = cad_geometry_bundle(domain)
@@ -532,7 +588,9 @@ def _python_chart_decisions(
         for finding in evidence.findings
         if finding.check == "source_fidelity_tolerance"
     }
-    assert all(finding.check == "source_fidelity_tolerance" for finding in evidence.findings)
+    assert all(
+        finding.check == "source_fidelity_tolerance" for finding in evidence.findings
+    )
     return tuple(int(value) not in failed for value in ids)
 
 
@@ -546,9 +604,11 @@ def _rational_spline_values(uv: np.ndarray) -> np.ndarray:
     )
     denominator = sum(weights)
     return np.stack(
-        ((weights[2] + weights[3]) / denominator,
-         (weights[1] + weights[3]) / denominator,
-         np.full_like(u, 1 / 3)),
+        (
+            (weights[2] + weights[3]) / denominator,
+            (weights[1] + weights[3]) / denominator,
+            np.full_like(u, 1 / 3),
+        ),
         axis=-1,
     )
 
@@ -570,7 +630,9 @@ def test_rational_spline_verdict_and_dense_bounds() -> None:
     uv = np.asarray([(0.5 * i, 0.5 * j) for j in range(3) for i in range(3)])
     mesh = mesh._replace(points=_rational_spline_values(uv))
     rows = np.flatnonzero(np.all(mesh.edge_chord < 0, axis=1))
-    fixture_path = Path(__file__).parents[3] / "native/meshcore/tests/spline_hessian_fixture.inc"
+    fixture_path = (
+        Path(__file__).parents[3] / "native/meshcore/tests/spline_hessian_fixture.inc"
+    )
     numbers = re.findall(r"-?0x[0-9a-f.]+p[+-][0-9]+", fixture_path.read_text())
     fixture = np.asarray([float.fromhex(value) for value in numbers]).reshape((2, 20))
     spans = SourcePreparation(domain).surface_spans(domain.patches[0].surface)
@@ -596,22 +658,34 @@ def test_rational_spline_verdict_and_dense_bounds() -> None:
         if broken:
             points[4, 2] += 10.0
         candidate = mesh._replace(points=points)
-        result = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords, tolerance, 4)
+        result = verify_cad_fidelity(
+            bundle.model, lower, upper, candidate, chords, tolerance, 4
+        )
         decisions = _python_chart_decisions(domain, candidate, rows, tolerance)
         if broken:
-            assert decisions == tuple(status == MeshcoreStatus.OK for status in result.item_status[rows])
+            assert decisions == tuple(
+                status == MeshcoreStatus.OK for status in result.item_status[rows]
+            )
         else:
             assert decisions == (False, False)
             assert np.all(result.item_status[rows] == MeshcoreStatus.OK)
-            assert np.all(result.upper[rows] <= np.asarray((1.0901229543292632, 7.954951288348677)))
-            assert np.all(result.upper[rows] >= np.asarray((0.04204418698947044, 0.020824323571858087)))
+            assert np.all(
+                result.upper[rows] <= np.asarray((1.0901229543292632, 7.954951288348677))
+            )
+            assert np.all(
+                result.upper[rows]
+                >= np.asarray((0.04204418698947044, 0.020824323571858087))
+            )
         for row in rows:
             vertices = points[candidate.triangles[row]]
             for i in range(21):
                 for j in range(21 - i):
                     barycentric = np.asarray((1 - (i + j) / 20, i / 20, j / 20))
                     sample = _rational_spline_values(barycentric @ candidate.uv[row])
-                    assert np.linalg.norm(sample - barycentric @ vertices) <= result.upper[row]
+                    assert (
+                        np.linalg.norm(sample - barycentric @ vertices)
+                        <= result.upper[row]
+                    )
 
 
 def test_python_spline_kink_requires_nonzero_interpolation_bound() -> None:
@@ -621,13 +695,19 @@ def test_python_spline_kink_requires_nonzero_interpolation_bound() -> None:
         dtype=np.float64,
     )
     surface = BSplineSurfacePatch(
-        controls, np.ones((3, 2), dtype=np.float64),
+        controls,
+        np.ones((3, 2), dtype=np.float64),
         np.asarray((0, 0, 0.5, 1, 1), dtype=np.float64),
-        np.asarray((0, 0, 1, 1), dtype=np.float64), 1, 1,
+        np.asarray((0, 0, 1, 1), dtype=np.float64),
+        1,
+        1,
     )
     domain = _surface_domain(surface)
-    chart = ((Fraction(0), Fraction(0)), (Fraction(1), Fraction(0)),
-             (Fraction(0), Fraction(1)))
+    chart = (
+        (Fraction(0), Fraction(0)),
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(1)),
+    )
     bound = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[0]
     assert bound is not None and bound >= 1
 
@@ -636,11 +716,18 @@ def _degree_one_surface(u_height: float, v_height: float) -> BSplineSurfacePatch
     """Degree-1 tents in u and v; u = 1/2 and v = 1/2 are C0 knot lines."""
     knots = np.asarray((0, 0, 0.5, 1, 1), dtype=np.float64)
     controls = np.asarray(
-        [[(0.5 * i, 0.5 * j, u_height * (i == 1) + v_height * (j == 1)) for j in range(3)]
-         for i in range(3)],
+        [
+            [
+                (0.5 * i, 0.5 * j, u_height * (i == 1) + v_height * (j == 1))
+                for j in range(3)
+            ]
+            for i in range(3)
+        ],
         dtype=np.float64,
     )
-    return BSplineSurfacePatch(controls, np.ones((3, 3), dtype=np.float64), knots, knots, 1, 1)
+    return BSplineSurfacePatch(
+        controls, np.ones((3, 3), dtype=np.float64), knots, knots, 1, 1
+    )
 
 
 def _tent_values(uv: np.ndarray, u_height: float, v_height: float) -> np.ndarray:
@@ -651,7 +738,9 @@ def _tent_values(uv: np.ndarray, u_height: float, v_height: float) -> np.ndarray
 
 
 def _square_mesh(
-    domain: MeshingDomain, uv_points: np.ndarray, triangles: list[tuple[int, int, int]],
+    domain: MeshingDomain,
+    uv_points: np.ndarray,
+    triangles: list[tuple[int, int, int]],
     points: np.ndarray,
 ) -> tuple[CadFidelityMesh, CadFidelityChords]:
     """A triangulation of the unit square chart with its boundary chords."""
@@ -684,8 +773,13 @@ def _square_mesh(
         chord_uv.append(np.stack((start, end)))
         chord_range.append((float(first), float(last)))
     mesh = CadFidelityMesh(
-        points, cells, np.zeros(len(cells), dtype=np.int32), uv_points[cells], cells,
-        np.arange(len(cells), dtype=np.int64), edge_rows,
+        points,
+        cells,
+        np.zeros(len(cells), dtype=np.int32),
+        uv_points[cells],
+        cells,
+        np.arange(len(cells), dtype=np.int64),
+        edge_rows,
     )
     bundle = cad_geometry_bundle(domain)
     use_patch = np.repeat(
@@ -693,19 +787,26 @@ def _square_mesh(
         np.diff(bundle.model.loop_use_offsets),
     )
     chords = CadFidelityChords(
-        use_patch, bundle.model.use_ranges, bundle.model.loop_surfaces.size,
-        np.asarray(chord_use, dtype=np.int64), np.zeros(len(chord_use), dtype=np.int64),
-        np.asarray(chord_uv, dtype=np.float64), np.asarray(chord_range, dtype=np.float64),
+        use_patch,
+        bundle.model.use_ranges,
+        bundle.model.loop_surfaces.size,
+        np.asarray(chord_use, dtype=np.int64),
+        np.zeros(len(chord_use), dtype=np.int64),
+        np.asarray(chord_uv, dtype=np.float64),
+        np.asarray(chord_range, dtype=np.float64),
     )
     return mesh, chords
 
 
-def _dense_distance(mesh: CadFidelityMesh, row: int, u_height: float, v_height: float) -> float:
+def _dense_distance(
+    mesh: CadFidelityMesh, row: int, u_height: float, v_height: float
+) -> float:
     """Sampled distance, including the triangle's crossings of the knot lines."""
     steps = 64
     weights = [
         (1 - (i + j) / steps, i / steps, j / steps)
-        for i in range(steps + 1) for j in range(steps + 1 - i)
+        for i in range(steps + 1)
+        for j in range(steps + 1 - i)
     ]
     uv = mesh.uv[row]
     for a in range(3):
@@ -767,8 +868,9 @@ def test_knot_edge_on_line_and_near_parallel_edges() -> None:
         ((0, 0), (0.5, 0), (1, 0), (1, 1), (0.5, 1), (0, 1)), dtype=np.float64
     )
     triangles = [(0, 1, 4), (0, 4, 5), (1, 2, 3), (1, 3, 4)]
-    mesh, chords = _square_mesh(domain, uv_points, triangles,
-                                _tent_values(uv_points, height, 0.0))
+    mesh, chords = _square_mesh(
+        domain, uv_points, triangles, _tent_values(uv_points, height, 0.0)
+    )
     result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 0)
     assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
     for row in range(len(triangles)):
@@ -788,17 +890,25 @@ def test_knot_edge_on_line_and_near_parallel_edges() -> None:
         (0.5 - 3 * 2.0**-54, 0.5 + 2.0**-50, 0.5 - 2.0**-48, False),
     ):
         uv_points = np.asarray(
-            ((0, 0), (1, 0), (1, b_v), (1, 1), (0, 1), (0, a_v), (0, c_v)), dtype=np.float64
+            ((0, 0), (1, 0), (1, b_v), (1, 1), (0, 1), (0, a_v), (0, c_v)),
+            dtype=np.float64,
         )
         triangles = [(6, 2, 5), (0, 1, 2), (0, 2, 6), (5, 2, 3), (5, 3, 4)]
-        mesh, chords = _square_mesh(domain, uv_points, triangles,
-                                    _tent_values(uv_points, height, height))
+        mesh, chords = _square_mesh(
+            domain, uv_points, triangles, _tent_values(uv_points, height, height)
+        )
         result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.1, 12)
         assert result.status == MeshcoreStatus.OK, (result.reasons, result.upper)
         for row in range(len(triangles)):
             assert _dense_distance(mesh, row, height, height) <= result.upper[row]
-        print("near-parallel", conditioned, "bound", result.upper[0],
-              "subdivisions", result.subdivisions[0])
+        print(
+            "near-parallel",
+            conditioned,
+            "bound",
+            result.upper[0],
+            "subdivisions",
+            result.subdivisions[0],
+        )
         assert (result.subdivisions[0] == 0) == conditioned
 
 
@@ -824,7 +934,9 @@ def test_interior_bounds_against_python_and_sampling(kind: str) -> None:
             (Fraction.from_float(float(vertex[0])), Fraction.from_float(float(vertex[1])))
             for vertex in mesh.uv[row]
         )
-        reference = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[0]
+        reference = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[
+            0
+        ]
         assert reference is not None
         if reference > Fraction(1, 2**100):
             ratios.append(result.upper[row] / float(reference))
@@ -857,7 +969,10 @@ def test_unbounded_coefficients_are_refused() -> None:
     bundle = cad_geometry_bundle(domain)
     lower, upper = coefficient_bounds(bundle, domain)
     node = bundle.model.surface_nodes[0]
-    first, last = bundle.model.node_real_offsets[node], bundle.model.node_real_offsets[node + 1]
+    first, last = (
+        bundle.model.node_real_offsets[node],
+        bundle.model.node_real_offsets[node + 1],
+    )
     lower, upper = lower.copy(), upper.copy()
     lower[first:last], upper[first:last] = -np.inf, np.inf
     mesh, chords = _cylinder_mesh(domain)
@@ -902,15 +1017,17 @@ def test_perturbed_vertex_and_uv_are_unresolved() -> None:
     )
     assert np.all(moved.item_status[interior] == MeshcoreStatus.UNRESOLVED)
     assert np.all(moved.reasons[interior] == 1)
-    assert _python_chart_decisions(domain, mesh._replace(points=points), interior, 0.1) == tuple(
-        status == MeshcoreStatus.OK for status in moved.item_status[interior]
-    )
+    assert _python_chart_decisions(
+        domain, mesh._replace(points=points), interior, 0.1
+    ) == tuple(status == MeshcoreStatus.OK for status in moved.item_status[interior])
     # Moving vertex 4 by 0.75 flips its triangles: V4's orientation, checked
     # by V3, refuses it as input; 0.45 keeps the orientation.
     flipped = mesh.uv.copy()
     flipped[:, :, 0][mesh.triangles == 4] += 0.75
     with pytest.raises(ValueError, match="INVALID_INPUT"):
-        verify_cad_fidelity(bundle.model, lower, upper, mesh._replace(uv=flipped), chords, 0.1, 3)
+        verify_cad_fidelity(
+            bundle.model, lower, upper, mesh._replace(uv=flipped), chords, 0.1, 3
+        )
     uv = mesh.uv.copy()
     uv[:, :, 0][mesh.triangles == 4] += 0.45
     perturbed = verify_cad_fidelity(
@@ -941,16 +1058,24 @@ def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
     def loop(sense: int) -> tuple[PatchCurveUse, ...]:
         uses = (
             PatchCurveUse(0, circular, 0.0, half_pi, sense=-sense),
-            *(PatchCurveUse(i + 1, curve, 0.0, 1.0, sense=sense)
-              for i, curve in enumerate(straight)),
+            *(
+                PatchCurveUse(i + 1, curve, 0.0, 1.0, sense=sense)
+                for i, curve in enumerate(straight)
+            ),
         )
         return uses if sense > 0 else tuple(reversed(uses))
 
     domain = MeshingDomain(
-        (MeshingSurfacePatch(surface, (loop(1),)),
-         MeshingSurfacePatch(surface, (loop(-1),), orientation=-1)),
-        (MeshingDomainCurve(0, 1), MeshingDomainCurve(0, 2),
-         MeshingDomainCurve(2, 3), MeshingDomainCurve(3, 1)),
+        (
+            MeshingSurfacePatch(surface, (loop(1),)),
+            MeshingSurfacePatch(surface, (loop(-1),), orientation=-1),
+        ),
+        (
+            MeshingDomainCurve(0, 1),
+            MeshingDomainCurve(0, 2),
+            MeshingDomainCurve(2, 3),
+            MeshingDomainCurve(3, 1),
+        ),
         4,
         tolerance=1e-12,
         source_id=f"qualification:native-curved-trim-{kind}",
@@ -975,8 +1100,7 @@ def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
         edges,
     )
     chord_range = np.asarray(
-        ((half_pi, half_pi / 2), (half_pi / 2, 0.0), (0.0, 1.0),
-         (0.0, 1.0), (0.0, 1.0)),
+        ((half_pi, half_pi / 2), (half_pi / 2, 0.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)),
         dtype=np.float64,
     )
     use_patch = np.repeat(
@@ -1012,8 +1136,12 @@ def test_curved_trim_lens_contains_sampled_arc(kind: str) -> None:
 def _sphere_pole_domain(*, pole: bool) -> MeshingDomain:
     latitude = float(np.pi / 2)
     corners = np.asarray(
-        ((0.0, latitude - 0.125), (1.0, latitude - 0.125),
-         (1.0, latitude), (0.0, latitude)),
+        (
+            (0.0, latitude - 0.125),
+            (1.0, latitude - 0.125),
+            (1.0, latitude),
+            (0.0, latitude),
+        ),
         dtype=np.float64,
     )
     pcurves = tuple(
@@ -1043,8 +1171,10 @@ def _sphere_pole_domain(*, pole: bool) -> MeshingDomain:
         else tuple(MeshingDomainCurve(i, (i + 1) % 4) for i in range(4))
     )
     return MeshingDomain(
-        (MeshingSurfacePatch(surface, (loop(1),)),
-         MeshingSurfacePatch(surface, (loop(-1),), orientation=-1)),
+        (
+            MeshingSurfacePatch(surface, (loop(1),)),
+            MeshingSurfacePatch(surface, (loop(-1),), orientation=-1),
+        ),
         curves,
         3 if pole else 4,
         source_id=f"qualification:native-sphere-pole-{pole}",
@@ -1083,8 +1213,12 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
     lower, upper = coefficient_bounds(bundle, domain)
     latitude = float(np.pi / 2)
     chart = np.asarray(
-        ((0.0, latitude - 0.125), (1.0, latitude - 0.125),
-         (1.0, latitude), (0.0, latitude)),
+        (
+            (0.0, latitude - 0.125),
+            (1.0, latitude - 0.125),
+            (1.0, latitude),
+            (0.0, latitude),
+        ),
         dtype=np.float64,
     )
     points = np.vstack((_analytic_values("sphere", chart[:2]), (0.0, 0.0, 1.0 / 3)))
@@ -1117,7 +1251,9 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
 
     def exact_uv(index: int) -> tuple[Fraction, Fraction]:
         vertex = chart_uv[1, index]
-        return Fraction.from_float(float(vertex[0])), Fraction.from_float(float(vertex[1]))
+        return Fraction.from_float(float(vertex[0])), Fraction.from_float(
+            float(vertex[1])
+        )
 
     exact_sliver = (exact_uv(0), exact_uv(1), exact_uv(2))
     python_cap = MeshingDomainBoundarySource(domain, (0,)).pole_sliver_cap_bound(
@@ -1135,7 +1271,13 @@ def test_sphere_pole_sliver_and_chart_mesh_link() -> None:
     bad_mapping = mesh.chart_to_mesh.copy()
     bad_mapping[1] = 0
     broken = verify_cad_fidelity(
-        bundle.model, lower, upper, mesh._replace(chart_to_mesh=bad_mapping), chords, 0.5, 4
+        bundle.model,
+        lower,
+        upper,
+        mesh._replace(chart_to_mesh=bad_mapping),
+        chords,
+        0.5,
+        4,
     )
     assert broken.status == MeshcoreStatus.UNRESOLVED
     assert np.any((broken.findings["kind"] == 5) & (broken.findings["triangle"] == 1))
@@ -1181,8 +1323,11 @@ def _pole_chart_deviation(
     else:
         rho = sigma * (uv[:, 1] - pole_v)
         pole = uv[:, 1] == pole_v
-    corners = np.where(pole[:, None], 0.0, rho[:, None] * np.stack(
-        (np.cos(uv[:, 0]), np.sin(uv[:, 0])), axis=1))
+    corners = np.where(
+        pole[:, None],
+        0.0,
+        rho[:, None] * np.stack((np.cos(uv[:, 0]), np.sin(uv[:, 0])), axis=1),
+    )
     worst = 0.0
     for i in range(n + 1):
         for j in range(n + 1 - i):
@@ -1190,8 +1335,12 @@ def _pole_chart_deviation(
             x, y = weights @ corners
             radius = np.hypot(x, y)
             v = sigma * (_HALF_PI - radius) if pole_v is None else pole_v + sigma * radius
-            exact = np.asarray(surface(np.asarray((np.arctan2(y, x), v))), dtype=np.float64)
-            worst = max(worst, float(np.linalg.norm(exact.reshape(3) - weights @ vertices)))
+            exact = np.asarray(
+                surface(np.asarray((np.arctan2(y, x), v))), dtype=np.float64
+            )
+            worst = max(
+                worst, float(np.linalg.norm(exact.reshape(3) - weights @ vertices))
+            )
     return worst
 
 
@@ -1207,7 +1356,9 @@ def _brep_sphere_grid(
     )
     tau, half = 2.0 * np.pi, 0.5 * np.pi
     u = np.asarray([tau * i / columns for i in range(columns)] + [tau], dtype=np.float64)
-    v = np.asarray([-half + np.pi * j / rows for j in range(rows)] + [half], dtype=np.float64)
+    v = np.asarray(
+        [-half + np.pi * j / rows for j in range(rows)] + [half], dtype=np.float64
+    )
     south, north = 0, 1
 
     def physical(i: int, j: int) -> int:
@@ -1220,8 +1371,9 @@ def _brep_sphere_grid(
     points = [(0.0, 0.0, -1.0), (0.0, 0.0, 1.0)]
     for j in range(1, rows):
         for i in range(columns):
-            points.append((-np.sin(u[i]) * np.cos(v[j]), np.cos(u[i]) * np.cos(v[j]),
-                           np.sin(v[j])))
+            points.append(
+                (-np.sin(u[i]) * np.cos(v[j]), np.cos(u[i]) * np.cos(v[j]), np.sin(v[j]))
+            )
     chart: list[tuple[int, int, int]] = []
     chart_uv: list[np.ndarray] = []
     edge_chord: list[list[int]] = []
@@ -1231,7 +1383,9 @@ def _brep_sphere_grid(
     mesh_rows: list[tuple[int, int, int]] = []
     chart_to_mesh: list[int] = []
 
-    def add_chord(use: int, start: np.ndarray, end: np.ndarray, first: float, last: float) -> int:
+    def add_chord(
+        use: int, start: np.ndarray, end: np.ndarray, first: float, last: float
+    ) -> int:
         chord_use.append(use)
         chord_uv.append(np.stack((start, end)))
         chord_range.append((first, last))
@@ -1298,21 +1452,28 @@ def test_brep_sphere_rooted_pole_pcurves() -> None:
         child = bundle.model.node_integers[bundle.model.node_integer_offsets[node]]
         angle = offsets[child]
         # The rooted latitude encloses the exact ±π/2, not its binary64 shadow.
-        assert Fraction.from_float(float(lower[angle])) < sign * Fraction(
-            "1.5707963267948966192313216916397514"
-        ) < Fraction.from_float(float(upper[angle]))
+        assert (
+            Fraction.from_float(float(lower[angle]))
+            < sign * Fraction("1.5707963267948966192313216916397514")
+            < Fraction.from_float(float(upper[angle]))
+        )
     seam = bundle.model.use_pcurve_nodes[1]
     shift = offsets[seam] + 4
     tau = 2 * Fraction("3.14159265358979323846264338327950288")
-    assert Fraction.from_float(float(lower[shift])) < tau < Fraction.from_float(float(upper[shift]))
+    assert (
+        Fraction.from_float(float(lower[shift]))
+        < tau
+        < Fraction.from_float(float(upper[shift]))
+    )
     result = verify_cad_fidelity(bundle.model, lower, upper, mesh, chords, 0.5, 4)
     assert result.findings.size == 0, result.findings
     assert result.status == MeshcoreStatus.OK
     assert np.all(result.item_status == MeshcoreStatus.OK)
 
     def sphere(uv: np.ndarray) -> np.ndarray:
-        return np.asarray((-np.sin(uv[0]) * np.cos(uv[1]), np.cos(uv[0]) * np.cos(uv[1]),
-                           np.sin(uv[1])))
+        return np.asarray(
+            (-np.sin(uv[0]) * np.cos(uv[1]), np.cos(uv[0]) * np.cos(uv[1]), np.sin(uv[1]))
+        )
 
     # Pole slivers too: I_T interpolates the collapsed corners, so it lies on
     # the mesh edge from the pole. Pole-region rows are associated in the pole
@@ -1321,7 +1482,9 @@ def test_brep_sphere_rooted_pole_pcurves() -> None:
     for row in range(mesh.triangles.shape[0]):
         vertices = mesh.points[mesh.triangles[row]]
         if region[row] != 0:
-            sampled = _pole_chart_deviation(sphere, mesh.uv[row], vertices, int(region[row]), 10)
+            sampled = _pole_chart_deviation(
+                sphere, mesh.uv[row], vertices, int(region[row]), 10
+            )
             assert sampled <= result.upper[row]
             continue
         for i in range(11):
@@ -1349,11 +1512,21 @@ def test_offset_cone_encloses_sine_and_cosine(distance: Fraction) -> None:
     lower, upper = coefficient_bounds(bundle, domain)
     start = bundle.model.node_real_offsets[bundle.model.surface_nodes[0]]
     mpmath.mp.prec = 200
-    angle = mpmath.mpf(Fraction.from_float(0.2).numerator) / Fraction.from_float(0.2).denominator
+    angle = (
+        mpmath.mpf(Fraction.from_float(0.2).numerator)
+        / Fraction.from_float(0.2).denominator
+    )
     scaled = mpmath.mpf(sign * distance.numerator) / distance.denominator
-    expected = {2: -scaled * mpmath.sin(angle), 12: mpmath.mpf(0.4) + scaled * mpmath.cos(angle)}
+    expected = {
+        2: -scaled * mpmath.sin(angle),
+        12: mpmath.mpf(0.4) + scaled * mpmath.cos(angle),
+    }
     for index, value in expected.items():
-        assert mpmath.mpf(float(lower[start + index])) <= value <= mpmath.mpf(float(upper[start + index]))
+        assert (
+            mpmath.mpf(float(lower[start + index]))
+            <= value
+            <= mpmath.mpf(float(upper[start + index]))
+        )
     assert lower[start + 13] == upper[start + 13] == 0.2
     mesh, chords = _cylinder_mesh(domain, "cone")
     radius_shift = float(sign * distance) * np.cos(0.2)
@@ -1361,8 +1534,14 @@ def test_offset_cone_encloses_sine_and_cosine(distance: Fraction) -> None:
 
     def offset_values(uv: np.ndarray) -> np.ndarray:
         radius = 0.4 + uv[..., 1] * np.tan(0.2) + radius_shift
-        return np.stack((radius * np.cos(uv[..., 0]), radius * np.sin(uv[..., 0]),
-                         uv[..., 1] + height_shift), axis=-1)
+        return np.stack(
+            (
+                radius * np.cos(uv[..., 0]),
+                radius * np.sin(uv[..., 0]),
+                uv[..., 1] + height_shift,
+            ),
+            axis=-1,
+        )
 
     uv_points = np.zeros((mesh.points.shape[0], 2))
     uv_points[mesh.triangles.reshape(-1)] = mesh.uv.reshape((-1, 2))
@@ -1406,7 +1585,8 @@ def test_offset_line_and_rooted_pcurve_enclosures() -> None:
         computed = _computed_coefficient_intervals(bank, entity, index)
         assert computed is not None
         pairs = [
-            (lo, hi) for lo, hi in computed[index]
+            (lo, hi)
+            for lo, hi in computed[index]
             if isinstance(lo, Fraction) and isinstance(hi, Fraction)
         ]
         assert len(pairs) == len(computed[index])
@@ -1417,20 +1597,26 @@ def test_offset_line_and_rooted_pcurve_enclosures() -> None:
         root2 = Decimal(2).sqrt()
         planar = interval(OffsetCurve(LineCurve((0, 0), (1, 1)), Fraction(1, 7)))
         shift = Decimal(1) / (Decimal(7) * root2)
-        for (lo, hi), exact in zip(planar, (shift, -shift, Decimal(1), Decimal(1)), strict=True):
+        for (lo, hi), exact in zip(
+            planar, (shift, -shift, Decimal(1), Decimal(1)), strict=True
+        ):
             assert Decimal(lo.numerator) / lo.denominator <= exact
             assert exact <= Decimal(hi.numerator) / hi.denominator
         spatial = interval(
             OffsetCurve(ExactLineCurve((0, 0, 0), (1, 1, 0)), Fraction(1, 7), (0, 0, 1))
         )
         for (lo, hi), exact in zip(
-            spatial, (shift, -shift, Decimal(0), 1 + shift, 1 - shift, Decimal(0)), strict=True
+            spatial,
+            (shift, -shift, Decimal(0), 1 + shift, 1 - shift, Decimal(0)),
+            strict=True,
         ):
             assert Decimal(lo.numerator) / lo.denominator <= exact
             assert exact <= Decimal(hi.numerator) / hi.denominator
     domain, _, _ = _brep_sphere_grid(4, 4)
     pole = domain.patches[0].loops[0][2].pcurve
-    if not (isinstance(pole, AffinePCurve) and isinstance(pole.curve, ConicRootLinePCurve)):
+    if not (
+        isinstance(pole, AffinePCurve) and isinstance(pole.curve, ConicRootLinePCurve)
+    ):
         pytest.fail("A BRep sphere pole p-curve is an affine conic-root line.")
     root = pole.curve.root
     rooted = interval(TorusRootedCirclePCurve(root, Fraction(3, 4), -1))
@@ -1483,12 +1669,19 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
     bundle = cad_geometry_bundle(domain)
     lower, upper = coefficient_bounds(bundle, domain)
     node = bundle.model.surface_nodes[0]
-    start, stop = bundle.model.node_real_offsets[node], bundle.model.node_real_offsets[node + 1]
-    assert np.all(np.isfinite(lower[start:stop])) and np.all(np.isfinite(upper[start:stop]))
+    start, stop = (
+        bundle.model.node_real_offsets[node],
+        bundle.model.node_real_offsets[node + 1],
+    )
+    assert np.all(np.isfinite(lower[start:stop])) and np.all(
+        np.isfinite(upper[start:stop])
+    )
     if not isinstance(surface, TSplineSurfacePatch):
         pytest.fail("The fixture is a T-spline surface.")
     realization = surface.realization
-    exact_bounds = [value for piece in realization.extractions for value in piece.parameter_bounds]
+    exact_bounds = [
+        value for piece in realization.extractions for value in piece.parameter_bounds
+    ]
     assert any(value.denominator == 3 for value in exact_bounds)
     for offset, value in enumerate(exact_bounds):
         assert Fraction.from_float(float(lower[start + offset])) <= value
@@ -1524,16 +1717,24 @@ def test_tspline_exact_coefficients_and_fidelity() -> None:
             (Fraction.from_float(float(a)), Fraction.from_float(float(b)))
             for a, b in candidate.uv[row]
         )
-        reference = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[0]
+        reference = domain.adaptive_interpolation_bounds(0, (chart,), (Fraction(1, 2),))[
+            0
+        ]
         assert reference is not None
         # Native refines until it meets the target: certify within Python's bound.
-        tight = verify_cad_fidelity(bundle.model, lower, upper, candidate, chords,
-                                    float(reference), 6)
+        tight = verify_cad_fidelity(
+            bundle.model, lower, upper, candidate, chords, float(reference), 6
+        )
         assert tight.item_status[row] == MeshcoreStatus.OK
         assert tight.upper[row] <= float(reference)
-        print("tspline native/Python depth 0", result.upper[row] / float(reference),
-              "within Python bound", tight.upper[row] / float(reference),
-              "subdivisions", tight.subdivisions[row])
+        print(
+            "tspline native/Python depth 0",
+            result.upper[row] / float(reference),
+            "within Python bound",
+            tight.upper[row] / float(reference),
+            "subdivisions",
+            tight.subdivisions[row],
+        )
 
 
 def test_intersection_pcurve_trimmed_face() -> None:
@@ -1546,7 +1747,9 @@ def test_intersection_pcurve_trimmed_face() -> None:
     bundle = cad_geometry_bundle(domain)
     lower, upper = coefficient_bounds(bundle, domain)
     assert np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))
-    assert np.all(lower <= bundle.model.node_reals) and np.all(bundle.model.node_reals <= upper)
+    assert np.all(lower <= bundle.model.node_reals) and np.all(
+        bundle.model.node_reals <= upper
+    )
     patch = domain.patches[0]
     (use,) = patch.loops[0]
     assert isinstance(use.pcurve, IntersectionPCurve) and use.sense == -1
@@ -1574,8 +1777,13 @@ def test_intersection_pcurve_trimmed_face() -> None:
         chord_range.append((float(start), float(parameters[j])))
     cells = np.asarray(triangles, dtype=np.int64)
     mesh = CadFidelityMesh(
-        points, cells, np.zeros(len(cells), dtype=np.int32), uv_points[cells], cells,
-        np.arange(len(cells), dtype=np.int64), np.asarray(edge_chord, dtype=np.int64),
+        points,
+        cells,
+        np.zeros(len(cells), dtype=np.int32),
+        uv_points[cells],
+        cells,
+        np.arange(len(cells), dtype=np.int64),
+        np.asarray(edge_chord, dtype=np.int64),
     )
     # Only face 0 is meshed: V3 checks every model use and surface is
     # covered, so it is given the model of face 0 alone (same nodes and
@@ -1598,9 +1806,13 @@ def test_intersection_pcurve_trimmed_face() -> None:
         region_orientations=bundle.model.region_orientations[:0],
     )
     chords = CadFidelityChords(
-        np.zeros(count, dtype=np.int64), model.use_ranges, 1,
-        np.zeros(len(chord_uv), dtype=np.int64), np.zeros(len(chord_uv), dtype=np.int64),
-        np.asarray(chord_uv, dtype=np.float64), np.asarray(chord_range, dtype=np.float64),
+        np.zeros(count, dtype=np.int64),
+        model.use_ranges,
+        1,
+        np.zeros(len(chord_uv), dtype=np.int64),
+        np.zeros(len(chord_uv), dtype=np.int64),
+        np.asarray(chord_uv, dtype=np.float64),
+        np.asarray(chord_range, dtype=np.float64),
     )
     result = verify_cad_fidelity(model, lower, upper, mesh, chords, 0.1, 6)
     assert result.findings.size == 0, result.findings
@@ -1614,11 +1826,15 @@ def test_intersection_pcurve_trimmed_face() -> None:
     )
     for row, cell in enumerate(cells):
         exact = np.asarray(patch.surface.evaluate(jnp.asarray(weights @ mesh.uv[row])))
-        assert np.all(np.linalg.norm(exact - weights @ points[cell], axis=1) <= result.upper[row])
+        assert np.all(
+            np.linalg.norm(exact - weights @ points[cell], axis=1) <= result.upper[row]
+        )
     for chord, (first, last) in enumerate(chord_range):
         row = 3 * chord + 1
         fractions = np.linspace(0.0, 1.0, 33)
-        arc_uv = np.asarray(use.pcurve.evaluate(jnp.asarray(first + fractions * (last - first))))
+        arc_uv = np.asarray(
+            use.pcurve.evaluate(jnp.asarray(first + fractions * (last - first)))
+        )
         arc = np.asarray(patch.surface.evaluate(jnp.asarray(arc_uv)))
         a, b = points[cells[row][1]], points[cells[row][2]]
         straight = a[None] + fractions[:, None] * (b - a)[None]
@@ -1631,12 +1847,20 @@ def _crossing_cylinders_model() -> BRepModel:
 
     contract = phx.SpatialCoordinateContract.si()
     vertical = phx.geometry.brep.brep_cylinder(
-        1.0, 2.4, base_center=(0.0, 0.0, -1.2), axis=(0.0, 0.0, 1.0),
-        coordinate_contract=contract, source_id="qualification:native-fidelity-vertical",
+        1.0,
+        2.4,
+        base_center=(0.0, 0.0, -1.2),
+        axis=(0.0, 0.0, 1.0),
+        coordinate_contract=contract,
+        source_id="qualification:native-fidelity-vertical",
     )
     transverse = phx.geometry.brep.brep_cylinder(
-        0.6, 3.0, base_center=(-1.5, 0.0, 0.0), axis=(1.0, 0.0, 0.0),
-        coordinate_contract=contract, source_id="qualification:native-fidelity-transverse",
+        0.6,
+        3.0,
+        base_center=(-1.5, 0.0, 0.0),
+        axis=(1.0, 0.0, 0.0),
+        coordinate_contract=contract,
+        source_id="qualification:native-fidelity-transverse",
     )
     return phx.geometry.brep.boolean_brep(
         vertical, transverse, "intersection", policy=phx.geometry.brep.BRepBooleanPolicy()
@@ -1668,8 +1892,12 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
     bundle = cad_geometry_bundle(domain)
     model = bundle.model
     faces = model.surface_nodes.size
-    meshed = cad_mesh(model, np.full(faces, h), np.full(faces, 1e6),
-                      np.full(model.curve_nodes.size, np.inf))
+    meshed = cad_mesh(
+        model,
+        np.full(faces, h),
+        np.full(faces, 1e6),
+        np.full(model.curve_nodes.size, np.inf),
+    )
     assert meshed.status == MeshcoreStatus.OK
     chart = meshed.chart
     slivers = np.flatnonzero(chart.chart_to_mesh < 0)
@@ -1703,25 +1931,49 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
         pole_v = float(chart.uv[row, pair[0], 1])
         other = chart.uv[row, 3 - pair[0] - pair[1], 1]
         sigma = 1 if other > pole_v else -1
-        probe = np.asarray(evaluate(np.asarray([[0.0, pole_v], [0.0, pole_v + sigma * 0.1],
-                                                [1.0, pole_v + sigma * 0.1],
-                                                [2.0, pole_v + sigma * 0.2]])))
+        probe = np.asarray(
+            evaluate(
+                np.asarray(
+                    [
+                        [0.0, pole_v],
+                        [0.0, pole_v + sigma * 0.1],
+                        [1.0, pole_v + sigma * 0.1],
+                        [2.0, pole_v + sigma * 0.2],
+                    ]
+                )
+            )
+        )
         normal = np.cross(probe[1] - probe[0], probe[2] - probe[0])
-        if abs(float(np.dot(normal, probe[3] - probe[0]))) <= 1e-12 * float(np.linalg.norm(normal)):
+        if abs(float(np.dot(normal, probe[3] - probe[0]))) <= 1e-12 * float(
+            np.linalg.norm(normal)
+        ):
             flat[position] = True
             sampled[position] = _pole_chart_deviation(
-                evaluate, chart.uv[row], vertices, sigma, n, pole_v)
+                evaluate, chart.uv[row], vertices, sigma, n, pole_v
+            )
             continue
         source = np.asarray(surface.evaluate(weights @ chart.uv[row]), dtype=np.float64)
         linear = weights @ vertices
         sampled[position] = np.max(np.linalg.norm(source - linear, axis=1))
     lower, upper = coefficient_bounds(bundle, domain)
-    mesh = CadFidelityMesh(meshed.points, chart.triangles, chart.patches, chart.uv,
-                           meshed.triangles.astype(np.int64), chart.chart_to_mesh,
-                           chart.edge_chord)
-    chords = CadFidelityChords(chart.use_patch, chart.use_range, len(model.loop_surfaces),
-                               chart.chord_use, chart.chord_loop, chart.chord_uv,
-                               chart.chord_range)
+    mesh = CadFidelityMesh(
+        meshed.points,
+        chart.triangles,
+        chart.patches,
+        chart.uv,
+        meshed.triangles.astype(np.int64),
+        chart.chart_to_mesh,
+        chart.edge_chord,
+    )
+    chords = CadFidelityChords(
+        chart.use_patch,
+        chart.use_range,
+        len(model.loop_surfaces),
+        chart.chord_use,
+        chart.chord_loop,
+        chart.chord_uv,
+        chart.chord_range,
+    )
     result = verify_cad_fidelity(model, lower, upper, mesh, chords, 1.0, 8)
     assert result.status == MeshcoreStatus.OK
     assert np.all(result.upper[slivers] >= sampled)
@@ -1755,20 +2007,36 @@ def test_sphere_pole_chart_rows(theta: float) -> None:
     bundle = cad_geometry_bundle(domain)
     model = bundle.model
     h, tolerance = 0.2, 0.01
-    meshed = cad_mesh(model, np.full(model.surface_nodes.size, h),
-                      np.full(model.surface_nodes.size, tolerance),
-                      np.full(model.curve_nodes.size, tolerance), tolerance_fraction=theta)
+    meshed = cad_mesh(
+        model,
+        np.full(model.surface_nodes.size, h),
+        np.full(model.surface_nodes.size, tolerance),
+        np.full(model.curve_nodes.size, tolerance),
+        tolerance_fraction=theta,
+    )
     assert meshed.status == MeshcoreStatus.OK
     chart = meshed.chart
     lower, upper = coefficient_bounds(bundle, domain)
-    chords = CadFidelityChords(chart.use_patch, chart.use_range, len(model.loop_surfaces),
-                               chart.chord_use, chart.chord_loop, chart.chord_uv,
-                               chart.chord_range)
+    chords = CadFidelityChords(
+        chart.use_patch,
+        chart.use_range,
+        len(model.loop_surfaces),
+        chart.chord_use,
+        chart.chord_loop,
+        chart.chord_uv,
+        chart.chord_range,
+    )
 
     def verify(points: np.ndarray) -> CadFidelityResult:
-        mesh = CadFidelityMesh(points, chart.triangles, chart.patches, chart.uv,
-                               meshed.triangles.astype(np.int64), chart.chart_to_mesh,
-                               chart.edge_chord)
+        mesh = CadFidelityMesh(
+            points,
+            chart.triangles,
+            chart.patches,
+            chart.uv,
+            meshed.triangles.astype(np.int64),
+            chart.chart_to_mesh,
+            chart.edge_chord,
+        )
         return verify_cad_fidelity(model, lower, upper, mesh, chords, tolerance, 8)
 
     result = verify(meshed.points)
@@ -1792,10 +2060,13 @@ def test_sphere_pole_chart_rows(theta: float) -> None:
     pole = uv[:, :, 1] == sigma[:, None] * _HALF_PI
     x = np.where(pole, 0.0, rho * np.cos(uv[:, :, 0])) @ weights.T
     y = np.where(pole, 0.0, rho * np.sin(uv[:, :, 0])) @ weights.T
-    points = np.stack((np.arctan2(y, x), sigma[:, None] * (_HALF_PI - np.hypot(x, y))), axis=-1)
+    points = np.stack(
+        (np.arctan2(y, x), sigma[:, None] * (_HALF_PI - np.hypot(x, y))), axis=-1
+    )
     surface = domain.patches[0].surface
-    exact = np.asarray(surface.evaluate(jnp.asarray(points.reshape(-1, 2))), dtype=np.float64).reshape(
-        rows.size, weights.shape[0], 3)
+    exact = np.asarray(
+        surface.evaluate(jnp.asarray(points.reshape(-1, 2))), dtype=np.float64
+    ).reshape(rows.size, weights.shape[0], 3)
     linear = np.einsum("kv,rvd->rkd", weights, meshed.points[chart.triangles[rows]])
     sampled = np.linalg.norm(exact - linear, axis=-1).max(axis=1)
     distance = np.abs(np.linalg.norm(linear, axis=-1) - 1.0).max(axis=1)
@@ -1803,8 +2074,14 @@ def test_sphere_pole_chart_rows(theta: float) -> None:
     assert np.all(result.upper[rows] >= distance)
     # Displaced vertices: the north pole (fan rows) and a band vertex.
     north_row = fan[region[fan] == 1][0]
-    north = int(chart.triangles[north_row][np.flatnonzero(chart.uv[north_row, :, 1] == _HALF_PI)[0]])
-    ring = int(np.setdiff1d(chart.triangles[band[region[band] == 1]], chart.triangles[fan])[0])
+    north = int(
+        chart.triangles[north_row][
+            np.flatnonzero(chart.uv[north_row, :, 1] == _HALF_PI)[0]
+        ]
+    )
+    ring = int(
+        np.setdiff1d(chart.triangles[band[region[band] == 1]], chart.triangles[fan])[0]
+    )
     for vertex in (north, ring):
         shifted = meshed.points.copy()
         shifted[vertex] *= 1.05

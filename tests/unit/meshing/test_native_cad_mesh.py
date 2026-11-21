@@ -129,30 +129,42 @@ def _assert_cad_fidelity(
         measured[rows] = np.max(np.linalg.norm(exact - linear, axis=2), axis=1)
         # V3 associates sphere pole-region rows in the pole chart
         # (x, y) = rho (cos u, sin u): their reference is sampled there.
-        poles = np.asarray(model.use_kinds)[chart.chord_use[chart.use_patch[chart.chord_use] == patch]]
+        poles = np.asarray(model.use_kinds)[
+            chart.chord_use[chart.use_patch[chart.chord_use] == patch]
+        ]
         if np.any(poles == 1):
             half = np.float64(np.pi / 2)
             for sigma in (1.0, -1.0):
-                local = np.flatnonzero((uv[:, :, 1] == sigma * half).any(axis=1)
-                                       | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(axis=1))
+                local = np.flatnonzero(
+                    (uv[:, :, 1] == sigma * half).any(axis=1)
+                    | (sigma * uv[:, :, 1] >= float.fromhex("0x1.3f004dc9db074p-1")).any(
+                        axis=1
+                    )
+                )
                 if local.size == 0 or not np.any(uv[:, :, 1] == sigma * half):
                     continue
                 rho = half - sigma * uv[local, :, 1]
                 pole = uv[local, :, 1] == sigma * half
                 x = np.where(pole, 0.0, rho * np.cos(uv[local, :, 0])) @ weights.T
                 y = np.where(pole, 0.0, rho * np.sin(uv[local, :, 0])) @ weights.T
-                chart_points = np.stack((np.arctan2(y, x), sigma * (half - np.hypot(x, y))), axis=-1)
+                chart_points = np.stack(
+                    (np.arctan2(y, x), sigma * (half - np.hypot(x, y))), axis=-1
+                )
                 pole_exact = np.asarray(
-                    surface.evaluate(jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)),
+                    surface.evaluate(
+                        jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)
+                    ),
                     dtype=np.float64,
                 ).reshape((local.size, len(weights), 3))
                 measured[rows[local]] = np.max(
-                    np.linalg.norm(pole_exact - linear[local], axis=2), axis=1)
+                    np.linalg.norm(pole_exact - linear[local], axis=2), axis=1
+                )
             # A planar disk centre (pole chord at v = pole_v): rows touching
             # it take the disk-centre chart (x, y) = |v - pole_v| (cos u,
             # sin u), where S is affine.
             pole_chords = (chart.use_patch[chart.chord_use] == patch) & (
-                np.asarray(model.use_kinds)[chart.chord_use] == 1)
+                np.asarray(model.use_kinds)[chart.chord_use] == 1
+            )
             for pole_v in np.unique(chart.chord_uv[pole_chords][:, :, 1]):
                 if abs(pole_v) == half:
                     continue
@@ -160,24 +172,41 @@ def _assert_cad_fidelity(
                 if local.size == 0:
                     continue
                 sigma = 1.0 if np.all(uv[local, :, 1] >= pole_v) else -1.0
-                probe = np.asarray(surface.evaluate(jnp.asarray(
-                    [[0.0, pole_v], [0.0, pole_v + sigma * 0.1], [1.0, pole_v + sigma * 0.1],
-                     [2.0, pole_v + sigma * 0.2]], dtype=jnp.float64)), dtype=np.float64)
+                probe = np.asarray(
+                    surface.evaluate(
+                        jnp.asarray(
+                            [
+                                [0.0, pole_v],
+                                [0.0, pole_v + sigma * 0.1],
+                                [1.0, pole_v + sigma * 0.1],
+                                [2.0, pole_v + sigma * 0.2],
+                            ],
+                            dtype=jnp.float64,
+                        )
+                    ),
+                    dtype=np.float64,
+                )
                 normal = np.cross(probe[1] - probe[0], probe[2] - probe[0])
                 if abs(float(np.dot(normal, probe[3] - probe[0]))) > 1e-12 * float(
-                        np.linalg.norm(normal)):
+                    np.linalg.norm(normal)
+                ):
                     continue
                 rho = sigma * (uv[local, :, 1] - pole_v)
                 pole = uv[local, :, 1] == pole_v
                 x = np.where(pole, 0.0, rho * np.cos(uv[local, :, 0])) @ weights.T
                 y = np.where(pole, 0.0, rho * np.sin(uv[local, :, 0])) @ weights.T
-                chart_points = np.stack((np.arctan2(y, x), pole_v + sigma * np.hypot(x, y)), axis=-1)
+                chart_points = np.stack(
+                    (np.arctan2(y, x), pole_v + sigma * np.hypot(x, y)), axis=-1
+                )
                 flat_exact = np.asarray(
-                    surface.evaluate(jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)),
+                    surface.evaluate(
+                        jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)
+                    ),
                     dtype=np.float64,
                 ).reshape((local.size, len(weights), 3))
                 measured[rows[local]] = np.max(
-                    np.linalg.norm(flat_exact - linear[local], axis=2), axis=1)
+                    np.linalg.norm(flat_exact - linear[local], axis=2), axis=1
+                )
     lower, upper = coefficient_bounds(cad_geometry_bundle(domain), domain)
     mesh = CadFidelityMesh(
         result.points,
