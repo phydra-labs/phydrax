@@ -743,6 +743,16 @@ bool in_pole_zone(const FaceMetric& metric, const double uv[2]) {
   return false;
 }
 
+// The kernel leaves a triangle of fixed points alone inside a zone only: a
+// sphere cap's pole and trim zones face each other on one axis, and the
+// triangles from one's last ring to the other's (edges to 1.44 h at cap
+// below 85 deg, h/r 0.6, theta 0.9) are no zone's construction.
+int32_t in_fixed_zone(void* opaque, const double point[2]) {
+  const auto& metric = *static_cast<FaceMetric*>(opaque);
+  const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
+  return in_pole_zone(metric, uv) ? 1 : 0;
+}
+
 int32_t admit_face_point(void* opaque, const double point[2]) {
   const auto& metric = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
@@ -1628,6 +1638,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.fixed_vertices = fixed.data();
   input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
   input.admit_context = &metric;
+  input.fixed_region = in_fixed_zone;
+  input.fixed_region_context = &metric;
   input.surface_position = face_position;
   input.surface_context = &metric;
   CadRefine2DResult refined;
