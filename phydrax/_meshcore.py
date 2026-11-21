@@ -1270,6 +1270,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
@@ -4475,6 +4476,45 @@ def polyhedral_star_decomposition(
     )
     _raise_for_call(result, "polyhedral_star_decomposition")
     return codes, face_reversed.astype(np.bool_), triangle_offsets, triangles
+
+
+def face_triangulation(
+    face_vertex_offsets: np.ndarray, face_integers: Sequence[int], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact ear-clipping triangulations of planar face loops.
+
+    ``face_integers`` holds every loop entry's integer row over its own face's
+    common denominator. Returns ``(codes, triangle_offsets, triangles)`` of
+    ``phx_mc_face_triangulation``: per face 0 or its polygon refusal code, and
+    rows ``[triangle_offsets[f], triangle_offsets[f + 1])`` of local loop
+    index triples (``-1`` on refusal), those of ``triangulate_planar_polygon``.
+    """
+    offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    if (
+        offsets.ndim != 1
+        or offsets.size < 1
+        or offsets[0] != 0
+        or np.any(np.diff(offsets) < 0)
+        or len(face_integers) != 3 * int(offsets[-1])
+    ):
+        raise ValueError("Face triangulation requires CSR face loops and integer rows.")
+    word_offsets, words, signs = _integer_word_bank(face_integers)
+    count = offsets.size - 1
+    triangle_offsets = np.zeros((offsets.size,), dtype=np.int64)
+    np.cumsum(np.maximum(np.diff(offsets) - 2, 0), out=triangle_offsets[1:])
+    codes = np.zeros((count,), dtype=np.int32)
+    triangles = np.zeros((int(triangle_offsets[-1]), 3), dtype=np.int32)
+    result = load_meshcore()["phx_mc_face_triangulation"](
+        count,
+        offsets.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        codes.ctypes.data,
+        triangles.ctypes.data,
+    )
+    _raise_for_call(result, "face_triangulation")
+    return codes, triangle_offsets, triangles
 
 
 class CadEntityKind(IntEnum):

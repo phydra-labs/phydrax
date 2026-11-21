@@ -20,7 +20,7 @@ from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import affine_tetrahedra
 from ..discretization._cell_mesh import CellMesh
-from ..discretization._exact_algebraic_geometry import ExactScalar
+from ..discretization._exact_algebraic_geometry import exact_sum, ExactScalar
 from ..discretization._mapped_geometry_measure import exact_block_cell_measures
 from ..typing import Dim, HostInt64
 from ._affine_plc_domain import AffinePlcDomain
@@ -864,7 +864,7 @@ def _target_region_measures(
             )
         except (TypeError, ValueError, IndexError, ArithmeticError) as error:
             polyhedral_measure_error = error
-    totals: list[ExactScalar] = [Fraction(0) for _ in domain.region_ids]
+    region_terms: list[list[ExactScalar]] = [[] for _ in domain.region_ids]
     unresolved_regions: set[int] = set()
     cell_kinds = tuple(
         mesh_block.cell_kind
@@ -928,9 +928,10 @@ def _target_region_measures(
                     detail="A target cell has nonpositive exact signed measure.",
                 )
             )
-        totals[assignment.region] += measure
-    achieved = tuple(None for _ in totals) if unresolved_regions else tuple(totals)
-    return achieved
+        region_terms[assignment.region].append(measure)
+    if unresolved_regions:
+        return tuple(None for _ in region_terms)
+    return tuple(exact_sum(terms) for terms in region_terms)
 
 
 def _exact_region_degree_ids(

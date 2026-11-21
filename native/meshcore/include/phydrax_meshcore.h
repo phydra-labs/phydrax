@@ -3138,6 +3138,20 @@ PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles);
 
+/* Exact ear-clipping triangulation of planar face loops, identical to
+ * phydrax's rational `triangulate_planar_polygon` and to the face triangles of
+ * phx_mc_polyhedral_star_decomposition. Loop entry e has its integer row over
+ * any positive common scale of its own face (the common denominator of the
+ * face's vertices) as values 3e, 3e + 1, 3e + 2 of the word bank. codes[f] is
+ * 0 or the face polygon refusal (8-14 of the decomposition codes); rows
+ * [sum over earlier faces of max(size - 2, 0), ... + max(size - 2, 0)) of
+ * triangles hold face f's local loop index triples (-1 on refusal). */
+PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
+                                             const int64_t* face_vertex_offsets,
+                                             const int64_t* word_offsets, const uint32_t* words,
+                                             const int8_t* signs, int32_t* codes,
+                                             int32_t* triangles);
+
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of
  * an interval program with three inputs; seed_lower and seed_upper are its

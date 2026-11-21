@@ -965,3 +965,47 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
     return PHX_MC_OK;
   });
 }
+
+extern "C" int32_t phx_mc_face_triangulation(int64_t face_count,
+                                             const int64_t* face_vertex_offsets,
+                                             const int64_t* word_offsets, const uint32_t* words,
+                                             const int8_t* signs, int32_t* codes,
+                                             int32_t* triangles) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (face_count < 0 || face_vertex_offsets == nullptr || face_vertex_offsets[0] != 0 ||
+        (face_count > 0 && codes == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    int64_t triangle_count = 0;
+    for (int64_t face = 0; face < face_count; ++face) {
+      const int64_t size = face_vertex_offsets[face + 1] - face_vertex_offsets[face];
+      if (size < 0) return PHX_MC_INVALID_INPUT;
+      triangle_count += std::max<int64_t>(size - 2, 0);
+    }
+    if (!valid_bank(3 * face_vertex_offsets[face_count], word_offsets, words, signs) ||
+        (triangle_count > 0 && triangles == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::GradualNearestScope mode;
+    const IntegerBank bank{word_offsets, words, signs};
+    std::vector<Vec> loop;
+    std::vector<std::array<int32_t, 3>> local;
+    int32_t* out = triangles;
+    for (int64_t face = 0; face < face_count; ++face) {
+      const int64_t first = face_vertex_offsets[face];
+      const int64_t size = face_vertex_offsets[face + 1] - first;
+      loop.clear();
+      local.clear();
+      for (int64_t entry = first; entry < first + size; ++entry) loop.push_back(bank.point(entry));
+      codes[face] = face_triangles(loop, local);
+      // A face's rows are fixed by its size, so refusals leave theirs at -1.
+      for (int64_t row = 0; row < std::max<int64_t>(size - 2, 0); ++row) {
+        const bool kept = codes[face] == kDecomposed;
+        for (int k = 0; k < 3; ++k) {
+          *out++ = kept ? local[static_cast<std::size_t>(row)][static_cast<std::size_t>(k)] : -1;
+        }
+      }
+    }
+    return PHX_MC_OK;
+  });
+}

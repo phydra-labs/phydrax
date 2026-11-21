@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 from fractions import Fraction
 
@@ -16,11 +17,13 @@ from phydrax.discretization._cell_geometry_source_validity import (
     _rational_polyhedron_proof,
 )
 from phydrax.discretization._cell_geometry_validity import polyhedral_star_tables
+from phydrax.geometry._boundary_degree_embedding import _native_face_routes
 from phydrax.geometry._embedding_cells import EmbeddingCell, UnsupportedEmbeddingMap
 from phydrax.geometry._global_embedding import (
     _native_volume_tetrahedra,
     _volume_tetrahedra,
 )
+from phydrax.geometry._planar_chain_embedding import triangulate_planar_polygon
 
 
 pytestmark = pytest.mark.skipif(
@@ -249,3 +252,64 @@ def test_native_star_validity_equals_the_rational_one(
     assert native[0].dtype == expected[0].dtype
     # Certified and invalid (inward) cells both occur.
     assert set(native[0].tolist()) >= {0, 1}
+
+
+def _star_polygon(generator: random.Random) -> tuple[tuple[Fraction, ...], ...]:
+    # A star-shaped (often nonconvex) loop with a collinear hanging vertex,
+    # embedded in a random rational plane.
+    count = generator.randint(3, 9)
+    angles = sorted(generator.sample(range(0, 360, 15), count))
+    radii = [generator.choice((1, 2, 3)) for _ in angles]
+    lattice = [
+        (
+            Fraction(round(radius * 8 * np.cos(np.radians(angle)))),
+            Fraction(round(radius * 8 * np.sin(np.radians(angle)))),
+        )
+        for radius, angle in zip(radii, angles, strict=True)
+    ]
+    if generator.random() < 0.5:
+        first, second = lattice[0], lattice[1]
+        lattice.insert(1, ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2))
+    if generator.random() < 0.5:
+        lattice.reverse()
+    u = tuple(
+        Fraction(generator.randint(-3, 3), generator.randint(1, 4)) for _ in range(3)
+    )
+    v = tuple(
+        Fraction(generator.randint(-3, 3), generator.randint(1, 4)) for _ in range(3)
+    )
+    origin = tuple(Fraction(generator.randint(-5, 5), 3) for _ in range(3))
+    return tuple(
+        tuple(origin[axis] + x * u[axis] + y * v[axis] for axis in range(3))
+        for x, y in lattice
+    )
+
+
+def test_native_face_triangulation_equals_the_rational_ear_clipping() -> None:
+    generator = random.Random(11)
+    loops = [_star_polygon(generator) for _ in range(300)]
+    # Refusals: a repeated vertex, a collinear loop, a nonplanar loop.
+    square = _star_polygon(random.Random(3))
+    loops.append((*square, square[0]))
+    loops.append(tuple((Fraction(t), Fraction(2 * t), Fraction(0)) for t in range(4)))
+    loops.append(
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(1), Fraction(1)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+        )
+    )
+    routes = _native_face_routes(loops)
+    refused = 0
+    for loop, native in zip(loops, routes, strict=True):
+        try:
+            expected = triangulate_planar_polygon(loop)
+        except ValueError:
+            expected = None
+        if native is None:
+            refused += 1
+        else:
+            assert native == expected
+    assert refused >= 2
+    assert routes[-3] is None and routes[-2] is None

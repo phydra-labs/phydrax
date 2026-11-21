@@ -116,6 +116,27 @@ void test_refusals() {
   PHX_CHECK(decompose(bent, kFaces).code == 7);
 }
 
+void test_face_triangulation() {
+  // An L-shaped hexagon on z = 0 (ear clipping order of the rational proof),
+  // a loop with a repeated vertex and a collinear loop.
+  const std::vector<int64_t> rows = {0, 0, 0, 2, 0, 0, 2, 1, 0, 1, 1, 0, 1, 2, 0, 0, 2, 0,
+                                     0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0,
+                                     0, 0, 0, 1, 1, 1, 2, 2, 2};
+  Bank bank;
+  for (const int64_t value : rows) bank.add(value);
+  const std::vector<int64_t> offsets = {0, 6, 10, 13};
+  std::vector<int32_t> codes(3, -2);
+  std::vector<int32_t> triangles(3 * 7, -2);
+  PHX_CHECK(phx_mc_face_triangulation(3, offsets.data(), bank.offsets.data(),
+                                      bank.words.data(), bank.signs.data(), codes.data(),
+                                      triangles.data()) == PHX_MC_OK);
+  PHX_CHECK(codes[0] == 0 && codes[1] == 8 && codes[2] == 9);
+  const std::vector<int32_t> expected = {0, 1, 2, 0, 2, 3, 5, 0, 3, 3, 4, 5};
+  PHX_CHECK(std::equal(expected.begin(), expected.end(), triangles.begin()));
+  PHX_CHECK(std::all_of(triangles.begin() + 12, triangles.end(),
+                        [](int32_t value) { return value == -1; }));
+}
+
 struct Validity {
   int8_t decided = 0;
   int32_t status = -1;
@@ -166,6 +187,7 @@ int main() {
   test_cube_decomposition();
   test_inward_cube_is_reoriented();
   test_refusals();
+  test_face_triangulation();
   test_cube_validity();
   return phx::mc::test::finish("test_polyhedral_certificates");
 }

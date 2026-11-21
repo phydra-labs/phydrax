@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import random
 from fractions import Fraction
 from itertools import product
+from math import gcd, lcm
 
 import pytest
 
@@ -11,7 +13,9 @@ from phydrax.geometry._planar_coverage import _overlap, OrientedFacet, SourceFac
 from phydrax.geometry._planar_primitives import (
     area2,
     intersection,
+    overlap_area2,
     plane_key,
+    plane_orientation,
     project_polygon,
     projection_axes,
 )
@@ -95,3 +99,66 @@ def test_overlap_measures_equal_the_clipped_intersection(name: str) -> None:
                 else Fraction(0)
             )
             assert _overlap(first, second, 3) == clipped
+
+
+def test_batch_candidates_equal_single_queries() -> None:
+    index = SourceFacetIndex(_sources())
+    queries = tuple(_QUERIES.values())
+    assert index.batch_candidates(queries) == tuple(
+        index.candidates(query, 3) for query in queries
+    )
+
+
+def _rational_plane(
+    points: tuple[tuple[Fraction, ...], ...],
+) -> tuple[tuple[int, ...], int]:
+    # The rational-arithmetic plane and orientation the integer forms replace.
+    origin, first, second = points[0], points[1], points[2]
+    u = tuple(first[axis] - origin[axis] for axis in range(3))
+    v = tuple(second[axis] - origin[axis] for axis in range(3))
+    normal = (
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    )
+    if not any(normal):
+        raise ValueError("collinear")
+    row = (*normal, -sum(normal[axis] * origin[axis] for axis in range(3)))
+    denominator = lcm(*(value.denominator for value in row))
+    integers = tuple(int(value * denominator) for value in row)
+    divisor = gcd(*integers)
+    key = tuple(value // divisor for value in integers)
+    if next(value for value in key if value) < 0:
+        key = tuple(-value for value in key)
+    return key, 1 if sum(normal[i] * key[i] for i in range(3)) > 0 else -1
+
+
+def test_integer_planes_and_lattice_overlaps_equal_rational_ones() -> None:
+    generator = random.Random(7)
+
+    def value() -> Fraction:
+        return Fraction(generator.randint(-9, 9), generator.choice((1, 2, 3, 7)))
+
+    for _ in range(2000):
+        points = tuple((value(), value(), value()) for _ in range(3))
+        if generator.random() < 0.2:
+            points = (
+                points[0],
+                points[1],
+                tuple(2 * b - a for a, b in zip(points[0], points[1], strict=True)),
+            )
+        try:
+            expected = _rational_plane(points)
+        except ValueError:
+            with pytest.raises(ValueError):
+                plane_key(points)
+            with pytest.raises(ValueError):
+                plane_orientation(points)
+        else:
+            assert (plane_key(points), plane_orientation(points)) == expected
+        first = tuple((value(), value()) for _ in range(3))
+        second = tuple((value(), value()) for _ in range(3))
+        if generator.random() < 0.3:
+            second = (first[0], first[1], second[2])
+        assert overlap_area2(first, second) == area2(intersection(first, second))
+        assert overlap_area2(second, first) == area2(intersection(first, second))
