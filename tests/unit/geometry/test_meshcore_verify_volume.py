@@ -28,7 +28,7 @@ def _convex_case(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         inner, axis=1, keepdims=True
     )
     points = np.concatenate((shell, inner))
-    cells, _ = delaunay_3d(points)
+    cells, _ = delaunay_3d(points, parallelism=1)
     hull = ConvexHull(points)
     surface = hull.simplices.astype(np.int32)
     centroid = points.mean(axis=0)

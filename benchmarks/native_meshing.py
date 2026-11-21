@@ -31,6 +31,7 @@ from jax import Array
 from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
+from phydrax._exact_kernels import exact_kernel_parallelism
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_complex import TetrahedralConnectivity
@@ -128,7 +129,9 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
             _Row(
                 "delaunay-3d",
                 size,
-                lambda points=spatial: _meshcore.delaunay_3d(points),
+                lambda points=spatial: _meshcore.delaunay_3d(
+                    points, parallelism=exact_kernel_parallelism()
+                ),
                 _cells,
             )
         )
@@ -222,7 +225,7 @@ def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 "regular-3d",
                 size,
                 lambda points=points, weights=weights: _meshcore.regular_3d(
-                    points, weights
+                    points, weights, parallelism=exact_kernel_parallelism()
                 ),
                 _cells,
             )

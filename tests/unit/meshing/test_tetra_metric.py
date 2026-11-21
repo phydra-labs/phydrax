@@ -626,7 +626,7 @@ def _blocked_chain_model(request: pytest.FixtureRequest) -> Iterator[_BlockedCha
     )
     if right_slack:
         points[3, 0] += right_slack * gap * np.expm1(metric._VIOLATION_QUANTUM)
-    cells, _ = delaunay_3d(points)
+    cells, _ = delaunay_3d(points, parallelism=1)
     source = _mesh_result(points, cells.tolist())
     fixed = np.ones(points.shape[0], dtype=np.bool_)
     fixed[:count] = False

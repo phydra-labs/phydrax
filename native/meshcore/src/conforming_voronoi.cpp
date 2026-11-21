@@ -1309,7 +1309,7 @@ class Builder {
   void delaunay() {
     const int64_t n = static_cast<int64_t>(regions_.size());
     phx_mc_mesh* raw = nullptr;
-    const int32_t status = triangulate_3d(n, seeds_.data(), nullptr, false, false, &raw);
+    const int32_t status = triangulate_3d(n, seeds_.data(), nullptr, false, false, &raw, 1);
     std::unique_ptr<phx_mc_mesh> mesh(raw);
     if (status != PHX_MC_OK) throw Failure(status);
     for (int64_t v = 0; v < n; ++v)

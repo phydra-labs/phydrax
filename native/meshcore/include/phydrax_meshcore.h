@@ -227,10 +227,14 @@ PHX_MC_API int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points,
                                       phx_mc_mesh** mesh);
 PHX_MC_API int32_t phx_mc_regular_2d(int64_t point_count, const double* points,
                                      const double* weights, phx_mc_mesh** mesh);
+/* The 3D triangulations insert in rounds of conflict-free cavities on
+ * parallelism >= 1 workers; their cells are canonical, so the result is the
+ * same for every parallelism. */
 PHX_MC_API int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points,
-                                      phx_mc_mesh** mesh);
+                                      phx_mc_mesh** mesh, int32_t parallelism);
 PHX_MC_API int32_t phx_mc_regular_3d(int64_t point_count, const double* points,
-                                     const double* weights, phx_mc_mesh** mesh);
+                                     const double* weights, phx_mc_mesh** mesh,
+                                     int32_t parallelism);
 
 /* The triangulations above, of dimension 2 or 3, with options. weights NULL
  * gives the Delaunay triangulation, otherwise the regular one. Without

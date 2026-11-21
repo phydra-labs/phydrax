@@ -421,7 +421,10 @@ inline void canonicalize_cells(phx_mc_mesh& mesh) {
 // and phx_mc_triangulate; `canonical` applies canonicalize_cells.
 int32_t triangulate_2d(int64_t point_count, const double* points, const double* weights,
                        bool weighted, bool canonical, phx_mc_mesh** mesh);
+// `parallelism` workers insert in rounds when `canonical` (the cell order of a
+// non-canonical result is the sequential construction's, built on one).
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, bool canonical, phx_mc_mesh** mesh);
+                       bool weighted, bool canonical, phx_mc_mesh** mesh,
+                       int32_t parallelism);
 
 }  // namespace phx::mc

@@ -1822,8 +1822,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_tet_mesh_free": (None, (_P,)),
     "phx_mc_delaunay_2d": (_I32, (_I64, _P, _P)),
     "phx_mc_regular_2d": (_I32, (_I64, _P, _P, _P)),
-    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P)),
-    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P, _I32)),
+    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P, _I32)),
     "phx_mc_constrained_delaunay_2d": (
         _I32,
         (_I64, _P, _I64, _P, _I64, _P, _I32, _F64, _F64, _P),
@@ -4000,6 +4000,7 @@ def _triangulate(
     points: object,
     weights: object | None,
     width: int,
+    trailing: tuple[int, ...] = (),
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     library = load_meshcore()
@@ -4007,7 +4008,9 @@ def _triangulate(
     count = point_array.shape[0]
     handle = ctypes.c_void_p()
     if weights is None:
-        status = library[name](count, point_array.ctypes.data, ctypes.addressof(handle))
+        status = library[name](
+            count, point_array.ctypes.data, ctypes.addressof(handle), *trailing
+        )
     else:
         weight_array = _real_array(weights, "weights")
         if weight_array.shape != (count,):
@@ -4017,6 +4020,7 @@ def _triangulate(
             point_array.ctypes.data,
             weight_array.ctypes.data,
             ctypes.addressof(handle),
+            *trailing,
         )
     operation = name.removeprefix("phx_mc_")
     if status != MeshcoreStatus.OK:
@@ -4039,14 +4043,15 @@ def delaunay_2d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
     return _triangulate("phx_mc_delaunay_2d", points, None, 2)
 
 
-def delaunay_3d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
+def delaunay_3d(points: object, /, *, parallelism: int) -> tuple[np.ndarray, np.ndarray]:
     """Exact Delaunay tetrahedralization of ``(n, 3)`` points.
 
     Returns positively oriented, canonically ordered tetrahedra and the input
-    vertex map.
+    vertex map. ``parallelism`` workers insert in rounds of conflict-free
+    cavities; the result does not depend on it.
     """
 
-    return _triangulate("phx_mc_delaunay_3d", points, None, 3)
+    return _triangulate("phx_mc_delaunay_3d", points, None, 3, (parallelism,))
 
 
 def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
@@ -4055,10 +4060,15 @@ def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarr
     return _triangulate("phx_mc_regular_2d", points, weights, 2)
 
 
-def regular_3d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
-    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1."""
+def regular_3d(
+    points: object, weights: object, /, *, parallelism: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1.
 
-    return _triangulate("phx_mc_regular_3d", points, weights, 3)
+    ``parallelism`` workers insert in rounds; the result does not depend on it.
+    """
+
+    return _triangulate("phx_mc_regular_3d", points, weights, 3, (parallelism,))
 
 
 class VerdictStatus(IntEnum):
