@@ -16,8 +16,8 @@
   gives the hexahedron fraction by shape); `prove=True` certifies cell
   validity (every cell a star about both its centroid and its exact vertex
   average, which smoothing and repair maintain), the global embedding and the
-  boundary fidelity (20 to 25 min and 14 to 22 GB on the 77k to 98k cell
-  rows, against about 5 s for `prove=False`), the proof-only fidelity
+  boundary fidelity (220 to 285 s on the 77k to 98k cell rows, process peak
+  13 to 22 GB, against about 5 s for `prove=False`), the proof-only fidelity
   preparation built on the first proved execution. `plc_hex_dominant`
   remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
@@ -59,6 +59,15 @@
   when one piece holds it. Pairs sharing a bent edge chain through a 2:1
   hanging vertex now certify, and a notch of a non-convex shared face filled
   differently by the two cells is refused.
+- Exact contacts of star-decomposed polyhedral cells are proved natively
+  (`phx_mc_polyhedral_declared_contacts`: interval filter with exact
+  fallback, on cells whose corners are exact rationals) against the declared
+  shared vertices, edges, convex faces and face fans; only pairs it does not
+  prove run the rational contact pass, so certificate decisions and digests
+  are unchanged. Polyhedral star tables are built once per connectivity and
+  shared read-only by validity, quality and audit. Hex-dominant rows certify
+  in 220 to 285 s instead of 1,220 to 1,500 s; conforming Voronoi with about
+  1e4 cells in about 96 s.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the

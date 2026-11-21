@@ -358,10 +358,11 @@ tetrahedra, then implicit volumes, then the CAD solid.
     Accepted rows (prove=False, three interleaved rounds against cfMesh; seconds ours / cfMesh):
     sphere L0 5.05-5.36 / 8.96-9.17, sphere L2 5.35-5.68 / 8.45-8.76, quadric L0 4.55-4.67 /
     6.46-6.58, quadric L2 5.32-5.47 / 5.99-6.06, every quality field at least cfMesh's. Public
-    prove=True certifies each row's mesh at row size on kernels `bd173a82d`: quadric L0 77,470
-    cells 1,218 s 14.1 GB, sphere L0 89,219 cells 1,470 s 22.3 GB, quadric L2 83,160 cells
-    1,234 s 16.8 GB, sphere L2 98,038 cells 1,499 s 16.4 GB. Open: proof time (the exact contact
-    pass dominates).
+    prove=True certifies each row's mesh at row size on kernels `dbbd0182c` (native contacts;
+    digests equal to the rational contact pass): quadric L0 77,470 cells 223 s, sphere L0 89,219
+    cells 284 s, quadric L2 83,160 cells 230 s, sphere L2 98,038 cells 270 s (process peaks
+    13-22 GB, mostly the dense certificate). Open: per-point denominators in the native star
+    kernels (cell-common denominators reach 200-3,250 bits on Voronoi cells).
   - Debt (narrowed): `test_native_layer_core_mixed_round_trip_preserves_source_strata` runs
     again (fixture at a 0.12 core offset: 8x8 cap, 1,280 cells, same topology classes; 447 s,
     3.3 GB peak). Not a BVH rebuild (column certification already prepares one wall and one
