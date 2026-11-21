@@ -42,6 +42,7 @@ from .._sizing import (
     size_statistic,
     SizeControlStrength,
     triangle_circumradii,
+    triangle_circumradius_measures,
     UniformSizeControl,
 )
 from .._volume_generation import _shape_targets_gated
@@ -146,13 +147,14 @@ def _size_compliance(
             issues.append(f"size_control:{control.control_id}:no_boundary_faces")
             continue
         radii = triangle_circumradii(points, faces)
+        measures = triangle_circumradius_measures(points, faces)
         for statistic in policy.target_statistics:
             value = size_statistic(radii, statistic)
             key = f"size:{control.control_id}:{statistic}_circumradius"
             requested.append((key, declaration.bound_factor * control.target_size))
             achieved.append((key, value))
             if control.strength is SizeControlStrength.HARD and declaration.exceeds(
-                value, control.target_size, policy
+                measures, statistic, control.target_size, policy
             ):
                 issues.append(key)
         if control.maximum_size is not None:
