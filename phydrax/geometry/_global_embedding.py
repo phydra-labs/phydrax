@@ -19,7 +19,11 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
-from .._exact_kernels import separation_screen, SeparationDecision
+from .._exact_kernels import (
+    exact_kernel_parallelism,
+    separation_screen,
+    SeparationDecision,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
     common_denominator_rows,
@@ -962,6 +966,7 @@ def _native_volume_tetrahedra(
             np.asarray(cell_faces, dtype=np.int64),
             np.asarray(face_offsets, dtype=np.int64),
             np.asarray(face_values, dtype=np.int64),
+            parallelism=exact_kernel_parallelism(),
         )
     )
     for local, row in enumerate(rows):
@@ -6349,7 +6354,9 @@ class _VolumePieceFilter:
             return cleared, certificates, set()
         left, right = first[general], second[general]
         proved = (
-            polyhedral_declared_contacts(self.contacts, left, right)
+            polyhedral_declared_contacts(
+                self.contacts, left, right, parallelism=exact_kernel_parallelism()
+            )
             if self.contacts is not None
             else np.zeros(left.shape, dtype=np.bool_)
         )

@@ -1295,6 +1295,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_welded_topology": (
@@ -1323,15 +1324,16 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_polyhedral_star_validity": (
         _I32,
-        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P),
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P, _I32),
     ),
     "phx_mc_polyhedral_star_decomposition": (
         _I32,
-        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
     ),
     "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_polyhedral_declared_contacts": (
@@ -1358,6 +1360,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _I64,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
@@ -4486,6 +4489,8 @@ def cell_map_validity(
     routes: object,
     floor: float,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact root validity proof of dof-linear polynomial cell maps in 3D.
 
@@ -4545,6 +4550,7 @@ def cell_map_validity(
         lower.ctypes.data,
         upper.ctypes.data,
         digests.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "cell_map_validity")
     return decided.astype(np.bool_), status, lower, upper, digests
@@ -4568,6 +4574,7 @@ def welded_topology(
     embedded: bool,
     check_manifold: bool,
     check_watertight: bool,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Combinatorial welded-topology counts of one star complex.
 
@@ -4622,6 +4629,7 @@ def welded_topology(
         None if scope_array is None else scope_array.ctypes.data,
         counts.ctypes.data,
         boundary.ctypes.data,
+        parallelism,
     )
     _raise_for_call(
         status,
@@ -4680,6 +4688,8 @@ def polyhedral_star_validity(
     stars: np.ndarray,
     floor: float,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact star validity of polyhedra (``phx_mc_polyhedral_star_validity``).
 
@@ -4729,6 +4739,7 @@ def polyhedral_star_validity(
         status.ctypes.data,
         lower.ctypes.data,
         upper.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_star_validity")
     return decided.astype(np.bool_), status, lower, upper
@@ -4742,6 +4753,8 @@ def polyhedral_star_decomposition(
     face_vertex_offsets: np.ndarray,
     face_vertex_values: np.ndarray,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact star decompositions of linear polytopes.
 
@@ -4795,6 +4808,7 @@ def polyhedral_star_decomposition(
         face_reversed.ctypes.data,
         triangles.ctypes.data,
         triangle_counts.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_star_decomposition")
     return (
@@ -4932,7 +4946,12 @@ def polyhedral_contact_bank(
 
 
 def polyhedral_declared_contacts(
-    bank: PolyhedralContactBank, first: np.ndarray, second: np.ndarray, /
+    bank: PolyhedralContactBank,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    parallelism: int,
 ) -> np.ndarray:
     """Pairs of ``bank`` cells whose every tetrahedron contact is proved to
     lie in one convex piece of their declared shared stratum
@@ -4966,6 +4985,7 @@ def polyhedral_declared_contacts(
         pairs.shape[0],
         pairs.ctypes.data,
         declared.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_declared_contacts")
     return declared.astype(np.bool_)

@@ -49,6 +49,7 @@
 #include "dyadic.hpp"
 #include "exact_scalar.hpp"
 #include "floating_point_mode.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -902,6 +903,8 @@ bool declared_pair(PointTable& points, const IntegerBank& rows, const CellView& 
   return true;
 }
 
+constexpr std::size_t kPairChunk = 64;
+
 }  // namespace
 
 extern "C" int32_t phx_mc_polyhedral_declared_contacts(
@@ -912,7 +915,7 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
     const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
     const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
     const int64_t* face_corners, int64_t pair_count,
-    const int64_t* pairs, int8_t* declared) {
+    const int64_t* pairs, int8_t* declared, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     if (point_count < 0 || cell_count < 0 || pair_count < 0 || cell_tet_offsets == nullptr ||
         cell_corner_offsets == nullptr || cell_face_offsets == nullptr ||
@@ -921,7 +924,8 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
         (point_count > 0 && (point_lower == nullptr || point_upper == nullptr)) ||
         !valid_bank(4 * point_count, point_word_offsets, point_words, point_signs) ||
         !valid_bank(3 * cell_corner_offsets[cell_count] + cell_count, row_word_offsets,
-                    row_words, row_signs)) {
+                    row_words, row_signs) ||
+        parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (cell_tet_offsets[0] != 0 || cell_corner_offsets[0] != 0 || cell_face_offsets[0] != 0 ||
@@ -956,8 +960,6 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
       if (pairs[value] < 0 || pairs[value] >= cell_count) return PHX_MC_INVALID_INPUT;
     }
     const phx::mc::GradualNearestScope mode;
-    PointTable points(IntegerBank{point_word_offsets, point_words, point_signs}, point_count,
-                      point_lower, point_upper);
     const IntegerBank rows{row_word_offsets, row_words, row_signs};
     auto view = [&](int64_t cell) {
       const int64_t corner_first = cell_corner_offsets[cell];
@@ -973,16 +975,29 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
                       tet_points + 4 * cell_tet_offsets[cell],
                       cell_tet_offsets[cell + 1] - cell_tet_offsets[cell]};
     };
-    TetrahedronCache tetrahedra;
-    for (int64_t pair = 0; pair < pair_count; ++pair) {
-      const CellView first = view(pairs[2 * pair]);
-      const CellView second = view(pairs[2 * pair + 1]);
-      declared[pair] =
-          first.tet_count > 0 && second.tet_count > 0 &&
-          declared_pair(points, rows, first, second,
-                        tetrahedra.of(points, pairs[2 * pair], first),
-                        tetrahedra.of(points, pairs[2 * pair + 1], second));
-    }
-    return PHX_MC_OK;
+    // Pairs are independent; each chunk of kPairChunk pairs (fixed, so results
+    // do not depend on parallelism) has its own point table and tetrahedron
+    // cache. Derived point identities are only compared for equality within
+    // one pair, so chunk-local numbering decides the same statements.
+    return phx::mc::parallel_for(
+        static_cast<std::size_t>(pair_count),
+        phx::mc::ParallelRequest{kPairChunk, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const phx::mc::GradualNearestScope chunk_mode;
+          PointTable points(IntegerBank{point_word_offsets, point_words, point_signs},
+                            point_count, point_lower, point_upper);
+          TetrahedronCache tetrahedra;
+          for (int64_t pair = static_cast<int64_t>(begin); pair < static_cast<int64_t>(end);
+               ++pair) {
+            const CellView first = view(pairs[2 * pair]);
+            const CellView second = view(pairs[2 * pair + 1]);
+            declared[pair] =
+                first.tet_count > 0 && second.tet_count > 0 &&
+                declared_pair(points, rows, first, second,
+                              tetrahedra.of(points, pairs[2 * pair], first),
+                              tetrahedra.of(points, pairs[2 * pair + 1], second));
+          }
+          return PHX_MC_OK;
+        });
   });
 }

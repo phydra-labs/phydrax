@@ -2500,6 +2500,7 @@ def _native_cell_map_proofs(
         )
     ):
         return undecided
+    from .._exact_kernels import exact_kernel_parallelism
     from .._meshcore import cell_map_validity, meshcore_available
 
     if not meshcore_available():
@@ -2521,6 +2522,7 @@ def _native_cell_map_proofs(
         _SPARSE,
         routes,
         floor,
+        parallelism=exact_kernel_parallelism(),
     )
     return decided, status, lower, upper, digests
 

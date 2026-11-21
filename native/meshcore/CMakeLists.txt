@@ -30,6 +30,9 @@ endif()
 option(PHX_MC_BUILD_TESTS "Build the meshcore C++ unit tests" ${PHX_MC_TOP_LEVEL})
 option(PHX_MC_SANITIZE
   "Instrument the library and its tests with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(PHX_MC_THREAD_SANITIZE
+  "Instrument the library and its tests with ThreadSanitizer (exclusive with PHX_MC_SANITIZE)"
+  OFF)
 find_package(Threads REQUIRED)
 
 set(PHX_MC_SOURCES
@@ -248,14 +251,21 @@ target_compile_options(phydrax_meshcore_objects PUBLIC ${PHX_MC_FP_FLAGS}
   PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
 # Every branch above forbids contraction; sources that depend on it check this.
 target_compile_definitions(phydrax_meshcore_objects PUBLIC PHX_MC_FP_CONTRACT_OFF=1)
-if(PHX_MC_SANITIZE)
+if(PHX_MC_SANITIZE AND PHX_MC_THREAD_SANITIZE)
+  message(FATAL_ERROR "PHX_MC_SANITIZE and PHX_MC_THREAD_SANITIZE are exclusive.")
+endif()
+if(PHX_MC_SANITIZE OR PHX_MC_THREAD_SANITIZE)
   if(MSVC)
-    message(FATAL_ERROR "PHX_MC_SANITIZE requires a Clang or GCC toolchain.")
+    message(FATAL_ERROR "The sanitizer builds require a Clang or GCC toolchain.")
   endif()
   # Any report aborts the test process, so CTest fails on the first finding;
   # PHX_MC_SANITIZE disables the time bounds of the performance checks.
-  set(PHX_MC_SANITIZER_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all
-    -fno-omit-frame-pointer)
+  if(PHX_MC_THREAD_SANITIZE)
+    set(PHX_MC_SANITIZER_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+  else()
+    set(PHX_MC_SANITIZER_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all
+      -fno-omit-frame-pointer)
+  endif()
   target_compile_definitions(phydrax_meshcore_objects PUBLIC PHX_MC_SANITIZE)
   target_compile_options(phydrax_meshcore_objects PUBLIC ${PHX_MC_SANITIZER_FLAGS})
   target_link_options(phydrax_meshcore_objects PUBLIC ${PHX_MC_SANITIZER_FLAGS})
@@ -276,6 +286,9 @@ if(PHX_MC_BUILD_TESTS)
     target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${name} PRIVATE phydrax_meshcore_objects)
     add_test(NAME ${name} COMMAND ${name})
+    if(PHX_MC_THREAD_SANITIZE)
+      set_tests_properties(${name} PROPERTIES ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1")
+    endif()
   endfunction()
   phx_mc_add_test(test_predicates)
   phx_mc_add_test(test_cdt2d)

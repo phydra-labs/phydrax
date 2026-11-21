@@ -197,6 +197,26 @@ def test_route_proves_the_cube_with_an_exact_wall() -> None:
     assert _fan_orientations(connectivity, points) in ({1}, {-1})
 
 
+def test_route_proof_is_identical_for_every_native_parallelism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The certification kernels split cells and pairs into fixed chunks, so
+    # the published mesh and its certificate do not depend on the worker count.
+    reports = []
+    for threads in ("1", "2", "3", "4", "8", "8"):
+        monkeypatch.setenv("PHX_MESHCORE_THREADS", threads)
+        result = _plan().execute()
+        certification = result.certification
+        assert certification is not None and certification.passed
+        reports.append(
+            (
+                certification.report_id,
+                np.asarray(result.mesh.coordinates, dtype=np.float64).tobytes(),
+            )
+        )
+    assert len(set(reports)) == 1
+
+
 def test_kernel_layers_lie_at_their_thicknesses_from_every_adjacent_wall() -> None:
     mesh = _kernel_cube(_LAYERS)
 

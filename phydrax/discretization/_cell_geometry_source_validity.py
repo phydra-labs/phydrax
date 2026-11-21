@@ -377,6 +377,7 @@ def _polyhedron_proof(
     identical); cells with a non-rational vertex or beyond its counts, and
     every cell without the native library, keep the rational proof.
     """
+    from .._exact_kernels import exact_kernel_parallelism
     from .._meshcore import (
         common_denominator_rows,
         meshcore_available,
@@ -498,6 +499,7 @@ def _polyhedron_proof(
             np.asarray(star_offsets, dtype=np.int64),
             np.asarray(stars, dtype=np.int64).reshape((-1, 3)),
             float(policy.relative_determinant_floor),
+            parallelism=exact_kernel_parallelism(),
         )
     pending = np.flatnonzero(~decided)
     if pending.size:

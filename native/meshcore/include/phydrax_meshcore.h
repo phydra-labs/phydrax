@@ -3158,14 +3158,16 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
  * ASCII without quote or backslash). Undecided cells (subdivision, the
  * expanded Hadamard margin, values beyond the exact range) are left to the
- * rational proof with their other outputs unspecified. floor in [0, 1). */
+ * rational proof with their other outputs unspecified. floor in [0, 1).
+ * Cells are decided in fixed chunks on parallelism >= 1 workers; results are
+ * bit-identical for every parallelism. */
 PHX_MC_API int32_t phx_mc_cell_map_validity(
     int32_t domain, int64_t dof_count, const int64_t* term_starts,
     const int32_t* term_exponents, const int64_t* term_numerators,
     int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper, uint8_t* digests);
+    int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism);
 
 /* Combinatorial counts of phydrax's welded-topology audit, identical to its
  * host route. Rows hold vertex keys in [0, key_count) padded with negative
@@ -3185,7 +3187,10 @@ PHX_MC_API int32_t phx_mc_cell_map_validity(
  * facets (when check_manifold and dimension >= 2, restricted to entities with
  * a vertex among the scope_count keys of scope unless scope_count is -1);
  * boundary[f] = 1 when audited facet f's key occurs once among the audited
- * facets. A facet link without its incidence yields PHX_MC_INVALID_INPUT. */
+ * facets. A facet link without its incidence yields PHX_MC_INVALID_INPUT.
+ * The four independent phases (facet groups, cells, vertex stars, edge stars)
+ * run on up to parallelism >= 1 workers; results are identical for every
+ * parallelism. */
 PHX_MC_API int32_t phx_mc_welded_topology(
     int32_t dimension, int32_t embedded, int32_t check_manifold, int32_t check_watertight,
     int64_t key_count, int64_t cell_count, int64_t audited_cell_count, int64_t cell_width,
@@ -3193,7 +3198,7 @@ PHX_MC_API int32_t phx_mc_welded_topology(
     int64_t audited_facet_width, const int64_t* facets, const int64_t* facet_cells,
     const int8_t* facet_signs, int64_t edge_count, const int64_t* edges,
     const int64_t* edge_cells, int64_t scope_count, const int64_t* scope, int64_t* counts,
-    int8_t* boundary);
+    int8_t* boundary, int32_t parallelism);
 
 /* Polyhedral cells for the two exact star proofs below. Cell k has local
  * points [point_offsets[k], ...+1) given as integer rows X = L x over one
@@ -3217,13 +3222,14 @@ PHX_MC_API int32_t phx_mc_welded_topology(
  * lower[k], upper[k] are the directed binary64 endpoints of min v_s and max
  * v_s (NaN without star rows). decided[k] = 0 leaves a cell with more than
  * 4096 vertices or face sizes of least common multiple above 2^40 to the
- * rational proof. */
+ * rational proof. Cells are decided in fixed chunks on parallelism >= 1
+ * workers; results are bit-identical for every parallelism. */
 PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
     int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
     const uint32_t* words, const int8_t* signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* star_offsets, const int64_t* stars, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper);
+    int32_t* status, double* lower, double* upper, int32_t parallelism);
 
 /* Exact star decomposition of linear polytopes, identical to phydrax's
  * rational `_volume_tetrahedra` (faces as `polytope_face_routes`: an exactly
@@ -3243,14 +3249,16 @@ PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
  * and the first triangle_counts[k] rows from triangle_offsets[k] of triangles
  * hold (face, i, j, k): oriented local loop indices of the face triangles,
  * where index -1 is the face's exact vertex average (fan apex).
- * triangle_offsets must count the face sizes per cell. */
+ * triangle_offsets must count the face sizes per cell. Cells are decided in
+ * fixed chunks on parallelism >= 1 workers; results are bit-identical for
+ * every parallelism. */
 PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
     int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
     const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
     const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
-    int64_t* triangle_counts);
+    int64_t* triangle_counts, int32_t parallelism);
 
 /* Exact ear-clipping triangulation of planar face loops, identical to
  * phydrax's rational `triangulate_planar_polygon` and to the face triangles of
@@ -3284,7 +3292,8 @@ PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
  * cell_face_offsets[c + 1]) are loops of local corner indices in
  * face_offsets CSR. Every corner coordinate is a Fraction (the rational
  * convex-loop decision requires it). Signs are decided in outward interval
- * arithmetic, else exactly. */
+ * arithmetic, else exactly. Pairs are decided in fixed chunks on parallelism
+ * >= 1 workers; results are bit-identical for every parallelism. */
 PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
     int64_t point_count, const int64_t* point_word_offsets, const uint32_t* point_words,
     const int8_t* point_signs, const double* point_lower, const double* point_upper,
@@ -3293,7 +3302,7 @@ PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
     const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
     const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
     const int64_t* face_corners, int64_t pair_count,
-    const int64_t* pairs, int8_t* declared);
+    const int64_t* pairs, int8_t* declared, int32_t parallelism);
 
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of

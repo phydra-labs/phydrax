@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -413,7 +414,7 @@ extern "C" int32_t phx_mc_welded_topology(
     int64_t audited_facet_width, const int64_t* facets, const int64_t* facet_cells,
     const int8_t* facet_signs, int64_t edge_count, const int64_t* edges,
     const int64_t* edge_cells, int64_t scope_count, const int64_t* scope, int64_t* counts,
-    int8_t* boundary) {
+    int8_t* boundary, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     if (dimension < 1 || dimension > 3 || key_count < 0 || cell_count < 0 ||
         audited_cell_count < 0 || audited_cell_count > cell_count || cell_width < 1 ||
@@ -430,7 +431,7 @@ extern "C" int32_t phx_mc_welded_topology(
          (facets == nullptr || facet_cells == nullptr || facet_signs == nullptr)) ||
         (audited_facet_count > 0 && boundary == nullptr) ||
         (edge_count > 0 && (edges == nullptr || edge_cells == nullptr)) ||
-        (scope_count > 0 && scope == nullptr)) {
+        (scope_count > 0 && scope == nullptr) || parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (!keys_bounded(cells, cell_count * cell_width, key_count) ||
@@ -453,18 +454,32 @@ extern "C" int32_t phx_mc_welded_topology(
     std::fill(counts, counts + 7, int64_t{0});
     std::fill(boundary, boundary + audited_facet_count, int8_t{0});
     const Grouping grouping = group_rows(facets, facet_count, facet_width, key_count);
-    std::int64_t open_groups = 0;
-    facet_counts(input, grouping, counts, boundary, open_groups);
-    if (check_watertight != 0) counts[4] = embedded != 0 ? open_groups : open_ridges(input, boundary);
-    cell_counts(input, counts);
-    if (check_manifold != 0 && dimension >= 2) {
-      try {
-        counts[5] = vertex_stars(input, grouping);
-        if (dimension == 3) counts[6] = edge_stars(input, grouping);
-      } catch (const UnknownIncidence&) {
-        return PHX_MC_INVALID_INPUT;
-      }
-    }
-    return PHX_MC_OK;
+    // Four independent phases, each writing only its own counts (facet
+    // groups and open boundary: counts[2..4] and boundary; cells: counts[0..1];
+    // vertex stars: counts[5]; edge stars: counts[6]), run as one task each;
+    // a failing phase reports through the lowest task index, as sequentially.
+    const bool manifold = check_manifold != 0 && dimension >= 2;
+    return phx::mc::parallel_for(
+        4, phx::mc::ParallelRequest{1, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t task, std::size_t, phx::mc::ChunkContext&) -> int32_t {
+          try {
+            if (task == 0) {
+              std::int64_t open_groups = 0;
+              facet_counts(input, grouping, counts, boundary, open_groups);
+              if (check_watertight != 0) {
+                counts[4] = embedded != 0 ? open_groups : open_ridges(input, boundary);
+              }
+            } else if (task == 1) {
+              cell_counts(input, counts);
+            } else if (task == 2 && manifold) {
+              counts[5] = vertex_stars(input, grouping);
+            } else if (task == 3 && manifold && dimension == 3) {
+              counts[6] = edge_stars(input, grouping);
+            }
+          } catch (const UnknownIncidence&) {
+            return PHX_MC_INVALID_INPUT;
+          }
+          return PHX_MC_OK;
+        });
   });
 }
