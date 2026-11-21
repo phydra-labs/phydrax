@@ -34,6 +34,16 @@ def canonical_json(value: Any, /) -> str:
     return _ENCODER.encode(value)
 
 
+def plain_json_fingerprint(value: Any, /) -> str:
+    """``canonical_fingerprint`` of a plain JSON value, encoded in one pass.
+
+    The caller guarantees a nest of str/int/float/bool/None scalars, tuples,
+    lists and str-keyed dicts (no array leaves); its canonical text is then
+    the encoder's text, so the digest is ``canonical_fingerprint(value)``.
+    """
+    return hashlib.sha256(_ENCODER.encode(value).encode("ascii")).hexdigest()
+
+
 class LazyCanonicalSequence:
     """A JSON array whose items are produced while it is written.
 

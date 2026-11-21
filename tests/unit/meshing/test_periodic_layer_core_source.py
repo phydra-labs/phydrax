@@ -178,6 +178,7 @@ def _bind_periodic_layer_identity(
         layers.evidence,
         source_wall=layers.source_wall,
         wall_association=layers.wall_association,
+        source_frames=layers.source_frames,
         obstacles=layers.obstacles,
         column_index=layers.column_index,
         column_scale=layers.column_scale,
@@ -375,7 +376,7 @@ def test_embedded_wall_propagates_authored_periodicity_to_layer_and_cap(
     assert _reprove_retained_boundary_layers(layers, wall, control) is layers
     # The stored stretch must be constant on every periodic column orbit, decided
     # exactly on the stored array.
-    _, front, _ = _reprove_retained_front(
+    _, front, _, _ = _reprove_retained_front(
         layers, wall, control, BoundaryLayerPolicy(), None
     )
     orbits = np.asarray(front.column_orbits)

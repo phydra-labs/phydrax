@@ -1205,6 +1205,9 @@ def test_equal_reference_chart_templates_share_only_exact_validated_proofs(
     monkeypatch.setattr(
         reference_types, "reference_chart_arguments_contain_source_cell", counted
     )
+    # The validated-row cache is process-wide; an empty one per test keeps the
+    # count independent of which tests ran first.
+    monkeypatch.setattr(reference_types, "_VALIDATED_CHART_ROWS", set())
     reference_types._validate_reference_chart_argument_rows(
         (row, row), "triangle", "triangle", (corners, corners)
     )

@@ -455,6 +455,24 @@ def canonical_exact_scalar(value: ExactScalar, /, *, role: str) -> ExactScalar:
     raise TypeError(f"{role} must be Fraction or RadicalElement values.")
 
 
+def exact_sum(terms: Iterable[ExactScalar], /) -> ExactScalar:
+    """``Fraction(0) + t_0 + t_1 + ...`` by pairwise (tree) reduction.
+
+    Exact addition is associative, so the sum is the left-to-right one, while
+    balanced partial sums keep rational denominators, and hence the cost of
+    each addition, small.
+    """
+    values: list[ExactScalar] = [Fraction(0), *terms]
+    while len(values) > 1:
+        paired: list[ExactScalar] = [
+            left + right for left, right in zip(values[::2], values[1::2], strict=False)
+        ]
+        if len(values) % 2:
+            paired.append(values[-1])
+        values = paired
+    return values[0]
+
+
 def rational_coefficient(value: ExactScalar, /, *, role: str) -> Fraction:
     if isinstance(value, Fraction):
         return value

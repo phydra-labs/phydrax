@@ -1808,6 +1808,246 @@ typedef struct phx_mc_overset_result {
 PHX_MC_API int32_t phx_mc_overset_assemble(const phx_mc_overset_parts* parts,
                                            const phx_mc_overset_result* result);
 
+/* ---------------------------------------------------------- prism layers */
+/* Prism layers grown from a closed, consistently oriented triangle wall
+ * (every edge shared by exactly two triangles with opposite directions, every
+ * vertex used and manifold); triangles are oriented so their right-hand
+ * normals point into the layer domain. heights are the cumulative heights of
+ * the layer_count levels (strictly increasing, positive); D = heights[last].
+ * One straight column per wall vertex: smooth vertices grow along the
+ * surface normal, vertices where two or more feature edges meet (adjacent
+ * normals differ by more than feature_angle_degrees) along the medial
+ * direction of their smooth sectors with curvature-corrected heights, and
+ * smooth columns near features carry the ridge offsets by a screened
+ * relaxation. Construction is floating point; columns of prisms with a
+ * nonpositive float Bernstein control are thinned (scale x 0.8, not below
+ * minimum_scale in (0, 1]). With prove, every prism is certified valid by the
+ * exact signs of its nine Bernstein Jacobian controls (degree one on the
+ * triangle, two along the column: the six corner Jacobians by orient3d and
+ * three mixed controls), and the top level is certified embedded and
+ * disjoint from the wall by exact triangle contacts; a failure thins the
+ * columns involved and the certificate reruns.
+ * Outputs: points ((layer_count + 1) * vertex_count, 3): level k of vertex v
+ * at row k * vertex_count + v, level 0 the wall bitwise; prisms
+ * (layer_count * triangle_count, 6): layer k of triangle t at row
+ * k * triangle_count + t, bottom (a, b, c) then top over them (positive
+ * corner Jacobians); displacement (vertex_count, 3): the full-depth column
+ * vector at scale 1; scale (vertex_count): the thinning factor;
+ * vertex_kind (vertex_count): 0 smooth, 1 ridge, 2 corner.
+ * stats (21): seconds of topology, jets, directions, relaxation,
+ * construction, certification and total; then ridge vertices, corner
+ * vertices, relaxed vertices, thinned vertices, thinned ridge/corner
+ * vertices, minimum scale, repair rounds, invalid prisms (exact with prove,
+ * else float), top-level contacts (-1 without prove), certified (1/0),
+ * minimum float corner ratio (min / max |corner Jacobian| per prism),
+ * feature edges, relaxation updates and the failures (invalid prisms and
+ * top-level contacts) detected over every repair round.
+ * Returns PHX_MC_OK, PHX_MC_UNRESOLVED when a failure remains at the minimum
+ * scale (outputs hold the last construction), PHX_MC_INVALID_INPUT for a
+ * wall that is not a closed oriented manifold, PHX_MC_DEGENERATE_INPUT for a
+ * zero-area triangle, or the argument and domain errors.
+ * Source frames (optional, both or neither): source_normals (triangle_count,
+ * 3, 3) and source_shape_operators (triangle_count, 3, 6) give, per triangle
+ * corner, the unit normal of the source surface the wall samples, pointing
+ * into the layer domain, and its shape operator S (symmetric; entries xx, xy,
+ * xz, yy, yz, zz) with normal curvature s.S.s / |s|^2 positive where the
+ * surface bends toward the normal. A sector whose corners all carry a frame
+ * takes its normal (the mean of the corner normals) and curvature from them,
+ * so its levels lie at their heights from the source surface. A corner with
+ * a zero normal and zero S (a singular chart point) carries none; a sector
+ * with such a corner, like every sector of a wall without frames, takes its
+ * normal and curvature from a weighted quadratic fit through the wall
+ * vertices. Nonzero normals must be unit to 1e-10 (else
+ * PHX_MC_INVALID_ARGUMENT). */
+typedef struct phx_mc_prism_layers_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  int32_t layer_count;
+  const double* heights;
+  double feature_angle_degrees;
+  double minimum_scale;
+  int32_t prove;
+  const double* source_normals;
+  const double* source_shape_operators;
+} phx_mc_prism_layers_request;
+typedef struct phx_mc_prism_layers_result {
+  double* points;
+  int32_t* prisms;
+  double* displacement;
+  double* scale;
+  uint8_t* vertex_kind;
+  double* stats;
+} phx_mc_prism_layers_result;
+PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* request,
+                                       const phx_mc_prism_layers_result* result);
+
+/* ------------------------------------------------ hex-dominant meshing
+ * Hex-dominant mesh of the solid enclosed by a closed, consistently oriented
+ * triangle surface (outward normals, every vertex used); triangle_facets[t]
+ * names the source facet of triangle t. A balanced octree from core_size
+ * down to boundary_size (core_size = boundary_size * 2^k) is cut to the
+ * cells inside the surface and clear of it; one projection layer of
+ * hexahedra joins the staircase boundary of that core to the closest-point
+ * images of its vertices, snapped to the feature curves (edges whose normals
+ * differ by more than feature_angle_degrees, or whose facets differ) and
+ * corners between smooth patches; the fine band, the transitions and the
+ * wall are smoothed. layer_count > 0 splits every projection column at the
+ * cumulative layer_thicknesses from the wall (hexahedral layers; the core
+ * keeps half a boundary cell plus the stack clear of the surface).
+ *
+ * The result is face-based: face f has the loop face_vertices[face_offsets[f]
+ * .. face_offsets[f + 1]) oriented out of face_owner[f]; face_neighbor[f] is
+ * -1 on the boundary, where face_facets[f] is the facet of the triangle
+ * nearest the face's vertex average (-1 inside). cell_kinds: 0 hexahedron
+ * (cell_vertices lists its eight vertices in the reference order: bottom
+ * counterclockwise about the direction to the top, then the top), 1
+ * polyhedron (no vertex list), 2 prism (six vertices, bottom then top).
+ * cell_roles: 0 core, 1 projection layer, 2 boundary layer. vertex_triangles
+ * is the nearest input triangle of a wall vertex (-1 elsewhere);
+ * vertex_kinds: 0 interior, 1 on a patch, 2 on a feature curve, 3 on a
+ * corner, 4 layer vertex.
+ *
+ * prove certifies every cell after construction as a polyhedron with
+ * OpenFOAM face semantics (a non-planar face is the fan from its vertex
+ * average): by the exact orientation of its decomposition tetrahedra
+ * (centroid, face vertex average, edge) and a closed genus-0 boundary.
+ * PHX_MC_UNRESOLVED (result still set) reports a cell left uncertified;
+ * PHX_MC_INVALID_INPUT a surface that is not a closed oriented manifold
+ * enclosing positive volume; PHX_MC_DEGENERATE_INPUT a zero-area triangle.
+ *
+ * stats (28): seconds total, surface, octree and core, faces, projection,
+ * smoothing and layers, certification; cells, hexahedra, polyhedra,
+ * certified cells, layer cells, staircase faces, feature edges, patches,
+ * largest wall vertex distance to the surface, largest sampled boundary
+ * distance (face averages and edge midpoints), staircase cells removed for
+ * manifoldness, partition flips, curve vertices, corner vertices, smoothing
+ * moves undone, certified (1, 0, or -1 without prove), uncertified cells, a
+ * reserved zero, octree levels, cells invalid before smoothing that it made
+ * valid, a reserved zero. */
+typedef struct phx_mc_hex_dominant_mesh phx_mc_hex_dominant_mesh;
+typedef struct phx_mc_hex_dominant_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  const int32_t* triangle_facets;
+  double core_size;
+  double boundary_size;
+  double feature_angle_degrees;
+  int32_t layer_count;
+  const double* layer_thicknesses;
+  int32_t prove;
+  phx_mc_hex_dominant_mesh** result;
+} phx_mc_hex_dominant_request;
+typedef struct phx_mc_hex_dominant_arrays {
+  double* points;
+  int64_t* face_offsets;
+  int32_t* face_vertices;
+  int32_t* face_owner;
+  int32_t* face_neighbor;
+  int32_t* face_facets;
+  uint8_t* cell_kinds;
+  uint8_t* cell_roles;
+  int64_t* cell_vertex_offsets;
+  int32_t* cell_vertices;
+  int32_t* vertex_triangles;
+  uint8_t* vertex_kinds;
+  double* stats;
+} phx_mc_hex_dominant_arrays;
+PHX_MC_API int32_t phx_mc_hex_dominant(const phx_mc_hex_dominant_request* request);
+/* points, faces, face vertex entries, cells, cell vertex entries. */
+PHX_MC_API int32_t phx_mc_hex_dominant_sizes(const phx_mc_hex_dominant_mesh* result,
+                                             int64_t* sizes);
+PHX_MC_API int32_t phx_mc_hex_dominant_export(const phx_mc_hex_dominant_mesh* result,
+                                              const phx_mc_hex_dominant_arrays* arrays);
+PHX_MC_API void phx_mc_hex_dominant_free(phx_mc_hex_dominant_mesh* result);
+
+/* ------------------------------------------------ conforming Voronoi cells
+ * Conforming Voronoi mesh of a triangulated solid for the cell size `size`.
+ * Triangle t separates region triangle_regions[2t] (in front, along the
+ * normal of (a, b, c)) from triangle_regions[2t + 1] (behind); -1 is the
+ * exterior and the two differ. triangle_facets[t] >= 0 names its source facet.
+ * Edges whose dihedral angle exceeds feature_angle_degrees are sharp
+ * features.
+ *
+ * The kernel places interior seeds (mirrored pairs about the surface, sector
+ * seeds about sharp edges, corner seeds, a body-centered cubic lattice) and
+ * exterior ghosts (interior seeds reflected across the surface), all on a
+ * dyadic grid, deterministically. The cells are the exact Voronoi cells of
+ * the interior seeds in the diagram of all seeds: closed and convex. A seed
+ * of a nearly cospherical configuration (adjacent circumcenters within
+ * 2^-14 size) moves 2^-10 size off the other circumsphere and the diagram is
+ * rebuilt, so the cells carry no near-degenerate edges or faces. The boundary is
+ * formed by the bisector faces towards ghosts; it lies exactly on
+ * axis-aligned planes and approximates curved surfaces.
+ *
+ * face_cells holds the owner whose outward normal the loop orientation gives
+ * (counterclockwise) and the neighbour (-1 on the exterior); face_facets is
+ * the facet of the triangle nearest the face's vertex centroid for a boundary
+ * or interface face, -1 otherwise. vertex_triangles is the nearest triangle
+ * of a vertex on a boundary or interface face, -1 otherwise. seeds holds
+ * every seed (interior seeds first), seed_regions their regions (-1: ghost).
+ * Every vertex is exact: exact_values[exact_offsets[4 v + k] ..
+ * exact_offsets[4 v + k + 1]) is the expansion (increasing nonoverlapping
+ * components) of N_k for k < 3 and of D for k = 3, x_k = N_k / D; `vertices`
+ * holds its nearest binary64 values (ties to even).
+ *
+ * stats: seconds of seeding, Delaunay, cells, publication, certification and
+ * total; seeds, interior seeds, ghosts, lattice seeds, cells, boundary cells,
+ * boundary faces, faces, repair rounds, certified (1/0, -1 without prove),
+ * open cell edges and local Delaunay violations (-1 without prove), signed
+ * relative volume error against the input regions, largest boundary vertex
+ * distance / size, certified boundary-to-surface distance bound / size (-1
+ * without prove), feature edges, size, surface spacing, exact boundary (1
+ * when every vertex of a boundary or interface face lies exactly on the plane
+ * of its nearest triangle, else 0), and a bound of the absolute relative
+ * volume error including its rounding.
+ *
+ * Returns PHX_MC_OK; PHX_MC_UNRESOLVED (result set when cells exist) when a
+ * cell still leaks after the repairs or certification failed, or when no seed
+ * lies in the solid; PHX_MC_DEGENERATE_INPUT for a degenerate triangle. */
+#define PHX_MC_CONFORMING_VORONOI_SIZES 6
+#define PHX_MC_CONFORMING_VORONOI_STATS 26
+typedef struct phx_mc_voronoi_cells phx_mc_voronoi_cells;
+typedef struct phx_mc_conforming_voronoi_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  const int32_t* triangle_regions;
+  const int32_t* triangle_facets;
+  double size;
+  double feature_angle_degrees;
+  int32_t prove;
+  phx_mc_voronoi_cells** result;
+} phx_mc_conforming_voronoi_request;
+typedef struct phx_mc_conforming_voronoi_arrays {
+  double* vertices;
+  int32_t* vertex_triangles;
+  int64_t* face_offsets;
+  int32_t* face_vertices;
+  int32_t* face_cells;
+  int32_t* face_facets;
+  int32_t* cell_seeds;
+  int32_t* cell_regions;
+  double* cell_volumes;
+  double* cell_centroids;
+  double* seeds;
+  int32_t* seed_regions;
+  double* stats;
+  int64_t* exact_offsets;
+  double* exact_values;
+} phx_mc_conforming_voronoi_arrays;
+PHX_MC_API int32_t phx_mc_conforming_voronoi(const phx_mc_conforming_voronoi_request* request);
+/* vertices, faces, face vertex entries, cells, seeds, exact components. */
+PHX_MC_API int32_t phx_mc_conforming_voronoi_sizes(const phx_mc_voronoi_cells* result,
+                                                   int64_t* sizes);
+PHX_MC_API int32_t phx_mc_conforming_voronoi_export(
+    const phx_mc_voronoi_cells* result, const phx_mc_conforming_voronoi_arrays* arrays);
+PHX_MC_API void phx_mc_conforming_voronoi_free(phx_mc_voronoi_cells* result);
+
 /* ------------------------------------------------ restricted power cells */
 #define PHX_MC_POWER_CELLS_SIZES 5
 enum phx_mc_power_failure_reason {
@@ -2450,6 +2690,14 @@ PHX_MC_API int32_t phx_mc_point_triangle_locations(
  * these observations are not a bound. */
 PHX_MC_API int32_t phx_mc_point_triangle_distances(
     int64_t count, const double* points, const double* triangles, double* distances);
+/* distances[k] = the least phx_mc_point_triangle_distances value of point k
+ * over every triangle (triangle_count >= 1 rows of nine coordinates), found
+ * by a box tree that skips only subtrees whose ordered box distance exceeds
+ * the best value, so the result equals the exhaustive minimum. Nonfinite
+ * input returns PHX_MC_NONFINITE_INPUT, a nonfinite value PHX_MC_RANGE_ERROR. */
+PHX_MC_API int32_t phx_mc_point_triangle_nearest_distances(
+    int64_t count, const double* points, int64_t triangle_count, const double* triangles,
+    double* distances);
 PHX_MC_API int32_t phx_mc_arrange_triangles(
     int64_t vertex_count, const double* vertices, int64_t triangle_count,
     const int64_t* triangles, const int32_t* surfaces, int64_t pair_count,
@@ -2842,6 +3090,43 @@ PHX_MC_API int32_t phx_mc_tet_mesh_entities(int64_t vertex_count, int64_t cell_c
                                             int32_t* edge_face_order,
                                             int32_t* face_cell_order);
 
+/* Oriented entities of m standard polyhedral cells, numbered exactly as the
+ * generic polyhedral connectivity numbers them. cell_kinds[k] in 0..3 is a
+ * tetrahedron, pyramid, prism or hexahedron (4, 5, 6, 8 vertices; 4, 5, 5, 6
+ * outward face loops: the phydrax reference loops); cells packs their
+ * vertex rows. Each face loop (L in all, cell-major) is canonicalized to
+ * start at its smallest vertex toward the smaller neighbor: loop_signs[l] is
+ * +1 when that keeps the loop's direction, else -1. Distinct canonical loops
+ * are the faces in first-appearance order: loop_faces (L) routes each loop,
+ * face_owner_loops / face_neighbor_loops its first and second loop (or -1),
+ * face_vertex_offsets (face_count + 1) / face_vertex_values the canonical
+ * vertices. The distinct sides of the face loops, in face-vertex order, are
+ * the edges (increasing vertex pairs) in first-appearance order:
+ * face_edge_values routes each face side, edge_first_sides each edge's first
+ * side. face_order and edge_order list the faces and edges in the
+ * lexicographic order of their increasing vertex rows (a triangle precedes
+ * the quadrilaterals it prefixes). Capacities: L loops and faces, S = the
+ * summed loop sizes for face vertices, face sides, edge_first_sides and
+ * edge_order, 2S for edges. An unknown kind or m above INT32_MAX / 24 is
+ * PHX_MC_INVALID_ARGUMENT; a vertex outside [0, vertex_count), a cell
+ * repeating a vertex, a face used thrice or twice with one orientation, or
+ * two faces on one vertex set is PHX_MC_INVALID_INPUT. */
+PHX_MC_API int32_t phx_mc_polyhedral_mesh_entities(
+    int64_t vertex_count, int64_t cell_count, const int32_t* cell_kinds, const int32_t* cells,
+    int32_t* loop_faces, int32_t* loop_signs, int64_t* face_count, int32_t* face_owner_loops,
+    int32_t* face_neighbor_loops, int32_t* face_vertex_offsets, int32_t* face_vertex_values,
+    int64_t* edge_count, int32_t* edges, int32_t* edge_first_sides, int32_t* face_edge_values,
+    int32_t* face_order, int32_t* edge_order);
+
+/* The stable order of n incidence routes sorting their (lower, upper, sign)
+ * rows: lower[k] in [0, lower_count), upper[k] in [0, upper_count) are
+ * dense entity ranks and signs[k] is -1 or +1 (otherwise
+ * PHX_MC_INVALID_INPUT). order receives n route indices, in linear time. */
+PHX_MC_API int32_t phx_mc_incidence_order(int64_t lower_count, int64_t upper_count,
+                                          int64_t count, const int32_t* lower,
+                                          const int32_t* upper, const int8_t* signs,
+                                          int32_t* order);
+
 /* Exact validity of affine tetrahedra: valid[k] = 1 when the Jacobian
  * determinant d = det[v1 - v0, v2 - v0, v3 - v0] and the scale-invariant
  * margin d^2 - floor^2 |v1 - v0|^2 |v2 - v0|^2 |v3 - v0|^2 are both positive
@@ -2856,7 +3141,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
                                               double* upper);
 
 /* Exact validity proof of dof-linear polynomial cell maps in three dimensions
- * (domain 0: affine simplices; 1: affine or multilinear boxes), identical to
+ * (domain 0: affine simplices; 1: affine or multilinear boxes; 2: affine or
+ * P1 prisms, triangle-linear times interval-linear), identical to
  * the rational per-cell proof of phydrax's cell geometry validity. Cell k maps
  * xi to sum_dof c_dof phi_dof(xi) with dof coordinates c = s 2^e taken from
  * rows routes[k * dof_count + dof] of the exact dyadic coordinate bank
@@ -2867,7 +3153,8 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * three). decided[k] = 1 when the root proof decides the cell: status[k] 0
  * (certified) or 1 (invalid) and lower[k], upper[k] the directed binary64
  * endpoints of the determinant (affine) or of the least and greatest
- * least-degree Bernstein control of det J (multilinear). digests[k] (16
+ * least-degree Bernstein control of det J on its support (multilinear,
+ * prism). digests[k] (16
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
  * ASCII without quote or backslash). Undecided cells (subdivision, the
  * expanded Hadamard margin, values beyond the exact range) are left to the
@@ -2879,6 +3166,77 @@ PHX_MC_API int32_t phx_mc_cell_map_validity(
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
     int32_t* status, double* lower, double* upper, uint8_t* digests);
+
+/* Polyhedral cells for the two exact star proofs below. Cell k has local
+ * points [point_offsets[k], ...+1) given as integer rows X = L x over one
+ * positive common denominator L of its rational vertices x, and faces
+ * [cell_face_offsets[k], ...+1), each a loop of local point indices in
+ * face_vertex_values. Integers live in a word bank: value v is the
+ * little-endian 32-bit magnitude words [word_offsets[v], word_offsets[v + 1])
+ * negated when signs[v] < 0; point p's coordinates are values 3p, 3p + 1,
+ * 3p + 2, and L of cell k is value 3 point_offsets[cell_count] + k. Signs
+ * the outward binary64 enclosures of the rational points decide are taken
+ * from them; every other statement is decided in exact integer arithmetic.
+ *
+ * Exact star validity, identical to phydrax's rational polyhedral validity
+ * proof: with c the vertex average of cell k, rows [star_offsets[k], ...+1)
+ * of stars hold (local face, first point, second point), the tetrahedron
+ * (c, face vertex average, first, second) of signed volume v_s and scale
+ * product w_s (product of its three squared edge-from-c lengths). status[k]
+ * is 0 (certified: every v_s > 0 and v_s^2 > floor^2 w_s), 1 (invalid: the
+ * total volume is negative or, for floor > 0, below floor sqrt(max w_s)) or
+ * 2 (unresolved);
+ * lower[k], upper[k] are the directed binary64 endpoints of min v_s and max
+ * v_s (NaN without star rows). decided[k] = 0 leaves a cell with more than
+ * 4096 vertices or face sizes of least common multiple above 2^40 to the
+ * rational proof. */
+PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
+    int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
+    const uint32_t* words, const int8_t* signs, const int64_t* cell_face_offsets,
+    const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
+    const int64_t* star_offsets, const int64_t* stars, double floor, int8_t* decided,
+    int32_t* status, double* lower, double* upper);
+
+/* Exact star decomposition of linear polytopes, identical to phydrax's
+ * rational `_volume_tetrahedra` (faces as `polytope_face_routes`: an exactly
+ * coplanar loop is ear-clipped, any other loop is the fan from its exact
+ * vertex average). Face-loop entry e (in face_vertex_values order) has its
+ * integer row over the common denominator of its own face's vertices as
+ * values 3e, 3e + 1, 3e + 2 of the face word bank. codes[k]: 0 decomposed,
+ * -1 undecided (left to the rational proof: more than 4096 points, or a
+ * vertex average not strictly inside every face triangle's plane), or the
+ * first refusal: 1 no faces, 2 invalid face incidence, 3 not a closed
+ * two-manifold, 4 not coherently orientable, 5 zero volume, 6 face loop of
+ * zero area vector, 7 folded fan of a non-planar face, 8-14 the face polygon
+ * refusals (vertices, degenerate, not coplanar, zero area, self contact, no
+ * ear, degenerate final triangle), 15 boundary degree about the star point
+ * not one, 16 non-planar face loop winding more than once about its vertex
+ * average. On 0, face_reversed marks the faces whose outward loop is reversed
+ * and the first triangle_counts[k] rows from triangle_offsets[k] of triangles
+ * hold (face, i, j, k): oriented local loop indices of the face triangles,
+ * where index -1 is the face's exact vertex average (fan apex).
+ * triangle_offsets must count the face sizes per cell. */
+PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
+    int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
+    const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
+    const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
+    const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
+    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
+    int64_t* triangle_counts);
+
+/* Exact ear-clipping triangulation of planar face loops, identical to
+ * phydrax's rational `triangulate_planar_polygon` and to the face triangles of
+ * phx_mc_polyhedral_star_decomposition. Loop entry e has its integer row over
+ * any positive common scale of its own face (the common denominator of the
+ * face's vertices) as values 3e, 3e + 1, 3e + 2 of the word bank. codes[f] is
+ * 0 or the face polygon refusal (8-14 of the decomposition codes); rows
+ * [sum over earlier faces of max(size - 2, 0), ... + max(size - 2, 0)) of
+ * triangles hold face f's local loop index triples (-1 on refusal). */
+PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
+                                             const int64_t* face_vertex_offsets,
+                                             const int64_t* word_offsets, const uint32_t* words,
+                                             const int8_t* signs, int32_t* codes,
+                                             int32_t* triangles);
 
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of

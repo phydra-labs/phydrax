@@ -252,6 +252,42 @@ tetrahedra, then implicit volumes, then the CAD solid.
     edges, cfMesh 0.456 / 1.09 s). Native growth directions and heights with certified non-intersection,
     thinning only where the certificate requires it, the core by S3 with the top layer fixed; full depth
     measured by true distance.
+    Timed scopes. Gmsh's 0.309 s is classify + extrudeBoundaryLayer + generate(3) from its surface
+    mesh (layers and core); cfMesh's 0.545 / 1.77 / 0.456 / 1.09 s are generateBoundaryLayers alone
+    on a tetMesh made first (3.2-5.8 s, untimed); Netgen's is the whole GenerateMesh. Our rows time
+    the larger scope, Gmsh's: the Gmsh surface mesh in, certified layers, the S3 core with the top
+    level fixed, one conforming prism + tet mesh out; the layer step is reported separately.
+    Design and result (Nov 20). One call, `phx_mc_prism_layers` (`_meshcore.prism_layers`), on a
+    closed oriented triangle wall and cumulative heights: one straight column per wall vertex (the
+    SMOOTH topology). Construction in floating point: feature edges by dihedral angle split vertex
+    fans into smooth sectors; per vertex and sector, the normal and second fundamental form come from
+    the source surface where the wall carries per-corner source frames (a CAD wall: the patch's
+    inward normal and shape operator at each corner's chart point, so levels are measured from the
+    source surface itself, 1e-5 of each level on the coarse CAD cylinder, rims included; the frames
+    are retained, fingerprinted and archived, and a cold restore reruns the kernel on them), else
+    from a weighted quadratic jet through the wall vertices (no one-sided bias at a ridge); smooth
+    columns grow along the normal by D, ridge and corner columns along the minimum-norm medial w
+    with w . g_i = a_i, a_i the
+    curvature-corrected height of sector i (the inward offset of a convex ridge is exact); a
+    screened Laplacian (decay four times the largest ridge offset, Gauss-Seidel worklist to 1e-4 D)
+    carries ridge offsets into neighboring smooth columns, each corrected for curvature along its
+    offset; float Bernstein checks thin failing columns (x 0.8). Certification (`prove`): the nine
+    Bernstein controls of every prism Jacobian (six corners by orient3d, three mixed by a filtered
+    expansion) and the top level embedded and disjoint from the wall by exact triangle contacts
+    (uniform grid), failures thinned and recertified down to `minimum_scale` (else UNRESOLVED).
+    Interleaved against the best reference (minimum of three each; ours certified): sphere h 0.1
+    0.052 s vs Gmsh 0.315 s; sphere h 0.05 0.232 s vs cfMesh 1.85 s; quadric h 0.1 0.041 s vs
+    cfMesh 0.463 s; quadric h 0.05 0.187 s vs cfMesh 1.14 s (layer step 0.024 / 0.085 / 0.017 /
+    0.062 s). 0 inverted prisms and tets, 0 generated nodes outside, no thinning; top depth by true
+    distance 0.074416 +- 1e-9 on the sphere (Netgen 0.0740-0.0744, Gmsh 0.0744-0.0767) and
+    0.07438-0.07442 on the quadric (Netgen thins to 0.0124 / 0.0081); minimum corner ratio 0.957
+    (sphere), 0.768 / 0.736 (quadric, all at the sharp edges; Netgen 0.31 / 0.22, NekMesh 0.45).
+    `prepare_boundary_layers` stays the owner of the public ADVANCING contract: it publishes
+    rational per-cell validity certificates (digests the native cell-validity bridge does not decide
+    for prisms), warped-wall contact proofs, column and front-row ancestry, FAN ridge splitting with
+    corner patches, rim columns, obstacles, periodic and quadrilateral walls (today 126 s on the F9
+    sphere and 90 s on the quadric at h 0.1, layers only; its cell certification is 174 of 206 s
+    under the profiler). Cutting it over needs native emission of those certificates.
   - S6-B conforming Voronoi (F14; VoroCrust 5.2-40.5 s, 95 % surface sampling; its explicit-mesh step
     0.04-0.67 s, our restricted power cells 26-56x slower). Native conforming seeds (surface ball
     pairs, interior seeds by the size field) and restricted cells taken from the Delaunay dual, clipping
@@ -260,6 +296,66 @@ tetrahedra, then implicit volumes, then the CAD solid.
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than
     cfMesh's. The tet-to-hex split route stays only if a row needs it.
+    Design (Nov 20). One call, `phx_mc_hex_dominant` (`_meshcore.hex_dominant`), on a closed
+    oriented triangle surface with its facet rows, the core size h, the boundary size h / 2^k, the
+    feature angle and an optional exact layer thickness schedule. The measured reference is cfMesh
+    `cartesianMesh`: its 77,896-cell sphere has every non-hexahedron in the h / (h/2) transition shell
+    (9-, 12- and 15-face cells) and reaches 18.7 degrees there only because it smooths; an unsmoothed
+    2:1 octree face has 25.2 degrees. Construction (floating point, exact predicates):
+    (1) surface topology (closed oriented manifold), feature edges by dihedral angle and facet
+    change, smooth patches between them, feature curves and corners; a transient triangle bin
+    index for closest points; (2) inside/outside of lattice vertices by +x ray parity per lattice
+    line with exact orient2d/orient3d and symbolic perturbation; (3) a balanced octree from size h:
+    a cell whose L-infinity distance to a triangle box is below its size is split down to the
+    boundary size (this alone gives 2:1 balance over all 26 neighbours); (4) core cells: inside and,
+    at the finest level, every corner at least half a boundary cell (plus the layer stack) from the
+    surface and no triangle in the box; manifold repair of the staircase by removing finest cells at
+    non-manifold edges and vertices; (5) the face-based mesh with hanging nodes: same-level faces
+    carry the midpoints of finer neighbours, so 2:1 coarse cells become polyhedra (OpenFOAM's
+    convention, as cfMesh's); (6) one projection layer of hexahedra between the staircase and its
+    closest-point image: staircase faces are assigned to patches, the partition is cleaned
+    (faces with three or four foreign edge neighbours flip, non-manifold chain vertices merge) and
+    chain vertices snap to the feature curve between their two patches, corner vertices to feature
+    corners; (7) smoothing: interior vertices of the fine band move to the mean of their cells'
+    centroids (this tilts the hanging faces towards the fine cells, the mechanism that lowers
+    cfMesh's transition non-orthogonality), surface vertices to the mean of their faces' centroids
+    projected back onto their patch or feature curve; a move is kept only when every incident cell
+    keeps positive float corner and decomposition volumes; (8) layers: L thin hexahedra per
+    projection column at the exact cumulative thicknesses from the wall (hex layers: the column is
+    split, so the hex fraction rises). Publication: every cell is a polyhedron with OpenFOAM face
+    semantics (a non-planar face is the fan from its exact vertex average; the certifier's
+    `polytope_face_triangles`), target `CellFamilyPolicy(required=("polyhedron",))`, hex fraction
+    by shape from the `cell_shape` marker (0 six quadrilaterals, 1 step prism, 2 other).
+    Certification (prove): every cell by exact orient3d of its fan decomposition tetrahedra (cell
+    centre, face vertex average, edge) plus a closed genus-0 boundary, hence star-shaped and
+    embedded; anything failing is UNRESOLVED. The boundary distance (vertices on the surface,
+    sampled face points) is reported; the route requests `volume_plc_fidelity` (the Voronoi
+    route's contract, over the exact fan wall) against `maximum_deviation` or the boundary size.
+    Route: `plc_octree_hex_dominant` for `HEX_DOMINANT_POLYHEDRAL_TRANSITION` (sizes from a volume
+    and a boundary uniform size control, layers from a PROVIDER `BoundaryLayerControl`). The
+    tet-to-hex split (`plc_hex_dominant`, `HEX_DOMINANT_SIMPLEX_TRANSITION`) stays: it is the
+    route for consumers needing trilinear hexahedra, and the only one whose boundary conforms
+    exactly to the PLC with region interfaces and simplex transitions, which a snapped octree
+    cannot offer by construction.
+    Mixed levels at feature curves (Nov 21; quadric L2 sag: wall legs ~h where the curve steps
+    through the lattice). (1) The octree gains one level below b on the level-b cells within the
+    core clearance plus one cell of a separating feature edge (only there), 2:1 balanced by the
+    existing rule; the lattice unit becomes b / 2 and b stays the smoothing scale. A fine leaf
+    takes the core test of its level-b cell, so the staircase is subdivided in place (own
+    clearance tests let fine cells approach the surface and step the staircase at the refined
+    region's rim: 53 cells uncertified on quadric L0); manifold repair runs at the unit lattice
+    on every leaf of size b or b / 2. (2) Staircase faces are the core's boundary faces of either
+    size; a level-b face carries the hanging midpoints of its fine neighbours explicitly (n-gons up
+    to eight vertices), adjacency is per loop edge, the partition's flip rules count loop edges
+    (three quarters foreign) and runs of curve vertices along any loop. (3) Chains and snapping
+    follow piece edges across levels. (4) Pieces: only quadrilaterals split at chain steps; an
+    n-gon piece gives an n-gon column of polyhedra (kind 1). Without feature curves nothing is
+    refined and the mesh is bit-identical to the uniform path. State (WIP patch
+    `.tmp/S6D_mixed_levels_wip.patch`): quadric L0 certified, Hausdorff 1.27e-4, but +13 % cells
+    and kernel 4.1 s against 2.4; quadric L2 Hausdorff 1.35e-4 with 15 uncertified cells, step
+    faces near the curve whose two vertices project to one wall point (collapsed wall pairs,
+    sideways projection columns) that smoothing cannot separate at b / 2 with the layer stack;
+    leaning patch-column layer directions towards curve columns did not change that.
   - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
     every step runs on the original, refined and restored mesh and the archive is written twice).
 

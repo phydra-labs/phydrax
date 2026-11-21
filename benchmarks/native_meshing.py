@@ -15,8 +15,10 @@ import argparse
 import json
 import math
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple, TYPE_CHECKING
@@ -30,12 +32,27 @@ from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_complex import TetrahedralConnectivity
 from phydrax.discretization._cell_mesh import SimplicialConnectivity
+from phydrax.discretization._exact_power_geometry import ExactPoint3
+from phydrax.discretization._exact_voronoi_geometry import (
+    ExactVoronoiCellGeometrySource,
+)
 from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.geometry._interval_enclosure import prepare_interval_function
-from phydrax.meshing import certify_cell_mesh
+from phydrax.meshing import (
+    BoundaryLayerCollisionPolicy,
+    BoundaryLayerControl,
+    BoundaryLayerCornerPolicy,
+    BoundaryLayerMesh,
+    BoundaryLayerRoute,
+    certify_cell_mesh,
+    LayerSchedule,
+    MeshingEntityKind,
+    MeshingScope,
+    prepare_boundary_layers,
+)
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 from phydrax.meshing._overset import (
     _cell_result,
@@ -49,6 +66,7 @@ from phydrax.meshing._overset import (
 
 if TYPE_CHECKING:
     from phydrax.discretization import PreparedSimplicialCellLocator
+    from phydrax.meshing import CellMeshingCandidate, NativeMeshingPlan
 
 
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
@@ -237,6 +255,9 @@ def _rows(
     improve_inputs: Path | None,
     query_inputs: Path | None,
     overset_inputs: Path | None,
+    layer_inputs: Path | None,
+    voronoi_inputs: Path | None,
+    hexdom_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -296,6 +317,29 @@ def _rows(
     elif names is not None and queries & names:
         raise ValueError(
             "The query rows read the ledger's F10 inputs: pass --query-inputs."
+        )
+    layer_rows = frozenset(name for name, _ in _F9_MODELS)
+    if layer_inputs is not None:
+        families += ((layer_rows, lambda: _layer_rows(layer_inputs)),)
+    elif names is not None and layer_rows & names:
+        raise ValueError(
+            "The layer rows read the ledger's F9 surfaces: pass --layer-inputs."
+        )
+    voronoi_rows = frozenset(
+        f"voronoi-{shape}" for shape in ("sphere", "cube", "torus", "steinmetz")
+    )
+    if voronoi_inputs is not None:
+        families += ((voronoi_rows, lambda: _voronoi_rows(voronoi_inputs)),)
+    elif names is not None and voronoi_rows & names:
+        raise ValueError(
+            "The voronoi rows read the ledger's F14 surfaces: pass --voronoi-inputs."
+        )
+    hexdom_rows = frozenset(f"hexdom-{model}-L{layers}" for model, layers, _ in _F8_CASES)
+    if hexdom_inputs is not None:
+        families += ((hexdom_rows, lambda: _hexdom_rows(hexdom_inputs)),)
+    elif names is not None and hexdom_rows & names:
+        raise ValueError(
+            "The hexdom rows read the ledger's F8 surfaces: pass --hexdom-inputs."
         )
     rows: list[_Row] = []
     for family, build in families:
@@ -2113,6 +2157,1097 @@ def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row,
     return tuple(rows)
 
 
+# Ledger F9: five prism layers, first height 0.01, growth 1.2 (total 0.074416),
+# grown inward from the Gmsh surface meshes the reference tools layer (h 0.1
+# and 0.05; the ledger's gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl).
+_F9_THICKNESSES = 0.01 * 1.2 ** np.arange(5, dtype=np.float64)
+_F9_HEIGHTS = np.cumsum(_F9_THICKNESSES)
+# The best reference depth band (Netgen on the sphere: 0.0740-0.0744 by true
+# distance) bounds the depth error of every unthinned column top.
+_F9_DEPTH_TOLERANCE = 4e-4
+# Gmsh's classification angle in the reference driver (classifySurfaces 40).
+_F9_FEATURE_ANGLE = 40.0
+# The certified repair's thinning floor (Netgen thins to 11-17 % at edges).
+_F9_MINIMUM_SCALE = 0.1
+_F9_MODELS = (("layers-sphere", "sphere"), ("layers-quadric", "quadric"))
+
+
+class _LayerCase(NamedTuple):
+    model: str
+    vertices: np.ndarray
+    # Outward-oriented wall triangles.
+    faces: np.ndarray
+    # The core's size target: the mean wall edge.
+    size: float
+    # The public call's inputs, built before the timer (the references get
+    # their surface mesh): the inward-oriented wall and its control.
+    wall: CellMesh
+    control: BoundaryLayerControl
+
+
+class _LayerResult(NamedTuple):
+    layers: BoundaryLayerMesh
+    # Layer mesh vertices, then the core's own vertices.
+    points: np.ndarray
+    prisms: np.ndarray
+    tetrahedra: np.ndarray
+    unmet: int
+    layer_seconds: float
+    core_seconds: float
+
+
+def _read_ascii_stl(path: Path, /) -> tuple[np.ndarray, np.ndarray]:
+    corners = np.asarray(
+        [
+            line.split()[1:4]
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.lstrip().startswith("vertex")
+        ],
+        dtype=np.float64,
+    )
+    vertices, inverse = np.unique(corners, axis=0, return_inverse=True)
+    return vertices, inverse.reshape((-1, 3)).astype(np.int64)
+
+
+def _layered_mesh(case: _LayerCase, /) -> _LayerResult:
+    # The whole task of Gmsh's timed call (classify, extrude, 3D): the public
+    # prepare_boundary_layers on the wall surface (certified prism layers
+    # with their certificates and ancestry), then the core meshed by S3 with
+    # the layers' cap as fixed boundary; one conforming mixed mesh out.
+    start = time.perf_counter()
+    layers = prepare_boundary_layers(case.wall, case.control)
+    layered = time.perf_counter()
+    if layers.cap is None:
+        raise RuntimeError("Closed-wall layers must leave a cap.")
+    cap_points = np.asarray(layers.cap.coordinates, dtype=np.float64)
+    # The cap faces away from the layers (into the core); the core's
+    # boundary is oriented outward.
+    cap_faces = np.asarray(layers.cap.blocks[0].vertices, dtype=np.int64)[:, ::-1]
+    count = cap_points.shape[0]
+    recovered = _recover(
+        cap_points, cap_faces, np.zeros((cap_faces.shape[0],), dtype=np.int32)
+    )
+    if recovered.status is not _meshcore.MeshcoreStatus.OK:
+        raise RuntimeError(f"Core recovery ended with {recovered.status!r}.")
+    mesh = _meshcore.TetMesh3D.from_recovery(
+        recovered, boundary_policy=_meshcore.PlcBoundaryPolicy.FIXED
+    )
+    sizes = np.full((recovered.points.shape[0],), case.size, dtype=np.float64)
+    refined = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+    if refined.status not in (
+        _meshcore.MeshcoreStatus.OK,
+        _meshcore.MeshcoreStatus.UNRESOLVED,
+    ):
+        raise RuntimeError(f"Core refinement failed with status {refined.status!r}.")
+    improved = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
+    core = mesh.arrays()
+    if not np.array_equal(core.points[:count], cap_points):
+        raise RuntimeError("The core must keep the cap's vertices first.")
+    layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
+    cap_vertices = np.asarray(layers.cap_vertices, dtype=np.int64)
+    cells = core.tetrahedra.astype(np.int64)
+    tetrahedra = np.where(
+        cells < count,
+        cap_vertices[np.minimum(cells, count - 1)],
+        cells - count + layer_points.shape[0],
+    )
+    return _LayerResult(
+        layers,
+        np.concatenate((layer_points, core.points[count:])),
+        np.asarray(layers.mesh.blocks[0].vertices, dtype=np.int64),
+        tetrahedra,
+        improved.unmet_cells,
+        layered - start,
+        time.perf_counter() - layered,
+    )
+
+
+def _layer_result(result: object, /) -> _LayerResult:
+    if not isinstance(result, _LayerResult):
+        raise TypeError("The layer row returns a _LayerResult.")
+    return result
+
+
+def _layer_cells(result: object, /) -> int:
+    layered = _layer_result(result)
+    return layered.prisms.shape[0] + layered.tetrahedra.shape[0]
+
+
+def _layer_unmet(result: object, /) -> int:
+    return _layer_result(result).unmet
+
+
+def _solid_depth(model: str, points: np.ndarray, /) -> np.ndarray:
+    # Signed true distance to the solid's boundary, positive inside: the unit
+    # sphere, and the quadric as the intersection of the z cylinder r 1 and
+    # the x cylinder r 0.6 (the distance to the complement of a convex
+    # intersection is the least distance to a complement).
+    match model:
+        case "sphere":
+            return 1.0 - np.linalg.norm(points, axis=-1)
+        case "quadric":
+            return np.minimum(
+                1.0 - np.hypot(points[:, 0], points[:, 1]),
+                0.6 - np.hypot(points[:, 1], points[:, 2]),
+            )
+        case _:
+            raise ValueError(f"Unknown F9 model {model!r}.")
+
+
+def _prism_corner_jacobians(points: np.ndarray, prisms: np.ndarray, /) -> np.ndarray:
+    # The ledger's six corner Jacobians per prism (meas_bl.py): at each bottom
+    # and top corner, det[edge to the next corner, edge to the one after, the
+    # corner's own column edge].
+    corners = points[prisms]
+    values = []
+    for k in range(3):
+        a, b, c = k, (k + 1) % 3, (k + 2) % 3
+        up = corners[:, a + 3] - corners[:, a]
+        for level in (0, 3):
+            values.append(
+                np.linalg.det(
+                    np.stack(
+                        (
+                            corners[:, b + level] - corners[:, a + level],
+                            corners[:, c + level] - corners[:, a + level],
+                            up,
+                        ),
+                        axis=2,
+                    )
+                )
+            )
+    return np.stack(values, axis=1)
+
+
+def _layer_quality(case: _LayerCase, result: object, /) -> tuple[int, dict[str, float]]:
+    layered = _layer_result(result)
+    layers = layered.layers
+    # The kernel the public call runs, once more outside the timing: its own
+    # seconds and vertex kinds; the public layers must be its levels.
+    kernel = _meshcore.prism_layers(
+        case.vertices,
+        case.faces[:, ::-1],
+        _F9_HEIGHTS,
+        feature_angle_degrees=_F9_FEATURE_ANGLE,
+        minimum_scale=_F9_MINIMUM_SCALE,
+        prove=True,
+    )
+    count = case.vertices.shape[0]
+    layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
+    levels = layer_points.shape[0]
+    scale = np.asarray(layers.column_scale, dtype=np.float64)
+    jacobians = _prism_corner_jacobians(layered.points, layered.prisms)
+    largest = np.max(np.abs(jacobians), axis=1)
+    lowest = np.min(jacobians, axis=1)
+    inverted_prisms = int(np.count_nonzero(lowest <= 1e-12 * largest))
+    ratios = lowest / largest
+    corners = layered.points[layered.tetrahedra]
+    volumes = np.linalg.det(
+        np.stack(
+            (
+                corners[:, 1] - corners[:, 0],
+                corners[:, 2] - corners[:, 0],
+                corners[:, 3] - corners[:, 0],
+            ),
+            axis=2,
+        )
+    )
+    inverted_tets = int(np.count_nonzero(volumes <= 0.0))
+    top_depth = _solid_depth(case.model, layer_points[levels - count :])
+    full = scale == 1.0
+    total = float(_F9_HEIGHTS[-1])
+    depth_error = float(np.max(np.abs(top_depth[full] - total))) if np.any(full) else 0.0
+    generated = _solid_depth(case.model, layered.points[count:])
+    outside = int(np.count_nonzero(generated < -1e-9))
+    ridge = kernel.vertex_kind != 0
+    thinned = scale < 1.0
+    # Prisms whose wall triangle lies within 1.5 h of a sharp edge (meas_bl).
+    bottom = layered.points[layered.prisms[:, :3]].mean(axis=1)
+    edge = float(
+        np.median(
+            np.linalg.norm(
+                case.vertices[case.faces[:, 1]] - case.vertices[case.faces[:, 0]], axis=1
+            )
+        )
+    )
+    near = (
+        (np.abs(np.hypot(bottom[:, 0], bottom[:, 1]) - 1.0) < 1.5 * edge)
+        & (np.abs(np.hypot(bottom[:, 1], bottom[:, 2]) - 0.6) < 1.5 * edge)
+        if case.model == "quadric"
+        else np.zeros((bottom.shape[0],), dtype=np.bool_)
+    )
+    cell_count = sum(block.cell_count for block in layers.mesh.blocks)
+    certified = layers.validity.certified_valid_count == cell_count
+    matches_kernel = bool(np.array_equal(layer_points, kernel.points))
+    missed = (
+        inverted_prisms
+        + inverted_tets
+        + outside
+        + int(depth_error > _F9_DEPTH_TOLERANCE)
+        + int(not certified)
+        + int(not matches_kernel)
+    )
+    return missed, {
+        "prisms": float(layered.prisms.shape[0]),
+        "tetrahedra": float(layered.tetrahedra.shape[0]),
+        "inverted_prisms": float(inverted_prisms),
+        "inverted_tetrahedra": float(inverted_tets),
+        "minimum_corner_ratio": float(np.min(ratios)),
+        "minimum_corner_ratio_near_sharp_edges": float(np.min(ratios[near]))
+        if np.any(near)
+        else math.nan,
+        "prisms_near_sharp_edges": float(np.count_nonzero(near)),
+        "top_depth_minimum": float(np.min(top_depth)),
+        "top_depth_maximum": float(np.max(top_depth)),
+        "unthinned_top_depth_error": depth_error,
+        "layer_depth_maximum": float(np.max(_solid_depth(case.model, layer_points))),
+        "intended_depth": total,
+        "generated_nodes_outside": float(outside),
+        "wall_nodes_outside_given": float(
+            np.count_nonzero(_solid_depth(case.model, case.vertices) < -1e-9)
+        ),
+        "ridge_vertices": float(np.count_nonzero(ridge)),
+        "thinned_vertices": float(np.count_nonzero(thinned)),
+        "ridge_thinning_fraction": float(np.count_nonzero(thinned & ridge))
+        / max(float(np.count_nonzero(ridge)), 1.0),
+        "minimum_scale": float(np.min(scale)),
+        "certified": float(certified),
+        "certified_cells": float(layers.validity.certified_valid_count),
+        "public_matches_kernel": float(matches_kernel),
+        "layer_step_seconds": layered.layer_seconds,
+        "layer_kernel_seconds": float(kernel.stats[6]),
+        "layer_certification_seconds": float(kernel.stats[5]),
+        "core_seconds": layered.core_seconds,
+    }
+
+
+def _layer_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row sizes are the request h in thousandths.
+    rows: list[_Row] = []
+    for name, model in _F9_MODELS:
+        for thousandths in (100, 50):
+            vertices, faces = _read_ascii_stl(
+                inputs / f"gmsh-{model}-h{thousandths / 1000:g}-t0.01-n5-sign-1-surf.stl"
+            )
+            edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+            spacing = float(
+                np.mean(
+                    np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1)
+                )
+            )
+            wall = CellMesh(
+                vertices,
+                (
+                    CellBlock(
+                        "wall",
+                        "triangle",
+                        faces[:, ::-1].copy(),
+                        global_ids=np.arange(faces.shape[0], dtype=np.int64),
+                    ),
+                ),
+            )
+            cells = wall.entity_set(2)
+            control = BoundaryLayerControl(
+                MeshingScope(
+                    wall.mesh_id,
+                    wall.numeric_version,
+                    MeshingEntityKind.MESH,
+                    2,
+                    cells.entity_set_id,
+                    cells.entity_ids,
+                ),
+                LayerSchedule(_F9_THICKNESSES),
+                route=BoundaryLayerRoute.ADVANCING,
+                collision=BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+                corner=BoundaryLayerCornerPolicy.SMOOTH,
+                feature_angle=math.radians(_F9_FEATURE_ANGLE),
+                minimum_thickness_fraction=_F9_MINIMUM_SCALE,
+            )
+            case = _LayerCase(model, vertices, faces, spacing, wall, control)
+            rows.append(
+                _Row(
+                    name,
+                    thousandths,
+                    partial(_layered_mesh, case),
+                    _layer_cells,
+                    unmet=_layer_unmet,
+                    quality=partial(_layer_quality, case),
+                )
+            )
+    return tuple(rows)
+
+
+# Ledger F14: conforming Voronoi meshes of four closed surfaces against
+# VoroCrust-Meshing (b5e0859, R_MAX calibrated to the cell target, LIP_CONST
+# 0.25, VC_ANGLE 60, one thread). Per row: the cell size requested from the
+# public route, and VoroCrust's measured quality every row must match or beat
+# (largest boundary distance to the closed-form surface, that distance over
+# the sizing, |relative volume error|, most faces per cell). VoroCrust's
+# sphere stopped at about 5e3 cells within its 60 s cap; its 4.8e3 row is the
+# reference of the 1e4 row.
+_F14_EXACT_VOLUMES = {
+    "sphere": 4.0 / 3.0 * math.pi,
+    "cube": 1.0,
+    "torus": 2.0 * math.pi**2 * 0.742 * 0.371**2,
+    "steinmetz": 16.0 / 3.0 * 0.5**3,
+}
+_F14_CASES: dict[tuple[str, int], tuple[float, tuple[float, float, float, int]]] = {
+    ("sphere", 1_000): (0.18, (1.2e-2, 0.071, 0.0175, 28)),
+    ("sphere", 10_000): (0.08, (3.4e-3, 0.038, 0.0051, 26)),
+    ("cube", 1_000): (0.1, (5.6e-16, 0.0, 0.0, 28)),
+    ("cube", 10_000): (0.045, (1.1e-15, 0.0, 0.0, 35)),
+    ("torus", 1_000): (0.15, (2.3e-2, 0.164, 0.0317, 41)),
+    ("torus", 10_000): (0.06, (3.8e-3, 0.066, 0.0052, 27)),
+    ("steinmetz", 1_000): (0.09, (1.2e-2, 0.205, 0.0127, 29)),
+    ("steinmetz", 10_000): (0.045, (9.2e-3, 0.223, 0.0030, 30)),
+}
+
+
+def _f14_distance(shape: str, points: np.ndarray, /) -> np.ndarray:
+    """Unsigned distance to the closed-form F14 surface (as the ledger's)."""
+    if shape == "sphere":
+        return np.abs(np.linalg.norm(points, axis=1) - 1.0)
+    if shape == "torus":
+        ring = np.hypot(points[:, 0], points[:, 1]) - 0.742
+        return np.abs(np.hypot(ring, points[:, 2]) - 0.371)
+    if shape == "cube":
+        outside = np.abs(points) - 0.5
+        return np.where(
+            np.any(outside > 0.0, axis=1),
+            np.linalg.norm(np.maximum(outside, 0.0), axis=1),
+            -np.max(outside, axis=1),
+        )
+    from scipy.spatial import cKDTree
+
+    # Steinmetz solid x^2 + y^2 <= r^2, y^2 + z^2 <= r^2: two cylinder
+    # patches and their intersection ellipses x = +-z.
+    radius = 0.5
+    around_z = np.hypot(points[:, 0], points[:, 1])
+    around_x = np.hypot(points[:, 1], points[:, 2])
+    foot_a = points.copy()
+    foot_a[:, :2] *= (radius / np.maximum(around_z, 1e-300))[:, None]
+    foot_b = points.copy()
+    foot_b[:, 1:] *= (radius / np.maximum(around_x, 1e-300))[:, None]
+    far = np.full((points.shape[0],), np.inf)
+    to_a = np.where(
+        foot_a[:, 1] ** 2 + foot_a[:, 2] ** 2 <= radius**2, np.abs(around_z - radius), far
+    )
+    to_b = np.where(
+        foot_b[:, 0] ** 2 + foot_b[:, 1] ** 2 <= radius**2, np.abs(around_x - radius), far
+    )
+    angle = np.linspace(0.0, 2.0 * np.pi, 400_000, endpoint=False)
+    x, y = radius * np.cos(angle), radius * np.sin(angle)
+    curves = cKDTree(np.concatenate((np.stack((x, y, x), 1), np.stack((x, y, -x), 1))))
+    to_curve, _ = curves.query(points)
+    return np.minimum(np.minimum(to_a, to_b), to_curve)
+
+
+class _VoronoiCase(NamedTuple):
+    shape: str
+    size: float
+    reference: tuple[float, float, float, int]
+    plan: NativeMeshingPlan
+    results: list[CellMeshingCandidate]
+
+
+def _voronoi_case(inputs: Path, shape: str, target: int, /) -> _VoronoiCase:
+    from phydrax.meshing import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingScope,
+        PiecewiseLinearComplex,
+        SizeControlStrength,
+        UniformSizeControl,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing.providers import (
+        NativeMeshingOptions,
+        NativeMeshingProvider,
+        NativePlcSource,
+    )
+
+    size, reference = _F14_CASES[(shape, target)]
+    surface = np.load(inputs / f"{shape}.npz")
+    vertices = np.asarray(surface["xyz"], dtype=np.float64)
+    faces = np.asarray(surface["tri"], dtype=np.int64)
+    complex_ = PiecewiseLinearComplex(
+        vertices,
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int64),
+        np.asarray([[-1, 0]], dtype=np.int64),
+        ("solid",),
+        vertex_ids=tuple(f"v{row}" for row in range(vertices.shape[0])),
+        vertex_occurrence_paths=((),) * vertices.shape[0],
+        facet_ids=("boundary",),
+        facet_occurrence_paths=((),),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+    )
+    source = NativePlcSource(complex_, f"f14-{shape}", "r1")
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(
+            UniformSizeControl(
+                MeshingScope.whole(source, 3), size, strength=SizeControlStrength.SOFT
+            ),
+        ),
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions("plc_conforming_voronoi")).plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    return _VoronoiCase(shape, size, reference, plan, [])
+
+
+def _voronoi_mesh(case: _VoronoiCase, /) -> CellMeshingCandidate:
+    # The public route without acceptance; results are kept for the
+    # determinism check, not inspected while timed.
+    candidate = case.plan.execute(prove=False)
+    case.results.append(candidate)
+    return candidate
+
+
+def _voronoi_candidate(result: object, /) -> CellMeshingCandidate:
+    from phydrax.meshing import CellMeshingCandidate
+
+    if not isinstance(result, CellMeshingCandidate):
+        raise TypeError("A voronoi row returns CellMeshingCandidate.")
+    return result
+
+
+def _voronoi_cells(result: object, /) -> int:
+    return int(_voronoi_candidate(result).mesh.connectivity.cell_count)
+
+
+def _polyhedral_connectivity(mesh: CellMesh, /) -> PolyhedralConnectivity:
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError("A voronoi row publishes polyhedral connectivity.")
+    return connectivity
+
+
+def _voronoi_quality(
+    case: _VoronoiCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    """Measure the published mesh independently and compare with VoroCrust."""
+    mesh = _voronoi_candidate(result).mesh
+    connectivity = _polyhedral_connectivity(mesh)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
+    cells = cell_offsets.size - 1
+    faces = offsets.size - 1
+    sizes = np.diff(offsets)
+    rows = np.repeat(np.arange(faces, dtype=np.int64), sizes)
+    following = np.arange(1, values.size + 1, dtype=np.int64)
+    following[offsets[1:] - 1] = offsets[:-1]
+    first, second = points[values], points[values[following]]
+    # Area vectors and centroids of the face loops.
+    area = np.zeros((faces, 3))
+    np.add.at(area, rows, 0.5 * np.cross(first, second))
+    centroid = np.zeros((faces, 3))
+    np.add.at(centroid, rows, first)
+    centroid /= sizes[:, None]
+    # Volumes by the divergence theorem over each cell's signed faces; the
+    # sign convention (outward or inward) follows from the total.
+    incidence_cell = np.repeat(np.arange(cells, dtype=np.int64), np.diff(cell_offsets))
+    flux = np.einsum("ij,ij->i", centroid, area)[cell_faces] * cell_signs / 3.0
+    volume = np.bincount(incidence_cell, flux, minlength=cells)
+    outward = 1.0 if np.sum(volume) > 0.0 else -1.0
+    volume *= outward
+    exact = _F14_EXACT_VOLUMES[case.shape]
+    volume_error = float(volume.sum() / exact - 1.0)
+    # Boundary faces (one incident cell): vertices, centroids and edge
+    # midpoints, as the ledger samples them.
+    boundary = np.bincount(cell_faces, minlength=faces) == 1
+    boundary_entries = boundary[rows]
+    samples = np.concatenate(
+        (
+            first[boundary_entries],
+            centroid[boundary],
+            0.5 * (first + second)[boundary_entries],
+        )
+    )
+    distance = _f14_distance(case.shape, samples)
+    largest = float(np.max(distance))
+    counts = np.diff(cell_offsets)
+    # Closure: every directed edge of a cell's outward loops met exactly once
+    # by its reverse.
+    vertex_count = points.shape[0]
+    entry_cells = np.repeat(incidence_cell, sizes[cell_faces])
+    entry_rows = np.concatenate(
+        [np.arange(offsets[f], offsets[f + 1]) for f in cell_faces]
+    )
+    entry_signs = np.repeat(cell_signs * outward, sizes[cell_faces]) > 0.0
+    tails = np.where(entry_signs, values[entry_rows], values[following[entry_rows]])
+    heads = np.where(entry_signs, values[following[entry_rows]], values[entry_rows])
+    keys = (entry_cells * vertex_count + tails) * vertex_count + heads
+    reverse = (entry_cells * vertex_count + heads) * vertex_count + tails
+    unique_keys, key_counts = np.unique(keys, return_counts=True)
+    found = np.searchsorted(unique_keys, reverse)
+    paired = (found < unique_keys.size) & (
+        unique_keys[np.minimum(found, unique_keys.size - 1)] == reverse
+    )
+    repeated = key_counts[np.searchsorted(unique_keys, keys)] > 1
+    open_cells = np.unique(entry_cells[~paired | repeated]).size
+    # Convexity, decided exactly: every vertex of a cell on the inner side of
+    # each of its face planes, the plane through the exact vertices with their
+    # exact Newell normal. Binary64 only screens: the published vertices are
+    # the nearest values of the exact ones, so on a face of area over
+    # (1e-3 h)^2 the rounded unit normal is off by far under 1e-12 and a
+    # rounded distance below -1e-9 h is a certain inside; every other
+    # (vertex, face) pair is decided in rationals.
+    source_map = _voronoi_candidate(result).geometry.source_map
+    if not isinstance(source_map, ExactVoronoiCellGeometrySource):
+        raise TypeError("A voronoi row carries exact Voronoi vertices.")
+    exact_points = source_map.source_coordinates()
+    scale = case.size
+    norm = np.linalg.norm(area, axis=1)
+    screened = norm > (1e-3 * scale) ** 2
+    unit = area / np.maximum(norm, 1e-300)[:, None]
+    exact_planes: dict[int, tuple[ExactPoint3, ExactPoint3]] = {}
+
+    def exact_plane(face: int, /) -> tuple[ExactPoint3, ExactPoint3]:
+        if face not in exact_planes:
+            loop = [exact_points[v] for v in values[offsets[face] : offsets[face + 1]]]
+            normal = [Fraction(0), Fraction(0), Fraction(0)]
+            for p, q in zip(loop, loop[1:] + loop[:1]):
+                normal[0] += p[1] * q[2] - p[2] * q[1]
+                normal[1] += p[2] * q[0] - p[0] * q[2]
+                normal[2] += p[0] * q[1] - p[1] * q[0]
+            exact_planes[face] = ((normal[0], normal[1], normal[2]), loop[0])
+        return exact_planes[face]
+
+    nonconvex = np.zeros((cells,), dtype=bool)
+    entry_offsets = np.concatenate(([0], np.cumsum(sizes[cell_faces])))
+    for cell in range(cells):
+        members = np.unique(
+            tails[
+                entry_offsets[cell_offsets[cell]] : entry_offsets[cell_offsets[cell + 1]]
+            ]
+        )
+        for slot in range(cell_offsets[cell], cell_offsets[cell + 1]):
+            face = int(cell_faces[slot])
+            orientation = 1 if cell_signs[slot] * outward > 0.0 else -1
+            doubtful = members
+            if screened[face]:
+                rounded = (points[members] - centroid[face]) @ (orientation * unit[face])
+                doubtful = members[rounded > -1e-9 * scale]
+            if doubtful.size == 0:
+                continue
+            normal, origin = exact_plane(face)
+            if any(
+                orientation
+                * sum(
+                    (
+                        normal[axis] * (exact_points[v][axis] - origin[axis])
+                        for axis in range(3)
+                    ),
+                    Fraction(0),
+                )
+                > 0
+                for v in doubtful.tolist()
+            ):
+                nonconvex[cell] = True
+                break
+    reference_distance, reference_ratio, reference_volume, reference_faces = (
+        case.reference
+    )
+    digests = set()
+    for candidate in case.results:
+        published = _polyhedral_connectivity(candidate.mesh)
+        digests.add(
+            hash(
+                (
+                    np.asarray(candidate.mesh.coordinates).tobytes(),
+                    np.asarray(published.face_vertex_values).tobytes(),
+                    np.asarray(published.face_owner).tobytes(),
+                    np.asarray(published.face_neighbor).tobytes(),
+                )
+            )
+        )
+    case.results.clear()
+    measured = {
+        "cells": float(cells),
+        "boundary_facets": float(int(boundary.sum())),
+        "boundary_distance_max": largest,
+        "boundary_distance_mean": float(np.mean(distance)),
+        "boundary_distance_over_size": largest / scale,
+        "volume_relative_error": volume_error,
+        "faces_per_cell_min": float(np.min(counts)),
+        "faces_per_cell_mean": float(np.mean(counts)),
+        "faces_per_cell_max": float(np.max(counts)),
+        "closed_cells": float(cells - open_cells),
+        "convex_cells": float(cells - int(nonconvex.sum())),
+        "deterministic": float(len(digests) == 1),
+    }
+    missed = sum(
+        (
+            largest > reference_distance,
+            largest / scale > reference_ratio and reference_ratio > 0.0,
+            abs(volume_error) > max(reference_volume, 1e-14),
+            int(np.max(counts)) > reference_faces,
+            open_cells > 0,
+            bool(np.any(nonconvex)),
+            len(digests) != 1,
+        )
+    )
+    return missed, measured
+
+
+def _voronoi_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row sizes are the cell targets of the F14 table.
+    rows: list[_Row] = []
+    for shape in ("sphere", "cube", "torus", "steinmetz"):
+        for target in (1_000, 10_000):
+            case = _voronoi_case(inputs, shape, target)
+            rows.append(
+                _Row(
+                    f"voronoi-{shape}",
+                    target,
+                    partial(_voronoi_mesh, case),
+                    _voronoi_cells,
+                    quality=partial(_voronoi_quality, case),
+                )
+            )
+    return tuple(rows)
+
+
+# Ledger F8 (cad.md): cfMesh cartesianMesh (maxCellSize h, boundaryCellSize
+# h / 2, 45-degree feature edges on the quadric), the best measured reference
+# per row: hexahedron fraction (cells of six quadrilaterals), sampled Hausdorff
+# distance to the closed-form surface, checkMesh non-orthogonality maximum and
+# average (acos of the mean cosine) and skewness maximum.
+_F8_REFERENCE: dict[tuple[str, int], dict[str, float]] = {
+    ("sphere", 0): {
+        "hexahedron_fraction": 0.945,
+        "hausdorff": 2.15e-4,
+        "nonorthogonality_maximum": 18.7,
+        "nonorthogonality_average": 5.53,
+        "skewness_maximum": 0.486,
+    },
+    ("sphere", 2): {
+        "hexahedron_fraction": 0.959,
+        "hausdorff": 2.73e-4,
+        "nonorthogonality_maximum": 26.4,
+        "nonorthogonality_average": 7.06,
+        "skewness_maximum": 0.737,
+    },
+    ("quadric", 0): {
+        "hexahedron_fraction": 0.911,
+        "hausdorff": 2.50e-4,
+        "nonorthogonality_maximum": 49.4,
+        "nonorthogonality_average": 5.37,
+        "skewness_maximum": 0.764,
+    },
+    ("quadric", 2): {
+        "hexahedron_fraction": 0.928,
+        "hausdorff": 1.97e-4,
+        "nonorthogonality_maximum": 50.5,
+        "nonorthogonality_average": 6.32,
+        "skewness_maximum": 0.807,
+    },
+}
+# Core size h per row (boundary size h / 2): the cfMesh reference's h on each
+# row (ledger F8, ~1e5-cell rung). Two layers grow at 1.2 from a first layer
+# of 0.325 boundary sizes, the median first-layer thickness of the ledger's
+# cfMesh sphere L2 mesh (cfMesh splits its boundary cells; second 0.39).
+_F8_CASES: tuple[tuple[str, int, float], ...] = (
+    ("sphere", 0, 0.05464),
+    ("sphere", 2, 0.06035),
+    ("quadric", 0, 0.04597),
+    ("quadric", 2, 0.0513),
+)
+_F8_FIRST_LAYER = 0.325
+
+
+class _HexDominantCase(NamedTuple):
+    model: str
+    layers: int
+    plan: NativeMeshingPlan
+
+
+def _hexdom_case(
+    inputs: Path, model: str, layers: int, size: float, /
+) -> _HexDominantCase:
+    from phydrax.meshing import (
+        BoundaryLayerControl,
+        BoundaryLayerRoute,
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        LayerSchedule,
+        MeshingScope,
+        PiecewiseLinearComplex,
+        SizeControlStrength,
+        UniformSizeControl,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing.providers import (
+        NativeMeshingOptions,
+        NativeMeshingProvider,
+        NativePlcSource,
+    )
+
+    surface = np.load(inputs / f"{model}-stl.npz")
+    vertices = np.asarray(surface["X"], dtype=np.float64)
+    faces = np.asarray(surface["F"], dtype=np.int64)
+    complex_ = PiecewiseLinearComplex(
+        vertices,
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int64),
+        np.asarray([[-1, 0]], dtype=np.int64),
+        ("solid",),
+        vertex_ids=tuple(f"v{row}" for row in range(vertices.shape[0])),
+        vertex_occurrence_paths=((),) * vertices.shape[0],
+        facet_ids=("boundary",),
+        facet_occurrence_paths=((),),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+    )
+    source = NativePlcSource(complex_, f"f8-{model}", "r1")
+    wall = MeshingScope.whole(source, 2)
+    solid = MeshingScope.whole(source, 3)
+    boundary_size = size / 2.0
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        wall,
+        VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION,
+        size_controls=(
+            UniformSizeControl(solid, size, strength=SizeControlStrength.SOFT),
+            UniformSizeControl(wall, boundary_size, strength=SizeControlStrength.SOFT),
+        ),
+        layer_controls=(
+            (
+                BoundaryLayerControl(
+                    wall,
+                    LayerSchedule.geometric(
+                        layers, _F8_FIRST_LAYER * boundary_size, growth_rate=1.2
+                    ),
+                    route=BoundaryLayerRoute.PROVIDER,
+                    volume_scope=solid,
+                ),
+            )
+            if layers
+            else ()
+        ),
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions()).plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    if plan.route != "plc_octree_hex_dominant":
+        raise RuntimeError("The F8 rows run the plc_octree_hex_dominant route.")
+    return _HexDominantCase(model, layers, plan)
+
+
+def _hexdom_mesh(case: _HexDominantCase, /) -> CellMeshingCandidate:
+    # The public route without acceptance (as the voronoi rows).
+    return case.plan.execute(prove=False)
+
+
+def _hexdom_candidate(result: object, /) -> CellMeshingCandidate:
+    from phydrax.meshing import CellMeshingCandidate
+
+    if not isinstance(result, CellMeshingCandidate):
+        raise TypeError("A hexdom row returns CellMeshingCandidate.")
+    return result
+
+
+def _hexdom_cells(result: object, /) -> int:
+    return int(_hexdom_candidate(result).mesh.connectivity.cell_count)
+
+
+def _f8_distance(model: str, points: np.ndarray, /) -> np.ndarray:
+    # Unsigned distance to the closed-form surface: the unit sphere, or the
+    # boundary of {x^2 + y^2 <= 1} n {y^2 + z^2 <= 0.36}: the radial foot on
+    # either cylinder when it lies in the other, else the intersection curve
+    # (sampled at 2e6 points, spacing below 1e-5).
+    if model == "sphere":
+        return np.abs(np.linalg.norm(points, axis=1) - 1.0)
+    from scipy.spatial import cKDTree
+
+    around_z = np.hypot(points[:, 0], points[:, 1])
+    around_x = np.hypot(points[:, 1], points[:, 2])
+    far = np.full((points.shape[0],), np.inf)
+    foot_z = points[:, 1] / np.maximum(around_z, 1e-300)
+    foot_x = points[:, 1] * 0.6 / np.maximum(around_x, 1e-300)
+    to_z = np.where(foot_z**2 + points[:, 2] ** 2 <= 0.36, np.abs(around_z - 1.0), far)
+    to_x = np.where(points[:, 0] ** 2 + foot_x**2 <= 1.0, np.abs(around_x - 0.6), far)
+    y = 0.6 * np.sin(np.linspace(0.0, 2.0 * np.pi, 500_000, endpoint=False))
+    curve = []
+    for sx in (-1.0, 1.0):
+        z = 0.6 * np.cos(np.linspace(0.0, 2.0 * np.pi, 500_000, endpoint=False))
+        curve.append(np.stack((sx * np.sqrt(1.0 - y * y), y, z), axis=1))
+    # The curve lies on both cylinders, so it is no nearer than either radial
+    # gap; only points where that bound is below the foot distance query it
+    # (a nearest-point search far from a sampled curve is slow).
+    distance = np.minimum(to_z, to_x)
+    closer = np.maximum(np.abs(around_z - 1.0), np.abs(around_x - 0.6)) < distance
+    distance[closer] = np.minimum(
+        distance[closer], cKDTree(np.concatenate(curve)).query(points[closer])[0]
+    )
+    return distance
+
+
+def _f8_samples(model: str, count: int, /) -> np.ndarray:
+    # Uniform points of the closed-form surface (the cylinder pieces by
+    # rejection, in proportion to their bounding areas).
+    generator = np.random.default_rng(8)
+    if model == "sphere":
+        points = generator.normal(size=(count, 3))
+        return points / np.linalg.norm(points, axis=1)[:, None]
+    pieces = []
+    while sum(piece.shape[0] for piece in pieces) < count:
+        angle = generator.uniform(0.0, 2.0 * np.pi, count)
+        z = generator.uniform(-0.6, 0.6, count)
+        on_z = np.stack((np.cos(angle), np.sin(angle), z), axis=1)
+        pieces.append(on_z[on_z[:, 1] ** 2 + z**2 <= 0.36])
+        angle = generator.uniform(0.0, 2.0 * np.pi, count)
+        x = generator.uniform(-1.0, 1.0, count)
+        on_x = np.stack((x, 0.6 * np.cos(angle), 0.6 * np.sin(angle)), axis=1)
+        pieces.append(on_x[x**2 + on_x[:, 1] ** 2 <= 1.0])
+    return np.concatenate(pieces)[:count]
+
+
+def _hexdom_quality(
+    case: _HexDominantCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    """OpenFOAM's checkMesh measures and the ledger's distances, from the
+    published mesh alone."""
+    from scipy.spatial import cKDTree
+
+    mesh = _hexdom_candidate(result).mesh
+    connectivity = _polyhedral_connectivity(mesh)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    owner = np.asarray(connectivity.face_owner, dtype=np.int64)
+    neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
+    faces, cells = offsets.size - 1, cell_offsets.size - 1
+    sizes = np.diff(offsets)
+    rows = np.repeat(np.arange(faces, dtype=np.int64), sizes)
+    following = np.arange(1, values.size + 1, dtype=np.int64)
+    following[offsets[1:] - 1] = offsets[:-1]
+    first, second = points[values], points[values[following]]
+    # OpenFOAM face centres and area vectors: triangles about the vertex mean.
+    average = np.zeros((faces, 3))
+    np.add.at(average, rows, first)
+    average /= sizes[:, None]
+    triangle = 0.5 * np.cross(first - average[rows], second - average[rows])
+    magnitude = np.linalg.norm(triangle, axis=1)
+    area = np.zeros((faces, 3))
+    np.add.at(area, rows, triangle)
+    centre = np.zeros((faces, 3))
+    np.add.at(centre, rows, (first + second + average[rows]) / 3.0 * magnitude[:, None])
+    centre /= np.bincount(rows, magnitude, minlength=faces)[:, None]
+    # Orient every area vector out of its owner: the cell-face signs, and the
+    # overall convention from the enclosed volume (wall faces only).
+    incidence = np.repeat(np.arange(cells, dtype=np.int64), np.diff(cell_offsets))
+    owner_entry = incidence == owner[cell_faces]
+    sign = np.zeros((faces,))
+    sign[cell_faces[owner_entry]] = cell_signs[owner_entry]
+    inner = neighbor >= 0
+    if np.sum((area * sign[:, None] * centre)[~inner]) < 0.0:
+        sign = -sign
+    area *= sign[:, None]
+    counts = np.bincount(owner, minlength=cells) + np.bincount(
+        neighbor[inner], minlength=cells
+    )
+    estimate = (
+        np.stack(
+            [
+                np.bincount(owner, centre[:, k], cells)
+                + np.bincount(neighbor[inner], centre[inner, k], cells)
+                for k in range(3)
+            ],
+            axis=1,
+        )
+        / counts[:, None]
+    )
+    pyramid_owner = np.sum(area * (centre - estimate[owner]), axis=1) / 3.0
+    pyramid_neighbor = (
+        -np.sum(area[inner] * (centre[inner] - estimate[neighbor[inner]]), axis=1) / 3.0
+    )
+    volume = np.bincount(owner, pyramid_owner, cells) + np.bincount(
+        neighbor[inner], pyramid_neighbor, cells
+    )
+    centroid = (
+        np.stack(
+            [
+                np.bincount(
+                    owner,
+                    pyramid_owner * (0.75 * centre[:, k] + 0.25 * estimate[owner, k]),
+                    cells,
+                )
+                + np.bincount(
+                    neighbor[inner],
+                    pyramid_neighbor
+                    * (0.75 * centre[inner, k] + 0.25 * estimate[neighbor[inner], k]),
+                    cells,
+                )
+                for k in range(3)
+            ],
+            axis=1,
+        )
+        / volume[:, None]
+    )
+    # Bad cells: a nonpositive decomposition tetrahedron (centroid, face
+    # vertex mean, edge) seen from either side.
+    spoke = np.cross(first - average[rows], second - average[rows]) * sign[rows, None]
+    bad = np.zeros((cells,), dtype=bool)
+    from_owner = np.einsum("ij,ij->i", spoke, average[rows] - centroid[owner[rows]])
+    bad[owner[rows][from_owner <= 0.0]] = True
+    inner_rows = inner[rows]
+    from_neighbor = -np.einsum(
+        "ij,ij->i",
+        spoke[inner_rows],
+        average[rows][inner_rows] - centroid[neighbor[rows][inner_rows]],
+    )
+    bad[neighbor[rows][inner_rows][from_neighbor <= 0.0]] = True
+    # Non-orthogonality and skewness (primitiveMeshTools).
+    interior = np.flatnonzero(inner)
+    join = centroid[neighbor[interior]] - centroid[owner[interior]]
+    cosine = np.sum(join * area[interior], axis=1) / (
+        np.linalg.norm(join, axis=1) * np.linalg.norm(area[interior], axis=1)
+    )
+    angle = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+    def skewness(selected: np.ndarray, toward: np.ndarray, /) -> np.ndarray:
+        offset = centre[selected] - centroid[owner[selected]]
+        sv = (
+            offset
+            - (
+                np.sum(area[selected] * offset, axis=1)
+                / np.sum(area[selected] * toward, axis=1)
+            )[:, None]
+            * toward
+        )
+        unit = sv / np.maximum(np.linalg.norm(sv, axis=1), 1e-300)[:, None]
+        reach = 0.2 * np.linalg.norm(toward, axis=1)
+        position = np.full((faces,), -1, dtype=np.int64)
+        position[selected] = np.arange(selected.size, dtype=np.int64)
+        member = position[rows] >= 0
+        spread = np.abs(
+            np.sum(
+                unit[position[rows][member]] * (first[member] - centre[rows][member]),
+                axis=1,
+            )
+        )
+        np.maximum.at(reach, position[rows][member], spread)
+        return np.linalg.norm(sv, axis=1) / reach
+
+    wall = np.flatnonzero(~inner)
+    normal = area[wall] / np.linalg.norm(area[wall], axis=1)[:, None]
+    skew = np.concatenate(
+        (
+            skewness(interior, join),
+            skewness(
+                wall,
+                normal
+                * np.sum(normal * (centre[wall] - centroid[owner[wall]]), axis=1)[
+                    :, None
+                ],
+            ),
+        )
+    )
+    # Hexahedra: six faces, all quadrilateral (checkMesh's shape count).
+    quads = np.bincount(owner, sizes == 4, cells) + np.bincount(
+        neighbor[inner], (sizes == 4)[inner], cells
+    )
+    hexahedra = int(np.count_nonzero((counts == 6) & (quads == 6)))
+    # Distances (the ledger's meas.py): wall faces fanned about their vertex
+    # mean; mesh -> surface at 28 lattice points per triangle, surface ->
+    # mesh at 2e5 surface points against their 16 nearest triangles.
+    wall_rows = np.flatnonzero(~inner[rows])
+    fan = np.stack(
+        (first[wall_rows], second[wall_rows], average[rows[wall_rows]]), axis=1
+    )
+    lattice = np.asarray(
+        [(i / 6, j / 6, 1 - (i + j) / 6) for i in range(7) for j in range(7 - i)],
+        dtype=np.float64,
+    )
+    mesh_to_surface = 0.0
+    for start in range(0, fan.shape[0], 20_000):
+        block = lattice @ fan[start : start + 20_000]
+        mesh_to_surface = max(
+            mesh_to_surface,
+            float(np.max(_f8_distance(case.model, block.reshape((-1, 3))))),
+        )
+    samples = _f8_samples(case.model, 200_000)
+    _, nearest = cKDTree(fan.mean(axis=1)).query(samples, k=16)
+    surface_to_mesh = float(
+        np.max(
+            np.min(
+                _point_triangle_distances(
+                    np.repeat(samples, 16, axis=0), fan[nearest.reshape(-1)]
+                ).reshape((-1, 16)),
+                axis=1,
+            )
+        )
+    )
+    wall_vertices = np.unique(values[np.flatnonzero(~inner[rows])])
+    measured = {
+        "cells": float(cells),
+        "hexahedron_fraction": hexahedra / cells,
+        "hausdorff": max(mesh_to_surface, surface_to_mesh),
+        "mesh_to_surface": mesh_to_surface,
+        "surface_to_mesh": surface_to_mesh,
+        "wall_vertex_distance": float(
+            np.max(_f8_distance(case.model, points[wall_vertices]))
+        ),
+        "nonorthogonality_maximum": float(np.max(angle)),
+        "nonorthogonality_average": float(np.degrees(np.arccos(np.mean(cosine)))),
+        "nonorthogonality_mean": float(np.mean(angle)),
+        "skewness_maximum": float(np.max(skew)),
+        "bad_cells": float(np.count_nonzero(bad)),
+        "minimum_volume": float(np.min(volume)),
+    }
+    reference = _F8_REFERENCE[(case.model, case.layers)]
+    missed = int(np.count_nonzero(bad)) + int(
+        measured["hexahedron_fraction"] < reference["hexahedron_fraction"]
+    )
+    missed += sum(
+        int(measured[name] > reference[name])
+        for name in (
+            "hausdorff",
+            "nonorthogonality_maximum",
+            "nonorthogonality_average",
+            "skewness_maximum",
+        )
+    )
+    return missed, {
+        **measured,
+        **{f"reference_{name}": value for name, value in reference.items()},
+    }
+
+
+def _hexdom_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row size: the ledger's rung (~1e5 cells).
+    rows: list[_Row] = []
+    for model, layers, size in _F8_CASES:
+        case = _hexdom_case(inputs, model, layers, size)
+        rows.append(
+            _Row(
+                f"hexdom-{model}-L{layers}",
+                100_000,
+                partial(_hexdom_mesh, case),
+                _hexdom_cells,
+                quality=partial(_hexdom_quality, case),
+            )
+        )
+    return tuple(rows)
+
+
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -2188,6 +3323,27 @@ def main(argv: list[str] | None = None) -> int:
         help="print the CAD rows' size statement of a reference mesh (X, F, T arrays "
         "as the Gmsh reference script exports them) at h and exit; reported, not judged",
     )
+    parser.add_argument(
+        "--layer-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F9 surfaces "
+        "(gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl); the layer rows run only with it",
+    )
+    parser.add_argument(
+        "--voronoi-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F14 surfaces (<shape>.npz with xyz and tri); "
+        "the voronoi rows run only with it",
+    )
+    parser.add_argument(
+        "--hexdom-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F8 surfaces (<model>-stl.npz with X and F); "
+        "the hexdom rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if arguments.reference_mesh is not None:
         path, size = arguments.reference_mesh
@@ -2207,6 +3363,9 @@ def main(argv: list[str] | None = None) -> int:
         arguments.improve_inputs,
         arguments.query_inputs,
         arguments.overset_inputs,
+        arguments.layer_inputs,
+        arguments.voronoi_inputs,
+        arguments.hexdom_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}

@@ -1905,7 +1905,10 @@ void unsupported_meshes_are_refused() {
 }
 
 // Time per local edit on boxes of about 1e4 and 1e5 cells: in-place
-// collapses and swaps, each with its own valid operation.
+// collapses and swaps, each with its own valid operation. The cell arrays
+// are reserved before timing (a built mesh can be exactly at capacity, and
+// the growth would land in one timed edit), and each kind's first edit is a
+// warm-up that builds the bank indexes.
 double seconds_per_edit(std::array<int, 3> n, std::uint32_t seed) {
   const Box box = make_box(n, false);
   TetMesh mesh(BoundaryPolicy::kConforming);
@@ -1914,13 +1917,16 @@ double seconds_per_edit(std::array<int, 3> n, std::uint32_t seed) {
   PHX_CHECK(incidence.initialize(mesh));
   Banks banks(mesh);
   Generator generator(box, seed);
+  // Room for every cell the timed edits can add.
+  mesh.reserve_cells(16384);
   using Clock = std::chrono::steady_clock;
-  Clock::duration spent{};
+  std::array<Clock::duration, 2> spent{};
+  std::array<int, 2> timed{};
+  std::array<bool, 2> warmed{};
   int applied = 0;
-  int timed = 0;
-  bool warmed = false;
-  for (int attempt = 0; attempt < 20000 && timed < 400; ++attempt) {
-    const bool swapping = (attempt % 2) == 0;
+  for (int attempt = 0; attempt < 20000 && timed[0] + timed[1] < 400; ++attempt) {
+    const std::size_t kind = attempt % 2;
+    const bool swapping = kind == 0;
     const std::optional<Planned> plan =
         swapping ? generator.swap(mesh, incidence, banks, Perturbation::kNone)
                  : generator.collapse(mesh, incidence, banks, Perturbation::kNone, false, false);
@@ -1933,20 +1939,22 @@ double seconds_per_edit(std::array<int, 3> n, std::uint32_t seed) {
       banks.apply(plan->operation);
       ++applied;
     }
-    // The first edit builds the bank indexes.
-    if (!warmed) {
-      warmed = true;
+    if (!warmed[kind]) {
+      warmed[kind] = true;
       continue;
     }
-    spent += elapsed;
-    ++timed;
+    spent[kind] += elapsed;
+    ++timed[kind];
   }
   PHX_CHECK(applied > 100);
-  return timed == 0 ? 0.0 : std::chrono::duration<double>(spent).count() / timed;
+  // Enough samples per kind that one slow call cannot set the mean.
+  PHX_CHECK(timed[0] >= 50 && timed[1] >= 50);
+  return std::chrono::duration<double>(spent[0] + spent[1]).count() / (timed[0] + timed[1]);
 }
 
 // Time per local split and per relocation on Gmsh-like cubes of about 1e4
 // and 1e5 cells: declared-pair midpoint splits and moves within the carrier.
+// As above, the cell arrays are reserved and each kind has its own warm-up.
 std::array<double, 3> seconds_per_split_and_move(std::array<int, 3> n, std::uint32_t seed) {
   const Box box = make_cube(n, false, seed);
   TetMesh mesh(BoundaryPolicy::kConforming);
@@ -1955,13 +1963,14 @@ std::array<double, 3> seconds_per_split_and_move(std::array<int, 3> n, std::uint
   PHX_CHECK(incidence.initialize(mesh));
   Banks banks(mesh);
   Generator generator(box, seed);
+  mesh.reserve_cells(32768);
   using Clock = std::chrono::steady_clock;
   // Splits, relocations, and splits of edges between segment vertices.
   std::array<Clock::duration, 3> spent{};
   std::array<int, 3> timed{};
   int splits = 0;
   int moves = 0;
-  bool warmed = false;
+  std::array<bool, 3> warmed{};
   for (int attempt = 0; attempt < 30000 && timed[0] + timed[1] + timed[2] < 900; ++attempt) {
     Clock::duration elapsed{};
     if (attempt % 3 != 1) {
@@ -1990,19 +1999,21 @@ std::array<double, 3> seconds_per_split_and_move(std::array<int, 3> n, std::uint
       elapsed = Clock::now() - start;
       moves += status == TetEditStatus::kApplied ? 1 : 0;
     }
-    // The first edit builds the bank indexes.
-    if (!warmed) {
-      warmed = true;
+    // Each kind's first edit is a warm-up (bank indexes, first-use caches).
+    const std::size_t kind = attempt % 3;
+    if (!warmed[kind]) {
+      warmed[kind] = true;
       continue;
     }
-    spent[attempt % 3] += elapsed;
-    ++timed[attempt % 3];
+    spent[kind] += elapsed;
+    ++timed[kind];
   }
   PHX_CHECK(splits > 50 && moves > 50);
+  // Enough samples per kind that one slow call cannot set the mean.
+  PHX_CHECK(timed[0] >= 50 && timed[1] >= 50 && timed[2] >= 10);
   std::array<double, 3> seconds{};
   for (std::size_t kind = 0; kind < 3; ++kind) {
-    seconds[kind] = timed[kind] == 0 ? 0.0
-                                     : std::chrono::duration<double>(spent[kind]).count() / timed[kind];
+    seconds[kind] = std::chrono::duration<double>(spent[kind]).count() / timed[kind];
   }
   return seconds;
 }

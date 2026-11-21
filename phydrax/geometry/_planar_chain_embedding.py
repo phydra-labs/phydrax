@@ -183,4 +183,140 @@ def point_in_convex_planar_hull(
     return not (any(value > 0 for value in signs) and any(value < 0 for value in signs))
 
 
-__all__ = ["point_in_convex_planar_hull", "triangulate_planar_polygon"]
+def polytope_face_routes(
+    points: tuple[Point3, ...], /
+) -> tuple[tuple[int, int, int], ...] | None:
+    """The exact triangulation a polyhedron face loop represents, by loop index.
+
+    An exactly coplanar loop is the simple polygon it bounds, triangulated
+    without changing it: its index triangles are returned. A loop whose
+    vertices are not coplanar is the fan of triangles ``(c, P_i, P_{i+1})``
+    from its exact vertex average ``c`` (the finite-volume face of OpenFOAM);
+    ``None`` is returned for it. For a planar face star-shaped about its
+    vertex average the fan is the same polygon, so the two conventions agree
+    there. The triangles keep the loop's orientation. A loop with a zero exact
+    area vector, a fan triangle whose exact area vector does not point along
+    the loop's (a folded fan), or a fan loop winding about ``c`` more than once
+    is refused.
+    """
+    if len(points) < 3 or any(len(point) != 3 for point in points):
+        raise ValueError("A polyhedron face is a loop of at least three points in R3.")
+    origin = points[0]
+    normal = (
+        sum(
+            (
+                (points[i][1] - origin[1])
+                * (points[(i + 1) % len(points)][2] - origin[2])
+                - (points[i][2] - origin[2])
+                * (points[(i + 1) % len(points)][1] - origin[1])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+        sum(
+            (
+                (points[i][2] - origin[2])
+                * (points[(i + 1) % len(points)][0] - origin[0])
+                - (points[i][0] - origin[0])
+                * (points[(i + 1) % len(points)][2] - origin[2])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+        sum(
+            (
+                (points[i][0] - origin[0])
+                * (points[(i + 1) % len(points)][1] - origin[1])
+                - (points[i][1] - origin[1])
+                * (points[(i + 1) % len(points)][0] - origin[0])
+                for i in range(len(points))
+            ),
+            Fraction(0),
+        ),
+    )
+    if not any(_sign(value) for value in normal):
+        raise ValueError("A polyhedron face loop has a zero exact area vector.")
+    planar = not any(
+        _sign(
+            sum(
+                (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
+                Fraction(0),
+            )
+        )
+        for point in points
+    )
+    if planar:
+        return triangulate_planar_polygon(points)
+    count = len(points)
+    centre: Point3 = (
+        sum((point[0] for point in points), Fraction(0)) / count,
+        sum((point[1] for point in points), Fraction(0)) / count,
+        sum((point[2] for point in points), Fraction(0)) / count,
+    )
+    spokes = tuple(
+        tuple(point[axis] - centre[axis] for axis in range(3)) for point in points
+    )
+
+    def turn(u: tuple[ExactScalar, ...], w: tuple[ExactScalar, ...]) -> int:
+        """Sign of the area of (c, c + u, c + w) along the loop's area vector."""
+        return _sign(
+            normal[0] * (u[1] * w[2] - u[2] * w[1])
+            + normal[1] * (u[2] * w[0] - u[0] * w[2])
+            + normal[2] * (u[0] * w[1] - u[1] * w[0])
+        )
+
+    if any(turn(spokes[i], spokes[(i + 1) % count]) <= 0 for i in range(count)):
+        raise ValueError("A non-planar polyhedron face folds its vertex-average fan.")
+    # Every spoke turns forward about the area vector, so the loop winds about
+    # c as many times as the spokes pass the direction of the first: the
+    # spokes' angles from it, ordered by half plane and then by turn, must
+    # increase along the loop with the one wrap back to the first spoke.
+    first = spokes[0]
+    norm2 = sum((value * value for value in normal), Fraction(0))
+
+    def half(u: tuple[ExactScalar, ...]) -> int:
+        side = turn(first, u)
+        if side:
+            return 0 if side > 0 else 1
+        along = _sign(
+            sum((first[axis] * u[axis] for axis in range(3)), Fraction(0)) * norm2
+            - sum((first[axis] * normal[axis] for axis in range(3)), Fraction(0))
+            * sum((u[axis] * normal[axis] for axis in range(3)), Fraction(0))
+        )
+        return 0 if along > 0 else 1
+
+    def before(u: tuple[ExactScalar, ...], w: tuple[ExactScalar, ...]) -> bool:
+        return half(u) < half(w) or (half(u) == half(w) and turn(u, w) > 0)
+
+    wraps = sum(not before(spokes[i], spokes[(i + 1) % count]) for i in range(count))
+    if wraps != 1:
+        raise ValueError(
+            "A non-planar polyhedron face loop winds more than once about its centre."
+        )
+    return None
+
+
+def polytope_face_triangles(
+    points: tuple[Point3, ...], /
+) -> tuple[tuple[Point3, Point3, Point3], ...]:
+    """The exact triangles a polyhedron face loop represents
+    (``polytope_face_routes``): the polygon of a coplanar loop, else the fan
+    ``(c, P_i, P_{i+1})`` from its exact vertex average ``c``."""
+    routes = polytope_face_routes(points)
+    if routes is not None:
+        return tuple((points[a], points[b], points[c]) for a, b, c in routes)
+    count = len(points)
+    centre: Point3 = (
+        sum((point[0] for point in points), Fraction(0)) / count,
+        sum((point[1] for point in points), Fraction(0)) / count,
+        sum((point[2] for point in points), Fraction(0)) / count,
+    )
+    return tuple((centre, points[i], points[(i + 1) % count]) for i in range(count))
+
+
+__all__ = [
+    "point_in_convex_planar_hull",
+    "polytope_face_routes",
+    "polytope_face_triangles",
+    "triangulate_planar_polygon",
+]

@@ -317,11 +317,10 @@ def _resolve_plc_route(
     if isinstance(source, NativePolyhedralSource):
         return "plc_restricted_power"
     strategy = specification.fill_strategy
-    if strategy in (
-        VolumeFillStrategy.HEX_DOMINANT_SIMPLEX_TRANSITION,
-        VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION,
-    ):
+    if strategy is VolumeFillStrategy.HEX_DOMINANT_SIMPLEX_TRANSITION:
         return "plc_hex_dominant"
+    if strategy is VolumeFillStrategy.HEX_DOMINANT_POLYHEDRAL_TRANSITION:
+        return "plc_octree_hex_dominant"
     if strategy is VolumeFillStrategy.POLYHEDRAL:
         return "plc_restricted_power"
     if strategy in (VolumeFillStrategy.SWEEP, VolumeFillStrategy.MULTIZONE):
@@ -1096,6 +1095,20 @@ def _prepare_route(
             return prepare_native_periodic(
                 source, specification, options, coordinate_contract
             )
+        case "plc_conforming_voronoi":
+            if not isinstance(source, NativePlcSource):
+                _unsupported(
+                    route, source, specification, "a NativePlcSource is required"
+                )
+            if not isinstance(specification, VolumeMeshingSpec):
+                _unsupported(
+                    route, source, specification, "a VolumeMeshingSpec is required"
+                )
+            from ._native_voronoi import prepare_native_voronoi
+
+            return prepare_native_voronoi(
+                source, specification, options, coordinate_contract
+            )
         case "plc_restricted_power":
             if not isinstance(source, (NativePlcSource, NativePolyhedralSource)):
                 _unsupported(
@@ -1214,6 +1227,20 @@ def _prepare_route(
             from ._native_dual import prepare_native_hex_dominant
 
             return prepare_native_hex_dominant(
+                source, specification, options, coordinate_contract
+            )
+        case "plc_octree_hex_dominant":
+            if not isinstance(source, NativePlcSource):
+                _unsupported(
+                    route, source, specification, "a NativePlcSource is required"
+                )
+            if not isinstance(specification, VolumeMeshingSpec):
+                _unsupported(
+                    route, source, specification, "a VolumeMeshingSpec is required"
+                )
+            from ._native_octree_hex import prepare_native_octree_hex_dominant
+
+            return prepare_native_octree_hex_dominant(
                 source, specification, options, coordinate_contract
             )
         case "plc_balanced_grid_hex":
@@ -1446,6 +1473,8 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         if not isinstance(prove, bool):
             raise TypeError("prove must be bool.")
         from ._native_implicit import _PreparedFixedImplicitRoute
+        from ._native_octree_hex import _PreparedNativeOctreeHexDominant
+        from ._native_voronoi import _PreparedNativeVoronoi
 
         if isinstance(self.prepared, _PreparedFixedImplicitRoute):
             _require_fixed_plan_current(self, check_prepared=False)
@@ -1488,6 +1517,11 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                 if cad_solid_support_issues(self.prepared)
                 else execute_cad_solid(self.prepared)
             )
+        elif isinstance(
+            self.prepared, (_PreparedNativeVoronoi, _PreparedNativeOctreeHexDominant)
+        ):
+            # The native call certifies its cells only for a proved result.
+            construction = self.prepared.execute(prove=prove)
         else:
             construction = self.prepared.execute()
         if not isinstance(construction, NativeMeshConstruction):

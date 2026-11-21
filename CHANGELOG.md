@@ -3,32 +3,86 @@
 ## Unreleased
 
 ### Added
-- Proved CAD solids (`cad_tetrahedral`, every source face sized, no layer
-  controls) are the native `cad_mesh_solid` candidate certified by the native
-  verifiers in order: chart partition (V4), surface embedding (V2), the source
-  shell, CAD fidelity at the request's `maximum_deviation` (V3), then global
-  tetrahedral embedding and exact tiling of the solid the certified surface
-  bounds. The source shell (one embedded shell, outward material side) is
-  proved from the model once per domain (single-shell topology, native trim
-  sheets, face-pair separation including a new exact plane/plane family, shell
-  volume sign) and, per mesh, on the native chart export (chord loops bound to
-  their source uses, trim-to-chord homotopy, reference trim sheets); cone and
-  torus solids are refused there as on the Python route. The report's
-  `native_cad` certificate carries the findings, V3's maximum bound, the shell
-  proof and the native occurrence/curve records it binds (`records_id`; the
-  certification inputs require them with the witness). Protected features or a normal-deviation bound given to
-  the native certificate are refused as unresolved. A soft
-  `NativeVolumeSchedule.shape_strength` publishes unmet radius-edge/dihedral
-  rows as `soft_shape_target_unmet_count` (prove and unproved; validity,
-  determinant and P2 rows of unforced cells stay issues, a forced rim cell
-  never is), from the new `cad_mesh_solid` stats `unmet_shape_rows` /
-  `unmet_hard_cells` (after cad's `unmet_forced_cells` /
-  `unmet_unforced_cells`). `execute(prove=True)`
-  equals `execute(prove=False).prove()`. Geometry order 2 CAD solids are
-  refused at proof. Bindings `verify_surface_embedding` and
-  `verify_chart_partition`. The quadric proof at h 0.2293 / 0.1061 takes 0.05
-  / 0.11 s of native verification instead of 14 / 29 s for the Python route
-  (before the shell proof).
+- Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
+  `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
+  core refined to half size at the boundary with exact inside/outside, one
+  projected wall layer snapped to feature edges and corners, smoothing with a
+  non-orthogonality and skewness descent and local repair, optional wall
+  layers along wall normals (never thinner than requested, deeper along
+  feature-curve columns where that lowers skewness). Every cell is published
+  as a polyhedron with OpenFOAM face semantics (a non-planar face is the fan
+  from its exact vertex average; requests use
+  `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
+  gives the hexahedron fraction by shape); `prove=True` certifies cell
+  validity, the global embedding and the boundary fidelity (on curved inputs
+  such as the F8 quadric it currently refuses: neighboring cells whose bent
+  faces share an edge chain overlap under fan semantics), the proof-only
+  fidelity preparation built on the first proved execution. `plc_hex_dominant`
+  remains the route for trilinear
+  hexahedra. Publication builds polyhedral connectivity from packed native
+  faces (also for conforming Voronoi) and maps each published face to its
+  native face through the cell's own face list; smoothing reuses the face and
+  centroid geometry it has computed and the final repair search stops scoring
+  a move that cannot improve (about 25 % faster, identical meshes). New
+  benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
+  `cartesianMesh` ceilings): sphere L0 / L2 and quadric L0 are faster than
+  cfMesh with every quality field better; quadric L2 is faster but does not
+  pass yet (Hausdorff and skew at the feature curve).
+- Polyhedron faces that are not planar are certified as the fan of triangles
+  from their exact vertex average (`polytope_face_triangles`,
+  `polytope_face_routes`): validity, global embedding (degree routes with fan
+  exterior faces, shared-face contact on the fan) and PLC fidelity use the
+  same triangles, and folded fans, loops winding more than once and zero-area
+  loops are refused. The native star proofs decide fan faces too (apex carried
+  exactly), with results identical to the rational proof. Declared identity
+  change: PLC fidelity triangulates planar exterior faces by ear clipping
+  instead of a fan from the first vertex, so fidelity-route certificates (for
+  example curved conforming Voronoi) change; witnesses name a fan exterior
+  boundary only when one is present.
+- Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
+  restricted-power route stays the default polyhedral fill for PLCs): one
+  native call places conforming seeds (interior seeds mirrored across the
+  surface by exterior ghosts, sharp-edge sector and corner seeds, a
+  body-centered cubic interior, on a dyadic grid, deterministic) and returns
+  the exact Voronoi cells of the interior seeds (closed, convex, exact
+  circumcenter vertices). Nearly cospherical configurations are resolved by
+  mirror-preserving seed moves first and a lone move only when those fail.
+  Certification follows the boundary: exact `volume_plc` coverage when every
+  boundary vertex lies on its facet (axis-aligned planes stay exact),
+  otherwise the new `volume_plc_fidelity` schedule certifies a two-sided
+  distance bound against `maximum_deviation` (default the cell size) through a
+  distance-only `SourceBoundaryDistanceWitness` that accepts PLC sources;
+  global-embedding identities write exact shell volumes beyond Python's
+  decimal limit in hex. New benchmark rows `voronoi-{sphere,cube,torus,
+  steinmetz}` (ledger F14, public `execute(prove=False)`): 1.5-8.2x faster
+  than VoroCrust with smaller boundary distance and volume error on every row
+  (cube rows exact), convexity decided exactly.
+- Native prism layers `phx_mc_prism_layers` (`_meshcore.prism_layers`) grow
+  layers from a closed oriented triangle wall, one column per vertex, with
+  fitted normals and curvature-corrected columns at sharp edges; every prism
+  is certified valid by its nine exact Jacobian terms and the top layer is
+  certified not to self-intersect or meet the wall, with local thinning where
+  a certificate fails; the core is meshed by the fixed-boundary tetrahedral
+  pipeline. `prepare_boundary_layers` uses it for closed, fully grown triangle
+  walls without split ridges, obstacles or periodicity (`FAIL` /
+  `REDUCE_THICKNESS`; other walls keep the existing construction): level
+  heights are measured from the smooth surface the wall vertices sample (on
+  CAD walls the source surface to the fit's accuracy; on a coarse cylinder the
+  rim columns fall up to 2.7 % short), a sector fit whose normal leaves the
+  cone of its face normals falls back to the flat normal, and
+  `BoundaryLayerEvidence.maximum_level_deviations` reports each level's
+  largest departure from the wall triangles. Declared change to layer geometry
+  and identities on those walls. `phx_mc_cell_map_validity` certifies P1
+  prisms natively (same statuses, endpoints and digests as the rational
+  proof), `phx_mc_polyhedral_mesh_entities` / `phx_mc_incidence_order` build
+  tetrahedron, pyramid, prism and hexahedron `CellMesh` topology with the
+  generic numbering, and `phx_mc_point_triangle_nearest_distances` supplies
+  the layer thickness evidence. The F9 sphere at h 0.1 takes 0.26 s for the
+  public call instead of 126 s. Benchmark rows `layers-sphere` /
+  `layers-quadric` (ledger F9) time the public call plus the core, interleaved:
+  0.257 / 1.000 / 0.189 / 0.738 s against Gmsh 0.293 s and cfMesh 1.755 /
+  0.444 / 1.105 s, with full true-distance depth, no thinning and no inverted
+  cells.
 - Native `LocalIncidence::split_boundary_edge` splits a boundary edge lying in
   two hull facets at a new vertex (the edge star's halves and the four facet
   halves with source and orientation kept), and `LocalIncidence::relocate`
@@ -426,39 +480,42 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
-- Native CAD meshing splits each face's `theta * tol` at its curves: a curve
-  chord's lens (the face's chart arc vs its chart chord at the same
-  parameter, mapped) gets `alpha theta tol` (curve sizing from
-  `|DS p''| / |DS p'|^2` and a midpoint lens check in the curve sag check),
-  and the face triangles next to a curve get `(1 - alpha) theta tol` (the
-  face metric's curvature size graded from that layer back to `theta` at
-  the boundary grading's rate; pole rings take the layer's size), so the
-  fidelity verifier's per-point sum of lens and own deviation holds there.
-  `alpha = 1/2` minimises the boundary layer's vertex count within 3 % for
-  the measured lens/surface curvature ratios. Curve and face meshes change.
-- Native CAD face smoothing searches for better vertex positions: below the
-  kernel's angle-pass target a compass search raises the star's worst 3D
-  angle (the fans at fixed curve vertices held the smallest angles), and an
-  edge longer than the face metric's unit is shortened by a step toward its
-  far end; every move keeps the chart star oriented and the kernel's metric
-  circumradius bound. On the quadric (tol = kappa_max h^2 / 4, theta = 1) the
-  minimum 3D angle and the mesh-to-surface distance beat Gmsh at the ledger's
-  four sizes with the same triangle count. Face meshes change. The size
-  guard evaluates the star's starting radius only when a move's radius
-  passes `1/sqrt(2)`, stops at the first cell past its bound, and the
-  long-edge step tests the shortening before the guard (identical meshes;
-  the unit sphere at h = 0.2 drops from 16.3 to 7.9 ms).
-- Native CAD face meshing sizes faces with one meaning of `h`: the face
-  metric is `I/h^2` intersected with the request's curvature tensor
-  `|II| / (4 theta tol)` (the kernel accepts metric circumradius
-  `<= 1/sqrt(2)`, so linear interpolation error `<= theta tol`; where the
-  curvature term does not bind the metric is exactly `I/h^2`). The C entry no
-  longer meshes at `h/sqrt(2)`. Curves take each face's smallest size
-  `min(h, sqrt(4 theta tol / |k|max))` (the request `h` within three sizes of
-  a face pole, where fixed rings replace kernel points); pole rings use the
-  same size; face flips judge Delaunay in the face metric where the curvature
-  term binds; smoothing keeps the kernel's metric circumradius bound. Face
-  and solid meshes change.
+- Certified polyhedral meshes (`prove=True`): exact star validity and star
+  decomposition of vertex-defined polyhedra run natively
+  (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)
+  on exact rational vertices (integer rows over each cell's common
+  denominator, interval filter with exact big-integer fallback) with identical
+  certificates, the Python proofs remaining for meshes without meshcore and
+  undecided cells; domain-coverage source matching is screened by outward
+  boxes and binary64 separation before the exact overlap test, and contained
+  triangle overlaps are taken directly; coverage overlaps, shell measures and
+  face triangulation are batched with identical results. Certified conforming
+  Voronoi at ~1e3 cells: cube 18.9 s, sphere 27.0 s (from several minutes),
+  certificates unchanged.
+- Native prism layers on CAD walls are measured from the source surface:
+  `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
+  into the layer domain, shape operator); a smooth sector framed at every
+  corner takes its normal and curvature from them instead of the vertex fit.
+  `brep_layer_core_source` evaluates the frames from the source patches
+  (`inward_source_frames`; corners at singular chart points such as cap
+  centers and poles carry none and are fitted) and passes them to
+  `prepare_boundary_layers(..., source_frames=)`. Levels on a coarse CAD
+  cylinder now lie within 1e-5 of the closed form, rims included (previously
+  up to 2.7 % short); bare STL walls are unchanged. Declared representation
+  change: `BoundaryLayerMesh` gains `source_frames` (validated, in
+  `result_id`, archived; field order, PyTree structure and result ids change),
+  and cold restore reproves the columns from the retained frames, so forged
+  frames are refused.
+- Size compliance judges the quantity each producing kernel bounds, declared
+  once per route in `SIZE_COMPLIANCE_DECLARATIONS` (`phydrax/meshing/_sizing.py`,
+  documented under "Size compliance" in the meshing guide). The native CAD
+  solid route judges the p50/p95 circumradius of the scoped boundary triangles
+  against h/sqrt(2), the chart kernel's bound (report rows
+  `size:<control>:p50_circumradius` / `p95_circumradius`; CAD compliance report
+  ids change); S3 / PLC volume boundary faces keep edge <= h; every other
+  route's size statement is unchanged and recorded in the table. The
+  `phx_mc_cad_mesh_solid` documentation states that the CAD volume passes h
+  unchanged as the circumradius target.
 - Fixed-boundary PLC recovery refuses a source triangle whose smallest-angle
   sine is below the 2^-22 relative-determinant floor before meshing
   (`UNRESOLVED` / `INVALID_FACET`, naming the triangle and its polygon, with
@@ -625,6 +682,29 @@
   the surface topology check groups edges instead of sorting them, and the
   boundary polish and sliver pass allocate less (about 13% fewer cycles on
   the implicit sphere and torus rows).
+- Native CAD face smoothing searches for better vertex positions: below the
+  kernel's angle-pass target a compass search raises the star's worst 3D
+  angle (the fans at fixed curve vertices held the smallest angles), and an
+  edge longer than the face metric's unit is shortened by a step toward its
+  far end; every move keeps the chart star oriented and the kernel's metric
+  circumradius bound. On the quadric (tol = kappa_max h^2 / 4, theta = 1) the
+  minimum 3D angle and the mesh-to-surface distance beat Gmsh at the ledger's
+  four sizes with the same triangle count. Face meshes change. The size
+  guard evaluates the star's starting radius only when a move's radius
+  passes `1/sqrt(2)`, stops at the first cell past its bound, and the
+  long-edge step tests the shortening before the guard (identical meshes;
+  the unit sphere at h = 0.2 drops from 16.3 to 7.9 ms).
+- Native CAD face meshing sizes faces with one meaning of `h`: the face
+  metric is `I/h^2` intersected with the request's curvature tensor
+  `|II| / (4 theta tol)` (the kernel accepts metric circumradius
+  `<= 1/sqrt(2)`, so linear interpolation error `<= theta tol`; where the
+  curvature term does not bind the metric is exactly `I/h^2`). The C entry no
+  longer meshes at `h/sqrt(2)`. Curves take each face's smallest size
+  `min(h, sqrt(4 theta tol / |k|max))` (the request `h` within three sizes of
+  a face pole, where fixed rings replace kernel points); pole rings use the
+  same size; face flips judge Delaunay in the face metric where the curvature
+  term binds; smoothing keeps the kernel's metric circumradius bound. Face
+  and solid meshes change.
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and

@@ -164,7 +164,7 @@ void check_arguments() {
   int32_t status = 0;
   double lower = 0.0, upper = 0.0;
   uint8_t digest[16] = {};
-  PHX_CHECK(phx_mc_cell_map_validity(2, 4, basis.starts.data(), basis.exponents.data(),
+  PHX_CHECK(phx_mc_cell_map_validity(3, 4, basis.starts.data(), basis.exponents.data(),
                                      basis.numerators.data(), 0, "tetrahedron", 11, 4,
                                      significands.data(), exponents.data(), -32768, 1,
                                      outside.data(), 0.0, &decided, &status, &lower, &upper,

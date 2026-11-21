@@ -264,10 +264,14 @@ def test_restore_under_other_platform_surface_rounding_keeps_identities(
 
 @pytest.mark.meshcore
 @pytest.mark.parametrize("ulps", (1, 7))
-def test_restore_keeps_other_platform_rounding_of_stored_chart_cover(
+def test_restore_adopts_fresh_chart_cover_with_hulled_bounds(
     cad_cylinder_volume: CellMeshingResult, ulps: int
 ) -> None:
-    """A stored cover corner and bound moved by a few ulps are stored evidence."""
+    """A stored cover moved by a few ulps restores to the fresh simplices.
+
+    Restore reproves the cover and adopts the fresh simplices with the larger
+    of the stored and fresh deviation bounds, so the identities are unchanged.
+    """
     accepted = cad_cylinder_volume
 
     def nudge(node: Any) -> Any:
@@ -303,7 +307,13 @@ def test_restore_keeps_other_platform_rounding_of_stored_chart_cover(
     assert restored.certification is not None
     kept = restored.certification.fidelity
     assert kept is not None and kept.coverage is not None
-    assert np.array_equal(kept.coverage.simplices, coverage.simplices)
+    accepted_coverage = accepted.certification.fidelity.coverage
+    assert np.array_equal(kept.coverage.simplices, accepted_coverage.simplices)
+    assert not np.array_equal(kept.coverage.simplices, coverage.simplices)
+    assert np.array_equal(
+        kept.coverage.deviation_bounds,
+        np.maximum(coverage.deviation_bounds, accepted_coverage.deviation_bounds),
+    )
     assert (restored.result_id, restored.certification.report_id) == (
         accepted.result_id,
         accepted.certification.report_id,

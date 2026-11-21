@@ -43,6 +43,7 @@ set(PHX_MC_SOURCES
   src/delaunay3d.cpp
   src/verify_volume.cpp
   src/cell_map_validity.cpp
+  src/polyhedral_certificates.cpp
   src/tet_entities.cpp
   src/box_tree.cpp
   src/deterministic_float.cpp
@@ -67,6 +68,10 @@ set(PHX_MC_SOURCES
   src/hex_topology.cpp
   src/overset.cpp
   src/overset_capi.cpp
+  src/prism_layers.cpp
+  src/prism_layers_capi.cpp
+  src/hex_dominant.cpp
+  src/hex_dominant_capi.cpp
   src/implicit_polygon.cpp
   src/implicit_face_proposals.cpp
   src/quad_topology.cpp
@@ -80,6 +85,7 @@ set(PHX_MC_SOURCES
   src/parallel.cpp
   src/periodic.cpp
   src/plc3d.cpp
+  src/conforming_voronoi.cpp
   src/power_diagram.cpp
   src/predicates.cpp
   src/quadratic_bounds.cpp
@@ -129,6 +135,8 @@ set(PHX_MC_HEADERS
   src/clip3d.hpp
   src/clip_common.hpp
   src/overset.hpp
+  src/prism_layers.hpp
+  src/hex_dominant.hpp
   src/dyadic.hpp
   src/exact_line.hpp
   src/exact_scalar.hpp
@@ -274,9 +282,13 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_delaunay3d)
   phx_mc_add_test(test_verify_volume)
   phx_mc_add_test(test_cell_map_validity)
+  phx_mc_add_test(test_polyhedral_certificates)
   phx_mc_add_test(test_exact_kernels)
   phx_mc_add_test(test_bvh_query)
   phx_mc_add_test(test_overset)
+  phx_mc_add_test(test_prism_layers)
+  phx_mc_add_test(test_hex_dominant)
+  phx_mc_add_test(test_conforming_voronoi)
   phx_mc_add_test(test_exact_polynomial_kernels)
   phx_mc_add_test(test_exact_polynomial_integral)
   phx_mc_add_test(test_exact_basis_integral)

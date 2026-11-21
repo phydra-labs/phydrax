@@ -93,6 +93,7 @@ def _require_route_geometry(inputs: MeshCertificationInputs, /) -> None:
     match route:
         case (
             "volume_plc"
+            | "volume_plc_fidelity"
             | "volume_implicit"
             | "volume_layer"
             | "volume_cad"

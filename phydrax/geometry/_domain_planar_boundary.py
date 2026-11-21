@@ -305,8 +305,6 @@ def _matching_source_pairs(
     allowed_pairs: tuple[tuple[int, int], ...],
     /,
 ) -> set[tuple[int, int]]:
-    from ._planar_coverage import _overlap
-
     pieces = (
         ((0, 1, 2), (0, 2, 3))
         if dimension == 3 and len(points) == 4
@@ -315,19 +313,39 @@ def _matching_source_pairs(
     pairs: set[tuple[int, int]] = set()
     for piece in pieces:
         piece_points = tuple(points[index] for index in piece)
-        for row in source_index.candidates(piece_points, dimension):
-            source = source_index.facets[row]
-            if (
-                source.region_pair in allowed_pairs
-                and source.region_pair not in pairs
-                and _overlap(
-                    source,
-                    OrientedFacet(-1, source.region_pair, piece_points),
-                    dimension,
-                )
-                > 0
-            ):
-                pairs.add(source.region_pair)
+        pairs.update(
+            _overlapping_source_pairs(
+                source_index,
+                piece_points,
+                source_index.candidates(piece_points, dimension),
+                dimension,
+                allowed_pairs,
+            )
+        )
+    return pairs
+
+
+def _overlapping_source_pairs(
+    source_index: SourceFacetIndex,
+    points: tuple[tuple[Fraction, ...], ...],
+    candidates: tuple[int, ...],
+    dimension: int,
+    allowed_pairs: tuple[tuple[int, int], ...],
+    /,
+) -> set[tuple[int, int]]:
+    """Allowed source material pairs of candidate rows with positive overlap."""
+    from ._planar_coverage import _overlap
+
+    pairs: set[tuple[int, int]] = set()
+    for row in candidates:
+        source = source_index.facets[row]
+        if (
+            source.region_pair in allowed_pairs
+            and source.region_pair not in pairs
+            and _overlap(source, OrientedFacet(-1, source.region_pair, points), dimension)
+            > 0
+        ):
+            pairs.add(source.region_pair)
     return pairs
 
 
@@ -517,14 +535,16 @@ def _polyhedral_target_facets(
     owner_local = np.asarray(connectivity.face_owner_local, dtype=np.int64)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
     cell_face_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
-    result: list[OrientedFacet] = []
-    issues: list[BoundaryIssue] = []
-    target_id = 0
+    # Per face in order: its issue, or its pair and outward triangles.
+    entries: list[
+        BoundaryIssue
+        | tuple[int, tuple[int, int], tuple[tuple[tuple[Fraction, ...], ...], ...]]
+    ] = []
     for face in range(connectivity.face_count):
         owner = int(owners[face])
         neighbor = int(neighbors[face])
         if owner < 0 or owner >= cell_count or neighbor >= cell_count or neighbor < -1:
-            issues.append(
+            entries.append(
                 BoundaryIssue(
                     "polyhedral_face_incidence",
                     (face,),
@@ -543,7 +563,7 @@ def _polyhedral_target_facets(
         start, stop = int(face_offsets[face]), int(face_offsets[face + 1])
         loop = tuple(coordinates[int(vertex)] for vertex in face_vertices[start:stop])
         if any(point is None for point in loop):
-            issues.append(
+            entries.append(
                 BoundaryIssue(
                     "polyhedral_face_coordinates",
                     (face,),
@@ -556,7 +576,7 @@ def _polyhedral_target_facets(
         owner_row = int(cell_face_offsets[owner]) + int(owner_local[face])
         outward_sign = int(cell_face_signs[owner_row])
         if outward_sign not in (-1, 1):
-            issues.append(
+            entries.append(
                 BoundaryIssue(
                     "polyhedral_face_orientation",
                     (face,),
@@ -569,19 +589,42 @@ def _polyhedral_target_facets(
         try:
             triangles = _triangulate_planar_loop(points)
         except (TypeError, ValueError, ArithmeticError) as error:
-            issues.append(
+            entries.append(
                 BoundaryIssue(
                     "polyhedral_face_triangulation", (face,), str(error), "unresolved"
                 )
             )
             continue
+        entries.append((face, pair, triangles))
+    # One batched screen of every target triangle against the source planes.
+    queries = tuple(
+        triangle
+        for entry in entries
+        if not isinstance(entry, BoundaryIssue)
+        for triangle in entry[2]
+    )
+    candidates = (
+        source_index.batch_candidates(queries) if source_index is not None else ()
+    )
+    result: list[OrientedFacet] = []
+    issues: list[BoundaryIssue] = []
+    target_id = 0
+    query = 0
+    for entry in entries:
+        if isinstance(entry, BoundaryIssue):
+            issues.append(entry)
+            continue
+        face, pair, triangles = entry
         source_pairs: set[tuple[int, int]] = set()
         if source_index is not None:
             allowed = (pair, pair[::-1])
             for triangle in triangles:
                 source_pairs.update(
-                    _matching_source_pairs(source_index, triangle, 3, allowed)
+                    _overlapping_source_pairs(
+                        source_index, triangle, candidates[query], 3, allowed
+                    )
                 )
+                query += 1
         if len(source_pairs) > 1:
             issues.append(
                 BoundaryIssue(
