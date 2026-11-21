@@ -17,6 +17,7 @@
 // for them.
 
 #include <cmath>
+#include <limits>
 
 #include "directed_interval.hpp"
 #include "predicates.hpp"
@@ -95,13 +96,19 @@ struct SphereFrame {
 //   S_yy = r ((2g' + 4y^2 g'') W + 4y g' e2 + sigma (2h' + 4y^2 h'') a)
 // `first`, `last` select the terms. False when q = x^2 + y^2 may exceed
 // kMaximumSquaredRadius or an enclosure is not finite.
+// `radius_squared`: an upper bound on x^2 + y^2 over the points of interest
+// when they lie in a disk smaller than the box (the box's own bound applies
+// otherwise).
 inline bool jets(const SphereFrame& frame, int sigma, const di::Interval& x,
-                 const di::Interval& y, int first, int last, di::Interval out[4][3]) {
+                 const di::Interval& y, int first, int last, di::Interval out[4][3],
+                 double radius_squared = std::numeric_limits<double>::infinity()) {
   using di::add, di::multiply;
   const di::Interval xx = square(x), yy = square(y);
   // x^2 + y^2 >= 0: the outward sum's lower end may be clamped there.
   di::Interval q = add(xx, yy);
   q.lower = std::max(q.lower, 0.0);
+  q.upper = std::min(q.upper, radius_squared);
+  if (!(q.lower <= q.upper)) return false;
   const di::Interval s = di::point(static_cast<double>(sigma));
   di::Interval g, h;
   if (first == 0) {

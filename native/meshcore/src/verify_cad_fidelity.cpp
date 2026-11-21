@@ -2118,7 +2118,7 @@ int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& l
                          std::numeric_limits<double>::infinity()};
   double box_upper[2] = {-std::numeric_limits<double>::infinity(),
                          -std::numeric_limits<double>::infinity()};
-  double mismatch = 0.0;
+  double mismatch = 0.0, radius_squared = 0.0;
   for (const Vertex& vertex : leaf.vertices) {
     di::Interval point[2];
     exact_chart_point(vertex, xy, point);
@@ -2126,15 +2126,20 @@ int32_t pole_leaf_bound(const pole::SphereFrame& frame, int sigma, const Leaf& l
       box_lower[axis] = std::min(box_lower[axis], point[axis].lower);
       box_upper[axis] = std::max(box_upper[axis], point[axis].upper);
     }
+    double reach[3] = {di::magnitude(point[0]), di::magnitude(point[1]), 0.0};
+    const double norm = phx::mc::geometry::norm_upper(reach);
+    radius_squared = std::max(radius_squared, di::multiply(di::point(norm), di::point(norm)).upper);
     double error = 0.0;
     const int32_t status = pole_vertex_error(frame, sigma, vertex, point, vertices, error);
     if (status != PHX_MC_OK) return status;
     mismatch = std::max(mismatch, error);
   }
   vertex_term = mismatch;
+  // The remainder needs the Hessian on the leaf triangle only (half_extent),
+  // which lies in the disk of its largest vertex norm.
   di::Interval jets[4][3];
   if (!pole::jets(frame, sigma, {box_lower[0], box_upper[0]}, {box_lower[1], box_upper[1]}, 1, 3,
-                  jets))
+                  jets, radius_squared))
     return PHX_MC_UNRESOLVED;
   const auto ex = half_extent(box_lower[0], box_upper[0]);
   const auto ey = half_extent(box_lower[1], box_upper[1]);
@@ -2283,7 +2288,15 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
             second[term][axis] = {jet_lower[9 + 3 * term + axis], jet_upper[9 + 3 * term + axis]};
       } else {
         di::Interval jets[4][3];
-        if (!pole::jets(frame, sigma, x, y, 1, 3, jets)) return false;
+        // The piece (a segment) lies in the disk of its larger endpoint norm.
+        double radius_squared = 0.0;
+        for (const auto* end : {points[k], points[k + 1]}) {
+          double reach[3] = {di::magnitude(end[0]), di::magnitude(end[1]), 0.0};
+          const double norm = phx::mc::geometry::norm_upper(reach);
+          radius_squared =
+              std::max(radius_squared, di::multiply(di::point(norm), di::point(norm)).upper);
+        }
+        if (!pole::jets(frame, sigma, x, y, 1, 3, jets, radius_squared)) return false;
         for (int term = 0; term < 3; ++term)
           for (int axis = 0; axis < 3; ++axis) second[term][axis] = jets[1 + term][axis];
       }
@@ -2337,7 +2350,11 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
   const double width = di::add(di::point(mismatch), di::point(sag)).upper;
   const double reach = di::add(di::point(rho_hull.upper), di::point(mismatch)).upper;
   di::Interval jets[4][3];
-  if (!pole::jets(frame, sigma, {-reach, reach}, {-reach, reach}, 1, 3, jets)) return false;
+  // P(gamma), Phi and H lie in the disk |z| <= reach (|P(gamma)| = rho, the
+  // corners within the mismatch of it, the disk convex).
+  if (!pole::jets(frame, sigma, {-reach, reach}, {-reach, reach}, 1, 3, jets,
+                  di::multiply(di::point(reach), di::point(reach)).upper))
+    return false;
   const di::Interval w2 = di::multiply(di::point(width), di::point(width));
   double magnitude[3];
   for (int axis = 0; axis < 3; ++axis) {

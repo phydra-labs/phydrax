@@ -1209,21 +1209,27 @@ struct SphereGrid {
   int32_t sphere = -1;
 };
 
-SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0) {
+// `middle` (two rows only): the latitude of the middle ring.
+SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0,
+                       double middle = std::numeric_limits<double>::quiet_NaN()) {
   SphereGrid g;
   Model& m = g.model;
   const double top = 0x1.921fb54442d18p+0;
   g.sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
   m.surface(g.sphere);
   const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  // low == -top: the bottom side is the south pole line (a second pole use).
+  const bool south = low == -top;
   m.corner(0, 0, 1);
+  m.corner(0, 0, -1);
   for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
   const double ends[4][2] = {{0, low}, {span, low}, {span, top}, {0, top}};
   for (int k = 0; k < 4; ++k) {
     const double* p = ends[k];
     const double* q = ends[(k + 1) % 4];
     const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
-    m.use(k == 2 ? 1 : 0, k == 2 ? 0 : (k < 2 ? k : 2), 0.0, 1.0, pcurve);
+    const bool pole_side = k == 2 || (k == 0 && south);
+    m.use(pole_side ? 1 : 0, k == 2 ? 0 : k == 0 && south ? 1 : (k < 2 ? k : 2), 0.0, 1.0, pcurve);
   }
   m.close_loop(0);
   const phx_mc_cad_model view = m.view();
@@ -1232,9 +1238,13 @@ SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0) {
   EvaluationWorkspace point_workspace;
   const bool full = span >= 2.0 * 0x1.921fb54442d18p+1;
   const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
-  const auto v = [&](int j) { return j == rows ? top : j == 0 ? low : low + (top - low) * j / rows; };
+  const auto v = [&](int j) {
+    if (rows == 2 && j == 1 && !std::isnan(middle)) return middle;
+    return j == rows ? top : j == 0 ? low : low + (top - low) * j / rows;
+  };
   const auto id = [&](int i, int j) -> int64_t {
     if (j == rows) return 0;
+    if (south && j == 0) return 1;
     if (full && i == columns) i = 0;
     return 1 + static_cast<int64_t>(j) * (columns + 1) + i;
   };
@@ -1307,6 +1317,7 @@ SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0) {
 // the seam lens cap, and both adjacent rows' bounds are at least it. Fault
 // caught: either charge call dropped (or overwritten by a later region).
 void full_turn_charges(int columns, int rows_count, double tolerance, double low = 0.0);
+void two_pole_regions();
 
 void pole_region_turns_and_charges() {
   for (const double span : {0x1.921fb54442d18p+0, 0x1.921fb54442d18p+1, 6.2}) {
@@ -1325,6 +1336,17 @@ void pole_region_turns_and_charges() {
   // Interface ring at latitude 0.25 (rho 1.32, pole-chart sag factor 1.52 vs
   // the uv chart's 1.03): the neighbour charge decides.
   full_turn_charges(4, 3, 1.0, -0.409);
+  // MAC 69172b0's witness: the octant, 4 x 4 grid, tol 7.711e-2 certified
+  // with max 7.468e-2 before the angular charge refused 24 of its 32 rows.
+  {
+    SphereGrid octant = sphere_grid(0x1.921fb54442d18p+0, 4, 4);
+    const Verdict verdict = verify(octant.model, octant.mesh, 7.711e-2, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P octant witness: status %d max %.6e\n", verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && worst <= 7.711e-2);
+  }
+  two_pole_regions();
 }
 
 // Every boundary edge of the pole region of a full-turn hemisphere grid:
@@ -1406,6 +1428,87 @@ void full_turn_charges(int columns, int rows_count, double tolerance, double low
               rows_count, tight.item_status[cap_row], tight.item_status[cap_neighbour]);
   PHX_CHECK(tight.item_status[cap_row] != PHX_MC_OK &&
             tight.item_status[cap_neighbour] != PHX_MC_OK);
+}
+
+// Both poles of one full sphere face, two latitude bands meeting at latitude
+// -0.2: the north and the south region meet along that ring, so each
+// region's seam charge falls on the other region's rows; the north caps
+// (pole-chart edge at colatitude 1.77) exceed the south ones (1.37). Every
+// row's bound is at least every adjacent cap of both regions, and just below
+// the largest cap both rows of its edge refuse. Fault caught (MAC 69172b0
+// P3): the south region, bounded after the north one charged its rows,
+// overwrites the larger north charge.
+void two_pole_regions() {
+  const double top = 0x1.921fb54442d18p+0, cap_latitude = 0x1.3f004dc9db074p-1;
+  SphereGrid g = sphere_grid(2.0 * 0x1.921fb54442d18p+1, 16, 2, -top, -0.35);
+  const Verdict verdict = verify(g.model, g.mesh, 1.0, 8);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  g.model.bind_bounds(workspace);
+  const Mesh& mesh = g.mesh;
+  const auto rows = mesh.face_rows.size();
+  const auto at = [&](std::size_t r, int k, int axis) {
+    return mesh.uv[6 * r + 2 * static_cast<std::size_t>(k) + static_cast<std::size_t>(axis)];
+  };
+  std::vector<int> region(rows, 0);
+  for (std::size_t r = 0; r < rows; ++r)
+    for (int k = 0; k < 3; ++k) {
+      const double lat = at(r, k, 1);
+      if (lat == top || lat >= cap_latitude) region[r] = 1;
+      if (lat == -top || lat <= -cap_latitude) region[r] = -1;
+    }
+  double largest = 0.0;
+  std::size_t worst_row = 0, worst_other = 0;
+  int shared = 0;
+  double margin = std::numeric_limits<double>::infinity();
+  for (std::size_t r = 0; r < rows; ++r) {
+    if (region[r] == 0) continue;
+    for (int k = 0; k < 3; ++k) {
+      const int a = k, b = (k + 1) % 3;
+      for (std::size_t s = 0; s < rows; ++s) {
+        if (s == r || region[s] == region[r]) continue;
+        bool joined = false;
+        for (int l = 0; l < 3; ++l)
+          joined |= at(r, a, 0) == at(s, (l + 1) % 3, 0) && at(r, a, 1) == at(s, (l + 1) % 3, 1) &&
+                    at(r, b, 0) == at(s, l, 0) && at(r, b, 1) == at(s, l, 1);
+        if (!joined) continue;
+        double uv_a[2] = {at(r, a, 0), at(r, a, 1)}, uv_b[2] = {at(r, b, 0), at(r, b, 1)};
+        double c[2][2], out[3];
+        for (int end = 0; end < 2; ++end) {
+          const double* point = end == 0 ? uv_a : uv_b;
+          if (point[1] == region[r] * top) {
+            c[end][0] = c[end][1] = 0.0;
+            continue;
+          }
+          double image[4];
+          PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, region[r], point, image) ==
+                    PHX_MC_OK);
+          c[end][0] = image[0] + 0.5 * (image[1] - image[0]);
+          c[end][1] = image[2] + 0.5 * (image[3] - image[2]);
+        }
+        const double* x_a = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(a)];
+        const double* x_b = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(b)];
+        PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, region[r], uv_a, uv_b, c[0], c[1], x_a,
+                                     x_b, out) == PHX_MC_OK);
+        PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[s] >= out[0]);
+        if (region[s] != 0) ++shared;
+        if (region[s] != 0 && out[0] > largest) largest = out[0], worst_row = r, worst_other = s;
+        if (region[s] != 0) margin = std::min(margin, verdict.upper[s] / out[0]);
+      }
+    }
+  }
+  std::printf("P two pole regions: status %d edges between regions %d largest cap %.6e min "
+              "other-region upper/cap %.4f\n",
+              verdict.status, shared, largest, margin);
+  PHX_CHECK(shared > 0);
+  const Verdict tight = verify(g.model, g.mesh, 0.999 * largest, 12);
+  std::printf("P two pole regions at 0.999 cap: statuses %d %d\n", tight.item_status[worst_row],
+              tight.item_status[worst_other]);
+  PHX_CHECK(tight.item_status[worst_row] != PHX_MC_OK &&
+            tight.item_status[worst_other] != PHX_MC_OK);
 }
 }  // namespace
 
