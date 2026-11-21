@@ -3,52 +3,59 @@
 //
 // Conforming Voronoi cells of a triangulated solid (phx_mc_conforming_voronoi).
 //
-// Seeds. Automatic seeds follow the size h: sharp feature corners, feature
-// edges sampled at spacing h, then a maximal Poisson-disk sample of the
-// surface at radius h (candidates in Morton order); every surface sample p
-// with inward offset direction m (n at smooth points, the least-squares
-// solution of n_k . m = 1 over the incident normals at features) gives a seed
-// p - h/2 m on each solid side of its triangle, kept when it lies on that side
-// (vertical ray parity with exact orient2d) and at least h/4 from the surface.
-// A body-centred cubic lattice of cell volume h^3 fills each region beyond
-// 3h/2 of the surface. Every automatic seed is displaced by a deterministic
-// hash of relative size 2^-10: symmetric seed patterns (feature samples about
-// a corner) are exactly cospherical, and the displacement splits them into
-// Voronoi features near 2^-10 h rather than at rounding scale; eight box
-// seeds far outside close the diagram.
+// The output is the Voronoi diagram of interior seeds and mirrored exterior
+// ghost seeds, restricted to the interior seeds: every cell is the exact,
+// closed, convex Voronoi cell of its seed, and the boundary is formed by the
+// bisector faces between interior seeds and ghosts (VoroCrust's construction).
 //
-// Cells. The exact Delaunay triangulation (delaunay3d) gives the Voronoi
-// diagram. The restricted Voronoi diagram of the surface is built triangle by
-// triangle: a triangle is clipped (Sutherland-Hodgman) by the bisectors of the
-// Delaunay neighbours of each seed met in a breadth-first walk. A clipped
-// vertex is symbolic: a triangle corner, a triangle edge on the bisector of two
-// seeds, or the point of the triangle on the bisectors of three seeds (where a
-// Voronoi edge pierces it). In barycentric coordinates every constraint is a
-// linear form (a unit vector, or the row of g_ix = |x - s_i|^2 - |x - s_x|^2 at
-// the corners), a vertex is the cross product of its two forms, and the side
-// of a vertex against bisector (i, l) is sign(r_l . (c1 x c2)) sign(1 . (c1 x
-// c2)): a polynomial in the input coordinates, evaluated with a running error
-// bound and exactly (expansions) when the bound does not decide. Symbolic keys
-// weld vertices without tolerances. Voronoi vertices (tet circumcentres) get
-// their region by a walk over the triangulation from a box seed's tet: along a
-// Voronoi edge the region changes at each piercing point, from the back to the
-// front region of the pierced triangle when the edge runs along its normal
-// (exact sign of n_t . N); every second arrival must agree.
+// Seeds, for the cell size h, surface spacing r = 0.75 h and depth d = 0.3 r:
+// - Surface samples: corners (feature degree other than 0 and 2), feature
+//   chains at spacing about r, then a maximal Poisson-disk sample of radius r
+//   (barycentric candidates in Morton order).
+// - Smooth sample p on triangle t: a seed p + c_t n - d n on every solid side
+//   of t, where the curvature shift c_t (0.15 times the mean offset of the
+//   same-patch neighbours from the tangent plane, exactly 0 on a plane) moves
+//   the mirror plane inside convex surfaces so that the bisector surface
+//   straddles the input.
+// - Feature edge sample: around the edge the incident triangles bound angular
+//   sectors; every solid sector gets seeds at radius d / sin(a) at angular
+//   offset a from its bounding planes (a = min(smallest sector / 2, 45 deg)),
+//   and more seeds inside so that they are at most 90 deg apart.
+// - Corner: the sector seeds of every incident feature edge, placed at
+//   distance d from the corner along that edge.
+// - Body-centred cubic lattice of cell volume h^3 beyond 1.2 r of the surface.
+// - Ghosts: every interior seed s within 1.2 r of the surface is reflected
+//   across the shifted tangent plane of each of its feet: a foot is the
+//   nearest point of the surface among triangles whose normals lie within the
+//   feature angle of each other, and a local minimum of the distance. A ghost
+//   is kept when the foot's triangle separates s's region from the exterior
+//   and the ghost lies outside every region (exact vertical-ray parity).
+// - Every seed is rounded to the grid 2^(e - 40), e the exponent of the
+//   largest coordinate: reflections across axis-aligned planes are then
+//   exact, so the bisectors lie exactly on those planes.
+// Seeding is a function of the input alone (no random state): deterministic.
 //
-// A cell is a connected component of (Voronoi cell of a seed) intersected
-// with one region. Cells whose seed meets no surface piece are Voronoi cells
-// taken directly from the dual; others get their surface pieces (merged per
-// source facet) and, for every Delaunay neighbour j, the loops of the bisector
-// face: its Voronoi edge portions split at piercing points plus the surface
-// curve on the bisector, chained per region.
+// Cells. The exact Delaunay triangulation (delaunay3d, symbolic perturbation)
+// of all seeds plus eight far box seeds gives the diagram. Adjacent tets with
+// exactly cospherical vertices (exact insphere = 0) share one Voronoi vertex;
+// the face of cell i towards seed j is the ring of Voronoi vertices around
+// Delaunay edge (i, j) with repeats removed, dropped when fewer than three
+// remain. Vertices are exact circumcentres (expansions); the published
+// coordinates are their nearest binary64 values.
 //
-// Certification (prove): every cell closed (each directed edge met once by
-// its reverse), every surface triangle covered by its pieces, every region's
-// cell volumes summing to its volume, and exact convexity: a clipped cell is
-// convex exactly when no reflex surface edge (exact orient3d) meets its
-// surface faces (Voronoi cells are convex). A degenerate exact predicate, an
-// inconsistent region walk or a failed certificate repairs automatic seeds by
-// a new displacement and rebuilds, up to the displacement bound h 2^-6.
+// Repair: an interior cell meeting a box seed, or a boundary vertex farther
+// than 1.2 r from the surface, gets a ghost: its seed reflected across the
+// nearest triangle to the offending vertex. Rebuilt until no cell leaks; every
+// (seed, triangle) pair is used at most once, so repair terminates.
+//
+// Certification (prove): every cell closed (each directed edge met once by its
+// reverse), the triangulation locally Delaunay at every face of an interior
+// seed's star (exact insphere <= 0: the cells are exactly Voronoi cells, hence
+// convex), and an upper bound on the distance of every boundary face to the
+// surface: the distance to one triangle is convex, so its maximum over a
+// piece of a face is attained at the piece's corners; pieces are split until
+// the bound meets the vertex maximum. The volume error against the input
+// solid is reported with or without prove.
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -65,15 +72,13 @@
 #include "expansion.hpp"
 #include "floating_point_mode.hpp"
 #include "geometry3.hpp"
-#include "key_map.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
 struct phx_mc_voronoi_cells {
   std::vector<double> vertices;
-  std::vector<int8_t> vertex_kinds;
-  std::vector<int32_t> vertex_sources;  // two per vertex
+  std::vector<int32_t> vertex_triangles;  // nearest input triangle of a boundary vertex, else -1
   std::vector<int64_t> face_offsets{0};
   std::vector<int32_t> face_vertices;
   std::vector<int32_t> face_cells;  // two per face
@@ -82,11 +87,10 @@ struct phx_mc_voronoi_cells {
   std::vector<int32_t> cell_regions;
   std::vector<double> cell_volumes;
   std::vector<double> cell_centroids;
-  std::vector<uint8_t> cell_convex;
   std::vector<double> seeds;
+  std::vector<int32_t> seed_regions;
   // Exact coordinates of every vertex: x_k = N_k / D, the expansions
   // N_0, N_1, N_2, D of vertex v at exact_offsets[4 v + 0 .. 4 v + 4].
-  // `vertices` holds their correctly rounded (nearest-even) values.
   std::vector<int64_t> exact_offsets{0};
   std::vector<double> exact_values;
   std::vector<double> stats = std::vector<double>(PHX_MC_CONFORMING_VORONOI_STATS, 0.0);
@@ -100,63 +104,11 @@ double seconds_since(Clock::time_point start) {
   return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
-constexpr double kUnit = 0x1p-53;
-
-// A binary64 value with a bound on its distance to the exact value.
-struct Bounded {
-  double v;
-  double e;
-};
-inline Bounded operator+(Bounded a, Bounded b) {
-  const double v = a.v + b.v;
-  return {v, a.e + b.e + kUnit * std::fabs(v)};
-}
-inline Bounded operator-(Bounded a, Bounded b) {
-  const double v = a.v - b.v;
-  return {v, a.e + b.e + kUnit * std::fabs(v)};
-}
-inline Bounded operator*(Bounded a, Bounded b) {
-  const double v = a.v * b.v;
-  return {v, std::fabs(a.v) * b.e + std::fabs(b.v) * a.e + a.e * b.e + kUnit * std::fabs(v)};
-}
-// 1 / -1 when the bound decides the sign, 2 otherwise. The bound itself was
-// rounded a few dozen times; the factor covers that relative error.
-inline int decided_sign(Bounded a) {
-  const double bound = a.e * (1.0 + 0x1p-40) + 0x1p-1000;
-  if (a.v > bound) return 1;
-  if (a.v < -bound) return -1;
-  return 2;
-}
-
-Bounded bounded_difference(double a, double b) {
-  const double v = a - b;
-  return {v, kUnit * std::fabs(v)};
-}
-Bounded bounded_squared_distance(const double* a, const double* s) {
-  Bounded total{0.0, 0.0};
-  for (int k = 0; k < 3; ++k) {
-    const Bounded d = bounded_difference(a[k], s[k]);
-    total = total + d * d;
-  }
-  return total;
-}
-Expansion exact_squared_distance(const double* a, const double* s) {
-  Expansion total;
-  for (int k = 0; k < 3; ++k) {
-    const Expansion d = Expansion::difference(a[k], s[k]);
-    total = total + d * d;
-  }
-  return total;
-}
-
-template <class T>
-std::array<T, 3> cross3(const std::array<T, 3>& a, const std::array<T, 3>& b) {
-  return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
-}
-template <class T>
-T dot3(const std::array<T, 3>& a, const std::array<T, 3>& b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
+constexpr double kSpacing = 0.75;  // surface sample spacing r / h
+constexpr double kDepth = 0.3;     // seed depth d / r
+constexpr double kReach = 1.2;     // lattice clearance and reflection reach / r
+constexpr double kShift = 0.15;    // curvature shift of the mirror plane
+constexpr double kPi = 3.14159265358979323846;
 
 // Shewchuk's compress: the same value with few, nonadjacent components.
 Expansion compressed(const Expansion& e) {
@@ -219,45 +171,6 @@ double rounded_quotient(Expansion n, Expansion d) {
   }
 }
 
-// 128-bit vertex identity: corner, edge on a bisector, or triangle on two.
-struct Key {
-  uint64_t hi;
-  uint64_t lo;
-  bool operator==(const Key& o) const { return hi == o.hi && lo == o.lo; }
-  bool operator<(const Key& o) const { return hi != o.hi ? hi < o.hi : lo < o.lo; }
-};
-struct KeyHash {
-  std::size_t operator()(const Key& k) const noexcept {
-    uint64_t h = k.hi * 0x9E3779B97F4A7C15ULL ^ (k.lo + 0x632BE59BD9B4E019ULL + (k.hi << 6));
-    h ^= h >> 31;
-    h *= 0xBF58476D1CE4E5B9ULL;
-    h ^= h >> 29;
-    return static_cast<std::size_t>(h);
-  }
-};
-Key corner_key(int32_t vertex) { return {0, static_cast<uint64_t>(vertex)}; }
-Key edge_key(int32_t edge, int32_t a, int32_t b) {
-  if (a > b) std::swap(a, b);
-  return {(uint64_t{1} << 62) | static_cast<uint64_t>(edge),
-          (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b)};
-}
-std::array<int32_t, 3> sorted3(int32_t a, int32_t b, int32_t c) {
-  std::array<int32_t, 3> s{a, b, c};
-  std::sort(s.begin(), s.end());
-  return s;
-}
-Key triple_key(const std::array<int32_t, 3>& s) {
-  return {(static_cast<uint64_t>(s[0])), (static_cast<uint64_t>(s[1]) << 32) |
-                                              static_cast<uint64_t>(s[2])};
-}
-Key face_key(int32_t triangle, const std::array<int32_t, 3>& s) {
-  return {(uint64_t{2} << 62) | (static_cast<uint64_t>(triangle) << 31) |
-              static_cast<uint64_t>(s[0]),
-          (static_cast<uint64_t>(s[1]) << 32) | static_cast<uint64_t>(s[2])};
-}
-
-enum VertexKind : int8_t { kVoronoi = 0, kSurfaceVertex = 1, kSurfaceEdge = 2, kSurfaceFace = 3 };
-
 struct Input {
   int64_t vertex_count;
   const double* vertices;
@@ -265,8 +178,6 @@ struct Input {
   const int32_t* triangles;
   const int32_t* regions;  // (front, back)
   const int32_t* facets;
-  int64_t seed_count;
-  const double* seeds;
   double size;
   double feature_angle;
   bool prove;
@@ -281,36 +192,45 @@ struct Failure : std::exception {
 struct Surface {
   const Input* in = nullptr;
   int32_t region_count = 0;
-  std::vector<int32_t> edges;            // two vertices per undirected edge
-  std::vector<int32_t> triangle_edges;   // edge opposite corner k: 3 t + k
-  std::vector<int32_t> edge_triangles;   // up to two incident triangles (-1 when more/less)
-  std::vector<uint8_t> edge_reflex;      // exact: some incident pair reflex
+  std::vector<int32_t> edges;           // two vertices per undirected edge
+  std::vector<int64_t> edge_offsets;    // incident triangles per edge (CSR)
+  std::vector<int32_t> edge_items;
   std::vector<uint8_t> edge_feature;
-  // Classes of edge-adjacent triangles of one facet and region pair that are
-  // exactly coplanar (orient3d) with equal orientation: pieces merge within one.
+  // Classes of edge-adjacent, exactly coplanar triangles of one facet and
+  // region pair; patches: classes of triangles joined by non-feature edges.
   std::vector<int32_t> plane_class;
-  std::vector<double> normals;           // unit, 3 per triangle
+  std::vector<int32_t> patch;
+  std::vector<double> normals;  // unit, 3 per triangle
   std::vector<double> areas;
+  std::vector<int64_t> star_offsets;  // triangles per vertex (CSR)
+  std::vector<int32_t> star;
   double lower[3]{}, upper[3]{};
   double diameter = 0.0;
   int32_t feature_edges = 0;
-  int32_t corners = 0;
 
   const double* point(int32_t v) const { return in->vertices + 3 * static_cast<int64_t>(v); }
   const double* corner(int32_t t, int k) const {
     return point(in->triangles[3 * static_cast<int64_t>(t) + k]);
   }
+  const double* normal(int32_t t) const { return normals.data() + 3 * static_cast<int64_t>(t); }
   int32_t front(int32_t t) const { return in->regions[2 * static_cast<int64_t>(t)]; }
   int32_t back(int32_t t) const { return in->regions[2 * static_cast<int64_t>(t) + 1]; }
 };
 
+int32_t find_root(std::vector<int32_t>& parent, int32_t a) {
+  while (parent[a] != a) a = parent[a] = parent[parent[a]];
+  return a;
+}
+void unite(std::vector<int32_t>& parent, int32_t a, int32_t b) {
+  a = find_root(parent, a);
+  b = find_root(parent, b);
+  if (a != b) parent[std::max(a, b)] = std::min(a, b);
+}
+
 void build_surface(const Input& in, Surface& s) {
   s.in = &in;
   const int64_t m = in.triangle_count;
-  for (int k = 0; k < 3; ++k) {
-    s.lower[k] = in.vertices[k];
-    s.upper[k] = in.vertices[k];
-  }
+  for (int k = 0; k < 3; ++k) s.lower[k] = s.upper[k] = in.vertices[k];
   for (int64_t v = 0; v < in.vertex_count; ++v) {
     for (int k = 0; k < 3; ++k) {
       s.lower[k] = std::min(s.lower[k], in.vertices[3 * v + k]);
@@ -321,8 +241,7 @@ void build_surface(const Input& in, Surface& s) {
   s.normals.resize(3 * m);
   s.areas.resize(m);
   for (int64_t t = 0; t < m; ++t) {
-    const int32_t front = in.regions[2 * t], back = in.regions[2 * t + 1];
-    s.region_count = std::max({s.region_count, front + 1, back + 1});
+    s.region_count = std::max({s.region_count, in.regions[2 * t] + 1, in.regions[2 * t + 1] + 1});
     double ab[3], ac[3], n[3];
     geometry::difference(s.corner(t, 1), s.corner(t, 0), ab);
     geometry::difference(s.corner(t, 2), s.corner(t, 0), ac);
@@ -331,6 +250,15 @@ void build_surface(const Input& in, Surface& s) {
     if (!(length > 0.0)) throw Failure(PHX_MC_DEGENERATE_INPUT);
     for (int k = 0; k < 3; ++k) s.normals[3 * t + k] = n[k] / length;
     s.areas[t] = 0.5 * length;
+  }
+  s.star_offsets.assign(in.vertex_count + 1, 0);
+  for (int64_t k = 0; k < 3 * m; ++k) ++s.star_offsets[in.triangles[k] + 1];
+  for (int64_t v = 0; v < in.vertex_count; ++v) s.star_offsets[v + 1] += s.star_offsets[v];
+  s.star.resize(3 * m);
+  {
+    std::vector<int64_t> cursor(s.star_offsets.begin(), s.star_offsets.end() - 1);
+    for (int64_t t = 0; t < m; ++t)
+      for (int k = 0; k < 3; ++k) s.star[cursor[in.triangles[3 * t + k]]++] = static_cast<int32_t>(t);
   }
   // Undirected edges by sorting (a, b, triangle, corner).
   std::vector<std::array<int32_t, 4>> rows;
@@ -343,67 +271,83 @@ void build_surface(const Input& in, Surface& s) {
     }
   }
   std::sort(rows.begin(), rows.end());
-  s.triangle_edges.assign(3 * m, -1);
   s.plane_class.resize(m);
   std::iota(s.plane_class.begin(), s.plane_class.end(), 0);
+  s.patch.resize(m);
+  std::iota(s.patch.begin(), s.patch.end(), 0);
+  s.edge_offsets.assign(1, 0);
+  const double cosine = std::cos(in.feature_angle);
   for (std::size_t r = 0; r < rows.size();) {
     std::size_t e = r;
     while (e < rows.size() && rows[e][0] == rows[r][0] && rows[e][1] == rows[r][1]) ++e;
-    const int32_t edge = static_cast<int32_t>(s.edges.size() / 2);
     s.edges.push_back(rows[r][0]);
     s.edges.push_back(rows[r][1]);
-    const bool pair = e - r == 2;
-    s.edge_triangles.push_back(pair ? rows[r][2] : -1);
-    s.edge_triangles.push_back(pair ? rows[r + 1][2] : -1);
-    // Bit 1: reflex seen from the back region; bit 2: from the front region.
-    // Edges without exactly two triangles count as reflex on both sides.
-    uint8_t reflex = pair ? 0 : 3, feature = pair ? 0 : 1;
-    for (std::size_t x = r; x < e; ++x) {
-      s.triangle_edges[3 * rows[x][2] + rows[x][3]] = edge;
-      for (std::size_t y = x + 1; y < e; ++y) {
-        const int32_t t = rows[x][2], u = rows[y][2];
-        const int32_t opposite = in.triangles[3 * static_cast<int64_t>(u) + rows[y][3]];
-        // The other triangle's far corner in front of t bends the surface
-        // towards the front: reflex for the back region, convex for the front.
-        const int bend =
-            orient3d(s.corner(t, 0), s.corner(t, 1), s.corner(t, 2), s.point(opposite));
-        if (bend > 0) reflex |= 1;
-        if (bend < 0) reflex |= 2;
-        if (pair && bend == 0 && in.facets[t] == in.facets[u] && s.front(t) == s.front(u) &&
-            s.back(t) == s.back(u) &&
-            geometry::dot(&s.normals[3 * t], &s.normals[3 * u]) > 0.0) {
-          int32_t a = t, b = u;
-          while (s.plane_class[a] != a) a = s.plane_class[a] = s.plane_class[s.plane_class[a]];
-          while (s.plane_class[b] != b) b = s.plane_class[b] = s.plane_class[s.plane_class[b]];
-          if (a != b) s.plane_class[std::max(a, b)] = std::min(a, b);
-        }
-        const double c = geometry::dot(&s.normals[3 * t], &s.normals[3 * u]);
-        if (c < std::cos(in.feature_angle) || s.front(t) != s.front(u) ||
-            s.back(t) != s.back(u)) {
-          feature = 1;
-        }
+    for (std::size_t x = r; x < e; ++x) s.edge_items.push_back(rows[x][2]);
+    s.edge_offsets.push_back(static_cast<int64_t>(s.edge_items.size()));
+    uint8_t feature = e - r == 2 ? 0 : 1;
+    if (e - r == 2) {
+      const int32_t t = rows[r][2], u = rows[r + 1][2];
+      const double c = geometry::dot(s.normal(t), s.normal(u));
+      if (c < cosine || s.front(t) != s.front(u) || s.back(t) != s.back(u)) feature = 1;
+      const int32_t opposite = in.triangles[3 * static_cast<int64_t>(u) + rows[r + 1][3]];
+      if (in.facets[t] == in.facets[u] && s.front(t) == s.front(u) && s.back(t) == s.back(u) &&
+          c > 0.0 &&
+          orient3d(s.corner(t, 0), s.corner(t, 1), s.corner(t, 2), s.point(opposite)) == 0) {
+        unite(s.plane_class, t, u);
       }
+      if (!feature) unite(s.patch, t, u);
     }
-    if (e - r == 1) feature = 1;
-    s.edge_reflex.push_back(reflex);
     s.edge_feature.push_back(feature);
     s.feature_edges += feature;
     r = e;
   }
   for (int64_t t = 0; t < m; ++t) {
-    int32_t root = static_cast<int32_t>(t);
-    while (s.plane_class[root] != root) root = s.plane_class[root];
-    s.plane_class[t] = root;
+    s.plane_class[t] = find_root(s.plane_class, static_cast<int32_t>(t));
+    s.patch[t] = find_root(s.patch, static_cast<int32_t>(t));
   }
+}
+
+// Closest point q of triangle (a, b, c) to p (Ericson).
+void closest_point(const double* p, const double* a, const double* b, const double* c, double* q) {
+  const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+  const double ac[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+  const double ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+  const auto set = [&](const double* x) { std::copy_n(x, 3, q); };
+  const auto along = [&](const double* x, const double* d, double t) {
+    for (int k = 0; k < 3; ++k) q[k] = x[k] + t * d[k];
+  };
+  const double d1 = geometry::dot(ab, ap), d2 = geometry::dot(ac, ap);
+  if (d1 <= 0.0 && d2 <= 0.0) return set(a);
+  const double bp[3] = {p[0] - b[0], p[1] - b[1], p[2] - b[2]};
+  const double d3 = geometry::dot(ab, bp), d4 = geometry::dot(ac, bp);
+  if (d3 >= 0.0 && d4 <= d3) return set(b);
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) return along(a, ab, d1 / (d1 - d3));
+  const double cp[3] = {p[0] - c[0], p[1] - c[1], p[2] - c[2]};
+  const double d5 = geometry::dot(ab, cp), d6 = geometry::dot(ac, cp);
+  if (d6 >= 0.0 && d5 <= d6) return set(c);
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) return along(a, ac, d2 / (d2 - d6));
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+    const double bc[3] = {c[0] - b[0], c[1] - b[1], c[2] - b[2]};
+    return along(b, bc, (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+  }
+  const double denominator = va + vb + vc;
+  const double v = vb / denominator, w = vc / denominator;
+  for (int k = 0; k < 3; ++k) q[k] = a[k] + ab[k] * v + ac[k] * w;
 }
 
 // Uniform grid of triangles by bounding box.
 struct TriangleGrid {
+  const Surface* s = nullptr;
   double origin[3]{};
   double cell = 1.0;
   int64_t dims[3]{1, 1, 1};
   std::vector<int64_t> offsets;
   std::vector<int32_t> items;
+  mutable std::vector<uint32_t> stamp;
+  mutable uint32_t clock = 0;
 
   int64_t clamp_index(double x, int axis) const {
     const double q = std::floor((x - origin[axis]) / cell);
@@ -412,23 +356,24 @@ struct TriangleGrid {
   }
   int64_t flat(int64_t i, int64_t j, int64_t k) const { return (k * dims[1] + j) * dims[0] + i; }
 
-  void build(const Surface& s, double requested) {
+  void build(const Surface& surface, double requested) {
+    s = &surface;
     double extent = 0.0;
-    for (int k = 0; k < 3; ++k) extent = std::max(extent, s.upper[k] - s.lower[k]);
+    for (int k = 0; k < 3; ++k) extent = std::max(extent, s->upper[k] - s->lower[k]);
     cell = std::max(requested, extent / 256.0);
     for (int k = 0; k < 3; ++k) {
-      origin[k] = s.lower[k];
-      dims[k] = std::max<int64_t>(1, static_cast<int64_t>((s.upper[k] - s.lower[k]) / cell) + 1);
+      origin[k] = s->lower[k];
+      dims[k] = std::max<int64_t>(1, static_cast<int64_t>((s->upper[k] - s->lower[k]) / cell) + 1);
     }
     const int64_t total = dims[0] * dims[1] * dims[2];
     std::vector<int64_t> counts(total + 1, 0);
-    const int64_t m = s.in->triangle_count;
+    const int64_t m = s->in->triangle_count;
     auto range = [&](int64_t t, int64_t lo[3], int64_t hi[3]) {
       for (int a = 0; a < 3; ++a) {
-        double l = s.corner(t, 0)[a], u = l;
+        double l = s->corner(t, 0)[a], u = l;
         for (int k = 1; k < 3; ++k) {
-          l = std::min(l, s.corner(t, k)[a]);
-          u = std::max(u, s.corner(t, k)[a]);
+          l = std::min(l, s->corner(t, k)[a]);
+          u = std::max(u, s->corner(t, k)[a]);
         }
         lo[a] = clamp_index(l, a);
         hi[a] = clamp_index(u, a);
@@ -456,10 +401,17 @@ struct TriangleGrid {
         std::fill(counts.begin(), counts.end(), 0);
       }
     }
+    stamp.assign(m, 0);
   }
 
-  // Whether any triangle lies within `radius` of p.
-  bool any_within(const Surface& s, const double* p, double radius) const {
+  // Calls f(t) once for every triangle whose box meets the box of radius
+  // `radius` about p.
+  template <class F>
+  void visit(const double* p, double radius, F&& f) const {
+    if (++clock == 0) {
+      std::fill(stamp.begin(), stamp.end(), 0);
+      clock = 1;
+    }
     int64_t lo[3], hi[3];
     for (int a = 0; a < 3; ++a) {
       lo[a] = clamp_index(p[a] - radius, a);
@@ -471,13 +423,53 @@ struct TriangleGrid {
           const int64_t c = flat(i, j, k);
           for (int64_t e = offsets[c]; e < offsets[c + 1]; ++e) {
             const int32_t t = items[e];
-            if (geometry::point_triangle_distance(p, s.corner(t, 0), s.corner(t, 1),
-                                                  s.corner(t, 2)) < radius) {
-              return true;
-            }
+            if (stamp[t] == clock) continue;
+            stamp[t] = clock;
+            f(t);
           }
         }
-    return false;
+  }
+
+  bool any_within(const double* p, double radius) const {
+    bool found = false;
+    visit(p, radius, [&](int32_t t) {
+      if (!found &&
+          geometry::point_triangle_distance(p, s->corner(t, 0), s->corner(t, 1), s->corner(t, 2)) <
+              radius) {
+        found = true;
+      }
+    });
+    return found;
+  }
+
+  // Nearest triangle to p (and its closest point), searching outwards from
+  // `radius`; -1 only for an empty surface.
+  int32_t nearest(const double* p, double radius, double* q, double* distance) const {
+    double limit = radius;
+    while (true) {
+      int32_t best = -1;
+      double best_distance = HUGE_VAL;
+      visit(p, limit, [&](int32_t t) {
+        double x[3];
+        closest_point(p, s->corner(t, 0), s->corner(t, 1), s->corner(t, 2), x);
+        const double d = std::sqrt(geometry::squared_distance(p, x));
+        if (d < best_distance || (d == best_distance && t < best)) {
+          best_distance = d;
+          best = t;
+          std::copy_n(x, 3, q);
+        }
+      });
+      if (best >= 0 && best_distance <= limit) {
+        *distance = best_distance;
+        return best;
+      }
+      if (limit > 4.0 * s->diameter + 1.0 && best >= 0) {
+        *distance = best_distance;
+        return best;
+      }
+      if (limit > 4.0 * s->diameter + 1.0) return -1;
+      limit *= 2.0;
+    }
   }
 };
 
@@ -546,17 +538,17 @@ int perturbed_orient2d(const double* a, const double* b, const double* q) {
   return b[0] > a[0] ? 1 : (b[0] < a[0] ? -1 : 0);
 }
 
-// Crossings of the upward vertical line through (x, y) with the surface:
-// (height, region below, region above), sorted by height.
-struct Crossing {
-  double z;
-  int32_t below;
-  int32_t above;
-};
-void column_crossings(const Surface& s, const ColumnGrid& grid, const double* q,
-                      std::vector<Crossing>& out) {
-  out.clear();
+// Region of p by the crossings of the upward vertical ray through it: the
+// region below the lowest crossing above p (exterior when none). The ray
+// position is perturbed symbolically (exact orient2d); heights are binary64.
+int32_t region_at(const Surface& s, const ColumnGrid& grid, const double* q) {
+  if (q[0] < s.lower[0] || q[0] > s.upper[0] || q[1] < s.lower[1] || q[1] > s.upper[1] ||
+      q[2] > s.upper[2]) {
+    return -1;
+  }
   const int64_t c = grid.index(q[1], 1) * grid.dims[0] + grid.index(q[0], 0);
+  double best = HUGE_VAL;
+  int32_t region = -1;
   for (int64_t e = grid.offsets[c]; e < grid.offsets[c + 1]; ++e) {
     const int32_t t = grid.items[e];
     const double* a = s.corner(t, 0);
@@ -569,39 +561,15 @@ void column_crossings(const Surface& s, const ColumnGrid& grid, const double* q,
         perturbed_orient2d(d, a, q) != orientation) {
       continue;
     }
-    const double* n = &s.normals[3 * static_cast<int64_t>(t)];
-    // Height of the triangle plane over (x, y).
+    const double* n = s.normal(t);
     const double z = a[2] - (n[0] * (q[0] - a[0]) + n[1] * (q[1] - a[1])) / n[2];
-    // orientation > 0: the normal points up, so the front lies above.
-    if (orientation > 0) {
-      out.push_back({z, s.back(t), s.front(t)});
-    } else {
-      out.push_back({z, s.front(t), s.back(t)});
-    }
-  }
-  std::sort(out.begin(), out.end(), [](const Crossing& x, const Crossing& y) {
-    return x.z < y.z;
-  });
-}
-
-// Region of a point from the crossings above it (the top is exterior).
-int32_t region_at(const std::vector<Crossing>& crossings, double z) {
-  int32_t region = -1;
-  for (std::size_t k = crossings.size(); k-- > 0;) {
-    if (crossings[k].z <= z) break;
-    region = crossings[k].below;
+    if (z <= q[2] || z >= best) continue;
+    best = z;
+    // orientation > 0: the normal points up, so the back lies below.
+    region = orientation > 0 ? s.back(t) : s.front(t);
   }
   return region;
 }
-
-// ------------------------------------------------------------------ seeds
-uint64_t mix(uint64_t x) {
-  x += 0x9E3779B97F4A7C15ULL;
-  x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
-  x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
-  return x ^ (x >> 31);
-}
-double unit_hash(uint64_t x) { return static_cast<double>(mix(x) >> 11) * 0x1p-53 * 2.0 - 1.0; }
 
 uint64_t morton(const double* p, const double* lower, double scale) {
   uint64_t key = 0;
@@ -616,141 +584,298 @@ uint64_t morton(const double* p, const double* lower, double scale) {
   return key;
 }
 
-struct Sample {
-  double p[3];
-  double m[3];       // inward offset direction (towards the back side)
-  int32_t triangle;  // a triangle carrying the sample
-};
-
-struct HashGrid {
+// Points in a hash grid of cell `cell`.
+struct PointGrid {
   double cell;
   std::unordered_map<uint64_t, std::vector<int32_t>> bins;
-  explicit HashGrid(double c) : cell(c) {}
+  explicit PointGrid(double c) : cell(c) {}
   static uint64_t key(int64_t i, int64_t j, int64_t k) {
     return (static_cast<uint64_t>(i + (1 << 20)) << 42) |
            (static_cast<uint64_t>(j + (1 << 20)) << 21) | static_cast<uint64_t>(k + (1 << 20));
   }
   int64_t index(double x) const { return static_cast<int64_t>(std::floor(x / cell)); }
-  bool near(const std::vector<Sample>& samples, const double* p, double radius) const {
+  void add(const double* p, int32_t id) {
+    bins[key(index(p[0]), index(p[1]), index(p[2]))].push_back(id);
+  }
+  // Calls f(id) for the points of the 27 cells about p.
+  template <class F>
+  void visit(const double* p, F&& f) const {
     const int64_t i = index(p[0]), j = index(p[1]), k = index(p[2]);
     for (int64_t dk = -1; dk <= 1; ++dk)
       for (int64_t dj = -1; dj <= 1; ++dj)
         for (int64_t di = -1; di <= 1; ++di) {
           const auto found = bins.find(key(i + di, j + dj, k + dk));
           if (found == bins.end()) continue;
-          for (const int32_t s : found->second) {
-            if (geometry::squared_distance(samples[s].p, p) < radius * radius) return true;
-          }
+          for (const int32_t id : found->second) f(id);
         }
-    return false;
-  }
-  void add(const std::vector<Sample>& samples, int32_t s) {
-    bins[key(index(samples[s].p[0]), index(samples[s].p[1]), index(samples[s].p[2]))].push_back(s);
   }
 };
 
-// Least-squares direction m with n_k . m = 1 over distinct incident normals.
-void feature_direction(const std::vector<const double*>& normals, double* m) {
-  double a[9] = {0}, b[3] = {0};
-  for (const double* n : normals) {
-    for (int r = 0; r < 3; ++r) {
-      b[r] += n[r];
-      for (int c = 0; c < 3; ++c) a[3 * r + c] += n[r] * n[c];
-    }
-  }
-  const double reg = 1e-3 * static_cast<double>(normals.size());
-  for (int r = 0; r < 3; ++r) a[4 * r] += reg;
-  // Cramer's rule on the regularized symmetric positive definite system.
-  const double det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6]) +
-                     a[2] * (a[3] * a[7] - a[4] * a[6]);
-  for (int c = 0; c < 3; ++c) {
-    double t[9];
-    std::copy(a, a + 9, t);
-    for (int r = 0; r < 3; ++r) t[3 * r + c] = b[r];
-    m[c] = (t[0] * (t[4] * t[8] - t[5] * t[7]) - t[1] * (t[3] * t[8] - t[5] * t[6]) +
-            t[2] * (t[3] * t[7] - t[4] * t[6])) /
-           det;
-  }
-  const double length = geometry::length(m);
-  if (length > 4.0) {
-    for (int k = 0; k < 3; ++k) m[k] *= 4.0 / length;
-  }
-}
-
+// ------------------------------------------------------------------ seeds
 struct SeedSet {
   std::vector<double> points;
-  std::vector<int32_t> regions;  // known region of automatic seeds, -2 unknown
-  int32_t surface_seeds = 0;
-  int32_t lattice_seeds = 0;
+  std::vector<int32_t> regions;  // -1: ghost
+  int32_t interior = 0;
+  int32_t lattice = 0;
 };
 
-void automatic_seeds(const Surface& s, double h, SeedSet& out) {
-  const Input& in = *s.in;
-  const int64_t m = in.triangle_count;
-  // Vertex feature degree and incident triangles.
-  std::vector<int32_t> degree(in.vertex_count, 0);
-  for (std::size_t e = 0; e < s.edge_feature.size(); ++e) {
-    if (s.edge_feature[e] == 0) continue;
-    ++degree[s.edges[2 * e]];
-    ++degree[s.edges[2 * e + 1]];
+class Seeder {
+ public:
+  Seeder(const Surface& s, double h)
+      : s_(s),
+        h_(h),
+        r_(kSpacing * h),
+        depth_(kDepth * kSpacing * h),
+        reach_(kReach * kSpacing * h),
+        cluster_(std::cos(s.in->feature_angle)) {
+    double largest = 0.0;
+    for (int k = 0; k < 3; ++k)
+      largest = std::max({largest, std::fabs(s.lower[k]), std::fabs(s.upper[k])});
+    largest += 4.0 * s.diameter + 1.0;
+    grid_ = std::ldexp(1.0, std::ilogb(largest) - 40);
+    triangles_.build(s, std::max(reach_, 0.5 * h));
+    columns_.build(s, 0.5 * h);
   }
-  std::vector<int64_t> star_offsets(in.vertex_count + 1, 0);
-  for (int64_t k = 0; k < 3 * m; ++k) ++star_offsets[in.triangles[k] + 1];
-  for (int64_t v = 0; v < in.vertex_count; ++v) star_offsets[v + 1] += star_offsets[v];
-  std::vector<int32_t> star(3 * m);
-  {
-    std::vector<int64_t> cursor(star_offsets.begin(), star_offsets.end() - 1);
-    for (int64_t t = 0; t < m; ++t)
-      for (int k = 0; k < 3; ++k) star[cursor[in.triangles[3 * t + k]]++] = static_cast<int32_t>(t);
+
+  double spacing() const { return r_; }
+  double reach() const { return reach_; }
+  const TriangleGrid& triangles() const { return triangles_; }
+  const ColumnGrid& columns() const { return columns_; }
+  const std::vector<double>& shifts() const { return shift_; }
+
+  void snap(double* p) const {
+    for (int k = 0; k < 3; ++k) p[k] = std::nearbyint(p[k] / grid_) * grid_;
   }
-  auto vertex_normals = [&](int32_t v, std::vector<const double*>& normals) {
-    normals.clear();
-    for (int64_t e = star_offsets[v]; e < star_offsets[v + 1]; ++e) {
-      const double* n = &s.normals[3 * static_cast<int64_t>(star[e])];
-      bool distinct = true;
-      for (const double* o : normals) distinct = distinct && geometry::dot(n, o) < 0.999;
-      if (distinct) normals.push_back(n);
+
+  void interior(SeedSet& out) {
+    samples();
+    curvature_shifts();
+    std::vector<double> points;
+    std::vector<int32_t> regions;
+    const auto add = [&](double* q, int32_t region) {
+      snap(q);
+      if (region < 0 || region_at(s_, columns_, q) != region) return;
+      if (triangles_.any_within(q, 0.5 * depth_)) return;
+      points.insert(points.end(), q, q + 3);
+      regions.push_back(region);
+    };
+    for (const Sample& sample : samples_) {
+      switch (sample.kind) {
+        case kSmooth: {
+          const int32_t t = sample.element;
+          const double* n = s_.normal(t);
+          for (int side = 0; side < 2; ++side) {
+            const double sign = side == 0 ? -1.0 : 1.0;
+            double q[3];
+            for (int k = 0; k < 3; ++k) q[k] = sample.p[k] + (shift_[t] + sign * depth_) * n[k];
+            add(q, side == 0 ? s_.back(t) : s_.front(t));
+          }
+          break;
+        }
+        case kEdge:
+          edge_seeds(sample, add);
+          break;
+        case kCorner:
+          corner_seeds(sample, add);
+          break;
+      }
     }
-  };
-  std::vector<Sample> samples;
-  HashGrid grid(h);
-  std::vector<const double*> normals;
-  int32_t corner_count = 0;
-  // Corners: feature degree other than 0 and 2.
-  for (int32_t v = 0; v < in.vertex_count; ++v) {
-    if (degree[v] == 0 || degree[v] == 2) continue;
-    Sample sample{};
-    std::copy_n(s.point(v), 3, sample.p);
-    vertex_normals(v, normals);
-    feature_direction(normals, sample.m);
-    sample.triangle = star[star_offsets[v]];
-    samples.push_back(sample);
-    grid.add(samples, static_cast<int32_t>(samples.size() - 1));
-    ++corner_count;
+    // Body-centred cubic lattice of cell volume h^3 beyond the reach.
+    const double a = std::cbrt(2.0) * h_;
+    int64_t counts[3];
+    for (int k = 0; k < 3; ++k)
+      counts[k] = static_cast<int64_t>(std::ceil((s_.upper[k] - s_.lower[k]) / a)) + 1;
+    for (int shift = 0; shift < 2; ++shift)
+      for (int64_t k = 0; k < counts[2]; ++k)
+        for (int64_t j = 0; j < counts[1]; ++j)
+          for (int64_t i = 0; i < counts[0]; ++i) {
+            double q[3] = {s_.lower[0] + (static_cast<double>(i) + 0.5 * shift + 0.25) * a,
+                           s_.lower[1] + (static_cast<double>(j) + 0.5 * shift + 0.25) * a,
+                           s_.lower[2] + (static_cast<double>(k) + 0.5 * shift + 0.25) * a};
+            snap(q);
+            const int32_t region = region_at(s_, columns_, q);
+            if (region < 0 || triangles_.any_within(q, reach_)) continue;
+            points.insert(points.end(), q, q + 3);
+            regions.push_back(region);
+            ++out.lattice;
+          }
+    // Exact duplicates keep their first occurrence.
+    const int64_t n = static_cast<int64_t>(regions.size());
+    std::vector<int64_t> order(n);
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int64_t x, int64_t y) {
+      for (int k = 0; k < 3; ++k)
+        if (points[3 * x + k] != points[3 * y + k]) return points[3 * x + k] < points[3 * y + k];
+      return x < y;
+    });
+    std::vector<uint8_t> keep(n, 1);
+    for (int64_t k = 1; k < n; ++k) {
+      const int64_t x = order[k - 1], y = order[k];
+      if (points[3 * x] == points[3 * y] && points[3 * x + 1] == points[3 * y + 1] &&
+          points[3 * x + 2] == points[3 * y + 2]) {
+        keep[y] = 0;
+      }
+    }
+    for (int64_t k = 0; k < n; ++k) {
+      if (!keep[k]) continue;
+      out.points.insert(out.points.end(), &points[3 * k], &points[3 * k] + 3);
+      out.regions.push_back(regions[k]);
+    }
+    out.interior = static_cast<int32_t>(out.regions.size());
   }
-  // Feature chains at spacing about h.
-  {
+
+  // Ghost of seed i reflected across triangle t at the foot q (when valid).
+  bool reflect(const SeedSet& seeds, int32_t i, int32_t t, const double* q, double* g) const {
+    const double* p = seeds.points.data() + 3 * static_cast<int64_t>(i);
+    const double* n = s_.normal(t);
+    double d[3];
+    geometry::difference(p, q, d);
+    const double height = geometry::dot(d, n) - shift_[t];
+    const int32_t region = seeds.regions[i];
+    if (height > 0.0 ? s_.front(t) != region || s_.back(t) != -1
+                     : height < 0.0 ? s_.back(t) != region || s_.front(t) != -1 : true) {
+      return false;
+    }
+    for (int k = 0; k < 3; ++k) g[k] = p[k] - 2.0 * height * n[k];
+    snap(g);
+    if (region_at(s_, columns_, g) != -1) return false;
+    // A mirror is as far from the surface as its seed; near a reflex edge a
+    // reflection can land close to another facet (under half its mirror
+    // distance), where it would claim interior points: such a ghost is dropped.
+    double foot[3], distance = 0.0;
+    triangles_.nearest(g, reach_, foot, &distance);
+    return distance >= 0.5 * std::fabs(height);
+  }
+
+  // Ghosts of every interior seed near the surface, across each of its feet.
+  void ghosts(SeedSet& seeds, PointGrid& ghost_grid) {
+    struct Foot {
+      double d;
+      int32_t t;
+      double q[3];
+    };
+    std::vector<Foot> feet;
+    std::vector<int32_t> accepted;
+    double g[3];
+    for (int32_t i = 0; i < seeds.interior; ++i) {
+      const double* p = seeds.points.data() + 3 * static_cast<int64_t>(i);
+      feet.clear();
+      triangles_.visit(p, reach_, [&](int32_t t) {
+        Foot f{};
+        f.t = t;
+        closest_point(p, s_.corner(t, 0), s_.corner(t, 1), s_.corner(t, 2), f.q);
+        f.d = std::sqrt(geometry::squared_distance(p, f.q));
+        if (f.d <= reach_) feet.push_back(f);
+      });
+      std::sort(feet.begin(), feet.end(), [](const Foot& a, const Foot& b) {
+        return a.d != b.d ? a.d < b.d : a.t < b.t;
+      });
+      accepted.clear();
+      for (std::size_t k = 0; k < feet.size(); ++k) {
+        const double* n = s_.normal(feet[k].t);
+        bool clustered = false;
+        for (const int32_t a : accepted)
+          clustered = clustered || geometry::dot(n, s_.normal(feet[a].t)) >= cluster_;
+        if (clustered) continue;
+        // A local minimum: no nearer foot of a similar normal close by.
+        bool dominated = false;
+        for (std::size_t j = 0; j < k && !dominated; ++j) {
+          dominated = feet[j].d < feet[k].d &&
+                      geometry::dot(n, s_.normal(feet[j].t)) >= cluster_ &&
+                      geometry::squared_distance(feet[j].q, feet[k].q) < 0.09 * r_ * r_;
+        }
+        if (dominated) continue;
+        accepted.push_back(static_cast<int32_t>(k));
+        if (reflect(seeds, i, feet[k].t, feet[k].q, g)) add_ghost(seeds, ghost_grid, g);
+      }
+    }
+  }
+
+  // Adds ghost g unless it repeats an existing ghost exactly.
+  bool add_ghost(SeedSet& seeds, PointGrid& ghost_grid, const double* g) const {
+    bool repeated = false;
+    ghost_grid.visit(g, [&](int32_t id) {
+      const double* x = seeds.points.data() + 3 * static_cast<int64_t>(id);
+      repeated = repeated || (x[0] == g[0] && x[1] == g[1] && x[2] == g[2]);
+    });
+    if (repeated) return false;
+    const int32_t id = static_cast<int32_t>(seeds.regions.size());
+    seeds.points.insert(seeds.points.end(), g, g + 3);
+    seeds.regions.push_back(-1);
+    ghost_grid.add(g, id);
+    return true;
+  }
+
+ private:
+  enum Kind : int8_t { kCorner = 0, kEdge = 1, kSmooth = 2 };
+  struct Sample {
+    double p[3];
+    Kind kind;
+    int32_t element;  // vertex (corner), input edge (edge) or triangle (smooth)
+  };
+
+  const Surface& s_;
+  double h_, r_, depth_, reach_, cluster_;
+  double grid_ = 1.0;
+  TriangleGrid triangles_;
+  ColumnGrid columns_;
+  std::vector<Sample> samples_;
+  std::vector<double> shift_;  // per triangle
+  std::vector<int64_t> feature_offsets_;  // feature edges per vertex (CSR)
+  std::vector<int32_t> feature_edges_;
+
+  void samples() {
+    const Input& in = *s_.in;
+    const int64_t m = in.triangle_count;
+    std::vector<int32_t> degree(in.vertex_count, 0);
     std::vector<int64_t> adjacency_offsets(in.vertex_count + 1, 0);
-    for (std::size_t e = 0; e < s.edge_feature.size(); ++e) {
-      if (!s.edge_feature[e]) continue;
-      ++adjacency_offsets[s.edges[2 * e] + 1];
-      ++adjacency_offsets[s.edges[2 * e + 1] + 1];
+    const int32_t edge_count = static_cast<int32_t>(s_.edge_feature.size());
+    for (int32_t e = 0; e < edge_count; ++e) {
+      if (!s_.edge_feature[e]) continue;
+      ++degree[s_.edges[2 * e]];
+      ++degree[s_.edges[2 * e + 1]];
+      ++adjacency_offsets[s_.edges[2 * e] + 1];
+      ++adjacency_offsets[s_.edges[2 * e + 1] + 1];
     }
     for (int64_t v = 0; v < in.vertex_count; ++v) adjacency_offsets[v + 1] += adjacency_offsets[v];
     std::vector<int32_t> adjacency(adjacency_offsets[in.vertex_count]);
-    std::vector<int64_t> cursor(adjacency_offsets.begin(), adjacency_offsets.end() - 1);
-    for (std::size_t e = 0; e < s.edge_feature.size(); ++e) {
-      if (!s.edge_feature[e]) continue;
-      adjacency[cursor[s.edges[2 * e]]++] = static_cast<int32_t>(e);
-      adjacency[cursor[s.edges[2 * e + 1]]++] = static_cast<int32_t>(e);
+    {
+      std::vector<int64_t> cursor(adjacency_offsets.begin(), adjacency_offsets.end() - 1);
+      for (int32_t e = 0; e < edge_count; ++e) {
+        if (!s_.edge_feature[e]) continue;
+        adjacency[cursor[s_.edges[2 * e]]++] = e;
+        adjacency[cursor[s_.edges[2 * e + 1]]++] = e;
+      }
     }
-    std::vector<uint8_t> used(s.edge_feature.size(), 0);
-    auto walk = [&](int32_t start, int32_t first_edge) {
-      std::vector<int32_t> chain{start};
-      int32_t v = start, e = first_edge;
+    feature_offsets_ = adjacency_offsets;
+    feature_edges_ = adjacency;
+    PointGrid grid(r_);
+    const auto push = [&](const double* p, Kind kind, int32_t element) {
+      Sample sample{};
+      std::copy_n(p, 3, sample.p);
+      sample.kind = kind;
+      sample.element = element;
+      grid.add(p, static_cast<int32_t>(samples_.size()));
+      samples_.push_back(sample);
+    };
+    const auto near = [&](const double* p, double radius) {
+      bool found = false;
+      grid.visit(p, [&](int32_t id) {
+        found = found || geometry::squared_distance(samples_[id].p, p) < radius * radius;
+      });
+      return found;
+    };
+    for (int32_t v = 0; v < in.vertex_count; ++v)
+      if (degree[v] != 0 && degree[v] != 2) push(s_.point(v), kCorner, v);
+    // Feature chains at spacing about r.
+    std::vector<uint8_t> used(edge_count, 0);
+    const auto walk = [&](int32_t start, int32_t first) {
+      std::vector<int32_t> chain{start}, chain_edges;
+      int32_t v = start, e = first;
       while (true) {
         used[e] = 1;
-        const int32_t w = s.edges[2 * e] == v ? s.edges[2 * e + 1] : s.edges[2 * e];
+        chain_edges.push_back(e);
+        const int32_t w = s_.edges[2 * e] == v ? s_.edges[2 * e + 1] : s_.edges[2 * e];
         chain.push_back(w);
         v = w;
         if (degree[v] != 2) break;
@@ -762,47 +887,29 @@ void automatic_seeds(const Surface& s, double h, SeedSet& out) {
       }
       double length = 0.0;
       for (std::size_t k = 1; k < chain.size(); ++k)
-        length += std::sqrt(geometry::squared_distance(s.point(chain[k - 1]), s.point(chain[k])));
-      const int64_t pieces = std::max<int64_t>(1, static_cast<int64_t>(std::llround(length / h)));
+        length += std::sqrt(geometry::squared_distance(s_.point(chain[k - 1]), s_.point(chain[k])));
+      const bool closed = chain.front() == chain.back() && degree[chain.front()] == 2;
+      const int64_t pieces = std::max<int64_t>(1, std::llround(length / r_));
       const double step = length / static_cast<double>(pieces);
       double travelled = 0.0;
       std::size_t segment = 1;
-      for (int64_t q = 1; q < pieces || (q == pieces && degree[chain.front()] == 2 && chain.front() == chain.back() && false); ++q) {
+      for (int64_t q = closed ? 0 : 1; q < pieces; ++q) {
         const double target = step * static_cast<double>(q);
         while (segment < chain.size()) {
-          const double piece =
-              std::sqrt(geometry::squared_distance(s.point(chain[segment - 1]), s.point(chain[segment])));
+          const double piece = std::sqrt(
+              geometry::squared_distance(s_.point(chain[segment - 1]), s_.point(chain[segment])));
           if (travelled + piece >= target) break;
           travelled += piece;
           ++segment;
         }
         if (segment >= chain.size()) break;
-        const double* a = s.point(chain[segment - 1]);
-        const double* b = s.point(chain[segment]);
+        const double* a = s_.point(chain[segment - 1]);
+        const double* b = s_.point(chain[segment]);
         const double piece = std::sqrt(geometry::squared_distance(a, b));
-        const double u = piece > 0.0 ? (target - travelled) / piece : 0.0;
-        Sample sample{};
-        for (int k = 0; k < 3; ++k) sample.p[k] = a[k] + u * (b[k] - a[k]);
-        // Normals of the triangles on this feature edge.
-        int32_t lo = chain[segment - 1], hi = chain[segment];
-        if (lo > hi) std::swap(lo, hi);
-        normals.clear();
-        sample.triangle = -1;
-        for (int64_t k = star_offsets[lo]; k < star_offsets[lo + 1]; ++k) {
-          const int32_t t = star[k];
-          const int32_t* tri = in.triangles + 3 * static_cast<int64_t>(t);
-          if (tri[0] != hi && tri[1] != hi && tri[2] != hi) continue;
-          const double* n = &s.normals[3 * static_cast<int64_t>(t)];
-          bool distinct = true;
-          for (const double* o : normals) distinct = distinct && geometry::dot(n, o) < 0.999;
-          if (distinct) normals.push_back(n);
-          if (sample.triangle < 0) sample.triangle = t;
-        }
-        feature_direction(normals, sample.m);
-        if (!grid.near(samples, sample.p, 0.5 * h)) {
-          samples.push_back(sample);
-          grid.add(samples, static_cast<int32_t>(samples.size() - 1));
-        }
+        const double u = piece > 0.0 ? std::clamp((target - travelled) / piece, 0.0, 1.0) : 0.0;
+        double p[3];
+        for (int k = 0; k < 3; ++k) p[k] = a[k] + u * (b[k] - a[k]);
+        if (!near(p, 0.5 * r_)) push(p, kEdge, chain_edges[segment - 1]);
       }
     };
     for (int32_t v = 0; v < in.vertex_count; ++v) {
@@ -810,270 +917,261 @@ void automatic_seeds(const Surface& s, double h, SeedSet& out) {
       for (int64_t k = adjacency_offsets[v]; k < adjacency_offsets[v + 1]; ++k)
         if (!used[adjacency[k]]) walk(v, adjacency[k]);
     }
-    // Closed loops without corners start at their smallest vertex.
-    for (std::size_t e = 0; e < s.edge_feature.size(); ++e) {
-      if (!s.edge_feature[e] || used[e]) continue;
-      const int32_t start = s.edges[2 * e];
-      Sample sample{};
-      std::copy_n(s.point(start), 3, sample.p);
-      vertex_normals(start, normals);
-      feature_direction(normals, sample.m);
-      sample.triangle = star[star_offsets[start]];
-      samples.push_back(sample);
-      grid.add(samples, static_cast<int32_t>(samples.size() - 1));
-      walk(start, static_cast<int32_t>(e));
-    }
-  }
-  // Smooth candidates: vertices off features and per-triangle barycentric
-  // points at spacing at most h / 2, in Morton order.
-  struct Candidate {
-    uint64_t key;
-    int64_t index;  // vertex v as -1 - v, else triangle point 3 * (t * K) ...
-    double p[3];
-    int32_t triangle;
-    int32_t vertex;
-  };
-  std::vector<Candidate> candidates;
-  const double scale = 2097151.0 / std::max(s.diameter, 1e-300);
-  for (int32_t v = 0; v < in.vertex_count; ++v) {
-    if (degree[v] != 0 || star_offsets[v + 1] == star_offsets[v]) continue;
-    Candidate c{};
-    std::copy_n(s.point(v), 3, c.p);
-    c.key = morton(c.p, s.lower, scale);
-    c.index = static_cast<int64_t>(candidates.size());
-    c.triangle = star[star_offsets[v]];
-    c.vertex = v;
-    candidates.push_back(c);
-  }
-  for (int64_t t = 0; t < m; ++t) {
-    double longest = 0.0;
-    for (int k = 0; k < 3; ++k)
-      longest = std::max(longest, geometry::squared_distance(s.corner(t, k), s.corner(t, (k + 1) % 3)));
-    const int64_t K = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(std::sqrt(longest) / (0.5 * h))));
-    for (int64_t i = 0; i <= K; ++i)
-      for (int64_t j = 0; i + j <= K; ++j) {
-        const int64_t k = K - i - j;
-        if (K > 1 && (i == K || j == K || k == K)) continue;
-        if (K == 1 && !(i == 0 && j == 0)) continue;
-        double w[3] = {static_cast<double>(i) / K, static_cast<double>(j) / K,
-                       static_cast<double>(k) / K};
-        if (K == 1) w[0] = w[1] = w[2] = 1.0 / 3.0;
+    for (int32_t e = 0; e < edge_count; ++e)
+      if (s_.edge_feature[e] && !used[e]) walk(s_.edges[2 * e], e);
+    // Smooth candidates: barycentric points at spacing at most r / 3.
+    struct Candidate {
+      uint64_t key;
+      int64_t index;
+      double p[3];
+      int32_t triangle;
+    };
+    std::vector<Candidate> candidates;
+    const double scale = 2097151.0 / std::max(s_.diameter, 1e-300);
+    for (int64_t t = 0; t < m; ++t) {
+      double longest = 0.0;
+      for (int k = 0; k < 3; ++k)
+        longest =
+            std::max(longest, geometry::squared_distance(s_.corner(t, k), s_.corner(t, (k + 1) % 3)));
+      // Interior barycentric points; a triangle of at most twice the
+      // candidate spacing offers its centroid.
+      const int64_t K =
+          std::max<int64_t>(1, static_cast<int64_t>(std::ceil(std::sqrt(longest) / (r_ / 3.0))));
+      const auto offer = [&](const double* w) {
         Candidate c{};
         for (int a = 0; a < 3; ++a)
-          c.p[a] = w[0] * s.corner(t, 0)[a] + w[1] * s.corner(t, 1)[a] + w[2] * s.corner(t, 2)[a];
-        c.key = morton(c.p, s.lower, scale);
+          c.p[a] = w[0] * s_.corner(t, 0)[a] + w[1] * s_.corner(t, 1)[a] + w[2] * s_.corner(t, 2)[a];
+        c.key = morton(c.p, s_.lower, scale);
         c.index = static_cast<int64_t>(candidates.size());
         c.triangle = static_cast<int32_t>(t);
-        c.vertex = -1;
         candidates.push_back(c);
+      };
+      if (K <= 2) {
+        const double w[3] = {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+        offer(w);
+        continue;
       }
-  }
-  std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
-    return a.key != b.key ? a.key < b.key : a.index < b.index;
-  });
-  for (const Candidate& c : candidates) {
-    if (grid.near(samples, c.p, h)) continue;
-    Sample sample{};
-    std::copy_n(c.p, 3, sample.p);
-    sample.triangle = c.triangle;
-    if (c.vertex >= 0) {
-      double n[3] = {0, 0, 0};
-      for (int64_t e = star_offsets[c.vertex]; e < star_offsets[c.vertex + 1]; ++e)
-        for (int k = 0; k < 3; ++k) n[k] += s.areas[star[e]] * s.normals[3 * static_cast<int64_t>(star[e]) + k];
-      const double length = geometry::length(n);
-      for (int k = 0; k < 3; ++k) sample.m[k] = n[k] / length;
-    } else {
-      std::copy_n(&s.normals[3 * static_cast<int64_t>(c.triangle)], 3, sample.m);
+      for (int64_t i = 1; i < K; ++i)
+        for (int64_t j = 1; i + j < K; ++j) {
+          const double w[3] = {static_cast<double>(i) / K, static_cast<double>(j) / K,
+                               static_cast<double>(K - i - j) / K};
+          offer(w);
+        }
     }
-    samples.push_back(sample);
-    grid.add(samples, static_cast<int32_t>(samples.size() - 1));
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+      return a.key != b.key ? a.key < b.key : a.index < b.index;
+    });
+    for (const Candidate& c : candidates)
+      if (!near(c.p, r_)) push(c.p, kSmooth, c.triangle);
+    // Holes of the maximal sample (empty disks up to radius r) bound the
+    // deviation of the bisector surface; a second pass at 3r/4 fills them.
+    for (const Candidate& c : candidates)
+      if (!near(c.p, 0.75 * r_)) push(c.p, kSmooth, c.triangle);
   }
 
-  TriangleGrid triangles;
-  triangles.build(s, 1.5 * h);
-  ColumnGrid columns;
-  columns.build(s, h);
-  std::vector<Crossing> crossings;
-  // Inward-offset seeds on each solid side.
-  const double depth = 0.5 * h;
-  for (const Sample& sample : samples) {
-    for (int side = 0; side < 2; ++side) {
-      const int32_t region = side == 0 ? s.back(sample.triangle) : s.front(sample.triangle);
-      if (region < 0) continue;
-      const double sign = side == 0 ? -1.0 : 1.0;
-      double q[3];
-      for (int k = 0; k < 3; ++k) q[k] = sample.p[k] + sign * depth * sample.m[k];
-      if (triangles.any_within(s, q, 0.25 * h)) continue;
-      column_crossings(s, columns, q, crossings);
-      if (region_at(crossings, q[2]) != region) continue;
-      out.points.insert(out.points.end(), q, q + 3);
-      out.regions.push_back(region);
-      ++out.surface_seeds;
+  void curvature_shifts() {
+    const int64_t m = s_.in->triangle_count;
+    std::vector<double> sample_shift(samples_.size(), 0.0);
+    PointGrid smooth(1.5 * r_);
+    for (std::size_t k = 0; k < samples_.size(); ++k)
+      if (samples_[k].kind == kSmooth) smooth.add(samples_[k].p, static_cast<int32_t>(k));
+    for (std::size_t k = 0; k < samples_.size(); ++k) {
+      const Sample& a = samples_[k];
+      if (a.kind != kSmooth) continue;
+      const int32_t t = a.element;
+      double total = 0.0;
+      int32_t count = 0;
+      smooth.visit(a.p, [&](int32_t id) {
+        const Sample& b = samples_[id];
+        if (static_cast<std::size_t>(id) == k || s_.patch[b.element] != s_.patch[t] ||
+            geometry::squared_distance(a.p, b.p) >= 2.25 * r_ * r_) {
+          return;
+        }
+        ++count;
+        if (s_.plane_class[b.element] == s_.plane_class[t]) return;
+        double d[3];
+        geometry::difference(b.p, a.p, d);
+        total += geometry::dot(d, s_.normal(t));
+      });
+      if (count) sample_shift[k] = kShift * total / count;
+    }
+    // Each triangle takes the shift of the nearest smooth sample of its patch.
+    shift_.assign(m, 0.0);
+    for (int64_t t = 0; t < m; ++t) {
+      double c[3];
+      for (int k = 0; k < 3; ++k)
+        c[k] = (s_.corner(t, 0)[k] + s_.corner(t, 1)[k] + s_.corner(t, 2)[k]) / 3.0;
+      double best = HUGE_VAL;
+      int32_t chosen = -1;
+      smooth.visit(c, [&](int32_t id) {
+        if (s_.patch[samples_[id].element] != s_.patch[t]) return;
+        const double d = geometry::squared_distance(samples_[id].p, c);
+        if (d < best || (d == best && id < chosen)) {
+          best = d;
+          chosen = id;
+        }
+      });
+      if (chosen >= 0) shift_[t] = sample_shift[chosen];
     }
   }
-  // Body-centred cubic lattice of cell volume h^3, beyond 3h/2 of the surface.
-  const double a = std::cbrt(2.0) * h;
-  const double offset[3] = {0.1234567 * a, 0.2345678 * a, 0.3456789 * a};
-  int64_t counts[3];
-  for (int k = 0; k < 3; ++k)
-    counts[k] = static_cast<int64_t>(std::ceil((s.upper[k] - s.lower[k]) / a)) + 1;
-  for (int shift = 0; shift < 2; ++shift) {
-    for (int64_t j = 0; j < counts[1]; ++j)
-      for (int64_t i = 0; i < counts[0]; ++i) {
-        double q[3] = {s.lower[0] + offset[0] + (static_cast<double>(i) + 0.5 * shift) * a,
-                       s.lower[1] + offset[1] + (static_cast<double>(j) + 0.5 * shift) * a, 0.0};
-        column_crossings(s, columns, q, crossings);
-        if (crossings.empty()) continue;
-        for (int64_t k = 0; k < counts[2]; ++k) {
-          q[2] = s.lower[2] + offset[2] + (static_cast<double>(k) + 0.5 * shift) * a;
-          const int32_t region = region_at(crossings, q[2]);
-          if (region < 0) continue;
-          if (triangles.any_within(s, q, 1.5 * h)) continue;
-          out.points.insert(out.points.end(), q, q + 3);
-          out.regions.push_back(region);
-          ++out.lattice_seeds;
-        }
+
+  template <class Add>
+  void edge_seeds(const Sample& sample, Add& add) {
+    const int32_t e = sample.element;
+    const double* a = s_.point(s_.edges[2 * e]);
+    const double* b = s_.point(s_.edges[2 * e + 1]);
+    double tangent[3];
+    geometry::difference(b, a, tangent);
+    const double length = geometry::length(tangent);
+    for (double& x : tangent) x /= length;
+    // An orthonormal frame (b1, b2) of the normal plane, b1 x b2 = tangent.
+    double b1[3] = {0, 0, 0}, b2[3];
+    int axis = 0;
+    for (int k = 1; k < 3; ++k)
+      if (std::fabs(tangent[k]) < std::fabs(tangent[axis])) axis = k;
+    b1[axis] = 1.0;
+    const double along = geometry::dot(b1, tangent);
+    for (int k = 0; k < 3; ++k) b1[k] -= along * tangent[k];
+    const double b1_length = geometry::length(b1);
+    for (double& x : b1) x /= b1_length;
+    geometry::cross(tangent, b1, b2);
+    struct Wing {
+      double angle;
+      int32_t region;  // counterclockwise of the wing
+    };
+    std::vector<Wing> wings;
+    for (int64_t k = s_.edge_offsets[e]; k < s_.edge_offsets[e + 1]; ++k) {
+      const int32_t t = s_.edge_items[k];
+      int32_t third = -1;
+      for (int c = 0; c < 3; ++c) {
+        const int32_t v = s_.in->triangles[3 * static_cast<int64_t>(t) + c];
+        if (v != s_.edges[2 * e] && v != s_.edges[2 * e + 1]) third = v;
       }
+      double d[3];
+      geometry::difference(s_.point(third), a, d);
+      const double x = geometry::dot(d, b1), y = geometry::dot(d, b2);
+      // Rotating the wing direction by +90 degrees about the tangent.
+      double rotated[3];
+      for (int c = 0; c < 3; ++c) rotated[c] = -y * b1[c] + x * b2[c];
+      const bool front = geometry::dot(s_.normal(t), rotated) > 0.0;
+      wings.push_back({std::atan2(y, x), front ? s_.front(t) : s_.back(t)});
+    }
+    std::sort(wings.begin(), wings.end(), [](const Wing& x, const Wing& y) {
+      return x.angle < y.angle;
+    });
+    const std::size_t count = wings.size();
+    double smallest = 2.0 * kPi;
+    for (std::size_t k = 0; k < count; ++k) {
+      const double next = k + 1 < count ? wings[k + 1].angle : wings[0].angle + 2.0 * kPi;
+      smallest = std::min(smallest, next - wings[k].angle);
+    }
+    const double offset = std::min(0.5 * smallest, 0.25 * kPi);
+    if (!(offset > 1e-6)) return;
+    const double radius = std::min(depth_ / std::sin(offset), r_);
+    for (std::size_t k = 0; k < count; ++k) {
+      if (wings[k].region < 0) continue;
+      const double start = wings[k].angle;
+      const double end = k + 1 < count ? wings[k + 1].angle : wings[0].angle + 2.0 * kPi;
+      const double inner = end - start - 2.0 * offset;
+      const int64_t gaps =
+          inner > 1e-9 ? static_cast<int64_t>(std::ceil(inner / (0.5 * kPi))) : 0;
+      for (int64_t g = 0; g <= gaps; ++g) {
+        const double angle =
+            start + offset + (gaps ? inner * static_cast<double>(g) / static_cast<double>(gaps) : 0.0);
+        double q[3];
+        for (int c = 0; c < 3; ++c)
+          q[c] = sample.p[c] + radius * (std::cos(angle) * b1[c] + std::sin(angle) * b2[c]);
+        add(q, wings[k].region);
+      }
+    }
   }
-  // Store counts for evidence.
-  (void)corner_count;
-}
+
+  // Corner: the sector seeds of every incident feature edge at distance d
+  // from the corner along that edge (on a cube corner the three coincide).
+  template <class Add>
+  void corner_seeds(const Sample& sample, Add& add) {
+    const int32_t v = sample.element;
+    for (int64_t k = feature_offsets_[v]; k < feature_offsets_[v + 1]; ++k) {
+      const int32_t e = feature_edges_[k];
+      const int32_t w = s_.edges[2 * e] == v ? s_.edges[2 * e + 1] : s_.edges[2 * e];
+      double u[3];
+      geometry::difference(s_.point(w), s_.point(v), u);
+      const double length = geometry::length(u);
+      Sample near{};
+      for (int c = 0; c < 3; ++c) near.p[c] = sample.p[c] + std::min(depth_, 0.5 * length) * u[c] / length;
+      near.kind = kEdge;
+      near.element = e;
+      edge_seeds(near, add);
+    }
+  }
+};
 
 // ------------------------------------------------------------------ builder
-struct Piece {
-  int32_t triangle;
-  int32_t seed;
-  int32_t begin;
-  int32_t size;
-};
-struct CurveEdge {  // piece edge on a bisector
-  int32_t seed;
-  int32_t other;
-  int32_t from;
-  int32_t to;
-  int32_t triangle;
-};
-struct CrossingRecord {
-  Key triple;
-  int32_t vertex;
-  int32_t triangle;
-};
-struct FaceRecord {
-  int32_t begin;
-  int32_t size;
-  int32_t left_seed, left_region;
-  int32_t right_seed, right_region;  // right_seed -1: boundary
-  int32_t facet;
-};
-
 class Builder {
  public:
-  Builder(const Surface& surface, std::vector<double> seeds, std::vector<int32_t> seed_regions,
-          bool automatic, double h)
-      : s_(surface),
-        seeds_(std::move(seeds)),
-        seed_regions_(std::move(seed_regions)),
-        automatic_(automatic),
-        h_(h) {}
+  Builder(const Surface& surface, const Seeder& seeder, const SeedSet& seeds, double h)
+      : s_(surface), seeder_(seeder), seeds_(seeds.points), regions_(seeds.regions), h_(h) {}
 
-  int32_t run(phx_mc_voronoi_cells& out, double* timings) {
+  void run(phx_mc_voronoi_cells& out, double* timings) {
     auto clock = Clock::now();
     add_box();
     delaunay();
-    timings[0] = seconds_since(clock);
+    timings[0] += seconds_since(clock);
     clock = Clock::now();
-    restricted_surface();
-    timings[1] = seconds_since(clock);
-    clock = Clock::now();
-    regions();
-    timings[2] = seconds_since(clock);
-    clock = Clock::now();
-    assemble();
-    timings[3] = seconds_since(clock);
+    cells();
+    timings[1] += seconds_since(clock);
     clock = Clock::now();
     publish(out);
-    timings[4] = seconds_since(clock);
-    return PHX_MC_OK;
+    timings[2] += seconds_since(clock);
   }
 
-  // Seeds touched by degenerate predicates or inconsistencies.
-  const std::vector<int32_t>& suspects() const { return suspects_; }
-  int64_t degenerate_events() const { return degenerate_; }
-  int32_t interior_count() const { return interior_; }
-  int32_t boundary_cells() const { return boundary_cells_; }
-
-  // Certificates (prove).
-  void certify(phx_mc_voronoi_cells& out);
+  // Interior seeds whose cells leak, with an offending point each.
+  const std::vector<std::pair<int32_t, std::array<double, 3>>>& leaks() const { return leaks_; }
+  void certify(const phx_mc_voronoi_cells& out);
   bool certified() const { return certified_; }
   int64_t open_edges() const { return open_edges_; }
-  double coverage_residual() const { return coverage_residual_; }
-  double volume_residual() const { return volume_residual_; }
-  double planarity_residual() const { return planarity_residual_; }
+  int64_t violations() const { return violations_; }
+  double distance_bound() const { return bound_; }
+  double vertex_distance() const { return vertex_distance_; }
+  int32_t boundary_cells() const { return boundary_cells_; }
+  int32_t boundary_faces() const { return boundary_faces_; }
 
  private:
   const Surface& s_;
+  const Seeder& seeder_;
   std::vector<double> seeds_;
-  std::vector<int32_t> seed_regions_;
-  bool automatic_;
+  std::vector<int32_t> regions_;  // -1 ghost, -2 box
   double h_;
-  int32_t interior_ = 0;  // seeds [0, interior_) are cells; the rest are box seeds
+  int32_t count_ = 0;  // seeds before the box
   std::vector<int32_t> tets_;
   std::vector<int32_t> tet_neighbors_;
-  std::vector<int64_t> neighbor_offsets_;
-  std::vector<int32_t> neighbors_;
   std::vector<int64_t> star_offsets_;
   std::vector<int32_t> star_;
-  // Restricted surface.
-  std::unordered_map<Key, int32_t, KeyHash> keys_;
-  std::vector<double> coords_;
-  std::vector<int8_t> kinds_;
-  std::vector<int32_t> sources_;
-  // Seeds defining each vertex: (i, j) of an edge point, the sorted triple
-  // of a face point, the representative tet of a Voronoi vertex.
-  std::vector<std::array<int32_t, 3>> defs_;
-  std::vector<Piece> pieces_;
-  std::vector<int32_t> piece_vertices_;
-  std::vector<int32_t> piece_supports_;
-  std::vector<CurveEdge> curve_;
-  std::vector<CrossingRecord> crossings_;
-  std::vector<uint8_t> has_piece_;
-  std::vector<int64_t> seed_piece_offsets_;
-  std::vector<int32_t> seed_pieces_;
-  std::vector<int32_t> tet_vertex_;
-  std::vector<int32_t> tet_region_;
   std::vector<int32_t> tet_root_;
-  // Faces.
-  std::vector<int32_t> loop_vertices_;
-  std::vector<FaceRecord> faces_;
-  std::vector<int32_t> suspects_;
-  int64_t degenerate_ = 0;
-  int32_t boundary_cells_ = 0;
+  std::vector<int32_t> tet_vertex_;
+  std::vector<int32_t> vertex_tets_;  // representative tet per vertex
+  std::vector<int32_t> cell_of_seed_;
+  std::vector<int32_t> face_owner_seed_;
+  std::vector<std::pair<int32_t, std::array<double, 3>>> leaks_;
   bool certified_ = false;
   int64_t open_edges_ = 0;
-  double coverage_residual_ = 0.0;
-  double volume_residual_ = 0.0;
-  double planarity_residual_ = 0.0;
-  std::vector<int32_t> piece_face_;
-  std::vector<int8_t> inside_;
-  // Published cells.
-  std::vector<std::array<int32_t, 2>> cell_keys_;  // seed, region per published cell
+  int64_t violations_ = 0;
+  double bound_ = -1.0;
+  double vertex_distance_ = 0.0;
+  int32_t boundary_cells_ = 0;
+  int32_t boundary_faces_ = 0;
 
   const double* seed(int32_t i) const { return seeds_.data() + 3 * static_cast<int64_t>(i); }
-
-  void suspect(int32_t a, int32_t b = -1, int32_t c = -1) {
-    ++degenerate_;
-    for (const int32_t x : {a, b, c})
-      if (x >= 0 && x < interior_) suspects_.push_back(x);
-  }
+  bool interior(int32_t i) const { return i < count_ && regions_[i] >= 0; }
 
   void add_box() {
-    interior_ = static_cast<int32_t>(seeds_.size() / 3);
+    count_ = static_cast<int32_t>(regions_.size());
     double lower[3], upper[3];
     for (int k = 0; k < 3; ++k) {
       lower[k] = s_.lower[k];
       upper[k] = s_.upper[k];
     }
-    for (int32_t i = 0; i < interior_; ++i)
+    for (int32_t i = 0; i < count_; ++i)
       for (int k = 0; k < 3; ++k) {
         lower[k] = std::min(lower[k], seed(i)[k]);
         upper[k] = std::max(upper[k], seed(i)[k]);
@@ -1082,24 +1180,26 @@ class Builder {
     for (int k = 0; k < 3; ++k) extent = std::max(extent, upper[k] - lower[k]);
     const double margin = 4.0 * extent + 1.0;
     for (int corner = 0; corner < 8; ++corner) {
-      for (int k = 0; k < 3; ++k) {
-        const double base = (corner >> k) & 1 ? upper[k] + margin : lower[k] - margin;
-        seeds_.push_back(base + 1e-3 * margin * unit_hash(97 * corner + k));
-      }
+      double p[3];
+      for (int k = 0; k < 3; ++k)
+        p[k] = ((corner >> k) & 1 ? upper[k] + margin : lower[k] - margin) +
+               (0.001 * (k + 1) + 0.0007 * corner) * margin;
+      seeder_.snap(p);
+      seeds_.insert(seeds_.end(), p, p + 3);
+      regions_.push_back(-2);
     }
   }
 
   void delaunay() {
-    const int64_t n = static_cast<int64_t>(seeds_.size() / 3);
+    const int64_t n = static_cast<int64_t>(regions_.size());
     phx_mc_mesh* raw = nullptr;
     const int32_t status = triangulate_3d(n, seeds_.data(), nullptr, false, false, &raw);
     std::unique_ptr<phx_mc_mesh> mesh(raw);
     if (status != PHX_MC_OK) throw Failure(status);
     for (int64_t v = 0; v < n; ++v)
-      if (mesh->vertex_map[v] != v) throw Failure(PHX_MC_DEGENERATE_INPUT);  // duplicate seed
+      if (mesh->vertex_map[v] != v) throw Failure(PHX_MC_INTERNAL_ERROR);  // duplicate seed
     tets_ = std::move(mesh->cells);
     const int64_t count = static_cast<int64_t>(tets_.size() / 4);
-    // Face adjacency by sorting.
     std::vector<std::array<int32_t, 4>> rows;
     rows.reserve(4 * count);
     for (int64_t t = 0; t < count; ++t)
@@ -1121,267 +1221,22 @@ class Builder {
         ++r;
       }
     }
-    // Seed adjacency and stars.
-    std::vector<std::pair<int32_t, int32_t>> pairs;
-    pairs.reserve(12 * count);
     star_offsets_.assign(n + 1, 0);
     for (int64_t t = 0; t < count; ++t)
-      for (int a = 0; a < 4; ++a) {
-        ++star_offsets_[tets_[4 * t + a] + 1];
-        for (int b = 0; b < 4; ++b)
-          if (a != b) pairs.emplace_back(tets_[4 * t + a], tets_[4 * t + b]);
-      }
+      for (int a = 0; a < 4; ++a) ++star_offsets_[tets_[4 * t + a] + 1];
     for (int64_t v = 0; v < n; ++v) star_offsets_[v + 1] += star_offsets_[v];
     star_.resize(star_offsets_[n]);
     std::vector<int64_t> cursor(star_offsets_.begin(), star_offsets_.end() - 1);
     for (int64_t t = 0; t < count; ++t)
       for (int a = 0; a < 4; ++a) star_[cursor[tets_[4 * t + a]]++] = static_cast<int32_t>(t);
-    std::sort(pairs.begin(), pairs.end());
-    pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
-    neighbor_offsets_.assign(n + 1, 0);
-    neighbors_.resize(pairs.size());
-    for (std::size_t k = 0; k < pairs.size(); ++k) {
-      ++neighbor_offsets_[pairs[k].first + 1];
-      neighbors_[k] = pairs[k].second;
-    }
-    for (int64_t v = 0; v < n; ++v) neighbor_offsets_[v + 1] += neighbor_offsets_[v];
   }
 
-  // ------------------------------------------------ predicates on a triangle
-  struct TriangleFrame {
-    const double* c[3];
-    int32_t t;
-  };
-  using Row = std::array<Bounded, 3>;
-  Row row(const TriangleFrame& f, int32_t i, int32_t x) const {
-    Row r;
-    for (int k = 0; k < 3; ++k)
-      r[k] = bounded_squared_distance(f.c[k], seed(i)) - bounded_squared_distance(f.c[k], seed(x));
-    return r;
-  }
-  std::array<Expansion, 3> exact_row(const TriangleFrame& f, int32_t i, int32_t x) const {
-    std::array<Expansion, 3> r;
-    for (int k = 0; k < 3; ++k)
-      r[k] = exact_squared_distance(f.c[k], seed(i)) - exact_squared_distance(f.c[k], seed(x));
-    return r;
-  }
-  // Constraint c < 0: barycentric coordinate (-1 - c) vanishes; c >= 0: bisector (i, c).
-  Row form(const TriangleFrame& f, int32_t i, int32_t c) const {
-    if (c < 0) {
-      Row r{Bounded{0, 0}, Bounded{0, 0}, Bounded{0, 0}};
-      r[-1 - c] = Bounded{1.0, 0.0};
-      return r;
-    }
-    return row(f, i, c);
-  }
-  std::array<Expansion, 3> exact_form(const TriangleFrame& f, int32_t i, int32_t c) const {
-    if (c < 0) {
-      std::array<Expansion, 3> r;
-      r[-1 - c] = Expansion(1.0);
-      return r;
-    }
-    return exact_row(f, i, c);
-  }
-  // Sign of g_il at the vertex (c1, c2) of triangle f in cell i.
-  int side(const TriangleFrame& f, int32_t i, int32_t c1, int32_t c2, int32_t l, const Row& rl) {
-    if (c1 < 0 && c2 < 0) {
-      const int corner = 3 - (-1 - c1) - (-1 - c2);
-      const int sign = decided_sign(rl[corner]);
-      if (sign != 2) return sign;
-      const Expansion exact = exact_squared_distance(f.c[corner], seed(i)) -
-                              exact_squared_distance(f.c[corner], seed(l));
-      return exact.sign();
-    }
-    const Row a = form(f, i, c1), b = form(f, i, c2);
-    const Row x = cross3(a, b);
-    const Bounded num = dot3(rl, x);
-    const Bounded den = x[0] + x[1] + x[2];
-    const int sn = decided_sign(num), sd = decided_sign(den);
-    if (sn != 2 && sd != 2) return sn * sd;
-    const auto ea = exact_form(f, i, c1), eb = exact_form(f, i, c2), el = exact_row(f, i, l);
-    const auto ex = cross3(ea, eb);
-    const Expansion en = dot3(el, ex);
-    const Expansion ed = ex[0] + ex[1] + ex[2];
-    return en.sign() * ed.sign();
+  bool relevant(int32_t t) const {
+    for (int v = 0; v < 4; ++v)
+      if (interior(tets_[4 * static_cast<int64_t>(t) + v])) return true;
+    return false;
   }
 
-  // Global vertex of the symbolic vertex (c1, c2) of triangle t in cell i.
-  int32_t vertex_of(const TriangleFrame& f, int32_t i, int32_t c1, int32_t c2) {
-    Key key;
-    int8_t kind;
-    int32_t source0, source1 = -1;
-    const int32_t* tri = s_.in->triangles + 3 * static_cast<int64_t>(f.t);
-    if (c1 < 0 && c2 < 0) {
-      const int corner = 3 - (-1 - c1) - (-1 - c2);
-      key = corner_key(tri[corner]);
-      kind = kSurfaceVertex;
-      source0 = tri[corner];
-    } else if (c1 < 0 || c2 < 0) {
-      const int32_t e = c1 < 0 ? c1 : c2, x = c1 < 0 ? c2 : c1;
-      const int32_t edge = s_.triangle_edges[3 * static_cast<int64_t>(f.t) + (-1 - e)];
-      key = edge_key(edge, i, x);
-      kind = kSurfaceEdge;
-      source0 = s_.edges[2 * edge];
-      source1 = s_.edges[2 * edge + 1];
-    } else {
-      key = face_key(f.t, sorted3(i, c1, c2));
-      kind = kSurfaceFace;
-      source0 = f.t;
-    }
-    const auto [found, inserted] = keys_.try_emplace(key, static_cast<int32_t>(kinds_.size()));
-    if (!inserted) return found->second;
-    // Barycentric coordinates from the cross product of the two forms.
-    const Row a = form(f, i, c1), b = form(f, i, c2);
-    const Row x = cross3(a, b);
-    double w[3] = {x[0].v, x[1].v, x[2].v};
-    const double sum = w[0] + w[1] + w[2];
-    double p[3] = {0, 0, 0};
-    for (int k = 0; k < 3; ++k) {
-      const double weight = sum != 0.0 ? w[k] / sum : 1.0 / 3.0;
-      for (int axis = 0; axis < 3; ++axis) p[axis] += weight * f.c[k][axis];
-    }
-    if (kind == kSurfaceVertex) std::copy_n(s_.point(source0), 3, p);
-    coords_.insert(coords_.end(), p, p + 3);
-    kinds_.push_back(kind);
-    sources_.push_back(source0);
-    sources_.push_back(source1);
-    if (kind == kSurfaceFace) {
-      const auto triple = sorted3(i, c1, c2);
-      defs_.push_back({triple[0], triple[1], triple[2]});
-    } else {
-      defs_.push_back({i, c1 < 0 ? c2 : c1, -1});
-    }
-    if (kind == kSurfaceFace) {
-      crossings_.push_back({triple_key(sorted3(i, c1, c2)), found->second, f.t});
-    }
-    return found->second;
-  }
-
-  // Exact nearest seed of corner p, walking from `start`; ties go to the
-  // smaller index, the rule every clip applies.
-  int32_t nearest(const double* p, int32_t start) {
-    int32_t current = start;
-    while (true) {
-      int32_t next = -1;
-      for (int64_t e = neighbor_offsets_[current]; e < neighbor_offsets_[current + 1]; ++e) {
-        const int32_t y = neighbors_[e];
-        const int32_t best = next < 0 ? current : next;
-        const Bounded g = bounded_squared_distance(p, seed(best)) - bounded_squared_distance(p, seed(y));
-        int sign = decided_sign(g);
-        if (sign == 2) {
-          sign = (exact_squared_distance(p, seed(best)) - exact_squared_distance(p, seed(y))).sign();
-        }
-        if (sign > 0 || (sign == 0 && y < best)) next = y;
-      }
-      if (next < 0) return current;
-      current = next;
-    }
-  }
-
-  struct PolyVertex {
-    int32_t c1, c2;
-    int32_t support;  // constraint of the edge leaving this vertex
-  };
-
-  // Clips triangle f by the cell of seed i; false when empty.
-  bool clip(const TriangleFrame& f, int32_t i, std::vector<PolyVertex>& poly,
-            std::vector<PolyVertex>& scratch) {
-    poly.clear();
-    poly.push_back({-2, -3, -3});  // corner 0 (b0 = 1): next edge opposite corner 2
-    poly.push_back({-1, -3, -1});  // corner 1
-    poly.push_back({-1, -2, -2});  // corner 2
-    for (int64_t e = neighbor_offsets_[i]; e < neighbor_offsets_[i + 1]; ++e) {
-      const int32_t l = neighbors_[e];
-      const Row rl = row(f, i, l);
-      // The polygon lies in the triangle: corners decide when they agree.
-      const int s0 = decided_sign(rl[0]), s1 = decided_sign(rl[1]), s2 = decided_sign(rl[2]);
-      if (s0 == -1 && s1 == -1 && s2 == -1) continue;
-      std::vector<int8_t>& inside = inside_;
-      inside.resize(poly.size());
-      bool any_in = false, any_out = false;
-      for (std::size_t k = 0; k < poly.size(); ++k) {
-        int sign = side(f, i, poly[k].c1, poly[k].c2, l, rl);
-        if (sign == 0) {
-          suspect(i, l);
-          sign = i < l ? -1 : 1;
-        }
-        inside[k] = sign < 0 ? 1 : 0;
-        any_in = any_in || inside[k];
-        any_out = any_out || !inside[k];
-      }
-      if (!any_out) continue;
-      if (!any_in) return false;
-      scratch.clear();
-      const std::size_t n = poly.size();
-      for (std::size_t k = 0; k < n; ++k) {
-        const PolyVertex& cur = poly[k];
-        const bool next_in = inside[(k + 1) % n] != 0;
-        if (inside[k]) {
-          scratch.push_back(cur);
-          if (!next_in) scratch.push_back({cur.support, l, l});
-        } else if (next_in) {
-          scratch.push_back({cur.support, l, cur.support});
-        }
-      }
-      poly.swap(scratch);
-    }
-    return poly.size() >= 3;
-  }
-
-  void restricted_surface() {
-    const int64_t m = s_.in->triangle_count;
-    has_piece_.assign(interior_, 0);
-    keys_.reserve(static_cast<std::size_t>(4 * m));
-    std::vector<PolyVertex> poly, scratch;
-    std::vector<int32_t> queue, visited;
-    int32_t hint = 0;
-    for (int64_t t = 0; t < m; ++t) {
-      TriangleFrame f{{s_.corner(t, 0), s_.corner(t, 1), s_.corner(t, 2)}, static_cast<int32_t>(t)};
-      const int32_t owner = nearest(f.c[0], hint);
-      hint = owner;
-      queue.assign(1, owner);
-      visited.assign(1, owner);
-      for (std::size_t q = 0; q < queue.size(); ++q) {
-        const int32_t i = queue[q];
-        if (!clip(f, i, poly, scratch)) continue;
-        if (i >= interior_) throw Failure(PHX_MC_UNRESOLVED);  // a box seed reaches the solid
-        Piece piece{static_cast<int32_t>(t), i, static_cast<int32_t>(piece_vertices_.size()),
-                    static_cast<int32_t>(poly.size())};
-        for (const PolyVertex& v : poly) {
-          piece_vertices_.push_back(vertex_of(f, i, v.c1, v.c2));
-          piece_supports_.push_back(v.support);
-        }
-        for (int32_t k = 0; k < piece.size; ++k) {
-          const int32_t support = piece_supports_[piece.begin + k];
-          if (support < 0) continue;
-          curve_.push_back({i, support, piece_vertices_[piece.begin + k],
-                            piece_vertices_[piece.begin + (k + 1) % piece.size],
-                            static_cast<int32_t>(t)});
-          if (std::find(visited.begin(), visited.end(), support) == visited.end()) {
-            visited.push_back(support);
-            queue.push_back(support);
-          }
-        }
-        has_piece_[i] = 1;
-        pieces_.push_back(piece);
-      }
-    }
-    // Pieces by seed.
-    seed_piece_offsets_.assign(interior_ + 1, 0);
-    for (const Piece& p : pieces_) ++seed_piece_offsets_[p.seed + 1];
-    for (int32_t i = 0; i < interior_; ++i) seed_piece_offsets_[i + 1] += seed_piece_offsets_[i];
-    seed_pieces_.resize(pieces_.size());
-    std::vector<int64_t> cursor(seed_piece_offsets_.begin(), seed_piece_offsets_.end() - 1);
-    for (std::size_t p = 0; p < pieces_.size(); ++p)
-      seed_pieces_[cursor[pieces_[p].seed]++] = static_cast<int32_t>(p);
-    std::sort(curve_.begin(), curve_.end(), [](const CurveEdge& a, const CurveEdge& b) {
-      return a.seed != b.seed ? a.seed < b.seed : a.other < b.other;
-    });
-    std::sort(crossings_.begin(), crossings_.end(),
-              [](const CrossingRecord& a, const CrossingRecord& b) { return a.triple < b.triple; });
-  }
-
-  // ------------------------------------------------ Voronoi vertices
   void circumcenter(int32_t t, double* out) const {
     const double* p0 = seed(tets_[4 * t]);
     double a[3], b[3], c[3];
@@ -1396,229 +1251,51 @@ class Builder {
     const double la = geometry::dot(a, a), lb = geometry::dot(b, b), lc = geometry::dot(c, c);
     for (int k = 0; k < 3; ++k) out[k] = p0[k] + (la * bc[k] + lb * ca[k] + lc * ab[k]) / det;
   }
-  // One vertex per class of exactly cospherical adjacent tets (their
-  // circumcentres coincide), so given symmetric seeds leave no zero edges.
-  int32_t tet_vertex(int32_t t) {
-    while (tet_root_[t] != t) t = tet_root_[t] = tet_root_[tet_root_[t]];
-    if (tet_vertex_[t] >= 0) return tet_vertex_[t];
-    double p[3];
-    circumcenter(t, p);
-    tet_vertex_[t] = static_cast<int32_t>(kinds_.size());
-    coords_.insert(coords_.end(), p, p + 3);
-    kinds_.push_back(kVoronoi);
-    defs_.push_back({t, -1, -1});
-    sources_.push_back(t);
-    sources_.push_back(-1);
-    return tet_vertex_[t];
-  }
-  // Exact coordinates N_k / D of vertex v from its defining seeds and surface.
-  void exact_vertex(int32_t v, std::array<Expansion, 3>& n, Expansion& d) const {
-    const auto& def = defs_[v];
-    switch (kinds_[v]) {
-      case kSurfaceVertex: {
-        const double* p = s_.point(sources_[2 * static_cast<int64_t>(v)]);
-        for (int k = 0; k < 3; ++k) n[k] = Expansion(p[k]);
-        d = Expansion(1.0);
-        return;
-      }
-      case kSurfaceEdge: {
-        // The edge point a + g(a) / (g(a) - g(b)) (b - a) on bisector (i, j).
-        const double* a = s_.point(sources_[2 * static_cast<int64_t>(v)]);
-        const double* b = s_.point(sources_[2 * static_cast<int64_t>(v) + 1]);
-        const Expansion ga = exact_squared_distance(a, seed(def[0])) -
-                             exact_squared_distance(a, seed(def[1]));
-        const Expansion gb = exact_squared_distance(b, seed(def[0])) -
-                             exact_squared_distance(b, seed(def[1]));
-        d = compressed(ga - gb);
-        for (int k = 0; k < 3; ++k) {
-          n[k] = compressed(d.scaled(a[k]) + ga * Expansion::difference(b[k], a[k]));
-        }
-        return;
-      }
-      case kSurfaceFace: {
-        // Barycentric weights cross(r_ij, r_ik) of the triangle corners.
-        const int32_t t = sources_[2 * static_cast<int64_t>(v)];
-        const TriangleFrame f{{s_.corner(t, 0), s_.corner(t, 1), s_.corner(t, 2)}, t};
-        auto rj = exact_row(f, def[0], def[1]);
-        auto rk = exact_row(f, def[0], def[2]);
-        for (int k = 0; k < 3; ++k) {
-          rj[k] = compressed(rj[k]);
-          rk[k] = compressed(rk[k]);
-        }
-        auto weights = cross3(rj, rk);
-        for (auto& w : weights) w = compressed(w);
-        d = compressed(weights[0] + weights[1] + weights[2]);
-        for (int k = 0; k < 3; ++k) {
-          n[k] = compressed(weights[0].scaled(f.c[0][k]) + weights[1].scaled(f.c[1][k]) +
-                            weights[2].scaled(f.c[2][k]));
-        }
-        return;
-      }
-      default: {
-        // Circumcentre p0 + (|a|^2 b x c + |b|^2 c x a + |c|^2 a x b) / (2 a . b x c).
-        const int32_t* tet = tets_.data() + 4 * static_cast<int64_t>(def[0]);
-        const double* p0 = seed(tet[0]);
-        std::array<std::array<Expansion, 3>, 3> e;
-        for (int r = 0; r < 3; ++r)
-          for (int k = 0; k < 3; ++k) e[r][k] = Expansion::difference(seed(tet[r + 1])[k], p0[k]);
-        auto bc = cross3(e[1], e[2]), ca = cross3(e[2], e[0]), ab = cross3(e[0], e[1]);
-        for (int k = 0; k < 3; ++k) {
-          bc[k] = compressed(bc[k]);
-          ca[k] = compressed(ca[k]);
-          ab[k] = compressed(ab[k]);
-        }
-        const Expansion la = compressed(dot3(e[0], e[0]));
-        const Expansion lb = compressed(dot3(e[1], e[1]));
-        const Expansion lc = compressed(dot3(e[2], e[2]));
-        d = compressed(dot3(e[0], bc).scaled(2.0));
-        for (int k = 0; k < 3; ++k) {
-          n[k] = compressed(d.scaled(p0[k]) + la * bc[k] + lb * ca[k] + lc * ab[k]);
-        }
-        return;
-      }
-    }
-  }
-  void cospherical_classes() {
-    const int64_t count = static_cast<int64_t>(tets_.size() / 4);
-    tet_root_.resize(count);
-    std::iota(tet_root_.begin(), tet_root_.end(), 0);
-    for (int64_t t = 0; t < count; ++t) {
-      const int32_t* v = tets_.data() + 4 * t;
-      for (int k = 0; k < 4; ++k) {
-        const int32_t u = tet_neighbors_[4 * t + k];
-        if (u < t) continue;
-        int32_t apex = -1;
-        for (int w = 0; w < 4; ++w) {
-          const int32_t x = tets_[4 * static_cast<int64_t>(u) + w];
-          if (x != v[0] && x != v[1] && x != v[2] && x != v[3]) apex = x;
-        }
-        if (insphere(seed(v[0]), seed(v[1]), seed(v[2]), seed(v[3]), seed(apex)) != 0) continue;
-        int32_t a = static_cast<int32_t>(t), b = u;
-        while (tet_root_[a] != a) a = tet_root_[a];
-        while (tet_root_[b] != b) b = tet_root_[b];
-        if (a != b) tet_root_[std::max(a, b)] = std::min(a, b);
-      }
-    }
-  }
 
-  // Sign of n_t . ((s_j - s_i) x (s_k - s_i)).
-  int piercing_sign(int32_t t, const std::array<int32_t, 3>& tri) const {
-    const double* q0 = s_.corner(t, 0);
-    const double* q1 = s_.corner(t, 1);
-    const double* q2 = s_.corner(t, 2);
-    const double* a = seed(tri[0]);
-    const double* b = seed(tri[1]);
-    const double* c = seed(tri[2]);
-    std::array<Bounded, 3> A, B, C, D;
+  // Exact circumcentre p0 + (|a|^2 b x c + |b|^2 c x a + |c|^2 a x b) / (2 a . b x c).
+  void exact_circumcenter(int32_t t, std::array<Expansion, 3>& n, Expansion& d) const {
+    const int32_t* tet = tets_.data() + 4 * static_cast<int64_t>(t);
+    const double* p0 = seed(tet[0]);
+    std::array<std::array<Expansion, 3>, 3> e;
+    for (int r = 0; r < 3; ++r)
+      for (int k = 0; k < 3; ++k) e[r][k] = Expansion::difference(seed(tet[r + 1])[k], p0[k]);
+    const auto cross = [](const std::array<Expansion, 3>& x, const std::array<Expansion, 3>& y) {
+      return std::array<Expansion, 3>{x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2],
+                                      x[0] * y[1] - x[1] * y[0]};
+    };
+    const auto dot = [](const std::array<Expansion, 3>& x, const std::array<Expansion, 3>& y) {
+      return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    };
+    auto bc = cross(e[1], e[2]), ca = cross(e[2], e[0]), ab = cross(e[0], e[1]);
     for (int k = 0; k < 3; ++k) {
-      A[k] = bounded_difference(q1[k], q0[k]);
-      B[k] = bounded_difference(q2[k], q0[k]);
-      C[k] = bounded_difference(b[k], a[k]);
-      D[k] = bounded_difference(c[k], a[k]);
+      bc[k] = compressed(bc[k]);
+      ca[k] = compressed(ca[k]);
+      ab[k] = compressed(ab[k]);
     }
-    const Bounded value = dot3(A, C) * dot3(B, D) - dot3(A, D) * dot3(B, C);
-    const int sign = decided_sign(value);
-    if (sign != 2) return sign;
-    std::array<Expansion, 3> EA, EB, EC, ED;
-    for (int k = 0; k < 3; ++k) {
-      EA[k] = Expansion::difference(q1[k], q0[k]);
-      EB[k] = Expansion::difference(q2[k], q0[k]);
-      EC[k] = Expansion::difference(b[k], a[k]);
-      ED[k] = Expansion::difference(c[k], a[k]);
-    }
-    return (dot3(EA, EC) * dot3(EB, ED) - dot3(EA, ED) * dot3(EB, EC)).sign();
+    const Expansion la = compressed(dot(e[0], e[0]));
+    const Expansion lb = compressed(dot(e[1], e[1]));
+    const Expansion lc = compressed(dot(e[2], e[2]));
+    d = compressed(dot(e[0], bc).scaled(2.0));
+    for (int k = 0; k < 3; ++k) n[k] = compressed(d.scaled(p0[k]) + la * bc[k] + lb * ca[k] + lc * ab[k]);
   }
 
-  struct Pierce {
-    double along;
-    int32_t vertex;
-    int32_t triangle;
-    int direction;  // +1: from back to front of the triangle
-  };
-  // Piercing points of the Voronoi edge of Delaunay triangle `tri` from the
-  // circumcentre of tet `from` towards that of the tet whose apex is `apex`.
-  void pierces(const std::array<int32_t, 3>& tri, int32_t from, int32_t apex,
-               std::vector<Pierce>& out) {
-    out.clear();
-    const Key key = triple_key(tri);
-    auto lo = std::lower_bound(crossings_.begin(), crossings_.end(), key,
-                               [](const CrossingRecord& r, const Key& k) { return r.triple < k; });
-    if (lo == crossings_.end() || !(lo->triple == key)) return;
-    // Orientation of the edge: towards the apex side of the triangle plane.
-    const int towards = orient3d(seed(tri[0]), seed(tri[1]), seed(tri[2]), seed(apex));
-    if (towards == 0) throw Failure(PHX_MC_INTERNAL_ERROR);
-    double origin[3], n[3], u[3], v[3];
-    circumcenter(from, origin);
-    geometry::difference(seed(tri[1]), seed(tri[0]), u);
-    geometry::difference(seed(tri[2]), seed(tri[0]), v);
-    geometry::cross(u, v, n);
-    for (auto it = lo; it != crossings_.end() && it->triple == key; ++it) {
-      const double* x = coords_.data() + 3 * static_cast<int64_t>(it->vertex);
-      double d[3];
-      geometry::difference(x, origin, d);
-      int sign = piercing_sign(it->triangle, tri);
-      if (sign == 0) {
-        suspect(tri[0], tri[1], tri[2]);
-        sign = 1;
-      }
-      out.push_back({towards * geometry::dot(d, n), it->vertex, it->triangle, sign * towards});
-    }
-    std::sort(out.begin(), out.end(), [](const Pierce& a, const Pierce& b) {
-      return a.along != b.along ? a.along < b.along : a.vertex < b.vertex;
-    });
-  }
-  int32_t transition(int32_t region, const Pierce& p, int32_t a, int32_t b, int32_t c) {
-    const int32_t from = p.direction > 0 ? s_.back(p.triangle) : s_.front(p.triangle);
-    const int32_t to = p.direction > 0 ? s_.front(p.triangle) : s_.back(p.triangle);
-    if (from != region) suspect(a, b, c);
-    return to;
+  int32_t apex(int32_t t, int slot) const {
+    const int32_t u = tet_neighbors_[4 * static_cast<int64_t>(t) + slot];
+    const int32_t* f = tets_.data() + 4 * static_cast<int64_t>(t);
+    const int32_t* g = tets_.data() + 4 * static_cast<int64_t>(u);
+    for (int v = 0; v < 4; ++v)
+      if (g[v] != f[0] && g[v] != f[1] && g[v] != f[2] && g[v] != f[3]) return g[v];
+    throw Failure(PHX_MC_INTERNAL_ERROR);
   }
 
-  void regions() {
-    const int64_t count = static_cast<int64_t>(tets_.size() / 4);
-    tet_vertex_.assign(count, -1);
-    cospherical_classes();
-    tet_region_.assign(count, -2);
-    // A box seed's cell misses the solid: its tets are exterior.
-    const int32_t anchor = star_[star_offsets_[interior_]];
-    tet_region_[anchor] = -1;
-    std::vector<int32_t> queue{anchor};
-    std::vector<Pierce> list;
-    for (std::size_t q = 0; q < queue.size(); ++q) {
-      const int32_t t = queue[q];
-      for (int k = 0; k < 4; ++k) {
-        const int32_t u = tet_neighbors_[4 * static_cast<int64_t>(t) + k];
-        if (u < 0) continue;
-        std::array<int32_t, 3> tri{};
-        int c = 0;
-        for (int v = 0; v < 4; ++v)
-          if (v != k) tri[c++] = tets_[4 * static_cast<int64_t>(t) + v];
-        std::sort(tri.begin(), tri.end());
-        int32_t apex = -1;
-        for (int v = 0; v < 4; ++v) {
-          const int32_t w = tets_[4 * static_cast<int64_t>(u) + v];
-          if (w != tri[0] && w != tri[1] && w != tri[2]) apex = w;
-        }
-        int32_t region = tet_region_[t];
-        pierces(tri, t, apex, list);
-        for (const Pierce& p : list) region = transition(region, p, tri[0], tri[1], tri[2]);
-        if (tet_region_[u] == -2) {
-          tet_region_[u] = region;
-          queue.push_back(u);
-        } else if (tet_region_[u] != region) {
-          suspect(tri[0], tri[1], tri[2]);
-        }
-      }
-    }
+  int insphere_of(int32_t t, int32_t e) const {
+    const int32_t* f = tets_.data() + 4 * static_cast<int64_t>(t);
+    return insphere(seed(f[0]), seed(f[1]), seed(f[2]), seed(f[3]), seed(e));
   }
 
-  // ------------------------------------------------ faces
-  // Ring of tets around Delaunay edge (i, j), counterclockwise about s_j - s_i;
-  // apex[q] is shared by ring[q - 1] and ring[q].
-  void ring(int32_t i, int32_t j, int32_t start, std::vector<int32_t>& tets,
-            std::vector<int32_t>& apexes) {
+  // Ring of tets around Delaunay edge (i, j), counterclockwise about s_j - s_i.
+  void ring(int32_t i, int32_t j, int32_t start, std::vector<int32_t>& tets) const {
     tets.clear();
-    apexes.clear();
     int32_t t = start;
     int32_t a = -1, b = -1;
     for (int v = 0; v < 4; ++v) {
@@ -1627,12 +1304,8 @@ class Builder {
       (a < 0 ? a : b) = w;
     }
     if (orient3d(seed(i), seed(j), seed(a), seed(b)) < 0) std::swap(a, b);
-    // tets[q] holds apexes (apexes[q], apexes[q + 1]).
-    apexes.push_back(a);
     while (true) {
       tets.push_back(t);
-      apexes.push_back(b);
-      // Next tet across the face opposite a (it keeps i, j, b).
       int32_t slot = -1;
       for (int v = 0; v < 4; ++v)
         if (tets_[4 * static_cast<int64_t>(t) + v] == a) slot = v;
@@ -1648,375 +1321,189 @@ class Builder {
       a = b;
       b = c;
     }
-    apexes.pop_back();  // the last apex repeats the first
   }
 
-  void emit_face(const std::vector<int32_t>& loop, int32_t left_seed, int32_t left_region,
-                 int32_t right_seed, int32_t right_region, int32_t facet) {
-    FaceRecord face{static_cast<int32_t>(loop_vertices_.size()), static_cast<int32_t>(loop.size()),
-                    left_seed, left_region, right_seed, right_region, facet};
-    loop_vertices_.insert(loop_vertices_.end(), loop.begin(), loop.end());
-    faces_.push_back(face);
-  }
+  // Published cells and faces (loops over tet-class vertices).
+  std::vector<int32_t> loops_;
+  std::vector<int64_t> loop_offsets_{0};
+  std::vector<int32_t> loop_cells_;   // owner cell, neighbour cell (-1 exterior)
+  std::vector<int32_t> loop_seeds_;   // owner seed, neighbour seed
+  std::vector<int32_t> cell_seed_list_;
 
-  // Simple loops of a directed edge set, false at a pinch or open chain.
-  static bool chain(std::vector<std::pair<int32_t, int32_t>>& edges,
-                    std::vector<std::vector<int32_t>>& loops) {
-    loops.clear();
-    std::sort(edges.begin(), edges.end());
-    for (std::size_t k = 1; k < edges.size(); ++k)
-      if (edges[k].first == edges[k - 1].first) return false;
-    std::vector<uint8_t> used(edges.size(), 0);
-    for (std::size_t k = 0; k < edges.size(); ++k) {
-      if (used[k]) continue;
-      std::vector<int32_t> loop;
-      std::size_t current = k;
-      while (!used[current]) {
-        used[current] = 1;
-        loop.push_back(edges[current].first);
-        const int32_t next = edges[current].second;
-        const auto found = std::lower_bound(edges.begin(), edges.end(),
-                                            std::make_pair(next, INT32_MIN));
-        if (found == edges.end() || found->first != next) return false;
-        current = static_cast<std::size_t>(found - edges.begin());
-      }
-      if (current != k || loop.size() < 3) return false;
-      loops.push_back(std::move(loop));
+  int32_t vertex_of(int32_t t) {
+    const int32_t root = find_root(tet_root_, t);
+    if (tet_vertex_[root] < 0) {
+      tet_vertex_[root] = static_cast<int32_t>(vertex_tets_.size());
+      vertex_tets_.push_back(root);
     }
-    return true;
+    return tet_vertex_[root];
   }
 
-  void newell(const std::vector<int32_t>& loop, double* n) const {
-    n[0] = n[1] = n[2] = 0.0;
-    for (std::size_t k = 0; k < loop.size(); ++k) {
-      const double* a = coords_.data() + 3 * static_cast<int64_t>(loop[k]);
-      const double* b = coords_.data() + 3 * static_cast<int64_t>(loop[(k + 1) % loop.size()]);
-      n[0] += (a[1] - b[1]) * (a[2] + b[2]);
-      n[1] += (a[2] - b[2]) * (a[0] + b[0]);
-      n[2] += (a[0] - b[0]) * (a[1] + b[1]);
-    }
-  }
-
-  void bisector_faces() {
+  void cells() {
     const int64_t count = static_cast<int64_t>(tets_.size() / 4);
-    // Unique Delaunay edges with a representative tet, in (i, j) order.
-    std::vector<std::array<int32_t, 3>> edges;
-    edges.reserve(7 * count);
-    for (int64_t t = 0; t < count; ++t)
-      for (int a = 0; a < 4; ++a)
-        for (int b = a + 1; b < 4; ++b) {
-          int32_t i = tets_[4 * t + a], j = tets_[4 * t + b];
-          if (i > j) std::swap(i, j);
-          if (i >= interior_) continue;
-          edges.push_back({i, j, static_cast<int32_t>(t)});
+    // Vertices: classes of adjacent, exactly cospherical relevant tets.
+    tet_root_.resize(count);
+    std::iota(tet_root_.begin(), tet_root_.end(), 0);
+    tet_vertex_.assign(count, -1);
+    std::vector<uint8_t> relevant_tet(count, 0);
+    for (int64_t t = 0; t < count; ++t) relevant_tet[t] = relevant(static_cast<int32_t>(t));
+    for (int64_t t = 0; t < count; ++t) {
+      if (!relevant_tet[t]) continue;
+      for (int k = 0; k < 4; ++k) {
+        const int32_t u = tet_neighbors_[4 * t + k];
+        if (u <= t || !relevant_tet[u]) continue;
+        if (insphere_of(static_cast<int32_t>(t), apex(static_cast<int32_t>(t), k)) == 0)
+          unite(tet_root_, static_cast<int32_t>(t), u);
+      }
+    }
+    cell_of_seed_.assign(count_, -1);
+    for (int32_t i = 0; i < count_; ++i) {
+      if (!interior(i)) continue;
+      cell_of_seed_[i] = static_cast<int32_t>(cell_seed_list_.size());
+      cell_seed_list_.push_back(i);
+    }
+    std::vector<int32_t> ring_tets, loop;
+    std::vector<int32_t> neighbor_tet;
+    for (const int32_t i : cell_seed_list_) {
+      // Delaunay neighbours of i with a representative tet each.
+      std::vector<std::pair<int32_t, int32_t>> around;
+      bool leak = false;
+      for (int64_t k = star_offsets_[i]; k < star_offsets_[i + 1]; ++k) {
+        const int32_t t = star_[k];
+        for (int v = 0; v < 4; ++v) {
+          const int32_t j = tets_[4 * static_cast<int64_t>(t) + v];
+          if (j == i) continue;
+          around.emplace_back(j, t);
+          if (regions_[j] == -2) leak = true;
         }
-    std::sort(edges.begin(), edges.end());
-    std::vector<int32_t> tets, apexes, loop;
-    std::vector<Pierce> list;
-    std::vector<std::array<int32_t, 3>> directed;  // region, from, to
-    std::vector<std::pair<int32_t, int32_t>> region_edges;
-    std::vector<std::vector<int32_t>> loops;
-    for (std::size_t k = 0; k < edges.size(); ++k) {
-      if (k > 0 && edges[k][0] == edges[k - 1][0] && edges[k][1] == edges[k - 1][1]) continue;
-      const int32_t i = edges[k][0], j = edges[k][1];
-      ring(i, j, edges[k][2], tets, apexes);
-      const bool box = j >= interior_;
-      const bool clipped = has_piece_[i] || (!box && has_piece_[j]);
-      if (!clipped) {
-        const int32_t region = tet_region_[tets[0]];
-        if (region < 0) continue;
-        if (box) {
-          suspect(i);
-          continue;
+      }
+      if (leak) {
+        // The farthest circumcentre of the star shows where the cell escapes.
+        std::array<double, 3> far{};
+        double best = -1.0;
+        for (int64_t k = star_offsets_[i]; k < star_offsets_[i + 1]; ++k) {
+          double p[3];
+          circumcenter(star_[k], p);
+          const double d = geometry::squared_distance(p, seed(i));
+          if (std::isfinite(d) && d > best) {
+            best = d;
+            std::copy_n(p, 3, far.data());
+          }
         }
-        loop.clear();
-        for (const int32_t t : tets) {
-          const int32_t vertex = tet_vertex(t);
-          if (loop.empty() || loop.back() != vertex) loop.push_back(vertex);
-        }
-        while (loop.size() > 1 && loop.front() == loop.back()) loop.pop_back();
-        if (loop.size() >= 3) emit_face(loop, i, region, j, region, -1);
+        leaks_.emplace_back(i, far);
         continue;
       }
-      directed.clear();
-      const std::size_t m = tets.size();
-      for (std::size_t q = 0; q < m; ++q) {
-        const int32_t from = tets[q], to = tets[(q + 1) % m];
-        const int32_t apex_to = apexes[(q + 2) % m == 0 ? 0 : (q + 2) % m];
-        std::array<int32_t, 3> tri = sorted3(i, j, apexes[(q + 1) % m]);
-        pierces(tri, from, apex_to, list);
-        int32_t region = tet_region_[from];
-        int32_t current = -1;
-        for (const Pierce& p : list) {
-          if (region >= 0) {
-            if (current < 0) current = tet_vertex(from);
-            directed.push_back({region, current, p.vertex});
-          }
-          region = transition(region, p, tri[0], tri[1], tri[2]);
-          current = p.vertex;
+      std::sort(around.begin(), around.end());
+      for (std::size_t k = 0; k < around.size(); ++k) {
+        if (k > 0 && around[k].first == around[k - 1].first) continue;
+        const int32_t j = around[k].first;
+        if (interior(j) && j < i) continue;  // emitted from j
+        ring(i, j, around[k].second, ring_tets);
+        loop.clear();
+        for (const int32_t t : ring_tets) {
+          const int32_t v = vertex_of(t);
+          if (loop.empty() || loop.back() != v) loop.push_back(v);
         }
-        if (region != tet_region_[to]) suspect(tri[0], tri[1], tri[2]);
-        if (region >= 0) {
-          if (current < 0) current = tet_vertex(from);
-          if (current != tet_vertex(to)) directed.push_back({region, current, tet_vertex(to)});
-        }
-      }
-      // The surface curve on the bisector, from i's pieces.
-      CurveEdge probe{i, j, 0, 0, 0};
-      auto lo = std::lower_bound(curve_.begin(), curve_.end(), probe,
-                                 [](const CurveEdge& a, const CurveEdge& b) {
-                                   return a.seed != b.seed ? a.seed < b.seed : a.other < b.other;
-                                 });
-      for (auto it = lo; it != curve_.end() && it->seed == i && it->other == j; ++it) {
-        directed.push_back({s_.back(it->triangle), it->to, it->from});
-        if (s_.front(it->triangle) >= 0) directed.push_back({s_.front(it->triangle), it->from, it->to});
-      }
-      std::sort(directed.begin(), directed.end());
-      for (std::size_t a = 0; a < directed.size();) {
-        std::size_t b = a;
-        while (b < directed.size() && directed[b][0] == directed[a][0]) ++b;
-        const int32_t region = directed[a][0];
-        region_edges.clear();
-        for (std::size_t c = a; c < b; ++c) region_edges.emplace_back(directed[c][1], directed[c][2]);
-        a = b;
-        if (region < 0) continue;
-        if (box) {
-          suspect(i);
-          continue;
-        }
-        if (!chain(region_edges, loops)) {
-          suspect(i, j);
-          continue;
-        }
-        double axis[3];
-        geometry::difference(seed(j), seed(i), axis);
-        for (const auto& l : loops) {
-          double n[3];
-          newell(l, n);
-          if (geometry::dot(n, axis) <= 0.0) {
-            // A hole or an inverted loop: not a simple face.
-            suspect(i, j);
-            continue;
-          }
-          emit_face(l, i, region, j, region, -1);
-        }
+        while (loop.size() > 1 && loop.front() == loop.back()) loop.pop_back();
+        if (loop.size() < 3) continue;
+        loops_.insert(loops_.end(), loop.begin(), loop.end());
+        loop_offsets_.push_back(static_cast<int64_t>(loops_.size()));
+        loop_cells_.push_back(cell_of_seed_[i]);
+        loop_cells_.push_back(interior(j) ? cell_of_seed_[j] : -1);
+        loop_seeds_.push_back(i);
+        loop_seeds_.push_back(j);
       }
     }
   }
 
-  void surface_faces() {
-    std::vector<std::pair<int32_t, int32_t>> edges;
-    std::vector<std::vector<int32_t>> loops;
-    std::vector<int32_t> loop;
-    for (int32_t i = 0; i < interior_; ++i) {
-      const int64_t begin = seed_piece_offsets_[i], end = seed_piece_offsets_[i + 1];
-      if (begin == end) continue;
-      std::vector<int32_t> order(seed_pieces_.begin() + begin, seed_pieces_.begin() + end);
-      auto facet_key = [&](int32_t p) {
-        const int32_t t = pieces_[p].triangle;
-        return std::array<int32_t, 4>{s_.plane_class[t], s_.front(t), s_.back(t), t};
-      };
-      std::sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
-        return facet_key(a) < facet_key(b);
-      });
-      for (std::size_t a = 0; a < order.size();) {
-        std::size_t b = a;
-        const auto ka = facet_key(order[a]);
-        while (b < order.size()) {
-          const auto kb = facet_key(order[b]);
-          if (kb[0] != ka[0] || kb[1] != ka[1] || kb[2] != ka[2]) break;
-          ++b;
-        }
-        const int32_t t = pieces_[order[a]].triangle;
-        const int32_t back = s_.back(t), front = s_.front(t);
-        const int32_t left_region = back >= 0 ? back : front;
-        const bool reversed = back < 0;
-        const int32_t right_region = back >= 0 ? front : -1;
-        auto emit = [&](std::vector<int32_t> l, std::size_t first, std::size_t last) {
-          if (reversed) std::reverse(l.begin(), l.end());
-          for (std::size_t c = first; c < last; ++c)
-            piece_face_[order[c]] = static_cast<int32_t>(faces_.size());
-          emit_face(l, i, left_region, right_region >= 0 ? i : -1, right_region,
-                    s_.in->facets[t]);
-        };
-        bool merged = false;
-        if (b - a > 1) {
-          // Cancel opposite edges among the pieces in one plane.
-          edges.clear();
-          for (std::size_t c = a; c < b; ++c) {
-            const Piece& p = pieces_[order[c]];
-            for (int32_t q = 0; q < p.size; ++q)
-              edges.emplace_back(piece_vertices_[p.begin + q],
-                                 piece_vertices_[p.begin + (q + 1) % p.size]);
-          }
-          std::sort(edges.begin(), edges.end());
-          std::vector<std::pair<int32_t, int32_t>> boundary;
-          for (const auto& e : edges) {
-            if (!std::binary_search(edges.begin(), edges.end(), std::make_pair(e.second, e.first)))
-              boundary.push_back(e);
-          }
-          if (chain(boundary, loops)) {
-            bool positive = true;
-            for (const auto& l : loops) {
-              double n[3];
-              newell(l, n);
-              positive = positive && geometry::dot(n, &s_.normals[3 * static_cast<int64_t>(t)]) > 0.0;
-            }
-            if (positive && loops.size() == 1) {
-              emit(loops[0], a, b);
-              merged = true;
-            }
-          }
-        }
-        if (!merged) {
-          for (std::size_t c = a; c < b; ++c) {
-            const Piece& p = pieces_[order[c]];
-            loop.assign(piece_vertices_.begin() + p.begin, piece_vertices_.begin() + p.begin + p.size);
-            emit(loop, c, c + 1);
-          }
-        }
-        a = b;
-      }
-    }
-  }
-
-  void assemble() {
-    bisector_faces();
-    piece_face_.assign(pieces_.size(), -1);
-    surface_faces();
-  }
-
-  // ------------------------------------------------ publication
   void publish(phx_mc_voronoi_cells& out);
+  mutable double lower_ = 0.0;  // largest sampled boundary distance (certify)
+  double piece_bound(const double* a, const double* b, const double* c) const;
 };
 
 void Builder::publish(phx_mc_voronoi_cells& out) {
-  // Cells: components of (seed, region) through shared edges.
-  struct Side {
-    int32_t seed, region, face;
-    bool reversed;
-  };
-  std::vector<Side> sides;
-  sides.reserve(2 * faces_.size());
-  for (std::size_t f = 0; f < faces_.size(); ++f) {
-    const FaceRecord& r = faces_[f];
-    sides.push_back({r.left_seed, r.left_region, static_cast<int32_t>(f), false});
-    if (r.right_seed >= 0) sides.push_back({r.right_seed, r.right_region, static_cast<int32_t>(f), true});
-  }
-  std::sort(sides.begin(), sides.end(), [](const Side& a, const Side& b) {
-    if (a.seed != b.seed) return a.seed < b.seed;
-    if (a.region != b.region) return a.region < b.region;
-    return a.face < b.face;
-  });
-  std::vector<int32_t> face_left(faces_.size(), -1), face_right(faces_.size(), -1);
-  std::vector<int32_t> parent;
-  std::vector<std::pair<uint64_t, int32_t>> edge_owner;
-  cell_keys_.clear();
-  std::vector<int32_t> used_seed(interior_, -1);
-  boundary_cells_ = 0;
-  for (std::size_t a = 0; a < sides.size();) {
-    std::size_t b = a;
-    while (b < sides.size() && sides[b].seed == sides[a].seed && sides[b].region == sides[a].region) ++b;
-    const std::size_t n = b - a;
-    parent.resize(n);
-    std::iota(parent.begin(), parent.end(), 0);
-    auto root = [&](int32_t x) {
-      while (parent[x] != x) x = parent[x] = parent[parent[x]];
-      return x;
-    };
-    edge_owner.clear();
-    for (std::size_t c = 0; c < n; ++c) {
-      const FaceRecord& r = faces_[sides[a + c].face];
-      for (int32_t q = 0; q < r.size; ++q) {
-        uint32_t u = static_cast<uint32_t>(loop_vertices_[r.begin + q]);
-        uint32_t v = static_cast<uint32_t>(loop_vertices_[r.begin + (q + 1) % r.size]);
-        if (u > v) std::swap(u, v);
-        edge_owner.emplace_back((static_cast<uint64_t>(u) << 32) | v, static_cast<int32_t>(c));
-      }
-    }
-    std::sort(edge_owner.begin(), edge_owner.end());
-    for (std::size_t e = 1; e < edge_owner.size(); ++e) {
-      if (edge_owner[e].first != edge_owner[e - 1].first) continue;
-      const int32_t x = root(edge_owner[e].second), y = root(edge_owner[e - 1].second);
-      if (x != y) parent[std::max(x, y)] = std::min(x, y);
-    }
-    // Components in order of their first face.
-    std::vector<int32_t> component(n, -1);
-    for (std::size_t c = 0; c < n; ++c) {
-      const int32_t r = root(static_cast<int32_t>(c));
-      if (component[r] < 0) {
-        component[r] = static_cast<int32_t>(cell_keys_.size());
-        cell_keys_.push_back({sides[a].seed, sides[a].region});
-        if (has_piece_[sides[a].seed]) ++boundary_cells_;
-      }
-      const Side& side = sides[a + c];
-      (side.reversed ? face_right : face_left)[side.face] = component[r];
-    }
-    a = b;
-  }
-  // Vertices in use, in first-use order of the faces.
-  std::vector<int32_t> remap(kinds_.size(), -1);
-  int32_t vertex_count = 0;
-  for (const int32_t v : loop_vertices_)
-    if (remap[v] < 0) remap[v] = vertex_count++;
+  const int32_t vertex_count = static_cast<int32_t>(vertex_tets_.size());
   out.vertices.assign(3 * static_cast<std::size_t>(vertex_count), 0.0);
-  out.vertex_kinds.assign(vertex_count, 0);
-  out.vertex_sources.assign(2 * static_cast<std::size_t>(vertex_count), -1);
-  std::vector<int32_t> order(static_cast<std::size_t>(vertex_count));
-  for (std::size_t v = 0; v < remap.size(); ++v)
-    if (remap[v] >= 0) order[remap[v]] = static_cast<int32_t>(v);
   out.exact_offsets.assign(1, 0);
   out.exact_values.clear();
   std::array<Expansion, 3> numerator;
   Expansion denominator;
-  for (int32_t w = 0; w < vertex_count; ++w) {
-    const int32_t v = order[w];
-    exact_vertex(v, numerator, denominator);
-    for (int k = 0; k < 3; ++k) {
-      out.vertices[3 * static_cast<int64_t>(w) + k] = rounded_quotient(numerator[k], denominator);
-    }
+  for (int32_t v = 0; v < vertex_count; ++v) {
+    exact_circumcenter(vertex_tets_[v], numerator, denominator);
+    for (int k = 0; k < 3; ++k)
+      out.vertices[3 * static_cast<int64_t>(v) + k] = rounded_quotient(numerator[k], denominator);
     for (const Expansion* e : {&numerator[0], &numerator[1], &numerator[2], &denominator}) {
       out.exact_values.insert(out.exact_values.end(), e->data(), e->data() + e->size());
       out.exact_offsets.push_back(static_cast<int64_t>(out.exact_values.size()));
     }
-    out.vertex_kinds[w] = kinds_[v];
-    out.vertex_sources[2 * w] = sources_[2 * v];
-    out.vertex_sources[2 * w + 1] = sources_[2 * v + 1];
   }
-  out.face_offsets.assign(1, 0);
-  out.face_vertices.clear();
-  out.face_cells.clear();
-  out.face_facets.clear();
-  for (std::size_t f = 0; f < faces_.size(); ++f) {
-    const FaceRecord& r = faces_[f];
-    for (int32_t q = 0; q < r.size; ++q) out.face_vertices.push_back(remap[loop_vertices_[r.begin + q]]);
-    out.face_offsets.push_back(static_cast<int64_t>(out.face_vertices.size()));
-    out.face_cells.push_back(face_left[f]);
-    out.face_cells.push_back(face_right[f]);
-    out.face_facets.push_back(r.facet);
+  const int64_t faces = static_cast<int64_t>(loop_offsets_.size()) - 1;
+  out.face_offsets = loop_offsets_;
+  out.face_vertices = loops_;
+  out.face_cells = loop_cells_;
+  out.face_facets.assign(faces, -1);
+  // Boundary vertices: nearest triangle; faces between regions or towards a
+  // ghost take the facet of the triangle nearest their vertex centroid.
+  out.vertex_triangles.assign(vertex_count, -1);
+  std::vector<double> vertex_distance(vertex_count, 0.0);
+  const TriangleGrid& grid = seeder_.triangles();
+  const double reach = seeder_.reach();
+  std::vector<uint8_t> leaking(count_, 0);
+  boundary_faces_ = 0;
+  vertex_distance_ = 0.0;
+  std::vector<uint8_t> boundary_cell(cell_seed_list_.size(), 0);
+  for (int64_t f = 0; f < faces; ++f) {
+    const int32_t owner = loop_cells_[2 * f], neighbor = loop_cells_[2 * f + 1];
+    const bool exterior = neighbor < 0;
+    if (!exterior && regions_[loop_seeds_[2 * f]] == regions_[loop_seeds_[2 * f + 1]]) continue;
+    if (exterior) {
+      ++boundary_faces_;
+      boundary_cell[owner] = 1;
+    }
+    double centroid[3] = {0, 0, 0};
+    const int64_t begin = loop_offsets_[f], end = loop_offsets_[f + 1];
+    for (int64_t q = begin; q < end; ++q) {
+      const int32_t v = loops_[q];
+      const double* x = out.vertices.data() + 3 * static_cast<int64_t>(v);
+      for (int k = 0; k < 3; ++k) centroid[k] += x[k] / static_cast<double>(end - begin);
+      if (out.vertex_triangles[v] < 0) {
+        double foot[3], d = 0.0;
+        out.vertex_triangles[v] = grid.nearest(x, reach, foot, &d);
+        vertex_distance[v] = d;
+      }
+      if (exterior) {
+        vertex_distance_ = std::max(vertex_distance_, vertex_distance[v]);
+        const int32_t i = loop_seeds_[2 * f];
+        if (vertex_distance[v] > reach && !leaking[i]) {
+          leaking[i] = 1;
+          leaks_.emplace_back(i, std::array<double, 3>{x[0], x[1], x[2]});
+        }
+      }
+    }
+    double foot[3], d = 0.0;
+    const int32_t t = grid.nearest(centroid, reach, foot, &d);
+    out.face_facets[f] = t >= 0 ? s_.in->facets[t] : -1;
   }
-  const std::size_t cells = cell_keys_.size();
-  out.cell_seeds.resize(cells);
+  boundary_cells_ = 0;
+  for (const uint8_t b : boundary_cell) boundary_cells_ += b;
+  const std::size_t cells = cell_seed_list_.size();
+  out.cell_seeds = cell_seed_list_;
   out.cell_regions.resize(cells);
   out.cell_volumes.assign(cells, 0.0);
   out.cell_centroids.assign(3 * cells, 0.0);
-  out.cell_convex.assign(cells, 1);
-  for (std::size_t c = 0; c < cells; ++c) {
-    out.cell_seeds[c] = cell_keys_[c][0];
-    out.cell_regions[c] = cell_keys_[c][1];
-  }
+  for (std::size_t c = 0; c < cells; ++c) out.cell_regions[c] = regions_[cell_seed_list_[c]];
   // Volumes and centroids by fans from each cell's seed.
-  for (std::size_t f = 0; f < faces_.size(); ++f) {
-    const int64_t begin = out.face_offsets[f], end = out.face_offsets[f + 1];
+  for (int64_t f = 0; f < faces; ++f) {
+    const int64_t begin = loop_offsets_[f], end = loop_offsets_[f + 1];
     for (int side = 0; side < 2; ++side) {
-      const int32_t cell = side == 0 ? face_left[f] : face_right[f];
+      const int32_t cell = loop_cells_[2 * f + side];
       if (cell < 0) continue;
-      const double* o = seed(cell_keys_[cell][0]);
+      const double* o = seed(cell_seed_list_[cell]);
       const double sign = side == 0 ? 1.0 : -1.0;
-      const double* x0 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[begin]);
+      const double* x0 = out.vertices.data() + 3 * static_cast<int64_t>(loops_[begin]);
       for (int64_t q = begin + 1; q + 1 < end; ++q) {
-        const double* x1 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[q]);
-        const double* x2 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[q + 1]);
+        const double* x1 = out.vertices.data() + 3 * static_cast<int64_t>(loops_[q]);
+        const double* x2 = out.vertices.data() + 3 * static_cast<int64_t>(loops_[q + 1]);
         double a[3], b[3], c[3], bc[3];
         geometry::difference(x0, o, a);
         geometry::difference(x1, o, b);
@@ -2024,67 +1511,62 @@ void Builder::publish(phx_mc_voronoi_cells& out) {
         geometry::cross(b, c, bc);
         const double volume = sign * geometry::dot(a, bc) / 6.0;
         out.cell_volumes[cell] += volume;
-        for (int k = 0; k < 3; ++k)
-          out.cell_centroids[3 * cell + k] += volume * (a[k] + b[k] + c[k]) / 4.0;
+        for (int k = 0; k < 3; ++k) out.cell_centroids[3 * cell + k] += volume * (a[k] + b[k] + c[k]) / 4.0;
       }
     }
   }
   for (std::size_t c = 0; c < cells; ++c) {
-    const double* o = seed(cell_keys_[c][0]);
+    const double* o = seed(cell_seed_list_[c]);
     for (int k = 0; k < 3; ++k) {
       out.cell_centroids[3 * c + k] =
           o[k] + (out.cell_volumes[c] != 0.0 ? out.cell_centroids[3 * c + k] / out.cell_volumes[c] : 0.0);
     }
   }
-  // Exact convexity: Voronoi cells are convex, and a clipped cell is convex
-  // exactly when no surface edge reflex towards its region (exact orient3d)
-  // carries a side of one of its pieces.
-  for (std::size_t p = 0; p < pieces_.size(); ++p) {
-    const Piece& piece = pieces_[p];
-    const int32_t face = piece_face_[p];
-    for (int32_t q = 0; q < piece.size; ++q) {
-      const int32_t support = piece_supports_[piece.begin + q];
-      if (support >= 0) continue;
-      const int32_t edge = s_.triangle_edges[3 * static_cast<int64_t>(piece.triangle) + (-1 - support)];
-      const uint8_t reflex = s_.edge_reflex[edge];
-      if ((reflex & 1) && s_.back(piece.triangle) >= 0) {
-        const int32_t cell = s_.back(piece.triangle) == faces_[face].left_region ? face_left[face]
-                                                                                  : face_right[face];
-        if (cell >= 0) out.cell_convex[cell] = 0;
-      }
-      if ((reflex & 2) && s_.front(piece.triangle) >= 0) {
-        const int32_t cell = s_.front(piece.triangle) == faces_[face].left_region ? face_left[face]
-                                                                                   : face_right[face];
-        if (cell >= 0) out.cell_convex[cell] = 0;
-      }
-    }
-  }
-  out.seeds.assign(seeds_.begin(), seeds_.begin() + 3 * static_cast<int64_t>(interior_));
-  // Planarity residual of bisector faces: distance of each vertex to the
-  // exact bisector plane of its two seeds, relative to h.
-  double residual = 0.0;
-  for (std::size_t f = 0; f < faces_.size(); ++f) {
-    const FaceRecord& r = faces_[f];
-    if (r.facet >= 0) continue;
-    const double* a = seed(r.left_seed);
-    const double* b = seed(r.right_seed);
-    double axis[3], middle[3];
-    geometry::difference(b, a, axis);
-    for (int k = 0; k < 3; ++k) middle[k] = 0.5 * (a[k] + b[k]);
-    const double length = geometry::length(axis);
-    for (int64_t q = out.face_offsets[f]; q < out.face_offsets[f + 1]; ++q) {
-      double d[3];
-      geometry::difference(out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[q]), middle, d);
-      residual = std::max(residual, std::fabs(geometry::dot(d, axis)) / length);
-    }
-  }
-  planarity_residual_ = residual / h_;
+  out.seeds.assign(seeds_.begin(), seeds_.begin() + 3 * static_cast<int64_t>(count_));
+  out.seed_regions.assign(regions_.begin(), regions_.begin() + count_);
 }
 
-void Builder::certify(phx_mc_voronoi_cells& out) {
+// Upper bound of the distance to the surface over triangle (a, b, c): the
+// distance to one triangle is convex, so its maximum over the piece is at a
+// corner. Branch and bound: the distance at every piece centroid raises the
+// lower bound `lower_`; a piece splits in four while its bound exceeds the
+// lower bound by more than 1/16 (plus a rounding allowance) and the piece is
+// larger than r / 8. Every returned value is an upper bound.
+double Builder::piece_bound(const double* a, const double* b, const double* c) const {
+  const TriangleGrid& grid = seeder_.triangles();
+  double centroid[3], foot[3], d = 0.0;
+  for (int k = 0; k < 3; ++k) centroid[k] = (a[k] + b[k] + c[k]) / 3.0;
+  const int32_t t = grid.nearest(centroid, seeder_.reach(), foot, &d);
+  if (t < 0) return HUGE_VAL;
+  lower_ = std::max(lower_, d);
+  double bound = 0.0;
+  for (const double* x : {a, b, c})
+    bound = std::max(bound, geometry::point_triangle_distance(x, s_.corner(t, 0), s_.corner(t, 1),
+                                                              s_.corner(t, 2)));
+  // Rounding of the computed distances (a few ulps of the coordinates).
+  const double rounding = 0x1p-40 * (s_.diameter + h_);
+  bound += rounding;
+  const double size = std::sqrt(std::max({geometry::squared_distance(a, b),
+                                          geometry::squared_distance(b, c),
+                                          geometry::squared_distance(c, a)}));
+  if (bound <= lower_ * (1.0 + 1.0 / 16.0) + 2.0 * rounding || size <= 0.125 * seeder_.spacing()) {
+    return bound;
+  }
+  double ab[3], bc[3], ca[3];
+  for (int k = 0; k < 3; ++k) {
+    ab[k] = 0.5 * (a[k] + b[k]);
+    bc[k] = 0.5 * (b[k] + c[k]);
+    ca[k] = 0.5 * (c[k] + a[k]);
+  }
+  return std::max({piece_bound(a, ab, ca), piece_bound(ab, b, bc), piece_bound(ca, bc, c),
+                   piece_bound(ab, bc, ca)});
+}
+
+void Builder::certify(const phx_mc_voronoi_cells& out) {
   // Closure: every directed edge of a cell meets its reverse exactly once.
   std::vector<std::array<int32_t, 3>> directed;
-  for (std::size_t f = 0; f + 1 < out.face_offsets.size(); ++f) {
+  const int64_t faces = static_cast<int64_t>(out.face_offsets.size()) - 1;
+  for (int64_t f = 0; f < faces; ++f) {
     const int64_t begin = out.face_offsets[f], end = out.face_offsets[f + 1];
     for (int side = 0; side < 2; ++side) {
       const int32_t cell = out.face_cells[2 * f + side];
@@ -2104,145 +1586,121 @@ void Builder::certify(phx_mc_voronoi_cells& out) {
     const bool duplicate = k > 0 && directed[k - 1] == e;
     const std::array<int32_t, 3> reverse{e[0], e[2], e[1]};
     const auto range = std::equal_range(directed.begin(), directed.end(), reverse);
-    if (duplicate || range.second - range.first != 1) {
-      ++open_edges_;
-      suspect(out.cell_seeds[e[0]]);
+    if (duplicate || range.second - range.first != 1) ++open_edges_;
+  }
+  // Local Delaunay at every face of an interior seed's star.
+  violations_ = 0;
+  const int64_t count = static_cast<int64_t>(tets_.size() / 4);
+  for (int64_t t = 0; t < count; ++t) {
+    if (!relevant(static_cast<int32_t>(t))) continue;
+    for (int k = 0; k < 4; ++k) {
+      const int32_t u = tet_neighbors_[4 * t + k];
+      if (u < 0 || u < t) continue;
+      if (insphere_of(static_cast<int32_t>(t), apex(static_cast<int32_t>(t), k)) > 0) ++violations_;
     }
   }
-  // Coverage: the pieces of every surface triangle sum to its area.
-  const int64_t m = s_.in->triangle_count;
-  std::vector<double> covered(m, 0.0);
-  for (const Piece& p : pieces_) {
-    double n[3] = {0, 0, 0};
-    for (int32_t q = 0; q < p.size; ++q) {
-      const double* a = coords_.data() + 3 * static_cast<int64_t>(piece_vertices_[p.begin + q]);
-      const double* b =
-          coords_.data() + 3 * static_cast<int64_t>(piece_vertices_[p.begin + (q + 1) % p.size]);
-      n[0] += (a[1] - b[1]) * (a[2] + b[2]);
-      n[1] += (a[2] - b[2]) * (a[0] + b[0]);
-      n[2] += (a[0] - b[0]) * (a[1] + b[1]);
-    }
-    covered[p.triangle] += 0.5 * geometry::dot(n, &s_.normals[3 * static_cast<int64_t>(p.triangle)]);
-  }
-  coverage_residual_ = 0.0;
-  for (int64_t t = 0; t < m; ++t)
-    coverage_residual_ = std::max(coverage_residual_, std::fabs(covered[t] - s_.areas[t]) / s_.areas[t]);
-  // Region volumes by the divergence theorem against the cell volumes.
-  std::vector<double> expected(s_.region_count, 0.0), achieved(s_.region_count, 0.0);
-  const double* origin = s_.lower;
-  for (int64_t t = 0; t < m; ++t) {
-    double a[3], b[3], c[3], bc[3];
-    geometry::difference(s_.corner(t, 0), origin, a);
-    geometry::difference(s_.corner(t, 1), origin, b);
-    geometry::difference(s_.corner(t, 2), origin, c);
-    geometry::cross(b, c, bc);
-    const double volume = geometry::dot(a, bc) / 6.0;
-    if (s_.back(t) >= 0) expected[s_.back(t)] += volume;
-    if (s_.front(t) >= 0) expected[s_.front(t)] -= volume;
-  }
-  for (std::size_t c = 0; c < out.cell_volumes.size(); ++c) achieved[out.cell_regions[c]] += out.cell_volumes[c];
-  double total = 0.0;
-  volume_residual_ = 0.0;
-  for (int32_t r = 0; r < s_.region_count; ++r) total += std::fabs(expected[r]);
-  for (int32_t r = 0; r < s_.region_count; ++r)
-    volume_residual_ = std::max(volume_residual_, std::fabs(achieved[r] - expected[r]) / total);
-  certified_ = open_edges_ == 0 && coverage_residual_ <= 1e-8 && volume_residual_ <= 1e-9 &&
-               degenerate_ == 0;
-}
-
-// Deterministic displacement of automatic seeds; suspects get a new salt and
-// a twice larger amplitude per repair round.
-void displace(const std::vector<double>& base, const std::vector<int32_t>& rounds, double h,
-              std::vector<double>& out) {
-  out.resize(base.size());
-  for (std::size_t i = 0; i < rounds.size(); ++i) {
-    const double amplitude = std::ldexp(h, -10 + rounds[i]);
-    for (int k = 0; k < 3; ++k) {
-      const uint64_t salt = (static_cast<uint64_t>(i) << 8) ^ (static_cast<uint64_t>(rounds[i]) << 2) ^ k;
-      out[3 * i + k] = base[3 * i + k] + amplitude * unit_hash(salt);
+  // Distance bound of the boundary faces.
+  bound_ = 0.0;
+  lower_ = vertex_distance_;
+  for (int64_t f = 0; f < faces; ++f) {
+    if (out.face_cells[2 * f + 1] >= 0) continue;
+    const int64_t begin = out.face_offsets[f], end = out.face_offsets[f + 1];
+    const double* x0 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[begin]);
+    for (int64_t q = begin + 1; q + 1 < end; ++q) {
+      const double* x1 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[q]);
+      const double* x2 = out.vertices.data() + 3 * static_cast<int64_t>(out.face_vertices[q + 1]);
+      bound_ = std::max(bound_, piece_bound(x0, x1, x2));
     }
   }
+  bound_ = std::max(bound_, lower_);
+  certified_ = open_edges_ == 0 && violations_ == 0 && leaks_.empty();
 }
 
 int32_t build(const Input& in, phx_mc_voronoi_cells& out) {
   const auto start = Clock::now();
   Surface surface;
   build_surface(in, surface);
-  const bool automatic = in.seed_count == 0;
-  SeedSet seeds;
+  const double h = in.size;
   auto clock = Clock::now();
-  if (automatic) {
-    automatic_seeds(surface, in.size, seeds);
-  } else {
-    seeds.points.assign(in.seeds, in.seeds + 3 * in.seed_count);
-    seeds.regions.assign(in.seed_count, -2);
-  }
+  Seeder seeder(surface, h);
+  SeedSet seeds;
+  seeder.interior(seeds);
+  if (seeds.interior == 0) return PHX_MC_UNRESOLVED;
+  PointGrid ghost_grid(seeder.spacing());
+  seeder.ghosts(seeds, ghost_grid);
+  double timings[3] = {0, 0, 0};
   const double seeding = seconds_since(clock);
-  const int64_t count = static_cast<int64_t>(seeds.regions.size());
-  if (count == 0) return PHX_MC_UNRESOLVED;
-  const double h = automatic ? in.size : surface.diameter / std::cbrt(static_cast<double>(count));
-  std::vector<int32_t> rounds(count, 0);
-  std::vector<double> displaced;
-  double timings[5] = {0, 0, 0, 0, 0};
   double certification = 0.0;
   int32_t repairs = 0;
-  int64_t events = 0;
+  std::vector<std::pair<int32_t, int32_t>> used;  // (seed, triangle) repairs
   while (true) {
-    if (automatic) {
-      displace(seeds.points, rounds, h, displaced);
-    } else {
-      displaced = seeds.points;
-    }
-    Builder builder(surface, displaced, seeds.regions, automatic, h);
+    Builder builder(surface, seeder, seeds, h);
     out = phx_mc_voronoi_cells{};
     builder.run(out, timings);
-    events += builder.degenerate_events();
+    // Repair: reflect each leaking seed across the triangle nearest its
+    // offending point.
+    int32_t added = 0;
+    for (const auto& [i, point] : builder.leaks()) {
+      double foot[3], d = 0.0, g[3];
+      const int32_t t = seeder.triangles().nearest(point.data(), seeder.reach(), foot, &d);
+      if (t < 0) continue;
+      const std::pair<int32_t, int32_t> key{i, t};
+      if (std::find(used.begin(), used.end(), key) != used.end()) continue;
+      used.push_back(key);
+      double q[3];
+      closest_point(seeds.points.data() + 3 * static_cast<int64_t>(i), surface.corner(t, 0),
+                    surface.corner(t, 1), surface.corner(t, 2), q);
+      if (seeder.reflect(seeds, i, t, q, g) && seeder.add_ghost(seeds, ghost_grid, g)) ++added;
+    }
+    if (added > 0) {
+      ++repairs;
+      continue;
+    }
     clock = Clock::now();
-    if (in.prove && builder.degenerate_events() == 0) builder.certify(out);
-    certification += seconds_since(clock);
-    const bool settled = builder.degenerate_events() == 0 && (!in.prove || builder.certified());
-    // Local repair: new displacements for the seeds the failure involved,
-    // while every one stays within the displacement bound h 2^-6.
-    std::vector<int32_t> involved = builder.suspects();
-    if (involved.empty()) {
-      involved.resize(count);
-      std::iota(involved.begin(), involved.end(), 0);
+    if (in.prove) builder.certify(out);
+    certification = seconds_since(clock);
+    // Signed volume error against the regions of the input.
+    std::vector<double> expected(surface.region_count, 0.0);
+    for (int64_t t = 0; t < in.triangle_count; ++t) {
+      double a[3], b[3], c[3], bc[3];
+      geometry::difference(surface.corner(t, 0), surface.lower, a);
+      geometry::difference(surface.corner(t, 1), surface.lower, b);
+      geometry::difference(surface.corner(t, 2), surface.lower, c);
+      geometry::cross(b, c, bc);
+      const double volume = geometry::dot(a, bc) / 6.0;
+      if (surface.back(t) >= 0) expected[surface.back(t)] += volume;
+      if (surface.front(t) >= 0) expected[surface.front(t)] -= volume;
     }
-    std::sort(involved.begin(), involved.end());
-    involved.erase(std::unique(involved.begin(), involved.end()), involved.end());
-    const bool repairable =
-        automatic && std::all_of(involved.begin(), involved.end(),
-                                 [&](int32_t i) { return rounds[i] < 4; });
-    if (settled || !repairable) {
-      double* stats = out.stats.data();
-      stats[0] = seeding;
-      for (int k = 0; k < 5; ++k) stats[1 + k] = timings[k];
-      stats[6] = certification;
-      stats[7] = seconds_since(start);
-      stats[8] = static_cast<double>(count);
-      stats[9] = static_cast<double>(seeds.surface_seeds);
-      stats[10] = static_cast<double>(seeds.lattice_seeds);
-      stats[11] = static_cast<double>(out.cell_seeds.size());
-      stats[12] = static_cast<double>(builder.boundary_cells());
-      stats[13] = static_cast<double>(repairs);
-      stats[14] = static_cast<double>(events);
-      stats[15] = in.prove ? (builder.certified() ? 1.0 : 0.0) : -1.0;
-      stats[16] = in.prove ? static_cast<double>(builder.open_edges()) : -1.0;
-      stats[17] = in.prove ? builder.coverage_residual() : -1.0;
-      stats[18] = in.prove ? builder.volume_residual() : -1.0;
-      int64_t nonconvex = 0;
-      for (const uint8_t c : out.cell_convex) nonconvex += c == 0;
-      stats[19] = static_cast<double>(nonconvex);
-      stats[20] = builder.planarity_residual();
-      stats[21] = static_cast<double>(surface.feature_edges);
-      stats[22] = static_cast<double>(out.face_cells.size() / 2);
-      stats[23] = h;
-      if (settled) return PHX_MC_OK;
-      return !automatic && builder.degenerate_events() > 0 ? PHX_MC_DEGENERATE_INPUT
-                                                            : PHX_MC_UNRESOLVED;
-    }
-    for (const int32_t i : involved) ++rounds[i];
-    ++repairs;
+    double total = 0.0, achieved = 0.0;
+    for (const double v : expected) total += v;
+    for (const double v : out.cell_volumes) achieved += v;
+    double* stats = out.stats.data();
+    stats[0] = seeding;
+    stats[1] = timings[0];
+    stats[2] = timings[1];
+    stats[3] = timings[2];
+    stats[4] = certification;
+    stats[5] = seconds_since(start);
+    stats[6] = static_cast<double>(seeds.regions.size());
+    stats[7] = static_cast<double>(seeds.interior);
+    stats[8] = static_cast<double>(seeds.regions.size()) - seeds.interior;
+    stats[9] = static_cast<double>(seeds.lattice);
+    stats[10] = static_cast<double>(out.cell_seeds.size());
+    stats[11] = static_cast<double>(builder.boundary_cells());
+    stats[12] = static_cast<double>(builder.boundary_faces());
+    stats[13] = static_cast<double>(out.face_facets.size());
+    stats[14] = static_cast<double>(repairs);
+    stats[15] = in.prove ? (builder.certified() ? 1.0 : 0.0) : -1.0;
+    stats[16] = in.prove ? static_cast<double>(builder.open_edges()) : -1.0;
+    stats[17] = in.prove ? static_cast<double>(builder.violations()) : -1.0;
+    stats[18] = total != 0.0 ? achieved / total - 1.0 : 0.0;
+    stats[19] = builder.vertex_distance() / h;
+    stats[20] = in.prove ? builder.distance_bound() / h : -1.0;
+    stats[21] = static_cast<double>(surface.feature_edges);
+    stats[22] = h;
+    stats[23] = seeder.spacing();
+    if (!builder.leaks().empty()) return PHX_MC_UNRESOLVED;
+    return !in.prove || builder.certified() ? PHX_MC_OK : PHX_MC_UNRESOLVED;
   }
 }
 
@@ -2254,25 +1712,19 @@ namespace {
 int32_t validate(const phx_mc_conforming_voronoi_request* in) {
   if (in == nullptr || in->result == nullptr || in->vertex_count < 4 || in->triangle_count < 4 ||
       in->vertices == nullptr || in->triangles == nullptr || in->triangle_regions == nullptr ||
-      in->triangle_facets == nullptr || in->seed_count < 0 ||
-      (in->seed_count > 0 && in->seeds == nullptr) || (in->prove != 0 && in->prove != 1) ||
+      in->triangle_facets == nullptr || (in->prove != 0 && in->prove != 1) ||
       !(in->feature_angle_degrees > 0.0 && in->feature_angle_degrees < 180.0) ||
-      (in->seed_count == 0 && !(in->size > 0.0 && std::isfinite(in->size)))) {
+      !(in->size > 0.0 && std::isfinite(in->size))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   if (in->vertex_count >= INT32_MAX || in->triangle_count >= (int64_t{1} << 31) / 3 ||
-      in->seed_count >= INT32_MAX - 8 || !phx::mc::addressable(in->vertex_count, 3, sizeof(double)) ||
-      !phx::mc::addressable(in->triangle_count, 3, sizeof(int32_t)) ||
-      !phx::mc::addressable(in->seed_count, 3, sizeof(double))) {
+      !phx::mc::addressable(in->vertex_count, 3, sizeof(double)) ||
+      !phx::mc::addressable(in->triangle_count, 3, sizeof(int32_t))) {
     return PHX_MC_INDEX_RANGE_ERROR;
   }
   for (int64_t k = 0; k < 3 * in->vertex_count; ++k) {
     if (!std::isfinite(in->vertices[k])) return PHX_MC_NONFINITE_INPUT;
     if (!phx::mc::coordinate_in_domain(in->vertices[k])) return PHX_MC_RANGE_ERROR;
-  }
-  for (int64_t k = 0; k < 3 * in->seed_count; ++k) {
-    if (!std::isfinite(in->seeds[k])) return PHX_MC_NONFINITE_INPUT;
-    if (!phx::mc::coordinate_in_domain(in->seeds[k])) return PHX_MC_RANGE_ERROR;
   }
   for (int64_t t = 0; t < in->triangle_count; ++t) {
     for (int k = 0; k < 3; ++k) {
@@ -2299,9 +1751,9 @@ int32_t phx_mc_conforming_voronoi(const phx_mc_conforming_voronoi_request* reque
     const int32_t status = validate(request);
     if (status != PHX_MC_OK) return status;
     const phx::mc::conforming_voronoi::Input input{
-        request->vertex_count,    request->vertices,        request->triangle_count,
-        request->triangles,       request->triangle_regions, request->triangle_facets,
-        request->seed_count,      request->seeds,           request->size,
+        request->vertex_count,     request->vertices,        request->triangle_count,
+        request->triangles,        request->triangle_regions, request->triangle_facets,
+        request->size,
         request->feature_angle_degrees * (3.14159265358979323846 / 180.0),
         request->prove != 0};
     auto result = std::make_unique<phx_mc_voronoi_cells>();
@@ -2320,11 +1772,11 @@ int32_t phx_mc_conforming_voronoi(const phx_mc_conforming_voronoi_request* reque
 
 int32_t phx_mc_conforming_voronoi_sizes(const phx_mc_voronoi_cells* result, int64_t* sizes) {
   if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
-  sizes[0] = static_cast<int64_t>(result->vertex_kinds.size());
+  sizes[0] = static_cast<int64_t>(result->vertex_triangles.size());
   sizes[1] = static_cast<int64_t>(result->face_facets.size());
   sizes[2] = static_cast<int64_t>(result->face_vertices.size());
   sizes[3] = static_cast<int64_t>(result->cell_seeds.size());
-  sizes[4] = static_cast<int64_t>(result->seeds.size() / 3);
+  sizes[4] = static_cast<int64_t>(result->seed_regions.size());
   sizes[5] = static_cast<int64_t>(result->exact_values.size());
   return PHX_MC_OK;
 }
@@ -2332,19 +1784,18 @@ int32_t phx_mc_conforming_voronoi_sizes(const phx_mc_voronoi_cells* result, int6
 int32_t phx_mc_conforming_voronoi_export(const phx_mc_voronoi_cells* result,
                                          const phx_mc_conforming_voronoi_arrays* arrays) {
   if (result == nullptr || arrays == nullptr || arrays->vertices == nullptr ||
-      arrays->vertex_kinds == nullptr || arrays->vertex_sources == nullptr ||
-      arrays->face_offsets == nullptr || arrays->face_vertices == nullptr ||
-      arrays->face_cells == nullptr || arrays->face_facets == nullptr ||
-      arrays->cell_seeds == nullptr || arrays->cell_regions == nullptr ||
-      arrays->cell_volumes == nullptr || arrays->cell_centroids == nullptr ||
-      arrays->cell_convex == nullptr || arrays->seeds == nullptr || arrays->stats == nullptr ||
+      arrays->vertex_triangles == nullptr || arrays->face_offsets == nullptr ||
+      arrays->face_vertices == nullptr || arrays->face_cells == nullptr ||
+      arrays->face_facets == nullptr || arrays->cell_seeds == nullptr ||
+      arrays->cell_regions == nullptr || arrays->cell_volumes == nullptr ||
+      arrays->cell_centroids == nullptr || arrays->seeds == nullptr ||
+      arrays->seed_regions == nullptr || arrays->stats == nullptr ||
       arrays->exact_offsets == nullptr ||
       (!result->exact_values.empty() && arrays->exact_values == nullptr)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   std::copy(result->vertices.begin(), result->vertices.end(), arrays->vertices);
-  std::copy(result->vertex_kinds.begin(), result->vertex_kinds.end(), arrays->vertex_kinds);
-  std::copy(result->vertex_sources.begin(), result->vertex_sources.end(), arrays->vertex_sources);
+  std::copy(result->vertex_triangles.begin(), result->vertex_triangles.end(), arrays->vertex_triangles);
   std::copy(result->face_offsets.begin(), result->face_offsets.end(), arrays->face_offsets);
   std::copy(result->face_vertices.begin(), result->face_vertices.end(), arrays->face_vertices);
   std::copy(result->face_cells.begin(), result->face_cells.end(), arrays->face_cells);
@@ -2353,8 +1804,8 @@ int32_t phx_mc_conforming_voronoi_export(const phx_mc_voronoi_cells* result,
   std::copy(result->cell_regions.begin(), result->cell_regions.end(), arrays->cell_regions);
   std::copy(result->cell_volumes.begin(), result->cell_volumes.end(), arrays->cell_volumes);
   std::copy(result->cell_centroids.begin(), result->cell_centroids.end(), arrays->cell_centroids);
-  std::copy(result->cell_convex.begin(), result->cell_convex.end(), arrays->cell_convex);
   std::copy(result->seeds.begin(), result->seeds.end(), arrays->seeds);
+  std::copy(result->seed_regions.begin(), result->seed_regions.end(), arrays->seed_regions);
   std::copy(result->stats.begin(), result->stats.end(), arrays->stats);
   std::copy(result->exact_offsets.begin(), result->exact_offsets.end(), arrays->exact_offsets);
   std::copy(result->exact_values.begin(), result->exact_values.end(), arrays->exact_values);

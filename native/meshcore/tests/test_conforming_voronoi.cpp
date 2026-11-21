@@ -1,18 +1,17 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Conforming Voronoi cells against independent references: two seeds in a
-// cube split it exactly at their bisector; random seeds in a cube give the
-// volumes of a brute-force clip of the cube by every bisector half-space;
-// automatic seeds on a convex icosphere, a notched (reflex) block and two
-// stacked material cubes give closed cells whose volumes sum to each region,
-// exact convexity verdicts and identical output on a second run.
+// Conforming Voronoi cells against independent references: on a cube every
+// cell equals a brute-force clip of a large box by the bisector half-spaces of
+// all exported seeds, is convex and closed, and the boundary lies exactly on
+// the cube; on an icosphere the cells are closed, convex, certified and
+// identical on a second run; stacked material boxes keep each region's
+// volume and their interface; a notched block keeps its reflex volume.
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <map>
-#include <random>
 #include <utility>
 #include <vector>
 
@@ -52,27 +51,23 @@ void add_box(Surface& s, const double lo[3], const double hi[3], int32_t front, 
 struct Cells {
   int32_t status = -1;
   std::vector<double> vertices, cell_volumes, cell_centroids, seeds, stats, exact_values;
-  std::vector<int8_t> kinds;
-  std::vector<int32_t> sources, face_vertices, face_cells, face_facets, cell_seeds,
-      cell_regions;
+  std::vector<int32_t> vertex_triangles, face_vertices, face_cells, face_facets, cell_seeds,
+      cell_regions, seed_regions;
   std::vector<int64_t> face_offsets, exact_offsets;
-  std::vector<uint8_t> convex;
 };
 
-Cells run(const Surface& s, const std::vector<double>& seeds, double size, int32_t prove) {
+Cells run(const Surface& s, double size, int32_t prove) {
   Cells out;
   phx_mc_voronoi_cells* handle = nullptr;
   const phx_mc_conforming_voronoi_request request{
       static_cast<int64_t>(s.x.size() / 3), s.x.data(), static_cast<int64_t>(s.f.size() / 3),
-      s.f.data(), s.regions.data(), s.facets.data(), static_cast<int64_t>(seeds.size() / 3),
-      seeds.empty() ? nullptr : seeds.data(), size, 30.0, prove, &handle};
+      s.f.data(), s.regions.data(), s.facets.data(), size, 20.0, prove, &handle};
   out.status = phx_mc_conforming_voronoi(&request);
   if (handle == nullptr) return out;
   int64_t sizes[PHX_MC_CONFORMING_VORONOI_SIZES];
   phx_mc_conforming_voronoi_sizes(handle, sizes);
   out.vertices.resize(3 * sizes[0]);
-  out.kinds.resize(sizes[0]);
-  out.sources.resize(2 * sizes[0]);
+  out.vertex_triangles.resize(sizes[0]);
   out.face_offsets.resize(sizes[1] + 1);
   out.face_vertices.resize(sizes[2]);
   out.face_cells.resize(2 * sizes[1]);
@@ -81,21 +76,74 @@ Cells run(const Surface& s, const std::vector<double>& seeds, double size, int32
   out.cell_regions.resize(sizes[3]);
   out.cell_volumes.resize(sizes[3]);
   out.cell_centroids.resize(3 * sizes[3]);
-  out.convex.resize(sizes[3]);
   out.seeds.resize(3 * sizes[4]);
+  out.seed_regions.resize(sizes[4]);
   out.stats.resize(PHX_MC_CONFORMING_VORONOI_STATS);
   out.exact_offsets.resize(4 * sizes[0] + 1);
   out.exact_values.resize(sizes[5]);
   const phx_mc_conforming_voronoi_arrays arrays{
-      out.vertices.data(),     out.kinds.data(),          out.sources.data(),
-      out.face_offsets.data(), out.face_vertices.data(),  out.face_cells.data(),
-      out.face_facets.data(),  out.cell_seeds.data(),     out.cell_regions.data(),
-      out.cell_volumes.data(), out.cell_centroids.data(), out.convex.data(),
-      out.seeds.data(),        out.stats.data(),          out.exact_offsets.data(),
-      out.exact_values.data()};
+      out.vertices.data(),       out.vertex_triangles.data(), out.face_offsets.data(),
+      out.face_vertices.data(),  out.face_cells.data(),       out.face_facets.data(),
+      out.cell_seeds.data(),     out.cell_regions.data(),     out.cell_volumes.data(),
+      out.cell_centroids.data(), out.seeds.data(),            out.seed_regions.data(),
+      out.stats.data(),          out.exact_offsets.data(),    out.exact_values.data()};
   PHX_CHECK(phx_mc_conforming_voronoi_export(handle, &arrays) == PHX_MC_OK);
   phx_mc_conforming_voronoi_free(handle);
   return out;
+}
+
+// Every vertex of every cell on the inner side of each of the cell's faces.
+bool convex(const Cells& c, double tolerance) {
+  const std::size_t cells = c.cell_seeds.size();
+  std::vector<std::vector<int32_t>> vertices(cells);
+  std::vector<std::vector<std::pair<int64_t, int>>> faces(cells);
+  for (std::size_t f = 0; f + 1 < c.face_offsets.size(); ++f)
+    for (int side = 0; side < 2; ++side) {
+      const int32_t cell = c.face_cells[2 * f + side];
+      if (cell < 0) continue;
+      faces[cell].emplace_back(static_cast<int64_t>(f), side);
+      for (int64_t q = c.face_offsets[f]; q < c.face_offsets[f + 1]; ++q)
+        vertices[cell].push_back(c.face_vertices[q]);
+    }
+  for (std::size_t cell = 0; cell < cells; ++cell) {
+    const double* s = &c.seeds[3 * c.cell_seeds[cell]];
+    for (const auto& [f, side] : faces[cell]) {
+      const int64_t begin = c.face_offsets[f], end = c.face_offsets[f + 1];
+      double n[3] = {0, 0, 0}, o[3] = {0, 0, 0};
+      const int32_t other = c.face_cells[2 * f + 1 - side];
+      if (other >= 0) {
+        // Between two cells: the bisector of their seeds, outward of `cell`.
+        const double* t = &c.seeds[3 * c.cell_seeds[other]];
+        for (int k = 0; k < 3; ++k) {
+          n[k] = t[k] - s[k];
+          o[k] = 0.5 * (t[k] + s[k]);
+        }
+      } else {
+        for (int64_t q = begin; q < end; ++q) {
+          const double* a = &c.vertices[3 * c.face_vertices[q]];
+          const double* b = &c.vertices[3 * c.face_vertices[q + 1 < end ? q + 1 : begin]];
+          n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+          n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+          n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+          for (int k = 0; k < 3; ++k) o[k] += a[k] / static_cast<double>(end - begin);
+        }
+        // Boundary faces below 1e-8 in area carry no reliable rounded plane.
+        if (std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) < 2e-8) continue;
+      }
+      // Orientation from the seed, which lies strictly inside its cell.
+      const double sn = (s[0] - o[0]) * n[0] + (s[1] - o[1]) * n[1] + (s[2] - o[2]) * n[2];
+      const double length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+      if (!(length > 0.0) || sn == 0.0) return false;
+      const double sign = sn < 0.0 ? 1.0 : -1.0;
+      for (const int32_t v : vertices[cell]) {
+        const double* x = &c.vertices[3 * v];
+        const double height =
+            sign * ((x[0] - o[0]) * n[0] + (x[1] - o[1]) * n[1] + (x[2] - o[2]) * n[2]) / length;
+        if (height > tolerance) return false;
+      }
+    }
+  }
+  return true;
 }
 
 double region_volume(const Surface& s, int32_t region) {
@@ -136,20 +184,26 @@ bool closed(const Cells& c) {
 }
 
 // Brute-force reference: clip a convex polytope (faces as loops) by a plane
-// n . x <= d, keeping the inner side.
+// n . x <= d, keeping the inner side. Values within 1e-12 of the plane count
+// as on it (mirrored seeds put many vertices exactly on bisectors).
 using Polygon = std::vector<std::array<double, 3>>;
 std::vector<Polygon> clip(const std::vector<Polygon>& faces, const double* n, double d) {
+  constexpr double kOn = 1e-12;
   std::vector<Polygon> result;
   std::vector<std::array<double, 3>> cap;
+  bool coincident = false;
   for (const Polygon& face : faces) {
     Polygon kept;
+    bool all_on = true;
     for (std::size_t k = 0; k < face.size(); ++k) {
       const auto& a = face[k];
       const auto& b = face[(k + 1) % face.size()];
       const double sa = n[0] * a[0] + n[1] * a[1] + n[2] * a[2] - d;
       const double sb = n[0] * b[0] + n[1] * b[1] + n[2] * b[2] - d;
-      if (sa <= 0.0) kept.push_back(a);
-      if ((sa < 0.0) != (sb < 0.0) && sa != sb) {
+      all_on = all_on && std::fabs(sa) <= kOn;
+      if (sa <= kOn) kept.push_back(a);
+      if (std::fabs(sa) <= kOn) cap.push_back(a);
+      if ((sa < -kOn && sb > kOn) || (sa > kOn && sb < -kOn)) {
         const double t = sa / (sa - sb);
         const std::array<double, 3> p{a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]),
                                       a[2] + t * (b[2] - a[2])};
@@ -157,14 +211,25 @@ std::vector<Polygon> clip(const std::vector<Polygon>& faces, const double* n, do
         cap.push_back(p);
       }
     }
+    coincident = coincident || all_on;
     if (kept.size() >= 3) result.push_back(kept);
   }
-  if (cap.size() >= 3) {
+  std::vector<std::array<double, 3>> unique;
+  for (const auto& p : cap) {
+    bool seen = false;
+    for (const auto& q : unique)
+      seen = seen || (std::fabs(p[0] - q[0]) <= kOn && std::fabs(p[1] - q[1]) <= kOn &&
+                      std::fabs(p[2] - q[2]) <= kOn);
+    if (!seen) unique.push_back(p);
+  }
+  cap = unique;
+  if (!coincident && cap.size() >= 3) {
     std::array<double, 3> c{0, 0, 0};
     for (const auto& p : cap)
       for (int k = 0; k < 3; ++k) c[k] += p[k] / static_cast<double>(cap.size());
-    const double u0[3] = {std::fabs(n[0]) < 0.9 ? 1.0 : 0.0, std::fabs(n[0]) < 0.9 ? 0.0 : 1.0,
-                          0.0};
+    // A helper axis away from the (unnormalized) plane normal.
+    const bool across = std::fabs(n[0]) < 0.9 * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    const double u0[3] = {across ? 1.0 : 0.0, across ? 0.0 : 1.0, 0.0};
     double u[3] = {n[1] * u0[2] - n[2] * u0[1], n[2] * u0[0] - n[0] * u0[2],
                    n[0] * u0[1] - n[1] * u0[0]};
     double w[3] = {n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2],
@@ -207,65 +272,57 @@ double polytope_volume(const std::vector<Polygon>& faces) {
   return total;
 }
 
-void test_two_seeds_split_the_cube_exactly() {
+void test_cube_cells_match_brute_force_voronoi() {
   Surface s;
   const double lo[3] = {0, 0, 0}, hi[3] = {1, 1, 1};
   add_box(s, lo, hi, -1, 0);
-  const std::vector<double> seeds = {0.25, 0.5, 0.5, 0.75, 0.5, 0.5};
-  const Cells c = run(s, seeds, 0.0, 1);
+  const Cells c = run(s, 0.3, 1);
   PHX_CHECK(c.status == PHX_MC_OK);
-  PHX_CHECK(c.cell_seeds.size() == 2);
   PHX_CHECK(c.stats[15] == 1.0);
-  for (const double v : c.cell_volumes) PHX_CHECK(v == 0.5);
-  // Every surface-edge point lies exactly on the bisector x = 0.5: the four
-  // cube-edge midpoints plus crossings of the face diagonals.
-  int midpoints = 0;
-  for (std::size_t v = 0; v < c.kinds.size(); ++v) {
-    if (c.kinds[v] != 2) continue;
-    ++midpoints;
-    PHX_CHECK(c.vertices[3 * v] == 0.5);
-  }
-  PHX_CHECK(midpoints >= 4);
-  // One bisector face and five merged cube faces per cell.
-  PHX_CHECK(c.face_facets.size() == 11);
+  PHX_CHECK(c.cell_seeds.size() > 20);
   PHX_CHECK(closed(c));
-  for (const uint8_t convex : c.convex) PHX_CHECK(convex == 1);
-}
-
-void test_random_seeds_match_brute_force_clipping() {
-  Surface s;
-  const double lo[3] = {0, 0, 0}, hi[3] = {1, 1, 1};
-  add_box(s, lo, hi, -1, 0);
-  std::mt19937_64 random(20261120);
-  std::uniform_real_distribution<double> unit(0.05, 0.95);
-  std::vector<double> seeds(3 * 40);
-  for (double& x : seeds) x = unit(random);
-  const Cells c = run(s, seeds, 0.0, 1);
-  PHX_CHECK(c.status == PHX_MC_OK);
-  PHX_CHECK(c.cell_seeds.size() == 40);
-  PHX_CHECK(closed(c));
+  PHX_CHECK(convex(c, 1e-9));
+  const std::size_t seeds = c.seed_regions.size();
   double total = 0.0;
   for (std::size_t cell = 0; cell < c.cell_seeds.size(); ++cell) {
     const int32_t i = c.cell_seeds[cell];
+    PHX_CHECK(c.seed_regions[i] == 0);
+    // Brute force: a box of side 9 about the cube clipped by every bisector.
     std::vector<Polygon> poly = {
-        {{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}}, {{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}},
-        {{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}}, {{0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
-        {{0, 0, 0}, {0, 0, 1}, {0, 1, 1}, {0, 1, 0}}, {{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}}};
-    for (int j = 0; j < 40; ++j) {
-      if (j == i) continue;
+        {{-4, -4, -4}, {-4, 5, -4}, {5, 5, -4}, {5, -4, -4}},
+        {{-4, -4, 5}, {5, -4, 5}, {5, 5, 5}, {-4, 5, 5}},
+        {{-4, -4, -4}, {5, -4, -4}, {5, -4, 5}, {-4, -4, 5}},
+        {{-4, 5, -4}, {-4, 5, 5}, {5, 5, 5}, {5, 5, -4}},
+        {{-4, -4, -4}, {-4, -4, 5}, {-4, 5, 5}, {-4, 5, -4}},
+        {{5, -4, -4}, {5, 5, -4}, {5, 5, 5}, {5, -4, 5}}};
+    for (std::size_t j = 0; j < seeds; ++j) {
+      if (static_cast<int32_t>(j) == i) continue;
       double n[3], d = 0.0;
       for (int k = 0; k < 3; ++k) {
-        n[k] = seeds[3 * j + k] - seeds[3 * i + k];
-        d += 0.5 * n[k] * (seeds[3 * j + k] + seeds[3 * i + k]);
+        n[k] = c.seeds[3 * j + k] - c.seeds[3 * i + k];
+        d += 0.5 * n[k] * (c.seeds[3 * j + k] + c.seeds[3 * i + k]);
       }
       poly = clip(poly, n, d);
     }
-    const double reference = polytope_volume(poly);
-    PHX_CHECK_NEAR(c.cell_volumes[cell], reference, 1e-12);
-    PHX_CHECK(c.convex[cell] == 1);
+    PHX_CHECK_NEAR(c.cell_volumes[cell], polytope_volume(poly), 1e-12);
     total += c.cell_volumes[cell];
   }
-  PHX_CHECK_NEAR(total, 1.0, 1e-12);
+  // Mirrored seeds put the bisectors exactly on the cube's faces.
+  PHX_CHECK_NEAR(total, 1.0, 1e-13);
+  for (std::size_t f = 0; f + 1 < c.face_offsets.size(); ++f) {
+    if (c.face_cells[2 * f + 1] >= 0) continue;
+    for (int64_t q = c.face_offsets[f]; q < c.face_offsets[f + 1]; ++q) {
+      const double* x = &c.vertices[3 * c.face_vertices[q]];
+      bool on = false, inside = true;
+      for (int k = 0; k < 3; ++k) {
+        on = on || x[k] == 0.0 || x[k] == 1.0;
+        inside = inside && x[k] >= 0.0 && x[k] <= 1.0;
+      }
+      PHX_CHECK(on && inside);
+    }
+  }
+  PHX_CHECK(std::fabs(c.stats[18]) < 1e-14);
+  PHX_CHECK(c.stats[19] < 1e-15);
 }
 
 Surface icosphere(int levels) {
@@ -312,24 +369,29 @@ Surface icosphere(int levels) {
 
 void test_automatic_sphere_cells_are_closed_convex_and_deterministic() {
   const Surface s = icosphere(3);
-  const Cells c = run(s, {}, 0.3, 1);
+  const Cells c = run(s, 0.3, 1);
   PHX_CHECK(c.status == PHX_MC_OK);
   PHX_CHECK(c.stats[15] == 1.0);
+  PHX_CHECK(c.stats[16] == 0.0 && c.stats[17] == 0.0);
   PHX_CHECK(c.cell_seeds.size() > 100);
   PHX_CHECK(closed(c));
+  PHX_CHECK(convex(c, 1e-9));
   double total = 0.0;
   for (const double v : c.cell_volumes) {
     PHX_CHECK(v > 0.0);
     total += v;
   }
-  PHX_CHECK_NEAR(total, region_volume(s, 0), 1e-12);
-  // The icosphere is convex: no reflex edge, hence every cell convex.
-  for (const uint8_t convex : c.convex) PHX_CHECK(convex == 1);
-  const Cells again = run(s, {}, 0.3, 1);
+  const double reference = region_volume(s, 0);
+  PHX_CHECK(std::fabs(total / reference - 1.0) < 0.02);
+  PHX_CHECK_NEAR(c.stats[18], total / reference - 1.0, 1e-12);
+  // The certified bound covers the vertex distances and stays below the size.
+  PHX_CHECK(c.stats[20] >= c.stats[19] && c.stats[20] < 0.3);
+  const Cells again = run(s, 0.3, 1);
   PHX_CHECK(again.vertices == c.vertices);
   PHX_CHECK(again.face_vertices == c.face_vertices);
   PHX_CHECK(again.face_cells == c.face_cells);
   PHX_CHECK(again.seeds == c.seeds);
+  PHX_CHECK(again.exact_values == c.exact_values);
 }
 
 void test_stacked_regions_share_their_interface() {
@@ -358,7 +420,7 @@ void test_stacked_regions_share_their_interface() {
   quad(6, 10, 11, 7, -1, 1, 8);
   quad(4, 8, 10, 6, -1, 1, 9);
   quad(5, 7, 11, 9, -1, 1, 10);
-  const Cells c = run(t, {}, 0.25, 1);
+  const Cells c = run(t, 0.25, 1);
   PHX_CHECK(c.status == PHX_MC_OK);
   PHX_CHECK(c.stats[15] == 1.0);
   PHX_CHECK(closed(c));
@@ -372,13 +434,12 @@ void test_stacked_regions_share_their_interface() {
     if (c.face_facets[f] != 1) continue;
     ++interface;
     PHX_CHECK(c.face_cells[2 * f + 1] >= 0);
-    PHX_CHECK(c.cell_regions[c.face_cells[2 * f]] == 0);
-    PHX_CHECK(c.cell_regions[c.face_cells[2 * f + 1]] == 1);
+    PHX_CHECK(c.cell_regions[c.face_cells[2 * f]] + c.cell_regions[c.face_cells[2 * f + 1]] == 1);
   }
   PHX_CHECK(interface > 0);
 }
 
-void test_reflex_edge_cells_are_nonconvex() {
+void test_notched_block_keeps_its_volume() {
   // A notched block: the union of [0,2]x[0,2]x[0,1] minus [1,2]x[1,2]x[0,1].
   Surface s;
   const double xy[6][2] = {{0, 0}, {2, 0}, {2, 1}, {1, 1}, {1, 2}, {0, 2}};
@@ -402,19 +463,14 @@ void test_reflex_edge_cells_are_nonconvex() {
       s.facets.push_back(2 + k);
     }
   }
-  const Cells c = run(s, {}, 0.3, 1);
+  const Cells c = run(s, 0.3, 1);
   PHX_CHECK(c.status == PHX_MC_OK);
   PHX_CHECK(c.stats[15] == 1.0);
   PHX_CHECK(closed(c));
+  PHX_CHECK(convex(c, 1e-9));
   double total = 0.0;
-  int nonconvex = 0;
-  for (std::size_t cell = 0; cell < c.cell_volumes.size(); ++cell) {
-    total += c.cell_volumes[cell];
-    nonconvex += c.convex[cell] == 0;
-  }
+  for (const double v : c.cell_volumes) total += v;
   PHX_CHECK_NEAR(total, 3.0, 1e-12);
-  PHX_CHECK(nonconvex > 0);
-  PHX_CHECK(c.stats[19] == static_cast<double>(nonconvex));
 }
 
 void test_invalid_requests_are_refused() {
@@ -423,23 +479,20 @@ void test_invalid_requests_are_refused() {
   add_box(s, lo, hi, -1, 0);
   Surface same = s;
   same.regions[0] = same.regions[1];
-  PHX_CHECK(run(same, {}, 0.2, 0).status == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(run(s, {}, -1.0, 0).status == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(run(same, 0.2, 0).status == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(run(s, -1.0, 0).status == PHX_MC_INVALID_ARGUMENT);
   Surface flat = s;
   flat.f[2] = flat.f[1];
-  PHX_CHECK(run(flat, {}, 0.2, 0).status == PHX_MC_DEGENERATE_INPUT);
-  const std::vector<double> duplicate = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
-  PHX_CHECK(run(s, duplicate, 0.0, 0).status == PHX_MC_DEGENERATE_INPUT);
+  PHX_CHECK(run(flat, 0.2, 0).status == PHX_MC_DEGENERATE_INPUT);
 }
 
 }  // namespace
 
 int main() {
-  test_two_seeds_split_the_cube_exactly();
-  test_random_seeds_match_brute_force_clipping();
+  test_cube_cells_match_brute_force_voronoi();
   test_automatic_sphere_cells_are_closed_convex_and_deterministic();
   test_stacked_regions_share_their_interface();
-  test_reflex_edge_cells_are_nonconvex();
+  test_notched_block_keeps_its_volume();
   test_invalid_requests_are_refused();
   return phx::mc::test::finish("test_conforming_voronoi");
 }

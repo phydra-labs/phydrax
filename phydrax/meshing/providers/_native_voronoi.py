@@ -4,12 +4,15 @@
 
 """Conforming Voronoi polyhedra of a PLC solid through one native call.
 
-The route places its own seeds for the requested cell size and clips their
-Voronoi cells exactly to the PLC (``phydrax._meshcore.conforming_voronoi``):
-cells away from the boundary come straight from the Delaunay dual, cells
-meeting it are restricted to their regions, and every boundary face is a piece
-of one PLC facet. The published geometry is the kernel's binary64
-realization; its combinatorics are decided by exact predicates.
+The route places conforming seeds for the requested cell size
+(``phydrax._meshcore.conforming_voronoi``): interior seeds mirrored across
+the surface by exterior ghosts, sector seeds about sharp edges, corner seeds
+and a body-centred cubic lattice. Every cell is the exact Voronoi cell of its
+seed in the diagram of all seeds, hence closed and convex; the boundary is
+formed by the bisector faces towards the ghosts. It lies exactly on
+axis-aligned planes and approximates other facets (the kernel reports the
+distance and volume error). The published geometry is the binary64 rounding
+of exact circumcentres; the combinatorics are decided by exact predicates.
 """
 
 from __future__ import annotations
@@ -53,8 +56,8 @@ from phydrax.meshing._organization import (
 )
 from phydrax.meshing._result import MeshingComplianceReport
 from phydrax.meshing._sizing import (
-    SizeControlStrength,
     size_statistic,
+    SizeControlStrength,
     UniformSizeControl,
 )
 from phydrax.meshing._trace import (
@@ -75,12 +78,12 @@ from phydrax.meshing.providers._native_sources import NativePlcSource
 from phydrax.typing import checked
 
 
-# Dihedral angle above which a surface edge is a sharp feature for seeding.
-# Feature samples only shape the cells: clipping preserves every PLC edge.
-_SEED_FEATURE_ANGLE_DEGREES = 30.0
+# Dihedral angle above which a surface edge is a sharp feature: sector seeds
+# and per-feature mirrors keep the bisector faces on both sides of the edge.
+_SEED_FEATURE_ANGLE_DEGREES = 20.0
 
 # Vertex and edge ancestry codes, indexing _ROLES.
-_REGION, _VERTEX, _EDGE, _FACET = 0, 1, 2, 3
+_REGION, _FACET = 0, 3
 _ROLES = (
     GeometrySourceEntityRole.REGION,
     GeometrySourceEntityRole.VERTEX,
@@ -174,7 +177,9 @@ class _Published:
     face_facets: np.ndarray
 
 
-def _sorted_loop_table(offsets: np.ndarray, values: np.ndarray, width: int, /) -> np.ndarray:
+def _sorted_loop_table(
+    offsets: np.ndarray, values: np.ndarray, width: int, /
+) -> np.ndarray:
     """Rows (size, sorted vertices padded with -1) identifying each face."""
     sizes = np.diff(offsets)
     rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
@@ -216,7 +221,9 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
         or native.shape != canonical.shape
         or not np.array_equal(native[native_rows], canonical[canonical_rows])
     ):
-        raise RuntimeError("Canonical polyhedra must retain their native cells and faces.")
+        raise RuntimeError(
+            "Canonical polyhedra must retain their native cells and faces."
+        )
     face_order = np.empty((native.shape[0],), dtype=np.int64)
     face_order[canonical_rows] = native_rows
     return _Published(
@@ -299,119 +306,50 @@ def _vertex_ancestry(
     triangles: np.ndarray,
     triangle_facets: np.ndarray,
     /,
-) -> tuple[_Ancestry, np.ndarray]:
-    """Vertex ancestry, and the PLC vertex row of every vertex on one (else -1)."""
+) -> _Ancestry:
+    """Facet of the nearest PLC triangle for boundary vertices, else the region."""
     complex_ = source.complex
     cells = published.cells
-    kinds = np.asarray(cells.vertex_kinds, dtype=np.int64)
-    carriers = np.asarray(cells.vertex_sources, dtype=np.int64)
+    nearest = np.asarray(cells.vertex_triangles, dtype=np.int64)
     points = np.asarray(cells.vertices, dtype=np.float64)
     plc_points = np.asarray(complex_.vertices, dtype=np.float64)
     facet_regions = np.asarray(complex_.facet_regions, dtype=np.int64)
-    vertex_count = plc_points.shape[0]
-    codes = kinds.copy()
-    rows = np.zeros((kinds.size,), dtype=np.int64)
-    sides = np.full((kinds.size, 2), -2, dtype=np.int64)
-    residuals = np.zeros((kinds.size,), dtype=np.float64)
-    # Voronoi vertices lie in the region of any cell around them.
+    count = nearest.size
+    codes = np.full((count,), _REGION, dtype=np.int64)
+    rows = np.zeros((count,), dtype=np.int64)
+    sides = np.full((count, 2), -2, dtype=np.int64)
+    residuals = np.zeros((count,), dtype=np.float64)
+    # Vertices off the boundary lie in the region of any cell around them.
     offsets = np.asarray(cells.face_offsets, dtype=np.int64)
     owners = np.asarray(cells.face_cells, dtype=np.int64)[:, 0]
-    regions = np.zeros((kinds.size,), dtype=np.int64)
-    regions[np.asarray(cells.face_vertices, dtype=np.int64)] = np.repeat(
+    rows[np.asarray(cells.face_vertices, dtype=np.int64)] = np.repeat(
         np.asarray(cells.cell_regions, dtype=np.int64)[owners], np.diff(offsets)
     )
-    interior = kinds == 0
-    rows[interior] = regions[interior]
-    on_vertex = kinds == 1
-    rows[on_vertex] = carriers[on_vertex, 0]
-    # A point of a triangle edge lies on a PLC edge or on a polygon diagonal.
-    on_edge = np.flatnonzero(kinds == 2)
-    if on_edge.size:
-        ends = np.sort(carriers[on_edge], axis=1)
-        keys = ends[:, 0] * vertex_count + ends[:, 1]
-        plc_ends = np.sort(np.asarray(complex_.plc_edge_vertices, dtype=np.int64), axis=1)
-        plc_keys = plc_ends[:, 0] * vertex_count + plc_ends[:, 1]
-        plc_order = np.argsort(plc_keys)
-        found = np.searchsorted(plc_keys[plc_order], keys)
-        found = np.minimum(found, plc_keys.size - 1)
-        hit = plc_keys[plc_order][found] == keys
-        rows[on_edge[hit]] = plc_order[found[hit]]
-        diagonal = on_edge[~hit]
-        if diagonal.size:
-            corners = np.sort(
-                np.stack(
-                    (triangles[:, (0, 1, 2)], triangles[:, (1, 2, 0)]), axis=2
-                ).reshape((-1, 2)),
-                axis=1,
-            )
-            edge_keys = corners[:, 0] * vertex_count + corners[:, 1]
-            edge_order = np.argsort(edge_keys)
-            where = np.searchsorted(edge_keys[edge_order], keys[~hit])
-            codes[diagonal] = _FACET
-            rows[diagonal] = triangle_facets[edge_order[where] // 3]
-        a, b = plc_points[carriers[on_edge, 0]], plc_points[carriers[on_edge, 1]]
-        direction = b - a
-        residuals[on_edge] = np.linalg.norm(
-            np.cross(points[on_edge] - a, direction), axis=1
-        ) / np.linalg.norm(direction, axis=1)
-    on_face = np.flatnonzero(kinds == 3)
+    on_face = np.flatnonzero(nearest >= 0)
     if on_face.size:
-        rows[on_face] = triangle_facets[carriers[on_face, 0]]
-        corners = plc_points[triangles[carriers[on_face, 0]]]
+        codes[on_face] = _FACET
+        rows[on_face] = triangle_facets[nearest[on_face]]
+        corners = plc_points[triangles[nearest[on_face]]]
         normal = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
         residuals[on_face] = np.abs(
             np.sum((points[on_face] - corners[:, 0]) * normal, axis=1)
         ) / np.linalg.norm(normal, axis=1)
-    facets = codes == _FACET
-    sides[facets] = np.where(facet_regions[rows[facets]] < 0, -2, facet_regions[rows[facets]])
-    plc_vertex = np.where(on_vertex, carriers[:, 0], -1)
-    return _Ancestry(codes, rows, sides, residuals), plc_vertex
+        sides[on_face] = np.where(
+            facet_regions[rows[on_face]] < 0, -2, facet_regions[rows[on_face]]
+        )
+    return _Ancestry(codes, rows, sides, residuals)
 
 
-def _edge_ancestry(
-    source: NativePlcSource,
-    published: _Published,
-    vertices: _Ancestry,
-    plc_vertex: np.ndarray,
-    /,
-) -> _Ancestry:
-    complex_ = source.complex
+def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
     connectivity = published.connectivity
     edges = np.asarray(connectivity.edges, dtype=np.int64)
     count = edges.shape[0]
-    vertex_count = np.asarray(complex_.vertices).shape[0]
-    first, second = edges[:, 0], edges[:, 1]
-    code_a, code_b = vertices.codes[first], vertices.codes[second]
-    row_a, row_b = vertices.rows[first], vertices.rows[second]
-    plc_ends = np.asarray(complex_.plc_edge_vertices, dtype=np.int64)
-    plc_edge = np.full((count,), -1, dtype=np.int64)
-    both_edges = (code_a == _EDGE) & (code_b == _EDGE) & (row_a == row_b)
-    plc_edge[both_edges] = row_a[both_edges]
-    for vertex_side, edge_side in ((first, second), (second, first)):
-        mixed = (vertices.codes[vertex_side] == _VERTEX) & (
-            vertices.codes[edge_side] == _EDGE
-        )
-        ends = plc_ends[vertices.rows[edge_side[mixed]]]
-        ends_match = np.any(ends == plc_vertex[vertex_side[mixed]][:, None], axis=1)
-        selected = np.flatnonzero(mixed)[ends_match]
-        plc_edge[selected] = vertices.rows[edge_side[selected]]
-    both_vertices = np.flatnonzero((code_a == _VERTEX) & (code_b == _VERTEX))
-    if both_vertices.size:
-        pair = np.sort(
-            np.stack((plc_vertex[first[both_vertices]], plc_vertex[second[both_vertices]]), 1),
-            axis=1,
-        )
-        keys = pair[:, 0] * vertex_count + pair[:, 1]
-        sorted_ends = np.sort(plc_ends, axis=1)
-        plc_keys = sorted_ends[:, 0] * vertex_count + sorted_ends[:, 1]
-        order = np.argsort(plc_keys)
-        found = np.minimum(np.searchsorted(plc_keys[order], keys), plc_keys.size - 1)
-        hit = plc_keys[order][found] == keys
-        plc_edge[both_vertices[hit]] = order[found[hit]]
     # Facets and regions of the faces around each edge.
     face_offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int64)
     face_edges = np.asarray(connectivity.face_edge_values, dtype=np.int64)
-    edge_faces = np.repeat(np.arange(face_offsets.size - 1, dtype=np.int64), np.diff(face_offsets))
+    edge_faces = np.repeat(
+        np.arange(face_offsets.size - 1, dtype=np.int64), np.diff(face_offsets)
+    )
     edge_facet = np.full((count,), -1, dtype=np.int64)
     np.maximum.at(edge_facet, face_edges, published.face_facets[edge_faces])
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
@@ -419,7 +357,9 @@ def _edge_ancestry(
     region_rows = np.concatenate(
         (
             np.stack((face_edges, published.cell_regions[owner]), axis=1),
-            np.stack((face_edges, published.cell_regions[neighbor]), axis=1)[neighbor >= 0],
+            np.stack((face_edges, published.cell_regions[neighbor]), axis=1)[
+                neighbor >= 0
+            ],
         )
     )
     region_rows = np.unique(region_rows, axis=0)
@@ -429,16 +369,16 @@ def _edge_ancestry(
     sides[:, 0] = region_rows[starts, 1]
     second_side = counts > 1
     sides[second_side, 1] = region_rows[starts[second_side] + 1, 1]
-    codes = np.where(plc_edge >= 0, _EDGE, np.where(edge_facet >= 0, _FACET, _REGION))
-    rows = np.where(plc_edge >= 0, plc_edge, np.where(edge_facet >= 0, edge_facet, sides[:, 0]))
-    interior = codes == _REGION
-    if np.any(interior & (counts != 1)):
+    codes = np.where(edge_facet >= 0, _FACET, _REGION)
+    rows = np.where(edge_facet >= 0, edge_facet, sides[:, 0])
+    if np.any((codes == _REGION) & (counts != 1)):
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
             "A conforming Voronoi edge off the PLC lies on a region interface.",
             provider_code="native_voronoi_association",
             stage="geometry_association",
         )
+    first, second = edges[:, 0], edges[:, 1]
     residuals = np.maximum(vertices.residuals[first], vertices.residuals[second])
     return _Ancestry(codes, rows, sides, residuals)
 
@@ -452,7 +392,9 @@ def _face_ancestry(
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
     regions = published.cell_regions.astype(np.int64)
     bisector = facets < 0
-    if np.any(bisector & (neighbor >= 0) & (regions[owner] != regions[np.maximum(neighbor, 0)])):
+    if np.any(
+        bisector & (neighbor >= 0) & (regions[owner] != regions[np.maximum(neighbor, 0)])
+    ):
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
             "A material interface must retain its PLC facet witness.",
@@ -484,8 +426,8 @@ def _associations(
     /,
 ) -> tuple[GeometryAssociation, ...]:
     mesh, connectivity = published.mesh, published.connectivity
-    vertices, plc_vertex = _vertex_ancestry(source, published, triangles, triangle_facets)
-    edges = _edge_ancestry(source, published, vertices, plc_vertex)
+    vertices = _vertex_ancestry(source, published, triangles, triangle_facets)
+    edges = _edge_ancestry(published, vertices)
     faces = _face_ancestry(source, published, vertices)
     regions = published.cell_regions.astype(np.int64)
     cells = _Ancestry(
@@ -496,16 +438,32 @@ def _associations(
     )
     return (
         _association_from(
-            source, mesh, 0, np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64), vertices
+            source,
+            mesh,
+            0,
+            np.asarray(mesh.entity_set(0).entity_ids, dtype=np.int64),
+            vertices,
         ),
         _association_from(
-            source, mesh, 1, np.asarray(connectivity.edge_global_ids, dtype=np.int64), edges
+            source,
+            mesh,
+            1,
+            np.asarray(connectivity.edge_global_ids, dtype=np.int64),
+            edges,
         ),
         _association_from(
-            source, mesh, 2, np.asarray(connectivity.face_global_ids, dtype=np.int64), faces
+            source,
+            mesh,
+            2,
+            np.asarray(connectivity.face_global_ids, dtype=np.int64),
+            faces,
         ),
         _association_from(
-            source, mesh, 3, np.asarray(connectivity.cell_global_ids, dtype=np.int64), cells
+            source,
+            mesh,
+            3,
+            np.asarray(connectivity.cell_global_ids, dtype=np.int64),
+            cells,
         ),
     )
 
@@ -521,7 +479,6 @@ def _organization(
     complex_ = source.complex
     cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     face_ids = np.asarray(connectivity.face_global_ids, dtype=np.int64)
-    edge_ids = np.asarray(connectivity.edge_global_ids, dtype=np.int64)
     controls = {control.region_name: control for control in specification.region_controls}
     seeds = {seed.region_name: seed for seed in specification.region_seeds}
     zones: list[MeshZone] = []
@@ -579,27 +536,6 @@ def _organization(
     interface = np.flatnonzero((facets >= 0) & (neighbor >= 0))
     if interface.size:
         labels.append(MeshLabel("interface", _mesh_scope(mesh, 2, face_ids[interface])))
-    edge_association = associations[1]
-    segments = set(complex_.segment_ids)
-    curve_rows = np.asarray(
-        [
-            row
-            for row, (identifier, role) in enumerate(
-                zip(
-                    edge_association.source_entity_ids,
-                    edge_association.source_roles,
-                    strict=True,
-                )
-            )
-            if role is GeometrySourceEntityRole.EDGE and identifier in segments
-        ],
-        dtype=np.int64,
-    )
-    if curve_rows.size:
-        labels.append(MeshLabel("internal_curve", _mesh_scope(mesh, 1, edge_ids[curve_rows])))
-    convex = np.asarray(published.cells.cell_convex, dtype=np.bool_)[published.cell_order]
-    if not np.all(convex):
-        labels.append(MeshLabel("nonconvex_cells", _mesh_scope(mesh, 3, cell_ids[~convex])))
     for control in specification.patch_controls:
         requested = np.asarray(control.scope.entity_ids, dtype=np.int64)
         rows = face_ids[np.isin(facets, _source_scope_rows(source, control.scope, 2))]
@@ -624,10 +560,15 @@ def _organization(
     # Meshing scopes store sorted entity IDs; attribute values follow that order.
     sorted_rows = np.argsort(cell_ids, kind="stable")
     all_cells = _mesh_scope(mesh, 3, cell_ids)
-    seed_rows = np.asarray(published.cells.cell_seeds, dtype=np.int64)[published.cell_order]
+    seed_rows = np.asarray(published.cells.cell_seeds, dtype=np.int64)[
+        published.cell_order
+    ]
     attributes = (
         MeshAttribute(
-            "voronoi_seed_index", MeshAttributeRole.MARKER, all_cells, seed_rows[sorted_rows]
+            "voronoi_seed_index",
+            MeshAttributeRole.MARKER,
+            all_cells,
+            seed_rows[sorted_rows],
         ),
         MeshAttribute(
             "voronoi_seed",
@@ -696,18 +637,21 @@ def _compliance(
             requested.append((f"size:{control.control_id}:{name}", bound))
             achieved.append((f"size:{control.control_id}:{name}_cell_size", value))
             tolerance = policy.absolute_tolerance + policy.relative_tolerance * abs(bound)
-            if hard and (value < bound - tolerance if below else value > bound + tolerance):
+            if hard and (
+                value < bound - tolerance if below else value > bound + tolerance
+            ):
                 issues.append(f"{name}_size:{control.control_id}")
     stats = np.asarray(published.cells.stats, dtype=np.float64)
-    achieved.append(("voronoi:nonconvex_cells", float(stats[19])))
-    achieved.append(("voronoi:repair_rounds", float(stats[13])))
+    achieved.append(("voronoi:volume_error", float(stats[18])))
+    achieved.append(("voronoi:boundary_vertex_distance_over_size", float(stats[19])))
+    achieved.append(("voronoi:repair_rounds", float(stats[14])))
     if stats[15] >= 0.0:
         achieved.extend(
             (
                 ("voronoi:certified", float(stats[15])),
                 ("voronoi:open_cell_edges", float(stats[16])),
-                ("voronoi:coverage_residual", float(stats[17])),
-                ("voronoi:volume_residual", float(stats[18])),
+                ("voronoi:delaunay_violations", float(stats[17])),
+                ("voronoi:boundary_distance_bound_over_size", float(stats[20])),
             )
         )
     return MeshingComplianceReport(
@@ -757,9 +701,9 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
             stats = np.asarray(cells.stats, dtype=np.float64)
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Conforming Voronoi certification failed after its repairs: "
-                f"{int(stats[16])} open cell edges, coverage residual {stats[17]:.3g}, "
-                f"volume residual {stats[18]:.3g}, {int(stats[14])} degenerate events.",
+                "Conforming Voronoi cells failed after their repairs: "
+                f"{int(stats[16])} open cell edges, {int(stats[17])} local Delaunay "
+                f"violations, {int(stats[14])} repair rounds.",
                 provider_code="native_voronoi_certification",
                 stage="volume_fill",
             )

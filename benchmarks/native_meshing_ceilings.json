@@ -141,6 +141,22 @@
     "layers-quadric": {
       "100": {"tool": "cfMesh (OpenFOAM v2606) generateBoundaryLayers on its tetMesh, layer step only (ledger F9; Gmsh fails inward; Netgen limit_growth_vectors 0.75 s thinned to 17 %)", "seconds": 0.456, "allowed_ratio": 1.0},
       "50": {"tool": "cfMesh (OpenFOAM v2606) generateBoundaryLayers on its tetMesh, layer step only (ledger F9; Netgen limit_growth_vectors 6.02 s)", "seconds": 1.09, "allowed_ratio": 1.0}
+    },
+    "voronoi-sphere": {
+      "1000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.1714, one thread (ledger F14: 945 cells, total 'Mission Accomplished' time, minimum of three)", "seconds": 11.30, "allowed_ratio": 1.0},
+      "10000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.0898, one thread (ledger F14: 4,854 cells, its largest sphere within the 60 s cap)", "seconds": 40.50, "allowed_ratio": 1.0}
+    },
+    "voronoi-cube": {
+      "1000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.3194, one thread (ledger F14: 1,205 cells)", "seconds": 5.20, "allowed_ratio": 1.0},
+      "10000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.0557, one thread (ledger F14: 11,405 cells)", "seconds": 18.50, "allowed_ratio": 1.0}
+    },
+    "voronoi-torus": {
+      "1000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.1516, one thread (ledger F14: 971 cells)", "seconds": 6.62, "allowed_ratio": 1.0},
+      "10000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.0581, one thread (ledger F14: 9,276 cells)", "seconds": 31.82, "allowed_ratio": 1.0}
+    },
+    "voronoi-steinmetz": {
+      "1000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.1677, one thread (ledger F14: 1,327 cells)", "seconds": 8.93, "allowed_ratio": 1.0},
+      "10000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.0487, one thread (ledger F14: 7,609 cells)", "seconds": 31.72, "allowed_ratio": 1.0}
     }
   }
 }

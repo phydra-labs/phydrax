@@ -473,6 +473,7 @@ statistic (`SizeCompliancePolicy.target_statistics`) and compares it with
 | structured and mapped surface quads | edge length | two-sided | h | none; the user's divisions are checked |
 | dual quads, balanced/frame/mapped grid hexes | edge length | two-sided | h | scaffold edges <= h, grid spacing h, ceil(length / h) divisions |
 | polyhedral cells | edge length | two-sided | h | cell diameter <= maximum_size or h(1+rel)+abs |
+| conforming Voronoi cells | cube root of cell volume | two-sided | h | interior lattice of cell volume h^3, surface samples at spacing 0.75 h |
 | periodic quotient edges (serial and owner-local) | edge length | two-sided | h | periodic metric I/h^2, exact at zero tolerance |
 | periodic algebraic carrier | edge length | construction objective | h | the edge search targets the quantile |
 
@@ -3291,6 +3292,26 @@ Facet-scoped and region-scoped uniform size requirements are evaluated on the
 actual output edges. Regional output sizing is not passed to the facet-only
 tetrahedral clipping-carrier size field; the original request and its hard
 compliance checks remain unchanged.
+
+### Conforming Voronoi cells
+
+`NativeMeshingOptions("plc_conforming_voronoi")` meshes a PLC solid with
+Voronoi polyhedra for a uniform cell size h (the finest uniform control).
+One native call places the seeds: interior seeds mirrored across the surface
+by exterior ghost seeds, sector seeds about sharp edges (dihedral angle above
+20 degrees) and corners, and a body-centred cubic lattice inside. Every cell
+is the exact Voronoi cell of its seed in the diagram of all seeds, so cells
+are closed and convex, and the boundary is formed by the bisector faces
+towards the ghosts. Mirrored pairs put that boundary exactly on axis-aligned
+facets; other facets are approximated, and the route reports the signed
+volume error and the largest boundary vertex distance over h
+(`voronoi:volume_error`, `voronoi:boundary_vertex_distance_over_size`). The
+seeds lie on a dyadic grid and are a function of the input alone, so the mesh
+is deterministic. With `prove=True` the kernel certifies closure, the local
+Delaunay property of every interior seed's star and an upper bound on the
+boundary distance (`voronoi:boundary_distance_bound_over_size`). A polyhedral
+fill without a route still resolves to `plc_restricted_power`, which conforms
+exactly to every facet.
 
 ### Mixed and polyhedral adaptation
 

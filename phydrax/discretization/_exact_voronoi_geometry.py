@@ -28,7 +28,9 @@ from .._trainable import NonTrainableState
 from ._exact_power_geometry import ExactPoint3
 
 
-def _expansion_values(offsets: np.ndarray, values: np.ndarray, /) -> list[tuple[int, int]]:
+def _expansion_values(
+    offsets: np.ndarray, values: np.ndarray, /
+) -> list[tuple[int, int]]:
     """Each expansion as an integer and a binary exponent: ``n * 2**e``."""
     mantissas, exponents = np.frexp(values)
     integers = (mantissas * 2.0**53).astype(np.int64).tolist()
@@ -88,7 +90,9 @@ class ExactVoronoiCellGeometrySource(StrictModule, NonTrainableState):
             or np.any(np.diff(offsets) < 0)
             or not np.all(np.isfinite(components))
         ):
-            raise ValueError("Exact Voronoi vertex expansions must align with the vertices.")
+            raise ValueError(
+                "Exact Voronoi vertex expansions must align with the vertices."
+            )
         if not source_id.strip() or not source_revision.strip():
             raise ValueError("Voronoi source identity and revision must be nonempty.")
         expansions = _expansion_values(offsets.astype(np.int64), components)

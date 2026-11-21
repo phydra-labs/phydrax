@@ -1,8 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Conforming Voronoi polyhedra in a two-material L, consumed by mimetic FV.
-
-The first mesh places its own seeds (plc_conforming_voronoi); the regenerated
-successor uses authored power sites (plc_restricted_power).
+"""Restricted-power polyhedra in a two-material L, consumed by mimetic FV.
 
 Set PHYDRAX_MESHCORE_LIBRARY to the intended library and JAX_ENABLE_X64=true.
 """
@@ -162,16 +159,16 @@ def main() -> None:
         scope,
         VolumeFillStrategy.POLYHEDRAL,
         size_controls=(
-            UniformSizeControl(scope, 0.5, strength=SizeControlStrength.SOFT),
+            UniformSizeControl(scope, 10.0, strength=SizeControlStrength.SOFT),
         ),
         region_controls=controls,
         region_seeds=seeds,
     )
-    options = NativeMeshingOptions("plc_conforming_voronoi")
+    options = NativeMeshingOptions("plc_restricted_power")
     plan = NativeMeshingProvider(options).plan(
         source, spec, coordinate_contract=phx.SpatialCoordinateContract.si()
     )
-    if plan.route != "plc_conforming_voronoi":
+    if plan.route != "plc_restricted_power":
         raise RuntimeError(f"Unexpected route {plan.route}")
     result = plan.execute()
     if (
@@ -199,17 +196,20 @@ def main() -> None:
         if measure is None or abs(float(measure) - expected) > 1e-10:
             raise RuntimeError(f"Material coverage mismatch: {measures}")
         measured_volumes[region] = float(measure)
-    attribute = next(
-        (a for a in result.attributes if a.name == "voronoi_seed_index"), None
-    )
+    attribute = next((a for a in result.attributes if a.name == "power_site_index"), None)
     cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     if attribute is None or not np.array_equal(
         np.asarray(attribute.scope.entity_ids, dtype=np.int64), np.sort(cell_ids)
     ):
-        raise RuntimeError("Missing cell-aligned Voronoi seed ownership")
+        raise RuntimeError("Missing cell-aligned power-site ownership")
     indices = np.asarray(attribute.values, dtype=np.int64)
-    if indices.shape != cell_ids.shape or np.any(indices < 0):
-        raise RuntimeError("Generated Voronoi seed ownership is incomplete")
+    site_ids = tuple(
+        label.name.removeprefix("power-site:")
+        for label in result.labels
+        if label.name.startswith("power-site:")
+    )
+    if indices.shape != cell_ids.shape or len(set(indices.tolist())) != len(site_ids):
+        raise RuntimeError("Generated power-site ownership is incomplete")
     fv = UnstructuredFiniteVolumePlan.from_cell_mesh(result.mesh).prepare()
     centers = np.asarray(fv.face_centers, dtype=np.float64)
     faces = np.flatnonzero(np.asarray(fv.neighbor_cells) < 0)
@@ -563,7 +563,8 @@ def main() -> None:
                 "source_revision": source.source_revision,
                 "complex_id": complex_.complex_id,
                 "topology_id": result.mesh.topology_id,
-                "voronoi_seeds": len(set(indices.tolist())),
+                "site_ids": site_ids,
+                "represented_site_indices": sorted(set(indices.tolist())),
                 "region_measures": measured_volumes,
                 "family": "polyhedron",
                 "cells": count,

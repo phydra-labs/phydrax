@@ -310,6 +310,16 @@ SIZE_COMPLIANCE_DECLARATIONS: tuple[SizeComplianceDeclaration, ...] = (
         "(_polyhedral_generation.py:136-158)",
     ),
     SizeComplianceDeclaration(
+        "providers/_native_voronoi.py:_compliance",
+        "conforming Voronoi cells",
+        "cube root of cell volume",
+        _TWO_SIDED,
+        1.0,
+        "seed placement: body-centred cubic interior lattice of cell volume h^3, "
+        "surface samples at spacing 0.75 h (native/meshcore/src/conforming_voronoi.cpp, "
+        "Seeder)",
+    ),
+    SizeComplianceDeclaration(
         "providers/_native_periodic_size.py:periodic_size_compliance",
         "periodic quotient edges",
         "edge length",

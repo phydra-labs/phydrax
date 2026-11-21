@@ -50,6 +50,7 @@ from phydrax.meshing._overset import (
 
 if TYPE_CHECKING:
     from phydrax.discretization import PreparedSimplicialCellLocator
+    from phydrax.meshing import CellMeshingCandidate, NativeMeshingPlan
 
 
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
@@ -239,6 +240,7 @@ def _rows(
     query_inputs: Path | None,
     overset_inputs: Path | None,
     layer_inputs: Path | None,
+    voronoi_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -305,6 +307,15 @@ def _rows(
     elif names is not None and layer_rows & names:
         raise ValueError(
             "The layer rows read the ledger's F9 surfaces: pass --layer-inputs."
+        )
+    voronoi_rows = frozenset(
+        f"voronoi-{shape}" for shape in ("sphere", "cube", "torus", "steinmetz")
+    )
+    if voronoi_inputs is not None:
+        families += ((voronoi_rows, lambda: _voronoi_rows(voronoi_inputs)),)
+    elif names is not None and voronoi_rows & names:
+        raise ValueError(
+            "The voronoi rows read the ledger's F14 surfaces: pass --voronoi-inputs."
         )
     rows: list[_Row] = []
     for family, build in families:
@@ -2319,6 +2330,301 @@ def _layer_rows(inputs: Path, /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
+# Ledger F14: conforming Voronoi meshes of four closed surfaces against
+# VoroCrust-Meshing (b5e0859, R_MAX calibrated to the cell target, LIP_CONST
+# 0.25, VC_ANGLE 60, one thread). Per row: the cell size requested from the
+# public route, and VoroCrust's measured quality every row must match or beat
+# (largest boundary distance to the closed-form surface, that distance over
+# the sizing, |relative volume error|, most faces per cell). VoroCrust's
+# sphere stopped at about 5e3 cells within its 60 s cap; its 4.8e3 row is the
+# reference of the 1e4 row.
+_F14_EXACT_VOLUMES = {
+    "sphere": 4.0 / 3.0 * math.pi,
+    "cube": 1.0,
+    "torus": 2.0 * math.pi**2 * 0.742 * 0.371**2,
+    "steinmetz": 16.0 / 3.0 * 0.5**3,
+}
+_F14_CASES: dict[tuple[str, int], tuple[float, tuple[float, float, float, int]]] = {
+    ("sphere", 1_000): (0.17, (1.2e-2, 0.071, 0.0175, 28)),
+    ("sphere", 10_000): (0.075, (3.4e-3, 0.038, 0.0051, 26)),
+    ("cube", 1_000): (0.1, (5.6e-16, 0.0, 0.0, 28)),
+    ("cube", 10_000): (0.045, (1.1e-15, 0.0, 0.0, 35)),
+    ("torus", 1_000): (0.14, (2.3e-2, 0.164, 0.0317, 41)),
+    ("torus", 10_000): (0.057, (3.8e-3, 0.066, 0.0052, 27)),
+    ("steinmetz", 1_000): (0.085, (1.2e-2, 0.205, 0.0127, 29)),
+    ("steinmetz", 10_000): (0.042, (9.2e-3, 0.223, 0.0030, 30)),
+}
+
+
+def _f14_distance(shape: str, points: np.ndarray, /) -> np.ndarray:
+    """Unsigned distance to the closed-form F14 surface (as the ledger's)."""
+    if shape == "sphere":
+        return np.abs(np.linalg.norm(points, axis=1) - 1.0)
+    if shape == "torus":
+        ring = np.hypot(points[:, 0], points[:, 1]) - 0.742
+        return np.abs(np.hypot(ring, points[:, 2]) - 0.371)
+    if shape == "cube":
+        outside = np.abs(points) - 0.5
+        return np.where(
+            np.any(outside > 0.0, axis=1),
+            np.linalg.norm(np.maximum(outside, 0.0), axis=1),
+            -np.max(outside, axis=1),
+        )
+    from scipy.spatial import cKDTree
+
+    # Steinmetz solid x^2 + y^2 <= r^2, y^2 + z^2 <= r^2: two cylinder
+    # patches and their intersection ellipses x = +-z.
+    radius = 0.5
+    around_z = np.hypot(points[:, 0], points[:, 1])
+    around_x = np.hypot(points[:, 1], points[:, 2])
+    foot_a = points.copy()
+    foot_a[:, :2] *= (radius / np.maximum(around_z, 1e-300))[:, None]
+    foot_b = points.copy()
+    foot_b[:, 1:] *= (radius / np.maximum(around_x, 1e-300))[:, None]
+    far = np.full((points.shape[0],), np.inf)
+    to_a = np.where(
+        foot_a[:, 1] ** 2 + foot_a[:, 2] ** 2 <= radius**2, np.abs(around_z - radius), far
+    )
+    to_b = np.where(
+        foot_b[:, 0] ** 2 + foot_b[:, 1] ** 2 <= radius**2, np.abs(around_x - radius), far
+    )
+    angle = np.linspace(0.0, 2.0 * np.pi, 400_000, endpoint=False)
+    x, y = radius * np.cos(angle), radius * np.sin(angle)
+    curves = cKDTree(np.concatenate((np.stack((x, y, x), 1), np.stack((x, y, -x), 1))))
+    to_curve, _ = curves.query(points)
+    return np.minimum(np.minimum(to_a, to_b), to_curve)
+
+
+class _VoronoiCase(NamedTuple):
+    shape: str
+    size: float
+    reference: tuple[float, float, float, int]
+    plan: NativeMeshingPlan
+    results: list[CellMeshingCandidate]
+
+
+def _voronoi_case(inputs: Path, shape: str, target: int, /) -> _VoronoiCase:
+    from phydrax.meshing import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        MeshingScope,
+        PiecewiseLinearComplex,
+        SizeControlStrength,
+        UniformSizeControl,
+        VolumeFillStrategy,
+        VolumeMeshingSpec,
+    )
+    from phydrax.meshing.providers import (
+        NativeMeshingOptions,
+        NativeMeshingProvider,
+        NativePlcSource,
+    )
+
+    size, reference = _F14_CASES[(shape, target)]
+    surface = np.load(inputs / f"{shape}.npz")
+    vertices = np.asarray(surface["xyz"], dtype=np.float64)
+    faces = np.asarray(surface["tri"], dtype=np.int64)
+    complex_ = PiecewiseLinearComplex(
+        vertices,
+        faces,
+        np.zeros((faces.shape[0],), dtype=np.int64),
+        np.asarray([[-1, 0]], dtype=np.int64),
+        ("solid",),
+        vertex_ids=tuple(f"v{row}" for row in range(vertices.shape[0])),
+        vertex_occurrence_paths=((),) * vertices.shape[0],
+        facet_ids=("boundary",),
+        facet_occurrence_paths=((),),
+        segment_ids=(),
+        segment_occurrence_paths=(),
+        region_occurrence_paths=((),),
+    )
+    source = NativePlcSource(complex_, f"f14-{shape}", "r1")
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("polyhedron",))),
+        MeshingScope.whole(source, 2),
+        VolumeFillStrategy.POLYHEDRAL,
+        size_controls=(
+            UniformSizeControl(
+                MeshingScope.whole(source, 3), size, strength=SizeControlStrength.SOFT
+            ),
+        ),
+    )
+    plan = NativeMeshingProvider(NativeMeshingOptions("plc_conforming_voronoi")).plan(
+        source, specification, coordinate_contract=SpatialCoordinateContract.si()
+    )
+    return _VoronoiCase(shape, size, reference, plan, [])
+
+
+def _voronoi_mesh(case: _VoronoiCase, /) -> CellMeshingCandidate:
+    # The public route without acceptance; results are kept for the
+    # determinism check, not inspected while timed.
+    candidate = case.plan.execute(prove=False)
+    case.results.append(candidate)
+    return candidate
+
+
+def _voronoi_candidate(result: object, /) -> CellMeshingCandidate:
+    from phydrax.meshing import CellMeshingCandidate
+
+    if not isinstance(result, CellMeshingCandidate):
+        raise TypeError("A voronoi row returns CellMeshingCandidate.")
+    return result
+
+
+def _voronoi_cells(result: object, /) -> int:
+    return int(_voronoi_candidate(result).mesh.connectivity.cell_count)
+
+
+def _voronoi_quality(
+    case: _VoronoiCase, result: object, /
+) -> tuple[int, dict[str, float]]:
+    """Measure the published mesh independently and compare with VoroCrust."""
+    mesh = _voronoi_candidate(result).mesh
+    connectivity = mesh.connectivity
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+    values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.float64)
+    cells = cell_offsets.size - 1
+    faces = offsets.size - 1
+    sizes = np.diff(offsets)
+    rows = np.repeat(np.arange(faces, dtype=np.int64), sizes)
+    following = np.arange(1, values.size + 1, dtype=np.int64)
+    following[offsets[1:] - 1] = offsets[:-1]
+    first, second = points[values], points[values[following]]
+    # Area vectors and centroids of the face loops.
+    area = np.zeros((faces, 3))
+    np.add.at(area, rows, 0.5 * np.cross(first, second))
+    centroid = np.zeros((faces, 3))
+    np.add.at(centroid, rows, first)
+    centroid /= sizes[:, None]
+    # Volumes by the divergence theorem over each cell's signed faces; the
+    # sign convention (outward or inward) follows from the total.
+    incidence_cell = np.repeat(np.arange(cells, dtype=np.int64), np.diff(cell_offsets))
+    flux = np.einsum("ij,ij->i", centroid, area)[cell_faces] * cell_signs / 3.0
+    volume = np.bincount(incidence_cell, flux, minlength=cells)
+    outward = 1.0 if np.sum(volume) > 0.0 else -1.0
+    volume *= outward
+    exact = _F14_EXACT_VOLUMES[case.shape]
+    volume_error = float(volume.sum() / exact - 1.0)
+    # Boundary faces (one incident cell): vertices, centroids and edge
+    # midpoints, as the ledger samples them.
+    boundary = np.bincount(cell_faces, minlength=faces) == 1
+    boundary_entries = boundary[rows]
+    samples = np.concatenate(
+        (
+            first[boundary_entries],
+            centroid[boundary],
+            0.5 * (first + second)[boundary_entries],
+        )
+    )
+    distance = _f14_distance(case.shape, samples)
+    largest = float(np.max(distance))
+    counts = np.diff(cell_offsets)
+    # Closure: every directed edge of a cell's outward loops met exactly once
+    # by its reverse.
+    vertex_count = points.shape[0]
+    entry_cells = np.repeat(incidence_cell, sizes[cell_faces])
+    entry_rows = np.concatenate(
+        [np.arange(offsets[f], offsets[f + 1]) for f in cell_faces]
+    )
+    entry_signs = np.repeat(cell_signs * outward, sizes[cell_faces]) > 0.0
+    tails = np.where(entry_signs, values[entry_rows], values[following[entry_rows]])
+    heads = np.where(entry_signs, values[following[entry_rows]], values[entry_rows])
+    keys = (entry_cells * vertex_count + tails) * vertex_count + heads
+    reverse = (entry_cells * vertex_count + heads) * vertex_count + tails
+    unique_keys, key_counts = np.unique(keys, return_counts=True)
+    found = np.searchsorted(unique_keys, reverse)
+    paired = (found < unique_keys.size) & (
+        unique_keys[np.minimum(found, unique_keys.size - 1)] == reverse
+    )
+    repeated = key_counts[np.searchsorted(unique_keys, keys)] > 1
+    open_cells = np.unique(entry_cells[~paired | repeated]).size
+    # Convexity: every vertex of a cell behind each of its outward face planes
+    # (faces under (1e-6 h)^2 in area carry no reliable rounded plane).
+    scale = case.size
+    norm = np.linalg.norm(area, axis=1)
+    usable = norm > (1e-6 * scale) ** 2
+    unit = area / np.maximum(norm, 1e-300)[:, None]
+    nonconvex = np.zeros((cells,), dtype=bool)
+    entry_offsets = np.concatenate(([0], np.cumsum(sizes[cell_faces])))
+    for cell in range(cells):
+        members = np.unique(
+            tails[
+                entry_offsets[cell_offsets[cell]] : entry_offsets[cell_offsets[cell + 1]]
+            ]
+        )
+        for slot in range(cell_offsets[cell], cell_offsets[cell + 1]):
+            face = cell_faces[slot]
+            if not usable[face]:
+                continue
+            normal = cell_signs[slot] * outward * unit[face]
+            if np.max((points[members] - centroid[face]) @ normal) > 1e-9 * scale:
+                nonconvex[cell] = True
+                break
+    reference_distance, reference_ratio, reference_volume, reference_faces = (
+        case.reference
+    )
+    digests = {
+        hash(
+            (
+                np.asarray(candidate.mesh.coordinates).tobytes(),
+                np.asarray(candidate.mesh.connectivity.face_vertex_values).tobytes(),
+                np.asarray(candidate.mesh.connectivity.face_owner).tobytes(),
+                np.asarray(candidate.mesh.connectivity.face_neighbor).tobytes(),
+            )
+        )
+        for candidate in case.results
+    }
+    case.results.clear()
+    measured = {
+        "cells": float(cells),
+        "boundary_facets": float(int(boundary.sum())),
+        "boundary_distance_max": largest,
+        "boundary_distance_mean": float(np.mean(distance)),
+        "boundary_distance_over_size": largest / scale,
+        "volume_relative_error": volume_error,
+        "faces_per_cell_min": float(np.min(counts)),
+        "faces_per_cell_mean": float(np.mean(counts)),
+        "faces_per_cell_max": float(np.max(counts)),
+        "closed_cells": float(cells - open_cells),
+        "convex_cells": float(cells - int(nonconvex.sum())),
+        "deterministic": float(len(digests) == 1),
+    }
+    missed = sum(
+        (
+            largest > reference_distance,
+            largest / scale > reference_ratio and reference_ratio > 0.0,
+            abs(volume_error) > max(reference_volume, 1e-14),
+            int(np.max(counts)) > reference_faces,
+            open_cells > 0,
+            bool(np.any(nonconvex)),
+            len(digests) != 1,
+        )
+    )
+    return missed, measured
+
+
+def _voronoi_rows(inputs: Path, /) -> tuple[_Row, ...]:
+    # Row sizes are the cell targets of the F14 table.
+    rows: list[_Row] = []
+    for shape in ("sphere", "cube", "torus", "steinmetz"):
+        for target in (1_000, 10_000):
+            case = _voronoi_case(inputs, shape, target)
+            rows.append(
+                _Row(
+                    f"voronoi-{shape}",
+                    target,
+                    partial(_voronoi_mesh, case),
+                    _voronoi_cells,
+                    quality=partial(_voronoi_quality, case),
+                )
+            )
+    return tuple(rows)
+
+
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -2393,6 +2699,13 @@ def main(argv: list[str] | None = None) -> int:
         help="directory of the ledger's F9 surfaces "
         "(gmsh-<model>-h<h>-t0.01-n5-sign-1-surf.stl); the layer rows run only with it",
     )
+    parser.add_argument(
+        "--voronoi-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F14 surfaces (<shape>.npz with xyz and tri); "
+        "the voronoi rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -2407,6 +2720,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.query_inputs,
         arguments.overset_inputs,
         arguments.layer_inputs,
+        arguments.voronoi_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}

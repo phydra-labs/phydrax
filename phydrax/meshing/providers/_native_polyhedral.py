@@ -343,7 +343,7 @@ def _association(
 
 
 def _vertex_association(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     construction: PolyhedralConstruction,
     /,
 ) -> tuple[GeometryAssociation, np.ndarray, tuple[GeometrySourceEntityRole, ...]]:
@@ -423,7 +423,7 @@ def _carrier_segment_rows(
 
 
 def _edge_association(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     construction: PolyhedralConstruction,
     vertex_association: GeometryAssociation,
     vertex_carriers: np.ndarray,
@@ -671,7 +671,7 @@ def _edge_association(
 
 
 def _face_association(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     construction: PolyhedralConstruction,
     vertex_association: GeometryAssociation,
     /,
@@ -742,7 +742,7 @@ def _face_association(
 
 
 def _cell_association(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     construction: PolyhedralConstruction,
     /,
 ) -> GeometryAssociation:
@@ -771,7 +771,7 @@ def _cell_association(
 
 
 def _polyhedral_associations(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     construction: PolyhedralConstruction,
     /,
 ) -> tuple[GeometryAssociation, ...]:
@@ -783,7 +783,7 @@ def _polyhedral_associations(
 
 
 def _require_protected_feature_witnesses(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     associations: tuple[GeometryAssociation, ...],
     /,
@@ -873,7 +873,7 @@ def _source_scope_rows(
 
 def _size_scope_edges(
     construction: PolyhedralConstruction,
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     control: UniformSizeControl,
     /,
 ) -> np.ndarray:
@@ -971,7 +971,7 @@ def _sqrt_upper(value: Fraction, /) -> float:
 
 def _polyhedral_compliance(
     construction: PolyhedralConstruction,
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     /,
 ) -> MeshingComplianceReport:
@@ -1099,7 +1099,7 @@ def _face_group_connected(
 
 
 def _polyhedral_organization(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     construction: PolyhedralConstruction,
     associations: tuple[GeometryAssociation, ...],
@@ -1493,7 +1493,7 @@ def _mapped_polyhedral_boundary_chart_witness(
 
 @final
 class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
-    source: NativePolyhedralSource
+    source: NativePlcSource | NativePolyhedralSource
     specification: VolumeMeshingSpec
     options: NativeMeshingOptions
     coordinate_contract: SpatialCoordinateContract
@@ -1501,7 +1501,7 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source: NativePolyhedralSource,
+        source: NativePlcSource | NativePolyhedralSource,
         specification: VolumeMeshingSpec,
         options: NativeMeshingOptions,
         coordinate_contract: SpatialCoordinateContract,
@@ -1536,12 +1536,19 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
             if self.specification.maximum_deviation is not None
             else self.source.maximum_deviation
         )
-        fidelity_source = self.source.fidelity_source
+        fidelity_source = (
+            self.source.fidelity_source
+            if isinstance(self.source, NativePolyhedralSource)
+            else None
+        )
+        if mapped_source and isinstance(self.source, NativePlcSource):
+            fidelity_source = self.source.boundary_query()
         fidelity_witness = (
             _mapped_polyhedral_boundary_chart_witness(
                 self.source, construction, fidelity_source
             )
             if mapped_source
+            and isinstance(self.source, NativePolyhedralSource)
             and isinstance(fidelity_source, MappedReferenceBoundarySource)
             else None
         )
@@ -1557,6 +1564,10 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
         )
         associations = _polyhedral_associations(self.source, construction)
         if self.specification.periodic_constraints:
+            if not isinstance(self.source, NativePolyhedralSource):
+                raise TypeError(
+                    "Periodic restricted-power generation requires NativePolyhedralSource."
+                )
             rebound = _rebind_periodic_constraints(
                 self.source,
                 construction.mesh,
@@ -1587,7 +1598,7 @@ class _PreparedNativePolyhedral(StrictModule, NonTrainableState):
 
 @checked
 def prepare_native_polyhedral(
-    source: NativePolyhedralSource,
+    source: NativePlcSource | NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     options: NativeMeshingOptions,
     coordinate_contract: SpatialCoordinateContract,

@@ -323,7 +323,7 @@ def _resolve_plc_route(
     ):
         return "plc_hex_dominant"
     if strategy is VolumeFillStrategy.POLYHEDRAL:
-        return "plc_conforming_voronoi"
+        return "plc_restricted_power"
     if strategy in (VolumeFillStrategy.SWEEP, VolumeFillStrategy.MULTIZONE):
         _unsupported(
             "plc_tetrahedral",
@@ -1100,7 +1100,9 @@ def _prepare_route(
             )
         case "plc_conforming_voronoi":
             if not isinstance(source, NativePlcSource):
-                _unsupported(route, source, specification, "a NativePlcSource is required")
+                _unsupported(
+                    route, source, specification, "a NativePlcSource is required"
+                )
             if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(
                     route, source, specification, "a VolumeMeshingSpec is required"
@@ -1111,12 +1113,9 @@ def _prepare_route(
                 source, specification, options, coordinate_contract
             )
         case "plc_restricted_power":
-            if not isinstance(source, NativePolyhedralSource):
+            if not isinstance(source, (NativePlcSource, NativePolyhedralSource)):
                 _unsupported(
-                    route,
-                    source,
-                    specification,
-                    "a NativePolyhedralSource with authored power sites is required",
+                    route, source, specification, "a PLC or polyhedral source is required"
                 )
             if not isinstance(specification, VolumeMeshingSpec):
                 _unsupported(

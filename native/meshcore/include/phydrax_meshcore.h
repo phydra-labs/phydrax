@@ -1868,38 +1868,43 @@ PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* reques
                                        const phx_mc_prism_layers_result* result);
 
 /* ------------------------------------------------ conforming Voronoi cells
- * Voronoi cells of seeds clipped exactly to a triangulated solid. Triangle t
- * separates region triangle_regions[2t] (in front, along the normal of
- * (a, b, c)) from triangle_regions[2t + 1] (behind); -1 is the exterior and
- * the two differ. triangle_facets[t] >= 0 names the source facet: surface
- * pieces of one cell merge within a facet. With seed_count 0 the seeds are
- * placed for the cell size `size` (feature corners and edges, a surface
- * sample offset inwards by size / 2, a body-centred cubic interior lattice);
- * otherwise the given seeds are used as they are.
+ * Conforming Voronoi mesh of a triangulated solid for the cell size `size`.
+ * Triangle t separates region triangle_regions[2t] (in front, along the
+ * normal of (a, b, c)) from triangle_regions[2t + 1] (behind); -1 is the
+ * exterior and the two differ. triangle_facets[t] >= 0 names its source facet.
+ * Edges whose dihedral angle exceeds feature_angle_degrees are sharp
+ * features.
  *
- * A cell is a connected component of a seed's Voronoi cell in one region.
+ * The kernel places interior seeds (mirrored pairs about the surface, sector
+ * seeds about sharp edges, corner seeds, a body-centred cubic lattice) and
+ * exterior ghosts (interior seeds reflected across the surface), all on a
+ * dyadic grid, deterministically. The cells are the exact Voronoi cells of
+ * the interior seeds in the diagram of all seeds: closed and convex. The
+ * boundary is formed by the bisector faces towards ghosts; it lies exactly on
+ * axis-aligned planes and approximates curved surfaces.
+ *
  * face_cells holds the owner whose outward normal the loop orientation gives
  * (counterclockwise) and the neighbour (-1 on the exterior); face_facets is
- * the source facet of a surface face, -1 for a bisector face. vertex_kinds:
- * 0 Voronoi vertex, 1 surface vertex (sources: vertex, -1), 2 point of a
- * surface edge (sources: its two vertices), 3 point inside a triangle
- * (sources: triangle, -1). cell_convex is the exact convexity verdict.
+ * the facet of the triangle nearest the face's vertex centroid for a boundary
+ * or interface face, -1 otherwise. vertex_triangles is the nearest triangle
+ * of a vertex on a boundary or interface face, -1 otherwise. seeds holds
+ * every seed (interior seeds first), seed_regions their regions (-1: ghost).
  * Every vertex is exact: exact_values[exact_offsets[4 v + k] ..
  * exact_offsets[4 v + k + 1]) is the expansion (increasing nonoverlapping
  * components) of N_k for k < 3 and of D for k = 3, x_k = N_k / D; `vertices`
  * holds its nearest binary64 values (ties to even).
  *
- * stats: seconds of seeding, Delaunay, restricted surface, regions, faces,
- * publication, certification and total; seeds, surface seeds, lattice seeds,
- * cells, boundary cells, repair rounds, degenerate events, certified (1/0,
- * -1 without prove), open cell edges, coverage residual, volume residual
- * (-1 without prove), nonconvex cells, bisector planarity residual / h,
- * feature edges, faces, h.
+ * stats: seconds of seeding, Delaunay, cells, publication, certification and
+ * total; seeds, interior seeds, ghosts, lattice seeds, cells, boundary cells,
+ * boundary faces, faces, repair rounds, certified (1/0, -1 without prove),
+ * open cell edges and local Delaunay violations (-1 without prove), signed
+ * relative volume error against the input regions, largest boundary vertex
+ * distance / size, certified boundary distance bound / size (-1 without
+ * prove), feature edges, size, surface spacing.
  *
- * Returns PHX_MC_OK; PHX_MC_UNRESOLVED (result set when cells exist) when
- * certification failed after the repairs automatic seeds allow, or when no
- * seed lies in the solid; PHX_MC_DEGENERATE_INPUT for a degenerate triangle,
- * duplicate seeds or given seeds meeting a degenerate predicate. */
+ * Returns PHX_MC_OK; PHX_MC_UNRESOLVED (result set when cells exist) when a
+ * cell still leaks after the repairs or certification failed, or when no seed
+ * lies in the solid; PHX_MC_DEGENERATE_INPUT for a degenerate triangle. */
 #define PHX_MC_CONFORMING_VORONOI_SIZES 6
 #define PHX_MC_CONFORMING_VORONOI_STATS 24
 typedef struct phx_mc_voronoi_cells phx_mc_voronoi_cells;
@@ -1910,8 +1915,6 @@ typedef struct phx_mc_conforming_voronoi_request {
   const int32_t* triangles;
   const int32_t* triangle_regions;
   const int32_t* triangle_facets;
-  int64_t seed_count;
-  const double* seeds;
   double size;
   double feature_angle_degrees;
   int32_t prove;
@@ -1919,8 +1922,7 @@ typedef struct phx_mc_conforming_voronoi_request {
 } phx_mc_conforming_voronoi_request;
 typedef struct phx_mc_conforming_voronoi_arrays {
   double* vertices;
-  int8_t* vertex_kinds;
-  int32_t* vertex_sources;
+  int32_t* vertex_triangles;
   int64_t* face_offsets;
   int32_t* face_vertices;
   int32_t* face_cells;
@@ -1929,8 +1931,8 @@ typedef struct phx_mc_conforming_voronoi_arrays {
   int32_t* cell_regions;
   double* cell_volumes;
   double* cell_centroids;
-  uint8_t* cell_convex;
   double* seeds;
+  int32_t* seed_regions;
   double* stats;
   int64_t* exact_offsets;
   double* exact_values;
