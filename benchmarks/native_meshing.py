@@ -3167,7 +3167,9 @@ def _hexdom_quality(
     hexahedra = int(np.count_nonzero((counts == 6) & (quads == 6)))
     # Distances (the ledger's meas.py): wall faces fanned about their vertex
     # mean; mesh -> surface at 28 lattice points per triangle, surface ->
-    # mesh at 2e5 surface points against their 16 nearest triangles.
+    # mesh at 2e5 surface points, exact: the 16 nearest triangles bound the
+    # distance, then every triangle whose centroid distance minus its
+    # circumradius about the centroid is within the bound is checked.
     wall_rows = np.flatnonzero(~inner[rows])
     fan = np.stack(
         (first[wall_rows], second[wall_rows], average[rows[wall_rows]]), axis=1
@@ -3184,17 +3186,41 @@ def _hexdom_quality(
             float(np.max(_f8_distance(case.model, block.reshape((-1, 3))))),
         )
     samples = _f8_samples(case.model, 200_000)
-    _, nearest = cKDTree(fan.mean(axis=1)).query(samples, k=16)
-    surface_to_mesh = float(
-        np.max(
-            np.min(
-                _point_triangle_distances(
-                    np.repeat(samples, 16, axis=0), fan[nearest.reshape(-1)]
-                ).reshape((-1, 16)),
-                axis=1,
-            )
-        )
+    centres = fan.mean(axis=1)
+    radius = np.max(np.linalg.norm(fan - centres[:, None, :], axis=2), axis=1)
+    tree = cKDTree(centres)
+    _, nearest = tree.query(samples, k=16)
+    best = np.min(
+        _point_triangle_distances(
+            np.repeat(samples, 16, axis=0), fan[nearest.reshape(-1)]
+        ).reshape((-1, 16)),
+        axis=1,
     )
+    reach = best + float(np.max(radius))
+    for start in range(0, samples.shape[0], 20_000):
+        lists = tree.query_ball_point(
+            samples[start : start + 20_000], reach[start : start + 20_000]
+        )
+        sample_rows = np.repeat(
+            np.arange(start, start + len(lists)), [len(c) for c in lists]
+        )
+        candidates = np.fromiter(
+            (c for found in lists for c in found),
+            dtype=np.int64,
+            count=sample_rows.size,
+        )
+        keep = (
+            np.linalg.norm(samples[sample_rows] - centres[candidates], axis=1)
+            - radius[candidates]
+            <= best[sample_rows]
+        )
+        sample_rows, candidates = sample_rows[keep], candidates[keep]
+        np.minimum.at(
+            best,
+            sample_rows,
+            _point_triangle_distances(samples[sample_rows], fan[candidates]),
+        )
+    surface_to_mesh = float(np.max(best))
     wall_vertices = np.unique(values[np.flatnonzero(~inner[rows])])
     measured = {
         "cells": float(cells),

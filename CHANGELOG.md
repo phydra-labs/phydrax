@@ -14,10 +14,9 @@
   from its exact vertex average; requests use
   `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
   gives the hexahedron fraction by shape); `prove=True` certifies cell
-  validity, the global embedding and the boundary fidelity (on curved inputs
-  such as the F8 quadric it currently refuses: neighboring cells whose bent
-  faces share an edge chain overlap under fan semantics), the proof-only
-  fidelity preparation built on the first proved execution. `plc_hex_dominant`
+  validity, the global embedding and the boundary fidelity (quadric without
+  layers, 77k cells: about 23 min and 14 GB), the proof-only fidelity
+  preparation built on the first proved execution. `plc_hex_dominant`
   remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
   faces (also for conforming Voronoi) and maps each published face to its
@@ -25,9 +24,17 @@
   centroid geometry it has computed and the final repair search stops scoring
   a move that cannot improve (about 25 % faster, identical meshes). New
   benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
-  `cartesianMesh` ceilings): sphere L0 / L2 and quadric L0 are faster than
-  cfMesh with every quality field better; quadric L2 is faster but does not
-  pass yet (Hausdorff and skew at the feature curve).
+  `cartesianMesh` ceilings, measured with `prove=False`): all four are faster
+  than cfMesh with every quality field at least as good; with wall layers
+  `prove=True` currently refuses on the quadric (a few cells are not
+  star-shaped about their vertex average). At convex feature curves wall layers do not
+  wrap the curve: each side's layers stop at a corner hexahedron column along
+  the curve, a curve segment whose chord lies farther from the curve than any
+  wall edge from its patch gains a midpoint on the exact curve, and patch
+  vertices next to the curve slide along their patch (quadric with 2 layers:
+  Hausdorff 2.83e-4 to 1.905e-4, maximum skewness 0.992 to 0.745). The
+  benchmark's surface-to-mesh distance is exact (it searched only the 16
+  nearest triangle centroids).
 - Polyhedron faces that are not planar are certified as the fan of triangles
   from their exact vertex average (`polytope_face_triangles`,
   `polytope_face_routes`): validity, global embedding (degree routes with fan
@@ -39,6 +46,18 @@
   instead of a fan from the first vertex, so fidelity-route certificates (for
   example curved conforming Voronoi) change; witnesses name a fan exterior
   boundary only when one is present.
+- Exact polyhedral contact proofs scale to hex-dominant meshes: face
+  incidence is read once per mesh, each cell pair's shared stratum is
+  prepared once with fan triangles cached, common corners of piece pairs are
+  compared as interned integer ids, and tetrahedron boxes are precomputed
+  (conforming Voronoi with about 1e4 cells certifies in 110 to 150 s;
+  certificates of the 1e3 rows unchanged). A cell pair's declared stratum is
+  a list of convex pieces: shared vertices, shared edges, convex shared faces,
+  the exact triangles (ear-clipped or fanned) of other shared faces, and
+  proved straight chains or convex face unions; a contact is declared only
+  when one piece holds it. Pairs sharing a bent edge chain through a 2:1
+  hanging vertex now certify, and a notch of a non-convex shared face filled
+  differently by the two cells is refused.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the

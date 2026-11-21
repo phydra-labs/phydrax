@@ -867,6 +867,8 @@ class TetrahedronEnclosures:
     centers: NDArray[np.float64]
     face_directions: NDArray[np.float64]
     face_offsets: NDArray[np.float64]
+    box_lower: NDArray[np.float64]
+    box_upper: NDArray[np.float64]
 
     @classmethod
     def prepare(
@@ -923,6 +925,8 @@ class TetrahedronEnclosures:
             centers,
             directions,
             offsets,
+            lower.min(axis=1),
+            upper.max(axis=1),
         )
 
     def common_hull_contacts(
@@ -948,8 +952,8 @@ class TetrahedronEnclosures:
         equal = self.point_ids[first][:, :, None] == self.point_ids[second][:, None, :]
         common = np.any(equal, axis=(1, 2))
         disjoint_boxes = np.any(
-            (self.upper[first].max(axis=1) < self.lower[second].min(axis=1))
-            | (self.upper[second].max(axis=1) < self.lower[first].min(axis=1)),
+            (self.box_upper[first] < self.box_lower[second])
+            | (self.box_upper[second] < self.box_lower[first]),
             axis=1,
         )
         certified[admitted & ~common & disjoint_boxes] = True
