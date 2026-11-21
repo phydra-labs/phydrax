@@ -24,8 +24,10 @@
   centroid geometry it has computed and the final repair search stops scoring
   a move that cannot improve (about 25 % faster, identical meshes). New
   benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
-  `cartesianMesh` ceilings): all four are faster than cfMesh with every
-  quality field at least as good. At convex feature curves wall layers do not
+  `cartesianMesh` ceilings, measured with `prove=False`): all four are faster
+  than cfMesh with every quality field at least as good; with wall layers
+  `prove=True` currently refuses on the quadric (a few cells are not
+  star-shaped about their vertex average). At convex feature curves wall layers do not
   wrap the curve: each side's layers stop at a corner hexahedron column along
   the curve, a curve segment whose chord lies farther from the curve than any
   wall edge from its patch gains a midpoint on the exact curve, and patch
