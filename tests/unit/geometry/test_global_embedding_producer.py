@@ -20,6 +20,7 @@ from phydrax._bvh import (
     prepare_bvh,
 )
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization._cell_geometry import (
     _coordinate_coefficient_identity,
     CellGeometryRestrictionSource,
@@ -3027,6 +3028,11 @@ def test_mixed_image_boxes_are_independent_of_block_partition_and_order(
         np.testing.assert_array_equal(block[cell_id], reordered[cell_id])
 
 
+# Only the native batched image bounds widen boxes past the exact gap and
+# carry inner bounds; the rational bounds are exact and leave nothing to retry.
+@pytest.mark.skipif(
+    not meshcore_available(), reason="the native meshcore library is absent"
+)
 @pytest.mark.parametrize("periodic", (False, True))
 def test_widened_image_boxes_retry_exact_separation(periodic: bool) -> None:
     from phydrax.discretization._periodic_cell import PeriodicCell
