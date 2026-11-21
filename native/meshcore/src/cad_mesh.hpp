@@ -76,6 +76,10 @@ struct CadVolumeMesh {
   CadQuadraticMesh quadratic;
   std::vector<phx_mc_cad_boundary_split> splits;
   phx_mc_cad_volume_stats stats{};
+  // Per model curve (empty when the volume stage stopped before quality):
+  // the smallest true wedge in degrees between its two faces, filled only
+  // when some unmet cell is not forced (count_forced_cells), else NaN.
+  std::vector<double> curve_rim_wedges;
 };
 
 // Test hook: refuse the first recovery as if it needed a boundary Steiner
@@ -104,8 +108,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                         const CadVolumeControls& controls, CadVolumeMesh& result,
                         const CadForcedRefusal* forced = nullptr);
 
+// graded_pole_rings: solid route (cad_mesh_face).
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& result);
+                         CadSurfaceMesh& result, bool graded_pole_rings = false);
 
 }  // namespace phx::mc

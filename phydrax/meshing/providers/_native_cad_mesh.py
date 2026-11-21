@@ -41,8 +41,8 @@ from .._sizing import (
     CAD_CHART_SURFACE_SIZE,
     size_statistic,
     SizeControlStrength,
+    stored_circumradius_measures,
     triangle_circumradii,
-    triangle_circumradius_measures,
     UniformSizeControl,
 )
 from .._volume_generation import _shape_targets_gated
@@ -124,9 +124,10 @@ def _size_compliance(
 ) -> None:
     """Size statistics of each face size control on its boundary triangles.
 
-    The target statistics judge the circumradius the chart kernel bounds
-    (``CAD_CHART_SURFACE_SIZE``: R <= h / sqrt(2)); ``maximum_size`` bounds
-    the longest boundary edge.
+    The target statistics judge the circumradius the CAD face stage bounds
+    on the stored coordinates (``CAD_CHART_SURFACE_SIZE``: R <= h / sqrt(2)
+    up to the rounding allowance); ``maximum_size`` bounds the longest
+    boundary edge.
     """
     from ._native_cad_volume import _domain_scope_rows
 
@@ -147,7 +148,7 @@ def _size_compliance(
             issues.append(f"size_control:{control.control_id}:no_boundary_faces")
             continue
         radii = triangle_circumradii(points, faces)
-        measures = triangle_circumradius_measures(points, faces)
+        measures = stored_circumradius_measures(points, faces)
         for statistic in policy.target_statistics:
             value = size_statistic(radii, statistic)
             key = f"size:{control.control_id}:{statistic}_circumradius"
@@ -243,6 +244,11 @@ def execute_cad_solid(
     geometry = (
         CellGeometrySpec.affine(mesh) if order == 1 else _quadratic_geometry(mesh, solid)
     )
+    # Unmet cells split per cell: forced by the input (a rim wedge below the
+    # dihedral target explains every failure of the cell) or not; only the
+    # unforced ones are an issue.
+    forced = int(stats["unmet_forced_cells"])
+    unforced = int(stats["unmet_unforced_cells"])
     issues: list[str] = []
     requested: list[tuple[str, float]] = [
         ("maximum_deviation", float(deviation)),
@@ -251,14 +257,30 @@ def execute_cad_solid(
     if schedule.radius_edge_bound is not None:
         requested.append(("radius_edge_bound", float(schedule.radius_edge_bound)))
     achieved: list[tuple[str, float]] = [
-        ("unmet_quality_cells", float(stats["unmet_cells"]))
+        ("unmet_quality_cells", float(int(stats["unmet_cells"]))),
+        ("unmet_forced_quality_cells", float(forced)),
+        ("unmet_unforced_quality_cells", float(unforced)),
     ]
     if _shape_targets_gated(schedule):
         if solid.status is MeshcoreStatus.UNRESOLVED:
-            issues.append(f"native_unmet_quality_cells:{int(stats['unmet_cells'])}")
+            issues.append(f"native_unmet_quality_cells:{unforced}")
+            # Input finding: a rim whose true wedge is below the dihedral
+            # target makes that target unattainable in a neighbourhood of the
+            # rim for any mesh (cad_mesh.cpp, count_forced_cells); relaxing
+            # minimum_dihedral_degrees below the wedge is the remedy.
+            target = float(schedule.minimum_dihedral_degrees)
+            wedges = solid.volume.curve_rim_wedges
+            for curve in np.flatnonzero(wedges < target):
+                issues.append(
+                    f"input_rim_wedge_below_dihedral_target:curve={int(curve)}:"
+                    f"wedge_degrees={float(wedges[curve])!r}:"
+                    f"target_degrees={target!r}:"
+                    "the dihedral target is unattainable near this rim for any mesh"
+                )
     else:
         # A soft schedule publishes unmet shape rows; validity, determinant,
-        # construction and P2 rows stay hard (as the Python route).
+        # construction and P2 rows of unforced cells stay hard (as the Python
+        # route). A forced cell is never an issue (cad_mesh.cpp).
         hard = int(stats["unmet_hard_cells"])
         quadratic = stats["quadratic"]
         curved = int(quadratic["final_invalid"]) + int(quadratic["final_unresolved"])

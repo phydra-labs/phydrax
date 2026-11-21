@@ -9,6 +9,7 @@
 #include <numeric>
 #include <vector>
 
+#include "cad_stored_size.hpp"
 #include "chart_surface.hpp"
 #include "expansion.hpp"
 #include "predicates.hpp"
@@ -270,6 +271,10 @@ struct PoleZone {
   double direction;
   double width;
   double spacing;
+  // A pole's first band takes no kernel point (the fan owns it); a trim
+  // line's band is the kernel's where the ring chain leaves it open (at a
+  // seam, whose vertices need not lie on a ring).
+  bool pole;
 };
 
 struct FaceMetric {
@@ -293,6 +298,8 @@ struct FaceMetric {
   // by chart, so the position hook agrees with assembly bit for bit.
   std::vector<std::pair<std::array<double, 2>, std::array<double, 3>>> boundary_positions;
   std::vector<std::array<double, 5>>* position_calls;
+  // Solid route: pole rings follow the graded base size (seed_poles).
+  bool graded_pole_rings = false;
 };
 
 bool surface_jet(FaceMetric& context, const double uv[2], double* jet) {
@@ -739,12 +746,22 @@ bool in_pole_zone(const FaceMetric& metric, const double uv[2]) {
   return false;
 }
 
+// The kernel leaves a triangle of fixed points alone inside a zone only: a
+// sphere cap's pole and trim zones face each other on one axis, and the
+// triangles from one's last ring to the other's (edges to 1.44 h at cap
+// below 85 deg, h/r 0.6, theta 0.9) are no zone's construction.
+int32_t in_fixed_zone(void* opaque, const double point[2]) {
+  const auto& metric = *static_cast<FaceMetric*>(opaque);
+  const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
+  return in_pole_zone(metric, uv) ? 1 : 0;
+}
+
 int32_t admit_face_point(void* opaque, const double point[2]) {
   const auto& metric = *static_cast<FaceMetric*>(opaque);
   const double uv[2] = {point[0] / metric.scale_u, point[1] / metric.scale_v};
   for (const PoleZone& zone : metric.poles) {
     const double distance = zone.direction * (uv[zone.axis] - zone.origin);
-    if (distance >= 0.0 && distance <= zone.spacing) return 0;
+    if (zone.pole && distance >= 0.0 && distance <= zone.spacing) return 0;
   }
   return 1;
 }
@@ -900,6 +917,33 @@ bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, 
   return found;
 }
 
+// A trim line's first ring takes the latitude of the boundary vertices next
+// to the line's corners off it (a seam's first vertex) when all lie at one
+// exact offset within a spacing, so the ring chain ends on them and closes
+// the band between ring and trim.
+bool trim_snap_latitude(const FaceBoundary& boundary, int axis, double origin, double direction,
+                        double spacing, double width, double& latitude) {
+  bool found = false;
+  Expansion common;
+  for (const CadFaceEdge& edge : boundary.edges) {
+    if (edge.curve < 0) continue;
+    for (int k = 0; k < 2; ++k) {
+      const auto& corner = boundary.vertices[static_cast<std::size_t>(edge.vertices[k])];
+      const auto& adjacent = boundary.vertices[static_cast<std::size_t>(edge.vertices[1 - k])];
+      if (corner.dimension != 0 || corner.uv[axis] != origin || adjacent.uv[axis] == origin)
+        continue;
+      const double offset = direction * (adjacent.uv[axis] - origin);
+      if (!(offset > 0.0 && offset <= spacing && offset <= width)) return false;
+      const Expansion exact = Expansion::difference(adjacent.uv[axis], origin);
+      if (found && !(exact - common).is_zero()) return false;
+      common = exact;
+      latitude = adjacent.uv[axis];
+      found = true;
+    }
+  }
+  return found;
+}
+
 int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundary,
                    std::size_t outer, FaceMetric& metric, std::vector<double>& points,
                    std::vector<uint8_t>& fixed, std::vector<int32_t>& segments,
@@ -911,11 +955,69 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       low[axis] = std::min(low[axis], vertex.uv[axis]);
       high[axis] = std::max(high[axis], vertex.uv[axis]);
     }
+  // Zone anchors: each chart pole, and each polar trim line. A polar trim
+  // line is a face box side along a periodic free axis that boundary curve
+  // edges cover over one whole period and where the free axis's chart speed
+  // is under half the zone axis's (the ratio test that ends a zone): a trim
+  // circle near a sphere's cut-off pole. The chart there is as anisotropic
+  // as beside a pole, and the kernel met neither size nor encroachment rules
+  // in the band between the trim and the rest (measured: caps below 75-85
+  // deg, h/r 0.4-0.8, surface UNRESOLVED); its rings take over as at a pole.
+  struct Anchor {
+    const PoleBoundary* pole;  // nullptr: a polar trim line.
+    int axis;
+    std::array<double, 2> start;
+    std::array<double, 2> end;  // Trim line: the free axis's far end.
+  };
+  std::vector<Anchor> anchors;
   for (const PoleBoundary& pole : boundary.poles) {
     const auto& start = boundary.vertices[pole.first_vertex].uv;
     const auto& almost_end = boundary.vertices[pole.first_vertex + pole.count - 1].uv;
     const int axis = std::abs(start[0] - almost_end[0]) <
                              std::abs(start[1] - almost_end[1]) ? 0 : 1;
+    anchors.push_back({&pole, axis, start, start});
+  }
+  const auto& model = geometry.model();
+  for (int axis = 0; axis < 2; ++axis) {
+    const int free_axis = 1 - axis;
+    int64_t turns = 0;
+    if (exact_turn(low[free_axis], high[free_axis], model.surface_periods[2 * metric.face + free_axis],
+                   turns) != 1 || turns != 1) continue;
+    for (const double line : {low[axis], high[axis]}) {
+      std::vector<std::array<double, 2>> spans;
+      for (const CadFaceEdge& edge : boundary.edges) {
+        if (edge.curve < 0) continue;
+        const auto& a = boundary.vertices[static_cast<std::size_t>(edge.vertices[0])].uv;
+        const auto& b = boundary.vertices[static_cast<std::size_t>(edge.vertices[1])].uv;
+        if (a[axis] != line || b[axis] != line) continue;
+        spans.push_back({std::min(a[free_axis], b[free_axis]), std::max(a[free_axis], b[free_axis])});
+      }
+      std::sort(spans.begin(), spans.end());
+      double reach = low[free_axis];
+      for (const auto& span : spans)
+        if (span[0] == reach) reach = span[1];
+      if (spans.empty() || reach != high[free_axis]) continue;
+      double uv[2];
+      uv[axis] = line;
+      uv[free_axis] = 0.5 * (low[free_axis] + high[free_axis]);
+      double jet[18];
+      if (!surface_jet(metric, uv, jet)) return PHX_MC_INVALID_INPUT;
+      const double scale[2] = {metric.scale_u, metric.scale_v};
+      const auto speed2 = [&](int k) {
+        const double* d = jet + 3 + 3 * k;
+        return (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / (scale[k] * scale[k]);
+      };
+      if (!(speed2(free_axis) < 0.5 * speed2(axis))) continue;
+      std::array<double, 2> start{}, end{};
+      start[axis] = end[axis] = line;
+      start[free_axis] = low[free_axis];
+      end[free_axis] = high[free_axis];
+      anchors.push_back({nullptr, axis, start, end});
+    }
+  }
+  for (const Anchor& anchor : anchors) {
+    const auto& start = anchor.start;
+    const int axis = anchor.axis;
     const int free_axis = 1 - axis;
     const double direction = (low[axis] + high[axis]) * 0.5 > start[axis] ? 1.0 : -1.0;
     double limit = direction > 0.0 ? high[axis] - start[axis] : start[axis] - low[axis];
@@ -927,8 +1029,8 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // zero-area strip left a boundary that tetrahedral improvement churned
     // on for minutes.
     double half_gap = std::numeric_limits<double>::infinity();
-    for (const PoleBoundary& other : boundary.poles) {
-      const double gap = direction * (boundary.vertices[other.first_vertex].uv[axis] - start[axis]);
+    for (const Anchor& other : anchors) {
+      const double gap = direction * (other.start[axis] - start[axis]);
       if (gap > 0.0) half_gap = std::min(half_gap, 0.5 * gap);
     }
     limit = std::min(limit, half_gap);
@@ -948,19 +1050,23 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // kernel triangles between them unresolved; rings at the layer size
     // beside a chart-straight seam left a 16 deg fan triangle between the
     // first ring and the seam's request-sized pole segment).
-    const int32_t corner = boundary.vertices[pole.first_vertex].entity;
+    // A trim line's zone lies in the layer of its own chords.
     double lens = 0.0;
     for (std::size_t e = 0; e < boundary.edges.size(); ++e) {
       const CadFaceEdge& edge = boundary.edges[e];
       if (edge.curve < 0) continue;
-      bool at_pole = false;
+      bool at_anchor = !anchor.pole;
       for (const int32_t v : edge.vertices) {
         const CadFaceVertex& vertex = boundary.vertices[static_cast<std::size_t>(v)];
-        at_pole = at_pole || (vertex.dimension == 0 && vertex.entity == corner);
+        if (anchor.pole)
+          at_anchor = at_anchor || (vertex.dimension == 0 &&
+                                    vertex.entity == boundary.vertices[anchor.pole->first_vertex].entity);
+        else
+          at_anchor = at_anchor && vertex.uv[axis] == start[axis];
       }
       double edge_lens = 0.0;
-      if (at_pole && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
-                                 metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
+      if (at_anchor && !chord_lens(geometry, boundary, metric.face, static_cast<int32_t>(e),
+                                   metric.workspace, edge_lens)) return PHX_MC_INVALID_INPUT;
       lens = std::max(lens, edge_lens);
     }
     const double layer = metric.theta - std::min(lens / metric.tolerance,
@@ -968,7 +1074,22 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     double curvature = 0.0;
     if (!pole_zone_curvature(geometry, metric.face, metric.workspace, curvature))
       return PHX_MC_INVALID_INPUT;
+    // Solid route (graded_pole_rings): a pole's rings start from the face's
+    // graded base size at the pole (base_size), not the bare request: a
+    // boundary there finer than h (a seam graded from a wedge-graded rim,
+    // cad_curves.cpp) otherwise left a zone as wide as the face with no
+    // ring, a fan of the boundary (measured: cap above 70 deg, h/r 0.4: a
+    // pole triangle across two seam points, flat). A trim line keeps the
+    // request: its first ring snaps to the seam's first vertex off the line
+    // (trim_snap_latitude), and rings at the trim's own spacing left the dome
+    // of caps below 80-85 deg UNRESOLVED. The surface route has no
+    // wedge-graded rim and keeps the request.
     double size = metric.size;
+    if (anchor.pole && metric.graded_pole_rings) {
+      double pole_jet[18];
+      if (!surface_jet(metric, start.data(), pole_jet)) return PHX_MC_INVALID_INPUT;
+      size = std::min(size, base_size(metric, pole_jet));
+    }
     if (curvature > 0.0)
       size = std::min(size, std::sqrt(4.0 * layer * metric.tolerance / curvature));
     double spacing = std::min(limit, size / speed);
@@ -995,23 +1116,42 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       width = next;
     }
     double latitude = 0.0;
-    const bool snapped = pole_snap_latitude(boundary, pole, axis, start[axis], direction,
-                                           spacing, width, latitude);
+    const bool snapped = anchor.pole
+        ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing, width,
+                             latitude)
+        : trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
     if (snapped) spacing = direction * (latitude - start[axis]);
-    metric.poles.push_back({axis, start[axis], direction, width, spacing});
-    const double first = geometry.model().use_ranges[2 * pole.use];
-    const double last = geometry.model().use_ranges[2 * pole.use + 1];
-    std::array<double, 2> end;
-    if (!chart_point(geometry, pole.use,
-                     geometry.model().use_senses[pole.use] > 0 ? last : first,
-                     metric.workspace, end)) return PHX_MC_INVALID_INPUT;
-    for (double offset = spacing; offset <= width; offset += spacing) {
+    metric.poles.push_back({axis, start[axis], direction, width, spacing, anchor.pole != nullptr});
+    std::array<double, 2> end = anchor.end;
+    if (anchor.pole) {
+      const auto& pole = *anchor.pole;
+      const double first = model.use_ranges[2 * pole.use];
+      const double last = model.use_ranges[2 * pole.use + 1];
+      if (!chart_point(geometry, pole.use, model.use_senses[pole.use] > 0 ? last : first,
+                       metric.workspace, end)) return PHX_MC_INVALID_INPUT;
+    }
+    // Solid route: each ring's point count and the step to the next ring
+    // follow the graded base size at the ring, at most the zone's spacing:
+    // rings beside a boundary finer than the request (a wedge-graded rim)
+    // start as fine and grow at the grading rate instead of joining a fine
+    // side to a coarse ring (measured: caps above 45-65 deg, solid scan 90
+    // of 195 runs UNRESOLVED with rings at the zone spacing, 15 with graded
+    // rings).
+    double step = spacing;
+    for (double offset = spacing; offset <= width; offset += step) {
       std::array<double, 2> uv = start;
       uv[axis] = snapped && offset == spacing ? latitude : start[axis] + direction * offset;
       if (!snapped && offset == spacing && direction * (uv[axis] - start[axis]) < spacing)
         uv[axis] = std::nextafter(uv[axis], direction > 0.0
                                   ? std::numeric_limits<double>::infinity()
                                   : -std::numeric_limits<double>::infinity());
+      if (metric.graded_pole_rings) {
+        double ring_middle[2];
+        ring_middle[axis] = uv[axis];
+        ring_middle[free_axis] = middle[free_axis];
+        if (!surface_jet(metric, ring_middle, jet)) return PHX_MC_INVALID_INPUT;
+        step = std::min(spacing, base_size(metric, jet) / speed);
+      }
       std::array<double, 3> previous;
       if (!evaluate_position(geometry, metric.face, uv, metric.workspace, previous))
         return PHX_MC_INVALID_INPUT;
@@ -1024,7 +1164,7 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         length += distance(previous, next);
         previous = next;
       }
-      const int count = std::max(8, static_cast<int>(std::ceil(length / (spacing * speed))));
+      const int count = std::max(8, static_cast<int>(std::ceil(length / (step * speed))));
       const bool first_ring = offset == spacing;
       std::vector<std::array<double, 2>> ring_uv;
       std::vector<int32_t> ring_rows;
@@ -1058,7 +1198,22 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
         points.push_back(uv[1] * metric.scale_v);
         fixed.push_back(1);
       }
-      if (first_ring) {
+      if (first_ring && !anchor.pole) {
+        // A trim line's first ring chain closes the band between it and the
+        // trim, whose triangles then join fixed points only, as a pole's fan;
+        // open, triangles from the trim to kernel points beyond the ring
+        // asked for points in the band, which admission refuses.
+        for (int i = 0; i < count; ++i) {
+          const int32_t a = ring_rows[static_cast<std::size_t>(i)];
+          const int32_t b = ring_rows[static_cast<std::size_t>(i+1)];
+          if (a < 0 || b < 0 || chord_meets_segment(boundary, a, b, ring_uv[i], ring_uv[i+1]))
+            continue;
+          segments.push_back(a);
+          segments.push_back(b);
+          protected_edges.push_back({a, b});
+        }
+      } else if (first_ring) {
+        const PoleBoundary& pole = *anchor.pole;
         CadPoleSectors counts{static_cast<int32_t>(pole.use), 0, 0};
         const auto add_segment = [&](int32_t a, int32_t b) {
           for (std::size_t j = 0; j < segments.size(); j += 2)
@@ -1118,6 +1273,31 @@ double maximum_cosine(const SurfaceTriangulation& surface,
     }
   }
   return maximum;
+}
+
+// Cells among `cells` whose stored triangle fails the kernel's stored size
+// test (cad_refine2d.hpp, stored_size: half the rounding allowance, a
+// constrained side of length >= sqrt(2) h exempt).
+int32_t stored_size_failures(const SurfaceTriangulation& surface,
+                             const std::vector<int32_t>& cells, double h) {
+  int32_t failures = 0;
+  for (const int32_t cell : cells) {
+    const auto& t = surface.cells[cell];
+    const double* p[3] = {surface.points.data() + 3 * t[0], surface.points.data() + 3 * t[1],
+                          surface.points.data() + 3 * t[2]};
+    bool exempt = false;
+    for (int k = 0; k < 3 && !exempt; ++k) {
+      if (!surface.constrained[cell][k]) continue;
+      const double* a = p[(k + 1) % 3];
+      const double* b = p[(k + 2) % 3];
+      double length2 = 0.0;
+      for (int i = 0; i < 3; ++i) length2 += (b[i] - a[i]) * (b[i] - a[i]);
+      exempt = length2 >= 2 * h * h;
+    }
+    if (exempt) continue;
+    failures += stored_size_fails(p[0], p[1], p[2], h);
+  }
+  return failures;
 }
 
 // Largest metric circumradius over cells (centroid metric, as the chart
@@ -1229,6 +1409,14 @@ void smooth(FaceMetric& metric, const std::vector<uint8_t>& fixed, double min_an
     const double quality = maximum_cosine(surface, incident[v]);
     if (!(quality <= limit)) return reject();
     if (sized && !fits(v, previous_radius)) return reject();
+    // The stored size test may not fail on more star cells than before.
+    const int32_t failures = stored_size_failures(surface, incident[v], metric.size);
+    if (failures > 0) {
+      std::copy(old_point.begin(), old_point.end(), surface.points.begin() + 3 * v);
+      const int32_t before = stored_size_failures(surface, incident[v], metric.size);
+      std::copy(xyz.begin(), xyz.end(), surface.points.begin() + 3 * v);
+      if (failures > before) return reject();
+    }
     vertices[v].uv = {chart[0] / metric.scale_u, chart[1] / metric.scale_v};
     return quality;
   };
@@ -1430,7 +1618,8 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
                       const CadCurveDiscretization& curves, int32_t face,
                       double size, double tolerance, double theta,
                       CadFaceMesh& result, std::vector<std::array<double, 2>>* metric_points,
-                      std::vector<std::array<double, 5>>* position_calls) {
+                      std::vector<std::array<double, 5>>* position_calls,
+                      bool graded_pole_rings) {
   if (face < 0 || face >= geometry.surface_count() || !(size > 0.0) ||
       !(tolerance > 0.0) || !(theta > 0.0) || !std::isfinite(size) ||
       !std::isfinite(tolerance) || !std::isfinite(theta)) return PHX_MC_INVALID_ARGUMENT;
@@ -1440,7 +1629,7 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   int32_t status = make_boundary(geometry, curves, face, workspace, boundary, result);
   if (status != PHX_MC_OK) return status;
   FaceMetric metric{&geometry, face, size, tolerance, theta, 1.0, 1.0, {}, {}, {}, {}, {}, {},
-                    {}, {}, metric_points, {}, position_calls};
+                    {}, {}, metric_points, {}, position_calls, graded_pole_rings};
   if (position_calls) position_calls->clear();
   if (metric_points) metric_points->clear();
   status = prepare_metric(geometry, curves, face, boundary, metric);
@@ -1516,8 +1705,15 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
   input.fixed_vertices = fixed.data();
   input.admit_point = metric.poles.empty() ? nullptr : admit_face_point;
   input.admit_context = &metric;
+  input.fixed_region = in_fixed_zone;
+  input.fixed_region_context = &metric;
   input.surface_position = face_position;
   input.surface_context = &metric;
+  // The stored size guarantee: R <= h/sqrt(2) on the emitted triangle up to
+  // the rounding allowance, h the face's request size (the base size's
+  // ungraded value: grading lowers the metric's size, a chord floor never
+  // lifts it past this).
+  input.stored_size = size;
   CadRefine2DResult refined;
   status = cad_refine2d(input, refined);
   if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
@@ -1643,6 +1839,37 @@ int32_t cad_mesh_face(const cad::CadGeometry& geometry,
       }
     }
     result.refinement_failures.push_back(record);
+  }
+  // The stored size guarantee on the emitted triangles (pole slivers aside,
+  // fixed like the kernel's pole fans): a failure the kernel and the guarded
+  // moves left (the 3D flips are not guarded) is a size refusal with its
+  // chart triangle, and the face is unresolved.
+  for (std::size_t c = 0; c < surface.cells.size(); ++c) {
+    const auto& cell = surface.cells[c];
+    bool sliver = false;
+    for (int i = 0; i < 3; ++i) {
+      const int32_t a = cell[i], b = cell[(i + 1) % 3];
+      sliver |= std::binary_search(pole_edges.begin(), pole_edges.end(),
+                                   std::make_pair(std::min(a, b), std::max(a, b)));
+    }
+    if (sliver ||
+        stored_size_failures(surface, {static_cast<int32_t>(c)}, metric.size) == 0) continue;
+    phx_mc_cad_face_failure record{};
+    record.face = face;
+    record.loop = record.use = record.axis = -1;
+    record.reason = PHX_MC_CAD_FACE_REFINEMENT;
+    record.triangle = -1;
+    record.bad_size = 1;
+    record.refusal_kind = static_cast<int32_t>(CadRefine2DRefusal::none);
+    record.curve = record.curve_segment = -1;
+    record.candidate_uv[0] = record.candidate_uv[1] = nan;
+    record.segment_parameters[0] = record.segment_parameters[1] = nan;
+    for (int k = 0; k < 3; ++k) {
+      record.triangle_uv[2*k] = surface.chart(cell[k])[0] / metric.scale_u;
+      record.triangle_uv[2*k+1] = surface.chart(cell[k])[1] / metric.scale_v;
+    }
+    result.refinement_failures.push_back(record);
+    status = PHX_MC_UNRESOLVED;
   }
   result.vertices = std::move(vertices);
   result.boundary_edges = std::move(boundary.edges);

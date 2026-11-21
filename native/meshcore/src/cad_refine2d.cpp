@@ -8,6 +8,7 @@
 #include <optional>
 #include <utility>
 
+#include "cad_stored_size.hpp"
 #include "cdt2d.hpp"
 #include "predicates.hpp"
 #include "refine_queue.hpp"
@@ -123,15 +124,37 @@ class Refinement {
     }
     for (std::size_t t=0;t<tri_.triangles.size();++t)
       if (inside(static_cast<int32_t>(t)) && states_[t]==2) enqueue(static_cast<int32_t>(t));
-    Entry entry;
-    while (queue_->pop_current(entry,[&](const Entry& e) {
-      if (e.generation!=generations_[e.slot]) return false;
-      queued_[e.slot]=0;
-      return inside(e.slot) && states_[e.slot]==2 && has_front(e.slot);
-    })) {
-      if (tri_.vertex_count() >= input_.point_cap) break;
-      states_[entry.slot]=3;
-      process(entry.slot);
+    const auto drain=[&]() {
+      Entry entry;
+      while (queue_->pop_current(entry,[&](const Entry& e) {
+        if (e.generation!=generations_[e.slot]) return false;
+        queued_[e.slot]=0;
+        return inside(e.slot) && states_[e.slot]==2 && has_front(e.slot);
+      })) {
+        if (tri_.vertex_count() >= input_.point_cap) return false;
+        states_[entry.slot]=3;
+        process(entry.slot);
+        if (status_ != PHX_MC_OK) return false;
+      }
+      return true;
+    };
+    const bool drained=drain();
+    if (status_ != PHX_MC_OK) return status_;
+    // Triangles of fixed points outside the caller's region that no
+    // insertion's cavity removed are refined next, under the same rules,
+    // and judged by the census; until then every triangle of fixed points
+    // is left alone, so meshes where none survives are unchanged.
+    if (input_.fixed_region) {
+      region_only_=true;
+      for (std::size_t t=0;t<tri_.triangles.size();++t) {
+        const auto slot=static_cast<int32_t>(t);
+        if (!inside(slot) || t>=states_.size() || states_[t]!=1 || !all_fixed(slot) ||
+            fixed_triangle(slot)) continue;
+        classify_state(slot);
+        if (status_!=PHX_MC_OK) return status_;
+        if (states_[t]==2) enqueue(slot);
+      }
+      if (drained) drain();
       if (status_ != PHX_MC_OK) return status_;
     }
     const int32_t initial=summarize();
@@ -196,8 +219,13 @@ class Refinement {
   double sine_;
   int32_t status_ = PHX_MC_OK;
   std::vector<uint8_t> fixed_;
+  bool region_only_ = false;
   std::vector<std::array<double,3>> physical_;
   std::vector<uint8_t> physical_valid_;
+  // The angle pass's moving vertex and its candidate position, which the
+  // stored size test reads in place of the cached one (-1: none).
+  int32_t moving_vertex_ = -1;
+  std::array<double,3> moving_xyz_{};
   // Centroid metric and metric worst-angle cosine per classified non-fixed
   // triangle (the cosine only once classified good); the census completes
   // them, and the angle pass keeps them current.
@@ -260,7 +288,7 @@ class Refinement {
     return index;
   }
 
-  bool fixed_triangle(int32_t t) const {
+  bool all_fixed(int32_t t) const {
     if (fixed_.empty()) return false;
     const auto& cell=tri_.triangles[t];
     for (int k=0;k<3;++k) {
@@ -268,6 +296,17 @@ class Refinement {
       if (v>=fixed_.size() || !fixed_[v]) return false;
     }
     return true;
+  }
+  // A triangle of fixed points is the caller's, except, once the first
+  // pass is drained (region_only_), where fixed_region declines its centroid.
+  bool fixed_triangle(int32_t t) const {
+    if (!all_fixed(t)) return false;
+    if (!region_only_) return true;
+    const auto& cell=tri_.triangles[t];
+    const double* a=tri_.point(cell.v[0]); const double* b=tri_.point(cell.v[1]);
+    const double* c=tri_.point(cell.v[2]);
+    const double centroid[2]={(a[0]+b[0]+c[0])/3,(a[1]+b[1]+c[1])/3};
+    return input_.fixed_region(input_.fixed_region_context,centroid)!=0;
   }
   bool inside(int32_t t) const {
     return t >= 0 && tri_.live[static_cast<std::size_t>(t)] &&
@@ -289,6 +328,10 @@ class Refinement {
   }
   struct PhysicalQuality { double worst=-1; double max_edge2=0; };
   const std::array<double,3>& physical_position(int32_t vertex) {
+    if(physical_valid_.size()<=static_cast<std::size_t>(vertex)) {
+      physical_.resize(static_cast<std::size_t>(vertex)+1);
+      physical_valid_.resize(static_cast<std::size_t>(vertex)+1,0);
+    }
     if(!physical_valid_[vertex]) {
       auto& xyz=physical_[vertex];
       if(!input_.surface_position(input_.surface_context,tri_.point(vertex),xyz.data()) ||
@@ -379,9 +422,11 @@ class Refinement {
   }
   void improve_worst_angles() {
     const auto vertex_count=static_cast<std::size_t>(tri_.vertex_count());
+    // Vertices move only here (which refreshes the cache on a move), so
+    // positions the stored size test cached during refinement stay valid.
     if(input_.surface_position) {
       physical_.resize(vertex_count);
-      physical_valid_.assign(vertex_count,0);
+      physical_valid_.resize(vertex_count,0);
     }
     std::vector<int32_t> offsets(vertex_count+1,0);
     std::vector<uint8_t> immovable(vertex_count,0);
@@ -579,7 +624,9 @@ class Refinement {
         for(auto candidate:candidates) {
           do {
             p[0]=candidate.point[0]; p[1]=candidate.point[1];
+            moving_vertex_=v; moving_xyz_=candidate.xyz;
             const double score=star_score(star,scores);
+            moving_vertex_=-1;
             if(status_!=PHX_MC_OK) return;
             if(score<best) {
               best=score; best_point[0]=p[0]; best_point[1]=p[1]; best_xyz=candidate.xyz;
@@ -601,6 +648,68 @@ class Refinement {
       }
       if(input_.surface_position) {physical_[v]=best_xyz; physical_valid_[v]=1;}
     }
+  }
+  // The metric length of chart segment pq, integrated along it (two-point
+  // Gauss-Legendre at canonical endpoints); NaN with status_ set when a
+  // metric evaluation fails. The nodes are interior, so an edge ending at a
+  // chart pole is measured where the metric exists.
+  double integrated_length(const double* p,const double* q) {
+    if (q[0]<p[0] || (q[0]==p[0] && q[1]<p[1])) std::swap(p,q);
+    const double ex=q[0]-p[0], ey=q[1]-p[1];
+    constexpr double node=0.21132486540518711775;  // (1 - 1/sqrt(3)) / 2
+    double total=0;
+    for (const double s : {node, 1-node}) {
+      const double x[2]={p[0]+s*ex, p[1]+s*ey};
+      const CadMetric2D mx=metric(x);
+      if (status_!=PHX_MC_OK) return std::numeric_limits<double>::quiet_NaN();
+      total+=0.5*std::sqrt(dot(mx,ex,ey,ex,ey));
+    }
+    return total;
+  }
+  // The stored size test (cad_stored_size.hpp) on the surface positions of
+  // t's vertices against input_.stored_size, at half the rounding allowance
+  // so that compliance, computing the allowance in its own rounding,
+  // accepts every triangle the kernel does. A triangle on a constrained
+  // side of stored length >= sqrt(2) h is exempt: its circumradius is at
+  // least half that side and no insertion shortens it.
+  bool stored_oversized(int32_t t) {
+    if (!(input_.stored_size > 0.0) || !input_.surface_position) return false;
+    const auto& cell=tri_.triangles[t];
+    std::array<double,3> xyz[3];
+    for (int k=0;k<3;++k) {
+      xyz[k]=cell.v[k]==moving_vertex_ ? moving_xyz_ : physical_position(cell.v[k]);
+      if (status_!=PHX_MC_OK) return false;
+    }
+    const double h=input_.stored_size;
+    for (int k=0;k<3;++k) {
+      if (tri_.constraint(t,k)==-1) continue;
+      const auto& a=xyz[next3(k)];
+      const auto& b=xyz[prev3(k)];
+      double length2=0;
+      for (int i=0;i<3;++i) length2+=(b[i]-a[i])*(b[i]-a[i]);
+      if (length2>=2*h*h) return false;
+    }
+    return stored_size_fails(xyz[0].data(),xyz[1].data(),xyz[2].data(),h);
+  }
+  // Confirms a centroid-metric oversize with edge-integrated metric lengths:
+  // the circumradius of the triangle with those side lengths against
+  // sqrt(1/2) of the larger of one unit and each fixed side's length. Where
+  // the chart metric varies across a triangle (a latitude chart: cos(v)
+  // along u), the centroid metric misstates sides that run far from the
+  // centroid; the band between a sphere's pole rings and a trim circle at
+  // h/r 0.8 held a triangle of physical circumradius 0.64 h judged 0.71 h
+  // whose every split point lay in a trim chord's lens or by a ring point.
+  bool integrated_oversized(int32_t t) {
+    const auto& cell=tri_.triangles[t];
+    double side[3], limit=0.70710678118654752440;
+    for (int k=0;k<3;++k) {
+      side[k]=integrated_length(tri_.point(cell.v[next3(k)]),tri_.point(cell.v[prev3(k)]));
+      if (status_!=PHX_MC_OK) return false;
+      if (tri_.constraint(t,k)!=-1) limit=std::max(limit,0.70710678118654752440*side[k]);
+    }
+    const double heron=(side[0]+side[1]+side[2])*(side[1]+side[2]-side[0])*
+                       (side[0]+side[2]-side[1])*(side[0]+side[1]-side[2]);
+    return !(heron>0) || side[0]*side[1]*side[2] > limit*std::sqrt(heron);
   }
   // angle_cosine, when given, receives the metric cosine of the smallest
   // angle (not written on the early oversized exit). A known centroid metric
@@ -641,7 +750,21 @@ class Refinement {
       const double ex=e1[0]-e0[0], ey=e1[1]-e0[1];
       size_limit=std::max(size_limit,0.70710678118654752440*std::sqrt(dot(m,ex,ey,ex,ey)));
     }
-    if (!size_reason && !angle_reason && radius > size_limit) {
+    // Refinement splits by the centroid test alone; the final verdict (a
+    // caller asking for reasons: the census and classify) also asks the
+    // side-integrated lengths, so a triangle the kernel could not split is
+    // accepted when they clear it. Splitting every centroid-oversized
+    // triangle it can keeps the parent's meshes where the kernel resolves
+    // them, and spends no metric evaluations on the confirmation there.
+    bool oversized = radius > size_limit && (!size_reason || integrated_oversized(t));
+    if (status_ != PHX_MC_OK) return false;
+    // The stored test splits (refinement, angle-pass guard) but takes no
+    // part in the final verdict: the face stage's flips can resolve a
+    // stored failure the kernel could not split, and the face stage checks
+    // the emitted triangles itself.
+    if (!oversized && !size_reason) oversized = stored_oversized(t);
+    if (status_ != PHX_MC_OK) return false;
+    if (!size_reason && !angle_reason && oversized) {
       if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }
       return true;
     }
@@ -663,7 +786,7 @@ class Refinement {
       *angle_cosine=(lengths[next3(shortest)]+lengths[prev3(shortest)]-lengths[shortest])/
                     (2*side_product);
     const bool bad_angle = !protected_angle && sine_ * side_product > area2;
-    const bool bad_size=radius > size_limit;
+    const bool bad_size=oversized;
     if (size_reason) *size_reason=bad_size;
     if (angle_reason) *angle_reason=bad_angle;
     if (center) { center[0]=a[0]+dx; center[1]=a[1]+dy; }

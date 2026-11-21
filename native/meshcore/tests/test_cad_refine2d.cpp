@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "cad_refine2d.hpp"
+#include "cad_stored_size.hpp"
 #include "check.hpp"
 #include "predicates.hpp"
 
@@ -411,6 +412,77 @@ int32_t pole_admit(void* context,const double* p) {
   return std::hypot(p[0],p[1])>=0.9 && p[0]<=2;
 }
 
+// A right triangle with legs a, b has R^2 = (a^2 + b^2) / 4 (closed form).
+// Fault caught: an inexact tie decision (a one-ulp leg passing without the
+// allowance) or an allowance wide enough to pass a real 1e-9 excess.
+void stored_size_predicate() {
+  const double up=std::nextafter(0.5,1.0);
+  const double p[3]={0,0,0}, q[3]={0.5,0,0}, tie[3]={0,0.5,0}, over[3]={0,up,0};
+  const double far[3]={0,0.5*(1+1e-9),0};
+  PHX_CHECK(!stored_size_exceeds(p,q,tie,0.5,0.0));
+  PHX_CHECK(stored_size_exceeds(p,q,over,0.5,0.0));
+  PHX_CHECK(!stored_size_exceeds(p,q,over,0.5,0.5*stored_size_allowance(p,q,over)));
+  PHX_CHECK(stored_size_exceeds(p,q,far,0.5,0.5*stored_size_allowance(p,q,far)));
+  // The unit box face at h 0.5: the kernel's center 0.49999999999999994.
+  const double low=std::nextafter(0.5,0.0);
+  const double a[3]={0.5,0,0}, b[3]={low,low,0}, c[3]={1,0.5,0};
+  PHX_CHECK(stored_size_exceeds(a,b,c,0.5,0.0));
+  PHX_CHECK(!stored_size_exceeds(a,b,c,0.5,0.5*stored_size_allowance(a,b,c)));
+  // Degenerate rows exceed every limit.
+  const double line[3]={1,0,0};
+  PHX_CHECK(stored_size_exceeds(p,q,line,1e9,0.0));
+}
+
+// A wavy surface S(u,v) = (u, v, 0.3 sin u) meshed with the chart metric
+// I (h = 1): the metric understates lengths along u by up to 4.4 %, so
+// stored triangles exceed R = 1/sqrt(2) without the stored test; with
+// stored_size 1 every stored triangle meets R^2 = a^2 b^2 c^2 / (16 A^2)
+// <= 1/2 (Heron-free: |x|^2 from the cross product), up to 1e-12.
+// Fault caught: the stored test not reaching the refinement queue.
+int32_t wavy_position(void*,const double* p,double* xyz) {
+  xyz[0]=p[0]; xyz[1]=p[1]; xyz[2]=0.3*std::sin(p[0]);
+  return 1;
+}
+double worst_stored_ratio(const CadRefine2DResult& r) {
+  const auto& tr=r.triangulation;
+  double worst=0;
+  for (std::size_t t=0;t<tr.triangles.size();++t) {
+    if (!tr.live[t] || !tr.region[t] || tr.is_ghost(static_cast<int32_t>(t))) continue;
+    double x[3][3];
+    for (int k=0;k<3;++k) wavy_position(nullptr,tr.point(tr.triangles[t].v[k]),x[k]);
+    double e[3][3], l2[3];
+    for (int k=0;k<3;++k) {
+      for (int i=0;i<3;++i) e[k][i]=x[(k+2)%3][i]-x[(k+1)%3][i];
+      l2[k]=e[k][0]*e[k][0]+e[k][1]*e[k][1]+e[k][2]*e[k][2];
+    }
+    const double n[3]={e[0][1]*e[1][2]-e[0][2]*e[1][1],e[0][2]*e[1][0]-e[0][0]*e[1][2],
+                       e[0][0]*e[1][1]-e[0][1]*e[1][0]};
+    const double radius2=l2[0]*l2[1]*l2[2]/(4*(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]));
+    worst=std::max(worst,radius2/0.5);
+  }
+  return worst;
+}
+void stored_size_split() {
+  const Fixture f=rectangle(6,6,6,6);
+  CadMetric2D identity{1,0,1};
+  CadRefine2DInput in;
+  in.points=f.points.data(); in.point_count=static_cast<int32_t>(f.points.size()/2);
+  in.segments=f.segments.data(); in.segment_count=static_cast<int32_t>(f.segments.size()/2);
+  in.metric=constant; in.metric_context=&identity; in.point_cap=4000;
+  in.surface_position=wavy_position;
+  CadRefine2DResult plain;
+  PHX_CHECK(cad_refine2d(in,plain)==PHX_MC_OK);
+  const double before=worst_stored_ratio(plain);
+  in.stored_size=1.0;
+  CadRefine2DResult stored;
+  PHX_CHECK(cad_refine2d(in,stored)==PHX_MC_OK);
+  const double after=worst_stored_ratio(stored);
+  std::fprintf(stderr,"wavy stored R^2/(h^2/2): metric only %.6f, stored test %.6f\n",before,after);
+  PHX_CHECK(before>1.0);
+  PHX_CHECK(after<=1.0+1e-12);
+  PHX_CHECK(stored.stats.insertions>plain.stats.insertions);
+}
+
 void fixed_pole_zone() {
   Fixture f;
   constexpr double pi=3.14159265358979323846;
@@ -704,6 +776,45 @@ void proximity_circumcenter() {
     PHX_CHECK(corner);
   }
 }
+// A square of side 2.3395222442394368 sampled six times per side with three
+// interior input points under the unit metric (found by a seeded search over
+// such squares): one bad triangle's frontal point lies within half a unit of
+// a vertex and its circumcenter is admissible. A constant metric makes the
+// centroid and side-integrated sizes agree, so the oversize stands.
+void proximity_circumcenter_constant() {
+  const double side=2.3395222442394368;
+  std::vector<double> points;
+  const double corners[4][2]={{0,0},{side,0},{side,side},{0,side}};
+  for(int c=0;c<4;++c) for(int i=0;i<6;++i) {
+    const double s=i/6.0;
+    points.push_back(corners[c][0]+s*(corners[(c+1)%4][0]-corners[c][0]));
+    points.push_back(corners[c][1]+s*(corners[(c+1)%4][1]-corners[c][1]));
+  }
+  std::vector<int32_t> segments;
+  for(int32_t i=0;i<24;++i) { segments.push_back(i); segments.push_back((i+1)%24); }
+  for(const double p : {0.63544211862839461,0.56492764420556585,1.4431496178781262,
+                        1.3772253578299756,1.5771264991118243,1.0188955295188946})
+    points.push_back(p);
+  CadMetric2D unit{1,0,1};
+  CadRefine2DInput in;
+  in.points=points.data(); in.point_count=static_cast<int32_t>(points.size()/2);
+  in.segments=segments.data(); in.segment_count=static_cast<int32_t>(segments.size()/2);
+  in.metric=constant; in.metric_context=&unit; in.point_cap=10000;
+  CadRefine2DResult r;
+  const int32_t status=cad_refine2d(in,r);
+  std::printf("proximity-circumcenter-constant status=%d refusals=%lld/%lld/%lld/%lld relocations=%lld/%lld/%lld insertions=%lld\n",
+      status,static_cast<long long>(r.stats.encroachment_refusals),
+      static_cast<long long>(r.stats.outside_refusals),static_cast<long long>(r.stats.proximity_refusals),
+      static_cast<long long>(r.stats.nonstar_refusals),static_cast<long long>(r.stats.relocations_tried),
+      static_cast<long long>(r.stats.relocations_accepted),static_cast<long long>(r.stats.relocations_failed),
+      static_cast<long long>(r.stats.insertions));
+  // Fault caught: refusing a too-close frontal point without trying the
+  // circumcenter (measured with that fallback removed: relocations 6/0/6,
+  // six proximity refusals).
+  PHX_CHECK(r.stats.encroachment_refusals==0 && r.stats.proximity_refusals==5);
+  PHX_CHECK(r.stats.relocations_tried==6 && r.stats.relocations_accepted==1 &&
+            r.stats.relocations_failed==5);
+}
 
 }  // namespace
 
@@ -714,9 +825,12 @@ int main() {
   metric_errors();
   long_fixed_segment();
   proximity_circumcenter();
+  proximity_circumcenter_constant();
   hole_and_small_angle();
   varying_metric();
   adversarial_metrics();
+  stored_size_predicate();
+  stored_size_split();
   fixed_pole_zone();
   worst_angle_star();
   permutation_invariance();

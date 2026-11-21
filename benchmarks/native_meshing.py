@@ -576,7 +576,9 @@ def _cad_rows() -> tuple[_Row, ...]:
                 lambda size=size: run(size, 1),
                 _cad_cells,
                 _cad_unmet,
-                quality=lambda result, tets=tets: _cad_quality(result, tets),
+                quality=lambda result, size=size, tets=tets: _cad_quality(
+                    result, size, tets
+                ),
             )
         )
     for size, tets in _NETGEN_QUADRIC_TETS.items():
@@ -587,7 +589,9 @@ def _cad_rows() -> tuple[_Row, ...]:
                 lambda size=size: run(size, 2),
                 _cad_cells,
                 _cad_unmet,
-                quality=lambda result, tets=tets: _cad_quality(result, tets),
+                quality=lambda result, size=size, tets=tets: _cad_quality(
+                    result, size, tets
+                ),
                 stage_seconds=lambda result: (
                     float(_cad_stats(result)["quadratic_ns"]) * 1e-9
                 ),
@@ -642,13 +646,15 @@ def _dihedral_degrees(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
     return np.stack(angles, axis=1)
 
 
+def _tetrahedron_circumradii(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
+    corners = points[cells]
+    edges = corners[:, 1:] - corners[:, :1]
+    rhs = 0.5 * np.sum(edges * edges, axis=2)
+    return np.linalg.norm(np.linalg.solve(edges, rhs[..., None])[..., 0], axis=1)
+
+
 def _radius_edge(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
     corners = points[cells]
-    origin = corners[:, 0]
-    edges = corners[:, 1:] - origin[:, None, :]
-    rhs = 0.5 * np.sum(edges * edges, axis=2)
-    center = np.linalg.solve(edges, rhs[..., None])[..., 0]
-    radius = np.linalg.norm(center, axis=1)
     index = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
     shortest = np.min(
         np.stack(
@@ -657,16 +663,72 @@ def _radius_edge(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
         ),
         axis=1,
     )
-    return radius / shortest
+    return _tetrahedron_circumradii(points, cells) / shortest
 
 
-def _cad_quality(result: object, reference_tets: int, /) -> tuple[int, dict[str, float]]:
-    # Dihedral range and radius-edge measured here; the tetrahedron count
-    # against the reference's (+-20 % band reported, not a target); the
-    # native stage times.
+def _unique_edges(cells: np.ndarray, /) -> np.ndarray:
+    arity = cells.shape[1]
+    pairs = cells[:, [(i, j) for i in range(arity) for j in range(i + 1, arity)]]
+    return np.unique(np.sort(pairs.reshape(-1, 2), axis=1), axis=0)
+
+
+def _size_statement(
+    points: np.ndarray, cells: np.ndarray, boundary: np.ndarray, size: float, /
+) -> dict[str, float]:
+    # The CAD rows' declared size statement on every element: tetrahedron
+    # circumradius R <= h, and the chart surface triangles' R <= h / sqrt(2)
+    # (CAD_CHART_SURFACE_SIZE); counts and the interior and boundary edge
+    # length medians for the comparison with Gmsh's mesh at the same h.
+    from phydrax.meshing._sizing import CAD_CHART_SURFACE_SIZE, triangle_circumradii
+
+    points = np.asarray(points, dtype=np.float64)
+    cells = np.asarray(cells, dtype=np.int64)
+    boundary = np.asarray(boundary, dtype=np.int64)
+    volume = _tetrahedron_circumradii(points, cells) / size
+    surface = triangle_circumradii(points, boundary) / (
+        CAD_CHART_SURFACE_SIZE.bound_factor * size
+    )
+    edges = _unique_edges(cells)
+    boundary_edges = _unique_edges(boundary)
+    count = points.shape[0]
+    interior = edges[
+        ~np.isin(
+            edges[:, 0] * count + edges[:, 1],
+            boundary_edges[:, 0] * count + boundary_edges[:, 1],
+        )
+    ]
+
+    def median(rows: np.ndarray, /) -> float:
+        return float(
+            np.median(np.linalg.norm(points[rows[:, 1]] - points[rows[:, 0]], axis=1))
+        )
+
+    interior_median, boundary_median = median(interior), median(boundary_edges)
+    return {
+        "tets": float(cells.shape[0]),
+        "boundary_triangles": float(boundary.shape[0]),
+        "interior_edge_median": interior_median,
+        "interior_edge_median_over_h": interior_median / size,
+        "boundary_edge_median": boundary_median,
+        "boundary_edge_median_over_h": boundary_median / size,
+        "maximum_tet_circumradius_over_h": float(volume.max()),
+        "tets_above_h": float(np.count_nonzero(volume > 1.0)),
+        "maximum_boundary_circumradius_over_bound": float(surface.max()),
+        "boundary_triangles_above_bound": float(np.count_nonzero(surface > 1.0)),
+    }
+
+
+def _cad_quality(
+    result: object, size: float, reference_tets: int, /
+) -> tuple[int, dict[str, float]]:
+    # Dihedral range and radius-edge measured here; the declared size
+    # statement on every element (each element above its bound a miss); the
+    # tetrahedron count against the reference's (+-20 % band reported, not a
+    # target); the native stage times.
     if not isinstance(result, _meshcore.CadSolidResult):
         raise TypeError("The CAD row returns a CadSolidResult.")
     points, cells = result.volume.points, result.volume.tetrahedra
+    statement = _size_statement(points, cells, result.surface.triangles, size)
     dihedral = _dihedral_degrees(points, cells)
     radius_edge = _radius_edge(points, cells)
     stats = _cad_stats(result)
@@ -676,14 +738,18 @@ def _cad_quality(result: object, reference_tets: int, /) -> tuple[int, dict[str,
         "maximum_radius_edge": float(radius_edge.max()),
         "reference_tets": float(reference_tets),
         "tets_over_reference": cells.shape[0] / reference_tets,
-        "surface_triangles": float(result.surface.triangles.shape[0]),
+        **statement,
         "boundary_splits": float(stats["boundary_splits"]),
         **{
             f"{stage}_seconds": float(stats[f"{stage}_ns"]) * 1e-9
             for stage in ("curve", "face", "assembly", "volume", "quadratic")
         },
     }
-    missed = int(np.sum(np.min(dihedral, axis=1) < 15.5)) + int(np.sum(radius_edge > 2.0))
+    missed = (
+        int(np.sum(np.min(dihedral, axis=1) < 15.5))
+        + int(np.sum(radius_edge > 2.0))
+        + int(statement["tets_above_h"] + statement["boundary_triangles_above_bound"])
+    )
     return missed, measured
 
 
@@ -2114,7 +2180,21 @@ def main(argv: list[str] | None = None) -> int:
         help="directory of the ledger's F13 tetrahedral inputs (f13-tet1eNs.npz); "
         "the overset-tet rows run only with it",
     )
+    parser.add_argument(
+        "--reference-mesh",
+        nargs=2,
+        metavar=("NPZ", "H"),
+        default=None,
+        help="print the CAD rows' size statement of a reference mesh (X, F, T arrays "
+        "as the Gmsh reference script exports them) at h and exit; reported, not judged",
+    )
     arguments = parser.parse_args(argv)
+    if arguments.reference_mesh is not None:
+        path, size = arguments.reference_mesh
+        with np.load(path) as mesh:
+            statement = _size_statement(mesh["X"], mesh["T"], mesh["F"], float(size))
+        print(json.dumps({"reference_mesh": path, "h": float(size), **statement}))
+        return 0
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
     ceilings = json.loads(_CEILINGS.read_text(encoding="utf-8"))

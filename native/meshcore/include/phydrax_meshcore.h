@@ -3213,6 +3213,10 @@ typedef struct phx_mc_cad_face_failure {
   int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
   double candidate_uv[2], triangle_uv[6], segment_parameters[2];
 } phx_mc_cad_face_failure;
+/* A REFINEMENT record with triangle -1, bad_size 1 and refusal NONE is an
+ * emitted triangle (after the face stage's flips and moves) whose stored
+ * circumradius fails the stored size test (cad_stored_size.hpp); its
+ * triangle_uv are the emitted triangle's charts. */
 
 typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
 typedef struct phx_mc_cad_surface_arrays {
@@ -3458,12 +3462,18 @@ typedef struct phx_mc_cad_volume_stats {
   /* With recovery_reason INVALID_FACET the refused triangle's smallest-angle
    * sine (phx_mc_plc3d_failure's certified_deviation), else 0. */
   double failure_measure;
+  /* Unmet cells (of unmet_cells) forced by the input: every record of the
+   * cell is a dihedral record and every edge below min_dihedral_degrees is a
+   * surface curve edge whose true wedge between its two faces is below it. */
+  int64_t unmet_forced_cells;
+  /* Unmet cells not forced; the status is UNRESOLVED iff this is nonzero. */
+  int64_t unmet_unforced_cells;
   /* The final unmet quality rows (phx_mc_tet_mesh_unmet criteria) after
    * improvement, split for a soft shape schedule: shape rows are RADIUS_EDGE
    * or DIHEDRAL rows whose reason is not NONREPRESENTABLE (the schedule's
-   * shape targets); hard cells have any other non-SIZE row (validity,
-   * relative determinant, construction or a nonrepresentable shape).
-   * unmet_cells counts cells with any row. */
+   * shape targets); hard cells are unforced cells with any other non-SIZE
+   * row (validity, relative determinant, construction or a nonrepresentable
+   * shape). unmet_cells counts cells with any row. */
   int64_t unmet_shape_rows, unmet_hard_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
@@ -3488,6 +3498,13 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t* records;             /* (R, 2) */
   phx_mc_cad_boundary_split* splits;
   phx_mc_cad_volume_stats* stats;
+  /* Per model curve (curve_capacity >= the model's curve count; left
+   * untouched when the volume stage stopped before quality): the smallest
+   * true wedge in degrees between the curve's two faces, written when some
+   * unmet cell is not forced, else NaN. A wedge below min_dihedral_degrees
+   * makes that target unattainable near the curve for any mesh. */
+  int64_t curve_capacity;
+  double* curve_rim_wedges;
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,

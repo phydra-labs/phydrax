@@ -20,8 +20,10 @@
   the native certificate are refused as unresolved. A soft
   `NativeVolumeSchedule.shape_strength` publishes unmet radius-edge/dihedral
   rows as `soft_shape_target_unmet_count` (prove and unproved; validity,
-  determinant and P2 rows stay issues), from the new `cad_mesh_solid` stats
-  `unmet_shape_rows` / `unmet_hard_cells`. `execute(prove=True)`
+  determinant and P2 rows of unforced cells stay issues, a forced rim cell
+  never is), from the new `cad_mesh_solid` stats `unmet_shape_rows` /
+  `unmet_hard_cells` (after cad's `unmet_forced_cells` /
+  `unmet_unforced_cells`). `execute(prove=True)`
   equals `execute(prove=False).prove()`. Geometry order 2 CAD solids are
   refused at proof. Bindings `verify_surface_embedding` and
   `verify_chart_partition`. The quadric proof at h 0.2293 / 0.1061 takes 0.05

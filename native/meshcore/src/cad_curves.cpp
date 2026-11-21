@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <vector>
 
 namespace phx::mc::cad {
@@ -81,6 +82,11 @@ struct Context {
     const double theta = controls.tolerance_fraction;
     const double ct = controls.curve_tolerances[curve];
     if (curvature > 0 && std::isfinite(ct)) h = std::min(h, std::sqrt(8 * theta * ct / curvature));
+    // Per face use with a jet: its normal oriented by the model (both faces
+    // alike, so -n1.n2 is the wedge cosine whatever the common sense) and its
+    // normal curvatures across (kappa_n) and along (kappa_t) the curve.
+    double rim_normals[2][3]{}, rim_across[2]{}, rim_along[2]{};
+    int rim_faces = 0;
     for (const Use& use : uses) {
       // The curve takes each face's boundary-layer size: its segments are
       // fixed, and a segment longer than the face's unit across the
@@ -129,6 +135,22 @@ struct Context {
         if (kappa_l>0 && 8*kLensShare*theta*tolerance<kappa_l*face_size*face_size)
           face_size=std::sqrt(8*kLensShare*theta*tolerance/kappa_l);
         resolved=std::isfinite(face_size) && face_size>0;
+        if (resolved && rim_faces < 2 && uses.size() == 2 && uses[0].face != uses[1].face) {
+          const double* I = differential.first_form;
+          const double* II = differential.second_form;
+          const double a[2] = {pc[2], pc[3]};
+          // The conormal in the chart: I-orthogonal to the tangent a.
+          const double b[2] = {-(I[1] * a[0] + I[2] * a[1]), I[0] * a[0] + I[1] * a[1]};
+          const auto normal_curvature = [&](const double* d) {
+            return (II[0] * d[0] * d[0] + 2 * II[1] * d[0] * d[1] + II[2] * d[1] * d[1]) /
+                   (I[0] * d[0] * d[0] + 2 * I[1] * d[0] * d[1] + I[2] * d[1] * d[1]);
+          };
+          const double sense = geometry.model().surface_orientations[use.face];
+          for (int k = 0; k < 3; ++k) rim_normals[rim_faces][k] = sense * differential.normal[k];
+          rim_across[rim_faces] = std::abs(normal_curvature(b));
+          rim_along[rim_faces] = std::abs(normal_curvature(a));
+          ++rim_faces;
+        }
         // Within the pole ring zone of the face (pole_ring_width, the face
         // stage's owner of it) the face stage seeds fixed rings and the
         // kernel inserts no point, so no kernel triangle needs the local
@@ -155,6 +177,34 @@ struct Context {
         failed=true; return {s,0,0};
       }
       h = std::min(h, face_size);
+    }
+    // Rim size (solid route). The tets on a curve edge AB lie in the meshed
+    // wedge between its two boundary triangles ABC, ABD, and each such tet's
+    // dihedral at AB is at most that wedge. A triangle plane leaves its
+    // face's tangent plane at the curve by its chords' tilt: the chord to
+    // the apex at distance s across the curve tilts by kappa_n s / 2 (a
+    // normal section of curvature kappa_n), and the curve chord AB of
+    // length L sits kappa_t L^2 / 8 off the face, which tilts a plane
+    // reaching the apex by kappa_t L^2 / (8 s). With the first row of
+    // triangles at s <= L (the face size grades from the curve spacing L),
+    // a face's tilt is at most L (kappa_n / 2 + kappa_t / 8) for s near L.
+    // The true wedge w (from the outward normals: cos w = -n1.n2; a reflex
+    // edge reads as 2 pi - w and only refines) exceeds the target w* by the
+    // margin w - w*; each face spends at most a quarter of it, so the meshed
+    // wedge keeps w* + (w - w*) / 2 and the half left over is the room the
+    // volume stage has to place a wedge tet that meets the target:
+    // L <= (w - w*) / (2 (kappa_n + kappa_t / 4)). A wedge at or below w*
+    // cannot be helped (the volume stage reports its cells as forced).
+    if (controls.rim_dihedral_degrees > 0 && rim_faces == 2) {
+      const double cosine = -(rim_normals[0][0] * rim_normals[1][0] +
+                              rim_normals[0][1] * rim_normals[1][1] +
+                              rim_normals[0][2] * rim_normals[1][2]);
+      const double margin = std::acos(std::clamp(cosine, -1.0, 1.0)) -
+                            controls.rim_dihedral_degrees * (std::numbers::pi / 180.0);
+      for (int f = 0; f < 2 && margin > 0; ++f) {
+        const double tilt = rim_across[f] + 0.25 * rim_along[f];
+        if (std::isfinite(tilt) && tilt > 0) h = std::min(h, margin / (2 * tilt));
+      }
     }
     if (!(h > 0) || !std::isfinite(h) || !(speed > 0) || !std::isfinite(speed)) failed = true;
     return {s, speed, h};

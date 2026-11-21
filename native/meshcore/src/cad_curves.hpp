@@ -23,6 +23,10 @@ struct CurveControls {
   double minimum_size;
   // Internal test control; the construction path enables the sag screen.
   bool sag_check = true;
+  // Solid route only (0: off): the volume stage's minimum dihedral target in
+  // degrees. A curve between two faces whose true wedge exceeds it takes the
+  // rim size of discretize_curves so the meshed wedge keeps a margin above it.
+  double rim_dihedral_degrees = 0.0;
 };
 
 struct CurveFailure {

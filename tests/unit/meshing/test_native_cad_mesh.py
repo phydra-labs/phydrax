@@ -494,26 +494,31 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
     # fixed-boundary volume stage into minutes of improvement (now refused
     # before recovery). Zones stop half a spacing short of the midline to
     # another pole; ring points near a trim are omitted by the boundary
-    # proximity rule. Over h/r 0.4-0.8 and theta 0.5-0.9: no surface edge is
-    # shorter than h / 10, and the volume stage does bounded work (the sphere
-    # resolves; the thin caps and cones may leave coarse-quality targets
-    # unmet, promptly).
-    model = cad_geometry_bundle(MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())).model
+    # proximity rule. Over h/r 0.4-0.8 and theta 0.5-0.9: no edge of the
+    # surface route (the solid route grades a rim to its wedge,
+    # test_rim_wedges_above_the_dihedral_target_resolve) is shorter than
+    # h / 10, and the volume stage does bounded work (the sphere resolves,
+    # with at most the bounded improvement below; the thin caps and cones
+    # may leave coarse-quality targets unmet, promptly).
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_COARSE_POLE_SHAPES[name]())
+    ).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
     for size in (0.4, 0.6, 0.8):
         for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
             tolerance = size / 6.0
-            solid = cad_mesh_solid(
+            arguments = (
                 model,
                 np.full((faces,), size, dtype=np.float64),
                 np.full((faces,), tolerance, dtype=np.float64),
                 np.full((curves,), tolerance, dtype=np.float64),
-                tolerance_fraction=theta,
             )
-            surface = solid.surface
-            corners = surface.points[surface.triangles]
+            surface_only = cad_mesh(*arguments, tolerance_fraction=theta)
+            corners = surface_only.points[surface_only.triangles]
             edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
             assert edges.min() > 0.1 * size, (size, theta)
+            solid = cad_mesh_solid(*arguments, tolerance_fraction=theta)
+            surface = solid.surface
             stats = solid.volume.stats
             assert solid.volume.tetrahedra.shape[0] > 0, (size, theta)
             # Bounded: at most 4 insertions per surface triangle (the hang
@@ -522,6 +527,246 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
             assert work <= 4 * surface.triangles.shape[0], (size, theta, work)
             if name == "sphere":
                 assert solid.status is MeshcoreStatus.OK, (size, theta)
+
+
+@pytest.mark.parametrize("latitude", (45, 50, 55, 60, 65, 70, 75, 80, 85))
+def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
+    # The unit ball below a latitude cut at 45-85 deg: the dome's trim circle
+    # lies where the latitude chart is as anisotropic as beside a pole. Before
+    # trim-line zones (rings seeded from the trim as from a pole) and the
+    # side-integrated size confirmation, 55 of these 135 runs returned the
+    # face stage UNRESOLVED (refusals beside the trim; with the confirmation
+    # alone most runs at 75-85 deg still did, with the zones alone one at 45
+    # deg). Each run must resolve, keep every edge over h / 10, keep every
+    # triangle's circumradius within h / sqrt(2) and stay within theta times
+    # the requested tolerance of the sphere: the distance of a flat
+    # triangle's point x to the unit sphere is |1 - |x||, sampled on a
+    # barycentric grid. Fault caught: triangles from the pole zone's last
+    # ring to the trim zone's, all of fixed points and never refined (cap
+    # below 85 deg, h/r 0.6, theta 0.9: circumradius 1.026 h / sqrt(2),
+    # distance 0.99 tol).
+    domain = MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
+    model = cad_geometry_bundle(domain).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    steps = 8
+    weights = np.asarray(
+        [
+            (1 - (i + j) / steps, i / steps, j / steps)
+            for i in range(steps + 1)
+            for j in range(steps + 1 - i)
+        ],
+        dtype=np.float64,
+    )
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.6, 0.7, 0.8, 0.9):
+            tolerance = size / 6.0
+            result = cad_mesh(
+                model,
+                np.full((faces,), size, dtype=np.float64),
+                np.full((faces,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert result.status is MeshcoreStatus.OK, (size, theta)
+            corners = result.points[result.triangles]
+            edges = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+            assert edges.min() > 0.1 * size, (size, theta)
+            sides = edges.prod(axis=1)
+            area2 = np.linalg.norm(
+                np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
+                axis=1,
+            )
+            circumradius = sides / (2.0 * area2)
+            assert circumradius.max() <= size / np.sqrt(2.0), (
+                size,
+                theta,
+                circumradius.max(),
+            )
+            radius = np.linalg.norm(corners, axis=2)
+            dome = np.all(np.abs(radius - 1.0) < 1e-12, axis=1)
+            assert np.any(dome) and not np.all(dome)
+            samples = np.einsum("kv,rvd->rkd", weights, corners[dome])
+            distance = np.abs(1.0 - np.linalg.norm(samples, axis=2))
+            assert distance.max() <= theta * tolerance, (size, theta, distance.max())
+
+
+def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per cell: the smallest dihedral angle (degrees) and the radius-edge ratio.
+
+    Closed forms: the dihedral at edge (i, j) is the angle between the other
+    two corners' offsets projected across the edge; the circumcentre solves
+    2 (p_k - p_0) . c = |p_k|^2 - |p_0|^2.
+    """
+    corners = points[cells]
+    smallest = np.full((cells.shape[0],), np.inf, dtype=np.float64)
+    for i, j, k, m in (
+        (0, 1, 2, 3),
+        (0, 2, 1, 3),
+        (0, 3, 1, 2),
+        (1, 2, 0, 3),
+        (1, 3, 0, 2),
+        (2, 3, 0, 1),
+    ):
+        axis = corners[:, j] - corners[:, i]
+        axis /= np.linalg.norm(axis, axis=1)[:, None]
+        a = corners[:, k] - corners[:, i]
+        b = corners[:, m] - corners[:, i]
+        a -= np.sum(a * axis, axis=1)[:, None] * axis
+        b -= np.sum(b * axis, axis=1)[:, None] * axis
+        cosine = np.sum(a * b, axis=1) / (
+            np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1)
+        )
+        smallest = np.minimum(smallest, np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    matrix = 2.0 * (corners[:, 1:] - corners[:, :1])
+    rhs = np.sum(corners[:, 1:] ** 2, axis=2) - np.sum(corners[:, :1] ** 2, axis=2)
+    centre = np.linalg.solve(matrix, rhs[:, :, None])[:, :, 0]
+    radius = np.linalg.norm(centre - corners[:, 0], axis=1)
+    edges = np.stack(
+        [
+            np.linalg.norm(corners[:, p] - corners[:, q], axis=1)
+            for p in range(4)
+            for q in range(p + 1, 4)
+        ],
+        axis=1,
+    )
+    return smallest, radius / edges.min(axis=1)
+
+
+def _rim_cone(height: float) -> phx.geometry.brep.BRepModel:
+    return phx.geometry.brep.brep_cone(
+        1.0, 0.0, height, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+
+
+def _rim_solid(model: CadModel, size: float, theta: float) -> CadSolidResult:
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    tolerance = size / 6.0
+    return cad_mesh_solid(
+        model,
+        np.full((faces,), size, dtype=np.float64),
+        np.full((faces,), tolerance, dtype=np.float64),
+        np.full((curves,), tolerance, dtype=np.float64),
+        tolerance_fraction=theta,
+    )
+
+
+# True rim wedges: a cap above latitude phi meets its disk at 90 - phi deg, a
+# unit-radius cone of height g its base at atan(g).
+_RIM_WEDGE_SHAPES = {
+    **{
+        f"cap_above_{d}": (lambda d=d: _unit_cap(float(d), above=True))
+        for d in (45, 55, 60, 65)
+    },
+    **{f"cone_{g}": (lambda g=g: _rim_cone(g)) for g in (0.5, 1.0)},
+}
+
+
+@pytest.mark.parametrize("name", sorted(_RIM_WEDGE_SHAPES))
+def test_rim_wedges_above_the_dihedral_target_resolve(name: str) -> None:
+    # A rim edge's cells lie in the meshed wedge between its two boundary
+    # triangles, whose chords tilt off the curved face by ~ kappa s / 2. With
+    # the rim spacing at the request size, caps above 60-65 deg (true wedge
+    # 30-25 deg) meshed their rim near the 15.5 deg target and ended
+    # UNRESOLVED. The rim size (cad_curves.cpp) keeps half the margin over
+    # the target: every run resolves, and every cell meets the targets by
+    # the closed forms above (fails if the rim rule is off).
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_RIM_WEDGE_SHAPES[name]())).model
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.7, 0.9):
+            solid = _rim_solid(model, size, theta)
+            assert solid.status is MeshcoreStatus.OK, (size, theta)
+            dihedral, ratio = _cell_quality(solid.volume.points, solid.volume.tetrahedra)
+            assert dihedral.min() >= 15.5 - 1e-9, (size, theta, dihedral.min())
+            assert ratio.max() <= 2.0 + 1e-9, (size, theta, ratio.max())
+
+
+def _rim_cells(
+    points: np.ndarray, cells: np.ndarray, rim_z: float, rim_radius: float
+) -> np.ndarray:
+    """Per cell: whether one of its edges has both ends on the rim circle."""
+    on_rim = (np.abs(points[:, 2] - rim_z) < 1e-12) & (
+        np.abs(np.hypot(points[:, 0], points[:, 1]) - rim_radius) < 1e-12
+    )
+    return on_rim[cells].sum(axis=1) >= 2
+
+
+def test_unmet_cells_split_into_forced_and_unforced_per_cell() -> None:
+    # Both kinds in one solid: the cone of height 0.25 (true rim wedge
+    # atan(0.25) = 14.0 deg, below the 15.5 deg target) at h 0.2. A rim cell
+    # whose only failure is its dihedral at the rim is forced (no mesh of
+    # that boundary meets the target there); a cell also failing
+    # radius-edge, which the wedge never forces (r/e = sqrt(1/2 +
+    # tan^2(w/2)/4) <= 2 is reachable), or failing off the rim is unforced.
+    # The decision is per cell: the run is UNRESOLVED because some unmet
+    # cell is unforced, and the closed forms bound both counts: forced cells
+    # number at most the rim cells below the dihedral target that meet the
+    # radius-edge bound, and the two counts cover every cell the closed forms
+    # find below a target (fails if a cell failing radius-edge or off the rim
+    # counts as forced, if no cell is forced, or if the counts miss cells).
+    model = cad_geometry_bundle(MeshingDomain.from_brep(_rim_cone(0.25))).model
+    solid = _rim_solid(model, 0.2, 0.7)
+    stats = solid.volume.stats
+    forced = int(stats["unmet_forced_cells"][0])
+    unforced = int(stats["unmet_unforced_cells"][0])
+    assert solid.status is MeshcoreStatus.UNRESOLVED
+    assert forced > 0 and unforced > 0
+    # One set: the split partitions unmet_cells exactly.
+    assert forced + unforced == int(stats["unmet_cells"][0])
+    points, cells = solid.volume.points, solid.volume.tetrahedra
+    dihedral, ratio = _cell_quality(points, cells)
+    rim = _rim_cells(points, cells, 0.0, 1.0)
+    assert forced <= int((rim & (dihedral < 15.5) & (ratio <= 2.0)).sum())
+    assert forced + unforced >= int(((dihedral < 15.5) | (ratio > 2.0)).sum())
+    # The input finding: the rim curve and its exact true wedge atan(0.25)
+    # (cone side against base disk), the only curve below the target (fails
+    # if the wedge is taken from the mesh instead of the faces, or a reflex
+    # or seam curve is reported).
+    wedges = solid.volume.curve_rim_wedges
+    below = np.flatnonzero(wedges < 15.5)
+    assert below.size == 1
+    assert abs(float(wedges[below[0]]) - np.degrees(np.arctan(0.25))) < 1e-9
+
+
+def test_soft_shape_schedule_and_forced_cells_agree() -> None:
+    # The rim cone of height 0.25 at h 0.2 has forced and unforced unmet
+    # cells. A hard schedule makes the unforced cells an issue (with the rim
+    # finding); a soft one publishes the unmet shape rows and only unforced
+    # hard cells (validity, determinant, nonrepresentable shape) stay issues:
+    # a forced cell is never a hard cell (fails if the native hard count
+    # includes forced cells or the soft route reports shape-only cells).
+    from phydrax.meshing.providers._native_cad_mesh import construct_cad_solid
+
+    reports = {}
+    for soft in (False, True):
+        plan = _cad_volume_plan(
+            _rim_cone(0.25), 0.2, 1, radius_edge=2.0, dihedral=15.5, soft_shape=soft
+        )
+        prepared = plan.prepared
+        assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+        stats = construct_cad_solid(prepared).volume.stats[0]
+        forced = int(stats["unmet_forced_cells"])
+        unforced = int(stats["unmet_unforced_cells"])
+        hard = int(stats["unmet_hard_cells"])
+        assert forced > 0 and unforced > 0
+        assert hard <= unforced
+        candidate = plan.execute(prove=False)
+        report = candidate._construction.compliance
+        achieved = dict(report.achieved)
+        assert achieved["unmet_forced_quality_cells"] == forced
+        assert achieved["unmet_unforced_quality_cells"] == unforced
+        reports[soft] = (report, hard, int(stats["unmet_shape_rows"]))
+    report, _, _ = reports[False]
+    unforced = int(dict(report.achieved)["unmet_unforced_quality_cells"])
+    assert f"native_unmet_quality_cells:{unforced}" in report.issues
+    assert any(
+        issue.startswith("input_rim_wedge_below_dihedral_target:")
+        for issue in report.issues
+    )
+    report, hard, shape_rows = reports[True]
+    assert dict(report.achieved)["soft_shape_target_unmet_count"] == shape_rows > 0
+    quality = [issue for issue in report.issues if issue.startswith("native_unmet_")]
+    assert quality == ([f"native_unmet_quality_cells:{hard}"] if hard else [])
+    assert not any(issue.startswith("input_rim_wedge") for issue in report.issues)
 
 
 def _washer() -> phx.geometry.brep.BRepModel:
@@ -915,6 +1160,127 @@ def test_size_bound_ties_are_decided_exactly() -> None:
     above = edge_length_measures(points, np.asarray([[0, 2]]))
     assert not S3_BOUNDARY_EDGE_SIZE.exceeds(tie, "p95", 0.5, exact)
     assert S3_BOUNDARY_EDGE_SIZE.exceeds(above, "p95", 0.5, exact)
+
+
+def test_stored_size_allowance_passes_rounded_ties_and_refuses_real_excess() -> None:
+    # Fault caught: an allowance missing (a leg one ulp past the tie fails)
+    # or too wide (a leg 1e-9 past the tie passes).
+    from phydrax.meshing._sizing import (
+        CAD_CHART_SURFACE_SIZE,
+        SizeCompliancePolicy,
+        stored_circumradius_measures,
+    )
+
+    exact = SizeCompliancePolicy()
+    for size in (0.5, 0.15, 0.1):
+        up = np.nextafter(np.nextafter(size, 1.0), 1.0)
+        for legs, exceeds in (
+            ([(size, size)] * 4, False),
+            ([(up, up)] * 4, False),
+            ([(size, size * (1.0 + 1e-9))] * 4, True),
+        ):
+            points, triangles = _right_triangles(legs)
+            measures = stored_circumradius_measures(points, triangles)
+            assert (
+                CAD_CHART_SURFACE_SIZE.exceeds(measures, "p95", size, exact) is exceeds
+            ), (legs, size)
+
+
+def test_stored_size_allowance_bounds_vertex_perturbations() -> None:
+    # Independent reference: R^2 of triangles whose vertices are moved by at
+    # most eps = sqrt(3) 4u M (the allowance's perturbation radius), computed
+    # in exact rationals, stays within (1 + tau) of the stored R^2 both ways.
+    # Fault caught: a sensitivity term dropped from tau (an obtuse triangle's
+    # area term dominates).
+    from fractions import Fraction
+
+    from phydrax.meshing._sizing import stored_size_allowance
+
+    def squared(corners: list[tuple[Fraction, ...]]) -> Fraction:
+        p, q, r = corners
+        e0 = [b - a for a, b in zip(q, r, strict=True)]
+        e1 = [b - a for a, b in zip(r, p, strict=True)]
+        e2 = [b - a for a, b in zip(p, q, strict=True)]
+        normal = (
+            e0[1] * e1[2] - e0[2] * e1[1],
+            e0[2] * e1[0] - e0[0] * e1[2],
+            e0[0] * e1[1] - e0[1] * e1[0],
+        )
+        product = Fraction(1)
+        for side in (e0, e1, e2):
+            product *= sum(value * value for value in side)
+        return product / (4 * sum(value * value for value in normal))
+
+    generator = np.random.default_rng(3)
+    unit = float(np.finfo(np.float64).eps) / 2.0
+    for corners in (
+        np.asarray([[0.0, 0.0, 0.0], [0.15, 0.0, 0.0], [0.0, 0.15, 0.0]]),
+        np.asarray([[0.3, 0.1, 0.2], [0.45, 0.1, 0.2], [0.375, 0.13, 0.25]]),
+        np.asarray([[1.0, 2.0, 3.0], [1.5, 2.0, 3.0], [1.25, 2.02, 3.0]]),
+    ):
+        tau = Fraction(float(stored_size_allowance(corners, np.asarray([[0, 1, 2]]))[0]))
+        assert tau > 0
+        eps = np.sqrt(3.0) * 4.0 * unit * float(np.max(np.abs(corners)))
+        stored = squared([tuple(Fraction(float(x)) for x in row) for row in corners])
+        for _ in range(50):
+            directions = generator.normal(size=(3, 3))
+            directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+            moved = [
+                tuple(
+                    Fraction(float(x)) + Fraction(float(eps)) * Fraction(float(d))
+                    for x, d in zip(row, direction, strict=True)
+                )
+                for row, direction in zip(
+                    corners.tolist(), directions.tolist(), strict=True
+                )
+            ]
+            ratio = squared(moved) / stored
+            assert 1 / (1 + tau) <= ratio <= 1 + tau
+
+
+@pytest.mark.parametrize(
+    ("side", "size", "count"), [(1.0, 0.5, 48), (0.3, 0.1, 144), (0.3, 0.15, 48)]
+)
+def test_native_box_faces_meet_the_stored_size_bound_without_splitting_ties(
+    side: float, size: float, count: int
+) -> None:
+    # Every box face is commensurate with h, so its right triangles sit at
+    # R = h / sqrt(2) up to coordinate rounding (0.49999999999999994 for a
+    # face center at h 0.5; 0.15 is not representable): the stored test
+    # keeps them (count unchanged from the metric-only kernel) and every
+    # boundary triangle meets R^2 <= (h^2 / 2)(1 + tau) exactly. Fault
+    # caught: an exact test without the allowance splitting ties (more
+    # triangles), or an allowance the route's check does not honour.
+    from fractions import Fraction
+
+    from phydrax.meshing._sizing import stored_circumradius_measures
+
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(
+            phx.geometry.brep.brep_box(
+                (0.0, 0.0, 0.0),
+                (side, side, side),
+                coordinate_contract=phx.SpatialCoordinateContract.si(),
+            )
+        )
+    ).model
+    solid = cad_mesh_solid(
+        model,
+        np.full(6, size),
+        np.full(6, 0.05),
+        np.full(model.curve_nodes.size, 0.05),
+        radius_edge_bound=8.0,
+        min_dihedral_degrees=0.0,
+    )
+    assert solid.status is MeshcoreStatus.OK
+    points = np.asarray(solid.volume.points, dtype=np.float64)
+    triangles = np.asarray(solid.surface.triangles, dtype=np.int64)
+    assert triangles.shape[0] == count
+    measures = stored_circumradius_measures(points, triangles)
+    bound = Fraction(size) ** 2 / 2
+    for row in range(triangles.shape[0]):
+        value = measures.exact(row)
+        assert value is not None and value <= bound, row
 
 
 def test_size_bound_decision_matches_the_float_statistic_away_from_ties() -> None:
