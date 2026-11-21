@@ -397,6 +397,24 @@ void convex_curve_layers_split() {
   PHX_CHECK(worst < 1e-12);
 }
 
+// The split and segment-midpoint decisions are scale-free: a surface scaled
+// by a power of two with sizes and layers scaled alike (every floating
+// operation then scales exactly) gives the same mesh, scaled.
+void convex_curve_split_is_scale_free() {
+  const Surface s = cylinder(0.5, 0.8, 96, 16);
+  Surface big = s;
+  for (double& x : big.x) x *= 8.0;
+  const Result r = mesh(s, 0.16, 0.08, {0.01, 0.012});
+  const Result q = mesh(big, 1.28, 0.64, {0.08, 0.096});
+  PHX_CHECK(r.status == PHX_MC_OK && q.status == PHX_MC_OK);
+  PHX_CHECK(r.face_offsets == q.face_offsets && r.face_vertices == q.face_vertices);
+  PHX_CHECK(r.face_owner == q.face_owner && r.face_neighbor == q.face_neighbor && r.cell_kinds == q.cell_kinds);
+  PHX_CHECK(r.points.size() == q.points.size());
+  bool scaled = r.points.size() == q.points.size();
+  for (size_t i = 0; i < r.points.size() && scaled; ++i) scaled = q.points[i] == 8.0 * r.points[i];
+  PHX_CHECK(scaled);
+}
+
 void invalid_input_is_refused() {
   Surface open = icosphere(2);
   open.f.resize(open.f.size() - 3);
@@ -414,6 +432,7 @@ int main() {
   box_corners_and_volume_are_exact();
   layers_sit_at_their_thicknesses();
   convex_curve_layers_split();
+  convex_curve_split_is_scale_free();
   invalid_input_is_refused();
   return phx::mc::test::finish("test_hex_dominant");
 }
