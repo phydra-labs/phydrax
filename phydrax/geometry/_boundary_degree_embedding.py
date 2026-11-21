@@ -59,7 +59,7 @@ from ._integer_triangle_contact import (
     IntegerTriangle,
 )
 from ._mapped_embedding import prove_mapped_cell_injective
-from ._planar_chain_embedding import triangulate_planar_polygon
+from ._planar_chain_embedding import polytope_face_triangles, triangulate_planar_polygon
 from ._restricted_embedding import (
     _trace_arguments,
     rational_simplex_trace_values,
@@ -153,8 +153,28 @@ def _canonical_face_triangles(
             ),
         )
     if vertex_defined:
-        # Vertex-defined polyhedral faces are exact planar loops that may carry
-        # collinear vertices; their exact ear triangulation keeps the loop.
+        # A vertex-defined polyhedral face is the exact triangles of its loop:
+        # the ear triangulation of a planar loop (which may carry collinear
+        # vertices), else the fan from its exact vertex average, which takes
+        # the synthetic vertex identifier -2 - facet_id (vertex identifiers
+        # are nonnegative).
+        triangles = polytope_face_triangles(points)
+        if len(triangles) == len(points):
+            if facet_id < 0 or min(vertex_ids) < 0:
+                raise ValueError(
+                    "A fan face requires nonnegative facet and vertex identifiers."
+                )
+            centre_id = -2 - facet_id
+            count = len(vertex_ids)
+            return tuple(
+                BoundaryTriangle(
+                    -1,
+                    facet_id,
+                    (centre_id, vertex_ids[index], vertex_ids[(index + 1) % count]),
+                    triangle,
+                )
+                for index, triangle in enumerate(triangles)
+            )
         routes = triangulate_planar_polygon(points)
     elif len(vertex_ids) != 4:
         raise ValueError(
@@ -382,7 +402,8 @@ def _exact_scalar_identity(value: ExactScalar, /) -> tuple[object, ...]:
 def _vertex_defined_face_evidence(
     points: tuple[Point3, ...], /
 ) -> tuple[str, ...] | None:
-    """Prove a vertex-defined face loop is exactly planar with nonzero area."""
+    """Prove a vertex-defined face loop is exactly planar with nonzero area, or
+    a non-planar loop whose vertex-average fan does not fold."""
     normal: Point3 = (Fraction(0), Fraction(0), Fraction(0))
     for start, stop in zip(points, (*points[1:], points[0]), strict=True):
         term = _cross3(start, stop)
@@ -391,7 +412,11 @@ def _vertex_defined_face_evidence(
         return None
     offset = _dot3(normal, points[0])
     if any(_sign(_dot3(normal, point) - offset) for point in points):
-        return None
+        try:
+            polytope_face_triangles(points)
+        except ValueError:
+            return None
+        return ("exact-vertex-defined-fan-face",)
     return (
         "exact-vertex-defined-planar-face",
         f"plane:{tuple(_exact_scalar_identity(value) for value in normal)}:"
@@ -1726,7 +1751,17 @@ def build_oriented_boundary(
         for triangle in face_tuple[face_index].triangles
     )
     if planar_embedded_exterior:
-        findings.extend(_boundary_triangle_contacts(face_tuple, triangles, vertex_images))
+        # Fan centres are vertices of their face's triangles only.
+        contact_images = dict(vertex_images)
+        for triangle in triangles:
+            for identifier, point in zip(
+                triangle.vertex_ids, triangle.points, strict=True
+            ):
+                if identifier < 0:
+                    contact_images[identifier] = point
+        findings.extend(
+            _boundary_triangle_contacts(face_tuple, triangles, contact_images)
+        )
     degree_geometry_available = degree_topology_available and not any(
         finding.check
         in (

@@ -191,9 +191,11 @@ def polytope_face_triangles(
     An exactly coplanar loop is the simple polygon it bounds, triangulated
     without changing it. A loop whose vertices are not coplanar is the fan of
     triangles ``(c, P_i, P_{i+1})`` from its exact vertex average ``c`` (the
-    finite-volume face of OpenFOAM); a planar face's fan would be the same
-    polygon, so the two conventions agree wherever both apply. The triangles
-    keep the loop's orientation.
+    finite-volume face of OpenFOAM); for a planar face star-shaped about its
+    vertex average the fan is the same polygon, so the two conventions agree
+    there. The triangles keep the loop's orientation. A loop with a zero exact
+    area vector, or a fan triangle whose exact area vector does not point
+    along the loop's (a folded fan), is refused.
     """
     if len(points) < 3 or any(len(point) != 3 for point in points):
         raise ValueError("A polyhedron face is a loop of at least three points in R3.")
@@ -230,7 +232,9 @@ def polytope_face_triangles(
             Fraction(0),
         ),
     )
-    planar = any(_sign(value) for value in normal) and not any(
+    if not any(_sign(value) for value in normal):
+        raise ValueError("A polyhedron face loop has a zero exact area vector.")
+    planar = not any(
         _sign(
             sum(
                 (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
@@ -250,7 +254,18 @@ def polytope_face_triangles(
         sum((point[1] for point in points), Fraction(0)) / count,
         sum((point[2] for point in points), Fraction(0)) / count,
     )
-    return tuple((centre, points[i], points[(i + 1) % count]) for i in range(count))
+    fan = tuple((centre, points[i], points[(i + 1) % count]) for i in range(count))
+    for apex, first, second in fan:
+        u = tuple(first[axis] - apex[axis] for axis in range(3))
+        w = tuple(second[axis] - apex[axis] for axis in range(3))
+        area = (
+            u[1] * w[2] - u[2] * w[1],
+            u[2] * w[0] - u[0] * w[2],
+            u[0] * w[1] - u[1] * w[0],
+        )
+        if _sign(sum((area[axis] * normal[axis] for axis in range(3)), Fraction(0))) <= 0:
+            raise ValueError("A non-planar polyhedron face folds its vertex-average fan.")
+    return fan
 
 
 __all__ = [

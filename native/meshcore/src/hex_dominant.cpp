@@ -1794,6 +1794,30 @@ void face_geometry(const Mesh& mesh, int64_t f, Vec& centre, Vec& area, Vec& ave
   centre = total > 0.0 ? mul(weighted, 1.0 / total) : average;
 }
 
+// A face's vertex-average fan does not fold: every fan triangle's area
+// vector points along the loop's area vector N (the certifier's refusal of a
+// folded fan), here with a relative margin of 1e-6 of N . N per triangle so
+// that rounding cannot accept a folded fan.
+bool fan_unfolded(const Mesh& mesh, int64_t f) {
+  const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+  const double* x = mesh.points.data();
+  Vec average{0, 0, 0}, normal{0, 0, 0};
+  for (int64_t q = first; q < last; ++q) {
+    const int64_t r = q + 1 < last ? q + 1 : first;
+    average = add(average, load(x + 3 * mesh.face_vertices[q]));
+    normal = add(normal, cross(load(x + 3 * mesh.face_vertices[q]), load(x + 3 * mesh.face_vertices[r])));
+  }
+  const double count = static_cast<double>(last - first);
+  average = mul(average, 1.0 / count);
+  const double floor = 1e-6 * dot(normal, normal) / count;
+  for (int64_t q = first; q < last; ++q) {
+    const int64_t r = q + 1 < last ? q + 1 : first;
+    const Vec a = cross(sub(load(x + 3 * mesh.face_vertices[q]), average), sub(load(x + 3 * mesh.face_vertices[r]), average));
+    if (!(dot(a, normal) > floor)) return false;
+  }
+  return true;
+}
+
 // OpenFOAM cell centroid (pyramids about the mean of the face centres).
 Vec cell_centroid(const Mesh& mesh, const Topology& t, int64_t c) {
   Vec estimate{0, 0, 0};
@@ -1818,9 +1842,10 @@ Vec cell_centroid(const Mesh& mesh, const Topology& t, int64_t c) {
   return volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
 }
 
-// Float screen of a cell: its decomposition tetrahedra (OpenFOAM centroid,
-// face vertex average, edge; the certified decomposition) above a relative
-// margin, and for hexahedra also the eight corner Jacobians.
+// Float screen of a cell: unfolded face fans, its decomposition tetrahedra
+// (OpenFOAM centroid, face vertex average, edge; the certified
+// decomposition) above a relative margin, and for hexahedra also the eight
+// corner Jacobians.
 bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
   const double* x = mesh.points.data();
   if (mesh.cell_kinds[c] == kHexahedron) {
@@ -1841,6 +1866,7 @@ bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
   for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
     const int32_t signed_face = t.cell_faces[slot];
     const int64_t f = std::abs(signed_face) - 1;
+    if (!fan_unfolded(mesh, f)) return false;
     const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
     Vec average{0, 0, 0};
     for (int64_t q = first; q < last; ++q) average = add(average, load(x + 3 * mesh.face_vertices[q]));
@@ -1858,7 +1884,8 @@ bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
   return true;
 }
 
-// Exact decomposition validity of a cell with a closed genus-0 boundary.
+// Decomposition validity of a cell with a closed genus-0 boundary: unfolded
+// face fans (with a margin) and exactly oriented decomposition tetrahedra.
 bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
   const Vec centre = cell_centroid(mesh, t, c);
   const double cp[3] = {centre[0], centre[1], centre[2]};
@@ -1869,6 +1896,7 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
     ++faces;
     const int32_t signed_face = t.cell_faces[slot];
     const int64_t f = std::abs(signed_face) - 1;
+    if (!fan_unfolded(mesh, f)) return false;
     const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
     Vec average{0, 0, 0};
     for (int64_t q = first; q < last; ++q) average = add(average, load(mesh.points.data() + 3 * mesh.face_vertices[q]));

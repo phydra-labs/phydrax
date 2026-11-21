@@ -310,10 +310,26 @@ def _point_in_declared_stratum(
             return point_on_segment3(
                 spatial_point, spatial_vertices[0], spatial_vertices[1]
             )
+        if len(spatial_vertices) > 3 and _noncoplanar(spatial_vertices):
+            # A non-planar shared face, given as its loop, is its exact
+            # vertex-average fan (``polytope_face_triangles``).
+            return any(
+                point_in_triangle3(spatial_point, triangle)
+                for triangle in polytope_face_triangles(spatial_vertices)
+            )
         return point_in_convex_planar_hull(spatial_point, spatial_vertices)
     raise ValueError(
         "Exact shared-stratum membership requires ambient dimension two or three."
     )
+
+
+def _noncoplanar(points: tuple[Point3, ...], /) -> bool:
+    origin = points[0]
+    for second, third in combinations(points[1:], 2):
+        normal = _cross3(_sub3(second, origin), _sub3(third, origin))
+        if any(_sign(value) for value in normal):
+            return any(_sign(_dot3(normal, _sub3(point, origin))) for point in points)
+    return False
 
 
 def _shared_face_union(
@@ -515,6 +531,16 @@ def _contact_is_declared(
     point_by_id = dict(zip(first_ids, first.corner_images, strict=True))
     if any(identifier not in point_by_id for identifier in shared):
         return False
+    loops = tuple(
+        loop
+        for loop in (
+            tuple(first_ids[index] for index in route) for route in first.facet_routes
+        )
+        if len(loop) > 3 and frozenset(loop) == common
+    )
+    if loops:
+        # A shared face keeps its loop order: a non-planar face is its fan.
+        shared = loops[0]
     if common not in _local_strata(first) or common not in _local_strata(second):
         edge_chain = _shared_edge_chain(first, second, common, point_by_id)
         if edge_chain is not None:
@@ -603,16 +629,8 @@ def _volume_tetrahedra(
         )
     if cell.kind in ("tetrahedron", "simplex:3"):
         return (_tetrahedron3(cell.corner_images),)
-    faces = _oriented_closed_faces(cell)
     points = tuple(_point3(point) for point in cell.corner_images)
-    triangles: list[tuple[Point3, Point3, Point3]] = []
-    for face in faces:
-        try:
-            triangles.extend(
-                polytope_face_triangles(tuple(points[index] for index in face))
-            )
-        except ValueError as error:
-            raise UnsupportedEmbeddingMap(str(error)) from error
+    triangles = _oriented_face_triangles(cell, points)
     # The star point lies strictly inside every face triangle's plane (one
     # plane per planar face, one per fan triangle of a non-planar face).
     planes = tuple(_face_plane(triangle) for triangle in triangles)
@@ -628,8 +646,15 @@ def _volume_tetrahedra(
     return tuple((center, *triangle) for triangle in triangles)
 
 
-def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...]:
-    """Orient face loops coherently outward over a closed oriented edge cycle."""
+def _oriented_face_triangles(
+    cell: EmbeddingCell, points: tuple[Point3, ...], /
+) -> tuple[tuple[Point3, Point3, Point3], ...]:
+    """Outward face triangles over a closed oriented edge cycle.
+
+    Face loops are oriented coherently, each triangulated once
+    (``polytope_face_triangles``), and the whole boundary turned outward by the
+    sign of its exact enclosed volume.
+    """
     routes = cell.facet_routes
     if not routes:
         raise UnsupportedEmbeddingMap(
@@ -668,26 +693,27 @@ def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...
                         raise UnsupportedEmbeddingMap(
                             "Polytope boundary faces are not coherently orientable."
                         )
-    oriented = tuple(
-        route[::-1] if reversed_face[index] else route
-        for index, route in enumerate(routes)
-    )
-    points = tuple(_point3(point) for point in cell.corner_images)
+    triangles: list[tuple[Point3, Point3, Point3]] = []
+    for index, route in enumerate(routes):
+        try:
+            face = polytope_face_triangles(tuple(points[vertex] for vertex in route))
+        except ValueError as error:
+            raise UnsupportedEmbeddingMap(str(error)) from error
+        triangles.extend(
+            (first, third, second) if reversed_face[index] else (first, second, third)
+            for first, second, third in face
+        )
     origin = points[0]
-    volume = sum(
-        (
-            determinant3(origin, *triangle)
-            for face in oriented
-            for triangle in polytope_face_triangles(
-                tuple(points[index] for index in face)
-            )
-        ),
-        Fraction(0),
+    sign = _sign(
+        sum((determinant3(origin, *triangle) for triangle in triangles), Fraction(0))
     )
-    sign = _sign(volume)
     if sign == 0:
         raise UnsupportedEmbeddingMap("A polytope boundary encloses zero exact volume.")
-    return oriented if sign > 0 else tuple(face[::-1] for face in oriented)
+    return (
+        tuple(triangles)
+        if sign > 0
+        else tuple((first, third, second) for first, second, third in triangles)
+    )
 
 
 def _face_plane(points: tuple[Point3, ...], /) -> tuple[Point3, ExactScalar]:

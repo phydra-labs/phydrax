@@ -4,12 +4,21 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+import numpy as np
 import pytest
 
+from phydrax.discretization._cell_geometry import CellGeometrySpec
+from phydrax.discretization._cell_geometry_validity import (
+    certify_cell_geometry_validity,
+)
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.geometry._embedding_cells import EmbeddingCell
 from phydrax.geometry._exact_polyhedral_geometry import determinant3, Point3
-from phydrax.geometry._global_embedding import _volume_tetrahedra, UnsupportedEmbeddingMap
+from phydrax.geometry._global_embedding import (
+    _volume_tetrahedra,
+    certify_global_embedding,
+)
 from phydrax.geometry._planar_chain_embedding import (
     polytope_face_triangles,
     triangulate_planar_polygon,
@@ -122,16 +131,82 @@ def test_non_planar_hexagon_cell_decomposes_into_its_fan_volume() -> None:
     assert sum(1 for tet in tetrahedra if _p(0, 0, Fraction(11, 10)) in tet) == 6
 
 
-def test_inverted_fan_refuses() -> None:
-    # An L-shaped prism is star-shaped from its corner square, but the vertex
-    # average of its L lies in the notch: once the top loop leaves its plane,
-    # the top fan folds over the notch and no exact star point sees it.
-    ring = ((0, 0), (4, 0), (4, 1), (1, 1), (1, 4), (0, 4))
-    flat = _prism((Fraction(1),) * 6, ring)
-    assert (
-        sum((determinant3(*tet) for tet in _volume_tetrahedra(flat)), Fraction(0))
-        == 6 * 7
+def _hexahedron_faces(v: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
+    b0, b1, b2, b3, t0, t1, t2, t3 = v
+    return (
+        (b0, b3, b2, b1),
+        (t0, t1, t2, t3),
+        (b0, b1, t1, t0),
+        (b1, b2, t2, t1),
+        (b2, b3, t3, t2),
+        (b3, b0, t0, t3),
     )
 
-    with pytest.raises(UnsupportedEmbeddingMap, match="star point"):
-        _volume_tetrahedra(_prism((Fraction(1), Fraction(11, 10)) * 3, ring))
+
+def _embedding_status(
+    coordinates: list[tuple[float, float, float]], cells: list[tuple[int, ...]]
+) -> str:
+    mesh = CellMesh.from_polyhedra(
+        np.asarray(coordinates, dtype=np.float64),
+        [
+            [np.asarray(face, dtype=np.int32) for face in _hexahedron_faces(cell)]
+            for cell in cells
+        ],
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    return certify_global_embedding(mesh, geometry, validity).status
+
+
+_SQUARE = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+
+
+@pytest.mark.parametrize("top", [2.0, 2.25])
+def test_stacked_cells_embed_across_a_non_planar_shared_face(top: float) -> None:
+    # The middle face (shared) is twisted; the top face is planar or twisted
+    # (a non-planar exterior face in the degree routes).
+    coordinates = (
+        [(x, y, 0.0) for x, y in _SQUARE]
+        + [(0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.25), (0.0, 1.0, 1.0)]
+        + [(0.0, 0.0, 2.0), (1.0, 0.0, 2.0), (1.0, 1.0, top), (0.0, 1.0, 2.0)]
+    )
+
+    status = _embedding_status(coordinates, [tuple(range(8)), tuple(range(4, 12))])
+
+    assert status == "certified"
+
+
+_FOLDED_CUBE = [
+    (0.0, 0.0, 0.0),
+    (4.0, 0.0, 0.0),
+    (4.0, 4.0, 0.0),
+    (3.0, 4.0, 2.0),
+    (0.0, 0.0, 4.0),
+    (4.0, 0.0, 4.0),
+    (4.0, 4.0, 4.0),
+    (0.0, 3.0, 4.0),
+]
+
+
+def test_folded_fan_refuses() -> None:
+    # The side loop (2, 3, 7, 6) of this cube with two moved corners has a
+    # fan triangle against its area vector: its fan folds.
+    loop = (_p(4, 4, 0), _p(3, 4, 2), _p(0, 3, 4), _p(4, 4, 4))
+    with pytest.raises(ValueError, match="folds"):
+        polytope_face_triangles(loop)
+
+    assert _embedding_status(_FOLDED_CUBE, [tuple(range(8))]) != "certified"
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        ((0, 0), (1, 1), (1, 0), (0, 1)),
+        ((0, 0), (1, 0), (0, 1), (1, 0)),
+        ((0, 0), (1, 0), (2, 0), (3, 0)),
+    ],
+    ids=["bowtie", "repeated-vertex", "collinear"],
+)
+def test_zero_area_loops_refuse(loop: tuple[tuple[int, int], ...]) -> None:
+    with pytest.raises(ValueError, match="zero exact area"):
+        polytope_face_triangles(tuple(_p(x, y, 0) for x, y in loop))
