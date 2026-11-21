@@ -126,7 +126,8 @@ void morton_reorder(CadSurfaceMesh& mesh) {
 
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& output, bool graded_pole_rings) {
+                         CadSurfaceMesh& output, bool graded_pole_rings,
+                         const cad::ProximityField* proximity) {
   const auto& model = geometry.model();
   if ((model.surface_count && (!sizes || !tolerances)) || !(theta > 0.0) || !std::isfinite(theta))
     return PHX_MC_INVALID_ARGUMENT;
@@ -188,7 +189,7 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
     CadFaceMesh local;
     const auto face_start = std::chrono::steady_clock::now();
     status = cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta, local,
-                           nullptr, nullptr, graded_pole_rings);
+                           nullptr, nullptr, graded_pole_rings, proximity);
     mesh.face_ns += elapsed_ns(face_start);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     if (local.failure.reason != 0) {
@@ -833,9 +834,15 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   double smallest = std::numeric_limits<double>::infinity();
   for (int64_t f = 0; f < model.surface_count; ++f) smallest = std::min(smallest, sizes[f]);
   std::vector<double> targets(point_count, std::numeric_limits<double>::infinity());
-  for (std::size_t t = 0; t < surface.triangles.size(); ++t)
-    for (int32_t v : surface.triangles[t])
-      targets[v] = std::min(targets[v], sizes[surface.triangle_patches[t]]);
+  for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
+    const int32_t face = surface.triangle_patches[t];
+    for (int32_t v : surface.triangles[t]) {
+      targets[v] = std::min(targets[v], sizes[face]);
+      // A proximity control's size at the point bounds it too.
+      if (controls.proximity)
+        targets[v] = std::min(targets[v], controls.proximity->size(face, surface.points[v].data()));
+    }
+  }
   for (double& target : targets) target = std::isfinite(target) ? target : smallest;
   phx_mc_tet_mesh_create_request create{};
   create.point_count = static_cast<int64_t>(point_count);

@@ -26,7 +26,10 @@ from phydrax._meshcore import (
     verify_cad_fidelity,
 )
 from phydrax.geometry._meshing_domain import MeshingDomain
+from phydrax.meshing import CellMeshingCandidate
 from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._scope import MeshingScope
+from phydrax.meshing._sizing import ProximitySizeControl
 from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
@@ -160,6 +163,54 @@ def _assert_cad_fidelity(
                 ).reshape((local.size, len(weights), 3))
                 measured[rows[local]] = np.max(
                     np.linalg.norm(pole_exact - linear[local], axis=2), axis=1
+                )
+            # A planar disk centre (pole chord at v = pole_v): rows touching
+            # it take the disk-centre chart (x, y) = |v - pole_v| (cos u,
+            # sin u), where S is affine.
+            pole_chords = (chart.use_patch[chart.chord_use] == patch) & (
+                np.asarray(model.use_kinds)[chart.chord_use] == 1
+            )
+            for pole_v in np.unique(chart.chord_uv[pole_chords][:, :, 1]):
+                if abs(pole_v) == half:
+                    continue
+                local = np.flatnonzero((uv[:, :, 1] == pole_v).any(axis=1))
+                if local.size == 0:
+                    continue
+                sigma = 1.0 if np.all(uv[local, :, 1] >= pole_v) else -1.0
+                probe = np.asarray(
+                    surface.evaluate(
+                        jnp.asarray(
+                            [
+                                [0.0, pole_v],
+                                [0.0, pole_v + sigma * 0.1],
+                                [1.0, pole_v + sigma * 0.1],
+                                [2.0, pole_v + sigma * 0.2],
+                            ],
+                            dtype=jnp.float64,
+                        )
+                    ),
+                    dtype=np.float64,
+                )
+                normal = np.cross(probe[1] - probe[0], probe[2] - probe[0])
+                if abs(float(np.dot(normal, probe[3] - probe[0]))) > 1e-12 * float(
+                    np.linalg.norm(normal)
+                ):
+                    continue
+                rho = sigma * (uv[local, :, 1] - pole_v)
+                pole = uv[local, :, 1] == pole_v
+                x = np.where(pole, 0.0, rho * np.cos(uv[local, :, 0])) @ weights.T
+                y = np.where(pole, 0.0, rho * np.sin(uv[local, :, 0])) @ weights.T
+                chart_points = np.stack(
+                    (np.arctan2(y, x), pole_v + sigma * np.hypot(x, y)), axis=-1
+                )
+                flat_exact = np.asarray(
+                    surface.evaluate(
+                        jnp.asarray(chart_points.reshape((-1, 2)), dtype=jnp.float64)
+                    ),
+                    dtype=np.float64,
+                ).reshape((local.size, len(weights), 3))
+                measured[rows[local]] = np.max(
+                    np.linalg.norm(flat_exact - linear[local], axis=2), axis=1
                 )
     lower, upper = coefficient_bounds(cad_geometry_bundle(domain), domain)
     mesh = CadFidelityMesh(
@@ -529,6 +580,38 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
                 assert solid.status is MeshcoreStatus.OK, (size, theta)
 
 
+@pytest.mark.parametrize("radius", (0.5, 1.0, 1.7, 3.0))
+def test_solid_spheres_snap_graded_pole_rings_to_the_seam(radius: float) -> None:
+    # Solid route pole rings start at the graded base size at the pole, the
+    # chord of the seam's first segment, while that vertex sits at the arc
+    # offset (longer by O(kappa^2 L^3)). Comparing the arc against the chord
+    # spacing refused the snap, the first ring sat 2e-4 short of the seam
+    # vertex (unit sphere, h 0.2), the ring points beside the seam were
+    # omitted and 8 pole triangles failed the stored size test: the surface
+    # stage was UNRESOLVED (42 of 60 runs of this grid). Every run resolves
+    # with no face failure (fails if the snap window is the graded spacing).
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(
+            phx.geometry.brep.brep_sphere(
+                radius, coordinate_contract=phx.SpatialCoordinateContract.si()
+            )
+        )
+    ).model
+    curves = model.curve_nodes.size
+    for size in (0.1, 0.2, 0.3, 0.5):
+        tolerance = size * size / (4.0 * radius)  # kappa h^2 / 4
+        for theta in (0.7, 0.8, 0.9):
+            solid = cad_mesh_solid(
+                model,
+                np.full((1,), size, dtype=np.float64),
+                np.full((1,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert solid.surface.face_failures.shape[0] == 0, (size, theta)
+            assert solid.status is MeshcoreStatus.OK, (size, theta)
+
+
 @pytest.mark.parametrize("latitude", (45, 50, 55, 60, 65, 70, 75, 80, 85))
 def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
     # The unit ball below a latitude cut at 45-85 deg: the dome's trim circle
@@ -588,6 +671,51 @@ def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
             samples = np.einsum("kv,rvd->rkd", weights, corners[dome])
             distance = np.abs(1.0 - np.linalg.norm(samples, axis=2))
             assert distance.max() <= theta * tolerance, (size, theta, distance.max())
+
+
+@pytest.mark.parametrize("latitude", (50, 65, 85))
+def test_polar_trim_band_rows_meet_the_chart_linear_bound(latitude: int) -> None:
+    # The unit ball below a latitude cut: its north pole is trimmed away, so
+    # V3 certifies the rows beside the trim in the (longitude, latitude)
+    # chart, by the chart-linear deviation |S - I_T|. A row with corners x_i
+    # deviates there at most (A du^2 + 2 B du dv + C dv^2) / 8 (A, B, C the
+    # bounds of |S_uu| = cos v, |S_uv| = |sin v|, |S_vv| <= |cos v| + |sin v|
+    # over its latitudes, du, dv its chart extents; cad_faces.hpp). The trim
+    # circle's chords (curve stage) and the band before the first ring (face
+    # stage) are sized by that bound, so every row standing on a trim chord
+    # meets it within theta tol. Fault caught: chords sized in 3D alone (the
+    # trim at 85 deg in three chords, du = 2 pi / 3: bound over theta tol,
+    # V3 refused those rows though the flat triangles lay within it).
+    trim = np.radians(float(latitude))
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(_unit_cap(float(latitude), above=False))
+    ).model
+    faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    for size in (0.4, 0.6, 0.8):
+        for theta in (0.5, 0.7, 0.9):
+            tolerance = size / 6.0
+            result = cad_mesh(
+                model,
+                np.full((faces,), size, dtype=np.float64),
+                np.full((faces,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert result.status is MeshcoreStatus.OK, (size, theta)
+            uv = np.asarray(result.chart.uv)
+            corners = result.points[np.asarray(result.chart.triangles)]
+            dome = np.all(np.abs(np.linalg.norm(corners, axis=2) - 1.0) < 1e-12, axis=1)
+            on_trim = np.abs(uv[:, :, 1] - trim) < 1e-12
+            rows = dome & (on_trim.sum(axis=1) == 2)
+            assert rows.any(), (size, theta)
+            latitudes = uv[rows, :, 1]
+            du = np.ptp(uv[rows, :, 0], axis=1)
+            dv = np.ptp(latitudes, axis=1)
+            low, high = latitudes.min(axis=1), latitudes.max(axis=1)
+            a = np.maximum(np.abs(np.cos(low)), np.abs(np.cos(high)))
+            b = np.maximum(np.abs(np.sin(low)), np.abs(np.sin(high)))
+            bound = (a * du * du + 2.0 * b * du * dv + (a + b) * dv * dv) / 8.0
+            assert bound.max() <= theta * tolerance, (size, theta, bound.max())
 
 
 def _cell_quality(points: np.ndarray, cells: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -853,6 +981,45 @@ def test_quadric_refinement_failures_reach_python(domain: MeshingDomain) -> None
             np.sort(failure["segment_parameters"]),
             result.curve_parameters[start : start + 2],
         )
+
+
+def test_quadric_refused_triangle_beside_a_curve_resolves_by_a_flip(
+    domain: MeshingDomain,
+) -> None:
+    # Quadric at h 0.0998, theta 0.8, tolerance kappa h^2 / 4 per face (kappa
+    # the faces' curvature 1 / radius: 1 on the vertical cylinder's faces 0
+    # and 1, 5/3 on the transverse one), curves at their faces' smallest. The
+    # chart kernel left one triangle on each mirror face, on curve segment
+    # 10 / 49, at metric circumradius 0.78 > 1/sqrt(2): a neighbour's vertex
+    # inserted under its own (smaller) metric sat 0.43 from the circumcenter
+    # in the triangle's centroid metric, every candidate was within 0.5 of a
+    # vertex and the long edge's midpoint encroached the segment, so the face
+    # stage returned UNRESOLVED with two encroachment refusals. Flipping the
+    # long unconstrained edge leaves both triangles under the bound. Fault
+    # caught: a refused triangle left in place instead of flipped.
+    model = cad_geometry_bundle(domain).model
+    size = 0.0998
+    curvature = np.asarray([1.0, 1.0, 5.0 / 3.0], dtype=np.float64)
+    face_tolerances = curvature * size * size / 4.0
+    curve_tolerances = np.full((model.curve_nodes.size,), np.inf, dtype=np.float64)
+    offsets = np.asarray(model.loop_use_offsets)
+    for loop, face in enumerate(np.asarray(model.loop_surfaces)):
+        for use in range(offsets[loop], offsets[loop + 1]):
+            if model.use_kinds[use] == 0:
+                curve = model.use_entities[use]
+                curve_tolerances[curve] = min(
+                    curve_tolerances[curve], face_tolerances[face]
+                )
+    result = cad_mesh(
+        model,
+        np.full((model.surface_nodes.size,), size, dtype=np.float64),
+        face_tolerances,
+        curve_tolerances,
+        tolerance_fraction=0.8,
+    )
+    assert result.status is MeshcoreStatus.OK
+    assert result.face_failures.size == 0
+    assert result.triangles.shape[0] > 0
 
 
 @pytest.mark.parametrize("order", [1, 2])
@@ -1799,7 +1966,7 @@ _FIELD_OUTCOMES = (
     ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
     ("size_maximum", "native"),
     ("size_compliance", "native"),
-    ("size_curvature", "supports uniform size controls on source faces only"),
+    ("size_curvature", "supports uniform and proximity size controls on source faces"),
     ("size_growth", "patch-size growth controls without a source geodesic"),
     ("size_volume_scope", "size controls must bind source face occurrences"),
     ("periodic_constraints", "does not support periodic constraints"),
@@ -2010,3 +2177,127 @@ def test_curve_sample_budget_of_a_surface_schedule_bounds_curve_sampling() -> No
     assert requested == {"maximum_curve_samples": 256.0, "maximum_deviation": 1e-12}
     assert dict(evidence.achieved_quantities)["unmet_chord_deviation"] > 1e-12
     assert evidence.logical_findings == (f"protected_feature:{feature.feature_id}",)
+
+
+def _face_scope(model: phx.geometry.brep.BRepModel, row: int) -> MeshingScope:
+    """The face scope of one model face row (cad_geometry_bundle's surface row)."""
+    from phydrax.meshing._scope import MeshingEntityKind
+    from phydrax.meshing.providers._native_cad_volume import _domain_scope_rows
+
+    domain = MeshingDomain.from_brep(model)
+    identifiers = np.asarray(domain.scope_entity_ids(2), dtype=np.int64)
+    rows = _domain_scope_rows(domain, MeshingScope.whole(model, 2), 2)
+    (index,) = np.flatnonzero(rows == row)
+    return MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        identifiers[index : index + 1],
+    )
+
+
+def _thin_solid_candidate(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    proximity: tuple[ProximitySizeControl, ...] = (),
+) -> CellMeshingCandidate:
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
+    )
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    boundary = MeshingScope.whole(model, 2)
+    specification = VolumeMeshingSpec(
+        CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
+        boundary,
+        VolumeFillStrategy.SIMPLEX,
+        size_controls=(UniformSizeControl(boundary, size), *proximity),
+        maximum_deviation=0.01,
+    )
+    candidate = (
+        phx.meshing.NativeMeshingProvider(
+            NativeMeshingOptions(
+                "cad_tetrahedral",
+                volume_schedule=NativeVolumeSchedule(
+                    radius_edge_bound=2.0, minimum_dihedral_degrees=15.5
+                ),
+            )
+        )
+        .plan(model, specification)
+        .execute(prove=False)
+    )
+    assert isinstance(candidate, CellMeshingCandidate)
+    assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+    return candidate
+
+
+def _thin_disk() -> phx.geometry.brep.BRepModel:
+    # A unit disk 0.06 thick: face rows 0 (z = 0), 1 (side), 2 (z = 0.06).
+    return phx.geometry.brep.brep_cylinder(
+        1.0, 0.06, coordinate_contract=phx.SpatialCoordinateContract.si()
+    )
+
+
+@pytest.mark.parametrize("size", [0.4, 0.8])
+def test_thin_solid_without_proximity_control_reports_the_thin_region(
+    size: float,
+) -> None:
+    # The request's size is kept: a disk 0.06 thick at h >= 0.4 is thinner
+    # than the volume targets allow at h (t >= h / (sqrt(2) sqrt(15)) =
+    # 0.073 h / 0.4; _thin_region_findings), so the run is UNRESOLVED and the
+    # finding names the two disk faces, the certified thickness (two planes:
+    # exactly 0.06) and the thickness h needs (fails if the route refines
+    # implicitly or the finding is missing).
+    candidate = _thin_solid_candidate(_thin_disk(), size)
+    issues = candidate._construction.compliance.issues
+    (finding,) = (x for x in issues if x.startswith("input_thin_region"))
+    fields = dict(part.split("=") for part in finding.split(":")[1:5])
+    assert fields["faces"] == "0,2"
+    assert float(fields["thickness_at_most"]) == pytest.approx(0.06, abs=1e-12)
+    needed = size / np.sqrt(2.0) / np.sqrt(15.0)
+    assert float(fields["thickness_needed"]) == pytest.approx(needed, rel=1e-12)
+    assert any(x.startswith("native_unmet_quality_cells:") for x in issues)
+
+
+@pytest.mark.parametrize("size", [0.4, 0.8])
+def test_thin_solid_with_proximity_control_resolves(size: float) -> None:
+    # A ProximitySizeControl between the disk faces (one element per gap)
+    # sizes them at the local gap 0.06: every cell meets the targets, and
+    # the control's rows state its request and the achieved circumradius
+    # ratio R / (gap / sqrt(2)) <= 1 on every scoped triangle (fails if the
+    # native route ignores the control or reports no rows).
+    model = _thin_disk()
+    control = ProximitySizeControl(_face_scope(model, 0), _face_scope(model, 2), 1)
+    candidate = _thin_solid_candidate(model, size, (control,))
+    report = candidate._construction.compliance
+    assert report.issues == ()
+    requested, achieved = dict(report.requested), dict(report.achieved)
+    key = f"proximity:{control.control_id}"
+    assert requested[f"{key}:elements_per_gap"] == 1.0
+    assert achieved[f"{key}:gap_estimate"] == pytest.approx(0.06, abs=1e-12)
+    assert achieved[f"{key}:maximum_circumradius_ratio"] <= 1.0
+    assert achieved[f"{key}:minimum_elements_per_gap"] >= 1.0
+    assert achieved["unmet_quality_cells"] == 0.0
+    points = np.asarray(candidate.mesh.coordinates, dtype=np.float64)
+    cells = np.asarray(candidate.mesh.blocks[0].vertices, dtype=np.int64)
+    dihedral, ratio = _cell_quality(points, cells)
+    assert dihedral.min() >= 15.5 - 1e-9
+    assert ratio.max() <= 2.0 + 1e-9
+
+
+def test_touching_proximity_scopes_need_a_minimum_size() -> None:
+    # The cap's disk and sphere meet at the rim, so their gap reaches zero:
+    # without minimum_size the control is refused (as Gmsh refuses touching
+    # scopes), naming the remedy.
+    from phydrax.meshing._contracts import MeshingFailure
+
+    model = _unit_cap(70.0, above=True)
+    control = ProximitySizeControl(_face_scope(model, 0), _face_scope(model, 1), 1)
+    with pytest.raises(MeshingFailure, match="declare minimum_size"):
+        _thin_solid_candidate(model, 0.4, (control,))

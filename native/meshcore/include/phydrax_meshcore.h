@@ -3672,8 +3672,19 @@ typedef struct phx_mc_fidelity_finding {
  * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
  * the triangle's linear map taken there; each edge where that region meets a
  * uv row (or a seam or pole chord) carries a seam lens bound charged to both
- * adjacent rows. Faces whose pole cap is not free of other trim chords keep
- * the uv chart.
+ * adjacent rows. Faces whose pole cap is not free of other trim chords, or
+ * whose u range spans less than a full turn (u_max - u_min < 2 pi rounded
+ * down), keep the uv chart; the remaining rounding excess of a full turn is
+ * charged to the region's rows.
+ * Disk centres (a line perpendicular to an axis revolved about it, meeting it
+ * at the degenerate chord's v, certified exactly): rows touching the centre
+ * vertex take the Cartesian chart (x, y) = |v - v_centre| (cos u, sin u),
+ * where the disk is affine, under the same region, seam and turn rules.
+ * A pole region may also reach outer trim rings (chords whose endpoints share
+ * v, with every region corner on the pole's side, checked exactly): those
+ * chords carry seam lenses like the uv interface, plus their own trim-lens
+ * cap (the p-curve need not stay on the chord). Faces whose pole is
+ * trimmed away keep the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
@@ -3801,11 +3812,33 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * zero cells, recovery_status UNRESOLVED, recovery_reason INVALID_FACET,
  * failure_kind FACET, failure_entity the triangle row and failure_measure
  * its smallest-angle sine. */
+/* Proximity size control (ProximitySizeControl) of the CAD solid: two
+ * disjoint face-row sets. At a point of a scoped face the size is the local
+ * gap (its distance to the other set's faces) over elements_per_gap,
+ * clamped to [minimum_size, maximum_size] (0: no bound); the gap is a lower
+ * bound from a first surface pass at the request (the proxy distance less
+ * the nearest proxy face's tolerance), and with opposite_normals_only it is
+ * infinite where the nearest proxy triangle of the other set does not face
+ * the point. Curves, faces and the volume's surface size targets take it
+ * where it is below the face size. A zero size (a gap bound reaching zero
+ * without minimum_size) is PHX_MC_INVALID_INPUT. */
+typedef struct phx_mc_cad_proximity_control {
+  int64_t source_count;
+  const int32_t* source_faces;
+  int64_t target_count;
+  const int32_t* target_faces;
+  int32_t elements_per_gap;
+  int32_t opposite_normals_only;
+  double minimum_size;
+  double maximum_size;
+} phx_mc_cad_proximity_control;
 typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
   double min_relative_determinant; /* 0; also the P2 relative floor */
   int32_t geometry_order;          /* 1 or 2 */
+  int64_t proximity_count;         /* 0: no proximity controls */
+  const phx_mc_cad_proximity_control* proximity_controls;
 } phx_mc_cad_volume_controls;
 typedef struct phx_mc_cad_volume_stats {
   /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */

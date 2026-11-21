@@ -55,12 +55,15 @@ struct CadSurfaceMesh {
   int64_t face_ns = 0, assembly_ns = 0;
 };
 
-// Volume stage controls: S3 quality targets and the geometry order (1 or 2).
+// Volume stage controls: S3 quality targets and the geometry order (1 or 2);
+// proximity (null: none) bounds each surface point's S3 size target by the
+// proximity size field at it (cad_proximity.hpp).
 struct CadVolumeControls {
   double radius_edge_bound = 2.0;
   double minimum_dihedral_degrees = 15.5;
   double minimum_relative_determinant = 0.0;
   int32_t geometry_order = 1;
+  const cad::ProximityField* proximity = nullptr;
 };
 
 // The fixed-boundary tetrahedralization of the assembled surface. Points
@@ -108,9 +111,10 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
                         const CadVolumeControls& controls, CadVolumeMesh& result,
                         const CadForcedRefusal* forced = nullptr);
 
-// graded_pole_rings: solid route (cad_mesh_face).
+// graded_pole_rings and proximity (null: none): solid route (cad_mesh_face).
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
-                         CadSurfaceMesh& result, bool graded_pole_rings = false);
+                         CadSurfaceMesh& result, bool graded_pole_rings = false,
+                         const cad::ProximityField* proximity = nullptr);
 
 }  // namespace phx::mc

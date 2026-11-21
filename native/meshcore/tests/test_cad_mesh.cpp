@@ -1162,12 +1162,15 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
                               adjacent_spacing <= nominal_spacing
                                   ? adjacent_spacing : nominal_spacing;
   {
-    // Solid route (graded_pole_rings): the first ring sits at the graded
-    // base size at the pole, the seam's chord next to it (uniform seam
-    // samples: 2 sin(d/2) on the unit sphere, d / cos(angle) along the
-    // cone's straight meridian, both over the latitude speed), and with a
-    // uniform seam the next rings keep that step. Fails if the flag is
-    // ignored (sphere: the arc d, not the chord) or rings jump to the request.
+    // Solid route (graded_pole_rings): the graded base size at the pole is
+    // the seam's chord next to it (uniform seam samples: 2 sin(d/2) on the
+    // unit sphere, d / cos(angle) along the cone's straight meridian, both
+    // over the latitude speed), and the first ring snaps to the seam's first
+    // vertex (offset d, the arc) since d is within the ungraded spacing; the
+    // next ring steps by at least that chord and at most d. Fails if the
+    // snap compares the arc against the chord (the ring then sits 2e-4 short
+    // of the seam vertex on the sphere and the ring points beside the seam
+    // are omitted) or rings jump to the request.
     CadFaceMesh graded;
     PHX_CHECK(phx::mc::cad_mesh_face(geometry, curves, 0, size, 0.4, 0.5, graded, nullptr,
                                      nullptr, true) == PHX_MC_OK);
@@ -1178,11 +1181,12 @@ void polar_patch(bool cone, bool trim = false, double size = 0.2, double trim_to
     const double chord = cone ? adjacent_spacing : 2 * std::sin(adjacent_spacing / 2);
     PHX_CHECK(offsets.size() > 3);
     if (offsets.size() > 3) {
-      PHX_CHECK(std::abs(offsets.front() - std::min(chord, nominal_spacing)) < 1e-12);
+      PHX_CHECK(std::abs(offsets.front() - adjacent_spacing) < 1e-12);
       if (!trim) {
         const auto ring = std::find_if(offsets.begin(), offsets.end(),
                                        [&](double x) { return x > offsets.front() + 1e-12; });
-        PHX_CHECK(ring != offsets.end() && std::abs(*ring - 2 * offsets.front()) < 1e-12);
+        PHX_CHECK(ring != offsets.end() && *ring - offsets.front() >= chord - 1e-12 &&
+                  *ring - offsets.front() <= adjacent_spacing + 1e-12);
       }
     }
   }
