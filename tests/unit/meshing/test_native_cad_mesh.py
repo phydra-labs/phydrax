@@ -681,6 +681,8 @@ def test_unmet_cells_split_into_forced_and_unforced_per_cell() -> None:
     unforced = int(stats["unmet_unforced_cells"][0])
     assert solid.status is MeshcoreStatus.UNRESOLVED
     assert forced > 0 and unforced > 0
+    # One set: the split partitions unmet_cells exactly.
+    assert forced + unforced == int(stats["unmet_cells"][0])
     points, cells = solid.volume.points, solid.volume.tetrahedra
     dihedral, ratio = _cell_quality(points, cells)
     rim = _rim_cells(points, cells, 0.0, 1.0)

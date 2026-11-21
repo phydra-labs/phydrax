@@ -885,15 +885,18 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   result.curve_rim_wedges.assign(static_cast<std::size_t>(model.curve_count),
                                  std::numeric_limits<double>::quiet_NaN());
   if (stats.unmet_cells > 0) {
-    std::vector<TetUnmetRecord> records;
-    const int32_t evaluated = evaluate_mesh_quality(state, quality, records);
-    if (evaluated != PHX_MC_OK) return evaluated;
-    const int32_t counted = count_forced_cells(geometry, surface, state, records,
+    // The split uses improve_mesh's own final records (one or more per
+    // unmet cell, the set unmet_cells counts), not a second evaluation:
+    // evaluate_mesh_quality also checks size targets and a determinant
+    // floor, so it can name cells improve_mesh does not count.
+    const int32_t counted = count_forced_cells(geometry, surface, state, state.unmet_records(),
                                                controls.minimum_dihedral_degrees,
                                                stats.unmet_forced_cells,
                                                stats.unmet_unforced_cells,
                                                &result.curve_rim_wedges);
     if (counted != PHX_MC_OK) return counted;
+    if (stats.unmet_forced_cells + stats.unmet_unforced_cells != stats.unmet_cells)
+      return PHX_MC_INTERNAL_ERROR;
   }
   // Live vertex slots in order; the surface keeps its rows.
   std::vector<int32_t> rows(state.vertex_slot_count(), -1);
