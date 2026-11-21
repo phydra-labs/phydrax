@@ -499,6 +499,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tests: the layer/core mixed round-trip strata test runs in the normal suite
+  again (447 s, 3.3 GB peak; it was deselected after exceeding 16 GB). The
+  exact layer/core adaptation pipeline costs about 75 ms and 0.5 MB per cell,
+  so the fixture uses a 0.12 core offset (1,280 cells, same topology classes)
+  instead of the archived 0.03 ridge (20,480 cells); `_archived_ridge_source`
+  takes `core_offset`, whose 0.03 default keeps the archived profile.
 - Certified polyhedral meshes (`prove=True`): exact star validity and star
   decomposition of vertex-defined polyhedra run natively
   (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)
