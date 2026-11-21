@@ -869,7 +869,9 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         seeds = np.empty((0, 3), dtype=np.float64)
         for _ in range(_RESTRICTED_REPAIRS):
             facets = construction.points[construction.boundary_faces]
-            failing = self.profile.triangle_distance_upper(facets) > self.fidelity_tolerance
+            failing = (
+                self.profile.triangle_distance_upper(facets) > self.fidelity_tolerance
+            )
             if not np.any(failing):
                 break
             seeds = np.concatenate((seeds, np.mean(facets[failing], axis=1)))
@@ -1034,9 +1036,7 @@ def prepare_restricted_implicit_volume(
             "source_inspection",
         )
     # The circumradius of the regular tetrahedron of the target edge.
-    cell_size = (
-        None if math.isinf(target_size) else target_size * math.sqrt(6.0) / 4.0
-    )
+    cell_size = None if math.isinf(target_size) else target_size * math.sqrt(6.0) / 4.0
     bounds = _boundary_bounds(profile)
     identity = canonical_fingerprint(
         {
