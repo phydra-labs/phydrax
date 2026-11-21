@@ -2177,9 +2177,9 @@ def test_cad_solid_organization_is_native_and_matches_existing_route(
 
 _SEED_OUTCOMES = (
     ("hole_inside", None, (0.5, 0.5, 0.5), "Native CAD hole seed"),
-    ("region_outside", (2.0, 2.0, 2.0), None, "lies outside the solid"),
+    ("region_outside", (2.0, 2.0, 2.0), None, "INVALID_SEED"),
     ("region_on_surface", (0.5, 0.5, 0.0), None, "lies on the certified surface"),
-    ("hole_outside", None, (2.0, 2.0, 2.0), None),
+    ("hole_outside", None, (2.0, 2.0, 2.0), "INVALID_SEED"),
 )
 
 
@@ -2192,10 +2192,12 @@ def test_cad_solid_seeds_classify_by_the_certified_surface(
     case: str,
     region_seed: tuple[float, float, float] | None,
     hole_seed: tuple[float, float, float] | None,
-    refusal: str | None,
+    refusal: str,
 ) -> None:
     # A region seed must lie inside its region and a hole seed outside the
-    # solid (exact point-in-shell test); a seed on a surface triangle refuses.
+    # solid (exact point-in-shell test); a seed on a surface triangle refuses,
+    # and one beyond the convex hull of the source points refuses as the
+    # existing route does (INVALID_SEED).
     from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
 
     plan = _organized_plan(
@@ -2205,14 +2207,11 @@ def test_cad_solid_seeds_classify_by_the_certified_surface(
         hole_seed=hole_seed,
         controls=False,
     )
-    if refusal is None:
-        candidate = plan.execute(prove=False)
-        assert isinstance(candidate, CellMeshingCandidate)
-        assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
-        return
     with pytest.raises(MeshingFailure, match=re.escape(refusal)) as error:
         plan.execute(prove=False)
     assert error.value.category is MeshingFailureCategory.REGION_RESOLUTION_FAILED
+    if refusal == "INVALID_SEED":
+        assert error.value.provider_code == "plc_source_invalid_seed"
 
 
 def _field_specification(
