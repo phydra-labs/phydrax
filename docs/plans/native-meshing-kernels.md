@@ -332,6 +332,25 @@ tetrahedra, then implicit volumes, then the CAD solid.
     route for consumers needing trilinear hexahedra, and the only one whose boundary conforms
     exactly to the PLC with region interfaces and simplex transitions, which a snapped octree
     cannot offer by construction.
+    Mixed levels at feature curves (Nov 21; quadric L2 sag: wall legs ~h where the curve steps
+    through the lattice). (1) The octree gains one level below b on the level-b cells within the
+    core clearance plus one cell of a separating feature edge (only there), 2:1 balanced by the
+    existing rule; the lattice unit becomes b / 2 and b stays the smoothing scale. A fine leaf
+    takes the core test of its level-b cell, so the staircase is subdivided in place (own
+    clearance tests let fine cells approach the surface and step the staircase at the refined
+    region's rim: 53 cells uncertified on quadric L0); manifold repair runs at the unit lattice
+    on every leaf of size b or b / 2. (2) Staircase faces are the core's boundary faces of either
+    size; a level-b face carries the hanging midpoints of its fine neighbours explicitly (n-gons up
+    to eight vertices), adjacency is per loop edge, the partition's flip rules count loop edges
+    (three quarters foreign) and runs of curve vertices along any loop. (3) Chains and snapping
+    follow piece edges across levels. (4) Pieces: only quadrilaterals split at chain steps; an
+    n-gon piece gives an n-gon column of polyhedra (kind 1). Without feature curves nothing is
+    refined and the mesh is bit-identical to the uniform path. State (WIP patch
+    `.tmp/S6D_mixed_levels_wip.patch`): quadric L0 certified, Hausdorff 1.27e-4, but +13 % cells
+    and kernel 4.1 s against 2.4; quadric L2 Hausdorff 1.35e-4 with 15 uncertified cells, step
+    faces near the curve whose two vertices project to one wall point (collapsed wall pairs,
+    sideways projection columns) that smoothing cannot separate at b / 2 with the layer stack;
+    leaning patch-column layer directions towards curve columns did not change that.
   - Debt: `test_native_layer_core_mixed_round_trip_preserves_source_strata` (deselected, over 16 GiB:
     every step runs on the original, refined and restored mesh and the archive is written twice).
 
