@@ -1960,6 +1960,14 @@ all-hexahedron request by silently retaining those transitions.
 `plc_hex_dominant` composes exact source charts through its mixed blocks. Curved
 PLC input also requires the independent mapped-root authority described below.
 
+`plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`) meshes a
+single-solid affine PLC with a snapped octree and publishes every cell as a
+polyhedron with OpenFOAM face semantics: a non-planar face is the fan of
+triangles from its exact vertex average, and the request's target is
+`CellFamilyPolicy(required=("polyhedron",))`. Its `cell_shape` marker counts
+hexahedra by shape (0 six quadrilaterals, 1 feature-step prism, 2 other).
+Consumers that need trilinear hexahedra use `plc_hex_dominant`.
+
 `plc_balanced_grid_hex` constructs cut cells from exact PLC/tetrahedral
 intersections, then closes their conforming face arrangements with an
 all-hexahedron transition. It supports nonsimple shared interfaces and cavity

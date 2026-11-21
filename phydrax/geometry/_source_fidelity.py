@@ -67,6 +67,7 @@ from ._mesh_certificates import (
     MeshCertificateBinding,
 )
 from ._meshing_domain import MeshingDomain, SourcePreparation
+from ._planar_chain_embedding import polytope_face_triangles
 from ._planar_primitives import (
     area2 as _polygon_area2,
     box_overlap_pairs,
@@ -4034,58 +4035,15 @@ def _exact_point_shadows(points: Sequence[ExactPoint3], /) -> tuple[np.ndarray, 
     return lower, float(np.max(upper - lower))
 
 
-def _exact_sign(value: ExactScalar, /) -> int:
-    return int(value > 0) - int(value < 0)
-
-
-def _convex_face_fan(points: Sequence[ExactPoint3], /) -> None:
-    """Refuse a face loop that is not exactly planar and convex, the faces
-    whose fan from the first vertex triangulates them exactly."""
-
-    def cross(first: ExactPoint3, second: ExactPoint3, third: ExactPoint3) -> ExactPoint3:
-        u = tuple(second[axis] - first[axis] for axis in range(3))
-        v = tuple(third[axis] - first[axis] for axis in range(3))
-        return (
-            u[1] * v[2] - u[2] * v[1],
-            u[2] * v[0] - u[0] * v[2],
-            u[0] * v[1] - u[1] * v[0],
-        )
-
-    count = len(points)
-    turns = [
-        cross(points[index], points[(index + 1) % count], points[(index + 2) % count])
-        for index in range(count)
-    ]
-    normal = next(
-        (turn for turn in turns if any(_exact_sign(value) for value in turn)), None
-    )
-    origin = points[0]
-    if normal is None or any(
-        _exact_sign(
-            sum(
-                (normal[axis] * (point[axis] - origin[axis]) for axis in range(3)),
-                Fraction(0),
-            )
-        )
-        for point in points
-    ):
-        raise ValueError("Source distance evidence requires exactly planar faces.")
-    if any(
-        _exact_sign(sum((turn[axis] * normal[axis] for axis in range(3)), Fraction(0)))
-        < 0
-        for turn in turns
-    ):
-        raise ValueError("Source distance evidence requires convex faces.")
-
-
 def _exterior_target_triangles(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[tuple[int, ...], np.ndarray, float]:
     """Exterior facet IDs, binary64 shadows (n, 3, 3) of their exact triangles,
     and a bound of every shadow vertex's distance to its exact point.
 
-    Polyhedral exterior faces must be exactly planar and convex; their fans
-    from the first vertex are then exact triangulations.
+    A polyhedral mesh's exterior faces are the exact triangles
+    ``polytope_face_triangles`` assigns them: the polygon of a planar face,
+    the fan from the vertex average of a non-planar one.
     """
     if any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
         from ..discretization._cell_complex import PolyhedralConnectivity
@@ -4101,22 +4059,19 @@ def _exterior_target_triangles(
             raise ValueError("Source distance evidence requires an exterior surface.")
         exact = _polyhedral_vertex_source_coordinates(mesh, geometry)
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-        fans: list[tuple[int, int, int]] = []
+        points: list[ExactPoint3] = []
         for row in rows.tolist():
             loop = vertex_ids[values[offsets[row] : offsets[row + 1]]].tolist()
-            _convex_face_fan([exact[vertex] for vertex in loop])
-            fans.extend(
-                (loop[0], loop[index], loop[index + 1])
-                for index in range(1, len(loop) - 1)
-            )
-        used = sorted({vertex for triangle in fans for vertex in triangle})
-        shadows, gap = _exact_point_shadows([exact[vertex] for vertex in used])
-        position = {vertex: index for index, vertex in enumerate(used)}
-        corners = np.asarray(
-            [[position[vertex] for vertex in triangle] for triangle in fans],
-            dtype=np.int64,
+            for triangle in polytope_face_triangles(
+                tuple(exact[vertex] for vertex in loop)
+            ):
+                points.extend(triangle)
+        shadows, gap = _exact_point_shadows(points)
+        return (
+            tuple(sorted(face_ids[rows].tolist())),
+            shadows.reshape((-1, 3, 3)),
+            2.0 * gap,
         )
-        return tuple(sorted(face_ids[rows].tolist())), shadows[corners], 2.0 * gap
     facet_ids, triangles = _target_boundary_triangles(mesh, geometry)
     shadows, gap = _exact_point_shadows(
         [point for triangle in triangles for point in triangle]

@@ -1883,6 +1883,87 @@ typedef struct phx_mc_prism_layers_result {
 PHX_MC_API int32_t phx_mc_prism_layers(const phx_mc_prism_layers_request* request,
                                        const phx_mc_prism_layers_result* result);
 
+/* ------------------------------------------------ hex-dominant meshing
+ * Hex-dominant mesh of the solid enclosed by a closed, consistently oriented
+ * triangle surface (outward normals, every vertex used); triangle_facets[t]
+ * names the source facet of triangle t. A balanced octree from core_size
+ * down to boundary_size (core_size = boundary_size * 2^k) is cut to the
+ * cells inside the surface and clear of it; one projection layer of
+ * hexahedra joins the staircase boundary of that core to the closest-point
+ * images of its vertices, snapped to the feature curves (edges whose normals
+ * differ by more than feature_angle_degrees, or whose facets differ) and
+ * corners between smooth patches; the fine band, the transitions and the
+ * wall are smoothed. layer_count > 0 splits every projection column at the
+ * cumulative layer_thicknesses from the wall (hexahedral layers; the core
+ * keeps half a boundary cell plus the stack clear of the surface).
+ *
+ * The result is face-based: face f has the loop face_vertices[face_offsets[f]
+ * .. face_offsets[f + 1]) oriented out of face_owner[f]; face_neighbor[f] is
+ * -1 on the boundary, where face_facets[f] is the facet of the triangle
+ * nearest the face's vertex average (-1 inside). cell_kinds: 0 hexahedron
+ * (cell_vertices lists its eight vertices in the reference order: bottom
+ * counterclockwise about the direction to the top, then the top), 1
+ * polyhedron (no vertex list), 2 prism (six vertices, bottom then top).
+ * cell_roles: 0 core, 1 projection layer, 2 boundary layer. vertex_triangles
+ * is the nearest input triangle of a wall vertex (-1 elsewhere);
+ * vertex_kinds: 0 interior, 1 on a patch, 2 on a feature curve, 3 on a
+ * corner, 4 layer vertex.
+ *
+ * prove certifies every cell after construction as a polyhedron with
+ * OpenFOAM face semantics (a non-planar face is the fan from its vertex
+ * average): by the exact orientation of its decomposition tetrahedra
+ * (centroid, face vertex average, edge) and a closed genus-0 boundary.
+ * PHX_MC_UNRESOLVED (result still set) reports a cell left uncertified;
+ * PHX_MC_INVALID_INPUT a surface that is not a closed oriented manifold
+ * enclosing positive volume; PHX_MC_DEGENERATE_INPUT a zero-area triangle.
+ *
+ * stats (28): seconds total, surface, octree and core, faces, projection,
+ * smoothing and layers, certification; cells, hexahedra, polyhedra,
+ * certified cells, layer cells, staircase faces, feature edges, patches,
+ * largest wall vertex distance to the surface, largest sampled boundary
+ * distance (face averages and edge midpoints), staircase cells removed for
+ * manifoldness, partition flips, curve vertices, corner vertices, smoothing
+ * moves undone, certified (1, 0, or -1 without prove), uncertified cells, a
+ * reserved zero, octree levels, cells invalid before smoothing that it made
+ * valid, a reserved zero. */
+typedef struct phx_mc_hex_dominant_mesh phx_mc_hex_dominant_mesh;
+typedef struct phx_mc_hex_dominant_request {
+  int64_t vertex_count;
+  const double* vertices;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  const int32_t* triangle_facets;
+  double core_size;
+  double boundary_size;
+  double feature_angle_degrees;
+  int32_t layer_count;
+  const double* layer_thicknesses;
+  int32_t prove;
+  phx_mc_hex_dominant_mesh** result;
+} phx_mc_hex_dominant_request;
+typedef struct phx_mc_hex_dominant_arrays {
+  double* points;
+  int64_t* face_offsets;
+  int32_t* face_vertices;
+  int32_t* face_owner;
+  int32_t* face_neighbor;
+  int32_t* face_facets;
+  uint8_t* cell_kinds;
+  uint8_t* cell_roles;
+  int64_t* cell_vertex_offsets;
+  int32_t* cell_vertices;
+  int32_t* vertex_triangles;
+  uint8_t* vertex_kinds;
+  double* stats;
+} phx_mc_hex_dominant_arrays;
+PHX_MC_API int32_t phx_mc_hex_dominant(const phx_mc_hex_dominant_request* request);
+/* points, faces, face vertex entries, cells, cell vertex entries. */
+PHX_MC_API int32_t phx_mc_hex_dominant_sizes(const phx_mc_hex_dominant_mesh* result,
+                                             int64_t* sizes);
+PHX_MC_API int32_t phx_mc_hex_dominant_export(const phx_mc_hex_dominant_mesh* result,
+                                              const phx_mc_hex_dominant_arrays* arrays);
+PHX_MC_API void phx_mc_hex_dominant_free(phx_mc_hex_dominant_mesh* result);
+
 /* ------------------------------------------------ conforming Voronoi cells
  * Conforming Voronoi mesh of a triangulated solid for the cell size `size`.
  * Triangle t separates region triangle_regions[2t] (in front, along the
@@ -3117,26 +3198,31 @@ PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
     int32_t* status, double* lower, double* upper);
 
 /* Exact star decomposition of linear polytopes, identical to phydrax's
- * rational `_volume_tetrahedra`. Face-loop entry e (in face_vertex_values
- * order) has its integer row over the common denominator of its own face's
- * vertices as values 3e, 3e + 1, 3e + 2 of the face word bank. codes[k]: 0
- * decomposed, -1 undecided (left to the rational proof: more than 4096
- * points, or a vertex average not strictly inside every face plane), or the
+ * rational `_volume_tetrahedra` (faces as `polytope_face_routes`: an exactly
+ * coplanar loop is ear-clipped, any other loop is the fan from its exact
+ * vertex average). Face-loop entry e (in face_vertex_values order) has its
+ * integer row over the common denominator of its own face's vertices as
+ * values 3e, 3e + 1, 3e + 2 of the face word bank. codes[k]: 0 decomposed,
+ * -1 undecided (left to the rational proof: more than 4096 points, or a
+ * vertex average not strictly inside every face triangle's plane), or the
  * first refusal: 1 no faces, 2 invalid face incidence, 3 not a closed
- * two-manifold, 4 not coherently orientable, 5 zero volume, 6 zero-area face,
- * 7 non-planar face, 8-14 the face polygon refusals (vertices, degenerate,
- * not coplanar, zero area, self contact, no ear, degenerate final triangle),
- * 15 boundary degree about the star point not one. On 0, face_reversed marks
- * the faces whose outward loop is reversed and rows
- * [triangle_offsets[k], ...+1) of triangles hold (face, i, j, k): oriented
- * local loop indices of the faces' ear-clipping triangles (triangle_offsets
- * must count sum(face size - 2) per cell). */
+ * two-manifold, 4 not coherently orientable, 5 zero volume, 6 face loop of
+ * zero area vector, 7 folded fan of a non-planar face, 8-14 the face polygon
+ * refusals (vertices, degenerate, not coplanar, zero area, self contact, no
+ * ear, degenerate final triangle), 15 boundary degree about the star point
+ * not one, 16 non-planar face loop winding more than once about its vertex
+ * average. On 0, face_reversed marks the faces whose outward loop is reversed
+ * and the first triangle_counts[k] rows from triangle_offsets[k] of triangles
+ * hold (face, i, j, k): oriented local loop indices of the face triangles,
+ * where index -1 is the face's exact vertex average (fan apex).
+ * triangle_offsets must count the face sizes per cell. */
 PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
     int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
     const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
     const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
-    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles);
+    const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
+    int64_t* triangle_counts);
 
 /* Exact ear-clipping triangulation of planar face loops, identical to
  * phydrax's rational `triangulate_planar_polygon` and to the face triangles of

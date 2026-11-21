@@ -157,6 +157,18 @@
     "voronoi-steinmetz": {
       "1000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.1677, one thread (ledger F14: 1,327 cells)", "seconds": 8.93, "allowed_ratio": 1.0},
       "10000": {"tool": "VoroCrust-Meshing b5e0859 vc_mesh, R_MAX 0.0487, one thread (ledger F14: 7,609 cells)", "seconds": 31.72, "allowed_ratio": 1.0}
+    },
+    "hexdom-sphere-L0": {
+      "100000": {"tool": "cfMesh (OpenFOAM v2606) cartesianMesh, maxCellSize 0.05464, boundaryCellSize h/2 (ledger F8: 77,896 cells, hex 0.945, wall time, OpenMP)", "seconds": 8.59, "allowed_ratio": 1.0}
+    },
+    "hexdom-sphere-L2": {
+      "100000": {"tool": "cfMesh (OpenFOAM v2606) cartesianMesh, maxCellSize 0.06035, boundaryCellSize h/2, nLayers 2, thicknessRatio 1.2 (ledger F8: 82,232 cells, hex 0.959, wall time, OpenMP)", "seconds": 8.23, "allowed_ratio": 1.0}
+    },
+    "hexdom-quadric-L0": {
+      "100000": {"tool": "cfMesh (OpenFOAM v2606) cartesianMesh, maxCellSize 0.04597, boundaryCellSize h/2, feature edges at 45 degrees (ledger F8: 69,408 cells, hex 0.911, wall time, OpenMP)", "seconds": 6.28, "allowed_ratio": 1.0}
+    },
+    "hexdom-quadric-L2": {
+      "100000": {"tool": "cfMesh (OpenFOAM v2606) cartesianMesh, maxCellSize 0.0513, boundaryCellSize h/2, feature edges at 45 degrees, nLayers 2, thicknessRatio 1.2 (ledger F8: 73,056 cells, hex 0.928, wall time, OpenMP)", "seconds": 5.77, "allowed_ratio": 1.0}
     }
   }
 }

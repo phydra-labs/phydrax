@@ -1264,6 +1264,41 @@ def polyhedral_connectivity(
     cell_face_counts, loop_lengths, explicit_loops, loop_values = _polyhedral_face_loops(
         entries, vertices
     )
+    return _polyhedral_loop_connectivity(
+        cell_face_counts,
+        loop_lengths,
+        explicit_loops,
+        loop_values,
+        vertices,
+        vertex_global_ids=vertex_global_ids,
+        edge_global_ids=edge_global_ids,
+        face_global_ids=face_global_ids,
+        cell_global_ids=cell_global_ids,
+    )
+
+
+def _polyhedral_loop_connectivity(
+    cell_face_counts: np.ndarray,
+    loop_lengths: np.ndarray,
+    explicit_loops: np.ndarray,
+    loop_values: np.ndarray,
+    vertex_count: int,
+    /,
+    *,
+    vertex_global_ids: ArrayLike | None = None,
+    edge_global_ids: ArrayLike | None = None,
+    face_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
+) -> PolyhedralConnectivity:
+    """Build exact oriented incidence from packed face-loop occurrences.
+
+    Cell ``c`` owns the next ``cell_face_counts[c]`` loops in order; loop ``i``
+    holds the next ``loop_lengths[i]`` entries of ``loop_values`` (length ``-1``
+    marks a malformed explicit loop with no entries); ``explicit_loops`` marks
+    the loops given explicitly rather than by a standard cell kind.
+    """
+
+    vertices = int(vertex_count)
     cell_count = cell_face_counts.size
     if cell_count == 0:
         raise ValueError("At least one polyhedral cell is required.")

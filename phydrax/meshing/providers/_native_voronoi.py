@@ -206,17 +206,60 @@ def _sorted_loop_table(
     return table
 
 
+def _native_face_mesh(
+    points: np.ndarray,
+    offsets: np.ndarray,
+    vertices: np.ndarray,
+    owner: np.ndarray,
+    neighbor: np.ndarray,
+    cell_count: int,
+    block_name: str,
+    /,
+) -> CellMesh:
+    """``CellMesh.from_polyhedra`` over native faces with their two cells:
+    every cell's loops in face order, the owner's as stored and the
+    neighbor's reversed (packed, without per-loop arrays)."""
+    inner = np.flatnonzero(neighbor >= 0)
+    cells = np.concatenate((owner, neighbor[inner]))
+    faces = np.concatenate((np.arange(owner.size, dtype=np.int64), inner))
+    reversed_ = np.concatenate(
+        (np.zeros((owner.size,), dtype=np.bool_), np.ones((inner.size,), dtype=np.bool_))
+    )
+    order = np.lexsort((faces, cells))
+    faces, reversed_ = faces[order], reversed_[order]
+    sizes = np.diff(offsets)[faces]
+    loops = np.repeat(np.arange(faces.size, dtype=np.int64), sizes)
+    position = np.arange(loops.size, dtype=np.int64) - np.repeat(
+        np.cumsum(sizes) - sizes, sizes
+    )
+    position = np.where(reversed_[loops], sizes[loops] - 1 - position, position)
+    return CellMesh._from_packed_polyhedra(
+        np.asarray(points, dtype=np.float64),
+        np.bincount(cells, minlength=cell_count),
+        sizes,
+        np.ones((faces.size,), dtype=np.bool_),
+        vertices[offsets[faces][loops] + position],
+        block_name=block_name,
+        vertex_global_ids=None,
+        cell_global_ids=None,
+        numeric_version="0",
+    )
+
+
 def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     offsets = np.asarray(cells.face_offsets, dtype=np.int64)
     vertices = np.asarray(cells.face_vertices, dtype=np.int32)
     sides = np.asarray(cells.face_cells, dtype=np.int64)
-    loops: list[list[np.ndarray]] = [[] for _ in range(cells.cell_seeds.shape[0])]
-    for face, (left, right) in enumerate(sides.tolist()):
-        loop = vertices[offsets[face] : offsets[face + 1]]
-        loops[left].append(loop)
-        if right >= 0:
-            loops[right].append(loop[::-1])
-    mesh = CellMesh.from_polyhedra(cells.vertices, loops, block_name="conforming-voronoi")
+    cell_count = cells.cell_seeds.shape[0]
+    mesh = _native_face_mesh(
+        cells.vertices,
+        offsets,
+        vertices,
+        sides[:, 0],
+        sides[:, 1],
+        cell_count,
+        "conforming-voronoi",
+    )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Conforming Voronoi publication must stay polyhedral.")
@@ -232,7 +275,7 @@ def _publish(cells: meshcore.ConformingVoronoi, /) -> _Published:
     native_rows = np.lexsort(native.T[::-1])
     canonical_rows = np.lexsort(canonical.T[::-1])
     if (
-        np.unique(cell_order).size != len(loops)
+        np.unique(cell_order).size != cell_count
         or native.shape != canonical.shape
         or not np.array_equal(native[native_rows], canonical[canonical_rows])
     ):
@@ -355,8 +398,14 @@ def _vertex_ancestry(
     return _Ancestry(codes, rows, sides, residuals)
 
 
-def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
-    connectivity = published.connectivity
+def _edge_ancestry(
+    connectivity: PolyhedralConnectivity,
+    face_facets: np.ndarray,
+    cell_regions: np.ndarray,
+    vertices: _Ancestry,
+    /,
+) -> _Ancestry:
+    """Facet of the faces around each edge, else the region of its cells."""
     edges = np.asarray(connectivity.edges, dtype=np.int64)
     count = edges.shape[0]
     # Facets and regions of the faces around each edge.
@@ -366,18 +415,20 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
         np.arange(face_offsets.size - 1, dtype=np.int64), np.diff(face_offsets)
     )
     edge_facet = np.full((count,), -1, dtype=np.int64)
-    np.maximum.at(edge_facet, face_edges, published.face_facets[edge_faces])
+    np.maximum.at(edge_facet, face_edges, face_facets[edge_faces])
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)[edge_faces]
-    region_rows = np.concatenate(
-        (
-            np.stack((face_edges, published.cell_regions[owner]), axis=1),
-            np.stack((face_edges, published.cell_regions[neighbor]), axis=1)[
-                neighbor >= 0
-            ],
+    # Distinct (edge, region) pairs as one sortable key each.
+    span = int(np.max(cell_regions, initial=0)) + 1
+    keys = np.unique(
+        np.concatenate(
+            (
+                face_edges * span + cell_regions[owner],
+                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[neighbor >= 0],
+            )
         )
     )
-    region_rows = np.unique(region_rows, axis=0)
+    region_rows = np.stack((keys // span, keys % span), axis=1)
     starts = np.searchsorted(region_rows[:, 0], np.arange(count, dtype=np.int64))
     counts = np.bincount(region_rows[:, 0], minlength=count)
     sides = np.full((count, 2), -2, dtype=np.int64)
@@ -389,7 +440,7 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
     if np.any((codes == _REGION) & (counts != 1)):
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
-            "A conforming Voronoi edge off the PLC lies on a region interface.",
+            "A cell edge off the PLC lies on a region interface.",
             provider_code="native_voronoi_association",
             stage="geometry_association",
         )
@@ -399,13 +450,17 @@ def _edge_ancestry(published: _Published, vertices: _Ancestry, /) -> _Ancestry:
 
 
 def _face_ancestry(
-    source: NativePlcSource, published: _Published, vertices: _Ancestry, /
+    source: NativePlcSource,
+    connectivity: PolyhedralConnectivity,
+    face_facets: np.ndarray,
+    cell_regions: np.ndarray,
+    vertices: _Ancestry,
+    /,
 ) -> _Ancestry:
-    connectivity = published.connectivity
-    facets = published.face_facets
+    facets = face_facets
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
-    regions = published.cell_regions.astype(np.int64)
+    regions = cell_regions.astype(np.int64)
     bisector = facets < 0
     if np.any(
         bisector & (neighbor >= 0) & (regions[owner] != regions[np.maximum(neighbor, 0)])
@@ -442,8 +497,12 @@ def _associations(
 ) -> tuple[GeometryAssociation, ...]:
     mesh, connectivity = published.mesh, published.connectivity
     vertices = _vertex_ancestry(source, published, triangles, triangle_facets)
-    edges = _edge_ancestry(published, vertices)
-    faces = _face_ancestry(source, published, vertices)
+    edges = _edge_ancestry(
+        connectivity, published.face_facets, published.cell_regions, vertices
+    )
+    faces = _face_ancestry(
+        source, connectivity, published.face_facets, published.cell_regions, vertices
+    )
     regions = published.cell_regions.astype(np.int64)
     cells = _Ancestry(
         np.full(regions.shape, _REGION, dtype=np.int64),
@@ -784,30 +843,44 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
                 provider_code="native_voronoi_certification",
                 stage="source_witness",
             )
-        query = PiecewiseLinearBoundarySource(
-            PiecewiseLinearDomainBoundaryOwner(domain), 2
-        )
-        face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
-        witness = SourceBoundaryDistanceWitness(
-            mesh_id=mesh.mesh_id,
-            geometry_id=cell_geometry_id(geometry),
-            topology_id=mesh.topology_id,
-            source_id=query.source_id,
-            source_revision=query.source_revision,
-            source_query_id=query.source_query_id,
-            reverse_tolerance=tolerance,
-            target_facet_global_ids=face_ids[
-                np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
-            ],
-        )
-        return NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc_fidelity"),
-            query.source_id,
-            query.source_revision,
-            fidelity_source=query,
-            fidelity_tolerance=tolerance,
-            fidelity_witness=witness,
-        )
+        return plc_fidelity_request(mesh, geometry, plc_fidelity_query(domain), tolerance)
+
+
+def plc_fidelity_query(domain: PiecewiseLinearDomain, /) -> PiecewiseLinearBoundarySource:
+    """The PLC's exterior facets as the source of a fidelity request."""
+    return PiecewiseLinearBoundarySource(PiecewiseLinearDomainBoundaryOwner(domain), 2)
+
+
+def plc_fidelity_request(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    query: PiecewiseLinearBoundarySource,
+    tolerance: float,
+    /,
+) -> NativeCertificationRequest:
+    """``volume_plc_fidelity``: a two-sided distance bound between the mesh's
+    exterior surface and the PLC's exterior facets within ``tolerance``."""
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    witness = SourceBoundaryDistanceWitness(
+        mesh_id=mesh.mesh_id,
+        geometry_id=cell_geometry_id(geometry),
+        topology_id=mesh.topology_id,
+        source_id=query.source_id,
+        source_revision=query.source_revision,
+        source_query_id=query.source_query_id,
+        reverse_tolerance=tolerance,
+        target_facet_global_ids=face_ids[
+            np.asarray(mesh.boundary_masks[2], dtype=np.bool_)
+        ],
+    )
+    return NativeCertificationRequest(
+        MeshCertificationSchedule("volume_plc_fidelity"),
+        query.source_id,
+        query.source_revision,
+        fidelity_source=query,
+        fidelity_tolerance=tolerance,
+        fidelity_witness=witness,
+    )
 
 
 @checked
