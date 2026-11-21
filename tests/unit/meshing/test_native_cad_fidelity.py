@@ -1166,14 +1166,21 @@ def _pole_chart_deviation(
     vertices: np.ndarray,
     sigma: int,
     n: int,
+    pole_v: float | None = None,
 ) -> float:
     """Sampled sup |S - I_T| over the pole-chart triangle of one row.
 
-    Corners map to rho (cos u, sin u), rho = pi/2 - sigma v (a pole corner to
-    the origin); S at a pole-chart point is the surface at its chart point.
+    Corners map to rho (cos u, sin u), rho = pi/2 - sigma v on a sphere, or
+    rho = sigma (v - pole_v) at a disk centre (`pole_v` given); a pole corner
+    maps to the origin. S at a pole-chart point is the surface at its chart
+    point.
     """
-    rho = _HALF_PI - sigma * uv[:, 1]
-    pole = uv[:, 1] == sigma * _HALF_PI
+    if pole_v is None:
+        rho = _HALF_PI - sigma * uv[:, 1]
+        pole = uv[:, 1] == sigma * _HALF_PI
+    else:
+        rho = sigma * (uv[:, 1] - pole_v)
+        pole = uv[:, 1] == pole_v
     corners = np.where(pole[:, None], 0.0, rho[:, None] * np.stack(
         (np.cos(uv[:, 0]), np.sin(uv[:, 0])), axis=1))
     worst = 0.0
@@ -1181,9 +1188,10 @@ def _pole_chart_deviation(
         for j in range(n + 1 - i):
             weights = np.asarray((1 - (i + j) / n, i / n, j / n))
             x, y = weights @ corners
-            chart = np.asarray((np.arctan2(y, x), sigma * (_HALF_PI - np.hypot(x, y))))
-            exact = np.asarray(surface(chart), dtype=np.float64).reshape(3)
-            worst = max(worst, float(np.linalg.norm(exact - weights @ vertices)))
+            radius = np.hypot(x, y)
+            v = sigma * (_HALF_PI - radius) if pole_v is None else pole_v + sigma * radius
+            exact = np.asarray(surface(np.asarray((np.arctan2(y, x), v))), dtype=np.float64)
+            worst = max(worst, float(np.linalg.norm(exact.reshape(3) - weights @ vertices)))
     return worst
 
 
@@ -1673,15 +1681,36 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
     )
     sampled = np.zeros(slivers.size, dtype=np.float64)
     region = _pole_region(chart.uv)
+    flat = np.zeros(slivers.size, dtype=bool)
     for position, row in enumerate(slivers):
         surface = domain.patches[int(chart.patches[row])].surface
         vertices = meshed.points[chart.triangles[row]]
+
+        def evaluate(c: np.ndarray, s: AbstractSurfacePatch = surface) -> np.ndarray:
+            return np.asarray(s.evaluate(jnp.asarray(c)))
+
         if kind == "sphere":
             assert region[row] != 0
             sampled[position] = _pole_chart_deviation(
-                lambda c, s=surface: np.asarray(s.evaluate(jnp.asarray(c))),
-                chart.uv[row], vertices, int(region[row]), n,
+                evaluate, chart.uv[row], vertices, int(region[row]), n
             )
+            continue
+        # A disk centre (planar face; V3 certifies the frame exactly): the
+        # sliver's two pole corners share v; its reference is the
+        # disk-centre chart, where the deviation is rounding only.
+        ids = chart.triangles[row]
+        pair = [(a, b) for a in range(3) for b in range(a + 1, 3) if ids[a] == ids[b]][0]
+        pole_v = float(chart.uv[row, pair[0], 1])
+        other = chart.uv[row, 3 - pair[0] - pair[1], 1]
+        sigma = 1 if other > pole_v else -1
+        probe = np.asarray(evaluate(np.asarray([[0.0, pole_v], [0.0, pole_v + sigma * 0.1],
+                                                [1.0, pole_v + sigma * 0.1],
+                                                [2.0, pole_v + sigma * 0.2]])))
+        normal = np.cross(probe[1] - probe[0], probe[2] - probe[0])
+        if abs(float(np.dot(normal, probe[3] - probe[0]))) <= 1e-12 * float(np.linalg.norm(normal)):
+            flat[position] = True
+            sampled[position] = _pole_chart_deviation(
+                evaluate, chart.uv[row], vertices, sigma, n, pole_v)
             continue
         source = np.asarray(surface.evaluate(weights @ chart.uv[row]), dtype=np.float64)
         linear = weights @ vertices
@@ -1695,8 +1724,10 @@ def test_pole_sliver_bound_is_tight(kind: str) -> None:
                                chart.chord_range)
     result = verify_cad_fidelity(model, lower, upper, mesh, chords, 1.0, 8)
     assert result.status == MeshcoreStatus.OK
-    ratio = result.upper[slivers] / sampled
-    assert np.all(ratio >= 1.0)
+    assert np.all(result.upper[slivers] >= sampled)
+    # Disk-centre slivers are rounding-level both ways; the tightness check
+    # applies to curved slivers.
+    ratio = result.upper[slivers][~flat] / sampled[~flat]
     assert np.all(ratio <= 1.5), ratio
 
 

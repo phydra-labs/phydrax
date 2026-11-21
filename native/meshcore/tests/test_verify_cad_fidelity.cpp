@@ -1562,6 +1562,128 @@ void two_pole_regions() {
   PHX_CHECK(tight.item_status[worst_row] != PHX_MC_OK &&
             tight.item_status[worst_other] != PHX_MC_OK);
 }
+
+// A planar disk charted by the revolution of the radial line (0,0,0) + v
+// (1,0,0) about z, v in [0, 1], u in [0, 2 pi]: the chart is singular at the
+// centre v = 0 (a pole chord there). The centre's fan rows take the
+// disk-centre chart (x, y) = v (cos u, sin u), where S is affine: their own
+// deviation is rounding only, and they carry the seam lens of their ring
+// edges. Certifies at 0.05 with every fan row's bound below 1e-2 (4.5e-2 in
+// the uv chart); the centre vertex lifted by 0.1 refuses every fan row. Fault
+// caught: a disk centre left in the uv chart, or a centre frame accepting a
+// displaced vertex.
+void disk_centre_rows() {
+  Model m;
+  const int32_t radial = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  const int32_t disk = m.add(PHX_MC_CAD_NODE_REVOLUTION, {radial}, {0, 0, 0, 0, 0, 1});
+  m.surface(disk);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 0);
+  for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
+  const double span = 2.0 * 0x1.921fb54442d18p+1;
+  const int columns = 16, rows = 3;
+  // Loop: centre (pole, v = 0), meridian at span, rim v = 1, meridian at 0.
+  const double ends[4][2] = {{0, 0}, {span, 0}, {span, 1}, {0, 1}};
+  for (int k = 0; k < 4; ++k) {
+    const double* p = ends[k];
+    const double* q = ends[(k + 1) % 4];
+    const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
+    m.use(k == 0 ? 1 : 0, k == 0 ? 0 : k - 1, 0.0, 1.0, pcurve);
+  }
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
+  const auto v = [&](int j) { return static_cast<double>(j) / rows; };
+  const auto id = [&](int i, int j) -> int64_t {
+    if (j == 0) return 0;
+    if (i == columns) i = 0;
+    return 1 + static_cast<int64_t>(j - 1) * columns + i;
+  };
+  Mesh mesh;
+  mesh.points.assign(3 * static_cast<std::size_t>(1 + rows * columns), 0.0);
+  for (int j = 0; j <= rows; ++j)
+    for (int i = 0; i <= columns; ++i) {
+      const double point[2] = {u(i), v(j)};
+      double xyz[3];
+      PHX_CHECK(geometry.jets(disk, point, 0, xyz, point_workspace));
+      std::copy(xyz, xyz + 3, mesh.points.begin() + 3 * id(i, j));
+    }
+  // Boundary side: 0 centre, 1 meridian at span, 2 rim, 3 meridian at 0.
+  const auto side = [&](int i0, int j0, int i1, int j1) {
+    if (j0 == 0 && j1 == 0) return 0;
+    if (i0 == columns && i1 == columns) return 1;
+    if (j0 == rows && j1 == rows) return 2;
+    if (i0 == 0 && i1 == 0) return 3;
+    return -1;
+  };
+  const auto parameter = [&](int s, int i, int j) {
+    return s == 0 ? static_cast<double>(i) / columns
+         : s == 1 ? static_cast<double>(j) / rows
+         : s == 2 ? static_cast<double>(columns - i) / columns
+                  : static_cast<double>(rows - j) / rows;
+  };
+  for (int j = 0; j < rows; ++j)
+    for (int i = 0; i < columns; ++i) {
+      const int cell[4][2] = {{i, j}, {i + 1, j}, {i + 1, j + 1}, {i, j + 1}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        int64_t ids[3];
+        for (int k = 0; k < 3; ++k) {
+          const int* c = cell[local[static_cast<std::size_t>(k)]];
+          ids[k] = id(c[0], c[1]);
+          mesh.triangles.push_back(ids[k]);
+          mesh.uv.insert(mesh.uv.end(), {u(c[0]), v(c[1])});
+        }
+        for (int k = 0; k < 3; ++k) {
+          const int* a = cell[local[static_cast<std::size_t>(k)]];
+          const int* b = cell[local[static_cast<std::size_t>((k + 1) % 3)]];
+          const int s = side(a[0], a[1], b[0], b[1]);
+          if (s < 0) {
+            mesh.edge_chord.push_back(-1);
+            continue;
+          }
+          mesh.edge_chord.push_back(static_cast<int64_t>(mesh.chord_use.size()));
+          mesh.chord_use.push_back(s);
+          mesh.chord_loop.push_back(0);
+          mesh.chord_uv.insert(mesh.chord_uv.end(), {u(a[0]), v(a[1]), u(b[0]), v(b[1])});
+          mesh.chord_range.insert(mesh.chord_range.end(),
+                                  {parameter(s, a[0], a[1]), parameter(s, b[0], b[1])});
+        }
+        mesh.face_rows.push_back(0);
+        const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+        mesh.chart_to_mesh.push_back(
+            sliver ? -1 : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+        if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids, ids + 3);
+      }
+    }
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  const Verdict verdict = verify(m, mesh, 0.05, 8);
+  double fan_worst = 0.0, worst = 0.0;
+  std::vector<std::size_t> fan;
+  for (std::size_t r = 0; r < verdict.upper.size(); ++r) {
+    worst = std::max(worst, verdict.upper[r]);
+    for (int k = 0; k < 3; ++k)
+      if (mesh.triangles[3 * r + static_cast<std::size_t>(k)] == 0) {
+        fan.push_back(r);
+        fan_worst = std::max(fan_worst, verdict.upper[r]);
+        break;
+      }
+  }
+  std::printf("P disk centre: status %d fan rows %zu fan max %.6e max %.6e\n", verdict.status,
+              fan.size(), fan_worst, worst);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty() && !fan.empty());
+  // In the uv chart (d502b7f0b) the fan rows bound 4.53e-2; in the
+  // disk-centre chart only the ring-edge seam caps remain (6.44e-3).
+  PHX_CHECK(fan_worst < 1e-2);
+  Mesh lifted = mesh;
+  lifted.points[2] = 0.1;
+  const Verdict moved = verify(m, lifted, 0.05, 8);
+  for (const std::size_t r : fan) PHX_CHECK(moved.item_status[r] != PHX_MC_OK);
+}
 }  // namespace
 
 int main() {
@@ -1586,6 +1708,7 @@ int main() {
   seam_lens_charge();
   pole_region_turns_and_charges();
   pole_row_disk_bound();
+  disk_centre_rows();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,

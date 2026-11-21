@@ -84,10 +84,22 @@ inline bool series(const di::Interval& q, int offset, int order, di::Interval& o
   return di::finite(out);
 }
 
-// Sphere frame: o, e1, e2, a (3 each) and r, as enclosures.
+// Pole frame: o, e1, e2, a (3 each) and r, as enclosures. `flat`: a disk
+// centre (the revolution of a line perpendicular to the axis, meeting it at
+// the chart parameter v = pole_v): S(u, v) = o + (v - pole_v)(cos u e1 +
+// sin u e2), so in the Cartesian chart (x, y) = rho (cos u, sin u), rho =
+// sigma (v - pole_v) >= 0 on the face's side sigma, S(x, y) = o + sigma (x e1
+// + y e2): affine, regular, zero Hessian (a unused, r = 1).
 struct SphereFrame {
   di::Interval o[3], e1[3], e2[3], a[3], r;
+  bool flat = false;
+  double pole_v = 0.0;
 };
+
+// The chart parameter v of the pole on side sigma.
+inline double pole_value(const SphereFrame& frame, int sigma) {
+  return frame.flat ? frame.pole_v : sigma * kHalfPiLower;
+}
 
 // Terms 0 (S), 1 (S_xx), 2 (S_xy), 3 (S_yy) of the pole-chart map over the
 // box [x] x [y], with sigma = +1 (north) or -1 (south). With W = x e1 + y e2:
@@ -110,6 +122,16 @@ inline bool jets(const SphereFrame& frame, int sigma, const di::Interval& x,
   q.upper = std::min(q.upper, radius_squared);
   if (!(q.lower <= q.upper)) return false;
   const di::Interval s = di::point(static_cast<double>(sigma));
+  if (frame.flat) {
+    for (int i = 0; i < 3; ++i) {
+      if (first == 0)
+        out[0][i] = add(frame.o[i],
+                        multiply(s, add(multiply(x, frame.e1[i]), multiply(y, frame.e2[i]))));
+      for (int t = 1; t <= 3; ++t) out[t][i] = di::point(0.0);
+      if (first == 0 && !di::finite(out[0][i])) return false;
+    }
+    return true;
+  }
   di::Interval g, h;
   if (first == 0) {
     if (!series(q, 1, 0, g) || !series(q, 0, 0, h)) return false;
@@ -153,9 +175,17 @@ inline bool jets(const SphereFrame& frame, int sigma, const di::Interval& x,
   return true;
 }
 
-// Colatitude enclosure rho = pi/2 - sigma v of a chart latitude v; false
-// unless sigma v <= kHalfPiLower (then rho >= 0).
-inline bool colatitude(double v, int sigma, di::Interval& rho) {
+// Colatitude enclosure rho of a chart parameter v on side sigma: pi/2 -
+// sigma v on a sphere (false unless sigma v <= kHalfPiLower), sigma (v -
+// pole_v) at a disk centre (false unless it is >= 0); rho >= 0 either way.
+inline bool colatitude(const SphereFrame& frame, double v, int sigma, di::Interval& rho) {
+  if (frame.flat) {
+    rho = di::subtract(di::point(v), di::point(frame.pole_v));
+    if (sigma < 0) rho = {-rho.upper, -rho.lower};
+    if (!(sigma > 0 ? v >= frame.pole_v : v <= frame.pole_v)) return false;
+    rho.lower = std::max(rho.lower, 0.0);
+    return di::finite(rho);
+  }
   const double w = sigma > 0 ? v : -v;
   if (!(w <= kHalfPiLower)) return false;
   rho = di::subtract(di::Interval{kHalfPiLower, di::kHalfPiUpper}, di::point(w));

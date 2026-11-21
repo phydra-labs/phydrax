@@ -1974,11 +1974,21 @@ FidelityTriangleResult subdivided_bound(const CadGeometry& geometry, FaceKernel&
 //   e2 := a x e1_r, a := (a.e2) a, r = R. "Exactly": point enclosures, a a
 //   signed coordinate unit vector, e1 off the axis (its axis coordinate 0),
 //   the off-axis coordinates of e2 zero and of center and O bitwise equal.
+// - (disk centre, `pole_v` given: the chart parameter of the degenerate pole
+//   chord) the revolution about (O, a) of a line p(v) = p0 + v d (line3:
+//   point, direction; exact_line3: first, last with d = last - first)
+//   perpendicular to the axis (d's axis coordinate 0) through the axis at
+//   v = pole_v (p(pole_v) - O has zero off-axis coordinates, checked with
+//   error-free transformations): the evaluator's O + a (a.w) + cos u w_r +
+//   sin u (a x w_r), w_r = (v - pole_v) d, is the flat frame o = O + a
+//   (a.(p0 - O)), e1 = d, e2 = a x d, with the same exactness conditions.
 // False for every other family: a circle off the axis is a spindle or horn
-// torus, a line meeting the axis a cone apex, neither smooth at the pole;
-// splines with a collapsed edge have no enclosure here.
+// torus, a line meeting the axis off the perpendicular a cone apex, neither
+// smooth at the pole; splines with a collapsed edge have no enclosure here.
 bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWorkspace& workspace,
-                       int32_t index, pole::SphereFrame& frame) {
+                       int32_t index, pole::SphereFrame& frame,
+                       double pole_v = std::numeric_limits<double>::quiet_NaN()) {
+  static const int32_t kLine = template_index("line3"), kExactLine = template_index("exact_line3");
   static const int32_t kSphere = template_index("sphere"), kCircle = template_index("circle3");
   const Node& node = geometry.node(index);
   const auto coefficient = [&](int32_t at, int64_t i) {
@@ -1996,7 +2006,8 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
     frame.r = coefficient(index, 12);
   } else if (node.kind == PHX_MC_CAD_NODE_AFFINE && node.integers[1] == 3) {
     pole::SphereFrame child;
-    if (!pole_sphere_frame(geometry, workspace, static_cast<int32_t>(node.integers[0]), child))
+    if (!pole_sphere_frame(geometry, workspace, static_cast<int32_t>(node.integers[0]), child,
+                           pole_v))
       return false;
     const auto apply = [&](const di::Interval* x, int r, bool offset) {
       di::Interval value = offset ? coefficient(index, 9 + r) : di::point(0.0);
@@ -2011,9 +2022,63 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
       frame.a[r] = apply(child.a, r, false);
     }
     frame.r = child.r;
+    frame.flat = child.flat;
+    frame.pole_v = child.pole_v;
   } else if (node.kind == PHX_MC_CAD_NODE_REVOLUTION) {
     const auto profile = static_cast<int32_t>(node.integers[0]);
     const Node& curve = geometry.node(profile);
+    const bool line = curve.kind == PHX_MC_CAD_NODE_TEMPLATE && curve.real_count == 6 &&
+                      (curve.integers[0] == kLine || curve.integers[0] == kExactLine);
+    if (line) {
+      if (std::isnan(pole_v)) return false;
+      const bool by_ends = curve.integers[0] == kExactLine;
+      double origin[3], axis[3], p[3], q[3];
+      for (int i = 0; i < 3; ++i) {
+        const di::Interval values[4] = {coefficient(index, i), coefficient(index, 3 + i),
+                                        coefficient(profile, i), coefficient(profile, 3 + i)};
+        for (const di::Interval& x : values)
+          if (!(x.lower == x.upper) || !std::isfinite(x.lower)) return false;
+        origin[i] = values[0].lower, axis[i] = values[1].lower;
+        p[i] = values[2].lower, q[i] = values[3].lower;
+      }
+      int k = -1;
+      for (int i = 0; i < 3; ++i)
+        if (std::fabs(axis[i]) == 1.0) k = i;
+      if (k < 0) return false;
+      // Perpendicular: d_k = 0 exactly.
+      if (by_ends ? std::bit_cast<uint64_t>(p[k]) != std::bit_cast<uint64_t>(q[k]) : q[k] != 0.0)
+        return false;
+      for (int i = 0; i < 3; ++i) {
+        if (i == k) continue;
+        if (axis[i] != 0.0) return false;
+        // p(pole_v)_i == O_i exactly.
+        if (by_ends) {
+          const double end = pole_v == 0.0 ? p[i] : pole_v == 1.0 ? q[i] : std::nan("");
+          if (!(end == origin[i])) return false;
+        } else {
+          const double product = pole_v * q[i];
+          const double sum = p[i] + product;
+          const double bv = sum - p[i], av = sum - bv;
+          if (std::fma(pole_v, q[i], -product) != 0.0 || (p[i] - av) + (product - bv) != 0.0 ||
+              !(sum == origin[i]))
+            return false;
+        }
+      }
+      di::Interval d[3];
+      for (int i = 0; i < 3; ++i) {
+        d[i] = by_ends ? di::subtract(di::point(q[i]), di::point(p[i])) : di::point(q[i]);
+        frame.o[i] = di::point(i == k ? p[k] : origin[i]);
+        frame.e1[i] = i == k ? di::point(0.0) : d[i];
+        frame.e2[i] = frame.a[i] = di::point(0.0);
+      }
+      const int a1 = (k + 1) % 3, a2 = (k + 2) % 3;
+      const di::Interval s = di::point(axis[k]);
+      frame.e2[a2] = di::multiply(s, d[a1]);
+      frame.e2[a1] = di::multiply(di::point(-axis[k]), d[a2]);
+      frame.r = di::point(1.0);
+      frame.flat = true;
+      frame.pole_v = pole_v;
+    } else {
     if (curve.kind != PHX_MC_CAD_NODE_TEMPLATE || curve.integers[0] != kCircle ||
         curve.real_count != 10)
       return false;
@@ -2048,6 +2113,7 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
     frame.e2[q] = di::point(axis[k] * first[p]);
     frame.e2[p] = di::point(-axis[k] * first[q]);
     frame.r = di::point(radius);
+    }
   } else {
     return false;
   }
@@ -2059,10 +2125,10 @@ bool pole_sphere_frame(const CadGeometry& geometry, const IntervalEvaluationWork
 }
 
 // Enclosure of the pole-chart image rho (cos u, sin u) of a chart point.
-bool pole_chart_image(AnchoredTrigonometry& trig, const double* uv, int sigma,
-                      di::Interval* image) {
+bool pole_chart_image(const pole::SphereFrame& frame, AnchoredTrigonometry& trig,
+                      const double* uv, int sigma, di::Interval* image) {
   di::Interval rho, c, s;
-  if (!pole::colatitude(uv[1], sigma, rho)) return false;
+  if (!pole::colatitude(frame, uv[1], sigma, rho)) return false;
   trig.evaluate(di::point(uv[0]), c, s);
   image[0] = di::multiply(rho, c);
   image[1] = di::multiply(rho, s);
@@ -2073,15 +2139,15 @@ bool pole_chart_image(AnchoredTrigonometry& trig, const double* uv, int sigma,
 // j of `pole_mask`, decided by the caller from exact topology) is the origin,
 // the pole's own chart point; every other corner the binary64 midpoint of its
 // image enclosure. The triangle's linear map is taken on these corners.
-bool pole_corners(AnchoredTrigonometry& trig, const double* uv, int sigma, int32_t pole_mask,
-                  double* xy) {
+bool pole_corners(const pole::SphereFrame& frame, AnchoredTrigonometry& trig, const double* uv,
+                  int sigma, int32_t pole_mask, double* xy) {
   for (int j = 0; j < 3; ++j) {
     if ((pole_mask >> j) & 1) {
       xy[2 * j] = xy[2 * j + 1] = 0.0;
       continue;
     }
     di::Interval image[2];
-    if (!pole_chart_image(trig, uv + 2 * j, sigma, image)) return false;
+    if (!pole_chart_image(frame, trig, uv + 2 * j, sigma, image)) return false;
     for (int axis = 0; axis < 2; ++axis)
       xy[2 * j + axis] = image[axis].lower + 0.5 * (image[axis].upper - image[axis].lower);
   }
@@ -2327,8 +2393,8 @@ bool seam_lens_bound(const CadGeometry& geometry, IntervalEvaluationWorkspace& w
     const double* point_uv = end == 0 ? uv_a : uv_b;
     const double* c = end == 0 ? c_a : c_b;
     di::Interval image[2];
-    if (!pole::colatitude(point_uv[1], sigma, rho[end]) ||
-        !pole_chart_image(trig, point_uv, sigma, image))
+    if (!pole::colatitude(frame, point_uv[1], sigma, rho[end]) ||
+        !pole_chart_image(frame, trig, point_uv, sigma, image))
       return false;
     double offset[3] = {0.0, 0.0, 0.0};
     for (int axis = 0; axis < 2; ++axis)
@@ -2449,38 +2515,53 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
                                      const std::vector<uint8_t>& face_refused,
                                      std::vector<int32_t>& row_region) {
   const auto bits = [](double value) { return std::bit_cast<uint64_t>(value); };
-  const auto at_pole = [&](double v, int sigma) {
-    return bits(v) == bits(sigma * pole::kHalfPiLower);
+  const auto at_pole = [&](const pole::SphereFrame& frame, double v, int sigma) {
+    return bits(v) == bits(pole::pole_value(frame, sigma));
   };
-  // Candidate poles (face, vertex, sigma), from the corners of pole chords.
+  // Candidate poles (face, vertex, chart v bits), from the corners of pole chords.
   std::vector<std::array<int64_t, 3>> candidates;
   for (int64_t i = 0; i < triangle_count; ++i)
     for (int j = 0; j < 3; ++j) {
       const int64_t chord = edge_chord[3 * i + j];
       if (chord < 0 || model.use_kinds[chord_use[chord]] != 1) continue;
-      for (const int corner : {j, (j + 1) % 3}) {
-        const double v = uv[6 * i + 2 * corner + 1];
-        const int sigma = v > 0.0 ? 1 : -1;
+      for (const int corner : {j, (j + 1) % 3})
         candidates.push_back({face_rows[i], triangles[3 * i + corner],
-                              at_pole(v, sigma) ? sigma : 0});
-      }
+                              std::bit_cast<int64_t>(uv[6 * i + 2 * corner + 1])});
     }
   std::sort(candidates.begin(), candidates.end());
   candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
   std::vector<PoleRegion> regions;
   for (std::size_t c = 0; c < candidates.size(); ++c) {
-    const auto [face64, vertex, sigma64] = candidates[c];
+    const auto [face64, vertex, v_bits] = candidates[c];
     const auto face = static_cast<int32_t>(face64);
-    const int sigma = static_cast<int>(sigma64);
-    // One latitude per pole vertex, on the pole line.
+    const double pole_v = std::bit_cast<double>(v_bits);
+    // One chart parameter per pole vertex.
     const bool unique = (c == 0 || candidates[c - 1][0] != face64 || candidates[c - 1][1] != vertex) &&
                         (c + 1 == candidates.size() || candidates[c + 1][0] != face64 ||
                          candidates[c + 1][1] != vertex);
-    if (!unique || sigma == 0 || face_refused[static_cast<std::size_t>(face)]) continue;
+    if (!unique || face_refused[static_cast<std::size_t>(face)]) continue;
     auto& kernel = kernels[static_cast<std::size_t>(face)];
     if (!kernel.prepared) prepare_face_kernel(geometry, face, workspace, kernel);
     pole::SphereFrame frame;
-    if (!pole_sphere_frame(geometry, workspace, kernel.node, frame)) continue;
+    int sigma = 0;
+    if (pole_sphere_frame(geometry, workspace, kernel.node, frame)) {
+      sigma = pole_v > 0.0 ? 1 : -1;
+      if (!at_pole(frame, pole_v, sigma)) continue;
+    } else if (pole_sphere_frame(geometry, workspace, kernel.node, frame, pole_v) && frame.flat) {
+      // The face's side of the disk centre: any corner of a row touching it
+      // off the centre parameter.
+      for (int64_t i = 0; i < triangle_count && sigma == 0; ++i)
+        if (face_rows[i] == face)
+          for (int j = 0; j < 3; ++j)
+            if (triangles[3 * i + j] == vertex)
+              for (int l = 0; l < 3; ++l) {
+                const double v = uv[6 * i + 2 * l + 1];
+                if (v != pole_v && sigma == 0) sigma = v > pole_v ? 1 : -1;
+              }
+      if (sigma == 0) continue;
+    } else {
+      continue;
+    }
     PoleRegion region;
     region.face = face, region.sigma = sigma, region.vertex = vertex, region.frame = frame;
     bool valid = true;
@@ -2491,17 +2572,17 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
       for (int j = 0; j < 3; ++j) {
         const double v = uv[6 * i + 2 * j + 1];
         if (triangles[3 * i + j] == vertex) {
-          if (!at_pole(v, sigma)) valid = false;
+          if (!at_pole(frame, v, sigma)) valid = false;
           mask |= 1 << j;
         }
-        cap = cap || sigma * v >= kCapLatitude;
+        cap = cap || (!frame.flat && sigma * v >= kCapLatitude);
       }
       if (mask == 0 && !cap) continue;
       std::array<double, 6> xy{};
-      if (!pole_corners(kernel.trig, uv + 6 * i, sigma, mask, xy.data())) valid = false;
+      if (!pole_corners(frame, kernel.trig, uv + 6 * i, sigma, mask, xy.data())) valid = false;
       for (int j = 0; j < 3 && valid; ++j) {
         di::Interval rho;
-        if (!pole::colatitude(uv[6 * i + 2 * j + 1], sigma, rho)) {
+        if (!pole::colatitude(frame, uv[6 * i + 2 * j + 1], sigma, rho)) {
           valid = false;
           break;
         }
@@ -2525,12 +2606,13 @@ std::vector<PoleRegion> pole_regions(const CadGeometry& geometry,
     for (int64_t k = 0; k < chord_count && valid; ++k) {
       if (use_patch[chord_use[k]] != face) continue;
       const double* p = chord_uv + 4 * k;
-      if (model.use_kinds[chord_use[k]] == 1 && at_pole(p[1], sigma) && at_pole(p[3], sigma))
+      if (model.use_kinds[chord_use[k]] == 1 && at_pole(frame, p[1], sigma) &&
+          at_pole(frame, p[3], sigma))
         continue;
       if (bits(p[0]) == bits(p[2]) && (p[0] == u_min || p[0] == u_max)) continue;
       for (int end = 0; end < 2; ++end) {
         di::Interval rho;
-        if (!pole::colatitude(p[2 * end + 1], sigma, rho) || !(rho.lower > region.strip))
+        if (!pole::colatitude(frame, p[2 * end + 1], sigma, rho) || !(rho.lower > region.strip))
           valid = false;
       }
     }
@@ -2614,11 +2696,14 @@ void pole_region_bounds(const CadGeometry& geometry, IntervalEvaluationWorkspace
     const PoleRegion& region = regions[r];
     if (region.rows.empty()) continue;
     const pole::SphereFrame& frame = region.frame;
-    const double rim = di::subtract(di::point(pole::kHalfPiLower), di::point(region.strip)).lower;
-    const double box[4] = {-std::numeric_limits<double>::max(),
-                           region.sigma > 0 ? rim : -pole::kHalfPiLower,
-                           std::numeric_limits<double>::max(),
-                           region.sigma > 0 ? pole::kHalfPiLower : -rim};
+    // The strip's v range: from the pole parameter to rho = strip (v grows
+    // with rho at a disk centre on side sigma, falls on a sphere's north).
+    const double pole_v = pole::pole_value(frame, region.sigma);
+    const int toward = frame.flat ? region.sigma : -region.sigma;
+    const di::Interval far = di::add(di::point(pole_v),
+                                     di::multiply(di::point(toward), di::point(region.strip)));
+    const double box[4] = {-std::numeric_limits<double>::max(), std::min(pole_v, far.lower),
+                           std::numeric_limits<double>::max(), std::max(pole_v, far.upper)};
     const double fixed =
         di::add(di::point(lens.charge(region.face, box)), di::point(region.gap)).upper;
     const double budget = di::subtract(di::point(tolerance), di::point(fixed)).lower;
@@ -2730,7 +2815,7 @@ FidelityTriangleResult fidelity_pole_triangle(const CadGeometry& geometry, int32
   pole::SphereFrame frame;
   double xy[6];
   if (!pole_sphere_frame(geometry, workspace, geometry.surface_node(face), frame) ||
-      !pole_corners(trig, uv, pole_side, pole_mask, xy))
+      !pole_corners(frame, trig, uv, pole_side, pole_mask, xy))
     return result;
   const bool sliver = pole_mask == 3 || pole_mask == 5 || pole_mask == 6;
   return pole_subdivided_bound(frame, pole_side, vertices, xy, tolerance, max_depth, sliver);
@@ -2747,7 +2832,7 @@ int32_t fidelity_pole_image(const CadGeometry& geometry, int32_t face,
   pole::SphereFrame frame;
   di::Interval point[2];
   if (!pole_sphere_frame(geometry, workspace, geometry.surface_node(face), frame) ||
-      !pole_chart_image(trig, uv, pole_side, point))
+      !pole_chart_image(frame, trig, uv, pole_side, point))
     return PHX_MC_UNRESOLVED;
   image[0] = point[0].lower, image[1] = point[0].upper;
   image[2] = point[1].lower, image[3] = point[1].upper;

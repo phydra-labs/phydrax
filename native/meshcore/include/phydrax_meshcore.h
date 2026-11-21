@@ -3012,6 +3012,10 @@ typedef struct phx_mc_fidelity_finding {
  * whose u range spans less than a full turn (u_max - u_min < 2 pi rounded
  * down), keep the uv chart; the remaining rounding excess of a full turn is
  * charged to the region's rows.
+ * Disk centres (a line perpendicular to an axis revolved about it, meeting it
+ * at the degenerate chord's v, certified exactly): rows touching the centre
+ * vertex take the Cartesian chart (x, y) = |v - v_centre| (cos u, sin u),
+ * where the disk is affine, under the same region, seam and turn rules.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
