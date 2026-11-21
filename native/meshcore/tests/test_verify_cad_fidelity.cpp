@@ -1200,6 +1200,58 @@ void seam_lens_charge() {
     }
 }
 
+// A pole-chart row at colatitudes 1.9, 1.9, 1.5 (u 0.6, 1.0, 0.8) on the unit
+// sphere: its square box reaches q = x^2 + y^2 > 4 (beyond the series
+// domain) while the triangle stays in the disk q < 3.62. With the disk bound
+// it certifies, its bound covering the dense pole-chart deviation and the
+// exact distance; with the box bound alone (cabb5b0d4) it refused.
+void pole_row_disk_bound() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(sphere);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const double top = 0x1.921fb54442d18p+0;
+  const double uv[6] = {0.6, top - 1.9, 1.0, top - 1.9, 0.8, top - 1.5};
+  double points[9], xy[6];
+  for (int j = 0; j < 3; ++j) {
+    PHX_CHECK(geometry.jets(sphere, uv + 2 * j, 0, points + 3 * j, point_workspace));
+    double image[4];
+    PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, 1, uv + 2 * j, image) == PHX_MC_OK);
+    xy[2 * j] = image[0] + 0.5 * (image[1] - image[0]);
+    xy[2 * j + 1] = image[2] + 0.5 * (image[3] - image[2]);
+  }
+  const double box_x = std::max({xy[0], xy[2], xy[4]}), box_y = std::max({xy[1], xy[3], xy[5]});
+  PHX_CHECK(box_x * box_x + box_y * box_y > 4.0);
+  double sampled = 0.0, distance = 0.0;
+  const int n = 80;
+  for (int a = 0; a <= n; ++a)
+    for (int b = 0; a + b <= n; ++b) {
+      const double w[3] = {static_cast<double>(a) / n, static_cast<double>(b) / n,
+                           static_cast<double>(n - a - b) / n};
+      const double x = w[0] * xy[0] + w[1] * xy[2] + w[2] * xy[4];
+      const double y = w[0] * xy[1] + w[1] * xy[3] + w[2] * xy[5];
+      const double q = std::hypot(x, y), g = std::sin(q) / q;
+      const double s[3] = {g * x, g * y, std::cos(q)};
+      double deviation = 0.0, radius = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double p = w[0] * points[k] + w[1] * points[3 + k] + w[2] * points[6 + k];
+        deviation += (s[k] - p) * (s[k] - p);
+        radius += p * p;
+      }
+      sampled = std::max(sampled, std::sqrt(deviation));
+      distance = std::max(distance, std::fabs(std::sqrt(radius) - 1.0));
+    }
+  const auto result = fidelity_pole_triangle(geometry, 0, points, uv, 1, 0, 1e3, 10, workspace);
+  std::printf("P disk bound row: status %d upper %.6e sampled %.6e distance %.6e\n", result.status,
+              result.upper, sampled, distance);
+  PHX_CHECK(result.status == PHX_MC_OK && result.upper >= sampled && result.upper >= distance);
+}
+
 // A chart grid of the unit sphere's upper hemisphere over u in [0, span],
 // v in [0, pi/2] (pole line collapsed, slivers there), with chords on the
 // equator, the two meridians and the pole line.
@@ -1533,6 +1585,7 @@ int main() {
   pole_chart_rows();
   seam_lens_charge();
   pole_region_turns_and_charges();
+  pole_row_disk_bound();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,
