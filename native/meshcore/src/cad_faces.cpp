@@ -893,9 +893,11 @@ bool chord_meets_segment(const FaceBoundary& boundary, int32_t a, int32_t b,
   return false;
 }
 
+// `upper` bounds the snap offset (the zone spacing on the surface route; on
+// the solid route the ungraded spacing, see seed_poles).
 bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, int axis,
-                        double origin, double direction, double spacing, double width,
-                        double& latitude) {
+                        double origin, double direction, double spacing, double upper,
+                        double width, double& latitude) {
   const int32_t corner = boundary.vertices[pole.first_vertex].entity;
   bool found = false;
   Expansion common;
@@ -906,7 +908,7 @@ bool pole_snap_latitude(const FaceBoundary& boundary, const PoleBoundary& pole, 
       if (endpoint.dimension != 0 || endpoint.entity != corner) continue;
       const double adjacent = boundary.vertices[edge.vertices[1-k]].uv[axis];
       const double offset = direction * (adjacent - origin);
-      if (!(offset >= 0.5 * spacing && offset <= spacing && offset <= width)) return false;
+      if (!(offset >= 0.5 * spacing && offset <= upper && offset <= width)) return false;
       const Expansion exact = Expansion::difference(adjacent, origin);
       if (found && !(exact - common).is_zero()) return false;
       common = exact;
@@ -1085,20 +1087,26 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
     // of caps below 80-85 deg UNRESOLVED. The surface route has no
     // wedge-graded rim and keeps the request.
     double size = metric.size;
+    double ungraded = metric.size;
     if (anchor.pole && metric.graded_pole_rings) {
       double pole_jet[18];
       if (!surface_jet(metric, start.data(), pole_jet)) return PHX_MC_INVALID_INPUT;
       size = std::min(size, base_size(metric, pole_jet));
     }
-    if (curvature > 0.0)
-      size = std::min(size, std::sqrt(4.0 * layer * metric.tolerance / curvature));
+    if (curvature > 0.0) {
+      const double cap = std::sqrt(4.0 * layer * metric.tolerance / curvature);
+      size = std::min(size, cap);
+      ungraded = std::min(ungraded, cap);
+    }
     double spacing = std::min(limit, size / speed);
+    double ungraded_spacing = std::min(limit, ungraded / speed);
     if (!(spacing > 0.0)) return PHX_MC_INVALID_INPUT;
     // The last ring stays half a spacing short of the midline, so the two
     // zones' last rings are at least a spacing apart; a spacing of at most
     // 2/3 of the half gap keeps one ring.
     if (std::isfinite(half_gap)) {
       spacing = std::min(spacing, half_gap * (2.0 / 3.0));
+      ungraded_spacing = std::min(ungraded_spacing, half_gap * (2.0 / 3.0));
       limit = half_gap - 0.5 * spacing;
     }
     double width = std::min(limit, pole_ring_width(spacing));
@@ -1115,9 +1123,19 @@ int32_t seed_poles(const cad::CadGeometry& geometry, const FaceBoundary& boundar
       if (!(next > width)) return PHX_MC_RANGE_ERROR;
       width = next;
     }
+    // Graded rings: the base size at the pole is the chord of the seam's
+    // first segment (plus grading), and its latitude offset is that
+    // segment's arc, longer by O(kappa^2 L^3): a first ring at the chord
+    // spacing sat 2e-4 short of the seam's first vertex (h 0.2 below), the ring
+    // points beside the seam were omitted by the proximity rule, and the
+    // pole fan reached the second ring (measured: unit sphere, h 0.2, tol
+    // 0.01: 8 oversize pole triangles, surface UNRESOLVED). The snap to that
+    // vertex therefore accepts offsets up to the ungraded spacing; the ring
+    // then sits on the seam vertex exactly, as on the surface route.
     double latitude = 0.0;
     const bool snapped = anchor.pole
-        ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing, width,
+        ? pole_snap_latitude(boundary, *anchor.pole, axis, start[axis], direction, spacing,
+                             metric.graded_pole_rings ? ungraded_spacing : spacing, width,
                              latitude)
         : trim_snap_latitude(boundary, axis, start[axis], direction, spacing, width, latitude);
     if (snapped) spacing = direction * (latitude - start[axis]);

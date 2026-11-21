@@ -528,6 +528,38 @@ def test_coarse_pole_zones_stop_short_of_other_fixed_vertices(name: str) -> None
                 assert solid.status is MeshcoreStatus.OK, (size, theta)
 
 
+@pytest.mark.parametrize("radius", (0.5, 1.0, 1.7, 3.0))
+def test_solid_spheres_snap_graded_pole_rings_to_the_seam(radius: float) -> None:
+    # Solid route pole rings start at the graded base size at the pole, the
+    # chord of the seam's first segment, while that vertex sits at the arc
+    # offset (longer by O(kappa^2 L^3)). Comparing the arc against the chord
+    # spacing refused the snap, the first ring sat 2e-4 short of the seam
+    # vertex (unit sphere, h 0.2), the ring points beside the seam were
+    # omitted and 8 pole triangles failed the stored size test: the surface
+    # stage was UNRESOLVED (42 of 60 runs of this grid). Every run resolves
+    # with no face failure (fails if the snap window is the graded spacing).
+    model = cad_geometry_bundle(
+        MeshingDomain.from_brep(
+            phx.geometry.brep.brep_sphere(
+                radius, coordinate_contract=phx.SpatialCoordinateContract.si()
+            )
+        )
+    ).model
+    curves = model.curve_nodes.size
+    for size in (0.1, 0.2, 0.3, 0.5):
+        tolerance = size * size / (4.0 * radius)  # kappa h^2 / 4
+        for theta in (0.7, 0.8, 0.9):
+            solid = cad_mesh_solid(
+                model,
+                np.full((1,), size, dtype=np.float64),
+                np.full((1,), tolerance, dtype=np.float64),
+                np.full((curves,), tolerance, dtype=np.float64),
+                tolerance_fraction=theta,
+            )
+            assert solid.surface.face_failures.shape[0] == 0, (size, theta)
+            assert solid.status is MeshcoreStatus.OK, (size, theta)
+
+
 @pytest.mark.parametrize("latitude", (45, 50, 55, 60, 65, 70, 75, 80, 85))
 def test_coarse_caps_below_a_polar_trim_resolve(latitude: int) -> None:
     # The unit ball below a latitude cut at 45-85 deg: the dome's trim circle
