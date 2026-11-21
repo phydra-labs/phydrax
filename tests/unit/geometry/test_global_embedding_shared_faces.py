@@ -99,7 +99,8 @@ def test_nonadjacent_shared_faces_are_not_a_declared_union() -> None:
         {**first_face, **second_face},
         ((1, 3, 2), (7, 9, 8), (1, 2, 7), (2, 3, 8), (3, 1, 9)),
     )
-    contact = (_point(0, 0, 1),)
+    # Off every shared vertex, edge and face (edge 1-7 is shared by both).
+    contact = ((Fraction(1, 4), Fraction(1, 4), Fraction(1)),)
     assert (
         _contact_is_declared(first, second, contact, first.vertex_ids, second.vertex_ids)
         is not True
@@ -386,3 +387,52 @@ def test_one_undecided_shared_stratum_does_not_hide_another() -> None:
                 _contact_is_declared(one, other, points, one.vertex_ids, other.vertex_ids)
                 is True
             )
+
+
+def test_contact_vertices_in_a_nonconvex_face_need_one_convex_piece() -> None:
+    # P = a r1 r2 b c d, notch quad a-b-r2-r1; the lower cell splits the notch
+    # along b-r1, the upper keeps the quad.
+    half = Fraction(1, 2)
+    plane = {
+        1: _point(0, 0, 0),
+        2: (Fraction(1), half, Fraction(0)),
+        3: (Fraction(3), half, Fraction(0)),
+        4: _point(4, 0, 0),
+        5: _point(4, 4, 0),
+        6: _point(0, 4, 0),
+    }
+    face = (1, 2, 3, 4, 5, 6)
+    lower_sides = (
+        (14, 13, 12, 11),
+        (1, 11, 12, 4),
+        (4, 12, 13, 5),
+        (5, 13, 14, 6),
+        (6, 14, 11, 1),
+    )
+    upper_sides = (
+        (21, 22, 23, 24),
+        (1, 4, 22, 21),
+        (4, 5, 23, 22),
+        (5, 6, 24, 23),
+        (6, 1, 21, 24),
+    )
+    upper = _polyhedron(81, {**plane, **_ABOVE}, (face[::-1], (1, 2, 3, 4), *upper_sides))
+    split = _polyhedron(
+        80, {**plane, **_BELOW}, (face, (1, 4, 2), (4, 3, 2), *lower_sides)
+    )
+    quad = _polyhedron(82, {**plane, **_BELOW}, (face, (1, 4, 3, 2), *lower_sides))
+
+    def declared(
+        first: EmbeddingCell, second: EmbeddingCell, points: tuple[_Point, ...], /
+    ) -> bool | None:
+        return _contact_is_declared(
+            first, second, points, first.vertex_ids, second.vertex_ids
+        )
+
+    triangle = (plane[1], plane[4], plane[2])
+    centroid = (Fraction(5, 3), Fraction(1, 6), Fraction(0))
+    assert declared(split, upper, triangle) is False
+    assert declared(split, upper, (centroid,)) is False
+    assert declared(split, upper, (plane[1], plane[4])) is True
+    assert declared(quad, upper, (_NOTCH_POINT,)) is True
+    assert declared(quad, upper, (plane[1], plane[4], plane[3], plane[2])) is True
