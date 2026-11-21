@@ -6417,7 +6417,6 @@ def _polyhedral_contact_bank(
     face_offsets = [0]
     cell_faces = [0]
     face_corners: list[int] = []
-    fraction = np.zeros((len(cells),), dtype=np.int8)
     scales = [1 for _ in cells]
     cursor = 0
     for index, cell in enumerate(cells):
@@ -6434,6 +6433,13 @@ def _polyhedral_contact_bank(
         )
         if (
             integer_rows is None
+            # The rational convex-loop decision and contact arithmetic stay
+            # exact only on Fraction corners.
+            or not all(
+                isinstance(value, Fraction)
+                for point in cell.corner_images
+                for value in point
+            )
             or len(cell.vertex_ids) != size
             or len(set(cell.vertex_ids)) != size
             or not bool(np.all(bounded[tets]))
@@ -6458,9 +6464,6 @@ def _polyhedral_contact_bank(
             face_corners.extend(route)
             face_offsets.append(len(face_corners))
         cell_faces.append(len(face_offsets) - 1)
-        fraction[index] = all(
-            isinstance(value, Fraction) for point in cell.corner_images for value in point
-        )
     return polyhedral_contact_bank(
         point_integers,
         lower,
@@ -6474,7 +6477,6 @@ def _polyhedral_contact_bank(
         np.asarray(cell_faces, dtype=np.int64),
         np.asarray(face_offsets, dtype=np.int64),
         np.asarray(face_corners, dtype=np.int64),
-        fraction,
     )
 
 

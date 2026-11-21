@@ -8,8 +8,10 @@ adversarial polyhedral meshes, and decide every pair of a conforming grid."""
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import replace
 from fractions import Fraction
+from typing import cast
 
 import numpy as np
 import pytest
@@ -17,6 +19,7 @@ import pytest
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.geometry._embedding_cells import prepare_embedding_cells
 from phydrax.geometry._global_embedding import _cell_simplices, _VolumePieceFilter
 from tests._support.declared_contacts import declared_contact_differential, non_dyadic
@@ -180,3 +183,64 @@ def test_native_contacts_refuse_a_flat_simplex_piece() -> None:
         np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
     )
     assert not native
+
+
+def _native_pairs(
+    corners: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+    ids: tuple[tuple[int, ...], ...],
+    routes: tuple[tuple[tuple[int, ...], ...], ...],
+    pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...],
+) -> set[tuple[int, int]]:
+    mesh = _two_cubes((3.0, 0.0, 0.0))
+    template = prepare_embedding_cells(mesh, CellGeometrySpec.affine(mesh))[0]
+    cells = tuple(
+        replace(
+            template,
+            global_id=index,
+            vertex_ids=ids[index],
+            corner_images=corners[index],
+            facet_routes=routes[index],
+        )
+        for index in range(2)
+    )
+    piece_filter = _VolumePieceFilter.prepare(mesh, cells, [(pieces[0],), (pieces[1],)])
+    if piece_filter is None:
+        raise AssertionError("Both cells are straight cells in R3.")
+    return piece_filter.certify(
+        np.asarray([0], dtype=np.intp), np.asarray([1], dtype=np.intp)
+    )[2]
+
+
+def _shared_triangle_pair(
+    number: Callable[[int], ExactScalar], /
+) -> set[tuple[int, int]]:
+    shared = tuple((number(x), number(y), number(0)) for x, y in ((0, 0), (3, 0), (0, 3)))
+    apex = (number(1), number(1), number(-3))
+    far = ((number(4), number(5), number(0)), (number(0), number(0), number(3)))
+    far = (*far, (number(0), number(3), number(3)))
+    return _native_pairs(
+        ((*shared, apex), (*shared, *far)),
+        ((0, 1, 2, 10), (0, 1, 2, 20, 21, 22)),
+        (((0, 1, 2), (0, 2, 1)), ((0, 2, 1), (3, 4, 5))),
+        ((*shared, apex), (shared[0], *far)),
+    )
+
+
+def test_native_contacts_need_fraction_corners() -> None:
+    # Integer corners make the rational pass refuse what Fraction corners prove.
+    assert not _shared_triangle_pair(cast(Callable[[int], ExactScalar], int))
+
+
+def test_native_contacts_refuse_a_zero_length_declared_edge() -> None:
+    third = Fraction(1, 3)
+    p = (third, third, third)
+    q = (third + Fraction(1, 2**70), third, third)
+    below = ((Fraction(1), third, Fraction(-1)), (third, Fraction(1), Fraction(-1)))
+    below = (*below, (third - 1, third - 1, Fraction(-1)))
+    above = tuple((x, y, -z) for x, y, z in below)
+    assert not _native_pairs(
+        ((p, p, q, *below), (p, p, q, *above)),
+        ((1, 2, 50, 51, 52, 53), (1, 2, 60, 61, 62, 63)),
+        (((0, 1, 3), (0, 1, 4)), ((1, 0, 3), (0, 1, 5))),
+        ((q, *below), (q, *above)),
+    )

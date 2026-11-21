@@ -3254,9 +3254,9 @@ PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
  * bank) over the cell's positive common denominator (row bank value
  * 3 K + c, K the corner count); its faces [cell_face_offsets[c],
  * cell_face_offsets[c + 1]) are loops of local corner indices in
- * face_offsets CSR. cell_fraction[c] states that every corner coordinate is
- * a Fraction, which a convex loop of more than three vertices requires.
- * Signs are decided in outward interval arithmetic, else exactly. */
+ * face_offsets CSR. Every corner coordinate is a Fraction (the rational
+ * convex-loop decision requires it). Signs are decided in outward interval
+ * arithmetic, else exactly. */
 PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
     int64_t point_count, const int64_t* point_word_offsets, const uint32_t* point_words,
     const int8_t* point_signs, const double* point_lower, const double* point_upper,
@@ -3264,7 +3264,7 @@ PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
     const int64_t* cell_corner_offsets, const int64_t* corner_points,
     const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
     const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
-    const int64_t* face_corners, const int8_t* cell_fraction, int64_t pair_count,
+    const int64_t* face_corners, int64_t pair_count,
     const int64_t* pairs, int8_t* declared);
 
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface

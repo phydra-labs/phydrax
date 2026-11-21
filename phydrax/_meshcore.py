@@ -1327,7 +1327,6 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
-            _P,
             _I64,
             _P,
             _P,
@@ -4753,7 +4752,6 @@ class PolyhedralContactBank(NamedTuple):
     cell_face_offsets: np.ndarray
     face_offsets: np.ndarray
     face_corners: np.ndarray
-    cell_fraction: np.ndarray
 
 
 def polyhedral_contact_bank(
@@ -4769,7 +4767,6 @@ def polyhedral_contact_bank(
     cell_face_offsets: np.ndarray,
     face_offsets: np.ndarray,
     face_corners: np.ndarray,
-    cell_fraction: np.ndarray,
     /,
 ) -> PolyhedralContactBank:
     """Prepare star-decomposed cells for ``polyhedral_declared_contacts``.
@@ -4783,9 +4780,8 @@ def polyhedral_contact_bank(
     identifiers and integer rows (``corner_integers``: three per corner, cells
     in order, then each cell's positive common denominator). Its face loops are
     the local corner indices of faces ``[cell_face_offsets[c],
-    cell_face_offsets[c + 1])`` in ``face_offsets`` CSR; ``cell_fraction[c]``
-    states that every corner coordinate is a ``Fraction``. A cell without
-    tetrahedra is never proved.
+    cell_face_offsets[c + 1])`` in ``face_offsets`` CSR. Every corner coordinate
+    is a ``Fraction``. A cell without tetrahedra is never proved.
     """
     point_word_offsets, point_words, point_signs = _integer_word_bank(point_integers)
     row_word_offsets, row_words, row_signs = _integer_word_bank(corner_integers)
@@ -4819,7 +4815,6 @@ def polyhedral_contact_bank(
         np.ascontiguousarray(cell_face_offsets, dtype=np.int64),
         np.ascontiguousarray(face_offsets, dtype=np.int64),
         np.ascontiguousarray(face_corners, dtype=np.int64),
-        np.ascontiguousarray(cell_fraction, dtype=np.int8),
     )
 
 
@@ -4855,7 +4850,6 @@ def polyhedral_declared_contacts(
         bank.cell_face_offsets.ctypes.data,
         bank.face_offsets.ctypes.data,
         bank.face_corners.ctypes.data,
-        bank.cell_fraction.ctypes.data,
         pairs.shape[0],
         pairs.ctypes.data,
         declared.ctypes.data,

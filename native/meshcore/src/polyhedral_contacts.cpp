@@ -435,6 +435,8 @@ class Stratum {
       if (sign == 1 || sign == -1) return false;
     }
     const Vec direction = points.difference(first, second);
+    // A zero-length edge holds no point but its own (`point_on_segment3`).
+    if (!nonzero(direction)) return false;
     const Vec offset = points.difference(first, point);
     if (nonzero(cross(direction, offset))) return false;
     return dot(direction, offset).sign() >= 0 &&
@@ -470,7 +472,6 @@ struct CellView {
   int64_t face_count;
   const int64_t* tets;  // 4 point ids each
   int64_t tet_count;
-  bool fraction;
 };
 
 // Area vector of a loop of cell rows (the rational `area_vector`).
@@ -667,7 +668,7 @@ Stratum declared_stratum(PointTable& points, const CellView& first, const CellVi
       polygon.points.push_back(first.corner_points[corner]);
     }
     const bool decided =
-        size > 3 ? first.fraction && convex_loop(identifiers, loop_rows, polygon.normal)
+        size > 3 ? convex_loop(identifiers, loop_rows, polygon.normal)
                  : nonzero(polygon.normal = area_vector(loop_rows));
     if (decided) {
       stratum.polygons.push_back(std::move(polygon));
@@ -910,12 +911,12 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
     const int64_t* cell_corner_offsets, const int64_t* corner_points,
     const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
     const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
-    const int64_t* face_corners, const int8_t* cell_fraction, int64_t pair_count,
+    const int64_t* face_corners, int64_t pair_count,
     const int64_t* pairs, int8_t* declared) {
   return phx::mc::guarded([&]() -> int32_t {
     if (point_count < 0 || cell_count < 0 || pair_count < 0 || cell_tet_offsets == nullptr ||
         cell_corner_offsets == nullptr || cell_face_offsets == nullptr ||
-        face_offsets == nullptr || (cell_count > 0 && cell_fraction == nullptr) ||
+        face_offsets == nullptr ||
         (pair_count > 0 && (pairs == nullptr || declared == nullptr)) ||
         (point_count > 0 && (point_lower == nullptr || point_upper == nullptr)) ||
         !valid_bank(4 * point_count, point_word_offsets, point_words, point_signs) ||
@@ -970,8 +971,7 @@ extern "C" int32_t phx_mc_polyhedral_declared_contacts(
                       face_corners,
                       cell_face_offsets[cell + 1] - face_first,
                       tet_points + 4 * cell_tet_offsets[cell],
-                      cell_tet_offsets[cell + 1] - cell_tet_offsets[cell],
-                      cell_fraction[cell] != 0};
+                      cell_tet_offsets[cell + 1] - cell_tet_offsets[cell]};
     };
     TetrahedronCache tetrahedra;
     for (int64_t pair = 0; pair < pair_count; ++pair) {
