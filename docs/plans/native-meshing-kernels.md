@@ -291,7 +291,12 @@ tetrahedra, then implicit volumes, then the CAD solid.
   - S6-B conforming Voronoi (F14; VoroCrust 5.2-40.5 s, 95 % surface sampling; its explicit-mesh step
     0.04-0.67 s, our restricted power cells 26-56x slower). Native conforming seeds (surface ball
     pairs, interior seeds by the size field) and restricted cells taken from the Delaunay dual, clipping
-    only boundary cells.
+    only boundary cells. Oblique planar facets (Nov 21, decided): snapped mirror reflections across a
+    non-dyadic plane are never exactly cospherical, so merging their snap-level Voronoi vertex
+    clusters (fidelity 2.5e-3-8e-3 h to about 1e-11 h) makes faces through the merged vertex
+    non-planar and breaks exact cell convexity (rotated cube h 0.25: 158 of 170 cells; F14 cube
+    and Steinmetz rows lose convex cells). Exact convexity is kept: clusters are resolved by the
+    existing rigid and lone seed moves, with the fidelity bound charged as today.
   - S6-D hex-dominant with snapping (F8; cfMesh 5.77-8.59 s at ~1e5 cells, hex fraction 0.91-0.96,
     Hausdorff 2.0-2.5e-4). An octree core snapped to the surface with feature edges, transition cells,
     optional layers by S6-C; hex fraction, Hausdorff, non-orthogonality and skew at or better than
