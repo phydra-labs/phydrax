@@ -208,14 +208,18 @@ def test_kernel_layers_lie_at_their_thicknesses_from_every_adjacent_wall() -> No
     columns = np.count_nonzero((kinds >= 1) & (kinds <= 3))
     layer = points[kinds == 4]
     assert layer.shape[0] == len(_LAYERS) * columns
-    # Layers follow the wall normals: every column puts one point at each
-    # cumulative thickness from the cube (on an edge or corner column, from
-    # each of its faces).
+    # Layers follow the wall normals: every patch and corner column puts one
+    # point at each cumulative thickness from the cube (on a corner column,
+    # from each of its faces). A feature-edge column's points move deeper
+    # along their offset direction where that repairs the cells across the
+    # edge, never thinner than requested.
+    curve = np.count_nonzero(kinds == 2)
     gaps = np.minimum(layer, 1.0 - layer)
     nearest = np.min(gaps, axis=1)
+    assert np.min(nearest) >= _LAYERS[0] - 1e-14
     for height in np.cumsum(_LAYERS):
         level = np.abs(nearest - height) <= 1e-14
-        assert np.count_nonzero(level) == columns
+        assert columns - curve <= np.count_nonzero(level) <= columns
 
 
 def test_route_publishes_layers_and_proves_them() -> None:

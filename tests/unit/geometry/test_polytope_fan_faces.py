@@ -210,3 +210,53 @@ def test_folded_fan_refuses() -> None:
 def test_zero_area_loops_refuse(loop: tuple[tuple[int, int], ...]) -> None:
     with pytest.raises(ValueError, match="zero exact area"):
         polytope_face_triangles(tuple(_p(x, y, 0) for x, y in loop))
+
+
+def test_fan_loop_winding_twice_refuses() -> None:
+    # A non-planar pentagram: every fan triangle turns forward about the
+    # area vector, but the loop winds twice about its vertex average.
+    ring = ((1000, 0), (309, 951), (-809, 588), (-809, -588), (309, -951))
+    loop = tuple(
+        _p(*ring[index], Fraction(height, 10))
+        for index, height in zip((0, 2, 4, 1, 3), (0, 1, 0, 1, 0), strict=True)
+    )
+    with pytest.raises(ValueError, match="winds more than once"):
+        polytope_face_triangles(loop)
+
+
+def _degree_witness_values(coordinates: list[tuple[float, float, float]]) -> str:
+    mesh = CellMesh.from_polyhedra(
+        np.asarray(coordinates, dtype=np.float64),
+        [
+            [
+                np.asarray(face, dtype=np.int32)
+                for face in _hexahedron_faces(tuple(range(8)))
+            ]
+        ],
+    )
+    geometry = CellGeometrySpec.affine(mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_global_embedding(mesh, geometry, validity)
+    assert certificate.status == "certified"
+    return repr(
+        [
+            (witness.premise_ids, witness.exact_values)
+            for witness in certificate.witnesses
+            if witness.theorem == "global_degree_one_injectivity"
+        ]
+    )
+
+
+def test_degree_witness_names_planar_and_fan_exterior_boundaries() -> None:
+    cube = [(x, y, 0.0) for x, y in _SQUARE] + [(x, y, 1.0) for x, y in _SQUARE]
+    planar = _degree_witness_values(cube)
+    assert "embedded_planar_exterior_boundary" in planar
+    assert "exterior_planar_embedded_facets:" in planar
+    assert "fan" not in planar
+
+    cube[6] = (1.0, 1.0, 1.25)
+    fan = _degree_witness_values(cube)
+    assert "embedded_fan_exterior_boundary" in fan
+    assert "exterior_fan_embedded_facets:" in fan
+    assert "embedded_planar_exterior_boundary" not in fan
+    assert "exterior_planar_embedded_facets:" not in fan

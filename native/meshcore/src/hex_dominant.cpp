@@ -39,7 +39,9 @@
 //     undone when an incident cell loses a positive float corner or
 //     decomposition volume.
 //  8. Layers: each projection column is split at the cumulative thicknesses
-//     from the wall, giving layer_count thin hexahedra and the remainder.
+//     from the wall, giving layer_count thin hexahedra and the remainder; the
+//     final repair search moves a feature-curve column's layer points (with
+//     those above them) deeper along its offset direction, never thinner.
 // Certification (prove): every cell, published as a polyhedron with OpenFOAM
 // face semantics (a non-planar face is the fan from its vertex average), by
 // the exact orientation of its decomposition tetrahedra (cell centre, face
@@ -846,6 +848,10 @@ struct Builder {
   std::vector<int32_t> piece_wall_face;
   int32_t levels = 1;
   std::vector<int32_t> column;
+  // Per column: the wall offset direction of its layer points and whether
+  // its wall vertex lies on a feature curve (two patch normals).
+  std::vector<Vec> layer_direction;
+  std::vector<uint8_t> curve_column;
 
   Builder(const Input& input, Surface& surface, Mesh& output) : in(input), s(surface), mesh(output) {}
 
@@ -1932,6 +1938,8 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
 void Builder::place_layers() {
   if (levels == 1) return;
   const int64_t columns = static_cast<int64_t>(stair_vertices.size());
+  layer_direction.resize(columns);
+  curve_column.resize(columns);
   std::vector<Vec> area(pieces.size());
   for (std::size_t p = 0; p < pieces.size(); ++p) {
     Vec centre, average;
@@ -2005,6 +2013,8 @@ void Builder::place_layers() {
         m = pair();
       }
     }
+    layer_direction[row] = m;
+    curve_column[row] = normals.size() == 2;
     const Vec wall = point(surface_vertex[row]);
     double height = 0.0;
     for (int32_t k = 1; k < levels; ++k) {
@@ -2374,13 +2384,16 @@ void Builder::smooth() {
     return std::max(length / fd / kSkewGoal, angle / kAngleGoal);
   };
   int64_t repaired = 0;
-  // Per vertex, the faces of its cells with their geometry cached: a trial
-  // move recomputes only the faces through the vertex and the centroids of
-  // its cells; validity is checked only for an improving move.
+  // Per vertex (with the layer points it carries), the faces of its cells
+  // with their geometry cached: a trial move recomputes only the faces
+  // through the moving points and the centroids of their cells; validity is
+  // checked only for an improving move.
   std::vector<int32_t> face_slot(faces, -1);
   std::vector<int32_t> local_cells, local_faces;
   std::vector<Vec> local_centroid, local_centre, local_area;
   std::vector<uint8_t> local_moving;
+  std::vector<int32_t> movers;
+  std::vector<Vec> starts;
   for (int round = 0; round < kRepairRounds; ++round) {
     geometry();
     std::vector<std::pair<double, int32_t>> bad;
@@ -2397,10 +2410,32 @@ void Builder::smooth() {
         if (c < 0) continue;
         for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
           const int32_t v = cell_vertex_list[slot];
-          if (role[v] != 1 || done[v]) continue;
+          // A layer point of a curve column moves along its column's offset
+          // direction with the layer points above it, its layer never
+          // thinner than requested: at a convex curve the parallel offset
+          // leaves the face between the two layer cells across the curve
+          // short against the distance of their centroids from the curve.
+          const int32_t layer_row = role[v] == 3 ? column_row[v] : -1;
+          const bool layer = layer_row >= 0 && curve_column[layer_row];
+          if ((role[v] != 1 && !layer) || done[v]) continue;
           done[v] = 1;
-          local_cells.assign(t.vertex_cells.begin() + t.vertex_cell_offsets[v],
-                             t.vertex_cells.begin() + t.vertex_cell_offsets[v + 1]);
+          movers.assign(1, v);
+          int32_t level = 0;
+          if (layer) {
+            const int32_t* stack = column.data() + layer_row * (levels + 1);
+            while (stack[level] != v) ++level;
+            for (int32_t k = level + 1; k < levels; ++k) movers.push_back(stack[k]);
+          }
+          local_cells.clear();
+          ++epoch;
+          for (const int32_t u : movers) {
+            for (int64_t r = t.vertex_cell_offsets[u]; r < t.vertex_cell_offsets[u + 1]; ++r) {
+              const int32_t k = t.vertex_cells[r];
+              if (stamp[k] == epoch) continue;
+              stamp[k] = epoch;
+              local_cells.push_back(k);
+            }
+          }
           local_faces.clear();
           for (const int32_t k : local_cells) {
             for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
@@ -2418,8 +2453,8 @@ void Builder::smooth() {
           local_centroid.resize(nc);
           for (std::size_t q = 0; q < nf; ++q) {
             const int32_t g = local_faces[q];
-            for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1]; ++e) {
-              local_moving[q] = local_moving[q] || mesh.face_vertices[e] == v;
+            for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1] && !local_moving[q]; ++e) {
+              local_moving[q] = std::find(movers.begin(), movers.end(), mesh.face_vertices[e]) != movers.end();
             }
             Vec average;
             face_geometry(mesh, g, local_centre[q], local_area[q], average);
@@ -2466,20 +2501,40 @@ void Builder::smooth() {
             return worst;
           };
           double current = evaluate();
-          const int32_t stair = stair_vertex[v];
+          const int32_t stair = v < core_points ? stair_vertex[v] : -1;
+          Vec axis{0, 0, 0}, wall{0, 0, 0};
+          double below = 0.0;  // height of the layer point below v
+          if (layer) {
+            const Vec& m = layer_direction[layer_row];
+            axis = mul(m, 1.0 / norm(m));
+            wall = point(surface_vertex[layer_row]);
+            below = dot(sub(wall, point(column[layer_row * (levels + 1) + level - 1])), m) / dot(m, m);
+          }
           for (const double scale : {0.08, 0.03, 0.01}) {
             for (bool improved = true; improved;) {
               improved = false;
-              for (int direction = 0; direction < 6; ++direction) {
-                const Vec start = point(v);
-                Vec trial = start;
-                trial[direction / 2] += (direction & 1 ? -1.0 : 1.0) * scale * b;
-                set_point(v, trial);
+              for (int direction = 0; direction < (layer ? 2 : 6); ++direction) {
+                Vec delta{0, 0, 0};
+                if (layer) {
+                  delta = mul(axis, (direction & 1 ? -1.0 : 1.0) * scale * b);
+                } else {
+                  delta[direction / 2] = (direction & 1 ? -1.0 : 1.0) * scale * b;
+                }
+                starts.clear();
+                for (const int32_t u : movers) {
+                  starts.push_back(point(u));
+                  set_point(u, add(point(u), delta));
+                }
                 const double value = evaluate();
                 bool accept = value < current;
+                // The layer keeps its thickness.
+                if (accept && layer) {
+                  const Vec& m = layer_direction[layer_row];
+                  accept = dot(sub(wall, point(v)), m) / dot(m, m) - below >= in.layer_thicknesses[level - 1];
+                }
                 // The staircase vertex keeps room for the layer stack.
                 if (accept && stair >= 0) {
-                  accept = norm(sub(trial, point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
+                  accept = norm(sub(point(v), point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
                 }
                 for (std::size_t q = 0; q < nc && accept; ++q) {
                   accept = !valid[local_cells[q]] || cell_valid_float(mesh, t, local_cells[q]);
@@ -2489,7 +2544,7 @@ void Builder::smooth() {
                   improved = true;
                   ++repaired;
                 } else {
-                  set_point(v, start);
+                  for (std::size_t q = 0; q < movers.size(); ++q) set_point(movers[q], starts[q]);
                 }
               }
             }

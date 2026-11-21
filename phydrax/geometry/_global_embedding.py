@@ -7021,14 +7021,17 @@ def _boundary_findings(
     cells: tuple[EmbeddingCell, ...],
     /,
 ) -> tuple[
-    list[MeshCertificateFinding], int, int, list[str], bool, tuple[int, ...] | None
+    list[MeshCertificateFinding], int, int, list[str], str | None, tuple[int, ...] | None
 ]:
     """Oriented-boundary findings, inventory, proof values and degree premises.
 
-    The fifth value states the complete planar-exterior degree-one theorem. The
-    last is the rows of the exterior-facet cells when the complex has one
-    closed manifold shell whose exterior images are not all proved planar, so
-    their embedding is still owed; otherwise ``None``.
+    The fifth value names the complete exterior degree-one theorem when it
+    holds (``embedded_planar_exterior_boundary``, or
+    ``embedded_fan_exterior_boundary`` when an exterior face is the fan of a
+    non-planar loop), else ``None``. The last is the rows of the exterior-facet
+    cells when the complex has one closed manifold shell whose exterior images
+    are not all proved planar, so their embedding is still owed; otherwise
+    ``None``.
     """
     if (
         mesh.topological_dimension != 3
@@ -7036,7 +7039,7 @@ def _boundary_findings(
         or not cells
         or any(cell.kind == "polygon" for cell in cells)
     ):
-        return [], 0, 0, [], False, None
+        return [], 0, 0, [], None, None
     boundary = build_oriented_boundary(mesh, cells)
     unresolved_checks = {
         "boundary_degree_dimension",
@@ -7082,12 +7085,23 @@ def _boundary_findings(
             f"map_evidence:{face.map_evidence}"
             for face in boundary.faces
         )
+    degree_route: str | None = None
     if boundary.boundary_degree_one:
+        # A fan face triangle carries the synthetic negative centre identity.
+        fan = any(min(triangle.vertex_ids) < 0 for triangle in boundary.triangles)
+        degree_route = (
+            "embedded_fan_exterior_boundary"
+            if fan
+            else "embedded_planar_exterior_boundary"
+        )
+        facets = tuple(sorted(face.facet_id for face in boundary.faces))
         values.extend(
             (
                 "boundary_degree_one:single-connected-source-component",
                 "boundary_topology:one-embedded-closed-shell",
-                f"exterior_planar_embedded_facets:{tuple(sorted(face.facet_id for face in boundary.faces))}",
+                f"exterior_fan_embedded_facets:{facets}"
+                if fan
+                else f"exterior_planar_embedded_facets:{facets}",
                 f"embedded_exterior_triangles:{len(boundary.triangles)}",
             )
         )
@@ -7096,7 +7110,7 @@ def _boundary_findings(
         len(boundary.faces),
         len(boundary.shell_face_indices),
         values,
-        boundary.boundary_degree_one,
+        degree_route,
         boundary.exterior_cells
         if boundary.single_shell_topology and not boundary.boundary_degree_one
         else None,
@@ -7841,7 +7855,7 @@ def _proof(
     boundary_facet_count = 0
     shell_count = 0
     boundary_values: list[str] = []
-    degree_one_boundary = False
+    degree_one_boundary: str | None = None
     global_degree_route: str | None = None
     periodic_shell_degree_topology: str | None = None
     reference_chain_attempt = (
@@ -8068,7 +8082,7 @@ def _proof(
         # through its certified positive Jacobian.
         owing: NDArray[np.bool_] | None = None
         if not state_findings and not boundary:
-            if degree_one_boundary:
+            if degree_one_boundary is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
             elif exterior_cells is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
@@ -8082,8 +8096,8 @@ def _proof(
         local_premises = not state_findings
         contact_values: list[str] = []
         participants: NDArray[np.bool_] | None = None
-        if local_premises and degree_one_boundary:
-            degree_route = "embedded_planar_exterior_boundary"
+        if local_premises and degree_one_boundary is not None:
+            degree_route = degree_one_boundary
             participants = np.zeros((len(cells),), dtype=np.bool_)
         elif local_premises and exterior_cells is not None:
             # A shell whose facets are not all planar is embedded when the

@@ -59,7 +59,7 @@ from ._integer_triangle_contact import (
     IntegerTriangle,
 )
 from ._mapped_embedding import prove_mapped_cell_injective
-from ._planar_chain_embedding import polytope_face_triangles, triangulate_planar_polygon
+from ._planar_chain_embedding import polytope_face_routes
 from ._restricted_embedding import (
     _trace_arguments,
     rational_simplex_trace_values,
@@ -158,24 +158,29 @@ def _canonical_face_triangles(
         # vertices), else the fan from its exact vertex average, which takes
         # the synthetic vertex identifier -2 - facet_id (vertex identifiers
         # are nonnegative).
-        triangles = polytope_face_triangles(points)
-        if len(triangles) == len(points):
+        planar_routes = polytope_face_routes(points)
+        if planar_routes is None:
             if facet_id < 0 or min(vertex_ids) < 0:
                 raise ValueError(
                     "A fan face requires nonnegative facet and vertex identifiers."
                 )
             centre_id = -2 - facet_id
             count = len(vertex_ids)
+            centre: Point3 = (
+                sum((point[0] for point in points), Fraction(0)) / count,
+                sum((point[1] for point in points), Fraction(0)) / count,
+                sum((point[2] for point in points), Fraction(0)) / count,
+            )
             return tuple(
                 BoundaryTriangle(
                     -1,
                     facet_id,
                     (centre_id, vertex_ids[index], vertex_ids[(index + 1) % count]),
-                    triangle,
+                    (centre, points[index], points[(index + 1) % count]),
                 )
-                for index, triangle in enumerate(triangles)
+                for index in range(count)
             )
-        routes = triangulate_planar_polygon(points)
+        routes = planar_routes
     elif len(vertex_ids) != 4:
         raise ValueError(
             "Exact affine boundary route supports triangular and quadrilateral facets."
@@ -413,7 +418,7 @@ def _vertex_defined_face_evidence(
     offset = _dot3(normal, points[0])
     if any(_sign(_dot3(normal, point) - offset) for point in points):
         try:
-            polytope_face_triangles(points)
+            polytope_face_routes(points)
         except ValueError:
             return None
         return ("exact-vertex-defined-fan-face",)
