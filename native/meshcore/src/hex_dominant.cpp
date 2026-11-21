@@ -55,8 +55,10 @@
 //     skewness or their wall faces' deviation from the surface.
 // Certification (prove): every cell, published as a polyhedron with OpenFOAM
 // face semantics (a non-planar face is the fan from its vertex average), by
-// the exact orientation of its decomposition tetrahedra (cell center, face
-// vertex average, edge) and a closed genus-0 boundary.
+// the exact orientation of its decomposition tetrahedra (center, face vertex
+// average, edge) about both the OpenFOAM centroid (OpenFOAM's decomposition)
+// and the vertex average of its distinct vertices (the published local map),
+// and a closed genus-0 boundary; smoothing screens both stars.
 #include "hex_dominant.hpp"
 
 #include <algorithm>
@@ -2182,13 +2184,33 @@ bool hexahedron_corners_positive(const Mesh& mesh, int64_t c) {
   return true;
 }
 
+// The vertex average of a cell's distinct vertices: the center of the
+// certified decomposition (the published cell's local map is the star from
+// it to every face's fan triangles).
+Vec cell_vertex_average(const Mesh& mesh, const Topology& t, int64_t c) {
+  std::vector<int32_t> vertices;
+  for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
+    const int64_t f = std::abs(t.cell_faces[slot]) - 1;
+    vertices.insert(vertices.end(), mesh.face_vertices.begin() + mesh.face_offsets[f],
+                    mesh.face_vertices.begin() + mesh.face_offsets[f + 1]);
+  }
+  std::sort(vertices.begin(), vertices.end());
+  vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
+  Vec average{0, 0, 0};
+  for (const int32_t v : vertices) average = add(average, load(mesh.points.data() + 3 * v));
+  return mul(average, 1.0 / static_cast<double>(vertices.size()));
+}
+
 // Float screen of a cell: unfolded face fans, its decomposition tetrahedra
-// (OpenFOAM centroid, face vertex average, edge; the certified
-// decomposition) above a relative margin, and for hexahedra also the eight
-// corner Jacobians. face(f, unfolded) yields face f's vertex average and sets
+// (center, face vertex average, edge) about both centers above a relative
+// margin: the OpenFOAM centroid (OpenFOAM's decomposition) and the vertex
+// average of the distinct vertices (the published cell's local map, the
+// star the certification checks); for hexahedra also the eight corner
+// Jacobians. face(f, unfolded) yields face f's vertex average and sets
 // whether its fan is unfolded, from whatever geometry the caller keeps.
 template <class Face>
-bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& center, Face face) {
+bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& centroid, const Vec& vertex_average,
+                 Face face) {
   const double* x = mesh.points.data();
   if (mesh.cell_kinds[c] == kHexahedron && !hexahedron_corners_positive(mesh, c)) return false;
   for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
@@ -2198,14 +2220,16 @@ bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& cent
     const Vec average = face(f, unfolded);
     if (!unfolded) return false;
     const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-    const double reach = norm(sub(average, center));
-    for (int64_t q = first; q < last; ++q) {
-      const int64_t r = q + 1 < last ? q + 1 : first;
-      const Vec p = load(x + 3 * mesh.face_vertices[q]);
-      const Vec n = load(x + 3 * mesh.face_vertices[r]);
-      double v = dot(cross(sub(p, average), sub(n, average)), sub(average, center));
-      if (signed_face < 0) v = -v;
-      if (!(v > 1e-9 * reach * reach * reach)) return false;
+    for (const Vec* center : {&centroid, &vertex_average}) {
+      const double reach = norm(sub(average, *center));
+      for (int64_t q = first; q < last; ++q) {
+        const int64_t r = q + 1 < last ? q + 1 : first;
+        const Vec p = load(x + 3 * mesh.face_vertices[q]);
+        const Vec n = load(x + 3 * mesh.face_vertices[r]);
+        double v = dot(cross(sub(p, average), sub(n, average)), sub(average, *center));
+        if (signed_face < 0) v = -v;
+        if (!(v > 1e-9 * reach * reach * reach)) return false;
+      }
     }
   }
   return true;
@@ -2213,20 +2237,25 @@ bool cell_screen(const Mesh& mesh, const Topology& t, int64_t c, const Vec& cent
 
 // The screen on geometry computed afresh.
 bool cell_valid_float(const Mesh& mesh, const Topology& t, int64_t c) {
-  return cell_screen(mesh, t, c, cell_centroid(mesh, t, c), [&](int64_t f, bool& unfolded) {
-    unfolded = fan_unfolded(mesh, f);
-    const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
-    Vec average{0, 0, 0};
-    for (int64_t q = first; q < last; ++q) average = add(average, load(mesh.points.data() + 3 * mesh.face_vertices[q]));
-    return mul(average, 1.0 / static_cast<double>(last - first));
-  });
+  return cell_screen(mesh, t, c, cell_centroid(mesh, t, c), cell_vertex_average(mesh, t, c),
+                     [&](int64_t f, bool& unfolded) {
+                       unfolded = fan_unfolded(mesh, f);
+                       const int64_t first = mesh.face_offsets[f], last = mesh.face_offsets[f + 1];
+                       Vec average{0, 0, 0};
+                       for (int64_t q = first; q < last; ++q) {
+                         average = add(average, load(mesh.points.data() + 3 * mesh.face_vertices[q]));
+                       }
+                       return mul(average, 1.0 / static_cast<double>(last - first));
+                     });
 }
 
 // Decomposition validity of a cell with a closed genus-0 boundary: unfolded
-// face fans (with a margin) and exactly oriented decomposition tetrahedra.
+// face fans (with a margin) and exactly oriented decomposition tetrahedra
+// about the OpenFOAM centroid and about the distinct-vertex average.
 bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
-  const Vec center = cell_centroid(mesh, t, c);
-  const double cp[3] = {center[0], center[1], center[2]};
+  const Vec centroid = cell_centroid(mesh, t, c), vertex_average = cell_vertex_average(mesh, t, c);
+  const double cp[3] = {centroid[0], centroid[1], centroid[2]};
+  const double vp[3] = {vertex_average[0], vertex_average[1], vertex_average[2]};
   std::vector<std::pair<int32_t, int32_t>> directed;
   std::vector<int32_t> vertices;
   int64_t faces = 0;
@@ -2248,6 +2277,7 @@ bool polyhedron_certified(const Mesh& mesh, const Topology& t, int64_t c) {
       vertices.push_back(u);
       // Outward triangle (average, u, w): the center lies on its inner side.
       if (orient3d(ap, mesh.points.data() + 3 * u, mesh.points.data() + 3 * w, cp) >= 0) return false;
+      if (orient3d(ap, mesh.points.data() + 3 * u, mesh.points.data() + 3 * w, vp) >= 0) return false;
     }
   }
   std::sort(directed.begin(), directed.end());
@@ -2566,9 +2596,18 @@ void Builder::smooth() {
     for (const int32_t f : active_faces) face_update(f);
     for (const int32_t c : active_cells) cell_geometry(c);
   };
-  // The validity screen on the current face and centroid data.
+  // The vertex average of a cell's distinct vertices (the certified
+  // decomposition's center) at the current positions.
+  auto vertex_average = [&](int64_t c) {
+    Vec average{0, 0, 0};
+    for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
+      average = add(average, point(cell_vertex_list[slot]));
+    }
+    return mul(average, 1.0 / static_cast<double>(cell_vertex_offsets[c + 1] - cell_vertex_offsets[c]));
+  };
+  // The validity screen on the current face data.
   auto cell_valid_cached = [&](int64_t c) {
-    return cell_screen(mesh, t, c, centroid[c], [&](int64_t f, bool& unfolded) {
+    return cell_screen(mesh, t, c, centroid[c], vertex_average(c), [&](int64_t f, bool& unfolded) {
       unfolded = face_unfolded[f];
       return face_average[f];
     });
@@ -3104,7 +3143,8 @@ void Builder::smooth() {
                 // trial's faces and centroids.
                 for (std::size_t q = 0; q < nc && accept; ++q) {
                   if (!valid[local_cells[q]]) continue;
-                  accept = cell_screen(mesh, t, local_cells[q], local_centroid[q], [&](int64_t g, bool& unfolded) {
+                  accept = cell_screen(mesh, t, local_cells[q], local_centroid[q], vertex_average(local_cells[q]),
+                                       [&](int64_t g, bool& unfolded) {
                     const int32_t slot_q = face_slot[g];
                     if (local_moving[slot_q]) {
                       unfolded = fan_unfolded(mesh, g);

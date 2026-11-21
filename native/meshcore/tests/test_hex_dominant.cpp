@@ -196,8 +196,9 @@ V cross3(const V& a, const V& b) {
 }
 
 // Independent checks: closed cells (every directed edge paired), positive
-// decomposition tetrahedra about the vertex average, positive hexahedron
-// corner Jacobians; returns the mesh volume.
+// decomposition tetrahedra (center, face vertex average, edge) about the
+// distinct-vertex average (the published local map) and about the OpenFOAM
+// centroid, positive hexahedron corner Jacobians; returns the mesh volume.
 double check_cells(const Result& r) {
   const int64_t cells = static_cast<int64_t>(r.cell_kinds.size());
   const int64_t faces = static_cast<int64_t>(r.face_owner.size());
@@ -210,32 +211,68 @@ double check_cells(const Result& r) {
   int64_t open = 0, negative = 0, inverted = 0;
   for (int64_t c = 0; c < cells; ++c) {
     std::vector<std::pair<int32_t, int32_t>> directed;
-    V center{0, 0, 0};
-    int64_t count = 0;
-    for (const auto& [f, sign] : of[c]) {
-      for (int64_t q = r.face_offsets[f]; q < r.face_offsets[f + 1]; ++q) {
-        const V p = at(r.points, r.face_vertices[q]);
-        for (int a = 0; a < 3; ++a) center[a] += p[a];
-        ++count;
-      }
-    }
-    for (int a = 0; a < 3; ++a) center[a] /= static_cast<double>(count);
-    double volume = 0.0;
+    // Distinct-vertex average; face vertex averages, centers and areas.
+    std::vector<int32_t> vertices;
+    std::vector<V> averages, centers, areas;
     for (const auto& [f, sign] : of[c]) {
       const int64_t first = r.face_offsets[f], last = r.face_offsets[f + 1];
       V average{0, 0, 0};
       for (int64_t q = first; q < last; ++q) {
+        vertices.push_back(r.face_vertices[q]);
         const V p = at(r.points, r.face_vertices[q]);
         for (int a = 0; a < 3; ++a) average[a] += p[a] / static_cast<double>(last - first);
       }
+      V center{0, 0, 0}, area{0, 0, 0};
+      double weight = 0.0;
+      for (int64_t q = first; q < last; ++q) {
+        const V p = at(r.points, r.face_vertices[q]);
+        const V n = at(r.points, r.face_vertices[q + 1 < last ? q + 1 : first]);
+        const V a = cross3(minus(p, average), minus(n, average));
+        const double m = std::sqrt(dot3(a, a));
+        for (int k = 0; k < 3; ++k) {
+          area[k] += 0.5 * sign * a[k];
+          center[k] += m * (p[k] + n[k] + average[k]) / 3.0;
+        }
+        weight += m;
+      }
+      for (int k = 0; k < 3; ++k) center[k] /= weight;
+      averages.push_back(average);
+      centers.push_back(center);
+      areas.push_back(area);
+    }
+    std::sort(vertices.begin(), vertices.end());
+    vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
+    V vertex_average{0, 0, 0};
+    for (const int32_t v : vertices) {
+      const V p = at(r.points, v);
+      for (int a = 0; a < 3; ++a) vertex_average[a] += p[a] / static_cast<double>(vertices.size());
+    }
+    // OpenFOAM centroid: pyramids about the mean of the face centers.
+    V estimate{0, 0, 0};
+    for (const V& center : centers) {
+      for (int a = 0; a < 3; ++a) estimate[a] += center[a] / static_cast<double>(centers.size());
+    }
+    V centroid{0, 0, 0};
+    double pyramids = 0.0;
+    for (size_t i = 0; i < centers.size(); ++i) {
+      const double v = dot3(areas[i], minus(centers[i], estimate)) / 3.0;
+      pyramids += v;
+      for (int a = 0; a < 3; ++a) centroid[a] += v * (0.75 * centers[i][a] + 0.25 * estimate[a]);
+    }
+    for (int a = 0; a < 3; ++a) centroid[a] /= pyramids;
+    double volume = 0.0;
+    for (size_t i = 0; i < of[c].size(); ++i) {
+      const auto& [f, sign] = of[c][i];
+      const V& average = averages[i];
+      const int64_t first = r.face_offsets[f], last = r.face_offsets[f + 1];
       for (int64_t q = first; q < last; ++q) {
         const int64_t n = q + 1 < last ? q + 1 : first;
         int32_t u = r.face_vertices[q], w = r.face_vertices[n];
         if (sign < 0) std::swap(u, w);
         directed.push_back({u, w});
-        const double tet = dot3(cross3(minus(at(r.points, u), average), minus(at(r.points, w), average)),
-                                minus(average, center)) / 6.0;
-        if (!(tet > 0.0)) ++negative;
+        const V fan = cross3(minus(at(r.points, u), average), minus(at(r.points, w), average));
+        const double tet = dot3(fan, minus(average, vertex_average)) / 6.0;
+        if (!(tet > 0.0) || !(dot3(fan, minus(average, centroid)) > 0.0)) ++negative;
         volume += tet;
       }
     }
@@ -369,6 +406,16 @@ void layers_sit_at_their_thicknesses() {
   PHX_CHECK(checked > 0);
 }
 
+// Every cell is star-shaped about its distinct-vertex average (the published
+// local map) as well as about its OpenFOAM centroid: on this cylinder at
+// h = 0.09 a mesher screening only the centroid star published 2:1
+// transition polyhedra with a negative vertex-average tetrahedron.
+void cells_are_stars_about_their_vertex_average() {
+  const Result r = mesh(cylinder(0.5, 0.8, 96, 16), 0.09, 0.045, {});
+  PHX_CHECK(r.status == PHX_MC_OK);
+  check_cells(r);
+}
+
 // At a convex feature curve the layers do not wrap the curve: corner
 // hexahedra own one wall strip per patch, every cell is certified and every
 // wall vertex lies on the surface.
@@ -475,6 +522,7 @@ int main() {
   sphere_is_certified_and_on_the_surface();
   box_corners_and_volume_are_exact();
   layers_sit_at_their_thicknesses();
+  cells_are_stars_about_their_vertex_average();
   convex_curve_layers_split();
   oblique_curve_segments_gain_midpoints();
   convex_curve_split_is_scale_free();
