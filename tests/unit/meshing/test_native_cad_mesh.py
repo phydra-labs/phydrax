@@ -29,6 +29,12 @@ from phydrax._meshcore import (
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing import CellMeshingCandidate
 from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._organization import (
+    MeshLabel,
+    MeshPatch,
+    MeshZone,
+    RegionBoundaryEvidence,
+)
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import ProximitySizeControl
 from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
@@ -1916,27 +1922,10 @@ def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
     assert again.certification is not None and again.certification.passed
 
 
-def test_unproved_cad_solid_with_region_control_honors_it() -> None:
-    # The native candidate has no organization records, so a region control
-    # keeps the existing construction, whose candidate carries the control.
-    from phydrax.meshing import CellMeshingCandidate
-    from phydrax.meshing._contracts import (
-        CellFamilyPolicy,
-        CellMeshingTarget,
-        VolumeFillStrategy,
-        VolumeMeshingSpec,
-    )
-    from phydrax.meshing._controls import RegionControl, RegionSeed
-    from phydrax.meshing._organization import RegionRole
-    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-    from phydrax.meshing._sizing import UniformSizeControl
-    from phydrax.meshing._volume_generation import NativeVolumeSchedule
-    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+def _region_scope(domain: MeshingDomain, /) -> MeshingScope:
+    from phydrax.meshing._scope import MeshingEntityKind
 
-    model = _sphere_model()
-    domain = MeshingDomain.from_brep(model)
-    boundary = MeshingScope.whole(model, 2)
-    region_scope = MeshingScope(
+    return MeshingScope(
         domain.source_id,
         domain.source_revision,
         MeshingEntityKind.GEOMETRY,
@@ -1944,27 +1933,73 @@ def test_unproved_cad_solid_with_region_control_honors_it() -> None:
         domain.scope_entity_set_id(3),
         np.asarray(domain.scope_entity_ids(3)[:1], dtype=np.int64),
     )
-    region_name = domain.regions[0].name
-    control = RegionControl(
-        region_scope, region_name, "controlled-solid", RegionRole.SOLID
+
+
+def _organized_plan(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    *,
+    region_seed: tuple[float, float, float] | None,
+    hole_seed: tuple[float, float, float] | None = None,
+    controls: bool = True,
+) -> phx.meshing.NativeMeshingPlan:
+    """A coarse CAD solid with a patch control, a region control and seeds."""
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
     )
+    from phydrax.meshing._controls import (
+        HoleSeed,
+        PatchControl,
+        RegionControl,
+        RegionSeed,
+    )
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingEntityKind
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    domain = MeshingDomain.from_brep(model)
+    boundary = MeshingScope.whole(model, 2)
+    faces = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        np.asarray(domain.scope_entity_ids(2)[:2], dtype=np.int64),
+    )
+    region = domain.regions[0].name
     specification = VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
         boundary,
         VolumeFillStrategy.SIMPLEX,
-        size_controls=(UniformSizeControl(boundary, 0.3),),
-        region_controls=(control,),
+        size_controls=(UniformSizeControl(boundary, size),),
+        region_controls=(
+            (RegionControl(_region_scope(domain), "renamed", "steel", RegionRole.SOLID),)
+            if controls
+            else ()
+        ),
+        patch_controls=(
+            (PatchControl("inlet", faces, ("renamed",)),) if controls else ()
+        ),
         region_seeds=(
-            RegionSeed(
-                np.zeros(3, dtype=np.float64),
-                region_name,
-                "seed-material",
-                RegionRole.SOLID,
-            ),
+            ()
+            if region_seed is None
+            else (
+                RegionSeed(np.asarray(region_seed), region, "seeded", RegionRole.FLUID),
+            )
+        ),
+        hole_seeds=(
+            ()
+            if hole_seed is None
+            else (HoleSeed(np.asarray(hole_seed), MeshingScope.whole(model, 3)),)
         ),
         maximum_deviation=0.05,
     )
-    plan = phx.meshing.NativeMeshingProvider(
+    return phx.meshing.NativeMeshingProvider(
         NativeMeshingOptions(
             "cad_tetrahedral",
             volume_schedule=NativeVolumeSchedule(
@@ -1972,12 +2007,212 @@ def test_unproved_cad_solid_with_region_control_honors_it() -> None:
             ),
         )
     ).plan(model, specification)
-    candidate = plan.execute(prove=False)
-    assert isinstance(candidate, CellMeshingCandidate)
-    assert candidate.mesh.blocks[0].name != "native-cad-tetrahedra"
-    (evidence,) = candidate._construction.organization.region_boundary_evidence
-    assert evidence.control_id == control.control_id
-    assert evidence.material_id == "controlled-solid"
+
+
+type _ViewRows = tuple[tuple[object, ...], ...]
+
+
+def _organization_view(
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    labels: tuple[MeshLabel, ...],
+    evidence: tuple[RegionBoundaryEvidence, ...],
+) -> tuple[_ViewRows, _ViewRows, _ViewRows, _ViewRows]:
+    """Mesh-independent organization semantics (names, adjacency, evidence)."""
+    zone_names = {zone.zone_id: zone.name for zone in zones}
+    patch_names = {patch.patch_id: patch.name for patch in patches}
+    return (
+        tuple(
+            (
+                patch.name,
+                patch.scope.entity_ids.size > 0,
+                patch.connected,
+                tuple(zone_names[zone] for zone in patch.adjacent_zone_ids),
+                patch.source_adjacent_region_ids,
+                patch.source_adjacent_region_occurrence_paths,
+            )
+            for patch in patches
+        ),
+        tuple(
+            (zone.name, zone.role, zone.material_id, zone.region_role) for zone in zones
+        ),
+        tuple(
+            sorted(
+                (
+                    label.name,
+                    label.scope.entity_dimension,
+                    label.scope.entity_ids.size > 0,
+                )
+                for label in labels
+            )
+        ),
+        tuple(
+            (
+                item.source_region_id,
+                item.source_scope.scope_id,
+                item.control_id,
+                item.material_id,
+                item.role,
+                tuple(
+                    sorted((patch_names[patch], side) for patch, side in item.patch_sides)
+                ),
+                item.source_occurrence_path,
+            )
+            for item in evidence
+        ),
+    )
+
+
+_ORGANIZED_SOLIDS = (
+    ("box", 0.3, (0.5, 0.5, 0.5)),
+    ("quadric", 0.6, (0.0, 0.0, 0.0)),
+)
+
+
+def _organized_model(name: str, /) -> phx.geometry.brep.BRepModel:
+    if name == "quadric":
+        return _quadric_model()
+    return phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="native-cad-route-organized-box",
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "size", "seed"), _ORGANIZED_SOLIDS, ids=[row[0] for row in _ORGANIZED_SOLIDS]
+)
+@pytest.mark.parametrize("prove", [False, True], ids=["candidate", "proved"])
+def test_cad_solid_organization_is_native_and_matches_existing_route(
+    name: str,
+    size: float,
+    seed: tuple[float, float, float],
+    prove: bool,
+    tmp_path: Path,
+) -> None:
+    # Patch and region controls and region seeds take the native route, whose
+    # patches, zones, labels and region evidence carry the existing route's
+    # semantics; the proved result certifies and survives the archive.
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._native_construction import NativeMeshConstruction
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._result import CellMeshingResult
+
+    plan = _organized_plan(_organized_model(name), size, region_seed=seed)
+    prepared = plan.prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    existing = prepared.execute()
+    assert isinstance(existing, NativeMeshConstruction)
+    assert existing.mesh.blocks[0].name != "native-cad-tetrahedra"
+    expected = _organization_view(
+        existing.organization.patches,
+        existing.organization.zones,
+        existing.organization.labels,
+        existing.organization.region_boundary_evidence,
+    )
+    patches, zones, _, evidence = expected
+    assert [row[0] for row in patches][-1] == "inlet"
+    assert [(row[2], row[3]) for row in zones] == [("steel", RegionRole.SOLID)]
+    assert evidence[0][3:5] == ("steel", RegionRole.SOLID)
+    if not prove:
+        candidate = plan.execute(prove=False)
+        assert isinstance(candidate, CellMeshingCandidate)
+        assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+        organization = candidate._construction.organization
+        assert (
+            _organization_view(
+                organization.patches,
+                organization.zones,
+                organization.labels,
+                organization.region_boundary_evidence,
+            )
+            == expected
+        )
+        return
+    result = plan.execute()
+    assert isinstance(result, CellMeshingResult)
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
+    assert result.certification is not None and result.certification.passed
+    view = _organization_view(
+        result.patches, result.zones, result.labels, result.region_boundary_evidence
+    )
+    assert view == expected
+    path = tmp_path / "native-cad-organized.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        expected_content_id=model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.certification is not None
+    assert restored.certification.report_id == result.certification.report_id
+    assert [patch.patch_id for patch in restored.patches] == [
+        patch.patch_id for patch in result.patches
+    ]
+    assert [zone.zone_id for zone in restored.zones] == [
+        zone.zone_id for zone in result.zones
+    ]
+    assert [item.evidence_id for item in restored.region_boundary_evidence] == [
+        item.evidence_id for item in result.region_boundary_evidence
+    ]
+    assert (
+        _organization_view(
+            restored.patches,
+            restored.zones,
+            restored.labels,
+            restored.region_boundary_evidence,
+        )
+        == view
+    )
+
+
+_SEED_OUTCOMES = (
+    ("hole_inside", None, (0.5, 0.5, 0.5), "Native CAD hole seed"),
+    ("region_outside", (2.0, 2.0, 2.0), None, "lies outside the solid"),
+    ("region_on_surface", (0.5, 0.5, 0.0), None, "lies on the certified surface"),
+    ("hole_outside", None, (2.0, 2.0, 2.0), None),
+)
+
+
+@pytest.mark.parametrize(
+    ("case", "region_seed", "hole_seed", "refusal"),
+    _SEED_OUTCOMES,
+    ids=[row[0] for row in _SEED_OUTCOMES],
+)
+def test_cad_solid_seeds_classify_by_the_certified_surface(
+    case: str,
+    region_seed: tuple[float, float, float] | None,
+    hole_seed: tuple[float, float, float] | None,
+    refusal: str | None,
+) -> None:
+    # A region seed must lie inside its region and a hole seed outside the
+    # solid (exact point-in-shell test); a seed on a surface triangle refuses.
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+
+    plan = _organized_plan(
+        _organized_model("box"),
+        0.3,
+        region_seed=region_seed,
+        hole_seed=hole_seed,
+        controls=False,
+    )
+    if refusal is None:
+        candidate = plan.execute(prove=False)
+        assert isinstance(candidate, CellMeshingCandidate)
+        assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+        return
+    with pytest.raises(MeshingFailure, match=re.escape(refusal)) as error:
+        plan.execute(prove=False)
+    assert error.value.category is MeshingFailureCategory.REGION_RESOLUTION_FAILED
 
 
 def _field_specification(
@@ -2087,8 +2322,8 @@ def _field_specification(
 
 _FIELD_OUTCOMES = (
     ("protected_features", "existing"),
-    ("region_seeds", "existing"),
-    ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
+    ("region_seeds", "native"),
+    ("hole_seeds", "Native CAD hole seed"),
     ("size_maximum", "native"),
     ("size_compliance", "native"),
     ("size_curvature", "supports uniform and proximity size controls on source faces"),

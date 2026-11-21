@@ -537,6 +537,17 @@ def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> No
             RegionControl(region_scope, "region", "material", RegionRole.SOLID),
         ),
         patch_controls=(PatchControl("wall", wall, ("region",)),),
+        # The native certificate refuses this partition's source face pairs
+        # (cad_source_shell, with or without controls); a soft protected
+        # feature keeps the existing construction, which certifies it.
+        protected_features=(
+            phx.meshing.ProtectedFeature(
+                boundary,
+                phx.meshing.FeatureKind.SURFACE,
+                maximum_deviation=0.05,
+                hard=False,
+            ),
+        ),
         maximum_deviation=0.05,
     )
     result = (

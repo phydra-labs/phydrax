@@ -165,33 +165,25 @@ def test_native_box_occurrences_name_the_existing_route_entities(
     # Reference: the existing CAD volume route (an independent implementation
     # of the same B-Rep occurrence naming) on the same model. Fault caught: a
     # native record keyed by model row instead of the B-Rep occurrence.
-    from phydrax.meshing._controls import RegionControl
-    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._native_construction import NativeMeshConstruction
+    from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 
     model, native = box
-    plan = _cad_volume_plan(model, 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    specification = eqx.tree_at(
-        lambda value: value.region_controls,
-        plan.specification,
-        (
-            RegionControl(
-                phx.meshing.MeshingScope.from_geometry(model, model.solid_ids[0]),
-                "region-0",
-                "material-0",
-                RegionRole.SOLID,
-            ),
-        ),
-        is_leaf=lambda value: value is None,
-    )
-    existing = (
-        phx.meshing.NativeMeshingProvider(plan.options)
-        .plan(model, specification)
-        .execute()
-    )
-    assert isinstance(existing, CellMeshingResult)
+    prepared = _cad_volume_plan(model, 0.3, 1, radius_edge=8.0, dihedral=0.0).prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    existing = prepared.execute()
+    assert isinstance(existing, NativeMeshConstruction)
     assert existing.mesh.blocks[0].name != "native-cad-tetrahedra"
+    associations = existing.organization.associations
     for dimension in range(4):
-        ours, theirs = _table(native, dimension), _table(existing, dimension)
+        entity_set = existing.mesh.entity_set(dimension).entity_set_id
+        ours = _table(native, dimension)
+        (theirs,) = (
+            item
+            for item in associations
+            if item.association_kind is GeometryAssociationKind.BREP
+            and item.target_entity_set_id == entity_set
+        )
         for dimension_value in range(4):
             assert {
                 (entity, path)
@@ -212,9 +204,12 @@ def test_native_box_occurrences_name_the_existing_route_entities(
                 )
                 if stratum == dimension_value
             }
-    assert set(_curve(native).source_entity_ids) == set(
-        _curve(existing).source_entity_ids
+    (curve,) = (
+        item
+        for item in associations
+        if item.association_kind is GeometryAssociationKind.CURVE
     )
+    assert set(_curve(native).source_entity_ids) == set(curve.source_entity_ids)
 
 
 def test_native_sphere_records_pair_pole_slivers() -> None:
