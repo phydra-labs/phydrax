@@ -54,7 +54,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <cstdio>
 #include <limits>
 #include <numeric>
 #include <utility>
@@ -296,10 +295,12 @@ struct Surface {
   std::vector<int32_t> opposite;  // half-edge 3t + e -> its opposite half-edge
   std::vector<Vec> normal;
   std::vector<int32_t> patch;
+  std::vector<int32_t> patch_facet;  // the facet of every patch (patches stop at facet changes)
   int32_t patch_count = 0;
   // Separating feature edges (between two different patches).
   std::vector<std::array<int32_t, 2>> edge_vertices;
   std::vector<std::array<int32_t, 2>> edge_patches;
+  std::vector<int32_t> edge_triangles;  // a triangle on each separating feature edge
   std::vector<int64_t> vertex_edge_offsets;  // CSR surface vertex -> feature edges
   std::vector<int32_t> vertex_edges;
   std::vector<int32_t> corners;  // corner surface vertices
@@ -370,6 +371,7 @@ int32_t build_surface(const Input& in, double feature_angle, double bin_size, Su
     if (s.patch[seed] >= 0) continue;
     const int32_t id = s.patch_count++;
     s.patch[seed] = id;
+    s.patch_facet.push_back(s.facets[seed]);
     stack.assign(1, static_cast<int32_t>(seed));
     while (!stack.empty()) {
       const int32_t t = stack.back();
@@ -394,6 +396,7 @@ int32_t build_surface(const Input& in, double feature_angle, double bin_size, Su
     const int32_t a = s.tri[h], b = s.tri[t * 3 + (h % 3 + 1) % 3];
     s.edge_vertices.push_back({a, b});
     s.edge_patches.push_back({std::min(s.patch[t], s.patch[u]), std::max(s.patch[t], s.patch[u])});
+    s.edge_triangles.push_back(static_cast<int32_t>(t));
     ++degree[a];
     ++degree[b];
   }
@@ -552,27 +555,33 @@ Hit nearest_edge(const Surface& s, const Vec& p, int32_t p0, int32_t p1) {
   return best;
 }
 
-// Local constrained projection: from triangle `t`, walk to edge neighbors of
-// the same patch while they are closer.
+// Local constrained projection: from triangle `t`, walk to triangles of the
+// same patch around the current triangle's corners (its vertex fans, which
+// hold its edge neighbors) while they are closer. Edge neighbors alone stall
+// where the closest point is a vertex whose nearer fan triangles share only
+// that vertex.
 Hit walk_triangle(const Surface& s, const Vec& p, int32_t t) {
   Hit best;
   best.item = t;
   best.point = closest_on_triangle(p, s.corner_point(t, 0), s.corner_point(t, 1), s.corner_point(t, 2));
   best.d2 = dot(sub(best.point, p), sub(best.point, p));
   for (;;) {
-    int32_t next = -1;
     Hit candidate = best;
+    const int32_t patch = s.patch[best.item];
     for (int e = 0; e < 3; ++e) {
-      const int32_t u = s.opposite[3 * static_cast<int64_t>(best.item) + e] / 3;
-      if (s.patch[u] != s.patch[best.item]) continue;
-      const Vec q = closest_on_triangle(p, s.corner_point(u, 0), s.corner_point(u, 1), s.corner_point(u, 2));
-      const double d2 = dot(sub(q, p), sub(q, p));
-      if (d2 < candidate.d2) {
-        candidate = {d2, u, q};
-        next = u;
+      // Outgoing half-edges of corner e: the next one is the opposite of the
+      // half-edge entering the corner in the current triangle.
+      const int64_t first = 3 * static_cast<int64_t>(best.item) + e;
+      for (int64_t h = s.opposite[(first / 3) * 3 + (first % 3 + 2) % 3]; h != first;
+           h = s.opposite[(h / 3) * 3 + (h % 3 + 2) % 3]) {
+        const int32_t u = static_cast<int32_t>(h / 3);
+        if (s.patch[u] != patch) continue;
+        const Vec q = closest_on_triangle(p, s.corner_point(u, 0), s.corner_point(u, 1), s.corner_point(u, 2));
+        const double d2 = dot(sub(q, p), sub(q, p));
+        if (d2 < candidate.d2) candidate = {d2, u, q};
       }
     }
-    if (next < 0) return best;
+    if (candidate.item == best.item) return best;
     best = candidate;
   }
 }
@@ -1422,34 +1431,71 @@ void Builder::partition() {
 // loop edges (a step of the curve chain) splits along the diagonal opposite
 // its corner vertex; the corner triangle joins the neighbors' patch, so the
 // chain runs along the diagonal and no wall face holds three curve vertices.
-// The core face splits likewise (its cell becomes a polyhedron).
+// Along a zigzag the step faces of both patches share chain edges; a face
+// whose chain neighbor already splits stays whole (its steps vanish with the
+// neighbor's split), so the chain becomes the run of diagonals. A split whose
+// triangle would still hold three chain vertices (the corner or the opposite
+// vertex stays on a chain through its other faces) flattens its prism onto
+// the curve and is withdrawn; withdrawals repeat until none remains. The
+// core face splits likewise (its cell becomes a polyhedron).
 void Builder::build_pieces() {
   const int64_t count = static_cast<int64_t>(stair_faces.size());
-  pieces.clear();
-  pieces.reserve(static_cast<std::size_t>(count) + 64);
+  const int64_t vertices = static_cast<int64_t>(stair_vertices.size());
+  std::vector<uint8_t> withdrawn(count, 0), splits(count, 0);
+  std::vector<int32_t> first_patch(vertices), multi(vertices);
   int64_t split = 0;
-  for (int64_t f = 0; f < count; ++f) {
-    const auto& loop = stair_loop[f];
-    bool chain[4];
-    for (int e = 0; e < 4; ++e) chain[e] = stair_patch[stair_adjacent[f][e]] != stair_patch[f];
-    int corner = -1;
-    for (int e = 0; e < 4; ++e) {
-      const int next = (e + 1) % 4;
-      if (chain[e] && chain[next] && !chain[(e + 2) % 4] && !chain[(e + 3) % 4] &&
-          stair_patch[stair_adjacent[f][e]] == stair_patch[stair_adjacent[f][next]]) {
-        corner = next;  // loop[next] is shared by the two chain edges
+  for (bool again = true; again;) {
+    again = false;
+    pieces.clear();
+    pieces.reserve(static_cast<std::size_t>(count) + 64);
+    std::fill(splits.begin(), splits.end(), 0);
+    split = 0;
+    for (int64_t f = 0; f < count; ++f) {
+      const auto& loop = stair_loop[f];
+      bool chain[4];
+      for (int e = 0; e < 4; ++e) chain[e] = stair_patch[stair_adjacent[f][e]] != stair_patch[f];
+      int corner = -1;
+      for (int e = 0; e < 4 && !withdrawn[f]; ++e) {
+        const int next = (e + 1) % 4;
+        if (chain[e] && chain[next] && !chain[(e + 2) % 4] && !chain[(e + 3) % 4] &&
+            stair_patch[stair_adjacent[f][e]] == stair_patch[stair_adjacent[f][next]]) {
+          corner = next;  // loop[next] is shared by the two chain edges
+        }
+      }
+      if (corner >= 0 && (splits[stair_adjacent[f][(corner + 3) % 4]] || splits[stair_adjacent[f][corner]])) {
+        corner = -1;
+      }
+      if (corner < 0) {
+        pieces.push_back({static_cast<int32_t>(f), 4, loop, stair_patch[f], -1});
+        continue;
+      }
+      splits[f] = 1;
+      ++split;
+      const int32_t before = loop[(corner + 3) % 4], at = loop[corner], after = loop[(corner + 1) % 4],
+                    opposite = loop[(corner + 2) % 4];
+      pieces.push_back({static_cast<int32_t>(f), 3, {before, at, after, -1},
+                        stair_patch[stair_adjacent[f][(corner + 3) % 4]], -1});
+      pieces.push_back({static_cast<int32_t>(f), 3, {after, opposite, before, -1}, stair_patch[f], -1});
+    }
+    if (split == 0) break;
+    std::fill(first_patch.begin(), first_patch.end(), -1);
+    std::fill(multi.begin(), multi.end(), 0);
+    for (const Piece& piece : pieces) {
+      for (int c = 0; c < piece.count; ++c) {
+        const int32_t row = stair_vertex[piece.loop[c]];
+        if (first_patch[row] < 0) first_patch[row] = piece.patch;
+        if (first_patch[row] != piece.patch) multi[row] = 1;
       }
     }
-    if (corner < 0) {
-      pieces.push_back({static_cast<int32_t>(f), 4, loop, stair_patch[f], -1});
-      continue;
+    for (const Piece& piece : pieces) {
+      if (piece.count != 3 || withdrawn[piece.face]) continue;
+      int on = 0;
+      for (int c = 0; c < 3; ++c) on += multi[stair_vertex[piece.loop[c]]];
+      if (on == 3) {
+        withdrawn[piece.face] = 1;
+        again = true;
+      }
     }
-    ++split;
-    const int32_t before = loop[(corner + 3) % 4], at = loop[corner], after = loop[(corner + 1) % 4],
-                  opposite = loop[(corner + 2) % 4];
-    pieces.push_back({static_cast<int32_t>(f), 3, {before, at, after, -1},
-                      stair_patch[stair_adjacent[f][(corner + 3) % 4]], -1});
-    pieces.push_back({static_cast<int32_t>(f), 3, {after, opposite, before, -1}, stair_patch[f], -1});
   }
   stats[27] = static_cast<double>(split);
 }
@@ -2020,28 +2066,56 @@ void Builder::smooth() {
       }
     }
   }
+  // Only cells with a movable vertex change shape: their faces and centroids
+  // are recomputed each pass, the rest once.
+  std::vector<int32_t> active_cells, active_faces;
+  {
+    std::vector<uint8_t> face_seen(faces, 0);
+    for (int64_t c = 0; c < cells; ++c) {
+      bool active = false;
+      for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1] && !active; ++slot) {
+        active = role[cell_vertex_list[slot]] != 0;
+      }
+      if (!active) continue;
+      active_cells.push_back(static_cast<int32_t>(c));
+      for (int64_t slot = t.cell_face_offsets[c]; slot < t.cell_face_offsets[c + 1]; ++slot) {
+        const int32_t f = std::abs(t.cell_faces[slot]) - 1;
+        if (!face_seen[f]) {
+          face_seen[f] = 1;
+          active_faces.push_back(f);
+        }
+      }
+    }
+    std::sort(active_faces.begin(), active_faces.end());
+  }
   std::vector<Vec> centroid(cells), face_centre(faces), face_area(faces);
+  auto cell_geometry = [&](int64_t c) {
+    const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
+    Vec estimate{0, 0, 0};
+    for (int64_t slot = first; slot < last; ++slot) estimate = add(estimate, face_centre[std::abs(t.cell_faces[slot]) - 1]);
+    estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
+    double volume = 0.0;
+    Vec moment{0, 0, 0};
+    for (int64_t slot = first; slot < last; ++slot) {
+      const int32_t signed_face = t.cell_faces[slot];
+      const int64_t f = std::abs(signed_face) - 1;
+      const double v = (signed_face > 0 ? 1.0 : -1.0) * dot(face_area[f], sub(face_centre[f], estimate)) / 3.0;
+      volume += v;
+      moment = add(moment, mul(add(mul(face_centre[f], 0.75), mul(estimate, 0.25)), v));
+    }
+    centroid[c] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
+  };
+  for (int64_t f = 0; f < faces; ++f) {
+    Vec average;
+    face_geometry(mesh, f, face_centre[f], face_area[f], average);
+  }
+  for (int64_t c = 0; c < cells; ++c) cell_geometry(c);
   auto geometry = [&]() {
-    for (int64_t f = 0; f < faces; ++f) {
+    for (const int32_t f : active_faces) {
       Vec average;
       face_geometry(mesh, f, face_centre[f], face_area[f], average);
     }
-    for (int64_t c = 0; c < cells; ++c) {
-      const int64_t first = t.cell_face_offsets[c], last = t.cell_face_offsets[c + 1];
-      Vec estimate{0, 0, 0};
-      for (int64_t slot = first; slot < last; ++slot) estimate = add(estimate, face_centre[std::abs(t.cell_faces[slot]) - 1]);
-      estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
-      double volume = 0.0;
-      Vec moment{0, 0, 0};
-      for (int64_t slot = first; slot < last; ++slot) {
-        const int32_t signed_face = t.cell_faces[slot];
-        const int64_t f = std::abs(signed_face) - 1;
-        const double v = (signed_face > 0 ? 1.0 : -1.0) * dot(face_area[f], sub(face_centre[f], estimate)) / 3.0;
-        volume += v;
-        moment = add(moment, mul(add(mul(face_centre[f], 0.75), mul(estimate, 0.25)), v));
-      }
-      centroid[c] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
-    }
+    for (const int32_t c : active_cells) cell_geometry(c);
   };
   std::vector<double> previous(mesh.points);
   std::vector<uint8_t> moved(points, 0);
@@ -2102,43 +2176,25 @@ void Builder::smooth() {
       check.swap(next);
     }
   };
-  auto knob = [](const char* name, double value) {
-    const char* text = std::getenv(name);
-    return text == nullptr ? value : std::atof(text);
-  };
-  const int sweeps = static_cast<int>(knob("HD_SWEEPS", 12));
-  const double relax = knob("HD_RELAX", 0.6);
-  const int iterations = static_cast<int>(knob("HD_OPT_ITERS", 0));
-  const double step = knob("HD_OPT_STEP", 0.02);
-  const double emphasis = knob("HD_OPT_MU", 860.0);
-  const double cap = knob("HD_OPT_CAP", 0.05);
-  const double skew_weight = knob("HD_SKEW_W", 0.0);
-  const double skew_emphasis = knob("HD_SKEW_MU", 4.0);
-  const double ortho_weight = knob("HD_ORTHO_W", 1.0);
-  // 0. Uniform columns: every staircase vertex moves along its column to the
-  // same distance from its wall image (an inward offset of the wall).
-  const double column = knob("HD_COLUMN", 0.0) * b;
-  if (column > 0.0) {
-    previous = mesh.points;
-    std::fill(moved.begin(), moved.end(), 0);
-    for (int64_t row = 0; row < columns; ++row) {
-      const int32_t v = stair_vertices[row];
-      const Vec wall = point(surface_vertex[row]);
-      const Vec d = sub(point(v), wall);
-      const double length = norm(d);
-      if (!(length > 0.0)) continue;
-      set_point(v, add(wall, mul(d, std::max(column, layer_total + 0.25 * b) / length)));
-      moved[v] = 1;
-    }
-    settle();
-  }
-  auto phase_clock = Clock::now();
-  auto phase = [&](const char* name) {
-    if (std::getenv("HD_TIME")) std::fprintf(stderr, "phase %s %.4f\n", name, seconds(phase_clock));
-    phase_clock = Clock::now();
-  };
+  // Smoothing constants, tuned on the F8 sphere and checked on the quadric
+  // (ledger cad.md F8). Twelve centroidal sweeps at relaxation 0.6: a full
+  // step oscillates at the staircase.
+  constexpr int kSweeps = 12;
+  constexpr double kRelax = 0.6;
+  // Descent: 20 steps of 0.1 b^2 times the gradient, each vertex capped by a
+  // trust radius of at most 0.05 b (halved when undone, regrown by 1.25 when
+  // kept). The wall stays where the centroidal sweeps put it: moving it in
+  // the descent trades surface distance for interior angles.
+  constexpr int kIterations = 20;
+  constexpr double kStep = 0.1;
+  constexpr double kTrust = 0.05;
+  // Skewness weight against the non-orthogonality term and the quartic
+  // emphasis that concentrates the descent on the few most skewed faces
+  // (the transition faces between octree levels and the projection layer).
+  constexpr double kSkewWeight = 0.1;
+  constexpr double kSkewEmphasis = 20.0;
   // 1. Centroidal smoothing.
-  for (int sweep = 0; sweep < sweeps; ++sweep) {
+  for (int sweep = 0; sweep < kSweeps; ++sweep) {
     geometry();
     previous = mesh.points;
     std::fill(moved.begin(), moved.end(), 0);
@@ -2149,7 +2205,7 @@ void Builder::smooth() {
       for (int64_t slot = first; slot < last; ++slot) target = add(target, centroid[t.vertex_cells[slot]]);
       target = mul(target, 1.0 / static_cast<double>(last - first));
       const Vec p = point(v);
-      set_point(v, add(p, mul(sub(target, p), relax)));
+      set_point(v, add(p, mul(sub(target, p), kRelax)));
       moved[v] = 1;
     }
     for (int64_t row = 0; row < columns; ++row) {
@@ -2170,33 +2226,21 @@ void Builder::smooth() {
         }
         target = mul(target, 1.0 / weight);
       }
-      place_surface(row, add(p, mul(sub(target, p), relax)));
+      place_surface(row, add(p, mul(sub(target, p), kRelax)));
       moved[v] = 1;
     }
     settle();
   }
-  phase("centroidal");
-  // 2. Non-orthogonality descent: E = sum over interior faces of
-  // x + mu x^3 with x = 1 - cos(angle between the centroid join and the
-  // area vector); cell centroids move with the mean of their vertices.
+  // 2. Descent on E = sum over interior faces of (1 - cos) of the angle
+  // between the centroid join and the area vector, plus the skewness term;
+  // cell centroids move with the mean of their vertices.
   std::vector<Vec> gradient(points), cell_gradient(cells);
-  std::vector<uint8_t> hot(points, 0);
-  const int global = static_cast<int>(knob("HD_OPT_GLOBAL", iterations));
-  const double hot_cos = std::cos(knob("HD_HOT_ANGLE", 6.0) * (3.14159265358979323846 / 180.0));
-  const double hot_skew = knob("HD_HOT_SKEW", 0.3);
-  auto heat = [&](int32_t c) {
-    for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) hot[cell_vertex_list[slot]] = 1;
-  };
-  // Per-vertex trust radius: halved when a move is undone, regrown when kept.
-  std::vector<double> trust(points, cap * b);
-  for (int iteration = 0; iteration < iterations; ++iteration) {
-    const auto t0 = Clock::now();
+  std::vector<double> trust(points, kTrust * b);
+  for (int iteration = 0; iteration < kIterations; ++iteration) {
     geometry();
-    const double tg = seconds(t0);
     std::fill(gradient.begin(), gradient.end(), Vec{0, 0, 0});
     std::fill(cell_gradient.begin(), cell_gradient.end(), Vec{0, 0, 0});
-    std::fill(hot.begin(), hot.end(), 0);
-    for (int64_t f = 0; f < faces; ++f) {
+    for (const int64_t f : active_faces) {
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
       if (n < 0) continue;
       const Vec d = sub(centroid[n], centroid[o]);
@@ -2205,12 +2249,7 @@ void Builder::smooth() {
       if (!(ld > 0.0) || !(ls > 0.0)) continue;
       const Vec dh = mul(d, 1.0 / ld), sh = mul(area, 1.0 / ls);
       const double c = dot(dh, sh);
-      if (c < hot_cos) {
-        heat(o);
-        heat(n);
-      }
-      const double x = 1.0 - c;
-      const double weight = -ortho_weight * (1.0 + 3.0 * emphasis * x * x);  // dE/dc
+      const double weight = -1.0;  // dE/dc
       const Vec gd = mul(sub(sh, mul(dh, c)), weight / ld);
       const Vec gs = mul(sub(dh, mul(sh, c)), weight / ls);
       cell_gradient[n] = add(cell_gradient[n], gd);
@@ -2225,7 +2264,7 @@ void Builder::smooth() {
       // face centre from where the centroid join meets the face plane
       // (OpenFOAM's measure); E += w (s^2 + mu s^4) with the face normal
       // and fd frozen, the face centre moving with its vertex mean.
-      if (skew_weight > 0.0) {
+      {
         const Vec cpf = sub(face_centre[f], centroid[o]);
         const double nd = dot(sh, d);
         if (!(std::fabs(nd) > 0.0)) continue;
@@ -2240,11 +2279,7 @@ void Builder::smooth() {
           }
         }
         const double skew = length / fd;
-        if (skew > hot_skew) {
-          heat(o);
-          heat(n);
-        }
-        const double scale = skew_weight * (1.0 + 2.0 * skew_emphasis * skew * skew) * 2.0 / (fd * fd);
+        const double scale = kSkewWeight * (1.0 + 2.0 * kSkewEmphasis * skew * skew) * 2.0 / (fd * fd);
         const Vec w = mul(sub(sv, mul(sh, dot(sv, d) / nd)), scale);
         const Vec face_share = mul(w, 1.0 / static_cast<double>(last - first));
         for (int64_t q = first; q < last; ++q) {
@@ -2254,60 +2289,47 @@ void Builder::smooth() {
         cell_gradient[o] = sub(cell_gradient[o], mul(w, 1.0 - alpha));
       }
     }
-    for (int64_t c = 0; c < cells; ++c) {
+    for (const int64_t c : active_cells) {
       const int64_t first = cell_vertex_offsets[c], last = cell_vertex_offsets[c + 1];
       const Vec share = mul(cell_gradient[c], 1.0 / static_cast<double>(last - first));
       for (int64_t slot = first; slot < last; ++slot) gradient[cell_vertex_list[slot]] = add(gradient[cell_vertex_list[slot]], share);
     }
     previous = mesh.points;
-    const bool freeze_wall = knob("HD_FREEZE_WALL", 0.0) > 0.0;
     std::fill(moved.begin(), moved.end(), 0);
     for (int64_t v = 0; v < points; ++v) {
-      if (role[v] == 0 || (iteration >= global && !hot[v]) || (role[v] == 2 && freeze_wall)) continue;
-      Vec delta = mul(gradient[v], -step * b * b);
+      if (role[v] != 1) continue;
+      Vec delta = mul(gradient[v], -kStep * b * b);
       const double length = norm(delta);
       if (length > trust[v]) delta = mul(delta, trust[v] / length);
-      if (role[v] == 1) {
-        set_point(v, add(point(v), delta));
-      } else {
-        place_surface(column_of[v], add(point(v), delta));
-      }
+      set_point(v, add(point(v), delta));
       moved[v] = 1;
     }
     std::vector<uint8_t> attempted(moved);
-    const auto t1 = Clock::now();
     settle();
-    if (std::getenv("HD_TIME")) {
-      int64_t hot_count = 0, move_count = 0;
-      for (int64_t v = 0; v < points; ++v) {
-        hot_count += hot[v];
-        move_count += attempted[v];
-      }
-      std::fprintf(stderr, "it %d geom %.4f grad+move %.4f settle %.4f hot %lld moved %lld\n", iteration, tg,
-                   std::chrono::duration<double>(t1 - t0).count() - tg, seconds(t1),
-                   static_cast<long long>(hot_count), static_cast<long long>(move_count));
-    }
     for (int64_t v = 0; v < points; ++v) {
       if (!attempted[v]) continue;
-      trust[v] = moved[v] ? std::min(cap * b, 1.25 * trust[v]) : 0.5 * trust[v];
+      trust[v] = moved[v] ? std::min(kTrust * b, 1.25 * trust[v]) : 0.5 * trust[v];
     }
   }
-  phase("descent");
   // 3. Local repair: a pattern search per vertex of the faces still above
   // the goals, on the largest normalised badness max(skew / s0, angle / a0)
-  // over the faces of its cells (OpenFOAM's measures, recomputed exactly).
-  const double skew_goal = knob("HD_REPAIR_SKEW", 0.45);
-  const double angle_goal = knob("HD_REPAIR_ANGLE", 15.0);
-  const int repair_rounds = static_cast<int>(knob("HD_REPAIR_ROUNDS", 3));
-  auto face_badness = [&](int64_t f, const Vec& co, const Vec& cn) {
-    Vec centre, area, average;
-    face_geometry(mesh, f, centre, area, average);
-    const Vec d = sub(cn, co);
-    const double ld = norm(d), ls = norm(area);
-    if (!(ld > 0.0) || !(ls > 0.0)) return std::numeric_limits<double>::infinity();
-    const double cosine = std::clamp(dot(d, area) / (ld * ls), -1.0, 1.0);
-    const double angle = std::acos(cosine) * (180.0 / 3.14159265358979323846);
+  // over the faces of its cells (OpenFOAM's measures, recomputed exactly;
+  // a boundary face measures its skewness against the owner centroid's
+  // projection along the face normal, as checkMesh does).
+  // Goals: checkMesh skewness 0.46 and non-orthogonality 17.5 degrees, the
+  // levels the F8 sphere reaches below cfMesh's (0.486, 18.7); three rounds.
+  constexpr double kSkewGoal = 0.46;
+  constexpr double kAngleGoal = 17.5;
+  constexpr int kRepairRounds = 3;
+  auto face_badness = [&](int64_t f, const Vec& centre, const Vec& area, const Vec& co, const Vec* cn) {
+    const double ls = norm(area);
+    if (!(ls > 0.0)) return std::numeric_limits<double>::infinity();
     const Vec cpf = sub(centre, co);
+    const Vec d = cn != nullptr ? sub(*cn, co) : mul(area, dot(area, cpf) / (ls * ls));
+    const double ld = norm(d);
+    if (!(ld > 0.0)) return std::numeric_limits<double>::infinity();
+    const double cosine = std::clamp(dot(d, area) / (ld * ls), -1.0, 1.0);
+    const double angle = cn != nullptr ? std::acos(cosine) * (180.0 / 3.14159265358979323846) : 0.0;
     const double nd = dot(area, d);
     if (!(std::fabs(nd) > 0.0)) return std::numeric_limits<double>::infinity();
     const Vec sv = sub(cpf, mul(d, dot(area, cpf) / nd));
@@ -2319,25 +2341,30 @@ void Builder::smooth() {
         fd = std::max(fd, std::fabs(dot(unit, sub(point(mesh.face_vertices[q]), centre))));
       }
     }
-    return std::max(length / fd / skew_goal, angle / angle_goal);
+    return std::max(length / fd / kSkewGoal, angle / kAngleGoal);
   };
   int64_t repaired = 0;
-  for (int round = 0; round < repair_rounds; ++round) {
+  // Per vertex, the faces of its cells with their geometry cached: a trial
+  // move recomputes only the faces through the vertex and the centroids of
+  // its cells; validity is checked only for an improving move.
+  std::vector<int32_t> face_slot(faces, -1);
+  std::vector<int32_t> local_cells, local_faces;
+  std::vector<Vec> local_centroid, local_centre, local_area;
+  std::vector<uint8_t> local_moving;
+  for (int round = 0; round < kRepairRounds; ++round) {
     geometry();
     std::vector<std::pair<double, int32_t>> bad;
-    for (int64_t f = 0; f < faces; ++f) {
+    for (const int64_t f : active_faces) {
       const int32_t o = mesh.face_owner[f], n = mesh.face_neighbor[f];
-      if (n < 0) continue;
-      const double value = face_badness(f, centroid[o], centroid[n]);
+      const double value = face_badness(f, face_centre[f], face_area[f], centroid[o], n >= 0 ? &centroid[n] : nullptr);
       if (value > 1.0) bad.emplace_back(-value, static_cast<int32_t>(f));
     }
     if (bad.empty()) break;
     std::sort(bad.begin(), bad.end());
     std::vector<uint8_t> done(points, 0);
-    std::vector<int32_t> local_cells, local_faces;
-    std::vector<Vec> local_centroid;
     for (const auto& [value, f] : bad) {
       for (const int32_t c : {mesh.face_owner[f], mesh.face_neighbor[f]}) {
+        if (c < 0) continue;
         for (int64_t slot = cell_vertex_offsets[c]; slot < cell_vertex_offsets[c + 1]; ++slot) {
           const int32_t v = cell_vertex_list[slot];
           if (role[v] != 1 || done[v]) continue;
@@ -2348,72 +2375,101 @@ void Builder::smooth() {
           for (const int32_t k : local_cells) {
             for (int64_t s2 = t.cell_face_offsets[k]; s2 < t.cell_face_offsets[k + 1]; ++s2) {
               const int32_t g = std::abs(t.cell_faces[s2]) - 1;
-              if (mesh.face_neighbor[g] >= 0) local_faces.push_back(g);
+              if (face_slot[g] < 0) {
+                face_slot[g] = static_cast<int32_t>(local_faces.size());
+                local_faces.push_back(g);
+              }
             }
           }
-          std::sort(local_faces.begin(), local_faces.end());
-          local_faces.erase(std::unique(local_faces.begin(), local_faces.end()), local_faces.end());
+          const std::size_t nf = local_faces.size(), nc = local_cells.size();
+          local_centre.resize(nf);
+          local_area.resize(nf);
+          local_moving.assign(nf, 0);
+          local_centroid.resize(nc);
+          for (std::size_t q = 0; q < nf; ++q) {
+            const int32_t g = local_faces[q];
+            for (int64_t e = mesh.face_offsets[g]; e < mesh.face_offsets[g + 1]; ++e) {
+              local_moving[q] = local_moving[q] || mesh.face_vertices[e] == v;
+            }
+            Vec average;
+            face_geometry(mesh, g, local_centre[q], local_area[q], average);
+          }
           auto centroid_of = [&](int32_t k) -> const Vec& {
-            for (std::size_t q = 0; q < local_cells.size(); ++q) {
+            for (std::size_t q = 0; q < nc; ++q) {
               if (local_cells[q] == k) return local_centroid[q];
             }
             return centroid[k];
           };
           auto evaluate = [&]() {
-            local_centroid.resize(local_cells.size());
-            for (std::size_t q = 0; q < local_cells.size(); ++q) {
-              local_centroid[q] = cell_centroid(mesh, t, local_cells[q]);
+            for (std::size_t q = 0; q < nf; ++q) {
+              if (!local_moving[q]) continue;
+              Vec average;
+              face_geometry(mesh, local_faces[q], local_centre[q], local_area[q], average);
+            }
+            for (std::size_t q = 0; q < nc; ++q) {
+              const int32_t k = local_cells[q];
+              const int64_t first = t.cell_face_offsets[k], last = t.cell_face_offsets[k + 1];
+              Vec estimate{0, 0, 0};
+              for (int64_t s2 = first; s2 < last; ++s2) {
+                estimate = add(estimate, local_centre[face_slot[std::abs(t.cell_faces[s2]) - 1]]);
+              }
+              estimate = mul(estimate, 1.0 / static_cast<double>(last - first));
+              double volume = 0.0;
+              Vec moment{0, 0, 0};
+              for (int64_t s2 = first; s2 < last; ++s2) {
+                const int32_t signed_face = t.cell_faces[s2];
+                const int32_t slot_q = face_slot[std::abs(signed_face) - 1];
+                const double w = (signed_face > 0 ? 1.0 : -1.0) *
+                                 dot(local_area[slot_q], sub(local_centre[slot_q], estimate)) / 3.0;
+                volume += w;
+                moment = add(moment, mul(add(mul(local_centre[slot_q], 0.75), mul(estimate, 0.25)), w));
+              }
+              local_centroid[q] = volume > 0.0 ? mul(moment, 1.0 / volume) : estimate;
             }
             double worst = 0.0;
-            for (const int32_t g : local_faces) {
-              worst = std::max(worst, face_badness(g, centroid_of(mesh.face_owner[g]),
-                                                   centroid_of(mesh.face_neighbor[g])));
+            for (std::size_t q = 0; q < nf; ++q) {
+              const int32_t g = local_faces[q];
+              const int32_t n = mesh.face_neighbor[g];
+              worst = std::max(worst, face_badness(g, local_centre[q], local_area[q], centroid_of(mesh.face_owner[g]),
+                                                   n >= 0 ? &centroid_of(n) : nullptr));
             }
             return worst;
           };
           double current = evaluate();
-          const int64_t row = role[v] == 2 ? column_of[v] : -1;
+          const int32_t stair = stair_vertex[v];
           for (const double scale : {0.08, 0.03, 0.01}) {
             for (bool improved = true; improved;) {
               improved = false;
               for (int direction = 0; direction < 6; ++direction) {
                 const Vec start = point(v);
-                const int32_t item = row >= 0 ? surface_item[row] : -1;
                 Vec trial = start;
                 trial[direction / 2] += (direction & 1 ? -1.0 : 1.0) * scale * b;
-                if (row >= 0) {
-                  place_surface(row, trial);
-                } else {
-                  set_point(v, trial);
+                set_point(v, trial);
+                const double value = evaluate();
+                bool accept = value < current;
+                // The staircase vertex keeps room for the layer stack.
+                if (accept && stair >= 0) {
+                  accept = norm(sub(trial, point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
                 }
-                bool valid = true;
-                for (const int32_t k : local_cells) valid = valid && cell_valid_float(mesh, t, k);
-                if (valid && row < 0) {
-                  // The staircase vertex keeps room for the layer stack.
-                  const int32_t stair = stair_vertex[v] >= 0 ? stair_vertex[v] : -1;
-                  if (stair >= 0) {
-                    valid = norm(sub(point(v), point(surface_vertex[stair]))) >= layer_total + 0.25 * b;
-                  }
-                }
-                const double value = valid ? evaluate() : std::numeric_limits<double>::infinity();
-                if (value < current) {
+                for (std::size_t q = 0; q < nc && accept; ++q) accept = cell_valid_float(mesh, t, local_cells[q]);
+                if (accept) {
                   current = value;
                   improved = true;
                   ++repaired;
                 } else {
                   set_point(v, start);
-                  if (row >= 0) surface_item[row] = item;
                 }
               }
             }
           }
-          for (std::size_t q = 0; q < local_cells.size(); ++q) centroid[local_cells[q]] = cell_centroid(mesh, t, local_cells[q]);
+          evaluate();
+          for (std::size_t q = 0; q < nc; ++q) centroid[local_cells[q]] = local_centroid[q];
+          for (const int32_t g : local_faces) face_slot[g] = -1;
         }
       }
     }
   }
   stats[26] = static_cast<double>(repaired);
-  phase("repair");
   stats[21] = static_cast<double>(reverted);
 }
 
@@ -2471,8 +2527,9 @@ int32_t build(const Input& in, Mesh& mesh) {
   builder.tree.levels = levels;
   builder.tree.b = in.boundary_size;
   for (int32_t k = 0; k < in.layer_count; ++k) builder.layer_total += in.layer_thicknesses[k];
-  builder.delta = (std::getenv("HD_DELTA") ? std::atof(std::getenv("HD_DELTA")) : 0.5) * in.boundary_size +
-                  builder.layer_total;
+  // Core clearance: half a boundary cell beyond the layer stack, so every
+  // projection column starts at least b / 2 from the wall.
+  builder.delta = 0.5 * in.boundary_size + builder.layer_total;
   auto& stats = builder.stats;
   int32_t status = build_surface(in, in.feature_angle_degrees, 0.5 * in.boundary_size, surface, stats);
   if (status != PHX_MC_OK) return status;
@@ -2498,7 +2555,10 @@ int32_t build(const Input& in, Mesh& mesh) {
   builder.smooth();
   builder.emit_layers(in.layer_count + 1);
   stats[5] = seconds(stage);
-  // Surface vertex ancestry and kinds.
+  // Surface vertex ancestry and kinds: the triangle under a patch vertex and
+  // a triangle on the feature edge under a curve vertex (walks from the item
+  // of the last placement attempt, which a revert may have left behind), the
+  // nearest triangle of a corner; the distance to that point.
   const int64_t points = static_cast<int64_t>(mesh.points.size() / 3);
   if (points >= std::numeric_limits<int32_t>::max()) return PHX_MC_INDEX_RANGE_ERROR;
   mesh.vertex_triangles.assign(points, -1);
@@ -2509,13 +2569,26 @@ int32_t build(const Input& in, Mesh& mesh) {
   double vertex_distance = 0.0;
   for (std::size_t row = 0; row < builder.stair_vertices.size(); ++row) {
     const int32_t v = builder.surface_vertex[row];
+    const int32_t item = builder.surface_item[row];
+    const Vec p = builder.point(v);
     mesh.vertex_kinds[v] = builder.surface_kind[row];
-    const Hit hit = nearest_triangle(surface, builder.point(v), -1);
+    Hit hit;
+    if (builder.surface_kind[row] == kPatch) {
+      hit = walk_triangle(surface, p, item);
+    } else if (builder.surface_kind[row] == kFeature) {
+      hit = walk_edge(surface, p, item);
+      hit.item = surface.edge_triangles[hit.item];
+    } else {
+      hit = nearest_triangle(surface, p, -1);
+    }
     mesh.vertex_triangles[v] = hit.item;
-    vertex_distance = std::max(vertex_distance, std::sqrt(hit.d2));
+    vertex_distance = std::max(vertex_distance, norm(sub(hit.point, p)));
   }
-  // Boundary faces: facet of the nearest triangle of the centre; sampled
-  // distance of centres and edge midpoints.
+  // Boundary faces: the facet of their patch, read from a patch vertex's
+  // triangle (a face without one: the nearest triangle of its centre). The
+  // sampled distance of centres and edge midpoints is to the face's patch
+  // (a walk from that triangle), an upper bound on the distance to the
+  // surface.
   const int64_t faces = static_cast<int64_t>(mesh.face_owner.size());
   mesh.face_facets.assign(faces, -1);
   double sampled = 0.0;
@@ -2523,13 +2596,19 @@ int32_t build(const Input& in, Mesh& mesh) {
     if (mesh.face_neighbor[f] >= 0) continue;
     Vec centre, area, average;
     face_geometry(mesh, f, centre, area, average);
-    const Hit hit = nearest_triangle(surface, average, -1);
-    mesh.face_facets[f] = in.triangle_facets[hit.item];
+    int32_t seed = -1;
+    for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1] && seed < 0; ++q) {
+      const int32_t v = mesh.face_vertices[q];
+      if (mesh.vertex_kinds[v] == kPatch) seed = mesh.vertex_triangles[v];
+    }
+    Hit hit = seed >= 0 ? walk_triangle(surface, average, seed) : nearest_triangle(surface, average, -1);
+    mesh.face_facets[f] = surface.patch_facet[surface.patch[hit.item]];
     sampled = std::max(sampled, std::sqrt(hit.d2));
     for (int64_t q = mesh.face_offsets[f]; q < mesh.face_offsets[f + 1]; ++q) {
       const int64_t r = q + 1 < mesh.face_offsets[f + 1] ? q + 1 : mesh.face_offsets[f];
       const Vec mid = mul(add(builder.point(mesh.face_vertices[q]), builder.point(mesh.face_vertices[r])), 0.5);
-      sampled = std::max(sampled, std::sqrt(nearest_triangle(surface, mid, -1).d2));
+      hit = walk_triangle(surface, mid, hit.item);
+      sampled = std::max(sampled, std::sqrt(hit.d2));
     }
   }
   stats[15] = vertex_distance;

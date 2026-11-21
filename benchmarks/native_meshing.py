@@ -257,6 +257,7 @@ def _rows(
     overset_inputs: Path | None,
     layer_inputs: Path | None,
     voronoi_inputs: Path | None,
+    hexdom_inputs: Path | None,
     /,
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
@@ -332,6 +333,15 @@ def _rows(
     elif names is not None and voronoi_rows & names:
         raise ValueError(
             "The voronoi rows read the ledger's F14 surfaces: pass --voronoi-inputs."
+        )
+    hexdom_rows = frozenset(
+        f"hexdom-{model}-L{layers}" for model, layers, _ in _F8_CASES
+    )
+    if hexdom_inputs is not None:
+        families += ((hexdom_rows, lambda: _hexdom_rows(hexdom_inputs)),)
+    elif names is not None and hexdom_rows & names:
+        raise ValueError(
+            "The hexdom rows read the ledger's F8 surfaces: pass --hexdom-inputs."
         )
     rows: list[_Row] = []
     for family, build in families:
@@ -2779,15 +2789,17 @@ _F8_REFERENCE: dict[tuple[str, int], dict[str, float]] = {
         "skewness_maximum": 0.807,
     },
 }
-# Core size h per row (boundary size h / 2) and the first of two layers
-# (growth 1.2) as a fraction of the boundary size.
+# Core size h per row (boundary size h / 2): the cfMesh reference's h on each
+# row (ledger F8, ~1e5-cell rung). Two layers grow at 1.2 from a first layer
+# of 0.325 boundary sizes, the median first-layer thickness of the ledger's
+# cfMesh sphere L2 mesh (cfMesh splits its boundary cells; second 0.39).
 _F8_CASES: tuple[tuple[str, int, float], ...] = (
     ("sphere", 0, 0.05464),
-    ("sphere", 2, 0.05464),
+    ("sphere", 2, 0.06035),
     ("quadric", 0, 0.04597),
-    ("quadric", 2, 0.04597),
+    ("quadric", 2, 0.0513),
 )
-_F8_FIRST_LAYER = 0.2
+_F8_FIRST_LAYER = 0.325
 
 
 class _HexDominantCase(NamedTuple):
@@ -3145,7 +3157,6 @@ def _hexdom_rows(inputs: Path, /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-
 def _ceiling(
     ceilings: Mapping[str, Any], row: _Row, elements: int, /
 ) -> tuple[float, float, str] | None:
@@ -3227,6 +3238,13 @@ def main(argv: list[str] | None = None) -> int:
         help="directory of the ledger's F14 surfaces (<shape>.npz with xyz and tri); "
         "the voronoi rows run only with it",
     )
+    parser.add_argument(
+        "--hexdom-inputs",
+        type=Path,
+        default=None,
+        help="directory of the ledger's F8 surfaces (<model>-stl.npz with X and F); "
+        "the hexdom rows run only with it",
+    )
     arguments = parser.parse_args(argv)
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
@@ -3242,6 +3260,7 @@ def main(argv: list[str] | None = None) -> int:
         arguments.overset_inputs,
         arguments.layer_inputs,
         arguments.voronoi_inputs,
+        arguments.hexdom_inputs,
     ):
         measured = _measure(row, arguments.repeats)
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}

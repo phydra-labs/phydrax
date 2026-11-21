@@ -42,6 +42,7 @@ import phydrax._meshcore as meshcore
 from phydrax._physical import SpatialCoordinateContract
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.geometry._piecewise_linear_boundary import PiecewiseLinearBoundarySource
 from phydrax.discretization import CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellBlock
@@ -49,7 +50,6 @@ from phydrax.meshing._association import GeometryAssociation
 from phydrax.meshing._contracts import (
     MeshingFailure,
     MeshingFailureCategory,
-    MeshingEntityKind,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
@@ -66,6 +66,7 @@ from phydrax.meshing._organization import (
     MeshZoneRole,
 )
 from phydrax.meshing._result import MeshingComplianceReport
+from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
 from phydrax.meshing._sizing import (
     size_statistic,
     SizeControlStrength,
@@ -93,6 +94,7 @@ from phydrax.meshing.providers._native_voronoi import (
     _plc_triangles,
     _REGION,
     _sorted_loop_table,
+    plc_fidelity_query,
     plc_fidelity_request,
 )
 from phydrax.typing import checked
@@ -109,8 +111,6 @@ _CORE, _PROJECTION, _LAYER = 0, 1, 2
 def _whole_scope(
     source: NativePlcSource, scope_dimension: int, specification_scope: object, /
 ) -> bool:
-    from phydrax.meshing._scope import MeshingScope
-
     if not isinstance(specification_scope, MeshingScope):
         return False
     return (
@@ -239,16 +239,28 @@ class _Published:
     cell_regions: np.ndarray
 
 
-def _publish(native: meshcore.HexDominant, facet_rows: np.ndarray, /) -> _Published:
+def _publish(native: meshcore.HexDominant, /) -> _Published:
     kinds = np.asarray(native.cell_kinds, dtype=np.int64)
     offsets = np.asarray(native.cell_vertex_offsets, dtype=np.int64)
     values = np.asarray(native.cell_vertices, dtype=np.int32)
+    counts = np.diff(offsets)
     hex_rows = np.flatnonzero(kinds == 0)
-    hexes = values.reshape((-1, 8))
-    if hexes.shape[0] != hex_rows.size or not np.array_equal(
-        np.diff(offsets)[hex_rows], np.full((hex_rows.size,), 8)
+    prism_rows = np.flatnonzero(kinds == 2)
+    if not (
+        np.all(counts[hex_rows] == 8)
+        and np.all(counts[prism_rows] == 6)
+        and np.all(counts[kinds == 1] == 0)
     ):
-        raise RuntimeError("Native hexahedra must list eight vertices each.")
+        raise RuntimeError(
+            "Native hexahedra and prisms must list eight and six vertices."
+        )
+    hexes = values[offsets[hex_rows][:, None] + np.arange(8)]
+    prisms = values[offsets[prism_rows][:, None] + np.arange(6)]
+    blocks = (CellBlock("hexahedra", "hexahedron", hexes, global_ids=hex_rows),) + (
+        (CellBlock("prisms", "prism", prisms, global_ids=prism_rows),)
+        if prism_rows.size
+        else ()
+    )
     face_offsets = np.asarray(native.face_offsets, dtype=np.int64)
     face_vertices = np.asarray(native.face_vertices, dtype=np.int32)
     owner = np.asarray(native.face_owner, dtype=np.int64)
@@ -265,7 +277,7 @@ def _publish(native: meshcore.HexDominant, facet_rows: np.ndarray, /) -> _Publis
             loops[slot[neighbor[face]]].append(loop[::-1])
     mesh = CellMesh.from_mixed_3d(
         native.points,
-        (CellBlock("hexahedra", "hexahedron", hexes, global_ids=hex_rows),),
+        blocks,
         polyhedra={"polyhedra": loops} if loops else {},
         polyhedral_cell_global_ids={"polyhedra": poly_rows} if loops else None,
     )
@@ -289,8 +301,7 @@ def _publish(native: meshcore.HexDominant, facet_rows: np.ndarray, /) -> _Publis
         raise RuntimeError("Canonical cells must retain the native faces.")
     face_order = np.empty((native_table.shape[0],), dtype=np.int64)
     face_order[canonical_rows] = native_rows
-    native_facets = np.asarray(native.face_facets, dtype=np.int64)
-    face_facets = np.where(native_facets >= 0, facet_rows[np.maximum(native_facets, 0)], -1)
+    face_facets = np.asarray(native.face_facets, dtype=np.int64)
     return _Published(
         native,
         mesh,
@@ -484,25 +495,18 @@ def _compliance(
     offsets = np.asarray(native.face_offsets, dtype=np.int64)
     values = np.asarray(native.face_vertices, dtype=np.int64)
     points = np.asarray(native.points, dtype=np.float64)
-    wall = np.flatnonzero(np.asarray(native.face_neighbor) < 0)
-    wall_sizes = np.asarray(
-        [
-            np.sqrt(
-                0.5
-                * np.linalg.norm(
-                    np.sum(
-                        np.cross(
-                            points[values[offsets[f] : offsets[f + 1]]],
-                            np.roll(points[values[offsets[f] : offsets[f + 1]]], -1, axis=0),
-                        ),
-                        axis=0,
-                    )
-                )
-            )
-            for f in wall.tolist()
-        ],
-        dtype=np.float64,
+    # Wall face sizes: the square root of the area of each boundary loop.
+    sizes = np.diff(offsets)
+    rows = np.repeat(np.arange(sizes.size, dtype=np.int64), sizes)
+    following = np.arange(1, values.size + 1, dtype=np.int64)
+    following[offsets[1:] - 1] = offsets[:-1]
+    twice = np.cross(points[values], points[values[following]])
+    area = np.stack(
+        [np.bincount(rows, twice[:, axis], minlength=sizes.size) for axis in range(3)],
+        axis=1,
     )
+    wall = np.asarray(native.face_neighbor) < 0
+    wall_sizes = np.sqrt(0.5 * np.linalg.norm(area[wall], axis=1))
     policy = specification.size_compliance
     requested: list[tuple[str, float]] = []
     achieved: list[tuple[str, float]] = []
@@ -571,6 +575,9 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
     source: NativePlcSource
     specification: VolumeMeshingSpec
     coordinate_contract: SpatialCoordinateContract
+    # The PLC's exterior facets as the fidelity request's source: a property
+    # of the source alone, built once per plan.
+    fidelity_query: PiecewiseLinearBoundarySource
     core_size: float = eqx.field(static=True)
     boundary_size: float = eqx.field(static=True)
 
@@ -583,9 +590,13 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         boundary_size: float,
         /,
     ) -> None:
+        triangles, polygons = _plc_triangles(source)
         self.source = source
         self.specification = specification
         self.coordinate_contract = coordinate_contract
+        self.fidelity_query = plc_fidelity_query(
+            declared_plc_domain(source.complex, triangles, polygons, source.source_id)
+        )
         self.core_size = core_size
         self.boundary_size = boundary_size
 
@@ -607,7 +618,7 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
         native = meshcore.hex_dominant(
             np.asarray(complex_.vertices, dtype=np.float64)[used],
             compact.reshape((-1, 3)),
-            np.arange(triangle_facets.size, dtype=np.int64),
+            triangle_facets,
             core_size=self.core_size,
             boundary_size=self.boundary_size,
             feature_angle_degrees=_FEATURE_ANGLE_DEGREES,
@@ -623,8 +634,7 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
                 provider_code="native_octree_hex_certification",
                 stage="volume_fill",
             )
-        # The kernel's facet rows are input triangle rows; report PLC facets.
-        published = _publish(native, triangle_facets)
+        published = _publish(native)
         organization = _organization(
             self.source,
             self.specification,
@@ -632,12 +642,11 @@ class _PreparedNativeOctreeHexDominant(StrictModule, NonTrainableState):
             _associations(self.source, published, triangles, triangle_facets),
         )
         geometry = CellGeometrySpec.affine(published.mesh)
-        domain = declared_plc_domain(complex_, triangles, polygons, self.source.source_id)
         tolerance = self.specification.maximum_deviation
         certification = plc_fidelity_request(
             published.mesh,
             geometry,
-            domain,
+            self.fidelity_query,
             self.boundary_size if tolerance is None else tolerance,
         )
         stages = (

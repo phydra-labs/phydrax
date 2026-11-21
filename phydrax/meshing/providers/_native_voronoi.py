@@ -375,13 +375,17 @@ def _edge_ancestry(
     np.maximum.at(edge_facet, face_edges, face_facets[edge_faces])
     owner = np.asarray(connectivity.face_owner, dtype=np.int64)[edge_faces]
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)[edge_faces]
-    region_rows = np.concatenate(
-        (
-            np.stack((face_edges, cell_regions[owner]), axis=1),
-            np.stack((face_edges, cell_regions[neighbor]), axis=1)[neighbor >= 0],
+    # Distinct (edge, region) pairs as one sortable key each.
+    span = int(np.max(cell_regions, initial=0)) + 1
+    keys = np.unique(
+        np.concatenate(
+            (
+                face_edges * span + cell_regions[owner],
+                (face_edges * span + cell_regions[np.maximum(neighbor, 0)])[neighbor >= 0],
+            )
         )
     )
-    region_rows = np.unique(region_rows, axis=0)
+    region_rows = np.stack((keys // span, keys % span), axis=1)
     starts = np.searchsorted(region_rows[:, 0], np.arange(count, dtype=np.int64))
     counts = np.bincount(region_rows[:, 0], minlength=count)
     sides = np.full((count, 2), -2, dtype=np.int64)
@@ -796,19 +800,23 @@ class _PreparedNativeVoronoi(StrictModule, NonTrainableState):
                 provider_code="native_voronoi_certification",
                 stage="source_witness",
             )
-        return plc_fidelity_request(mesh, geometry, domain, tolerance)
+        return plc_fidelity_request(mesh, geometry, plc_fidelity_query(domain), tolerance)
+
+
+def plc_fidelity_query(domain: PiecewiseLinearDomain, /) -> PiecewiseLinearBoundarySource:
+    """The PLC's exterior facets as the source of a fidelity request."""
+    return PiecewiseLinearBoundarySource(PiecewiseLinearDomainBoundaryOwner(domain), 2)
 
 
 def plc_fidelity_request(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    domain: PiecewiseLinearDomain,
+    query: PiecewiseLinearBoundarySource,
     tolerance: float,
     /,
 ) -> NativeCertificationRequest:
     """``volume_plc_fidelity``: a two-sided distance bound between the mesh's
     exterior surface and the PLC's exterior facets within ``tolerance``."""
-    query = PiecewiseLinearBoundarySource(PiecewiseLinearDomainBoundaryOwner(domain), 2)
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     witness = SourceBoundaryDistanceWitness(
         mesh_id=mesh.mesh_id,

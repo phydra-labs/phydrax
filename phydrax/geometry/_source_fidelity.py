@@ -4038,9 +4038,9 @@ def _exact_sign(value: ExactScalar, /) -> int:
     return int(value > 0) - int(value < 0)
 
 
-def _convex_face_fan(points: Sequence[ExactPoint3], /) -> None:
-    """Refuse a face loop that is not exactly planar and convex, the faces
-    whose fan from the first vertex triangulates them exactly."""
+def _planar_convex_face(points: Sequence[ExactPoint3], /) -> bool:
+    """Whether a face loop is exactly planar and convex, the faces whose fan
+    from the first vertex triangulates them exactly."""
 
     def cross(first: ExactPoint3, second: ExactPoint3, third: ExactPoint3) -> ExactPoint3:
         u = tuple(second[axis] - first[axis] for axis in range(3))
@@ -4069,13 +4069,12 @@ def _convex_face_fan(points: Sequence[ExactPoint3], /) -> None:
         )
         for point in points
     ):
-        raise ValueError("Source distance evidence requires exactly planar faces.")
-    if any(
+        return False
+    return not any(
         _exact_sign(sum((turn[axis] * normal[axis] for axis in range(3)), Fraction(0)))
         < 0
         for turn in turns
-    ):
-        raise ValueError("Source distance evidence requires convex faces.")
+    )
 
 
 def _exterior_target_triangles(
@@ -4084,10 +4083,20 @@ def _exterior_target_triangles(
     """Exterior facet IDs, binary64 shadows (n, 3, 3) of their exact triangles,
     and a bound of every shadow vertex's distance to its exact point.
 
-    Polyhedral exterior faces must be exactly planar and convex; their fans
-    from the first vertex are then exact triangulations.
+    On a mesh with polyhedra or hexahedra, exterior faces must be exactly
+    planar and convex (their fans from the first vertex are then exact
+    triangulations) or be a hexahedron's bilinear quadrilateral. A bilinear
+    face B(u, v) over the loop P0..P3 differs from its fan from P0 at equal
+    (u, v) by v (1 - u) d (or u (1 - v) d) with d = P0 - P1 + P2 - P3, so the
+    two lie within |d| / 4 of each other both ways; the bound joins the gap.
     """
-    if any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
+    hexahedra = {
+        int(value)
+        for block in mesh.blocks
+        if isinstance(block, CellBlock) and block.cell_kind == "hexahedron"
+        for value in np.asarray(block.global_ids, dtype=np.int64).tolist()
+    }
+    if hexahedra or any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
         from ..discretization._cell_complex import PolyhedralConnectivity
 
         connectivity = mesh.connectivity
@@ -4101,10 +4110,24 @@ def _exterior_target_triangles(
             raise ValueError("Source distance evidence requires an exterior surface.")
         exact = _polyhedral_vertex_source_coordinates(mesh, geometry)
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
+        owners = np.asarray(connectivity.face_owner, dtype=np.int64)
+        twist = Fraction(0)
         fans: list[tuple[int, int, int]] = []
         for row in rows.tolist():
             loop = vertex_ids[values[offsets[row] : offsets[row + 1]]].tolist()
-            _convex_face_fan([exact[vertex] for vertex in loop])
+            points = [exact[vertex] for vertex in loop]
+            if not _planar_convex_face(points):
+                if len(loop) != 4 or int(cell_ids[owners[row]]) not in hexahedra:
+                    raise ValueError(
+                        "Source distance evidence requires exactly planar convex "
+                        "faces off hexahedra."
+                    )
+                d = tuple(
+                    points[0][axis] - points[1][axis] + points[2][axis] - points[3][axis]
+                    for axis in range(3)
+                )
+                twist = max(twist, sum((value * value for value in d), Fraction(0)))
             fans.extend(
                 (loop[0], loop[index], loop[index + 1])
                 for index in range(1, len(loop) - 1)
@@ -4116,7 +4139,14 @@ def _exterior_target_triangles(
             [[position[vertex] for vertex in triangle] for triangle in fans],
             dtype=np.int64,
         )
-        return tuple(sorted(face_ids[rows].tolist())), shadows[corners], 2.0 * gap
+        # sqrt(twist) / 4 rounded up: the binary64 square root of an upper
+        # endpoint is correctly rounded, one step up covers it.
+        bilinear = (
+            math.nextafter(math.sqrt(coefficient_endpoint(twist, upper=True)), math.inf) / 4.0
+            if twist
+            else 0.0
+        )
+        return tuple(sorted(face_ids[rows].tolist())), shadows[corners], 2.0 * gap + bilinear
     facet_ids, triangles = _target_boundary_triangles(mesh, geometry)
     shadows, gap = _exact_point_shadows(
         [point for triangle in triangles for point in triangle]
