@@ -3840,6 +3840,26 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
     int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
     int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
     phx_mc_fidelity_finding* evidence, int64_t* evidence_count);
+/* Same chart and source checks as phx_mc_verify_cad_fidelity, with outward
+ * bounds on the paired quadratic trace. triangle_edge_nodes has 9 doubles per
+ * chart row: xyz midpoint nodes of edges (0,1), (1,2), (2,0) in order.
+ * Repeated mesh edges must name bitwise equal node coordinates; a collapsed
+ * edge must repeat its point. The caller verifies these traces belong to the
+ * actual embedded coordinate map and verifies the full chart partition. */
+PHX_MC_API int32_t phx_mc_verify_cad_quadratic_fidelity(
+    const phx_mc_cad_model* model, int64_t coefficient_count,
+    const double* coefficient_lower, const double* coefficient_upper,
+    int64_t point_count, const double* points, int64_t triangle_count,
+    const int64_t* triangles, const int32_t* face_rows, const double* uv,
+    int64_t mesh_triangle_count, const int64_t* mesh_triangles, const int64_t* chart_to_mesh,
+    int64_t use_count, const int64_t* use_patch, const double* use_range,
+    int64_t loop_count, int64_t chord_count, const int64_t* chord_use,
+    const int64_t* chord_loop, const double* chord_uv, const double* chord_range,
+    const int64_t* edge_chord, double tolerance, int32_t max_depth,
+    int64_t output_capacity, double* upper, int32_t* item_status, int32_t* reasons,
+    int32_t* subdivisions, double* maximum_upper, int64_t evidence_capacity,
+    phx_mc_fidelity_finding* evidence, int64_t* evidence_count,
+    const double* triangle_edge_nodes);
 /* phx_mc_verify_cad_fidelity preconditions, checked at entry (refused with
  * PHX_MC_INVALID_INPUT, outputs unchanged): loop_count equals the model's;
  * every surface is on a loop; use_patch is the model's loop surface of each

@@ -23,6 +23,13 @@ in order and each conditional on the previous:
   exactly the source-declared solid on each side of every certified exterior
   or interface triangle (``verify_volume``).
 
+The standalone quadratic proof is opt-in and single-material. It uses the
+affine tetrahedra only as the reference complex. A freshly validated global
+embedding of the actual native nodal P2 map and exact agreement of its
+shared edge nodes identify the same complex's curved physical boundary.
+The V3 bound is on those quadratic traces, not the affine shadow. Public
+mesh acceptance and cold archive admission still refuse P2 CAD.
+
 The witness is construction data, not a claim: every verdict is recomputed
 from it, the mesh, cell labels and the source domain.
 """
@@ -31,6 +38,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from fractions import Fraction
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -59,10 +67,19 @@ from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
 )
 from ..discretization._coordinate_enclosure import (
+    add,
+    axes,
+    constant,
+    coordinate_execution_basis,
     coordinate_map_expressions,
     coordinate_point_rounding_bound,
+    coordinate_source_basis,
     evaluate_expression,
+    expression_sequence_equal,
+    multiply,
     RationalPolynomial,
+    scale,
+    sum_polynomials,
 )
 from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._embedding_state import MeshCertificateFinding
@@ -71,9 +88,12 @@ from ..geometry._rational import fraction_down, fraction_up
 
 
 if TYPE_CHECKING:
-    from .._meshcore import CadSurfaceResult
+    from .._meshcore import CadModel, CadSurfaceResult
     from ..discretization._cell_mesh import CellMesh
-    from ..geometry._global_embedding import GlobalEmbeddingCertificate
+    from ..geometry._global_embedding import (
+        GlobalEmbeddingCertificate,
+        ValidatedGlobalEmbedding,
+    )
     from ..geometry._mesh_certificates import MeshCertificateStatus
     from ..geometry._meshing_domain import MeshingDomain
     from ._contracts import ProtectedFeature
@@ -359,6 +379,248 @@ def _cad_affine_carrier(
     return carrier, rounding
 
 
+_TETRAHEDRON_EDGES = tuple(combinations(range(4), 2))
+_TRIANGLE_EDGES = ((0, 1), (1, 2), (2, 0))
+
+
+def _edge_key(a: int, b: int, /) -> tuple[int, int]:
+    return (a, b) if a < b else (b, a)
+
+
+def _quadratic_dofs(
+    element: object, cell_kind: str, /
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Authenticate both the effective exact basis and its execution owner."""
+    from ..discretization.fem._high_order import SimplexNodalFamily
+    from ..discretization.fem._reference import FiniteElementSpec, lagrange_element
+
+    native = lagrange_element(cell_kind, 2)
+    if type(element) is not FiniteElementSpec:
+        raise ValueError("Native quadratic CAD proof requires a finite element basis.")
+    tabulate = element.tabulator
+    # Equinox's bound-method record is not a Python MethodType. Match the
+    # actual canonical wrapper, its callable identity, and its complete tree.
+    if (
+        type(tabulate) is not type(native.tabulator)
+        or getattr(tabulate, "__func__", None) is not SimplexNodalFamily.tabulate
+        or type(getattr(tabulate, "__self__", None)) is not SimplexNodalFamily
+        or not _same_tree_content(element, native)
+    ):
+        raise ValueError(
+            "Native quadratic CAD proof requires the native P2 simplex Lagrange basis."
+        )
+
+    # Check the full polynomial, not probes at the ten nodes. In particular,
+    # basis cache keys and tabulator IDs do not authenticate the executable
+    # coefficients, which are checked through the bound owner above.
+    vertices = reference_cell_topology(cell_kind).vertices
+    row = {tuple(point): i for i, point in enumerate(np.asarray(native.reference_nodes))}
+    corner_dofs = tuple(row[tuple(point)] for point in vertices)
+    edge_dofs = tuple(
+        row[tuple((a + b) / 2 for a, b in zip(vertices[i], vertices[j], strict=True))]
+        for i, j in _TETRAHEDRON_EDGES
+    )
+    variables = axes(3)
+    one = constant(1, 3)
+    barycentric = (add(one, scale(sum_polynomials(variables, 3), -1)), *variables)
+    expected = [constant(0, 3) for _ in range(10)]
+    for dof, value in zip(corner_dofs, barycentric, strict=True):
+        expected[dof] = multiply(value, add(scale(value, 2), scale(one, -1)))
+    for dof, (i, j) in zip(edge_dofs, _TETRAHEDRON_EDGES, strict=True):
+        expected[dof] = scale(multiply(barycentric[i], barycentric[j]), 4)
+    if not (
+        expression_sequence_equal(coordinate_source_basis(element), expected)
+        and expression_sequence_equal(coordinate_execution_basis(element), expected)
+    ):
+        raise ValueError(
+            "Native quadratic CAD proof requires the exact native P2 Lagrange basis."
+        )
+    return corner_dofs, edge_dofs
+
+
+def _quadratic_cad_carrier(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    domain: MeshingDomain,
+    witness: NativeCadSurfaceWitness,
+    cell_regions: np.ndarray,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None,
+    /,
+) -> tuple[AffineTetrahedra, np.ndarray, dict[tuple[int, int], int]]:
+    """Bind the actual continuous P2 map to the affine cell complex."""
+    from ..geometry._global_embedding import ValidatedGlobalEmbedding
+
+    if len(domain.regions) != 1:
+        raise ValueError("Native quadratic CAD proof requires exactly one material.")
+    if (
+        type(geometry) is not CellGeometrySpec
+        or geometry.source_map is not None
+        or geometry.source_mesh_id is not None
+        or geometry.source_topology_id is not None
+        or geometry.source_map_id is not None
+        or geometry.exact_coordinate_bank is not None
+        or geometry.restriction_source is not None
+        or mesh.periodic_topology is not None
+    ):
+        raise ValueError(
+            "Native quadratic CAD proof requires a nonperiodic nodal coordinate "
+            "map without a source bank or restriction."
+        )
+    embedding_error = (
+        "Native quadratic CAD proof requires a certified embedding of the "
+        "current coordinate map."
+    )
+    if type(embedding) is not ValidatedGlobalEmbedding:
+        raise ValueError(embedding_error)
+    try:
+        certificate = embedding.require(mesh, geometry, embedding.validity)
+    except ValueError as error:
+        raise ValueError(embedding_error) from error
+    if certificate.status != "certified" or not certificate.validity.all_certified:
+        raise ValueError(embedding_error)
+    witness.require_binding(mesh)
+    domain.require_current()
+    carrier = affine_tetrahedra(mesh, CellGeometrySpec.affine(mesh))
+    if carrier is None or not len(carrier.cells):
+        raise ValueError("Native quadratic CAD proof requires a tetrahedral carrier.")
+    regions = np.asarray(cell_regions)
+    if (
+        regions.shape != (len(carrier.cells),)
+        or regions.dtype.kind not in "iu"
+        or np.any(regions)
+    ):
+        raise ValueError(
+            "Native quadratic CAD proof requires all cells in the one material."
+        )
+
+    if geometry.block_names != tuple(sorted(block.name for block in mesh.blocks)):
+        raise ValueError("Native quadratic geometry blocks must align with the carrier.")
+    if any(np.ndim(route) != 2 for route in geometry.geometry_dofs):
+        raise ValueError("Native quadratic coordinate routes must be matrices.")
+    elements, routes, coordinates = geometry.resolve(mesh)
+    bank = np.asarray(coordinates)
+    if (
+        bank.dtype != np.float64
+        or bank.ndim != 2
+        or bank.shape[1] != 3
+        or not np.all(np.isfinite(bank))
+    ):
+        raise ValueError(
+            "Native quadratic coordinate bank must contain finite binary64 points."
+        )
+    bank_bits = bank.view(np.uint64)
+    point_bits = carrier.points.view(np.uint64)
+    midpoint_rows: dict[tuple[int, int], int] = {}
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        corner_dofs, edge_dofs = _quadratic_dofs(element, block.cell_kind)
+        dofs = np.asarray(route)
+        cells = np.asarray(block.vertices)
+        if (
+            dofs.dtype != np.int32
+            or dofs.shape != (block.cell_count, 10)
+            or np.any(dofs < 0)
+            or np.any(dofs >= len(bank))
+            or np.any(cells < 0)
+            or np.any(cells >= len(carrier.points))
+        ):
+            raise ValueError(
+                "Native quadratic coordinate routes must index the current bank."
+            )
+        if not np.array_equal(bank_bits[dofs[:, corner_dofs]], point_bits[cells]):
+            raise ValueError(
+                "Native quadratic corner coordinates must equal the carrier vertices."
+            )
+        for cell, cell_dofs in zip(cells.tolist(), dofs.tolist(), strict=True):
+            for dof, (i, j) in zip(edge_dofs, _TETRAHEDRON_EDGES, strict=True):
+                key = _edge_key(cell[i], cell[j])
+                index = cell_dofs[dof]
+                prior = midpoint_rows.setdefault(key, index)
+                if prior != index and not np.array_equal(
+                    bank_bits[prior], bank_bits[index]
+                ):
+                    raise ValueError(
+                        "Native quadratic cells disagree on a shared edge midpoint node."
+                    )
+    # All lengths, domains and scalar types were checked on the retained
+    # arrays, before the constructor (which normalizes them) is allowed to run.
+    rebuilt = CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        bank,
+    )
+    if rebuilt.geometry_layout_id != geometry.geometry_layout_id:
+        raise ValueError(
+            "Native quadratic coordinate layout does not reproduce its binding."
+        )
+    return carrier, bank, midpoint_rows
+
+
+def _quadratic_chart_edge_nodes(
+    mesh: CellMesh,
+    domain: MeshingDomain,
+    model: CadModel,
+    witness: NativeCadSurfaceWitness,
+    points: np.ndarray,
+    bank: np.ndarray,
+    midpoint_rows: dict[tuple[int, int], int],
+    /,
+) -> np.ndarray:
+    """Restrict the P2 map to each witnessed boundary facet or pole edge."""
+    from ._native_cad_records import _chart_face_rows
+
+    triangles, _ = _chart_face_rows(mesh, witness, domain, oriented=True)
+    chart = np.asarray(witness.chart_triangles)
+    mapping = np.asarray(witness.chart_to_mesh)
+    edges = np.asarray(witness.edge_chord)
+    uses = np.asarray(witness.chord_use)
+    if (
+        any(value.dtype != np.int64 for value in (chart, mapping, edges, uses))
+        or uses.ndim != 1
+        or np.any(uses < 0)
+        or np.any(uses >= model.use_kinds.size)
+        or np.any(edges < -1)
+        or np.any(edges >= uses.size)
+    ):
+        raise ValueError(
+            "Native quadratic chart edges must route to declared trim chords."
+        )
+    collapsed = np.zeros(chart.shape, dtype=np.bool_)
+    trim = edges >= 0
+    collapsed[trim] = model.use_kinds[uses[edges[trim]]] == 1
+    if np.any(np.count_nonzero(collapsed, axis=1) != (mapping == -1)):
+        raise ValueError(
+            "Native quadratic slivers require exactly one collapsed trim side."
+        )
+    boundary_edges = {
+        _edge_key(tri[i], tri[j])
+        for tri in triangles.tolist()
+        for i, j in _TRIANGLE_EDGES
+    }
+    nodes = np.empty((len(chart), 3, 3), dtype=np.float64)
+    for row, tri in enumerate(chart.tolist()):
+        for edge, (i, j) in enumerate(_TRIANGLE_EDGES):
+            a, b = tri[i], tri[j]
+            if (a == b) != collapsed[row, edge]:
+                raise ValueError(
+                    "Native quadratic collapsed side must repeat its carrier vertex."
+                )
+            if a == b:
+                nodes[row, edge] = points[a]
+            else:
+                key = _edge_key(a, b)
+                dof = midpoint_rows.get(key)
+                if key not in boundary_edges or dof is None:
+                    raise ValueError(
+                        "Native quadratic chart edge is not on the carrier boundary."
+                    )
+                nodes[row, edge] = bank[dof]
+    return nodes
+
+
+def _quadratic_refusal(detail: str, /) -> tuple[MeshCertificateFinding, ...]:
+    return (MeshCertificateFinding("cad_fidelity", "unresolved", "mesh", detail=detail),)
+
+
 def _native_findings(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -370,7 +632,8 @@ def _native_findings(
     normal_deviation: bool,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
+    quadratic: bool = False,
 ) -> tuple[tuple[MeshCertificateFinding, ...], np.ndarray | None, str | None]:
     """Return the first refusal, or the V3 upper bounds and source-shell identity.
 
@@ -378,6 +641,7 @@ def _native_findings(
     chart and source, and runs only after the preceding premise is proved.
     Most lines describe failure evidence, not alternate execution paths.
     """
+    from ..geometry._global_embedding import ValidatedGlobalEmbedding
     from ._native_cad_shell import certify_native_trim_references, source_shell
     from .providers._native_cad_bundle import cad_geometry_bundle, coefficient_bounds
 
@@ -401,7 +665,9 @@ def _native_findings(
             None,
             None,
         )
-    if any(element.local_dof_count != 4 for element in geometry.elements):
+    if not quadratic and any(
+        element.local_dof_count != 4 for element in geometry.elements
+    ):
         return (
             (
                 MeshCertificateFinding(
@@ -416,22 +682,38 @@ def _native_findings(
             None,
             None,
         )
-    carrier = _cad_affine_carrier(mesh, geometry, embedding)
-    if carrier is None:
-        return (
-            (
-                MeshCertificateFinding(
-                    "cad_fidelity",
-                    "unresolved",
-                    "mesh",
-                    detail="Native CAD proof requires the affine tetrahedral map "
-                    "interpolating the mesh vertices.",
-                ),
-            ),
-            None,
-            None,
+    quadratic_data = None
+    if quadratic:
+        try:
+            quadratic_data = _quadratic_cad_carrier(
+                mesh, geometry, domain, witness, cell_regions, embedding
+            )
+        except ValueError as error:
+            return _quadratic_refusal(str(error)), None, None
+        tetrahedra = quadratic_data[0]
+        rounding = Fraction(0)
+    else:
+        affine_embedding = (
+            embedding.certificate
+            if isinstance(embedding, ValidatedGlobalEmbedding)
+            else embedding
         )
-    tetrahedra, rounding = carrier
+        carrier = _cad_affine_carrier(mesh, geometry, affine_embedding)
+        if carrier is None:
+            return (
+                (
+                    MeshCertificateFinding(
+                        "cad_fidelity",
+                        "unresolved",
+                        "mesh",
+                        detail="Native CAD proof requires the affine tetrahedral map "
+                        "interpolating the mesh vertices.",
+                    ),
+                ),
+                None,
+                None,
+            )
+        tetrahedra, rounding = carrier
     points, cells = tetrahedra.points, tetrahedra.cells
     # Matching barycentric weights move every point of a chart facet by at
     # most the largest vertex displacement, in either direction.
@@ -523,6 +805,21 @@ def _native_findings(
             "sheets": sheets,
         }
     )
+    triangle_edge_nodes = None
+    if quadratic_data is not None:
+        # Exact P1 coverage identifies the reference complex's boundary, not
+        # the validity or embedding of its curved image. Those were proved
+        # on the actual P2 map; every routed trace is its exact restriction.
+        finding = _volume_finding(points, cells, triangles, None, None)
+        if finding is not None:
+            return (finding,), None, None
+        _, bank, midpoint_rows = quadratic_data
+        try:
+            triangle_edge_nodes = _quadratic_chart_edge_nodes(
+                mesh, domain, model, witness, points, bank, midpoint_rows
+            )
+        except ValueError as error:
+            return _quadratic_refusal(str(error)), None, None
     lower, upper = coefficient_bounds(bundle, domain)
     fidelity = verify_cad_fidelity(
         model,
@@ -540,6 +837,7 @@ def _native_findings(
         chords,
         fidelity_tolerance,
         FIDELITY_DEPTH,
+        triangle_edge_nodes=triangle_edge_nodes,
     )
     unresolved = np.flatnonzero(fidelity.item_status != MeshcoreStatus.OK)
     if (
@@ -571,15 +869,16 @@ def _native_findings(
             None,
             None,
         )
-    finding = _volume_finding(
-        points,
-        cells,
-        triangles,
-        None if surface_regions is None else cell_regions,
-        surface_regions,
-    )
-    if finding is not None:
-        return (finding,), None, None
+    if quadratic_data is None:
+        finding = _volume_finding(
+            points,
+            cells,
+            triangles,
+            None if surface_regions is None else cell_regions,
+            surface_regions,
+        )
+        if finding is not None:
+            return (finding,), None, None
     bounds = fidelity.upper
     if rounding:
         bounds = np.minimum(
@@ -626,7 +925,8 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         maximum_normal_deviation: float | None,
         /,
         *,
-        embedding: GlobalEmbeddingCertificate | None = None,
+        embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None = None,
+        quadratic: bool = False,
     ) -> None:
         if type(witness) is not NativeCadSurfaceWitness:
             raise TypeError("witness must be NativeCadSurfaceWitness.")
@@ -645,6 +945,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
             bool(protected_features),
             maximum_normal_deviation is not None,
             embedding=embedding,
+            quadratic=quadratic,
         )
         self.witness = witness
         self.tolerance = float(tolerance)

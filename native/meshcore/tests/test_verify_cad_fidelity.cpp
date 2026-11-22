@@ -1203,6 +1203,62 @@ void seam_lens_charge() {
     }
 }
 
+// The seam proof is an independent consumer of the actual quadratic trace.
+// A cap computed against the chord instead would miss the bowed-mode oracle.
+void quadratic_seam_lens_charge() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(sphere);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  constexpr double half_pi = 0x1.921fb54442d18p+0;
+  constexpr double rho = 0.5;
+  constexpr double angle = 1.2;
+  for (int sigma : {1, -1}) {
+    const double uv_a[2] = {0.0, sigma * (half_pi - rho)};
+    const double uv_b[2] = {angle, uv_a[1]};
+    const double c_a[2] = {rho, 0.0};
+    const double c_b[2] = {rho * std::cos(angle), rho * std::sin(angle)};
+    const double x_a[3] = {std::sin(rho), 0.0, sigma * std::cos(rho)};
+    const double x_b[3] = {std::sin(rho) * std::cos(angle), std::sin(rho) * std::sin(angle),
+                           sigma * std::cos(rho)};
+    const double node[3] = {(x_a[0] + x_b[0]) * 0.5, (x_a[1] + x_b[1]) * 0.5,
+                            x_a[2] + sigma * 0.24};
+    double straight[3], curved[3];
+    PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, sigma, uv_a, uv_b, c_a, c_b, x_a, x_b,
+                                 straight) == PHX_MC_OK);
+    PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, sigma, uv_a, uv_b, c_a, c_b, x_a, x_b,
+                                 curved, node) == PHX_MC_OK);
+    double sampled = 0.0, endpoint_curve[2]{};
+    for (int i = 0; i <= 200; ++i) {
+      const double t = static_cast<double>(i) / 200, u = t * angle;
+      const double px = rho * std::cos(u), py = rho * std::sin(u);
+      const double fx = (1 - t) * c_a[0] + t * c_b[0], fy = t * c_b[1];
+      double q[3];
+      for (int axis = 0; axis < 3; ++axis)
+        q[axis] = (1 - t) * (1 - 2 * t) * x_a[axis] +
+                  t * (2 * t - 1) * x_b[axis] + 4 * t * (1 - t) * node[axis];
+      for (int k = 0; k <= 200; ++k) {
+        const double s = static_cast<double>(k) / 200;
+        const double x = (1 - s) * px + s * fx, y = (1 - s) * py + s * fy;
+        const double r = std::hypot(x, y), scale = std::sin(r) / r;
+        const double gap =
+            std::hypot(x * scale - q[0], y * scale - q[1], sigma * std::cos(r) - q[2]);
+        sampled = std::max(sampled, gap);
+        if (k == 0) endpoint_curve[0] = std::max(endpoint_curve[0], gap);
+        if (k == 200) endpoint_curve[1] = std::max(endpoint_curve[1], gap);
+      }
+    }
+    PHX_CHECK(straight[0] < sampled);
+    PHX_CHECK(curved[0] >= sampled);
+    PHX_CHECK(curved[1] >= endpoint_curve[0]);
+    PHX_CHECK(curved[2] >= endpoint_curve[1]);
+  }
+}
+
 // A pole-chart row at colatitudes 1.9, 1.9, 1.5 (u 0.6, 1.0, 0.8) on the unit
 // sphere: its square box reaches q = x^2 + y^2 > 4 (beyond the series
 // domain) while the triangle stays in the disk q < 3.62. With the disk bound
@@ -2295,6 +2351,7 @@ int main() {
   lens_index_overflow();
   pole_chart_rows();
   seam_lens_charge();
+  quadratic_seam_lens_charge();
   pole_region_turns_and_charges();
   pole_row_disk_bound();
   disk_center_rows();
@@ -2502,5 +2559,5 @@ int main() {
   std::swap(mesh_triangles[1], mesh_triangles[2]);
   PHX_CHECK(verify() == PHX_MC_UNRESOLVED);
   PHX_CHECK(evidence_count >= 1 && evidence[0].kind == PHX_MC_FIDELITY_CHART_MESH_LINK);
-  return 0;
+  return phx::mc::test::finish("test_verify_cad_fidelity");
 }
