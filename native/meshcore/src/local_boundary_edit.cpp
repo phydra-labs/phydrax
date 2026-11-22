@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -243,18 +244,6 @@ struct PlanarSourcePoint {
             (Dyadic(point(b)[axes[1]]) - y) * (p[0] - x)).sign();
   }
 
-  bool on_rim(std::span<const std::int32_t, 2> edge, const std::array<Dyadic, 2>& p) const {
-    const double* a = point(edge[0]);
-    const double* b = point(edge[1]);
-    for (std::size_t axis = 0; axis < 2; ++axis) {
-      const auto [low, high] = std::minmax(a[axes[axis]], b[axes[axis]]);
-      if ((p[axis] - Dyadic(low)).sign() < 0 || (p[axis] - Dyadic(high)).sign() > 0) {
-        return false;
-      }
-    }
-    return side(edge[0], edge[1], p) == 0;
-  }
-
   bool in_triangle(std::span<const std::int32_t, 3> rows, const std::array<Dyadic, 2>& p,
                    int winding) const {
     for (std::size_t corner = 0; corner < 3; ++corner) {
@@ -416,18 +405,32 @@ bool LocalIncidence::rounded_plane_support(const TetMesh& mesh, std::int32_t gro
       !source_stencil_supported(stencil, group_points)) return false;
   const Dyadic unit(1.0);
   for (std::size_t axis = 0; axis < 3; ++axis) {
-    if (exact::rounded_quotient(image[axis], unit) != carrier[axis]) return false;
+    const double rounded = exact::rounded_quotient(image[axis], unit);
+    if (std::bit_cast<std::uint64_t>(rounded) != std::bit_cast<std::uint64_t>(carrier[axis])) {
+      return false;
+    }
   }
   const int u = (normal + 1) % 3;
   const int v = (normal + 2) % 3;
   const PlanarSourcePoint projected{
       mesh.source_points_, {u, v}, {std::move(image[u]), std::move(image[v])},
       {Dyadic(carrier[u]), Dyadic(carrier[v])}, {carrier[u], carrier[v]}};
+  // Every point of the exact-to-binary64 displacement rounds numerically
+  // to the same carrier. If it meets a box with binary64 endpoints, the
+  // carrier is in the box. Reject any possible rim or source-segment contact,
+  // including an authored segment internal to this face group.
   for (const auto& edge : plane_group.boundary_edges) {
-    if (projected.in_box(std::span(edge)) &&
-        (projected.on_rim(edge, projected.exact) || projected.on_rim(edge, projected.rounded))) {
-      return false;
+    if (projected.in_box(std::span(edge))) return false;
+  }
+  for (std::size_t row = 0; row < mesh.source_segments_.size(); row += 2) {
+    const double* a = projected.point(mesh.source_segments_[row]);
+    const double* b = projected.point(mesh.source_segments_[row + 1]);
+    bool overlaps = true;
+    for (std::size_t axis = 0; axis < 3 && overlaps; ++axis) {
+      const auto [low, high] = std::minmax(a[axis], b[axis]);
+      overlaps = carrier[axis] >= low && carrier[axis] <= high;
     }
+    if (overlaps) return false;
   }
   bool exact_inside = false;
   bool rounded_inside = false;

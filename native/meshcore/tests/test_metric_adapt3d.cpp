@@ -19,6 +19,7 @@
 
 #include "check.hpp"
 #include "metric_adapt3d.hpp"
+#include "metric_float.hpp"
 #include "plc3d.hpp"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
@@ -327,6 +328,111 @@ void check_witnessed_boundary_relocation() {
   PHX_CHECK(witness.deviation == 0.0 && deviation == 0.0);
 }
 
+Run adapt_direction_sensitive_edge(bool permuted) {
+  // Only the logical body diagonal is editable. Its two evaluation
+  // directions straddle the exact binary64 completion threshold.
+  Cube cube = kuhn_cube(1);
+  for (double& value : cube.points) value *= 0x1.b7f92f0969ff9p-1;
+  const std::array<std::uint64_t, 8> ids{41, 719, 203, 367, 691, 27, 109, 533};
+  const std::array<std::uint64_t, 6> cell_ids{110, 145, 192, 211, 297, 350};
+  metric::AdaptInput input;
+  input.source_points = cube.points;
+  input.source_vertex_ids.assign(ids.begin(), ids.end());
+  input.source_cells.assign(cube.tetrahedra.begin(), cube.tetrahedra.end());
+  for (std::size_t row = 0; row < ids.size(); ++row) {
+    const double c = row == 0 ? 0.64 : 1.25;
+    const std::array<double, 9> tensor{c, 0, 0, 0, c, 0, 0, 0, c};
+    std::array<double, 9> logarithm{};
+    PHX_CHECK(metric::logarithm(tensor.data(), logarithm.data()));
+    input.source_metrics.insert(input.source_metrics.end(), tensor.begin(), tensor.end());
+    input.source_logarithms.insert(input.source_logarithms.end(), logarithm.begin(),
+                                   logarithm.end());
+  }
+  const double* a = input.source_points.data();
+  const double* b = a + 21;
+  const double* ma = input.source_metrics.data();
+  const double* mb = ma + 63;
+  PHX_CHECK(metric::length(a, b, ma, mb) > metric::kUpperLength);
+  PHX_CHECK(metric::length(b, a, mb, ma) <= metric::kUpperLength);
+  std::set<std::array<std::uint64_t, 2>> protected_edges;
+  for (std::size_t cell = 0; cell < cube.tetrahedra.size(); cell += 4) {
+    for (std::size_t i = 0; i < 4; ++i) {
+      for (std::size_t j = i + 1; j < 4; ++j) {
+        const auto [low, high] = std::minmax(ids[cube.tetrahedra[cell + i]],
+                                             ids[cube.tetrahedra[cell + j]]);
+        if (low != ids.front() || high != ids.back()) protected_edges.insert({low, high});
+      }
+    }
+  }
+  for (const auto& key : protected_edges) {
+    input.protected_edges.insert(input.protected_edges.end(), key.begin(), key.end());
+  }
+  auto physical_ids = ids;
+  if (permuted) {
+    std::reverse(physical_ids.begin(), physical_ids.end());
+    for (std::size_t row = 0; row < ids.size(); ++row) {
+      std::copy_n(input.source_points.data() + 3 * (ids.size() - row - 1), 3,
+                  cube.points.data() + 3 * row);
+    }
+    for (auto* bank : {&cube.tetrahedra, &cube.faces}) {
+      for (std::int32_t& row : *bank) row = 7 - row;
+    }
+  }
+  TetMesh mesh(BoundaryPolicy::kConforming);
+  const std::vector<std::int32_t> regions(cell_ids.size(), 0);
+  Run run;
+  const auto setup = mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides,
+                                 {}, {}, {}, {});
+  PHX_CHECK(setup == PHX_MC_OK);
+  if (setup != PHX_MC_OK) return run;
+  PHX_CHECK(mesh.assign_initial_ids(physical_ids, cell_ids, {}, {}) == PHX_MC_OK);
+  PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
+  input.vertex_ids.assign(ids.begin(), ids.end());
+  std::sort(input.vertex_ids.begin(), input.vertex_ids.end());
+  input.stencil_offsets.push_back(0);
+  for (std::uint64_t id : input.vertex_ids) {
+    const auto row = std::find(ids.begin(), ids.end(), id) - ids.begin();
+    input.stencil_rows.push_back(static_cast<std::int32_t>(row));
+    input.stencil_weights.push_back(1.0);
+    input.stencil_offsets.push_back(static_cast<std::int64_t>(input.stencil_rows.size()));
+  }
+  input.vertex_target_ids = input.vertex_ids;
+  input.cell_ids.assign(cell_ids.begin(), cell_ids.end());
+  input.cell_target_ids = input.cell_ids;
+  input.cell_blocks.assign(cell_ids.size(), 0);
+  input.ancestry_ids = input.cell_ids;
+  input.ancestry_kinds.assign(cell_ids.size(), static_cast<std::int32_t>(metric::AdaptLineage::kPreserved));
+  for (std::size_t row = 0; row <= cell_ids.size(); ++row) {
+    input.ancestry_offsets.push_back(static_cast<std::int64_t>(row));
+  }
+  input.next_vertex_id = input.next_target_vertex = 800;
+  input.next_cell_id = input.next_target_cell = 800;
+  input.lower = 0.6;
+  input.relocation = false;
+  run.status = metric::adapt_metric(mesh, input, run.output);
+  PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
+  return run;
+}
+
+void metric_worksets_ignore_physical_vertex_order() {
+  const Run first = adapt_direction_sensitive_edge(false);
+  const Run second = adapt_direction_sensitive_edge(true);
+  PHX_CHECK(first.status == TetEditStatus::kApplied && second.status == first.status);
+  PHX_CHECK(first.output.status == metric::AdaptStatus::kComplete &&
+            second.output.status == first.output.status);
+  PHX_CHECK(first.output.counters.splits == 1 && second.output.counters.splits == 1);
+  PHX_CHECK(first.output.vertex_ids == second.output.vertex_ids);
+  PHX_CHECK(first.output.stencil_rows == second.output.stencil_rows);
+  PHX_CHECK(first.output.stencil_weights == second.output.stencil_weights);
+  PHX_CHECK(first.output.ancestry_ids == second.output.ancestry_ids);
+  const auto cells = [](const Run& run) {
+    std::map<std::uint64_t, std::array<std::uint64_t, 4>> result;
+    for (const auto& cell : run.after.cells) result.emplace(cell.id, cell.vertices);
+    return result;
+  };
+  PHX_CHECK(cells(first) == cells(second));
+}
+
 }  // namespace
 
 int main() {
@@ -334,5 +440,6 @@ int main() {
   check_refinement();
   check_coarsening();
   check_witnessed_boundary_relocation();
+  metric_worksets_ignore_physical_vertex_order();
   return phx::mc::test::finish("test_metric_adapt3d");
 }

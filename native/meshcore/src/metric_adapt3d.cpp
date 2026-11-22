@@ -131,6 +131,7 @@ std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
 // An edge by its two vertex IDs, ascending (exact key; EdgeIdHash hashes it).
 using IdEdge = std::array<std::uint64_t, 2>;
 IdEdge id_edge(std::uint64_t a, std::uint64_t b) { return {std::min(a, b), std::max(a, b)}; }
+using MeasuredEdge = std::pair<double, IdEdge>;
 
 using IdFace = std::array<std::uint64_t, 3>;
 
@@ -162,20 +163,23 @@ class Adapter {
   };
   void touch(std::int32_t vertex);
   void dirty_edges(Phase phase, const std::function<bool(double)>& wanted,
-                   std::vector<std::pair<double, std::uint64_t>>& edges);
+                   std::vector<MeasuredEdge>& edges);
   void ensure_cell(std::int32_t slot);
   const double* metric(std::int32_t slot) const { return metrics_.data() + 9 * slot; }
   bool vertex_metric(const Stencil& stencil, double* tensor) const;
   double edge_length(std::int32_t a, std::int32_t b) const {
+    // The graded log-mean is mathematically symmetric, not bit-symmetric.
+    if (mesh_.vertex_id(b) < mesh_.vertex_id(a)) std::swap(a, b);
     return length(mesh_.point(a), mesh_.point(b), metric(a), metric(b));
   }
+  IdEdge edge_ids(std::int32_t a, std::int32_t b) const {
+    return id_edge(mesh_.vertex_id(a), mesh_.vertex_id(b));
+  }
   bool protected_edge(std::int32_t a, std::int32_t b) const {
-    return protected_edges_.contains(id_edge(mesh_.vertex_id(a), mesh_.vertex_id(b)));
+    return protected_edges_.contains(edge_ids(a, b));
   }
 
   // Measurement.
-  // Measured edges above (long_side) or below the band, each once, with lengths.
-  void out_of_band(bool long_side, std::vector<std::pair<double, std::uint64_t>>& edges) const;
   bool complete() const;
 
   // Splits.
@@ -373,7 +377,7 @@ void Adapter::touch(std::int32_t vertex) {
 }
 
 void Adapter::dirty_edges(Phase phase, const std::function<bool(double)>& wanted,
-                          std::vector<std::pair<double, std::uint64_t>>& edges) {
+                          std::vector<MeasuredEdge>& edges) {
   // The wanted measured edges at the vertices changed since this phase last
   // looked, each once; the phase's dirty list is consumed.
   edges.clear();
@@ -388,9 +392,8 @@ void Adapter::dirty_edges(Phase phase, const std::function<bool(double)>& wanted
       for (int corner = 0; corner < 4; ++corner) {
         const std::int32_t other = cell.v[corner];
         if (other == vertex || other < 0) continue;
-        // Match the direction used by the workset's stale-length check.
-        const double value = edge_length(std::min(vertex, other), std::max(vertex, other));
-        if (wanted(value)) edges.emplace_back(value, edge_key(vertex, other));
+        const double value = edge_length(vertex, other);
+        if (wanted(value)) edges.emplace_back(value, edge_ids(vertex, other));
       }
     }
   }
@@ -400,8 +403,7 @@ void Adapter::dirty_edges(Phase phase, const std::function<bool(double)>& wanted
                           [](const auto& x, const auto& y) { return x.second == y.second; }),
               edges.end());
   std::erase_if(edges, [&](const auto& entry) {
-    return protected_edge(static_cast<std::int32_t>(entry.second >> 32),
-                          static_cast<std::int32_t>(entry.second & 0xffffffffU));
+    return protected_edges_.contains(entry.second);
   });
 }
 
@@ -576,34 +578,6 @@ void Adapter::bind() {
   for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
     if (mesh_.live_vertex(static_cast<std::int32_t>(slot))) touch(static_cast<std::int32_t>(slot));
   }
-}
-
-void Adapter::out_of_band(bool long_side, std::vector<std::pair<double, std::uint64_t>>& edges) const {
-  // Every cell edge once per cell; the few out-of-band ones are deduplicated.
-  edges.clear();
-  const auto& tets = mesh_.complex().tets;
-  for (std::size_t slot = 0; slot < tets.size(); ++slot) {
-    const Tetrahedron& cell = tets[slot];
-    if (cell.v[0] == kDeadVertex || is_ghost(cell)) continue;
-    for (int first = 0; first < 4; ++first) {
-      for (int second = first + 1; second < 4; ++second) {
-        const std::int32_t a = cell.v[first];
-        const std::int32_t b = cell.v[second];
-        const double value = edge_length(a, b);
-        if (long_side ? value > kUpperLength : value < kLowerLength) {
-          edges.emplace_back(value, edge_key(a, b));
-        }
-      }
-    }
-  }
-  std::sort(edges.begin(), edges.end(), [](const auto& x, const auto& y) { return x.second < y.second; });
-  edges.erase(std::unique(edges.begin(), edges.end(),
-                          [](const auto& x, const auto& y) { return x.second == y.second; }),
-              edges.end());
-  std::erase_if(edges, [&](const auto& entry) {
-    return protected_edge(static_cast<std::int32_t>(entry.second >> 32),
-                          static_cast<std::int32_t>(entry.second & 0xffffffffU));
-  });
 }
 
 bool Adapter::complete() const {
@@ -1104,14 +1078,14 @@ TetEditStatus Adapter::commit_pending(std::int64_t& applied) {
 }
 
 std::int64_t Adapter::split_sweep() {
-  std::vector<std::pair<double, std::uint64_t>> long_edges;
+  std::vector<MeasuredEdge> long_edges;
   dirty_edges(kSplitPhase, [](double value) { return value > kUpperLength; }, long_edges);
   std::sort(long_edges.begin(), long_edges.end(),
             [](const auto& x, const auto& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
   std::int64_t applied = 0;
   for (const auto& [value, key] : long_edges) {
-    const auto a = static_cast<std::int32_t>(key >> 32);
-    const auto b = static_cast<std::int32_t>(key & 0xffffffffU);
+    const auto a = mesh_.vertex_slot(key[0]);
+    const auto b = mesh_.vertex_slot(key[1]);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
     if (edge_length(a, b) != value) continue;  // a moved end: next sweep
     bool done = false;
@@ -1643,15 +1617,15 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
 std::int64_t Adapter::collapse_sweep() {
   // Shortest first at the changed vertices; a round's collapses change the
   // stars around their survivors, which the next round looks at.
-  std::vector<std::pair<double, std::uint64_t>> work;
+  std::vector<MeasuredEdge> work;
   std::int64_t total = 0;
   for (;;) {
     dirty_edges(kCollapsePhase, [](double value) { return value < kLowerLength; }, work);
     if (work.empty()) break;
     std::sort(work.begin(), work.end());
     for (const auto& [value, key] : work) {
-      const auto a = static_cast<std::int32_t>(key >> 32);
-      const auto b = static_cast<std::int32_t>(key & 0xffffffffU);
+      const auto a = mesh_.vertex_slot(key[0]);
+      const auto b = mesh_.vertex_slot(key[1]);
       if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
       if (edge_length(a, b) != value || incidence_.edge_star(a, b).empty()) continue;
       CollapsePlan best;
@@ -1803,9 +1777,10 @@ TetEditStatus Adapter::try_ring(std::int32_t s, std::int32_t t, bool& applied) {
   applied = false;
   if (protected_edge(s, t)) return TetEditStatus::kApplied;
   const std::span<const std::int32_t> view = incidence_.edge_star(s, t);
-  const std::vector<std::int32_t> shell(view.begin(), view.end());
+  std::vector<std::int32_t> shell(view.begin(), view.end());
   const std::size_t n = shell.size();
   if (n < 2 || n > 7) return TetEditStatus::kApplied;
+  std::ranges::sort(shell, {}, [&](std::int32_t cell) { return mesh_.cell_id(cell); });
   const std::int32_t region = mesh_.complex().region(shell.front());
   const std::int32_t block = cell_blocks_[static_cast<std::size_t>(shell.front())];
   // The ring: the two other corners of each shell cell, chained. An interior
@@ -2061,8 +2036,8 @@ std::int64_t Adapter::swap_sweep() {
   // Candidates at the changed vertices: the faces and edges of poor cells and
   // every out-of-band edge.
   constexpr double kPoor = 0.4;
-  std::vector<std::pair<std::int32_t, int>> faces;
-  std::vector<std::uint64_t> edges;
+  std::vector<std::pair<std::uint64_t, int>> faces;
+  std::vector<IdEdge> edges;
   std::vector<std::int32_t> star;
   for (std::int32_t vertex : dirty_[kSwapPhase]) {
     dirty_flags_[kSwapPhase][static_cast<std::size_t>(vertex)] = 0;
@@ -2072,17 +2047,17 @@ std::int64_t Adapter::swap_sweep() {
       const Tetrahedron& cell = mesh_.tet(slot);
       const bool poor = cell_quality(slot) < kPoor;
       for (int first = 0; first < 4; ++first) {
-        if (poor) faces.emplace_back(slot, first);
+        if (poor) faces.emplace_back(mesh_.cell_id(slot), first);
         for (int second = first + 1; second < 4; ++second) {
           const std::int32_t a = cell.v[first];
           const std::int32_t b = cell.v[second];
           if (poor) {
-            edges.push_back(edge_key(a, b));
+            edges.push_back(edge_ids(a, b));
             continue;
           }
           if (a != vertex && b != vertex) continue;
           const double value = edge_length(a, b);
-          if (!(value >= kLowerLength && value <= kUpperLength)) edges.push_back(edge_key(a, b));
+          if (!(value >= kLowerLength && value <= kUpperLength)) edges.push_back(edge_ids(a, b));
         }
       }
     }
@@ -2093,7 +2068,9 @@ std::int64_t Adapter::swap_sweep() {
   std::sort(edges.begin(), edges.end());
   edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
   std::int64_t applied = 0;
-  for (const auto& [slot, face] : faces) {
+  for (const auto& [id, face] : faces) {
+    const auto slot = mesh_.cell_slot(id);
+    if (slot < 0) continue;
     bool done = false;
     const TetEditStatus status = try_flip23(slot, face, done);
     if (status != TetEditStatus::kApplied) {
@@ -2102,9 +2079,9 @@ std::int64_t Adapter::swap_sweep() {
     }
     applied += done ? 1 : 0;
   }
-  for (std::uint64_t key : edges) {
-    const auto a = static_cast<std::int32_t>(key >> 32);
-    const auto b = static_cast<std::int32_t>(key & 0xffffffffU);
+  for (const IdEdge& key : edges) {
+    const auto a = mesh_.vertex_slot(key[0]);
+    const auto b = mesh_.vertex_slot(key[1]);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
     bool done = false;
     const TetEditStatus status = try_ring(a, b, done);
@@ -2571,7 +2548,7 @@ std::int64_t Adapter::relocate_sweep() {
   std::vector<std::int32_t> vertices(dirty_[kRelocatePhase].begin(), dirty_[kRelocatePhase].end());
   for (std::int32_t vertex : vertices) dirty_flags_[kRelocatePhase][static_cast<std::size_t>(vertex)] = 0;
   dirty_[kRelocatePhase].clear();
-  std::sort(vertices.begin(), vertices.end());
+  std::ranges::sort(vertices, {}, [&](std::int32_t vertex) { return mesh_.vertex_id(vertex); });
   std::int64_t applied = 0;
   for (std::int32_t vertex : vertices) {
     if (!mesh_.live_vertex(vertex)) continue;
@@ -2725,7 +2702,7 @@ TetEditStatus Adapter::relocate_pair(std::int32_t u, std::int32_t v, bool& appli
 
 std::int64_t Adapter::pair_sweep(std::span<const std::int32_t> vertices) {
   // The out-of-band edges at the changed vertices, each once.
-  std::vector<std::pair<double, std::uint64_t>> edges;
+  std::vector<MeasuredEdge> edges;
   std::vector<std::int32_t> star;
   for (std::int32_t vertex : vertices) {
     if (!mesh_.live_vertex(vertex)) continue;
@@ -2733,9 +2710,9 @@ std::int64_t Adapter::pair_sweep(std::span<const std::int32_t> vertices) {
     for (std::int32_t slot : star) {
       for (std::int32_t other : mesh_.tet(slot).v) {
         if (other == vertex || protected_edge(vertex, other)) continue;
-        const double value = edge_length(std::min(vertex, other), std::max(vertex, other));
+        const double value = edge_length(vertex, other);
         if (!(value >= kLowerLength && value <= kUpperLength)) {
-          edges.emplace_back(value, edge_key(vertex, other));
+          edges.emplace_back(value, edge_ids(vertex, other));
         }
       }
     }
@@ -2744,8 +2721,8 @@ std::int64_t Adapter::pair_sweep(std::span<const std::int32_t> vertices) {
   edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
   std::int64_t applied = 0;
   for (const auto& [value, key] : edges) {
-    const auto a = static_cast<std::int32_t>(key >> 32);
-    const auto b = static_cast<std::int32_t>(key & 0xffffffffU);
+    const auto a = mesh_.vertex_slot(key[0]);
+    const auto b = mesh_.vertex_slot(key[1]);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b) || edge_length(a, b) != value) continue;
     bool done = false;
     const TetEditStatus status = relocate_pair(a, b, done);

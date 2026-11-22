@@ -2484,7 +2484,11 @@ void stencil_collapses_match_the_batch() {
   PHX_CHECK(tally.applied > 0 && tally.refused_inexact > 0 && tally.refused_outside > 0);
 }
 
-void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
+enum class RoundedControl { kCovered, kOblique, kAuthoredSegment, kOppositeZeroSign };
+
+void rounded_survivor_matches_batch_across_chart_boundary(RoundedControl control) {
+  const bool oblique = control == RoundedControl::kOblique;
+  const bool admit = control == RoundedControl::kCovered;
   Box box = witness_free_box({4, 4, 2}, false);
   const auto transform = [oblique](double* point) {
     point[0] *= 1.25;
@@ -2508,6 +2512,15 @@ void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
   // A coordinate duplicate is not a source row of the bottom face group.
   const auto foreign = static_cast<std::int32_t>(box.source_points.size() / 3);
   box.source_points.insert(box.source_points.end(), {0.0, 0.0, 0.0});
+  if (control == RoundedControl::kAuthoredSegment) {
+    // Assign semantic source identity to the formerly unprotected internal
+    // diagonal; the live survivor's incident facets and vertices are unchanged.
+    const auto segment = static_cast<std::int32_t>(box.segment_groups.size());
+    box.source_segments.insert(box.source_segments.end(), {0, 3});
+    box.segment_groups.push_back(segment);
+    box.segment_ids.push_back(segment);
+    box.segment_tolerances.push_back(0.0);
+  }
   TetMesh local(BoundaryPolicy::kConforming);
   TetMesh batch(BoundaryPolicy::kConforming);
   if (!build(local, box, {}) || !build(batch, box, {})) return;
@@ -2527,9 +2540,12 @@ void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
   const SourceStencil stencil{rows, weights, rounded};
   MovePlan move{incidence.vertex_star(kept), {}};
   move.vertex.id = local.vertex_id(kept);
-  move.vertex.carrier = {x, y, oblique ? 0.125 * x : 0.0};
+  const bool wrong_zero = control == RoundedControl::kOppositeZeroSign;
+  const double z = oblique ? 0.125 * x : (wrong_zero ? -0.0 : 0.0);
+  move.vertex.carrier = {x, y, z};
   PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star) ==
             TetEditStatus::kApplied);
+  if (wrong_zero) PHX_CHECK(std::signbit(local.point(kept)[2]));
   TetEditStatus status = TetEditStatus::kApplied;
   PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
   PHX_CHECK(status == TetEditStatus::kApplied && same_state(local, batch));
@@ -2543,7 +2559,7 @@ void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
                                          false, std::pair{removed, kept});
     if (!plan) continue;
     const auto star = incidence.vertex_star(removed);
-    if (!oblique) {
+    if (admit) {
       const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
       const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1],
                                              weights[2] + 0x1p-49};
@@ -2565,10 +2581,11 @@ void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
       }
     }
     const TetEditStatus reference = apply_batch(batch, plan->operation);
+    const auto generation = local.generation();
     const auto actual = incidence.collapse_boundary(local, plan->operation, star, nullptr, &stencil);
-    if (oblique) {
-      PHX_CHECK(!actual);
-      if (reference == TetEditStatus::kApplied) return;  // valid only through the batch
+    if (!admit) {
+      PHX_CHECK(!actual && local.generation() == generation);
+      if (reference == TetEditStatus::kApplied) return;
     } else {
       PHX_CHECK(actual == reference && same_state(local, batch));
       if (reference == TetEditStatus::kApplied) {
@@ -2708,8 +2725,10 @@ int main() {
   boundary_edits_are_star_local();
   boundary_cavities_never_hold_a_non_disk_constrained_face();
   stencil_collapses_match_the_batch();
-  rounded_survivor_matches_batch_across_chart_boundary(false);
-  rounded_survivor_matches_batch_across_chart_boundary(true);
+  rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kCovered);
+  rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kOblique);
+  rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kAuthoredSegment);
+  rounded_survivor_matches_batch_across_chart_boundary(RoundedControl::kOppositeZeroSign);
   boundary_lookups_require_bound_mesh();
   stencil_relocations_verify_the_candidate();
   stencil_relocations_respect_incident_segments();
