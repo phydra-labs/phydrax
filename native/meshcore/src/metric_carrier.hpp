@@ -15,6 +15,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -64,6 +65,34 @@ struct CarrierSimplex {
   std::uint8_t projected_axes = 0;
 };
 
+// Buckets list overlapping boxes in input row order. Nonparticipating axes
+// use a single bucket; the caller still checks each box and exact location.
+class CarrierBoxGrid {
+ public:
+  void prepare(std::span<const double> lower, std::span<const double> upper,
+               std::uint8_t axes, std::size_t membership_limit);
+  bool indexed() const noexcept { return !offsets_.empty(); }
+  std::span<const std::int64_t> candidates(const double* target) const noexcept;
+
+ private:
+  std::array<double, 3> origin_{};
+  std::array<double, 3> scale_{};
+  std::array<std::int64_t, 3> size_{};
+  std::vector<std::int64_t> offsets_;
+  std::vector<std::int64_t> rows_;
+};
+
+struct CarrierChartView {
+  std::span<const CarrierSimplex> simplices;
+  const CarrierBoxGrid* grid = nullptr;
+};
+
+struct CarrierChart {
+  std::vector<CarrierSimplex> simplices;
+  CarrierBoxGrid grid;
+  CarrierChartView view() const noexcept { return {simplices, grid.indexed() ? &grid : nullptr}; }
+};
+
 class CarrierSource {
  public:
   // Exact point p is numerators[3 p + axis] / denominator with a positive
@@ -87,6 +116,9 @@ class CarrierSource {
 
   // Identify a coordinate-subspace hull with exact source numerators.
   CarrierSimplex prepare_simplex(CarrierSimplex simplex) const;
+  // Prepare an ordered screen for charts sharing exact projection axes.
+  // Other charts and overlarge bucket memberships keep the same linear lookup.
+  void prepare_chart(CarrierChart& chart) const;
 
   bool matches_roundings(std::span<const double> points, std::span<const std::int64_t> cells) const;
   // Correctly rounded image of one coordinate of a dyadic stencil.
@@ -116,7 +148,7 @@ class CarrierSource {
   // `current` is (squared binary64 distances, summed x, y, z) and, on a
   // simplex, when the image is exact or the simplex is declared.
   std::vector<Carrier> carriers(const double* target, const double* current,
-                                const std::vector<CarrierSimplex>& simplices, std::int64_t cell,
+                                CarrierChartView chart, std::int64_t cell,
                                 CarrierOrder order, std::int64_t limit) const;
 
  private:
@@ -126,14 +158,7 @@ class CarrierSource {
   std::vector<std::int64_t> cells_;
   std::vector<double> lower_;  // closed binary64 box of each cell
   std::vector<double> upper_;
-  // A uniform bucket grid over the cell boxes: bucket b lists, ascending, the
-  // cells whose box meets it (CSR), so a location reads one bucket instead
-  // of every cell and still finds the first holding cell in search order.
-  std::array<double, 3> grid_origin_{};
-  std::array<double, 3> grid_scale_{};
-  std::array<std::int64_t, 3> grid_size_{};
-  std::vector<std::int64_t> grid_offsets_;
-  std::vector<std::int64_t> grid_cells_;
+  CarrierBoxGrid cell_grid_;
   // The numerators and then the denominator as 64-bit limbs, integer i in
   // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
   // of the search; a query that leaves their capacity runs on the unbounded

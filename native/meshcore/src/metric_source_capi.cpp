@@ -30,6 +30,7 @@ const phx::mc::metric::CarrierSource& phx::mc::metric::metric_carrier_source(
 }
 
 struct phx_mc_metric_relocation {
+  std::vector<phx::mc::metric::CarrierSimplex> simplices;
   phx::mc::metric::RelocationSearch search;
 };
 
@@ -190,7 +191,7 @@ int32_t phx_mc_metric_source_carriers(const phx_mc_metric_source* source, const 
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     const std::vector<Carrier> found = source->source.carriers(
-        target, current, simplices, cell < 0 ? -1 : cell,
+        target, current, {simplices}, cell < 0 ? -1 : cell,
         static_cast<phx::mc::metric::CarrierOrder>(order), limit);
     for (std::size_t index = 0; index < found.size(); ++index) {
       write_carrier(found[index], index, rows, weights, bits, points);
@@ -289,7 +290,7 @@ int32_t phx_mc_metric_source_survivor_moves(
     std::vector<phx::mc::metric::SurvivorMove> moves;
     std::vector<double> measured;
     const phx::mc::metric::SearchEnd ended = phx::mc::metric::survivor_search(
-        source->source, source->metrics.data(), source->logarithms.data(), star, simplices,
+        source->source, source->metrics.data(), source->logarithms.data(), star, {simplices},
         every_resolution != 0, moves, measured);
     if (static_cast<int64_t>(moves.size()) > capacity) return PHX_MC_CAPACITY_EXCEEDED;
     for (std::size_t index = 0; index < moves.size(); ++index) {
@@ -366,9 +367,11 @@ int32_t phx_mc_metric_relocation_create(
                                           above, below)) {
       return PHX_MC_INVALID_INPUT;
     }
-    *search = new phx_mc_metric_relocation{phx::mc::metric::RelocationSearch(
+    // The vector move preserves its row addresses for the borrowed search.
+    const phx::mc::metric::CarrierChartView chart{simplices};
+    *search = new phx_mc_metric_relocation{std::move(simplices), phx::mc::metric::RelocationSearch(
         source->source, source->metrics.data(), source->logarithms.data(), star, pull_count,
-        pulls, origin, projector, std::move(simplices), selected)};
+        pulls, origin, projector, chart, selected)};
     return PHX_MC_OK;
   });
 }

@@ -403,9 +403,9 @@ void prepared_projection_box_preserves_carrier_order() {
   for (std::size_t row = 0; row < goals.size(); ++row) {
     const auto& target = goals[row];
     const auto expected =
-        source.carriers(target.data(), current.data(), plain, -1, CarrierOrder::kFineFirst, 4);
+        source.carriers(target.data(), current.data(), {plain}, -1, CarrierOrder::kFineFirst, 4);
     const auto found =
-        source.carriers(target.data(), current.data(), prepared, -1, CarrierOrder::kFineFirst, 4);
+        source.carriers(target.data(), current.data(), {prepared}, -1, CarrierOrder::kFineFirst, 4);
     PHX_CHECK(!expected.empty() && found.size() == expected.size());
     if (found.size() != expected.size()) continue;
     for (std::size_t index = 0; index < found.size(); ++index) {
@@ -420,7 +420,7 @@ void prepared_projection_box_preserves_carrier_order() {
   const std::vector<CarrierSimplex> segment{source.prepare_simplex({{0, 1, -1}, 2})};
   const double target[3]{0.5, 2.0, -3.0};
   const auto found =
-      source.carriers(target, current.data(), segment, -1, CarrierOrder::kFineFirst, 1);
+      source.carriers(target, current.data(), {segment}, -1, CarrierOrder::kFineFirst, 1);
   PHX_CHECK(found.size() == 1);
   if (found.size() == 1) {
     const std::array<double, 3> midpoint{0.5, 0, 0};
@@ -428,9 +428,9 @@ void prepared_projection_box_preserves_carrier_order() {
   }
   const double endpoint[3]{1.0, 2.0, -3.0};
   const double beyond[3]{std::nextafter(1.0, 2.0), 2.0, -3.0};
-  PHX_CHECK(!source.carriers(endpoint, current.data(), segment, -1,
+  PHX_CHECK(!source.carriers(endpoint, current.data(), {segment}, -1,
                              CarrierOrder::kFineFirst, 1).empty());
-  PHX_CHECK(source.carriers(beyond, current.data(), segment, -1,
+  PHX_CHECK(source.carriers(beyond, current.data(), {segment}, -1,
                             CarrierOrder::kFineFirst, 1).empty());
 }
 
@@ -450,13 +450,77 @@ void rounded_source_coordinates_do_not_hide_an_oblique_hull() {
   const CarrierSimplex face{{0, 1, 2}, 3, true};
   const double target[3]{-0x1p-56, 0.25, 5.0};
   const double current[3]{1.0, 0.0, 1.0};
-  const auto result = source.carriers(target, current, {source.prepare_simplex(face)}, -1,
-                                       CarrierOrder::kFineFirst, 1);
+  const std::array prepared{source.prepare_simplex(face)};
+  const auto result = source.carriers(target, current, {prepared}, -1, CarrierOrder::kFineFirst, 1);
   PHX_CHECK(result.size() == 1);
   if (result.size() == 1) {
     PHX_CHECK(result.front().point[0] > 0.0);
     PHX_CHECK(result.front().point[1] == 0.25);
     PHX_CHECK(result.front().point[2] == 1.0 && !result.front().exact);
+  }
+}
+
+void indexed_charts_preserve_exact_first_carrier_on_closed_boxes() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierChart;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  // Two overlapping projected triangles, with different projections, followed
+  // by enough separated triangles for the prepared bucket lookup.
+  std::vector<double> points{0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 2, 2, 0, 2, 0, 1, 2};
+  CarrierChart chart;
+  chart.simplices = {{{0, 1, 2}, 3}, {{3, 4, 5}, 3}};
+  for (std::int64_t row = 2; row < 34; ++row) {
+    const double x = static_cast<double>(2 * row);
+    points.insert(points.end(), {x, 0, 1, x + 1, 0, 1, x, 1, 1});
+    chart.simplices.push_back({{3 * row, 3 * row + 1, 3 * row + 2}, 3});
+  }
+  const auto plain = chart.simplices;
+  std::vector<Dyadic> numerators;
+  for (const double value : points) numerators.emplace_back(value);
+  const CarrierSource source(std::move(points), std::move(numerators), Dyadic(1.0), {});
+  source.prepare_chart(chart);
+  const double current[3]{-4, 3, 0};
+  const std::array<std::array<double, 3>, 4> targets{{
+      {0.25, 0.25, 5}, {1, 0, -5}, {std::nextafter(1.0, 2.0), 0, 5}, {40.25, 0.25, 5}}};
+  const std::array<double, 4> heights{1, 1, 2, 1};
+  for (std::size_t row = 0; row < targets.size(); ++row) {
+    const double* target = targets[row].data();
+    const auto expected = source.carriers(target, current, {plain}, -1, CarrierOrder::kFineFirst, 1);
+    const auto actual = source.carriers(target, current, chart.view(), -1, CarrierOrder::kFineFirst, 1);
+    PHX_CHECK(expected.size() == 1 && actual.size() == 1);
+    if (expected.size() != 1 || actual.size() != 1) continue;
+    PHX_CHECK(actual.front().point[2] == heights[row]);
+    PHX_CHECK(actual.front().point == expected.front().point);
+    PHX_CHECK(actual.front().rows == expected.front().rows);
+    PHX_CHECK(actual.front().weights == expected.front().weights);
+    PHX_CHECK(actual.front().bits == expected.front().bits);
+    PHX_CHECK(actual.front().exact == expected.front().exact);
+  }
+}
+
+void crowded_chart_still_searches_past_the_bucket_budget() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierChart;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  std::vector<double> points{0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 2, 0, 1, 2, 1, 0, 2};
+  std::vector<Dyadic> numerators;
+  for (const double value : points) numerators.emplace_back(value);
+  const CarrierSource source(std::move(points), std::move(numerators), Dyadic(1.0), {});
+  CarrierChart chart;
+  // The square boxes overlap everywhere, but only the last exact triangle
+  // holds the target's projection. Partial bucket population loses it.
+  chart.simplices.assign(224, {{0, 1, 2}, 3});
+  chart.simplices.push_back({{3, 4, 5}, 3});
+  source.prepare_chart(chart);
+  const double target[3]{0.75, 0.75, 5};
+  const double current[3]{0, 0, 0};
+  const auto found = source.carriers(target, current, chart.view(), -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(found.size() == 1);
+  if (found.size() == 1) {
+    const std::array<double, 3> projected{0.75, 0.75, 2};
+    PHX_CHECK(found.front().point == projected && found.front().exact);
   }
 }
 
@@ -472,5 +536,7 @@ int main() {
   common_factor();
   prepared_projection_box_preserves_carrier_order();
   rounded_source_coordinates_do_not_hide_an_oblique_hull();
+  indexed_charts_preserve_exact_first_carrier_on_closed_boxes();
+  crowded_chart_still_searches_past_the_bucket_budget();
   return phx::mc::test::finish("test_metric_carrier");
 }

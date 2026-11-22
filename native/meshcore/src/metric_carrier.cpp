@@ -416,11 +416,7 @@ struct Geometry {
   const std::vector<std::int64_t>& cells;
   const std::vector<double>& lower;
   const std::vector<double>& upper;
-  const std::array<double, 3>& grid_origin;
-  const std::array<double, 3>& grid_scale;
-  const std::array<std::int64_t, 3>& grid_size;
-  const std::vector<std::int64_t>& grid_offsets;
-  const std::vector<std::int64_t>& grid_cells;
+  const CarrierBoxGrid& grid;
 };
 
 // The grid bucket coordinate of `value` on `axis`: monotone in value, so a
@@ -468,30 +464,17 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
   // The cells to try, ascending: `only`, or the target's grid bucket (every
   // cell whose box can hold the target is listed there, so the first holding
   // cell is the one a scan of all cells would find).
-  const std::int64_t* candidates = nullptr;
-  std::size_t candidate_count = 0;
-  const std::int64_t single = only;
+  std::span<const std::int64_t> candidates;
   if (only >= 0) {
-    candidates = &single;
-    candidate_count = 1;
+    candidates = std::span(&only, 1);
   } else {
     for (int axis = 0; axis < 3; ++axis) {
       if (!std::isfinite(target[axis])) return false;
     }
-    std::int64_t bucket = 0;
-    for (int axis = 2; axis >= 0; --axis) {
-      bucket = bucket * geometry.grid_size[static_cast<std::size_t>(axis)] +
-               bucket_coordinate(geometry.grid_origin, geometry.grid_scale, geometry.grid_size,
-                                 axis, target[axis]);
-    }
-    const auto row = static_cast<std::size_t>(bucket);
-    const auto begin = static_cast<std::size_t>(geometry.grid_offsets[row]);
-    const auto end = static_cast<std::size_t>(geometry.grid_offsets[row + 1]);
-    candidates = geometry.grid_cells.data() + begin;
-    candidate_count = end - begin;
+    candidates = geometry.grid.candidates(target);
   }
-  for (std::size_t index = 0; index < candidate_count; ++index) {
-    const auto cell = static_cast<std::size_t>(candidates[index]);
+  for (const std::int64_t row : candidates) {
+    const auto cell = static_cast<std::size_t>(row);
     // Rounding is monotone and the box corners are binary64 source points, so
     // a cell that holds the exact target passes this comparison.
     bool inside = true;
@@ -609,25 +592,30 @@ bool within_projection_box(const Geometry& geometry, const CarrierSimplex& simpl
 
 template <class View>
 std::vector<Carrier> search(const View& view, const Geometry& geometry, const double* target,
-                            const double* current, const std::vector<CarrierSimplex>& simplices,
+                            const double* current, CarrierChartView chart,
                             std::int64_t only, CarrierOrder order, std::int64_t limit) {
   using Z = typename View::Value;
   std::vector<Carrier> found;
   if (limit <= 0) return found;
   const Target<View> exact_target(view, target);
   Located<Z> located;
-  const bool on_simplex = !simplices.empty();
+  const bool on_simplex = !chart.simplices.empty();
   bool has_location = false;
   if (on_simplex) {
-    for (const CarrierSimplex& simplex : simplices) {
-      if (simplex.size != 2 && simplex.size != 3) continue;
-      if (simplex.projected_axes != 0 && !within_projection_box(geometry, simplex, target)) {
-        continue;
+    const auto holds = [&](const CarrierSimplex& simplex) {
+      return (simplex.size == 2 || simplex.size == 3) &&
+             (simplex.projected_axes == 0 || within_projection_box(geometry, simplex, target)) &&
+             locate_simplex(view, exact_target, simplex, located);
+    };
+    if (chart.grid != nullptr) {
+      for (const std::int64_t row : chart.grid->candidates(target)) {
+        if (holds(chart.simplices[static_cast<std::size_t>(row)])) {
+          has_location = true;
+          break;
+        }
       }
-      if (locate_simplex(view, exact_target, simplex, located)) {
-        has_location = true;
-        break;
-      }
+    } else {
+      has_location = std::ranges::any_of(chart.simplices, holds);
     }
   } else {
     has_location = locate_cell(view, geometry, target, exact_target, only, located);
@@ -791,6 +779,91 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
 
 }  // namespace
 
+void CarrierBoxGrid::prepare(std::span<const double> lower, std::span<const double> upper,
+                             std::uint8_t axes, std::size_t membership_limit) {
+  if (lower.size() != upper.size() || lower.size() % 3 != 0 || axes == 0 || axes > 7) {
+    throw std::invalid_argument("Carrier boxes require aligned bounds and projection axes.");
+  }
+  const std::size_t count = lower.size() / 3;
+  const double rows = static_cast<double>(std::max<std::size_t>(count, 1));
+  const int dimension = std::popcount(axes);
+  const auto side = static_cast<std::int64_t>(
+      std::ceil(dimension == 3 ? std::cbrt(rows) : dimension == 2 ? std::sqrt(rows) : rows));
+  std::size_t buckets = 1;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (count == 0 || (axes & (1U << axis)) == 0) {
+      size_[axis] = 1;
+      continue;
+    }
+    double low = lower[axis];
+    double high = upper[axis];
+    for (std::size_t row = 1; row < count; ++row) {
+      low = std::min(low, lower[3 * row + axis]);
+      high = std::max(high, upper[3 * row + axis]);
+    }
+    const double extent = high - low;
+    origin_[axis] = low;
+    size_[axis] = extent > 0.0 ? side : 1;
+    scale_[axis] = size_[axis] == 1 ? 0.0 : static_cast<double>(side) / extent;
+    buckets *= static_cast<std::size_t>(size_[axis]);
+  }
+  rows_.clear();
+  offsets_.assign(buckets + 1, 0);
+  const auto each_bucket = [&](std::size_t row, auto&& visit) {
+    std::array<std::int64_t, 3> first{};
+    std::array<std::int64_t, 3> last{};
+    for (int axis = 0; axis < 3; ++axis) {
+      if (size_[axis] == 1) continue;
+      const auto at = static_cast<std::size_t>(axis);
+      first[at] = bucket_coordinate(origin_, scale_, size_, axis, lower[3 * row + at]);
+      last[at] = bucket_coordinate(origin_, scale_, size_, axis, upper[3 * row + at]);
+    }
+    for (std::int64_t z = first[2]; z <= last[2]; ++z) {
+      for (std::int64_t y = first[1]; y <= last[1]; ++y) {
+        for (std::int64_t x = first[0]; x <= last[0]; ++x) {
+          if (!visit(static_cast<std::size_t>((z * size_[1] + y) * size_[0] + x))) return false;
+        }
+      }
+    }
+    return true;
+  };
+  std::size_t memberships = 0;
+  for (std::size_t row = 0; row < count; ++row) {
+    if (!each_bucket(row, [&](std::size_t bucket) {
+          if (memberships == membership_limit) return false;
+          ++memberships;
+          ++offsets_[bucket + 1];
+          return true;
+        })) {
+      offsets_.clear();
+      return;
+    }
+  }
+  for (std::size_t bucket = 0; bucket < buckets; ++bucket) {
+    offsets_[bucket + 1] += offsets_[bucket];
+  }
+  rows_.resize(memberships);
+  std::vector<std::int64_t> cursor(offsets_.begin(), offsets_.end() - 1);
+  for (std::size_t row = 0; row < count; ++row) {
+    each_bucket(row, [&](std::size_t bucket) {
+      rows_[static_cast<std::size_t>(cursor[bucket]++)] = static_cast<std::int64_t>(row);
+      return true;
+    });
+  }
+}
+
+std::span<const std::int64_t> CarrierBoxGrid::candidates(const double* target) const noexcept {
+  std::int64_t bucket = 0;
+  for (int axis = 2; axis >= 0; --axis) {
+    if (size_[axis] == 1) continue;
+    bucket = bucket * size_[axis] + bucket_coordinate(origin_, scale_, size_, axis, target[axis]);
+  }
+  const auto row = static_cast<std::size_t>(bucket);
+  const auto begin = static_cast<std::size_t>(offsets_[row]);
+  const auto end = static_cast<std::size_t>(offsets_[row + 1]);
+  return std::span(rows_).subspan(begin, end - begin);
+}
+
 CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> numerators,
                              Dyadic denominator, std::vector<std::int64_t> cells)
     : points_(std::move(points)),
@@ -819,59 +892,8 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     }
   }
 
-  // The bucket grid: about one cell per bucket over the boxes' hull.
-  std::array<double, 3> low{};
-  std::array<double, 3> high{};
-  for (std::size_t axis = 0; axis < 3; ++axis) {
-    low[axis] = std::numeric_limits<double>::infinity();
-    high[axis] = -std::numeric_limits<double>::infinity();
-    for (std::size_t cell = 0; cell < cell_count; ++cell) {
-      low[axis] = std::min(low[axis], lower_[3 * cell + axis]);
-      high[axis] = std::max(high[axis], upper_[3 * cell + axis]);
-    }
-  }
-  const auto side = static_cast<std::int64_t>(
-      std::ceil(std::cbrt(static_cast<double>(std::max<std::size_t>(cell_count, 1)))));
-  std::int64_t buckets = 1;
-  for (std::size_t axis = 0; axis < 3; ++axis) {
-    const double extent = high[axis] - low[axis];
-    grid_size_[axis] = cell_count == 0 || !(extent > 0.0) ? 1 : side;
-    grid_origin_[axis] = cell_count == 0 ? 0.0 : low[axis];
-    grid_scale_[axis] = grid_size_[axis] == 1 ? 0.0 : static_cast<double>(side) / extent;
-    buckets *= grid_size_[axis];
-  }
-  grid_offsets_.assign(static_cast<std::size_t>(buckets) + 1, 0);
-  const auto for_each_bucket = [&](std::size_t cell, auto&& visit) {
-    std::array<std::int64_t, 3> first{};
-    std::array<std::int64_t, 3> last{};
-    for (int axis = 0; axis < 3; ++axis) {
-      const auto at = static_cast<std::size_t>(axis);
-      first[at] = bucket_coordinate(grid_origin_, grid_scale_, grid_size_, axis,
-                                    lower_[3 * cell + at]);
-      last[at] = bucket_coordinate(grid_origin_, grid_scale_, grid_size_, axis,
-                                   upper_[3 * cell + at]);
-    }
-    for (std::int64_t z = first[2]; z <= last[2]; ++z) {
-      for (std::int64_t y = first[1]; y <= last[1]; ++y) {
-        for (std::int64_t x = first[0]; x <= last[0]; ++x) {
-          visit(static_cast<std::size_t>((z * grid_size_[1] + y) * grid_size_[0] + x));
-        }
-      }
-    }
-  };
-  for (std::size_t cell = 0; cell < cell_count; ++cell) {
-    for_each_bucket(cell, [&](std::size_t bucket) { ++grid_offsets_[bucket + 1]; });
-  }
-  for (std::size_t bucket = 0; bucket < static_cast<std::size_t>(buckets); ++bucket) {
-    grid_offsets_[bucket + 1] += grid_offsets_[bucket];
-  }
-  grid_cells_.resize(static_cast<std::size_t>(grid_offsets_.back()));
-  std::vector<std::int64_t> cursor(grid_offsets_.begin(), grid_offsets_.end() - 1);
-  for (std::size_t cell = 0; cell < cell_count; ++cell) {
-    for_each_bucket(cell, [&](std::size_t bucket) {
-      grid_cells_[static_cast<std::size_t>(cursor[bucket]++)] = static_cast<std::int64_t>(cell);
-    });
-  }
+  cell_grid_.prepare(lower_, upper_, 7, std::numeric_limits<std::int64_t>::max());
+  if (!cell_grid_.indexed()) throw std::length_error("Carrier cell buckets exceed the index range.");
 
   // The same integers as 64-bit limbs for the inline route, when every one
   // of them and their offsets fit.
@@ -946,6 +968,37 @@ CarrierSimplex CarrierSource::prepare_simplex(CarrierSimplex simplex) const {
   return simplex;
 }
 
+void CarrierSource::prepare_chart(CarrierChart& chart) const {
+  chart.grid = CarrierBoxGrid{};
+  std::uint8_t axes = 7;
+  for (CarrierSimplex& simplex : chart.simplices) {
+    simplex = prepare_simplex(simplex);
+    axes &= simplex.projected_axes;
+  }
+  const std::size_t count = chart.simplices.size();
+  if (axes == 0 || count < 16) return;
+  // All boxes constrain the shared projection coordinates. Broad overlapping
+  // charts keep the linear screen rather than materializing dense membership.
+  std::vector<double> lower(3 * count);
+  std::vector<double> upper(3 * count);
+  for (std::size_t row = 0; row < count; ++row) {
+    const CarrierSimplex& simplex = chart.simplices[row];
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      if ((axes & (1U << axis)) == 0) continue;
+      double low = point(simplex.rows[0])[axis];
+      double high = low;
+      for (int corner = 1; corner < simplex.size; ++corner) {
+        const double value = point(simplex.rows[static_cast<std::size_t>(corner)])[axis];
+        low = std::min(low, value);
+        high = std::max(high, value);
+      }
+      lower[3 * row + axis] = low;
+      upper[3 * row + axis] = high;
+    }
+  }
+  chart.grid.prepare(lower, upper, axes, 16 * count);
+}
+
 bool CarrierSource::matches_roundings(std::span<const double> points,
                                       std::span<const std::int64_t> cells) const {
   if (!std::ranges::equal(points_, points) || !std::ranges::equal(cells_, cells)) return false;
@@ -968,22 +1021,20 @@ double CarrierSource::stencil_coordinate(std::span<const StencilTerm> stencil, i
 }
 
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,
-                                             const std::vector<CarrierSimplex>& simplices,
-                                             std::int64_t cell, CarrierOrder order,
-                                             std::int64_t limit) const {
-  const Geometry geometry{points_,      cells_,     lower_,        upper_,     grid_origin_,
-                          grid_scale_,  grid_size_, grid_offsets_, grid_cells_};
+                                             CarrierChartView chart, std::int64_t cell,
+                                             CarrierOrder order, std::int64_t limit) const {
+  const Geometry geometry{points_, cells_, lower_, upper_, cell_grid_};
   if (inline_) {
     try {
       InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small()};
       view.common = view.at(numerators_.size());
-      return search(view, geometry, target, current, simplices, cell, order, limit);
+      return search(view, geometry, target, current, chart, cell, order, limit);
     } catch (const CapacityExceeded&) {
       // The unbounded integers below repeat the query.
     }
   }
   const ExactView view{&numerators_, &denominator_};
-  return search(view, geometry, target, current, simplices, cell, order, limit);
+  return search(view, geometry, target, current, chart, cell, order, limit);
 }
 
 }  // namespace phx::mc::metric

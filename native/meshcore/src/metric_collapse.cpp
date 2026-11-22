@@ -129,16 +129,16 @@ PositionVerdict CollapseObjective::evaluate(const double* point, const double* m
 
 SearchEnd survivor_search(const CarrierSource& source, const double* source_metrics,
                           const double* source_logarithms, const CollapseStar& star,
-                          const std::vector<CarrierSimplex>& simplices, bool every_resolution,
+                          CarrierChartView chart, bool every_resolution,
                           std::vector<SurvivorMove>& moves, std::vector<double>& lengths) {
   const double* survivor = star.points;
   const double* removed = star.points + 3;
   int corner_count = 0;
   double corners[9];
-  if (!simplices.empty()) {
+  if (!chart.simplices.empty()) {
     // The simplices of one carrier are coplanar or collinear: the first
     // spans their hull.
-    const CarrierSimplex& first = simplices.front();
+    const CarrierSimplex& first = chart.simplices.front();
     corner_count = first.size;
     for (int slot = 0; slot < first.size; ++slot) {
       const double* values = source.point(first.rows[static_cast<std::size_t>(slot)]);
@@ -160,7 +160,7 @@ SearchEnd survivor_search(const CarrierSource& source, const double* source_metr
   for (int goal = 0; goal < 3; ++goal) {
     if (!valid[goal]) return SearchEnd::kGoalNotFinite;
     const std::vector<Carrier> carriers = source.carriers(
-        goals + 3 * goal, survivor, simplices, -1, CarrierOrder::kCoarseFirst, limit);
+        goals + 3 * goal, survivor, chart, -1, CarrierOrder::kCoarseFirst, limit);
     for (const Carrier& carrier : carriers) {
       const double* point = carrier.point.data();
       if (same_point(point, survivor) || same_point(point, removed)) continue;

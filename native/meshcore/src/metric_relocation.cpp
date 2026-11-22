@@ -42,7 +42,7 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
                                    const double* source_logarithms, const RelocationStar& star,
                                    std::int64_t pull_count, const double* pulls,
                                    const double* origin, const double* projector,
-                                   std::vector<CarrierSimplex> simplices, RelocationMode mode)
+                                   CarrierChartView chart, RelocationMode mode)
     : source_(source),
       source_metrics_(source_metrics),
       source_logarithms_(source_logarithms),
@@ -57,7 +57,7 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
       determinant_floor_(star.determinant_floor),
       improvement_(star.improvement),
       pulls_(pulls, pulls + 3 * pull_count),
-      simplices_(std::move(simplices)),
+      chart_(chart),
       mode_(mode) {
   if (origin != nullptr && projector != nullptr) {
     framed_ = true;
@@ -230,7 +230,7 @@ RelocationEnd RelocationSearch::next(std::vector<RelocationCandidate>& group,
       limit = 2;
     }
     const std::vector<Carrier> carriers =
-        source_.carriers(goal, vertex, simplices_, -1, order, limit);
+        source_.carriers(goal, vertex, chart_, -1, order, limit);
     for (std::size_t index = first; index < carriers.size(); ++index) {
       const Carrier& carrier = carriers[index];
       const double* position = carrier.point.data();

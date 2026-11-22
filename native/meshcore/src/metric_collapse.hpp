@@ -120,7 +120,7 @@ enum class SearchEnd : int {
 // std::bad_alloc.
 SearchEnd survivor_search(const CarrierSource& source, const double* source_metrics,
                           const double* source_logarithms, const CollapseStar& star,
-                          const std::vector<CarrierSimplex>& simplices, bool every_resolution,
+                          CarrierChartView chart, bool every_resolution,
                           std::vector<SurvivorMove>& moves, std::vector<double>& lengths);
 
 // The nonzero band quanta (metric_float.hpp) of `count` lengths, largest
