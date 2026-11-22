@@ -26,6 +26,7 @@
 
 #include "cavity.hpp"
 #include "dyadic.hpp"
+#include "exact_scalar.hpp"
 #include "tet_mesh.hpp"
 
 namespace phx::mc::detail {
@@ -151,8 +152,8 @@ bool link_condition(const TetMesh& mesh, std::span<const std::int32_t> cells, st
   return common_vertices == edge_vertices && common_edges == edge_edges && !common_face;
 }
 
-bool source_stencil_matches(const SourceStencil& stencil, std::span<const double> source_points,
-                            const double* carrier) {
+bool source_stencil_image(const SourceStencil& stencil, std::span<const double> source_points,
+                          std::array<Dyadic, 3>& combination) {
   const std::size_t point_count = source_points.size() / 3;
   if (stencil.points.empty() || stencil.points.size() != stencil.weights.size() ||
       stencil.points.size() > point_count) {
@@ -170,10 +171,10 @@ bool source_stencil_matches(const SourceStencil& stencil, std::span<const double
     return false;
   }
   Dyadic weight_sum;
-  std::array<Dyadic, 3> combination{};
   for (std::size_t k = 0; k < stencil.points.size(); ++k) {
     const double weight = stencil.weights[k];
     if (!std::isfinite(weight)) return false;
+    if (weight < 0.0 && stencil.image == SourceStencilImage::kRoundedPlane) return false;
     if (weight == 0.0) continue;
     const Dyadic exact_weight(weight);
     weight_sum = weight_sum + exact_weight;
@@ -182,7 +183,14 @@ bool source_stencil_matches(const SourceStencil& stencil, std::span<const double
       combination[axis] = combination[axis] + Dyadic(p[axis]) * exact_weight;
     }
   }
-  if (!weight_sum.is_positive_one()) return false;
+  return weight_sum.is_positive_one();
+}
+
+bool source_stencil_matches(const SourceStencil& stencil, std::span<const double> source_points,
+                            const double* carrier) {
+  if (stencil.image != SourceStencilImage::kExact) return false;
+  std::array<Dyadic, 3> combination{};
+  if (!source_stencil_image(stencil, source_points, combination)) return false;
   for (std::size_t axis = 0; axis < 3; ++axis) {
     if (!std::isfinite(carrier[axis]) || !(combination[axis] - Dyadic(carrier[axis])).is_zero()) {
       return false;
@@ -200,6 +208,61 @@ bool source_stencil_supported(const SourceStencil& stencil, std::span<const std:
   }
   return true;
 }
+
+// Closed boxes conservatively screen both points: a binary64 bound that
+// contains the exact image also contains its correctly rounded image.
+struct PlanarSourcePoint {
+  std::span<const double> points;
+  std::array<int, 2> axes;
+  std::array<Dyadic, 2> exact;
+  std::array<Dyadic, 2> rounded;
+  std::array<double, 2> carrier;
+
+  const double* point(std::int32_t row) const {
+    return points.data() + 3 * static_cast<std::size_t>(row);
+  }
+
+  template <std::size_t N>
+  bool in_box(std::span<const std::int32_t, N> rows) const {
+    for (std::size_t axis = 0; axis < 2; ++axis) {
+      double low = point(rows.front())[axes[axis]];
+      double high = low;
+      for (std::int32_t row : rows.subspan(1)) {
+        const double value = point(row)[axes[axis]];
+        low = std::min(low, value);
+        high = std::max(high, value);
+      }
+      if (carrier[axis] < low || carrier[axis] > high) return false;
+    }
+    return true;
+  }
+
+  int side(std::int32_t a, std::int32_t b, const std::array<Dyadic, 2>& p) const {
+    const Dyadic x(point(a)[axes[0]]), y(point(a)[axes[1]]);
+    return ((Dyadic(point(b)[axes[0]]) - x) * (p[1] - y) -
+            (Dyadic(point(b)[axes[1]]) - y) * (p[0] - x)).sign();
+  }
+
+  bool on_rim(std::span<const std::int32_t, 2> edge, const std::array<Dyadic, 2>& p) const {
+    const double* a = point(edge[0]);
+    const double* b = point(edge[1]);
+    for (std::size_t axis = 0; axis < 2; ++axis) {
+      const auto [low, high] = std::minmax(a[axes[axis]], b[axes[axis]]);
+      if ((p[axis] - Dyadic(low)).sign() < 0 || (p[axis] - Dyadic(high)).sign() > 0) {
+        return false;
+      }
+    }
+    return side(edge[0], edge[1], p) == 0;
+  }
+
+  bool in_triangle(std::span<const std::int32_t, 3> rows, const std::array<Dyadic, 2>& p,
+                   int winding) const {
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      if (side(rows[corner], rows[(corner + 1) % 3], p) * winding < 0) return false;
+    }
+    return true;
+  }
+};
 
 }  // namespace
 
@@ -328,10 +391,63 @@ TetEditStatus LocalIncidence::boundary_segment(std::array<std::uint64_t, 2> vert
   return TetEditStatus::kApplied;
 }
 
-TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& operation,
-                                                const Star& removed_star,
-                                                const Star* survivor_star,
-                                                const SourceStencil* survivor_stencil) {
+bool LocalIncidence::rounded_plane_support(const TetMesh& mesh, std::int32_t group,
+                                           const SourceStencil& stencil,
+                                           const double* carrier) const {
+  const auto declared = mesh.declared_groups_.find(group);
+  if (declared == mesh.declared_groups_.end()) return false;
+  const auto& plane_group = declared->second;
+  const auto row = plane_group.rows.front();
+  const double* plane = mesh.face_plane(row);
+  if (plane == nullptr || mesh.source_face_plane_tolerances_[static_cast<std::size_t>(row)] != 0.0) {
+    return false;
+  }
+  int normal = 0;
+  while (normal < 3 && (plane[3 + normal] != 0.0 || plane[6 + normal] != 0.0)) ++normal;
+  if (normal == 3 || carrier[normal] != plane[normal]) return false;
+  const auto& group_points = boundary_index_.face_group_points.at(group);
+  if (!std::ranges::all_of(group_points, [&](std::int32_t point) {
+        return mesh.source_points_[3 * static_cast<std::size_t>(point) + normal] == plane[normal];
+      })) {
+    return false;
+  }
+  std::array<Dyadic, 3> image{};
+  if (!source_stencil_image(stencil, mesh.source_points_, image) ||
+      !source_stencil_supported(stencil, group_points)) return false;
+  const Dyadic unit(1.0);
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (exact::rounded_quotient(image[axis], unit) != carrier[axis]) return false;
+  }
+  const int u = (normal + 1) % 3;
+  const int v = (normal + 2) % 3;
+  const PlanarSourcePoint projected{
+      mesh.source_points_, {u, v}, {std::move(image[u]), std::move(image[v])},
+      {Dyadic(carrier[u]), Dyadic(carrier[v])}, {carrier[u], carrier[v]}};
+  for (const auto& edge : plane_group.boundary_edges) {
+    if (projected.in_box(std::span(edge)) &&
+        (projected.on_rim(edge, projected.exact) || projected.on_rim(edge, projected.rounded))) {
+      return false;
+    }
+  }
+  bool exact_inside = false;
+  bool rounded_inside = false;
+  for (std::int32_t face : plane_group.rows) {
+    const std::span<const std::int32_t, 3> rows(
+        mesh.source_faces_.data() + 3 * static_cast<std::size_t>(face), 3);
+    if (!projected.in_box(rows)) continue;
+    const double* c = projected.point(rows[2]);
+    const int winding = projected.side(rows[0], rows[1], {Dyadic(c[u]), Dyadic(c[v])});
+    if (winding == 0) continue;
+    exact_inside = exact_inside || projected.in_triangle(rows, projected.exact, winding);
+    rounded_inside = rounded_inside || projected.in_triangle(rows, projected.rounded, winding);
+    if (exact_inside && rounded_inside) return true;
+  }
+  return false;
+}
+
+std::optional<TetEditStatus> LocalIncidence::collapse_boundary(
+    TetMesh& mesh, const TetEdit& operation, const Star& removed_star,
+    const Star* survivor_star, const SourceStencil* survivor_stencil) {
   mesh.clear_implicit_facet_refusal();
   try {
     if (mesh_ != &mesh || operation.kind != TetEditKind::kCollapse ||
@@ -428,6 +544,35 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
     if (survivor_stencil != nullptr && s_witness.stratum != SourceStratum::kNone) {
       return TetEditStatus::kRejectedTopology;
     }
+    const bool rounded = survivor_stencil != nullptr &&
+                         survivor_stencil->image == SourceStencilImage::kRoundedPlane;
+    std::vector<std::int32_t> s_star;
+    if (rounded) {
+      if (moved || r_facets.empty() || !r_segments.empty() ||
+          r_dimension != 2 || mesh.vertex_dimension(s) != 2) {
+        return std::nullopt;
+      }
+      const std::int32_t group = mesh.facets_[r_facets.front()].source;
+      if (!std::ranges::all_of(r_facets, [&](std::size_t facet) {
+            return mesh.facets_[facet].source == group;
+          })) {
+        return std::nullopt;
+      }
+      collect_star(s, s_star);
+      bool on_group = false;
+      for (std::int32_t slot : s_star) {
+        const Tetrahedron& cell = mesh.tet(slot);
+        for (int side = 0; side < 4; ++side) {
+          if (cell.v[side] == s) continue;
+          const std::int32_t label = mesh.complex_.constraint(slot, side);
+          if (label != kNoConstraint && label != group) return std::nullopt;
+          on_group = on_group || label == group;
+        }
+      }
+      if (!on_group || !rounded_plane_support(mesh, group, *survivor_stencil, s_carrier)) {
+        return std::nullopt;
+      }
+    }
     bool supported = true;
     const auto row = static_cast<std::size_t>(s_witness.entity);
     switch (s_witness.stratum) {
@@ -461,6 +606,7 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
         break;
       }
       case SourceStratum::kNone: {
+        if (rounded) break;
         if (survivor_stencil == nullptr) {
           // A witness-free vertex is its own exact point: one of the carrier's.
           supported = std::any_of(entity.begin(), entity.end(), [&](std::int32_t point) {
@@ -480,10 +626,9 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
     BoundaryEdit edit;
     edit.removed_vertex = r;
     edit.removed.assign(removed_star.begin(), removed_star.end());
-    std::vector<std::int32_t> s_star;
     if (moved) {
       s_star.assign(survivor_star->begin(), survivor_star->end());
-    } else {
+    } else if (!rounded) {
       collect_star(s, s_star);
     }
     if (moved) edit.removed.insert(edit.removed.end(), s_star.begin(), s_star.end());

@@ -1443,10 +1443,9 @@ std::optional<TetEditStatus> Adapter::collapse_boundary(
   if (support.size() == 1 && support.front().weight == 1.0) {
     return incidence_.collapse_boundary(mesh_, edit, removed_star, moved_star);
   }
-  // An affine image that had to be rounded is not in the exact-stencil
-  // contract. A refusal for an exact image is authoritative.
+  bool exact = true;
   if (plan.moved && input_.exact_source == nullptr) {
-    if (!plan.carrier.exact) return std::nullopt;
+    exact = plan.carrier.exact;
   } else {
     const double* point = plan.moved ? plan.carrier.point.data() : mesh_.point(plan.kept);
     for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -1456,9 +1455,14 @@ std::optional<TetEditStatus> Adapter::collapse_boundary(
                             term.weight,
                             input_.source_points[3 * static_cast<std::size_t>(term.row) + axis]);
       }
-      if (!(image - Expansion(point[axis])).is_zero()) return std::nullopt;
+      if (!(image - Expansion(point[axis])).is_zero()) {
+        exact = false;
+        break;
+      }
     }
   }
+  // Only the frozen binary64 source bank can prove the local rounded plane.
+  if (!exact && (plan.moved || input_.exact_source != nullptr)) return std::nullopt;
   std::vector<std::int32_t> rows;
   std::vector<double> weights;
   rows.reserve(support.size());
@@ -1467,7 +1471,9 @@ std::optional<TetEditStatus> Adapter::collapse_boundary(
     rows.push_back(term.row);
     weights.push_back(term.weight);
   }
-  const detail::SourceStencil stencil{rows, weights};
+  const detail::SourceStencil stencil{
+      rows, weights, exact ? detail::SourceStencilImage::kExact
+                           : detail::SourceStencilImage::kRoundedPlane};
   return incidence_.collapse_boundary(mesh_, edit, removed_star, moved_star, &stencil);
 }
 

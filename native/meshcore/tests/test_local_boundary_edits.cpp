@@ -980,9 +980,9 @@ TetEditStatus apply_local(TetMesh& mesh, LocalIncidence& incidence, const Planne
     return incidence.swap_boundary_edge(mesh, plan.operation);
   }
   const LocalIncidence::Star removed = incidence.vertex_star(plan.removed);
-  if (!plan.moved) return incidence.collapse_boundary(mesh, plan.operation, removed, nullptr);
+  if (!plan.moved) return incidence.collapse_boundary(mesh, plan.operation, removed, nullptr).value();
   const LocalIncidence::Star survivor = incidence.vertex_star(plan.survivor);
-  return incidence.collapse_boundary(mesh, plan.operation, removed, &survivor);
+  return incidence.collapse_boundary(mesh, plan.operation, removed, &survivor).value();
 }
 
 const char* status_name(TetEditStatus status) {
@@ -2393,14 +2393,15 @@ void stencil_collapse_case(const char* name, const Box& box, std::uint32_t seed,
     const std::array<std::int32_t, 3> points = *corners;
 
     // Refusals leave the mesh as it is.
-    const TetEditStatus bare = incidence.collapse_boundary(local, plan->operation, removed, nullptr);
+    const TetEditStatus bare =
+        incidence.collapse_boundary(local, plan->operation, removed, nullptr).value();
     PHX_CHECK(bare == TetEditStatus::kRejectedTopology);
     tally.refused_without_stencil += bare == TetEditStatus::kRejectedTopology ? 1 : 0;
     const std::array<double, 3> inexact{weights[0] - 0x1p-52, weights[1] + 0x1p-52, weights[2]};
     PHX_CHECK(!exact_stencil(box, points, inexact, moved.carrier.data()));
     const SourceStencil off{points, inexact};
     const TetEditStatus missed =
-        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &off);
+        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &off).value();
     PHX_CHECK(missed == TetEditStatus::kRejectedTopology);
     tally.refused_inexact += missed == TetEditStatus::kRejectedTopology ? 1 : 0;
     // The same point through the corners of the whole plane, when one of
@@ -2424,7 +2425,7 @@ void stencil_collapse_case(const char* name, const Box& box, std::uint32_t seed,
           exact_stencil(box, *wide, wide_weights, moved.carrier.data())) {
         const SourceStencil outside{*wide, wide_weights};
         const TetEditStatus left =
-            incidence.collapse_boundary(local, plan->operation, removed, nullptr, &outside);
+            incidence.collapse_boundary(local, plan->operation, removed, nullptr, &outside).value();
         PHX_CHECK(left == TetEditStatus::kRejectedTopology);
         tally.refused_outside += left == TetEditStatus::kRejectedTopology ? 1 : 0;
       }
@@ -2434,7 +2435,7 @@ void stencil_collapse_case(const char* name, const Box& box, std::uint32_t seed,
     // The exact stencil: the local verdict and state are the batch's.
     const SourceStencil exact{points, weights};
     const TetEditStatus local_status =
-        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &exact);
+        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &exact).value();
     const TetEditStatus batch_status = apply_batch(batch, plan->operation);
     if (local_status != batch_status) {
       std::fprintf(stderr, "%s stencil collapse: local %s, batch %s\n", name,
@@ -2469,6 +2470,102 @@ void stencil_collapses_match_the_batch() {
       "carrier\n",
       tally.applied, tally.refused_without_stencil, tally.refused_inexact, tally.refused_outside);
   PHX_CHECK(tally.applied > 0 && tally.refused_inexact > 0 && tally.refused_outside > 0);
+}
+
+void rounded_survivor_matches_batch_across_chart_boundary(bool oblique) {
+  Box box = witness_free_box({4, 4, 2}, false);
+  const auto transform = [oblique](double* point) {
+    point[0] *= 1.25;
+    point[1] *= 1.75;
+    if (oblique) point[2] += 0.125 * point[0];
+  };
+  for (auto* points : {&box.points, &box.source_points}) {
+    for (std::size_t row = 0; row < points->size(); row += 3) transform(points->data() + row);
+  }
+  for (std::int32_t group : box.face_groups) {
+    const Piece& piece = box.pieces.at(group);
+    const auto axis = static_cast<std::size_t>(piece.axis);
+    std::array<double, 9> plane{};
+    plane[axis] = piece.value;
+    plane[3 + (axis + 1) % 3] = 1.0;
+    plane[6 + (axis + 2) % 3] = 1.0;
+    for (std::size_t row = 0; row < 9; row += 3) transform(plane.data() + row);
+    box.face_planes.insert(box.face_planes.end(), plane.begin(), plane.end());
+    box.face_plane_tolerances.push_back(0.0);
+  }
+  // A coordinate duplicate is not a source row of the bottom face group.
+  const auto foreign = static_cast<std::int32_t>(box.source_points.size() / 3);
+  box.source_points.insert(box.source_points.end(), {0.0, 0.0, 0.0});
+  TetMesh local(BoundaryPolicy::kConforming);
+  TetMesh batch(BoundaryPolicy::kConforming);
+  if (!build(local, box, {}) || !build(batch, box, {})) return;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local));
+  constexpr std::int32_t kept = 18;  // (3, 3, 0) before the transform
+  constexpr double a = 0x1.999999999999cp-1;
+  constexpr double b = 0x1.999999999999dp-1;
+  const double x = 5.0 * a;
+  const double y = 7.0 * b;
+  // The image lies to one side of the diagonal, its rounding to the other.
+  PHX_CHECK((Dyadic(a) - Dyadic(b)).sign() < 0);
+  PHX_CHECK((Dyadic(7.0) * Dyadic(x) - Dyadic(5.0) * Dyadic(y)).sign() > 0);
+  const std::array<std::int32_t, 3> rows{0, 2, 3};
+  const std::array<double, 3> weights{1.0 - b, b - a, a};
+  constexpr auto rounded = detail::SourceStencilImage::kRoundedPlane;
+  const SourceStencil stencil{rows, weights, rounded};
+  MovePlan move{incidence.vertex_star(kept), {}};
+  move.vertex.id = local.vertex_id(kept);
+  move.vertex.carrier = {x, y, oblique ? 0.125 * x : 0.0};
+  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star) ==
+            TetEditStatus::kApplied);
+  TetEditStatus status = TetEditStatus::kApplied;
+  PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
+  PHX_CHECK(status == TetEditStatus::kApplied && same_state(local, batch));
+  Banks banks(local);
+  Generator generator(box, 37);
+  for (std::int32_t removed : generator.link(local, incidence, kept)) {
+    if (removed < 0 || local.vertex_dimension(removed) != 2) continue;
+    const double* candidate = local.point(removed);
+    if (candidate[2] != (oblique ? 0.125 * candidate[0] : 0.0)) continue;
+    const auto plan = generator.collapse(local, incidence, banks, Perturbation::kNone, false,
+                                         false, std::pair{removed, kept});
+    if (!plan) continue;
+    const auto star = incidence.vertex_star(removed);
+    if (!oblique) {
+      const std::array<std::int32_t, 3> wrong_group{foreign, rows[1], rows[2]};
+      const std::array<double, 3> wrong_point{weights[0] - 0x1p-49, weights[1],
+                                             weights[2] + 0x1p-49};
+      for (const SourceStencil bad : {
+               SourceStencil{wrong_group, weights, rounded},
+               SourceStencil{rows, wrong_point, rounded},
+               SourceStencil{rows, std::span(weights).first<2>(), rounded}}) {
+        PHX_CHECK(!incidence.collapse_boundary(local, plan->operation, star, nullptr, &bad));
+        PHX_CHECK(same_state(local, batch));
+      }
+      if (!plan->operation.replacement_facets.empty()) {
+        TetEdit reversed = plan->operation;
+        reversed.replacement_facets.front().orientation *= -1;
+        const auto refusal = apply_batch(batch, reversed);
+        PHX_CHECK(refusal != TetEditStatus::kApplied);
+        PHX_CHECK(incidence.collapse_boundary(local, reversed, star, nullptr, &stencil) ==
+                  refusal);
+        PHX_CHECK(same_state(local, batch));
+      }
+    }
+    const TetEditStatus reference = apply_batch(batch, plan->operation);
+    const auto actual = incidence.collapse_boundary(local, plan->operation, star, nullptr, &stencil);
+    if (oblique) {
+      PHX_CHECK(!actual);
+      if (reference == TetEditStatus::kApplied) return;  // valid only through the batch
+    } else {
+      PHX_CHECK(actual == reference && same_state(local, batch));
+      if (reference == TetEditStatus::kApplied) {
+        PHX_CHECK(consistent_complex(local) && incidence_current(local, incidence));
+        return;
+      }
+    }
+  }
+  PHX_CHECK(false);  // the fixture must exercise a batch-admissible collapse
 }
 
 void boundary_lookups_require_bound_mesh() {
@@ -2599,6 +2696,8 @@ int main() {
   boundary_edits_are_star_local();
   boundary_cavities_never_hold_a_non_disk_constrained_face();
   stencil_collapses_match_the_batch();
+  rounded_survivor_matches_batch_across_chart_boundary(false);
+  rounded_survivor_matches_batch_across_chart_boundary(true);
   boundary_lookups_require_bound_mesh();
   stencil_relocations_verify_the_candidate();
   stencil_relocations_respect_incident_segments();
