@@ -388,7 +388,7 @@ tetrahedra, then implicit volumes, then the CAD solid.
 |---|---|---|---|
 | F1 point-set Delaunay 2D/3D, 1e3-1e6 | CGAL DT2 / DT3 | S0-B | macOS |
 | Regular triangulation 3D, periodic Delaunay (native-kernels §2-3) | CGAL Regular_3 (2.6-2.9x today), Periodic_3 (5x) | S0-B | macOS |
-| F1 planar CDT and quality refinement (square, square + ring + slit) | Triangle `pcQ`, `pq20a` / `pq30a` | S2-C (`cdt2d`) | Linux |
+| F1 planar CDT; q20 unit square and ring-slit; q30 square with polygonal hole and 100-spike star | Triangle `pcQ`, `pq20a`, and `pq30a` on their respective fixtures | S2-C (`cdt2d`) | Linux |
 | F3 surface to tetrahedra; recovery; refinement; export | Gmsh HXT on the same surface; CGAL CDT_3 | S3 | macOS |
 | Improvement passes on a given mesh (native-kernels §3) | MMG3D `-optim` at equal quality | S3-B | macOS |
 | F4 implicit to tetrahedra | CGAL make_mesh_3, Gmsh | S1 | macOS |
@@ -399,3 +399,9 @@ tetrahedra, then implicit volumes, then the CAD solid.
 | F8 hex-dominant, F9 prism layers, F13 overset, F14 Voronoi | cfMesh / snappyHexMesh, Gmsh / Netgen, TIOGA, VoroCrust | S6 (A overset, C layers, B Voronoi, D hex-dominant) | macOS |
 | STEP import and exchange formats (spline faces are S2, decision D1) | the S2 rows on the STEP models (washer, NIST) | S5 | Linux after S2 |
 | Threads and devices | each row above at 1-8 threads | S7 | macOS |
+
+The F1 q30 size ladder uses h = 0.0431, 0.01362, 0.00431, and 0.001362, with the
+same points, segments, hole seeds, and equilateral area limit on both sides.
+Measure covered area, positive orientation, and maximum area as well as the
+minimum angle. The star's input tips force angles smaller than 30 degrees;
+report the actual minimum and the number of triangles below the requested target.
