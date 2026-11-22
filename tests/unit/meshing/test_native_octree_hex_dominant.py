@@ -255,8 +255,8 @@ def test_route_publishes_layers_and_proves_them() -> None:
     assert np.count_nonzero(np.asarray(roles.values) == 2) > 0
 
 
-def test_unproved_candidate_refuses_proof() -> None:
-    candidate = _plan().execute(prove=False)
+def test_default_octree_candidate_refuses_deferred_proof() -> None:
+    candidate = _plan().execute()
 
     assert candidate.mesh.connectivity.cell_count == 432
     with pytest.raises(MeshingFailure, match="prove=False"):

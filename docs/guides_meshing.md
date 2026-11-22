@@ -1063,7 +1063,6 @@ plan = NativeMeshingProvider().plan(
     coordinate_contract=coordinates,
 )
 candidate = plan.execute()
-result = candidate.prove()
 ```
 
 `NativeMeshingOptions.route` may select a route explicitly. When omitted,
@@ -1076,9 +1075,13 @@ the caller must supply the actual units and reference frame.
 Construction and certification are separate steps. `plan.execute()` (or
 `plan.execute(prove=False)`) returns a `CellMeshingCandidate` with a `mesh`,
 `geometry`, and `coordinate_contract`, but no acceptance proof.
-`candidate.prove()` certifies exactly that mesh without reconstruction or repair.
-Use `plan.execute(prove=True)` to construct and certify in one call. Both proof
-paths return the same `CellMeshingResult` (equal identities) or raise findings.
+Where deferred proof is supported, `candidate.prove()` certifies exactly that
+mesh without reconstruction or repair. On the PLC tetrahedral route this
+returns the same certified result as `plan.execute(prove=True)`.
+The `plc_octree_hex_dominant` route omits required proof data from unproved
+candidates, so `candidate.prove()` refuses them. For certified octree meshes
+or owner-local execution, pass `prove=True` up front.
+
 Acceptance of the PLC tetrahedral route decides embedding and region coverage
 by exact native theorems over affine tetrahedra (`tetrahedral_degree`): every
 cell is positively oriented, every face lies in at most two oppositely oriented

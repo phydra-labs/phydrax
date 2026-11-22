@@ -1339,9 +1339,9 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
     """A constructed native mesh before acceptance; nothing on it is certified.
 
     ``mesh``, ``geometry`` and ``coordinate_contract`` are the produced arrays
-    and coordinate map. :meth:`prove` runs the canonical acceptance of exactly
-    this mesh (no construction or repair) and returns the certified result or
-    raises its findings.
+    and coordinate map. Where supported, :meth:`prove` runs the canonical
+    acceptance of exactly this mesh (no construction or repair) and returns
+    the certified result or raises its findings.
     """
 
     _construction: NativeMeshConstruction = eqx.field(repr=False)
@@ -1414,7 +1414,11 @@ class CellMeshingCandidate(StrictModule, NonTrainableState):
         return self._construction.coordinate_contract
 
     def prove(self, /) -> CellMeshingResult:
-        """Certify this mesh as produced, without constructing or repairing it."""
+        """Certify this mesh without reconstruction or repair.
+
+        The octree hex-dominant route needs ``execute(prove=True)`` up front:
+        an unproved octree candidate does not carry the required proof data.
+        """
         return _accept_native_construction(
             self._construction,
             self.specification,
@@ -1496,9 +1500,10 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
     ) -> CellMeshingCandidate | CellMeshingResult | MeshAssembly:
         """Construct the mesh and, with ``prove=True``, certify it.
 
-        By default this returns the constructed :class:`CellMeshingCandidate`
-        without an acceptance proof; ``candidate.prove()`` later certifies
-        exactly that mesh. Owner-local execution requires ``prove=True``.
+        By default this returns a :class:`CellMeshingCandidate` without an
+        acceptance proof. Where supported, ``candidate.prove()`` certifies
+        exactly that mesh. Owner-local execution and certification of the
+        octree hex-dominant route require ``prove=True`` up front.
         """
         if not isinstance(prove, bool):
             raise TypeError("prove must be bool.")

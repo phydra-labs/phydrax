@@ -546,9 +546,9 @@
 
 ### Changed
 - `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
-  Use `candidate.prove()` to certify that mesh later or pass `prove=True`
-  to construct and certify in one call. Owner-local execution requires
-  explicit `prove=True`.
+  Where supported, `candidate.prove()` certifies that mesh later. Certified
+  octree hex-dominant meshes and owner-local execution require
+  `execute(prove=True)` up front.
 - Native interval sine and cosine use a certified small-angle fast path.
   The trigonometric interval benchmark rises from 0.88 to 10.16 million boxes
   per second without loosening the enclosure. Endpoints with uncertain
