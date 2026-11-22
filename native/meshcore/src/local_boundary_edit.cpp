@@ -248,6 +248,36 @@ bool LocalIncidence::ensure_boundary_index(const TetMesh& mesh) {
   return true;
 }
 
+TetEditStatus LocalIncidence::boundary_facet(std::array<std::uint64_t, 3> vertices,
+                                             const TetSnapshotFacet*& record) {
+  record = nullptr;
+  if (mesh_ == nullptr || !ensure_boundary_index(*mesh_)) return TetEditStatus::kStaleGeneration;
+  const auto key = sorted_ids(vertices);
+  const auto found = boundary_index_.facets.find(key);
+  if (found == boundary_index_.facets.end()) return TetEditStatus::kApplied;
+  if (found->second >= mesh_->facets_.size()) return TetEditStatus::kStaleGeneration;
+  const TetSnapshotFacet& facet = mesh_->facets_[found->second];
+  if (sorted_ids(facet.vertices) != key) return TetEditStatus::kStaleGeneration;
+  record = &facet;
+  return TetEditStatus::kApplied;
+}
+
+TetEditStatus LocalIncidence::boundary_segment(std::array<std::uint64_t, 2> vertices,
+                                               const TetSnapshotSegment*& record) {
+  record = nullptr;
+  if (mesh_ == nullptr || !ensure_boundary_index(*mesh_)) return TetEditStatus::kStaleGeneration;
+  const auto key = sorted_ids(vertices[0], vertices[1]);
+  const auto found = boundary_index_.segments.find(key);
+  if (found == boundary_index_.segments.end()) return TetEditStatus::kApplied;
+  if (found->second >= mesh_->segments_.size()) return TetEditStatus::kStaleGeneration;
+  const TetSnapshotSegment& segment = mesh_->segments_[found->second];
+  if (sorted_ids(segment.vertices[0], segment.vertices[1]) != key) {
+    return TetEditStatus::kStaleGeneration;
+  }
+  record = &segment;
+  return TetEditStatus::kApplied;
+}
+
 TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& operation,
                                                 const Star& removed_star,
                                                 const Star* survivor_star,

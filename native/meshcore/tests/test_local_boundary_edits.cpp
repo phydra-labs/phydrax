@@ -1104,7 +1104,11 @@ int insert_split(const Box& box, Generator& generator, TetMesh& local, TetMesh& 
     operation.removed_facet_ids.push_back(before.constrained_facets[row].id);
   }
   for (std::size_t row : segment_rows_split) {
-    operation.removed_segment_ids.push_back(before.constrained_segments[row].id);
+    const TetSnapshotSegment& old = before.constrained_segments[row];
+    operation.removed_segment_ids.push_back(old.id);
+    const TetSnapshotSegment* retired = nullptr;
+    PHX_CHECK(incidence.boundary_segment(old.vertices, retired) == TetEditStatus::kApplied);
+    PHX_CHECK(retired == nullptr);
   }
   std::set<std::uint64_t> old_facets;
   for (const auto& facet : before.constrained_facets) old_facets.insert(facet.id);
@@ -1116,6 +1120,12 @@ int insert_split(const Box& box, Generator& generator, TetMesh& local, TetMesh& 
   std::set<std::uint64_t> old_segments;
   for (const auto& segment : before.constrained_segments) old_segments.insert(segment.id);
   for (const auto& segment : after.constrained_segments) {
+    // The row may have been overwritten by the first half or appended.
+    const TetSnapshotSegment* record = nullptr;
+    PHX_CHECK(incidence.boundary_segment({segment.vertices[1], segment.vertices[0]}, record) ==
+              TetEditStatus::kApplied);
+    PHX_CHECK(record != nullptr && record->id == segment.id &&
+              record->vertices == segment.vertices && record->source == segment.source);
     if (old_segments.contains(segment.id)) continue;
     operation.replacement_segments.push_back(
         TetEditSegment{segment.id, segment.vertices, segment.source, false});
@@ -1641,12 +1651,25 @@ bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
     }
     TetMeshSnapshot after;
     PHX_CHECK(local.snapshot(after) == TetEditStatus::kApplied);
+    for (const auto& [key, old] : banks.facets) {
+      if (std::find(operation.removed_facet_ids.begin(), operation.removed_facet_ids.end(),
+                    old.id) == operation.removed_facet_ids.end()) continue;
+      const TetSnapshotFacet* retired = nullptr;
+      PHX_CHECK(incidence.boundary_facet(key, retired) == TetEditStatus::kApplied);
+      PHX_CHECK(retired == nullptr);
+    }
     for (TetEditFacet& facet : operation.replacement_facets) {
       const auto found = std::find_if(
           after.constrained_facets.begin(), after.constrained_facets.end(),
           [&](const TetSnapshotFacet& made) { return made.vertices == facet.vertices; });
       PHX_CHECK(found != after.constrained_facets.end());
       if (found == after.constrained_facets.end()) return false;
+      const TetSnapshotFacet* record = nullptr;
+      PHX_CHECK(incidence.boundary_facet({facet.vertices[2], facet.vertices[0], facet.vertices[1]},
+                                          record) == TetEditStatus::kApplied);
+      PHX_CHECK(record != nullptr && record->id == found->id &&
+                record->vertices == found->vertices && record->source == found->source &&
+                record->orientation == found->orientation);
       facet.id = found->id;
     }
   }
@@ -2447,6 +2470,14 @@ void stencil_collapses_match_the_batch() {
   PHX_CHECK(tally.applied > 0 && tally.refused_inexact > 0 && tally.refused_outside > 0);
 }
 
+void boundary_lookups_require_bound_mesh() {
+  LocalIncidence incidence;
+  const TetSnapshotFacet* facet = nullptr;
+  const TetSnapshotSegment* segment = nullptr;
+  PHX_CHECK(incidence.boundary_facet({0, 1, 2}, facet) == TetEditStatus::kStaleGeneration);
+  PHX_CHECK(incidence.boundary_segment({0, 1}, segment) == TetEditStatus::kStaleGeneration);
+}
+
 }  // namespace
 
 int main() {
@@ -2456,5 +2487,6 @@ int main() {
   boundary_edits_are_star_local();
   boundary_cavities_never_hold_a_non_disk_constrained_face();
   stencil_collapses_match_the_batch();
+  boundary_lookups_require_bound_mesh();
   return phx::mc::test::finish("test_local_boundary_edits");
 }

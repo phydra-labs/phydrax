@@ -169,6 +169,14 @@ class LocalIncidence {
                                     const TetEditVertex& vertex,
                                     std::vector<std::uint64_t>& created_cells);
 
+  // From the bound mesh's current boundary index. kApplied with a null
+  // record means no constraint; a failed index is kStaleGeneration. Records
+  // are read-only borrows, valid only until the next edit or initialize.
+  TetEditStatus boundary_facet(std::array<std::uint64_t, 3> vertices,
+                                const TetSnapshotFacet*& record);
+  TetEditStatus boundary_segment(std::array<std::uint64_t, 2> vertices,
+                                  const TetSnapshotSegment*& record);
+
  private:
   struct FaceIdHash {
     std::size_t operator()(const std::array<std::uint64_t, 3>& face) const noexcept {

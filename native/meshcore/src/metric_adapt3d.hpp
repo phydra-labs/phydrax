@@ -15,15 +15,12 @@
 // predicates of the TetMesh commits; kernel floats (metric_float.hpp) only
 // measure, rank and screen.
 //
-// Commits are star-local through detail::LocalIncidence: interior splits,
-// collapses, reconnections and relocations, boundary collapses (in place or
-// with a moving survivor) and boundary edge swaps. A split on a constrained
-// facet or segment goes through TetMesh::apply_edit_batch, which copies and
-// audits the whole state: those splits are gathered into one disjoint batch
-// per sweep, bisected on refusal; so does an interior collapse whose
-// survivor moves, one at a time. A boundary vertex moves through
-// TetMesh::apply_relocation_edit. Boundary relocations, survivor moves and
-// deeper relocation searches are enabled in turn as the loop stalls.
+// Commits through detail::LocalIncidence include interior edits, explicit
+// boundary swaps and single-vertex moves, and hull edge splits and boundary
+// collapses in the local contracts. Other constrained splits and collapses
+// use TetMesh::apply_edit_batch. Coupled moves and implicit boundary
+// relocations use TetMesh::apply_relocation_edit. The search expands to
+// boundary moves, moving survivors and deeper searches as it stalls.
 #pragma once
 
 #include <array>

@@ -133,21 +133,9 @@ std::uint64_t edge_key(std::int32_t a, std::int32_t b) {
 using IdEdge = std::array<std::uint64_t, 2>;
 IdEdge id_edge(std::uint64_t a, std::uint64_t b) { return {std::min(a, b), std::max(a, b)}; }
 
-// A face by its three vertex IDs, ascending.
 using IdFace = std::array<std::uint64_t, 3>;
-IdFace id_face(std::uint64_t a, std::uint64_t b, std::uint64_t c) {
-  IdFace face{a, b, c};
-  std::sort(face.begin(), face.end());
-  return face;
-}
-struct IdFaceHash {
-  std::size_t operator()(const IdFace& face) const noexcept {
-    std::uint64_t mixed = face[0] * 0x9E3779B97F4A7C15ULL;
-    mixed ^= face[1] + 0x9E3779B97F4A7C15ULL + (mixed << 6) + (mixed >> 2);
-    mixed ^= face[2] + 0x9E3779B97F4A7C15ULL + (mixed << 6) + (mixed >> 2);
-    return static_cast<std::size_t>(mixed);
-  }
-};
+
+Stencil carrier_stencil(const Carrier& carrier);
 
 struct CellLineage {
   std::vector<std::uint64_t> ancestry;  // ascending source cell IDs
@@ -193,17 +181,16 @@ class Adapter {
 
   // Splits.
   std::int64_t split_sweep();
-  // How an edge's split point is admitted: free (interior, the carrier is the
-  // rounding of the exact stencil image) or exact (on a constrained facet or
-  // segment: the commit proves the split covers the old facet exactly).
-  enum class EdgeSupport { kFree, kExact };
-  EdgeSupport edge_support(std::int32_t a, std::int32_t b,
-                           std::span<const std::int32_t> shell) const;
-  bool split_parameter(std::int32_t a, std::int32_t b, EdgeSupport support, Stencil& stencil,
+  // A two-facet hull shell can commit locally. Only a declared coplanar
+  // pair can use coverage of the whole pair instead of exact edge coverage.
+  enum class EdgeSupport { kFree, kBatch, kHull, kDeclaredHull };
+  std::optional<EdgeSupport> edge_support(std::int32_t a, std::int32_t b,
+                                          std::span<const std::int32_t> shell);
+  bool split_parameter(std::int32_t a, std::int32_t b, bool exact_edge, Stencil& stencil,
                        double* point, double& parameter) const;
+  bool sync_split_facets(std::int32_t slot, std::int32_t inserted);
   TetEditStatus split(std::int32_t a, std::int32_t b, bool& applied);
-  // Splits of edges on constrained facets, committed as one disjoint batch
-  // per sweep through apply_edit_batch (bisected on refusal).
+  // Constrained segment and non-hull splits use disjoint batches.
   struct PendingSplit {
     std::int32_t a = -1;
     std::int32_t b = -1;
@@ -240,20 +227,15 @@ class Adapter {
   void record_collapse(std::int32_t removed, std::int32_t kept);
   // The vertex's exact stencil and tensor after it moves to `carrier`.
   void assign_carrier(std::int32_t vertex, const Carrier& carrier, const double* tensor);
+  std::optional<TetEditStatus> collapse_boundary(
+      const CollapsePlan& plan, const TetEdit& edit,
+      const LocalIncidence::Star& removed_star, const LocalIncidence::Star& kept_star);
 
-  // The constrained facets and segments by their vertex IDs, kept current by
-  // every edit that changes them (the records name the banks' facets and
-  // segments in edit operations).
-  // False when a constrained face has no record: the mirror drifted, a
-  // fatal state (kStaleGeneration).
+  // A labeled face with no record, or a failed boundary index, is stale.
   bool facets_through(std::int32_t vertex, std::span<const std::int32_t> star,
-                      std::vector<TetSnapshotFacet>& facets) const;
-  void segments_through(std::int32_t vertex, std::span<const std::int32_t> star,
-                        std::vector<TetSnapshotSegment>& segments) const;
-  // Retires the operation's removed facets and segments (`removed_faces`,
-  // `removed_edges`: their vertex IDs) and records its replacements.
-  void update_banks(const TetEdit& operation, std::span<const IdFace> removed_faces,
-                    std::span<const IdEdge> removed_edges);
+                      std::vector<TetSnapshotFacet>& facets);
+  bool segments_through(std::int32_t vertex, std::span<const std::int32_t> star,
+                        std::vector<TetSnapshotSegment>& segments);
 
   // Swaps: 2-3 face flips and ring reconnections (3-2 included) of interior
   // cavities, committed star-locally.
@@ -328,11 +310,11 @@ class Adapter {
   // whether the mesh's source points are the adaptation's (boundary vertices
   // move on them only then).
   std::unordered_map<std::int32_t, std::vector<CarrierSimplex>> group_triangles_;
-  bool boundary_relocation_ = false;
+  std::unordered_set<std::int32_t> declared_groups_;
+  bool source_banks_match_ = false;
   // Collapses may move their survivor: on once boundary relocation stalls.
   bool survivor_moves_ = false;
-  // Boundary vertex relocations (each validated against the whole mesh by
-  // TetMesh::apply_relocation_edit): on from the first pass that stalls.
+  // Boundary vertex relocations start once the interior stalls.
   bool boundary_moves_ = false;
   // Relocation stage: 0 out-of-band vertices, 1 deep, 2 deep and refined
   // (both band improvements only), 3 every vertex, 4 also pairs of ends of
@@ -347,8 +329,6 @@ class Adapter {
   std::uint64_t next_segment_id_ = 0;
   std::vector<PendingSplit> pending_;
   std::vector<char> occupied_;  // per cell slot: in the pending split batch
-  std::unordered_map<IdFace, TetSnapshotFacet, IdFaceHash> facets_;
-  std::unordered_map<IdEdge, TetSnapshotSegment, EdgeIdHash> segments_;
   std::array<std::vector<std::int32_t>, 4> dirty_;
   std::array<std::vector<char>, 4> dirty_flags_;
   TetEditStatus fatal_ = TetEditStatus::kApplied;
@@ -509,13 +489,18 @@ void Adapter::bind() {
   }
   for (const TetSnapshotFacet& facet : snapshot.constrained_facets) {
     next_facet_id_ = std::max(next_facet_id_, facet.id + 1);
-    facets_.emplace(id_face(facet.vertices[0], facet.vertices[1], facet.vertices[2]), facet);
   }
   for (const TetSnapshotSegment& segment : snapshot.constrained_segments) {
     next_segment_id_ = std::max(next_segment_id_, segment.id + 1);
-    segments_.emplace(id_edge(segment.vertices[0], segment.vertices[1]), segment);
   }
   if (!incidence_.initialize(mesh_)) throw std::invalid_argument("The mesh has no incidence.");
+  source_banks_match_ = snapshot.source_points == input_.source_points;
+  for (std::size_t row = 0; row < snapshot.source_face_groups.size(); ++row) {
+    if (9 * row < snapshot.source_face_planes.size() &&
+        !std::isnan(snapshot.source_face_planes[9 * row])) {
+      declared_groups_.insert(snapshot.source_face_groups[row]);
+    }
+  }
   if (input_.relocation) {
     if (input_.source_cells.size() % 4 != 0) {
       throw std::invalid_argument("Source cells are four point rows each.");
@@ -533,16 +518,15 @@ void Adapter::bind() {
     carriers_ = std::make_unique<CarrierSource>(input_.source_points, std::move(numerators),
                                                 Dyadic(1.0).scaled_power(shift), input_.source_cells);
     // Facet groups of the mesh's own source complex, when it is this source.
-    boundary_relocation_ = snapshot.source_points == input_.source_points;
     const std::size_t faces = snapshot.source_faces.size() / 3;
-    for (std::size_t row = 0; boundary_relocation_ && row < faces; ++row) {
+    for (std::size_t row = 0; source_banks_match_ && row < faces; ++row) {
       CarrierSimplex triangle;
       triangle.size = 3;
       for (std::size_t corner = 0; corner < 3; ++corner) {
         triangle.rows[corner] = snapshot.source_faces[3 * row + corner];
       }
-      triangle.declared = 9 * row < snapshot.source_face_planes.size() &&
-                          !std::isnan(snapshot.source_face_planes[9 * row]);
+      // Boundary moves keep an exactly representable source image for the
+      // verified collapse stencil and edges outside declared facet pairs.
       group_triangles_[snapshot.source_face_groups[row]].push_back(triangle);
     }
   }
@@ -638,22 +622,37 @@ void Adapter::retire_cell(std::int32_t slot) {
 
 // ---------------------------------------------------------------- splits ---
 
-Adapter::EdgeSupport Adapter::edge_support(std::int32_t a, std::int32_t b,
-                                           std::span<const std::int32_t> shell) const {
+std::optional<Adapter::EdgeSupport> Adapter::edge_support(
+    std::int32_t a, std::int32_t b, std::span<const std::int32_t> shell) {
   if (mesh_.vertex_dimension(a) <= 1 && mesh_.vertex_dimension(b) <= 1) {
-    return EdgeSupport::kExact;  // possibly a segment
+    const TetSnapshotSegment* segment = nullptr;
+    if (incidence_.boundary_segment({mesh_.vertex_id(a), mesh_.vertex_id(b)}, segment) !=
+        TetEditStatus::kApplied) return std::nullopt;
+    if (segment != nullptr) return EdgeSupport::kBatch;
   }
+  int faces = 0;
+  bool hull = true;
+  std::int32_t group = kNoConstraint;
+  bool one_group = true;
   for (std::int32_t slot : shell) {
     const Tetrahedron& cell = mesh_.tet(slot);
     for (int face = 0; face < 4; ++face) {
       if (cell.v[face] == a || cell.v[face] == b) continue;
-      if (mesh_.complex().constraint(slot, face) != kNoConstraint) return EdgeSupport::kExact;
+      const std::int32_t source = mesh_.complex().constraint(slot, face);
+      if (source == kNoConstraint) continue;
+      if (faces == 0) group = source;
+      one_group = one_group && group == source;
+      hull = hull && is_ghost(mesh_.tet(cell.n[face]));
+      ++faces;
     }
   }
-  return EdgeSupport::kFree;
+  if (faces == 0) return EdgeSupport::kFree;
+  if (!hull || faces != 2 || mesh_.implicit_source()) return EdgeSupport::kBatch;
+  return one_group && declared_groups_.contains(group) ? EdgeSupport::kDeclaredHull
+                                                       : EdgeSupport::kHull;
 }
 
-bool Adapter::split_parameter(std::int32_t a, std::int32_t b, EdgeSupport support,
+bool Adapter::split_parameter(std::int32_t a, std::int32_t b, bool exact_edge,
                               Stencil& stencil, double* point, double& parameter) const {
   const double* pa = mesh_.point(a);
   const double* pb = mesh_.point(b);
@@ -682,7 +681,7 @@ bool Adapter::split_parameter(std::int32_t a, std::int32_t b, EdgeSupport suppor
                             input_.source_points[3 * static_cast<std::size_t>(term.row) + axis]);
       }
       const double rounded = nearest_double(image);
-      if (support == EdgeSupport::kExact) {
+      if (exact_edge) {
         const Expansion edge =
             Expansion(pa[axis]) + Expansion::difference(pb[axis], pa[axis]).scaled(t);
         admissible = (edge - image).is_zero() && (image - Expansion(rounded)).is_zero();
@@ -708,12 +707,21 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
       return TetEditStatus::kApplied;  // in this sweep's boundary batch
     }
   }
-  const EdgeSupport support = edge_support(a, b, shell);
+  const auto support = edge_support(a, b, shell);
+  if (!support) return TetEditStatus::kStaleGeneration;
 
   Stencil stencil;
   std::array<double, 3> point{};
   double parameter = 0.0;
-  if (!split_parameter(a, b, support, stencil, point.data(), parameter)) {
+  bool exact_edge = *support != EdgeSupport::kFree;
+  bool have_point = split_parameter(a, b, exact_edge, stencil, point.data(), parameter);
+  if (!have_point && *support == EdgeSupport::kDeclaredHull) {
+    // Preserve exact edge witnesses where possible. Otherwise the kernel
+    // proves coverage against the pair using the rounded source image.
+    exact_edge = false;
+    have_point = split_parameter(a, b, false, stencil, point.data(), parameter);
+  }
+  if (!have_point) {
     unrepresentable_.insert(edge_key(a, b));
     ++counters_.rejected_invalid;
     return TetEditStatus::kApplied;
@@ -754,7 +762,7 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   added.finish();
   if (!objective_decreases(removed, added, false)) return TetEditStatus::kApplied;
 
-  if (support != EdgeSupport::kFree) {
+  if (*support == EdgeSupport::kBatch) {
     for (std::int32_t slot : shell) {
       if (occupied_.size() <= static_cast<std::size_t>(slot)) {
         occupied_.resize(static_cast<std::size_t>(slot) + 1, 0);
@@ -794,14 +802,25 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   TetEditVertex vertex;
   vertex.id = next_vertex_id_;
   vertex.carrier = point;
+  const bool boundary = *support != EdgeSupport::kFree;
+  if (boundary && exact_edge) {
+    vertex.has_edge_parameter = true;
+    vertex.edge_witness_supplied = true;
+    vertex.edge_endpoints = {mesh_.vertex_id(a), mesh_.vertex_id(b)};
+    vertex.edge_parameter = parameter;
+    vertex.ancestry = {{vertex.edge_endpoints[0], {0, 0, 0}, 1.0 - parameter},
+                       {vertex.edge_endpoints[1], {0, 0, 0}, parameter}};
+  }
   std::vector<std::uint64_t> created;
-  const TetEditStatus status = incidence_.insert_cone(mesh_, vertex, shell, {}, created);
+  const TetEditStatus status =
+      boundary ? incidence_.split_boundary_edge(mesh_, a, b, vertex, created)
+               : incidence_.insert_cone(mesh_, vertex, shell, {}, created);
   if (status != TetEditStatus::kApplied) {
     if (fatal(status)) return status;
     count_refusal(status);
     return TetEditStatus::kApplied;
   }
-  // The cone draws its cell IDs from the mesh's own allocator.
+  // Local splits draw cell IDs from the mesh's allocator.
   ++next_vertex_id_;
   for (std::uint64_t id : created) next_cell_id_ = std::max(next_cell_id_, id + 1);
   for (std::int32_t slot : shell) retire_cell(slot);
@@ -812,6 +831,7 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   vertex_targets_[static_cast<std::size_t>(inserted)] = next_target_vertex_++;
   for (std::uint64_t id : created) {
     const std::int32_t slot = mesh_.cell_slot(id);
+    if (boundary && !sync_split_facets(slot, inserted)) return TetEditStatus::kStaleGeneration;
     const Tetrahedron& cell = mesh_.tet(slot);
     std::array<std::int32_t, 3> key{};
     int count = 0;
@@ -830,12 +850,30 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   return TetEditStatus::kApplied;
 }
 
+bool Adapter::sync_split_facets(std::int32_t slot, std::int32_t inserted) {
+  const Tetrahedron& cell = mesh_.tet(slot);
+  for (int face = 0; face < 4; ++face) {
+    if (cell.v[face] == inserted || mesh_.complex().constraint(slot, face) == kNoConstraint) {
+      continue;
+    }
+    IdFace ids{};
+    std::size_t count = 0;
+    for (int corner = 0; corner < 4; ++corner) {
+      if (corner != face) ids[count++] = mesh_.vertex_id(cell.v[corner]);
+    }
+    const TetSnapshotFacet* record = nullptr;
+    if (incidence_.boundary_facet(ids, record) != TetEditStatus::kApplied || record == nullptr) {
+      return false;
+    }
+    next_facet_id_ = std::max(next_facet_id_, record->id + 1);
+  }
+  return true;
+}
+
 TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
                                          std::int64_t& applied) {
   // The constrained facets and segments of each split edge come from the
-  // adapter's banks through the edge's shell.
-  std::vector<IdFace> removed_faces;
-  std::vector<IdEdge> removed_edges;
+  // incidence index through the edge's shell.
   std::vector<TetSnapshotFacet> through;
   TetEdit op;
   op.kind = TetEditKind::kSplit;
@@ -896,7 +934,6 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
         continue;
       }
       op.removed_facet_ids.push_back(facet.id);
-      removed_faces.push_back(id_face(facet.vertices[0], facet.vertices[1], facet.vertices[2]));
       // The facet's directed edge over {a, b} and its opposite corner.
       for (int side = 0; side < 3; ++side) {
         const std::uint64_t x = facet.vertices[static_cast<std::size_t>(side)];
@@ -916,11 +953,12 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
         break;
       }
     }
-    const auto segment = segments_.find(key);
-    if (segment != segments_.end()) {
-      const TetSnapshotSegment& old = segment->second;
+    const TetSnapshotSegment* segment = nullptr;
+    const TetEditStatus lookup = incidence_.boundary_segment(key, segment);
+    if (lookup != TetEditStatus::kApplied) return lookup;
+    if (segment != nullptr) {
+      const TetSnapshotSegment& old = *segment;
       op.removed_segment_ids.push_back(old.id);
-      removed_edges.push_back(key);
       for (const std::array<std::uint64_t, 2>& half :
            {std::array<std::uint64_t, 2>{old.vertices[0], middle},
             std::array<std::uint64_t, 2>{middle, old.vertices[1]}}) {
@@ -971,7 +1009,6 @@ TetEditStatus Adapter::apply_split_batch(std::span<const PendingSplit> splits,
   next_cell_id_ = cell_id;
   next_facet_id_ = facet_id;
   next_segment_id_ = segment_id;
-  update_banks(batch.operations.front(), removed_faces, removed_edges);
   if (!incidence_.initialize(mesh_)) return TetEditStatus::kStaleGeneration;
   std::size_t parent_row = 0;
   std::uint64_t middle = vertex_id - splits.size();
@@ -1233,9 +1270,7 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
     }
     candidate.finish();
     const bool in_band = candidate.long_side.empty();
-    // A boundary survivor goes only to an exact carrier: a rounded one would
-    // leave its facet edges without an exact split point.
-    if (blocked || (!interior && !moves[index].carrier.exact)) continue;
+    if (blocked) continue;
     if (admitted && compare_violations(candidate, plan.added) >= 0) continue;
     plan.added = std::move(candidate);
     plan.moved = true;
@@ -1283,7 +1318,7 @@ void Adapter::record_collapse(std::int32_t removed, std::int32_t kept) {
 }
 
 bool Adapter::facets_through(std::int32_t vertex, std::span<const std::int32_t> star,
-                             std::vector<TetSnapshotFacet>& facets) const {
+                             std::vector<TetSnapshotFacet>& facets) {
   facets.clear();
   for (std::int32_t slot : star) {
     const Tetrahedron& cell = mesh_.tet(slot);
@@ -1294,12 +1329,14 @@ bool Adapter::facets_through(std::int32_t vertex, std::span<const std::int32_t> 
       for (int corner = 0; corner < 4; ++corner) {
         if (corner != face) ids[static_cast<std::size_t>(count++)] = mesh_.vertex_id(cell.v[corner]);
       }
-      const auto found = facets_.find(id_face(ids[0], ids[1], ids[2]));
-      if (found == facets_.end()) return false;
+      const TetSnapshotFacet* found = nullptr;
+      if (incidence_.boundary_facet(ids, found) != TetEditStatus::kApplied || found == nullptr) {
+        return false;
+      }
       if (std::none_of(facets.begin(), facets.end(), [&](const TetSnapshotFacet& facet) {
-            return facet.id == found->second.id;
+            return facet.id == found->id;
           })) {
-        facets.push_back(found->second);
+        facets.push_back(*found);
       }
     }
   }
@@ -1308,47 +1345,70 @@ bool Adapter::facets_through(std::int32_t vertex, std::span<const std::int32_t> 
   return true;
 }
 
-void Adapter::segments_through(std::int32_t vertex, std::span<const std::int32_t> star,
-                               std::vector<TetSnapshotSegment>& segments) const {
+bool Adapter::segments_through(std::int32_t vertex, std::span<const std::int32_t> star,
+                               std::vector<TetSnapshotSegment>& segments) {
   segments.clear();
+  if (mesh_.vertex_dimension(vertex) > 1) return true;
   const std::uint64_t id = mesh_.vertex_id(vertex);
   for (std::int32_t slot : star) {
     for (std::int32_t other : mesh_.tet(slot).v) {
-      if (other == vertex) continue;
-      const auto found = segments_.find(id_edge(id, mesh_.vertex_id(other)));
-      if (found == segments_.end()) continue;
+      if (other == vertex || mesh_.vertex_dimension(other) > 1) continue;
+      const TetSnapshotSegment* found = nullptr;
+      if (incidence_.boundary_segment({id, mesh_.vertex_id(other)}, found) !=
+          TetEditStatus::kApplied) return false;
+      if (found == nullptr) continue;
       if (std::none_of(segments.begin(), segments.end(), [&](const TetSnapshotSegment& segment) {
-            return segment.id == found->second.id;
+            return segment.id == found->id;
           })) {
-        segments.push_back(found->second);
+        segments.push_back(*found);
       }
     }
   }
   std::sort(segments.begin(), segments.end(),
             [](const TetSnapshotSegment& x, const TetSnapshotSegment& y) { return x.id < y.id; });
+  return true;
 }
 
-void Adapter::update_banks(const TetEdit& operation, std::span<const IdFace> removed_faces,
-                           std::span<const IdEdge> removed_edges) {
-  for (const IdFace& face : removed_faces) facets_.erase(face);
-  for (const IdEdge& edge : removed_edges) segments_.erase(edge);
-  for (const TetEditFacet& facet : operation.replacement_facets) {
-    TetSnapshotFacet record;
-    record.id = facet.id;
-    record.vertices = facet.vertices;
-    record.source = facet.source;
-    record.orientation = facet.orientation;
-    record.protected_facet = facet.protected_facet;
-    facets_[id_face(facet.vertices[0], facet.vertices[1], facet.vertices[2])] = record;
+std::optional<TetEditStatus> Adapter::collapse_boundary(
+    const CollapsePlan& plan, const TetEdit& edit,
+    const LocalIncidence::Star& removed_star, const LocalIncidence::Star& kept_star) {
+  if (mesh_.implicit_source()) return std::nullopt;
+  const LocalIncidence::Star* moved_star = plan.moved ? &kept_star : nullptr;
+  if (mesh_.witness(plan.kept).stratum != SourceStratum::kNone) {
+    return incidence_.collapse_boundary(mesh_, edit, removed_star, moved_star);
   }
-  for (const TetEditSegment& segment : operation.replacement_segments) {
-    TetSnapshotSegment record;
-    record.id = segment.id;
-    record.vertices = segment.vertices;
-    record.source = segment.source;
-    record.protected_segment = segment.protected_segment;
-    segments_[id_edge(segment.vertices[0], segment.vertices[1])] = record;
+  if (!source_banks_match_) return std::nullopt;
+  const Stencil moved = plan.moved ? carrier_stencil(plan.carrier) : Stencil{};
+  const Stencil& support = plan.moved ? moved : stencils_[static_cast<std::size_t>(plan.kept)];
+  if (support.size() == 1 && support.front().weight == 1.0) {
+    return incidence_.collapse_boundary(mesh_, edit, removed_star, moved_star);
   }
+  // An affine image that had to be rounded is not in the exact-stencil
+  // contract. A refusal for an exact image is authoritative.
+  if (plan.moved) {
+    if (!plan.carrier.exact) return std::nullopt;
+  } else {
+    const double* point = mesh_.point(plan.kept);
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      Expansion image;
+      for (const StencilTerm& term : support) {
+        image = image + Expansion::product(
+                            term.weight,
+                            input_.source_points[3 * static_cast<std::size_t>(term.row) + axis]);
+      }
+      if (!(image - Expansion(point[axis])).is_zero()) return std::nullopt;
+    }
+  }
+  std::vector<std::int32_t> rows;
+  std::vector<double> weights;
+  rows.reserve(support.size());
+  weights.reserve(support.size());
+  for (const StencilTerm& term : support) {
+    rows.push_back(term.row);
+    weights.push_back(term.weight);
+  }
+  const detail::SourceStencil stencil{rows, weights};
+  return incidence_.collapse_boundary(mesh_, edit, removed_star, moved_star, &stencil);
 }
 
 TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
@@ -1424,19 +1484,18 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
   }
   // The removed vertex's facets and segments: those through the survivor
   // go, the others continue as their images.
-  std::vector<IdFace> removed_faces;
-  std::vector<IdEdge> removed_edges;
   std::uint64_t facet_id = next_facet_id_;
   std::uint64_t segment_id = next_segment_id_;
   if (plan.boundary) {
     std::vector<TetSnapshotFacet> facets;
     std::vector<TetSnapshotSegment> segments;
-    if (!facets_through(removed, removed_star.cells(), facets)) return TetEditStatus::kStaleGeneration;
-    segments_through(removed, removed_star.cells(), segments);
+    if (!facets_through(removed, removed_star.cells(), facets) ||
+        !segments_through(removed, removed_star.cells(), segments)) {
+      return TetEditStatus::kStaleGeneration;
+    }
     const auto image = [&](std::uint64_t id) { return id == removed_id ? kept_id : id; };
     for (const TetSnapshotFacet& facet : facets) {
       edit.removed_facet_ids.push_back(facet.id);
-      removed_faces.push_back(id_face(facet.vertices[0], facet.vertices[1], facet.vertices[2]));
       if (std::find(facet.vertices.begin(), facet.vertices.end(), kept_id) != facet.vertices.end()) {
         continue;
       }
@@ -1451,7 +1510,6 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     }
     for (const TetSnapshotSegment& segment : segments) {
       edit.removed_segment_ids.push_back(segment.id);
-      removed_edges.push_back(id_edge(segment.vertices[0], segment.vertices[1]));
       if (segment.vertices[0] == kept_id || segment.vertices[1] == kept_id) continue;
       TetEditSegment replacement;
       replacement.id = segment_id++;
@@ -1468,17 +1526,11 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     parent_lineage.push_back(cell_lineage_[static_cast<std::size_t>(slot)]);
     parent_blocks.push_back(cell_blocks_[static_cast<std::size_t>(slot)]);
   }
-  // LocalIncidence::collapse_boundary admits a witness-free survivor only at
-  // a source point (its source rule); one elsewhere on the carrier (a
-  // relocated or inserted boundary vertex) is decided by the batch, as is an
-  // interior collapse whose survivor moves (no star-local route moves it).
-  const Stencil& support = stencils_[static_cast<std::size_t>(kept)];
-  const bool source_survivor =
-      plan.moved ? plan.carrier.size == 1 : support.size() == 1 && support.front().weight == 1.0;
-  TetEditStatus status = TetEditStatus::kApplied;
-  if (plan.boundary && source_survivor) {
-    status = incidence_.collapse_boundary(mesh_, edit, removed_star,
-                                          plan.moved ? &kept_star : nullptr);
+  const std::optional<TetEditStatus> local =
+      plan.boundary ? collapse_boundary(plan, edit, removed_star, kept_star) : std::nullopt;
+  TetEditStatus status;
+  if (local) {
+    status = *local;
   } else if (plan.boundary || plan.moved) {
     TetEditBatch batch;
     batch.expected_generation = mesh_.generation();
@@ -1505,7 +1557,6 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
   next_cell_id_ += edit.replacement_cells.size();
   next_facet_id_ = facet_id;
   next_segment_id_ = segment_id;
-  update_banks(edit, removed_faces, removed_edges);
   for (std::int32_t slot : cavity) retire_cell(slot);
   for (std::size_t index = 0; index < edit.replacement_cells.size(); ++index) {
     const std::int32_t slot = mesh_.cell_slot(edit.replacement_cells[index].id);
@@ -2003,13 +2054,15 @@ TetEditStatus Adapter::swap_boundary(const std::vector<std::int32_t>& shell,
   applied = false;
   const std::uint64_t sid = mesh_.vertex_id(s);
   const std::uint64_t tid = mesh_.vertex_id(t);
-  const IdFace first_key = id_face(sid, tid, mesh_.vertex_id(c));
-  const IdFace second_key = id_face(sid, tid, mesh_.vertex_id(d));
-  const auto first = facets_.find(first_key);
-  const auto second = facets_.find(second_key);
-  if (first == facets_.end() || second == facets_.end()) return TetEditStatus::kStaleGeneration;
-  const TetSnapshotFacet& reference = first->second;
-  const TetSnapshotFacet& other = second->second;
+  const TetSnapshotFacet* first = nullptr;
+  const TetSnapshotFacet* second = nullptr;
+  if (incidence_.boundary_facet({sid, tid, mesh_.vertex_id(c)}, first) != TetEditStatus::kApplied ||
+      incidence_.boundary_facet({sid, tid, mesh_.vertex_id(d)}, second) != TetEditStatus::kApplied ||
+      first == nullptr || second == nullptr) {
+    return TetEditStatus::kStaleGeneration;
+  }
+  const TetSnapshotFacet& reference = *first;
+  const TetSnapshotFacet& other = *second;
   if (reference.protected_facet || other.protected_facet || reference.source != other.source ||
       reference.orientation != other.orientation) {
     ++counters_.rejected_protected;
@@ -2115,8 +2168,6 @@ TetEditStatus Adapter::swap_boundary(const std::vector<std::int32_t>& shell,
   }
   next_cell_id_ += edit.replacement_cells.size();
   next_facet_id_ += edit.replacement_facets.size();
-  const std::array<IdFace, 2> removed_faces{first_key, second_key};
-  update_banks(edit, removed_faces, {});
   for (std::int32_t slot : shell) retire_cell(slot);
   for (const TetEditCell& cell : edit.replacement_cells) {
     record_created_cell(mesh_.cell_slot(cell.id), block, lineage, AdaptLineage::kSwappedFrom);
@@ -2136,7 +2187,7 @@ bool Adapter::carrier_simplices(std::int32_t vertex, const LocalIncidence::Star&
   simplices.clear();
   interior = mesh_.vertex_dimension(vertex) == 3;
   if (interior) return true;
-  if (mesh_.vertex_dimension(vertex) != 2 || !boundary_relocation_) return false;
+  if (mesh_.vertex_dimension(vertex) != 2 || !source_banks_match_) return false;
   std::vector<std::int32_t> groups;
   for (std::int32_t slot : star) {
     const Tetrahedron& cell = mesh_.tet(slot);
@@ -2285,19 +2336,15 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   for (;;) {
     if (search.next(group, candidate_lengths) != RelocationEnd::kGroup) return TetEditStatus::kApplied;
     for (const RelocationCandidate& candidate : group) {
-      // A boundary vertex goes only to an exact carrier: on a rounded one its
-      // facet edges would have no exact split point.
-      if (!interior && !candidate.carrier.exact) continue;
       TetEditVertex moved;
       moved.id = mesh_.vertex_id(vertex);
       moved.carrier = candidate.carrier.point;
       moved.edge_witness_supplied = true;
-      // An interior vertex moves star-locally; a boundary vertex through the
-      // relocation edit, which revalidates its facets against their sources.
       TetEditStatus status = TetEditStatus::kRejectedTopology;
-      if (interior) {
+      if (interior || !mesh_.implicit_source()) {
         status = incidence_.relocate(mesh_, std::span<const TetEditVertex>(&moved, 1), star);
       } else {
+        // The star-local route does not admit an implicit-boundary mesh.
         TetEdit edit;
         edit.kind = TetEditKind::kRelocate;
         for (std::int32_t slot : star) edit.removed_cell_ids.push_back(mesh_.cell_id(slot));
@@ -2648,11 +2695,8 @@ TetEditStatus Adapter::run(AdaptOutput& output) {
     // progress alone continues at its depth until it stalls there.
     if (topology != 0) relocation_stage_ = 0;
     if (applied != 0) continue;
-    // A stall first enables boundary relocations (each validated against
-    // the whole mesh, so they wait until the interior is done), then
-    // survivor moves (collapses that move their survivor on its source
-    // carrier), then deepens the relocation search stage by stage, each time
-    // revisiting every vertex.
+    // Exhaust the cheap single-vertex interior search before enabling
+    // boundary moves, moving survivors and deeper searches.
     if (input_.relocation && !boundary_moves_) {
       boundary_moves_ = true;
     } else if (input_.topology_operations && carriers_ && !survivor_moves_) {
