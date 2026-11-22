@@ -576,6 +576,9 @@
 - Parallel 3D Delaunay and regular triangulation reserve disjoint cavity
   stamp ranges per region, removing the atomic increment per insertion.
   Cone linking uses fixed corner indices and preserves canonical output.
+- The 3D Delaunay builder avoids repeated cell and constraint checks only
+  while it owns an unlabeled complex. Labeled and edited complexes retain
+  their checks; exact predicates and canonical output are unchanged.
 - Point-set triangulation exports only the cells and vertex map it returns.
   A million-point 3D run uses about 90 MB less peak resident memory on
   macOS. Constrained meshes still export their boundary and source records.

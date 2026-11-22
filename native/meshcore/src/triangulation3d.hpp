@@ -402,7 +402,9 @@ class Triangulation3D {
       hint_ = origin;
       return PHX_MC_OK;
     }
-    int32_t status = grow_cavity(origin, p);
+    const bool owned_build = building_ && !complex_.labeled();
+    int32_t status =
+        owned_build ? grow_cavity<true>(origin, p) : grow_cavity<false>(origin, p);
     if (status != PHX_MC_OK) return status;
     if (constraint_inside_) return PHX_MC_CONSTRAINT_INTERSECTION;
     // Every vertex of an unweighted Delaunay cavity stays on its boundary:
@@ -1172,10 +1174,13 @@ class Triangulation3D {
   int32_t identity(int32_t v) const noexcept {
     return identities_ == nullptr ? v : identities_[static_cast<std::size_t>(v)];
   }
+  template <bool OwnedBuild = false>
   bool conflict(int32_t t, int32_t p, bool& topology_valid) {
-    if (!checked(t)) {
-      topology_valid = false;
-      return false;
+    if constexpr (!OwnedBuild) {
+      if (!checked(t)) {
+        topology_valid = false;
+        return false;
+      }
     }
     Tetrahedron& current = mutable_tet(t);
     if (current.stamp == stamp_value_) return current.state != kNoConflict;
@@ -1192,7 +1197,7 @@ class Triangulation3D {
       if (side > 0) {
         result = true;
       } else if (side == 0) {
-        result = conflict(current.n[slot], p, topology_valid);
+        result = conflict<OwnedBuild>(current.n[slot], p, topology_valid);
       }
     }
     if (!topology_valid) return false;
@@ -1203,8 +1208,13 @@ class Triangulation3D {
   // Grows the conflict cavity of p through unconstrained faces and records
   // in constraint_inside_ whether a constrained face has cavity cells on
   // both sides (reached around it).
+  // Build-owned unlabeled cells need neither mutable-input validation nor
+  // constraint checks: no other operation edits them during construction.
+  template <bool OwnedBuild>
   int32_t grow_cavity(int32_t origin, int32_t p) {
-    if (!checked(origin)) return PHX_MC_INTERNAL_ERROR;
+    if constexpr (!OwnedBuild) {
+      if (!checked(origin)) return PHX_MC_INTERNAL_ERROR;
+    }
     cavity_.clear();
     boundary_.clear();
     stack_.clear();
@@ -1218,19 +1228,24 @@ class Triangulation3D {
     while (!stack_.empty()) {
       const int32_t t = stack_.back();
       stack_.pop_back();
-      if (!checked(t)) return PHX_MC_INTERNAL_ERROR;
+      if constexpr (!OwnedBuild) {
+        if (!checked(t)) return PHX_MC_INTERNAL_ERROR;
+      }
       for (int k = 0; k < 4; ++k) {
         const int32_t neighbor = tet(t).n[k];
-        if (!checked(neighbor)) return PHX_MC_INTERNAL_ERROR;
+        if constexpr (!OwnedBuild) {
+          if (!checked(neighbor)) return PHX_MC_INTERNAL_ERROR;
+        }
         if (in_cavity(neighbor)) {
-          if (complex_.constraint(t, k) != kNoConstraint) constraint_inside_ = true;
+          if constexpr (!OwnedBuild) {
+            if (complex_.constraint(t, k) != kNoConstraint) constraint_inside_ = true;
+          }
           continue;
         }
         bool topology_valid = true;
-        const bool unconstrained =
-            complex_.constraint(t, k) == kNoConstraint;
+        const bool unconstrained = OwnedBuild || complex_.constraint(t, k) == kNoConstraint;
         const bool neighbor_conflict =
-            unconstrained && conflict(neighbor, p, topology_valid);
+            unconstrained && conflict<OwnedBuild>(neighbor, p, topology_valid);
         if (!topology_valid) return PHX_MC_INTERNAL_ERROR;
         if (neighbor_conflict) {
           Tetrahedron& joined = mutable_tet(neighbor);
@@ -1254,9 +1269,11 @@ class Triangulation3D {
         }
       }
     }
-    // A constrained boundary face whose outer cell joined the cavity later.
-    for (const BoundaryFacet& face : boundary_) {
-      if (in_cavity(face.outside)) constraint_inside_ = true;
+    if constexpr (!OwnedBuild) {
+      // A constrained boundary face whose outer cell joined the cavity later.
+      for (const BoundaryFacet& face : boundary_) {
+        if (in_cavity(face.outside)) constraint_inside_ = true;
+      }
     }
     return PHX_MC_OK;
   }
