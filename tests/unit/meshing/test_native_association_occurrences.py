@@ -27,6 +27,7 @@ from phydrax.geometry.brep._partition import (
     BRepPartitionOperand,
     BRepPartitionPlan,
     BRepPartitionPolicy,
+    BRepPartitionResult,
     BRepPartitionRole,
     cad_revision_from_brep_model,
     partition_brep,
@@ -501,7 +502,7 @@ def test_partition_descendants_bind_region_control_exactly() -> None:
         MeshingScope.from_geometry(region, descendants)
 
 
-def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> None:
+def _partitioned_box() -> BRepPartitionResult:
     contract = SpatialCoordinateContract.si()
     model = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=contract)
     revision = cad_revision_from_brep_model(model)
@@ -509,13 +510,40 @@ def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> No
         revision,
         tuple(o.occurrence_id for o in revision.occurrences if o.kind == "solid"),
     )
-    partition = partition_brep(
+    return partition_brep(
         BRepPartitionPlan(
             contract,
             (BRepPartitionOperand("region", model, BRepPartitionRole.REGION, solid),),
             BRepPartitionPolicy(("region",)),
         )
     )
+
+
+def test_partitioned_box_meshes_and_certifies_on_the_native_route() -> None:
+    # Partition edges are ExactLineCurve; the native source-shell proof decides
+    # their plane face pairs exactly, like the LineCurve edges of brep_box.
+    partition = _partitioned_box()
+    boundary = MeshingScope.whole(partition.model, 2)
+    specification = phx.meshing.VolumeMeshingSpec(
+        phx.meshing.CellMeshingTarget(
+            3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
+        ),
+        boundary,
+        phx.meshing.VolumeFillStrategy.SIMPLEX,
+        size_controls=(phx.meshing.UniformSizeControl(boundary, 0.5),),
+        maximum_deviation=0.05,
+    )
+    plan = phx.meshing.NativeMeshingProvider().plan(partition.model, specification)
+    candidate = plan.execute(prove=False)
+    assert candidate.route == "cad_tetrahedral"
+    assert candidate.mesh.topological_dimension == 3
+    # The native candidate itself is certified (no Python-route fallback).
+    result = candidate.prove()
+    assert result.certification is not None and result.certification.passed
+
+
+def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> None:
+    partition = _partitioned_box()
     graph = partition.association_graph
     source_face = next(o for o in graph.source_revision.occurrences if o.kind == "face")
     descendants = graph.resolve_target_selection(
@@ -537,17 +565,6 @@ def test_transported_face_drives_native_mesh_and_fe_dirichlet_constraint() -> No
             RegionControl(region_scope, "region", "material", RegionRole.SOLID),
         ),
         patch_controls=(PatchControl("wall", wall, ("region",)),),
-        # The native certificate refuses this partition's source face pairs
-        # (cad_source_shell, with or without controls); a soft protected
-        # feature keeps the existing construction, which certifies it.
-        protected_features=(
-            phx.meshing.ProtectedFeature(
-                boundary,
-                phx.meshing.FeatureKind.SURFACE,
-                maximum_deviation=0.05,
-                hard=False,
-            ),
-        ),
         maximum_deviation=0.05,
     )
     result = (
