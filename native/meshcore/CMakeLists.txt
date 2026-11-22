@@ -187,6 +187,7 @@ set(PHX_MC_HEADERS
   src/surface_certify.hpp
   src/mesh_source.hpp
   src/elementary.hpp
+  src/small_trig_table.hpp
   src/directed_norm.hpp
   src/directed_interval.hpp
   src/angle.hpp

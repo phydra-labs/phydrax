@@ -164,6 +164,9 @@ void special_values() {
   PHX_CHECK(exactly(point(Function::kTan, -kSmallest), down(-kSmallest), -kSmallest));
   PHX_CHECK(exactly(point(Function::kCos, 0x1p-40), down(1.0), 1.0));
   PHX_CHECK(exactly(point(Function::kSin, kHalfPiRounded), down(1.0), 1.0));
+  // Exact rational Taylor bounds just below the first anchor midpoint.
+  PHX_CHECK(exactly(point(Function::kSin, down(0x1p-8)), 0x1.ffffaaaaaeeedp-9,
+                    0x1.ffffaaaaaeeeep-9));
   // sin(10^22) = -0.85220084976718880177..., cos(10^22) = 0.52321478539513894549...
   const Enclosure sin_huge = point(Function::kSin, 1e22);
   const Enclosure cos_huge = point(Function::kCos, 1e22);

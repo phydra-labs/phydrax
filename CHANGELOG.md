@@ -549,6 +549,10 @@
   Use `candidate.prove()` to certify that mesh later or pass `prove=True`
   to construct and certify in one call. Owner-local execution requires
   explicit `prove=True`.
+- Native interval sine and cosine use a certified small-angle fast path.
+  The trigonometric interval benchmark rises from 0.88 to 10.16 million boxes
+  per second without loosening the enclosure. Endpoints with uncertain
+  rounding and boxes outside the small-angle range use the original proof.
 - Planar refinement reuses cavity point lookups and writes triangle slots
   with their final neighbors, preserving mesh output and constraint ancestry.
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs

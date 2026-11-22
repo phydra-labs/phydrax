@@ -35,6 +35,7 @@
 // recurrences of the tables, (2/pi) (pi/2) = 1, tan(atan(j/16)) = j/16).
 #include "elementary.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -45,6 +46,7 @@
 #include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "rounding.hpp"
+#include "small_trig_table.hpp"
 
 namespace phx::mc::elementary {
 
@@ -505,6 +507,66 @@ Enclosure periodic(Function function, double lower, double upper) noexcept {
   return {ieee_maximum(low, -1.0), ieee_minimum(high, 1.0)};
 }
 
+[[gnu::noinline]] Enclosure slow_periodic_point(Function function, double x) noexcept {
+  return periodic_point(function, x, reduce(x));
+}
+
+// For |x| <= 25/16, nearest-even m = RN(128 |x|) is an anchor index.
+// r = |x| - m/128 is exact (Sterbenz, or m == 0) and |r| <= 2^-8.
+// Reconstruct A cos(r) + B sin(r) using double-word A and B at the anchor.
+// The leading A.high + B.high * r is exact as a sum of the TwoSum pair
+// and the product's FMA residue. Only the small corrections are rounded.
+//
+// For z = r^2, the sine correction omits at most |r|^7/7!; forming z,
+// the FMA, and the products adds less than 8u |r|^3/6. The cosine
+// correction omits at most |r|^8/8!, and its two FMAs and two products
+// add less than 4u r^2/2 including the coefficient errors. The two
+// correction errors sum to less than 2^-67 at |r| <= 2^-8. Anchor errors,
+// omitted low-word products, and rounding of the correction sum cost less
+// than a further 2^-67, so the absolute error is below 2^-66. At m == 0
+// for sine, only the sine correction contributes: error < 2^-60 |x|.
+//
+// Accept only when the normalized low word clears twice the error bound,
+// so the exact value is strictly inside the adjacent binary64 pair. The
+// margin also keeps the original double-word enclosure's pre-rounding
+// endpoints in the same gap (its error is below 2^-95, relative for
+// m == 0 sine). Otherwise reuse that enclosure unchanged.
+template <Function F>
+[[gnu::always_inline]] Enclosure small_periodic_point(double x) noexcept {
+  static_assert(F == Function::kSin || F == Function::kCos);
+  const double magnitude = std::fabs(x);
+  if (magnitude < kTinyArgument) return periodic_point(F, x, {});
+  const int grid = static_cast<int>(std::nearbyint(magnitude * kSmallTrigScale));
+  const double residual = magnitude - static_cast<double>(grid) * (1.0 / kSmallTrigScale);
+  const SmallTrigAnchor& angle = kSmallTrigAnchors[grid];
+  const DoubleWord a = F == Function::kSin ? angle.sine : angle.cosine;
+  const DoubleWord b = F == Function::kSin ? angle.cosine : negate(angle.sine);
+  const double z = residual * residual;
+  const double sine_tail = (residual * z) * std::fma(z, 1.0 / 120.0, -1.0 / 6.0);
+  const double cosine_tail = z * std::fma(z, std::fma(z, -1.0 / 720.0, 1.0 / 24.0), -0.5);
+  const double linear = b.high * residual;
+  const DoubleWord head = two_sum(a.high, linear);
+  const double small_offset =
+      std::fma(b.low, residual, std::fma(b.high, residual, -linear) + a.low + head.low);
+  const double curved = std::fma(a.high, cosine_tail, b.high * sine_tail);
+  const DoubleWord result = two_sum(head.high, small_offset + curved);
+  const double guard = F == Function::kSin && grid == 0 ? 0x1p-59 * magnitude : 0x1p-65;
+  if (std::fabs(result.low) <= guard) return slow_periodic_point(F, x);
+  const bool below = result.low < 0.0;
+  // The high word is strictly positive away from the tiny-argument path.
+  const auto bits = std::bit_cast<std::uint64_t>(result.high);
+  const double neighbor = std::bit_cast<double>(below ? bits - 1 : bits + 1);
+  const Enclosure pair = below ? Enclosure{neighbor, result.high} : Enclosure{result.high, neighbor};
+  if constexpr (F == Function::kSin) {
+    return x < 0.0 ? negate(pair) : pair;
+  }
+  return pair;
+}
+
+bool small_angle_box(double lower, double upper) noexcept {
+  return lower >= -kSmallTrigLimit && upper <= kSmallTrigLimit && lower <= upper;
+}
+
 // -------------------------------------------------------------------- atan
 //
 // atan(-x) = -atan(x). For t = |x| <= 1: j = nearest integer to 16 t,
@@ -745,10 +807,24 @@ Enclosure log(double lower, double upper) noexcept {
 }
 
 Enclosure sin(double lower, double upper) noexcept {
+  // Sine increases throughout the small-angle range.
+  if (small_angle_box(lower, upper)) {
+    const Enclosure low = small_periodic_point<Function::kSin>(lower);
+    if (lower == upper) return low;
+    return {low.lower, small_periodic_point<Function::kSin>(upper).upper};
+  }
   return periodic(Function::kSin, lower, upper);
 }
 
 Enclosure cos(double lower, double upper) noexcept {
+  // Cosine decreases with magnitude here, including a maximum at zero.
+  if (small_angle_box(lower, upper)) {
+    const double far = std::max(std::fabs(lower), std::fabs(upper));
+    const double near = std::max(0.0, std::max(lower, -upper));
+    const Enclosure low = small_periodic_point<Function::kCos>(far);
+    if (near == far) return low;
+    return {low.lower, small_periodic_point<Function::kCos>(near).upper};
+  }
   return periodic(Function::kCos, lower, upper);
 }
 
