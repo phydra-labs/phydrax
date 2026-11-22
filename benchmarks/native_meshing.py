@@ -582,6 +582,10 @@ def _cad_rows() -> tuple[_Row, ...]:
     from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 
     contract = phx.SpatialCoordinateContract.si()
+    cylinders = (
+        ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+        ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    )
     vertical, transverse = (
         phx.geometry.brep.brep_cylinder(
             radius,
@@ -591,10 +595,7 @@ def _cad_rows() -> tuple[_Row, ...]:
             coordinate_contract=contract,
             source_id=f"qualification:native-cad-quadric-{name}",
         )
-        for name, radius, height, base, axis in (
-            ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
-            ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        )
+        for name, radius, height, base, axis in cylinders
     )
     solid = phx.geometry.brep.boolean_brep(
         vertical,
@@ -604,13 +605,37 @@ def _cad_rows() -> tuple[_Row, ...]:
     ).model
     model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    # The quadric contains only circular-cylinder faces. Associate each
+    # chart with its constant analytic curvature before timing.
+    curvatures = np.array([1.0 / row[1] for row in cylinders], dtype=np.float64)
+    face_curvatures = np.empty((faces,), dtype=np.float64)
+    for face, limits in enumerate(model.surface_parameter_domains):
+        parameters = np.clip(
+            np.zeros((1, 2), dtype=np.float64), limits[:, 0], limits[:, 1]
+        )
+        differential = _meshcore.cad_geometry_evaluate(
+            model,
+            _meshcore.CadEntityKind.SURFACE,
+            face,
+            parameters,
+            _meshcore.CadGeometryQuantity.DIFFERENTIAL,
+        )
+        measured = np.max(np.abs(differential[0, -2:]))
+        matches = np.flatnonzero(np.isclose(curvatures, measured, rtol=1e-12, atol=0.0))
+        if matches.size != 1:
+            raise ValueError(f"Unexpected quadric curvature on face {face}: {measured}.")
+        face_curvatures[face] = curvatures[matches[0]]
+    curve_tolerances = np.full((curves,), np.inf, dtype=np.float64)
 
     def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        # The F2 request bounds interpolation at size h by κmax h² / 4
+        # on each face. The kernel budgets shared chords from adjacent faces.
         return _meshcore.cad_mesh_solid(
             model,
-            np.full((faces,), size),
-            np.full((faces,), 0.4),
-            np.full((curves,), np.inf),
+            np.full((faces,), size, dtype=np.float64),
+            face_curvatures * (size * size / 4.0),
+            curve_tolerances,
+            tolerance_fraction=0.8,
             geometry_order=order,
         )
 
