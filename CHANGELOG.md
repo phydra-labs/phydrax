@@ -557,6 +557,11 @@
   prepared tree is shared by all workers, and each output row retains its
   serial arithmetic and tie breaks. Queries no longer build pair-stream
   extent data. Rebuild meshcore with Phydrax for the updated query ABI.
+- Native affine CAD meshing certifies exact planar material regions with
+  convex trims and a manifold exterior, including shared interfaces, labeled
+  refinement, and archive replay. Certificates bind the actual coordinate
+  map and per-triangle bounds; archives with the previous native CAD record
+  fields are refused.
 - Planar refinement reuses cavity point lookups and writes triangle slots
   with their final neighbors, preserving mesh output and constraint ancestry.
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs
