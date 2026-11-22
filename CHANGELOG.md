@@ -553,6 +553,9 @@
   checks the represented coordinates. Multi-solid interfaces, protected
   features, unsupported source kinds, and layer/core requests keep their
   existing routes; quadratic CAD candidates are not admitted for proof.
+- Native CAD solid certification admits regular conical frusta when the
+  exact profile has nonzero axial rate and stays off its rotation axis
+  throughout the certified chart. Apex and axis crossings remain refused.
 - Overset preparation places validated host arrays in bulk, avoiding eager
   JAX compilation for individual fields on the default device. Explicit mesh
   placement, donor evidence, and connectivity identities are unchanged. The
