@@ -739,8 +739,10 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   const auto support = edge_support(a, b, shell);
   if (!support) return TetEditStatus::kStaleGeneration;
   const std::uint64_t key = edge_key(a, b);
-  const SplitRefusal current{carrier_revisions_[static_cast<std::size_t>(a)],
-                             carrier_revisions_[static_cast<std::size_t>(b)], *support};
+  // The cache and its final evidence decode slot order, not operation order.
+  const auto [first, second] = std::minmax(a, b);
+  const SplitRefusal current{carrier_revisions_[static_cast<std::size_t>(first)],
+                             carrier_revisions_[static_cast<std::size_t>(second)], *support};
   if (const auto failed = unrepresentable_.find(key); failed != unrepresentable_.end()) {
     if (failed->second == current) return TetEditStatus::kApplied;
     unrepresentable_.erase(failed);

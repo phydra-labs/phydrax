@@ -2960,7 +2960,8 @@ exact stencil image and the correctly rounded binary64 point both lie inside
 one declared axis-aligned source facet group. The rounding displacement must
 avoid the group rim and every authored source segment. Crossing an internal
 triangle edge without a source feature is allowed.
-Edge worksets use persistent endpoint IDs for measurement and tie-breaking.
+Edge worksets use persistent endpoint IDs for measurement and tie-breaking;
+final band evidence measures each edge in the same endpoint order.
 Persistent split parents, not storage slots, order fresh cell and facet IDs.
 For an adaptive implicit volume, a nonnested metric edit proposes root-chart
 ancestry from the actual oriented target boundary. The candidate ancestry is

@@ -7771,7 +7771,12 @@ def _adapted_evidence(
     metrics = adaptation.metrics[rows]
     cells = np.asarray(snapshot.tetrahedra, dtype=np.int64).reshape((-1, 4))
     edges = np.unique(np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0)
-    lengths = metric_lengths(points, metrics, edges)
+    reverse = snapshot_ids[edges[:, 0]] > snapshot_ids[edges[:, 1]]
+    measurement_edges = edges
+    if np.any(reverse):
+        measurement_edges = edges.copy()
+        measurement_edges[reverse] = edges[reverse, ::-1]
+    lengths = metric_lengths(points, metrics, measurement_edges)
     segments = np.sort(np.asarray(snapshot.segments, dtype=np.int64), axis=1)
     protected = _row_member(
         np.sort(targets[edges], axis=1),

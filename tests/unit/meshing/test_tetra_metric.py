@@ -2423,6 +2423,30 @@ def test_relocation_reopens_an_unrepresentable_split() -> None:
     assert result.unrepresentable_edges.size == 0
 
 
+def test_native_metric_band_evidence_uses_persistent_endpoint_order() -> None:
+    cube = _source(2).mesh
+    points = np.asarray(cube.coordinates) * float.fromhex("0x1.b7f92f0969ff9p-1")
+    vertex_ids = np.arange(7, -1, -1, dtype=np.int64)
+    mesh = CellMesh(points, cube.blocks, vertex_global_ids=vertex_ids)
+    source = certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    tensors = np.broadcast_to(
+        np.eye(3, dtype=np.float64) * 1.25, (vertex_ids.size, 3, 3)
+    ).copy()
+    tensors[0] = np.eye(3, dtype=np.float64) * 0.64
+    protected = np.any(entity_keys(mesh, 1) != np.asarray((0, 7)), axis=1)
+
+    evidence = _adapt(
+        source,
+        tensors,
+        protected_edges=protected,
+        topology_operations=False,
+        relocation=False,
+    ).evidence
+
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.out_of_range_edges == 0
+
+
 def test_relocation_progress_survives_topology_edits() -> None:
     source = _source(4, nonuniform=True)
     outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
