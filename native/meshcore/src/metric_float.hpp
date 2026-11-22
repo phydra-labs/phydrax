@@ -70,6 +70,15 @@ void relative_determinant(const double* corners, double& determinant,
 // sum are both positive; NaN when both are infinite.
 double tetra_quality(const double* corners, const double* metrics) noexcept;
 
+// The same quality with log det M_k of the four corners supplied (the values
+// log(determinant) the function above evaluates), for callers that keep them
+// per vertex: the result is bit for bit that of tetra_quality.
+double tetra_quality(const double* corners, const double* metrics,
+                     const double* log_determinants) noexcept;
+
+// log det M as tetra_quality evaluates it, for a caller's per-vertex cache.
+double log_determinant(const double* metric) noexcept;
+
 // Whether a full row-major 3x3 tensor is admitted as the metric of a field.
 // With lambda the eigenvalues of its symmetric part (M + M^T) / 2 from the
 // Jacobi iteration and tol = 64 * 2^-52 * max |lambda|: `symmetric` when

@@ -106,6 +106,14 @@ class CarrierSource {
   std::vector<std::int64_t> cells_;
   std::vector<double> lower_;  // closed binary64 box of each cell
   std::vector<double> upper_;
+  // A uniform bucket grid over the cell boxes: bucket b lists, ascending, the
+  // cells whose box meets it (CSR), so a location reads one bucket instead
+  // of every cell and still finds the first holding cell in search order.
+  std::array<double, 3> grid_origin_{};
+  std::array<double, 3> grid_scale_{};
+  std::array<std::int64_t, 3> grid_size_{};
+  std::vector<std::int64_t> grid_offsets_;
+  std::vector<std::int64_t> grid_cells_;
   // The numerators and then the denominator as 64-bit limbs, integer i in
   // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
   // of the search; a query that leaves their capacity runs on the unbounded

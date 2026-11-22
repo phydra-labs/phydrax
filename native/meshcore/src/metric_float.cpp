@@ -194,10 +194,23 @@ void relative_determinant(const double* corners, double& determinant,
   relative = finite(size) && products_finite && largest > 0.0 ? size / largest : 0.0;
 }
 
+double log_determinant(const double* metric) noexcept {
+  return deterministic::log(deterministic::determinant3(metric));
+}
+
 double tetra_quality(const double* corners, const double* metrics) noexcept {
+  double logs[4];
+  for (std::size_t corner = 0; corner < 4; ++corner) {
+    logs[corner] = log_determinant(metrics + 9 * corner);
+  }
+  return tetra_quality(corners, metrics, logs);
+}
+
+double tetra_quality(const double* corners, const double* metrics,
+                     const double* log_determinants) noexcept {
   double log_determinant = 0.0;
   for (std::size_t corner = 0; corner < 4; ++corner) {
-    const double value = deterministic::log(deterministic::determinant3(metrics + 9 * corner));
+    const double value = log_determinants[corner];
     log_determinant = corner == 0 ? value : log_determinant + value;
   }
   log_determinant = log_determinant * 0.25;

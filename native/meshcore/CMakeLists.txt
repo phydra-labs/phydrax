@@ -108,6 +108,8 @@ set(PHX_MC_SOURCES
   src/angle.cpp
   src/angle_capi.cpp
   src/metric_relocation.cpp
+  src/metric_adapt3d.cpp
+  src/metric_adapt3d_capi.cpp
   src/cad_geometry.cpp
   src/cad_refine2d.cpp
   src/cad_curves.cpp
@@ -174,6 +176,7 @@ set(PHX_MC_HEADERS
   src/directed_interval.hpp
   src/angle.hpp
   src/metric_relocation.hpp
+  src/metric_adapt3d.hpp
   src/cad_geometry.hpp
   src/cad_geometry_programs.inc
   src/cad_jet.hpp
@@ -294,6 +297,7 @@ if(PHX_MC_BUILD_TESTS)
   phx_mc_add_test(test_geometry_length)
   phx_mc_add_test(test_angle)
   phx_mc_add_test(test_metric_relocation)
+  phx_mc_add_test(test_metric_adapt3d)
   phx_mc_add_test(test_implicit_face_proposals)
   phx_mc_add_test(test_interval_program)
   phx_mc_add_test(test_interval_simplex_restrict)

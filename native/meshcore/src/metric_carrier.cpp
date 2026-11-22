@@ -23,6 +23,7 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "exact_scalar.hpp"
 #include "wide_integer.hpp"
@@ -414,7 +415,25 @@ struct Geometry {
   const std::vector<std::int64_t>& cells;
   const std::vector<double>& lower;
   const std::vector<double>& upper;
+  const std::array<double, 3>& grid_origin;
+  const std::array<double, 3>& grid_scale;
+  const std::array<std::int64_t, 3>& grid_size;
+  const std::vector<std::int64_t>& grid_offsets;
+  const std::vector<std::int64_t>& grid_cells;
 };
+
+// The grid bucket coordinate of `value` on `axis`: monotone in value, so a
+// box [lower, upper] meets every bucket between those of its corners.
+std::int64_t bucket_coordinate(const std::array<double, 3>& origin,
+                               const std::array<double, 3>& scale,
+                               const std::array<std::int64_t, 3>& size, int axis,
+                               double value) {
+  const auto at = static_cast<std::size_t>(axis);
+  const double position = std::floor((value - origin[at]) * scale[at]);
+  if (!(position > 0.0)) return 0;
+  const auto last = static_cast<double>(size[at] - 1);
+  return position >= last ? size[at] - 1 : static_cast<std::int64_t>(position);
+}
 
 // The target as integer numerators over (denominator 2^shift).
 template <class View>
@@ -445,9 +464,33 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
                  const Target<View>& exact_target, std::int64_t only,
                  Located<typename View::Value>& located) {
   using Z = typename View::Value;
-  const std::size_t begin = only < 0 ? 0 : static_cast<std::size_t>(only);
-  const std::size_t end = only < 0 ? geometry.cells.size() / 4 : begin + 1;
-  for (std::size_t cell = begin; cell < end; ++cell) {
+  // The cells to try, ascending: `only`, or the target's grid bucket (every
+  // cell whose box can hold the target is listed there, so the first holding
+  // cell is the one a scan of all cells would find).
+  const std::int64_t* candidates = nullptr;
+  std::size_t candidate_count = 0;
+  const std::int64_t single = only;
+  if (only >= 0) {
+    candidates = &single;
+    candidate_count = 1;
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!std::isfinite(target[axis])) return false;
+    }
+    std::int64_t bucket = 0;
+    for (int axis = 2; axis >= 0; --axis) {
+      bucket = bucket * geometry.grid_size[static_cast<std::size_t>(axis)] +
+               bucket_coordinate(geometry.grid_origin, geometry.grid_scale, geometry.grid_size,
+                                 axis, target[axis]);
+    }
+    const auto row = static_cast<std::size_t>(bucket);
+    const auto begin = static_cast<std::size_t>(geometry.grid_offsets[row]);
+    const auto end = static_cast<std::size_t>(geometry.grid_offsets[row + 1]);
+    candidates = geometry.grid_cells.data() + begin;
+    candidate_count = end - begin;
+  }
+  for (std::size_t index = 0; index < candidate_count; ++index) {
+    const auto cell = static_cast<std::size_t>(candidates[index]);
     // Rounding is monotone and the box corners are binary64 source points, so
     // a cell that holds the exact target passes this comparison.
     bool inside = true;
@@ -757,6 +800,60 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     }
   }
 
+  // The bucket grid: about one cell per bucket over the boxes' hull.
+  std::array<double, 3> low{};
+  std::array<double, 3> high{};
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    low[axis] = std::numeric_limits<double>::infinity();
+    high[axis] = -std::numeric_limits<double>::infinity();
+    for (std::size_t cell = 0; cell < cell_count; ++cell) {
+      low[axis] = std::min(low[axis], lower_[3 * cell + axis]);
+      high[axis] = std::max(high[axis], upper_[3 * cell + axis]);
+    }
+  }
+  const auto side = static_cast<std::int64_t>(
+      std::ceil(std::cbrt(static_cast<double>(std::max<std::size_t>(cell_count, 1)))));
+  std::int64_t buckets = 1;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    const double extent = high[axis] - low[axis];
+    grid_size_[axis] = cell_count == 0 || !(extent > 0.0) ? 1 : side;
+    grid_origin_[axis] = cell_count == 0 ? 0.0 : low[axis];
+    grid_scale_[axis] = grid_size_[axis] == 1 ? 0.0 : static_cast<double>(side) / extent;
+    buckets *= grid_size_[axis];
+  }
+  grid_offsets_.assign(static_cast<std::size_t>(buckets) + 1, 0);
+  const auto for_each_bucket = [&](std::size_t cell, auto&& visit) {
+    std::array<std::int64_t, 3> first{};
+    std::array<std::int64_t, 3> last{};
+    for (int axis = 0; axis < 3; ++axis) {
+      const auto at = static_cast<std::size_t>(axis);
+      first[at] = bucket_coordinate(grid_origin_, grid_scale_, grid_size_, axis,
+                                    lower_[3 * cell + at]);
+      last[at] = bucket_coordinate(grid_origin_, grid_scale_, grid_size_, axis,
+                                   upper_[3 * cell + at]);
+    }
+    for (std::int64_t z = first[2]; z <= last[2]; ++z) {
+      for (std::int64_t y = first[1]; y <= last[1]; ++y) {
+        for (std::int64_t x = first[0]; x <= last[0]; ++x) {
+          visit(static_cast<std::size_t>((z * grid_size_[1] + y) * grid_size_[0] + x));
+        }
+      }
+    }
+  };
+  for (std::size_t cell = 0; cell < cell_count; ++cell) {
+    for_each_bucket(cell, [&](std::size_t bucket) { ++grid_offsets_[bucket + 1]; });
+  }
+  for (std::size_t bucket = 0; bucket < static_cast<std::size_t>(buckets); ++bucket) {
+    grid_offsets_[bucket + 1] += grid_offsets_[bucket];
+  }
+  grid_cells_.resize(static_cast<std::size_t>(grid_offsets_.back()));
+  std::vector<std::int64_t> cursor(grid_offsets_.begin(), grid_offsets_.end() - 1);
+  for (std::size_t cell = 0; cell < cell_count; ++cell) {
+    for_each_bucket(cell, [&](std::size_t bucket) {
+      grid_cells_[static_cast<std::size_t>(cursor[bucket]++)] = static_cast<std::int64_t>(cell);
+    });
+  }
+
   // The same integers as 64-bit limbs for the inline route, when every one
   // of them and their offsets fit.
   inline_ = true;
@@ -806,7 +903,8 @@ std::vector<Carrier> CarrierSource::carriers(const double* target, const double*
                                              const std::vector<CarrierSimplex>& simplices,
                                              std::int64_t cell, CarrierOrder order,
                                              std::int64_t limit) const {
-  const Geometry geometry{points_, cells_, lower_, upper_};
+  const Geometry geometry{points_,      cells_,     lower_,        upper_,     grid_origin_,
+                          grid_scale_,  grid_size_, grid_offsets_, grid_cells_};
   if (inline_) {
     try {
       InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small()};
