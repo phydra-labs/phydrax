@@ -504,6 +504,49 @@ def _check_face_sides(
                 assert projection._contains_solid(query, solid) is (solid == owner)
 
 
+@pytest.mark.parametrize("second_side", (1, -1), ids=("area-overlap", "singleton"))
+def test_coplanar_source_faces_respect_declared_singleton(second_side: int) -> None:
+    from phydrax.geometry.brep._source_shell_admissibility import (
+        _convex_faces_meet_only_shared,
+        _ConvexSourceFace,
+    )
+
+    def rectangle(width: int, height: int, first_id: int, /) -> _ConvexSourceFace:
+        zero, one = Fraction(0), Fraction(1)
+        x, y = Fraction(width), Fraction(height)
+        origin = (zero, zero, zero)
+        corners = (0, first_id, first_id + 1, first_id + 2)
+        points = dict(
+            zip(
+                corners,
+                (origin, (x, zero, zero), (x, y, zero), (zero, y, zero)),
+                strict=True,
+            )
+        )
+        edges = dict(enumerate(zip(corners, (*corners[1:], 0), strict=True), first_id))
+        low_x, high_x = sorted((zero, x))
+        low_y, high_y = sorted((zero, y))
+        inward = (
+            ((one, zero, zero), low_x),
+            ((-one, zero, zero), -high_x),
+            ((zero, one, zero), low_y),
+            ((zero, -one, zero), -high_y),
+        )
+        return _ConvexSourceFace(
+            (origin, (zero, zero, one)), (points, edges), inward, (x / 2, y / 2, zero)
+        )
+
+    first = rectangle(4, 1, 1)
+    second = rectangle(second_side, 4 * second_side, 5)
+    # The rectangles intersect in a unit square or only at the origin.
+    # In both cases the same source vertex is the only declared contact.
+    shared_edges = first.polygon[1].keys() & second.polygon[1].keys()
+    shared_vertices = first.polygon[0].keys() & second.polygon[0].keys()
+    assert not shared_edges and shared_vertices == {0}
+    allowed = _convex_faces_meet_only_shared(first, second, shared_edges, shared_vertices)
+    assert allowed is (second_side < 0)
+
+
 def test_source_regions_refuse_nested_outward_material_despite_pair_separation() -> None:
     outer = _partition_region_boxes(((0.0, 0.0, 0.0), (4.0, 4.0, 4.0)))
     inner = _partition_region_boxes(((1.0, 1.0, 1.0), (2.0, 2.0, 2.0)))

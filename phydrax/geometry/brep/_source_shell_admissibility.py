@@ -1416,6 +1416,9 @@ def _dot(first: _Vector, second: _Vector, /) -> Fraction:
 
 def _on_segment(point: _Vector, start: _Vector, stop: _Vector, /) -> bool:
     """Whether ``point`` lies on the closed segment (exact)."""
+    if start == stop:
+        return point == start
+
     from .._rational import rational_cross
 
     offset = tuple(p - s for p, s in zip(point, start, strict=True))
