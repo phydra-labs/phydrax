@@ -50,6 +50,9 @@ struct CarrierSimplex {
   std::array<std::int64_t, 3> rows{};
   int size = 0;
   bool declared = false;
+  // Prepared by the source: coordinates preserved by orthogonal projection
+  // onto an axis-aligned hull. Zero leaves location entirely to the proof.
+  std::uint8_t projected_axes = 0;
 };
 
 class CarrierSource {
@@ -72,6 +75,9 @@ class CarrierSource {
   std::int64_t cell_count() const noexcept {
     return static_cast<std::int64_t>(cells_.size() / 4);
   }
+
+  // Identify a coordinate-subspace hull with exact source numerators.
+  CarrierSimplex prepare_simplex(CarrierSimplex simplex) const;
 
   // Carriers of `target` closer to it than `current`, at most `limit`, in the
   // order of `order`.

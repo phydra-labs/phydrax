@@ -552,7 +552,8 @@ void Adapter::bind() {
       }
       // Boundary moves keep an exactly representable source image for the
       // verified collapse stencil and edges outside declared facet pairs.
-      group_triangles_[snapshot.source_face_groups[row]].push_back(triangle);
+      group_triangles_[snapshot.source_face_groups[row]].push_back(
+          carriers_->prepare_simplex(triangle));
     }
     if (source_banks_match_ &&
         std::any_of(snapshot.vertices.begin(), snapshot.vertices.end(),
@@ -2273,7 +2274,7 @@ bool Adapter::carrier_simplices(std::int32_t vertex, const LocalIncidence::Star&
     CarrierSimplex simplex;
     simplex.rows = {edge[0], edge[1], -1};
     simplex.size = 2;
-    simplices.push_back(simplex);
+    simplices.push_back(carriers_->prepare_simplex(simplex));
   }
   return !simplices.empty();
 }
@@ -2429,7 +2430,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   RelocationSearch search(*carriers_, input_.source_metrics.data(),
                           input_.source_logarithms.data(), relocation_star, pull_count,
                           pulls.data(), interior ? nullptr : origin.data(),
-                          interior ? nullptr : projector.data(), simplices, mode);
+                          interior ? nullptr : projector.data(), std::move(simplices), mode);
   std::vector<RelocationCandidate> group;
   std::vector<double> candidate_lengths;
   for (;;) {

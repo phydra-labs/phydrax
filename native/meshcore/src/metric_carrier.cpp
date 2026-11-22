@@ -17,6 +17,7 @@
 // does not depend on which one ran.
 #include "metric_carrier.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -591,6 +592,21 @@ bool locate_simplex(const View& view, const Target<View>& exact_target,
   return true;
 }
 
+bool within_projection_box(const Geometry& geometry, const CarrierSimplex& simplex,
+                           const double* target) {
+  for (int axis = 0; axis < 3; ++axis) {
+    if ((simplex.projected_axes & (1U << axis)) == 0) continue;
+    const double first = geometry.points[3 * simplex.rows[0] + axis];
+    const double second = geometry.points[3 * simplex.rows[1] + axis];
+    const double third = simplex.size == 3 ? geometry.points[3 * simplex.rows[2] + axis] : first;
+    // The projected coordinate is unchanged. Monotone rounding implies
+    // that a binary64 target in the exact box is also in the rounded box.
+    if (target[axis] < std::min({first, second, third}) ||
+        target[axis] > std::max({first, second, third})) return false;
+  }
+  return true;
+}
+
 template <class View>
 std::vector<Carrier> search(const View& view, const Geometry& geometry, const double* target,
                             const double* current, const std::vector<CarrierSimplex>& simplices,
@@ -605,6 +621,9 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
   if (on_simplex) {
     for (const CarrierSimplex& simplex : simplices) {
       if (simplex.size != 2 && simplex.size != 3) continue;
+      if (simplex.projected_axes != 0 && !within_projection_box(geometry, simplex, target)) {
+        continue;
+      }
       if (locate_simplex(view, exact_target, simplex, located)) {
         has_location = true;
         break;
@@ -897,6 +916,34 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     inline_offsets_.clear();
     inline_negative_.clear();
   }
+}
+
+CarrierSimplex CarrierSource::prepare_simplex(CarrierSimplex simplex) const {
+  simplex.projected_axes = 0;
+  if (simplex.size != 2 && simplex.size != 3) return simplex;
+  for (int corner = 0; corner < simplex.size; ++corner) {
+    const auto row = simplex.rows[static_cast<std::size_t>(corner)];
+    if (row < 0 || row >= point_count()) {
+      throw std::invalid_argument("A carrier simplex names an absent source point.");
+    }
+  }
+  unsigned axes = 0;
+  for (int axis = 0; axis < 3; ++axis) {
+    const Dyadic& origin = numerators_[3 * simplex.rows[0] + axis];
+    for (int corner = 1; corner < simplex.size; ++corner) {
+      const auto row = simplex.rows[static_cast<std::size_t>(corner)];
+      if (!(numerators_[3 * row + axis] - origin).is_zero()) {
+        axes |= 1U << axis;
+        break;
+      }
+    }
+  }
+  // An independent simplex spanning exactly this many coordinate directions
+  // fills its coordinate subspace. Degenerate candidates still fail location.
+  if (std::popcount(axes) == simplex.size - 1) {
+    simplex.projected_axes = static_cast<std::uint8_t>(axes);
+  }
+  return simplex;
 }
 
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "metric_carrier.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -375,6 +376,57 @@ void common_factor() {
   PHX_CHECK(compared > 1000);
 }
 
+void prepared_projection_box_preserves_carrier_order() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSimplex;
+  using phx::mc::metric::CarrierSource;
+  // Two separated horizontal triangles followed by a sloped triangle.
+  // The out-of-plane goal coordinate must not limit a projected lookup.
+  const std::vector<double> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0,
+      2, 0, 0, 3, 0, 0, 2, 1, 0,
+      4, 0, 0, 5, 0, 1, 4, 1, 0};
+  std::vector<Dyadic> numerators;
+  for (double value : points) numerators.emplace_back(value);
+  const CarrierSource source(points, std::move(numerators), Dyadic(1.0), {});
+  const std::vector<CarrierSimplex> plain{
+      {{0, 1, 2}, 3}, {{3, 4, 5}, 3}, {{6, 7, 8}, 3}};
+  std::vector<CarrierSimplex> prepared;
+  for (CarrierSimplex simplex : plain) prepared.push_back(source.prepare_simplex(simplex));
+
+  const std::array<double, 3> current{0, 0, 0};
+  // The second goal projects exactly onto the shared chart boundary.
+  const std::array<std::array<double, 3>, 3> goals{{
+      {2.25, 0.25, 4.0}, {2.0, 0.5, -4.0}, {3.75, 0.25, 0.75}}};
+  for (std::size_t row = 0; row < goals.size(); ++row) {
+    const auto& target = goals[row];
+    const auto expected =
+        source.carriers(target.data(), current.data(), plain, -1, CarrierOrder::kFineFirst, 4);
+    const auto found =
+        source.carriers(target.data(), current.data(), prepared, -1, CarrierOrder::kFineFirst, 4);
+    PHX_CHECK(!expected.empty() && found.size() == expected.size());
+    if (found.size() != expected.size()) continue;
+    for (std::size_t index = 0; index < found.size(); ++index) {
+      PHX_CHECK(found[index].rows == expected[index].rows);
+      PHX_CHECK(found[index].weights == expected[index].weights);
+      PHX_CHECK(found[index].bits == expected[index].bits);
+      PHX_CHECK(found[index].point == expected[index].point);
+      PHX_CHECK(found[index].exact == expected[index].exact);
+    }
+  }
+
+  const std::vector<CarrierSimplex> segment{source.prepare_simplex({{0, 1, -1}, 2})};
+  const double target[3]{0.5, 2.0, -3.0};
+  const auto found =
+      source.carriers(target, current.data(), segment, -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(found.size() == 1);
+  if (found.size() == 1) {
+    const std::array<double, 3> midpoint{0.5, 0, 0};
+    PHX_CHECK(found.front().point == midpoint);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -385,5 +437,6 @@ int main() {
   declared_faces();
   guards_arguments();
   common_factor();
+  prepared_projection_box_preserves_carrier_order();
   return phx::mc::test::finish("test_metric_carrier");
 }
