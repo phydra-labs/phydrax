@@ -46,9 +46,10 @@ from ._trim_helpers import PeriodOffset
 
 
 if TYPE_CHECKING:
-    from .._meshing_domain import MeshingDomain, SourcePreparation
+    from .._meshing_domain import MeshingDomain, PatchCurveUse, SourcePreparation
     from .._surface_source_support import _CadCurveUseBinding, SurfaceSourceCharts
     from ._curve_approximation_topology import TrimReferenceSegment
+    from ._intersection import RootEndpoint
 
 
 type ExactChartBox = tuple[
@@ -66,6 +67,7 @@ type _Family = Literal[
 
 _TAU = PeriodOffset(Fraction(0), Fraction(1))
 _QUARTER = PeriodOffset(Fraction(0), Fraction(1, 4))
+_TORUS_BOX: ExactChartBox = ((Fraction(0), Fraction(0)), (_TAU, _TAU))
 
 
 def _difference(a: ChartScalar, b: ChartScalar, /) -> ChartScalar:
@@ -603,6 +605,174 @@ def _sphere_trim_latitudes(
     return poles, exact
 
 
+@dataclass(frozen=True, slots=True)
+class _TorusTrimSide:
+    use: PatchCurveUse
+    coedge: int
+    axis: int
+    high: bool
+
+    def corner(self, end: bool, /) -> tuple[bool, bool]:
+        return (self.high, end) if self.axis == 0 else (end, self.high)
+
+
+def _torus_turn_roots(
+    roots: tuple[RootEndpoint | None, RootEndpoint | None],
+    carrier: AbstractCurve,
+    surface: RevolutionSurface,
+    axis: int,
+    bounds: tuple[float, float],
+    /,
+) -> bool:
+    """Match the authored zero/one-turn roots to this carrier and ordered range."""
+    from ._boolean_core import _cardinal_conic_phase
+    from ._intersection import (
+        _same_parameter_source,
+        ConicParameterEndpoint,
+        NativePeriodEndpoint,
+    )
+
+    for turn, (root, parameter) in enumerate(zip(roots, bounds, strict=True)):
+        exact = _TORUS_BOX[turn][axis]
+        if axis == 0:
+            if (
+                not isinstance(root, NativePeriodEndpoint)
+                or root.axis != axis
+                or not _same_parameter_source(root.patch, surface)
+                or not _same_parameter_source(root.curve, carrier)
+                or not _same(root.exact_parameter, exact)
+            ):
+                return False
+            shadow = root.parameter
+        else:
+            if (
+                not isinstance(root, ConicParameterEndpoint)
+                or not _same_parameter_source(root.carrier, carrier)
+                or not _same_parameter_source(root.root.conic, surface.curve)
+                or root.parameter_exact is not None
+            ):
+                return False
+            phase = _cardinal_conic_phase(root.root)
+            if phase is None or not _same(phase, exact):
+                return False
+            shadow = root.root.parameter
+        # A range value is only the root's numeric label. In particular its
+        # one-turn label is not what establishes the full turn.
+        if parameter != shadow:
+            return False
+    return True
+
+
+def _torus_trim_sides(
+    domain: MeshingDomain, patch: int, /
+) -> tuple[_TorusTrimSide, ...] | None:
+    """Replay both seam decks of the authored circular revolution rectangle."""
+    from .._domain_boundary import _exact_line_junction_box
+    from .._meshing_domain import _same_brep_trim_endpoint, PatchCurveUse
+    from ._boolean_core import PeriodicPCurve
+    from ._correspondence import _periodic_pcurve_source
+    from ._intersection import _same_parameter_source
+    from ._patches import _validate_curve_source_shadows
+
+    model = domain.brep_authority
+    if model is None:
+        return None
+    face = domain.source_indices[2][patch]
+    surface = model.patches[face]
+    geometry = model.geometry
+    loops, authored = domain.patches[patch].loops, geometry.face_loops[face]
+    if (
+        not isinstance(surface, RevolutionSurface)
+        or not isinstance(surface.curve, CircleCurve)
+        or surface.native_period_symbols() != ("two_pi", "two_pi")
+        or len(loops) != 1
+        or len(authored) != 1
+        or len(loops[0]) != 4
+        or len(authored[0]) != 4
+    ):
+        return None
+    sides: dict[tuple[int, bool], _TorusTrimSide] = {}
+    ordered: list[_TorusTrimSide] = []
+    for use, coedge in zip(loops[0], authored[0], strict=True):
+        pcurve = geometry.pcurves[coedge]
+        if not isinstance(use, PatchCurveUse) or not _same_parameter_source(
+            use.pcurve, pcurve
+        ):
+            return None
+        _validate_curve_source_shadows(pcurve)
+        axis = 0
+        line = _constant_chart_line(pcurve, axis)
+        if line is None:
+            axis = 1
+            line = _constant_chart_line(pcurve, axis)
+        if line is None or not _same(line[1], Fraction(0)) or line[2] != 1:
+            return None
+        high = _same(line[0], _TAU)
+        if (not high and not _same(line[0], Fraction(0))) or (axis, high) in sides:
+            return None
+        side = _TorusTrimSide(use, coedge, axis, high)
+        sides[axis, high] = side
+        ordered.append(side)
+
+    for axis in (0, 1):
+        low, high = sides[axis, False], sides[axis, True]
+        edge = geometry.coedge_edges[low.coedge]
+        curve_index = geometry.edge_curves[edge]
+        shifted = geometry.pcurves[high.coedge]
+        base = geometry.pcurves[low.coedge]
+        shift = (1, 0) if axis == 0 else (0, 1)
+        bounds = (low.use.first, low.use.last)
+        if (
+            geometry.coedge_edges[high.coedge] != edge
+            or low.use.curve != high.use.curve
+            or curve_index < 0
+            or low.use.sense != -high.use.sense
+            or (high.use.first, high.use.last) != bounds
+            or not isinstance(shifted, PeriodicPCurve)
+            or shifted.period_shifts != shift
+            or not _same_parameter_source(shifted.source_curve, base)
+            or _periodic_pcurve_source(shifted, surface) is None
+        ):
+            return None
+        edge_curve = geometry.curves[curve_index]
+        if axis == 0 and not _same_parameter_source(edge_curve, surface.curve):
+            return None
+        if not (
+            _torus_turn_roots(
+                geometry.edge_endpoint_roots[edge], edge_curve, surface, 1 - axis, bounds
+            )
+            and all(
+                _torus_turn_roots(
+                    geometry.coedge_endpoint_roots[side.coedge],
+                    geometry.pcurves[side.coedge],
+                    surface,
+                    1 - axis,
+                    bounds,
+                )
+                for side in (low, high)
+            )
+        ):
+            return None
+
+    for slot, side in enumerate(ordered):
+        previous = ordered[slot - 1]
+        if previous.corner(previous.use.sense > 0) != side.corner(side.use.sense < 0):
+            return None
+        if (
+            not _same_brep_trim_endpoint(
+                model, face, previous.coedge, side.coedge, previous.use, side.use
+            )
+            and _exact_line_junction_box(
+                model, face, previous.coedge, side.coedge, previous.use, side.use
+            )
+            is None
+        ):
+            return None
+    # Every trim is an affine unit-speed side between the exact rooted
+    # corners. Containment follows on both axes without interval clipping.
+    return tuple(ordered)
+
+
 def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
     """Prove a plane, cylinder, frustum, polar plane, sphere, or ring-torus sheet.
 
@@ -676,13 +846,18 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
                 return None
             return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
         family = _family(surface)
+        if family == "ring-torus" and _torus_trim_sides(domain, patch) is not None:
+            embedding = certify_source_embedding(surface, _TORUS_BOX, deck_axes=(0, 1))
+            if embedding is None:
+                return None
+            return BRepTrimSheetProof(domain, domain.domain_id, patch, embedding)
         if family not in (
             "plane",
             "cylinder",
             "revolution-cylinder",
             "revolution-frustum",
-            "ring-torus",
             "sphere",
+            "ring-torus",
         ):
             return None
         uses = domain.patches[patch].loops
@@ -987,6 +1162,189 @@ def _certify_cad_trim_sheet_validated(
     return CadTrimSheetProof(charts, charts.source_chart_id, patch, *sheet)
 
 
+def _torus_reference_endpoint(
+    side: _TorusTrimSide,
+    parameter: Fraction,
+    point: tuple[Fraction, Fraction],
+    root_box: np.ndarray | None,
+    parameter_box: tuple[float, float] | None,
+    roots: tuple[RootEndpoint | None, RootEndpoint | None],
+    labels: tuple[Fraction, Fraction],
+    /,
+) -> bool:
+    """Bind a raw chord point and, at a corner, its exact source endpoint."""
+    fixed = point[side.axis]
+    if (
+        fixed != labels[side.high]
+        or point[1 - side.axis] != parameter
+        or any(
+            value < 0 or _sheet_sign(_difference(_TAU, value)) not in (0, 1)
+            for value in point
+        )
+    ):
+        return False
+    if labels[0] < parameter < labels[1]:
+        return root_box is None and parameter_box is None
+    if parameter not in labels or root_box is None:
+        return False
+    end = parameter == labels[1]
+    root = roots[end]
+    if root is None or parameter_box != root.parameter_enclosure():
+        return False
+    box = np.asarray(root_box, dtype=np.float64)
+    if box.shape != (2, 2) or not np.all(np.isfinite(box)):
+        return False
+    for axis, high in enumerate(side.corner(end)):
+        exact = _TORUS_BOX[high][axis]
+        low, high_bound = (Fraction.from_float(float(box[i, axis])) for i in (0, 1))
+        if (
+            not low <= point[axis] <= high_bound
+            or _sheet_sign(_difference(exact, low)) not in (0, 1)
+            or _sheet_sign(_difference(high_bound, exact)) not in (0, 1)
+        ):
+            return False
+    return True
+
+
+def _torus_reference_sheet(
+    domain: MeshingDomain,
+    patch: int,
+    native: BRepTrimSheetProof,
+    reference: tuple[tuple[TrimReferenceSegment, ...], ...],
+    preparation: SourcePreparation,
+    /,
+) -> bool:
+    """Prove containment and correspondence of both paired reference chains.
+
+    Each source interval and its chord have the same affine transverse
+    coordinate, except for an endpoint bound to its exact period root.
+    Consequently each chord lifts to an exact segment of its source side;
+    opposite lifts agree by one symbolic period and reverse traversal.
+    Separately the unlifted, represented chord is contained by convexity of
+    the exact rectangle. It is never used to infer an exact period.
+
+    This also proves the straight trim-to-reference homotopy for the rectangle:
+    every interpolated side has a constant normal coordinate, and its ordered
+    transverse knots stay strictly ordered by convexity. Both paired sides
+    have the same transverse knots throughout, and the two positive widths
+    interpolate between the exact source turn and its represented reference
+    label. Thus no nonincident sides intersect or adjacent junctions separate;
+    the exact lifts, rather than the rounded rectangle widths, bind the decks.
+    """
+    preparation.require(domain)
+    domain.require_current()
+    model = domain.brep_authority
+    if (
+        model is None
+        or native.domain is not domain
+        or native.domain_id != domain.domain_id
+        or native.patch != patch
+        or not native.embedding.replay(
+            domain.patches[patch].surface, _TORUS_BOX, deck_axes=(0, 1)
+        )
+        or len(reference) != 1
+        or not reference[0]
+    ):
+        return False
+    sides = _torus_trim_sides(domain, patch)
+    if sides is None:
+        return False
+    owners = {id(side.use.pcurve): side for side in sides}
+    labels = {
+        side.coedge: (
+            Fraction.from_float(side.use.first),
+            Fraction.from_float(side.use.last),
+        )
+        for side in sides
+    }
+    cuts: dict[int, list[tuple[Fraction, Fraction]]] = {side.coedge: [] for side in sides}
+    direction: int | None = None
+    loop = reference[0]
+    for slot, segment in enumerate(loop):
+        side = owners.get(id(segment.curve))
+        if (
+            side is None
+            or segment.start != loop[slot - 1].stop
+            or segment.first == segment.last
+        ):
+            return False
+        observed = (1 if segment.first < segment.last else -1) * side.use.sense
+        if direction is not None and observed != direction:
+            return False
+        direction = observed
+        roots = model.geometry.coedge_endpoint_roots[side.coedge]
+        span = labels[side.coedge]
+        if not (
+            _torus_reference_endpoint(
+                side,
+                segment.first,
+                segment.start,
+                segment.start_root_box,
+                segment.start_parameter_box,
+                roots,
+                span,
+            )
+            and _torus_reference_endpoint(
+                side,
+                segment.last,
+                segment.stop,
+                segment.stop_root_box,
+                segment.stop_parameter_box,
+                roots,
+                span,
+            )
+        ):
+            return False
+        first, last = sorted((segment.first, segment.last))
+        cuts[side.coedge].append((first, last))
+
+    paired: dict[int, list[tuple[Fraction, Fraction]]] = {}
+    for side in sides:
+        intervals = cuts[side.coedge]
+        intervals.sort()
+        low, high = labels[side.coedge]
+        if (
+            not intervals
+            or intervals[0][0] != low
+            or intervals[-1][1] != high
+            or any(a[1] != b[0] for a, b in zip(intervals, intervals[1:]))
+        ):
+            return False
+        opposite = paired.setdefault(side.axis, intervals)
+        if opposite != intervals:
+            return False
+    return True
+
+
+def _trim_reference_id(reference: tuple[tuple[TrimReferenceSegment, ...], ...], /) -> str:
+    def ratio(value: Fraction) -> tuple[int, int]:
+        return value.numerator, value.denominator
+
+    return canonical_fingerprint(
+        tuple(
+            tuple(
+                (
+                    carrier_content_id(segment.curve),
+                    ratio(segment.first),
+                    ratio(segment.last),
+                    tuple(map(ratio, segment.start)),
+                    tuple(map(ratio, segment.stop)),
+                    None
+                    if segment.start_root_box is None
+                    else array_tree_fingerprint(segment.start_root_box),
+                    None
+                    if segment.stop_root_box is None
+                    else array_tree_fingerprint(segment.stop_root_box),
+                    segment.start_parameter_box,
+                    segment.stop_parameter_box,
+                )
+                for segment in loop
+            )
+            for loop in reference
+        )
+    )
+
+
 def certify_reference_trim_sheet(
     domain: MeshingDomain,
     patch: int,
@@ -999,13 +1357,19 @@ def certify_reference_trim_sheet(
 
     ``native`` is ``certify_brep_trim_sheet(domain, patch)``. The sheet bounds
     grow to every reference chord and source-interval enclosure (exact
-    latitudes where a sphere use binds them); the widened chart must still be
-    an embedding. Returns the reference identity and that embedding.
+    latitudes where a sphere use binds them); the resulting chart must still
+    be an embedding. A two-deck torus instead proves exact containment and
+    paired correspondence on both native decks. Returns the reference
+    identity and the embedding.
     """
     from ._boolean_core import _coedge_affine_axis
     from ._curve_approximation_topology import _trim_reference_box
 
     try:
+        if native.embedding.deck_axes == (0, 1):
+            if not _torus_reference_sheet(domain, patch, native, reference, preparation):
+                return None
+            return _trim_reference_id(reference), native.embedding
         pieces = tuple(segment for loop in reference for segment in loop)
         if not pieces:
             return None
@@ -1132,33 +1496,7 @@ def certify_reference_trim_sheet(
         if embedding is None:
             return None
 
-        def ratio(value: Fraction) -> tuple[int, int]:
-            return value.numerator, value.denominator
-
-        reference_id = canonical_fingerprint(
-            tuple(
-                tuple(
-                    (
-                        carrier_content_id(segment.curve),
-                        ratio(segment.first),
-                        ratio(segment.last),
-                        tuple(map(ratio, segment.start)),
-                        tuple(map(ratio, segment.stop)),
-                        None
-                        if segment.start_root_box is None
-                        else array_tree_fingerprint(segment.start_root_box),
-                        None
-                        if segment.stop_root_box is None
-                        else array_tree_fingerprint(segment.stop_root_box),
-                        segment.start_parameter_box,
-                        segment.stop_parameter_box,
-                    )
-                    for segment in loop
-                )
-                for loop in reference
-            )
-        )
-        return reference_id, embedding
+        return _trim_reference_id(reference), embedding
     except (
         ArithmeticError,
         IndexError,

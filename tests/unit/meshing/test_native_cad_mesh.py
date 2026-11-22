@@ -1645,19 +1645,15 @@ _CERTIFIED_FIXTURES = {
         ),
         0.3,
     ),
-    "cone": (
-        lambda: phx.geometry.brep.brep_cone(
-            0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
-        ),
-        0.3,
-    ),
-}
-
-# Its native trim sheet is unproved, as on the Python route.
-_UNPROVED_SHELL_FIXTURES = {
     "torus": (
         lambda: phx.geometry.brep.brep_torus(
             1.0, 0.25, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+    "cone": (
+        lambda: phx.geometry.brep.brep_cone(
+            0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
         ),
         0.3,
     ),
@@ -1690,20 +1686,6 @@ def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
     assert again.mesh.mesh_id == result.mesh.mesh_id
     assert again.certification is not None
     assert again.certification.report_id == certification.report_id
-
-
-@pytest.mark.parametrize("name", sorted(_UNPROVED_SHELL_FIXTURES))
-def test_unproved_source_shell_refuses_the_cad_solid(name: str) -> None:
-    from phydrax.meshing._contracts import MeshingFailure
-
-    factory, size = _UNPROVED_SHELL_FIXTURES[name]
-    plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
-    with pytest.raises(
-        MeshingFailure,
-        match="Rooted CAD source shell embedding or material orientation remains "
-        r"unresolved \(refused at: trim sheet of source patch",
-    ):
-        plan.execute()
 
 
 def test_source_shell_is_proved_once_per_domain(

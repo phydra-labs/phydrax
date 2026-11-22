@@ -443,4 +443,7 @@ def test_repaired_step_original_source_sheets(tmp_path: Path) -> None:
         proof = certify_brep_trim_sheet(domain, patch)
         assert proof is not None
         assert proof.embedding.family == family
+        if family == "ring-torus":
+            # These imported torus trims do not wind in both directions.
+            assert proof.embedding.deck_axes in ((), (0,)), patch
         assert proof.replay(domain, patch)
