@@ -567,6 +567,9 @@
 - Native CAD solid certification admits regular conical frusta when the
   exact profile has nonzero axial rate and stays off its rotation axis
   throughout the certified chart. Apex and axis crossings remain refused.
+- Native CAD certification proves both exact seam identifications and the
+  rectangular trim homotopy of full-turn ring tori. Partial torus trims
+  retain their existing proof path.
 - Overset preparation places validated host arrays in bulk, avoiding eager
   JAX compilation for individual fields on the default device. Explicit mesh
   placement, donor evidence, and connectivity identities are unchanged. The
