@@ -7,6 +7,7 @@
 // than the current point), the three resolution orders and the argument
 // guards. The search is integer arithmetic, so these expectations are exact.
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -396,7 +397,7 @@ void prepared_projection_box_preserves_carrier_order() {
   for (CarrierSimplex simplex : plain) prepared.push_back(source.prepare_simplex(simplex));
 
   const std::array<double, 3> current{0, 0, 0};
-  // The second goal projects exactly onto the shared chart boundary.
+  // The second goal projects exactly onto a chart edge.
   const std::array<std::array<double, 3>, 3> goals{{
       {2.25, 0.25, 4.0}, {2.0, 0.5, -4.0}, {3.75, 0.25, 0.75}}};
   for (std::size_t row = 0; row < goals.size(); ++row) {
@@ -425,6 +426,38 @@ void prepared_projection_box_preserves_carrier_order() {
     const std::array<double, 3> midpoint{0.5, 0, 0};
     PHX_CHECK(found.front().point == midpoint);
   }
+  const double endpoint[3]{1.0, 2.0, -3.0};
+  const double beyond[3]{std::nextafter(1.0, 2.0), 2.0, -3.0};
+  PHX_CHECK(!source.carriers(endpoint, current.data(), segment, -1,
+                             CarrierOrder::kFineFirst, 1).empty());
+  PHX_CHECK(source.carriers(beyond, current.data(), segment, -1,
+                            CarrierOrder::kFineFirst, 1).empty());
+}
+
+void rounded_source_coordinates_do_not_hide_an_oblique_hull() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSimplex;
+  using phx::mc::metric::CarrierSource;
+  // z = 1 + 2^-54 x. All three z coordinates round to 1, but the projected
+  // target lies in the simplex even though its original x is negative.
+  const Dyadic unit = Dyadic(1.0).scaled_power(54);
+  const Dyadic zero;
+  const CarrierSource source({0, 0, 1, 1, 0, 1, 0, 1, 1},
+                             {zero, zero, unit, unit, zero, unit + Dyadic(1.0),
+                              zero, unit, unit},
+                             unit, {});
+  const CarrierSimplex face{{0, 1, 2}, 3, true};
+  const double target[3]{-0x1p-56, 0.25, 5.0};
+  const double current[3]{1.0, 0.0, 1.0};
+  const auto result = source.carriers(target, current, {source.prepare_simplex(face)}, -1,
+                                       CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(result.size() == 1);
+  if (result.size() == 1) {
+    PHX_CHECK(result.front().point[0] > 0.0);
+    PHX_CHECK(result.front().point[1] == 0.25);
+    PHX_CHECK(result.front().point[2] == 1.0 && !result.front().exact);
+  }
 }
 
 }  // namespace
@@ -438,5 +471,6 @@ int main() {
   guards_arguments();
   common_factor();
   prepared_projection_box_preserves_carrier_order();
+  rounded_source_coordinates_do_not_hide_an_oblique_hull();
   return phx::mc::test::finish("test_metric_carrier");
 }
