@@ -548,6 +548,9 @@
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs
   when collecting finite cells, avoiding a separate remapping pass. Output
   order and vertex maps are unchanged.
+- Point-set triangulation exports only the cells and vertex map it returns.
+  A million-point 3D run uses about 90 MB less peak resident memory on
+  macOS. Constrained meshes still export their boundary and source records.
 - Native point programs skip initializing workspace entries that the bytecode
   overwrites before reading. Entries read as seeds keep the same values and
   block order. The polynomial benchmark rises from about 252 to 303 million
