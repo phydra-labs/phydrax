@@ -42,6 +42,7 @@
 #include "floating_point_mode.hpp"
 #include "parallel.hpp"
 #include "phydrax_meshcore.h"
+#include "wide_integer.hpp"
 
 namespace {
 
@@ -98,13 +99,10 @@ int compare_magnitude(const Big& a, const Big& b) noexcept {
 void add_magnitude(const Big& a, const Big& b, Big& out) {
   const Big& longer = a.size >= b.size ? a : b;
   const Big& shorter = a.size >= b.size ? b : a;
-  __extension__ using Wide = unsigned __int128;
   std::uint64_t carry = 0;
   for (int index = 0; index < longer.size; ++index) {
-    const Wide total = static_cast<Wide>(longer.limb[index]) +
-                       (index < shorter.size ? shorter.limb[index] : 0) + carry;
-    out.limb[index] = static_cast<std::uint64_t>(total);
-    carry = static_cast<std::uint64_t>(total >> 64);
+    out.limb[index] = phx::mc::add_with_carry(
+        longer.limb[index], index < shorter.size ? shorter.limb[index] : 0, carry);
   }
   out.size = longer.size;
   if (carry != 0) {
@@ -163,14 +161,12 @@ Big operator*(const Big& a, const Big& b) {
   if (a.size + b.size > kLimbs) throw Undecided{};
   const int width = a.size + b.size;
   for (int index = 0; index < width; ++index) out.limb[index] = 0;
-  __extension__ using Wide = unsigned __int128;
   for (int row = 0; row < a.size; ++row) {
     std::uint64_t carry = 0;
     for (int column = 0; column < b.size; ++column) {
       const int at = row + column;
-      const Wide total = static_cast<Wide>(a.limb[row]) * b.limb[column] + out.limb[at] + carry;
-      out.limb[at] = static_cast<std::uint64_t>(total);
-      carry = static_cast<std::uint64_t>(total >> 64);
+      out.limb[at] = phx::mc::multiply_accumulate(
+          a.limb[row], b.limb[column], out.limb[at], carry, carry);
     }
     out.limb[row + b.size] = carry;
   }
@@ -280,13 +276,10 @@ void append_decimal(const Big& a, char*& out) {
   std::array<std::uint64_t, 2 * kLimbs> chunks{};  // base 10^19, least significant first
   int count = 0;
   constexpr std::uint64_t kBase = UINT64_C(10000000000000000000);
-  __extension__ using Wide = unsigned __int128;
   while (size > 0) {
     std::uint64_t remainder = 0;
     for (int index = size - 1; index >= 0; --index) {
-      const Wide current = (static_cast<Wide>(remainder) << 64) | work[index];
-      work[index] = static_cast<std::uint64_t>(current / kBase);
-      remainder = static_cast<std::uint64_t>(current % kBase);
+      work[index] = phx::mc::divide_wide(work[index], kBase, remainder);
     }
     while (size > 0 && work[size - 1] == 0) --size;
     chunks[count++] = remainder;
