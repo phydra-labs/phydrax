@@ -802,6 +802,27 @@ def execute_cad_solid(
     volume = solid.volume
     stats = volume.stats[0]
     if volume.tetrahedra.shape[0] == 0:
+        if int(stats["recovery_attempts"]) == 0:
+            curves = solid.surface.curve_failures
+            faces = solid.surface.face_failures
+            if faces.size:
+                row = faces[0]
+                first = (
+                    f"; first face {int(row['face'])}, reason {int(row['reason'])}, "
+                    f"triangle {int(row['triangle'])}, refusal {int(row['refusal_kind'])}"
+                )
+            elif curves.size:
+                first = f"; first unresolved interval on curve {int(curves[0]['curve'])}"
+            else:
+                first = ""
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "Native CAD surface construction did not reach volume recovery "
+                f"(status {solid.status.name}, {curves.size} unresolved curve "
+                f"intervals and {faces.size} face findings{first}).",
+                provider_code="native_cad_surface_unresolved",
+                stage="surface_meshing",
+            )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
             "Native CAD volume recovery refused the surface (status "
