@@ -545,6 +545,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Overset preparation places validated host arrays in bulk, avoiding eager
+  JAX compilation for individual fields on the default device. Explicit mesh
+  placement, donor evidence, and connectivity identities are unchanged. The
+  10,000-cell tetrahedral benchmark's first construction call falls from
+  123–133 ms to 49–52 ms on macOS; repeated calls remain about 7 ms.
 - Native local boundary edits can validate a caller-supplied affine source
   stencil for a witness-free collapse survivor or relocated vertex. The
   stored coordinates must match the combination exactly and its nonzero
