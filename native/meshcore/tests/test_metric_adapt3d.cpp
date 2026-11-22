@@ -138,8 +138,10 @@ struct Run {
 };
 
 // Adapts the Kuhn cube of n^3 cells under the constant tensor c I.
-Run adapt_cube(int n, double c) {
-  const Cube cube = kuhn_cube(n);
+Run adapt_cube(int n, double c, bool witnessed = false) {
+  Cube cube = kuhn_cube(n);
+  const std::int32_t moved = n + 2;  // (0, 1/n, 1/n)
+  if (witnessed) cube.points[3 * moved + 1] *= 0.625;
   Run run;
   TetMesh mesh(BoundaryPolicy::kConforming);
   const std::vector<std::int32_t> regions(cube.tetrahedra.size() / 4, 0);
@@ -169,12 +171,29 @@ Run adapt_cube(int n, double c) {
   source.face_tolerances = zeros;
   source.face_planes = planes;
   source.face_plane_tolerances = zeros;
+  std::vector<SourceWitness> witnesses;
+  std::vector<std::int8_t> fixed;
+  const std::size_t count = cube.points.size() / 3;
+  if (witnessed) {
+    witnesses.resize(count);
+    fixed.assign(count, 1);
+    fixed[static_cast<std::size_t>(moved)] = 0;
+    for (std::size_t row = 0; row < faces; ++row) {
+      const auto first = cube.faces.begin() + static_cast<std::ptrdiff_t>(3 * row);
+      const auto corner = std::find(first, first + 3, moved);
+      if (corner == first + 3) continue;
+      witnesses[static_cast<std::size_t>(moved)] = {
+          SourceStratum::kFacet, static_cast<std::int32_t>(row),
+          {corner == first + 1 ? 1.0 : 0.0, corner == first + 2 ? 1.0 : 0.0}};
+      break;
+    }
+    source.witnesses = witnesses;
+  }
   PHX_CHECK(mesh.build(cube.points, cube.tetrahedra, regions, cube.faces, cube.sides, {}, {}, {},
-                       {}, &source) == PHX_MC_OK);
+                       {}, &source, fixed) == PHX_MC_OK);
   PHX_CHECK(mesh.snapshot(run.before) == TetEditStatus::kApplied);
   metric::AdaptInput input;
   input.source_points = cube.points;
-  const std::size_t count = cube.points.size() / 3;
   const double tensor[9] = {c, 0, 0, 0, c, 0, 0, 0, c};
   const double logarithm[9] = {std::log(c), 0, 0, 0, std::log(c), 0, 0, 0, std::log(c)};
   for (std::size_t row = 0; row < count; ++row) {
@@ -206,6 +225,7 @@ Run adapt_cube(int n, double c) {
   input.next_target_vertex = count;
   input.next_target_cell = input.next_cell_id;
   input.lower = kLower;
+  input.topology_operations = !witnessed;
   run.status = metric::adapt_metric(mesh, input, run.output);
   PHX_CHECK(mesh.snapshot(run.after) == TetEditStatus::kApplied);
   return run;
@@ -279,11 +299,40 @@ void check_coarsening() {
   PHX_CHECK(boundary_vertices(run.after) < boundary_vertices(run.before));
 }
 
+void check_witnessed_boundary_relocation() {
+  const Run run = adapt_cube(2, 4.0, true);
+  PHX_CHECK(run.status == TetEditStatus::kApplied);
+  PHX_CHECK(run.output.counters.relocations > 0);
+  if (run.before.vertices.size() <= 4 || run.after.vertices.size() <= 4) {
+    PHX_CHECK(false);
+    return;
+  }
+  const auto& before = run.before.vertices[4];
+  const auto& after = run.after.vertices[4];
+  PHX_CHECK(before.id == after.id && before.carrier != after.carrier);
+  const SourceWitness& witness = after.witness;
+  PHX_CHECK(witness.stratum == SourceStratum::kFacet && witness.entity >= 0);
+  if (witness.stratum != SourceStratum::kFacet || witness.entity < 0) return;
+  const std::size_t face = 3 * static_cast<std::size_t>(witness.entity);
+  PHX_CHECK(face + 2 < run.before.source_faces.size());
+  if (face + 2 >= run.before.source_faces.size()) return;
+  const double* corners[3];
+  for (std::size_t corner = 0; corner < 3; ++corner) {
+    corners[corner] = run.before.source_points.data() + 3 * run.before.source_faces[face + corner];
+  }
+  std::array<double, 3> point{};
+  double deviation = 0.0;
+  PHX_CHECK(source_carrier(corners, witness.stratum, witness.parameters, point.data(), deviation));
+  PHX_CHECK(after.carrier == point && after.carrier[0] == 0.0);
+  PHX_CHECK(witness.deviation == 0.0 && deviation == 0.0);
+}
+
 }  // namespace
 
 int main() {
   check_combine_stencils();
   check_refinement();
   check_coarsening();
+  check_witnessed_boundary_relocation();
   return phx::mc::test::finish("test_metric_adapt3d");
 }

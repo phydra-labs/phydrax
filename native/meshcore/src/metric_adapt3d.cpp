@@ -212,6 +212,7 @@ class Adapter {
     bool boundary = false;  // the removed vertex lies on constrained facets
     bool moved = false;     // the survivor moves to `carrier` with tensor `metric`
     Carrier carrier;
+    SourceWitness witness;
     std::array<double, 9> metric{};
   };
   bool plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePlan& plan);
@@ -272,6 +273,8 @@ class Adapter {
   std::int64_t pair_sweep(std::span<const std::int32_t> vertices);
   bool carrier_simplices(std::int32_t vertex, const LocalIncidence::Star& star, bool& interior,
                          std::vector<CarrierSimplex>& simplices);
+  std::optional<SourceWitness> relocation_witness(std::int32_t vertex,
+                                                  const Carrier& carrier) const;
 
   // Lineage.
   void record_created_cell(std::int32_t slot, std::int32_t parent_block,
@@ -310,6 +313,8 @@ class Adapter {
   // whether the mesh's source points are the adaptation's (boundary vertices
   // move on them only then).
   std::unordered_map<std::int32_t, std::vector<CarrierSimplex>> group_triangles_;
+  std::vector<std::int32_t> witness_face_groups_;
+  std::vector<std::int32_t> witness_faces_;
   std::unordered_set<std::int32_t> declared_groups_;
   bool source_banks_match_ = false;
   // Collapses may move their survivor: on once boundary relocation stalls.
@@ -548,6 +553,14 @@ void Adapter::bind() {
       // Boundary moves keep an exactly representable source image for the
       // verified collapse stencil and edges outside declared facet pairs.
       group_triangles_[snapshot.source_face_groups[row]].push_back(triangle);
+    }
+    if (source_banks_match_ &&
+        std::any_of(snapshot.vertices.begin(), snapshot.vertices.end(),
+                    [](const TetSnapshotVertex& vertex) {
+                      return vertex.witness.stratum == SourceStratum::kFacet;
+                    })) {
+      witness_face_groups_ = std::move(snapshot.source_face_groups);
+      witness_faces_ = std::move(snapshot.source_faces);
     }
   }
   for (std::size_t slot = 0; slot < mesh_.vertex_slot_count(); ++slot) {
@@ -1297,10 +1310,13 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
     candidate.finish();
     const bool in_band = candidate.long_side.empty();
     if (blocked) continue;
+    const auto witness = relocation_witness(kept, moves[index].carrier);
+    if (!witness) continue;
     if (admitted && compare_violations(candidate, plan.added) >= 0) continue;
     plan.added = std::move(candidate);
     plan.moved = true;
     plan.carrier = moves[index].carrier;
+    plan.witness = *witness;
     plan.metric = moves[index].metric;
     admitted = true;
     if (in_band) break;
@@ -1504,7 +1520,7 @@ TetEditStatus Adapter::collapse(const CollapsePlan& plan, bool& applied) {
     TetEditVertex survivor;
     survivor.id = kept_id;
     survivor.carrier = plan.carrier.point;
-    survivor.witness = mesh_.witness(kept);
+    survivor.witness = plan.witness;
     survivor.edge_witness_supplied = true;
     edit.changed_vertices.push_back(survivor);
   }
@@ -2262,6 +2278,63 @@ bool Adapter::carrier_simplices(std::int32_t vertex, const LocalIncidence::Star&
   return !simplices.empty();
 }
 
+std::optional<SourceWitness> Adapter::relocation_witness(std::int32_t vertex,
+                                                          const Carrier& carrier) const {
+  const SourceWitness& old = mesh_.witness(vertex);
+  if (old.stratum == SourceStratum::kNone) return SourceWitness{};
+  if (!carrier.exact || old.entity < 0) return std::nullopt;
+  SourceWitness next{old.stratum, old.entity};
+  const auto matches = [&](const Expansion* image) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      if (!(image[axis] - Expansion(carrier.point[axis])).is_zero()) return false;
+    }
+    return true;
+  };
+  Expansion image[3];
+  if (old.stratum == SourceStratum::kPlane) {
+    const double* plane = mesh_.face_plane(old.entity);
+    if (plane == nullptr) return std::nullopt;
+    const double zero[3]{};
+    const double* const axes[3]{zero, plane + 3, plane + 6};
+    double offset[3];
+    for (std::size_t axis = 0; axis < 3; ++axis) offset[axis] = carrier.point[axis] - plane[axis];
+    source_locator(axes, SourceStratum::kFacet, offset, next.parameters, false);
+    if (std::isfinite(next.parameters[0]) && std::isfinite(next.parameters[1]) &&
+        mesh_.plane_point(old.entity, next.parameters, image) && matches(image)) return next;
+    return std::nullopt;
+  }
+  if (old.stratum == SourceStratum::kSegment) {
+    const double* corners[3]{};
+    if (!mesh_.source_corners(old.stratum, old.entity, corners)) return std::nullopt;
+    source_locator(corners, old.stratum, carrier.point.data(), next.parameters, false);
+    if (source_point(corners, old.stratum, next.parameters, image) && matches(image)) return next;
+    return std::nullopt;
+  }
+  const auto old_row = static_cast<std::size_t>(old.entity);
+  if (old_row >= witness_face_groups_.size()) return std::nullopt;
+  const auto in_face = [&](std::size_t row) {
+    std::array<std::int64_t, 3> weights{};
+    for (int term = 0; term < carrier.size; ++term) {
+      const auto slot = static_cast<std::size_t>(term);
+      const auto first = witness_faces_.begin() + static_cast<std::ptrdiff_t>(3 * row);
+      const auto found = std::find(first, first + 3, carrier.rows[slot]);
+      if (found == first + 3) return false;
+      weights[static_cast<std::size_t>(found - first)] = carrier.weights[slot];
+    }
+    next.entity = static_cast<std::int32_t>(row);
+    next.parameters[0] = std::ldexp(static_cast<double>(weights[1]), -carrier.bits);
+    next.parameters[1] = std::ldexp(static_cast<double>(weights[2]), -carrier.bits);
+    return source_parameters_valid(SourceStratum::kFacet, next.parameters);
+  };
+  // The dyadic carrier already realizes these exact barycentric weights.
+  // Prefer the existing source triangle, then any triangle in its group.
+  if (in_face(old_row)) return next;
+  for (std::size_t row = 0; row < witness_face_groups_.size(); ++row) {
+    if (witness_face_groups_[row] == witness_face_groups_[old_row] && in_face(row)) return next;
+  }
+  return std::nullopt;
+}
+
 TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   applied = false;
   if (!carriers_ || mesh_.protected_vertex(vertex) || mesh_.protection_radius(vertex) > 0.0) {
@@ -2366,9 +2439,12 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
       moved.id = mesh_.vertex_id(vertex);
       moved.carrier = candidate.carrier.point;
       moved.edge_witness_supplied = true;
+      const auto witness = relocation_witness(vertex, candidate.carrier);
+      if (!witness) continue;
+      moved.witness = *witness;
       TetEditStatus status = TetEditStatus::kRejectedTopology;
       const std::span<const TetEditVertex> records(&moved, 1);
-      if (interior) {
+      if (interior || (!mesh_.implicit_source() && moved.witness.stratum != SourceStratum::kNone)) {
         status = incidence_.relocate(mesh_, records, star);
       } else if (!mesh_.implicit_source()) {
         const Carrier& carrier = candidate.carrier;
