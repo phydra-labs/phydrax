@@ -434,7 +434,6 @@ class _NativeState:
     source_cell_vertices: np.ndarray
     source_cell_regions: np.ndarray
     source_cell_blocks: np.ndarray
-    source_records: _SourceRecords
     source_region_volumes: dict[int, float]
     source_identity: tuple[str, str, str, str]
     vertex_target_ids: dict[int, int]
@@ -483,6 +482,22 @@ class _NativeState:
     ] = field(default_factory=dict)
     # The native exact source (``_source_bank``), created on first use.
     source_bank: _SourceBank | None = None
+    _host_source_records: _SourceRecords | None = field(default=None, init=False)
+
+    @property
+    def source_records(self) -> _SourceRecords:
+        """Exact inverse records for the host proposal engine, not the native loop."""
+        records = self._host_source_records
+        if records is None:
+            records = _source_tetra_inverse(
+                self.source_points,
+                self.source_cell_vertices,
+                self.source_vertex_ids,
+                self.source_cell_ids,
+                exact_points=self.source_exact_points,
+            )
+            self._host_source_records = records
+        return records
 
 
 @dataclass(slots=True)
@@ -2060,13 +2075,6 @@ def _prepare_native_state(
         source_cell_vertices=source_cells,
         source_cell_regions=regions,
         source_cell_blocks=source_cell_blocks,
-        source_records=_source_tetra_inverse(
-            points,
-            source_cells,
-            vertex_ids,
-            source_cell_ids,
-            exact_points=exact_source_points,
-        ),
         source_region_volumes=_region_volumes(points, source_cells, regions),
         source_identity=source_identity,
         vertex_target_ids=vertex_target_ids,
