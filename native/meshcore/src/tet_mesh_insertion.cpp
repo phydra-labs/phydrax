@@ -1851,6 +1851,7 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
       (!segment_star.empty() && split_segment[0] < 0)) {
     return TetCavityStatus::kRefused;
   }
+  std::set<SortedFace> disk_faces;
   for (const auto& [cell, face] : disk_sides) {
     if (!complex_.live(cell) || is_ghost(tet(cell)) || face < 0 || face > 3 ||
         complex_.constraint(cell, face) == kNoConstraint) {
@@ -1860,6 +1861,9 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
     if (!complex_.live(other)) return TetCavityStatus::kRefused;
     disk_cells.insert(cell);
     disk_cells.insert(other);
+    std::int32_t corners[3];
+    oriented_facet(tet(cell).v, face, corners);
+    disk_faces.insert(sorted_face(corners));
   }
   for (std::int32_t cell : segment_star) {
     if (!complex_.live(cell) || is_ghost(tet(cell))) return TetCavityStatus::kRefused;
@@ -1939,6 +1943,28 @@ TetCavityStatus TetMesh::boundary_insertion_cavity(
         if (drop < 0 && (loses_vertex ||
                          removes_constrained_segment(single, kept_edges, segment_index))) {
           drop = cell;
+        }
+      }
+      // A constrained face between two cavity cells other than a disk face
+      // would be removed with them (the edit refuses that): the cell beyond
+      // it from the disk leaves the cavity.
+      for (std::int32_t cell : members) {
+        if (drop >= 0) break;
+        const Tetrahedron& tetrahedron = tet(cell);
+        for (int face = 0; face < 4; ++face) {
+          const std::int32_t next = tetrahedron.n[face];
+          if (!members.contains(next) || complex_.constraint(cell, face) == kNoConstraint) {
+            continue;
+          }
+          std::int32_t corners[3];
+          oriented_facet(tetrahedron.v, face, corners);
+          if (disk_faces.contains(sorted_face(corners))) continue;
+          drop = disk_cells.contains(cell) ? next : cell;
+          if (disk_cells.contains(drop)) {
+            cells.clear();
+            return TetCavityStatus::kRefused;
+          }
+          break;
         }
       }
     }

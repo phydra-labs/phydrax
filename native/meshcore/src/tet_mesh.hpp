@@ -744,6 +744,18 @@ class TetMesh {
   TetEditStatus relocate(std::span<const TetEditVertex> moved_vertices,
                          std::span<const std::uint64_t> affected_cells);
 
+  // Called by refinement: the cavity of the constrained boundary point
+  // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
+  // (finite cell, face slot), cells on both sides of their facets, splitting
+  // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
+  // an embedded split segment has no disk faces and its finite edge star
+  // `segment_star` (cell slots) seeds the cavity instead;
+  // kFound or kRefused (see insert_local_boundary_point).
+  TetCavityStatus boundary_insertion_cavity(
+      const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
+      std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
+      std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const;
+
  private:
   friend std::int32_t flip_to_constrained_delaunay(
       TetMesh&, detail::LocalIncidence&, std::span<const std::uint64_t>,
@@ -886,17 +898,6 @@ class TetMesh {
                                             std::span<const std::size_t> segment_rows,
                                             std::vector<std::uint64_t>& created_cells,
                                             const TetSegmentIndex* segment_index);
-  // Called by refinement: the cavity of the constrained boundary point
-  // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
-  // (finite cell, face slot), cells on both sides of their facets, splitting
-  // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
-  // an embedded split segment has no disk faces and its finite edge star
-  // `segment_star` (cell slots) seeds the cavity instead;
-  // kFound or kRefused (see insert_local_boundary_point).
-  TetCavityStatus boundary_insertion_cavity(
-      const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
-      std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
-      std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const;
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,

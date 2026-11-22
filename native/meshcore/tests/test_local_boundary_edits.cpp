@@ -28,6 +28,7 @@
 #include "cavity.hpp"
 #include "check.hpp"
 #include "local_incidence.hpp"
+#include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
@@ -2086,6 +2087,124 @@ void boundary_edits_are_star_local() {
   }
 }
 
+// A boundary split's cavity (TetMesh::boundary_insertion_cavity) grows by
+// insphere tests from the cells beside its disk faces and never across a
+// constrained face, but it can wrap around the free edges of an interior
+// constrained facet and hold the cells on both of its sides. The edit
+// (insert_boundary_point) refuses a cavity that would remove a constrained
+// face other than a disk face, so such a split was refused and its edge
+// stayed long. Every hull edge of a small Delaunay mesh is split against
+// every interior face constrained as a one-triangle fin: a found cavity
+// never joins two of its cells through a constrained face off the disk.
+void boundary_cavities_never_hold_a_non_disk_constrained_face() {
+  std::vector<double> input;
+  std::uint32_t state = 12345;
+  const auto jitter = [&]() {
+    state = state * 1664525U + 1013904223U;
+    return static_cast<double>(static_cast<int>((state >> 16) % 5U) - 2);
+  };
+  for (int k = 0; k < 3; ++k) {
+    for (int j = 0; j < 3; ++j) {
+      for (int i = 0; i < 3; ++i) {
+        input.push_back(16.0 * i + jitter());
+        input.push_back(16.0 * j + jitter());
+        input.push_back(16.0 * k + jitter());
+      }
+    }
+  }
+  phx_mc_mesh* delaunay = nullptr;
+  const std::int32_t triangulated =
+      phx_mc_delaunay_3d(static_cast<std::int64_t>(input.size() / 3), input.data(), &delaunay, 1);
+  PHX_CHECK(triangulated == PHX_MC_OK);
+  if (triangulated != PHX_MC_OK) return;
+  const std::vector<double> points = delaunay->points;
+  const std::vector<std::int32_t> tetrahedra = delaunay->cells;
+  phx_mc_mesh_free(delaunay);
+  const auto face_of = [](const std::int32_t* cell, int skip) {
+    std::array<std::int32_t, 3> face{};
+    int at = 0;
+    for (int corner = 0; corner < 4; ++corner) {
+      if (corner != skip) face[static_cast<std::size_t>(at++)] = cell[corner];
+    }
+    std::sort(face.begin(), face.end());
+    return face;
+  };
+  std::map<std::array<std::int32_t, 3>, int> uses;
+  for (std::size_t cell = 0; cell < tetrahedra.size() / 4; ++cell) {
+    for (int skip = 0; skip < 4; ++skip) ++uses[face_of(tetrahedra.data() + 4 * cell, skip)];
+  }
+  std::vector<std::array<std::int32_t, 3>> hull;
+  std::vector<std::array<std::int32_t, 3>> interior;
+  for (const auto& [face, count] : uses) (count == 1 ? hull : interior).push_back(face);
+  std::set<std::array<std::int32_t, 2>> hull_edges;
+  for (const auto& face : hull) {
+    for (int corner = 0; corner < 3; ++corner) {
+      const std::int32_t a = face[static_cast<std::size_t>(corner)];
+      const std::int32_t b = face[static_cast<std::size_t>((corner + 1) % 3)];
+      hull_edges.insert({std::min(a, b), std::max(a, b)});
+    }
+  }
+  const std::vector<std::int32_t> regions(tetrahedra.size() / 4, 0);
+  std::int64_t found = 0;
+  for (const auto& fin : interior) {
+    std::vector<std::int32_t> faces;
+    std::vector<std::int32_t> sources;
+    for (const auto& face : hull) {
+      faces.insert(faces.end(), face.begin(), face.end());
+      sources.push_back(static_cast<std::int32_t>(sources.size()));
+    }
+    faces.insert(faces.end(), fin.begin(), fin.end());
+    sources.push_back(static_cast<std::int32_t>(sources.size()));
+    TetMesh mesh(BoundaryPolicy::kConforming);
+    if (mesh.build(points, tetrahedra, regions, faces, sources, {}, {}) != PHX_MC_OK) continue;
+    const TetrahedralComplex& complex = mesh.complex();
+    for (const auto& [first, second] : hull_edges) {
+      const std::int32_t a = mesh.vertex_slot(static_cast<std::uint64_t>(first));
+      const std::int32_t b = mesh.vertex_slot(static_cast<std::uint64_t>(second));
+      std::vector<std::pair<std::int32_t, int>> disk;
+      std::set<std::array<std::int32_t, 3>> disk_faces;
+      for (std::size_t slot = 0; slot < complex.tets.size(); ++slot) {
+        const auto cell = static_cast<std::int32_t>(slot);
+        if (!complex.live(cell) || is_ghost(mesh.tet(cell))) continue;
+        const Tetrahedron& tetrahedron = mesh.tet(cell);
+        if (vertex_slot(tetrahedron, a) < 0 || vertex_slot(tetrahedron, b) < 0) continue;
+        for (int face = 0; face < 4; ++face) {
+          if (tetrahedron.v[face] == a || tetrahedron.v[face] == b ||
+              !is_ghost(mesh.tet(tetrahedron.n[face]))) {
+            continue;
+          }
+          disk.emplace_back(cell, face);
+          disk_faces.insert(face_of(tetrahedron.v, face));
+        }
+      }
+      TetEditVertex vertex;
+      vertex.id = mesh.vertex_slot_count();
+      for (int axis = 0; axis < 3; ++axis) {
+        vertex.carrier[static_cast<std::size_t>(axis)] =
+            0.5 * (points[3 * static_cast<std::size_t>(first) + static_cast<std::size_t>(axis)] +
+                   points[3 * static_cast<std::size_t>(second) + static_cast<std::size_t>(axis)]);
+      }
+      std::vector<std::int32_t> cells;
+      if (mesh.boundary_insertion_cavity(vertex, disk, {-1, -1}, {}, cells, nullptr) !=
+          TetCavityStatus::kFound) {
+        continue;
+      }
+      ++found;
+      for (const std::int32_t cell : cells) {
+        const Tetrahedron& tetrahedron = mesh.tet(cell);
+        for (int face = 0; face < 4; ++face) {
+          if (!std::binary_search(cells.begin(), cells.end(), tetrahedron.n[face]) ||
+              complex.constraint(cell, face) == kNoConstraint) {
+            continue;
+          }
+          PHX_CHECK(disk_faces.contains(face_of(tetrahedron.v, face)));
+        }
+      }
+    }
+  }
+  PHX_CHECK(found > 0);
+}
+
 }  // namespace
 
 int main() {
@@ -2093,5 +2212,6 @@ int main() {
   unsupported_meshes_are_refused();
   splits_and_relocations_match_the_batch();
   boundary_edits_are_star_local();
+  boundary_cavities_never_hold_a_non_disk_constrained_face();
   return phx::mc::test::finish("test_local_boundary_edits");
 }
