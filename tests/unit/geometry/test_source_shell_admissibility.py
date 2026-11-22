@@ -516,7 +516,7 @@ def test_coplanar_source_faces_respect_declared_singleton(second_side: int) -> N
         x, y = Fraction(width), Fraction(height)
         origin = (zero, zero, zero)
         corners = (0, first_id, first_id + 1, first_id + 2)
-        points = dict(
+        points: dict[int, tuple[Fraction, ...]] = dict(
             zip(
                 corners,
                 (origin, (x, zero, zero), (x, y, zero), (zero, y, zero)),
