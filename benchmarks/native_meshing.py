@@ -20,6 +20,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, NamedTuple, TYPE_CHECKING
 
@@ -96,11 +97,31 @@ class _Row:
     # The timed seconds of one run when the row times a stage of a larger
     # call by the kernel's own stage clock; None times the whole call.
     stage_seconds: Callable[[object], float] | None = None
+    input_sha256: tuple[tuple[str, str], ...] = ()
 
 
 def _uniform_points(count: int, dimension: int, seed: int, /) -> np.ndarray:
     generator = np.random.default_rng(seed)
     return generator.random((count, dimension), dtype=np.float64)
+
+
+def _triangulation_input(
+    directory: Path, stem: str, shape: tuple[int, ...], /
+) -> np.ndarray:
+    path = directory / f"{stem}.bin"
+    data = np.fromfile(path, dtype=np.uint8)
+    if data.size != math.prod(shape) * np.dtype(np.float64).itemsize:
+        raise ValueError(f"{path} does not contain exactly {shape} binary64 values.")
+    return data.view(np.float64).reshape(shape)
+
+
+def _triangulation_digests(
+    points: np.ndarray, weights: np.ndarray | None = None, /
+) -> tuple[tuple[str, str], ...]:
+    point_digest = ("points", sha256(memoryview(points).cast("B")).hexdigest())
+    if weights is None:
+        return (point_digest,)
+    return (point_digest, ("weights", sha256(memoryview(weights).cast("B")).hexdigest()))
 
 
 def _cells(result: object, /) -> int:
@@ -112,17 +133,22 @@ def _cells(result: object, /) -> int:
     return cells.shape[0]
 
 
-def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+def _delaunay_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
     rows: list[_Row] = []
     for size in sizes:
-        planar = _uniform_points(size, 2, 20261119)
-        spatial = _uniform_points(size, 3, 20261119)
+        if inputs is None:
+            planar = _uniform_points(size, 2, 20261119)
+            spatial = _uniform_points(size, 3, 20261119)
+        else:
+            planar = _triangulation_input(inputs, f"p2_{size}", (size, 2))
+            spatial = _triangulation_input(inputs, f"p3_{size}", (size, 3))
         rows.append(
             _Row(
                 "delaunay-2d",
                 size,
                 lambda points=planar: _meshcore.delaunay_2d(points),
                 _cells,
+                input_sha256=_triangulation_digests(planar),
             )
         )
         rows.append(
@@ -133,6 +159,7 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                     points, parallelism=exact_kernel_parallelism()
                 ),
                 _cells,
+                input_sha256=_triangulation_digests(spatial),
             )
         )
     return tuple(rows)
@@ -212,14 +239,20 @@ def _planar_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     return tuple(rows)
 
 
-def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+def _regular_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
     # The ledger's weighted points: uniform in the unit cube, weights uniform
     # in [0, (0.5 n^(-1/3))^2), so some points are redundant.
     rows: list[_Row] = []
     for size in sizes:
-        points = _uniform_points(size, 3, 20261119)
-        limit = (0.5 * size ** (-1.0 / 3.0)) ** 2
-        weights = limit * np.random.default_rng(20261120).random(size, dtype=np.float64)
+        if inputs is None:
+            points = _uniform_points(size, 3, 20261119)
+            limit = (0.5 * size ** (-1.0 / 3.0)) ** 2
+            weights = limit * np.random.default_rng(20261120).random(
+                size, dtype=np.float64
+            )
+        else:
+            points = _triangulation_input(inputs, f"p3_{size}", (size, 3))
+            weights = _triangulation_input(inputs, f"w3_{size}", (size,))
         rows.append(
             _Row(
                 "regular-3d",
@@ -228,17 +261,22 @@ def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                     points, weights, parallelism=exact_kernel_parallelism()
                 ),
                 _cells,
+                input_sha256=_triangulation_digests(points, weights),
             )
         )
     return tuple(rows)
 
 
-def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
+def _periodic_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row, ...]:
     # Uniform points on the unit 3-torus at the default initial margin.
     lattice = np.eye(3, dtype=np.float64)
     rows: list[_Row] = []
     for size in sizes:
-        points = _uniform_points(size, 3, 20261121)
+        points = (
+            _uniform_points(size, 3, 20261121)
+            if inputs is None
+            else _triangulation_input(inputs, f"p3_{size}", (size, 3))
+        )
         rows.append(
             _Row(
                 "periodic-3d",
@@ -247,6 +285,7 @@ def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                     points, points, lattice, lattice
                 ),
                 _cells,
+                input_sha256=_triangulation_digests(points),
             )
         )
     return tuple(rows)
@@ -255,6 +294,7 @@ def _periodic_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
 def _rows(
     sizes: tuple[int, ...],
     names: frozenset[str] | None,
+    triangulation_inputs: Path | None,
     improve_inputs: Path | None,
     query_inputs: Path | None,
     overset_inputs: Path | None,
@@ -265,10 +305,13 @@ def _rows(
 ) -> tuple[_Row, ...]:
     # Families prepare their inputs only when one of their rows is selected.
     families: tuple[tuple[frozenset[str], Callable[[], tuple[_Row, ...]]], ...] = (
-        (frozenset({"delaunay-2d", "delaunay-3d"}), lambda: _delaunay_rows(sizes)),
+        (
+            frozenset({"delaunay-2d", "delaunay-3d"}),
+            lambda: _delaunay_rows(sizes, triangulation_inputs),
+        ),
         (frozenset({"cdt-2d", "ruppert-2d"}), lambda: _planar_rows(sizes)),
-        (frozenset({"regular-3d"}), lambda: _regular_rows(sizes)),
-        (frozenset({"periodic-3d"}), lambda: _periodic_rows(sizes)),
+        (frozenset({"regular-3d"}), lambda: _regular_rows(sizes, triangulation_inputs)),
+        (frozenset({"periodic-3d"}), lambda: _periodic_rows(sizes, triangulation_inputs)),
         (frozenset({"implicit-sphere", "implicit-torus"}), _implicit_rows),
         (frozenset({"recover-sphere", "recover-torus"}), _recovery_rows),
         (
@@ -582,6 +625,10 @@ def _cad_rows() -> tuple[_Row, ...]:
     from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 
     contract = phx.SpatialCoordinateContract.si()
+    cylinders = (
+        ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
+        ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
+    )
     vertical, transverse = (
         phx.geometry.brep.brep_cylinder(
             radius,
@@ -591,10 +638,7 @@ def _cad_rows() -> tuple[_Row, ...]:
             coordinate_contract=contract,
             source_id=f"qualification:native-cad-quadric-{name}",
         )
-        for name, radius, height, base, axis in (
-            ("vertical", 1.0, 2.4, (0.0, 0.0, -1.2), (0.0, 0.0, 1.0)),
-            ("transverse", 0.6, 3.0, (-1.5, 0.0, 0.0), (1.0, 0.0, 0.0)),
-        )
+        for name, radius, height, base, axis in cylinders
     )
     solid = phx.geometry.brep.boolean_brep(
         vertical,
@@ -604,13 +648,37 @@ def _cad_rows() -> tuple[_Row, ...]:
     ).model
     model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
     faces, curves = model.surface_nodes.size, model.curve_nodes.size
+    # The quadric contains only circular-cylinder faces. Associate each
+    # chart with its constant analytic curvature before timing.
+    curvatures = np.array([1.0 / row[1] for row in cylinders], dtype=np.float64)
+    face_curvatures = np.empty((faces,), dtype=np.float64)
+    for face, limits in enumerate(model.surface_parameter_domains):
+        parameters = np.clip(
+            np.zeros((1, 2), dtype=np.float64), limits[:, 0], limits[:, 1]
+        )
+        differential = _meshcore.cad_geometry_evaluate(
+            model,
+            _meshcore.CadEntityKind.SURFACE,
+            face,
+            parameters,
+            _meshcore.CadGeometryQuantity.DIFFERENTIAL,
+        )
+        measured = np.max(np.abs(differential[0, -2:]))
+        matches = np.flatnonzero(np.isclose(curvatures, measured, rtol=1e-12, atol=0.0))
+        if matches.size != 1:
+            raise ValueError(f"Unexpected quadric curvature on face {face}: {measured}.")
+        face_curvatures[face] = curvatures[matches[0]]
+    curve_tolerances = np.full((curves,), np.inf, dtype=np.float64)
 
     def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        # The F2 request bounds interpolation at size h by κmax h² / 4
+        # on each face. The kernel budgets shared chords from adjacent faces.
         return _meshcore.cad_mesh_solid(
             model,
-            np.full((faces,), size),
-            np.full((faces,), 0.4),
-            np.full((curves,), np.inf),
+            np.full((faces,), size, dtype=np.float64),
+            face_curvatures * (size * size / 4.0),
+            curve_tolerances,
+            tolerance_fraction=0.8,
             geometry_order=order,
         )
 
@@ -3338,6 +3406,13 @@ def main(argv: list[str] | None = None) -> int:
         "q-1eN.npy, qloc-1eN.npy); the query rows run only with it",
     )
     parser.add_argument(
+        "--triangulation-inputs",
+        type=Path,
+        default=None,
+        help="read the same raw binary64 p2_N.bin, p3_N.bin and w3_N.bin as the "
+        "CGAL references for Delaunay, regular and periodic rows",
+    )
+    parser.add_argument(
         "--overset-inputs",
         type=Path,
         default=None,
@@ -3382,6 +3457,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
+    # Like the reference executables, load the library and bind its symbols
+    # before timing a construction call. Do not warm up construction itself.
+    meshcore = _meshcore.meshcore_identity()
     ceilings = json.loads(_CEILINGS.read_text(encoding="utf-8"))
     records: list[dict[str, Any]] = []
     failed = False
@@ -3389,6 +3467,7 @@ def main(argv: list[str] | None = None) -> int:
     for row in _rows(
         tuple(arguments.sizes),
         names,
+        arguments.triangulation_inputs,
         arguments.improve_inputs,
         arguments.query_inputs,
         arguments.overset_inputs,
@@ -3400,6 +3479,8 @@ def main(argv: list[str] | None = None) -> int:
         record: dict[str, Any] = {"row": row.name, "size": row.size, **measured}
         if row.domain is not None:
             record["domain"] = row.domain
+        if row.input_sha256:
+            record["input_sha256"] = dict(row.input_sha256)
         ceiling = _ceiling(ceilings, row, measured["elements"])
         if ceiling is not None:
             seconds, allowed, tool = ceiling
@@ -3420,7 +3501,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "environment": capture_environment().to_dict(),
-                    "meshcore": _meshcore.meshcore_identity(),
+                    "meshcore": meshcore,
                     "ceilings_provenance": ceilings["provenance"],
                     "rows": records,
                 },
