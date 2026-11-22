@@ -6,16 +6,24 @@
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    CellValidityStatus,
+    certify_cell_geometry_validity,
+)
 from phydrax.discretization.fem import (
     AnisotropicHPattern,
     compact_hp_forest,
     ConservativeMovingInterfaceTransfer,
+    FiniteElementSpec,
     GeometryOrderAdaptation,
     HybridMortarPlan,
     HybridReferenceFamily,
@@ -31,6 +39,66 @@ from phydrax.discretization.fem import (
 )
 from phydrax.exterior._algebra import map_reference_values
 from phydrax.exterior._form_type import FormType, FormValueSpec
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("x64", (False, True))
+def test_linear_prism_certifies_the_exact_unit_map(x64: bool) -> None:
+    with jax.enable_x64(x64):
+        family = HybridReferenceFamily("prism", 1)
+        spec = CellGeometrySpec(
+            {"layer": family.finite_element()},
+            {"layer": np.arange(6, dtype=np.int32)[None, :]},
+            family.nodes,
+        )
+        certificate = certify_cell_geometry_validity(spec)
+    assert certificate.all_certified
+    np.testing.assert_array_equal(certificate.determinant_lower, (1.0,))
+    np.testing.assert_array_equal(certificate.determinant_upper, (1.0,))
+    assert float(certificate.maximum_element_coefficient_rounding_error) == 0.0
+
+
+@pytest.mark.parametrize("changed_operand", ("axial", "triangle"))
+def test_linear_prism_validity_refuses_changed_tabulation_operands(
+    changed_operand: Literal["axial", "triangle"],
+) -> None:
+    family = HybridReferenceFamily("prism", 1)
+    triangle = family.triangle_family
+    assert triangle is not None
+    if changed_operand == "axial":
+        changed = eqx.tree_at(
+            lambda value: value.axial_nodes, family, family.axial_nodes[::-1]
+        )
+    else:
+        changed_triangle = eqx.tree_at(
+            lambda value: value.coefficients,
+            triangle,
+            triangle.coefficients.at[0, 0].set(0.5),
+        )
+        changed = eqx.tree_at(
+            lambda value: value.triangle_family, family, changed_triangle
+        )
+    original = family.finite_element()
+    forged = changed.finite_element()
+    assert forged.element_id == original.element_id
+    assert not np.array_equal(
+        original.tabulate(family.nodes)[0], forged.tabulate(family.nodes)[0]
+    )
+    routes = np.arange(6, dtype=np.int32)[None, :]
+    mesh = CellMesh(family.nodes, (CellBlock("layer", "prism", routes),))
+
+    def geometry(element: FiniteElementSpec) -> CellGeometrySpec:
+        return CellGeometrySpec({"layer": element}, {"layer": routes}, mesh.coordinates)
+
+    assert certify_cell_geometry_validity(geometry(original), mesh=mesh).all_certified
+    certificate = certify_cell_geometry_validity(geometry(forged), mesh=mesh)
+    assert certificate.unsupported_block_names == ("layer",)
+    np.testing.assert_array_equal(
+        certificate.execution_status, (CellValidityStatus.UNRESOLVED,)
+    )
+    np.testing.assert_array_equal(
+        certificate.source_status, (CellValidityStatus.UNRESOLVED,)
+    )
 
 
 @pytest.mark.parametrize("kind", ("prism", "pyramid"))
