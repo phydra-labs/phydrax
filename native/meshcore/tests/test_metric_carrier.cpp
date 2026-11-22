@@ -392,7 +392,7 @@ void prepared_projection_box_preserves_carrier_order() {
   for (double value : points) numerators.emplace_back(value);
   const CarrierSource source(points, std::move(numerators), Dyadic(1.0), {});
   const std::vector<CarrierSimplex> plain{
-      {{0, 1, 2}, 3}, {{3, 4, 5}, 3}, {{6, 7, 8}, 3}};
+      {{0, 1, 2}, 3}, {{3, 5, 4}, 3}, {{6, 7, 8}, 3}};
   std::vector<CarrierSimplex> prepared;
   for (CarrierSimplex simplex : plain) prepared.push_back(source.prepare_simplex(simplex));
 
@@ -417,7 +417,7 @@ void prepared_projection_box_preserves_carrier_order() {
     }
   }
 
-  const std::vector<CarrierSimplex> segment{source.prepare_simplex({{0, 1, -1}, 2})};
+  const std::vector<CarrierSimplex> segment{source.prepare_simplex({{1, 0, -1}, 2})};
   const double target[3]{0.5, 2.0, -3.0};
   const auto found =
       source.carriers(target, current.data(), {segment}, -1, CarrierOrder::kFineFirst, 1);

@@ -523,9 +523,52 @@ bool locate_cell(const View& view, const Geometry& geometry, const double* targe
   return false;
 }
 
+// On a coordinate subspace projection leaves the participating coordinates
+// unchanged. Solve only those exact equations, without squaring a Gram matrix.
 template <class View>
-bool locate_simplex(const View& view, const Target<View>& exact_target,
-                    const CarrierSimplex& simplex, Located<typename View::Value>& located) {
+bool projected_weights(const View& view, const Target<View>& target,
+                       const CarrierSimplex& simplex, typename View::Value* weights,
+                       typename View::Value& total) {
+  using Z = typename View::Value;
+  const unsigned axes = simplex.projected_axes;
+  const int x = std::countr_zero(axes);
+  const Z px = view.numerator(simplex.rows[0], x);
+  const Z ax = view.numerator(simplex.rows[1], x) - px;
+  const Z rx = target.numerators[static_cast<std::size_t>(x)] -
+               Integer<Z>::shifted(px, target.shift);
+  if (simplex.size == 2) {
+    total = ax;
+    weights[1] = rx;
+  } else {
+    const int y = std::countr_zero(axes & (axes - 1));
+    const Z py = view.numerator(simplex.rows[0], y);
+    const Z ay = view.numerator(simplex.rows[1], y) - py;
+    const Z bx = view.numerator(simplex.rows[2], x) - px;
+    const Z by = view.numerator(simplex.rows[2], y) - py;
+    const Z ry = target.numerators[static_cast<std::size_t>(y)] -
+                 Integer<Z>::shifted(py, target.shift);
+    total = ax * by - ay * bx;
+    weights[1] = rx * by - ry * bx;
+    weights[2] = ax * ry - ay * rx;
+  }
+  const int orientation = total.sign();
+  if (orientation == 0) return false;
+  if (orientation < 0) total = Integer<Z>::negated(total);
+  Z remaining = Integer<Z>::shifted(total, target.shift);
+  for (int corner = 1; corner < simplex.size; ++corner) {
+    Z& weight = weights[corner];
+    if (orientation < 0) weight = Integer<Z>::negated(weight);
+    if (weight.sign() < 0 || Integer<Z>::order(weight, remaining) > 0) return false;
+    remaining = remaining - weight;
+  }
+  weights[0] = std::move(remaining);
+  return true;
+}
+
+template <class View>
+bool gram_weights(const View& view, const Target<View>& exact_target,
+                  const CarrierSimplex& simplex, typename View::Value* weights,
+                  typename View::Value& total) {
   using Z = typename View::Value;
   Vector<Z> edges[2];
   Vector<Z> offset;
@@ -538,8 +581,6 @@ bool locate_simplex(const View& view, const Target<View>& exact_target,
     }
     offset[slot] = exact_target.numerators[slot] - Integer<Z>::shifted(origin, exact_target.shift);
   }
-  Z weights[3];
-  Z total;
   if (simplex.size == 2) {
     total = dot(edges[0], edges[0]);
     if (total.sign() == 0) return false;
@@ -563,14 +604,24 @@ bool locate_simplex(const View& view, const Target<View>& exact_target,
     if (weights[2].sign() < 0 || Integer<Z>::order(weights[2], remaining) > 0) return false;
     weights[0] = remaining - weights[2];
   }
+  return true;
+}
+
+template <class View>
+bool locate_simplex(const View& view, const Target<View>& target, const CarrierSimplex& simplex,
+                    Located<typename View::Value>& located) {
+  auto& weights = located.weights;
+  auto& total = located.denominator;
+  const bool found = simplex.projected_axes != 0
+                         ? projected_weights(view, target, simplex, weights.data(), total)
+                         : gram_weights(view, target, simplex, weights.data(), total);
+  if (!found) return false;
   located.size = simplex.size;
   located.declared = simplex.declared;
-  located.shift = exact_target.shift;
-  located.denominator = total;
+  located.shift = target.shift;
   for (int corner = 0; corner < simplex.size; ++corner) {
     const std::size_t slot = static_cast<std::size_t>(corner);
     located.rows[slot] = simplex.rows[slot];
-    located.weights[slot] = weights[corner];
   }
   return true;
 }

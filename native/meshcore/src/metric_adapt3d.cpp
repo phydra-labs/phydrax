@@ -270,8 +270,8 @@ class Adapter {
   TetEditStatus relocate_pair(std::int32_t u, std::int32_t v, bool& applied);
   // The joint moves of the out-of-band edges at `vertices`.
   std::int64_t pair_sweep(std::span<const std::int32_t> vertices);
-  bool carrier_chart(std::int32_t vertex, const LocalIncidence::Star& star,
-                     CarrierChartView& chart, std::vector<CarrierSimplex>& seam);
+  std::optional<CarrierChartView> carrier_chart(std::int32_t vertex,
+                                                const LocalIncidence::Star& star);
   std::optional<SourceWitness> relocation_witness(std::int32_t vertex,
                                                   const Carrier& carrier) const;
 
@@ -313,6 +313,7 @@ class Adapter {
   // whether the mesh's source points are the adaptation's (boundary vertices
   // move on them only then).
   std::unordered_map<std::int32_t, CarrierChart> group_triangles_;
+  std::unordered_map<std::uint64_t, CarrierChart> group_seams_;
   std::vector<std::int32_t> witness_face_groups_;
   std::vector<std::int32_t> witness_faces_;
   std::unordered_set<std::int32_t> declared_groups_;
@@ -1298,10 +1299,9 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
   // move on its carrier, replacing both stars. Interior edges always split;
   // a boundary survivor's spokes to boundary vertices may lie on its facets,
   // where splits are exact only, so none of those may be left long.
-  CarrierChartView chart;
-  std::vector<CarrierSimplex> seam;
-  if (!carrier_chart(kept, kept_star, chart, seam)) return admitted;
-  const bool interior = chart.simplices.empty();
+  const auto chart = carrier_chart(kept, kept_star);
+  if (!chart) return admitted;
+  const bool interior = chart->simplices.empty();
   for (std::int32_t slot : kept_star) {
     const Tetrahedron& cell = mesh_.tet(slot);
     if (vertex_slot(cell, removed) >= 0) continue;
@@ -1312,7 +1312,7 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
   std::vector<SurvivorMove> moves;
   std::vector<double> move_lengths;
   const SearchEnd end = survivor_search(*carriers_, input_.source_metrics.data(),
-                                        input_.source_logarithms.data(), star, chart, false,
+                                        input_.source_logarithms.data(), star, *chart, false,
                                         moves, move_lengths);
   std::size_t count = moves.size();
   if (count > 0 && (end == SearchEnd::kUnmeasured || end == SearchEnd::kOutsideDomain)) --count;
@@ -2239,38 +2239,12 @@ TetEditStatus Adapter::swap_boundary(const std::vector<std::int32_t>& shell,
 
 // ------------------------------------------------------------ relocation ---
 
-// The source simplices a boundary vertex moves in: the source triangles of
-// its one facet group, the source edges two groups share, or none (a corner,
-// or a vertex on a segment); an interior vertex has an empty view.
-bool Adapter::carrier_chart(std::int32_t vertex, const LocalIncidence::Star& star,
-                            CarrierChartView& chart, std::vector<CarrierSimplex>& seam) {
-  const int dimension = mesh_.vertex_dimension(vertex);
-  if (dimension == 3) return true;
-  if (dimension != 2 || !source_banks_match_) return false;
-  std::vector<std::int32_t> groups;
-  for (std::int32_t slot : star) {
-    const Tetrahedron& cell = mesh_.tet(slot);
-    for (int face = 0; face < 4; ++face) {
-      if (cell.v[face] == vertex) continue;
-      const std::int32_t label = mesh_.complex().constraint(slot, face);
-      if (label != kNoConstraint) groups.push_back(label);
-    }
-  }
-  std::sort(groups.begin(), groups.end());
-  groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
-  if (groups.size() == 1) {
-    const auto found = group_triangles_.find(groups.front());
-    if (found == group_triangles_.end()) return false;
-    chart = found->second.view();
-    return !chart.simplices.empty();
-  }
-  if (groups.size() != 2) return false;
-  const auto first = group_triangles_.find(groups[0]);
-  const auto second = group_triangles_.find(groups[1]);
-  if (first == group_triangles_.end() || second == group_triangles_.end()) return false;
-  const auto sides = [](const std::vector<CarrierSimplex>& triangles) {
+CarrierChart prepare_seam(const CarrierSource& source, const CarrierChart& first,
+                          const CarrierChart& second) {
+  const auto sides = [](const CarrierChart& chart) {
     std::vector<std::array<std::int64_t, 2>> edges;
-    for (const CarrierSimplex& triangle : triangles) {
+    edges.reserve(3 * chart.simplices.size());
+    for (const CarrierSimplex& triangle : chart.simplices) {
       for (int corner = 0; corner < 3; ++corner) {
         const std::int64_t a = triangle.rows[static_cast<std::size_t>(corner)];
         const std::int64_t b = triangle.rows[static_cast<std::size_t>((corner + 1) % 3)];
@@ -2281,19 +2255,66 @@ bool Adapter::carrier_chart(std::int32_t vertex, const LocalIncidence::Star& sta
     edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
     return edges;
   };
-  const auto left = sides(first->second.simplices);
-  const auto right = sides(second->second.simplices);
-  std::vector<std::array<std::int64_t, 2>> shared;
-  std::set_intersection(left.begin(), left.end(), right.begin(), right.end(),
-                        std::back_inserter(shared));
-  for (const auto& edge : shared) {
-    CarrierSimplex simplex;
-    simplex.rows = {edge[0], edge[1], -1};
-    simplex.size = 2;
-    seam.push_back(carriers_->prepare_simplex(simplex));
+  const auto left = sides(first);
+  const auto right = sides(second);
+  CarrierChart seam;
+  auto a = left.begin();
+  auto b = right.begin();
+  // Lexicographic source-edge intersection is also the exact search order.
+  while (a != left.end() && b != right.end()) {
+    if (*a < *b) {
+      ++a;
+    } else if (*b < *a) {
+      ++b;
+    } else {
+      seam.simplices.push_back({{(*a)[0], (*a)[1], -1}, 2});
+      ++a;
+      ++b;
+    }
   }
-  chart = {seam};
-  return !chart.simplices.empty();
+  source.prepare_chart(seam);
+  return seam;
+}
+
+// An interior vertex has an empty view. A boundary vertex uses its one
+// source group or the shared source edges of its two groups, not live facets.
+std::optional<CarrierChartView> Adapter::carrier_chart(
+    std::int32_t vertex, const LocalIncidence::Star& star) {
+  const int dimension = mesh_.vertex_dimension(vertex);
+  if (dimension == 3) return CarrierChartView{};
+  if (dimension != 2 || !source_banks_match_) return std::nullopt;
+  std::int32_t first_group = kNoConstraint;
+  std::int32_t second_group = kNoConstraint;
+  for (std::int32_t slot : star) {
+    const Tetrahedron& cell = mesh_.tet(slot);
+    for (int face = 0; face < 4; ++face) {
+      if (cell.v[face] == vertex) continue;
+      const std::int32_t group = mesh_.complex().constraint(slot, face);
+      if (group == kNoConstraint || group == first_group || group == second_group) continue;
+      if (first_group == kNoConstraint) {
+        first_group = group;
+      } else if (second_group == kNoConstraint) {
+        second_group = group;
+      } else {
+        return std::nullopt;
+      }
+    }
+  }
+  const auto first = group_triangles_.find(first_group);
+  if (first == group_triangles_.end()) return std::nullopt;
+  if (second_group == kNoConstraint) return first->second.view();
+  const auto second = group_triangles_.find(second_group);
+  if (second == group_triangles_.end()) return std::nullopt;
+
+  // Group pairs refer to the immutable source bank even as the live star changes.
+  const std::uint64_t pair = edge_key(first_group, second_group);
+  auto cached = group_seams_.find(pair);
+  if (cached == group_seams_.end()) {
+    cached = group_seams_.emplace(pair, prepare_seam(*carriers_, first->second, second->second)).first;
+  }
+  const CarrierChart& seam = cached->second;
+  if (seam.simplices.empty()) return std::nullopt;
+  return seam.view();
 }
 
 std::optional<SourceWitness> Adapter::relocation_witness(std::int32_t vertex,
@@ -2364,10 +2385,9 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   }
   const LocalIncidence::Star star = incidence_.vertex_star(vertex);
   if (star.empty()) return TetEditStatus::kApplied;
-  CarrierChartView chart;
-  std::vector<CarrierSimplex> seam;
-  if (!carrier_chart(vertex, star, chart, seam)) return TetEditStatus::kApplied;
-  const bool interior = chart.simplices.empty();
+  const auto chart = carrier_chart(vertex, star);
+  if (!chart) return TetEditStatus::kApplied;
+  const bool interior = chart->simplices.empty();
   if (!interior && !boundary_moves_) return TetEditStatus::kApplied;
   // Star rows: the vertex, then its link in first-seen order.
   std::vector<std::int32_t> rows{vertex};
@@ -2412,7 +2432,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   std::array<double, 3> origin{};
   int basis_count = 0;
   if (!interior) {
-    const CarrierSimplex& hull = chart.simplices.front();
+    const CarrierSimplex& hull = chart->simplices.front();
     std::array<double, 9> corners{};
     for (int corner = 0; corner < hull.size; ++corner) {
       std::copy_n(input_.source_points.data() +
@@ -2452,7 +2472,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   RelocationSearch search(*carriers_, input_.source_metrics.data(),
                           input_.source_logarithms.data(), relocation_star, pull_count,
                           pulls.data(), interior ? nullptr : origin.data(),
-                          interior ? nullptr : projector.data(), chart, mode);
+                          interior ? nullptr : projector.data(), *chart, mode);
   std::vector<RelocationCandidate> group;
   std::vector<double> candidate_lengths;
   for (;;) {
