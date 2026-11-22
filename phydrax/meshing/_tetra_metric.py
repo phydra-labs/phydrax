@@ -1382,10 +1382,77 @@ def _relation_records(
     )
 
 
+type _FacetSides = tuple[int, tuple[int, ...], int]
+type _SourceFacet = tuple[int, tuple[int, int, int], np.ndarray, _FacetSides]
+
+
+def _constrained_source_facets(
+    mesh: CellMesh,
+    cells: np.ndarray,
+    cell_ids: np.ndarray,
+    regions: np.ndarray,
+    face_ids: np.ndarray,
+    face_keys: np.ndarray,
+    facet_codes: np.ndarray,
+    /,
+) -> list[_SourceFacet]:
+    """Reuse the source's facet-to-cell incidence; orient only constrained rows."""
+    relation = mesh.topology.incidences[2].relation
+    valid = np.asarray(relation.valid, dtype=np.bool_)
+    facets = np.asarray(relation.source_indices)[valid]
+    top_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
+    incident = np.searchsorted(
+        cell_ids, top_ids[np.asarray(relation.target_indices)[valid]]
+    )
+    counts = np.bincount(facets, minlength=face_ids.size)
+    lowest = np.full(face_ids.size, np.iinfo(np.int32).max, dtype=np.int32)
+    highest = np.full(face_ids.size, -1, dtype=np.int32)
+    incident_regions = regions[incident]
+    np.minimum.at(lowest, facets, incident_regions)
+    np.maximum.at(highest, facets, incident_regions)
+    select = ((counts == 1) | (lowest != highest) | (facet_codes > 0)) & (counts > 0)
+    eligible = select[facets]
+    facets, incident = facets[eligible], incident[eligible]
+    order = np.lexsort((incident, facets))
+    facet_rows, starts, sizes = np.unique(
+        facets[order], return_index=True, return_counts=True
+    )
+    incident = incident[order]
+    owner_cells = cells[incident[starts]]
+    owner_points = np.asarray(mesh.vertex_global_ids)[owner_cells]
+    on_face = np.any(owner_points[:, :, None] == face_keys[facet_rows, None], axis=-1)
+    if np.any(np.count_nonzero(on_face, axis=1) != 3):
+        raise ValueError("A constrained tetra facet has no source identity.")
+    oriented = np.take_along_axis(
+        owner_cells, _TETRA_FACES[np.argmin(on_face, axis=1)], axis=1
+    ).astype(np.int32)
+    ordered = np.argsort(face_ids[facet_rows])
+    result: list[_SourceFacet] = []
+    for index in ordered.tolist():
+        row, start, count = facet_rows[index], starts[index], sizes[index]
+        if lowest[row] == highest[row]:
+            active_regions = (int(lowest[row]),)
+        elif count == 2:
+            active_regions = (int(lowest[row]), int(highest[row]))
+        else:
+            active_regions = tuple(
+                np.unique(regions[incident[start : start + count]]).tolist()
+            )
+        result.append(
+            (
+                int(face_ids[row]),
+                _face_key(face_keys[row]),
+                oriented[index],
+                (int(count), active_regions, int(facet_codes[row])),
+            )
+        )
+    return result
+
+
 def _coplanar_face_groups(
     points: np.ndarray,
     faces: np.ndarray,
-    sides: list[tuple[Any, ...]],
+    sides: list[_FacetSides],
     segments: set[tuple[int, int]],
     /,
 ) -> np.ndarray:
@@ -1818,38 +1885,9 @@ def _prepare_native_state(
         for row, value in zip(face_keys.tolist(), facet_codes.tolist(), strict=True)
     }
 
-    incidence: dict[tuple[int, int, int], list[tuple[int, int]]] = defaultdict(list)
-    global_cells = vertex_ids[source_cells]
-    for cell_row, vertices in enumerate(global_cells):
-        for local_face, face in enumerate(_TETRA_FACES):
-            key = _face_key(int(vertices[index]) for index in face)
-            incidence[key].append((cell_row, local_face))
-    constrained_faces: list[
-        tuple[int, tuple[int, int, int], np.ndarray, tuple[Any, ...]]
-    ] = []
-    for key, incident in incidence.items():
-        incident_regions = {int(regions[row]) for row, _ in incident}
-        if (
-            len(incident) == 1
-            or len(incident_regions) > 1
-            or face_class_by_key.get(key, 0) > 0
-        ):
-            face_id = face_id_by_key.get(key)
-            if face_id is None:
-                raise ValueError("A constrained tetra facet has no source identity.")
-            row, local_face = min(
-                incident, key=lambda item: int(source_cell_ids[item[0]])
-            )
-            face_vertices = source_cells[row, _TETRA_FACES[local_face]].astype(
-                np.int32, copy=True
-            )
-            sides = (
-                len(incident),
-                tuple(sorted(incident_regions)),
-                face_class_by_key.get(key, 0),
-            )
-            constrained_faces.append((face_id, key, face_vertices, sides))
-    constrained_faces.sort(key=lambda item: item[0])
+    constrained_faces = _constrained_source_facets(
+        mesh, source_cells, source_cell_ids, regions, face_ids, face_keys, facet_codes
+    )
     source_faces = np.asarray(
         [row for _, _, row, _ in constrained_faces], dtype=np.int32
     ).reshape((-1, 3))
@@ -1894,7 +1932,7 @@ def _prepare_native_state(
             raise ValueError(
                 "Implicit tetra source admission does not support periodic state."
             )
-        group_by_sides: dict[tuple[Any, ...], int] = {}
+        group_by_sides: dict[_FacetSides, int] = {}
         next_group = int(np.max(row_groups, initial=-1)) + 1
         for row, (_, _, _, sides) in enumerate(constrained_faces):
             if sides[0] != 1:
