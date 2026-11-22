@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import StrEnum
+from fractions import Fraction
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -117,6 +120,478 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         ):
             raise ValueError("Stored size-compliance policy differs from its fields.")
         return rebuilt
+
+
+class SizeComplianceComparison(StrEnum):
+    """How a route compares its declared size statistic q with the bound b.
+
+    ``AT_MOST``: q <= b (1 + relative_tolerance) + absolute_tolerance.
+    ``TWO_SIDED``: |q - b| <= absolute_tolerance + relative_tolerance * b.
+    ``REPORT_ONLY``: q is reported and never an issue.
+    ``CONSTRUCTION_OBJECTIVE``: the construction searches for q = b exactly.
+    """
+
+    AT_MOST = "at_most"
+    TWO_SIDED = "two_sided"
+    REPORT_ONLY = "report_only"
+    CONSTRUCTION_OBJECTIVE = "construction_objective"
+
+
+# Unit roundoff of float64.
+_UNIT_ROUNDOFF = float(np.finfo(np.float64).eps) / 2.0
+
+
+def _sign(value: Fraction, /) -> int:
+    return int(value > 0) - int(value < 0)
+
+
+def _rational_plus_root(
+    rational: Fraction, coefficient: Fraction, radicand: Fraction
+) -> int:
+    """The exact sign of ``rational + coefficient * sqrt(radicand)``."""
+    if coefficient == 0 or radicand == 0:
+        return _sign(rational)
+    if rational == 0 or _sign(rational) == _sign(coefficient):
+        return _sign(coefficient)
+    return _sign(rational) * _sign(rational * rational - coefficient**2 * radicand)
+
+
+@dataclass(frozen=True, slots=True)
+class SizeMeasures:
+    """Per-entity squared size Q with a float value, its error bound and Q exactly.
+
+    ``squared[i]`` is the float evaluation of Q_i and ``relative_error[i]`` a
+    proved bound on ``|squared[i] - Q_i| / Q_i`` (inf when none is proved);
+    ``exact(i)`` is Q_i as a rational in the stored coordinates, or ``None``
+    for an infinite Q_i (a degenerate triangle).
+    """
+
+    squared: np.ndarray
+    relative_error: np.ndarray
+    exact: Callable[[int], Fraction | None]
+
+
+def edge_length_measures(points: np.ndarray, edges: np.ndarray, /) -> SizeMeasures:
+    """Squared edge lengths |p - q|^2.
+
+    Each component difference and square is one rounding (relative error u
+    each), and the three-term sum adds 2u: the float value is within about 5u
+    of Q relatively; 16u is the stated bound.
+    """
+    stored = np.asarray(points, dtype=np.float64)
+    rows = np.asarray(edges, dtype=np.int64)
+    vectors = stored[rows[:, 1]] - stored[rows[:, 0]]
+    squared = np.sum(vectors * vectors, axis=1)
+
+    def exact(row: int, /) -> Fraction:
+        first, second = (stored[int(index)] for index in rows[row])
+        return sum(
+            (
+                (Fraction(float(b)) - Fraction(float(a))) ** 2
+                for a, b in zip(first, second)
+            ),
+            Fraction(0),
+        )
+
+    return SizeMeasures(squared, np.full(squared.shape, 16.0 * _UNIT_ROUNDOFF), exact)
+
+
+def triangle_circumradius_measures(
+    points: np.ndarray, triangles: np.ndarray, /
+) -> SizeMeasures:
+    """Squared circumradii R^2 = a^2 b^2 c^2 / (4 |e0 x e1|^2).
+
+    Error bound (u the unit roundoff, first order): each squared edge length
+    is within 5u, so the numerator within 17u; each cross component
+    fl(fl(ab) - fl(cd)) of the rounded edges is within 4u (|ab| + |cd|), whose
+    norm is at most 4 sqrt(2) u |e0||e1|, so 4 |cross|^2 is within
+    3u D + 12u |e0|^2 |e1|^2 of D = 4 |cross|^2; the division adds u. The
+    relative bound is thus below 21u + 12u |e0|^2 |e1|^2 / |cross|^2; the
+    stated bound is 64u (1 + |e0|^2 |e1|^2 / |cross|^2) from the float values,
+    inf when that exceeds 1/4 (where first order no longer holds) or the
+    float cross product vanishes.
+    """
+    stored = np.asarray(points, dtype=np.float64)
+    rows = np.asarray(triangles, dtype=np.int64)
+    corners = stored[rows]
+    edges = corners[:, (1, 2, 0)] - corners[:, (2, 0, 1)]
+    lengths = np.sum(edges * edges, axis=2)
+    cross = np.cross(edges[:, 0], edges[:, 1])
+    denominator = 4.0 * np.sum(cross * cross, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        squared = np.prod(lengths, axis=1) / denominator
+        relative = (
+            64.0
+            * _UNIT_ROUNDOFF
+            * (1.0 + 4.0 * lengths[:, 0] * lengths[:, 1] / denominator)
+        )
+    proved = (denominator > 0.0) & np.isfinite(relative) & (relative <= 0.25)
+    squared = np.where(denominator > 0.0, squared, np.inf)
+    relative = np.where(proved, relative, np.inf)
+
+    def exact(row: int, /) -> Fraction | None:
+        p, q, r = (
+            tuple(Fraction(float(value)) for value in stored[int(index)])
+            for index in rows[row]
+        )
+        sides = [
+            tuple(b - a for a, b in zip(first, second, strict=True))
+            for first, second in ((q, r), (r, p), (p, q))
+        ]
+        u, v = sides[0], sides[1]
+        normal = (
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        )
+        area = 4 * sum((value * value for value in normal), Fraction(0))
+        if area == 0:
+            return None
+        numerator = Fraction(1)
+        for side in sides:
+            numerator *= sum((value * value for value in side), Fraction(0))
+        return numerator / area
+
+    return SizeMeasures(squared, relative, exact)
+
+
+@dataclass(frozen=True, slots=True)
+class SizeComplianceDeclaration:
+    """The size quantity one route judges and the kernel guarantee behind it.
+
+    ``sqrt(bound_factor_squared)`` times a hard uniform control's
+    ``target_size`` h is the bound b of :class:`SizeComplianceComparison`
+    (held squared so that b is exact: h / sqrt(2) is ``Fraction(1, 2)``);
+    ``statistic`` names the per-entity quantity whose p50/p95
+    (``SizeCompliancePolicy``) is judged.
+    """
+
+    route: str
+    entity: str
+    statistic: str
+    comparison: SizeComplianceComparison
+    bound_factor_squared: Fraction
+    guarantee: str
+
+    @property
+    def bound_factor(self) -> float:
+        """The bound factor as a float (reported requested values)."""
+        return float(np.sqrt(float(self.bound_factor_squared)))
+
+    def exceeds(
+        self,
+        measures: SizeMeasures,
+        statistic: str,
+        target_size: float,
+        policy: SizeCompliancePolicy,
+        /,
+    ) -> bool:
+        """Whether an AT_MOST statistic lies above its tolerated bound, exactly.
+
+        The statistic is :func:`size_statistic` of sqrt(Q) (the order
+        statistics at numpy's linear virtual index (n - 1) q and its float
+        weight g), compared with t = sqrt(F) c + d, F the declared squared
+        factor, c = h (1 + relative_tolerance), d = absolute_tolerance, all
+        rationals of the stored floats. Each entity's side of t is decided in
+        floating point when its value is farther from t^2 than the proved
+        error bounds of both, else exactly; an interpolated statistic between
+        an entity at or below t and one above is decided exactly.
+        """
+        if self.comparison is not SizeComplianceComparison.AT_MOST:
+            raise ValueError(f"{self.route} does not declare an AT_MOST size bound.")
+        factor = self.bound_factor_squared
+        scale = Fraction(target_size) * (1 + Fraction(policy.relative_tolerance))
+        offset = Fraction(policy.absolute_tolerance)
+        squared = np.asarray(measures.squared, dtype=np.float64)
+        relative = np.asarray(measures.relative_error, dtype=np.float64)
+        count = squared.shape[0]
+        if count == 0:
+            raise ValueError("A size statistic needs at least one entity.")
+
+        def side(row: int, /) -> int:
+            # sign(sqrt(Q) - t) = sign(Q - F c^2 - d^2 - 2 c d sqrt(F)).
+            value = measures.exact(row)
+            if value is None:
+                return 1
+            return _rational_plus_root(
+                value - factor * scale**2 - offset**2, -2 * scale * offset, factor
+            )
+
+        threshold = float(np.sqrt(float(factor))) * float(scale) + float(offset)
+        limit = threshold * threshold
+        # |squared - Q| <= rho Q <= 2 rho squared (rho <= 1/4); t^2 in floats
+        # is within ~6u of the exact t^2, 16u is stated.
+        margin = 2.0 * relative * squared + 16.0 * _UNIT_ROUNDOFF * limit
+        with np.errstate(invalid="ignore"):
+            gap = squared - limit
+        decided = np.isfinite(margin) & (np.abs(gap) > margin)
+        above = np.where(decided, gap > 0, False)
+        for row in np.flatnonzero(~decided).tolist():
+            above[row] = side(row) > 0
+        at_most = int(count - np.count_nonzero(above))
+        virtual = (count - 1) * {"p50": 0.5, "p95": 0.95}[statistic]
+        lower = int(np.floor(virtual))
+        weight = Fraction(float(virtual - lower))
+        if lower >= count - 1 or weight == 0:
+            return at_most < lower + 1
+        if at_most >= lower + 2:
+            return False
+        if at_most <= lower:
+            return True
+        # Order statistic lower is the largest Q at or below t; lower + 1 the
+        # smallest above it.
+        below_value = _extreme(measures, np.flatnonzero(~above), largest=True)
+        above_value = _extreme(measures, np.flatnonzero(above), largest=False)
+        if above_value is None:
+            return True
+        assert below_value is not None
+        # sign((1-g) sqrt(x) + g sqrt(y) - sqrt(F) c - d), both sides >= 0:
+        # sign(r + p sqrt(xy) - q sqrt(F)) with p, q >= 0.
+        alpha, beta = 1 - weight, weight
+        rational = (
+            alpha**2 * below_value + beta**2 * above_value - factor * scale**2 - offset**2
+        )
+        positive = 2 * alpha * beta
+        negative = 2 * scale * offset
+        product = below_value * above_value
+        left = _rational_plus_root(rational, positive, product)
+        if negative == 0 or factor == 0:
+            return left > 0
+        if left <= 0:
+            return False
+        # r + p sqrt(X) > 0: compare its square with q^2 F.
+        return (
+            _rational_plus_root(
+                rational**2 + positive**2 * product - negative**2 * factor,
+                2 * rational * positive,
+                product,
+            )
+            > 0
+        )
+
+
+def _extreme(
+    measures: SizeMeasures, rows: np.ndarray, /, *, largest: bool
+) -> Fraction | None:
+    """The exact largest (or smallest) Q of ``rows``; None for an infinite one."""
+    squared = np.asarray(measures.squared, dtype=np.float64)[rows]
+    relative = np.asarray(measures.relative_error, dtype=np.float64)[rows]
+    finite = np.isfinite(relative)
+    with np.errstate(invalid="ignore"):
+        # Q lies in [squared / (1 + rho), squared / (1 - rho)], inside these.
+        low = np.where(finite, squared * (1.0 - 2.0 * relative), 0.0)
+        high = np.where(finite, squared * (1.0 + 4.0 * relative), np.inf)
+    if largest:
+        candidates = rows[high >= np.max(low)]
+    else:
+        candidates = rows[low <= np.min(high)]
+    values = [measures.exact(int(row)) for row in candidates.tolist()]
+    finite_values = [value for value in values if value is not None]
+    if largest:
+        # Rows at or below t are finite.
+        return max(finite_values)
+    return min(finite_values) if finite_values else None
+
+
+_AT_MOST = SizeComplianceComparison.AT_MOST
+_TWO_SIDED = SizeComplianceComparison.TWO_SIDED
+
+# One row per route that evaluates a size control's p50/p95 statistic: the
+# quantity the route judges, how, and the producing kernel's guarantee it
+# comes from. Only the CAD chart surface and the S3 boundary rows are consumed
+# in code; the others record what their routes already do.
+CAD_CHART_SURFACE_SIZE = SizeComplianceDeclaration(
+    "providers/_native_cad_mesh.py:_size_compliance",
+    "scoped CAD-solid boundary triangles",
+    "triangle circumradius R",
+    _AT_MOST,
+    Fraction(1, 2),
+    "chart kernel: metric circumradius <= sqrt(1/2) under I/h^2 "
+    "(native/meshcore/src/cad_refine2d.hpp:83, cad_geometry.hpp:199-209), "
+    "so R <= h/sqrt(2)",
+)
+S3_BOUNDARY_EDGE_SIZE = SizeComplianceDeclaration(
+    "providers/_native_volume.py:_volume_compliance",
+    "boundary faces of facet-scoped controls",
+    "edge length",
+    _AT_MOST,
+    Fraction(1),
+    "S3 splits every splittable boundary edge longer than 4/sqrt(6) of its "
+    "stored size (native/meshcore/src/refine3d.cpp:1697-1706, 2655-2690); the "
+    "PLC edge-length convention stores sqrt(6)/4 h "
+    "(phydrax/meshing/_volume_generation.py:79-84), so edge <= h",
+)
+SIZE_COMPLIANCE_DECLARATIONS: tuple[SizeComplianceDeclaration, ...] = (
+    CAD_CHART_SURFACE_SIZE,
+    S3_BOUNDARY_EDGE_SIZE,
+    SizeComplianceDeclaration(
+        "providers/_native_implicit.py:_implicit_volume_compliance",
+        "implicit carrier boundary faces",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "construction stop rule: octree cell diagonal <= h(1+rel)+abs "
+        "(providers/_native_implicit.py:713-729, "
+        "geometry/implicit/_adaptive_discovery.py:2740-2754)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_implicit.py:_compliance",
+        "implicit surface triangles",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "construction stop rule: octree cell diagonal <= h(1+rel)+abs "
+        "(providers/_native_implicit.py:713-729)",
+    ),
+    SizeComplianceDeclaration(
+        "_implicit_volume.py:_compliance",
+        "restricted implicit boundary facets",
+        "edge length",
+        _AT_MOST,
+        Fraction(1),
+        "restricted Delaunay facet longest edge <= min(h, reach diameter) "
+        "(_implicit_volume.py:769, 1060-1072)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_reconstruction.py:_compliance",
+        "reconstructed surface triangles",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "construction stop rule: red refinement until the statistic is met "
+        "(providers/_native_reconstruction.py:340-397, 505)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_planar.py:_compliance",
+        "planar triangle edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "construction stop rule: free edges <= local size, h or h(1+rel)+abs "
+        "(providers/_native_planar.py:198-268, "
+        "_native_planar_construction.py:39-50)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_curve.py:_curve_compliance",
+        "curve intervals",
+        "arc length",
+        _TWO_SIDED,
+        Fraction(1),
+        "equidistribution with ceil(length / h) intervals "
+        "(providers/_native_curve.py:1824)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_gmsh_sizing.py:_edge_size_evidence",
+        "Gmsh mesh edges",
+        "edge length",
+        SizeComplianceComparison.REPORT_ONLY,
+        Fraction(1),
+        "Gmsh size fields are target edge lengths without a bound "
+        "(providers/_gmsh_sizing.py:83-193)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_structured.py:_size_compliance",
+        "structured quad/hex physical edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "none: the user's divisions are checked against h",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_surface_quad.py:_mapped_size_compliance",
+        "mapped quad edge enclosures",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "none: the user's divisions are checked against h",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_quad_compliance",
+        "dual quad edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "pairs or subdivides planar triangles whose free edges are <= h "
+        "(providers/_native_dual.py:2692)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_dual_hex_compliance",
+        "balanced/frame grid hex edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "grid knots at spacing h (_hex_cut_preparation.py:211-224)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_dual.py:_mapped_grid_compliance",
+        "mapped grid hex edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "ceil(Jacobian length bound / h) divisions (_hex_generation.py:1466-1469)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_polyhedral.py:_polyhedral_compliance",
+        "polyhedral cell edge enclosures",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "construction stop rule: cell diameter <= maximum_size or h(1+rel)+abs "
+        "(_polyhedral_generation.py:136-158)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_voronoi.py:_compliance",
+        "conforming Voronoi cells",
+        "cube root of cell volume",
+        _TWO_SIDED,
+        Fraction(1),
+        "seed placement: body-centered cubic interior lattice of cell volume h^3, "
+        "surface samples at spacing 0.75 h (native/meshcore/src/conforming_voronoi.cpp, "
+        "Seeder)",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_periodic_size.py:periodic_size_compliance",
+        "periodic quotient edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "periodic metric I/h^2 from uniform controls "
+        "(providers/_native_periodic_size.py:180-238); exact at zero tolerance",
+    ),
+    SizeComplianceDeclaration(
+        "_device_adaptation.py:_owner_local_periodic_size_epoch",
+        "owner-local periodic quotient edges",
+        "edge length",
+        _TWO_SIDED,
+        Fraction(1),
+        "periodic metric I/h^2; exact rational quantile",
+    ),
+    SizeComplianceDeclaration(
+        "providers/_native_periodic_algebraic.py:construct_exact_algebraic_carrier",
+        "algebraic periodic carrier edges",
+        "edge length",
+        SizeComplianceComparison.CONSTRUCTION_OBJECTIVE,
+        Fraction(1),
+        "the edge-graph search targets the p50/p95 edge quantile exactly "
+        "(providers/_native_periodic_algebraic.py:955-1060, 1721-1725)",
+    ),
+)
+
+
+def size_statistic(values: np.ndarray, statistic: str, /) -> float:
+    """The p50 or p95 (linear interpolation) of per-entity size values."""
+    return float(np.quantile(values, {"p50": 0.5, "p95": 0.95}[statistic]))
+
+
+def triangle_circumradii(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
+    """Circumradius abc / (4 area) of every triangle; inf for a degenerate one."""
+    corners = np.asarray(points, dtype=np.float64)[np.asarray(triangles, dtype=np.int64)]
+    edges = corners[:, (1, 2, 0)] - corners[:, (2, 0, 1)]
+    product = np.prod(np.linalg.norm(edges, axis=2), axis=1)
+    twice_area = np.linalg.norm(np.cross(edges[:, 0], edges[:, 1]), axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        radii = product / (2.0 * twice_area)
+    return np.where(twice_area > 0.0, radii, np.inf)
 
 
 def _size(value: float, name: str, /) -> float:

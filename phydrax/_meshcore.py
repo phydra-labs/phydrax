@@ -289,6 +289,103 @@ class _OversetResult(ctypes.Structure):
     )
 
 
+class _PrismLayersRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("layer_count", _I32),
+        ("heights", _P),
+        ("feature_angle_degrees", _F64),
+        ("minimum_scale", _F64),
+        ("prove", _I32),
+        ("source_normals", _P),
+        ("source_shape_operators", _P),
+    )
+
+
+class _PrismLayersResult(ctypes.Structure):
+    _fields_ = (
+        ("points", _P),
+        ("prisms", _P),
+        ("displacement", _P),
+        ("scale", _P),
+        ("vertex_kind", _P),
+        ("stats", _P),
+    )
+
+
+class _ConformingVoronoiRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("triangle_regions", _P),
+        ("triangle_facets", _P),
+        ("size", _F64),
+        ("feature_angle_degrees", _F64),
+        ("prove", _I32),
+        ("result", ctypes.POINTER(ctypes.c_void_p)),
+    )
+
+
+class _ConformingVoronoiArrays(ctypes.Structure):
+    _fields_ = (
+        ("vertices", _P),
+        ("vertex_triangles", _P),
+        ("face_offsets", _P),
+        ("face_vertices", _P),
+        ("face_cells", _P),
+        ("face_facets", _P),
+        ("cell_seeds", _P),
+        ("cell_regions", _P),
+        ("cell_volumes", _P),
+        ("cell_centroids", _P),
+        ("seeds", _P),
+        ("seed_regions", _P),
+        ("stats", _P),
+        ("exact_offsets", _P),
+        ("exact_values", _P),
+    )
+
+
+class _HexDominantRequest(ctypes.Structure):
+    _fields_ = (
+        ("vertex_count", _I64),
+        ("vertices", _P),
+        ("triangle_count", _I64),
+        ("triangles", _P),
+        ("triangle_facets", _P),
+        ("core_size", _F64),
+        ("boundary_size", _F64),
+        ("feature_angle_degrees", _F64),
+        ("layer_count", _I32),
+        ("layer_thicknesses", _P),
+        ("prove", _I32),
+        ("result", ctypes.POINTER(ctypes.c_void_p)),
+    )
+
+
+class _HexDominantArrays(ctypes.Structure):
+    _fields_ = (
+        ("points", _P),
+        ("face_offsets", _P),
+        ("face_vertices", _P),
+        ("face_owner", _P),
+        ("face_neighbor", _P),
+        ("face_facets", _P),
+        ("cell_kinds", _P),
+        ("cell_roles", _P),
+        ("cell_vertex_offsets", _P),
+        ("cell_vertices", _P),
+        ("vertex_triangles", _P),
+        ("vertex_kinds", _P),
+        ("stats", _P),
+    )
+
+
 class _RestrictedPowerCellsExactRequest(ctypes.Structure):
     _fields_ = (
         ("original_site_count", _I64),
@@ -1223,12 +1320,108 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
+    "phx_mc_polyhedral_mesh_entities": (
+        _I32,
+        (_I64, _I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
+    "phx_mc_incidence_order": (_I32, (_I64, _I64, _I64, _P, _P, _P, _P)),
     "phx_mc_verify_surface_embedding": (_I32, (_I64, _P, _I64, _P, _I64, _P, _P)),
     "phx_mc_verify_chart_partition": (
         _I32,
         (_I64, _I64, _P, _P, _I64, _P, _P, _I64, _I64, _P, _P, _P, _P, _I64, _P, _P),
     ),
     "phx_mc_tetrahedra_validity": (_I32, (_I64, _P, _I64, _P, _F64, _P, _P, _P)),
+    "phx_mc_cell_map_validity": (
+        _I32,
+        (
+            _I32,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I32,
+            _P,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            ctypes.c_int16,
+            _I64,
+            _P,
+            _F64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I32,
+        ),
+    ),
+    "phx_mc_welded_topology": (
+        _I32,
+        (
+            _I32,
+            _I32,
+            _I32,
+            _I32,
+            _I64,
+            _I64,
+            _I64,
+            _I64,
+            _P,
+            _I64,
+            _I64,
+            _I64,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _I32,
+        ),
+    ),
+    "phx_mc_polyhedral_star_validity": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_polyhedral_star_decomposition": (
+        _I32,
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
+    "phx_mc_polyhedral_declared_contacts": (
+        _I32,
+        (
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I64,
+            _P,
+            _P,
+            _I32,
+        ),
+    ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
     "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
@@ -1311,6 +1504,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
     ),
+    "phx_mc_bvh_build": (
+        _I32,
+        (_I32, _I64, _I32, _P, _P, _P, _I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_bvh_pair_stream_create": (
         _I32,
         (_P, _P, _I32, _I32, _F64, _F64, _I64, _I64, _I32, _P),
@@ -1337,6 +1534,21 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         _I32,
         (ctypes.POINTER(_OversetParts), ctypes.POINTER(_OversetResult)),
     ),
+    "phx_mc_prism_layers": (
+        _I32,
+        (ctypes.POINTER(_PrismLayersRequest), ctypes.POINTER(_PrismLayersResult)),
+    ),
+    "phx_mc_conforming_voronoi": (_I32, (ctypes.POINTER(_ConformingVoronoiRequest),)),
+    "phx_mc_conforming_voronoi_sizes": (_I32, (_P, _P)),
+    "phx_mc_conforming_voronoi_export": (
+        _I32,
+        (_P, ctypes.POINTER(_ConformingVoronoiArrays)),
+    ),
+    "phx_mc_conforming_voronoi_free": (None, (_P,)),
+    "phx_mc_hex_dominant": (_I32, (ctypes.POINTER(_HexDominantRequest),)),
+    "phx_mc_hex_dominant_sizes": (_I32, (_P, _P)),
+    "phx_mc_hex_dominant_export": (_I32, (_P, ctypes.POINTER(_HexDominantArrays))),
+    "phx_mc_hex_dominant_free": (None, (_P,)),
     "phx_mc_tetrahedron_dual_hexes": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_triangle_dual_quads": (_I32, (_I64, _I64, _P, _I64, _P)),
     "phx_mc_restricted_power_cells": (
@@ -1371,6 +1583,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_point_triangle_locations": (_I32, (_I64, _P, _P, _P, _P, _P)),
     "phx_mc_point_triangle_distances": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_point_triangle_nearest_distances": (_I32, (_I64, _P, _I64, _P, _P)),
     "phx_mc_arrange_triangles": (_I32, (_I64, _P, _I64, _P, _P, _I64, _P, _P, _P)),
     "phx_mc_arrangement_sizes": (_I32, (_P, _P)),
     "phx_mc_arrangement_export": (
@@ -1693,8 +1906,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_tet_mesh_free": (None, (_P,)),
     "phx_mc_delaunay_2d": (_I32, (_I64, _P, _P)),
     "phx_mc_regular_2d": (_I32, (_I64, _P, _P, _P)),
-    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P)),
-    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P, _I32)),
+    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P, _I32)),
     "phx_mc_constrained_delaunay_2d": (
         _I32,
         (_I64, _P, _I64, _P, _I64, _P, _I32, _F64, _F64, _P),
@@ -1710,6 +1923,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_mesh_copy_constraint_sources": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_parents": (_I32, (_P, _I64, _P)),
     "phx_mc_mesh_copy_constraint_ratios": (_I32, (_P, _I64, _P)),
+    "phx_mc_mesh_shape": (_I32, (_P, _P)),
+    "phx_mc_mesh_copy_all": (_I32, (_P, _I64, _I64, _I64, _P, _P, _P, _P, _P, _P, _P)),
     "phx_mc_mesh_free": (None, (_P,)),
     "phx_mc_deterministic_float_self_test": (_I32, (ctypes.POINTER(_I32),)),
     "phx_mc_metric_logarithms": (_I32, (_I64, _P, _P, _P)),
@@ -1813,6 +2028,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_quality_dihedral_angles": (_I32, (_I64, _I64, _P, _I64, _P, _P)),
+    "phx_mc_quality_solid_corners": (
+        _I32,
+        (_I64, _I64, _P, _I64, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_metric_relocation_create": (
         _I32,
         (
@@ -2732,6 +2952,412 @@ def overset_assemble(
     return result
 
 
+class PrismLayers(NamedTuple):
+    """Levels, prisms and evidence of ``prism_layers``.
+
+    ``points`` holds level ``k`` of wall vertex ``v`` at row ``k * n + v``
+    (level 0 is the wall bitwise); ``prisms`` holds layer ``k`` of triangle
+    ``t`` at row ``k * m + t`` as bottom ``(a, b, c)`` then the tops over them.
+    ``status`` is OK, or UNRESOLVED when a failure remained at the minimum
+    scale (the arrays then hold the last construction).
+    """
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    prisms: np.ndarray
+    displacement: np.ndarray
+    scale: np.ndarray
+    vertex_kind: np.ndarray
+    # Seconds of topology, jets, directions, relaxation, construction,
+    # certification and total; then ridge vertices, corner vertices, relaxed
+    # vertices, thinned vertices, thinned ridge/corner vertices, minimum
+    # scale, repair rounds, invalid prisms, top-level contacts (-1 without
+    # prove), certified, minimum float corner ratio, feature edges and
+    # relaxation updates and the failures detected over every repair round.
+    stats: np.ndarray
+
+
+def prism_layers(
+    vertices: object,
+    triangles: object,
+    heights: object,
+    /,
+    *,
+    feature_angle_degrees: float,
+    minimum_scale: float,
+    prove: bool,
+    source_normals: object | None = None,
+    source_shape_operators: object | None = None,
+) -> PrismLayers:
+    """Grow prism layers from a closed oriented triangle wall.
+
+    Rows follow ``phx_mc_prism_layers``: triangles oriented so their normals
+    point into the layer domain, ``heights`` the increasing cumulative level
+    heights. ``source_normals`` (m, 3, 3) and ``source_shape_operators``
+    (m, 3, 6), given together, are the per-corner source-surface frames
+    (unit normal into the layer domain, or zero where the chart is singular;
+    shape-operator entries xx, xy, xz, yy, yz, zz) from which the levels are
+    measured; without them the kernel fits the surface through the vertices.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    levels = np.ascontiguousarray(heights, dtype=np.float64)
+    if rows.ndim != 2 or rows.shape[1] != 3 or levels.ndim != 1 or levels.size < 1:
+        raise ValueError("prism_layers takes (m, 3) triangles and a heights vector.")
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    for name, value in (
+        ("feature_angle_degrees", feature_angle_degrees),
+        ("minimum_scale", minimum_scale),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
+            raise TypeError(f"{name} must be a real number.")
+    vertex_count, triangle_count = points.shape[0], rows.shape[0]
+    if (source_normals is None) != (source_shape_operators is None):
+        raise ValueError(
+            "source_normals and source_shape_operators are given together or not at all."
+        )
+    frames = None
+    if source_normals is not None:
+        frames = (
+            _real_array(source_normals, "source_normals"),
+            _real_array(source_shape_operators, "source_shape_operators"),
+        )
+        if frames[0].shape != (triangle_count, 3, 3) or frames[1].shape != (
+            triangle_count,
+            3,
+            6,
+        ):
+            raise ValueError(
+                "source frames take (m, 3, 3) normals and (m, 3, 6) shape operators."
+            )
+    layer_count = levels.shape[0]
+    arrays = (
+        np.empty(((layer_count + 1) * vertex_count, 3), dtype=np.float64),
+        np.empty((layer_count * triangle_count, 6), dtype=np.int32),
+        np.empty((vertex_count, 3), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.float64),
+        np.empty((vertex_count,), dtype=np.uint8),
+        np.empty((21,), dtype=np.float64),
+    )
+    request = _PrismLayersRequest(
+        vertex_count=vertex_count,
+        vertices=points.ctypes.data,
+        triangle_count=triangle_count,
+        triangles=rows.ctypes.data,
+        layer_count=_int32_argument(layer_count, "layer_count"),
+        heights=levels.ctypes.data,
+        feature_angle_degrees=float(feature_angle_degrees),
+        minimum_scale=float(minimum_scale),
+        prove=1 if prove else 0,
+        source_normals=None if frames is None else frames[0].ctypes.data,
+        source_shape_operators=None if frames is None else frames[1].ctypes.data,
+    )
+    outputs = _PrismLayersResult(*(array.ctypes.data for array in arrays))
+    status = load_meshcore()["phx_mc_prism_layers"](
+        ctypes.byref(request), ctypes.byref(outputs)
+    )
+    if status != MeshcoreStatus.UNRESOLVED:
+        _raise_for_call(
+            status,
+            "prism_layers",
+            contracts={
+                MeshcoreStatus.INVALID_INPUT: "the wall must be a closed, "
+                "consistently oriented triangle manifold using every vertex.",
+                MeshcoreStatus.DEGENERATE_INPUT: "a wall triangle has zero area.",
+            },
+        )
+    return PrismLayers(MeshcoreStatus(status), *arrays)
+
+
+class ConformingVoronoi(NamedTuple):
+    """Cells of ``conforming_voronoi``: Voronoi cells of conforming seeds.
+
+    Face ``f`` is the counterclockwise loop
+    ``face_vertices[face_offsets[f]:face_offsets[f + 1]]`` whose normal points
+    out of cell ``face_cells[f, 0]`` into ``face_cells[f, 1]`` (``-1`` on the
+    exterior); ``face_facets[f]`` is the source facet of a boundary or
+    interface face and ``-1`` otherwise. ``vertex_triangles[v]`` is the
+    nearest input triangle of a vertex on a boundary or interface face, ``-1``
+    otherwise. ``seeds`` holds every seed (interior seeds first) and
+    ``seed_regions`` their regions (``-1``: exterior ghost); cell ``c`` is the
+    Voronoi cell of ``seeds[cell_seeds[c]]`` in the diagram of all seeds.
+    Vertex ``v`` is exact: ``x_k = N_k / D`` with ``N_0, N_1, N_2, D`` the
+    expansions ``exact_values[exact_offsets[4 v + k]:exact_offsets[4 v + k + 1]]``
+    (sums of their components); ``vertices`` holds the nearest binary64
+    values. ``status`` is OK, or UNRESOLVED when a cell leaks after the
+    repairs or certification failed (the arrays then hold the last
+    construction). ``stats`` follows ``phx_mc_conforming_voronoi``.
+    """
+
+    status: MeshcoreStatus
+    vertices: np.ndarray
+    vertex_triangles: np.ndarray
+    face_offsets: np.ndarray
+    face_vertices: np.ndarray
+    face_cells: np.ndarray
+    face_facets: np.ndarray
+    cell_seeds: np.ndarray
+    cell_regions: np.ndarray
+    cell_volumes: np.ndarray
+    cell_centroids: np.ndarray
+    seeds: np.ndarray
+    seed_regions: np.ndarray
+    # Seconds of seeding, Delaunay, cells, publication, certification and
+    # total; seeds, interior seeds, ghosts, lattice seeds, cells, boundary
+    # cells, boundary faces, faces, repair rounds, certified (1/0, -1 without
+    # prove), open cell edges and local Delaunay violations (-1 without
+    # prove), signed relative volume error, largest boundary vertex distance /
+    # size, certified boundary distance bound / size (-1 without prove),
+    # feature edges, size, surface spacing, exact boundary (1/0) and a bound
+    # of the absolute relative volume error.
+    stats: np.ndarray
+    exact_offsets: np.ndarray
+    exact_values: np.ndarray
+
+
+def conforming_voronoi(
+    vertices: object,
+    triangles: object,
+    triangle_regions: object,
+    triangle_facets: object,
+    /,
+    *,
+    size: float,
+    feature_angle_degrees: float,
+    prove: bool,
+) -> ConformingVoronoi:
+    """Conforming Voronoi cells of a triangulated solid for the cell size ``size``.
+
+    Rows follow ``phx_mc_conforming_voronoi``: triangle ``t`` separates region
+    ``triangle_regions[t, 0]`` in front (along its normal) from
+    ``triangle_regions[t, 1]`` behind, ``-1`` the exterior.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    sides = _native_integer_array(
+        triangle_regions, "triangle_regions", np.dtype(np.int32)
+    )
+    facets = _native_integer_array(triangle_facets, "triangle_facets", np.dtype(np.int32))
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or sides.shape != (rows.shape[0], 2)
+        or facets.shape != (rows.shape[0],)
+    ):
+        raise ValueError(
+            "conforming_voronoi takes (m, 3) triangles, (m, 2) regions and (m,) facets."
+        )
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    for name, value in (("size", size), ("feature_angle_degrees", feature_angle_degrees)):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
+            raise TypeError(f"{name} must be a real number.")
+    handle = ctypes.c_void_p()
+    request = _ConformingVoronoiRequest(
+        vertex_count=points.shape[0],
+        vertices=points.ctypes.data,
+        triangle_count=rows.shape[0],
+        triangles=rows.ctypes.data,
+        triangle_regions=sides.ctypes.data,
+        triangle_facets=facets.ctypes.data,
+        size=float(size),
+        feature_angle_degrees=float(feature_angle_degrees),
+        prove=1 if prove else 0,
+        result=ctypes.pointer(handle),
+    )
+    library = load_meshcore()
+    status = library["phx_mc_conforming_voronoi"](ctypes.byref(request))
+    if not handle.value:
+        _raise_for_call(
+            status,
+            "conforming_voronoi",
+            contracts={
+                MeshcoreStatus.DEGENERATE_INPUT: "a zero-area triangle.",
+                MeshcoreStatus.UNRESOLVED: "no seed lies in the solid.",
+            },
+        )
+        raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "missing Voronoi result")
+    try:
+        sizes = np.empty((6,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_conforming_voronoi_sizes"](handle, sizes.ctypes.data),
+            "conforming_voronoi_sizes",
+        )
+        vertex_count, face_count, entry_count, cell_count, seed_count, exact_count = (
+            int(value) for value in sizes
+        )
+        arrays = (
+            np.empty((vertex_count, 3), dtype=np.float64),
+            np.empty((vertex_count,), dtype=np.int32),
+            np.empty((face_count + 1,), dtype=np.int64),
+            np.empty((entry_count,), dtype=np.int32),
+            np.empty((face_count, 2), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.float64),
+            np.empty((cell_count, 3), dtype=np.float64),
+            np.empty((seed_count, 3), dtype=np.float64),
+            np.empty((seed_count,), dtype=np.int32),
+            np.empty((26,), dtype=np.float64),
+            np.empty((4 * vertex_count + 1,), dtype=np.int64),
+            np.empty((exact_count,), dtype=np.float64),
+        )
+        outputs = _ConformingVoronoiArrays(*(array.ctypes.data for array in arrays))
+        _raise_for_call(
+            library["phx_mc_conforming_voronoi_export"](handle, ctypes.byref(outputs)),
+            "conforming_voronoi_export",
+        )
+    finally:
+        library["phx_mc_conforming_voronoi_free"](handle)
+    return ConformingVoronoi(MeshcoreStatus(status), *arrays)
+
+
+class HexDominant(NamedTuple):
+    """Face-based mixed mesh of ``hex_dominant``.
+
+    Face ``f`` is the loop ``face_vertices[face_offsets[f]:face_offsets[f + 1]]``
+    oriented out of ``face_owner[f]``; ``face_neighbor[f]`` is ``-1`` on the
+    boundary, where ``face_facets[f]`` is the facet of the input triangle
+    nearest the face (``-1`` inside). ``cell_kinds``: 0 hexahedron (its eight
+    vertices ``cell_vertices[cell_vertex_offsets[c]:cell_vertex_offsets[c + 1]]``
+    in the reference order), 1 polyhedron (no vertex list). ``cell_roles``: 0
+    core, 1 projection layer, 2 boundary layer. ``vertex_triangles`` is the
+    nearest input triangle of a wall vertex (``-1`` elsewhere);
+    ``vertex_kinds``: 0 interior, 1 patch, 2 feature curve, 3 corner, 4 layer.
+    ``status`` is OK, or UNRESOLVED when a cell failed certification (the
+    arrays then hold the construction).
+    """
+
+    status: MeshcoreStatus
+    points: np.ndarray
+    face_offsets: np.ndarray
+    face_vertices: np.ndarray
+    face_owner: np.ndarray
+    face_neighbor: np.ndarray
+    face_facets: np.ndarray
+    cell_kinds: np.ndarray
+    cell_roles: np.ndarray
+    cell_vertex_offsets: np.ndarray
+    cell_vertices: np.ndarray
+    vertex_triangles: np.ndarray
+    vertex_kinds: np.ndarray
+    # Seconds of the whole call, surface, octree and core, faces, projection,
+    # smoothing and layers, certification; cells, hexahedra, polyhedra,
+    # certified hexahedra, layer cells, staircase faces, feature edges,
+    # patches, largest wall vertex distance, largest sampled boundary
+    # distance, manifold removals, partition flips, curve vertices, corner
+    # vertices, undone smoothing moves, certified (1/0, -1 without prove),
+    # uncertified cells, hexahedra published as polyhedra, octree levels.
+    stats: np.ndarray
+
+
+def hex_dominant(
+    vertices: object,
+    triangles: object,
+    triangle_facets: object,
+    /,
+    *,
+    core_size: float,
+    boundary_size: float,
+    feature_angle_degrees: float,
+    layer_thicknesses: object,
+    prove: bool,
+) -> HexDominant:
+    """Hex-dominant mesh of a closed outward-oriented triangle surface.
+
+    Rows follow ``phx_mc_hex_dominant``: ``core_size`` is ``boundary_size``
+    times a power of two; ``layer_thicknesses`` (possibly empty) are the
+    hexahedral layer thicknesses from the wall outward.
+    """
+
+    points = _points(vertices, "vertices", 3)
+    rows = _native_integer_array(triangles, "triangles", np.dtype(np.int32))
+    facets = _native_integer_array(triangle_facets, "triangle_facets", np.dtype(np.int32))
+    layers = np.ascontiguousarray(layer_thicknesses, dtype=np.float64)
+    if (
+        rows.ndim != 2
+        or rows.shape[1] != 3
+        or facets.shape != (rows.shape[0],)
+        or layers.ndim != 1
+    ):
+        raise ValueError(
+            "hex_dominant takes (m, 3) triangles, (m,) facets and a thickness vector."
+        )
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
+    for name, value in (
+        ("core_size", core_size),
+        ("boundary_size", boundary_size),
+        ("feature_angle_degrees", feature_angle_degrees),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.floating)):
+            raise TypeError(f"{name} must be a real number.")
+    handle = ctypes.c_void_p()
+    request = _HexDominantRequest(
+        vertex_count=points.shape[0],
+        vertices=points.ctypes.data,
+        triangle_count=rows.shape[0],
+        triangles=rows.ctypes.data,
+        triangle_facets=facets.ctypes.data,
+        core_size=float(core_size),
+        boundary_size=float(boundary_size),
+        feature_angle_degrees=float(feature_angle_degrees),
+        layer_count=_int32_argument(layers.shape[0], "layer_count"),
+        layer_thicknesses=layers.ctypes.data,
+        prove=1 if prove else 0,
+        result=ctypes.pointer(handle),
+    )
+    library = load_meshcore()
+    status = library["phx_mc_hex_dominant"](ctypes.byref(request))
+    if not handle.value:
+        _raise_for_call(
+            status,
+            "hex_dominant",
+            contracts={
+                MeshcoreStatus.INVALID_INPUT: "the surface must be a closed, "
+                "consistently outward-oriented triangle manifold using every vertex.",
+                MeshcoreStatus.DEGENERATE_INPUT: "a surface triangle has zero area.",
+            },
+        )
+        raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, "missing hex-dominant result")
+    try:
+        sizes = np.empty((5,), dtype=np.int64)
+        _raise_for_call(
+            library["phx_mc_hex_dominant_sizes"](handle, sizes.ctypes.data),
+            "hex_dominant_sizes",
+        )
+        point_count, face_count, entry_count, cell_count, cell_entry_count = (
+            int(value) for value in sizes
+        )
+        arrays = (
+            np.empty((point_count, 3), dtype=np.float64),
+            np.empty((face_count + 1,), dtype=np.int64),
+            np.empty((entry_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((face_count,), dtype=np.int32),
+            np.empty((cell_count,), dtype=np.uint8),
+            np.empty((cell_count,), dtype=np.uint8),
+            np.empty((cell_count + 1,), dtype=np.int64),
+            np.empty((cell_entry_count,), dtype=np.int32),
+            np.empty((point_count,), dtype=np.int32),
+            np.empty((point_count,), dtype=np.uint8),
+            np.empty((28,), dtype=np.float64),
+        )
+        outputs = _HexDominantArrays(*(array.ctypes.data for array in arrays))
+        _raise_for_call(
+            library["phx_mc_hex_dominant_export"](handle, ctypes.byref(outputs)),
+            "hex_dominant_export",
+        )
+    finally:
+        library["phx_mc_hex_dominant_free"](handle)
+    return HexDominant(MeshcoreStatus(status), *arrays)
+
+
 def _int32_argument(value: object, name: str, /) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{name} must be an integer.")
@@ -3400,12 +4026,12 @@ def _read_mesh(
     np.ndarray,
     np.ndarray,
 ]:
-    # The native handle is released even when a copy fails.
+    # The native handle is released even when a copy fails. Every array is
+    # written in full by the copy, so it is allocated uninitialized.
     try:
-        dimension = library["phx_mc_mesh_dimension"](handle)
-        point_count = library["phx_mc_mesh_point_count"](handle)
-        cell_count = library["phx_mc_mesh_cell_count"](handle)
-        input_count = library["phx_mc_mesh_input_point_count"](handle)
+        shape = (ctypes.c_int64 * 4)()
+        _raise_for_call(library["phx_mc_mesh_shape"](handle, shape), "mesh_shape")
+        dimension, point_count, cell_count, input_count = shape
         if (
             dimension not in (2, 3)
             or point_count < 0
@@ -3417,50 +4043,28 @@ def _read_mesh(
             raise MeshcoreError(
                 MeshcoreStatus.INTERNAL_ERROR, "mesh handle reported invalid output sizes"
             )
-        points = np.zeros((point_count, dimension), dtype=np.float64)
-        cells = np.zeros((cell_count, dimension + 1), dtype=np.int32)
-        vertex_map = np.zeros((input_count,), dtype=np.int32)
-        cell_segments = np.zeros((cell_count, 3), dtype=np.int32)
+        points = np.empty((point_count, dimension), dtype=np.float64)
+        cells = np.empty((cell_count, dimension + 1), dtype=np.int32)
+        vertex_map = np.empty((input_count,), dtype=np.int32)
+        cell_segments = np.empty((cell_count, 3), dtype=np.int32)
         constraint_sources = np.empty((point_count,), dtype=np.int32)
         constraint_parents = np.empty((point_count, 2), dtype=np.int32)
         constraint_ratios = np.empty((point_count,), dtype=np.float64)
         _raise_for_call(
-            library["phx_mc_mesh_copy_points"](handle, point_count, points.ctypes.data),
-            "mesh_copy_points",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_cells"](handle, cell_count, cells.ctypes.data),
-            "mesh_copy_cells",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_vertex_map"](
-                handle, input_count, vertex_map.ctypes.data
+            library["phx_mc_mesh_copy_all"](
+                handle,
+                point_count,
+                cell_count,
+                input_count,
+                points.ctypes.data,
+                cells.ctypes.data,
+                vertex_map.ctypes.data,
+                cell_segments.ctypes.data,
+                constraint_sources.ctypes.data,
+                constraint_parents.ctypes.data,
+                constraint_ratios.ctypes.data,
             ),
-            "mesh_copy_vertex_map",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_cell_segments"](
-                handle, cell_count, cell_segments.ctypes.data
-            ),
-            "mesh_copy_cell_segments",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_sources"](
-                handle, point_count, constraint_sources.ctypes.data
-            ),
-            "mesh_copy_constraint_sources",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_parents"](
-                handle, point_count, constraint_parents.ctypes.data
-            ),
-            "mesh_copy_constraint_parents",
-        )
-        _raise_for_call(
-            library["phx_mc_mesh_copy_constraint_ratios"](
-                handle, point_count, constraint_ratios.ctypes.data
-            ),
-            "mesh_copy_constraint_ratios",
+            "mesh_copy_all",
         )
     finally:
         library["phx_mc_mesh_free"](handle)
@@ -3480,6 +4084,7 @@ def _triangulate(
     points: object,
     weights: object | None,
     width: int,
+    trailing: tuple[int, ...] = (),
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     library = load_meshcore()
@@ -3487,7 +4092,9 @@ def _triangulate(
     count = point_array.shape[0]
     handle = ctypes.c_void_p()
     if weights is None:
-        status = library[name](count, point_array.ctypes.data, ctypes.addressof(handle))
+        status = library[name](
+            count, point_array.ctypes.data, ctypes.addressof(handle), *trailing
+        )
     else:
         weight_array = _real_array(weights, "weights")
         if weight_array.shape != (count,):
@@ -3497,6 +4104,7 @@ def _triangulate(
             point_array.ctypes.data,
             weight_array.ctypes.data,
             ctypes.addressof(handle),
+            *trailing,
         )
     operation = name.removeprefix("phx_mc_")
     if status != MeshcoreStatus.OK:
@@ -3519,14 +4127,15 @@ def delaunay_2d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
     return _triangulate("phx_mc_delaunay_2d", points, None, 2)
 
 
-def delaunay_3d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
+def delaunay_3d(points: object, /, *, parallelism: int) -> tuple[np.ndarray, np.ndarray]:
     """Exact Delaunay tetrahedralization of ``(n, 3)`` points.
 
     Returns positively oriented, canonically ordered tetrahedra and the input
-    vertex map.
+    vertex map. ``parallelism`` workers insert in rounds of conflict-free
+    cavities; the result does not depend on it.
     """
 
-    return _triangulate("phx_mc_delaunay_3d", points, None, 3)
+    return _triangulate("phx_mc_delaunay_3d", points, None, 3, (parallelism,))
 
 
 def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
@@ -3535,10 +4144,15 @@ def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarr
     return _triangulate("phx_mc_regular_2d", points, weights, 2)
 
 
-def regular_3d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
-    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1."""
+def regular_3d(
+    points: object, weights: object, /, *, parallelism: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1.
 
-    return _triangulate("phx_mc_regular_3d", points, weights, 3)
+    ``parallelism`` workers insert in rounds; the result does not depend on it.
+    """
+
+    return _triangulate("phx_mc_regular_3d", points, weights, 3, (parallelism,))
 
 
 class VerdictStatus(IntEnum):
@@ -3793,6 +4407,139 @@ def tet_mesh_entities(cells: object, vertex_count: int, /) -> TetMeshEntities:
     )
 
 
+class PolyhedralMeshEntities(NamedTuple):
+    """Oriented entities of standard polyhedral cells, first-appearance numbered.
+
+    ``loop_faces`` and ``loop_signs`` route every cell-major face loop to its
+    face and orientation; ``face_owner_loops`` and ``face_neighbor_loops``
+    (``-1`` when unshared) are each face's first and second loop;
+    ``face_vertex_offsets`` / ``face_vertex_values`` hold the canonical face
+    loops; ``edges`` ``(e, 2)`` are increasing vertex pairs routed by
+    ``face_edge_values`` per face side, ``edge_first_sides`` their first
+    side; ``face_order`` and ``edge_order`` sort the faces and edges by
+    increasing vertex rows. All int32.
+    """
+
+    loop_faces: np.ndarray
+    loop_signs: np.ndarray
+    face_owner_loops: np.ndarray
+    face_neighbor_loops: np.ndarray
+    face_vertex_offsets: np.ndarray
+    face_vertex_values: np.ndarray
+    edges: np.ndarray
+    edge_first_sides: np.ndarray
+    face_edge_values: np.ndarray
+    face_order: np.ndarray
+    edge_order: np.ndarray
+
+
+# Face loops and summed loop sizes of tetrahedra, pyramids, prisms, hexahedra.
+_POLYHEDRAL_KIND_LOOPS = np.asarray((4, 5, 5, 6), dtype=np.int64)
+_POLYHEDRAL_KIND_SIDES = np.asarray((12, 16, 18, 24), dtype=np.int64)
+
+
+def polyhedral_mesh_entities(
+    cell_kinds: object, cells: object, vertex_count: int, /
+) -> PolyhedralMeshEntities | None:
+    """Entities of standard cells (kinds 0..3: tetrahedron, pyramid, prism,
+    hexahedron; ``cells`` their packed vertex rows), or ``None`` for a cell
+    set the generic construction rejects."""
+    kinds = _native_integer_array(cell_kinds, "cell_kinds", np.dtype(np.int32))
+    values = _native_integer_array(cells, "cells", np.dtype(np.int32))
+    if kinds.ndim != 1 or values.ndim != 1:
+        raise ValueError("cell_kinds and cells must be rank one.")
+    if np.any((kinds < 0) | (kinds > 3)):
+        raise ValueError("cell_kinds must lie in 0..3.")
+    if values.size != int(np.sum(np.asarray((4, 5, 6, 8))[kinds])):
+        raise ValueError("cells must pack one vertex row per cell kind.")
+    count = kinds.size
+    loops = int(np.sum(_POLYHEDRAL_KIND_LOOPS[kinds]))
+    sides = int(np.sum(_POLYHEDRAL_KIND_SIDES[kinds]))
+    loop_faces = np.empty((loops,), dtype=np.int32)
+    loop_signs = np.empty((loops,), dtype=np.int32)
+    owners = np.empty((loops,), dtype=np.int32)
+    neighbors = np.empty((loops,), dtype=np.int32)
+    face_offsets = np.empty((loops + 1,), dtype=np.int32)
+    face_values = np.empty((sides,), dtype=np.int32)
+    edges = np.empty((sides, 2), dtype=np.int32)
+    edge_first_sides = np.empty((sides,), dtype=np.int32)
+    face_edges = np.empty((sides,), dtype=np.int32)
+    face_order = np.empty((loops,), dtype=np.int32)
+    edge_order = np.empty((sides,), dtype=np.int32)
+    face_count = ctypes.c_int64()
+    edge_count = ctypes.c_int64()
+    status = load_meshcore()["phx_mc_polyhedral_mesh_entities"](
+        int(vertex_count),
+        count,
+        kinds.ctypes.data,
+        values.ctypes.data,
+        loop_faces.ctypes.data,
+        loop_signs.ctypes.data,
+        ctypes.byref(face_count),
+        owners.ctypes.data,
+        neighbors.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        ctypes.byref(edge_count),
+        edges.ctypes.data,
+        edge_first_sides.ctypes.data,
+        face_edges.ctypes.data,
+        face_order.ctypes.data,
+        edge_order.ctypes.data,
+    )
+    if status == MeshcoreStatus.INVALID_INPUT:
+        return None
+    _raise_for_call(status, "polyhedral_mesh_entities")
+    faces = face_count.value
+    edge_total = edge_count.value
+    entries = int(face_offsets[faces])
+    return PolyhedralMeshEntities(
+        loop_faces,
+        loop_signs,
+        owners[:faces].copy(),
+        neighbors[:faces].copy(),
+        face_offsets[: faces + 1].copy(),
+        face_values[:entries].copy(),
+        edges[:edge_total].copy(),
+        edge_first_sides[:edge_total].copy(),
+        face_edges[:entries].copy(),
+        face_order[:faces].copy(),
+        edge_order[:edge_total].copy(),
+    )
+
+
+def incidence_order(
+    lower: object, upper: object, signs: object, lower_count: int, upper_count: int, /
+) -> np.ndarray:
+    """Stable order of routes sorting their ``(lower, upper, sign)`` rows.
+
+    ``lower`` and ``upper`` are dense entity ranks below ``lower_count`` and
+    ``upper_count``; ``signs`` are ±1. Linear time.
+    """
+    lower_array = _native_integer_array(lower, "lower", np.dtype(np.int32))
+    upper_array = _native_integer_array(upper, "upper", np.dtype(np.int32))
+    sign_array = _native_integer_array(signs, "signs", np.dtype(np.int8))
+    count = lower_array.size
+    if (
+        lower_array.ndim != 1
+        or upper_array.shape != lower_array.shape
+        or sign_array.shape != lower_array.shape
+    ):
+        raise ValueError("lower, upper and signs must be equal rank-one arrays.")
+    order = np.empty((count,), dtype=np.int32)
+    status = load_meshcore()["phx_mc_incidence_order"](
+        int(lower_count),
+        int(upper_count),
+        count,
+        lower_array.ctypes.data,
+        upper_array.ctypes.data,
+        sign_array.ctypes.data,
+        order.ctypes.data,
+    )
+    _raise_for_call(status, "incidence_order")
+    return order
+
+
 def validity_coordinates(values: object, /) -> np.ndarray:
     """Which values ``tetrahedra_validity`` decides exactly (elementwise mask).
 
@@ -3832,6 +4579,519 @@ def tetrahedra_validity(
     )
     _raise_for_call(status, "tetrahedra_validity")
     return valid.astype(np.bool_), lower, upper
+
+
+def cell_map_validity(
+    domain: str,
+    basis: Sequence[Sequence[tuple[tuple[int, int, int], int]]],
+    denominator_log2: int,
+    kind: str,
+    significands: object,
+    exponents: object,
+    sparse_exponent: int,
+    routes: object,
+    floor: float,
+    /,
+    *,
+    parallelism: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact root validity proof of dof-linear polynomial cell maps in 3D.
+
+    ``basis`` lists each dof's integer terms ``(exponent, numerator)`` of the
+    basis ``numerator / 2**denominator_log2 * xi**exponent``; the coordinate
+    bank is the exact dyadic ``significands * 2**exponents`` of shape
+    ``(rows, 3)`` (``sparse_exponent`` marks non-dyadic entries). Returns
+    ``(decided, status, lower, upper, digests)``: a decided cell's
+    ``CellValidityStatus`` value (0 certified, 1 invalid), directed
+    determinant endpoints and exact-map digest equal those of the rational
+    per-cell proof; undecided cells are left to it.
+    """
+    significand_array = np.ascontiguousarray(significands, dtype=np.int64)
+    exponent_array = np.ascontiguousarray(exponents, dtype=np.int16)
+    route_array = np.ascontiguousarray(routes, dtype=np.int64)
+    if (
+        significand_array.ndim != 2
+        or significand_array.shape[1] != 3
+        or exponent_array.shape != significand_array.shape
+        or route_array.ndim != 2
+        or route_array.shape[1] != len(basis)
+    ):
+        raise ValueError("Cell map validity requires (rows, 3) banks and dof routes.")
+    starts = np.zeros((len(basis) + 1,), dtype=np.int64)
+    starts[1:] = np.cumsum([len(terms) for terms in basis])
+    term_exponents = np.asarray(
+        [exponent for terms in basis for exponent, _ in terms], dtype=np.int32
+    ).reshape(-1, 3)
+    term_numerators = np.asarray(
+        [numerator for terms in basis for _, numerator in terms], dtype=np.int64
+    )
+    encoded_kind = kind.encode("ascii")
+    count = route_array.shape[0]
+    decided = np.zeros((count,), dtype=np.int8)
+    status = np.zeros((count,), dtype=np.int32)
+    lower = np.zeros((count,), dtype=np.float64)
+    upper = np.zeros((count,), dtype=np.float64)
+    digests = np.zeros((count, 16), dtype=np.uint8)
+    result = load_meshcore()["phx_mc_cell_map_validity"](
+        {"simplex": 0, "box": 1, "prism": 2}[domain],
+        len(basis),
+        starts.ctypes.data,
+        term_exponents.ctypes.data,
+        term_numerators.ctypes.data,
+        int(denominator_log2),
+        encoded_kind,
+        len(encoded_kind),
+        significand_array.shape[0],
+        significand_array.ctypes.data,
+        exponent_array.ctypes.data,
+        int(sparse_exponent),
+        count,
+        route_array.ctypes.data,
+        float(floor),
+        decided.ctypes.data,
+        status.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        digests.ctypes.data,
+        parallelism,
+    )
+    _raise_for_call(result, "cell_map_validity")
+    return decided.astype(np.bool_), status, lower, upper, digests
+
+
+def welded_topology(
+    dimension: int,
+    key_count: int,
+    cells: np.ndarray,
+    audited_cells: int,
+    facets: np.ndarray,
+    facet_cells: np.ndarray,
+    facet_signs: np.ndarray,
+    audited_facets: int,
+    audited_facet_width: int,
+    edges: np.ndarray,
+    edge_cells: np.ndarray,
+    scope: np.ndarray | None,
+    /,
+    *,
+    embedded: bool,
+    check_manifold: bool,
+    check_watertight: bool,
+    parallelism: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Combinatorial welded-topology counts of one star complex.
+
+    The first ``audited_cells`` cells and ``audited_facets`` facets are the
+    audited mesh. Returns ``counts`` (collapsed cells, duplicate cells,
+    nonmanifold facets, inconsistent facets, open boundary, nonmanifold
+    vertices, nonmanifold edges) and the audited boundary-occurrence mask, as
+    ``phx_mc_welded_topology`` documents.
+    """
+    cell_array = np.ascontiguousarray(cells, dtype=np.int64)
+    facet_array = np.ascontiguousarray(facets, dtype=np.int64)
+    facet_cell_array = np.ascontiguousarray(facet_cells, dtype=np.int64)
+    sign_array = np.ascontiguousarray(facet_signs, dtype=np.int8)
+    edge_array = np.ascontiguousarray(edges, dtype=np.int64)
+    edge_cell_array = np.ascontiguousarray(edge_cells, dtype=np.int64)
+    scope_array = (
+        None if scope is None else np.ascontiguousarray(scope, dtype=np.int64).reshape(-1)
+    )
+    if (
+        cell_array.ndim != 2
+        or facet_array.ndim != 2
+        or facet_cell_array.shape != (facet_array.shape[0],)
+        or sign_array.shape != (facet_array.shape[0],)
+        or edge_array.ndim != 2
+        or edge_array.shape[1] != 2
+        or edge_cell_array.shape != (edge_array.shape[0],)
+    ):
+        raise ValueError("Welded topology requires padded cell, facet and edge rows.")
+    counts = np.zeros((7,), dtype=np.int64)
+    boundary = np.zeros((audited_facets,), dtype=np.int8)
+    status = load_meshcore()["phx_mc_welded_topology"](
+        dimension,
+        int(embedded),
+        int(check_manifold),
+        int(check_watertight),
+        key_count,
+        cell_array.shape[0],
+        audited_cells,
+        cell_array.shape[1],
+        cell_array.ctypes.data,
+        facet_array.shape[0],
+        audited_facets,
+        facet_array.shape[1],
+        audited_facet_width,
+        facet_array.ctypes.data,
+        facet_cell_array.ctypes.data,
+        sign_array.ctypes.data,
+        edge_array.shape[0],
+        edge_array.ctypes.data,
+        edge_cell_array.ctypes.data,
+        -1 if scope_array is None else scope_array.size,
+        None if scope_array is None else scope_array.ctypes.data,
+        counts.ctypes.data,
+        boundary.ctypes.data,
+        parallelism,
+    )
+    _raise_for_call(
+        status,
+        "welded_topology",
+        contracts={
+            MeshcoreStatus.INVALID_INPUT: (
+                "Welded star links reference unknown incidences."
+            )
+        },
+    )
+    return counts, boundary.astype(np.bool_)
+
+
+def common_denominator_rows(
+    points: Sequence[Sequence[object]], /
+) -> tuple[list[int], int] | None:
+    """Integer rows ``X = L x`` of rational points over their least common ``L``.
+
+    Flattened row-major; ``None`` when a coordinate is not rational.
+    """
+    values: list[Fraction] = []
+    for point in points:
+        for value in point:
+            if not isinstance(value, (Fraction, int)) or isinstance(value, bool):
+                return None
+            values.append(Fraction(value))
+    common = lcm(*(value.denominator for value in values)) if values else 1
+    return [value.numerator * (common // value.denominator) for value in values], common
+
+
+def _integer_word_bank(
+    values: Sequence[int], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Little-endian 32-bit magnitude words, offsets and signs of integers."""
+    counts = np.asarray(
+        [(abs(value).bit_length() + 31) // 32 for value in values], dtype=np.int64
+    )
+    offsets = np.zeros((counts.size + 1,), dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    payload = b"".join(
+        abs(value).to_bytes(4 * int(count), "little")
+        for value, count in zip(values, counts.tolist(), strict=True)
+    )
+    words = np.frombuffer(payload, dtype="<u4").astype(np.uint32)
+    signs = np.asarray([-1 if value < 0 else 1 for value in values], dtype=np.int8)
+    return offsets, np.ascontiguousarray(words), signs
+
+
+def polyhedral_star_validity(
+    point_offsets: np.ndarray,
+    integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_vertex_offsets: np.ndarray,
+    face_vertex_values: np.ndarray,
+    star_offsets: np.ndarray,
+    stars: np.ndarray,
+    floor: float,
+    /,
+    *,
+    parallelism: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact star validity of polyhedra (``phx_mc_polyhedral_star_validity``).
+
+    ``integers`` holds every cell's integer point rows ``X = L x`` (three per
+    point, cells in order) followed by each cell's common denominator ``L``;
+    ``stars`` rows are ``(local face, first point, second point)``. Returns
+    ``(decided, status, lower, upper)`` per cell, equal to the rational
+    polyhedral star proof where decided.
+    """
+    point_offset_array = np.ascontiguousarray(point_offsets, dtype=np.int64)
+    cell_faces = np.ascontiguousarray(cell_face_offsets, dtype=np.int64)
+    face_offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    face_values = np.ascontiguousarray(face_vertex_values, dtype=np.int64)
+    star_offset_array = np.ascontiguousarray(star_offsets, dtype=np.int64)
+    star_array = np.ascontiguousarray(stars, dtype=np.int64)
+    if (
+        point_offset_array.ndim != 1
+        or point_offset_array.size < 1
+        or cell_faces.shape != point_offset_array.shape
+        or star_offset_array.shape != point_offset_array.shape
+        or face_offsets.ndim != 1
+        or face_offsets.size < 1
+        or star_array.ndim != 2
+        or star_array.shape[1] != 3
+        or len(integers) != 3 * int(point_offset_array[-1]) + point_offset_array.size - 1
+    ):
+        raise ValueError("Polyhedral star validity requires CSR cells, faces and stars.")
+    word_offsets, words, signs = _integer_word_bank(integers)
+    count = point_offset_array.size - 1
+    decided = np.zeros((count,), dtype=np.int8)
+    status = np.zeros((count,), dtype=np.int32)
+    lower = np.zeros((count,), dtype=np.float64)
+    upper = np.zeros((count,), dtype=np.float64)
+    result = load_meshcore()["phx_mc_polyhedral_star_validity"](
+        count,
+        point_offset_array.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        cell_faces.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        star_offset_array.ctypes.data,
+        star_array.ctypes.data,
+        float(floor),
+        decided.ctypes.data,
+        status.ctypes.data,
+        lower.ctypes.data,
+        upper.ctypes.data,
+        parallelism,
+    )
+    _raise_for_call(result, "polyhedral_star_validity")
+    return decided.astype(np.bool_), status, lower, upper
+
+
+def polyhedral_star_decomposition(
+    point_offsets: np.ndarray,
+    integers: Sequence[int],
+    face_integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_vertex_offsets: np.ndarray,
+    face_vertex_values: np.ndarray,
+    /,
+    *,
+    parallelism: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact star decompositions of linear polytopes.
+
+    ``integers`` holds every cell's integer point rows ``X = L x`` (three per
+    point, cells in order) followed by each cell's ``L``; ``face_integers``
+    every face-loop entry's row over its own face's common denominator.
+    Returns ``(codes, face_reversed, triangle_offsets, triangle_counts,
+    triangles)`` of ``phx_mc_polyhedral_star_decomposition``: per cell 0
+    (decomposed), -1 (undecided) or the first refusal code; per face its
+    outward reversal; per cell the ``triangle_counts`` rows ``(face, i, j, k)``
+    from ``triangle_offsets`` of its oriented face triangles, local index -1
+    being the face's exact vertex average (a fan apex).
+    """
+    point_offset_array = np.ascontiguousarray(point_offsets, dtype=np.int64)
+    cell_faces = np.ascontiguousarray(cell_face_offsets, dtype=np.int64)
+    face_offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    face_values = np.ascontiguousarray(face_vertex_values, dtype=np.int64)
+    if (
+        point_offset_array.ndim != 1
+        or point_offset_array.size < 1
+        or cell_faces.shape != point_offset_array.shape
+        or face_offsets.ndim != 1
+        or face_offsets.size < 1
+        or len(integers) != 3 * int(point_offset_array[-1]) + point_offset_array.size - 1
+        or len(face_integers) != 3 * int(face_offsets[-1])
+    ):
+        raise ValueError("Polyhedral star decomposition requires CSR cells and faces.")
+    word_offsets, words, signs = _integer_word_bank(integers)
+    face_word_offsets, face_words, face_signs = _integer_word_bank(face_integers)
+    count = point_offset_array.size - 1
+    # A face has at most as many triangles as vertices (its fan).
+    triangle_offsets = np.ascontiguousarray(face_offsets[cell_faces])
+    codes = np.zeros((count,), dtype=np.int32)
+    face_reversed = np.zeros((face_offsets.size - 1,), dtype=np.int8)
+    triangles = np.zeros((int(triangle_offsets[-1]), 4), dtype=np.int32)
+    triangle_counts = np.zeros((count,), dtype=np.int64)
+    result = load_meshcore()["phx_mc_polyhedral_star_decomposition"](
+        count,
+        point_offset_array.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        face_word_offsets.ctypes.data,
+        face_words.ctypes.data,
+        face_signs.ctypes.data,
+        cell_faces.ctypes.data,
+        face_offsets.ctypes.data,
+        face_values.ctypes.data,
+        triangle_offsets.ctypes.data,
+        codes.ctypes.data,
+        face_reversed.ctypes.data,
+        triangles.ctypes.data,
+        triangle_counts.ctypes.data,
+        parallelism,
+    )
+    _raise_for_call(result, "polyhedral_star_decomposition")
+    return (
+        codes,
+        face_reversed.astype(np.bool_),
+        triangle_offsets,
+        triangle_counts,
+        triangles,
+    )
+
+
+def face_triangulation(
+    face_vertex_offsets: np.ndarray, face_integers: Sequence[int], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact ear-clipping triangulations of planar face loops.
+
+    ``face_integers`` holds every loop entry's integer row over its own face's
+    common denominator. Returns ``(codes, triangle_offsets, triangles)`` of
+    ``phx_mc_face_triangulation``: per face 0 or its polygon refusal code, and
+    rows ``[triangle_offsets[f], triangle_offsets[f + 1])`` of local loop
+    index triples (``-1`` on refusal), those of ``triangulate_planar_polygon``.
+    """
+    offsets = np.ascontiguousarray(face_vertex_offsets, dtype=np.int64)
+    if (
+        offsets.ndim != 1
+        or offsets.size < 1
+        or offsets[0] != 0
+        or np.any(np.diff(offsets) < 0)
+        or len(face_integers) != 3 * int(offsets[-1])
+    ):
+        raise ValueError("Face triangulation requires CSR face loops and integer rows.")
+    word_offsets, words, signs = _integer_word_bank(face_integers)
+    count = offsets.size - 1
+    triangle_offsets = np.zeros((offsets.size,), dtype=np.int64)
+    np.cumsum(np.maximum(np.diff(offsets) - 2, 0), out=triangle_offsets[1:])
+    codes = np.zeros((count,), dtype=np.int32)
+    triangles = np.zeros((int(triangle_offsets[-1]), 3), dtype=np.int32)
+    result = load_meshcore()["phx_mc_face_triangulation"](
+        count,
+        offsets.ctypes.data,
+        word_offsets.ctypes.data,
+        words.ctypes.data,
+        signs.ctypes.data,
+        codes.ctypes.data,
+        triangles.ctypes.data,
+    )
+    _raise_for_call(result, "face_triangulation")
+    return codes, triangle_offsets, triangles
+
+
+class PolyhedralContactBank(NamedTuple):
+    """Prepared operands of ``phx_mc_polyhedral_declared_contacts``."""
+
+    point_count: int
+    point_word_offsets: np.ndarray
+    point_words: np.ndarray
+    point_signs: np.ndarray
+    point_lower: np.ndarray
+    point_upper: np.ndarray
+    tet_points: np.ndarray
+    cell_tet_offsets: np.ndarray
+    cell_corner_offsets: np.ndarray
+    corner_points: np.ndarray
+    corner_vertices: np.ndarray
+    row_word_offsets: np.ndarray
+    row_words: np.ndarray
+    row_signs: np.ndarray
+    cell_face_offsets: np.ndarray
+    face_offsets: np.ndarray
+    face_corners: np.ndarray
+
+
+def polyhedral_contact_bank(
+    point_integers: Sequence[int],
+    point_lower: np.ndarray,
+    point_upper: np.ndarray,
+    tet_points: np.ndarray,
+    cell_tet_offsets: np.ndarray,
+    cell_corner_offsets: np.ndarray,
+    corner_points: np.ndarray,
+    corner_vertices: np.ndarray,
+    corner_integers: Sequence[int],
+    cell_face_offsets: np.ndarray,
+    face_offsets: np.ndarray,
+    face_corners: np.ndarray,
+    /,
+) -> PolyhedralContactBank:
+    """Prepare star-decomposed cells for ``polyhedral_declared_contacts``.
+
+    ``point_integers`` holds the homogeneous integer row ``(X, W)`` of every
+    exact point ``X / W`` (``W > 0``), whose outward binary64 enclosures are
+    ``point_lower`` and ``point_upper``. Cell ``c`` owns the tetrahedra
+    ``[cell_tet_offsets[c], cell_tet_offsets[c + 1])`` of ``tet_points``
+    (four point indices each) and the corners ``[cell_corner_offsets[c],
+    cell_corner_offsets[c + 1])``: their point indices, mesh vertex
+    identifiers and integer rows (``corner_integers``: three per corner, cells
+    in order, then each cell's positive common denominator). Its face loops are
+    the local corner indices of faces ``[cell_face_offsets[c],
+    cell_face_offsets[c + 1])`` in ``face_offsets`` CSR. Every corner coordinate
+    is a ``Fraction``. A cell without tetrahedra is never proved.
+    """
+    point_word_offsets, point_words, point_signs = _integer_word_bank(point_integers)
+    row_word_offsets, row_words, row_signs = _integer_word_bank(corner_integers)
+    corner_offsets = np.ascontiguousarray(cell_corner_offsets, dtype=np.int64)
+    lower = np.ascontiguousarray(point_lower, dtype=np.float64)
+    if (
+        lower.ndim != 2
+        or lower.shape[1] != 3
+        or lower.shape != np.shape(point_upper)
+        or len(point_integers) != 4 * lower.shape[0]
+        or len(corner_integers) != 3 * int(corner_offsets[-1]) + corner_offsets.size - 1
+    ):
+        raise ValueError(
+            "Polyhedral contacts require four integers and an enclosure per point."
+        )
+    return PolyhedralContactBank(
+        int(lower.shape[0]),
+        point_word_offsets,
+        point_words,
+        point_signs,
+        lower,
+        np.ascontiguousarray(point_upper, dtype=np.float64),
+        np.ascontiguousarray(tet_points, dtype=np.int64),
+        np.ascontiguousarray(cell_tet_offsets, dtype=np.int64),
+        corner_offsets,
+        np.ascontiguousarray(corner_points, dtype=np.int64),
+        np.ascontiguousarray(corner_vertices, dtype=np.int64),
+        row_word_offsets,
+        row_words,
+        row_signs,
+        np.ascontiguousarray(cell_face_offsets, dtype=np.int64),
+        np.ascontiguousarray(face_offsets, dtype=np.int64),
+        np.ascontiguousarray(face_corners, dtype=np.int64),
+    )
+
+
+def polyhedral_declared_contacts(
+    bank: PolyhedralContactBank,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    parallelism: int,
+) -> np.ndarray:
+    """Pairs of ``bank`` cells whose every tetrahedron contact is proved to
+    lie in one convex piece of their declared shared stratum
+    (``phx_mc_polyhedral_declared_contacts``); ``False`` decides nothing."""
+    pairs = np.ascontiguousarray(
+        np.stack(
+            (np.asarray(first, dtype=np.int64), np.asarray(second, dtype=np.int64)),
+            axis=1,
+        )
+    )
+    declared = np.zeros((pairs.shape[0],), dtype=np.int8)
+    result = load_meshcore()["phx_mc_polyhedral_declared_contacts"](
+        bank.point_count,
+        bank.point_word_offsets.ctypes.data,
+        bank.point_words.ctypes.data,
+        bank.point_signs.ctypes.data,
+        bank.point_lower.ctypes.data,
+        bank.point_upper.ctypes.data,
+        bank.tet_points.ctypes.data,
+        bank.cell_tet_offsets.size - 1,
+        bank.cell_tet_offsets.ctypes.data,
+        bank.cell_corner_offsets.ctypes.data,
+        bank.corner_points.ctypes.data,
+        bank.corner_vertices.ctypes.data,
+        bank.row_word_offsets.ctypes.data,
+        bank.row_words.ctypes.data,
+        bank.row_signs.ctypes.data,
+        bank.cell_face_offsets.ctypes.data,
+        bank.face_offsets.ctypes.data,
+        bank.face_corners.ctypes.data,
+        pairs.shape[0],
+        pairs.ctypes.data,
+        declared.ctypes.data,
+        parallelism,
+    )
+    _raise_for_call(result, "polyhedral_declared_contacts")
+    return declared.astype(np.bool_)
 
 
 class CadEntityKind(IntEnum):
@@ -7189,6 +8449,32 @@ def point_triangle_distances(points: object, triangles: object, /) -> np.ndarray
     _raise_for_call(
         call,
         "point_triangle_distances",
+        contracts={MeshcoreStatus.RANGE_ERROR: "computed distance is nonfinite"},
+    )
+    return distances
+
+
+def point_triangle_nearest_distances(points: object, triangles: object, /) -> np.ndarray:
+    """Least ``point_triangle_distances`` value of every point over all triangles.
+
+    Equal to the exhaustive minimum (a box tree skips only subtrees whose box
+    distance exceeds the best value found).
+    """
+    point_array = _points(points, "points", 3)
+    triangle_array = _contact_simplices(triangles, "triangles", 3)
+    if triangle_array.shape[0] < 1:
+        raise ValueError("triangles must be nonempty.")
+    distances = np.empty((point_array.shape[0],), dtype=np.float64)
+    call = load_meshcore()["phx_mc_point_triangle_nearest_distances"](
+        point_array.shape[0],
+        point_array.ctypes.data,
+        triangle_array.shape[0],
+        triangle_array.ctypes.data,
+        distances.ctypes.data,
+    )
+    _raise_for_call(
+        call,
+        "point_triangle_nearest_distances",
         contracts={MeshcoreStatus.RANGE_ERROR: "computed distance is nonfinite"},
     )
     return distances
@@ -12207,6 +13493,70 @@ def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
     return results
 
 
+BVH_BUILD_MEDIAN = 0
+BVH_BUILD_SAH = 1
+BVH_BUILD_MORTON = 2
+
+
+def bvh_build(
+    kind: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    codes: np.ndarray | None,
+    leaf_size: int,
+    sah_bins: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Level-ordered BVH topology over item boxes (``phx_mc_bvh_build``).
+
+    Returns the item order and, per node in breadth-first level order, its
+    item range ``[start, stop)`` and children (``-1`` at leaves), with the
+    node offsets of every level. ``codes`` (uint64 per item) are required
+    for ``BVH_BUILD_MORTON`` and unused otherwise.
+    """
+    low = np.ascontiguousarray(lower, dtype=np.float64)
+    high = np.ascontiguousarray(upper, dtype=np.float64)
+    if low.ndim != 2 or high.shape != low.shape:
+        raise ValueError("lower and upper must share shape (items, dimension).")
+    count, dimension = low.shape
+    keys = None if codes is None else np.ascontiguousarray(codes, dtype=np.uint64)
+    if keys is not None and keys.shape != (count,):
+        raise ValueError("codes must hold one value per item.")
+    capacity = max(2 * count - 1, 1)
+    order = np.empty((count,), dtype=np.int64)
+    start, stop, left, right = (np.empty((capacity,), dtype=np.int64) for _ in range(4))
+    level_offsets = np.empty((capacity + 1,), dtype=np.int64)
+    node_count, level_count = _I64(), _I64()
+    status = load_meshcore()["phx_mc_bvh_build"](
+        kind,
+        count,
+        dimension,
+        low.ctypes.data,
+        high.ctypes.data,
+        None if keys is None else keys.ctypes.data,
+        leaf_size,
+        sah_bins,
+        order.ctypes.data,
+        start.ctypes.data,
+        stop.ctypes.data,
+        left.ctypes.data,
+        right.ctypes.data,
+        level_offsets.ctypes.data,
+        ctypes.addressof(node_count),
+        ctypes.addressof(level_count),
+    )
+    _raise_for_call(status, "bvh_build")
+    nodes = int(node_count.value)
+    return (
+        order,
+        start[:nodes],
+        stop[:nodes],
+        left[:nodes],
+        right[:nodes],
+        level_offsets[: int(level_count.value) + 1],
+    )
+
+
 def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.ndarray:
     """``atan2(ordinates, abscissas)`` in ``[-pi, pi]``, the same binary64
     result on every platform (within 7 units in the last place).
@@ -12227,6 +13577,74 @@ def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.nda
     )
     _raise_for_call(status, "angle_arctangent2")
     return results
+
+
+def _quality_cells(
+    points: np.ndarray, rows: np.ndarray, width: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    corners = _real_array(points, "points")
+    table = np.ascontiguousarray(rows, dtype=np.int64)
+    if corners.ndim != 3 or corners.shape[2] != 3 or corners.shape[1] == 0:
+        raise ValueError("points must have shape (cells, corners, 3).")
+    if table.ndim != 2 or table.shape[1] != width:
+        raise ValueError(f"Corner index rows must have shape (rows, {width}).")
+    return corners, table
+
+
+def quality_dihedral_angles(points: np.ndarray, samples: np.ndarray, /) -> np.ndarray:
+    """Dihedral angles ``(cells, samples)`` of ``points`` ``(cells, corners,
+    3)`` with the host quality formula's rounded binary64 operations: per
+    sample row ``(origin, end, first, second)`` of corner indices, the angle
+    about the edge ``(origin, end)`` from the first to the second corner by
+    :func:`angle_arctangent2`, plus ``2 pi`` when negative.
+    """
+    corners, rows = _quality_cells(points, samples, 4)
+    angles = np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64)
+    status = load_meshcore()["phx_mc_quality_dihedral_angles"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        angles.ctypes.data,
+    )
+    _raise_for_call(status, "quality_dihedral_angles")
+    return angles
+
+
+def quality_solid_corners(
+    points: np.ndarray,
+    frames: np.ndarray,
+    ideal_inverse: np.ndarray,
+    ideal_scaled: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Corner measures ``(cells, rows)`` of ``points`` ``(cells, corners, 3)``
+    with the host quality formula's rounded binary64 operations: per frame
+    row ``(apex, n0, n1, n2)``, the frame determinant, the scaled Jacobian,
+    the shape ratio and the condition number against the row's ideal inverse
+    ``(3, 3)`` and ideal scaled Jacobian (``phx_mc_quality_solid_corners``).
+    """
+    corners, rows = _quality_cells(points, frames, 4)
+    inverse = np.ascontiguousarray(ideal_inverse, dtype=np.float64)
+    scale = np.ascontiguousarray(ideal_scaled, dtype=np.float64)
+    if inverse.shape != (rows.shape[0], 3, 3) or scale.shape != (rows.shape[0],):
+        raise ValueError("Ideal frames must align with the frame rows.")
+    results = tuple(
+        np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64) for _ in range(4)
+    )
+    status = load_meshcore()["phx_mc_quality_solid_corners"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        inverse.ctypes.data,
+        scale.ctypes.data,
+        *(result.ctypes.data for result in results),
+    )
+    _raise_for_call(status, "quality_solid_corners")
+    return results[0], results[1], results[2], results[3]
 
 
 def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
@@ -13112,8 +14530,14 @@ class MetricRelocationSearch:
 
 
 __all__ = [
+    "BVH_BUILD_MEDIAN",
+    "BVH_BUILD_MORTON",
+    "BVH_BUILD_SAH",
+    "bvh_build",
     "angle_arccosine",
     "angle_arctangent2",
+    "quality_dihedral_angles",
+    "quality_solid_corners",
     "angle_arcsine",
     "angle_between",
     "angle_cosine",
@@ -13270,6 +14694,9 @@ __all__ = [
     "CadSurfaceResult",
     "cad_mesh",
 ]
+
+__all__ += ["ConformingVoronoi", "conforming_voronoi"]
+__all__ += ["HexDominant", "hex_dominant"]
 
 __all__ += [
     "CadFidelityChords",

@@ -354,11 +354,14 @@ def certify_periodic_mapped_contacts(
             tree, shifted_tree, include_touching=True
         ):
             piece_certificates = {}
+            declared_pairs: set[tuple[int, int]] = set()
             if zero:
                 ordered = left < right
                 left, right = left[ordered], right[ordered]
                 if piece_filter is not None:
-                    cleared, piece_certificates = piece_filter.certify(left, right)
+                    cleared, piece_certificates, declared_pairs = piece_filter.certify(
+                        left, right
+                    )
                     left, right = left[~cleared], right[~cleared]
             shadows = {}
             cache = cache.renewed()
@@ -395,6 +398,8 @@ def certify_periodic_mapped_contacts(
                     )
                     continue
                 if first.affine and second.affine and trace is True:
+                    if (i, j) in declared_pairs:
+                        continue
                     try:
                         if first.global_id not in pieces:
                             pieces[first.global_id] = _cell_simplices(first)

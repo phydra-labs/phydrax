@@ -1,5 +1,6 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include "cad_curves.hpp"
+#include "cad_faces.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,20 @@ struct Context {
     ++stats.value_evaluations;
     return geometry.jets(geometry.curve_node(curve), &t, 0, xyz, workspace);
   }
+  // Distance from x to the nearest pole corner of the face (infinity if none).
+  double pole_distance(int32_t face, const double* x) const {
+    const auto& m = geometry.model();
+    double nearest = std::numeric_limits<double>::infinity();
+    for (int64_t l = 0; l < m.loop_count; ++l) {
+      if (m.loop_surfaces[l] != face) continue;
+      for (int64_t u = m.loop_use_offsets[l]; u < m.loop_use_offsets[l + 1]; ++u) {
+        if (m.use_kinds[u] != 1) continue;
+        const double* p = m.corner_points + 3 * m.use_entities[u];
+        nearest = std::min(nearest, std::hypot(x[0] - p[0], x[1] - p[1], x[2] - p[2]));
+      }
+    }
+    return nearest;
+  }
   Sample sample(double s) {
     const auto& m = geometry.model();
     const double t = parameter(s);
@@ -64,7 +79,13 @@ struct Context {
     const double ct = controls.curve_tolerances[curve];
     if (curvature > 0 && std::isfinite(ct)) h = std::min(h, std::sqrt(8 * theta * ct / curvature));
     for (const Use& use : uses) {
-      double kn=0;
+      // The curve takes each face's smallest metric size, min(h, sqrt(4
+      // theta tol / |k|max)) (cad::fidelity_metric): its segments are fixed,
+      // and a segment longer than the face's unit across the curvature leaves
+      // the kernel triangles it can neither split nor meet (measured on the
+      // quadric with the tangent's size instead: proximity refusals where the
+      // intersection curve runs along the cylinder axis).
+      double face_size=0;
       bool resolved=false, evaluated=false;
       for (int attempt=0; attempt<9 && !resolved; ++attempt) {
         if (attempt && s!=0 && s!=1) break;
@@ -77,28 +98,29 @@ struct Context {
         ++stats.second_order_evaluations;
         if (!geometry.jets(geometry.surface_node(use.face), pc, 2, sj, workspace)) continue;
         evaluated=true;
-        const double* a=sj+3; const double* b=sj+6;
-        double n[3]={a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
-        const double nl=std::hypot(n[0],n[1],n[2]);
-        if (!(nl>0) || !std::isfinite(nl)) continue;
-        for (double& x:n) x/=nl;
-        double tangent[3],second[3];
-        for (int k=0;k<3;++k) {
-          tangent[k]=a[k]*pc[2]+b[k]*pc[3];
-          second[k]=sj[9+k]*pc[2]*pc[2]+2*sj[12+k]*pc[2]*pc[3]+sj[15+k]*pc[3]*pc[3];
-        }
-        const double v2=tangent[0]*tangent[0]+tangent[1]*tangent[1]+tangent[2]*tangent[2];
-        if (!(v2>0) || !std::isfinite(v2)) continue;
-        kn=std::abs(n[0]*second[0]+n[1]*second[1]+n[2]*second[2])/v2;
-        resolved=std::isfinite(kn);
+        SurfaceDifferential differential;
+        if (!surface_differential(sj, differential)) continue;
+        face_size=controls.face_sizes[use.face];
+        const double kappa=std::max(std::abs(differential.curvatures[0]),
+                                    std::abs(differential.curvatures[1]));
+        const double tolerance=controls.face_tolerances[use.face];
+        if (kappa>0 && 4*theta*tolerance<kappa*face_size*face_size)
+          face_size=std::sqrt(4*theta*tolerance/kappa);
+        resolved=std::isfinite(face_size) && face_size>0;
+        // Within the pole ring zone of the face (pole_ring_width, the face
+        // stage's owner of it) the face stage seeds fixed rings (spacing <=
+        // the request) and the kernel inserts no point, so no kernel triangle
+        // needs the curvature size; at a cone apex |k|max ~ 1/r would
+        // otherwise drive the size to zero.
+        if (resolved && face_size<controls.face_sizes[use.face] &&
+            pole_distance(use.face, jet)<pole_ring_width(face_size))
+          face_size=controls.face_sizes[use.face];
       }
       if (!resolved) {
         if (!evaluated) failure_status=PHX_MC_INVALID_INPUT;
         failed=true; return {s,0,0};
       }
-      h = std::min(h, controls.face_sizes[use.face]);
-      if (kn > 0 && std::isfinite(controls.face_tolerances[use.face]))
-        h = std::min(h, std::sqrt(6*theta*controls.face_tolerances[use.face]/kn));
+      h = std::min(h, face_size);
     }
     if (!(h > 0) || !std::isfinite(h) || !(speed > 0) || !std::isfinite(speed)) failed = true;
     return {s, speed, h};

@@ -24,6 +24,17 @@ using LocalEdgeKey = std::pair<std::int32_t, std::int32_t>;
 
 LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept;
 
+// A caller's exact stencil for a witness-free boundary vertex: rows of the
+// mesh's source points and binary64 weights, one per row. collapse_boundary
+// verifies it (it never trusts it): the rows are distinct source points, the
+// weights are finite and sum exactly to 1 (an affine combination), and the
+// exact weighted combination of the points equals the vertex's coordinates
+// exactly, axis by axis. Its support is the rows of nonzero weight.
+struct SourceStencil {
+  std::span<const std::int32_t> points;
+  std::span<const double> weights;
+};
+
 class LocalIncidence {
  public:
   class Star {
@@ -75,6 +86,14 @@ class LocalIncidence {
   std::int32_t edge_cell_outside(
       const TetMesh& mesh, std::int32_t first, std::int32_t second,
       std::span<const std::int32_t> removed_slots, std::int32_t seed = -1) const;
+  // Moves one vertex (moved_vertices holds its record) whose current star
+  // is `star`. An interior vertex (dimension three, no witness) goes through
+  // TetMesh::relocate_with_complete_star. A facet or segment vertex
+  // (dimension two or one) is decided on its star: the record's checks, the
+  // facets and segments through it revalidated on their sources with the
+  // moved record (in bank order) and exact positivity of the star cells, in
+  // TetMesh::apply_relocation_edit's order, so verdict and state equal it;
+  // a periodic or implicit-bound mesh is refused (kRejectedTopology).
   TetEditStatus relocate(TetMesh& mesh,
                          std::span<const TetEditVertex> moved_vertices,
                          const Star& star);
@@ -114,8 +133,15 @@ class LocalIncidence {
   // periodic or implicit-bound mesh and an operation outside this contract
   // are refused (kRejectedTopology) and the facet and segment banks are not
   // kept in ID order (a removed row takes the bank's last row).
+  // A witness-free survivor (after its move when s moves) is supported where
+  // it is a source point of r's carrier or, with `survivor_stencil`, where
+  // the verified stencil (SourceStencil) of its coordinates has its support
+  // within the source points common to the groups of r's constrained facets
+  // and segments; a stencil for a witnessed survivor, or one that fails
+  // verification, is refused (kRejectedTopology).
   TetEditStatus collapse_boundary(TetMesh& mesh, const TetEdit& operation,
-                                  const Star& removed_star, const Star* survivor_star);
+                                  const Star& removed_star, const Star* survivor_star,
+                                  const SourceStencil* survivor_stencil = nullptr);
   // Swaps the boundary edge ab for cd (a kRingReconnect `operation`): ab is
   // no constrained segment and lies in exactly two constrained facets, abc
   // and abd (operation.removed_facet_ids), of one source group and
@@ -127,6 +153,21 @@ class LocalIncidence {
   // apply_edit_batch's exact volume check refuses the swap (kRejectedTopology)
   // unless a, b, c and d are exactly coplanar.
   TetEditStatus swap_boundary_edge(TetMesh& mesh, const TetEdit& operation);
+  // Splits the boundary edge ab at the new vertex `vertex` (a never-used
+  // ID): ab is no constrained segment and lies in exactly two constrained
+  // faces, abc and abd, both on the hull. The kSplit edit replaces each cell
+  // around ab by its halves (b, then a, replaced by the vertex; IDs from the
+  // mesh's next cell ID, each with its parent as ancestor) and abc, abd by
+  // (a, m, c), (m, b, c), (b, m, d), (m, a, d) (vertex order, source and
+  // orientation kept; IDs from the next facet ID), whose finite cell IDs
+  // are returned. Verdict and state equal TetMesh::apply_edit_batch on that
+  // edit (whose coverage proof is exact, or the declared pair's of
+  // TetMesh::declared_split_pair), except that a periodic or implicit-bound
+  // mesh and a split outside this contract are refused (kRejectedTopology)
+  // and the facet bank is not kept in ID order.
+  TetEditStatus split_boundary_edge(TetMesh& mesh, std::int32_t a, std::int32_t b,
+                                    const TetEditVertex& vertex,
+                                    std::vector<std::uint64_t>& created_cells);
 
  private:
   struct FaceIdHash {
@@ -161,6 +202,8 @@ class LocalIncidence {
   // this index and the bank indexes.
   TetEditStatus commit_boundary_edit(TetMesh& mesh, const TetEdit& operation,
                                      BoundaryEdit& edit);
+  // The facet or segment vertex branch of relocate.
+  TetEditStatus relocate_boundary(TetMesh& mesh, const TetEditVertex& moved, const Star& star);
 
   const TetMesh* mesh_ = nullptr;
   // Per vertex slot: one incident cell (a hint, checked before use) and the

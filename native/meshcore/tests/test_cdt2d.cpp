@@ -88,6 +88,38 @@ Result run(const Input& in) {
                 mesh, point_count, r.constraint_parents.data()) == PHX_MC_OK);
   PHX_CHECK(phx_mc_mesh_copy_constraint_ratios(
                 mesh, point_count, r.constraint_ratios.data()) == PHX_MC_OK);
+  // The fused shape query and copy agree with the per-bank calls.
+  int64_t shape[4] = {-1, -1, -1, -1};
+  PHX_CHECK(phx_mc_mesh_shape(mesh, shape) == PHX_MC_OK);
+  PHX_CHECK(shape[0] == 2 && shape[1] == point_count && shape[2] == cell_count &&
+            shape[3] == input_count);
+  Result fused;
+  fused.points.resize(r.points.size());
+  fused.cells.resize(r.cells.size());
+  fused.segments.resize(r.segments.size());
+  fused.vertex_map.resize(r.vertex_map.size());
+  fused.constraint_sources.resize(r.constraint_sources.size());
+  fused.constraint_parents.resize(r.constraint_parents.size());
+  fused.constraint_ratios.resize(r.constraint_ratios.size());
+  PHX_CHECK(phx_mc_mesh_copy_all(mesh, point_count, cell_count, input_count,
+                                 fused.points.data(), fused.cells.data(),
+                                 fused.vertex_map.data(), fused.segments.data(),
+                                 fused.constraint_sources.data(),
+                                 fused.constraint_parents.data(),
+                                 fused.constraint_ratios.data()) == PHX_MC_OK);
+  PHX_CHECK(fused.points == r.points && fused.cells == r.cells && fused.segments == r.segments &&
+            fused.vertex_map == r.vertex_map &&
+            fused.constraint_sources == r.constraint_sources &&
+            fused.constraint_parents == r.constraint_parents &&
+            fused.constraint_ratios == r.constraint_ratios);
+  PHX_CHECK(phx_mc_mesh_copy_all(mesh, point_count, cell_count - 1, input_count,
+                                 fused.points.data(), fused.cells.data(),
+                                 fused.vertex_map.data(), fused.segments.data(),
+                                 fused.constraint_sources.data(),
+                                 fused.constraint_parents.data(),
+                                 fused.constraint_ratios.data()) ==
+            (cell_count > 0 ? PHX_MC_CAPACITY_EXCEEDED : PHX_MC_INVALID_ARGUMENT));
+  PHX_CHECK(phx_mc_mesh_shape(nullptr, shape) == PHX_MC_INVALID_ARGUMENT);
   phx_mc_mesh_free(mesh);
   return r;
 }
@@ -842,6 +874,53 @@ void test_wide_heap_matches_binary_heap() {
   }
 }
 
+// Fault caught: a rank that lets a worse entry sit in a later bucket, or a
+// bucket scan that skips a refilled earlier bucket, changes the pop sequence
+// against one std::priority_queue under the same strict total order.
+struct RankedEntry { int priority; int id; };
+struct RankedWorse {
+  bool operator()(const RankedEntry& a, const RankedEntry& b) const {
+    return a.priority != b.priority ? a.priority < b.priority : a.id > b.id;
+  }
+};
+struct RankedRank {
+  static constexpr int kBuckets = 8;
+  static constexpr bool kFifo = false;
+  int operator()(const RankedEntry& e) const { return kBuckets - 1 - e.priority / 7; }
+};
+
+void test_ranked_heap_matches_binary_heap() {
+  using Entry = RankedEntry;
+  using Worse = RankedWorse;
+  SpatialRefinementQueue<Entry, Worse, 4, RankedRank> ranked(0.0, 0.0, 1.0, 1.0, 1.0, 4);
+  PHX_CHECK(!ranked.spatial());
+  std::priority_queue<Entry, std::vector<Entry>, Worse> reference;
+  std::uint64_t state = 4321;
+  auto next = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<int>(state >> 33);
+  };
+  int id = 0;
+  for (int round = 0; round < 3000; ++round) {
+    for (int k = 1 + next() % 3; k > 0; --k) {
+      const Entry entry{next() % 56, id++};
+      ranked.push(entry);
+      reference.push(entry);
+    }
+    for (int k = next() % 4; k > 0 && !ranked.empty(); --k) {
+      PHX_CHECK(ranked.top().id == reference.top().id);
+      ranked.pop();
+      reference.pop();
+    }
+  }
+  while (!ranked.empty()) {
+    PHX_CHECK(ranked.top().id == reference.top().id);
+    ranked.pop();
+    reference.pop();
+  }
+  PHX_CHECK(reference.empty());
+}
+
 // Fault caught: a binary64 dot-product stage whose error bound is too small
 // (or whose sign is flipped) disagrees with the exact integer sign on
 // near-orthogonal configurations whose products round.
@@ -889,6 +968,7 @@ int main() {
   test_refinement_determinism();
   test_spatial_queue_order();
   test_wide_heap_matches_binary_heap();
+  test_ranked_heap_matches_binary_heap();
   test_dot_sign_against_integer_reference();
   test_ruppert_square();
   test_refinement_angle_thresholds();

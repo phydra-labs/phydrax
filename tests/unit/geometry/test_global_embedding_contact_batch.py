@@ -5,6 +5,7 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization import CellBlock, CellGeometrySpec, CellMesh
 from phydrax.discretization._cell_geometry_validity import certify_cell_geometry_validity
 from phydrax.discretization._reference_cell import reference_cell_topology
@@ -193,15 +194,26 @@ def _shared_edge_certificate(
 
 
 def test_shared_edge_certificate_matches_independent_pair_proofs() -> None:
-    combined, values = _shared_edge_certificate((0, 1, 2))
-    first, first_values = _shared_edge_certificate((0, 1))
-    second, second_values = _shared_edge_certificate((0, 2))
-    assert (combined, first, second) == (
-        "e7bdde70079a6c4d0cdad06908c25250f694a80063cdb4f99c31ba3e29f0f170",
-        "9422c999aa1c227826527065f2d115dc31a008121e561bd0399a861b458d2d9f",
-        "e39cd5b18a98ed30838891a6cd501026f74df6a0b69199465046a7d04716bc3f",
-    )
+    _, values = _shared_edge_certificate((0, 1, 2))
+    _, first_values = _shared_edge_certificate((0, 1))
+    _, second_values = _shared_edge_certificate((0, 2))
     assert first_values == tuple(value for value in values if "cell-pair:10:11:" in value)
     assert second_values == tuple(
         value for value in values if "cell-pair:10:12:" in value
+    )
+
+
+# The native vertex-cone screen proves these straight shared edges by their
+# cross-residual cones; the rational route proves them by subdivision, so the
+# certificate identities below are those of the native route.
+@pytest.mark.skipif(
+    not meshcore_available(), reason="the native meshcore library is absent"
+)
+def test_shared_edge_certificate_identities_are_stable() -> None:
+    assert tuple(
+        _shared_edge_certificate(selected)[0] for selected in ((0, 1, 2), (0, 1), (0, 2))
+    ) == (
+        "e7bdde70079a6c4d0cdad06908c25250f694a80063cdb4f99c31ba3e29f0f170",
+        "9422c999aa1c227826527065f2d115dc31a008121e561bd0399a861b458d2d9f",
+        "e39cd5b18a98ed30838891a6cd501026f74df6a0b69199465046a7d04716bc3f",
     )

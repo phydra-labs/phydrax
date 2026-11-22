@@ -1753,8 +1753,11 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
     """Continuous two-directed distance evidence without chart ancestry.
 
     ``reverse_tolerance`` is the bound the source-to-target direction is
-    certified within: the zero-set certificate proves every target facet and
-    every source point within it, or the witness does not revalidate.
+    certified within. For an analytic profile the zero-set certificate proves
+    every target facet and every source point within it, or the witness does
+    not revalidate. For a complete PWL facet stratum both directed distances
+    between the exterior facets of the source and the target's exterior
+    surface are bounded directly; a larger source-to-target bound is a finding.
     """
 
     mesh_id: str

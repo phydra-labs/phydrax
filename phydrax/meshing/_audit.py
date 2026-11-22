@@ -707,19 +707,25 @@ def _patch_zone_adjacency_issues(
     target_rows = np.asarray(incidence.relation.target_indices, dtype=np.int64)[valid]
     patch_order = np.argsort(patch_ids, kind="stable")
     sorted_patch_ids = patch_ids[patch_order]
+    # Every adjacent patch's face IDs, concatenated in patch order: one search
+    # serves all patches (a facet per source triangle makes tens of thousands).
+    requested_parts = [
+        np.asarray(patch.scope.entity_ids, dtype=np.int64) for patch in adjacent_patches
+    ]
+    requested_counts = np.fromiter(
+        map(len, requested_parts), dtype=np.int64, count=len(requested_parts)
+    )
+    requested_all = np.concatenate(requested_parts)
     # Only faces some adjacent patch names are examined; keeping every
     # incidence of those faces (a superset of rows is harmless) leaves their
     # counts and zones exact without grouping the whole relation.
     examined = np.zeros((patch_ids.size,), dtype=np.bool_)
+    requested_position = np.zeros((0,), dtype=np.int64)
     if patch_ids.size:
-        for patch in adjacent_patches:
-            position = np.minimum(
-                np.searchsorted(
-                    sorted_patch_ids, np.asarray(patch.scope.entity_ids, dtype=np.int64)
-                ),
-                patch_ids.size - 1,
-            )
-            examined[patch_order[position]] = True
+        requested_position = np.minimum(
+            np.searchsorted(sorted_patch_ids, requested_all), patch_ids.size - 1
+        )
+        examined[patch_order[requested_position]] = True
     kept = examined[source_rows]
     source_rows, target_rows = source_rows[kept], target_rows[kept]
     # Distinct (patch row, cell row) incidences grouped by patch row; a relation
@@ -757,39 +763,74 @@ def _patch_zone_adjacency_issues(
             cell_zone_codes[cell_order[position[present]]] = code
     incident_zones = cell_zone_codes[incident_cell_rows]
 
+    # Each patch face meets exactly one cell of every adjacent zone: per face
+    # row, the sorted zone codes of its incident cells equal the sorted codes
+    # of its patch's adjacent zones. The binding check and the expected codes
+    # depend on the scope's binding fields and the zone IDs only.
+    mesh_binding = (
+        mesh.mesh_id,
+        mesh.numeric_version,
+        patch_dimension,
+        patch_entities.entity_set_id,
+    )
+    expected_by_key: dict[tuple[object, ...], tuple[int, ...] | None] = {}
+    expected_rows: list[tuple[int, ...]] = []
     for patch in adjacent_patches:
         scope = patch.scope
-        expected = set(patch.adjacent_zone_ids)
-        if (
-            scope.source_id != mesh.mesh_id
-            or scope.source_revision != mesh.numeric_version
-            or scope.entity_dimension != patch_dimension
-            or scope.entity_set_id != patch_entities.entity_set_id
-            or not expected.issubset(zone_codes)
-        ):
-            return ("patch_zone_adjacency",)
-        requested = np.asarray(scope.entity_ids, dtype=np.int64)
-        if patch_ids.size == 0:
-            if requested.size:
-                return ("patch_zone_adjacency",)
-            continue
-        position = np.minimum(
-            np.searchsorted(sorted_patch_ids, requested), patch_ids.size - 1
+        key = (
+            scope.source_id,
+            scope.source_revision,
+            scope.entity_dimension,
+            scope.entity_set_id,
+            patch.adjacent_zone_ids,
         )
-        if not np.all(sorted_patch_ids[position] == requested):
+        if key in expected_by_key:
+            codes = expected_by_key[key]
+        else:
+            expected = set(patch.adjacent_zone_ids)
+            codes = (
+                tuple(sorted(zone_codes[zone] for zone in expected))
+                if key[:4] == mesh_binding and expected.issubset(zone_codes)
+                else None
+            )
+            expected_by_key[key] = codes
+        if codes is None:
             return ("patch_zone_adjacency",)
-        rows = patch_order[position]
-        # Each patch face meets exactly one cell of every adjacent zone.
-        width = len(expected)
-        if not np.all(incident_counts[rows] == width):
-            return ("patch_zone_adjacency",)
+        expected_rows.append(codes)
+    if patch_ids.size == 0:
+        return ("patch_zone_adjacency",) if requested_all.size else ()
+    if not np.all(sorted_patch_ids[requested_position] == requested_all):
+        return ("patch_zone_adjacency",)
+    rows = patch_order[requested_position]
+    widths = np.repeat(
+        np.fromiter(map(len, expected_rows), dtype=np.int64, count=len(expected_rows)),
+        requested_counts,
+    )
+    if not np.all(incident_counts[rows] == widths):
+        return ("patch_zone_adjacency",)
+    patch_of_row = np.repeat(
+        np.arange(len(expected_rows), dtype=np.int64), requested_counts
+    )
+    for width in np.unique(widths).tolist():
+        selected = widths == width
         observed = np.sort(
-            incident_zones[incident_offsets[rows][:, None] + np.arange(width)], axis=1
+            incident_zones[incident_offsets[rows[selected]][:, None] + np.arange(width)],
+            axis=1,
         )
-        expected_codes = np.sort(
-            np.asarray([zone_codes[zone] for zone in expected], dtype=np.int64)
+        expected_codes = np.asarray(
+            [row for row in expected_rows if len(row) == width], dtype=np.int64
+        ).reshape((-1, width))
+        codes_of_patch = (
+            np.cumsum(
+                np.fromiter(
+                    (len(row) == width for row in expected_rows),
+                    dtype=np.int64,
+                    count=len(expected_rows),
+                )
+            )
+            - 1
         )
-        if not np.all(observed == expected_codes):
+        if not np.all(observed == expected_codes[codes_of_patch[patch_of_row[selected]]]):
             return ("patch_zone_adjacency",)
     return ()
 
@@ -812,43 +853,79 @@ def _mesh_evidence_issues(
         for owner in meshes
         for entities in owner.topology.entity_sets
     }
-    # One sorted identity table per entity set serves every scope.
-    sorted_ids: dict[str, np.ndarray] = {}
+    # Each value's binding verdict is a function of its scope's binding fields
+    # (decided once per distinct tuple); its entity IDs are searched together
+    # with every other value's on the same entity set, one sorted identity
+    # table and one search per set. Issues are then emitted in value order.
+    binding_verdicts: dict[tuple[object, ...], bool] = {}
+    verdicts: list[tuple[str | None, bool]] = []
+    requested_by_set: dict[str, list[np.ndarray]] = {}
     for value in (*patches, *zones, *labels, *attributes):
         scope = value.scope
-        binding = bindings.get(scope.entity_set_id)
+        set_id = scope.entity_set_id
+        binding = bindings.get(set_id)
         if binding is None:
+            verdicts.append((None, False))
+            continue
+        key = (
+            set_id,
+            scope.entity_kind,
+            scope.entity_dimension,
+            scope.source_id,
+            scope.source_revision,
+        )
+        unbound = binding_verdicts.get(key)
+        if unbound is None:
+            _, entities = binding
+            owners = tuple(
+                owner
+                for owner in meshes
+                if any(
+                    owned.entity_set_id == set_id for owned in owner.topology.entity_sets
+                )
+            )
+            unbound = (
+                scope.entity_kind != MeshingEntityKind.MESH
+                or scope.entity_dimension != entities.intrinsic_dimension
+                or not any(
+                    scope.source_id == owner.mesh_id
+                    and scope.source_revision == owner.numeric_version
+                    for owner in owners
+                )
+            )
+            binding_verdicts[key] = unbound
+        verdicts.append((set_id, unbound))
+        requested_by_set.setdefault(set_id, []).append(
+            np.asarray(scope.entity_ids, dtype=np.int64)
+        )
+    absent_by_set: dict[str, list[bool]] = {}
+    for set_id, parts in requested_by_set.items():
+        table = np.asarray(bindings[set_id][1].entity_ids, dtype=np.int64)
+        if np.any(table[1:] < table[:-1]):
+            table = np.sort(table)
+        if table.size == 0:
+            absent_by_set[set_id] = [True] * len(parts)
+            continue
+        requested = np.concatenate(parts)
+        position = np.minimum(np.searchsorted(table, requested), table.size - 1)
+        owners_of_rows = np.repeat(
+            np.arange(len(parts), dtype=np.int64),
+            np.fromiter(map(len, parts), dtype=np.int64, count=len(parts)),
+        )
+        misses = np.bincount(
+            owners_of_rows[table[position] != requested], minlength=len(parts)
+        )
+        absent_by_set[set_id] = (misses > 0).tolist()
+    cursors = dict.fromkeys(absent_by_set, 0)
+    for set_id, unbound in verdicts:
+        if set_id is None:
             issues.append("organization_entity_set")
             continue
-        _, entities = binding
-        owners = tuple(
-            owner
-            for owner in meshes
-            if any(
-                value.entity_set_id == scope.entity_set_id
-                for value in owner.topology.entity_sets
-            )
-        )
-        if (
-            scope.entity_kind != MeshingEntityKind.MESH
-            or scope.entity_dimension != entities.intrinsic_dimension
-            or not any(
-                scope.source_id == owner.mesh_id
-                and scope.source_revision == owner.numeric_version
-                for owner in owners
-            )
-        ):
+        if unbound:
             issues.append("organization_binding")
-        table = sorted_ids.get(scope.entity_set_id)
-        if table is None:
-            table = np.asarray(entities.entity_ids, dtype=np.int64)
-            if np.any(table[1:] < table[:-1]):
-                table = np.sort(table)
-            sorted_ids[scope.entity_set_id] = table
-        requested = np.asarray(scope.entity_ids, dtype=np.int64)
-        position = np.minimum(np.searchsorted(table, requested), table.size - 1)
-        if table.size == 0 or not np.all(table[position] == requested):
+        if absent_by_set[set_id][cursors[set_id]]:
             issues.append("organization_entity_ids")
+        cursors[set_id] += 1
     # Rows can conflict only with earlier rows sharing (kind, source, revision, target
     # set, target id); only resolved rows whose key recurs need the pairwise replay.
     group_targets: dict[tuple[object, ...], list[np.ndarray]] = {}

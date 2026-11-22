@@ -133,6 +133,56 @@ def inward_wall_charts(
     return _reversed_charts(charts)
 
 
+def inward_source_frames(charts: SurfaceSourceCharts, /) -> np.ndarray:
+    """Per-corner source-surface frames of an inward wall (``source_frames``).
+
+    Rows follow the wall cells in global-ID order and corners their vertex
+    order (see :func:`phydrax.meshing.prepare_boundary_layers`). At the corner's
+    chart point the normal is the source patch's oriented (outward) normal
+    reversed, into the solid the wall grows into, and the shape operator is
+    S = J I^-1 II I^-1 J^T with I = J^T J and II the second derivatives of the
+    patch along that normal. A corner at a singular chart point (no oriented
+    normal, or a first fundamental form the native small solve refuses as
+    singular or ill-conditioned, as at a pole of a revolved patch) has no
+    frame: a zero row, whose sectors the layer kernel fits.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from ..linalg import SmallLinearSolvePlan, solve_small_linear
+
+    parameters = np.asarray(charts.root_parameters, dtype=np.float64)
+    patches = np.asarray(charts.root_patches, dtype=np.int64)
+    if parameters.shape != (patches.size, 3, 2):
+        raise ValueError("Source frames require triangular wall charts.")
+    frames = np.zeros((patches.size * 3, 9), dtype=np.float64)
+    corner_patches = np.repeat(patches, 3)
+    corner_parameters = parameters.reshape((-1, 2))
+    outward, regular = charts.domain.oriented_normals(corner_patches, corner_parameters)
+    plan = SmallLinearSolvePlan(2)
+    for patch_index in np.unique(corner_patches[regular]).tolist():
+        rows = np.flatnonzero(regular & (corner_patches == patch_index))
+        surface = charts.domain.patches[patch_index].surface
+        points = jnp.asarray(corner_parameters[rows])
+        jacobian = np.asarray(jax.vmap(jax.jacfwd(surface.evaluate))(points))
+        hessian = np.asarray(jax.vmap(jax.hessian(surface.evaluate))(points))
+        normal = -outward[rows]
+        second = np.sum(hessian * normal[:, :, None, None], axis=1)
+        first = np.swapaxes(jacobian, -1, -2) @ jacobian
+        # X = I^-1 J^T, so S = X^T II X.
+        solved = solve_small_linear(
+            plan, jnp.asarray(first), jnp.asarray(np.swapaxes(jacobian, -1, -2))
+        )
+        solvable = np.asarray(solved.successful, dtype=np.bool_)
+        tangent = np.asarray(solved.value, dtype=np.float64)[solvable]
+        shape = np.swapaxes(tangent, -1, -2) @ second[solvable] @ tangent
+        framed = rows[solvable]
+        frames[framed, :3] = normal[solvable]
+        frames[framed, 3:] = shape[:, (0, 0, 0, 1, 1, 2), (0, 1, 2, 1, 2, 2)]
+    order = np.argsort(np.asarray(charts.cell_global_ids, dtype=np.int64), kind="stable")
+    return frames.reshape((patches.size, 3, 9))[order]
+
+
 def outward_surface_charts(charts: SurfaceSourceCharts, /) -> SurfaceSourceCharts:
     """The exact charts in their authored patch orientation.
 
@@ -799,7 +849,11 @@ def brep_layer_core_source(
     control = controls_owner.wall_layer_control(specification.layer_controls[0], charts)
     policy = boundary_layer_owner.BoundaryLayerPolicy()
     layers = boundary_layer_owner.prepare_boundary_layers(
-        charts.mesh, control, wall_association=vertex_association, policy=policy
+        charts.mesh,
+        control,
+        wall_association=vertex_association,
+        policy=policy,
+        source_frames=inward_source_frames(charts),
     )
     core = fixed_core(domain, layers, charts)
     return sources_owner.NativeLayerCoreSource(
@@ -845,5 +899,6 @@ __all__ = [
     "brep_layer_core_source",
     "fixed_core",
     "grown_wall_cells",
+    "inward_source_frames",
     "inward_wall_charts",
 ]

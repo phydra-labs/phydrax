@@ -53,6 +53,14 @@ struct CadFaceMesh {
   std::vector<phx_mc_cad_face_failure> refinement_failures;
 };
 
+// Width of a pole's fixed-ring zone for ring spacing `spacing`: the face
+// stage seeds rings at least this far from a pole (further while the chart
+// stays anisotropic, the whole face when it is narrower) and the chart
+// kernel inserts no point there. The curve stage reverts a curve's
+// curvature-shrunk size to the request within it (no kernel triangle there
+// needs the curvature size).
+inline double pole_ring_width(double spacing) { return 3.0 * spacing; }
+
 // Exact chart segment contact under the shared-vertex/chord rule above.
 bool cad_face_segments_conflict(int32_t a, int32_t b, const std::array<double, 2>& auv,
                                 const std::array<double, 2>& buv, int32_t c, int32_t d,

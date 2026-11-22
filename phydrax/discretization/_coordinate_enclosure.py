@@ -9,7 +9,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
-from functools import cache
+from functools import cache, lru_cache
 from itertools import product
 from math import comb, lcm, prod
 from types import MappingProxyType
@@ -591,6 +591,18 @@ class PreparedLinearCombinationBasis:
                 for function in polynomials
             )
 
+    def integer_terms(
+        self, /
+    ) -> tuple[tuple[tuple[tuple[tuple[int, ...], int], ...], ...], int] | None:
+        """``combine``'s integer basis and common denominator, or ``None``.
+
+        Each basis function is ``numerator / denominator * xi**exponent``
+        summed over its nonzero terms in stored order.
+        """
+        if self._integer_basis is None:
+            return None
+        return self._integer_basis, self._denominator
+
     def combine(
         self, coefficients: Sequence[Sequence[ExactScalar]], /
     ) -> tuple[Expression, ...]:
@@ -919,7 +931,7 @@ def _weight_column(weights: tuple[Fraction, ...], /) -> _WeightColumn:
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _simplex_weight_column(
     alpha: tuple[int, ...], degree: int, parts: int, /
 ) -> _WeightColumn:
@@ -931,7 +943,7 @@ def _simplex_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _box_weight_column(
     alpha: tuple[int, ...], degrees: tuple[int, ...], /
 ) -> _WeightColumn:
@@ -944,7 +956,7 @@ def _box_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _prism_weight_column(
     alpha: tuple[int, ...], triangle_degree: int, line_degree: int, /
 ) -> _WeightColumn:

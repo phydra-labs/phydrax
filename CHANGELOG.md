@@ -3,6 +3,178 @@
 ## Unreleased
 
 ### Added
+- Native octree hex-dominant meshing `phx_mc_hex_dominant` and route
+  `plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`): an octree
+  core refined to half size at the boundary with exact inside/outside, one
+  projected wall layer snapped to feature edges and corners, smoothing with a
+  non-orthogonality and skewness descent and local repair, optional wall
+  layers along wall normals (never thinner than requested, deeper along
+  feature-curve columns where that lowers skewness). Every cell is published
+  as a polyhedron with OpenFOAM face semantics (a non-planar face is the fan
+  from its exact vertex average; requests use
+  `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
+  gives the hexahedron fraction by shape); `prove=True` certifies cell
+  validity (every cell a star about both its centroid and its exact vertex
+  average, which smoothing and repair maintain), the global embedding and the
+  boundary fidelity (220 to 285 s on the 77k to 98k cell rows, process peak
+  13 to 22 GB, against about 5 s for `prove=False`), the proof-only fidelity
+  preparation built on the first proved execution. `plc_hex_dominant`
+  remains the route for trilinear
+  hexahedra. Publication builds polyhedral connectivity from packed native
+  faces (also for conforming Voronoi) and maps each published face to its
+  native face through the cell's own face list; smoothing reuses the face and
+  centroid geometry it has computed and the final repair search stops scoring
+  a move that cannot improve (about 25 % faster, identical meshes). New
+  benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
+  `cartesianMesh` ceilings, timed with `prove=False`): all four are faster
+  than cfMesh with every quality field at least as good, and each row's mesh
+  certifies with `prove=True`. At convex feature curves wall layers do not
+  wrap the curve: each side's layers stop at a corner hexahedron column along
+  the curve, a curve segment whose chord lies farther from the curve than any
+  wall edge from its patch gains a midpoint on the exact curve, and patch
+  vertices next to the curve slide along their patch (quadric with 2 layers:
+  Hausdorff 2.83e-4 to 1.905e-4, maximum skewness 0.992 to 0.745). The
+  benchmark's surface-to-mesh distance is exact (it searched only the 16
+  nearest triangle centroids).
+- Polyhedron faces that are not planar are certified as the fan of triangles
+  from their exact vertex average (`polytope_face_triangles`,
+  `polytope_face_routes`): validity, global embedding (degree routes with fan
+  exterior faces, shared-face contact on the fan) and PLC fidelity use the
+  same triangles, and folded fans, loops winding more than once and zero-area
+  loops are refused. The native star proofs decide fan faces too (apex carried
+  exactly), with results identical to the rational proof. Declared identity
+  change: PLC fidelity triangulates planar exterior faces by ear clipping
+  instead of a fan from the first vertex, so fidelity-route certificates (for
+  example curved conforming Voronoi) change; witnesses name a fan exterior
+  boundary only when one is present.
+- Exact polyhedral contact proofs scale to hex-dominant meshes: face
+  incidence is read once per mesh, each cell pair's shared stratum is
+  prepared once with fan triangles cached, common corners of piece pairs are
+  compared as interned integer ids, and tetrahedron boxes are precomputed
+  (conforming Voronoi with about 1e4 cells certifies in 110 to 150 s;
+  certificates of the 1e3 rows unchanged). A cell pair's declared stratum is
+  a list of convex pieces: shared vertices, shared edges, convex shared faces,
+  the exact triangles (ear-clipped or fanned) of other shared faces, and
+  proved straight chains or convex face unions; a contact is declared only
+  when one piece holds it. Pairs sharing a bent edge chain through a 2:1
+  hanging vertex now certify, and a notch of a non-convex shared face filled
+  differently by the two cells is refused.
+- Exact contacts of star-decomposed polyhedral cells are proved natively
+  (`phx_mc_polyhedral_declared_contacts`: interval filter with exact
+  fallback, on cells whose corners are exact rationals) against the declared
+  shared vertices, edges, convex faces and face fans; only pairs it does not
+  prove run the rational contact pass, so certificate decisions and digests
+  are unchanged. Polyhedral star tables are built once per connectivity and
+  shared read-only by validity, quality and audit. Hex-dominant rows certify
+  in 220 to 285 s instead of 1,220 to 1,500 s; conforming Voronoi with about
+  1e4 cells in about 96 s.
+- Native certification kernels (cell-map validity, polyhedral star validity
+  and decomposition, declared contacts, welded topology) run on meshcore's
+  deterministic worker pool: a `parallelism` argument (from Python, the
+  existing `exact_kernel_parallelism()` control) splits cells and pairs into
+  fixed chunks whose size does not depend on the worker count, and results
+  are byte-identical for every worker count. `PHX_MC_THREAD_SANITIZE` builds
+  meshcore and its tests with ThreadSanitizer.
+- `delaunay_3d` / `regular_3d` (`phx_mc_delaunay_3d` / `phx_mc_regular_3d`)
+  take a `parallelism` argument: from 16384 points, after a sequential
+  prefix, points are inserted by grid regions in parallel on the native
+  worker pool (a region commits a cavity only when it owns every neighboring
+  cell; border points are deferred to passes on shifted grids), and cells are
+  canonicalized in parallel. The canonical output is byte-identical for every
+  parallelism and insertion order (the symbolic perturbation is ordered by
+  input index); parallelism 1 runs the sequential build unchanged.
+- `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
+  (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
+  builders, which remain the path without meshcore; building over 1e6
+  tetrahedra takes 0.5 to 1.2 s instead of 5.4 to 8.3 s.
+- Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
+  restricted-power route stays the default polyhedral fill for PLCs): one
+  native call places conforming seeds (interior seeds mirrored across the
+  surface by exterior ghosts, sharp-edge sector and corner seeds, a
+  body-centered cubic interior, on a dyadic grid, deterministic) and returns
+  the exact Voronoi cells of the interior seeds (closed, convex, exact
+  circumcenter vertices). Nearly cospherical configurations are resolved by
+  mirror-preserving seed moves first and a lone move only when those fail.
+  Certification follows the boundary: exact `volume_plc` coverage when every
+  boundary vertex lies on its facet (axis-aligned planes stay exact),
+  otherwise the new `volume_plc_fidelity` schedule certifies a two-sided
+  distance bound against `maximum_deviation` (default the cell size) through a
+  distance-only `SourceBoundaryDistanceWitness` that accepts PLC sources;
+  global-embedding identities write exact shell volumes beyond Python's
+  decimal limit in hex. New benchmark rows `voronoi-{sphere,cube,torus,
+  steinmetz}` (ledger F14, public `execute(prove=False)`): 1.5-8.2x faster
+  than VoroCrust with smaller boundary distance and volume error on every row
+  (cube rows exact), convexity decided exactly.
+- Native prism layers `phx_mc_prism_layers` (`_meshcore.prism_layers`) grow
+  layers from a closed oriented triangle wall, one column per vertex, with
+  fitted normals and curvature-corrected columns at sharp edges; every prism
+  is certified valid by its nine exact Jacobian terms and the top layer is
+  certified not to self-intersect or meet the wall, with local thinning where
+  a certificate fails; the core is meshed by the fixed-boundary tetrahedral
+  pipeline. `prepare_boundary_layers` uses it for closed, fully grown triangle
+  walls without split ridges, obstacles or periodicity (`FAIL` /
+  `REDUCE_THICKNESS`; other walls keep the existing construction): level
+  heights are measured from the smooth surface the wall vertices sample (on
+  CAD walls the source surface to the fit's accuracy; on a coarse cylinder the
+  rim columns fall up to 2.7 % short), a sector fit whose normal leaves the
+  cone of its face normals falls back to the flat normal, and
+  `BoundaryLayerEvidence.maximum_level_deviations` reports each level's
+  largest departure from the wall triangles. Declared change to layer geometry
+  and identities on those walls. `phx_mc_cell_map_validity` certifies P1
+  prisms natively (same statuses, endpoints and digests as the rational
+  proof), `phx_mc_polyhedral_mesh_entities` / `phx_mc_incidence_order` build
+  tetrahedron, pyramid, prism and hexahedron `CellMesh` topology with the
+  generic numbering, and `phx_mc_point_triangle_nearest_distances` supplies
+  the layer thickness evidence. The F9 sphere at h 0.1 takes 0.26 s for the
+  public call instead of 126 s. Benchmark rows `layers-sphere` /
+  `layers-quadric` (ledger F9) time the public call plus the core, interleaved:
+  0.257 / 1.000 / 0.189 / 0.738 s against Gmsh 0.293 s and cfMesh 1.755 /
+  0.444 / 1.105 s, with full true-distance depth, no thinning and no inverted
+  cells.
+- Native `LocalIncidence::split_boundary_edge` splits a boundary edge lying in
+  two hull facets at a new vertex (the edge star's halves and the four facet
+  halves with source and orientation kept), and `LocalIncidence::relocate`
+  moves facet and segment vertices, revalidating only the facets and segments
+  through the vertex and the star's exact positivity; both match
+  `apply_edit_batch` / `apply_relocation_edit` verdicts and states (randomized
+  differential test on cubes with declared planes) at a per-edit cost that
+  does not grow with the mesh. `apply_edit_batch` admits the split of an edge
+  between two facets of one declared-plane group off the exact edge when the
+  point's exact position lies on the plane and the four halves keep their
+  faces' projected orientation, which proves they tile the two facets.
+- Native exact cell validity `phx_mc_cell_map_validity` for P1 tetrahedra and
+  affine or trilinear hexahedra on exact dyadic coordinates, used by
+  `certify_cell_geometry_validity`: it reproduces the rational proof's
+  statuses, directed determinant endpoints, depths and map digests bit for
+  bit, so certificate and audit identities are unchanged; the rational proof
+  remains the only path without meshcore and for subdivision, expanded
+  margins or out-of-range values. `certify_cell_mesh` on a 967k-tetrahedron
+  cube takes 17 s instead of 79 s, on the 1e6-cell F13 hexahedral parts 43 s.
+- Welded-topology audit counts (facet grouping, orientation, open boundary,
+  collapsed and duplicate cells, vertex and edge star manifoldness) run in the
+  native `phx_mc_welded_topology` kernel when meshcore is loaded, with results
+  identical to the host route (a 68-case differential on adversarial meshes);
+  on a 1e6-tetrahedron cube `certify_cell_mesh` takes 7.8 s instead of 13.1 s.
+  The host route now groups equal padded row keys correctly when a column
+  spans both the padding sentinel and vertex 0, and an out-of-range lookup
+  raises `ValueError`.
+- Host cell-quality dihedral angles and solid corner measures run in meshcore
+  (`phx_mc_quality_dihedral_angles`, `phx_mc_quality_solid_corners`) in the
+  host formulas' binary64 operation order, bit-identical to the NumPy path,
+  which remains without meshcore. Audit patch-zone adjacency, organization
+  entity-id checks and `resolve_mesh_scope_rows` search all scopes of an
+  entity set at once instead of per patch. Certified icosphere L6 (703k
+  cells) executes in 7.6-7.8 s instead of 8.1-8.5 s with one facet, and in
+  19.6-20.3 s instead of 23.4-25.7 s with one facet per triangle (81,920
+  facets); certificate, association and result identities are unchanged.
+- Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
+  a facet or segment vertex into a vertex on its carrier (in place or with a
+  moved survivor) and swap an exactly coplanar boundary edge between two
+  facets of one group, decided and committed on the cavity alone with the
+  same verdict and state as `apply_edit_batch` on the same single operation
+  (a randomized differential test, including boundary insertions in between)
+  at a per-edit cost that does not grow with the mesh; both refuse periodic
+  and implicit-bound meshes.
 - Native overset assembly `phx_mc_overset_assemble` for 3D affine-tetrahedron
   and trilinear-hexahedron parts: exact hole parity against walls,
   conservative cut cells, fringe layers, and donors certified after
@@ -373,6 +545,73 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tests: the layer/core mixed round-trip strata test runs in the normal suite
+  again (447 s, 3.3 GB peak; it was deselected after exceeding 16 GB). The
+  exact layer/core adaptation pipeline costs about 75 ms and 0.5 MB per cell,
+  so the fixture uses a 0.12 core offset (1,280 cells, same topology classes)
+  instead of the archived 0.03 ridge (20,480 cells); `_archived_ridge_source`
+  takes `core_offset`, whose 0.03 default keeps the archived profile.
+- Certified polyhedral meshes (`prove=True`): exact star validity and star
+  decomposition of vertex-defined polyhedra run natively
+  (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)
+  on exact rational vertices (integer rows over each cell's common
+  denominator, interval filter with exact big-integer fallback) with identical
+  certificates, the Python proofs remaining for meshes without meshcore and
+  undecided cells; domain-coverage source matching is screened by outward
+  boxes and binary64 separation before the exact overlap test, and contained
+  triangle overlaps are taken directly; coverage overlaps, shell measures and
+  face triangulation are batched with identical results. Certified conforming
+  Voronoi at ~1e3 cells: cube 18.9 s, sphere 27.0 s (from several minutes),
+  certificates unchanged.
+- Native prism layers on CAD walls are measured from the source surface:
+  `phx_mc_prism_layers` takes optional per-corner source frames (unit normal
+  into the layer domain, shape operator); a smooth sector framed at every
+  corner takes its normal and curvature from them instead of the vertex fit.
+  `brep_layer_core_source` evaluates the frames from the source patches
+  (`inward_source_frames`; corners at singular chart points such as cap
+  centers and poles carry none and are fitted) and passes them to
+  `prepare_boundary_layers(..., source_frames=)`. Levels on a coarse CAD
+  cylinder now lie within 1e-5 of the closed form, rims included (previously
+  up to 2.7 % short); bare STL walls are unchanged. Declared representation
+  change: `BoundaryLayerMesh` gains `source_frames` (validated, in
+  `result_id`, archived; field order, PyTree structure and result ids change),
+  and cold restore reproves the columns from the retained frames, so forged
+  frames are refused.
+- Size compliance judges the quantity each producing kernel bounds, declared
+  once per route in `SIZE_COMPLIANCE_DECLARATIONS` (`phydrax/meshing/_sizing.py`,
+  documented under "Size compliance" in the meshing guide). The native CAD
+  solid route judges the p50/p95 circumradius of the scoped boundary triangles
+  against h/sqrt(2), the chart kernel's bound (report rows
+  `size:<control>:p50_circumradius` / `p95_circumradius`; CAD compliance report
+  ids change); S3 / PLC volume boundary faces keep edge <= h; every other
+  route's size statement is unchanged and recorded in the table. The
+  `phx_mc_cad_mesh_solid` documentation states that the CAD volume passes h
+  unchanged as the circumradius target.
+- Fixed-boundary PLC recovery refuses a source triangle whose smallest-angle
+  sine is below the 2^-22 relative-determinant floor before meshing
+  (`UNRESOLVED` / `INVALID_FACET`, naming the triangle and its polygon, with
+  the sine and the floor as failure evidence), since no cell on such a face can
+  clear the floor. Tetrahedral improvement accepts an edit only if it lowers a
+  stated residual (cells below the floor, then the mesh's lowest score and how
+  many cells have it, then the total score deficit, then the cell count),
+  which bounds the insertion/collapse churn on hostile fixed boundaries (a
+  flat-seam sphere: 164 s -> about 18 s for refinement and improvement).
+  Declared output change: improved meshes on several reference surfaces differ
+  by at most a few tenths of a percent in cell count, with unchanged quality
+  and unmet counts.
+- Process-lifetime host caches keyed by open element degrees, orders,
+  polygon arities, kinematic topologies, quadrature orders and trigonometric
+  tables are bounded (the trigonometric table store is least-recently-used),
+  and custom-JVP interval extensions are registered weakly, so evicted tables
+  are released; results are unchanged.
+- Planar Ruppert refinement ranks bad triangles in exact badness buckets with
+  Triangle-style FIFO order inside a bucket, reuses split and flipped slots in
+  place, writes cells directly in canonical order, sorts few spatial keys with
+  a stable comparison sort, and Python reads native meshes through one fused
+  copy (`phx_mc_mesh_shape`, `phx_mc_mesh_copy_all`). Declared output change:
+  the ring 1e3 and 1e4 refinement rows (1,782 -> 1,758 and 10,170 -> 10,168
+  cells, minimum angle 20.079 -> 20.112 and 23.877 degrees; guarantees
+  unchanged); every other planar output is identical.
 - Fixed-boundary tetrahedral refinement with a size field (CAD volumes,
   surface to tetrahedra) first fills the interior with the body-centered cubic
   lattice whose cells meet the circumradius bound (cube edge 4 * 0.98 * h /
@@ -514,6 +753,29 @@
   the surface topology check groups edges instead of sorting them, and the
   boundary polish and sliver pass allocate less (about 13% fewer cycles on
   the implicit sphere and torus rows).
+- Native CAD face smoothing searches for better vertex positions: below the
+  kernel's angle-pass target a compass search raises the star's worst 3D
+  angle (the fans at fixed curve vertices held the smallest angles), and an
+  edge longer than the face metric's unit is shortened by a step toward its
+  far end; every move keeps the chart star oriented and the kernel's metric
+  circumradius bound. On the quadric (tol = kappa_max h^2 / 4, theta = 1) the
+  minimum 3D angle and the mesh-to-surface distance beat Gmsh at the ledger's
+  four sizes with the same triangle count. Face meshes change. The size
+  guard evaluates the star's starting radius only when a move's radius
+  passes `1/sqrt(2)`, stops at the first cell past its bound, and the
+  long-edge step tests the shortening before the guard (identical meshes;
+  the unit sphere at h = 0.2 drops from 16.3 to 7.9 ms).
+- Native CAD face meshing sizes faces with one meaning of `h`: the face
+  metric is `I/h^2` intersected with the request's curvature tensor
+  `|II| / (4 theta tol)` (the kernel accepts metric circumradius
+  `<= 1/sqrt(2)`, so linear interpolation error `<= theta tol`; where the
+  curvature term does not bind the metric is exactly `I/h^2`). The C entry no
+  longer meshes at `h/sqrt(2)`. Curves take each face's smallest size
+  `min(h, sqrt(4 theta tol / |k|max))` (the request `h` within three sizes of
+  a face pole, where fixed rings replace kernel points); pole rings use the
+  same size; face flips judge Delaunay in the face metric where the curvature
+  term binds; smoothing keeps the kernel's metric circumradius bound. Face
+  and solid meshes change.
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and
@@ -2081,6 +2343,17 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- AT_MOST size compliance rows (CAD chart circumradius, S3 boundary edge)
+  are decided exactly at ties. A unit box meshed at h = 0.5 meets
+  R = h/sqrt(2) exactly, yet its float circumradius rounded above the float
+  bound and was refused. `SizeComplianceDeclaration.exceeds` now takes the
+  per-entity measures (`triangle_circumradius_measures`,
+  `edge_length_measures`): an entity farther from t^2 than a proved
+  forward error bound is decided in floats, otherwise exactly in the stored
+  coordinates (R^2 = a^2 b^2 c^2 / (16 A^2), squared lengths) against
+  t = sqrt(F) h (1 + rel) + abs, with `bound_factor_squared` exact (1/2 for
+  the chart rows). The quantile's order statistics and interpolation weight
+  are numpy's linear ones.
 - The CUDA native loader no longer rewraps its own missing-dependency refusal
   as an invalid companion: `CudaNativeUnavailableError` (an `ImportError`) is
   re-raised as is.

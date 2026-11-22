@@ -9,7 +9,7 @@ import math
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
-from functools import cache, partial
+from functools import lru_cache, partial
 from typing import final, Literal, Protocol, runtime_checkable, TYPE_CHECKING
 from weakref import ref, ReferenceType
 
@@ -827,7 +827,7 @@ class _SimplexControls:
     denominator: int
 
 
-@cache
+@lru_cache(maxsize=64)
 def _control_indices(degree: int, /) -> tuple[_ControlIndex, ...]:
     return tuple(
         (degree - first - second, first, second)

@@ -584,6 +584,12 @@ class TetMesh {
   const std::string& source_map_id() const noexcept { return source_map_id_; }
   BoundaryPolicy policy() const noexcept { return policy_; }
   const TetrahedralComplex& complex() const noexcept { return complex_; }
+  // Reserve storage for `extra` more cells so the next edits that add cells
+  // do not grow the cell arrays. No other effect.
+  void reserve_cells(std::size_t extra) {
+    complex_.reserve(extra, 0);
+    cell_ids_.reserve(complex_.tets.size() + extra);
+  }
 
   // Protect all current facets in the named source groups and their edges and
   // vertices. Returns false without mutation if a group is absent.
@@ -738,6 +744,18 @@ class TetMesh {
   TetEditStatus relocate(std::span<const TetEditVertex> moved_vertices,
                          std::span<const std::uint64_t> affected_cells);
 
+  // Called by refinement: the cavity of the constrained boundary point
+  // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
+  // (finite cell, face slot), cells on both sides of their facets, splitting
+  // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
+  // an embedded split segment has no disk faces and its finite edge star
+  // `segment_star` (cell slots) seeds the cavity instead;
+  // kFound or kRefused (see insert_local_boundary_point).
+  TetCavityStatus boundary_insertion_cavity(
+      const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
+      std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
+      std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const;
+
  private:
   friend std::int32_t flip_to_constrained_delaunay(
       TetMesh&, detail::LocalIncidence&, std::span<const std::uint64_t>,
@@ -804,6 +822,41 @@ class TetMesh {
                                    std::span<const LocalGhostCell> ghosts,
                                    std::span<const std::pair<std::int32_t, int>> cleared_sides,
                                    const RelocationOverlay* overlay);
+  // A split of the edge (a, b) whose removed cells are `cells` keeps its
+  // constrained faces covered by their halves pairwise when (a, b) is no
+  // constrained segment and lies in exactly two constrained faces of those
+  // cells, both cavity boundary faces (their other side kept) of one
+  // declared-plane group: that group, else kNoConstraint. `segment_index`
+  // (segment vertex IDs -> segments_ row), when given, decides whether
+  // (a, b) is a segment without a scan of the bank.
+  std::int32_t declared_split_pair(std::int32_t a, std::int32_t b,
+                                   std::span<const std::int32_t> cells,
+                                   const TetSegmentIndex* segment_index = nullptr) const;
+  // The halves (start, m, third) and (m, end, third) of a constrained face
+  // of declared group `source` keep its projected orientation on the
+  // group's plane, with m's exact position exactly on the plane. For both
+  // faces of a declared_split_pair this proves their halves tile the two
+  // faces exactly: the four fan triangles around m over the quadrilateral
+  // (a, c, b, d) are positively oriented, so m lies in its kernel.
+  bool declared_split_children(std::int32_t source, const std::int32_t* parent_face,
+                               const std::array<std::int32_t, 3>& first_child,
+                               const std::array<std::int32_t, 3>& second_child) const;
+  // apply_edit_batch's coverage of a split constrained face `parent_face`
+  // (source `source`) of the removed cells `cells` by its halves: exact
+  // (exact_split_coverage), or by its declared pair.
+  bool split_face_covered(const std::int32_t* parent_face, std::int32_t source,
+                          const std::array<std::int32_t, 3>& first_child,
+                          const std::array<std::int32_t, 3>& second_child,
+                          std::span<const std::int32_t> cells,
+                          const TetSegmentIndex* segment_index = nullptr) const;
+  // apply_edit_batch's checks of the vertex `inserted` splitting the edge
+  // (a, b), which is no constrained segment, of the removed cells `cells`:
+  // kApplied, or the refusal.
+  TetEditStatus unconstrained_split_point_status(std::int32_t a, std::int32_t b,
+                                                 const std::array<std::uint64_t, 2>& edge,
+                                                 const TetEditVertex& inserted,
+                                                 std::span<const std::int32_t> cells,
+                                                 const TetSegmentIndex* segment_index = nullptr) const;
   // Called by refinement and improvement: cones a star-shaped cavity to one
   // new interior vertex; created cell IDs are returned in cone order. The
   // cone buries exactly the cavity vertices `removed_vertices` (sorted
@@ -845,17 +898,6 @@ class TetMesh {
                                             std::span<const std::size_t> segment_rows,
                                             std::vector<std::uint64_t>& created_cells,
                                             const TetSegmentIndex* segment_index);
-  // Called by refinement: the cavity of the constrained boundary point
-  // `vertex` (carrier and source witness) whose disk faces are `disk_sides`
-  // (finite cell, face slot), cells on both sides of their facets, splitting
-  // the segment `split_segment` (vertex slots; {-1, -1} for a facet point);
-  // an embedded split segment has no disk faces and its finite edge star
-  // `segment_star` (cell slots) seeds the cavity instead;
-  // kFound or kRefused (see insert_local_boundary_point).
-  TetCavityStatus boundary_insertion_cavity(
-      const TetEditVertex& vertex, std::span<const std::pair<std::int32_t, int>> disk_sides,
-      std::array<std::int32_t, 2> split_segment, std::span<const std::int32_t> segment_star,
-      std::vector<std::int32_t>& cells, const TetSegmentIndex* segment_index) const;
   // Called by refinement and improvement: the star-shaped cavity of `point`
   // reached by walking from cell slot `start`.
   TetCavityStatus insertion_cavity(std::int32_t start, const double* point,

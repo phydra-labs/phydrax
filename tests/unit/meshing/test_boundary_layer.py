@@ -418,6 +418,14 @@ def test_boundary_layer_scenario_2() -> None:
         evidence.maximum_thicknesses, SCHEDULE.thicknesses, rtol=1e-6
     )
     np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-6)
+    # The first level's deviation from the wall triangles bounds its thickness
+    # spread about the schedule (no column is thinned).
+    first = SCHEDULE.thicknesses[0]
+    assert float(evidence.maximum_level_deviations[0]) == max(
+        abs(float(evidence.minimum_thicknesses[0]) - first),
+        abs(float(evidence.maximum_thicknesses[0]) - first),
+    )
+    assert np.all(np.isfinite(np.asarray(evidence.maximum_level_deviations)))
     assert evidence.fan_column_count == 0
     assert result.closed_cap
     # ty: ignore[unresolved-attribute]

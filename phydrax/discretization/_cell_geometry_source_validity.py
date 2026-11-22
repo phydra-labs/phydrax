@@ -370,6 +370,163 @@ def _polyhedron_proof(
     *,
     star_tables: object,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact star proof of polyhedra: native where decided, rational otherwise.
+
+    ``phx_mc_polyhedral_star_validity`` evaluates the same exact statements
+    on each cell's rational vertices (status and directed endpoints are
+    identical); cells with a non-rational vertex or beyond its counts, and
+    every cell without the native library, keep the rational proof.
+    """
+    from .._exact_kernels import exact_kernel_parallelism
+    from .._meshcore import (
+        common_denominator_rows,
+        meshcore_available,
+        polyhedral_star_validity,
+    )
+    from ._cell_geometry_validity import CellValidityStatus, PolyhedralStarTables
+
+    if not isinstance(star_tables, PolyhedralStarTables):
+        raise TypeError("star_tables must be the canonical PolyhedralStarTables record.")
+    if not selected_rows.size or not meshcore_available():
+        return _rational_polyhedron_proof(
+            mesh,
+            block_index,
+            block,
+            selected_rows,
+            exact_by_vertex,
+            policy,
+            star_tables=star_tables,
+        )
+    global_offset = sum(prior.cell_count for prior in mesh.blocks[:block_index])
+    star_cells = np.asarray(star_tables.star_cell, dtype=np.int64)
+    output_by_global = np.full(
+        (
+            max(int(star_cells.max(initial=-1)), global_offset + int(selected_rows.max()))
+            + 1,
+        ),
+        -1,
+        dtype=np.int64,
+    )
+    output_by_global[global_offset + selected_rows] = np.arange(
+        selected_rows.size, dtype=np.int64
+    )
+    star_outputs = output_by_global[star_cells]
+    selected_stars = np.flatnonzero(star_outputs >= 0)
+    selected_stars = selected_stars[
+        np.argsort(star_outputs[selected_stars], kind="stable")
+    ]
+    star_bounds = np.searchsorted(
+        star_outputs[selected_stars], np.arange(selected_rows.size + 1)
+    ).tolist()
+    star_faces = np.asarray(star_tables.star_face, dtype=np.int64).tolist()
+    star_first = np.asarray(star_tables.star_first, dtype=np.int64).tolist()
+    star_second = np.asarray(star_tables.star_second, dtype=np.int64).tolist()
+    face_offsets_all = np.zeros((star_tables.face_sizes.size + 1,), dtype=np.int64)
+    np.cumsum(star_tables.face_sizes, out=face_offsets_all[1:])
+    face_starts = face_offsets_all.tolist()
+    face_corners = np.asarray(star_tables.face_corner_vertex, dtype=np.int64).tolist()
+    block_vertices = np.asarray(block.vertices, dtype=np.int64)
+    valid_vertices = np.asarray(block.vertex_valid, dtype=np.bool_)
+    native_rows: list[int] = []
+    integers: list[int] = []
+    scales: list[int] = []
+    point_offsets = [0]
+    cell_faces = [0]
+    face_offsets = [0]
+    face_values: list[int] = []
+    star_offsets = [0]
+    stars: list[tuple[int, int, int]] = []
+    selected_list = selected_rows.tolist()
+    for output, row in enumerate(selected_list):
+        vertices = block_vertices[row, valid_vertices[row]].tolist()
+        rows = common_denominator_rows(
+            tuple(exact_by_vertex[vertex] for vertex in vertices)
+        )
+        if rows is None:
+            continue
+        local = {vertex: index for index, vertex in enumerate(vertices)}
+        faces: dict[int, int] = {}
+        cell_stars: list[tuple[int, int, int]] = []
+        complete = True
+        for star in selected_stars[
+            star_bounds[output] : star_bounds[output + 1]
+        ].tolist():
+            face = star_faces[star]
+            if face not in faces:
+                loop = face_corners[face_starts[face] : face_starts[face + 1]]
+                if any(vertex not in local for vertex in loop):
+                    complete = False
+                    break
+                faces[face] = len(faces)
+                face_values.extend(local[vertex] for vertex in loop)
+                face_offsets.append(len(face_values))
+            if star_first[star] not in local or star_second[star] not in local:
+                complete = False
+                break
+            cell_stars.append(
+                (faces[face], local[star_first[star]], local[star_second[star]])
+            )
+        if not complete:
+            del face_values[face_offsets[cell_faces[-1]] :]
+            del face_offsets[cell_faces[-1] + 1 :]
+            continue
+        native_rows.append(output)
+        integers.extend(rows[0])
+        scales.append(rows[1])
+        point_offsets.append(point_offsets[-1] + len(vertices))
+        cell_faces.append(len(face_offsets) - 1)
+        stars.extend(cell_stars)
+        star_offsets.append(len(stars))
+    status = np.full(
+        (selected_rows.size,), int(CellValidityStatus.UNRESOLVED), dtype=np.int32
+    )
+    lower = np.full((selected_rows.size,), np.nan, dtype=np.float64)
+    upper = np.full((selected_rows.size,), np.nan, dtype=np.float64)
+    decided = np.zeros((selected_rows.size,), dtype=np.bool_)
+    if native_rows:
+        native = np.asarray(native_rows, dtype=np.int64)
+        (
+            decided[native],
+            status[native],
+            lower[native],
+            upper[native],
+        ) = polyhedral_star_validity(
+            np.asarray(point_offsets, dtype=np.int64),
+            integers + scales,
+            np.asarray(cell_faces, dtype=np.int64),
+            np.asarray(face_offsets, dtype=np.int64),
+            np.asarray(face_values, dtype=np.int64),
+            np.asarray(star_offsets, dtype=np.int64),
+            np.asarray(stars, dtype=np.int64).reshape((-1, 3)),
+            float(policy.relative_determinant_floor),
+            parallelism=exact_kernel_parallelism(),
+        )
+    pending = np.flatnonzero(~decided)
+    if pending.size:
+        rational = _rational_polyhedron_proof(
+            mesh,
+            block_index,
+            block,
+            selected_rows[pending],
+            exact_by_vertex,
+            policy,
+            star_tables=star_tables,
+        )
+        status[pending], lower[pending], upper[pending] = rational
+    return status, lower, upper
+
+
+def _rational_polyhedron_proof(
+    mesh: CellMesh,
+    block_index: int,
+    block: CellBlock | PolyhedralBlock,
+    selected_rows: np.ndarray,
+    exact_by_vertex: Mapping[int, ExactPoint],
+    policy: CellValidityPolicy,
+    /,
+    *,
+    star_tables: object,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     from ._cell_geometry_validity import CellValidityStatus, PolyhedralStarTables
 
     if not isinstance(star_tables, PolyhedralStarTables):

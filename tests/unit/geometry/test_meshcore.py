@@ -2365,6 +2365,64 @@ def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_ver
         assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
+def _seamed_tetrahedron(
+    lift: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # The unit corner tetrahedron with edge AB doubled on its bottom and
+    # front faces by a point M near AB's midpoint, lifted `lift` outward off
+    # both; the seam triangle (A, M, B), last, closes the gap between the two
+    # paths. Each triangle is its own facet bounding region 0.
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.5, -lift, -lift],
+        ]
+    )
+    triangles = np.asarray(
+        [[0, 2, 4], [2, 1, 4], [0, 1, 3], [0, 3, 2], [1, 2, 3], [0, 4, 1]], dtype=np.int32
+    )
+    count = triangles.shape[0]
+    return (
+        points,
+        np.arange(0, 3 * count + 1, 3, dtype=np.int64),
+        triangles.reshape((-1,)),
+        np.arange(count, dtype=np.int32),
+        np.tile(np.asarray([[-1, 0]], dtype=np.int32), (count, 1)),
+    )
+
+
+def test_fixed_boundary_refuses_a_triangle_flat_to_rounding() -> None:
+    # A fixed boundary keeps every source triangle, and a cell on a triangle
+    # has relative determinant at most the sine of the triangle's smallest
+    # angle: a seam triangle whose sine is below the kernels' determinant
+    # floor 2^-22 can carry no admissible cell, so recovery refuses it before
+    # meshing, naming the triangle with its sine and the floor.
+    seam = _seamed_tetrahedron(1e-12)
+    with pytest.raises(PlcSourceFailure) as refusal:
+        recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.FIXED)
+    failure = refusal.value
+    assert failure.status is MeshcoreStatus.UNRESOLVED
+    assert failure.reason is PlcFailureReason.INVALID_FACET
+    assert (failure.first_kind, failure.first) == (PlcEntityKind.FACET, 5)
+    assert (failure.second_kind, failure.second) == (PlcEntityKind.POLYGON, 5)
+    a, m, b = seam[0][[0, 4, 1]]
+    lengths = np.sort(
+        [np.linalg.norm(m - a), np.linalg.norm(b - m), np.linalg.norm(a - b)]
+    )
+    sine = np.linalg.norm(np.cross(m - a, b - a)) / (lengths[2] * lengths[1])
+    assert failure.certified_deviation == pytest.approx(sine, rel=1e-6)
+    assert failure.declared_bound == 2.0**-22
+    # A conforming boundary may split the seam, and a seam lifted to a sine
+    # above the floor is a valid fixed boundary.
+    recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.CONFORMING)
+    lifted = _seamed_tetrahedron(1e-6)
+    recovered = recover_plc_3d(*lifted, boundary_policy=PlcBoundaryPolicy.FIXED)
+    assert recovered.faces.shape[0] == 6
+
+
 def test_declared_planes_recover_a_rotated_cube_missing_its_face_diagonals() -> None:
     # Corners are the correct roundings of the exact corners of a rotated
     # cube of half side 1/8, and each face declares its exact plane (origin
@@ -3261,6 +3319,90 @@ def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
     _assert_same_arrays(*meshes)
 
 
+def _improvement_residual(
+    mesh: TetMesh3D, radius_edge_bound: float, dihedral_degrees: float
+) -> tuple[int, float]:
+    # Independent measure of improvement's residual: cells whose relative
+    # determinant (|det| over the largest edge product at a corner) is at
+    # most 2^-22, and the summed score deficit 1 - min(1, dihedral / target,
+    # bound / radius-edge) of the others.
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    edges = corners[:, 1:] - corners[:, :1]
+    determinant = np.einsum("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
+    pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    length = {
+        (i, j): np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in pairs
+    }
+    length.update({(j, i): value for (i, j), value in tuple(length.items())})
+    products = np.max(
+        [
+            np.prod([length[(k, other)] for other in range(4) if other != k], axis=0)
+            for k in range(4)
+        ],
+        axis=0,
+    )
+    below = np.abs(determinant) / products <= 2.0**-22
+    normals = [
+        np.cross(corners[:, b] - corners[:, a], corners[:, c] - corners[:, a])
+        for a, b, c in ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
+    ]
+    normals = [normal / np.linalg.norm(normal, axis=1)[:, None] for normal in normals]
+    cosines = [
+        -np.einsum("ij,ij->i", normals[i], normals[j])
+        for i in range(4)
+        for j in range(i + 1, 4)
+    ]
+    dihedral = np.degrees(np.arccos(np.clip(np.max(cosines, axis=0), -1.0, 1.0)))
+    squared = [np.einsum("ij,ij->i", edge, edge) for edge in edges.transpose(1, 0, 2)]
+    numerator = (
+        squared[0][:, None] * np.cross(edges[:, 1], edges[:, 2])
+        + squared[1][:, None] * np.cross(edges[:, 2], edges[:, 0])
+        + squared[2][:, None] * np.cross(edges[:, 0], edges[:, 1])
+    )
+    circumradius = np.linalg.norm(numerator, axis=1) / (2.0 * np.abs(determinant))
+    shortest = np.min([length[pair] for pair in pairs], axis=0)
+    radius_edge = circumradius / shortest
+    score = np.minimum(
+        np.minimum(dihedral / dihedral_degrees, radius_edge_bound / radius_edge), 1.0
+    )
+    return int(below.sum()), float(np.sum(1.0 - score[~below]))
+
+
+def test_improvement_ends_on_a_fixed_boundary_flat_to_rounding() -> None:
+    # The recovered sphere surface of a solid whose equator ring is doubled 2
+    # ulps apart (22 seam triangles flat to rounding; recovery now refuses
+    # it, so the fixture holds the mesh recovered before that check). Cells on
+    # the seam stay below the determinant floor whatever improvement does.
+    # Accepting every edit that improved its cells' worst-first scores let
+    # insertions trade one poor cell for many slightly better ones and
+    # collapses trade them back (tens of thousands of edits, minutes);
+    # every accepted edit now lowers the residual (below-floor cells, then the
+    # mesh's worst score and its multiplicity, then total score deficit, then
+    # cell count), and the run ends UNRESOLVED with the seam's cells reported
+    # below the floor.
+    with np.load(Path(__file__).with_name("flat_seam_sphere_recovery.npz")) as fixture:
+        mesh = TetMesh3D(
+            fixture["points"],
+            fixture["tetrahedra"],
+            fixture["tetrahedron_regions"],
+            fixture["faces"],
+            fixture["face_sources"],
+            fixture["segments"],
+            fixture["segment_sources"],
+            boundary_policy=PlcBoundaryPolicy.FIXED,
+            protection_radii=fixture["protection_radii"],
+        )
+    points = mesh.arrays().points.shape[0]
+    mesh.refine(radius_edge_bound=2.0, sizes=np.full((points,), 0.3))
+    below, deficit = _improvement_residual(mesh, 2.0, 15.5)
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.5)
+    assert run.status is MeshcoreStatus.UNRESOLVED
+    assert np.any(mesh.unmet().criteria == 4)  # PHX_MC_TET_UNMET_VALIDITY
+    after_below, after_deficit = _improvement_residual(mesh, 2.0, 15.5)
+    assert after_below < below or (after_below == below and after_deficit < deficit)
+
+
 def test_fixed_boundary_refinement_packs_the_interior_as_the_bounding_lattice() -> None:
     # A uniform circumradius bound h on a fixed boundary: every cell meets it,
     # and refinement inserts about as many vertices as the body-centered cubic
@@ -3316,7 +3458,9 @@ def test_fixed_boundary_lattice_reaches_a_non_convex_interior() -> None:
     depth = 0.4 - np.hypot(np.hypot(inserted[:, 0], inserted[:, 1]) - 1.0, inserted[:, 2])
     deep = inserted[depth > 0.5 * lattice]
     angle = np.arctan2(deep[:, 1], deep[:, 0]) + np.pi
-    sectors = np.bincount(np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8)
+    sectors = np.bincount(
+        np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8
+    )
     assert sectors.max() <= 1.1 * sectors.min()
 
 
@@ -3405,7 +3549,9 @@ print(growth if sys.platform == "darwin" else 1024 * growth)
     return int(completed.stdout.split()[-1])
 
 
-def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: Path) -> None:
+def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(
+    tmp_path: Path,
+) -> None:
     # A 100:1:1 bar at h = 0.2: the lattice sites are listed sparsely (the
     # box's rows, or per recovered cell), so seeding costs the bar's box or
     # volume, not its bounding box's diagonal cubed (a dense site table over
@@ -3416,7 +3562,9 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: P
     surface = _box_surface(
         (np.linspace(0.0, 100.0, 501), np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6))
     )
-    growth = _refine_peak_growth(tmp_path, surface, f"np.full((points.shape[0],), {size})")
+    growth = _refine_peak_growth(
+        tmp_path, surface, f"np.full((points.shape[0],), {size})"
+    )
     assert growth < 64 * 2**20
     recovery = _recover(*surface)
     mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
@@ -3433,7 +3581,9 @@ def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(tmp_path: P
     inserted = np.asarray(mesh.arrays().points)[recovery.points.shape[0] :]
     depth = np.min(np.minimum(inserted, [100.0, 1.0, 1.0] - inserted), axis=1)
     deep = inserted[depth > lattice]
-    stretches = np.bincount(np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10)
+    stretches = np.bincount(
+        np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10
+    )
     assert stretches.max() <= 1.15 * stretches.min()
 
 

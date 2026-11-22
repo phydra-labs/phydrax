@@ -67,6 +67,7 @@ from ._mesh_certificates import (
     MeshCertificateBinding,
 )
 from ._meshing_domain import MeshingDomain, SourcePreparation
+from ._planar_chain_embedding import polytope_face_triangles
 from ._planar_primitives import (
     area2 as _polygon_area2,
     box_overlap_pairs,
@@ -115,6 +116,7 @@ if TYPE_CHECKING:
         RationalBSplineSurfaceSpan,
     )
     from ..meshing._scope import _SourceEntityScopes
+    from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
     from .implicit._adaptive_discovery import (
         AdaptiveImplicitBoundarySource,
         AdaptiveImplicitSurface,
@@ -1617,7 +1619,7 @@ def _validate_source_fidelity_witness(
         return
 
     if isinstance(witness, SourceBoundaryDistanceWitness):
-        _validate_analytic_profile_distance_witness(mesh, geometry, source, witness)
+        _distance_witness_evidence(mesh, geometry, source, witness)
         return
     if isinstance(witness, SurfaceEnvelopeDistanceWitness):
         _validate_surface_envelope_witness(mesh, geometry, source, witness)
@@ -4004,14 +4006,202 @@ def _outward_boundary_surface(
     return vertices, surface
 
 
-def _validate_analytic_profile_distance_witness(
+# Outcomes hold only the three exact distance bounds, never operands.
+_PiecewiseLinearDistanceEvidence: TypeAlias = tuple[Fraction, Fraction, Fraction]
+_PIECEWISE_LINEAR_DISTANCE_EVIDENCE: LiveProofLedger[_PiecewiseLinearDistanceEvidence] = (
+    LiveProofLedger()
+)
+# Allowance of the binary64 distance evaluations, relative to the coordinate
+# scale: far above their few-ulp error.
+_DISTANCE_ROUNDING = 2.0**-40
+
+
+def _exact_point_shadows(points: Sequence[ExactPoint3], /) -> tuple[np.ndarray, float]:
+    """Lower binary64 endpoints of exact points and the largest endpoint gap."""
+    lower = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=False) for value in point]
+            for point in points
+        ],
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        [
+            [coefficient_endpoint(value, upper=True) for value in point]
+            for point in points
+        ],
+        dtype=np.float64,
+    )
+    return lower, float(np.max(upper - lower))
+
+
+def _exterior_target_triangles(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[tuple[int, ...], np.ndarray, float]:
+    """Exterior facet IDs, binary64 shadows (n, 3, 3) of their exact triangles,
+    and a bound of every shadow vertex's distance to its exact point.
+
+    A polyhedral mesh's exterior faces are the exact triangles
+    ``polytope_face_triangles`` assigns them: the polygon of a planar face,
+    the fan from the vertex average of a non-planar one.
+    """
+    if any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
+        from ..discretization._cell_complex import PolyhedralConnectivity
+
+        connectivity = mesh.connectivity
+        if not isinstance(connectivity, PolyhedralConnectivity):
+            raise TypeError("Polyhedral blocks require a PolyhedralConnectivity mesh.")
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+        face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+        rows = np.flatnonzero(np.asarray(mesh.boundary_masks[2], dtype=np.bool_))
+        if not rows.size:
+            raise ValueError("Source distance evidence requires an exterior surface.")
+        exact = _polyhedral_vertex_source_coordinates(mesh, geometry)
+        vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+        points: list[ExactPoint3] = []
+        for row in rows.tolist():
+            loop = vertex_ids[values[offsets[row] : offsets[row + 1]]].tolist()
+            for triangle in polytope_face_triangles(
+                tuple(exact[vertex] for vertex in loop)
+            ):
+                points.extend(triangle)
+        shadows, gap = _exact_point_shadows(points)
+        return (
+            tuple(sorted(face_ids[rows].tolist())),
+            shadows.reshape((-1, 3, 3)),
+            2.0 * gap,
+        )
+    facet_ids, triangles = _target_boundary_triangles(mesh, geometry)
+    shadows, gap = _exact_point_shadows(
+        [point for triangle in triangles for point in triangle]
+    )
+    return facet_ids, shadows.reshape((-1, 3, 3)), 2.0 * gap
+
+
+def _piecewise_linear_distance_evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
     witness: SourceBoundaryDistanceWitness,
     /,
-) -> None:
-    _analytic_profile_distance_evidence(mesh, geometry, source, witness)
+) -> _PiecewiseLinearDistanceEvidence:
+    """Target-to-PLC lower/upper and PLC-to-target upper distance bounds.
+
+    The target is the mesh's exterior surface (its exact facets), the source
+    the exterior facets of a declared binary64 PWL domain. Evidence this
+    process completed for the same live, unchanged operands and source
+    identity is not recomputed.
+    """
+    from ._domain_coverage import PiecewiseLinearDomain
+    from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+
+    if not isinstance(source, PiecewiseLinearBoundarySource) or not isinstance(
+        source.domain, PiecewiseLinearDomain
+    ):
+        raise TypeError(
+            "A distance-only PWL witness requires a declared PiecewiseLinearDomain source."
+        )
+    if source.entity_dimension != 2 or not source.is_full_scope:
+        raise ValueError("A distance-only PWL witness binds the complete facet stratum.")
+    operands = (mesh, geometry, witness)
+    parameters = (source.source_id, source.source_revision, source.source_query_id)
+    evidence = _PIECEWISE_LINEAR_DISTANCE_EVIDENCE.find(operands, parameters=parameters)
+    if evidence is None:
+        fingerprint = live_content_fingerprint(operands)
+        evidence = _computed_piecewise_linear_distance_evidence(
+            mesh, geometry, source, witness
+        )
+        _PIECEWISE_LINEAR_DISTANCE_EVIDENCE.record(
+            operands, fingerprint, evidence, parameters=parameters
+        )
+    return evidence
+
+
+def _computed_piecewise_linear_distance_evidence(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: PiecewiseLinearBoundarySource,
+    witness: SourceBoundaryDistanceWitness,
+    /,
+) -> _PiecewiseLinearDistanceEvidence:
+    from ._triangle_surface_distance import directed_distance_bounds
+
+    source.require_current()
+    if (
+        witness.mesh_id != mesh.mesh_id
+        or witness.geometry_id != cell_geometry_id(geometry)
+        or witness.topology_id != mesh.topology_id
+        or witness.source_id != source.source_id
+        or witness.source_revision != source.source_revision
+        or witness.source_query_id != source.source_query_id
+    ):
+        raise ValueError(
+            "PWL source distance witness is bound to different source, mesh, or geometry inputs."
+        )
+    renewed = SourceBoundaryDistanceWitness(
+        mesh_id=witness.mesh_id,
+        geometry_id=witness.geometry_id,
+        topology_id=witness.topology_id,
+        source_id=witness.source_id,
+        source_revision=witness.source_revision,
+        source_query_id=witness.source_query_id,
+        reverse_tolerance=witness.reverse_tolerance,
+        target_facet_global_ids=np.asarray(witness.target_facet_global_ids),
+    )
+    if renewed.witness_id != witness.witness_id:
+        raise ValueError(
+            "PWL source distance witness identity does not reproduce its target extent."
+        )
+    facet_ids, targets, gap = _exterior_target_triangles(mesh, geometry)
+    if set(facet_ids) != set(_integer_vector(witness.target_facet_global_ids)):
+        raise ValueError(
+            "PWL distance witness must bind every target exterior facet exactly once."
+        )
+    domain = source.domain
+    rows = np.asarray(source.source_rows, dtype=np.int64)
+    facets = np.asarray(domain.facets, dtype=np.int64)[rows]
+    exterior = np.any(np.asarray(domain.facet_regions, dtype=np.int64)[rows] < 0, axis=1)
+    if not np.any(exterior):
+        raise ValueError("The PWL source has no exterior facet.")
+    vertices = np.asarray(domain.vertices, dtype=np.float64)
+    surface = facets[exterior]
+    mesh_lower, mesh_upper = directed_distance_bounds(targets, vertices, surface)
+    _, source_upper = directed_distance_bounds(
+        vertices[surface],
+        targets.reshape((-1, 3)),
+        np.arange(3 * targets.shape[0], dtype=np.int64).reshape((-1, 3)),
+    )
+    points = np.concatenate(
+        (vertices[surface].reshape((-1, 3)), targets.reshape((-1, 3)))
+    )
+    scale = float(np.max(np.abs(points)) + np.max(np.ptp(points, axis=0)))
+    allowance = Fraction.from_float(_DISTANCE_ROUNDING * scale) + Fraction.from_float(gap)
+    return (
+        max(Fraction(0), Fraction.from_float(mesh_lower) - allowance),
+        Fraction.from_float(mesh_upper) + allowance,
+        Fraction.from_float(source_upper) + allowance,
+    )
+
+
+def _distance_witness_evidence(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    source: SourceBoundaryQuery,
+    witness: SourceBoundaryDistanceWitness,
+    /,
+) -> _PiecewiseLinearDistanceEvidence:
+    """Distance bounds of a distance-only witness: target-to-source lower and
+    upper, source-to-target upper; PWL sources bound both directions directly,
+    analytic profiles through their zero-set certificate."""
+    from ._piecewise_linear_boundary import PiecewiseLinearBoundarySource
+
+    if isinstance(source, PiecewiseLinearBoundarySource):
+        return _piecewise_linear_distance_evidence(mesh, geometry, source, witness)
+    mesh_lower, mesh_upper, source_upper, _ = _analytic_profile_distance_evidence(
+        mesh, geometry, source, witness
+    )
+    return mesh_lower, mesh_upper, source_upper
 
 
 def _face_reference_chart(
@@ -5994,7 +6184,7 @@ def _certify_surface_envelope_fidelity(
     )
 
 
-def _certify_analytic_profile_distance_fidelity(
+def _certify_distance_witness_fidelity(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     source: SourceBoundaryQuery,
@@ -6004,7 +6194,7 @@ def _certify_analytic_profile_distance_fidelity(
     tolerance: float,
     maximum_normal_deviation: float | None,
 ) -> SourceFidelityCertificate:
-    mesh_lower, mesh_upper, source_upper, _ = _analytic_profile_distance_evidence(
+    mesh_lower, mesh_upper, source_upper = _distance_witness_evidence(
         mesh, geometry, source, witness
     )
     limit = Fraction.from_float(float(tolerance))
@@ -6024,16 +6214,16 @@ def _certify_analytic_profile_distance_fidelity(
                 "source_fidelity_tolerance",
                 "unresolved",
                 "mesh",
-                detail="The continuous target-to-profile distance upper bound exceeds the request.",
+                detail="The continuous target-to-source distance upper bound exceeds the request.",
             )
         )
-    if source_upper > limit:
+    if source_upper > min(limit, Fraction.from_float(witness.reverse_tolerance)):
         findings.append(
             MeshCertificateFinding(
                 "source_fidelity_tolerance",
                 "unresolved",
                 "mesh",
-                detail="The continuous profile-to-target distance upper bound exceeds the request.",
+                detail="The continuous source-to-target distance upper bound exceeds the request or the witness's reverse tolerance.",
             )
         )
     if maximum_normal_deviation is not None:
@@ -6042,7 +6232,7 @@ def _certify_analytic_profile_distance_fidelity(
                 "source_distance_normal",
                 "unresolved",
                 "mesh",
-                detail="A profile distance witness does not prove oriented-normal deviation.",
+                detail="A distance-only witness does not prove oriented-normal deviation.",
             )
         )
     binding = MeshCertificateBinding(
@@ -6820,7 +7010,7 @@ def certify_source_fidelity(
             "source must implement the immutable SourceBoundaryQuery contract."
         )
     if isinstance(witness, SourceBoundaryDistanceWitness):
-        return _certify_analytic_profile_distance_fidelity(
+        return _certify_distance_witness_fidelity(
             mesh,
             geometry,
             source,

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import reduce
-from math import gcd, lcm
+from math import gcd, inf, lcm, nextafter
 from typing import TypeAlias
 
 import numpy as np
@@ -129,6 +129,83 @@ def area2(polygon: Polygon, /) -> Fraction:
     return abs(signed_area2(polygon))
 
 
+def _lattice_ring(
+    polygon: Polygon, denominator: int, /
+) -> list[tuple[int, int, int]] | None:
+    """Counter-clockwise homogeneous integer ring ``(X, Y, 1)``; ``None`` if flat."""
+    ring = [
+        (
+            point[0].numerator * (denominator // point[0].denominator),
+            point[1].numerator * (denominator // point[1].denominator),
+            1,
+        )
+        for point in polygon
+    ]
+    twice = sum(
+        first[0] * second[1] - first[1] * second[0]
+        for first, second in zip(ring, ring[1:] + ring[:1], strict=True)
+    )
+    if not twice:
+        return None
+    return ring if twice > 0 else ring[::-1]
+
+
+def overlap_area2(first: Polygon, second: Polygon, /) -> Fraction:
+    """Twice the exact area of the intersection of two convex rational polygons.
+
+    Equal to ``area2(intersection(first, second))``: the same clipping runs on
+    one integer lattice with homogeneous intersection points, so only the
+    final measure is a reduced fraction.
+    """
+    if len(first) < 3 or len(second) < 3:
+        return Fraction(0)
+    denominator = lcm(
+        *(coordinate.denominator for point in (*first, *second) for coordinate in point)
+    )
+    subject = _lattice_ring(first, denominator)
+    clipper = _lattice_ring(second, denominator)
+    if subject is None or clipper is None:
+        return Fraction(0)
+    for (ax, ay, _), (bx, by, _) in zip(clipper, clipper[1:] + clipper[:1], strict=True):
+        if not subject:
+            return Fraction(0)
+        dx, dy = bx - ax, by - ay
+        output: list[tuple[int, int, int]] = []
+        previous = subject[-1]
+        previous_side = dx * (previous[1] - ay * previous[2]) - dy * (
+            previous[0] - ax * previous[2]
+        )
+        for current in subject:
+            current_side = dx * (current[1] - ay * current[2]) - dy * (
+                current[0] - ax * current[2]
+            )
+            if (previous_side >= 0) != (current_side >= 0):
+                x = previous_side * current[0] - current_side * previous[0]
+                y = previous_side * current[1] - current_side * previous[1]
+                w = previous_side * current[2] - current_side * previous[2]
+                if w < 0:
+                    x, y, w = -x, -y, -w
+                divisor = gcd(x, y, w)
+                output.append((x // divisor, y // divisor, w // divisor))
+            if current_side >= 0:
+                output.append(current)
+            previous = current
+            previous_side = current_side
+        subject = output
+    if len(subject) < 3:
+        return Fraction(0)
+    scale = lcm(*(point[2] for point in subject))
+    ring = [
+        (point[0] * (scale // point[2]), point[1] * (scale // point[2]))
+        for point in subject
+    ]
+    total = sum(
+        first_point[0] * second_point[1] - first_point[1] * second_point[0]
+        for first_point, second_point in zip(ring, ring[1:] + ring[:1], strict=True)
+    )
+    return Fraction(abs(total), (scale * denominator) ** 2)
+
+
 def _primitive_integer_row(values: tuple[Fraction, ...], /) -> tuple[int, ...]:
     denominator = reduce(lcm, (value.denominator for value in values), 1)
     integers = tuple(int(value * denominator) for value in values)
@@ -140,43 +217,69 @@ def _primitive_integer_row(values: tuple[Fraction, ...], /) -> tuple[int, ...]:
     return tuple(-value for value in normalized) if first < 0 else normalized
 
 
-def plane_key(points: tuple[tuple[Fraction, ...], ...], /) -> tuple[int, int, int, int]:
-    """Canonical exact plane equation through three 3-D points."""
+def _integer_normal(
+    points: tuple[tuple[Fraction, ...], ...], /
+) -> tuple[int, int, int, int, tuple[int, int, int]]:
+    """Integer normal ``N``, common denominator ``D`` and integer origin ``D o``.
+
+    The first three points ``p`` become integer rows ``D p`` over their
+    common denominator ``D``; ``N``, the cross product of those rows' edges,
+    is the positive multiple ``D^2`` of the rational normal.
+    """
     if len(points) < 3 or any(len(point) != 3 for point in points):
         raise ValueError("plane_key requires at least three points in 3-D.")
-    origin = points[0]
-    first = tuple(points[1][axis] - origin[axis] for axis in range(3))
-    second = tuple(points[2][axis] - origin[axis] for axis in range(3))
-    normal = (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
+    triangle = points[:3]
+    denominator = lcm(*(value.denominator for point in triangle for value in point))
+    (ox, oy, oz), (ax, ay, az), (bx, by, bz) = (
+        tuple(value.numerator * (denominator // value.denominator) for value in point)
+        for point in triangle
     )
-    if not any(normal):
+    ax, ay, az, bx, by, bz = ax - ox, ay - oy, az - oz, bx - ox, by - oy, bz - oz
+    return (
+        ay * bz - az * by,
+        az * bx - ax * bz,
+        ax * by - ay * bx,
+        denominator,
+        (ox, oy, oz),
+    )
+
+
+def plane_key(points: tuple[tuple[Fraction, ...], ...], /) -> tuple[int, int, int, int]:
+    """Canonical exact plane equation through three 3-D points."""
+    nx, ny, nz, denominator, (ox, oy, oz) = _integer_normal(points)
+    if not (nx or ny or nz):
         raise ValueError("plane_key requires non-collinear points.")
-    offset = -sum((normal[axis] * origin[axis] for axis in range(3)), Fraction(0))
-    key = _primitive_integer_row((*normal, offset))
-    return (key[0], key[1], key[2], key[3])
+    # (n, -n . o) of the rational points is proportional to (D N, -N . O).
+    row = (
+        nx * denominator,
+        ny * denominator,
+        nz * denominator,
+        -(nx * ox + ny * oy + nz * oz),
+    )
+    divisor = gcd(*row)
+    if (row[0] or row[1] or row[2]) < 0:
+        divisor = -divisor
+    return (
+        row[0] // divisor,
+        row[1] // divisor,
+        row[2] // divisor,
+        row[3] // divisor,
+    )
 
 
 def plane_orientation(points: tuple[tuple[Fraction, ...], ...], /) -> int:
-    """Orientation of an ordered triangle relative to its canonical plane."""
+    """Orientation of an ordered triangle relative to its canonical plane.
+
+    The canonical plane normal is the triangle's own normal with its first
+    nonzero component made positive, so the orientation is that component's
+    sign.
+    """
     if len(points) < 3:
         raise ValueError("plane_orientation requires an ordered triangle.")
-    raw = tuple(
-        points[axis + 1][axis2] - points[0][axis2]
-        for axis in range(2)
-        for axis2 in range(3)
-    )
-    first = raw[:3]
-    second = raw[3:]
-    normal = (
-        first[1] * second[2] - first[2] * second[1],
-        first[2] * second[0] - first[0] * second[2],
-        first[0] * second[1] - first[1] * second[0],
-    )
-    canonical = plane_key(points)
-    return 1 if sum(normal[i] * canonical[i] for i in range(3)) > 0 else -1
+    nx, ny, nz, _, _ = _integer_normal(points)
+    if not (nx or ny or nz):
+        raise ValueError("plane_key requires non-collinear points.")
+    return 1 if (nx or ny or nz) > 0 else -1
 
 
 def projection_axes(plane: tuple[int, int, int, int], /) -> tuple[int, int]:
@@ -290,7 +393,7 @@ def _float_down(value: Fraction, /) -> float:
     return (
         result
         if numerator * value.denominator <= value.numerator * denominator
-        else float(np.nextafter(result, -np.inf))
+        else nextafter(result, -inf)
     )
 
 
@@ -300,7 +403,7 @@ def _float_up(value: Fraction, /) -> float:
     return (
         result
         if numerator * value.denominator >= value.numerator * denominator
-        else float(np.nextafter(result, np.inf))
+        else nextafter(result, inf)
     )
 
 
@@ -357,8 +460,10 @@ def polygon_boxes(polygons: Sequence[Polygon], /) -> PolygonBoxes | None:
     try:
         for row, polygon in enumerate(polygons):
             for axis in range(2):
-                lower[row, axis] = _float_down(min(point[axis] for point in polygon))
-                upper[row, axis] = _float_up(max(point[axis] for point in polygon))
+                # Directed rounding is monotone: the rounded extreme is the
+                # extreme of the rounded coordinates.
+                lower[row, axis] = min(_float_down(point[axis]) for point in polygon)
+                upper[row, axis] = max(_float_up(point[axis]) for point in polygon)
     except OverflowError:
         return None
     if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
@@ -456,10 +561,10 @@ def _triangle_bank(
                     rounded = numerator * value.denominator
                     exact = value.numerator * denominator
                     lower[row, corner, axis] = (
-                        result if rounded <= exact else np.nextafter(result, -np.inf)
+                        result if rounded <= exact else nextafter(result, -inf)
                     )
                     upper[row, corner, axis] = (
-                        result if rounded >= exact else np.nextafter(result, np.inf)
+                        result if rounded >= exact else nextafter(result, inf)
                     )
         except OverflowError:
             continue
@@ -622,6 +727,43 @@ def _bank_pair_separation(
 
 
 @dataclass(frozen=True, slots=True)
+class PlanarOverlapScreen:
+    """One exact planar polygon bank prepared for repeated overlap queries.
+
+    A query keeps, in row order, every polygon whose closed outward box meets
+    the query's and whose interior `triangle_pair_separation` does not prove
+    separated from the query's; every positive-area overlap survives.
+    """
+
+    polygons: tuple[Polygon, ...]
+    boxes: PolygonBoxes | None
+    bank: _TriangleBank
+    identities: dict[Point, int]
+
+    @classmethod
+    def prepare(cls, polygons: Sequence[Polygon], /) -> PlanarOverlapScreen:
+        identities: dict[Point, int] = {}
+        bank = _triangle_bank(polygons, identities)
+        return cls(tuple(polygons), polygon_boxes(polygons), bank, identities)
+
+    def possibly_overlapping(self, polygon: Polygon, /) -> np.ndarray:
+        """Rows, in order, whose exact overlap with ``polygon`` may be positive."""
+        rows = np.arange(len(self.polygons), dtype=np.int64)
+        query_boxes = polygon_boxes((polygon,))
+        if self.boxes is not None and query_boxes is not None:
+            lower, upper = self.boxes
+            query_lower, query_upper = query_boxes
+            rows = rows[np.all((lower <= query_upper) & (query_lower <= upper), axis=1)]
+        if not rows.size:
+            return rows
+        query = _triangle_bank((polygon,), self.identities)
+        decisions = _bank_pair_separation(
+            query, np.zeros(rows.shape, dtype=np.int64), self.bank, rows
+        )
+        return rows[decisions != 1]
+
+
+@dataclass(frozen=True, slots=True)
 class TriangleEnclosures:
     """Outward binary64 enclosures and exact corner identities of planar triangles.
 
@@ -687,6 +829,7 @@ __all__ = [
     "line_key",
     "oriented_polygon",
     "partition_verdict",
+    "PlanarOverlapScreen",
     "plane_key",
     "plane_orientation",
     "polygon_boxes",

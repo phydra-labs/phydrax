@@ -26,7 +26,8 @@ from ._domain_coverage import PiecewiseLinearDomain
 from ._planar_primitives import (
     area2,
     box_overlap_pairs,
-    intersection,
+    overlap_area2,
+    PlanarOverlapScreen,
     plane_key,
     plane_orientation,
     polygon_boxes,
@@ -91,10 +92,12 @@ class SourceFacetIndex:
 
     Two 3-D facets overlap with positive area only when their plane keys are
     equal, and a facet without a plane key overlaps nothing, so a 3-D query
-    needs only the facets of its own plane. Segment (2-D) queries scan them all.
+    needs only the facets of its own plane, further screened by outward boxes
+    and the binary64 edge-line separation proof. Segment (2-D) queries scan
+    them all.
     """
 
-    __slots__ = ("_by_plane", "facets")
+    __slots__ = ("_by_plane", "_screens", "facets")
 
     def __init__(self, facets: tuple[OrientedFacet, ...], /) -> None:
         by_plane: dict[tuple[int, int, int, int], list[int]] = {}
@@ -106,6 +109,7 @@ class SourceFacetIndex:
             by_plane.setdefault(key, []).append(row)
         self.facets = facets
         self._by_plane = {key: tuple(rows) for key, rows in by_plane.items()}
+        self._screens: dict[tuple[int, int, int, int], PlanarOverlapScreen] = {}
 
     def candidates(
         self, vertices: tuple[tuple[Fraction, ...], ...], dimension: int, /
@@ -117,7 +121,48 @@ class SourceFacetIndex:
             key = plane_key(vertices)
         except ValueError:
             return ()
-        return self._by_plane.get(key, ())
+        rows = self._by_plane.get(key, ())
+        if not rows:
+            return ()
+        axes = projection_axes(key)
+        screen = self._screens.get(key)
+        if screen is None:
+            screen = PlanarOverlapScreen.prepare(
+                tuple(project_polygon(self.facets[row].vertices, axes) for row in rows)
+            )
+            self._screens[key] = screen
+        kept = screen.possibly_overlapping(project_polygon(vertices, axes))
+        return tuple(rows[local] for local in kept.tolist())
+
+    def batch_candidates(
+        self, queries: tuple[tuple[tuple[Fraction, ...], ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        """3-D `candidates` of many queries: per query, rows in source order.
+
+        Queries are grouped by canonical plane and screened against that
+        plane's facets in one vectorized box and separation pass.
+        """
+        found: list[list[int]] = [[] for _ in queries]
+        by_plane: dict[tuple[int, int, int, int], list[int]] = {}
+        for row, vertices in enumerate(queries):
+            try:
+                key = plane_key(vertices)
+            except ValueError:
+                continue
+            if key in self._by_plane:
+                by_plane.setdefault(key, []).append(row)
+        for key, query_rows in by_plane.items():
+            source_rows = self._by_plane[key]
+            # Pairs arrive in (query, source) row order, so each query's
+            # source rows stay in source order.
+            for query_local, source_local in _possibly_overlapping(
+                tuple(queries[row] for row in query_rows),
+                tuple(self.facets[row].vertices for row in source_rows),
+                key,
+                self_pairs=False,
+            ).tolist():
+                found[query_rows[query_local]].append(source_rows[source_local])
+        return tuple(tuple(rows) for rows in found)
 
     def coplanar_rows(self) -> tuple[tuple[int, ...], ...]:
         """Source-ordered row groups that share one supporting plane."""
@@ -165,6 +210,18 @@ def _orientation_matches(
     return plane_orientation(first.vertices) == plane_orientation(second.vertices)
 
 
+def _coplanar_overlap(
+    first: OrientedFacet, second: OrientedFacet, plane: tuple[int, int, int, int], /
+) -> Fraction:
+    axes = projection_axes(plane)
+    return (
+        overlap_area2(
+            project_polygon(first.vertices, axes), project_polygon(second.vertices, axes)
+        )
+        / 2
+    )
+
+
 def _overlap(first: OrientedFacet, second: OrientedFacet, dimension: int, /) -> Fraction:
     if dimension == 2:
         first_start, first_end = ((x, y) for x, y in first.vertices)
@@ -176,32 +233,29 @@ def _overlap(first: OrientedFacet, second: OrientedFacet, dimension: int, /) -> 
             return Fraction(0)
     except ValueError:
         return Fraction(0)
-    axes = projection_axes(first_plane)
-    first_polygon = project_polygon(first.vertices, axes)
-    second_polygon = project_polygon(second.vertices, axes)
-    return area2(intersection(first_polygon, second_polygon)) / 2
+    return _coplanar_overlap(first, second, first_plane)
 
 
 def _possibly_overlapping(
-    first: tuple[OrientedFacet, ...],
-    second: tuple[OrientedFacet, ...],
+    first: tuple[tuple[tuple[Fraction, ...], ...], ...],
+    second: tuple[tuple[tuple[Fraction, ...], ...], ...],
     key: tuple[int, int, int, int],
     /,
     *,
     self_pairs: bool,
 ) -> np.ndarray:
-    """Row pairs of coplanar facets whose exact overlap may be positive, in row order.
+    """Row pairs of coplanar polygons whose exact overlap may be positive, in row order.
 
     Pairs with disjoint closed projected boxes, or whose projected interiors
     the binary64 screen of the exact edge-line test separates, have exactly
     zero intersection area; every other pair keeps its exact overlap.
     """
     axes = projection_axes(key)
-    first_polygons = tuple(project_polygon(facet.vertices, axes) for facet in first)
+    first_polygons = tuple(project_polygon(vertices, axes) for vertices in first)
     second_polygons = (
         first_polygons
         if self_pairs
-        else tuple(project_polygon(facet.vertices, axes) for facet in second)
+        else tuple(project_polygon(vertices, axes) for vertices in second)
     )
     pairs = box_overlap_pairs(
         len(first_polygons),
@@ -259,13 +313,14 @@ def partition_overlaps(
         overlapping_pairs = sorted(
             (rows[first], rows[second])
             for rows in index.coplanar_rows()
+            for key in (plane_key(sources[rows[0]].vertices),)
             for first, second in _possibly_overlapping(
-                tuple(sources[row] for row in rows),
+                tuple(sources[row].vertices for row in rows),
                 (),
-                plane_key(sources[rows[0]].vertices),
+                key,
                 self_pairs=True,
             ).tolist()
-            if _overlap(sources[rows[first]], sources[rows[second]], dimension)
+            if _coplanar_overlap(sources[rows[first]], sources[rows[second]], key)
         )
     findings.extend(
         ("overlapping_source_facets", sources[first].facet_id, sources[second].facet_id)
@@ -274,45 +329,60 @@ def partition_overlaps(
 
     # Per target, the source rows (in source order) whose overlap may be positive.
     target_candidates: list[list[int]] = [[] for _ in targets]
+    # Every 3-D candidate shares its target's canonical plane.
+    target_planes: list[tuple[int, int, int, int] | None] = [None for _ in targets]
     if dimension == 2:
         for row, target in enumerate(targets):
             target_candidates[row].extend(index.candidates(target.vertices, dimension))
     else:
-        targets_by_plane: dict[tuple[int, int, int, int], list[int]] = {}
         for row, target in enumerate(targets):
             try:
-                key = plane_key(target.vertices)
+                target_planes[row] = plane_key(target.vertices)
             except ValueError:
                 continue
-            targets_by_plane.setdefault(key, []).append(row)
-        for key, target_rows in targets_by_plane.items():
-            source_rows = index.plane_rows(key)
-            if not source_rows:
-                continue
-            for target_local, source_local in _possibly_overlapping(
-                tuple(targets[row] for row in target_rows),
-                tuple(sources[row] for row in source_rows),
-                key,
-                self_pairs=False,
-            ).tolist():
-                target_candidates[target_rows[target_local]].append(
-                    source_rows[source_local]
-                )
+        for row, rows in enumerate(
+            index.batch_candidates(tuple(target.vertices for target in targets))
+        ):
+            target_candidates[row].extend(rows)
 
-    for target, candidates in zip(targets, target_candidates, strict=True):
+    source_orientations: dict[int, int] = {}
+
+    def orientation_matches(
+        source_index: int, target: OrientedFacet, target_orientation: int | None, /
+    ) -> bool:
+        if target_orientation is None:
+            return _orientation_matches(sources[source_index], target, dimension)
+        if source_index not in source_orientations:
+            source_orientations[source_index] = plane_orientation(
+                sources[source_index].vertices
+            )
+        return source_orientations[source_index] == target_orientation
+
+    for target, candidates, plane in zip(
+        targets, target_candidates, target_planes, strict=True
+    ):
         target_measure = _facet_measure(target, dimension)
         if target_measure <= 0:
             findings.append(("degenerate_target_facet", target.facet_id, -1))
             continue
         matched = Fraction(0)
         reverse = Fraction(0)
+        target_orientation = (
+            plane_orientation(target.vertices)
+            if plane is not None and candidates
+            else None
+        )
         for source_index in candidates:
             source = sources[source_index]
-            overlap = _overlap(source, target, dimension)
+            overlap = (
+                _overlap(source, target, dimension)
+                if plane is None
+                else _coplanar_overlap(source, target, plane)
+            )
             if overlap <= 0:
                 continue
-            if source.region_pair == target.region_pair and _orientation_matches(
-                source, target, dimension
+            if source.region_pair == target.region_pair and orientation_matches(
+                source_index, target, target_orientation
             ):
                 matched += overlap
                 source_totals[source_index] += overlap
@@ -328,7 +398,7 @@ def partition_overlaps(
                 )
             elif source.region_pair == target.region_pair[::-1] or (
                 source.region_pair == target.region_pair
-                and not _orientation_matches(source, target, dimension)
+                and not orientation_matches(source_index, target, target_orientation)
             ):
                 reverse += overlap
         if reverse:

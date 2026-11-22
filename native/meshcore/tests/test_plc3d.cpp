@@ -3679,10 +3679,10 @@ ClosedSurface grid_torus(int32_t around, int32_t tube) {
   return surface;
 }
 
-// Two disjoint capped cylinders of radius 1/2 and height 1 along z, centred
+// Two disjoint capped cylinders of radius 1/2 and height 1 along z, centered
 // at x = -1 (region 1) and x = 1 (region 2), their sides split into
 // rectangles (exactly coplanar and cocircular quads) along one diagonal and
-// their caps fanned from the cap centres.
+// their caps fanned from the cap centers.
 ClosedSurface two_cylinders(int32_t around, int32_t along) {
   constexpr double kPi = 3.141592653589793;
   ClosedSurface surface;
@@ -3813,7 +3813,7 @@ void check_surface_recovery(const ClosedSurface& surface, const PlcRecovery& res
 // where flips fail, an edge removal with a volume Steiner point, never by a
 // boundary split), and two disjoint cylinders with two regions. Seeds inside
 // the cylinders are located and agree with the facet regions; a seed on a
-// cap triangle or at a cap centre is refused.
+// cap triangle or at a cap center is refused.
 void test_closed_surfaces_recover_their_boundary_exactly() {
   for (const ClosedSurface& surface :
        {icosphere(3), grid_torus(48, 24), grid_torus(36, 18), two_cylinders(24, 6)}) {

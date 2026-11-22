@@ -350,18 +350,20 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
       const double v = (mesh.uv[6*t+2*k+1] + mesh.uv[6*t+2*next+1])/2;
       const double du = mesh.uv[6*t+2*k] - mesh.uv[6*t+2*next];
       const double dv = mesh.uv[6*t+2*k+1] - mesh.uv[6*t+2*next+1];
-      double metric_length = 0.0;
+      // Every parametrization here is orthogonal with principal directions u
+      // and v (principal curvatures k_u, k_v).
+      double length_u2 = 0.0, length_v2 = 0.0;
       std::array<double,3> midpoint{};
-      double curvature = 0.0;
+      double curvature_u = 0.0, curvature_v = 0.0;
       if (quadric) {
         const double e = face == 2 ? 0.36 : 1.0, g = face == 2 ? 9.0 : 5.76;
-        metric_length = std::hypot(std::sqrt(e)*du, std::sqrt(g)*dv);
+        length_u2 = e*du*du; length_v2 = g*dv*dv;
         if (face == 2) {
           midpoint = {-1.5+3*v,-0.6*std::sin(u),0.6*std::cos(u)};
-          curvature = 1.0/0.6;
+          curvature_u = 1.0/0.6;
         } else {
           midpoint = {-std::sin(u),std::cos(u),-1.2+2.4*v};
-          curvature = 1.0;
+          curvature_u = 1.0;
         }
       } else {
         const bool plane = kind == phx::mc::cad::template_index("plane");
@@ -370,11 +372,13 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
         const bool cone = kind == phx::mc::cad::template_index("cone");
         const bool torus = kind == phx::mc::cad::template_index("torus");
         PHX_CHECK(plane || cylinder || sphere || cone || torus);
-        if (sphere || cylinder) curvature = 1.0/c[12];
-        if (cone) curvature = std::cos(c[13])/std::abs(c[12]+v*std::tan(c[13]));
-        if (torus) curvature = std::max(1.0/c[13],
-            std::abs(std::cos(v)/(c[12]+c[13]*std::cos(v))));
-        double sum = 0.0;
+        if (sphere || cylinder) curvature_u = 1.0/c[12];
+        if (sphere) curvature_v = 1.0/c[12];
+        if (cone) curvature_u = std::cos(c[13])/std::abs(c[12]+v*std::tan(c[13]));
+        if (torus) {
+          curvature_u = std::abs(std::cos(v)/(c[12]+c[13]*std::cos(v)));
+          curvature_v = 1.0/c[13];
+        }
         for (int j = 0; j < 3; ++j) {
           const double radial = std::cos(u)*c[3+j] + std::sin(u)*c[6+j];
           const double tangent = -std::sin(u)*c[3+j] + std::cos(u)*c[6+j];
@@ -392,13 +396,16 @@ void check_boundary_lengths(const phx_mc_cad_model& model, const SurfaceArrays& 
                       sv = c[9+j]+slope*radial; }
           if (torus) { su = (c[12]+c[13]*std::cos(v))*tangent;
                        sv = c[13]*(-std::sin(v)*radial+std::cos(v)*c[9+j]); }
-          const double delta = su*du+sv*dv;
-          sum += delta*delta;
+          length_u2 += su*du*su*du;
+          length_v2 += sv*dv*sv*dv;
         }
-        metric_length = std::sqrt(sum);
       }
+      const double metric_length = std::sqrt(length_u2+length_v2);
+      // Curves take the face's smallest size min(h, sqrt(4 theta tol / k_max)),
+      // theta tol = .5 * .4.
+      const double curvature = std::max(curvature_u, curvature_v);
       double local_size = size;
-      if (curvature > 0.0) local_size = std::min(local_size,std::sqrt(1.2/curvature));
+      if (curvature > 0.0) local_size = std::min(local_size, std::sqrt(0.8/curvature));
       const double ungraded = local_size;
       for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
         if (!std::isfinite(spacing[face][vertex])) continue;
@@ -479,10 +486,6 @@ void check_chart(const phx_mc_cad_model& model, const phx::mc::CadSurfaceMesh& m
 
 SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
-  // The C entry meshes curves and faces at h_t = h/sqrt(2).
-  const double internal_size = size * 0.70710678118654752440;
-  const std::vector<double> internal_sizes(static_cast<std::size_t>(model.surface_count),
-                                           internal_size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
   const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count),
                                              std::numeric_limits<double>::infinity());
@@ -530,7 +533,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(chart_geometry.bind(model) == PHX_MC_OK);
   const CadCurveDiscretization chart_curves{result.curve_offsets.data(), result.curve_parameters.data()};
   phx::mc::CadSurfaceMesh chart_mesh;
-  PHX_CHECK(phx::mc::cad_mesh_surface(chart_geometry, chart_curves, internal_sizes.data(),
+  PHX_CHECK(phx::mc::cad_mesh_surface(chart_geometry, chart_curves, sizes.data(),
                                       tolerances.data(), 0.5, chart_mesh) == PHX_MC_OK);
   check_chart(model, chart_mesh);
   int64_t chart_sizes[3]{};
@@ -566,7 +569,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   PHX_CHECK(exported.chord_loop == chart_mesh.chart.chord_loop);
   PHX_CHECK(exported.chord_uv == chart_mesh.chart.chord_uv);
   PHX_CHECK(exported.chord_range == chart_mesh.chart.chord_range);
-  check_boundary_lengths(model, result, internal_size);
+  check_boundary_lengths(model, result, size);
   for (const auto& failure : result.face_failures)
     std::fprintf(stderr, "failure face=%d loop=%d use=%d axis=%d reason=%d turns=%lld parameter=%.17g\n",
                  failure.face, failure.loop, failure.use, failure.axis, failure.reason,
@@ -822,7 +825,7 @@ void periodic_patch(bool torus, bool ungraded = false) {
   bank.periods = {turn, torus ? turn : 0};
   bank.domains = {0,turn, 0,height};
   const double requested_size = ungraded ? 0.3 : 0.1;
-  const double curvature_size = std::sqrt(6.0 * 0.5 * 0.4 / (torus ? 2.0 : 1.0));
+  const double curvature_size = std::sqrt(4.0 * 0.5 * 0.4 / (torus ? 2.0 : 1.0));
   const double boundary_size = std::min(requested_size, curvature_size);
   bank.samples.clear(); bank.sample_offsets = {0};
   for (std::size_t i = 0; i < bank.curve_nodes.size(); ++i) {

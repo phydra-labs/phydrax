@@ -377,19 +377,29 @@ class EmbeddingCell:
         return self.affine_offset is not None and self.affine_matrix is not None
 
 
-def _polyhedral_face_routes(
-    mesh: CellMesh, cell_row: int, vertex_row: tuple[int, ...], /
-) -> tuple[tuple[int, ...], ...]:
+type _FaceIncidence = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+
+
+def _face_incidence(mesh: CellMesh, /) -> _FaceIncidence:
+    """The mesh's polyhedral face incidence as host rows, read once per mesh."""
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise UnsupportedEmbeddingMap(
             "A variable-topology cell has no exact face incidence."
         )
-    cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
-    cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)
-    cell_signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int64)
-    face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-    face_vertices = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
+    return (
+        np.asarray(connectivity.cell_face_offsets, dtype=np.int64),
+        np.asarray(connectivity.cell_face_values, dtype=np.int64),
+        np.asarray(connectivity.cell_face_sign_values, dtype=np.int64),
+        np.asarray(connectivity.face_vertex_offsets, dtype=np.int64),
+        np.asarray(connectivity.face_vertex_values, dtype=np.int64),
+    )
+
+
+def _polyhedral_face_routes(
+    incidence: _FaceIncidence, cell_row: int, vertex_row: tuple[int, ...], /
+) -> tuple[tuple[int, ...], ...]:
+    cell_offsets, cell_faces, cell_signs, face_offsets, face_vertices = incidence
     local_index = {vertex: index for index, vertex in enumerate(vertex_row)}
     routes = []
     start, stop = cell_offsets[cell_row], cell_offsets[cell_row + 1]
@@ -655,6 +665,7 @@ def _iter_embedding_cells(
     vertex_global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64).tolist()
     ambient = mesh.ambient_dimension
     block_offset = 0
+    incidence: _FaceIncidence | None = None
     for block, element, block_route in zip(mesh.blocks, elements, routes, strict=True):
         rows = np.asarray(block.vertices, dtype=np.int64)
         route_rows = np.asarray(block_route, dtype=np.int64)
@@ -757,8 +768,10 @@ def _iter_embedding_cells(
                         for index in range(len(active_row))
                     )
                 else:
+                    if incidence is None:
+                        incidence = _face_incidence(mesh)
                     facet_routes = _polyhedral_face_routes(
-                        mesh, block_offset + local_index, active_row
+                        incidence, block_offset + local_index, active_row
                     )
                 corners = tuple(bank[index] for index in active_route)
                 if len(corners) < (3 if kind == "polygon" else 4):

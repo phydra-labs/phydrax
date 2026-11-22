@@ -23,6 +23,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._exact_kernels import exact_kernel_parallelism
 from .._geometry_predicates import (
     orient2d,
     orient3d,
@@ -39,6 +40,7 @@ from .._meshcore import (
     meshcore_available,
     MeshcoreStatus,
     triangle_intersection_classes,
+    welded_topology,
 )
 from ..discretization import CellMesh, PolyhedralConnectivity, SimplicialConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
@@ -470,7 +472,8 @@ def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
     )
     query = np.ascontiguousarray(rows).view(view.dtype).reshape(-1)
     order = np.argsort(view, kind="stable")
-    position = order[np.searchsorted(view[order], query)]
+    # An unknown row may sort after every table row; clamp it onto the last.
+    position = order[np.minimum(np.searchsorted(view[order], query), table.shape[0] - 1)]
     if not np.array_equal(table[position], rows):
         raise ValueError("Welded star links reference unknown incidences.")
     return position
@@ -1163,6 +1166,144 @@ def _degree_certified_evidence(
     )
 
 
+# Combinatorial counts ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _TopologyCounts:
+    """Combinatorial welded-topology counts and the audited boundary facets."""
+
+    collapsed_cells: int
+    duplicate_cells: int
+    nonmanifold_facets: int
+    inconsistent_facets: int
+    open_facets: int
+    nonmanifold_vertices: int
+    nonmanifold_edges: int
+    boundary: np.ndarray
+
+
+def _host_topology_counts(
+    complex_: _Complex,
+    star: _Complex,
+    scope: np.ndarray | None,
+    dimension: int,
+    /,
+    *,
+    embedded: bool,
+    check_manifold: bool,
+    check_watertight: bool,
+) -> _TopologyCounts:
+    """Counts of the audited ``complex_``, with vertex and edge stars of ``star``."""
+
+    keys = _sorted_keys(complex_.facets)
+    _, inverse, counts = unique_rows_inverse(keys)
+    first, second = _facet_links(inverse)
+    twice = counts[inverse[first]] == 2
+    pair_first = first[twice]
+    pair_second = second[twice]
+    if dimension == 1:
+        inconsistent = (
+            complex_.facet_signs[pair_first] == complex_.facet_signs[pair_second]
+        )
+    elif dimension == 2:
+        direction = complex_.facets[:, 0] < complex_.facets[:, 1]
+        inconsistent = direction[pair_first] == direction[pair_second]
+    else:
+        successor, predecessor = _loop_neighbors(complex_.facets)
+        inconsistent = successor[pair_first] != predecessor[pair_second]
+    nonmanifold_vertices = 0
+    nonmanifold_edges = 0
+    if check_manifold:
+        star_first, star_second = first, second
+        if star is not complex_:
+            _, star_inverse, _ = unique_rows_inverse(_sorted_keys(star.facets))
+            star_first, star_second = _facet_links(star_inverse)
+        cell_vertices = star.cells
+        slots = cell_vertices >= 0
+        owners = np.broadcast_to(
+            np.arange(cell_vertices.shape[0])[:, None], cell_vertices.shape
+        )[slots]
+        nonmanifold_vertices = _star_components(
+            cell_vertices[slots][:, None],
+            owners,
+            _vertex_links(star, star_first, star_second),
+            scope,
+        )
+        if dimension == 3:
+            nonmanifold_edges = _star_components(
+                np.sort(star.edges, axis=1),
+                star.edge_cells,
+                _edge_links(star, star_first, star_second),
+                scope,
+            )
+    return _TopologyCounts(
+        collapsed_cells=int(np.count_nonzero(_collapsed(complex_.cells))),
+        duplicate_cells=_duplicate_count(complex_.cells),
+        nonmanifold_facets=int(np.count_nonzero(counts > 2)),
+        inconsistent_facets=int(np.count_nonzero(inconsistent)),
+        open_facets=(
+            _open_boundary_count(complex_, counts, inverse, embedded)
+            if check_watertight
+            else 0
+        ),
+        nonmanifold_vertices=nonmanifold_vertices,
+        nonmanifold_edges=nonmanifold_edges,
+        boundary=counts[inverse] == 1,
+    )
+
+
+def _native_topology_counts(
+    complex_: _Complex,
+    star: _Complex,
+    scope: np.ndarray | None,
+    dimension: int,
+    /,
+    *,
+    embedded: bool,
+    check_manifold: bool,
+    check_watertight: bool,
+) -> _TopologyCounts:
+    """``_host_topology_counts`` through ``phx_mc_welded_topology``.
+
+    ``star`` is ``complex_`` followed by supplementary star cells, so its
+    leading cells and facet occurrences are the audited ones.
+    """
+
+    key_count = 1 + max(
+        int(np.max(star.cells, initial=-1)),
+        -1 if scope is None else int(np.max(scope, initial=-1)),
+    )
+    counts, boundary = welded_topology(
+        dimension,
+        key_count,
+        star.cells,
+        complex_.cells.shape[0],
+        star.facets,
+        star.facet_cells,
+        star.facet_signs,
+        complex_.facets.shape[0],
+        complex_.facets.shape[1],
+        star.edges,
+        star.edge_cells,
+        scope,
+        embedded=embedded,
+        check_manifold=check_manifold,
+        check_watertight=check_watertight,
+        parallelism=exact_kernel_parallelism(),
+    )
+    return _TopologyCounts(
+        collapsed_cells=int(counts[0]),
+        duplicate_cells=int(counts[1]),
+        nonmanifold_facets=int(counts[2]),
+        inconsistent_facets=int(counts[3]),
+        open_facets=int(counts[4]),
+        nonmanifold_vertices=int(counts[5]),
+        nonmanifold_edges=int(counts[6]),
+        boundary=boundary,
+    )
+
+
 # Entry point ---------------------------------------------------------------------
 
 
@@ -1209,97 +1350,62 @@ def audit_welded_topology(
         implied = _degree_certified_evidence(mesh, check_manifold)
         if implied is not None:
             return implied
-    unresolved: list[str] = []
     complex_ = _welded_complex(mesh, welded)
-    keys = _sorted_keys(complex_.facets)
-    _, inverse, counts = unique_rows_inverse(keys)
-    first, second = _facet_links(inverse)
-    twice = counts[inverse[first]] == 2
-    pair_first = first[twice]
-    pair_second = second[twice]
-    if mesh.topological_dimension == 1:
-        inconsistent = (
-            complex_.facet_signs[pair_first] == complex_.facet_signs[pair_second]
+    dimension = mesh.topological_dimension
+    check_stars = check_manifold and dimension >= 2
+    star = complex_
+    if check_stars and star_supplement:
+        vertex_count = points.shape[0]
+        star = _supplemented_star_complex(
+            complex_,
+            tuple(
+                (
+                    cell_kind,
+                    np.where(
+                        rows < vertex_count,
+                        welded[np.minimum(rows, vertex_count - 1)],
+                        rows,
+                    ),
+                )
+                for cell_kind, rows in star_supplement
+            ),
+            dimension,
         )
-    elif mesh.topological_dimension == 2:
-        direction = complex_.facets[:, 0] < complex_.facets[:, 1]
-        inconsistent = direction[pair_first] == direction[pair_second]
-    else:
-        successor, predecessor = _loop_neighbors(complex_.facets)
-        inconsistent = successor[pair_first] != predecessor[pair_second]
-    nonmanifold_vertices = 0
-    nonmanifold_edges = 0
-    if check_manifold and mesh.topological_dimension >= 2:
-        star = complex_
-        star_first, star_second = first, second
-        if star_supplement:
-            vertex_count = points.shape[0]
-            star = _supplemented_star_complex(
-                complex_,
-                tuple(
-                    (
-                        cell_kind,
-                        np.where(
-                            rows < vertex_count,
-                            welded[np.minimum(rows, vertex_count - 1)],
-                            rows,
-                        ),
-                    )
-                    for cell_kind, rows in star_supplement
-                ),
-                mesh.topological_dimension,
-            )
-            _, star_inverse, _ = unique_rows_inverse(_sorted_keys(star.facets))
-            star_first, star_second = _facet_links(star_inverse)
-        scope = (
-            None
-            if manifold_vertices is None
-            else np.unique(welded[np.asarray(manifold_vertices, dtype=np.int64)])
-        )
-        cell_vertices = star.cells
-        slots = cell_vertices >= 0
-        owners = np.broadcast_to(
-            np.arange(cell_vertices.shape[0])[:, None], cell_vertices.shape
-        )[slots]
-        nonmanifold_vertices = _star_components(
-            cell_vertices[slots][:, None],
-            owners,
-            _vertex_links(star, star_first, star_second),
-            scope,
-        )
-        if mesh.topological_dimension == 3:
-            nonmanifold_edges = _star_components(
-                np.sort(star.edges, axis=1),
-                star.edge_cells,
-                _edge_links(star, star_first, star_second),
-                scope,
-            )
-    embedded = mesh.ambient_dimension > mesh.topological_dimension
-    open_facets = (
-        _open_boundary_count(complex_, counts, inverse, embedded)
-        if check_watertight
-        else 0
+    scope = (
+        None
+        if manifold_vertices is None or not check_stars
+        else np.unique(welded[np.asarray(manifold_vertices, dtype=np.int64)])
     )
+    route = _native_topology_counts if meshcore_available() else _host_topology_counts
+    counts = route(
+        complex_,
+        star,
+        scope,
+        dimension,
+        embedded=mesh.ambient_dimension > dimension,
+        check_manifold=check_stars,
+        check_watertight=check_watertight,
+    )
+    unresolved: list[str] = []
     intersections = 0
     if check_self_intersection:
-        boundary = counts[inverse] == 1
         intersections, uncertain = _self_intersections(
             points[welded],
             complex_,
-            boundary,
-            mesh.topological_dimension,
+            counts.boundary,
+            dimension,
         )
         if uncertain:
             unresolved.append("self_intersection_predicates")
     return WeldedTopologyEvidence(
         coincident_vertices=coincident,
-        collapsed_cells=int(np.count_nonzero(_collapsed(complex_.cells))),
-        duplicate_cells=_duplicate_count(complex_.cells),
-        nonmanifold_facets=int(np.count_nonzero(counts > 2)),
-        nonmanifold_edges=nonmanifold_edges,
-        nonmanifold_vertices=nonmanifold_vertices,
-        inconsistent_facets=int(np.count_nonzero(inconsistent)),
-        open_facets=open_facets,
+        collapsed_cells=counts.collapsed_cells,
+        duplicate_cells=counts.duplicate_cells,
+        nonmanifold_facets=counts.nonmanifold_facets,
+        nonmanifold_edges=counts.nonmanifold_edges,
+        nonmanifold_vertices=counts.nonmanifold_vertices,
+        inconsistent_facets=counts.inconsistent_facets,
+        open_facets=counts.open_facets,
         self_intersections=intersections,
         unresolved=tuple(unresolved),
     )

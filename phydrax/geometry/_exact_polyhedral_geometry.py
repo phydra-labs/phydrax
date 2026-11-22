@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterator, Mapping, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import combinations, product
+from itertools import chain, combinations, product
 from math import lcm
 from typing import Any, cast
 
@@ -615,7 +615,7 @@ def segment_contact_points3(
     )
 
 
-def _rational_point_enclosures(
+def rational_point_enclosures(
     points: Sequence[Point3], /
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Binary64 outward enclosures of exact spatial points.
@@ -867,6 +867,8 @@ class TetrahedronEnclosures:
     centers: NDArray[np.float64]
     face_directions: NDArray[np.float64]
     face_offsets: NDArray[np.float64]
+    box_lower: NDArray[np.float64]
+    box_upper: NDArray[np.float64]
 
     @classmethod
     def prepare(
@@ -923,6 +925,8 @@ class TetrahedronEnclosures:
             centers,
             directions,
             offsets,
+            lower.min(axis=1),
+            upper.max(axis=1),
         )
 
     def common_hull_contacts(
@@ -948,8 +952,8 @@ class TetrahedronEnclosures:
         equal = self.point_ids[first][:, :, None] == self.point_ids[second][:, None, :]
         common = np.any(equal, axis=(1, 2))
         disjoint_boxes = np.any(
-            (self.upper[first].max(axis=1) < self.lower[second].min(axis=1))
-            | (self.upper[second].max(axis=1) < self.lower[first].min(axis=1)),
+            (self.box_upper[first] < self.box_lower[second])
+            | (self.box_upper[second] < self.box_lower[first]),
             axis=1,
         )
         certified[admitted & ~common & disjoint_boxes] = True
@@ -1132,23 +1136,34 @@ def _point_key(point: Point3, /) -> Hashable:
     return point
 
 
+def exact_point_identities(
+    points: Iterable[Point3], /
+) -> tuple[NDArray[np.int64], list[Point3]]:
+    """Identity of each point among the returned distinct exact points.
+
+    Rational keys are canonical, so equal identities are exactly equal points
+    and distinct identities distinct points.
+    """
+    identities: dict[Hashable, int] = {}
+    distinct: list[Point3] = []
+    rows: list[int] = []
+    for point in points:
+        key = _point_key(point)
+        identifier = identities.get(key)
+        if identifier is None:
+            identifier = identities[key] = len(distinct)
+            distinct.append(point)
+        rows.append(identifier)
+    return np.asarray(rows, dtype=np.int64), distinct
+
+
 def outward_spatial_triangle_enclosures(
     triangles: Sequence[tuple[Point3, ...]], /
 ) -> SpatialTriangleEnclosures:
     """Prepare exact point identities and rational-only finite corner enclosures."""
-    identities: dict[Hashable, int] = {}
-    points: list[Point3] = []
-    rows: list[int] = []
-    for triangle in triangles:
-        for point in triangle:
-            key = _point_key(point)
-            identifier = identities.get(key)
-            if identifier is None:
-                identifier = identities[key] = len(points)
-                points.append(point)
-            rows.append(identifier)
-    point_ids = np.asarray(rows, dtype=np.int64).reshape((len(triangles), 3))
-    lower, upper = _rational_point_enclosures(points)
+    rows, points = exact_point_identities(chain.from_iterable(triangles))
+    point_ids = rows.reshape((len(triangles), 3))
+    lower, upper = rational_point_enclosures(points)
     return SpatialTriangleEnclosures.prepare(
         lower[point_ids], upper[point_ids], point_ids
     )
@@ -1162,19 +1177,9 @@ def outward_tetrahedron_enclosures(
     Only rational points receive finite enclosures, and their keys are canonical,
     so on every admitted tetrahedron equal identities are exactly equal points.
     """
-    identities: dict[Hashable, int] = {}
-    points: list[Point3] = []
-    rows: list[int] = []
-    for tetrahedron in tetrahedra:
-        for point in tetrahedron:
-            key = _point_key(point)
-            identifier = identities.get(key)
-            if identifier is None:
-                identifier = identities[key] = len(points)
-                points.append(point)
-            rows.append(identifier)
-    point_ids = np.asarray(rows, dtype=np.int64).reshape((len(tetrahedra), 4))
-    lower, upper = _rational_point_enclosures(points)
+    rows, points = exact_point_identities(chain.from_iterable(tetrahedra))
+    point_ids = rows.reshape((len(tetrahedra), 4))
+    lower, upper = rational_point_enclosures(points)
     return TetrahedronEnclosures.prepare(lower[point_ids], upper[point_ids], point_ids)
 
 

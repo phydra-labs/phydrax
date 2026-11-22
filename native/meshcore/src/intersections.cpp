@@ -33,6 +33,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <vector>
 
 #include "capi_guard.hpp"
 #include "clip_common.hpp"
@@ -831,6 +833,21 @@ int32_t contact_batch(int64_t count, int32_t minimum_capacity, const double* fir
 }
 
 }  // namespace
+// S = max(N, L) of one point and triangle (see phx_mc_point_triangle_distances).
+int32_t specified_distance(const double* p, const double* t, double& out) {
+  const double candidate = geometry::point_triangle_candidate_distance(p, t, t + 3, t + 6);
+  double gap[3];
+  for (int axis = 0; axis < 3; ++axis) {
+    const double lo = std::min({t[axis], t[3 + axis], t[6 + axis]});
+    const double hi = std::max({t[axis], t[3 + axis], t[6 + axis]});
+    gap[axis] = std::max({lo - p[axis], p[axis] - hi, 0.0});
+  }
+  const double lower = std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
+  if (!std::isfinite(candidate) || !std::isfinite(lower)) return PHX_MC_RANGE_ERROR;
+  out = std::max(candidate, lower);
+  return PHX_MC_OK;
+}
+
 }  // namespace phx::mc
 
 extern "C" {
@@ -949,17 +966,134 @@ int32_t phx_mc_point_triangle_distances(int64_t count, const double* points,
       const double* t = triangles + 9 * item;
       if (phx::mc::clip::check_finite(p, 3) != PHX_MC_OK ||
           phx::mc::clip::check_finite(t, 9) != PHX_MC_OK) return PHX_MC_NONFINITE_INPUT;
-      const double candidate = phx::mc::geometry::point_triangle_candidate_distance(
-          p, t, t + 3, t + 6);
+      const int32_t status = phx::mc::specified_distance(p, t, distances[item]);
+      if (status != PHX_MC_OK) return status;
+    }
+    return PHX_MC_OK;
+  });
+}
+
+// min_t S(p, t) over every triangle: a median-split box tree of the triangle
+// boxes, nearer child first, a node skipped when its ordered box distance
+// exceeds the best S (a node box contains its triangles' boxes, and ordered
+// rounding is monotone, so the node's computed L bounds every computed L,
+// hence every S, below it).
+int32_t phx_mc_point_triangle_nearest_distances(int64_t count, const double* points,
+                                                int64_t triangle_count,
+                                                const double* triangles, double* distances) {
+  return phx::mc::guarded([&]() -> int32_t {
+    const phx::mc::GradualNearestScope mode;
+    if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+    if (count < 0 || triangle_count < 1 || !phx::mc::addressable(count, 3, sizeof(double)) ||
+        !phx::mc::addressable(triangle_count, 9, sizeof(double)) || triangles == nullptr ||
+        (count > 0 && (points == nullptr || distances == nullptr))) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    if (phx::mc::clip::check_finite(triangles, 9 * triangle_count) != PHX_MC_OK ||
+        (count > 0 && phx::mc::clip::check_finite(points, 3 * count) != PHX_MC_OK)) {
+      return PHX_MC_NONFINITE_INPUT;
+    }
+    struct Box {
+      double lo[3], hi[3];
+    };
+    const auto n = static_cast<std::size_t>(triangle_count);
+    std::vector<Box> item(n);
+    std::vector<int64_t> order(n);
+    for (std::size_t index = 0; index < n; ++index) {
+      const double* t = triangles + 9 * index;
+      for (int axis = 0; axis < 3; ++axis) {
+        item[index].lo[axis] = std::min({t[axis], t[3 + axis], t[6 + axis]});
+        item[index].hi[axis] = std::max({t[axis], t[3 + axis], t[6 + axis]});
+      }
+      order[index] = static_cast<int64_t>(index);
+    }
+    struct Node {
+      Box box;
+      int64_t begin, end;  // leaf range of `order` when left < 0
+      int64_t left = -1, right = -1;
+    };
+    constexpr int64_t kLeaf = 8;
+    std::vector<Node> nodes;
+    nodes.reserve(2 * n / kLeaf + 2);
+    // Iterative build: each node covers order[begin, end).
+    std::vector<int64_t> pending{0};
+    nodes.push_back(Node{{}, 0, static_cast<int64_t>(n)});
+    while (!pending.empty()) {
+      const int64_t at = pending.back();
+      pending.pop_back();
+      Node node = nodes[static_cast<std::size_t>(at)];
+      for (int axis = 0; axis < 3; ++axis) {
+        node.box.lo[axis] = std::numeric_limits<double>::infinity();
+        node.box.hi[axis] = -std::numeric_limits<double>::infinity();
+      }
+      for (int64_t k = node.begin; k < node.end; ++k) {
+        const Box& b = item[static_cast<std::size_t>(order[static_cast<std::size_t>(k)])];
+        for (int axis = 0; axis < 3; ++axis) {
+          node.box.lo[axis] = std::min(node.box.lo[axis], b.lo[axis]);
+          node.box.hi[axis] = std::max(node.box.hi[axis], b.hi[axis]);
+        }
+      }
+      if (node.end - node.begin > kLeaf) {
+        int axis = 0;
+        for (int a = 1; a < 3; ++a) {
+          if (node.box.hi[a] - node.box.lo[a] > node.box.hi[axis] - node.box.lo[axis]) axis = a;
+        }
+        const int64_t middle = node.begin + (node.end - node.begin) / 2;
+        std::nth_element(order.begin() + node.begin, order.begin() + middle,
+                         order.begin() + node.end, [&](int64_t a, int64_t b) {
+                           const Box& x = item[static_cast<std::size_t>(a)];
+                           const Box& y = item[static_cast<std::size_t>(b)];
+                           const double cx = x.lo[axis] + x.hi[axis];
+                           const double cy = y.lo[axis] + y.hi[axis];
+                           return cx < cy || (cx == cy && a < b);
+                         });
+        node.left = static_cast<int64_t>(nodes.size());
+        nodes.push_back(Node{{}, node.begin, middle});
+        node.right = static_cast<int64_t>(nodes.size());
+        nodes.push_back(Node{{}, middle, node.end});
+        pending.push_back(node.left);
+        pending.push_back(node.right);
+      }
+      nodes[static_cast<std::size_t>(at)] = node;
+    }
+    const auto box_distance = [](const double* p, const Box& b) {
       double gap[3];
       for (int axis = 0; axis < 3; ++axis) {
-        const double lo = std::min({t[axis], t[3 + axis], t[6 + axis]});
-        const double hi = std::max({t[axis], t[3 + axis], t[6 + axis]});
-        gap[axis] = std::max({lo - p[axis], p[axis] - hi, 0.0});
+        gap[axis] = std::max({b.lo[axis] - p[axis], p[axis] - b.hi[axis], 0.0});
       }
-      const double lower = std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
-      if (!std::isfinite(candidate) || !std::isfinite(lower)) return PHX_MC_RANGE_ERROR;
-      distances[item] = std::max(candidate, lower);
+      return std::sqrt((gap[0] * gap[0] + gap[1] * gap[1]) + gap[2] * gap[2]);
+    };
+    std::vector<int64_t> stack;
+    for (int64_t query = 0; query < count; ++query) {
+      const double* p = points + 3 * query;
+      double best = std::numeric_limits<double>::infinity();
+      stack.assign(1, 0);
+      while (!stack.empty()) {
+        const Node& node = nodes[static_cast<std::size_t>(stack.back())];
+        stack.pop_back();
+        if (box_distance(p, node.box) > best) continue;
+        if (node.left < 0) {
+          for (int64_t k = node.begin; k < node.end; ++k) {
+            double value = 0.0;
+            const int32_t status = phx::mc::specified_distance(
+                p, triangles + 9 * order[static_cast<std::size_t>(k)], value);
+            if (status != PHX_MC_OK) return status;
+            best = std::min(best, value);
+          }
+          continue;
+        }
+        const double left = box_distance(p, nodes[static_cast<std::size_t>(node.left)].box);
+        const double right = box_distance(p, nodes[static_cast<std::size_t>(node.right)].box);
+        // Nearer child on top of the stack.
+        if (left <= right) {
+          stack.push_back(node.right);
+          stack.push_back(node.left);
+        } else {
+          stack.push_back(node.left);
+          stack.push_back(node.right);
+        }
+      }
+      distances[query] = best;
     }
     return PHX_MC_OK;
   });

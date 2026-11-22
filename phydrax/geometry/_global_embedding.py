@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import cache
@@ -19,9 +19,19 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
-from .._exact_kernels import separation_screen, SeparationDecision
+from .._exact_kernels import (
+    exact_kernel_parallelism,
+    separation_screen,
+    SeparationDecision,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import meshcore_available
+from .._meshcore import (
+    common_denominator_rows,
+    meshcore_available,
+    polyhedral_contact_bank,
+    polyhedral_declared_contacts,
+    PolyhedralContactBank,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import (
@@ -102,14 +112,15 @@ from ._exact_polyhedral_geometry import (
     _sub3,
     contact_is_declared,
     determinant3,
+    exact_point_identities,
     outward_spatial_triangle_enclosures,
-    outward_tetrahedron_enclosures,
     Point2,
     Point3,
     point_in_tetrahedron,
     point_in_triangle3,
     point_on_segment2,
     point_on_segment3,
+    rational_point_enclosures,
     segment_contact_points3,
     SpatialTriangleEnclosures,
     tetrahedron_contact_points,
@@ -134,6 +145,7 @@ from ._periodic_restriction import (
 )
 from ._planar_chain_embedding import (
     point_in_convex_planar_hull,
+    polytope_face_triangles,
     triangulate_planar_polygon,
 )
 from ._planar_primitives import TriangleEnclosures
@@ -309,10 +321,26 @@ def _point_in_declared_stratum(
             return point_on_segment3(
                 spatial_point, spatial_vertices[0], spatial_vertices[1]
             )
+        if len(spatial_vertices) > 3 and _noncoplanar(spatial_vertices):
+            # A non-planar shared face, given as its loop, is its exact
+            # vertex-average fan (``polytope_face_triangles``).
+            return any(
+                point_in_triangle3(spatial_point, triangle)
+                for triangle in polytope_face_triangles(spatial_vertices)
+            )
         return point_in_convex_planar_hull(spatial_point, spatial_vertices)
     raise ValueError(
         "Exact shared-stratum membership requires ambient dimension two or three."
     )
+
+
+def _noncoplanar(points: tuple[Point3, ...], /) -> bool:
+    origin = points[0]
+    for second, third in combinations(points[1:], 2):
+        normal = _cross3(_sub3(second, origin), _sub3(third, origin))
+        if any(_sign(value) for value in normal):
+            return any(_sign(_dot3(normal, _sub3(point, origin))) for point in points)
+    return False
 
 
 def _shared_face_union(
@@ -442,7 +470,31 @@ def _convex_planar_face_union(
         )
         if dot(turn, normal) < 0:
             return False
+    # Every turn is forward; the fan from one corner then has no backward
+    # triangle exactly when the boundary winds once (a star loop does not).
+    origin_point = points[loop[0]]
+    for current, following in zip(loop[1:-1], loop[2:], strict=True):
+        fan = cross(
+            difference(points[current], origin_point),
+            difference(points[following], origin_point),
+        )
+        if dot(fan, normal) < 0:
+            return False
     return True
+
+
+def _off_hull_plane(
+    points: tuple[tuple[ExactScalar, ...], ...],
+    vertices: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> bool:
+    """Whether some spatial point lies off the plane of coplanar ``vertices``."""
+    if any(len(point) != 3 for point in (*points, *vertices)):
+        return False
+    spatial = tuple(_point3(vertex) for vertex in vertices)
+    if _noncoplanar(spatial):
+        return False
+    return any(_noncoplanar((*spatial, _point3(point))) for point in points)
 
 
 def _shared_edge_chain(
@@ -497,6 +549,192 @@ def _shared_edge_chain(
     return endpoints
 
 
+class _DeclaredStratum:
+    """The exact shared stratum of one cell pair as convex pieces, prepared once.
+
+    ``hulls`` are vertex-identifier sets decided by their convex hull (shared
+    vertices, shared edges, convex shared faces, a straight shared edge chain
+    or a proved convex face union); ``triangles`` are the exact triangles of
+    the other shared faces as both cells triangulate them. The exact
+    intersection of two convex pieces is the hull of its vertices, so a
+    contact is declared only when one convex piece holds all of its vertices.
+    """
+
+    __slots__ = ("_hulls", "_points_by_id", "_triangles", "_undecided")
+
+    def __init__(
+        self,
+        hulls: tuple[tuple[int, ...], ...],
+        triangles: tuple[tuple[Point3, Point3, Point3], ...],
+        points_by_id: dict[int, tuple[ExactScalar, ...]],
+        /,
+        *,
+        undecided: bool = False,
+    ) -> None:
+        self._hulls = hulls
+        self._triangles = triangles
+        self._points_by_id = points_by_id
+        self._undecided = undecided
+
+    def contains(self, points: tuple[tuple[ExactScalar, ...], ...], /) -> bool | None:
+        """Whether one convex piece holds every point; ``None`` when none is
+        proved to and some piece, or the stratum itself, was undecided."""
+        undecided = self._undecided
+        for hull in self._hulls:
+            try:
+                if len(hull) > 2 and _off_hull_plane(
+                    points, tuple(self._points_by_id[vertex] for vertex in hull)
+                ):
+                    # A coplanar convex face holds no point off its plane.
+                    continue
+                if all(
+                    _point_in_declared_stratum(point, hull, self._points_by_id)
+                    for point in points
+                ):
+                    return True
+            except (ValueError, ZeroDivisionError):
+                undecided = True
+        if self._triangles:
+            try:
+                spatial = tuple(_point3(point) for point in points)
+            except UnsupportedEmbeddingMap:
+                return None
+            for triangle in self._triangles:
+                try:
+                    if all(
+                        point in triangle or point_in_triangle3(point, triangle)
+                        for point in spatial
+                    ):
+                        return True
+                except (ValueError, ZeroDivisionError):
+                    undecided = True
+        return None if undecided else False
+
+
+def _face_loops(
+    cell: EmbeddingCell, ids: tuple[int, ...], /
+) -> tuple[tuple[int, ...], ...]:
+    """The cell's face loops as vertex identifiers."""
+    return tuple(tuple(ids[index] for index in route) for route in cell.facet_routes)
+
+
+def _shared_loops(
+    loops: tuple[tuple[int, ...], ...], common: frozenset[int], /
+) -> dict[frozenset[int], tuple[int, ...]]:
+    """Face loops with at least three vertices, all within ``common``."""
+    shared: dict[frozenset[int], tuple[int, ...]] = {}
+    for loop in loops:
+        key = frozenset(loop)
+        if len(key) > 2 and key <= common:
+            shared.setdefault(key, loop)
+    return shared
+
+
+def _loop_edges(
+    loops: Iterable[tuple[int, ...]], common: frozenset[int], /
+) -> set[frozenset[int]]:
+    """Edges of the loops with both endpoints in ``common``."""
+    return {
+        edge
+        for loop in loops
+        for index in range(len(loop))
+        if (edge := frozenset((loop[index], loop[(index + 1) % len(loop)]))) <= common
+        and len(edge) == 2
+    }
+
+
+def _declared_stratum(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    first_ids: tuple[int, ...],
+    second_ids: tuple[int, ...],
+    /,
+) -> _DeclaredStratum | bool | None:
+    """The declared shared stratum of a cell pair, or the verdict on every
+    nonempty contact when it has none: ``False`` (undeclared) or ``None``."""
+    shared = tuple(sorted(set(first_ids).intersection(second_ids)))
+    if not shared:
+        return False
+    common = frozenset(shared)
+    point_by_id = dict(zip(first_ids, first.corner_images, strict=True))
+    if any(identifier not in point_by_id for identifier in shared):
+        return False
+    if (
+        first.dimension != 3
+        or second.dimension != 3
+        or any(len(point_by_id[identifier]) != 3 for identifier in shared)
+    ):
+        return _planar_declared_stratum(first, second, shared, point_by_id)
+    # Every shared vertex, every edge and face both cells declare within the
+    # shared set, each a closed set both cells contain.
+    first_faces = _face_loops(first, first_ids)
+    second_faces = _face_loops(second, second_ids)
+    first_loops = _shared_loops(first_faces, common)
+    second_loops = _shared_loops(second_faces, common)
+    faces = tuple(key for key in first_loops if key in second_loops)
+    edges = _loop_edges(first_faces, common) & _loop_edges(second_faces, common)
+    hulls: list[tuple[int, ...]] = [(identifier,) for identifier in shared]
+    hulls.extend(sorted(tuple(sorted(edge)) for edge in edges))
+    triangles: list[tuple[Point3, Point3, Point3]] = []
+    undecided = False
+    for key in faces:
+        loop = first_loops[key]
+        if len(loop) > 3 and _convex_planar_face_union((loop,), point_by_id) is True:
+            hulls.append(loop)
+            continue
+        # A triangle, or a non-convex or non-planar face, is exactly the
+        # triangles each cell assigns it (``polytope_face_triangles``).
+        for cell_loop in (loop, second_loops[key]):
+            try:
+                triangles.extend(
+                    polytope_face_triangles(
+                        tuple(_point3(point_by_id[vertex]) for vertex in cell_loop)
+                    )
+                )
+            except (ValueError, ZeroDivisionError):
+                undecided = True
+    if common not in _local_strata(first) or common not in _local_strata(second):
+        edge_chain = _shared_edge_chain(first, second, common, point_by_id)
+        if edge_chain is not None:
+            hulls.append(edge_chain)
+        else:
+            # Split interfaces are declared through their complete convex face
+            # union, never the hull of disconnected shared vertices.
+            union = _shared_face_union(first, second, common)
+            if union is not None:
+                convex = _convex_planar_face_union(union, point_by_id)
+                if convex is True:
+                    hulls.append(shared)
+                elif convex is None:
+                    undecided = True
+    return _DeclaredStratum(
+        tuple(hulls), tuple(triangles), point_by_id, undecided=undecided
+    )
+
+
+def _planar_declared_stratum(
+    first: EmbeddingCell,
+    second: EmbeddingCell,
+    shared: tuple[int, ...],
+    point_by_id: dict[int, tuple[ExactScalar, ...]],
+    /,
+) -> _DeclaredStratum | bool | None:
+    """The one shared stratum of a lower-dimensional or planar cell pair."""
+    common = frozenset(shared)
+    if common not in _local_strata(first) or common not in _local_strata(second):
+        edge_chain = _shared_edge_chain(first, second, common, point_by_id)
+        if edge_chain is not None:
+            shared = edge_chain
+        else:
+            faces = _shared_face_union(first, second, common)
+            if faces is None:
+                return False
+            convex = _convex_planar_face_union(faces, point_by_id)
+            if convex is not True:
+                return None
+    return _DeclaredStratum((shared,), (), point_by_id)
+
+
 def _contact_is_declared(
     first: EmbeddingCell,
     second: EmbeddingCell,
@@ -507,32 +745,52 @@ def _contact_is_declared(
 ) -> bool | None:
     if not points:
         return True
-    shared = tuple(sorted(set(first_ids).intersection(second_ids)))
-    if not shared:
-        return False
-    common = frozenset(shared)
-    point_by_id = dict(zip(first_ids, first.corner_images, strict=True))
-    if any(identifier not in point_by_id for identifier in shared):
-        return False
-    if common not in _local_strata(first) or common not in _local_strata(second):
-        edge_chain = _shared_edge_chain(first, second, common, point_by_id)
-        if edge_chain is not None:
-            shared = edge_chain
-        else:
-            # Split interfaces are declared only through their complete convex
-            # face union, never the hull of disconnected shared vertices.
-            faces = _shared_face_union(first, second, common)
-            if faces is None:
-                return False
-            convex = _convex_planar_face_union(faces, point_by_id)
-            if convex is not True:
-                return None
-    try:
-        return all(
-            _point_in_declared_stratum(point, shared, point_by_id) for point in points
-        )
-    except (ValueError, ZeroDivisionError):
-        return None
+    stratum = _declared_stratum(first, second, first_ids, second_ids)
+    if not isinstance(stratum, _DeclaredStratum):
+        return stratum
+    return stratum.contains(points)
+
+
+def _common_corner_keys(
+    first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
+) -> list[tuple[int, ...]]:
+    """Row-major per piece pair, its sorted common corner ids (``-1`` padded).
+
+    Equal keys name equal sets; corners are interned point identities.
+    """
+    left = np.asarray(first, dtype=np.int64)
+    right = np.asarray(second, dtype=np.int64)
+    member = np.any(left[:, None, :, None] == right[None, :, None, :], axis=3)
+    common = np.sort(np.where(member, left[:, None, :], -1), axis=2)
+    return list(map(tuple, common.reshape((-1, left.shape[1])).tolist()))
+
+
+class _PairStratum:
+    """`_contact_is_declared` of one cell pair, its stratum prepared on first use."""
+
+    __slots__ = ("_first", "_second", "_stratum")
+
+    def __init__(self, first: EmbeddingCell, second: EmbeddingCell, /) -> None:
+        self._first = first
+        self._second = second
+        self._stratum: list[_DeclaredStratum | bool | None] = []
+
+    def declared(self, points: tuple[tuple[ExactScalar, ...], ...], /) -> bool | None:
+        if not points:
+            return True
+        if not self._stratum:
+            self._stratum.append(
+                _declared_stratum(
+                    self._first,
+                    self._second,
+                    self._first.vertex_ids,
+                    self._second.vertex_ids,
+                )
+            )
+        stratum = self._stratum[0]
+        if not isinstance(stratum, _DeclaredStratum):
+            return stratum
+        return stratum.contains(points)
 
 
 def _polygon_cycle(cell: EmbeddingCell, /) -> tuple[int, ...]:
@@ -602,24 +860,15 @@ def _volume_tetrahedra(
         )
     if cell.kind in ("tetrahedron", "simplex:3"):
         return (_tetrahedron3(cell.corner_images),)
-    faces = _oriented_closed_faces(cell)
     points = tuple(_point3(point) for point in cell.corner_images)
-    planes = tuple(_face_plane(tuple(points[index] for index in face)) for face in faces)
+    triangles = _oriented_face_triangles(cell, points)
+    # The star point lies strictly inside every face triangle's plane (one
+    # plane per planar face, one per fan triangle of a non-planar face).
+    planes = tuple(_face_plane(triangle) for triangle in triangles)
     center = _star_center(points, planes)
     if center is None:
         raise UnsupportedEmbeddingMap(
             "Polytope face planes do not admit an exact strictly interior star point."
-        )
-    triangles: list[tuple[Point3, Point3, Point3]] = []
-    for face in faces:
-        face_points = tuple(points[index] for index in face)
-        try:
-            local = triangulate_planar_polygon(face_points)
-        except ValueError as error:
-            raise UnsupportedEmbeddingMap(str(error)) from error
-        triangles.extend(
-            (face_points[first], face_points[second], face_points[third])
-            for first, second, third in local
         )
     if _star_ray_degree(center, tuple(triangles)) != 1:
         raise UnsupportedEmbeddingMap(
@@ -628,8 +877,143 @@ def _volume_tetrahedra(
     return tuple((center, *triangle) for triangle in triangles)
 
 
-def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...]:
-    """Orient face loops coherently outward over a closed oriented edge cycle."""
+_STAR_DECOMPOSITION_REFUSALS = (
+    "",
+    "A linear polytope has no exact face triangulation.",
+    "A polytope face has invalid vertex incidence.",
+    "Polytope boundary is not a closed two-manifold face complex.",
+    "Polytope boundary faces are not coherently orientable.",
+    "A polytope boundary encloses zero exact volume.",
+    "A polyhedron face loop has a zero exact area vector.",
+    "A non-planar polyhedron face folds its vertex-average fan.",
+    "A polygon must have at least three distinct exact vertices.",
+    "Planar polygon is exactly degenerate.",
+    "Polygon vertices are not exactly coplanar.",
+    "A planar polygon has zero exact area.",
+    "Polygon boundary self-intersects or self-touches.",
+    "No exact simple-polygon ear is available for triangulation.",
+    "Polygon triangulation produced a degenerate final triangle.",
+    "The polytope boundary does not wrap its star point exactly once.",
+    "A non-planar polyhedron face loop winds more than once about its centre.",
+)
+
+
+def _native_volume_tetrahedra(
+    cells: Sequence[EmbeddingCell], /
+) -> list[tuple[tuple[Point3, Point3, Point3, Point3], ...] | str | None]:
+    """`_volume_tetrahedra` of non-simplex cells by the native exact proof.
+
+    Each entry is the identical exact decomposition, the identical refusal
+    message, or ``None`` when the native proof leaves the cell (or a corner is
+    not rational) to the rational one.
+    """
+    from .._meshcore import (
+        common_denominator_rows,
+        meshcore_available,
+        polyhedral_star_decomposition,
+    )
+
+    results: list[tuple[tuple[Point3, Point3, Point3, Point3], ...] | str | None] = [
+        None for _ in cells
+    ]
+    if not cells or not meshcore_available():
+        return results
+    rows: list[int] = []
+    integers: list[int] = []
+    scales: list[int] = []
+    face_integers: list[int] = []
+    point_offsets = [0]
+    cell_faces = [0]
+    face_offsets = [0]
+    face_values: list[int] = []
+    for row, cell in enumerate(cells):
+        count = len(cell.corner_images)
+        integer_rows = (
+            common_denominator_rows(cell.corner_images)
+            if all(len(point) == 3 for point in cell.corner_images)
+            else None
+        )
+        if integer_rows is None or any(
+            index < 0 or index >= count for route in cell.facet_routes for index in route
+        ):
+            continue
+        face_rows: list[int] = []
+        for route in cell.facet_routes:
+            # Each face is decided again over its own vertices' denominator.
+            local_rows = common_denominator_rows(
+                tuple(cell.corner_images[index] for index in route)
+            )
+            if local_rows is None:
+                break
+            face_rows.extend(local_rows[0])
+        else:
+            rows.append(row)
+            integers.extend(integer_rows[0])
+            scales.append(integer_rows[1])
+            face_integers.extend(face_rows)
+            point_offsets.append(point_offsets[-1] + count)
+            for route in cell.facet_routes:
+                face_values.extend(route)
+                face_offsets.append(len(face_values))
+            cell_faces.append(len(face_offsets) - 1)
+    if not rows:
+        return results
+    codes, face_reversed, triangle_offsets, triangle_counts, triangles = (
+        polyhedral_star_decomposition(
+            np.asarray(point_offsets, dtype=np.int64),
+            integers + scales,
+            face_integers,
+            np.asarray(cell_faces, dtype=np.int64),
+            np.asarray(face_offsets, dtype=np.int64),
+            np.asarray(face_values, dtype=np.int64),
+            parallelism=exact_kernel_parallelism(),
+        )
+    )
+    for local, row in enumerate(rows):
+        code = int(codes[local])
+        if code < 0:
+            continue
+        if code:
+            results[row] = _STAR_DECOMPOSITION_REFUSALS[code]
+            continue
+        cell = cells[row]
+        corner_points = tuple(_point3(point) for point in cell.corner_images)
+        center = _vertex_centroid(corner_points)
+        first_face = cell_faces[local]
+        faces = tuple(
+            tuple(corner_points[index] for index in (route[::-1] if flip else route))
+            for route, flip in zip(
+                cell.facet_routes,
+                face_reversed[first_face : cell_faces[local + 1]].tolist(),
+                strict=True,
+            )
+        )
+        start = int(triangle_offsets[local])
+        rows_of_cell = triangles[start : start + int(triangle_counts[local])].tolist()
+        # Local index -1 is a fan face's apex: its outward loop is extended by
+        # its exact vertex average.
+        fan_faces = {face for face, first, _, _ in rows_of_cell if first < 0}
+        faces = tuple(
+            (*loop, _vertex_centroid(loop)) if face in fan_faces else loop
+            for face, loop in enumerate(faces)
+        )
+        results[row] = tuple(
+            (center, faces[face][first], faces[face][second], faces[face][third])
+            for face, first, second, third in rows_of_cell
+        )
+    return results
+
+
+def _oriented_face_triangles(
+    cell: EmbeddingCell, points: tuple[Point3, ...], /
+) -> tuple[tuple[Point3, Point3, Point3], ...]:
+    """Outward face triangles over a closed oriented edge cycle.
+
+    Face loops are oriented coherently, each oriented loop is triangulated
+    (``polytope_face_triangles``), and when the exact enclosed volume is
+    negative every loop is reversed and triangulated again: a face's triangles
+    are always those of its outward loop.
+    """
     routes = cell.facet_routes
     if not routes:
         raise UnsupportedEmbeddingMap(
@@ -668,26 +1052,27 @@ def _oriented_closed_faces(cell: EmbeddingCell, /) -> tuple[tuple[int, ...], ...
                         raise UnsupportedEmbeddingMap(
                             "Polytope boundary faces are not coherently orientable."
                         )
-    oriented = tuple(
-        route[::-1] if reversed_face[index] else route
-        for index, route in enumerate(routes)
-    )
-    points = tuple(_point3(point) for point in cell.corner_images)
+
+    def loop_triangles(flip_all: bool, /) -> list[tuple[Point3, Point3, Point3]]:
+        triangles: list[tuple[Point3, Point3, Point3]] = []
+        for index, route in enumerate(routes):
+            loop = route[::-1] if reversed_face[index] ^ flip_all else route
+            try:
+                triangles.extend(
+                    polytope_face_triangles(tuple(points[vertex] for vertex in loop))
+                )
+            except ValueError as error:
+                raise UnsupportedEmbeddingMap(str(error)) from error
+        return triangles
+
+    triangles = loop_triangles(False)
     origin = points[0]
-    volume = sum(
-        (
-            determinant3(
-                origin, points[face[0]], points[face[index]], points[face[index + 1]]
-            )
-            for face in oriented
-            for index in range(1, len(face) - 1)
-        ),
-        Fraction(0),
+    sign = _sign(
+        sum((determinant3(origin, *triangle) for triangle in triangles), Fraction(0))
     )
-    sign = _sign(volume)
     if sign == 0:
         raise UnsupportedEmbeddingMap("A polytope boundary encloses zero exact volume.")
-    return oriented if sign > 0 else tuple(face[::-1] for face in oriented)
+    return tuple(triangles if sign > 0 else loop_triangles(True))
 
 
 def _face_plane(points: tuple[Point3, ...], /) -> tuple[Point3, ExactScalar]:
@@ -5834,10 +6219,12 @@ class _VertexConeFilter:
 
 @dataclass(frozen=True, slots=True)
 class _VolumePieceFilter:
-    """Binary64 contact certificates for the exact tetrahedra of straight cells in R3.
+    """Contact certificates for the exact tetrahedra of straight cells in R3.
 
     Cells with `counts == 0` are not filtered.  Simplex cells contribute their own
-    corners as their single piece, in vertex-identifier order.
+    corners as their single piece, in vertex-identifier order.  `contacts` holds
+    the native declared-contact proof operands of the filtered cells with
+    rational corners (``None`` without the native library).
     """
 
     enclosures: TetrahedronEnclosures
@@ -5845,6 +6232,7 @@ class _VolumePieceFilter:
     counts: NDArray[np.intp]
     vertex_ids: NDArray[np.int64]
     simplex: NDArray[np.bool_]
+    contacts: PolyhedralContactBank | None
 
     @classmethod
     def prepare(
@@ -5882,25 +6270,60 @@ class _VolumePieceFilter:
             return None
         offsets = np.zeros((len(cells) + 1,), dtype=np.intp)
         np.cumsum(counts, out=offsets[1:])
+        native = meshcore_available()
+        corners = (
+            tuple(
+                _point3(point)
+                for index in np.flatnonzero(counts).tolist()
+                for point in cells[index].corner_images
+                if len(point) == 3
+            )
+            if native
+            else ()
+        )
+        rows, points = exact_point_identities(
+            chain(chain.from_iterable(tetrahedra), corners)
+        )
+        point_ids = rows[: 4 * len(tetrahedra)].reshape((len(tetrahedra), 4))
+        lower, upper = rational_point_enclosures(points)
         return cls(
-            outward_tetrahedron_enclosures(tetrahedra),
+            TetrahedronEnclosures.prepare(lower[point_ids], upper[point_ids], point_ids),
             offsets,
             counts,
             vertex_ids,
             simplex,
+            _polyhedral_contact_bank(
+                cells,
+                counts,
+                offsets,
+                point_ids,
+                rows[4 * len(tetrahedra) :],
+                points,
+                lower,
+                upper,
+            )
+            if native
+            else None,
         )
 
     def certify(
         self, first: NDArray[np.intp], second: NDArray[np.intp], /
-    ) -> tuple[NDArray[np.bool_], dict[tuple[int, int], NDArray[np.bool_]]]:
-        """Cell pairs with no exact finding, and certified piece pairs of the others.
+    ) -> tuple[
+        NDArray[np.bool_],
+        dict[tuple[int, int], NDArray[np.bool_]],
+        set[tuple[int, int]],
+    ]:
+        """Cell pairs with no exact finding, certified piece pairs of the others,
+        and the others whose every piece contact is declared.
 
         A cleared pair of simplex cells has equal corner images exactly on its
         shared vertex identifiers, so its exact restriction trace holds, and its
         intersection lies in the hull of those images, every point of which lies
-        in the declared shared stratum.  For other filtered cell pairs the
-        returned `(first pieces, second pieces)` mask marks piece pairs whose
-        intersection lies in the hull of their common corners.
+        in the declared shared stratum.  For the other filtered cell pairs either
+        the native proof places every piece intersection in one convex piece of
+        the declared stratum (the exact rational contact pass then accepts every
+        piece pair), or the returned `(first pieces, second pieces)` mask marks
+        piece pairs whose intersection lies in the hull of their common corners.
         """
         cleared = np.zeros(first.shape, dtype=np.bool_)
         simplex_rows = np.flatnonzero(self.simplex[first] & self.simplex[second])
@@ -5928,11 +6351,22 @@ class _VolumePieceFilter:
         )
         certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
         if not general.size:
-            return cleared, certificates
+            return cleared, certificates, set()
         left, right = first[general], second[general]
+        proved = (
+            polyhedral_declared_contacts(
+                self.contacts, left, right, parallelism=exact_kernel_parallelism()
+            )
+            if self.contacts is not None
+            else np.zeros(left.shape, dtype=np.bool_)
+        )
+        declared = set(zip(left[proved].tolist(), right[proved].tolist(), strict=True))
+        left, right = left[~proved], right[~proved]
+        if not left.size:
+            return cleared, certificates, declared
         left_counts, right_counts = self.counts[left], self.counts[right]
         sizes = left_counts * right_counts
-        row = np.repeat(np.arange(general.size), sizes)
+        row = np.repeat(np.arange(left.size), sizes)
         local = np.arange(row.size) - np.repeat(np.cumsum(sizes) - sizes, sizes)
         certified = self.enclosures.common_hull_contacts(
             self.offsets[left][row] + local // right_counts[row],
@@ -5949,7 +6383,108 @@ class _VolumePieceFilter:
             certificates[first_index, second_index] = block.reshape(
                 (int(left_counts[position]), int(right_counts[position]))
             )
-        return cleared, certificates
+        return cleared, certificates, declared
+
+
+def _polyhedral_contact_bank(
+    cells: tuple[EmbeddingCell, ...],
+    counts: NDArray[np.intp],
+    offsets: NDArray[np.intp],
+    point_ids: NDArray[np.int64],
+    corner_ids: NDArray[np.int64],
+    points: list[Point3],
+    lower: NDArray[np.float64],
+    upper: NDArray[np.float64],
+    /,
+) -> PolyhedralContactBank:
+    """Native contact operands of the filtered cells, in filter order.
+
+    `corner_ids` are the identities of the filtered cells' three-dimensional
+    corner images in order.  A cell keeps its tetrahedra only when all its
+    corners are distinct rational vertices in R3 and every point it names is
+    rational and binary64-bounded; points of other cells stay placeholders.
+    """
+    point_integers: list[int] = []
+    rational = np.zeros((len(points),), dtype=np.bool_)
+    for index, point in enumerate(points):
+        integer_row = common_denominator_rows((point,))
+        rational[index] = integer_row is not None
+        point_integers.extend(
+            (*integer_row[0], integer_row[1]) if integer_row is not None else (0, 0, 0, 1)
+        )
+    # Rational points with finite enclosures: the rational pass orders contact
+    # vertices by their binary64 values.
+    bounded = rational & np.all(np.isfinite(lower) & np.isfinite(upper), axis=1)
+    tet_rows: list[NDArray[np.int64]] = []
+    tet_offsets = [0]
+    corner_offsets = [0]
+    corner_points: list[int] = []
+    corner_vertices: list[int] = []
+    corner_integers: list[int] = []
+    face_offsets = [0]
+    cell_faces = [0]
+    face_corners: list[int] = []
+    scales = [1 for _ in cells]
+    cursor = 0
+    for index, cell in enumerate(cells):
+        size = (
+            sum(len(point) == 3 for point in cell.corner_images) if counts[index] else 0
+        )
+        own = corner_ids[cursor : cursor + size]
+        cursor += size
+        tets = point_ids[offsets[index] : offsets[index + 1]]
+        integer_rows = (
+            common_denominator_rows(cell.corner_images)
+            if size == len(cell.corner_images) and size
+            else None
+        )
+        if (
+            integer_rows is None
+            # The rational convex-loop decision and contact arithmetic stay
+            # exact only on Fraction corners.
+            or not all(
+                isinstance(value, Fraction)
+                for point in cell.corner_images
+                for value in point
+            )
+            or len(cell.vertex_ids) != size
+            or len(set(cell.vertex_ids)) != size
+            or not bool(np.all(bounded[tets]))
+            or any(
+                corner < 0 or corner >= size
+                for route in cell.facet_routes
+                for corner in route
+            )
+        ):
+            tet_offsets.append(tet_offsets[-1])
+            corner_offsets.append(corner_offsets[-1])
+            cell_faces.append(cell_faces[-1])
+            continue
+        tet_rows.append(tets)
+        tet_offsets.append(tet_offsets[-1] + len(tets))
+        corner_points.extend(own.tolist())
+        corner_vertices.extend(cell.vertex_ids)
+        corner_integers.extend(integer_rows[0])
+        scales[index] = integer_rows[1]
+        corner_offsets.append(len(corner_points))
+        for route in cell.facet_routes:
+            face_corners.extend(route)
+            face_offsets.append(len(face_corners))
+        cell_faces.append(len(face_offsets) - 1)
+    return polyhedral_contact_bank(
+        point_integers,
+        lower,
+        upper,
+        np.concatenate(tet_rows) if tet_rows else np.zeros((0, 4), dtype=np.int64),
+        np.asarray(tet_offsets, dtype=np.int64),
+        np.asarray(corner_offsets, dtype=np.int64),
+        np.asarray(corner_points, dtype=np.int64),
+        np.asarray(corner_vertices, dtype=np.int64),
+        corner_integers + scales,
+        np.asarray(cell_faces, dtype=np.int64),
+        np.asarray(face_offsets, dtype=np.int64),
+        np.asarray(face_corners, dtype=np.int64),
+    )
 
 
 def _rational_planar_corners(
@@ -6139,6 +6674,22 @@ def _nonperiodic_contacts(
     # Preserve the first source of each stratum, not its expensive derived
     # polynomial. Rebuilding from that source gives the identical residual.
     stratum_sources: dict[tuple[int, ...], int] = {}
+    # Straight non-simplex solids decomposed below share one native exact pass.
+    native_rows = tuple(
+        index
+        for index, cell in enumerate(cells)
+        if cell.dimension == 3
+        and cell.kind not in ("tetrahedron", "simplex:3")
+        and (cell.affine or not cell.coordinates)
+        and (participants is None or participants[index] or cell.kind == "polyhedron")
+    )
+    native_tetrahedra = dict(
+        zip(
+            native_rows,
+            _native_volume_tetrahedra(tuple(cells[index] for index in native_rows)),
+            strict=True,
+        )
+    )
     for index, cell in enumerate(cells):
         if (
             participants is not None
@@ -6176,8 +6727,11 @@ def _nonperiodic_contacts(
         if not cell.affine and cell.coordinates:
             simplices.append(None)
             continue
+        native = native_tetrahedra.get(index)
         try:
-            simplices.append(_cell_simplices(cell))
+            if isinstance(native, str):
+                raise UnsupportedEmbeddingMap(native)
+            simplices.append(native if native is not None else _cell_simplices(cell))
         except (ValueError, ZeroDivisionError) as error:
             simplices.append(None)
             # A vertex-defined polyhedron has no Jacobian; its exact star
@@ -6221,6 +6775,22 @@ def _nonperiodic_contacts(
     # The operands stay alive for this proof, so identity keys cannot be reused.
     vertex_sets = {id(cell): frozenset(cell.vertex_ids) for cell in original_cells}
     vertex_frames: dict[tuple[int, int], _VertexResidualFrame | None] = {}
+    # Exact piece corners interned once: common corners of two pieces are an
+    # integer set intersection, not pairwise exact comparisons.
+    point_ids: dict[tuple[ExactScalar, ...], int] = {}
+    piece_point_ids: dict[int, tuple[tuple[int, ...], ...]] = {}
+
+    def corner_ids(
+        pieces: tuple[tuple[tuple[ExactScalar, ...], ...], ...], /
+    ) -> tuple[tuple[int, ...], ...]:
+        found = piece_point_ids.get(id(pieces))
+        if found is None:
+            found = tuple(
+                tuple(point_ids.setdefault(point, len(point_ids)) for point in piece)
+                for piece in pieces
+            )
+            piece_point_ids[id(pieces)] = found
+        return found
 
     def straight_polygon(
         index: int, /
@@ -6256,8 +6826,11 @@ def _nonperiodic_contacts(
         ordered = first_block < second_block
         first_block, second_block = first_block[ordered], second_block[ordered]
         piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
+        declared_pairs: set[tuple[int, int]] = set()
         if piece_filter is not None:
-            cleared, piece_certificates = piece_filter.certify(first_block, second_block)
+            cleared, piece_certificates, declared_pairs = piece_filter.certify(
+                first_block, second_block
+            )
             first_block, second_block = first_block[~cleared], second_block[~cleared]
         if planar_filter is not None:
             cleared = planar_filter.certify(first_block, second_block)
@@ -6814,47 +7387,53 @@ def _nonperiodic_contacts(
                         detail="The shared mapped stratum has no completed exact restriction proof.",
                     )
                 )
-            if first_pieces is None or second_pieces is None:
+            if (
+                first_pieces is None
+                or second_pieces is None
+                or (first_index, second_index) in declared_pairs
+            ):
                 continue
             certified_pieces = piece_certificates.get((first_index, second_index))
-            declared_common: dict[frozenset[Point3], bool] = {}
+            declared_common: dict[tuple[int, ...], bool] = {}
+            first_ids = corner_ids(first_pieces) if certified_pieces is not None else ()
+            second_ids = corner_ids(second_pieces) if certified_pieces is not None else ()
+            certified_flags, common_keys = (
+                (
+                    certified_pieces.reshape(-1).tolist(),
+                    _common_corner_keys(first_ids, second_ids),
+                )
+                if certified_pieces is not None
+                else ([], [])
+            )
+            right_count = len(second_pieces)
+            pair_stratum = _PairStratum(first_cell, second_cell)
             offending: tuple[tuple[ExactScalar, ...], ...] = ()
             contact_error: Exception | None = None
             for left_index, left in enumerate(first_pieces):
                 for right_index, right in enumerate(second_pieces):
-                    if (
-                        certified_pieces is not None
-                        and certified_pieces[left_index, right_index]
-                    ):
+                    flat = left_index * right_count + right_index
+                    if certified_flags and certified_flags[flat]:
                         # The certified intersection lies in the hull of the
                         # common corners; shared-stratum membership is convex.
-                        common = tuple(_point3(point) for point in left if point in right)
-                        key = frozenset(common)
+                        key = common_keys[flat]
                         if key not in declared_common:
-                            declared_common[key] = (
-                                _contact_is_declared(
-                                    first_cell,
-                                    second_cell,
-                                    common,
-                                    first_cell.vertex_ids,
-                                    second_cell.vertex_ids,
+                            right_ids = frozenset(second_ids[right_index])
+                            common = tuple(
+                                _point3(point)
+                                for point, point_id in zip(
+                                    left, first_ids[left_index], strict=True
                                 )
-                                is True
+                                if point_id in right_ids
                             )
+                            declared_common[key] = pair_stratum.declared(common) is True
                         if declared_common[key]:
                             continue
                     shared_contacts = _plane_side_shared_contacts(
                         left, right, first_cell.dimension, mesh.ambient_dimension
                     )
-                    if shared_contacts is not None and (
-                        _contact_is_declared(
-                            first_cell,
-                            second_cell,
-                            shared_contacts,
-                            first_cell.vertex_ids,
-                            second_cell.vertex_ids,
-                        )
-                        is True
+                    if (
+                        shared_contacts is not None
+                        and pair_stratum.declared(shared_contacts) is True
                     ):
                         continue
                     try:
@@ -6867,13 +7446,7 @@ def _nonperiodic_contacts(
                     except (ValueError, ZeroDivisionError) as error:
                         contact_error = error
                         break
-                    declared = _contact_is_declared(
-                        first_cell,
-                        second_cell,
-                        contacts,
-                        first_cell.vertex_ids,
-                        second_cell.vertex_ids,
-                    )
+                    declared = pair_stratum.declared(contacts)
                     if declared is None:
                         contact_error = UnsupportedEmbeddingMap(
                             "Exact intersection membership in the shared stratum was not decided."
@@ -6975,19 +7548,37 @@ def _periodic_contacts(
     return findings, result.quotient_boundary, exterior_only
 
 
+# Integers beyond this many bits exceed Python's decimal conversion limit
+# (4300 digits); their identity text is hexadecimal instead.
+_DECIMAL_IDENTITY_BITS = 14000
+
+
+def _shell_measure_identity(value: ExactScalar, /) -> object:
+    """The exact identity of a shell measure, printable at any size."""
+    if isinstance(value, Fraction) and (
+        max(value.numerator.bit_length(), value.denominator.bit_length())
+        > _DECIMAL_IDENTITY_BITS
+    ):
+        return ("rational-hex", f"{value.numerator:#x}", f"{value.denominator:#x}")
+    return _coordinate_coefficient_identity(value)
+
+
 def _boundary_findings(
     mesh: CellMesh,
     cells: tuple[EmbeddingCell, ...],
     /,
 ) -> tuple[
-    list[MeshCertificateFinding], int, int, list[str], bool, tuple[int, ...] | None
+    list[MeshCertificateFinding], int, int, list[str], str | None, tuple[int, ...] | None
 ]:
     """Oriented-boundary findings, inventory, proof values and degree premises.
 
-    The fifth value states the complete planar-exterior degree-one theorem. The
-    last is the rows of the exterior-facet cells when the complex has one
-    closed manifold shell whose exterior images are not all proved planar, so
-    their embedding is still owed; otherwise ``None``.
+    The fifth value names the complete exterior degree-one theorem when it
+    holds (``embedded_planar_exterior_boundary``, or
+    ``embedded_fan_exterior_boundary`` when an exterior face is the fan of a
+    non-planar loop), else ``None``. The last is the rows of the exterior-facet
+    cells when the complex has one closed manifold shell whose exterior images
+    are not all proved planar, so their embedding is still owed; otherwise
+    ``None``.
     """
     if (
         mesh.topological_dimension != 3
@@ -6995,7 +7586,7 @@ def _boundary_findings(
         or not cells
         or any(cell.kind == "polygon" for cell in cells)
     ):
-        return [], 0, 0, [], False, None
+        return [], 0, 0, [], None, None
     boundary = build_oriented_boundary(mesh, cells)
     unresolved_checks = {
         "boundary_degree_dimension",
@@ -7032,7 +7623,7 @@ def _boundary_findings(
     if boundary.status == "certified":
         values.extend(
             (
-                f"shell_measures:{tuple(_coordinate_coefficient_identity(value) for value in boundary.shell_signed_measures)}",
+                f"shell_measures:{tuple(_shell_measure_identity(value) for value in boundary.shell_signed_measures)}",
                 f"exterior_degrees:{boundary.shell_degrees}",
             )
         )
@@ -7041,12 +7632,23 @@ def _boundary_findings(
             f"map_evidence:{face.map_evidence}"
             for face in boundary.faces
         )
+    degree_route: str | None = None
     if boundary.boundary_degree_one:
+        # A fan face triangle carries the synthetic negative centre identity.
+        fan = any(min(triangle.vertex_ids) < 0 for triangle in boundary.triangles)
+        degree_route = (
+            "embedded_fan_exterior_boundary"
+            if fan
+            else "embedded_planar_exterior_boundary"
+        )
+        facets = tuple(sorted(face.facet_id for face in boundary.faces))
         values.extend(
             (
                 "boundary_degree_one:single-connected-source-component",
                 "boundary_topology:one-embedded-closed-shell",
-                f"exterior_planar_embedded_facets:{tuple(sorted(face.facet_id for face in boundary.faces))}",
+                f"exterior_fan_embedded_facets:{facets}"
+                if fan
+                else f"exterior_planar_embedded_facets:{facets}",
                 f"embedded_exterior_triangles:{len(boundary.triangles)}",
             )
         )
@@ -7055,7 +7657,7 @@ def _boundary_findings(
         len(boundary.faces),
         len(boundary.shell_face_indices),
         values,
-        boundary.boundary_degree_one,
+        degree_route,
         boundary.exterior_cells
         if boundary.single_shell_topology and not boundary.boundary_degree_one
         else None,
@@ -7800,7 +8402,7 @@ def _proof(
     boundary_facet_count = 0
     shell_count = 0
     boundary_values: list[str] = []
-    degree_one_boundary = False
+    degree_one_boundary: str | None = None
     global_degree_route: str | None = None
     periodic_shell_degree_topology: str | None = None
     reference_chain_attempt = (
@@ -8027,7 +8629,7 @@ def _proof(
         # through its certified positive Jacobian.
         owing: NDArray[np.bool_] | None = None
         if not state_findings and not boundary:
-            if degree_one_boundary:
+            if degree_one_boundary is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
             elif exterior_cells is not None:
                 owing = np.zeros((len(cells),), dtype=np.bool_)
@@ -8041,8 +8643,8 @@ def _proof(
         local_premises = not state_findings
         contact_values: list[str] = []
         participants: NDArray[np.bool_] | None = None
-        if local_premises and degree_one_boundary:
-            degree_route = "embedded_planar_exterior_boundary"
+        if local_premises and degree_one_boundary is not None:
+            degree_route = degree_one_boundary
             participants = np.zeros((len(cells),), dtype=np.bool_)
         elif local_premises and exterior_cells is not None:
             # A shell whose facets are not all planar is embedded when the
