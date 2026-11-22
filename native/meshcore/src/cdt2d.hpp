@@ -276,7 +276,7 @@ class ConstrainedMesher {
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0) {
-        enqueue_triangle_checks(slot);
+        enqueue_triangle_checks(slot, tri_.triangles[t]);
       }
     }
     for (;;) {
@@ -631,10 +631,8 @@ class ConstrainedMesher {
 
   // Hot per-star helpers are force-inlined (as triangulation2d.hpp's conflict
   // tests): measured 3-5% on GCC ring/square 1e4, 3% on Clang square.
-  [[gnu::always_inline]] Quality quality(int32_t t) const {
-    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
-    const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
-                          tri_.point(triangle.v[2])};
+  [[gnu::always_inline]] Quality quality(int32_t t, const Triangle2D& triangle,
+                                         const double* const (&p)[3]) const {
     double squared[3];
     for (int k = 0; k < 3; ++k) {
       const double dx = p[prev3(k)][0] - p[next3(k)][0];
@@ -687,8 +685,15 @@ class ConstrainedMesher {
     return result;
   }
 
-  [[gnu::always_inline]] BadTriangle make_entry(int32_t t, double badness) const {
+  [[gnu::always_inline]] Quality quality(int32_t t) const {
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
+    const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
+                          tri_.point(triangle.v[2])};
+    return quality(t, triangle, p);
+  }
+
+  [[gnu::always_inline]] BadTriangle make_entry(int32_t t, const Triangle2D& triangle,
+                                                double badness) const {
     int first = 0;
     if (triangle.v[1] < triangle.v[first]) first = 1;
     if (triangle.v[2] < triangle.v[first]) first = 2;
@@ -697,16 +702,20 @@ class ConstrainedMesher {
   }
 
   [[gnu::always_inline]] void enqueue_bad(const BadTriangle& entry) {
+    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(entry.slot)];
+    const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
+                          tri_.point(triangle.v[2])};
+    enqueue_bad(entry, p);
+  }
+
+  [[gnu::always_inline]] void enqueue_bad(const BadTriangle& entry,
+                                         const double* const (&p)[3]) {
     if (!bad_queue_.spatial()) {
       bad_queue_.push(entry);
       return;
     }
-    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(entry.slot)];
-    const double* a = tri_.point(triangle.v[0]);
-    const double* b = tri_.point(triangle.v[1]);
-    const double* c = tri_.point(triangle.v[2]);
-    bad_queue_.push(entry, (a[0] + b[0] + c[0]) / 3.0,
-                    (a[1] + b[1] + c[1]) / 3.0);
+    bad_queue_.push(entry, (p[0][0] + p[1][0] + p[2][0]) / 3.0,
+                    (p[0][1] + p[1][1] + p[2][1]) / 3.0);
   }
 
   // An entry is current when its slot is live and holds its cyclic triple.
@@ -757,15 +766,18 @@ class ConstrainedMesher {
            encroaches(o, j, tri_.point(tri_.triangles[static_cast<std::size_t>(o)].v[j]));
   }
 
-  [[gnu::always_inline]] void enqueue_triangle_checks(int32_t t) {
-    const Quality q = quality(t);
+  [[gnu::always_inline]] void enqueue_triangle_checks(int32_t t, const Triangle2D& triangle) {
+    const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
+                          tri_.point(triangle.v[2])};
+    const Quality q = quality(t, triangle, p);
     if (q.bad) {
-      enqueue_bad(make_entry(t, q.badness));
+      enqueue_bad(make_entry(t, triangle, q.badness), p);
     }
-    const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     for (int k = 0; k < 3; ++k) {
-      if (tri_.constraint(t, k) != kFree && encroaches(t, k, tri_.point(triangle.v[k]))) {
-        segment_queue_.emplace_back(triangle.v[next3(k)], triangle.v[prev3(k)]);
+      const int next = next3(k);
+      const int prev = prev3(k);
+      if (tri_.constraint(t, k) != kFree && dot_sign(p[next], p[prev], p[k]) < 0) {
+        segment_queue_.emplace_back(triangle.v[next], triangle.v[prev]);
       }
     }
   }
@@ -774,10 +786,13 @@ class ConstrainedMesher {
     const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(m)];
     int32_t t = start;
     do {
-      if (!tri_.is_ghost(t) && tri_.region[static_cast<std::size_t>(t)] != 0) {
-        enqueue_triangle_checks(t);
+      // Ghosts always have region zero; every triangle in this star contains m.
+      const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
+      const int32_t next = triangle.n[triangle.v[0] == m ? 1 : triangle.v[1] == m ? 2 : 0];
+      if (tri_.region[static_cast<std::size_t>(t)] != 0) {
+        enqueue_triangle_checks(t, triangle);
       }
-      t = tri_.triangles[static_cast<std::size_t>(t)].n[next3(tri_.index_of(t, m))];
+      t = next;
     } while (t != start);
   }
 
@@ -848,11 +863,16 @@ class ConstrainedMesher {
   // Edge k (u -> w) of t is adjacent to nb, whose twin edge w -> u is found;
   // what Triangulation2D::link_edge does when k is already known.
   [[gnu::always_inline]] void link_across(int32_t t, int k, int32_t u, int32_t w, int32_t nb) {
+    redirect_twin(t, u, w, nb);
+    tri_.triangles[static_cast<std::size_t>(t)].n[k] = nb;
+  }
+
+  // The new triangle already names its neighbor; redirect only the twin.
+  [[gnu::always_inline]] void redirect_twin(int32_t t, int32_t u, int32_t w, int32_t nb) {
     const int j = tri_.edge_index(nb, w, u);
     if (j < 0) {
       throw std::logic_error("cdt2d: inconsistent adjacency");
     }
-    tri_.triangles[static_cast<std::size_t>(t)].n[k] = nb;
     tri_.triangles[static_cast<std::size_t>(nb)].n[j] = t;
   }
 
@@ -870,26 +890,37 @@ class ConstrainedMesher {
     const int32_t c2 = tri_.constraint(t, 2);
     const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
     const int32_t a = old.v[0], b = old.v[1], c = old.v[2];
-    // release(t) then allocate() would return t: it is replaced in place.
-    tri_.recycle(t);
+    // t is finite and is replaced in place, so only two slots are allocated.
     const int32_t t0 = t;
     const int32_t t1 = tri_.allocate();
     const int32_t t2 = tri_.allocate();
-    tri_.set_triangle(t0, b, c, m, kFree, kFree, c0);
-    tri_.set_triangle(t1, c, a, m, kFree, kFree, c1);
-    tri_.set_triangle(t2, a, b, m, kFree, kFree, c2);
-    for (int32_t s : {t0, t1, t2}) {
-      tri_.region[static_cast<std::size_t>(s)] = region;
-    }
-    // Edge k of (p0, p1, p2) runs p[k+1] -> p[k+2]: t0 = (b, c, m) has
-    // c -> m, m -> b, b -> c; t1 = (c, a, m) a -> m, m -> c, c -> a;
-    // t2 = (a, b, m) b -> m, m -> a, a -> b.
-    link_across(t0, 2, b, c, old.n[0]);
-    link_across(t1, 2, c, a, old.n[1]);
-    link_across(t2, 2, a, b, old.n[2]);
-    link_inner(t0, 0, t1, 1);
-    link_inner(t1, 0, t2, 1);
-    link_inner(t2, 0, t0, 1);
+    // Write each triangle with its final neighbors. The old boundary remains
+    // attached across edge 2 of each new triangle.
+    tri_.triangles[static_cast<std::size_t>(t0)] = {{b, c, m}, {t1, t2, old.n[0]}};
+    tri_.triangles[static_cast<std::size_t>(t1)] = {{c, a, m}, {t2, t0, old.n[1]}};
+    tri_.triangles[static_cast<std::size_t>(t2)] = {{a, b, m}, {t0, t1, old.n[2]}};
+    int32_t* constraints = tri_.constraints.data();
+    // Allocated slots can be reused rather than fresh.
+    constraints[3 * static_cast<std::size_t>(t0)] = kFree;
+    constraints[3 * static_cast<std::size_t>(t0) + 1] = kFree;
+    constraints[3 * static_cast<std::size_t>(t0) + 2] = c0;
+    constraints[3 * static_cast<std::size_t>(t1)] = kFree;
+    constraints[3 * static_cast<std::size_t>(t1) + 1] = kFree;
+    constraints[3 * static_cast<std::size_t>(t1) + 2] = c1;
+    constraints[3 * static_cast<std::size_t>(t2)] = kFree;
+    constraints[3 * static_cast<std::size_t>(t2) + 1] = kFree;
+    constraints[3 * static_cast<std::size_t>(t2) + 2] = c2;
+    tri_.region[static_cast<std::size_t>(t1)] = region;
+    tri_.region[static_cast<std::size_t>(t2)] = region;
+    tri_.finite_count += 2;
+    // Same representatives as assigning t0, t1, t2 in order.
+    tri_.vertex_triangle[static_cast<std::size_t>(c)] = t1;
+    tri_.vertex_triangle[static_cast<std::size_t>(a)] = t2;
+    tri_.vertex_triangle[static_cast<std::size_t>(b)] = t2;
+    tri_.vertex_triangle[static_cast<std::size_t>(m)] = t2;
+    redirect_twin(t0, b, c, old.n[0]);
+    redirect_twin(t1, c, a, old.n[1]);
+    redirect_twin(t2, a, b, old.n[2]);
     flip_stack_.insert(flip_stack_.end(), {t0, t1, t2});
   }
 
@@ -1259,8 +1290,6 @@ class ConstrainedMesher {
         marks_[static_cast<std::size_t>(located)] = 0;
         if (zero_count == 1) {
           marks_[static_cast<std::size_t>(host.n[zero_edge])] = 0;
-        }
-        if (zero_count == 1) {
           split_edge(located, zero_edge, v, kFree);
         } else {
           split_triangle(located, v);
@@ -1303,20 +1332,25 @@ class ConstrainedMesher {
     while (!stack.empty()) {
       const int32_t t = stack.back();
       stack.pop_back();
-      const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
+      const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
       for (int k = 0; k < 3; ++k) {
         if (tri_.constraint(t, k) != kFree) {
-          if (encroaches(t, k, center)) {
-            out.emplace_back(triangle.v[next3(k)], triangle.v[prev3(k)]);
+          const int32_t a = triangle.v[next3(k)], b = triangle.v[prev3(k)];
+          if (dot_sign(tri_.point(a), tri_.point(b), center) < 0) {
+            out.emplace_back(a, b);
           }
           continue;
         }
         const int32_t nb = triangle.n[k];
         const std::uint64_t mark = marks_[static_cast<std::size_t>(nb)];
-        if (mark == inside || mark == outside || tri_.is_ghost(nb)) {
+        // The low bit distinguishes inside from outside in the same epoch.
+        if ((mark & ~std::uint64_t{1}) == inside) {
           continue;
         }
         const Triangle2D& other = tri_.triangles[static_cast<std::size_t>(nb)];
+        if (other.v[2] == kInfiniteVertex) {
+          continue;
+        }
         if (incircle_sos_filtered(tri_.point(other.v[0]), tri_.point(other.v[1]),
                                   tri_.point(other.v[2]), center, other.v[0], other.v[1],
                                   other.v[2], id) > 0) {
