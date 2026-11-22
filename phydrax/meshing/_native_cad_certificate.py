@@ -23,12 +23,11 @@ in order and each conditional on the previous:
   exactly the source-declared solid on each side of every certified exterior
   or interface triangle (``verify_volume``).
 
-The standalone quadratic proof is opt-in and single-material. It uses the
-affine tetrahedra only as the reference complex. A freshly validated global
-embedding of the actual native nodal P2 map and exact agreement of its
-shared edge nodes identify the same complex's curved physical boundary.
-The V3 bound is on those quadratic traces, not the affine shadow. Public
-mesh acceptance and cold archive admission still refuse P2 CAD.
+The quadratic proof is single-material. It uses the affine tetrahedra only as
+the reference complex. A validated global embedding of the actual native
+nodal P2 map and exact agreement of its shared edge nodes identify the same
+complex's curved physical boundary. The V3 bound is on those quadratic
+traces, not the affine shadow.
 
 The witness is construction data, not a claim: every verdict is recomputed
 from it, the mesh, cell labels and the source domain.
@@ -674,9 +673,8 @@ def _native_findings(
                     "cad_fidelity",
                     "unresolved",
                     "mesh",
-                    detail="V3 bounds affine boundary triangles; a geometry order 2 CAD "
-                    "solid has no certified curved boundary and is constructed "
-                    "unproved only (prove=False).",
+                    detail="V3 requires affine boundary triangles or the admitted "
+                    "native quadratic trace proof.",
                 ),
             ),
             None,

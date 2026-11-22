@@ -799,6 +799,32 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         if reuse_surface:
             assert computed_surface is not None
             embedding = computed_surface.report.embedding
+        quadratic_cad = False
+        cad_embedding = None
+        if inputs.native_cad_surface is not None:
+            from ..discretization.fem._reference import FiniteElementSpec
+
+            quadratic_cad = any(
+                isinstance(element, FiniteElementSpec) and element.degree == 2
+                for element in inputs.geometry.elements
+            )
+            if (
+                quadratic_cad
+                and inputs.junction_vertices is None
+                and embedding_premise is None
+            ):
+                if reused_embedding:
+                    cad_embedding = validated_embedding
+                else:
+                    if embedding is not None:
+                        embedding.require_inputs(inputs.mesh, inputs.geometry, validity)
+                    cad_embedding = ValidatedGlobalEmbedding(
+                        inputs.mesh,
+                        inputs.geometry,
+                        validity,
+                        validated_validity=validated_validity,
+                    )
+                    embedding = cad_embedding.certificate
         if embedding is None:
             embedding = certify_global_embedding(
                 inputs.mesh,
@@ -864,7 +890,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 inputs.fidelity_tolerance,
                 inputs.protected_features,
                 inputs.maximum_normal_deviation,
-                embedding=embedding,
+                embedding=cad_embedding if quadratic_cad else embedding,
+                quadratic=quadratic_cad,
             )
             findings.extend(native_cad.findings)
         elif inputs.source is not None:

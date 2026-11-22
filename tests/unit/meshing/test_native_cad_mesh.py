@@ -2195,14 +2195,18 @@ def test_quadratic_cad_certificate_requires_embedding_of_its_actual_shared_trace
         assert "certified embedding of the current coordinate map" in finding.detail
 
 
-def test_proved_quadratic_cad_solid_is_refused() -> None:
-    from phydrax.meshing._contracts import MeshingFailure
-
-    plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
-    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
-        plan.execute(prove=True)
-    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
-        plan.execute(prove=False).prove()
+def test_quadratic_cad_public_proof_reuses_the_constructed_map(
+    quadratic_cad_sphere: CellMeshingCandidate,
+) -> None:
+    deferred = quadratic_cad_sphere.prove()
+    eager = _cad_volume_plan(_sphere_model(), 0.3, 2).execute(prove=True)
+    assert deferred.result_id == eager.result_id
+    assert deferred.mesh.mesh_id == quadratic_cad_sphere.mesh.mesh_id
+    assert deferred.certification is not None
+    native = deferred.certification.native_cad
+    assert native is not None and native.status == "certified"
+    assert native.maximum_deviation is not None and native.maximum_deviation <= 0.05
+    assert native.geometry_id == deferred.certification.embedding.binding.geometry_id
 
 
 @pytest.mark.parametrize("prove_later", [False, True])
@@ -2234,7 +2238,14 @@ def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
     assert "ORIENTATION" in str(failure.value)
 
 
-def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("order", "radius_edge", "dihedral"),
+    [(1, 8.0, 0.0), (2, 2.0, 15.5)],
+    ids=["affine", "quadratic"],
+)
+def test_native_cad_certificate_survives_the_archive(
+    tmp_path: Path, order: int, radius_edge: float, dihedral: float
+) -> None:
     import subprocess
     import sys
 
@@ -2245,7 +2256,7 @@ def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
     )
 
     result = _cad_volume_plan(
-        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+        _sphere_model(), 0.3, order, radius_edge=radius_edge, dihedral=dihedral
     ).execute(prove=True)
     path = tmp_path / "native-cad-result.phx"
     write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)

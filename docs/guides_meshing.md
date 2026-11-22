@@ -1119,6 +1119,13 @@ of incident cells at each vertex, certifies embedding on the actual map, and
 includes the maximum vertex-rounding displacement in the deviation bound.
 Replay re-proves the original labeled CAD mesh and the current map.
 
+For a single-material native CAD solid with `geometry_order=2`, eager or
+deferred proof certifies the actual nonperiodic nodal tetrahedral map. The
+affine reference complex establishes material coverage; the mapped boundary
+proof uses the shared quadratic edge traces, including polar slivers, for
+both directed distance bounds. Unsupported maps or unresolved bounds are
+refused. Archive restore re-proves the same map and source.
+
 `PHX_MESHCORE_THREADS` controls native CAD face preparation. Faces share
 the already discretized curves, run in bounded batches, and are assembled
 in source order, so the worker count does not change the mesh or findings.

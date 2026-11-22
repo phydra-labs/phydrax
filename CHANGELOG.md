@@ -88,9 +88,10 @@
 - Native CAD surface and solid construction prepare faces in bounded batches
   on the meshcore worker pool. They assemble faces and report failures in
   source order; shared curves and volume construction are unchanged.
-- The standalone native quadratic CAD verifier bounds both directed
-  distances against the actual embedded P2 map, including polar slivers
-  and shared trimmed traces. Public P2 CAD acceptance remains unavailable.
+- Native CAD can certify single-material nodal P2 tetrahedra eagerly or
+  through the candidate's `prove()`. The proof binds the actual embedded map
+  and both directed boundary distances, including polar slivers and shared
+  trimmed traces. Archive restore recomputes it.
 - Tetrahedral refinement screens the live complex after lattice seeding
   instead of maintaining a queue of cells that may be removed by later
   seeds. The first refinement round keeps its Hilbert and cell-ID order.
