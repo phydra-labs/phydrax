@@ -532,7 +532,7 @@ Enclosure periodic(Function function, double lower, double upper) noexcept {
 // endpoints in the same gap (its error is below 2^-95, relative for
 // m == 0 sine). Otherwise reuse that enclosure unchanged.
 template <Function F>
-[[gnu::always_inline]] Enclosure small_periodic_point(double x) noexcept {
+[[gnu::always_inline]] inline Enclosure small_periodic_point(double x) noexcept {
   static_assert(F == Function::kSin || F == Function::kCos);
   const double magnitude = std::fabs(x);
   if (magnitude < kTinyArgument) return periodic_point(F, x, {});
