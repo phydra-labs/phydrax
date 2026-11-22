@@ -545,6 +545,9 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native 3D Delaunay and regular triangulation emit original input vertex IDs
+  when collecting finite cells, avoiding a separate remapping pass. Output
+  order and vertex maps are unchanged.
 - Native point programs skip initializing workspace entries that the bytecode
   overwrites before reading. Entries read as seeds keep the same values and
   block order. The polynomial benchmark rises from about 252 to 303 million
