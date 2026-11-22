@@ -549,6 +549,8 @@
   Use `candidate.prove()` to certify that mesh later or pass `prove=True`
   to construct and certify in one call. Owner-local execution requires
   explicit `prove=True`.
+- Planar refinement reuses cavity point lookups and writes triangle slots
+  with their final neighbors, preserving mesh output and constraint ancestry.
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs
   when collecting finite cells, avoiding a separate remapping pass. Output
   order and vertex maps are unchanged.
