@@ -40,14 +40,15 @@ int32_t fidelity_pole_jets(const CadGeometry& geometry, int32_t face,
                            IntervalEvaluationWorkspace& workspace, int32_t pole_side,
                            const double* lower, const double* upper, double* jet_lower,
                            double* jet_upper);
-// The seam lens cap of one pole-region boundary edge (seam_lens_bound) from
-// chart corner a to b, pole-chart corners c, mesh points x: out = {cap,
-// sup |S_uv(gamma) - L|, sup |S_xy(Phi) - L|}.
+// The seam lens cap of one pole-region boundary edge from chart corner a
+// to b, with pole-chart corners c and mesh endpoints x. If midpoint_node
+// is given the physical trace Q is quadratic, otherwise it is affine.
+// out = {cap, sup |S_uv(gamma) - Q|, sup |S_xy(Phi) - Q|}.
 int32_t fidelity_seam_lens(const CadGeometry& geometry, int32_t face,
                            IntervalEvaluationWorkspace& workspace, int32_t pole_side,
                            const double* uv_a, const double* uv_b, const double* c_a,
                            const double* c_b, const double* x_a, const double* x_b,
-                           double* out);
+                           double* out, const double* midpoint_node = nullptr);
 
 // The per-face kernels fidelity_triangle uses, for tests.
 // The anchored cos/sin enclosure over [lower, upper] (fresh anchors):

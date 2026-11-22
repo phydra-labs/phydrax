@@ -2052,6 +2052,10 @@ _SIGNATURES["phx_mc_verify_cad_fidelity"] = (
         _P,
     ),
 )
+_SIGNATURES["phx_mc_verify_cad_quadratic_fidelity"] = (
+    _I32,
+    (*_SIGNATURES["phx_mc_verify_cad_fidelity"][1], _P),
+)
 
 
 def _library_location(configured: str, /) -> Path | str:
@@ -5289,8 +5293,15 @@ def verify_cad_fidelity(
     tolerance: float,
     max_depth: int,
     /,
+    *,
+    triangle_edge_nodes: np.ndarray | None = None,
 ) -> CadFidelityResult:
-    """Verify bounds conditional on an independently checked chart partition."""
+    """Verify bounds conditional on an independently checked chart partition.
+
+    With ``triangle_edge_nodes``, use quadratic triangle traces with the given
+    midpoint nodes on chart-local edges (0, 1), (1, 2), and (2, 0). A collapsed
+    edge uses the repeated corner as its node.
+    """
     lower = _cad_fidelity_array(coefficient_lower, np.float64, "coefficient_lower")
     upper = _cad_fidelity_array(coefficient_upper, np.float64, "coefficient_upper")
     points = _cad_fidelity_array(mesh.points, np.float64, "points")
@@ -5311,6 +5322,18 @@ def verify_cad_fidelity(
     if triangles.ndim != 2 or triangles.shape[1] != 3:
         raise ValueError("triangles must have shape (m, 3).")
     count = triangles.shape[0]
+    symbol = "phx_mc_verify_cad_fidelity"
+    trailing: tuple[int, ...] = ()
+    if triangle_edge_nodes is not None:
+        triangle_edge_nodes = _cad_fidelity_array(
+            triangle_edge_nodes, np.float64, "triangle_edge_nodes"
+        )
+        if triangle_edge_nodes.shape != (count, 3, 3):
+            raise ValueError("triangle_edge_nodes must have shape (m, 3, 3).")
+        if not np.all(np.isfinite(triangle_edge_nodes)):
+            raise ValueError("triangle_edge_nodes must be finite.")
+        symbol = "phx_mc_verify_cad_quadratic_fidelity"
+        trailing = (triangle_edge_nodes.ctypes.data,)
     if faces.shape != (count,) or uv.shape != (count, 3, 2) or edges.shape != (count, 3):
         raise ValueError("face_rows, uv and edge_chord must align with triangles.")
     if mesh_triangles.ndim != 2 or mesh_triangles.shape[1] != 3:
@@ -5340,7 +5363,7 @@ def verify_cad_fidelity(
     findings = np.empty(
         7 * count + chord_count + len(mesh_triangles), dtype=_CAD_FIDELITY_FINDING_DTYPE
     )
-    status = load_meshcore()["phx_mc_verify_cad_fidelity"](
+    status = load_meshcore()[symbol](
         ctypes.addressof(structure),
         lower.size,
         lower.ctypes.data,
@@ -5375,6 +5398,7 @@ def verify_cad_fidelity(
         findings.size,
         findings.ctypes.data,
         ctypes.addressof(evidence_count),
+        *trailing,
     )
     del arrays
     if status not in (MeshcoreStatus.OK, MeshcoreStatus.UNRESOLVED):

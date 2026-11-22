@@ -7,6 +7,7 @@ import ctypes
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -48,6 +49,13 @@ from tests.unit.meshing.test_native_surface_verifiers import (
     _ChartFailure,
     _surface_verdict,
 )
+
+
+if TYPE_CHECKING:
+    from phydrax.discretization import CellGeometrySpec, CellMesh
+    from phydrax.geometry import GlobalEmbeddingCertificate
+    from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
+    from phydrax.meshing._native_cad_certificate import NativeCadCertificate
 
 
 @pytest.fixture(scope="module")
@@ -1787,6 +1795,404 @@ def test_native_cad_certificate_refuses_requests_without_native_owner(
     assert (
         "protected features" if features else "maximum_normal_deviation"
     ) in finding.detail
+
+
+@pytest.fixture(scope="module")
+def quadratic_cad_sphere() -> CellMeshingCandidate:
+    return _cad_volume_plan(_sphere_model(), 0.3, 2).execute(prove=False)
+
+
+def _quadratic_cad_embedding(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> ValidatedGlobalEmbedding:
+    from phydrax.discretization import certify_cell_geometry_validity
+    from phydrax.geometry._global_embedding import ValidatedGlobalEmbedding
+
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    embedding = ValidatedGlobalEmbedding(mesh, geometry, validity)
+    assert embedding.certificate.status == "certified", embedding.certificate.findings
+    return embedding
+
+
+@pytest.fixture(scope="module")
+def quadratic_cad_embedding(
+    quadratic_cad_sphere: CellMeshingCandidate,
+) -> ValidatedGlobalEmbedding:
+    return _quadratic_cad_embedding(
+        quadratic_cad_sphere.mesh, quadratic_cad_sphere.geometry
+    )
+
+
+def _quadratic_cad_certificate(
+    candidate: CellMeshingCandidate,
+    geometry: CellGeometrySpec,
+    embedding: GlobalEmbeddingCertificate | ValidatedGlobalEmbedding | None,
+) -> NativeCadCertificate:
+    from phydrax.meshing._native_cad_certificate import NativeCadCertificate
+
+    request = candidate._construction.certification
+    assert isinstance(request.domain, MeshingDomain)
+    assert request.native_cad_surface is not None
+    assert request.native_cad_records is not None
+    assert request.cell_regions is not None
+    return NativeCadCertificate(
+        candidate.mesh,
+        geometry,
+        request.domain,
+        request.native_cad_surface,
+        request.native_cad_records,
+        request.cell_regions,
+        0.05,
+        (),
+        None,
+        embedding=embedding,
+        quadratic=True,
+    )
+
+
+def test_standalone_quadratic_cad_certificate_covers_the_sphere(
+    quadratic_cad_sphere: CellMeshingCandidate,
+    quadratic_cad_embedding: ValidatedGlobalEmbedding,
+    tmp_path: Path,
+) -> None:
+    from phydrax.discretization import CellGeometrySpec
+    from phydrax.meshing._model_codec import (
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        write_model_artifact,
+    )
+
+    sphere = quadratic_cad_sphere
+    proof = _quadratic_cad_certificate(sphere, sphere.geometry, quadratic_cad_embedding)
+    assert proof.status == "certified", proof.findings
+    assert proof.source_shell is not None
+    assert proof.triangle_deviation is not None
+    witness = sphere._construction.certification.native_cad_surface
+    assert witness is not None
+    paired = witness.chart_to_mesh >= 0
+    np.testing.assert_array_equal(
+        np.sort(witness.chart_to_mesh[paired]), np.arange(len(witness.surface_triangles))
+    )
+    np.testing.assert_array_equal(
+        witness.chart_triangles[paired],
+        witness.surface_triangles[witness.chart_to_mesh[paired]],
+    )
+    assert np.count_nonzero(~paired) == 16
+    assert proof.triangle_deviation.shape == witness.chart_to_mesh.shape
+    for rows in (paired, ~paired):
+        bounds = proof.triangle_deviation[rows]
+        assert np.all(np.isfinite(bounds) & (bounds >= 0.0) & (bounds <= 0.05))
+        assert np.max(bounds) > 0.0
+    assert proof.maximum_deviation == np.max(proof.triangle_deviation)
+
+    path = write_model_artifact(
+        tmp_path / "quadratic-map.phx", sphere.geometry, limits=MODEL_ARCHIVE_LIMITS
+    )
+
+    def restore_geometry(stored: CellGeometrySpec, /) -> CellGeometrySpec:
+        return CellGeometrySpec.from_stored_fields(
+            stored,
+            source_mesh=None,
+            source_map=None,
+            restriction_source=None,
+            elements=dict(zip(stored.block_names, stored.elements, strict=True)),
+        )
+
+    geometry = read_model_artifact(
+        path,
+        expected_type=CellGeometrySpec,
+        restore=restore_geometry,
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    again = _quadratic_cad_certificate(
+        sphere, geometry, _quadratic_cad_embedding(sphere.mesh, geometry)
+    )
+    assert again.geometry_id == proof.geometry_id
+    assert again.certificate_id == proof.certificate_id
+
+
+def _quadratic_mesh_edge_dofs(
+    candidate: CellMeshingCandidate,
+) -> dict[tuple[int, int], int]:
+    from phydrax.discretization import reference_cell_topology
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+
+    # Read the actual cell maps at the reference edge midpoints; do not use
+    # the certificate's trace-extraction code to construct the test operand.
+    (block,) = candidate.mesh.blocks
+    (element,) = candidate.geometry.elements
+    assert isinstance(element, FiniteElementSpec)
+    (routes,) = map(np.asarray, candidate.geometry.geometry_dofs)
+    reference = reference_cell_topology(block.cell_kind)
+    corners, nodes = np.asarray(reference.vertices), np.asarray(element.reference_nodes)
+    edge_dofs: dict[tuple[int, int], int] = {}
+    for a, b in reference.entities[1]:
+        (slot,) = np.flatnonzero(np.all(nodes == (corners[a] + corners[b]) / 2, axis=1))
+        for (v, w), dof in zip(
+            np.asarray(block.vertices)[:, [a, b]], routes[:, slot], strict=True
+        ):
+            edge = (min(int(v), int(w)), max(int(v), int(w)))
+            assert edge_dofs.setdefault(edge, int(dof)) == dof
+    return edge_dofs
+
+
+class _QuadraticTraceInputs(NamedTuple):
+    model: CadModel
+    lower: np.ndarray
+    upper: np.ndarray
+    mesh: CadFidelityMesh
+    chords: CadFidelityChords
+    nodes: np.ndarray
+
+
+@pytest.fixture(scope="module")
+def quadratic_trace_inputs(
+    quadratic_cad_sphere: CellMeshingCandidate,
+) -> _QuadraticTraceInputs:
+    sphere = quadratic_cad_sphere
+    request = sphere._construction.certification
+    witness, domain = request.native_cad_surface, request.domain
+    assert witness is not None and isinstance(domain, MeshingDomain)
+    edge_dofs = _quadratic_mesh_edge_dofs(sphere)
+    points = np.asarray(sphere.mesh.coordinates)
+    coordinates = np.asarray(sphere.geometry.coordinates)
+    triangles = witness.chart_triangles
+    starts, ends = triangles, np.roll(triangles, -1, axis=1)
+    edge_nodes = np.array(
+        [
+            points[a] if a == b else coordinates[edge_dofs[min(a, b), max(a, b)]]
+            for a, b in zip(starts.flat, ends.flat, strict=True)
+        ]
+    ).reshape((*triangles.shape, 3))
+    bundle = cad_geometry_bundle(domain)
+    lower, upper = coefficient_bounds(bundle, domain)
+    trace = CadFidelityMesh(
+        points,
+        triangles,
+        witness.chart_patches,
+        witness.chart_uv,
+        witness.surface_triangles,
+        witness.chart_to_mesh,
+        witness.edge_chord,
+    )
+    return _QuadraticTraceInputs(
+        bundle.model, lower, upper, trace, witness.chords(), edge_nodes
+    )
+
+
+def test_quadratic_cad_fidelity_refuses_split_chart_edge_identity(
+    quadratic_trace_inputs: _QuadraticTraceInputs,
+) -> None:
+    model, lower, upper, trace, chords, edge_nodes = quadratic_trace_inputs
+    # Duplicate a complete physical triangle's vertex identities without
+    # changing any point, midpoint or chart coordinate on it.
+    row = np.flatnonzero(
+        (trace.chart_to_mesh >= 0) & np.all(trace.edge_chord == -1, axis=1)
+    )[0]
+    chart = trace.triangles.copy()
+    surface = trace.mesh_triangles.copy()
+    original = chart[row].copy()
+    copies = np.arange(len(trace.points), len(trace.points) + 3, dtype=np.int64)
+    chart[row] = copies
+    face = trace.chart_to_mesh[row]
+    replacements = dict(zip(original.tolist(), copies.tolist(), strict=True))
+    surface[face] = [replacements[vertex] for vertex in surface[face].tolist()]
+    split = trace._replace(
+        points=np.concatenate((trace.points, trace.points[original])),
+        triangles=chart,
+        mesh_triangles=surface,
+    )
+    verdict = verify_cad_fidelity(
+        model, lower, upper, split, chords, 0.05, 8, triangle_edge_nodes=edge_nodes
+    )
+    assert verdict.status is MeshcoreStatus.UNRESOLVED
+    assert any(
+        row in (finding["triangle"], finding["other_triangle"])
+        and finding["other_edge"] >= 0
+        for finding in verdict.findings
+    )
+
+
+def test_quadratic_cad_fidelity_refuses_split_periodic_coedge(
+    quadratic_cad_sphere: CellMeshingCandidate,
+    quadratic_trace_inputs: _QuadraticTraceInputs,
+) -> None:
+    model, lower, upper, trace, chords, edge_nodes = quadratic_trace_inputs
+    domain = quadratic_cad_sphere._construction.certification.domain
+    assert isinstance(domain, MeshingDomain)
+    ((patch, loop, owner),) = domain.curve_owners[domain.curve_owners[:, 0] >= 0]
+    use_owner = (
+        model.loop_use_offsets[np.flatnonzero(model.loop_surfaces == patch)[loop]] + owner
+    )
+    regular_uses = np.flatnonzero(model.use_kinds == 0)
+    (nonowner,) = regular_uses[regular_uses != use_owner]
+    bank = np.flatnonzero(chords.chord_use == nonowner)
+    local, endpoint = np.unravel_index(
+        np.argmin(np.abs(chords.chord_range[bank])), (len(bank), 2)
+    )
+    chord = bank[local]
+    ((row, side),) = np.argwhere(trace.edge_chord == chord)
+    corner = (side + endpoint) % 3
+    vertex = trace.triangles[row, corner]
+    uv = trace.uv[row, corner]
+    selected = (
+        (trace.face_rows == trace.face_rows[row])[:, None]
+        & (trace.triangles == vertex)
+        & np.all(trace.uv == uv, axis=2)
+    )
+    # Split only one lift of the seam endpoint; its chart ring and every
+    # rooted UV chord are otherwise unchanged, as are the stored XYZ values.
+    split_vertex = len(trace.points)
+    chart = trace.triangles.copy()
+    chart[selected] = split_vertex
+    surface = trace.mesh_triangles.copy()
+    affected = trace.chart_to_mesh[np.any(selected, axis=1)]
+    assert np.all(affected >= 0)
+    surface[affected] = np.where(
+        surface[affected] == vertex, split_vertex, surface[affected]
+    )
+    split = trace._replace(
+        points=np.concatenate((trace.points, trace.points[vertex : vertex + 1])),
+        triangles=chart,
+        mesh_triangles=surface,
+    )
+    verdict = verify_cad_fidelity(
+        model, lower, upper, split, chords, 0.05, 8, triangle_edge_nodes=edge_nodes
+    )
+    assert verdict.status is MeshcoreStatus.UNRESOLVED
+    assert any(
+        finding["other_edge"] >= 0
+        and finding["chord"] >= 0
+        and row in (finding["triangle"], finding["other_triangle"])
+        for finding in verdict.findings
+    )
+
+
+@pytest.mark.parametrize(
+    "collapsed", (False, True), ids=("shared-edge", "collapsed-side")
+)
+def test_quadratic_cad_fidelity_rejects_incompatible_edge_uses(
+    quadratic_trace_inputs: _QuadraticTraceInputs, collapsed: bool
+) -> None:
+    model, lower, upper, trace, chords, edge_nodes = quadratic_trace_inputs
+    starts, ends = trace.triangles, np.roll(trace.triangles, -1, axis=1)
+    if collapsed:
+        row, side = np.argwhere(starts == ends)[0]
+    else:
+        row, side = np.argwhere((starts != ends) & (trace.edge_chord < 0))[0]
+        a, b = starts[row, side], ends[row, side]
+        assert (
+            np.count_nonzero(
+                ((starts == a) & (ends == b)) | ((starts == b) & (ends == a))
+            )
+            >= 2
+        )
+    changed = edge_nodes.copy()
+    changed[row, side, 0] = np.nextafter(changed[row, side, 0], np.inf)
+    verdict = verify_cad_fidelity(
+        model, lower, upper, trace, chords, 0.05, 8, triangle_edge_nodes=changed
+    )
+    assert verdict.status is MeshcoreStatus.UNRESOLVED
+    assert any(
+        (row, side)
+        in ((f["triangle"], f["edge"]), (f["other_triangle"], f["other_edge"]))
+        for f in verdict.findings
+    )
+
+
+def test_quadratic_cad_fidelity_refuses_a_bowed_shared_edge(
+    quadratic_cad_sphere: CellMeshingCandidate,
+    quadratic_trace_inputs: _QuadraticTraceInputs,
+) -> None:
+    request = quadratic_cad_sphere._construction.certification
+    witness, domain = request.native_cad_surface, request.domain
+    assert witness is not None and isinstance(domain, MeshingDomain)
+    model, lower, upper, trace, chords, edge_nodes = quadratic_trace_inputs
+    starts, ends = trace.triangles, np.roll(trace.triangles, -1, axis=1)
+    baseline = verify_cad_fidelity(
+        model,
+        lower,
+        upper,
+        trace,
+        chords,
+        0.05,
+        8,
+        triangle_edge_nodes=edge_nodes,
+    )
+    assert baseline.status is MeshcoreStatus.OK
+    assert baseline.findings.size == 0
+    assert np.all(baseline.item_status == MeshcoreStatus.OK)
+
+    # V3 is tested independently of volume embedding: only the trace operator
+    # changes, with the same P1 carrier and conforming values in all edge uses.
+    ordinary = np.max(np.abs(witness.chart_uv[:, :, 1]), axis=1) < 0.6
+    row, side = np.argwhere(ordinary[:, None] & (witness.edge_chord < 0))[0]
+    a, b = starts[row, side], ends[row, side]
+    incident = ((starts == a) & (ends == b)) | ((starts == b) & (ends == a))
+    assert np.count_nonzero(incident) >= 2
+    bowed = edge_nodes.copy()
+    midpoint = edge_nodes[row, side]
+    uv = (witness.chart_uv[row, side] + witness.chart_uv[row, (side + 1) % 3]) / 2
+    surface = domain.patches[int(witness.chart_patches[row])].surface
+    source_point = np.asarray(surface.evaluate(jnp.asarray(uv[None, :])))[0]
+    measured = np.linalg.norm(midpoint - source_point)
+    assert measured <= baseline.upper[row]
+    bowed[incident] = 0.65 * midpoint / np.linalg.norm(midpoint)
+    # The midpoint of the quadratic edge is itself an interpolation node.
+    # Its distance even to the *whole* radius-0.5 source exceeds the budget.
+    assert np.linalg.norm(bowed[row, side]) - 0.5 > 0.05
+    verdict = verify_cad_fidelity(
+        model,
+        lower,
+        upper,
+        trace,
+        chords,
+        0.05,
+        8,
+        triangle_edge_nodes=bowed,
+    )
+    assert verdict.status is MeshcoreStatus.UNRESOLVED
+    assert verdict.findings.size == 0
+    assert verdict.item_status[row] == MeshcoreStatus.UNRESOLVED
+    assert verdict.upper[row] > 0.05
+    untouched = ~np.any(incident, axis=1)
+    np.testing.assert_array_equal(verdict.upper[untouched], baseline.upper[untouched])
+
+
+def test_quadratic_cad_certificate_requires_embedding_of_its_actual_shared_trace(
+    quadratic_cad_sphere: CellMeshingCandidate,
+    quadratic_cad_embedding: ValidatedGlobalEmbedding,
+) -> None:
+    from phydrax.discretization import CellGeometrySpec
+
+    sphere = quadratic_cad_sphere
+    geometry = sphere.geometry
+    witness = sphere._construction.certification.native_cad_surface
+    assert witness is not None
+    a, b = sorted(int(v) for v in witness.surface_triangles[0, :2])
+    dof = _quadratic_mesh_edge_dofs(sphere)[a, b]
+    (routes,) = map(np.asarray, geometry.geometry_dofs)
+    assert np.count_nonzero(routes == dof) >= 2
+    coordinates = np.array(geometry.coordinates)
+    # Forge one shared node without changing the mesh, chart, or any DOF
+    # routes. A certificate for the original map cannot review this trace.
+    coordinates[dof] *= 1.01
+    forged = CellGeometrySpec(
+        dict(zip(geometry.block_names, geometry.elements, strict=True)),
+        dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+        coordinates,
+    )
+    for embedding in (
+        None,
+        quadratic_cad_embedding.certificate,
+        quadratic_cad_embedding,
+    ):
+        proof = _quadratic_cad_certificate(sphere, forged, embedding)
+        assert proof.status == "unresolved"
+        assert proof.triangle_deviation is None
+        (finding,) = proof.findings
+        assert finding.check == "cad_fidelity"
+        assert "certified embedding of the current coordinate map" in finding.detail
 
 
 def test_proved_quadratic_cad_solid_is_refused() -> None:
