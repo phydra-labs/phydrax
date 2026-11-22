@@ -1184,6 +1184,11 @@ class Triangulation3D {
     }
     Tetrahedron& current = mutable_tet(t);
     if (current.stamp == stamp_value_) return current.state != kNoConflict;
+    return evaluate_conflict<OwnedBuild>(current, p, topology_valid);
+  }
+  // `current` is live and has not been classified for this insertion.
+  template <bool OwnedBuild>
+  bool evaluate_conflict(Tetrahedron& current, int32_t p, bool& topology_valid) {
     // Live vertices are kGhostVertex (-1) or indices: a cell is finite iff
     // the bitwise or of its vertices is nonnegative.
     const int32_t* v = current.v;
@@ -1236,23 +1241,31 @@ class Triangulation3D {
         if constexpr (!OwnedBuild) {
           if (!checked(neighbor)) return PHX_MC_INTERNAL_ERROR;
         }
-        if (in_cavity(neighbor)) {
-          if constexpr (!OwnedBuild) {
-            if (complex_.constraint(t, k) != kNoConstraint) constraint_inside_ = true;
-          }
-          continue;
-        }
         bool topology_valid = true;
-        const bool unconstrained = OwnedBuild || complex_.constraint(t, k) == kNoConstraint;
-        const bool neighbor_conflict =
-            unconstrained && conflict<OwnedBuild>(neighbor, p, topology_valid);
+        bool neighbor_conflict;
+        if constexpr (OwnedBuild) {
+          Tetrahedron& adjacent = mutable_tet(neighbor);
+          if (adjacent.stamp == stamp_value_) {
+            if (adjacent.state == kInCavity) continue;
+            neighbor_conflict = adjacent.state == kConflict;
+          } else {
+            neighbor_conflict = evaluate_conflict<true>(adjacent, p, topology_valid);
+          }
+        } else {
+          const bool unconstrained = complex_.constraint(t, k) == kNoConstraint;
+          if (in_cavity(neighbor)) {
+            if (!unconstrained) constraint_inside_ = true;
+            continue;
+          }
+          neighbor_conflict = unconstrained && conflict<false>(neighbor, p, topology_valid);
+        }
         if (!topology_valid) return PHX_MC_INTERNAL_ERROR;
         if (neighbor_conflict) {
           Tetrahedron& joined = mutable_tet(neighbor);
           joined.state = kInCavity;
           // Its neighbors are read when it leaves the stack.
           for (int32_t next : joined.n) {
-            if (static_cast<std::size_t>(next) < complex_.tets.size()) {
+            if (OwnedBuild || static_cast<std::size_t>(next) < complex_.tets.size()) {
               prefetch(&complex_.tets[static_cast<std::size_t>(next)]);
             }
           }
@@ -1282,10 +1295,9 @@ class Triangulation3D {
   void collect_removed_vertices() {
     for (const BoundaryFacet& face : boundary_) {
       const Tetrahedron& current = tet(face.tet);
-      for (int slot = 0; slot < 4; ++slot) {
-        if (slot != face.slot && current.v[slot] >= 0) {
-          vertex_stamp_[static_cast<std::size_t>(current.v[slot])] = stamp_value_;
-        }
+      for (const int slot : kOrientedFacet[face.slot]) {
+        const int32_t vertex = current.v[slot];
+        if (vertex >= 0) vertex_stamp_[static_cast<std::size_t>(vertex)] = stamp_value_;
       }
     }
     removed_.clear();

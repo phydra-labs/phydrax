@@ -82,7 +82,9 @@
   cell; border points are deferred to passes on shifted grids), and cells are
   canonicalized in parallel. The canonical output is byte-identical for every
   parallelism and insertion order (the symbolic perturbation is ordered by
-  input index); parallelism 1 runs the sequential build unchanged.
+  input index). The sequential build reads each neighbor's cached conflict
+  classification once and visits only the three boundary-face vertices
+  when identifying buried vertices in a regular triangulation.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6
