@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import weakref
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from itertools import product
 from typing import Any, assert_never, NamedTuple, NoReturn, SupportsIndex
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -135,7 +137,7 @@ from ._exact_algebraic_geometry import (
     coefficient_endpoint,
     RadicalElement,
 )
-from ._exact_coordinate_bank import ExactCoordinateBank
+from ._exact_coordinate_bank import _SPARSE, ExactCoordinateBank
 from ._reference_cell import reference_cell_topology
 from .fem._reference import FiniteElementSpec
 
@@ -146,10 +148,19 @@ class CellValidityStatus(IntEnum):
     UNRESOLVED = 2
 
 
+# Identities of live geometries whose every leaf is an immutable JAX array,
+# keyed by object identity (each entry dies with its geometry).
+_GEOMETRY_IDS: dict[int, tuple[weakref.ref[CellGeometrySpec], str]] = {}
+
+
 def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
     """Bind the complete coordinate map and its source/restriction ancestry."""
+    key = id(geometry)
+    cached = _GEOMETRY_IDS.get(key)
+    if cached is not None and cached[0]() is geometry:
+        return cached[1]
     restriction = geometry.restriction_source
-    return canonical_fingerprint(
+    identity = canonical_fingerprint(
         {
             "kind": "cell-geometry",
             "layout": geometry.geometry_layout_id,
@@ -167,6 +178,14 @@ def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
             "content": array_tree_fingerprint(geometry),
         }
     )
+    if geometry.exact_coordinate_bank is None and all(
+        isinstance(leaf, Array) for leaf in jax.tree_util.tree_leaves(geometry)
+    ):
+        _GEOMETRY_IDS[key] = (
+            weakref.ref(geometry, lambda _, key=key: _GEOMETRY_IDS.pop(key, None)),
+            identity,
+        )
+    return identity
 
 
 _TETRAHEDRA = frozenset(("tetrahedron", "simplex:3"))
@@ -2412,6 +2431,100 @@ class _CellProofs:
             self.local.popitem(last=False)
 
 
+def _native_cell_map_proofs(
+    cell_kind: str,
+    basis: PreparedLinearCombinationBasis | None,
+    coordinates: CoordinateSourceBank,
+    routes: NDArray[np.int64],
+    policy: CellValidityPolicy,
+    /,
+) -> tuple[
+    NDArray[np.bool_],
+    NDArray[np.int32],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.uint8],
+]:
+    """Native root proofs of P1 tetrahedra, Q1-type hexahedra and P1 prisms.
+
+    ``phx_mc_cell_map_validity`` reproduces exactly what the per-cell proof
+    of ``_certify_source_block`` records (status, directed determinant
+    endpoints, depth zero and the exact-map digest) for a 3D integer
+    polynomial basis on exact dyadic coordinates: affine simplex, box and
+    prism maps, and multilinear box and P1 prism maps the root Bernstein
+    controls and the bounded Hadamard margin decide. Every other cell, and
+    every cell without the native library, is undecided and keeps the
+    rational proof.
+    """
+    count = routes.shape[0]
+    undecided = (
+        np.zeros((count,), dtype=np.bool_),
+        np.zeros((count,), dtype=np.int32),
+        np.zeros((count,), dtype=np.float64),
+        np.zeros((count,), dtype=np.float64),
+        np.zeros((count, _MAP_DIGEST_SIZE), dtype=np.uint8),
+    )
+    family = reference_cell_topology(cell_kind).family
+    domain = {"tetrahedron": "simplex", "hexahedron": "box", "prism": "prism"}.get(family)
+    if (
+        not count
+        or domain is None
+        or basis is None
+        or not isinstance(coordinates, ExactCoordinateBank)
+        or coordinates.shape[1] != 3
+        or routes.ndim != 2
+        or not cell_kind.isascii()
+        or not cell_kind.isprintable()
+        or "'" in cell_kind
+        or "\\" in cell_kind
+        or np.any(routes < 0)
+        or np.any(routes >= len(coordinates))
+    ):
+        return undecided
+    terms = basis.integer_terms()
+    if terms is None:
+        return undecided
+    integer_basis, denominator = terms
+    floor = policy.determinant_floor()
+    if (
+        denominator & (denominator - 1)
+        or denominator.bit_length() > 65
+        or len(integer_basis) != routes.shape[1]
+        or not 0.0 <= floor < 1.0
+        or not all(
+            len(exponent) == 3
+            and all(0 <= power <= 7 for power in exponent)
+            and -(1 << 63) <= numerator < (1 << 63)
+            for function in integer_basis
+            for exponent, numerator in function
+        )
+    ):
+        return undecided
+    from .._meshcore import cell_map_validity, meshcore_available
+
+    if not meshcore_available():
+        return undecided
+    significands, exponents, _, _, _ = coordinates.canonical_parts()
+    decided, status, lower, upper, digests = cell_map_validity(
+        domain,
+        tuple(
+            tuple(
+                ((exponent[0], exponent[1], exponent[2]), numerator)
+                for exponent, numerator in function
+            )
+            for function in integer_basis
+        ),
+        denominator.bit_length() - 1,
+        cell_kind,
+        significands,
+        exponents,
+        _SPARSE,
+        routes,
+        floor,
+    )
+    return decided, status, lower, upper, digests
+
+
 def _certify_source_block(
     element: ScalarCoordinateElement,
     cell_kind: str,
@@ -2480,9 +2593,21 @@ def _certify_source_block(
         lower[mask] = screened_lower[mask]
         upper[mask] = screened_upper[mask]
         # Direct interval proofs do not claim a reusable exact-map digest.
-    remaining = (
-        np.flatnonzero(~mask) if screened is not None else np.arange(count, dtype=np.intp)
-    )
+    settled = mask.copy() if screened is not None else np.zeros(count, dtype=np.bool_)
+    if root_preparation is None and not pyramid:
+        candidates = np.flatnonzero(~settled)
+        decided, native_status, native_lower, native_upper, native_digests = (
+            _native_cell_map_proofs(
+                cell_kind, prepared_plain_basis, coordinates, routes[candidates], policy
+            )
+        )
+        rows = candidates[decided]
+        status[rows] = native_status[decided]
+        lower[rows] = native_lower[decided]
+        upper[rows] = native_upper[decided]
+        digests[rows] = native_digests[decided]
+        settled[rows] = True
+    remaining = np.flatnonzero(~settled)
     coordinate_rows: dict[int, tuple[ExactScalar, ...]] | None = None
     if isinstance(coordinates, ExactCoordinateBank) and remaining.size:
         indices = np.unique(routes[remaining])
@@ -2501,9 +2626,7 @@ def _certify_source_block(
         )
         for row, result in zip(remaining, batch, strict=True):
             affine_quality_rows[int(row)] = result
-    for row in range(routes.shape[0]):
-        if screened is not None and mask[row]:
-            continue
+    for row in remaining.tolist():
         local = tuple(
             coordinates[index] if coordinate_rows is None else coordinate_rows[index]
             for index in routes[row].tolist()
@@ -2953,11 +3076,42 @@ class PolyhedralStarTables:
     edge_pairs: np.ndarray
 
 
+# Star tables of live connectivities whose every leaf is an immutable JAX
+# array, keyed by object identity (each entry dies with its connectivity).
+# Validity, decomposition, quality and audit of one mesh share one build.
+_STAR_TABLES: dict[
+    int, tuple[weakref.ref[PolyhedralConnectivity], PolyhedralStarTables]
+] = {}
+
+
 def polyhedral_star_tables(
     connectivity: PolyhedralConnectivity, /
 ) -> PolyhedralStarTables:
+    """Star tables of one connectivity (see `PolyhedralStarTables`).
+
+    Tables of a connectivity of immutable JAX arrays are built once per live
+    connectivity and shared read-only.
+    """
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("connectivity must be PolyhedralConnectivity.")
+    key = id(connectivity)
+    cached = _STAR_TABLES.get(key)
+    if cached is not None and cached[0]() is connectivity:
+        return cached[1]
+    tables = _build_polyhedral_star_tables(connectivity)
+    if all(isinstance(leaf, Array) for leaf in jax.tree_util.tree_leaves(connectivity)):
+        for value in vars(tables).values():
+            value.setflags(write=False)
+        _STAR_TABLES[key] = (
+            weakref.ref(connectivity, lambda _, key=key: _STAR_TABLES.pop(key, None)),
+            tables,
+        )
+    return tables
+
+
+def _build_polyhedral_star_tables(
+    connectivity: PolyhedralConnectivity, /
+) -> PolyhedralStarTables:
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
     face_values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
     cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
@@ -3385,7 +3539,11 @@ def certify_cell_geometry_validity(
     tetrahedra (a route's explicit choice, recorded in the certificate
     identity); it requires ``geometry`` to be the affine vertex map of a
     nonperiodic tetrahedral mesh. Otherwise every cell takes the rational proof
-    and the native library is never loaded.
+    and the native library is never required: where it is available,
+    ``phx_mc_cell_map_validity`` decides the root proof of P1 tetrahedra,
+    affine or multilinear hexahedra and P1 prisms on exact dyadic coordinates with the
+    rational proof's exact statuses, endpoints, depths and map digests, and
+    the Python proof (the only fallback) takes every other cell.
     """
 
     policy_ = CellValidityPolicy() if policy is None else policy

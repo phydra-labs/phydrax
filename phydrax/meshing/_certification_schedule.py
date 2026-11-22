@@ -25,6 +25,7 @@ type MeshCertificationCheck = Literal[
 ]
 type MeshCertificationRoute = Literal[
     "volume_plc",
+    "volume_plc_fidelity",
     "volume_implicit",
     "volume_layer",
     "volume_cad",
@@ -62,6 +63,10 @@ def route_checks(
     match route:
         case "volume_plc":
             return (*_COMMON_CHECKS, "domain_coverage"), _VOLUME_AUDIT
+        case "volume_plc_fidelity":
+            # A volume whose boundary approximates its PLC: the certified
+            # two-sided boundary distance replaces exact material coverage.
+            return (*_COMMON_CHECKS, "source_fidelity"), _VOLUME_AUDIT
         case "volume_implicit" | "volume_layer" | "volume_cad" | "mapped_volume":
             return (*_COMMON_CHECKS, "domain_coverage", "source_fidelity"), _VOLUME_AUDIT
         case "surface":

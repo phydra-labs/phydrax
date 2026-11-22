@@ -183,11 +183,11 @@ def _boundary_bounds(profile: AnalyticImplicitProfile) -> np.ndarray:
     return bounds
 
 
-def _cover_radius(
+def _fidelity_tolerance(
     profile: AnalyticImplicitProfile,
     specification: VolumeMeshingSpec,
     /,
-) -> tuple[float, float]:
+) -> float:
     requested = profile.tube_radius
     if specification.maximum_deviation is not None:
         requested = min(requested, float(specification.maximum_deviation))
@@ -197,22 +197,7 @@ def _cover_radius(
             "Restricted analytic volume construction requires a positive physical fidelity tolerance.",
             "source_inspection",
         )
-    boundary_size = min(
-        (
-            control.target_size
-            for control in specification.size_controls
-            if isinstance(control, UniformSizeControl)
-        ),
-        default=profile.reach_lower,
-    )
-    cover_radius = min(requested / 4.0, boundary_size / 2.0)
-    if not math.isfinite(cover_radius) or cover_radius <= 0.0:
-        raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "The analytic profile must admit a positive representable physical cover radius.",
-            "source_inspection",
-        )
-    return requested, cover_radius
+    return requested
 
 
 def _topology_matches(
@@ -776,7 +761,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
     coordinate_contract: SpatialCoordinateContract
     program: NativeIntervalProgram
     fidelity_tolerance: float = eqx.field(static=True)
-    seed_cover_radius: float = eqx.field(static=True)
     bounds: np.ndarray
     facet_edge: float = eqx.field(static=True)
     cell_size: float | None = eqx.field(static=True)
@@ -790,7 +774,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         program: NativeIntervalProgram,
         fidelity_tolerance: float,
-        seed_cover_radius: float,
         bounds: np.ndarray,
         facet_edge: float,
         cell_size: float | None,
@@ -803,7 +786,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         self.coordinate_contract = coordinate_contract
         self.program = program
         self.fidelity_tolerance = float(fidelity_tolerance)
-        self.seed_cover_radius = float(seed_cover_radius)
         box = np.array(bounds, dtype=np.float64, copy=True)
         box.setflags(write=False)
         self.bounds = box
@@ -887,7 +869,9 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         seeds = np.empty((0, 3), dtype=np.float64)
         for _ in range(_RESTRICTED_REPAIRS):
             facets = construction.points[construction.boundary_faces]
-            failing = self.profile.triangle_distance_upper(facets) > self.fidelity_tolerance
+            failing = (
+                self.profile.triangle_distance_upper(facets) > self.fidelity_tolerance
+            )
             if not np.any(failing):
                 break
             seeds = np.concatenate((seeds, np.mean(facets[failing], axis=1)))
@@ -901,21 +885,6 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
         mesh, target_face_global_ids, boundary_faces = _published_mesh(
             self._repaired(self.construct()), profile.source_revision
         )
-        samples = profile.boundary_cover(self.seed_cover_radius)
-        if (
-            not samples.complete
-            or samples.semantics != "certified"
-            or samples.points.shape[0] == 0
-            or np.any(samples.covering_radius > self.seed_cover_radius)
-        ):
-            raise _failure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "The profile must provide a complete certified boundary cover at the requested physical radius.",
-                "source_preparation",
-            )
-        cover_radius = self.seed_cover_radius
-        sample_count = samples.points.shape[0]
-        del samples
         if not _topology_matches(profile, boundary_faces):
             raise _failure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -940,8 +909,7 @@ class PreparedRestrictedImplicitVolume(StrictModule, NonTrainableState):
             source_id=profile.source_id,
             source_revision=profile.source_revision,
             source_query_id=profile.profile_id,
-            sample_count=sample_count,
-            cover_radius=cover_radius,
+            reverse_tolerance=self.fidelity_tolerance,
             target_facet_global_ids=target_face_global_ids,
         )
         coverage_witness = TubularProjectionBoundaryWitness(
@@ -1045,7 +1013,7 @@ def prepare_restricted_implicit_volume(
             f"Analytic profile is not bound to the requested compiled geometry and coordinate contract: {error}",
             "source_inspection",
         ) from error
-    fidelity, cover = _cover_radius(profile, specification)
+    fidelity = _fidelity_tolerance(profile, specification)
     target_size = min(
         (
             control.target_size
@@ -1068,9 +1036,7 @@ def prepare_restricted_implicit_volume(
             "source_inspection",
         )
     # The circumradius of the regular tetrahedron of the target edge.
-    cell_size = (
-        None if math.isinf(target_size) else target_size * math.sqrt(6.0) / 4.0
-    )
+    cell_size = None if math.isinf(target_size) else target_size * math.sqrt(6.0) / 4.0
     bounds = _boundary_bounds(profile)
     identity = canonical_fingerprint(
         {
@@ -1081,7 +1047,6 @@ def prepare_restricted_implicit_volume(
             "schedule": schedule.schedule_id,
             "coordinate_contract": coordinate_contract.spatial_id,
             "fidelity_tolerance": fidelity,
-            "cover_radius": cover,
             "bounds": bounds,
             "facet_edge": facet_edge,
             "cell_size": cell_size,
@@ -1094,7 +1059,6 @@ def prepare_restricted_implicit_volume(
         coordinate_contract,
         _field_program(profile),
         fidelity,
-        cover,
         bounds,
         facet_edge,
         cell_size,

@@ -1026,39 +1026,59 @@ class _PreparedWallTriangles:
             self.wall_bvh = None
             self.vertex_tree = None
 
-    def candidates(
-        self, point: tuple[Fraction, ...], /
-    ) -> tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...]:
+    def candidate_bank(
+        self, points: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...], ...]:
+        """Exact co-nearest candidate triangles for each point, in wall order.
+
+        All query cubes of one bank share one prepared query tree and one
+        overlap pair stream against the wall tree.
+        """
         if self.wall_bvh is None or self.vertex_tree is None:
-            return self.triangles
+            return tuple(self.triangles for _ in points)
         # The seed is an actual wall vertex; its approximate selection has no
         # bearing on correctness. Its exact L1 distance bounds the true
         # Euclidean distance, so every co-nearest point lies in this cube.
-        approximate = np.asarray([fraction_down(value) for value in point])
         limit = np.finfo(np.float32).max / 4
-        if not np.all(np.isfinite(approximate)) or np.any(np.abs(approximate) > limit):
-            return self.triangles
-        _, index = self.vertex_tree.query(approximate, k=1)
-        vertex = self.vertices[int(index)]
-        radius = sum((abs(point[i] - vertex[i]) for i in range(3)), Fraction(0))
-        lower = np.asarray([fraction_down(point[i] - radius) for i in range(3)])
-        upper = np.asarray([fraction_up(point[i] + radius) for i in range(3)])
-        if (
-            not np.all(np.isfinite(lower))
-            or not np.all(np.isfinite(upper))
-            or np.any(np.abs(lower) > limit)
-            or np.any(np.abs(upper) > limit)
-        ):
-            return self.triangles
-        query_bvh = prepare_bvh(lower[None, :], upper[None, :], dtype=np.float32)
-        selected = sorted(
-            int(index)
-            for indices, _ in bvh_overlap_pair_blocks(
-                self.wall_bvh, query_bvh, include_touching=True, item_block=256
-            )
-            for index in indices
+        approximate = np.asarray(
+            [[fraction_down(value) for value in point] for point in points],
+            dtype=np.float64,
+        ).reshape(-1, 3)
+        seeded = np.all(np.isfinite(approximate), axis=1) & np.all(
+            np.abs(approximate) <= limit, axis=1
         )
-        return tuple(self.triangles[index] for index in selected)
+        _, nearest = self.vertex_tree.query(np.where(seeded[:, None], approximate, 0.0))
+        queries: list[int] = []
+        lower_boxes: list[list[float]] = []
+        upper_boxes: list[list[float]] = []
+        for row, point in enumerate(points):
+            if not seeded[row]:
+                continue
+            vertex = self.vertices[int(nearest[row])]
+            radius = sum((abs(point[i] - vertex[i]) for i in range(3)), Fraction(0))
+            lower = [fraction_down(point[i] - radius) for i in range(3)]
+            upper = [fraction_up(point[i] + radius) for i in range(3)]
+            bounds = np.asarray(lower + upper, dtype=np.float64)
+            if np.all(np.isfinite(bounds)) and np.all(np.abs(bounds) <= limit):
+                queries.append(row)
+                lower_boxes.append(lower)
+                upper_boxes.append(upper)
+        selected: list[list[int]] = [[] for _ in queries]
+        if queries:
+            query_bvh = prepare_bvh(
+                np.asarray(lower_boxes, dtype=np.float64),
+                np.asarray(upper_boxes, dtype=np.float64),
+                dtype=np.float32,
+            )
+            for walls, boxes in bvh_overlap_pair_blocks(
+                self.wall_bvh, query_bvh, include_touching=True
+            ):
+                for wall, box in zip(walls.tolist(), boxes.tolist(), strict=True):
+                    selected[box].append(wall)
+        banks = [self.triangles for _ in points]
+        for box, row in enumerate(queries):
+            banks[row] = tuple(self.triangles[index] for index in sorted(selected[box]))
+        return tuple(banks)
 
 
 def _distance_increment_at_least(
@@ -1212,7 +1232,12 @@ def _certify_column_bank(
     max_stretch = Fraction(float(control.maximum_corner_stretch))
     max_stretch += absolute + relative * max_stretch
     evidence = []
-    prepared_wall = None
+    candidates: (
+        dict[
+            tuple[Fraction, ...], tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...]
+        ]
+        | None
+    ) = None
     for key, levels in sorted(columns.items()):
         face_sets = [incident.get(identifier, set()) & selected for identifier, _ in key]
         supporting_faces = set.intersection(*face_sets) if face_sets else set()
@@ -1224,11 +1249,28 @@ def _certify_column_bank(
             )
         rows = tuple(levels[level] for level in range(len(schedule) + 1))
         points = tuple(exact_coordinates[row] for row in rows)
-        if prepared_wall is None:
-            prepared_wall = _PreparedWallTriangles(triangles)
+        if candidates is None:
+            # One query bank for every complete column, prepared when the
+            # first column passes its structural checks.
+            bank_points = tuple(
+                sorted(
+                    {
+                        exact_coordinates[bank_levels[level]]
+                        for bank_levels in columns.values()
+                        if set(bank_levels) == set(range(len(schedule) + 1))
+                        for level in range(len(schedule) + 1)
+                    }
+                )
+            )
+            candidates = dict(
+                zip(
+                    bank_points,
+                    _PreparedWallTriangles(triangles).candidate_bank(bank_points),
+                    strict=True,
+                )
+            )
         distances = tuple(
-            _nearest_wall_point(point, prepared_wall.candidates(point))
-            for point in points
+            _nearest_wall_point(point, candidates[point]) for point in points
         )
         if distances[0].squared_distance != 0:
             raise ValueError("A refined column starts away from its original wall.")

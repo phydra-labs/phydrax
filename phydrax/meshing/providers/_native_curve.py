@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from functools import cache
+from functools import lru_cache
 from itertools import accumulate
 from typing import final, NamedTuple
 
@@ -1285,7 +1285,7 @@ class _GaussRule(NamedTuple):
     constant_defect: Fraction
 
 
-@cache
+@lru_cache(maxsize=32)
 def _gauss_rule(order: int, /) -> _GaussRule:
     nodes, weights = np.polynomial.legendre.leggauss(order)
     return _GaussRule(

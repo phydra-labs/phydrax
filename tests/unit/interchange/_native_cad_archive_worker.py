@@ -5098,8 +5098,7 @@ def _rebuild_continuation_value(
             source_id=value.source_id,
             source_revision=value.source_revision,
             source_query_id=value.source_query_id,
-            sample_count=value.sample_count,
-            cover_radius=value.cover_radius,
+            reverse_tolerance=value.reverse_tolerance,
             target_facet_global_ids=value.target_facet_global_ids,
         )
         if witness.witness_id != value.witness_id:
@@ -5237,7 +5236,6 @@ def _rebuild_continuation_value(
             geometry,
             contract,
             tube_radius=value.tube_radius,
-            cover_radius=value.cover_radius,
             source_id=value.source_id,
             source_revision=value.source_revision,
         )
@@ -12520,7 +12518,6 @@ def _sphere_surface_chart_boundary_query_fixture() -> tuple[
         profile_geometry,
         contract,
         tube_radius=0.25,
-        cover_radius=0.5,
         source_id=model.source_id,
         source_revision=model.source_revision,
     )

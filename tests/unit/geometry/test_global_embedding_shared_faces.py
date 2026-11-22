@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+from phydrax.discretization._exact_algebraic_geometry import ExactScalar
 from phydrax.geometry._embedding_cells import EmbeddingCell
-from phydrax.geometry._global_embedding import _contact_is_declared
+from phydrax.geometry._global_embedding import (
+    _contact_is_declared,
+    _convex_planar_face_union,
+)
 
 
 type _Point = tuple[Fraction, Fraction, Fraction]
@@ -94,36 +98,89 @@ def test_nonadjacent_shared_faces_are_not_a_declared_union() -> None:
         {**first_face, **second_face},
         ((1, 2, 3), (7, 8, 9), (1, 7, 2), (2, 8, 3), (3, 9, 1)),
     )
+    # Distinct side faces: only the two triangles and their edges are shared.
     second = _polyhedron(
         21,
         {**first_face, **second_face},
-        ((1, 3, 2), (7, 9, 8), (1, 2, 7), (2, 3, 8), (3, 1, 9)),
+        ((1, 3, 2), (7, 9, 8), (1, 8, 2), (2, 9, 3), (3, 7, 1)),
     )
-    contact = (_point(0, 0, 1),)
+    # Off every shared vertex, edge and face.
+    contact = ((Fraction(1, 4), Fraction(1, 4), Fraction(1)),)
     assert (
         _contact_is_declared(first, second, contact, first.vertex_ids, second.vertex_ids)
-        is not True
+        is False
     )
 
 
-def test_extra_shared_vertex_outside_face_union_is_not_declared() -> None:
+def test_off_plane_contact_against_a_convex_shared_face_is_refused() -> None:
+    lower = _polyhedron(
+        90,
+        {**_INTERFACE, **_BOTTOM_APEX},
+        ((1, 2, 3, 4), (5, 2, 1), (5, 3, 2), (5, 4, 3), (5, 1, 4)),
+    )
+    upper = _polyhedron(
+        91,
+        {**_INTERFACE, **_TOP_APEX},
+        ((1, 4, 3, 2), (6, 1, 2), (6, 2, 3), (6, 3, 4), (6, 4, 1)),
+    )
+    off_plane = ((Fraction(1, 2), Fraction(1, 2), Fraction(3, 2)),)
+    assert (
+        _contact_is_declared(lower, upper, off_plane, lower.vertex_ids, upper.vertex_ids)
+        is False
+    )
+    inside = ((Fraction(1, 2), Fraction(1, 2), Fraction(1)),)
+    assert (
+        _contact_is_declared(lower, upper, inside, lower.vertex_ids, upper.vertex_ids)
+        is True
+    )
+
+
+def test_star_loop_is_not_a_convex_face_union() -> None:
+    # A pentagram turns forward at every corner but winds twice.
+    star: dict[int, tuple[ExactScalar, ...]] = {
+        1: _point(0, 4, 0),
+        2: (Fraction(-24, 10), Fraction(-32, 10), Fraction(0)),
+        3: (Fraction(38, 10), Fraction(12, 10), Fraction(0)),
+        4: (Fraction(-38, 10), Fraction(12, 10), Fraction(0)),
+        5: (Fraction(24, 10), Fraction(-32, 10), Fraction(0)),
+    }
+    assert _convex_planar_face_union(((1, 2, 3, 4, 5),), star) is False
+    pentagon: dict[int, tuple[ExactScalar, ...]] = {
+        1: star[1],
+        2: star[4],
+        3: star[2],
+        4: star[5],
+        5: star[3],
+    }
+    assert _convex_planar_face_union(((1, 2, 3, 4, 5),), pentagon) is True
+
+
+def test_extra_shared_vertex_declares_only_single_shared_strata() -> None:
     lower = _polyhedron(
         30,
         {**_INTERFACE, **_BOTTOM_APEX},
         ((1, 2, 3), (1, 3, 4), (5, 2, 1), (5, 3, 2), (5, 4, 3), (5, 1, 4)),
     )
     # The upper cell also names the lower apex through a face the lower cell
-    # lacks, so vertex 5 is shared outside every shared face.
+    # lacks, so vertex 5 is shared outside every shared face and the pair has
+    # no single shared stratum: each contact must lie in one shared vertex,
+    # edge or face.
     upper = _polyhedron(
         31,
         {**_INTERFACE, **_BOTTOM_APEX, **_TOP_APEX},
         ((1, 3, 2), (1, 4, 3), (6, 1, 2), (6, 2, 3), (6, 3, 4), (6, 4, 1), (5, 6, 1)),
     )
-    contacts = (_point(0, 0, 1),)
-    assert (
-        _contact_is_declared(lower, upper, contacts, lower.vertex_ids, upper.vertex_ids)
-        is False
-    )
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            lower, upper, points, lower.vertex_ids, upper.vertex_ids
+        )
+
+    assert declared((_point(0, 0, 1),)) is True
+    assert declared((_point(0, 0, 1), _point(1, 0, 1), _point(1, 1, 1))) is True
+    # Corners 2 and 4 share no face: their segment crosses two shared faces.
+    assert declared((_point(1, 0, 1), _point(0, 1, 1))) is False
+    assert declared((_point(0, 0, 2),)) is False
 
 
 def _edge_touching_boxes(
@@ -214,3 +271,216 @@ def test_disconnected_shared_edges_do_not_declare_their_convex_hull() -> None:
         )
         is False
     )
+
+
+def test_bent_shared_edge_chain_declares_its_vertex_and_edge_union() -> None:
+    # Two pyramids on opposite sides of z = 0 share only the bent chain
+    # 1-2-3 (2 a hanging corner); their square bases have distinct far
+    # corners 4 and 7, so no face, and no straight chain, is shared.
+    chain = {1: _point(0, 0, 0), 2: _point(2, 0, 0), 3: _point(2, 2, 0)}
+    upper = _polyhedron(
+        50,
+        {**chain, 4: _point(0, 2, 0), 5: _point(1, 1, 2)},
+        ((1, 4, 3, 2), (5, 1, 2), (5, 2, 3), (5, 3, 4), (5, 4, 1)),
+    )
+    lower = _polyhedron(
+        51,
+        {**chain, 7: _point(0, 2, 0), 8: _point(1, 1, -2)},
+        ((1, 2, 3, 7), (8, 2, 1), (8, 3, 2), (8, 7, 3), (8, 1, 7)),
+    )
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            upper, lower, points, upper.vertex_ids, lower.vertex_ids
+        )
+
+    # Exactly the hanging corner, and contacts within one shared edge.
+    assert declared((_point(2, 0, 0),)) is True
+    assert declared((_point(0, 0, 0), _point(1, 0, 0), _point(2, 0, 0))) is True
+    assert declared((_point(2, 0, 0), _point(2, 1, 0))) is True
+    # Vertices on both edges span the triangle 1-2-3, which is not shared.
+    assert declared((_point(1, 0, 0), _point(2, 1, 0))) is False
+    # A genuine overlap next to the hanging corner, off the chain.
+    near = (Fraction(19, 10), Fraction(1, 10), Fraction(0))
+    assert declared((near,)) is False
+    assert declared((_point(2, 0, 0), _point(1, 1, 0))) is False
+
+
+# A non-convex pentagon 1-2-3-4-5 in z = 0, reflex at 2: its notch is the
+# triangle 1-3-2, with 6 the midpoint of edge 1-3.
+_NOTCHED = {
+    1: _point(0, 0, 0),
+    2: (Fraction(2), Fraction(1, 2), Fraction(0)),
+    3: _point(4, 0, 0),
+    4: _point(4, 4, 0),
+    5: _point(0, 4, 0),
+    6: _point(2, 0, 0),
+}
+_BELOW = {
+    11: _point(0, 0, -1),
+    12: _point(4, 0, -1),
+    13: _point(4, 4, -1),
+    14: _point(0, 4, -1),
+}
+_ABOVE = {
+    21: _point(0, 0, 1),
+    22: _point(4, 0, 1),
+    23: _point(4, 4, 1),
+    24: _point(0, 4, 1),
+}
+_NOTCH_POINT = (Fraction(2), Fraction(1, 4), Fraction(0))
+
+
+def _upper_with_quad_notch() -> EmbeddingCell:
+    return _polyhedron(
+        71,
+        {**_NOTCHED, **_ABOVE},
+        (
+            (5, 4, 3, 2, 1),
+            (1, 2, 3, 6),
+            (21, 22, 23, 24),
+            (1, 6, 3, 22, 21),
+            (3, 4, 23, 22),
+            (4, 5, 24, 23),
+            (5, 1, 21, 24),
+        ),
+    )
+
+
+def test_nonconvex_shared_face_is_its_polygon_not_its_hull() -> None:
+    # One shared stratum, the notched pentagon: the notch is not shared.
+    lower = _polyhedron(
+        72,
+        {**{k: v for k, v in _NOTCHED.items() if k != 6}, **_BELOW},
+        (
+            (1, 2, 3, 4, 5),
+            (1, 3, 2),
+            (14, 13, 12, 11),
+            (1, 11, 12, 3),
+            (3, 12, 13, 4),
+            (4, 13, 14, 5),
+            (5, 14, 11, 1),
+        ),
+    )
+    upper = _upper_with_quad_notch()
+    assert (
+        _contact_is_declared(
+            lower, upper, (_NOTCH_POINT,), lower.vertex_ids, upper.vertex_ids
+        )
+        is False
+    )
+    assert (
+        _contact_is_declared(
+            lower, upper, (_point(2, 2, 0),), lower.vertex_ids, upper.vertex_ids
+        )
+        is True
+    )
+
+
+def test_notch_split_differently_is_not_a_declared_union() -> None:
+    # The notch is split at the shared hanging vertex 6 differently in each
+    # cell: no single shared stratum, and the notch interior is in none.
+    lower = _polyhedron(
+        70,
+        {**_NOTCHED, **_BELOW},
+        (
+            (1, 2, 3, 4, 5),
+            (1, 6, 2),
+            (6, 3, 2),
+            (14, 13, 12, 11),
+            (1, 11, 12, 3, 6),
+            (3, 12, 13, 4),
+            (4, 13, 14, 5),
+            (5, 14, 11, 1),
+        ),
+    )
+    upper = _upper_with_quad_notch()
+
+    def declared(points: tuple[_Point, ...], /) -> bool | None:
+        return _contact_is_declared(
+            lower, upper, points, lower.vertex_ids, upper.vertex_ids
+        )
+
+    assert declared((_NOTCH_POINT,)) is False
+    assert declared((_point(2, 2, 0),)) is True
+    assert declared((_NOTCHED[1], _NOTCHED[6])) is True
+
+
+def test_one_undecided_shared_stratum_does_not_hide_another() -> None:
+    # Shared triangles in z = 0 and y = 0 plus a shared vertex outside both.
+    shared = {
+        1: _point(0, 0, 0),
+        2: _point(2, 0, 0),
+        3: _point(0, 2, 0),
+        4: _point(0, 0, 2),
+        9: _point(5, 5, 5),
+    }
+    first = _polyhedron(
+        60,
+        {**shared, 10: _point(-1, -1, -1)},
+        ((1, 2, 3), (1, 4, 2), (10, 1, 3), (10, 9, 1)),
+    )
+    second = _polyhedron(
+        61,
+        {**shared, 11: _point(3, 3, 3)},
+        ((1, 3, 2), (1, 2, 4), (11, 2, 3), (11, 9, 2)),
+    )
+    for one, other in ((first, second), (second, first)):
+        for points in (
+            (shared[1], shared[2], shared[3]),
+            (shared[1], shared[2], shared[4]),
+            ((Fraction(1, 2), Fraction(0), Fraction(1, 2)),),
+        ):
+            assert (
+                _contact_is_declared(one, other, points, one.vertex_ids, other.vertex_ids)
+                is True
+            )
+
+
+def test_contact_vertices_in_a_nonconvex_face_need_one_convex_piece() -> None:
+    # P = a r1 r2 b c d, notch quad a-b-r2-r1; the lower cell splits the notch
+    # along b-r1, the upper keeps the quad.
+    half = Fraction(1, 2)
+    plane = {
+        1: _point(0, 0, 0),
+        2: (Fraction(1), half, Fraction(0)),
+        3: (Fraction(3), half, Fraction(0)),
+        4: _point(4, 0, 0),
+        5: _point(4, 4, 0),
+        6: _point(0, 4, 0),
+    }
+    face = (1, 2, 3, 4, 5, 6)
+    lower_sides = (
+        (14, 13, 12, 11),
+        (1, 11, 12, 4),
+        (4, 12, 13, 5),
+        (5, 13, 14, 6),
+        (6, 14, 11, 1),
+    )
+    upper_sides = (
+        (21, 22, 23, 24),
+        (1, 4, 22, 21),
+        (4, 5, 23, 22),
+        (5, 6, 24, 23),
+        (6, 1, 21, 24),
+    )
+    upper = _polyhedron(81, {**plane, **_ABOVE}, (face[::-1], (1, 2, 3, 4), *upper_sides))
+    split = _polyhedron(
+        80, {**plane, **_BELOW}, (face, (1, 4, 2), (4, 3, 2), *lower_sides)
+    )
+    quad = _polyhedron(82, {**plane, **_BELOW}, (face, (1, 4, 3, 2), *lower_sides))
+
+    def declared(
+        first: EmbeddingCell, second: EmbeddingCell, points: tuple[_Point, ...], /
+    ) -> bool | None:
+        return _contact_is_declared(
+            first, second, points, first.vertex_ids, second.vertex_ids
+        )
+
+    triangle = (plane[1], plane[4], plane[2])
+    centroid = (Fraction(5, 3), Fraction(1, 6), Fraction(0))
+    assert declared(split, upper, triangle) is False
+    assert declared(split, upper, (centroid,)) is False
+    assert declared(split, upper, (plane[1], plane[4])) is True
+    assert declared(quad, upper, (_NOTCH_POINT,)) is True
+    assert declared(quad, upper, (plane[1], plane[4], plane[3], plane[2])) is True

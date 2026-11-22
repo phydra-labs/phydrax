@@ -1456,7 +1456,11 @@ def test_unmeasured_lengths_have_no_band_violation_count() -> None:
 def _implicit_plane_pyramid(
     height: float, tolerance: float, *, fixed_corners: bool = False
 ) -> _NativeState:
-    from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
+    from phydrax._meshcore import (
+        IntervalBoxProgram,
+        IntervalBranchProgram,
+        TetMeshImplicitSource,
+    )
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 
     points = np.asarray(
@@ -1518,7 +1522,7 @@ def _implicit_plane_pyramid(
     )
     state.native.bind_implicit_source(
         TetMeshImplicitSource(
-            value,
+            IntervalBranchProgram(value, np.empty((0, 6), dtype=np.int64)),
             gradient,
             np.asarray([group], dtype=np.int32),
             tolerance,
@@ -1606,7 +1610,7 @@ def test_implicit_relocation_continues_after_native_distance_refusal() -> None:
 
 def _relocation_cache_witness_state() -> _NativeState:
     import phydrax.meshing._tetra_metric as metric
-    from phydrax._meshcore import IntervalBoxProgram
+    from phydrax._meshcore import IntervalBoxProgram, IntervalBranchProgram
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
 
     # Numeric initial carrier, metric and sphere interval programs from the
@@ -1645,7 +1649,7 @@ def _relocation_cache_witness_state() -> _NativeState:
     source = certify_cell_mesh(source.mesh, source.coordinate_contract, geometry=geometry)
     mesh = source.mesh
     implicit = metric._ImplicitMetricSource(
-        programs[0],
+        IntervalBranchProgram(programs[0], np.empty((0, 6), dtype=np.int64)),
         programs[1],
         0.005,
         bank.source_id,
@@ -2125,7 +2129,11 @@ def test_relocation_progress_survives_topology_edits() -> None:
 def test_implicit_collapse_admits_survivor_off_original_facet(
     tmp_path: Path, restored: bool
 ) -> None:
-    from phydrax._meshcore import IntervalBoxProgram, TetMeshImplicitSource
+    from phydrax._meshcore import (
+        IntervalBoxProgram,
+        IntervalBranchProgram,
+        TetMeshImplicitSource,
+    )
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from phydrax.meshing._tetra_metric import (
         _current_edge_controls,
@@ -2198,7 +2206,7 @@ def test_implicit_collapse_admits_survivor_off_original_facet(
     try:
         state.native.bind_implicit_source(
             TetMeshImplicitSource(
-                value,
+                IntervalBranchProgram(value, np.empty((0, 6), dtype=np.int64)),
                 gradient,
                 np.asarray([group], dtype=np.int32),
                 0.01,

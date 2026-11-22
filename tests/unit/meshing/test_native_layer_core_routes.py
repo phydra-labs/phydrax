@@ -303,14 +303,15 @@ def test_prepared_wall_bounds_preserve_exact_supports(
     triangle = (point(0, 0, 0), point(1, 0, 0), point(0, 1, 0))
     far = (point(100, 100, 0), point(101, 100, 0), point(100, 101, 0))
     triangles = ((29, triangle), (7, triangle), (44, far))
-    prepared = _PreparedWallTriangles(triangles)
-    for query in (
+    queries = (
         point(Fraction(1, 4), Fraction(1, 4), Fraction(1, 10)),
         point(0, 0, 0),
         point(Fraction(1, 2), Fraction(1, 2), 0),
         point(100, 100, 0),
-    ):
-        assert _nearest_wall_point(query, prepared.candidates(query)) == (
+    )
+    bank = _PreparedWallTriangles(triangles).candidate_bank(queries)
+    for query, candidates in zip(queries, bank, strict=True):
+        assert _nearest_wall_point(query, candidates) == (
             _nearest_wall_point(query, triangles)
         )
 
@@ -504,6 +505,48 @@ def test_original_ridge_subdivision_reproves_authored_column_controls() -> None:
         occurrences,
     )
     assert domain.region_occurrence_paths == occurrences
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native boundary layers require meshcore"
+)
+def test_column_bank_candidates_match_per_point_and_exhaustive_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools.meshing_qualification.scenarios.native_hybrid_profiles import (
+        _archived_ridge_source,
+        _periodic_layer_core_specification,
+    )
+
+    source, _, _ = _archived_ridge_source(cap_refinement="conforming")
+    specification = _periodic_layer_core_specification(source)
+    partition = subdivide_nested_prism_columns(source.layers.mesh, 2)
+    bank_query = _PreparedWallTriangles.candidate_bank
+    banks: list[tuple[object, ...]] = []
+
+    def recorded(
+        prepared: _PreparedWallTriangles, points: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...], ...]:
+        bank = bank_query(prepared, points)
+        # One query tree per bank selects the same wall candidates as one
+        # single-box query tree per point.
+        assert bank == tuple(bank_query(prepared, (point,))[0] for point in points)
+        assert len(points) > 1
+        assert any(len(row) < len(prepared.triangles) for row in bank)
+        banks.append(bank)
+        return bank
+
+    monkeypatch.setattr(_PreparedWallTriangles, "candidate_bank", recorded)
+    certificate = certify_nested_layer_columns(source, partition, specification)
+    assert len(banks) == 1
+
+    def exhaustive(
+        prepared: _PreparedWallTriangles, points: tuple[tuple[Fraction, ...], ...], /
+    ) -> tuple[tuple[tuple[int, tuple[tuple[Fraction, ...], ...]], ...], ...]:
+        return tuple(prepared.triangles for _ in points)
+
+    monkeypatch.setattr(_PreparedWallTriangles, "candidate_bank", exhaustive)
+    assert certify_nested_layer_columns(source, partition, specification) == certificate
 
 
 @pytest.mark.skipif(

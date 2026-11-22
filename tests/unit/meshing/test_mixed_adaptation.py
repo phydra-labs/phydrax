@@ -557,13 +557,17 @@ def test_mixed_postcertification_owner_replays_actual_phase(
     assert replayed.transition.transition_id == actual.transition.transition_id
 
 
-def test_local_template_point_cache_preserves_exact_facts(
+def test_local_template_points_preserve_exact_global_point_keys(
     tet_prism_mesh: CellMesh,
     hex_pyramid_mesh: CellMesh,
 ) -> None:
-    from phydrax.meshing._mixed_adaptation import _Cell, _template_facts, _templates
+    from phydrax.meshing._mixed_adaptation import (
+        _Cell,
+        _point_key,
+        _template_facts,
+        _templates,
+    )
 
-    cache = {}
     for mesh in (tet_prism_mesh, hex_pyramid_mesh):
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
         for block in mesh.blocks:
@@ -572,9 +576,15 @@ def test_local_template_point_cache_preserves_exact_facts(
                 cell = _Cell(1, block.name, block.cell_kind, actual, 0, None, None)
                 for axial in (False, True):
                     for template in _templates(block.cell_kind, axial):
-                        assert _template_facts(
-                            cell, template, point_cache=cache
-                        ) == _template_facts(cell, template)
+                        # Shared local template points relabel to the keys
+                        # evaluated directly on the cell's global vertices.
+                        assert _template_facts(cell, template).points == tuple(
+                            tuple(
+                                _point_key(block.cell_kind, actual, point)
+                                for point in child
+                            )
+                            for child in template.children
+                        )
 
 
 def test_periodic_witness_rebind_survives_nonidentity_vertex_reordering() -> None:

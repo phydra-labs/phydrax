@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from fractions import Fraction
-from itertools import combinations
+from itertools import combinations, pairwise
+from math import lcm
 
 import numpy as np
 from jax.typing import ArrayLike
@@ -236,48 +237,58 @@ def polyhedral_cell_measures(
     cell_kinds = tuple(
         block.cell_kind for block in mesh.blocks for _ in range(block.cell_count)
     )
+    # Each face's oriented cone volume about the origin, shared by its cells.
+    face_volumes: dict[int, Fraction] = {}
+
+    def face_volume(face: int, /) -> Fraction:
+        start, stop = int(face_offsets[face]), int(face_offsets[face + 1])
+        face_points = tuple(points[int(index)] for index in face_vertices[start:stop])
+        if any(point is None for point in face_points) or len(face_points) < 3:
+            raise ValueError(
+                "Polyhedral face lacks exact nondegenerate vertex coordinates."
+            )
+        polygon = tuple(point for point in face_points if point is not None)
+        plane = None
+        for candidate in combinations(polygon, 3):
+            try:
+                plane = plane_key(candidate)
+            except ValueError:
+                continue
+            break
+        # Integer rows D p over the face's common denominator D.
+        denominator = lcm(*(value.denominator for point in polygon for value in point))
+        rows = tuple(
+            tuple(value.numerator * (denominator // value.denominator) for value in point)
+            for point in polygon
+        )
+        if plane is None or any(
+            plane[0] * x + plane[1] * y + plane[2] * z + plane[3] * denominator
+            for x, y, z in rows
+        ):
+            raise ValueError("Polyhedral face vertices are not exactly coplanar.")
+        (x0, y0, z0) = rows[0]
+        determinants = 0
+        for (x1, y1, z1), (x2, y2, z2) in pairwise(rows[1:]):
+            determinants += (
+                x0 * (y1 * z2 - z1 * y2)
+                - y0 * (x1 * z2 - z1 * x2)
+                + z0 * (x1 * y2 - y1 * x2)
+            )
+        return Fraction(determinants, 6 * denominator**3)
+
     measures: list[Fraction | None] = []
     for cell in range(connectivity.cell_count):
         if cell_kinds[cell] != "polyhedron":
             measures.append(None)
             continue
         volume = Fraction(0)
-        for local_face, face in enumerate(
+        for local_face, face_value in enumerate(
             cell_faces[cell_face_offsets[cell] : cell_face_offsets[cell + 1]]
         ):
-            start, stop = int(face_offsets[face]), int(face_offsets[face + 1])
-            face_points = tuple(points[int(index)] for index in face_vertices[start:stop])
-            if any(point is None for point in face_points) or len(face_points) < 3:
-                raise ValueError(
-                    "Polyhedral face lacks exact nondegenerate vertex coordinates."
-                )
-            polygon = tuple(point for point in face_points if point is not None)
-            plane = None
-            for candidate in combinations(polygon, 3):
-                try:
-                    plane = plane_key(candidate)
-                except ValueError:
-                    continue
-                break
-            if plane is None or any(
-                sum(
-                    coefficient * value
-                    for coefficient, value in zip(plane[:3], point, strict=True)
-                )
-                + plane[3]
-                != 0
-                for point in polygon
-            ):
-                raise ValueError("Polyhedral face vertices are not exactly coplanar.")
-            p0 = polygon[0]
-            oriented = Fraction(0)
-            for index in range(1, len(polygon) - 1):
-                p1, p2 = polygon[index], polygon[index + 1]
-                oriented += (
-                    p0[0] * (p1[1] * p2[2] - p1[2] * p2[1])
-                    - p0[1] * (p1[0] * p2[2] - p1[2] * p2[0])
-                    + p0[2] * (p1[0] * p2[1] - p1[1] * p2[0])
-                ) / 6
+            face = int(face_value)
+            oriented = face_volumes.get(face)
+            if oriented is None:
+                oriented = face_volumes[face] = face_volume(face)
             volume += int(face_signs[cell_face_offsets[cell] + local_face]) * oriented
         measures.append(volume)
     return tuple(measures)

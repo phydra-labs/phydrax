@@ -104,7 +104,6 @@ from ._topology_edit import (
 
 _PointKey = tuple[tuple[int, Fraction], ...]
 _FaceSignature = tuple[tuple[_PointKey, ...], ...]
-_LocalPointCache = dict[tuple[str, tuple[float, ...], int], _PointKey]
 
 
 class MixedSibling(NamedTuple):
@@ -742,27 +741,30 @@ def _point_key(
     )
 
 
-def _template_facts(
-    cell: _Cell, template: _Template, /, *, point_cache: _LocalPointCache | None = None
-) -> _TemplateFacts:
+@cache
+def _local_template_points(
+    kind: str, size: int, shape: tuple[int, ...], children: bytes, /
+) -> tuple[tuple[_PointKey, ...], ...]:
+    """Exact template child points keyed by local cell vertex index."""
+    local = np.arange(size, dtype=np.int64)
+    points = np.frombuffer(children, dtype=np.float64).reshape(shape)
+    return tuple(
+        tuple(_point_key(kind, local, point) for point in child) for child in points
+    )
+
+
+def _template_facts(cell: _Cell, template: _Template, /) -> _TemplateFacts:
     topology = reference_cell_topology(cell.kind)
-
-    def point_key(point: NDArray[np.float64], /) -> _PointKey:
-        if point_cache is None:
-            return _point_key(cell.kind, cell.vertices, point)
-        key = (cell.kind, tuple(float(value) for value in point), cell.vertices.size)
-        local = point_cache.get(key)
-        if local is None:
-            local = _point_key(
-                cell.kind, np.arange(cell.vertices.size, dtype=np.int64), point
-            )
-            point_cache[key] = local
-        return tuple(
-            sorted((int(cell.vertices[index]), weight) for index, weight in local)
-        )
-
+    children = np.ascontiguousarray(template.children, dtype=np.float64)
+    vertices = cell.vertices.tolist()
     child_points = tuple(
-        tuple(point_key(point) for point in child) for child in template.children
+        tuple(
+            tuple(sorted((vertices[index], weight) for index, weight in point))
+            for point in child
+        )
+        for child in _local_template_points(
+            cell.kind, cell.vertices.size, children.shape, children.tobytes()
+        )
     )
     parent_facets = tuple(
         frozenset(int(cell.vertices[index]) for index in facet)
@@ -983,7 +985,6 @@ def _face_signature(
     facet: int,
     cache: dict[tuple[int, int], tuple[_FaceSignature, ...]],
     index: int,
-    point_cache: _LocalPointCache | None = None,
     /,
 ) -> _FaceSignature:
     if template.index == 0:
@@ -996,7 +997,7 @@ def _face_signature(
     key = (index, template.index)
     facets = cache.get(key)
     if facets is None:
-        facets = _template_facts(cell, template, point_cache=point_cache).facets
+        facets = _template_facts(cell, template).facets
         cache[key] = facets
     return facets[facet]
 
@@ -1007,7 +1008,6 @@ def _close_templates(
     interfaces: list[tuple[int, int, int, int, dict[int, int] | None]],
 ) -> tuple[list[_Template], int]:
     cache: dict[tuple[int, int], tuple[_FaceSignature, ...]] = {}
-    point_cache: _LocalPointCache = {}
     incident: list[list[int]] = [[] for _ in cells]
     for index, (left, _, right, _, _) in enumerate(interfaces):
         incident[left].append(index)
@@ -1079,7 +1079,7 @@ def _close_templates(
 
             def right_signature(value: _Template) -> _FaceSignature:
                 signature = _face_signature(
-                    cells[right], value, right_facet, cache, right, point_cache
+                    cells[right], value, right_facet, cache, right
                 )
                 if vertex_map is None:
                     return signature
@@ -1104,9 +1104,7 @@ def _close_templates(
                 retained = [
                     value
                     for value in choices[left]
-                    if _face_signature(
-                        cells[left], value, left_facet, cache, left, point_cache
-                    )
+                    if _face_signature(cells[left], value, left_facet, cache, left)
                     == right_signature(value)
                 ]
                 if not retained:
@@ -1121,9 +1119,7 @@ def _close_templates(
                 retained_left = [
                     value
                     for value in choices[left]
-                    if _face_signature(
-                        cells[left], value, left_facet, cache, left, point_cache
-                    )
+                    if _face_signature(cells[left], value, left_facet, cache, left)
                     in right_signatures
                 ]
                 if not retained_left:
@@ -1134,9 +1130,7 @@ def _close_templates(
                     install(left, retained_left)
                     changed_cells.append(left)
                 left_signatures = {
-                    _face_signature(
-                        cells[left], value, left_facet, cache, left, point_cache
-                    )
+                    _face_signature(cells[left], value, left_facet, cache, left)
                     for value in choices[left]
                 }
                 retained_right = [
@@ -1186,10 +1180,10 @@ def _close_templates(
                 right_value = identity_choice[right]
                 assert left_value is not None and right_value is not None
                 left_trace = _face_signature(
-                    cells[left], left_value, left_facet, cache, left, point_cache
+                    cells[left], left_value, left_facet, cache, left
                 )
                 right_trace = _face_signature(
-                    cells[right], right_value, right_facet, cache, right, point_cache
+                    cells[right], right_value, right_facet, cache, right
                 )
                 if vertex_map is not None:
                     right_trace = tuple(

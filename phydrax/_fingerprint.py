@@ -34,6 +34,16 @@ def canonical_json(value: Any, /) -> str:
     return _ENCODER.encode(value)
 
 
+def plain_json_fingerprint(value: Any, /) -> str:
+    """``canonical_fingerprint`` of a plain JSON value, encoded in one pass.
+
+    The caller guarantees a nest of str/int/float/bool/None scalars, tuples,
+    lists and str-keyed dicts (no array leaves); its canonical text is then
+    the encoder's text, so the digest is ``canonical_fingerprint(value)``.
+    """
+    return hashlib.sha256(_ENCODER.encode(value).encode("ascii")).hexdigest()
+
+
 class LazyCanonicalSequence:
     """A JSON array whose items are produced while it is written.
 
@@ -366,9 +376,54 @@ def _plain_json_size(value: tuple[Any, ...] | list[Any], budget: int, /) -> int:
     return budget
 
 
+def _text_leaves(value: Any, /) -> bool:
+    """Whether a value is a string, None, or a tuple nest of those."""
+    kind = type(value)
+    if kind is str or value is None:
+        return True
+    return kind is tuple and all(map(_text_leaves, value))
+
+
+def _repeated_text_tokens(value: tuple[Any, ...] | list[Any], /) -> dict[Any, str] | None:
+    """Canonical JSON of each distinct item of a long, repetitive text sequence.
+
+    Only strings, None and tuple nests of those qualify: equal such values
+    encode identically (equal numbers of different types would not).
+    """
+    if not _text_leaves(value[0]):
+        return None
+    try:
+        uniform = value.count(value[0]) == len(value)
+        distinct = {value[0]} if uniform else set(value)
+    except (TypeError, ValueError):
+        # Unhashable items, or items whose equality is not a truth value.
+        return None
+    if 2 * len(distinct) > len(value) or not all(map(_text_leaves, distinct)):
+        return None
+    return {item: _ENCODER.encode(item) for item in distinct}
+
+
 def _write_sequence(
     value: tuple[Any, ...] | list[Any], write: Callable[[str], object], /
 ) -> None:
+    tokens = _repeated_text_tokens(value) if len(value) > _SEQUENCE_CHUNK else None
+    if tokens is not None:
+        # Per-row identity columns repeat few values: each distinct item is
+        # encoded once and the array text joined from those encodings; a
+        # chunk of one value repeats its encoding.
+        token = tokens.__getitem__
+        write("[")
+        for start in range(0, len(value), _SEQUENCE_CHUNK):
+            if start:
+                write(",")
+            chunk = value[start : start + _SEQUENCE_CHUNK]
+            if chunk.count(chunk[0]) == len(chunk):
+                text = token(chunk[0])
+                write((text + ",") * (len(chunk) - 1) + text)
+            else:
+                write(",".join(map(token, chunk)))
+        write("]")
+        return
     if _JSON_SCALAR_TYPES.issuperset(map(type, value)):
         if len(value) <= _SEQUENCE_CHUNK:
             write(_ENCODER.encode(value))

@@ -105,6 +105,16 @@ inline bool snap_to_domain(double* xy) {
   return true;
 }
 
+// incircle_sos with its floating stage inlined: incircle_sos decides by the
+// same stage first, so the sign is the same.
+[[gnu::always_inline]] inline int incircle_sos_filtered(const double* a, const double* b,
+                                                        const double* c, const double* d,
+                                                        int64_t ia, int64_t ib, int64_t ic,
+                                                        int64_t id) {
+  const int sign = incircle_stage(a, b, c, d);
+  return sign != 0 ? sign : incircle_sos(a, b, c, d, ia, ib, ic, id);
+}
+
 struct BadTriangle {
   double badness;
   int32_t v[3];  // rotated to start at the smallest vertex
@@ -126,22 +136,23 @@ struct BadOrder {
 // matching one processed either way. The pop sequence, and so the mesh, is
 // therefore independent of the heap layout, and a 4-ary heap is used.
 //
-// Without spatial buckets the entries are ranked by badness: a queued entry
-// is bad, so its badness is above one (possibly +inf; never NaN, as
-// std::max keeps the area ratio over a NaN angle ratio), and the bits of a
-// double above one increase with its value. Rank 0 holds badness >= 16,
-// then 256 ranks per octave down to
-// one; equal badness shares a rank, so BadOrder never puts a worse entry in
-// a later rank and the pop sequence is that of one heap (see
-// SpatialRefinementQueue). Measured on the ring at 1e4 (badness median 2.2,
-// 99th percentile 52): the single heap's pops were 20 % of the refinement
-// under libc++; the ranks keep each heap at about 30 entries.
+// Without spatial buckets the entries are ranked by badness, as in
+// Triangle's bad-triangle queue: a queued entry is bad, so its badness is
+// above one (possibly +inf; never NaN, as std::max keeps the area ratio over
+// a NaN angle ratio), and the bits of a double above one increase with its
+// value. 16 ranks per octave, the worst rank first, first in first out
+// within a rank: the pop order is not BadOrder's (OUTPUT-CHANGING), but every
+// bad triangle is still processed until none is left, so the Ruppert/Chew
+// termination and quality criteria are those of any processing order.
+// Measured on the ring at 1e4: the single heap's pops were 20 % of the
+// refinement under libc++, the rank FIFOs 4 %.
 struct BadRank {
   static constexpr int kBuckets = 1024;
+  static constexpr bool kFifo = true;
   int operator()(const BadTriangle& entry) const {
     const uint64_t bits = std::bit_cast<uint64_t>(entry.badness);
     constexpr uint64_t kOne = std::bit_cast<uint64_t>(1.0);
-    const uint64_t rank = bits > kOne ? (bits - kOne) >> 44 : 0;
+    const uint64_t rank = bits > kOne ? (bits - kOne) >> 48 : 0;
     return kBuckets - 1 - static_cast<int>(std::min<uint64_t>(rank, kBuckets - 1));
   }
 };
@@ -559,8 +570,8 @@ class ConstrainedMesher {
       for (std::size_t j = job.lo + 1; j < job.hi; ++j) {
         const int32_t c = chain[best];
         const int32_t p = chain[j];
-        if (incircle_sos(tri_.point(job.u), tri_.point(job.w), tri_.point(c), tri_.point(p),
-                         job.u, job.w, c, p) > 0) {
+        if (incircle_sos_filtered(tri_.point(job.u), tri_.point(job.w), tri_.point(c),
+                                  tri_.point(p), job.u, job.w, c, p) > 0) {
           best = j;
         }
       }
@@ -859,8 +870,9 @@ class ConstrainedMesher {
     const int32_t c2 = tri_.constraint(t, 2);
     const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
     const int32_t a = old.v[0], b = old.v[1], c = old.v[2];
-    tri_.release(t);
-    const int32_t t0 = tri_.allocate();
+    // release(t) then allocate() would return t: it is replaced in place.
+    tri_.recycle(t);
+    const int32_t t0 = t;
     const int32_t t1 = tri_.allocate();
     const int32_t t2 = tri_.allocate();
     tri_.set_triangle(t0, b, c, m, kFree, kFree, c0);
@@ -900,10 +912,11 @@ class ConstrainedMesher {
     const int32_t n_db = oold.n[jd], c_db = tri_.constraint(o, jd);
     const uint8_t region_t = tri_.region[static_cast<std::size_t>(t)];
     const uint8_t region_o = tri_.region[static_cast<std::size_t>(o)];
-    tri_.release(t);
-    tri_.release(o);
-    const int32_t t1 = tri_.allocate();
-    const int32_t t2 = tri_.allocate();
+    // release(t), release(o) then allocate() twice would return o, t.
+    tri_.recycle(t);
+    tri_.recycle(o);
+    const int32_t t1 = o;
+    const int32_t t2 = t;
     const int32_t o1 = tri_.allocate();
     const int32_t o2 = tri_.allocate();
     tri_.set_triangle(t1, c, a, m, id, kFree, c_ca);
@@ -944,8 +957,8 @@ class ConstrainedMesher {
     const int32_t ghost_q = old.n[0];
     const int32_t ghost_p = old.n[1];
     const uint8_t region = tri_.region[static_cast<std::size_t>(inner)];
-    tri_.release(g);
-    const int32_t f = tri_.allocate();
+    tri_.recycle(g);  // release(g) then allocate() would return g
+    const int32_t f = g;
     const int32_t h1 = tri_.allocate();
     const int32_t h2 = tri_.allocate();
     tri_.set_triangle(f, p, q, m, id, id, kFree);
@@ -995,8 +1008,8 @@ class ConstrainedMesher {
       const int j = tri_.edge_index(o, w, u);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(o)].v[j];
       if (!(cavity_certificates && mark == epoch_) &&
-          incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
-              0) {
+          incircle_sos_filtered(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u,
+                                w, x) <= 0) {
         continue;
       }
       const Triangle2D oold = tri_.triangles[static_cast<std::size_t>(o)];
@@ -1012,10 +1025,11 @@ class ConstrainedMesher {
       if (cavity_certificates && static_cast<std::size_t>(o) < marks_.size()) {
         marks_[static_cast<std::size_t>(o)] = 0;
       }
-      tri_.release(t);
-      tri_.release(o);
-      const int32_t first = tri_.allocate();
-      const int32_t second = tri_.allocate();
+      // release(t), release(o) then allocate() twice would return o, t.
+      tri_.recycle(t);
+      tri_.recycle(o);
+      const int32_t first = o;
+      const int32_t second = t;
       tri_.set_triangle(first, m, u, x, c_ux, kFree, c_mu);
       tri_.set_triangle(second, m, x, w, c_xw, c_wm, kFree);
       tri_.region[static_cast<std::size_t>(first)] = region;
@@ -1303,8 +1317,9 @@ class ConstrainedMesher {
           continue;
         }
         const Triangle2D& other = tri_.triangles[static_cast<std::size_t>(nb)];
-        if (incircle_sos(tri_.point(other.v[0]), tri_.point(other.v[1]), tri_.point(other.v[2]),
-                         center, other.v[0], other.v[1], other.v[2], id) > 0) {
+        if (incircle_sos_filtered(tri_.point(other.v[0]), tri_.point(other.v[1]),
+                                  tri_.point(other.v[2]), center, other.v[0], other.v[1],
+                                  other.v[2], id) > 0) {
           marks_[static_cast<std::size_t>(nb)] = inside;
           stack.push_back(nb);
         } else {

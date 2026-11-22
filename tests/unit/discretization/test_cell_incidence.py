@@ -225,3 +225,114 @@ def test_cell_incidence_scenario_2() -> None:
     moved = mesh.with_coordinates(points + 0.5, numeric_version="moved")
     assert moved.topology_id == mesh.topology_id
     assert moved.geometry_id != mesh.geometry_id
+
+
+def _layered_mixed_cells(
+    seed: int,
+) -> tuple[int, tuple[tuple[str, np.ndarray], ...]]:
+    """Hexahedra under pyramids, prism columns under tetrahedra, relabeled."""
+    n = 3
+    grid = np.arange((n + 1) * (n + 1) * 3).reshape((3, n + 1, n + 1))
+    hexahedra, pyramids, prisms, tetrahedra = [], [], [], []
+    apex = grid.size
+    for i in range(n):
+        for j in range(n):
+            square = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+            if (i + j) % 2 == 0:
+                for layer in range(2):
+                    bottom = [grid[layer][corner] for corner in square]
+                    top = [grid[layer + 1][corner] for corner in square]
+                    hexahedra.append(bottom + top)
+                pyramids.append([grid[2][corner] for corner in square] + [apex])
+                apex += 1
+                continue
+            for triangle in (square[:3], [square[0], square[2], square[3]]):
+                for layer in range(2):
+                    prisms.append(
+                        [grid[layer][corner] for corner in triangle]
+                        + [grid[layer + 1][corner] for corner in triangle]
+                    )
+                top = [grid[2][corner] for corner in triangle]
+                tetrahedra.append([*top, apex])
+                apex += 1
+    relabel = np.random.default_rng(seed).permutation(apex)
+    blocks = tuple(
+        (kind, relabel[np.asarray(rows, dtype=np.int64)].astype(np.int32))
+        for kind, rows in (
+            ("prism", prisms),
+            ("tetrahedron", tetrahedra),
+            ("hexahedron", hexahedra),
+            ("pyramid", pyramids),
+        )
+    )
+    return apex, blocks
+
+
+@pytest.mark.parametrize("seed", (0, 1, 2))
+@pytest.mark.parametrize(
+    "kinds",
+    (
+        ("prism",),
+        ("prism", "tetrahedron"),
+        ("prism", "tetrahedron", "hexahedron", "pyramid"),
+    ),
+)
+def test_native_standard_polyhedral_connectivity_matches_generic(
+    monkeypatch: pytest.MonkeyPatch, seed: int, kinds: tuple[str, ...]
+) -> None:
+    from phydrax._meshcore import meshcore_available
+    from phydrax.discretization import _cell_complex
+
+    if not meshcore_available():
+        pytest.skip("phydrax-meshcore unavailable")
+    vertex_count, blocks = _layered_mixed_cells(seed)
+    cells = tuple(block for block in blocks if block[0] in kinds)
+    native = _cell_complex._native_standard_connectivity(
+        cells, vertex_count, None, None, None, None
+    )
+    assert native is not None
+    native_topology = polyhedral_cell_complex(native)
+    monkeypatch.setattr(_cell_complex, "meshcore_available", lambda: False)
+    generic = polyhedral_connectivity(cells, vertex_count)
+    for name in generic.__dataclass_fields__:
+        expected = getattr(generic, name)
+        actual = getattr(native, name)
+        if isinstance(expected, int):
+            assert actual == expected, name
+        else:
+            assert np.asarray(actual).dtype == np.asarray(expected).dtype, name
+            np.testing.assert_array_equal(actual, expected, err_msg=name)
+    # Natively ordered incidences carry the generic sorted identities.
+    assert native_topology.topology_id == polyhedral_cell_complex(generic).topology_id
+
+
+def test_incidence_order_sorts_lower_upper_sign_rows() -> None:
+    from phydrax._meshcore import incidence_order, meshcore_available
+
+    if not meshcore_available():
+        pytest.skip("phydrax-meshcore unavailable")
+    generator = np.random.default_rng(7)
+    lower = generator.integers(0, 40, size=500)
+    upper = generator.integers(0, 60, size=500)
+    signs = generator.choice(np.asarray([-1, 1]), size=500)
+    np.testing.assert_array_equal(
+        incidence_order(lower, upper, signs, 40, 60), np.lexsort((signs, upper, lower))
+    )
+    with pytest.raises(ValueError):
+        incidence_order(lower, upper, signs * 2, 40, 60)
+
+
+def test_native_standard_polyhedral_connectivity_defers_defects() -> None:
+    from phydrax._meshcore import meshcore_available
+
+    if not meshcore_available():
+        pytest.skip("phydrax-meshcore unavailable")
+    prism = np.asarray([[0, 1, 2, 3, 4, 5]], dtype=np.int32)
+    with pytest.raises(ValueError, match="duplicate cells"):
+        polyhedral_connectivity(
+            (("prism", np.concatenate((prism, prism[:, [0, 2, 1, 3, 5, 4]]))),), 6
+        )
+    with pytest.raises(ValueError, match="distinct vertices"):
+        polyhedral_connectivity((("prism", [[0, 1, 2, 3, 4, 4]]),), 6)
+    with pytest.raises(ValueError, match="opposite orientation"):
+        polyhedral_connectivity((("prism", prism), ("prism", [[0, 1, 2, 6, 7, 8]])), 9)

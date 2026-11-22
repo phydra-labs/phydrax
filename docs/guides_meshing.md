@@ -473,6 +473,7 @@ statistic (`SizeCompliancePolicy.target_statistics`) and compares it with
 | structured and mapped surface quads | edge length | two-sided | h | none; the user's divisions are checked |
 | dual quads, balanced/frame/mapped grid hexes | edge length | two-sided | h | scaffold edges <= h, grid spacing h, ceil(length / h) divisions |
 | polyhedral cells | edge length | two-sided | h | cell diameter <= maximum_size or h(1+rel)+abs |
+| conforming Voronoi cells | cube root of cell volume | two-sided | h | interior lattice of cell volume h^3, surface samples at spacing 0.75 h |
 | periodic quotient edges (serial and owner-local) | edge length | two-sided | h | periodic metric I/h^2, exact at zero tolerance |
 | periodic algebraic carrier | edge length | construction objective | h | the edge search targets the quantile |
 
@@ -827,11 +828,36 @@ thicknesses measured as exact distances to the wall. Per-layer statistics cover
 the surviving columns that carry each layer; `layer_active[k]` is `True` iff at
 least one column carries requested layer `k`. A layer carried by no column (for
 example after `TERMINATE_LOCALLY` stops every column early) has
-`layer_active[k] == False`, NaN achieved, minimum, and maximum thickness, and NaN
-for every growth rate touching it (`achieved_growth_rates[k]` is the ratio of
-achieved thicknesses `k + 1` and `k`). Read layer support from `layer_active`,
-not from NaNs; `terminated_vertex_count`, `reduced_vertex_count`, and
-`merged_vertex_count` state why columns stopped short of or shrank the schedule.
+`layer_active[k] == False`, NaN achieved, minimum, and maximum thickness, NaN
+maximum level deviation, and NaN for every growth rate touching it
+(`achieved_growth_rates[k]` is the ratio of achieved thicknesses `k + 1` and
+`k`). Read layer support from `layer_active`, not from NaNs;
+`terminated_vertex_count`, `reduced_vertex_count`, and `merged_vertex_count`
+state why columns stopped short of or shrank the schedule.
+`maximum_level_deviations[k]` is the largest `|d - s h|` over the columns
+carrying layer `k`, with `d` the distance of the column's level `k + 1` vertex to
+the wall triangles, `h` that level's scheduled height and `s` the column scale.
+
+Closed, fully grown triangle walls without split ridges, obstacles or
+periodicity, under `FAIL` or `REDUCE_THICKNESS`, grow on the native prism layers
+(`phx_mc_prism_layers`): one straight column per wall vertex, every prism
+certified by the exact signs of its nine Bernstein Jacobian controls and the top
+level by exact triangle contacts. Their level heights are measured from the
+smooth surface the wall samples, not from the triangles, and ridge columns reach
+the scheduled height from every smooth sector. A CAD wall (a source-face layer
+control on a BRep volume) passes its per-corner source frames, the source
+patch's inward normal and shape operator at each corner's chart point, as
+`source_frames`: its levels are measured from the source surface itself (within
+1e-5 of each level on a sphere and on a coarsely meshed cylinder, rims
+included). A corner at a singular chart point (a cap center, a pole) carries no
+frame, and its sectors, like every sector of a bare triangle wall, take normal
+and curvature from a weighted quadratic fit through the wall vertices. The
+result retains the frames as `source_frames`, fingerprinted and archived, and a
+cold restore reruns the kernel on them to reprove the columns.
+`maximum_level_deviations` reports the levels' departure from the triangles.
+Every other wall takes the advancing-front route, whose probed column stretch
+measures levels from the triangles.
+
 The result retains the original obstacle surface (or its absence) and the actual
 final column scales, layer counts, stretches, merge targets, and level coordinates,
 including coordinates not present in the compacted cell mesh. These are source
@@ -1950,6 +1976,14 @@ hexahedron, pyramid, and tetrahedron transition blocks; it does not satisfy an
 all-hexahedron request by silently retaining those transitions.
 `plc_hex_dominant` composes exact source charts through its mixed blocks. Curved
 PLC input also requires the independent mapped-root authority described below.
+
+`plc_octree_hex_dominant` (`HEX_DOMINANT_POLYHEDRAL_TRANSITION`) meshes a
+single-solid affine PLC with a snapped octree and publishes every cell as a
+polyhedron with OpenFOAM face semantics: a non-planar face is the fan of
+triangles from its exact vertex average, and the request's target is
+`CellFamilyPolicy(required=("polyhedron",))`. Its `cell_shape` marker counts
+hexahedra by shape (0 six quadrilaterals, 1 feature-step prism, 2 other).
+Consumers that need trilinear hexahedra use `plc_hex_dominant`.
 
 `plc_balanced_grid_hex` constructs cut cells from exact PLC/tetrahedral
 intersections, then closes their conforming face arrangements with an
@@ -3309,6 +3343,40 @@ actual output edges. Regional output sizing is not passed to the facet-only
 tetrahedral clipping-carrier size field; the original request and its hard
 compliance checks remain unchanged.
 
+### Conforming Voronoi cells
+
+`NativeMeshingOptions("plc_conforming_voronoi")` meshes a PLC solid with
+Voronoi polyhedra for a uniform cell size h (the finest uniform control).
+One native call places the seeds: interior seeds mirrored across the surface
+by exterior ghost seeds, sector seeds about sharp edges (dihedral angle above
+20 degrees) and corners, and a body-centred cubic lattice inside. Every cell
+is the exact Voronoi cell of its seed in the diagram of all seeds, so cells
+are closed and convex, and the boundary is formed by the bisector faces
+towards the ghosts. A seed of a nearly cospherical configuration (adjacent
+circumcentres within 2^-14 h) moves 2^-10 h off the other circumsphere before
+the final diagram, so no cell carries near-degenerate edges or faces. The
+route reports the signed volume error, a bound of its absolute value, whether
+the boundary is exact, and the largest boundary vertex distance over h
+(`voronoi:volume_error`, `voronoi:volume_error_bound`,
+`voronoi:exact_boundary`, `voronoi:boundary_vertex_distance_over_size`). The
+seeds lie on a dyadic grid and are a function of the input alone, so the mesh
+is deterministic. With `prove=True` the kernel certifies closure, the local
+Delaunay property of every interior seed's star and an upper bound on the
+boundary distance (`voronoi:boundary_distance_bound_over_size`).
+
+The certification contract follows the boundary. Mirrored pairs put it
+exactly on axis-aligned facets; when every boundary vertex lies exactly on its
+facet's plane, acceptance certifies exact `volume_plc` material coverage.
+Otherwise the bisector boundary approximates the PLC, and acceptance follows
+the `volume_plc_fidelity` schedule: in place of exact coverage, a certified
+two-sided distance bound between the cell union's exterior surface and the
+PLC's exterior facets (`certification.fidelity.mesh_to_source_upper` and
+`source_to_mesh_upper`, from a distance-only `SourceBoundaryDistanceWitness`)
+must lie within the request's `maximum_deviation`, or within h when the
+request sets none; a tighter request refuses. A polyhedral fill without a
+route still resolves to `plc_restricted_power`, which conforms exactly to
+every facet.
+
 ### Mixed and polyhedral adaptation
 
 `NATIVE_MIXED` adapts three-dimensional tetrahedron, prism, pyramid, and
@@ -3450,6 +3518,24 @@ mapped/polyhedral cells; candidate failures are synchronized before sparse field
 coefficients and transpose contributions follow the execution-group halo plan.
 Owners with no field rows still participate in search with an empty, valid halo
 partition, and each process supplies only its owned donor/receptor arrays.
+
+Serial 3D parts of affine tetrahedra and trilinear hexahedra without a source
+solid query assemble in one native meshcore call (`phx_mc_overset_assemble`)
+when the library loads; the Python owner above is the path for 2D, polyhedral,
+curved and solid-query parts and when meshcore is missing. The call classifies
+each vertex against every other part's closed wall by exact ray parity (a
+vertex in the corner tetrahedron of a nonplanar wall quad is wall contact, hence
+a hole), cuts every cell that no exact separating plane proves clear of the
+wall, grows `fringe_layers` receptor layers, and certifies each chosen donor
+after construction: exact orientation signs for tetrahedra, a Krawczyk
+enclosure of the trilinear inverse for hexahedra (a straddled face decided by
+the exact side of its bilinear surface, and a receptor on a shared face, edge
+or corner taken by the closed union of the cells around it). A float candidate
+that fails is replaced by the next; a receptor without a certified donor is an
+orphan with its status. `OversetPolicy(fringe_donors=True)` admits fringe cells
+as donors where no active cell contains a receptor (serial only; such routes
+stay packets, not explicit overlays). `prove=False` stops after construction
+and the connectivity then reads donor coverage as unproved.
 
 Moving connectivity consumes accepted, source-bound `MeshMotionAdvance` results
 through `connectivity.moved_from_advances(...)`; it does not recertify arbitrary

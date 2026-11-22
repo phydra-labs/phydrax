@@ -4,6 +4,7 @@
 
 
 import importlib.metadata
+import math
 import os
 import subprocess
 import sys
@@ -18,9 +19,10 @@ import pytest
 from jax import Array
 from scipy.spatial import ConvexHull
 
+from benchmarks._meshing_surfaces import icosphere
 from benchmarks.native_meshing import (
     _facets,
-    _icosphere,
+    _point_triangle_distances,
     _recover,
     _restricted_torus_surface,
     _sphere_distance,
@@ -34,6 +36,7 @@ from phydrax._meshcore import (
     clip_reference_tetrahedron_exact,
     implicit_face_proposals,
     IntervalBoxProgram,
+    IntervalBranchProgram,
     mesh_certify,
     mesh_remesh,
     meshcore_available,
@@ -68,6 +71,7 @@ from phydrax._meshcore import (
     TetMeshPlaneRefusal,
     TetMeshSourceComplex,
     TetMeshSourceEvidence,
+    TetMeshUnmetReason,
     tetrahedron_dual_hexes,
     tetrahedron_intersection_moments,
     tetrahedron_intersection_simplices,
@@ -1510,7 +1514,7 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         np.empty(0, dtype=np.int64),
     )
     source = TetMeshImplicitSource(
-        value,
+        IntervalBranchProgram(value, np.empty((0, 6), dtype=np.int64)),
         gradient,
         np.asarray([3], dtype=np.int32),
         0.01,
@@ -1539,7 +1543,8 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
         value.instructions[0, 0] = 99
         arrays = state.arrays()
         assert arrays.implicit_source is not None
-        assert arrays.implicit_source.source.value.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.program.instructions[0, 0] == 2
+        assert arrays.implicit_source.source.value.events.shape == (0, 6)
         assert arrays.implicit_source.source.orientation == 1
     with _restored_tet_mesh(arrays, arrays.witness_parameters) as restored:
         restored_source = restored.arrays().implicit_source
@@ -1558,17 +1563,58 @@ def test_implicit_tet_source_round_trips_owned_program_and_refuses_tamper() -> N
     )
     with pytest.raises(ValueError, match="identity and frame"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
-    program = arrays.implicit_source.source.value
+    branches = arrays.implicit_source.source.value
+    program = branches.program
     low, high = program.workspace_lower.copy(), program.workspace_upper.copy()
     low[3] = high[3] = 1.0
     off_band = arrays.implicit_source.source._replace(
-        value=program._replace(workspace_lower=low, workspace_upper=high)
+        value=branches._replace(
+            program=program._replace(workspace_lower=low, workspace_upper=high)
+        )
     )
     tampered = arrays._replace(
         implicit_source=arrays.implicit_source._replace(source=off_band)
     )
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         _restored_tet_mesh(tampered, tampered.witness_parameters)
+    # A jump field on the implicit facet: f = z + select(z > 0, c, -c) has no
+    # zero, yet over the facet z = 0 its enclosure is [-c, c] with grad f =
+    # (0, 0, 1). Without branch evidence the facet is admitted; with f's jump
+    # event (the comparison undecided on the facet) the source refuses.
+    c = 0.004
+    jump_workspace = np.asarray([0.0, 0.0, 0.0, 0.0, -c, c, 0.0, 0.0, 0.0])
+    jump = IntervalBoxProgram(
+        np.asarray(
+            [
+                [13, 6, 1, 2, -1, 3, -1, 0],
+                [14, 7, 1, 6, -1, 4, -1, 1],
+                [2, 8, 1, 2, -1, 7, -1, 0],
+            ],
+            dtype=np.int64,
+        ),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        jump_workspace,
+        jump_workspace.copy(),
+        np.asarray([8]),
+        np.empty(0, dtype=np.int64),
+    )
+    for events, refused in (
+        (np.empty((0, 6), dtype=np.int64), False),
+        (np.asarray([[1, 3, 1, 6, -1, -1]], dtype=np.int64), True),
+    ):
+        jumped = arrays.implicit_source.source._replace(
+            value=IntervalBranchProgram(jump, events)
+        )
+        tampered = arrays._replace(
+            implicit_source=arrays.implicit_source._replace(source=jumped)
+        )
+        if refused:
+            with pytest.raises(MeshcoreError, match="UNRESOLVED"):
+                _restored_tet_mesh(tampered, tampered.witness_parameters)
+        else:
+            with _restored_tet_mesh(tampered, tampered.witness_parameters):
+                pass
 
 
 def test_plane_witnesses_and_records_round_trip_through_tet_mesh_arrays() -> None:
@@ -2320,6 +2366,64 @@ def test_declared_facet_plane_groups_rounded_triangles_and_refuses_off_plane_ver
         assert (refusal.value.first_kind, refusal.value.first) == (PlcEntityKind.FACET, 5)
 
 
+def _seamed_tetrahedron(
+    lift: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # The unit corner tetrahedron with edge AB doubled on its bottom and
+    # front faces by a point M near AB's midpoint, lifted `lift` outward off
+    # both; the seam triangle (A, M, B), last, closes the gap between the two
+    # paths. Each triangle is its own facet bounding region 0.
+    points = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.5, -lift, -lift],
+        ]
+    )
+    triangles = np.asarray(
+        [[0, 2, 4], [2, 1, 4], [0, 1, 3], [0, 3, 2], [1, 2, 3], [0, 4, 1]], dtype=np.int32
+    )
+    count = triangles.shape[0]
+    return (
+        points,
+        np.arange(0, 3 * count + 1, 3, dtype=np.int64),
+        triangles.reshape((-1,)),
+        np.arange(count, dtype=np.int32),
+        np.tile(np.asarray([[-1, 0]], dtype=np.int32), (count, 1)),
+    )
+
+
+def test_fixed_boundary_refuses_a_triangle_flat_to_rounding() -> None:
+    # A fixed boundary keeps every source triangle, and a cell on a triangle
+    # has relative determinant at most the sine of the triangle's smallest
+    # angle: a seam triangle whose sine is below the kernels' determinant
+    # floor 2^-22 can carry no admissible cell, so recovery refuses it before
+    # meshing, naming the triangle with its sine and the floor.
+    seam = _seamed_tetrahedron(1e-12)
+    with pytest.raises(PlcSourceFailure) as refusal:
+        recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.FIXED)
+    failure = refusal.value
+    assert failure.status is MeshcoreStatus.UNRESOLVED
+    assert failure.reason is PlcFailureReason.INVALID_FACET
+    assert (failure.first_kind, failure.first) == (PlcEntityKind.FACET, 5)
+    assert (failure.second_kind, failure.second) == (PlcEntityKind.POLYGON, 5)
+    a, m, b = seam[0][[0, 4, 1]]
+    lengths = np.sort(
+        [np.linalg.norm(m - a), np.linalg.norm(b - m), np.linalg.norm(a - b)]
+    )
+    sine = np.linalg.norm(np.cross(m - a, b - a)) / (lengths[2] * lengths[1])
+    assert failure.certified_deviation == pytest.approx(sine, rel=1e-6)
+    assert failure.declared_bound == 2.0**-22
+    # A conforming boundary may split the seam, and a seam lifted to a sine
+    # above the floor is a valid fixed boundary.
+    recover_plc_3d(*seam, boundary_policy=PlcBoundaryPolicy.CONFORMING)
+    lifted = _seamed_tetrahedron(1e-6)
+    recovered = recover_plc_3d(*lifted, boundary_policy=PlcBoundaryPolicy.FIXED)
+    assert recovered.faces.shape[0] == 6
+
+
 def test_declared_planes_recover_a_rotated_cube_missing_its_face_diagonals() -> None:
     # Corners are the correct roundings of the exact corners of a rotated
     # cube of half side 1/8, and each face declares its exact plane (origin
@@ -2461,13 +2565,14 @@ def test_surface_envelope_remesh_keeps_the_band_and_raises_angles() -> None:
     np.testing.assert_array_equal(again.surface_triangles, remeshed.surface_triangles)
 
 
-def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]:
+def _unit_sphere_box_programs() -> tuple[
+    IntervalBoxProgram, IntervalBoxProgram, IntervalBranchProgram
+]:
     def sphere(x: Array) -> Array:
         return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] - 1.0
 
-    value = prepare_interval_function(
-        sphere, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(sphere, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
     gradient = prepare_interval_function(
         jax.grad(sphere), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2475,12 +2580,21 @@ def _unit_sphere_box_programs() -> tuple[IntervalBoxProgram, IntervalBoxProgram]
         raise RuntimeError(
             "The unit sphere field must lower to native interval programs."
         )
-    return value.box_program(), gradient.box_program()
+    return (
+        value.box_program(),
+        gradient.box_program(),
+        prepared.native_branches().branch_box_program(),
+    )
+
+
+# A box holding the unit sphere and the lenses below, for the two-way
+# certificates.
+_CERTIFIED_DOMAIN = np.array([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=np.float64)
 
 
 def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -> None:
-    value, gradient = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(3)
+    value, gradient, branches = _unit_sphere_box_programs()
+    vertices, faces = icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
     assert remeshed.orientation == 1
     assert remeshed.counters[4] == 0 and remeshed.counters[6] == 0
@@ -2493,17 +2607,34 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     certificate = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value,
+        branches,
         gradient,
         0.01,
         1,
         vertices,
         faces,
         _widened_boxes(vertices, faces, 0.005),
+        _CERTIFIED_DOMAIN,
         0.15,
         30.0,
     )
     assert 0.0 <= certificate.distance <= 0.01
+    # Both ways: every point of the unit sphere (sampled) lies within the
+    # certified reverse distance of the surface, which the tube refines toward
+    # the tolerance.
+    sphere_points = _sphere_samples(2000)
+    nearest = np.min(
+        np.stack(
+            [
+                _point_triangle_distances(
+                    point, certificate.vertices[certificate.triangles]
+                )
+                for point in sphere_points
+            ]
+        ),
+        axis=1,
+    )
+    assert np.max(nearest) <= certificate.reverse_distance <= 0.01
     # Input triangles the remesh left untouched are proved, not carried.
     assert certificate.counters[3] == 0 and not np.any(certificate.carried)
     # Nothing needed repair: the certified surface is the constructed one.
@@ -2512,48 +2643,93 @@ def test_zero_set_remesh_certifies_and_names_triangles_kept_from_the_carrier() -
     np.testing.assert_array_equal(certificate.triangles, remeshed.triangles)
     # A vertex lifted off the sphere: its star fails the proof and splitting
     # cannot repair it, unless the carrier holds those very triangles with
-    # witness boxes that straddle the sphere; they are then accepted at their
-    # box diagonals (above the tolerance) and flagged as carried.
+    # witness boxes that straddle the sphere; they are then accepted from the
+    # carrier. The sphere under the lifted star lies farther than the
+    # tolerance from the surface, so the two-way certificate (both directions
+    # within the tolerance) still refuses, naming the carried triangles.
     lifted = np.array(remeshed.vertices)
-    lifted[0] *= 1.05
-    with pytest.raises(MeshcoreError, match="UNRESOLVED"):
-        zero_set_certify(
-            lifted, remeshed.triangles, value, gradient, 0.01, 1, *no_carrier, 0.15, 30.0
-        )
-    carrier_faces = remeshed.triangles[:, (1, 2, 0)]
-    boxes = _widened_boxes(lifted, carrier_faces, 0.02)
-    carried = zero_set_certify(
-        lifted,
-        remeshed.triangles,
-        value,
-        gradient,
-        0.01,
-        1,
-        lifted,
-        carrier_faces,
-        boxes,
-        0.15,
-        30.0,
-    )
-    assert carried.counters[3] > 0 and carried.counters[4] == 0
-    assert np.count_nonzero(carried.carried) == carried.counters[3]
-    diagonals = np.linalg.norm(boxes[:, 1] - boxes[:, 0], axis=1)
-    assert 0.01 < carried.distance <= np.max(diagonals) * (1 + 1e-12)
-    # Boxes entirely outside the sphere prove no zero: nothing is carried.
+    lifted[0] *= 1.02
     with pytest.raises(MeshcoreError, match="UNRESOLVED"):
         zero_set_certify(
             lifted,
             remeshed.triangles,
-            value,
+            branches,
+            gradient,
+            0.01,
+            1,
+            *no_carrier,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
+        )
+    carrier_faces = remeshed.triangles[:, (1, 2, 0)]
+    boxes = _widened_boxes(lifted, carrier_faces, 0.02)
+    with pytest.raises(
+        MeshcoreError, match=r"; [1-9][0-9]* triangles accepted from the carrier"
+    ):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            branches,
+            gradient,
+            0.01,
+            1,
+            lifted,
+            carrier_faces,
+            boxes,
+            _CERTIFIED_DOMAIN,
+            0.15,
+            30.0,
+        )
+    # Boxes entirely outside the sphere prove no zero: nothing is carried.
+    with pytest.raises(MeshcoreError, match="; 0 triangles accepted from the carrier"):
+        zero_set_certify(
+            lifted,
+            remeshed.triangles,
+            branches,
             gradient,
             0.01,
             1,
             lifted,
             carrier_faces,
             boxes + 10.0,
+            _CERTIFIED_DOMAIN,
             0.15,
             30.0,
         )
+
+
+def test_zero_set_certify_makes_room_when_only_the_reverse_bound_exceeds() -> None:
+    # Built toward 500 triangles at h^2 / 4 and certified at 2/3 of that:
+    # every triangle is proved forward without a refusal, but the tube bounds
+    # the zero set beyond the tolerance. One repair into 0.8 of the tolerance
+    # gives the reverse proof room, so both directions certify.
+    value, gradient, branches = _unit_sphere_box_programs()
+    vertices, faces = icosphere(5)
+    edge = math.sqrt(16.0 * math.pi / (math.sqrt(3.0) * 500.0))
+    built = edge * edge / 4.0
+    remeshed = zero_set_remesh(vertices, faces, value, built, built, edge, 30.0)
+    tolerance = built / 1.5
+    certificate = zero_set_certify(
+        remeshed.vertices,
+        remeshed.triangles,
+        branches,
+        gradient,
+        tolerance,
+        remeshed.orientation,
+        np.empty((0, 3), dtype=np.float64),
+        np.empty((0, 3), dtype=np.int64),
+        np.empty((0, 2, 3), dtype=np.float64),
+        _CERTIFIED_DOMAIN,
+        edge,
+        30.0,
+    )
+    assert certificate.counters[1] == 0
+    assert certificate.counters[4] > 0 and certificate.counters[5] > 1
+    assert certificate.counters[8] == 1
+    assert certificate.distance <= tolerance
+    assert certificate.reverse_distance <= tolerance
+    assert certificate.triangles.shape[0] > remeshed.triangles.shape[0]
 
 
 def _widened_boxes(
@@ -2564,7 +2740,7 @@ def _widened_boxes(
 
 
 def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
-    vertices, faces = _icosphere(4)
+    vertices, faces = icosphere(4)
     remeshed = mesh_remesh(vertices, faces, 0.01, 0.2, 30.0)
     assert remeshed.triangles.shape[0] < faces.shape[0]
     certificate = mesh_certify(
@@ -2587,10 +2763,18 @@ def test_mesh_remesh_certifies_both_ways_against_its_source() -> None:
 
 
 def test_remesh_row_quality_counts_a_refused_certificate_as_a_miss() -> None:
-    value, gradient = _unit_sphere_box_programs()
-    vertices, faces = _icosphere(3)
+    value, gradient, branches = _unit_sphere_box_programs()
+    vertices, faces = icosphere(3)
     remeshed = zero_set_remesh(vertices, faces, value, 0.01, 0.01, 0.15, 30.0)
-    controls = (value, gradient, 0.01, 0.15, _sphere_distance, _sphere_samples)
+    controls = (
+        branches,
+        gradient,
+        _CERTIFIED_DOMAIN,
+        0.01,
+        0.15,
+        _sphere_distance,
+        _sphere_samples,
+    )
     missed, measured = _zero_set_quality(remeshed, *controls)
     assert missed == 0 and measured["certified"] == 1.0
     # A vertex lifted off the sphere: the certificate refuses it, which counts
@@ -2657,7 +2841,7 @@ def _oblique_lens_carrier() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return vertices, np.asarray(triangles, dtype=np.int64), rotation[:, 2]
 
 
-def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
+def test_zero_set_certify_proves_a_csg_lens_crease_by_the_cover() -> None:
     vertices, faces, axis = _oblique_lens_carrier()
     first, second = -_LENS_SHIFT * axis, _LENS_SHIFT * axis
 
@@ -2670,9 +2854,9 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
         )
         return jnp.maximum(to_first - 1.0, to_second - 1.0)
 
-    value = prepare_interval_function(
-        lens, 3, batch_capacity=1, execution="native"
-    ).native_program
+    prepared = prepare_interval_function(lens, 3, batch_capacity=1, execution="native")
+    value = prepared.native_program
+    branches = prepared.native_branches().branch_box_program()
     gradient = prepare_interval_function(
         jax.grad(lens), 3, batch_capacity=1, execution="native"
     ).native_program
@@ -2681,35 +2865,89 @@ def test_zero_set_certify_repairs_a_csg_lens_with_an_oblique_crease() -> None:
     remeshed = zero_set_remesh(
         vertices, faces, value.box_program(), 0.02, 0.02, 0.2, 30.0
     )
+    # Triangles next to the crease rest on the carrier (witness boxes) and the
+    # tube cannot cross the crease; the possible-zero cover alone, within the
+    # tolerance, proves the zero set -> surface direction (proof 2).
     certified = zero_set_certify(
         remeshed.vertices,
         remeshed.triangles,
-        value.box_program(),
+        branches,
         gradient.box_program(),
         0.02,
         remeshed.orientation,
         vertices,
         faces,
         _widened_boxes(vertices, faces, 0.02),
+        _CERTIFIED_DOMAIN,
         0.2,
         30.0,
     )
-    # Triangles next to the crease rest on the carrier, accepted at their
-    # witness boxes' diagonals; boxes of nearby remeshed triangles straddle
-    # the slanted branch switch, fail transversality and are repaired by
-    # splits within the round budget.
     assert certified.counters[3] > 0
     assert np.count_nonzero(certified.carried) == certified.counters[3]
-    assert certified.distance > 0.02
-    assert certified.counters[0] > certified.counters[3]
-    assert certified.counters[4] > 0 and certified.counters[5] <= 4
-    directed = {
-        (int(face[k]), int(face[(k + 1) % 3]))
-        for face in certified.triangles
-        for k in range(3)
-    }
-    assert len(directed) == 3 * certified.triangles.shape[0]
-    assert all((head, tail) in directed for tail, head in directed)
+    # Carried triangles are accepted at their witness boxes' diagonals (above
+    # the tolerance), at most the widest carrier box.
+    diagonals = np.linalg.norm(
+        np.diff(_widened_boxes(vertices, faces, 0.02), axis=1)[:, 0], axis=1
+    )
+    assert 0.02 < certified.distance <= np.max(diagonals) * (1 + 1e-12)
+    assert certified.counters[6] > 0 and certified.counters[8] == 2
+    assert 0.0 <= certified.reverse_distance < 0.02
+    # The same cover under half the boxes it evaluated: refused, naming the
+    # budget, rather than run unbounded.
+    with pytest.raises(MeshcoreError, match="exceeded its budget"):
+        zero_set_certify(
+            remeshed.vertices,
+            remeshed.triangles,
+            branches,
+            gradient.box_program(),
+            0.02,
+            remeshed.orientation,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.02),
+            _CERTIFIED_DOMAIN,
+            0.2,
+            30.0,
+            cover_budget=int(certified.counters[9]) // 2,
+        )
+
+
+def test_zero_set_certify_carries_nothing_across_a_jump() -> None:
+    # where(x > 0, 1, -1) has corner values -1 and +1 on every witness box
+    # around the plane x = 0 and a finite (zero) gradient program, but no zero:
+    # its branch evidence reports those boxes discontinuous, so a tetrahedron
+    # around the origin as its own carrier has no triangle accepted from it.
+    def step(x: Array) -> Array:
+        return jnp.where(x[0] > 0.0, 1.0, -1.0)
+
+    prepared = prepare_interval_function(step, 3, batch_capacity=1, execution="native")
+    if prepared.native_program is None:
+        raise RuntimeError("The step field must lower to a native interval program.")
+    gradient = prepare_interval_function(
+        jax.grad(step), 3, batch_capacity=1, execution="native"
+    ).native_program
+    if gradient is None:
+        raise RuntimeError("The step gradient must lower to a native interval program.")
+    vertices = np.array(
+        ((0.5, 0.5, 0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (-0.5, -0.5, 0.5)),
+        dtype=np.float64,
+    )
+    faces = np.array(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int64)
+    with pytest.raises(MeshcoreError, match=r"; 0 triangles accepted from the carrier"):
+        zero_set_certify(
+            vertices,
+            faces,
+            prepared.native_branches().branch_box_program(),
+            gradient.box_program(),
+            0.05,
+            1,
+            vertices,
+            faces,
+            _widened_boxes(vertices, faces, 0.5),
+            _CERTIFIED_DOMAIN,
+            0.3,
+            30.0,
+        )
 
 
 def test_surface_envelope_names_the_offset_domination_contract() -> None:
@@ -3004,8 +3242,8 @@ def test_relocated_tet_mesh_arrays_erases_only_the_moved_ancestry_rows() -> None
 
 # The native meshing benchmark's surfaces (benchmarks/native_meshing.py).
 _BENCHMARK_SURFACES = {
-    "sphere-5": lambda: _icosphere(5),
-    "sphere-6": lambda: _icosphere(6),
+    "sphere-5": lambda: icosphere(5),
+    "sphere-6": lambda: icosphere(6),
     # The restricted Delaunay torus surfaces of facet edge 0.072 and 0.025
     # (14,010 and 123,098 triangles).
     "restricted-torus-72": lambda: _restricted_torus_surface(0.072),
@@ -3077,6 +3315,296 @@ def test_mesh_adopted_from_recovery_refines_as_the_array_built_mesh() -> None:
         mesh.refine(radius_edge_bound=2.0, sizes=sizes)
         mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.0)
     _assert_same_arrays(*meshes)
+
+
+def _improvement_residual(
+    mesh: TetMesh3D, radius_edge_bound: float, dihedral_degrees: float
+) -> tuple[int, float]:
+    # Independent measure of improvement's residual: cells whose relative
+    # determinant (|det| over the largest edge product at a corner) is at
+    # most 2^-22, and the summed score deficit 1 - min(1, dihedral / target,
+    # bound / radius-edge) of the others.
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    edges = corners[:, 1:] - corners[:, :1]
+    determinant = np.einsum("ij,ij->i", edges[:, 0], np.cross(edges[:, 1], edges[:, 2]))
+    pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+    length = {
+        (i, j): np.linalg.norm(corners[:, i] - corners[:, j], axis=1) for i, j in pairs
+    }
+    length.update({(j, i): value for (i, j), value in tuple(length.items())})
+    products = np.max(
+        [
+            np.prod([length[(k, other)] for other in range(4) if other != k], axis=0)
+            for k in range(4)
+        ],
+        axis=0,
+    )
+    below = np.abs(determinant) / products <= 2.0**-22
+    normals = [
+        np.cross(corners[:, b] - corners[:, a], corners[:, c] - corners[:, a])
+        for a, b, c in ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
+    ]
+    normals = [normal / np.linalg.norm(normal, axis=1)[:, None] for normal in normals]
+    cosines = [
+        -np.einsum("ij,ij->i", normals[i], normals[j])
+        for i in range(4)
+        for j in range(i + 1, 4)
+    ]
+    dihedral = np.degrees(np.arccos(np.clip(np.max(cosines, axis=0), -1.0, 1.0)))
+    squared = [np.einsum("ij,ij->i", edge, edge) for edge in edges.transpose(1, 0, 2)]
+    numerator = (
+        squared[0][:, None] * np.cross(edges[:, 1], edges[:, 2])
+        + squared[1][:, None] * np.cross(edges[:, 2], edges[:, 0])
+        + squared[2][:, None] * np.cross(edges[:, 0], edges[:, 1])
+    )
+    circumradius = np.linalg.norm(numerator, axis=1) / (2.0 * np.abs(determinant))
+    shortest = np.min([length[pair] for pair in pairs], axis=0)
+    radius_edge = circumradius / shortest
+    score = np.minimum(
+        np.minimum(dihedral / dihedral_degrees, radius_edge_bound / radius_edge), 1.0
+    )
+    return int(below.sum()), float(np.sum(1.0 - score[~below]))
+
+
+def test_improvement_ends_on_a_fixed_boundary_flat_to_rounding() -> None:
+    # The recovered sphere surface of a solid whose equator ring is doubled 2
+    # ulps apart (22 seam triangles flat to rounding; recovery now refuses
+    # it, so the fixture holds the mesh recovered before that check). Cells on
+    # the seam stay below the determinant floor whatever improvement does.
+    # Accepting every edit that improved its cells' worst-first scores let
+    # insertions trade one poor cell for many slightly better ones and
+    # collapses trade them back (tens of thousands of edits, minutes);
+    # every accepted edit now lowers the residual (below-floor cells, then the
+    # mesh's worst score and its multiplicity, then total score deficit, then
+    # cell count), and the run ends UNRESOLVED with the seam's cells reported
+    # below the floor.
+    with np.load(Path(__file__).with_name("flat_seam_sphere_recovery.npz")) as fixture:
+        mesh = TetMesh3D(
+            fixture["points"],
+            fixture["tetrahedra"],
+            fixture["tetrahedron_regions"],
+            fixture["faces"],
+            fixture["face_sources"],
+            fixture["segments"],
+            fixture["segment_sources"],
+            boundary_policy=PlcBoundaryPolicy.FIXED,
+            protection_radii=fixture["protection_radii"],
+        )
+    points = mesh.arrays().points.shape[0]
+    mesh.refine(radius_edge_bound=2.0, sizes=np.full((points,), 0.3))
+    below, deficit = _improvement_residual(mesh, 2.0, 15.5)
+    run = mesh.improve(radius_edge_bound=2.0, min_dihedral_degrees=15.5)
+    assert run.status is MeshcoreStatus.UNRESOLVED
+    assert np.any(mesh.unmet().criteria == 4)  # PHX_MC_TET_UNMET_VALIDITY
+    after_below, after_deficit = _improvement_residual(mesh, 2.0, 15.5)
+    assert after_below < below or (after_below == below and after_deficit < deficit)
+
+
+def test_fixed_boundary_refinement_packs_the_interior_as_the_bounding_lattice() -> None:
+    # A uniform circumradius bound h on a fixed boundary: every cell meets it,
+    # and refinement inserts about as many vertices as the body-centered cubic
+    # lattice whose cells meet h (cube edge 4 * 0.98 h / sqrt(5), two vertices
+    # per cube) holds in the volume: the lattice plus the boundary layer, within
+    # a quarter of it (circumcenter refinement alone inserts 1.8 times as many).
+    vertices, faces = icosphere(4)
+    recovery = _recover(vertices, faces, _facets(vertices, faces))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    size = float(
+        np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
+    )
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    assert run.status is MeshcoreStatus.OK and run.unmet_cells == 0
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    spans = corners[:, 1:] - corners[:, :1]
+    centers = np.linalg.solve(spans, 0.5 * np.sum(spans * spans, axis=2)[..., None])
+    assert np.max(np.linalg.norm(centers[..., 0], axis=1)) <= size * (1.0 + 1e-9)
+    volume = float(np.sum(np.abs(np.linalg.det(spans)))) / 6.0
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * volume / lattice**3
+
+
+def test_fixed_boundary_lattice_reaches_a_non_convex_interior() -> None:
+    # The torus tube curves out of line of sight of any one interior point:
+    # lattice seeds are located throughout it, so the vertices deeper than
+    # half a lattice spacing are spread evenly around the ring (a seed lost
+    # to a blocked walk leaves its stretch to circumcenter refinement, which
+    # packs it about 1.6 times as densely), and refinement inserts about the
+    # lattice count (1.43 times it with stretches lost).
+    vertices, faces = _BENCHMARK_SURFACES["restricted-torus-72"]()
+    recovery = _recover(vertices, faces, _facets(vertices, faces))
+    edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
+    size = float(
+        np.mean(np.linalg.norm(vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1))
+    )
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    assert run.status is MeshcoreStatus.OK and run.unmet_cells == 0
+    arrays = mesh.arrays()
+    points = np.asarray(arrays.points)
+    corners = points[np.asarray(arrays.tetrahedra)]
+    volume = float(np.sum(np.abs(np.linalg.det(corners[:, 1:] - corners[:, :1])))) / 6.0
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * volume / lattice**3
+    inserted = points[recovery.points.shape[0] :]
+    depth = 0.4 - np.hypot(np.hypot(inserted[:, 0], inserted[:, 1]) - 1.0, inserted[:, 2])
+    deep = inserted[depth > 0.5 * lattice]
+    angle = np.arctan2(deep[:, 1], deep[:, 0]) + np.pi
+    sectors = np.bincount(
+        np.floor(angle / (np.pi / 4.0)).astype(np.int64) % 8, minlength=8
+    )
+    assert sectors.max() <= 1.1 * sectors.min()
+
+
+def _box_surface(
+    nodes: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # The box spanned by the per-axis node rows, each side a grid of
+    # outward-oriented triangle pairs and one facet. Nodes inside a side or
+    # an edge are moved within it (by up to a fifth of their spacing,
+    # seeded), so the sides stay planar but no four grid nodes are
+    # cocircular (a degenerate boundary skips lattice seeding).
+    counts = [len(row) - 1 for row in nodes]
+    rng = np.random.default_rng(7)
+    index: dict[tuple[int, int, int], int] = {}
+    points: list[list[float]] = []
+
+    def node(at: tuple[int, int, int]) -> int:
+        if at not in index:
+            point = []
+            for axis, row in enumerate(nodes):
+                step = at[axis]
+                value = float(row[step])
+                if 0 < step < counts[axis]:
+                    spacing = min(row[step] - row[step - 1], row[step + 1] - row[step])
+                    value += 0.2 * float(spacing) * (2.0 * rng.random() - 1.0)
+                point.append(value)
+            index[at] = len(points)
+            points.append(point)
+        return index[at]
+
+    faces: list[list[int]] = []
+    facets: list[int] = []
+    for axis in range(3):
+        u, v = (axis + 1) % 3, (axis + 2) % 3
+        for side in (0, 1):
+            for a in range(counts[u]):
+                for b in range(counts[v]):
+                    quad = []
+                    for da, db in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                        at = [0, 0, 0]
+                        at[axis] = side * counts[axis]
+                        at[u], at[v] = a + da, b + db
+                        quad.append(node((at[0], at[1], at[2])))
+                    if side == 0:
+                        quad.reverse()
+                    faces += [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]]
+                    facets += [2 * axis + side] * 2
+    return (
+        np.asarray(points, dtype=np.float64),
+        np.asarray(faces, dtype=np.int32),
+        np.asarray(facets, dtype=np.int32),
+    )
+
+
+def _refine_peak_growth(
+    path: Path, surface: tuple[np.ndarray, np.ndarray, np.ndarray], sizes: str
+) -> int:
+    # Peak resident growth of a fixed-boundary refine of `surface` (sizes
+    # given as an expression of the recovery's `points`), measured in a fresh
+    # process: ru_maxrss is a process-lifetime high-water mark, so in a test
+    # worker an earlier, larger peak would hide the refine's own.
+    np.savez(path / "surface.npz", *surface)
+    script = f"""\
+import resource, sys
+import numpy as np
+from benchmarks.native_meshing import _recover
+from phydrax._meshcore import PlcBoundaryPolicy, TetMesh3D
+surface = np.load(sys.argv[1])
+recovery = _recover(*(surface[f"arr_{{index}}"] for index in range(3)))
+points = np.asarray(recovery.points)
+mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+mesh.refine(radius_edge_bound=2.0, sizes={sizes})
+growth = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - peak
+print(growth if sys.platform == "darwin" else 1024 * growth)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(path / "surface.npz")],
+        cwd=Path(__file__).resolve().parents[3],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return int(completed.stdout.split()[-1])
+
+
+def test_fixed_boundary_lattice_seeds_an_elongated_bar_at_its_volume(
+    tmp_path: Path,
+) -> None:
+    # A 100:1:1 bar at h = 0.2: the lattice sites are listed sparsely (the
+    # box's rows, or per recovered cell), so seeding costs the bar's box or
+    # volume, not its bounding box's diagonal cubed (a dense site table over
+    # that cube held 4.7e7 entries, 190 MB, for
+    # 1,951 seeds). Every lattice site at least half a spacing inside is
+    # seeded (the lattice count in the volume), evenly along the bar.
+    size = 0.2
+    surface = _box_surface(
+        (np.linspace(0.0, 100.0, 501), np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6))
+    )
+    growth = _refine_peak_growth(
+        tmp_path, surface, f"np.full((points.shape[0],), {size})"
+    )
+    assert growth < 64 * 2**20
+    recovery = _recover(*surface)
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(
+        radius_edge_bound=2.0, sizes=np.full((recovery.points.shape[0],), size)
+    )
+    # Refinement leaves a few slivers on the bar's fixed sides unmet (their
+    # circumcenters lie beyond a fixed face), as it did with the dense site
+    # table: the same seeds, in the same order.
+    assert run.edit_status is TetMeshEditStatus.APPLIED
+    assert np.all(mesh.unmet().reasons == TetMeshUnmetReason.FIXED_BOUNDARY)
+    lattice = 4.0 * 0.98 * size / np.sqrt(5.0)
+    assert run.inserted_vertices <= 1.25 * 2.0 * 100.0 / lattice**3
+    inserted = np.asarray(mesh.arrays().points)[recovery.points.shape[0] :]
+    depth = np.min(np.minimum(inserted, [100.0, 1.0, 1.0] - inserted), axis=1)
+    deep = inserted[depth > lattice]
+    stretches = np.bincount(
+        np.minimum(deep[:, 0] // 10.0, 9).astype(np.int64), minlength=10
+    )
+    assert stretches.max() <= 1.15 * stretches.min()
+
+
+def test_fixed_boundary_lattice_seeds_only_where_a_graded_target_qualifies() -> None:
+    # A unit cube whose target grows tenfold from the face x = 0 to x = 1: no
+    # recovered cell has a target within the margin of the smallest, so no
+    # lattice site is generated (seeding the box at the smallest target
+    # walked 4.6e4 seeds to refuse them all, 2.7 times the rest of the
+    # refinement), and refinement meets the graded bound but at slivers on
+    # the fixed sides whose circumcenters lie beyond them.
+    nodes = np.linspace(0.0, 1.0, 51)
+    recovery = _recover(*_box_surface((nodes, nodes, nodes)))
+    sizes = 0.02 * (1.0 + 9.0 * np.asarray(recovery.points)[:, 0])
+    mesh = TetMesh3D.from_recovery(recovery, boundary_policy=PlcBoundaryPolicy.FIXED)
+    run = mesh.refine(radius_edge_bound=2.0, sizes=sizes)
+    assert run.edit_status is TetMeshEditStatus.APPLIED
+    assert np.all(mesh.unmet().reasons == TetMeshUnmetReason.FIXED_BOUNDARY)
+    arrays = mesh.arrays()
+    corners = np.asarray(arrays.points)[np.asarray(arrays.tetrahedra)]
+    spans = corners[:, 1:] - corners[:, :1]
+    centers = np.linalg.solve(spans, 0.5 * np.sum(spans * spans, axis=2)[..., None])
+    radii = np.linalg.norm(centers[..., 0], axis=1)
+    assert np.count_nonzero(radii > 0.2 * (1.0 + 1e-9)) <= run.unmet_cells
 
 
 def test_mesh_adoption_refuses_a_recovery_without_its_native_result() -> None:

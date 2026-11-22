@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from functools import cache
+from functools import cache, lru_cache
 from math import prod
 from typing import Any, NamedTuple
 
@@ -1856,7 +1856,7 @@ def _ideal_corner_grams(
     )
 
 
-@cache
+@lru_cache(maxsize=64)
 def _gate_table(kind: str, arity: int, /) -> _GateTable:
     if kind == "interval":
         return _GateTable((), (), _edges(kind, arity), (), (), ())
@@ -2047,7 +2047,7 @@ def _cosine_point(value: Fraction, bits: int, /) -> tuple[Fraction, Fraction]:
             return total - term, total + term
 
 
-@cache
+@lru_cache(maxsize=256)
 def _polygon_cosine(arity: int, bits: int, /) -> tuple[Fraction, Fraction]:
     """Rational enclosure of ``c = -cos(2 pi / n)``, the ideal corner cosine."""
     if arity in _RATIONAL_POLYGON_COSINES:

@@ -1750,7 +1750,15 @@ class SurfaceEnvelopeDistanceWitness(StrictModule, NonTrainableState):
 
 @final
 class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
-    """Continuous two-directed distance evidence without chart ancestry."""
+    """Continuous two-directed distance evidence without chart ancestry.
+
+    ``reverse_tolerance`` is the bound the source-to-target direction is
+    certified within. For an analytic profile the zero-set certificate proves
+    every target facet and every source point within it, or the witness does
+    not revalidate. For a complete PWL facet stratum both directed distances
+    between the exterior facets of the source and the target's exterior
+    surface are bounded directly; a larger source-to-target bound is a finding.
+    """
 
     mesh_id: str
     geometry_id: str
@@ -1758,8 +1766,7 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
     source_id: str
     source_revision: str
     source_query_id: str
-    sample_count: int = eqx.field(static=True)
-    cover_radius: float = eqx.field(static=True)
+    reverse_tolerance: float = eqx.field(static=True)
     target_facet_global_ids: np.ndarray
     witness_id: str
 
@@ -1772,8 +1779,7 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
         source_id: str,
         source_revision: str,
         source_query_id: str,
-        sample_count: int,
-        cover_radius: float,
+        reverse_tolerance: float,
         target_facet_global_ids: ConvertibleToArray,
     ) -> None:
         identities = tuple(
@@ -1787,21 +1793,13 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
                 (source_query_id, "source_query_id"),
             )
         )
-        if (
-            isinstance(sample_count, (bool, np.bool_))
-            or not isinstance(sample_count, (int, np.integer))
-            or int(sample_count) <= 0
-        ):
-            raise ValueError(
-                "sample_count must be the positive integer replayed source-point count."
-            )
-        if isinstance(cover_radius, (bool, np.bool_)):
+        if isinstance(reverse_tolerance, (bool, np.bool_)):
             raise TypeError(
-                "cover_radius must be a real positive distance, not a boolean."
+                "reverse_tolerance must be a real positive distance, not a boolean."
             )
-        cover_radius_ = float(cover_radius)
-        if not np.isfinite(cover_radius_) or cover_radius_ <= 0.0:
-            raise ValueError("cover_radius must be finite and positive.")
+        reverse_tolerance_ = float(reverse_tolerance)
+        if not np.isfinite(reverse_tolerance_) or reverse_tolerance_ <= 0.0:
+            raise ValueError("reverse_tolerance must be finite and positive.")
         raw_ids = np.asarray(target_facet_global_ids)
         if raw_ids.ndim != 1 or raw_ids.dtype.kind not in "iu" or raw_ids.size == 0:
             raise TypeError("target_facet_global_ids must be a nonempty integer vector.")
@@ -1814,15 +1812,13 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
         facet_ids.setflags(write=False)
         self.mesh_id, self.geometry_id, self.topology_id = identities[:3]
         self.source_id, self.source_revision, self.source_query_id = identities[3:]
-        self.sample_count = int(sample_count)
-        self.cover_radius = cover_radius_
+        self.reverse_tolerance = reverse_tolerance_
         self.target_facet_global_ids = facet_ids
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "source-bound-distance-witness",
                 "identities": identities,
-                "sample_count": self.sample_count,
-                "cover_radius": self.cover_radius,
+                "reverse_tolerance": self.reverse_tolerance,
                 "target_facets": array_tree_fingerprint(facet_ids),
             }
         )
@@ -1831,7 +1827,7 @@ class SourceBoundaryDistanceWitness(StrictModule, NonTrainableState):
         self,
         mesh: CellMesh,
         geometry: CellGeometrySpec,
-        source: SourceBoundaryCoverQuery,
+        source: SourceBoundaryQuery,
         /,
     ) -> None:
         from ._source_fidelity import validate_source_fidelity_witness

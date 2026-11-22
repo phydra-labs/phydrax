@@ -482,7 +482,9 @@ class TetIdIndex {
 // one the arrays alone build.
 struct RecoveredTopology {
   // Per cell and face slot: the cell across, -1 on the boundary (empty: the
-  // adjacency is paired from the cells).
+  // adjacency is paired from the cells). Nonempty, the recovered segments
+  // are also adopted as distinct cell edges (recovery published them as
+  // intervals of its recovered edge chains).
   std::span<const std::int32_t> neighbors;
   // The mesh is its own source bank (no explicit source or witnesses): every
   // constrained face and segment is one of its own source rows, which covers
@@ -490,7 +492,9 @@ struct RecoveredTopology {
   // of a group overlaps one), so the coverage proofs are not repeated.
   bool self_covered = false;
   // The recovery published cells of a Delaunay triangulation of its points
-  // (PlcRecovery::delaunay), so every unconstrained face is locally Delaunay.
+  // (PlcRecovery::delaunay), so every unconstrained face is locally Delaunay
+  // and, the points being the ones its exact predicates read, every cell is
+  // positively oriented.
   bool delaunay = false;
 };
 
@@ -580,6 +584,12 @@ class TetMesh {
   const std::string& source_map_id() const noexcept { return source_map_id_; }
   BoundaryPolicy policy() const noexcept { return policy_; }
   const TetrahedralComplex& complex() const noexcept { return complex_; }
+  // Reserve storage for `extra` more cells so the next edits that add cells
+  // do not grow the cell arrays. No other effect.
+  void reserve_cells(std::size_t extra) {
+    complex_.reserve(extra, 0);
+    cell_ids_.reserve(complex_.tets.size() + extra);
+  }
 
   // Protect all current facets in the named source groups and their edges and
   // vertices. Returns false without mutation if a group is absent.
@@ -778,6 +788,63 @@ class TetMesh {
   // collapse; validation and commit touch only the cavity and its boundary.
   TetEditStatus replace_local_cavity(const TetEdit& operation,
                                     const TetSegmentIndex* segment_index);
+  // A hull ghost cell a local boundary edit creates: {kGhostVertex, a, b, c}
+  // over the new hull face (a, b, c) (the oriented face of the finite cell
+  // below it), labeled with that face's source.
+  struct LocalGhostCell {
+    std::array<std::int32_t, 4> vertices{};
+    std::int32_t source = kNoConstraint;
+  };
+  // The commit shared by the cavity-local edits: stages the removal of
+  // `removed` (finite and hull ghost slots) and the creation of the
+  // operation's replacement cells (corner slots `replacement_vertices`, four
+  // per cell) then `ghosts`, clears the constraint labels of `cleared_sides`
+  // (cell, face) for the proof, validates exact positivity of every finite
+  // cell (moved vertices read from `overlay` when given) and commits, binding
+  // the replacement cell IDs and ancestry and retiring
+  // operation.removed_cell_ids. On refusal the complex, its labels and the
+  // cell records are unchanged.
+  TetEditStatus commit_local_cells(const TetEdit& operation,
+                                   std::span<const std::int32_t> replacement_vertices,
+                                   std::span<const std::int32_t> removed,
+                                   std::span<const LocalGhostCell> ghosts,
+                                   std::span<const std::pair<std::int32_t, int>> cleared_sides,
+                                   const RelocationOverlay* overlay);
+  // A split of the edge (a, b) whose removed cells are `cells` keeps its
+  // constrained faces covered by their halves pairwise when (a, b) is no
+  // constrained segment and lies in exactly two constrained faces of those
+  // cells, both cavity boundary faces (their other side kept) of one
+  // declared-plane group: that group, else kNoConstraint. `segment_index`
+  // (segment vertex IDs -> segments_ row), when given, decides whether
+  // (a, b) is a segment without a scan of the bank.
+  std::int32_t declared_split_pair(std::int32_t a, std::int32_t b,
+                                   std::span<const std::int32_t> cells,
+                                   const TetSegmentIndex* segment_index = nullptr) const;
+  // The halves (start, m, third) and (m, end, third) of a constrained face
+  // of declared group `source` keep its projected orientation on the
+  // group's plane, with m's exact position exactly on the plane. For both
+  // faces of a declared_split_pair this proves their halves tile the two
+  // faces exactly: the four fan triangles around m over the quadrilateral
+  // (a, c, b, d) are positively oriented, so m lies in its kernel.
+  bool declared_split_children(std::int32_t source, const std::int32_t* parent_face,
+                               const std::array<std::int32_t, 3>& first_child,
+                               const std::array<std::int32_t, 3>& second_child) const;
+  // apply_edit_batch's coverage of a split constrained face `parent_face`
+  // (source `source`) of the removed cells `cells` by its halves: exact
+  // (exact_split_coverage), or by its declared pair.
+  bool split_face_covered(const std::int32_t* parent_face, std::int32_t source,
+                          const std::array<std::int32_t, 3>& first_child,
+                          const std::array<std::int32_t, 3>& second_child,
+                          std::span<const std::int32_t> cells,
+                          const TetSegmentIndex* segment_index = nullptr) const;
+  // apply_edit_batch's checks of the vertex `inserted` splitting the edge
+  // (a, b), which is no constrained segment, of the removed cells `cells`:
+  // kApplied, or the refusal.
+  TetEditStatus unconstrained_split_point_status(std::int32_t a, std::int32_t b,
+                                                 const std::array<std::uint64_t, 2>& edge,
+                                                 const TetEditVertex& inserted,
+                                                 std::span<const std::int32_t> cells,
+                                                 const TetSegmentIndex* segment_index = nullptr) const;
   // Called by refinement and improvement: cones a star-shaped cavity to one
   // new interior vertex; created cell IDs are returned in cone order. The
   // cone buries exactly the cavity vertices `removed_vertices` (sorted

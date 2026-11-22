@@ -9,7 +9,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
-from functools import cache
+from functools import cache, lru_cache
 from itertools import product
 from math import comb, lcm, prod
 from types import MappingProxyType
@@ -591,6 +591,18 @@ class PreparedLinearCombinationBasis:
                 for function in polynomials
             )
 
+    def integer_terms(
+        self, /
+    ) -> tuple[tuple[tuple[tuple[tuple[int, ...], int], ...], ...], int] | None:
+        """``combine``'s integer basis and common denominator, or ``None``.
+
+        Each basis function is ``numerator / denominator * xi**exponent``
+        summed over its nonzero terms in stored order.
+        """
+        if self._integer_basis is None:
+            return None
+        return self._integer_basis, self._denominator
+
     def combine(
         self, coefficients: Sequence[Sequence[ExactScalar]], /
     ) -> tuple[Expression, ...]:
@@ -699,7 +711,9 @@ def compose(
         raise ValueError("compose.dimension must be nonnegative.")
     if any(isinstance(argument, RationalPolynomial) for argument in arguments):
         return _compose_over_common_denominator(expression, arguments, dimension_)
-    result: Expression = constant(0, dimension_)
+    # `add` term by term, accumulated in place rather than copying the
+    # partial sum once per monomial; key order and cancellation are the same.
+    result: Polynomial = {}
     # Each argument power is formed once per call, not once per monomial.
     powers: dict[tuple[int, int], Expression] = {}
     for exponent, coefficient in expression.items():
@@ -713,7 +727,14 @@ def compose(
                     factor = power(arguments[axis], degree, dimension=dimension_)
                     powers[axis, degree] = factor
                 term = multiply(term, factor)
-        result = add(result, term)
+        if isinstance(term, RationalPolynomial):
+            raise RuntimeError("A polynomial composition term must remain polynomial.")
+        for index, value in term.items():
+            updated = result.get(index, Fraction(0)) + value
+            if updated:
+                result[index] = updated
+            else:
+                result.pop(index, None)
     return result
 
 
@@ -910,7 +931,7 @@ def _weight_column(weights: tuple[Fraction, ...], /) -> _WeightColumn:
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _simplex_weight_column(
     alpha: tuple[int, ...], degree: int, parts: int, /
 ) -> _WeightColumn:
@@ -922,7 +943,7 @@ def _simplex_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _box_weight_column(
     alpha: tuple[int, ...], degrees: tuple[int, ...], /
 ) -> _WeightColumn:
@@ -935,7 +956,7 @@ def _box_weight_column(
     )
 
 
-@cache
+@lru_cache(maxsize=4096)
 def _prism_weight_column(
     alpha: tuple[int, ...], triangle_degree: int, line_degree: int, /
 ) -> _WeightColumn:

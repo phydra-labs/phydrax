@@ -215,6 +215,13 @@ def _polyhedral_cell_measures(locator: PreparedPolyhedralCellLocator, /) -> np.n
     return volumes
 
 
+def _id_rows(identifiers: np.ndarray, wanted: np.ndarray, /) -> np.ndarray:
+    """Rows of ``wanted`` in ``identifiers``, sorting only the matching rows."""
+    candidates = np.flatnonzero(np.isin(identifiers, wanted))
+    order = candidates[np.argsort(identifiers[candidates], kind="stable")]
+    return order[np.searchsorted(identifiers[order], wanted)]
+
+
 def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
     part.require_scope(scope)
     mesh = _cell_result(part).mesh
@@ -225,8 +232,7 @@ def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
     if isinstance(connectivity, PolyhedralConnectivity):
         identifiers = np.asarray(connectivity.face_global_ids, dtype=np.int64)
         boundary = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-        order = np.argsort(identifiers, kind="stable")
-        rows = order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
+        rows = _id_rows(identifiers, np.asarray(scope.entity_ids, dtype=np.int64))
         if np.any(~boundary[rows]):
             raise ValueError(
                 "Overset wall and receptor scopes must identify exterior facets."
@@ -274,8 +280,7 @@ def _facet_rows(part: MeshPart, scope: MeshingScope) -> np.ndarray:
         or identifiers.shape != boundary.shape
     ):
         raise ValueError("Overset facet connectivity lacks complete canonical incidence.")
-    order = np.argsort(identifiers, kind="stable")
-    rows = order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
+    rows = _id_rows(identifiers, np.asarray(scope.entity_ids, dtype=np.int64))
     if np.any(~boundary[rows]):
         raise ValueError(
             "Overset wall and receptor scopes must identify exterior facets."
@@ -329,10 +334,7 @@ def _require_closed_wall(facets: np.ndarray, dimension: int, /) -> None:
         ridges = facets.reshape((-1,))
     else:
         ridges = np.sort(
-            np.concatenate(
-                [np.stack((row, np.roll(row, -1)), axis=1) for row in facets],
-                axis=0,
-            ),
+            np.stack((facets, np.roll(facets, -1, axis=1)), axis=2).reshape((-1, 2)),
             axis=1,
         )
     _, counts = np.unique(ridges, axis=0, return_counts=True)
@@ -704,11 +706,15 @@ class OversetPolicy(StrictModule, NonTrainableState):
     ``"part-priority"`` prefers the donor part with the higher declared
     ``OversetPartSpec.priority`` and then the finer donor cell;
     ``"finest-donor"`` prefers the finer donor cell and breaks ties by the
-    higher part priority.
+    higher part priority. Donors are active cells; ``fringe_donors=True``
+    also admits fringe cells (cells with a receptor vertex, never hole
+    cells) for receptors that no active cell contains, as TIOGA's donors do.
+    Such a donor chains receptors; it is serial-only.
     """
 
     fringe_layers: int = eqx.field(static=True)
     donor_priority: OversetDonorPriority = eqx.field(static=True)
+    fringe_donors: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -716,6 +722,7 @@ class OversetPolicy(StrictModule, NonTrainableState):
         *,
         fringe_layers: int = 2,
         donor_priority: OversetDonorPriority = "finest-donor",
+        fringe_donors: bool = False,
     ) -> None:
         if (
             isinstance(fringe_layers, bool)
@@ -723,14 +730,18 @@ class OversetPolicy(StrictModule, NonTrainableState):
             or fringe_layers < 1
         ):
             raise ValueError("fringe_layers must be a positive integer excluding bool.")
+        if not isinstance(fringe_donors, bool):
+            raise TypeError("fringe_donors must be a bool.")
         donor_priority_ = parse(donor_priority, OversetDonorPriority, "donor_priority")
         self.fringe_layers = int(fringe_layers)
         self.donor_priority = donor_priority_
+        self.fringe_donors = fringe_donors
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "overset-policy",
                 "fringe_layers": self.fringe_layers,
                 "donor_priority": donor_priority_,
+                "fringe_donors": fringe_donors,
             }
         )
 
@@ -1052,15 +1063,23 @@ class _PartGeometry(StrictModule, NonTrainableState):
     cell_vertices: Array
     cell_vertex_valid: Array
     cell_ids: Array
-    cell_measures: Array
-    cell_lower: Array
-    cell_upper: Array
+    # None on native parts: the native assembly measures and bounds its own
+    # cells; the Python owner and owner-local views carry both.
+    cell_measures: Array | None
+    cell_lower: Array | None
+    cell_upper: Array | None
     cell_locators: tuple[AbstractCellLocator, ...]
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     block_names: tuple[str, ...] = eqx.field(static=True)
     wall_facets: Array | None
     wall_lower: Array | None
     wall_upper: Array | None
+
+
+def _cell_bounds(geometry: _PartGeometry, /) -> tuple[Array, Array]:
+    if geometry.cell_lower is None or geometry.cell_upper is None:
+        raise ValueError("Overset cell bounds are not prepared on native parts.")
+    return geometry.cell_lower, geometry.cell_upper
 
 
 def _owner_local_carrier(part: MeshPart, /) -> OwnerLocalCellGeometry:
@@ -2024,10 +2043,11 @@ def _owner_local_cut_cells(
                 if owner_by_id[identifier_] != local_rank:
                     continue
                 key = (part.name, identifier_)
+                lower, upper = _cell_bounds(geometry)
                 box = np.stack(
                     (
-                        np.asarray(geometry.cell_lower[row], dtype=np.float64),
-                        np.asarray(geometry.cell_upper[row], dtype=np.float64),
+                        np.asarray(lower[row], dtype=np.float64),
+                        np.asarray(upper[row], dtype=np.float64),
                     )
                 )
                 if box.shape != (2, dimension) or np.any(~np.isfinite(box)):
@@ -2712,6 +2732,46 @@ def _owner_local_prepare_blanking(
     )
 
 
+def _native_geometry(part: MeshPart, /) -> _PartGeometry:
+    """Cell banks of a part the native assembly owns, built in bulk.
+
+    The native call classifies walls, bounds, locates and measures cells
+    itself, so the mapped-cell locators, bounds, measures and wall banks of
+    the Python owner are not built (the certified carrier already proved its
+    cells valid): cell rows come from the blocks.
+    """
+    mesh = _cell_result(part).mesh
+    blocks = tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
+    width = max(rows.shape[1] for rows in blocks)
+    cell_vertices = np.zeros((sum(rows.shape[0] for rows in blocks), width), np.int64)
+    cell_vertex_valid = np.zeros(cell_vertices.shape, dtype=np.bool_)
+    block_offsets = [0]
+    for rows in blocks:
+        cells = slice(block_offsets[-1], block_offsets[-1] + rows.shape[0])
+        cell_vertices[cells, : rows.shape[1]] = rows
+        cell_vertex_valid[cells, : rows.shape[1]] = True
+        block_offsets.append(cells.stop)
+    return _PartGeometry(
+        part_id=part.part_id,
+        cell_vertices=jnp.asarray(cell_vertices),
+        cell_vertex_valid=jnp.asarray(cell_vertex_valid),
+        cell_ids=jnp.asarray(
+            np.concatenate(
+                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+            )
+        ),
+        cell_measures=None,
+        cell_lower=None,
+        cell_upper=None,
+        cell_locators=(),
+        block_offsets=tuple(block_offsets),
+        block_names=tuple(block.name for block in mesh.blocks),
+        wall_facets=None,
+        wall_lower=None,
+        wall_upper=None,
+    )
+
+
 def _geometry(part: MeshPart, spec: OversetPartSpec, /) -> _PartGeometry:
     result = _cell_result(part)
     mesh = result.mesh
@@ -2944,7 +3004,7 @@ def _cut_cell_candidates(
 ) -> np.ndarray:
     if facets_in_part_frame.size == 0:
         return np.zeros(geometry.cell_ids.shape, dtype=np.bool_)
-    cells = prepare_bvh(geometry.cell_lower, geometry.cell_upper, dtype=jnp.float64)
+    cells = prepare_bvh(*_cell_bounds(geometry), dtype=jnp.float64)
     facets = prepare_bvh(
         np.min(facets_in_part_frame, axis=1),
         np.max(facets_in_part_frame, axis=1),
@@ -2966,7 +3026,7 @@ def _cut_cell_candidates(
 def _cut_cell_bounds(
     geometry: _PartGeometry, lower: np.ndarray, upper: np.ndarray, /
 ) -> np.ndarray:
-    cells = prepare_bvh(geometry.cell_lower, geometry.cell_upper, dtype=jnp.float64)
+    cells = prepare_bvh(*_cell_bounds(geometry), dtype=jnp.float64)
     wall = prepare_bvh(lower[None, :], upper[None, :], dtype=jnp.float64)
     cut = np.zeros(np.asarray(geometry.cell_ids).shape, dtype=np.bool_)
     for rows, _ in bvh_overlap_pair_blocks(cells, wall, include_touching=True):
@@ -3185,10 +3245,25 @@ def _resolve_donors(
         if donor == receptor_index:
             continue
         geometry = geometries[donor]
+        if geometry.cell_measures is None:
+            raise ValueError("Python overset donors require prepared cell measures.")
+        donor_measures = np.asarray(geometry.cell_measures, dtype=np.float64)
         donor_points = _to_source(sites, specs[receptor_index], spec)
-        active_cells = (
-            np.asarray(blanking[donor].cell_status) == int(OversetCellStatus.ACTIVE)
-        ) & ~np.asarray(blanking[donor].ambiguous_cells, dtype=np.bool_)
+        cell_status = np.asarray(blanking[donor].cell_status)
+        ambiguous = np.asarray(blanking[donor].ambiguous_cells, dtype=np.bool_)
+        # Tier 0: active cells; tier 1: fringe cells when the policy admits them.
+        tiers = np.where(
+            ambiguous,
+            -1,
+            np.select(
+                (
+                    cell_status == int(OversetCellStatus.ACTIVE),
+                    (cell_status == int(OversetCellStatus.FRINGE)) & policy.fringe_donors,
+                ),
+                (0, 1),
+                -1,
+            ),
+        )
         for block, locator in enumerate(geometry.cell_locators):
             start, _ = geometry.block_offsets[block : block + 2]
             location = locator.locate(donor_points)
@@ -3218,12 +3293,12 @@ def _resolve_donors(
                     if local_cell < 0:
                         continue
                     cell = start + int(local_cell)
-                    if not active_cells[cell]:
+                    if tiers[cell] < 0:
                         blocked[receptor] = True
                         continue
                     candidate_parts[receptor].add(donor)
                     identifier = int(np.asarray(geometry.cell_ids)[cell])
-                    measure = float(np.asarray(geometry.cell_measures)[cell])
+                    measure = float(donor_measures[cell])
                     reference = candidate_references[receptor, slot]
                     has_stencil = explicit_blocks[donor][block]
                     ids = np.full((dimension + 1,), -1, dtype=np.int64)
@@ -3270,7 +3345,13 @@ def _resolve_donors(
                             size_priority = measure
                         case other:
                             assert_never(other)
-                    key = (part_priority, size_priority, spec.part_name, identifier)
+                    key = (
+                        int(tiers[cell]),
+                        part_priority,
+                        size_priority,
+                        spec.part_name,
+                        identifier,
+                    )
                     choices[receptor].append(
                         (
                             key,
@@ -3356,12 +3437,45 @@ def _make_blanking(
     )
 
 
-def _receptor_records(
+def _receptor_rows(part: MeshPart, blanking: OversetPartBlanking, /) -> np.ndarray:
+    """Receptor vertex rows of one part, ordered by stable vertex ID."""
+    vertex_ids = np.asarray(_cell_result(part).mesh.vertex_global_ids, dtype=np.int64)
+    rows = np.flatnonzero(
+        np.asarray(blanking.vertex_status) == OversetVertexStatus.RECEPTOR
+    )
+    return rows[np.argsort(vertex_ids[rows], kind="stable")]
+
+
+def _python_choices(
     parts: tuple[MeshPart, ...],
     specs: tuple[OversetPartSpec, ...],
     geometries: tuple[_PartGeometry, ...],
     blanking: tuple[OversetPartBlanking, ...],
     policy: OversetPolicy,
+    /,
+) -> tuple[_DonorChoice, ...]:
+    return tuple(
+        _resolve_donors(
+            np.asarray(_cell_result(target).mesh.coordinates, dtype=np.float64)[
+                _receptor_rows(target, blanking[index])
+            ],
+            index,
+            parts,
+            specs,
+            geometries,
+            blanking,
+            policy,
+        )
+        for index, target in enumerate(parts)
+    )
+
+
+def _receptor_records(
+    parts: tuple[MeshPart, ...],
+    specs: tuple[OversetPartSpec, ...],
+    geometries: tuple[_PartGeometry, ...],
+    blanking: tuple[OversetPartBlanking, ...],
+    donor_choices: tuple[_DonorChoice, ...],
     /,
 ) -> tuple[
     tuple[OversetReceptorEvidence, ...],
@@ -3372,29 +3486,15 @@ def _receptor_records(
     for target_index, target in enumerate(parts):
         mesh = _cell_result(target).mesh
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-        rows = np.flatnonzero(
-            np.asarray(blanking[target_index].vertex_status)
-            == OversetVertexStatus.RECEPTOR
-        )
-        rows = rows[np.argsort(vertex_ids[rows], kind="stable")]
+        rows = _receptor_rows(target, blanking[target_index])
         target_points = np.asarray(mesh.coordinates, dtype=np.float64)[rows]
-        choices = _resolve_donors(
-            target_points,
-            target_index,
-            parts,
-            specs,
-            geometries,
-            blanking,
-            policy,
-        )
+        choices = donor_choices[target_index]
         donor_cell_ids = np.full(rows.size, -1, dtype=np.int64)
-        for slot, (donor_index, row) in enumerate(
-            zip(choices.parts, choices.cells, strict=True)
-        ):
-            if donor_index >= 0:
-                donor_cell_ids[slot] = int(
-                    np.asarray(geometries[donor_index].cell_ids)[row]
-                )
+        for donor_index, geometry in enumerate(geometries):
+            slots = np.asarray(choices.parts) == donor_index
+            donor_cell_ids[slots] = np.asarray(geometry.cell_ids, dtype=np.int64)[
+                np.asarray(choices.cells)[slots]
+            ]
         receptor_owner_ranks = np.full(
             rows.size, specs[target_index].owner_rank, dtype=np.int32
         )
@@ -3442,7 +3542,12 @@ def _receptor_records(
                     donor_block=block_name,
                 )
                 packets.append(packet)
-                if not np.all(choices.explicit[slots]):
+                # Explicit overlays carry unchained affine stencils only; a
+                # fringe donor (policy.fringe_donors) stays a packet route.
+                chained = np.asarray(blanking[donor_index].cell_status)[
+                    choices.cells[slots]
+                ] != int(OversetCellStatus.ACTIVE)
+                if not np.all(choices.explicit[slots]) or np.any(chained):
                     continue
                 stencil_ids = choices.ids[slots]
                 stencil_weights = choices.weights[slots]
@@ -4582,6 +4687,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             self.connectivity_id,
             self.partition_priority,
             self.partition_sources if partition_sources is None else partition_sources,
+            prove=self.donor_search_complete,
         )
 
     def composition_entries(self) -> tuple[CompositionEntry, ...]:
@@ -4634,6 +4740,10 @@ class OversetConnectivity(StrictModule, NonTrainableState):
     def registration(self) -> OversetRegistration:
         if self.owner_local or self.partition_priority is not None:
             self.require_complete()
+        if not self.donor_search_complete:
+            raise ValueError(
+                "Overset registration replays proved connectivity; prepare it with prove=True."
+            )
         assembly = (
             self.assembly
             if self.owner_local
@@ -4658,6 +4768,244 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         )
 
 
+_NATIVE_CELL_KINDS = frozenset({"tetrahedron", "hexahedron"})
+
+
+def _p1q1_part(part: MeshPart, spec: OversetPartSpec, /) -> bool:
+    """A 3D part of affine tetrahedra or trilinear hexahedra (P1/Q1 maps on
+    the mesh vertices) without a source solid query."""
+    if spec.solid_query is not None or not isinstance(part.carrier, CellMeshingResult):
+        return False
+    result = part.carrier
+    mesh = result.mesh
+    if (
+        mesh.ambient_dimension != 3
+        or mesh.topological_dimension != 3
+        or isinstance(mesh.connectivity, PolyhedralConnectivity)
+        or result.geometry.source_map is not None
+    ):
+        return False
+    elements, routes, points = result.geometry.resolve(mesh)
+    if not np.array_equal(np.asarray(points), np.asarray(mesh.coordinates)):
+        return False
+    return all(
+        block.cell_kind in _NATIVE_CELL_KINDS
+        and isinstance(element, FiniteElementSpec)
+        and element.degree == 1
+        and np.array_equal(np.asarray(route), np.asarray(block.vertices))
+        for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+    )
+
+
+def _require_certified_validity(
+    parts: tuple[MeshPart, ...], specs: tuple[OversetPartSpec, ...], /
+) -> None:
+    """Refuse P1/Q1 parts whose audit did not certify every cell valid.
+
+    Applies before any owner dispatch: skipped or policy-dispositioned
+    validity findings are refused, since positive measure alone does not
+    exclude negative corner Jacobians.
+    """
+    for part, spec in zip(parts, specs, strict=True):
+        if _p1q1_part(part, spec) and not (
+            _cell_result(part).audit.validity.all_certified
+        ):
+            raise ValueError(
+                "Overset parts require certified cell validity: part "
+                f"{part.name!r} has cells whose validity is not certified."
+            )
+
+
+def _native_assembly_supported(
+    parts: tuple[MeshPart, ...], specs: tuple[OversetPartSpec, ...], /
+) -> bool:
+    """Whether ``phx_mc_overset_assemble`` owns these parts: every part is
+    P1/Q1 and meshcore loads. The Python owner stays the path for 2D,
+    polyhedral, curved and solid-query parts and for a missing library."""
+    from .._meshcore import meshcore_available
+
+    return meshcore_available() and all(
+        _p1q1_part(part, spec) for part, spec in zip(parts, specs, strict=True)
+    )
+
+
+def _native_faces(
+    part: MeshPart, spec: OversetPartSpec, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exterior faces padded to four corners, with roles 0 other, 1 wall, 2 receptor boundary."""
+    mesh = _cell_result(part).mesh
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, SimplicialConnectivity):
+        entities = np.asarray(connectivity.entities[2], dtype=np.int64)
+        boundary = np.asarray(connectivity.boundary_facets, dtype=np.bool_)
+    elif isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+        entities = np.asarray(connectivity.faces, dtype=np.int64)
+        boundary = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
+    else:
+        raise TypeError(
+            "Native overset faces require tetrahedral or hexahedral incidence."
+        )
+    identifiers = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    rows = np.flatnonzero(boundary)
+    faces = np.full((rows.size, 4), -1, dtype=np.int64)
+    faces[:, : entities.shape[1]] = entities[rows]
+    roles = np.zeros((rows.size,), dtype=np.uint8)
+    if spec.wall is not None:
+        _require_closed_wall(_facet_rows(part, spec.wall), 3)
+        roles[np.isin(identifiers[rows], np.asarray(spec.wall.entity_ids))] = 1
+    if spec.boundary is not None:
+        _facet_rows(part, spec.boundary)
+        roles[np.isin(identifiers[rows], np.asarray(spec.boundary.entity_ids))] = 2
+    return faces, roles
+
+
+def _native_records(
+    parts: tuple[MeshPart, ...],
+    specs: tuple[OversetPartSpec, ...],
+    geometries: tuple[_PartGeometry, ...],
+    policy: OversetPolicy,
+    prove: bool,
+    /,
+) -> tuple[tuple[OversetPartBlanking, ...], tuple[_DonorChoice, ...]]:
+    """Blanking and donor choices of every part from one native assembly call."""
+    from .. import _meshcore
+
+    vertex_rows, cell_rows, face_rows, role_rows, excluded_rows = [], [], [], [], []
+    vertex_offsets, cell_offsets, face_offsets = [0], [0], [0]
+    for part, spec, geometry in zip(parts, specs, geometries, strict=True):
+        points = np.asarray(_cell_result(part).mesh.coordinates, dtype=np.float64)
+        if spec.image_rotation is not None and spec.image_translation is not None:
+            # Every part in the common physical frame x = R x_part + t.
+            points = points @ np.asarray(spec.image_rotation).T + np.asarray(
+                spec.image_translation
+            )
+        base = vertex_offsets[-1]
+        corners = np.asarray(geometry.cell_vertices, dtype=np.int64)
+        valid = np.asarray(geometry.cell_vertex_valid, dtype=np.bool_)
+        padded = np.full((corners.shape[0], 8), -1, dtype=np.int64)
+        padded[:, : corners.shape[1]] = np.where(valid, corners + base, -1)
+        faces, roles = _native_faces(part, spec)
+        cell_ids = np.asarray(geometry.cell_ids, dtype=np.int64)
+        excluded = (
+            np.zeros(cell_ids.shape, dtype=np.uint8)
+            if spec.excluded is None
+            else np.isin(cell_ids, np.asarray(spec.excluded.entity_ids)).astype(np.uint8)
+        )
+        vertex_rows.append(points)
+        cell_rows.append(padded)
+        face_rows.append(np.where(faces >= 0, faces + base, -1))
+        role_rows.append(roles)
+        excluded_rows.append(excluded)
+        vertex_offsets.append(base + points.shape[0])
+        cell_offsets.append(cell_offsets[-1] + padded.shape[0])
+        face_offsets.append(face_offsets[-1] + faces.shape[0])
+    names = [spec.part_name for spec in specs]
+    name_ranks = np.argsort(np.argsort(names, kind="stable"), kind="stable")
+    match policy.donor_priority:
+        case "finest-donor":
+            donor_priority = 0
+        case "part-priority":
+            donor_priority = 1
+        case other:
+            assert_never(other)
+    result = _meshcore.overset_assemble(
+        np.asarray(vertex_offsets, dtype=np.int64),
+        np.concatenate(vertex_rows),
+        np.asarray(cell_offsets, dtype=np.int64),
+        np.concatenate(cell_rows).astype(np.int32),
+        np.concatenate([np.asarray(item.cell_ids) for item in geometries]).astype(
+            np.int64
+        ),
+        np.concatenate(excluded_rows),
+        np.asarray(face_offsets, dtype=np.int64),
+        np.concatenate(face_rows).astype(np.int32),
+        np.concatenate(role_rows),
+        np.asarray([spec.priority for spec in specs], dtype=np.int32),
+        name_ranks.astype(np.int32),
+        fringe_layers=policy.fringe_layers,
+        donor_priority=donor_priority,
+        fringe_donors=policy.fringe_donors,
+        prove=prove,
+    )
+    blanking = tuple(
+        OversetPartBlanking(
+            part,
+            result.vertex_status[vertex_offsets[index] : vertex_offsets[index + 1]],
+            result.fringe_layer[vertex_offsets[index] : vertex_offsets[index + 1]],
+            result.wall_contact[vertex_offsets[index] : vertex_offsets[index + 1]],
+            result.protected_conflict[vertex_offsets[index] : vertex_offsets[index + 1]],
+            result.cell_status[cell_offsets[index] : cell_offsets[index + 1]],
+            result.ambiguous[cell_offsets[index] : cell_offsets[index + 1]],
+        )
+        for index, part in enumerate(parts)
+    )
+    vertex_ids = [
+        np.asarray(_cell_result(part).mesh.vertex_global_ids, dtype=np.int64)
+        for part in parts
+    ]
+    choices = []
+    for index, part in enumerate(parts):
+        rows = vertex_offsets[index] + _receptor_rows(part, blanking[index])
+        count = rows.size
+        status = result.donor_status[rows]
+        found = status == int(CouplingSearchStatus.FOUND)
+        donor_cells = result.donor_cell[rows]
+        donor_parts = np.where(
+            found, np.searchsorted(cell_offsets, donor_cells, side="right") - 1, -1
+        ).astype(np.int32)
+        local = np.where(found, donor_cells - np.asarray(cell_offsets)[donor_parts], -1)
+        blocks = np.full((count,), -1, dtype=np.int32)
+        ids = np.full((count, 4), -1, dtype=np.int64)
+        weights = np.zeros((count, 4), dtype=np.float64)
+        explicit = np.zeros((count,), dtype=np.bool_)
+        measures = np.where(found, result.donor_measure[rows], np.inf)
+        references = result.donor_reference[rows]
+        for donor, geometry in enumerate(geometries):
+            slots = np.flatnonzero(found & (donor_parts == donor))
+            if not slots.size:
+                continue
+            cells = local[slots]
+            blocks[slots] = (
+                np.searchsorted(np.asarray(geometry.block_offsets), cells, side="right")
+                - 1
+            )
+            valid = np.asarray(geometry.cell_vertex_valid, dtype=np.bool_)[cells]
+            # Affine tetrahedra: the clamped, renormalized barycentric stencil.
+            tets = np.sum(valid, axis=1) == 4
+            slots, cells = slots[tets], cells[tets]
+            if not slots.size:
+                continue
+            reference = references[slots]
+            stencil = np.maximum(
+                np.concatenate(
+                    (1.0 - np.sum(reference, axis=1, keepdims=True), reference), axis=1
+                ),
+                0.0,
+            )
+            weights[slots] = stencil / np.sum(stencil, axis=1, keepdims=True)
+            ids[slots] = vertex_ids[donor][
+                np.asarray(geometry.cell_vertices, dtype=np.int64)[cells, :4]
+            ]
+            explicit[slots] = True
+        choices.append(
+            _DonorChoice(
+                donor_parts,
+                local,
+                blocks,
+                ids,
+                weights,
+                explicit,
+                references,
+                measures,
+                status.astype(np.int32),
+                result.candidate_parts[rows],
+                result.donor_residual[rows],
+                (),
+            )
+        )
+    return blanking, tuple(choices)
+
+
 def _prepare_connectivity(
     parts: tuple[MeshPart, ...],
     retained: tuple[MeshCoupling, ...],
@@ -4667,13 +5015,22 @@ def _prepare_connectivity(
     predecessor_id: str | None,
     partition_priority: tuple[str, ...] | None = None,
     partition_sources: Mapping[str, Any] | None = None,
+    *,
+    prove: bool,
 ) -> OversetConnectivity:
+    _require_certified_validity(parts, specs)
+    native = partition_priority is None and _native_assembly_supported(parts, specs)
     geometries = tuple(
-        _geometry(part, spec) for part, spec in zip(parts, specs, strict=True)
+        _native_geometry(part) if native else _geometry(part, spec)
+        for part, spec in zip(parts, specs, strict=True)
     )
-    blanking = _make_blanking(parts, specs, geometries, policy)
+    if native:
+        blanking, choices = _native_records(parts, specs, geometries, policy, prove)
+    else:
+        blanking = _make_blanking(parts, specs, geometries, policy)
+        choices = _python_choices(parts, specs, geometries, blanking, policy)
     receptors, packets, overlays = _receptor_records(
-        parts, specs, geometries, blanking, policy
+        parts, specs, geometries, blanking, choices
     )
     return OversetConnectivity(
         MeshAssembly(parts, couplings=(*retained, *overlays)),
@@ -4685,7 +5042,7 @@ def _prepare_connectivity(
         geometries,
         epoch=epoch,
         predecessor_id=predecessor_id,
-        donor_search_complete=True,
+        donor_search_complete=prove,
         partition_priority=partition_priority,
         partition_sources=partition_sources,
     )
@@ -4964,6 +5321,7 @@ def prepare_overset_connectivity(
     axis_name: str = "overset",
     partition_priority: tuple[str, ...] | None = None,
     partition_sources: Mapping[str, Any] | None = None,
+    prove: bool = True,
 ) -> OversetConnectivity:
     """Prepare serial connectivity or collective rank-local blanking/receptors.
 
@@ -4979,6 +5337,16 @@ def prepare_overset_connectivity(
     whose associated mesh edges exactly equal that part's wall scope. The
     resulting bound partition is rebuilt on motion and registration replay;
     whole-cell blanking remains conservative for donor search.
+
+    Serial 3D parts of affine tetrahedra and trilinear hexahedra without a
+    source solid query assemble in one native meshcore call
+    (``phx_mc_overset_assemble``) when the library loads: exact hole parity
+    against the walls, conservative cut cells, fringe layers, and donors
+    certified after construction (exact orientation for tetrahedra, a
+    Krawczyk-enclosed trilinear inverse for hexahedra). The Python owner is
+    the path for every other part and for a missing library. ``prove=False``
+    stops after construction: donors are float-located and the connectivity
+    reads donor coverage as unproved.
     """
     policy_ = OversetPolicy() if policy is None else policy
     if not isinstance(assembly, MeshAssembly) or not isinstance(policy_, OversetPolicy):
@@ -4998,11 +5366,17 @@ def prepare_overset_connectivity(
             "Overset registration requires one role specification per global assembly part."
         )
     specs = tuple(by_name[name] for name in global_names)
+    if not isinstance(prove, bool):
+        raise TypeError("prove must be a bool.")
     if assembly.owner_local:
         if partition_priority is not None or partition_sources is not None:
             raise ValueError("Exact partition ownership is serial-only.")
         if execution_group is None:
             raise TypeError("Owner-local overset requires execution_group.")
+        if not prove or policy_.fringe_donors:
+            raise ValueError(
+                "Owner-local overset requires prove=True and active donors only."
+            )
         return _prepare_owner_local_connectivity(
             assembly, specs, policy_, execution_group, axis_name
         )
@@ -5051,6 +5425,7 @@ def prepare_overset_connectivity(
         None,
         partition_priority,
         partition_sources,
+        prove=prove,
     )
 
 
@@ -5790,6 +6165,7 @@ class OversetRegistration(StrictModule, NonTrainableState):
             self.predecessor_id,
             self.partition_priority,
             self.partition_sources,
+            prove=True,
         )
         if result.connectivity_id != self.connectivity_id:
             raise ValueError(

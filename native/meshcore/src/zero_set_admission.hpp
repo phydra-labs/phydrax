@@ -25,8 +25,10 @@
 //    sign witness the adaptive scaffold carries per leaf cell: T is a local
 //    graph over Z along the gradient lines, with the carrier's orientation.
 // f and grad f are evaluated by the native straight-line interval executor
-// (interval_program.cpp) on one three-dimensional box per call; both are
-// assumed C^1 wherever the gradient enclosure is finite.
+// (interval_program.cpp) on one three-dimensional box per call; over any box
+// where the gradient enclosure is finite, f is assumed Lipschitz with its
+// (Clarke) gradient in that enclosure (the caller's assertion, see
+// phx_mc_zero_set_certify; kinks such as max qualify, jumps do not).
 // The admission is sound but incomplete: an undecided enclosure refuses.
 #pragma once
 
@@ -45,17 +47,39 @@ namespace phx::mc::remesh {
 // One validated interval program over a single 3-d input box. The workspace
 // template carries the program's constant seeds; entries [0, 3) receive the
 // box and `outputs` name the workspace entries of the result components.
+// Not copyable or movable: require_continuity() keeps a pointer to the
+// evidence program, possibly this one.
 class IntervalBoxProgram {
  public:
-  // PHX_MC_OK, or the refusal status for an invalid program or extent.
+  IntervalBoxProgram() = default;
+  IntervalBoxProgram(const IntervalBoxProgram&) = delete;
+  IntervalBoxProgram& operator=(const IntervalBoxProgram&) = delete;
+  IntervalBoxProgram(IntervalBoxProgram&&) = delete;
+  IntervalBoxProgram& operator=(IntervalBoxProgram&&) = delete;
+  // PHX_MC_OK, or the refusal status for an invalid program or extent; any
+  // bound events and required continuity are cleared.
   int32_t bind(const int64_t* instructions, int64_t instruction_count, const int64_t* indices,
                int64_t index_count, const double* parameters, int64_t parameter_count,
                const double* workspace_lower, const double* workspace_upper,
                int64_t workspace_size, const int64_t* outputs, int64_t output_count,
                const int64_t* guards, int64_t guard_count);
-  // Encloses every output over the box; false when execution fails or an
-  // output is NaN. `result` must hold output_count() intervals.
+  // Binds f's branch-evidence events (rows over this program's workspace,
+  // one box) once, validated; PHX_MC_OK or the refusal status.
+  int32_t bind_events(const int64_t* events, int64_t event_count);
+  // From now on, evaluate() refuses (false) every box on which `evidence`
+  // (a program with bound events, possibly this one) does not report f
+  // continuous: the proofs that read this program's enclosures may then
+  // rely on continuity there.
+  void require_continuity(const IntervalBoxProgram* evidence) { evidence_ = evidence; }
+  // Whether evaluate() requires continuity from branch evidence.
+  bool checks_branches() const noexcept { return evidence_ != nullptr; }
+  // Encloses every output over the box; false when execution fails, an
+  // output is NaN, or a required continuity is not reported. `result` must
+  // hold output_count() intervals.
   bool evaluate(const Point& lower, const Point& upper, Interval* result) const;
+  // The box's branch flags from the bound events (one execution); false when
+  // execution fails.
+  bool flags(const Point& lower, const Point& upper, bool& smooth, bool& continuous) const;
   int64_t output_count() const { return static_cast<int64_t>(outputs_.size()); }
   const phx::mc::PreparedIntervalProgram& program() const noexcept { return program_; }
   const std::vector<int64_t>& outputs() const noexcept { return outputs_; }
@@ -68,6 +92,9 @@ class IntervalBoxProgram {
   std::vector<int64_t> outputs_, guards_;
   std::vector<double> template_lower_, template_upper_;
   mutable std::vector<double> lower_, upper_;  // single-threaded scratch workspace
+  const IntervalBoxProgram* evidence_ = nullptr;
+  // Fills the scratch workspace with the template and the box.
+  bool load(const Point& lower, const Point& upper) const;
 };
 
 // Exact results of earlier admissions of one field and tolerance, keyed by

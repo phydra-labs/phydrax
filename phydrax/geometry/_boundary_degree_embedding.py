@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import combinations, pairwise
+from math import lcm
 from typing import cast, Literal
 
 import numpy as np
@@ -30,7 +31,11 @@ from ..discretization._coordinate_enclosure import (
     scale,
     subtract,
 )
-from ..discretization._exact_algebraic_geometry import ExactScalar, RadicalElement
+from ..discretization._exact_algebraic_geometry import (
+    exact_sum,
+    ExactScalar,
+    RadicalElement,
+)
 from ..discretization._reference_cell import reference_cell_topology
 from ._batch_boundary_traces import (
     batch_simplex_face_equal,
@@ -59,7 +64,7 @@ from ._integer_triangle_contact import (
     IntegerTriangle,
 )
 from ._mapped_embedding import prove_mapped_cell_injective
-from ._planar_chain_embedding import triangulate_planar_polygon
+from ._planar_chain_embedding import polytope_face_routes
 from ._restricted_embedding import (
     _trace_arguments,
     rational_simplex_trace_values,
@@ -133,6 +138,47 @@ def _loop_relation(first: tuple[int, ...], second: tuple[int, ...]) -> int | Non
     return None
 
 
+def _native_face_routes(
+    loops: Sequence[tuple[tuple[ExactScalar, ...], ...]], /
+) -> list[tuple[tuple[int, int, int], ...] | None]:
+    """`triangulate_planar_polygon` of rational face loops by the native proof.
+
+    Each entry is the identical triangulation, or ``None`` when meshcore is
+    unavailable, a coordinate is not rational or the native proof refuses
+    the loop (the rational proof then states the refusal).
+    """
+    from .._meshcore import (
+        common_denominator_rows,
+        face_triangulation,
+        meshcore_available,
+    )
+
+    routes: list[tuple[tuple[int, int, int], ...] | None] = [None for _ in loops]
+    if not loops or not meshcore_available():
+        return routes
+    rows: list[int] = []
+    offsets = [0]
+    integers: list[int] = []
+    for row, loop in enumerate(loops):
+        integer_rows = common_denominator_rows(loop)
+        if integer_rows is None:
+            continue
+        rows.append(row)
+        integers.extend(integer_rows[0])
+        offsets.append(offsets[-1] + len(loop))
+    if not rows:
+        return routes
+    codes, triangle_offsets, triangles = face_triangulation(
+        np.asarray(offsets, dtype=np.int64), integers
+    )
+    for local, row in enumerate(rows):
+        if codes[local]:
+            continue
+        block = triangles[triangle_offsets[local] : triangle_offsets[local + 1]].tolist()
+        routes[row] = tuple((first, second, third) for first, second, third in block)
+    return routes
+
+
 def _canonical_face_triangles(
     facet_id: int,
     vertex_ids: tuple[int, ...],
@@ -140,7 +186,13 @@ def _canonical_face_triangles(
     /,
     *,
     vertex_defined: bool = False,
+    routes: tuple[tuple[int, int, int], ...] | None = None,
 ) -> tuple[BoundaryTriangle, ...]:
+    """Oriented triangles of one exterior face.
+
+    ``routes``, for a vertex-defined face, is its `triangulate_planar_polygon`
+    triangulation already proved by `_native_face_routes`.
+    """
     if len(points) != len(vertex_ids):
         raise ValueError("Boundary face points must align with their vertex identities.")
     if len(vertex_ids) == 3:
@@ -153,9 +205,34 @@ def _canonical_face_triangles(
             ),
         )
     if vertex_defined:
-        # Vertex-defined polyhedral faces are exact planar loops that may carry
-        # collinear vertices; their exact ear triangulation keeps the loop.
-        routes = triangulate_planar_polygon(points)
+        # A vertex-defined polyhedral face is the exact triangles of its loop:
+        # the ear triangulation of a planar loop (which may carry collinear
+        # vertices; ``routes`` when `_native_face_routes` proved it), else the
+        # fan from its exact vertex average, which takes the synthetic vertex
+        # identifier -2 - facet_id (vertex identifiers are nonnegative).
+        planar_routes = routes if routes is not None else polytope_face_routes(points)
+        if planar_routes is None:
+            if facet_id < 0 or min(vertex_ids) < 0:
+                raise ValueError(
+                    "A fan face requires nonnegative facet and vertex identifiers."
+                )
+            centre_id = -2 - facet_id
+            count = len(vertex_ids)
+            centre: Point3 = (
+                sum((point[0] for point in points), Fraction(0)) / count,
+                sum((point[1] for point in points), Fraction(0)) / count,
+                sum((point[2] for point in points), Fraction(0)) / count,
+            )
+            return tuple(
+                BoundaryTriangle(
+                    -1,
+                    facet_id,
+                    (centre_id, vertex_ids[index], vertex_ids[(index + 1) % count]),
+                    (centre, points[index], points[(index + 1) % count]),
+                )
+                for index in range(count)
+            )
+        routes = planar_routes
     elif len(vertex_ids) != 4:
         raise ValueError(
             "Exact affine boundary route supports triangular and quadrilateral facets."
@@ -262,13 +339,37 @@ def _shell_components(
     return tuple(components), ()
 
 
+def _face_cone_volume6(face: BoundaryFace, /) -> ExactScalar:
+    """Six times the signed volume of the cone of a face's triangles at the origin."""
+    values = [
+        value
+        for triangle in face.triangles
+        for point in triangle.points
+        for value in point
+    ]
+    rational = [value for value in values if isinstance(value, Fraction)]
+    if len(rational) != len(values):
+        origin: Point3 = (Fraction(0), Fraction(0), Fraction(0))
+        return exact_sum(
+            determinant3(origin, *triangle.points) for triangle in face.triangles
+        )
+    # Integer coordinates D x over the face's common denominator D, nine per
+    # triangle.
+    denominator = lcm(*(value.denominator for value in rational))
+    integers = [
+        value.numerator * (denominator // value.denominator) for value in rational
+    ]
+    total = 0
+    for start in range(0, len(integers), 9):
+        ax, ay, az, bx, by, bz, cx, cy, cz = integers[start : start + 9]
+        total += (
+            ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
+        )
+    return Fraction(total, denominator**3)
+
+
 def _shell_measure(faces: tuple[BoundaryFace, ...], /) -> ExactScalar:
-    total: ExactScalar = Fraction(0)
-    origin: Point3 = (Fraction(0), Fraction(0), Fraction(0))
-    for face in faces:
-        for triangle in face.triangles:
-            total += determinant3(origin, *triangle.points)
-    return total / 6
+    return exact_sum(_face_cone_volume6(face) for face in faces) / 6
 
 
 def _ray_winding(
@@ -382,7 +483,8 @@ def _exact_scalar_identity(value: ExactScalar, /) -> tuple[object, ...]:
 def _vertex_defined_face_evidence(
     points: tuple[Point3, ...], /
 ) -> tuple[str, ...] | None:
-    """Prove a vertex-defined face loop is exactly planar with nonzero area."""
+    """Prove a vertex-defined face loop is exactly planar with nonzero area, or
+    a non-planar loop whose vertex-average fan does not fold."""
     normal: Point3 = (Fraction(0), Fraction(0), Fraction(0))
     for start, stop in zip(points, (*points[1:], points[0]), strict=True):
         term = _cross3(start, stop)
@@ -391,7 +493,11 @@ def _vertex_defined_face_evidence(
         return None
     offset = _dot3(normal, points[0])
     if any(_sign(_dot3(normal, point) - offset) for point in points):
-        return None
+        try:
+            polytope_face_routes(points)
+        except ValueError:
+            return None
+        return ("exact-vertex-defined-fan-face",)
     return (
         "exact-vertex-defined-planar-face",
         f"plane:{tuple(_exact_scalar_identity(value) for value in normal)}:"
@@ -1535,6 +1641,22 @@ def build_oriented_boundary(
         if len(quadratic_banks) > _QUADRATIC_BANKS:
             quadratic_banks.clear()
     del simplex_maps, integer_programs, quadratic_banks
+    # Exterior polyhedral faces beyond triangles, triangulated in one native call.
+    polyhedral_loops = {
+        key: incident[0][2]
+        for key, incident in occurrences.items()
+        if len(incident) == 1
+        and key in facet_ids
+        and len(incident[0][1]) > 3
+        and cells[incident[0][0]].kind == "polyhedron"
+    }
+    native_routes = dict(
+        zip(
+            polyhedral_loops,
+            _native_face_routes(list(polyhedral_loops.values())),
+            strict=True,
+        )
+    )
     for key, incident in occurrences.items():
         facet_id = facet_ids.get(key)
         if facet_id is None:
@@ -1610,6 +1732,7 @@ def build_oriented_boundary(
                 vertex_ids,
                 points,
                 vertex_defined=cells[cell_index].kind == "polyhedron",
+                routes=native_routes.get(key),
             )
         except ValueError as error:
             findings.append(
@@ -1726,7 +1849,17 @@ def build_oriented_boundary(
         for triangle in face_tuple[face_index].triangles
     )
     if planar_embedded_exterior:
-        findings.extend(_boundary_triangle_contacts(face_tuple, triangles, vertex_images))
+        # Fan centres are vertices of their face's triangles only.
+        contact_images = dict(vertex_images)
+        for triangle in triangles:
+            for identifier, point in zip(
+                triangle.vertex_ids, triangle.points, strict=True
+            ):
+                if identifier < 0:
+                    contact_images[identifier] = point
+        findings.extend(
+            _boundary_triangle_contacts(face_tuple, triangles, contact_images)
+        )
     degree_geometry_available = degree_topology_available and not any(
         finding.check
         in (

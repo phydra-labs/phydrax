@@ -844,11 +844,13 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     ++stats.boundary_splits;
   }
   // S3's size is an upper bound on each cell's circumradius; the request h is
-  // passed as that bound unchanged. Measured on Gmsh's own quadric surfaces (MAC
-  // 111e914), this reproduces Gmsh's interior edge distribution (median 1.34 h vs
-  // Gmsh's 1.37 h) at 1.08x its tet count, whereas the regular-tet value
-  // h * sqrt(6) / 4 gives 4-5x. Each surface point takes the smallest h of its
-  // faces, the rest the smallest h overall; refinement interpolates inside.
+  // passed as that bound unchanged. Refinement seeds the interior with the
+  // coarsest lattice meeting it (refine3d.cpp): on Gmsh's quadric surface at
+  // h = 0.02286 every cell has circumradius at most h, interior edges median
+  // 1.52 h (HXT's 1.45 h), at 0.69x HXT's tet count; the regular-tet value
+  // h * sqrt(6) / 4 would give several times that. Each surface point takes
+  // the smallest h of its faces, the rest the smallest h overall; refinement
+  // interpolates inside.
   const auto surface_points = surface.points.size();
   const auto& recovered = recovery->recovery;
   const std::size_t point_count = recovered.points.size() / 3;
