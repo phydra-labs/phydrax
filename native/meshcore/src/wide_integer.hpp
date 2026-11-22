@@ -91,6 +91,32 @@ inline std::uint64_t multiply_accumulate(std::uint64_t x, std::uint64_t y,
 #endif
 }
 
+// Divide (high * 2^64 + low) by divisor, returning the quotient and updating
+// high to the remainder. The caller maintains high < divisor, which implies
+// a nonzero divisor and a one-limb quotient.
+inline std::uint64_t divide_wide(std::uint64_t low, std::uint64_t divisor,
+                                  std::uint64_t& high) noexcept {
+#if defined(__SIZEOF_INT128__)
+  __extension__ using Wide = unsigned __int128;
+  const Wide value = (static_cast<Wide>(high) << 64) | low;
+  high = static_cast<std::uint64_t>(value % divisor);
+  return static_cast<std::uint64_t>(value / divisor);
+#elif defined(_MSC_VER) && defined(_M_X64)
+  return _udiv128(high, low, divisor, &high);
+#else
+  std::uint64_t quotient = 0;
+  for (int bit = 63; bit >= 0; --bit) {
+    const bool overflow = (high >> 63) != 0;
+    high = (high << 1) | ((low >> bit) & 1);
+    if (overflow || high >= divisor) {
+      high -= divisor;
+      quotient |= UINT64_C(1) << bit;
+    }
+  }
+  return quotient;
+#endif
+}
+
 // out = a * b; false when the exact product is not representable.
 inline bool checked_multiply(std::uint64_t a, std::uint64_t b, std::uint64_t& out) noexcept {
   std::uint64_t high = 0;

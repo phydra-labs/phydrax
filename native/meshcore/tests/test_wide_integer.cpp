@@ -218,10 +218,23 @@ void test_256_bit_products() {
     check_256(a, (trial & 1) != 0, b, (trial & 2) != 0);
   }
 }
+
+void test_two_limb_division() {
+  // (2^64 + 1) / 2 exercises the quotient's top bit and an odd dividend.
+  std::uint64_t high = 1;
+  PHX_CHECK(phx::mc::divide_wide(1, 2, high) == (UINT64_C(1) << 63));
+  PHX_CHECK(high == 1);
+  // For B = 2^64, the dividend dB - 1 has quotient B - 1 and remainder d - 1.
+  constexpr auto limit = std::numeric_limits<std::uint64_t>::max();
+  high = limit - 1;
+  PHX_CHECK(phx::mc::divide_wide(limit, limit, high) == limit);
+  PHX_CHECK(high == limit - 1);
+}
 }  // namespace
 
 int main() {
   test_64_bit_helpers();
+  test_two_limb_division();
   test_256_bit_products();
   return phx::mc::test::finish("test_wide_integer");
 }
