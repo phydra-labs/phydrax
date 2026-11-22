@@ -252,16 +252,17 @@ extern "C" int32_t phx_mc_polyhedral_mesh_entities(
         }
         for (int face = 0; face < kind.face_count; ++face, ++loop) {
           const int n = kind.size[face];
-          int32_t value[4];
+          const int* local = kind.vertex[face];
+          const int32_t value[4] = {row[local[0]], row[local[1]], row[local[2]],
+                                    n == 4 ? row[local[3]] : static_cast<int32_t>(vertex_count)};
           int first = 0;
-          for (int p = 0; p < n; ++p) {
-            value[p] = row[kind.vertex[face][p]];
+          for (int p = 1; p < n; ++p) {
             if (value[p] < value[first]) first = p;
           }
           const int sign = value[(first + 1) % n] < value[(first + n - 1) % n] ? 1 : -1;
           Row<4>& item = loops[static_cast<std::size_t>(loop)];
           for (int p = 0; p < n; ++p) item.vertex[p] = value[(first + sign * p + n) % n];
-          if (n == 3) item.vertex[3] = static_cast<int32_t>(vertex_count);
+          if (n == 3) item.vertex[3] = value[3];
           item.slot = static_cast<int32_t>(loop);
           loop_size[static_cast<std::size_t>(loop)] = static_cast<int8_t>(n);
           loop_signs[loop] = sign;

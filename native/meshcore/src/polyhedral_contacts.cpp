@@ -377,8 +377,13 @@ class Stratum {
 
   bool contains(PointTable& points, const PointSet& set) {
     std::array<int64_t, 4> key{-1, -1, -1, -1};
-    std::copy(set.ids.begin(), set.ids.begin() + set.size, key.begin());
-    std::sort(key.begin(), key.begin() + set.size);
+    // Sort only the live prefix of the four-corner set, leaving the padding in place.
+    for (std::size_t i = 0; i < key.size() && i < static_cast<std::size_t>(set.size); ++i) {
+      const int64_t id = set.ids[i];
+      std::size_t slot = i;
+      for (; slot > 0 && key[slot - 1] > id; --slot) key[slot] = key[slot - 1];
+      key[slot] = id;
+    }
     for (const auto& [known, verdict] : cache_) {
       if (known == key) return verdict;
     }
@@ -724,8 +729,8 @@ bool narrowed_contact(PointTable& points, Plane& plane, const Separation& contac
       return lower && upper;
     };
     PointSet overlap;
-    for (const auto [own, other] : {std::pair{&narrow.first, &narrow.second},
-                                    std::pair{&narrow.second, &narrow.first}}) {
+    for (const auto& [own, other] : {std::pair{&narrow.first, &narrow.second},
+                                     std::pair{&narrow.second, &narrow.first}}) {
       for (int index = 0; index < own->size; ++index) {
         const int64_t point = own->ids[static_cast<std::size_t>(index)];
         if (overlap.size < 4 && within(point, *other) &&

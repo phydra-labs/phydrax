@@ -473,7 +473,9 @@ class Blake2b128 {
     }
     v[12] ^= counter_;
     if (last) v[14] = ~v[14];
+#if defined(__clang__)
 #pragma clang loop unroll(full)
+#endif
     for (const auto& s : kSigma) {
       mix(v, 0, 4, 8, 12, message[s[0]], message[s[1]]);
       mix(v, 1, 5, 9, 13, message[s[2]], message[s[3]]);
