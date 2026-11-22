@@ -545,6 +545,14 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Supported affine CAD single solids certify the same native mesh produced
+  with `prove=False`. Proofs cover chart partition, surface embedding,
+  source-shell admissibility, CAD fidelity, and volume coverage. Certification,
+  transfer, and restore verify the complete source-association bank, including
+  material sides and residuals. Restore replays exact curve-split intervals and
+  checks the represented coordinates. Multi-solid interfaces, protected
+  features, unsupported source kinds, and layer/core requests keep their
+  existing routes; quadratic CAD candidates are not admitted for proof.
 - Overset preparation places validated host arrays in bulk, avoiding eager
   JAX compilation for individual fields on the default device. Explicit mesh
   placement, donor evidence, and connectivity identities are unchanged. The
