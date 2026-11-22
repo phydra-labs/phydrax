@@ -138,9 +138,7 @@ def test_revolution_frustum_embedding_excludes_the_exact_axis_root() -> None:
         bounds = ((F(0), low), (T, high))
         assert certify_source_embedding(surface, bounds, deck_axes=(0,)) is None
         assert (
-            certify_source_embedding(
-                surface, bounds, deck_axes=(0,), pole_roots=(F(4),)
-            )
+            certify_source_embedding(surface, bounds, deck_axes=(0,), pole_roots=(F(4),))
             is None
         )
 
