@@ -29,12 +29,13 @@ from phydrax.discretization.finite_volume import (
 )
 from phydrax.lifecycle import Composition
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
-from phydrax.meshing._coupling import OversetCoupling
+from phydrax.meshing._coupling import CouplingSearchStatus, OversetCoupling
 from phydrax.meshing._overset import (
     OversetCellStatus,
     OversetConnectivityError,
     OversetPartSpec,
     OversetPolicy,
+    OversetReceptorEvidence,
     prepare_overset_connectivity,
     prepare_overset_conservative_remap,
     prepare_overset_field_transfer,
@@ -53,6 +54,45 @@ def test_owner_local_finite_volume_reconstruction_factory_is_exported() -> None:
     assert getattr(phx.discretization, name) is getattr(
         phx.discretization.finite_volume, name
     )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("enable_x64", [True, False], ids=["x64", "x32"])
+@pytest.mark.parametrize("explicit_mesh", [False, True], ids=["default", "mesh"])
+def test_receptor_evidence_preserves_jax_placement_and_dtypes(
+    enable_x64: bool, explicit_mesh: bool
+) -> None:
+    arrays = (
+        np.array([17, 2**34 + 9], dtype=np.int64),
+        np.array([1, 2], dtype=np.int32),
+        np.array(
+            [CouplingSearchStatus.FOUND, CouplingSearchStatus.OUTSIDE], dtype=np.int32
+        ),
+        np.array([0, -1], dtype=np.int32),
+        np.array([2**34 + 11, -1], dtype=np.int64),
+        np.array([1, 0], dtype=np.int32),
+        np.array([0.0, np.inf], dtype=np.float64),
+        np.array([0.5, np.inf], dtype=np.float64),
+        np.array([0, 1], dtype=np.uint64),
+    )
+    mesh = (
+        jax.make_mesh((1,), ("overset",), axis_types=(jax.sharding.AxisType.Explicit,))
+        if explicit_mesh
+        else None
+    )
+    with (
+        phx.config.context(phx.config.NumericsConfig(enable_x64=enable_x64)),
+        jax.set_mesh(mesh),
+    ):
+        evidence = OversetReceptorEvidence("target", *arrays, donor_refusals=())
+        expected = tuple(jnp.asarray(value) for value in arrays)
+        for actual, reference in zip(jax.tree.leaves(evidence), expected, strict=True):
+            assert isinstance(actual, jax.Array)
+            assert actual.committed == reference.committed
+            assert actual.sharding == reference.sharding
+            assert actual.dtype == reference.dtype
+            np.testing.assert_array_equal(actual, reference)
+        np.testing.assert_array_equal(evidence.orphan_ids, np.asarray(expected[0])[1:])
 
 
 def _part(name: str, points: Any, triangles: Any) -> Any:

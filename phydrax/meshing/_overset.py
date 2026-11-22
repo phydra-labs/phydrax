@@ -746,6 +746,19 @@ class OversetPolicy(StrictModule, NonTrainableState):
         )
 
 
+def _place_overset_fields(arrays: tuple[np.ndarray, ...], /) -> tuple[Array, ...]:
+    # Under an ambient mesh, eager staging infers placement from that mesh.
+    # Otherwise bulk placement keeps the default uncommitted placement without
+    # compiling a staging primitive for each host array shape and dtype.
+    # The concrete mesh can still be active under a scoped abstract override.
+    # Observe it outside tracing without changing the staging trace itself.
+    with jax.core.eval_context():
+        concrete_mesh = jax.sharding.get_mesh()
+    if not concrete_mesh.empty or not jax.sharding.get_abstract_mesh().empty:
+        return tuple(jnp.asarray(value) for value in arrays)
+    return jax.device_put(arrays)
+
+
 class OversetPartBlanking(StrictModule, NonTrainableState):
     vertex_ids: Array
     vertex_status: Array
@@ -799,10 +812,10 @@ class OversetPartBlanking(StrictModule, NonTrainableState):
             self.fringe_layer,
             self.wall_contact,
             self.protected_conflict,
-        ) = tuple(jnp.asarray(value) for value in (vertex_ids, *arrays[:4]))
-        self.cell_ids, self.cell_status, self.ambiguous_cells = tuple(
-            jnp.asarray(value) for value in (cell_ids, *arrays[4:])
-        )
+            self.cell_ids,
+            self.cell_status,
+            self.ambiguous_cells,
+        ) = _place_overset_fields((vertex_ids, *arrays[:4], cell_ids, *arrays[4:]))
         self.part_name, self.part_id = part.name, part.part_id
         self.blanking_id = canonical_fingerprint(
             {
@@ -921,7 +934,7 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
             self.residuals,
             self.donor_measures,
             self.owner_ranks,
-        ) = tuple(jnp.asarray(value) for value in arrays)
+        ) = _place_overset_fields(arrays)
         self.part_name = str(part_name)
         self.donor_refusals = refusals
         self.evidence_id = canonical_fingerprint(
@@ -938,7 +951,9 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
 
     @property
     def orphan_ids(self) -> np.ndarray:
-        return np.asarray(self.receptor_ids)[~np.asarray(self.found)]
+        return np.asarray(self.receptor_ids)[
+            np.asarray(self.status) != int(CouplingSearchStatus.FOUND)
+        ]
 
 
 class OversetDonorPacket(StrictModule, NonTrainableState):
@@ -1025,11 +1040,19 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
         )
         if donor_owner < 0 or receptor_owner < 0:
             raise ValueError("Overset packet owner ranks must be non-negative.")
-        self.receptor_ids, self.receptor_slots = jnp.asarray(ids), jnp.asarray(slots_)
-        self.query_points, self.target_points = jnp.asarray(query), jnp.asarray(target)
-        self.donor_cells, self.donor_cell_rows = jnp.asarray(cells), jnp.asarray(rows)
-        self.reference_coordinates = jnp.asarray(reference)
-        self.rotation, self.translation = jnp.asarray(rotation), jnp.asarray(translation)
+        (
+            self.receptor_ids,
+            self.receptor_slots,
+            self.query_points,
+            self.target_points,
+            self.donor_cells,
+            self.donor_cell_rows,
+            self.reference_coordinates,
+            self.rotation,
+            self.translation,
+        ) = _place_overset_fields(
+            (ids, slots_, query, target, cells, rows, reference, rotation, translation)
+        )
         self.donor_block = donor_block
         self.donor_part, self.receptor_part = donor.name, receptor.name
         self.donor_revision, self.receptor_revision = donor.part_id, receptor.part_id
@@ -2751,15 +2774,17 @@ def _native_geometry(part: MeshPart, /) -> _PartGeometry:
         cell_vertices[cells, : rows.shape[1]] = rows
         cell_vertex_valid[cells, : rows.shape[1]] = True
         block_offsets.append(cells.stop)
+    cell_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
+    vertices, vertex_valid, identifiers = _place_overset_fields(
+        (cell_vertices, cell_vertex_valid, cell_ids)
+    )
     return _PartGeometry(
         part_id=part.part_id,
-        cell_vertices=jnp.asarray(cell_vertices),
-        cell_vertex_valid=jnp.asarray(cell_vertex_valid),
-        cell_ids=jnp.asarray(
-            np.concatenate(
-                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-            )
-        ),
+        cell_vertices=vertices,
+        cell_vertex_valid=vertex_valid,
+        cell_ids=identifiers,
         cell_measures=None,
         cell_lower=None,
         cell_upper=None,
@@ -3838,7 +3863,10 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             self.partition_cavities = cavities
             self.partition_binding_id = binding
             self.partition_digest = _partition_digest(self.bound_partition)
-        self.orphan_count = sum(item.orphan_ids.size for item in receptors)
+        self.orphan_count = sum(
+            np.count_nonzero(np.asarray(item.status) != int(CouplingSearchStatus.FOUND))
+            for item in receptors
+        )
         local_conflicts = sum(
             int(np.count_nonzero(np.asarray(item.protected_conflict)))
             for item in blanking
