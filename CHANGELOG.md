@@ -545,6 +545,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native point programs skip initializing workspace entries that the bytecode
+  overwrites before reading. Entries read as seeds keep the same values and
+  block order. The polynomial benchmark rises from about 252 to 303 million
+  points per second with identical output. Interval and jet execution paths
+  are unchanged.
 - Supported affine CAD single solids certify the same native mesh produced
   with `prove=False`. Proofs cover chart partition, surface embedding,
   source-shell admissibility, CAD fidelity, and volume coverage. Certification,
