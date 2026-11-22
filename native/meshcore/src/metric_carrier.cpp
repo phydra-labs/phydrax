@@ -162,6 +162,12 @@ class Small {
   friend Small operator*(const Small& a, const Small& b) {
     Small out;
     if (a.size_ == 0 || b.size_ == 0) return out;
+    if (a.size_ == 1 && b.size_ == 1) {
+      out.limb_[0] = multiply_wide(a.limb_[0], b.limb_[0], out.limb_[1]);
+      out.size_ = out.limb_[1] == 0 ? 1 : 2;
+      out.negative_ = a.negative_ != b.negative_;
+      return out;
+    }
     if (a.size_ + b.size_ > kLimbs) throw CapacityExceeded{};
     const std::size_t size = a.size_ + b.size_;
     for (std::size_t index = 0; index < size; ++index) out.limb_[index] = 0;
