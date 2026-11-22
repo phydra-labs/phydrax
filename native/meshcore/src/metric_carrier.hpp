@@ -163,6 +163,7 @@ class CarrierSource {
   // limbs [offsets[i], offsets[i + 1]), when each fits the inline integers
   // of the search; a query that leaves their capacity runs on the unbounded
   // ones above.
+  std::int64_t binary_shift_ = -1;  // exponent of an inline power-of-two denominator
   bool inline_ = false;
   std::vector<std::uint64_t> inline_limbs_;
   std::vector<std::uint32_t> inline_offsets_;

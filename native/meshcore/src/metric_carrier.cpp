@@ -98,6 +98,42 @@ class Small {
     exponent = start;
     return static_cast<double>(top);
   }
+  // Round this integer times 2^power using the discarded bits, without division.
+  double nearest_binary64(std::int64_t power, bool& exact) const {
+    const std::int64_t length = bits();
+    if (length == 0) {
+      exact = true;
+      return 0.0;
+    }
+    const std::int64_t biased = length - 1 + power + 1023;
+    if (biased < 1 || biased > 2046) throw CapacityExceeded{};
+    std::uint64_t mantissa;
+    exact = true;
+    if (length <= 53) {
+      mantissa = limb_[0] << (53 - length);
+    } else {
+      const std::int64_t discarded = length - 53;
+      const auto word = static_cast<std::size_t>(discarded / 64);
+      const int offset = static_cast<int>(discarded % 64);
+      mantissa = limb_[word] >> offset;
+      if (offset != 0 && word + 1 < size_) mantissa |= limb_[word + 1] << (64 - offset);
+      const auto guard_word = static_cast<std::size_t>((discarded - 1) / 64);
+      const int guard_offset = static_cast<int>((discarded - 1) % 64);
+      const std::uint64_t guard_mask = std::uint64_t{1} << guard_offset;
+      const bool guard = (limb_[guard_word] & guard_mask) != 0;
+      bool sticky = (limb_[guard_word] & (guard_mask - 1)) != 0;
+      for (std::size_t index = 0; index < guard_word && !sticky; ++index) {
+        sticky = limb_[index] != 0;
+      }
+      exact = !guard && !sticky;
+      if (guard && (sticky || (mantissa & 1) != 0)) ++mantissa;
+    }
+    // The leading mantissa bit supplies one exponent unit; addition also
+    // carries when rounding over a binade boundary.
+    const std::uint64_t magnitude = (static_cast<std::uint64_t>(biased - 1) << 52) + mantissa;
+    if (magnitude >= 0x7ff0000000000000ULL) throw CapacityExceeded{};
+    return std::bit_cast<double>(magnitude | (static_cast<std::uint64_t>(negative_) << 63));
+  }
   // value * 2^count for count >= 0.
   Small shifted(std::int64_t count) const {
     if (size_ == 0 || count == 0) return *this;
@@ -380,6 +416,9 @@ struct ExactView {
     return (*numerators)[static_cast<std::size_t>(3 * row + axis)];
   }
   const Dyadic& denominator() const { return *common; }
+  double round_coordinate(const Dyadic& value, int bits, bool& exact) const {
+    return rounded_quotient(value, denominator(), bits, exact);
+  }
 };
 
 // The same numbers as inline integers, read from their limb bank.
@@ -389,6 +428,7 @@ struct InlineView {
   const std::vector<std::uint32_t>* offsets;
   const std::vector<std::uint8_t>* negative;
   Small common;
+  std::int64_t binary_shift;
   Small at(std::size_t index) const {
     const std::uint32_t begin = (*offsets)[index];
     return Small::from_limbs(limbs->data() + begin, (*offsets)[index + 1] - begin,
@@ -398,6 +438,10 @@ struct InlineView {
     return at(static_cast<std::size_t>(3 * row + axis));
   }
   const Small& denominator() const { return common; }
+  double round_coordinate(const Small& value, int bits, bool& exact) const {
+    if (binary_shift >= 0) return value.nearest_binary64(-binary_shift - bits, exact);
+    return rounded_quotient(value, denominator(), bits, exact);
+  }
 };
 
 // A located goal: weights[i] / (denominator 2^shift) at point rows[i].
@@ -409,6 +453,7 @@ struct Located {
   std::int64_t shift = 0;
   int size = 0;
   bool declared = false;
+  std::uint8_t projected_axes = 0;
 };
 
 struct Geometry {
@@ -618,6 +663,7 @@ bool locate_simplex(const View& view, const Target<View>& target, const CarrierS
   if (!found) return false;
   located.size = simplex.size;
   located.declared = simplex.declared;
+  located.projected_axes = simplex.projected_axes;
   located.shift = target.shift;
   for (int corner = 0; corner < simplex.size; ++corner) {
     const std::size_t slot = static_cast<std::size_t>(corner);
@@ -700,7 +746,14 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
 
   // The goal: the target in a cell, the correctly rounded projection on a simplex.
   double goal[3] = {target[0], target[1], target[2]};
-  if (on_simplex) {
+  if (located.projected_axes != 0) {
+    // The exact projection keeps the target on participating axes and the
+    // common source coordinate on the rest; each is already rounded.
+    const double* origin = geometry.points.data() + 3 * located.rows[0];
+    for (int axis = 0; axis < 3; ++axis) {
+      if ((located.projected_axes & (1U << axis)) == 0) goal[axis] = origin[axis];
+    }
+  } else if (on_simplex) {
     const Z image_denominator = located.denominator * view.denominator();
     for (int axis = 0; axis < 3; ++axis) {
       Z sum;
@@ -787,8 +840,7 @@ std::vector<Carrier> search(const View& view, const Geometry& geometry, const do
                             numerators[slot][axis];
       }
       bool whole = false;
-      carrier.point[static_cast<std::size_t>(axis)] =
-          rounded_quotient(value, view.denominator(), bits, whole);
+      carrier.point[static_cast<std::size_t>(axis)] = view.round_coordinate(value, bits, whole);
       if (!whole) carrier.exact = false;
     }
     const double dx = carrier.point[0] - goal[0];
@@ -984,6 +1036,9 @@ CarrierSource::CarrierSource(std::vector<double> points, std::vector<Dyadic> num
     if (inline_) append(value);
   }
   if (inline_) append(denominator_);
+  if (inline_ && denominator_.magnitude().size() == 1 && denominator_.magnitude()[0] == 1) {
+    binary_shift_ = denominator_.exponent();
+  }
   if (!inline_) {
     inline_limbs_.clear();
     inline_offsets_.clear();
@@ -1077,7 +1132,7 @@ std::vector<Carrier> CarrierSource::carriers(const double* target, const double*
   const Geometry geometry{points_, cells_, lower_, upper_, cell_grid_};
   if (inline_) {
     try {
-      InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small()};
+      InlineView view{&inline_limbs_, &inline_offsets_, &inline_negative_, Small(), binary_shift_};
       view.common = view.at(numerators_.size());
       return search(view, geometry, target, current, chart, cell, order, limit);
     } catch (const CapacityExceeded&) {

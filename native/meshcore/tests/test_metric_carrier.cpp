@@ -315,16 +315,19 @@ void guards_arguments() {
 // The exact points do not change when numerators and denominator share a
 // factor, so neither does any carrier, however long the integers are: about
 // 240 and about 1,110 bits of common factor here.
-void common_factor() {
-  const std::vector<std::int64_t> numerators = {0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 8, 9, 10};
+void common_factor(std::int64_t denominator, std::int64_t y_sign) {
+  const std::vector<std::int64_t> numerators{
+      0, 0, 0, 9, 0, 0, 0, y_sign * 10, 0, 0, 0, 11, 8, y_sign * 9, 10};
   const std::vector<std::int64_t> cells = {4, 1, 2, 3, 0, 1, 2, 3};
-  const double points[5][3] = {{0.0, 0.0, 0.0},
-                               {9.0 / 7.0, 0.0, 0.0},
-                               {0.0, 10.0 / 7.0, 0.0},
-                               {0.0, 0.0, 11.0 / 7.0},
-                               {8.0 / 7.0, 9.0 / 7.0, 10.0 / 7.0}};
+  double points[5][3];
+  for (std::size_t row = 0; row < 5; ++row) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      points[row][axis] = static_cast<double>(numerators[3 * row + axis]) /
+                          static_cast<double>(denominator);
+    }
+  }
   Source plain;
-  create(plain, numerators, 7, cells);
+  create(plain, numerators, denominator, cells);
   std::uint64_t state = 20261118;
   const auto unit = [&state]() {
     state = state * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -333,7 +336,7 @@ void common_factor() {
   std::int64_t compared = 0;
   for (const int power : {150, 700}) {
     Source scaled;
-    create(scaled, numerators, 7, cells, power);
+    create(scaled, numerators, denominator, cells, power);
     for (int query = 0; query < 40; ++query) {
       // A point of one cell, and a current point somewhere else.
       const std::int64_t* corners = cells.data() + 4 * (query % 2);
@@ -524,6 +527,28 @@ void crowded_chart_still_searches_past_the_bucket_budget() {
   }
 }
 
+void axis_aligned_projection_retains_the_rounded_authored_coordinate() {
+  using phx::mc::Dyadic;
+  using phx::mc::metric::CarrierOrder;
+  using phx::mc::metric::CarrierSource;
+  const Dyadic zero;
+  const Dyadic denominator(3.0);
+  const Dyadic exact_z(2.0);
+  const double z = 2.0 / 3.0;
+  const CarrierSource source({0, 0, z, 1, 0, z, 0, 1, z},
+                             {zero, zero, exact_z, denominator, zero, exact_z,
+                              zero, denominator, exact_z},
+                             denominator, {});
+  const std::array chart{source.prepare_simplex({{0, 1, 2}, 3, true})};
+  const double target[3]{0.25, 0.25, 5};
+  const auto result = source.carriers(target, target, {chart}, -1, CarrierOrder::kFineFirst, 1);
+  PHX_CHECK(result.size() == 1);
+  if (result.size() == 1) {
+    const std::array<double, 3> projected{0.25, 0.25, z};
+    PHX_CHECK(result.front().point == projected && !result.front().exact);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -533,10 +558,12 @@ int main() {
   simplices();
   declared_faces();
   guards_arguments();
-  common_factor();
+  common_factor(7, 1);
+  common_factor(8, -1);
   prepared_projection_box_preserves_carrier_order();
   rounded_source_coordinates_do_not_hide_an_oblique_hull();
   indexed_charts_preserve_exact_first_carrier_on_closed_boxes();
   crowded_chart_still_searches_past_the_bucket_budget();
+  axis_aligned_projection_retains_the_rounded_authored_coordinate();
   return phx::mc::test::finish("test_metric_carrier");
 }
