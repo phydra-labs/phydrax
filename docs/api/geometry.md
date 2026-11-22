@@ -569,9 +569,9 @@ angle-weighted pseudonormal of the closest face, edge, or corner (Baerentzen and
 Aanaes 2005), exact for closed oriented surfaces; `sign="winding_number"` signs by
 the exact winding number instead (`|w| > 0.5` is inside, as `MeshRegion`). Closing
 fans, dipoles, and pseudonormals are prepared once per embedding (construction or
-`refit`). Concrete float64 queries run in the native meshcore library when it is
-present, batched and single-threaded over the same packed tree; traced queries and
-builds without the library use the JAX route. Both evaluate one fixed operation
+`refit`). Concrete float64 queries use the same packed tree in native meshcore
+when present. Large query batches honor `PHX_MESHCORE_THREADS` (default one);
+traced queries and builds without meshcore use JAX. Both evaluate one fixed operation
 schedule (products rounded on their own, sums left to right, no fused
 multiply-add), so every route returns identical bits, including faces chosen on
 exact ties (lowest face index) and winding decisions.

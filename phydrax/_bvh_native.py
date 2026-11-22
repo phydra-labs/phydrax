@@ -3,9 +3,9 @@
 #
 """Native traversals of one host ``PackedBVH``: the meshcore ``BVH`` C ABI.
 
-Python ``prepare_bvh`` remains the only tree builder; native code validates
-and traverses its packed arrays (``phx_mc_bvh_tree_view``). The point queries
-are batched and single threaded and write caller-owned arrays allocated here.
+``prepare_bvh`` owns the tree. Native queries validate and traverse its packed
+arrays (``phx_mc_bvh_tree_view``), use the native worker policy for query
+batches, and write caller-owned outputs.
 Generic owners dispatch to them only for concrete float64 inputs while the
 library is present (``native_point_queries``); traced inputs and a missing
 library keep their JAX routes.
@@ -54,10 +54,14 @@ def _pointer(array: np.ndarray, /) -> int:
     return array.ctypes.data
 
 
-def tree_view(tree: HostTree, /) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
+def tree_view(
+    tree: HostTree, /, *, point_query: bool = False
+) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
     """The native view of a host tree and the contiguous arrays it points into.
 
     The caller keeps the returned arrays alive while the view is in use.
+    Point queries validate index values in their C entry points and do not
+    use the extent sum that orders pair-stream descent.
     """
     if len(tree) != 8:
         raise ValueError("host trees require eight arrays.")
@@ -84,40 +88,37 @@ def tree_view(tree: HostTree, /) -> tuple[_TreeView, tuple[np.ndarray, ...]]:
         or item_max.shape != item_min.shape
     ):
         raise ValueError("item bounds must share the node dimension and one shape.")
-    if np.any(leaf >= leaf_items.shape[0]):
-        raise ValueError("node leaf indices exceed the leaf array.")
-    internal = leaf < 0
-    if any(
-        np.any((value[internal] < 0) | (value[internal] >= node_count))
-        for value in (left, right)
-    ):
-        raise ValueError("child indices exceed the node arrays.")
-    if np.any(leaf_items >= item_min.shape[0]):
-        raise ValueError("leaf item indices exceed the item bounds.")
+    if not point_query:
+        if np.any(leaf >= leaf_items.shape[0]):
+            raise ValueError("node leaf indices exceed the leaf array.")
+        internal = leaf < 0
+        if any(
+            np.any((value[internal] < 0) | (value[internal] >= node_count))
+            for value in (left, right)
+        ):
+            raise ValueError("child indices exceed the node arrays.")
+        if np.any(leaf_items >= item_min.shape[0]):
+            raise ValueError("leaf item indices exceed the item bounds.")
     node_min, node_max, left, right, leaf, leaf_items, item_min, item_max = (
         np.ascontiguousarray(value) for value in tree
     )
-    # The descent key is the reference's own float64 extent sum.
-    node_size = np.ascontiguousarray(np.sum(node_max - node_min, axis=-1))
-    arrays = (
-        node_min,
-        node_max,
-        node_size,
-        left,
-        right,
-        leaf,
-        leaf_items,
-        item_min,
-        item_max,
+    arrays = node_min, node_max, left, right, leaf, leaf_items, item_min, item_max
+    node_size = (
+        None
+        if point_query
+        else np.ascontiguousarray(np.sum(node_max - node_min, axis=-1))
     )
     view = _TreeView(
         int(node_min.shape[0]),
         int(leaf_items.shape[0]),
         int(leaf_items.shape[1]),
         int(item_min.shape[0]),
-        *(_pointer(array) for array in arrays),
+        _pointer(node_min),
+        _pointer(node_max),
+        None if node_size is None else _pointer(node_size),
+        *(_pointer(array) for array in arrays[2:]),
     )
-    return view, arrays
+    return view, arrays if node_size is None else (*arrays, node_size)
 
 
 def native_point_queries(*values: object) -> bool:
@@ -170,7 +171,9 @@ def triangle_nearest(
     k: int,
 ) -> TriangleNearest:
     """The ``k`` nearest triangles of every point, ties to the lower face index."""
-    view, arrays = tree_view(tree)
+    from ._exact_kernels import exact_kernel_parallelism
+
+    view, arrays = tree_view(tree, point_query=True)
     vertex_values, face_values = _simplices(vertices, faces, 3)
     queries = _points(points)
     count = queries.shape[0]
@@ -178,7 +181,7 @@ def triangle_nearest(
     squared = np.empty((count, k), dtype=np.float64)
     closest = np.empty((count, k, 3), dtype=np.float64)
     features = np.empty((count, k), dtype=np.int8)
-    status = load_meshcore()["phx_mc_bvh_triangle_nearest"](
+    status = load_meshcore()["phx_mc_bvh_query_nearest_triangles"](
         ctypes.addressof(view),
         vertex_values.shape[0],
         _pointer(vertex_values),
@@ -190,9 +193,10 @@ def triangle_nearest(
         _pointer(squared),
         _pointer(closest),
         _pointer(features),
+        exact_kernel_parallelism(),
     )
     del arrays
-    _raise_for_call(status, "bvh_triangle_nearest")
+    _raise_for_call(status, "bvh_query_nearest_triangles")
     return TriangleNearest(found, squared, closest, features)
 
 
@@ -205,7 +209,9 @@ def triangle_signed_distance(
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``(signed distance, nearest face, closest point)`` by feature pseudonormals."""
-    view, arrays = tree_view(tree)
+    from ._exact_kernels import exact_kernel_parallelism
+
+    view, arrays = tree_view(tree, point_query=True)
     vertex_values, face_values = _simplices(vertices, faces, 3)
     normals = np.ascontiguousarray(feature_normals, dtype=np.float64)
     if normals.shape != (face_values.shape[0], 7, 3):
@@ -215,7 +221,7 @@ def triangle_signed_distance(
     distance = np.empty((count,), dtype=np.float64)
     found = np.empty((count,), dtype=np.int32)
     closest = np.empty((count, 3), dtype=np.float64)
-    status = load_meshcore()["phx_mc_bvh_triangle_signed_distance"](
+    status = load_meshcore()["phx_mc_bvh_query_signed_distance"](
         ctypes.addressof(view),
         vertex_values.shape[0],
         _pointer(vertex_values),
@@ -226,9 +232,10 @@ def triangle_signed_distance(
         _pointer(distance),
         _pointer(found),
         _pointer(closest),
+        exact_kernel_parallelism(),
     )
     del arrays
-    _raise_for_call(status, "bvh_triangle_signed_distance")
+    _raise_for_call(status, "bvh_query_signed_distance")
     return distance, found, closest
 
 
@@ -244,11 +251,13 @@ def _winding(
     opening_angle: float,
     /,
 ) -> np.ndarray:
-    view, arrays = tree_view(tree)
+    from ._exact_kernels import exact_kernel_parallelism
+
+    view, arrays = tree_view(tree, point_query=True)
     vertex_values, face_values = _simplices(vertices, faces, 3)
     queries = _points(points)
     values = np.empty((queries.shape[0],), dtype=np.float64)
-    status = load_meshcore()["phx_mc_bvh_triangle_winding"](
+    status = load_meshcore()["phx_mc_bvh_query_winding"](
         ctypes.addressof(view),
         vertex_values.shape[0],
         _pointer(vertex_values),
@@ -262,9 +271,10 @@ def _winding(
         queries.shape[0],
         _pointer(queries),
         _pointer(values),
+        exact_kernel_parallelism(),
     )
     del arrays
-    _raise_for_call(status, "bvh_triangle_winding")
+    _raise_for_call(status, "bvh_query_winding")
     return values
 
 
@@ -343,6 +353,8 @@ def _locate_call(
     capacity: int,
     /,
 ) -> TetrahedronLocation:
+    from ._exact_kernels import exact_kernel_parallelism
+
     count = queries.shape[0]
     result = TetrahedronLocation(
         np.empty((count,), dtype=np.int32),
@@ -354,7 +366,7 @@ def _locate_call(
         np.empty((count, capacity), dtype=np.int32),
         np.empty((count, capacity, 3), dtype=np.float64),
     )
-    status = load_meshcore()["phx_mc_bvh_tetrahedron_locate"](
+    status = load_meshcore()["phx_mc_bvh_query_locate_tetrahedra"](
         ctypes.addressof(view),
         vertices.shape[0],
         _pointer(vertices),
@@ -365,8 +377,9 @@ def _locate_call(
         _pointer(queries),
         capacity,
         *(_pointer(array) for array in result),
+        exact_kernel_parallelism(),
     )
-    _raise_for_call(status, "bvh_tetrahedron_locate")
+    _raise_for_call(status, "bvh_query_locate_tetrahedra")
     return result
 
 
@@ -385,7 +398,7 @@ def tetrahedron_locate(
     Candidate lists are as wide as the most accepting cells of any point; the
     few points beyond the first pass's width are located again at full width.
     """
-    view, arrays = tree_view(tree)
+    view, arrays = tree_view(tree, point_query=True)
     vertex_values, cell_values = _simplices(vertices, cells, 4)
     mask = None
     if cell_mask is not None:

@@ -1391,8 +1391,9 @@ int32_t phx_mc_bvh_pair_stream_create(const phx_mc_bvh_tree_view* first,
     if (dimension < 1 || item_block < 1 || node_block < 1 || parallelism < 1 ||
         (include_touching != 0 && include_touching != 1) || !std::isfinite(absolute_tolerance) ||
         !std::isfinite(relative_tolerance) || absolute_tolerance < 0.0 ||
-        relative_tolerance < 0.0 || !phx::mc::bvh::tree_valid(first, dimension) ||
-        !phx::mc::bvh::tree_valid(second, dimension)) {
+        relative_tolerance < 0.0 || first == nullptr || second == nullptr ||
+        first->node_size == nullptr || second->node_size == nullptr ||
+        !phx::mc::bvh::tree_valid(first, dimension) || !phx::mc::bvh::tree_valid(second, dimension)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     int64_t per_leaf = 0;
