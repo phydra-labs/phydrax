@@ -88,6 +88,9 @@
 - Native CAD surface and solid construction prepare faces in bounded batches
   on the meshcore worker pool. They assemble faces and report failures in
   source order; shared curves and volume construction are unchanged.
+- The standalone native quadratic CAD verifier bounds both directed
+  distances against the actual embedded P2 map, including polar slivers
+  and shared trimmed traces. Public P2 CAD acceptance remains unavailable.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6
