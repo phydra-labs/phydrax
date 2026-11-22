@@ -4053,11 +4053,19 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         """Propagate B-Rep associations with the accepted vertex stencil."""
         records = self._native_cad_records(source)
         if records is not None:
+            from ._adaptation import _transition_regions
+
+            report = source.certification
+            if report is None:
+                raise ValueError("Native CAD propagation requires its source report.")
+            regions = _transition_regions(report.inputs, target, lineage)
+            if regions is None:
+                raise ValueError("Native CAD propagation requires target cell regions.")
             _, _, tables = records.retarget(
                 source,
                 lineage,
                 target,
-                np.zeros(target.entity_set(3).count, dtype=np.int64),
+                regions,
                 vertex_stencil,
             )
             return tables

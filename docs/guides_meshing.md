@@ -1102,6 +1102,23 @@ theorems do not decide (a boundary that subdivides the source triangles,
 coordinates outside the exact predicate domain) takes the rational proofs. The
 certificates record which proof ran, and restore reproves the same one.
 
+The native `cad_tetrahedral` route admits affine multi-solid meshes when the
+exact B-Rep proves separated material interiors, strictly convex planar trims,
+and a manifold union exterior. A shared interface is one source face with
+opposite outward uses in its adjacent regions. Certification checks the
+exterior and each region boundary independently, and proves that the labeled
+tetrahedra tile exactly the declared sides. Source associations retain both
+interface sides and each cell's solid occurrence. Eager and deferred proof use
+the same constructed mesh and labels. Sources or requests outside this scope
+take their existing CAD route before construction; a failed native candidate
+is not remeshed by a different route.
+
+The proof binds the actual coordinate map, not just the mesh vertices. For
+an affine restriction produced by adaptation, proof checks exact agreement
+of incident cells at each vertex, certifies embedding on the actual map, and
+includes the maximum vertex-rounding displacement in the deviation bound.
+Replay re-proves the original labeled CAD mesh and the current map.
+
 The native CAD solid (`cad_tetrahedral`, `prove=False`) keeps the requested size
 h and refines only where fidelity or the rim rule needs it. `ProximitySizeControl`
 on source faces is its thickness sizing: at a point of a scoped face the size is

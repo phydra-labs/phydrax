@@ -1759,7 +1759,9 @@ def test_native_cad_certificate_refuses_requests_without_native_owner(
     witness = request.native_cad_surface
     domain = request.domain
     records = request.native_cad_records
-    assert witness is not None and records is not None
+    assert (
+        witness is not None and records is not None and request.cell_regions is not None
+    )
     assert isinstance(domain, MeshingDomain)
     features = (
         (ProtectedFeature(MeshingScope.whole(domain, 2), FeatureKind.SURFACE),)
@@ -1773,6 +1775,7 @@ def test_native_cad_certificate_refuses_requests_without_native_owner(
         domain,
         witness,
         records,
+        request.cell_regions,
         0.05,
         features,
         normal,

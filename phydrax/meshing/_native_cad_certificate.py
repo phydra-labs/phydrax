@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native certification of a CAD solid: chart partition, embedding, fidelity, volume.
+"""Native CAD certification: chart partition, embedding, fidelity, labeled volume.
 
 A native CAD solid candidate (``cad_mesh_solid``) carries its boundary as
 mesh vertex triangles together with the per-face chart realization the
@@ -12,24 +12,25 @@ in order and each conditional on the previous:
 - V4 ``verify_chart_partition``: the chart triangles of every face are
   positively oriented, pairwise interior-disjoint and close against the trim
   chords (exact);
-- V2 ``verify_surface_embedding``: the boundary triangles form an embedded
-  closed surface (exact);
-- the source shell (:mod:`._native_cad_shell`): the source B-Rep is one
-  embedded shell with outward material side, proved from the model once per
-  domain and, on the chart export, its trim-to-chord homotopies and sheets;
+- V2 ``verify_surface_embedding``: the exterior and, for multiple solids,
+  each region's outward boundary form embedded closed surfaces (exact);
+- the source shell (:mod:`._native_cad_shell`): exact source topology and
+  material orientation, with embedded trim-to-chord homotopies and sheets;
 - V3 ``verify_cad_fidelity``: every chart triangle's two-sided deviation from
   its source face is bounded by the requested tolerance, and each chart
   triangle is the boundary triangle it names with its orientation;
 - the tetrahedra are globally embedded (``verify_tetrahedra``) and tile
-  exactly the solid the certified surface bounds (``verify_volume``).
+  exactly the source-declared solid on each side of every certified exterior
+  or interface triangle (``verify_volume``).
 
 The witness is construction data, not a claim: every verdict is recomputed
-from it, the mesh and the source domain.
+from it, the mesh, cell labels and the source domain.
 """
 
 from __future__ import annotations
 
 from enum import IntEnum
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -51,14 +52,28 @@ from .._meshcore import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_geometry import CellGeometrySpec, ScalarCoordinateElement
+from ..discretization._cell_geometry_validity import (
+    affine_tetrahedra,
+    AffineTetrahedra,
+    cell_geometry_id,
+)
+from ..discretization._coordinate_enclosure import (
+    coordinate_map_expressions,
+    coordinate_point_rounding_bound,
+    evaluate_expression,
+    RationalPolynomial,
+)
+from ..discretization._reference_cell import reference_cell_topology
 from ..geometry._embedding_state import MeshCertificateFinding
-from ..geometry._mesh_certificates import certificate_status
+from ..geometry._mesh_certificates import _same_tree_content, certificate_status
+from ..geometry._rational import fraction_down, fraction_up
 
 
 if TYPE_CHECKING:
     from .._meshcore import CadSurfaceResult
-    from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
+    from ..geometry._global_embedding import GlobalEmbeddingCertificate
     from ..geometry._mesh_certificates import MeshCertificateStatus
     from ..geometry._meshing_domain import MeshingDomain
     from ._contracts import ProtectedFeature
@@ -174,17 +189,195 @@ def _ids(rows: np.ndarray, /) -> tuple[int, ...]:
     return tuple(int(row) for row in np.unique(rows) if row >= 0)
 
 
+def _surface_embedding_findings(
+    points: np.ndarray,
+    triangles: np.ndarray,
+    boundary: str,
+    /,
+    *,
+    original_rows: np.ndarray | None = None,
+) -> tuple[MeshCertificateFinding, ...]:
+    embedding = verify_surface_embedding(points, triangles)
+    if embedding.status is VerdictStatus.CERTIFIED:
+        return ()
+    status = "violated" if embedding.status is VerdictStatus.VIOLATED else "unresolved"
+    findings = embedding.findings
+    kinds = findings["kind"]
+    by_facet = (kinds == SurfaceFindingKind.DEGENERATE) | (
+        kinds == SurfaceFindingKind.CONTACT
+    )
+    triangle_rows = _ids(
+        np.concatenate((findings["first"][by_facet], findings["second"][by_facet]))
+    )
+    if original_rows is not None and triangle_rows:
+        triangle_rows = tuple(int(row) for row in original_rows[list(triangle_rows)])
+    vertex_rows = _ids(
+        np.concatenate((findings["first"][~by_facet], findings["second"][~by_facet]))
+    )
+    detail = (
+        f"V2 {boundary} embedding {embedding.status.name.lower()} ("
+        + _counts(kinds, SurfaceFindingKind)
+        + ")."
+    )
+    evidence: list[MeshCertificateFinding] = []
+    if triangle_rows:
+        evidence.append(
+            MeshCertificateFinding(
+                "cad_surface_embedding",
+                status,
+                "facet",
+                triangle_rows,
+                detail=detail + " Entity IDs index the full physical triangle bank.",
+            )
+        )
+    if vertex_rows:
+        evidence.append(
+            MeshCertificateFinding(
+                "cad_surface_embedding",
+                status,
+                "vertex",
+                vertex_rows,
+                detail=detail + " Entity IDs index the mesh coordinate bank.",
+            )
+        )
+    if not evidence:
+        evidence.append(
+            MeshCertificateFinding("cad_surface_embedding", status, "mesh", detail=detail)
+        )
+    return tuple(evidence)
+
+
+def _volume_finding(
+    points: np.ndarray,
+    cells: np.ndarray,
+    triangles: np.ndarray,
+    cell_regions: np.ndarray | None,
+    surface_regions: np.ndarray | None,
+    /,
+) -> MeshCertificateFinding | None:
+    tiling = verify_tetrahedra(points, cells)
+    if tiling.status is not VerdictStatus.CERTIFIED:
+        return MeshCertificateFinding(
+            "cad_volume",
+            "violated" if tiling.status is VerdictStatus.VIOLATED else "unresolved",
+            "cell",
+            _ids(
+                np.asarray([tiling.first_nonpositive_cell, tiling.first_nonmanifold_cell])
+            ),
+            detail=f"Tetrahedra are not globally embedded ({tiling.status.name}).",
+        )
+    coverage = verify_volume(
+        points,
+        cells,
+        triangles,
+        cell_regions=cell_regions,
+        surface_regions=surface_regions,
+    )
+    if coverage.certified:
+        return None
+    cell_rows = [coverage.first_unmatched_cell]
+    mismatch = ""
+    if surface_regions is not None:
+        cell_rows.append(coverage.first_region_mismatch_cell)
+        mismatch = f"; {coverage.region_mismatches} region mismatches"
+    return MeshCertificateFinding(
+        "cad_volume",
+        "violated",
+        "cell",
+        _ids(np.asarray(cell_rows)),
+        detail="Tetrahedra do not tile the solid the certified surface bounds "
+        f"({coverage.unmatched_boundary_faces} unmatched boundary faces, "
+        f"{coverage.unmatched_surface_triangles} unmatched surface triangles{mismatch}).",
+    )
+
+
+def _restricted_affine_rounding(
+    mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
+) -> Fraction | None:
+    """Prove affine cell maps share one exact point per stored vertex."""
+    elements, routes, coefficients = geometry.resolve(mesh)
+    bank = np.asarray(coefficients, dtype=np.float64)
+    corners: dict[int, tuple[Fraction, ...]] = {}
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if not isinstance(element, ScalarCoordinateElement):
+            return None
+        reference = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in reference_cell_topology(block.cell_kind).vertices
+        )
+        for row, (cell, dofs) in enumerate(
+            zip(np.asarray(block.vertices), np.asarray(route), strict=True)
+        ):
+            expressions = coordinate_map_expressions(element, bank[dofs], cell_row=row)
+            if any(
+                isinstance(expression, RationalPolynomial)
+                or any(sum(power) > 1 for power in expression)
+                for expression in expressions
+            ):
+                return None
+            for vertex, corner in zip(cell, reference, strict=True):
+                exact = tuple(evaluate_expression(value, corner) for value in expressions)
+                if not all(isinstance(value, Fraction) for value in exact):
+                    return None
+                rational = tuple(value for value in exact if isinstance(value, Fraction))
+                if corners.setdefault(int(vertex), rational) != rational:
+                    return None
+    if len(corners) != len(points):
+        return None
+    ordered = tuple(corners[row] for row in range(len(points)))
+    if not np.array_equal(np.asarray(ordered, dtype=np.float64), points):
+        return None
+    return coordinate_point_rounding_bound(ordered, points)
+
+
+def _cad_affine_carrier(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    embedding: GlobalEmbeddingCertificate | None,
+    /,
+) -> tuple[AffineTetrahedra, Fraction] | None:
+    carrier = affine_tetrahedra(mesh, geometry)
+    if carrier is not None:
+        return carrier, Fraction(0)
+    if (
+        geometry.restriction_source is None
+        or geometry.exact_coordinate_bank is not None
+        or embedding is None
+        or embedding.status != "certified"
+    ):
+        return None
+    embedding.require_current(mesh, geometry)
+    carrier = affine_tetrahedra(mesh, CellGeometrySpec.affine(mesh))
+    if carrier is None:
+        return None
+    rounding = _restricted_affine_rounding(mesh, geometry, carrier.points)
+    if rounding is None:
+        return None
+    # The exact map and its rounded carrier realize the same oriented cell
+    # complex. Embedding of the exact map is proved independently; the
+    # carrier's labeled incidence and surface-link checks then apply to it.
+    return carrier, rounding
+
+
 def _native_findings(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     domain: MeshingDomain,
     witness: NativeCadSurfaceWitness,
+    cell_regions: np.ndarray,
     tolerance: float,
     protected_features: bool,
     normal_deviation: bool,
     /,
+    *,
+    embedding: GlobalEmbeddingCertificate | None = None,
 ) -> tuple[tuple[MeshCertificateFinding, ...], np.ndarray | None, str | None]:
-    """The first refusing verifier's findings, or none, V3's bounds and the shell proof."""
+    """Return the first refusal, or the V3 upper bounds and source-shell identity.
+
+    Keep the verifier order explicit: each stage consumes the same carrier,
+    chart and source, and runs only after the preceding premise is proved.
+    Most lines describe failure evidence, not alternate execution paths.
+    """
     from ._native_cad_shell import certify_native_trim_references, source_shell
     from .providers._native_cad_bundle import cad_geometry_bundle, coefficient_bounds
 
@@ -223,10 +416,42 @@ def _native_findings(
             None,
             None,
         )
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
-    cells = np.concatenate(
-        [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
+    carrier = _cad_affine_carrier(mesh, geometry, embedding)
+    if carrier is None:
+        return (
+            (
+                MeshCertificateFinding(
+                    "cad_fidelity",
+                    "unresolved",
+                    "mesh",
+                    detail="Native CAD proof requires the affine tetrahedral map "
+                    "interpolating the mesh vertices.",
+                ),
+            ),
+            None,
+            None,
+        )
+    tetrahedra, rounding = carrier
+    points, cells = tetrahedra.points, tetrahedra.cells
+    # Matching barycentric weights move every point of a chart facet by at
+    # most the largest vertex displacement, in either direction.
+    fidelity_tolerance = (
+        tolerance if not rounding else fraction_down(Fraction(tolerance) - rounding)
     )
+    if fidelity_tolerance <= 0.0:
+        return (
+            (
+                MeshCertificateFinding(
+                    "cad_fidelity",
+                    "unresolved",
+                    "mesh",
+                    detail="The exact affine map's carrier rounding bound "
+                    f"{fraction_up(rounding):.6g} exhausts the CAD tolerance.",
+                ),
+            ),
+            None,
+            None,
+        )
     bundle = cad_geometry_bundle(domain)
     model = bundle.model
     chords = witness.chords()
@@ -253,25 +478,24 @@ def _native_findings(
             None,
         )
     triangles = np.asarray(witness.surface_triangles)
-    embedding = verify_surface_embedding(points, triangles)
-    if embedding.status is not VerdictStatus.CERTIFIED:
-        return (
-            (
-                MeshCertificateFinding(
-                    "cad_surface_embedding",
-                    "violated"
-                    if embedding.status is VerdictStatus.VIOLATED
-                    else "unresolved",
-                    "facet",
-                    _ids(embedding.findings["first"]),
-                    detail=f"V2 surface embedding {embedding.status.name.lower()} ("
-                    + _counts(embedding.findings["kind"], SurfaceFindingKind)
-                    + "); entity ids are the findings' first vertex or triangle.",
-                ),
-            ),
-            None,
-            None,
-        )
+    surface_regions = None
+    if len(domain.regions) > 1:
+        from ._native_cad_records import _native_cad_regional_surface
+
+        regional = _native_cad_regional_surface(mesh, domain, witness)
+        surface_regions = regional.regions
+        for region in range(-1, len(domain.regions)):
+            original, outward = regional.outward(None if region < 0 else region)
+            boundary = "union exterior" if region < 0 else f"region {region} surface"
+            findings = _surface_embedding_findings(
+                points, outward, boundary, original_rows=original
+            )
+            if findings:
+                return findings, None, None
+    else:
+        findings = _surface_embedding_findings(points, triangles, "surface")
+        if findings:
+            return findings, None, None
     shell = source_shell(domain)
     if shell.refusal is None:
         sheets, refusal = certify_native_trim_references(domain, model, shell, witness)
@@ -314,7 +538,7 @@ def _native_findings(
             np.asarray(witness.edge_chord),
         ),
         chords,
-        tolerance,
+        fidelity_tolerance,
         FIDELITY_DEPTH,
     )
     unresolved = np.flatnonzero(fidelity.item_status != MeshcoreStatus.OK)
@@ -347,58 +571,35 @@ def _native_findings(
             None,
             None,
         )
-    tiling = verify_tetrahedra(points, cells)
-    if tiling.status is not VerdictStatus.CERTIFIED:
-        return (
-            (
-                MeshCertificateFinding(
-                    "cad_volume",
-                    "violated"
-                    if tiling.status is VerdictStatus.VIOLATED
-                    else "unresolved",
-                    "cell",
-                    _ids(
-                        np.asarray(
-                            [tiling.first_nonpositive_cell, tiling.first_nonmanifold_cell]
-                        )
-                    ),
-                    detail=f"Tetrahedra are not globally embedded ({tiling.status.name}).",
-                ),
-            ),
-            None,
-            None,
+    finding = _volume_finding(
+        points,
+        cells,
+        triangles,
+        None if surface_regions is None else cell_regions,
+        surface_regions,
+    )
+    if finding is not None:
+        return (finding,), None, None
+    bounds = fidelity.upper
+    if rounding:
+        bounds = np.minimum(
+            tolerance,
+            np.nextafter(bounds + fraction_up(rounding), np.inf),
         )
-    coverage = verify_volume(points, cells, triangles)
-    if not coverage.certified:
-        return (
-            (
-                MeshCertificateFinding(
-                    "cad_volume",
-                    "violated",
-                    "cell",
-                    _ids(np.asarray([coverage.first_unmatched_cell])),
-                    detail="Tetrahedra do not tile the solid the certified surface bounds "
-                    f"({coverage.unmatched_boundary_faces} unmatched boundary faces, "
-                    f"{coverage.unmatched_surface_triangles} unmatched surface "
-                    "triangles).",
-                ),
-            ),
-            None,
-            None,
-        )
-    return (), fidelity.upper, shell_id
+    return (), bounds, shell_id
 
 
 class NativeCadCertificate(StrictModule, NonTrainableState):
-    """V4, V2, V3 and volume verdicts of one native CAD solid.
+    """V4, V2, V3 and labeled volume verdicts for native CAD solids.
 
     ``maximum_deviation`` is V3's certified upper bound of the boundary's
     two-sided deviation from its source faces (``None`` unless certified);
     ``triangle_deviation`` holds it per chart triangle. ``source_shell`` is
-    the identity of the source-shell proof (:mod:`._native_cad_shell`: one
-    embedded shell with outward material side), ``None`` unless proved.
+    the identity of the embedded source boundary and material proof
+    (:mod:`._native_cad_shell`), ``None`` unless proved.
     ``records_id`` binds the native occurrence and curve records
     (:mod:`._native_cad_records`) the candidate's associations must match.
+    ``geometry_id`` binds the exact coordinate map used by the proof.
     """
 
     witness: NativeCadSurfaceWitness
@@ -408,6 +609,7 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
     source_shell: str | None
     findings: tuple[MeshCertificateFinding, ...]
     records_id: str
+    geometry_id: str
     status: MeshCertificateStatus = eqx.field(static=True)
     certificate_id: str
 
@@ -418,33 +620,31 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         domain: MeshingDomain,
         witness: NativeCadSurfaceWitness,
         records: NativeCadRecords,
+        cell_regions: np.ndarray,
         tolerance: float,
         protected_features: tuple[ProtectedFeature, ...] | None,
         maximum_normal_deviation: float | None,
         /,
+        *,
+        embedding: GlobalEmbeddingCertificate | None = None,
     ) -> None:
         if type(witness) is not NativeCadSurfaceWitness:
             raise TypeError("witness must be NativeCadSurfaceWitness.")
-        if witness.mesh_id != mesh.mesh_id:
-            raise ValueError("The native CAD surface witness binds another mesh.")
         from ._native_cad_records import NativeCadRecords
 
         if type(records) is not NativeCadRecords:
             raise TypeError("records must be NativeCadRecords.")
-        if (records.source_id, records.source_revision) != (
-            domain.source_id,
-            domain.source_revision,
-        ):
-            raise ValueError("The native CAD records bind another source revision.")
-        records.require_mesh(mesh)
+        records.require_premises(mesh, domain, cell_regions, witness, tolerance)
         findings, bounds, shell = _native_findings(
             mesh,
             geometry,
             domain,
             witness,
+            cell_regions,
             tolerance,
             bool(protected_features),
             maximum_normal_deviation is not None,
+            embedding=embedding,
         )
         self.witness = witness
         self.tolerance = float(tolerance)
@@ -453,16 +653,48 @@ class NativeCadCertificate(StrictModule, NonTrainableState):
         self.source_shell = shell
         self.findings = findings
         self.records_id = records.records_id
+        self.geometry_id = cell_geometry_id(geometry)
         self.status = certificate_status(findings)
-        self.certificate_id = canonical_fingerprint(
+        self.certificate_id = self._identity()
+
+    def require_binding(
+        self,
+        witness: NativeCadSurfaceWitness,
+        records: NativeCadRecords,
+        geometry_id: str,
+        /,
+    ) -> None:
+        """Require the proof to bind the request's chart, materials and map."""
+        if (
+            not _same_tree_content(self.witness, witness)
+            or self.records_id != records.records_id
+            or self.geometry_id != geometry_id
+            or self.tolerance != records.tolerance
+        ):
+            raise ValueError(
+                "Native CAD certificate binds another witness, records or geometry."
+            )
+        if (
+            self.status != certificate_status(self.findings)
+            or self.certificate_id != self._identity()
+        ):
+            raise ValueError("Native CAD certificate evidence differs from its identity.")
+
+    def _identity(self) -> str:
+        bounds = self.triangle_deviation
+        return canonical_fingerprint(
             {
                 "kind": "native-cad-certificate",
-                "witness": witness.witness_id,
+                "witness": self.witness.witness_id,
                 "tolerance": self.tolerance,
                 "maximum_deviation": self.maximum_deviation,
-                "source_shell": shell,
-                "findings": tuple(value.finding_id for value in findings),
-                "records": records.records_id,
+                "triangle_deviation": None
+                if bounds is None
+                else array_tree_fingerprint(bounds),
+                "source_shell": self.source_shell,
+                "findings": tuple(value.finding_id for value in self.findings),
+                "records": self.records_id,
+                "geometry": self.geometry_id,
             }
         )
 

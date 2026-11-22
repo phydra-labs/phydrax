@@ -2,17 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Source-shell proof of a native CAD solid: model part cached, chart part per mesh.
+"""Source-shell proof for native CAD solids: model part cached, chart part per mesh.
 
-The native certificate claims the source B-Rep is one embedded shell with
-outward material side, as the Python CAD certificate did
-(``certify_single_source_shell``), from two parts:
+The native certificate proves embedded source boundaries with outward material
+sides. Multi-solid sources additionally require exact disjoint material regions
+and a manifold union exterior. The proof has two parts:
 
 - the model part (:func:`prove_source_shell`, cached per domain by
-  :func:`source_shell`): exact single-shell topology, the native trim sheet of
-  every face (``certify_brep_trim_sheet``), every touching face pair meeting
-  only on its shared topology (``certify_source_face_pairs``) and a positive
-  shell volume sign;
+  :func:`source_shell`): exact source topology and material orientation,
+  embedded trim sheets and declared face contact only. Multiple solids use
+  the exact planar convex-trim source proof and the union's exterior links;
 - the chart part (:func:`certify_native_trim_references`), on the native chart
   export the mesh was built from: each face's chord loops become reference
   segments bound to their source use (p-curve, coedge endpoint roots and
@@ -50,7 +49,9 @@ from ..geometry.brep._source_embedding import (
     certify_reference_trim_sheet,
 )
 from ..geometry.brep._source_shell_admissibility import (
+    _source_region_exterior_is_manifold,
     certify_source_face_pairs,
+    certify_source_regions,
     shell_source_model,
 )
 
@@ -90,6 +91,8 @@ def _shell(
     sheets: tuple[BRepTrimSheetProof, ...] = (),
     pairs: tuple[str, ...] = (),
     /,
+    *,
+    regional_material: str | None = None,
 ) -> NativeSourceShell:
     identity = canonical_fingerprint(
         {
@@ -98,6 +101,11 @@ def _shell(
             "refusal": refusal,
             "sheets": tuple(sheet.embedding.source_id for sheet in sheets),
             "pairs": pairs,
+            **(
+                {}
+                if regional_material is None
+                else {"regional_material": regional_material}
+            ),
             "volume_sign": None if refusal is not None else 1,
         }
     )
@@ -107,23 +115,36 @@ def _shell(
 def prove_source_shell(domain: MeshingDomain, /) -> NativeSourceShell:
     """Prove the mesh-independent shell premises of ``domain`` (uncached)."""
     try:
-        model = shell_source_model(domain)
-        if model is None:
-            return _shell(domain, "single-shell topology")
+        regional_material = None
+        model = None
+        if len(domain.regions) > 1:
+            material = certify_source_regions(domain)
+            if material is None:
+                return _shell(domain, "exact planar source material regions")
+            if not _source_region_exterior_is_manifold(domain, material):
+                return _shell(domain, "regional union exterior links")
+            regional_material = material.certificate_id
+        else:
+            model = shell_source_model(domain)
+            if model is None:
+                return _shell(domain, "single-shell topology")
         sheets: list[BRepTrimSheetProof] = []
         for patch in range(len(domain.patches)):
             sheet = certify_brep_trim_sheet(domain, patch)
             if sheet is None:
                 return _shell(domain, f"trim sheet of source patch {patch}")
             sheets.append(sheet)
-        pairs = certify_source_face_pairs(model)
-        if pairs is None:
-            return _shell(domain, "source face pair separation")
-        if brep_shell_volume_sign(model, model.geometry.solid_shells[0][0]) != 1:
-            return _shell(domain, "shell volume sign")
+        pairs = ()
+        if model is not None:
+            certified_pairs = certify_source_face_pairs(model)
+            if certified_pairs is None:
+                return _shell(domain, "source face pair separation")
+            if brep_shell_volume_sign(model, model.geometry.solid_shells[0][0]) != 1:
+                return _shell(domain, "shell volume sign")
+            pairs = certified_pairs
     except _UNDECIDED as error:
         return _shell(domain, f"undecided source ({type(error).__name__}: {error})")
-    return _shell(domain, None, tuple(sheets), pairs)
+    return _shell(domain, None, tuple(sheets), pairs, regional_material=regional_material)
 
 
 # The model part depends on the domain's BRep authority and its patch/loop
