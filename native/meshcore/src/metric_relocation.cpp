@@ -27,6 +27,8 @@ constexpr std::int64_t kSeedSteps = 5;
 constexpr std::int64_t kLastStep = 2200;
 // The 53 resolutions of a carrier and one more, the bound the host states.
 constexpr std::int64_t kAllCarriers = 54;
+constexpr std::uint8_t kMeasured = 1;
+constexpr std::uint8_t kNeighborFirst = 2;
 
 bool same_point(const double* a, const double* b) noexcept {
   return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
@@ -51,7 +53,7 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
       cell_count_(star.cell_count),
       points_(star.points, star.points + 3 * star.point_count),
       metrics_(star.metrics, star.metrics + 9 * star.point_count),
-      measured_(star.measured, star.measured + (star.point_count - 1)),
+      spoke_flags_(static_cast<std::size_t>(spoke_count_)),
       cells_(star.cells, star.cells + 4 * star.cell_count),
       before_quality_(star.before_quality),
       determinant_floor_(star.determinant_floor),
@@ -65,10 +67,19 @@ RelocationSearch::RelocationSearch(const CarrierSource& source, const double* so
     std::copy(projector, projector + 9, projector_.begin());
   }
   const std::size_t spokes = static_cast<std::size_t>(spoke_count_);
+  if (!star.neighbor_first.empty() && star.neighbor_first.size() != spokes) {
+    throw std::invalid_argument("Relocation measurement directions must match the spokes.");
+  }
   scratch_.resize(spokes);
   selected_.reserve(spokes);
   for (std::size_t spoke = 0; spoke < spokes; ++spoke) {
-    if (measured_[spoke] != 0) selected_.push_back(star.before_lengths[spoke]);
+    if (star.measured[spoke] != 0) {
+      spoke_flags_[spoke] |= kMeasured;
+      selected_.push_back(star.before_lengths[spoke]);
+    }
+    if (!star.neighbor_first.empty() && star.neighbor_first[spoke] != 0) {
+      spoke_flags_[spoke] |= kNeighborFirst;
+    }
   }
   if (!band_violations(static_cast<std::int64_t>(selected_.size()), selected_.data(),
                        before_long_, before_short_)) {
@@ -127,9 +138,12 @@ RelocationSearch::Verdict RelocationSearch::evaluate(const double* position,
   selected_.clear();
   for (std::int64_t spoke = 0; spoke < spoke_count_; ++spoke) {
     const std::size_t index = static_cast<std::size_t>(spoke);
-    lengths[index] = length(position, point(spoke + 1), metric,
-                            metrics_.data() + 9 * (index + 1));
-    if (measured_[index] != 0) selected_.push_back(lengths[index]);
+    const double* neighbor = point(spoke + 1);
+    const double* tensor = metrics_.data() + 9 * (index + 1);
+    lengths[index] = (spoke_flags_[index] & kNeighborFirst) != 0
+                         ? length(neighbor, position, tensor, metric)
+                         : length(position, neighbor, metric, tensor);
+    if ((spoke_flags_[index] & kMeasured) != 0) selected_.push_back(lengths[index]);
   }
   if (!band_violations(static_cast<std::int64_t>(selected_.size()), selected_.data(), long_,
                        short_)) {

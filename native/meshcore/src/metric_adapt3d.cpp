@@ -794,7 +794,11 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   std::sort(others.begin(), others.end());
   others.erase(std::unique(others.begin(), others.end()), others.end());
   for (std::int32_t other : others) {
-    added.add(length(point.data(), mesh_.point(other), tensor.data(), metric(other)));
+    const double* fixed = mesh_.point(other);
+    const double* fixed_tensor = metric(other);
+    added.add(mesh_.vertex_id(other) < next_vertex_id_
+                  ? length(fixed, point.data(), fixed_tensor, tensor.data())
+                  : length(point.data(), fixed, tensor.data(), fixed_tensor));
   }
   if (!added.measured || !removed.measured) return TetEditStatus::kApplied;
   added.finish();
@@ -1233,8 +1237,11 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
     if (v != removed && !protected_edge(kept, v)) before.push_back(edge_length(kept, v));
   }
   std::vector<std::int64_t> spokes;
+  std::vector<std::uint8_t> neighbor_first;
   for (std::size_t row = 2; row < rows.size(); ++row) {
-    if (!protected_edge(kept, rows[row])) spokes.push_back(static_cast<std::int64_t>(row));
+    if (protected_edge(kept, rows[row])) continue;
+    spokes.push_back(static_cast<std::int64_t>(row));
+    neighbor_first.push_back(mesh_.vertex_id(rows[row]) < mesh_.vertex_id(kept));
   }
   std::vector<std::int64_t> cells;
   for (std::int32_t slot : removed_star) {
@@ -1251,6 +1258,7 @@ bool Adapter::plan_collapse(std::int32_t removed, std::int32_t kept, CollapsePla
   star.metrics = tensors.data();
   star.spoke_count = static_cast<std::int64_t>(spokes.size());
   star.spokes = spokes.data();
+  star.neighbor_first = neighbor_first;
   star.before_count = static_cast<std::int64_t>(before.size());
   star.before_lengths = before.data();
   star.cell_count = static_cast<std::int64_t>(cells.size() / 4);
@@ -2396,6 +2404,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   std::vector<double> points(3 * rows.size());
   std::vector<double> tensors(9 * rows.size());
   std::vector<std::int8_t> measured(spokes);
+  std::vector<std::uint8_t> neighbor_first(spokes);
   std::vector<double> lengths(spokes);
   bool outside = false;
   for (std::size_t row = 0; row < rows.size(); ++row) {
@@ -2403,6 +2412,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
     std::copy_n(metric(rows[row]), 9, tensors.data() + 9 * row);
     if (row == 0) continue;
     measured[row - 1] = protected_edge(vertex, rows[row]) ? 0 : 1;
+    neighbor_first[row - 1] = mesh_.vertex_id(rows[row]) < mesh_.vertex_id(vertex);
     lengths[row - 1] = edge_length(vertex, rows[row]);
     if (measured[row - 1] != 0 && !(lengths[row - 1] > 0.0 && std::isfinite(lengths[row - 1]))) {
       return TetEditStatus::kApplied;  // a spoke without a finite quantum is not relocated
@@ -2453,6 +2463,7 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   relocation_star.metrics = tensors.data();
   relocation_star.measured = measured.data();
   relocation_star.before_lengths = lengths.data();
+  relocation_star.neighbor_first = neighbor_first;
   relocation_star.before_quality = before_quality;
   relocation_star.cell_count = static_cast<std::int64_t>(cells.size() / 4);
   relocation_star.cells = cells.data();
@@ -2589,8 +2600,9 @@ TetEditStatus Adapter::relocate_pair(std::int32_t u, std::int32_t v, bool& appli
     const Tetrahedron& cell = mesh_.tet(slot);
     for (int first = 0; first < 4; ++first) {
       for (int second = first + 1; second < 4; ++second) {
-        const std::int32_t a = std::min(cell.v[first], cell.v[second]);
-        const std::int32_t b = std::max(cell.v[first], cell.v[second]);
+        std::int32_t a = cell.v[first];
+        std::int32_t b = cell.v[second];
+        if (mesh_.vertex_id(b) < mesh_.vertex_id(a)) std::swap(a, b);
         if ((a == u || a == v || b == u || b == v) && !protected_edge(a, b)) edges.push_back({a, b});
       }
     }

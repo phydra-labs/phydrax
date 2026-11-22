@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <set>
+#include <span>
 #include <vector>
 
 #include "metric_carrier.hpp"
@@ -48,6 +49,9 @@ struct RelocationStar {
   // Per spoke: whether its length is measured, and its metric length now.
   const std::int8_t* measured = nullptr;
   const double* before_lengths = nullptr;
+  // A nonzero entry puts the neighbor first in the floating measurement.
+  // Empty means moving vertex first on every spoke, as for row-ordered stars.
+  std::span<const std::uint8_t> neighbor_first;
   // Smallest cell quality now.
   double before_quality = 0.0;
   // Cells of the star, four star rows each.
@@ -129,7 +133,7 @@ class RelocationSearch {
   std::int64_t cell_count_ = 0;
   std::vector<double> points_;
   std::vector<double> metrics_;
-  std::vector<std::int8_t> measured_;
+  std::vector<std::uint8_t> spoke_flags_;
   std::vector<std::int64_t> cells_;
   double before_quality_ = 0.0;
   double determinant_floor_ = 0.0;

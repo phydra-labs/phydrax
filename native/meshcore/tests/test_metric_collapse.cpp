@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "check.hpp"
+#include "metric_collapse.hpp"
+#include "metric_float.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -492,6 +494,40 @@ void search_on_simplices() {
   }
 }
 
+void reversed_survivor_spoke_is_not_an_improvement() {
+  namespace metric = phx::mc::metric;
+  constexpr double h = 0x1.b7f92f0969ff9p-1;
+  const double points[12]{h, h, h, 0, 0, 0, 0, 1, 0, 1, 0, 0};
+  const double tensors[36]{
+      1.25, 0, 0, 0, 1.25, 0, 0, 0, 1.25,
+      0.64, 0, 0, 0, 0.64, 0, 0, 0, 0.64,
+      1.25, 0, 0, 0, 1.25, 0, 0, 0, 1.25,
+      1.25, 0, 0, 0, 1.25, 0, 0, 0, 1.25};
+  const double before = metric::length(points + 3, points, tensors + 9, tensors);
+  PHX_CHECK(before > kUpper && metric::length(points, points + 3, tensors, tensors + 9) <= kUpper);
+  const std::int64_t spokes[1]{1};
+  const std::uint8_t neighbor_first[1]{1};
+  const std::int64_t cells[4]{0, 1, 2, 3};
+  metric::CollapseStar star;
+  star.point_count = 4;
+  star.points = points;
+  star.metrics = tensors;
+  star.spoke_count = 1;
+  star.spokes = spokes;
+  star.neighbor_first = neighbor_first;
+  star.before_count = 1;
+  star.before_lengths = &before;
+  star.cell_count = 1;
+  star.cells = cells;
+  star.determinant_floor = kFloor;
+  metric::CollapseObjective objective(star);
+  double after = 0.0;
+  double quality = 0.0;
+  PHX_CHECK(objective.evaluate(points, tensors, &after, quality) ==
+            metric::PositionVerdict::kNotDecreasing);
+  PHX_CHECK(after == before);
+}
+
 void guards_arguments() {
   Source source;
   create(source, {0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 8}, {0, 1, 2, 3});
@@ -566,6 +602,7 @@ void guards_arguments() {
 int main() {
   band_edge();
   violation_order();
+  reversed_survivor_spoke_is_not_an_improvement();
   cells_decide();
   unmeasured_and_domain();
   search_moves();
