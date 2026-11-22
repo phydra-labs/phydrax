@@ -3931,6 +3931,25 @@ def clip_box_halfspaces(
 # ---------------------------------------------------------------- triangulations
 
 
+def _mesh_shape(
+    library: MeshcoreLibrary, handle: ctypes.c_void_p, /
+) -> tuple[int, int, int, int]:
+    shape = (ctypes.c_int64 * 4)()
+    _raise_for_call(library["phx_mc_mesh_shape"](handle, shape), "mesh_shape")
+    dimension, point_count, cell_count, input_count = shape
+    index_limit = np.iinfo(np.int32).max
+    if (
+        dimension not in (2, 3)
+        or not 0 <= point_count < index_limit
+        or cell_count < 0
+        or not 0 <= input_count < index_limit
+    ):
+        raise MeshcoreError(
+            MeshcoreStatus.INTERNAL_ERROR, "mesh handle reported invalid output sizes"
+        )
+    return dimension, point_count, cell_count, input_count
+
+
 def _read_mesh(
     library: MeshcoreLibrary, handle: ctypes.c_void_p, /
 ) -> tuple[
@@ -3945,20 +3964,7 @@ def _read_mesh(
     # The native handle is released even when a copy fails. Every array is
     # written in full by the copy, so it is allocated uninitialized.
     try:
-        shape = (ctypes.c_int64 * 4)()
-        _raise_for_call(library["phx_mc_mesh_shape"](handle, shape), "mesh_shape")
-        dimension, point_count, cell_count, input_count = shape
-        if (
-            dimension not in (2, 3)
-            or point_count < 0
-            or point_count >= np.iinfo(np.int32).max
-            or cell_count < 0
-            or input_count < 0
-            or input_count >= np.iinfo(np.int32).max
-        ):
-            raise MeshcoreError(
-                MeshcoreStatus.INTERNAL_ERROR, "mesh handle reported invalid output sizes"
-            )
+        dimension, point_count, cell_count, input_count = _mesh_shape(library, handle)
         points = np.empty((point_count, dimension), dtype=np.float64)
         cells = np.empty((cell_count, dimension + 1), dtype=np.int32)
         vertex_map = np.empty((input_count,), dtype=np.int32)
@@ -4027,7 +4033,22 @@ def _triangulate(
         _raise_for_call(status, operation)
     if not handle.value:
         raise MeshcoreError(MeshcoreStatus.INTERNAL_ERROR, f"{operation}: missing mesh")
-    _, cells, vertex_map, _, _, _, _ = _read_mesh(library, handle)
+    try:
+        dimension, _, cell_count, input_count = _mesh_shape(library, handle)
+        cells = np.empty((cell_count, dimension + 1), dtype=np.int32)
+        vertex_map = np.empty((input_count,), dtype=np.int32)
+        _raise_for_call(
+            library["phx_mc_mesh_copy_cells"](handle, cell_count, cells.ctypes.data),
+            "mesh_copy_cells",
+        )
+        _raise_for_call(
+            library["phx_mc_mesh_copy_vertex_map"](
+                handle, input_count, vertex_map.ctypes.data
+            ),
+            "mesh_copy_vertex_map",
+        )
+    finally:
+        library["phx_mc_mesh_free"](handle)
     return cells, vertex_map
 
 
