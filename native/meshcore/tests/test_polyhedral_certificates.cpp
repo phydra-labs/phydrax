@@ -1,6 +1,5 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
-// phx_mc_polyhedral_star_validity and phx_mc_polyhedral_star_decomposition on
-// the unit cube (values of the rational proofs worked by hand) and refusals.
+// Native star validity/decomposition and declared contact of exact polyhedra.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -290,6 +289,55 @@ void test_parallelism() {
   PHX_CHECK(run(0).validity_code == PHX_MC_INVALID_ARGUMENT);
 }
 
+void test_declared_contact_workers() {
+  // Two exact tetrahedra share the z=0 face. The third occupies the second
+  // tetrahedron's position but claims no shared mesh vertices with the first.
+  constexpr std::array<double, 15> points{
+      0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1};
+  constexpr std::array<int64_t, 12> corners{0, 1, 2, 3, 0, 2, 1, 4, 0, 2, 1, 4};
+  constexpr std::array<int64_t, 12> vertices{0, 1, 2, 3, 0, 2, 1, 4, 10, 11, 12, 13};
+  constexpr std::array<int64_t, 4> cells{0, 1, 2, 3};
+  constexpr std::array<int64_t, 4> offsets{0, 4, 8, 12};
+  constexpr std::array<int64_t, 12> tetrahedron_faces{0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3};
+  std::array<int64_t, 13> face_offsets{};
+  std::array<int64_t, 36> face_corners{};
+  for (std::size_t i = 0; i < face_offsets.size(); ++i) face_offsets[i] = 3 * i;
+  for (std::size_t i = 0; i < face_corners.size(); ++i) {
+    face_corners[i] = tetrahedron_faces[i % tetrahedron_faces.size()];
+  }
+  Bank point_bank, rows;
+  for (std::size_t i = 0; i < points.size(); i += 3) {
+    for (std::size_t k = 0; k < 3; ++k) point_bank.add(static_cast<int64_t>(points[i + k]));
+    point_bank.add(1);
+  }
+  for (const auto corner : corners) {
+    for (int k = 0; k < 3; ++k) rows.add(static_cast<int64_t>(points[3 * corner + k]));
+  }
+  for (std::size_t cell = 0; cell < 3; ++cell) rows.add(1);
+
+  constexpr std::size_t kPairs = 513;
+  std::array<int64_t, 2 * kPairs> pairs;
+  std::array<int8_t, kPairs> expected;
+  for (std::size_t pair = 0; pair < kPairs; ++pair) {
+    const int64_t other = pair % 3 == 0 ? 2 : 1;
+    const bool reverse = pair % 2 != 0;
+    pairs[2 * pair] = reverse ? other : 0;
+    pairs[2 * pair + 1] = reverse ? 0 : other;
+    expected[pair] = other == 1 ? 1 : 0;
+  }
+  for (const int32_t workers : {1, 2, 3, 4, 8}) {
+    std::array<int8_t, kPairs> declared;
+    declared.fill(-1);
+    PHX_CHECK(phx_mc_polyhedral_declared_contacts(
+                  5, point_bank.offsets.data(), point_bank.words.data(), point_bank.signs.data(),
+                  points.data(), points.data(), corners.data(), 3, cells.data(), offsets.data(),
+                  corners.data(), vertices.data(), rows.offsets.data(), rows.words.data(),
+                  rows.signs.data(), offsets.data(), face_offsets.data(), face_corners.data(),
+                  kPairs, pairs.data(), declared.data(), workers) == PHX_MC_OK);
+    PHX_CHECK(declared == expected);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -300,5 +348,6 @@ int main() {
   test_face_triangulation();
   test_cube_validity();
   test_parallelism();
+  test_declared_contact_workers();
   return phx::mc::test::finish("test_polyhedral_certificates");
 }
