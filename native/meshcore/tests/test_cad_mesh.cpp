@@ -484,7 +484,8 @@ void check_chart(const phx_mc_cad_model& model, const phx::mc::CadSurfaceMesh& m
   PHX_CHECK(count == 0);
 }
 
-SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
+SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size,
+                               int32_t parallelism = 1) {
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
   const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count),
@@ -492,7 +493,7 @@ SurfaceArrays assemble_surface(const phx_mc_cad_model& model, double size) {
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   phx_mc_cad_surface_result* handle = nullptr;
-  const int32_t status = phx_mc_cad_mesh(&model, &controls, &handle);
+  const int32_t status = phx_mc_cad_mesh_surface(&model, &controls, &handle, parallelism);
   if (status != PHX_MC_OK)
     std::fprintf(stderr, "assembly faces=%lld curves=%lld status=%d handle=%d\n",
                  static_cast<long long>(model.surface_count), static_cast<long long>(model.curve_count),
@@ -1294,7 +1295,7 @@ void periodic_wrap_failure(bool huge = false) {
   const double size = 0.2, tolerance = 0.4, curve_tolerance = 1.0;
   const phx_mc_cad_surface_controls controls{&size,&tolerance,&curve_tolerance,0.5,1.3,1e-8};
   phx_mc_cad_surface_result* handle = nullptr;
-  PHX_CHECK(phx_mc_cad_mesh(&model, &controls, &handle) == PHX_MC_UNRESOLVED);
+  PHX_CHECK(phx_mc_cad_mesh_surface(&model, &controls, &handle, 1) == PHX_MC_UNRESOLVED);
   PHX_CHECK(handle != nullptr);
   if (!handle) return;
   int64_t counts[9]{};
@@ -1407,6 +1408,10 @@ void quadric_assembly() {
   check_closed(mesh, 2);
   const SurfaceArrays generated = assemble_surface(model, spacing);
   check_closed(generated, 2);
+  for (const int32_t workers : {2, 3, 4, 8}) {
+    const SurfaceArrays threaded = assemble_surface(model, spacing, workers);
+    check_deterministic(generated, threaded);
+  }
   for (std::size_t i = 0; i < mesh.regions.size(); i += 2)
     PHX_CHECK(mesh.regions[i] == -1 && mesh.regions[i+1] == 0);
   for (std::size_t i = 0; i < mesh.points.size(); i += 3) {

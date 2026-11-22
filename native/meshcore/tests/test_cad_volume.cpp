@@ -167,7 +167,7 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   const phx_mc_cad_volume_controls volume{2.0, minimum_dihedral, 0.0, order};
   phx_mc_cad_surface_result* handle = nullptr;
-  s.status = phx_mc_cad_mesh_solid(&model, &controls, &volume, &handle);
+  s.status = phx_mc_cad_mesh_volume(&model, &controls, &volume, &handle, 1);
   PHX_CHECK(handle != nullptr);
   if (!handle) return s;
   int64_t n[9]{}, m[6]{};
@@ -474,9 +474,13 @@ void refusals() {
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   const phx_mc_cad_volume_controls bad{2.0, 15.5, 0.0, 3};
   phx_mc_cad_surface_result* handle = reinterpret_cast<phx_mc_cad_surface_result*>(&handle);
-  PHX_CHECK(phx_mc_cad_mesh_solid(&model, &controls, &bad, &handle) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_cad_mesh_volume(&model, &controls, &bad, &handle, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(handle == nullptr);
-  PHX_CHECK(phx_mc_cad_mesh_solid(&model, &controls, nullptr, &handle) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_cad_mesh_volume(&model, &controls, nullptr, &handle, 1) == PHX_MC_INVALID_ARGUMENT);
+  const phx_mc_cad_volume_controls linear{2.0, 15.5, 0.0, 1};
+  PHX_CHECK(phx_mc_cad_mesh_volume(&model, &controls, &linear, &handle, 0) ==
+            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(handle == nullptr);
   int64_t sizes_out[6];
   PHX_CHECK(phx_mc_cad_volume_sizes(nullptr, sizes_out) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_cad_volume_export(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);

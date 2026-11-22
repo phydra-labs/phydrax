@@ -1364,14 +1364,14 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
         ),
     ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
-    "phx_mc_cad_mesh": (_I32, (_P, _P, _P)),
+    "phx_mc_cad_mesh_surface": (_I32, (_P, _P, _P, _I32)),
     "phx_mc_cad_surface_result_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_export": (_I32, (_P, _P)),
     "phx_mc_cad_surface_result_free": (None, (_P,)),
     "phx_mc_cad_surface_pole_sectors": (_I32, (_P, _I64, _P, _P)),
     "phx_mc_cad_chart_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_chart_export": (_I32, (_P, _P)),
-    "phx_mc_cad_mesh_solid": (_I32, (_P, _P, _P, _P)),
+    "phx_mc_cad_mesh_volume": (_I32, (_P, _P, _P, _P, _I32)),
     "phx_mc_cad_volume_sizes": (_I32, (_P, _P)),
     "phx_mc_cad_volume_export": (_I32, (_P, _P)),
     "phx_mc_implicit_restricted_delaunay": (
@@ -15060,6 +15060,8 @@ def _cad_mesh(
     volume: _CadVolumeControls | None,
     /,
 ) -> tuple[CadSurfaceResult, CadVolumeResult | None]:
+    from ._exact_kernels import exact_kernel_parallelism
+
     sizes = _real_array(face_sizes, "face_sizes")
     tolerances = _real_array(face_tolerances, "face_tolerances")
     curve_tols = _real_array(curve_tolerances, "curve_tolerances")
@@ -15078,18 +15080,21 @@ def _cad_mesh(
     )
     library = load_meshcore()
     handle = ctypes.c_void_p()
+    parallelism = exact_kernel_parallelism()
     status = MeshcoreStatus(
-        library["phx_mc_cad_mesh"](
+        library["phx_mc_cad_mesh_surface"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
             ctypes.addressof(handle),
+            parallelism,
         )
         if volume is None
-        else library["phx_mc_cad_mesh_solid"](
+        else library["phx_mc_cad_mesh_volume"](
             ctypes.addressof(structure),
             ctypes.addressof(controls),
             ctypes.addressof(volume),
             ctypes.addressof(handle),
+            parallelism,
         )
     )
     del retained

@@ -85,6 +85,9 @@
   input index). The sequential build reads each neighbor's cached conflict
   classification once and visits only the three boundary-face vertices
   when identifying buried vertices in a regular triangulation.
+- Native CAD surface and solid construction prepare faces in bounded batches
+  on the meshcore worker pool. They assemble faces and report failures in
+  source order; shared curves and volume construction are unchanged.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6

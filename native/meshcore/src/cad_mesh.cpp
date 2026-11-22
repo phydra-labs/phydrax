@@ -10,6 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "expansion.hpp"
 #include "spatial_sort.hpp"
@@ -127,9 +130,10 @@ void morton_reorder(CadSurfaceMesh& mesh) {
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& output, bool graded_pole_rings,
-                         const cad::ProximityField* proximity) {
+                         const cad::ProximityField* proximity, int32_t parallelism) {
   const auto& model = geometry.model();
-  if ((model.surface_count && (!sizes || !tolerances)) || !(theta > 0.0) || !std::isfinite(theta))
+  if (parallelism < 1 || (model.surface_count && (!sizes || !tolerances)) ||
+      !(theta > 0.0) || !std::isfinite(theta))
     return PHX_MC_INVALID_ARGUMENT;
   if (model.surface_count > std::numeric_limits<int32_t>::max() ||
       model.curve_count > std::numeric_limits<int32_t>::max() ||
@@ -184,23 +188,9 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
                                             curve_parameter(model,c,curves.parameters[first+j+1])});
     }
   }
-  int32_t overall = PHX_MC_OK;
-  for (int32_t face = 0; face < model.surface_count; ++face) {
-    CadFaceMesh local;
-    const auto face_start = std::chrono::steady_clock::now();
-    status = cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta, local,
-                           nullptr, nullptr, graded_pole_rings, proximity);
-    mesh.face_ns += elapsed_ns(face_start);
-    if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
-    if (local.failure.reason != 0) {
-      output = CadSurfaceMesh{};
-      output.face_failures = std::move(mesh.face_failures);
-      output.face_failures.push_back(local.failure);
-      return PHX_MC_UNRESOLVED;
-    }
+  const auto append_face = [&](int32_t face, const CadFaceMesh& local) -> int32_t {
     mesh.face_failures.insert(mesh.face_failures.end(), local.refinement_failures.begin(),
                               local.refinement_failures.end());
-    if (status == PHX_MC_UNRESOLVED) overall = status;
     mesh.face_stats.push_back(local.stats);
     mesh.omitted_pole_points.push_back(local.omitted_pole_points);
     for (const auto& pole : local.pole_sectors)
@@ -290,6 +280,55 @@ int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscret
       chart_record(sliver, -1);
       mesh.sliver_uv.push_back(uv_record(sliver));
       mesh.sliver_patches.push_back(face);
+    }
+    return PHX_MC_OK;
+  };
+
+  int32_t overall = PHX_MC_OK;
+  // Curves are fixed before any face is prepared. Bound the unassembled
+  // work, and consume its statuses and records in the original face order.
+  constexpr std::size_t kFaceWindow = 8;
+  const std::size_t window = parallelism == 1 ? 1 : kFaceWindow;
+  const auto face_count = static_cast<std::size_t>(model.surface_count);
+  for (std::size_t first = 0; first < face_count; first += window) {
+    const auto count = std::min(window, face_count - first);
+    std::array<CadFaceMesh, kFaceWindow> staged;
+    std::array<int32_t, kFaceWindow> outcomes;
+    const auto prepare = [&](std::size_t lane) {
+      const auto face = static_cast<int32_t>(first + lane);
+      outcomes[lane] = guarded([&]() -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        return cad_mesh_face(geometry, curves, face, sizes[face], tolerances[face], theta,
+                             staged[lane], nullptr, nullptr, graded_pole_rings, proximity);
+      });
+    };
+    const auto face_start = std::chrono::steady_clock::now();
+    if (count == 1) {
+      prepare(0);
+    } else {
+      const auto dispatched = parallel_for(
+          count, {1, static_cast<uint32_t>(parallelism)},
+          [&](std::size_t begin, std::size_t end, ChunkContext&) {
+            for (std::size_t lane = begin; lane < end; ++lane) prepare(lane);
+          });
+      if (dispatched != PHX_MC_OK) return dispatched;
+    }
+    mesh.face_ns += elapsed_ns(face_start);
+    for (std::size_t lane = 0; lane < count; ++lane) {
+      const int32_t outcome = outcomes[lane];
+      const auto& local = staged[lane];
+      if (outcome != PHX_MC_OK && outcome != PHX_MC_UNRESOLVED) return outcome;
+      if (local.failure.reason != 0) {
+        output = CadSurfaceMesh{};
+        output.face_failures = std::move(mesh.face_failures);
+        output.face_failures.push_back(local.failure);
+        return PHX_MC_UNRESOLVED;
+      }
+      if (outcome == PHX_MC_UNRESOLVED) overall = outcome;
+      const int32_t appended = append_face(static_cast<int32_t>(first + lane), local);
+      if (appended != PHX_MC_OK) return appended;
+      staged[lane] = CadFaceMesh{};
     }
   }
   morton_reorder(mesh);

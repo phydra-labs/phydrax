@@ -192,7 +192,7 @@ bool surface_mesh(const phx_mc_cad_model& model, double size, Surface& s) {
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
   phx_mc_cad_surface_result* handle = nullptr;
-  const int32_t status = phx_mc_cad_mesh(&model, &controls, &handle);
+  const int32_t status = phx_mc_cad_mesh_surface(&model, &controls, &handle, 1);
   PHX_CHECK(status == PHX_MC_OK);
   if (status != PHX_MC_OK || handle == nullptr) {
     phx_mc_cad_surface_result_free(handle);

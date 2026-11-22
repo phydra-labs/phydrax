@@ -1119,6 +1119,11 @@ of incident cells at each vertex, certifies embedding on the actual map, and
 includes the maximum vertex-rounding displacement in the deviation bound.
 Replay re-proves the original labeled CAD mesh and the current map.
 
+`PHX_MESHCORE_THREADS` controls native CAD face preparation. Faces share
+the already discretized curves, run in bounded batches, and are assembled
+in source order, so the worker count does not change the mesh or findings.
+Curve discretization and the fixed-boundary volume fill remain sequential.
+
 The native CAD solid (`cad_tetrahedral`, `prove=False`) keeps the requested size
 h and refines only where fidelity or the rim rule needs it. `ProximitySizeControl`
 on source faces is its thickness sizing: at a point of a scoped face the size is

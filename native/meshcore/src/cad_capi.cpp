@@ -39,7 +39,7 @@ bool present(const void* p, std::size_t n) { return n == 0 || p != nullptr; }
 // route, null: none) is the proximity size field of both stages.
 int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad_model& model,
                      const phx_mc_cad_surface_controls& controls, double rim_dihedral_degrees,
-                     phx_mc_cad_surface_result& candidate,
+                     phx_mc_cad_surface_result& candidate, int32_t parallelism,
                      const phx::mc::cad::ProximityField* proximity = nullptr) {
   const double* face_sizes = controls.face_sizes;
   phx::mc::cad::CurveControls curve_controls{
@@ -57,7 +57,8 @@ int32_t mesh_surface(const phx::mc::cad::CadGeometry& geometry, const phx_mc_cad
     return curve_status == PHX_MC_UNRESOLVED ? curve_status : PHX_MC_INTERNAL_ERROR;
   const int32_t surface_status = phx::mc::cad_mesh_surface(
       geometry, candidate.curves.view(), face_sizes, controls.face_tolerances,
-      controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity);
+      controls.tolerance_fraction, candidate.mesh, rim_dihedral_degrees > 0.0, proximity,
+      parallelism);
   candidate.volume.stats.face_ns = candidate.mesh.face_ns;
   candidate.volume.stats.assembly_ns = candidate.mesh.assembly_ns;
   if (surface_status != PHX_MC_OK && surface_status != PHX_MC_UNRESOLVED) return surface_status;
@@ -140,34 +141,38 @@ int32_t proximity_field(const phx::mc::cad::CadGeometry& geometry,
 }
 }  // namespace
 
-extern "C" int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
-                                     const phx_mc_cad_surface_controls* controls,
-                                     phx_mc_cad_surface_result** result) {
+extern "C" int32_t phx_mc_cad_mesh_surface(const phx_mc_cad_model* model,
+                                          const phx_mc_cad_surface_controls* controls,
+                                          phx_mc_cad_surface_result** result,
+                                          int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!model || !controls || !result) return PHX_MC_INVALID_ARGUMENT;
     *result = nullptr;
+    if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
     phx::mc::cad::CadGeometry geometry;
     const int32_t bound = geometry.bind(*model);
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
-    const int32_t status = mesh_surface(geometry, *model, *controls, 0.0, *candidate);
+    const int32_t status = mesh_surface(geometry, *model, *controls, 0.0, *candidate, parallelism);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     *result = candidate.release();
     return status;
   });
 }
 
-extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
-                                           const phx_mc_cad_surface_controls* controls,
-                                           const phx_mc_cad_volume_controls* volume,
-                                           phx_mc_cad_surface_result** result) {
+extern "C" int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
+                                         const phx_mc_cad_surface_controls* controls,
+                                         const phx_mc_cad_volume_controls* volume,
+                                         phx_mc_cad_surface_result** result,
+                                         int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
     if (!model || !controls || !volume || !result) return PHX_MC_INVALID_ARGUMENT;
     *result = nullptr;
+    if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
     if (volume->geometry_order != 1 && volume->geometry_order != 2)
       return PHX_MC_INVALID_ARGUMENT;
     phx::mc::cad::CadGeometry geometry;
@@ -175,7 +180,8 @@ extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
     if (bound != PHX_MC_OK) return bound;
     auto candidate = std::make_unique<phx_mc_cad_surface_result>();
     int32_t status =
-        mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate);
+        mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate,
+                     parallelism);
     if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
     // Proximity controls: the first pass at the request is the field's proxy
     // (cad_proximity.hpp); the solid is the second pass under the field, and
@@ -188,7 +194,7 @@ extern "C" int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
       const phx_mc_cad_volume_stats first = candidate->volume.stats;
       candidate = std::make_unique<phx_mc_cad_surface_result>();
       status = mesh_surface(geometry, *model, *controls, volume->min_dihedral_degrees, *candidate,
-                            &field);
+                          parallelism, &field);
       if (status != PHX_MC_OK && status != PHX_MC_UNRESOLVED) return status;
       candidate->volume.stats.curve_ns += first.curve_ns;
       candidate->volume.stats.face_ns += first.face_ns;

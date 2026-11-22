@@ -3728,10 +3728,13 @@ typedef struct phx_mc_cad_surface_arrays {
  * failure without a complete proposal may return a null handle. Sizes are
  * vertices, triangles, slivers, curve edges, faces, curves, curve parameters,
  * unresolved curve intervals and face failures, respectively. Export validates
- * every capacity and required output before writing anything. */
-PHX_MC_API int32_t phx_mc_cad_mesh(const phx_mc_cad_model* model,
-                                    const phx_mc_cad_surface_controls* controls,
-                                    phx_mc_cad_surface_result** result);
+ * every capacity and required output before writing anything. Faces are
+ * prepared independently with up to parallelism workers, then assembled
+ * in source order. */
+PHX_MC_API int32_t phx_mc_cad_mesh_surface(const phx_mc_cad_model* model,
+                                         const phx_mc_cad_surface_controls* controls,
+                                         phx_mc_cad_surface_result** result,
+                                         int32_t parallelism);
 PHX_MC_API int32_t phx_mc_cad_surface_result_sizes(const phx_mc_cad_surface_result* result,
                                                     int64_t sizes[9]);
 PHX_MC_API int32_t phx_mc_cad_surface_result_export(const phx_mc_cad_surface_result* result,
@@ -3925,7 +3928,7 @@ typedef struct phx_mc_cad_quadratic_request {
 } phx_mc_cad_quadratic_request;
 PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request* request);
 
-/* CAD solid: the curve and face stages of phx_mc_cad_mesh, then the volume
+/* CAD solid: the curves and faces of phx_mc_cad_mesh_surface, then the volume
  * stage (S3 fixed-boundary recovery of the assembled surface, one facet per
  * triangle, curve segments as protected edges; refinement to the request h
  * (h passed unchanged as the circumradius target at every surface point, S3's graded field
@@ -4028,10 +4031,11 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t curve_capacity;
   double* curve_rim_wedges;
 } phx_mc_cad_volume_arrays;
-PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
+PHX_MC_API int32_t phx_mc_cad_mesh_volume(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,
                                          const phx_mc_cad_volume_controls* volume,
-                                         phx_mc_cad_surface_result** result);
+                                         phx_mc_cad_surface_result** result,
+                                         int32_t parallelism);
 /* Sizes: points, cells, surface triangles, P2 edges, P2 records, splits. */
 PHX_MC_API int32_t phx_mc_cad_volume_sizes(const phx_mc_cad_surface_result* result,
                                            int64_t sizes[6]);

@@ -115,6 +115,7 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
 int32_t cad_mesh_surface(const cad::CadGeometry& geometry, const CadCurveDiscretization& curves,
                          const double* sizes, const double* tolerances, double theta,
                          CadSurfaceMesh& result, bool graded_pole_rings = false,
-                         const cad::ProximityField* proximity = nullptr);
+                         const cad::ProximityField* proximity = nullptr,
+                         int32_t parallelism = 1);
 
 }  // namespace phx::mc
