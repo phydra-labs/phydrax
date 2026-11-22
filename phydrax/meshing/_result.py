@@ -896,6 +896,7 @@ class CellMeshingResult(StrictModule, NonTrainableState):
             _same_model_content,
             restore_mapped_layer_core_boundary_source,
             restore_model_archive_value,
+            restore_native_cad_association_authority,
         )
         from ._native_construction import NativeMeshOrganization
         from ._scope import MeshingScope
@@ -1378,6 +1379,9 @@ class CellMeshingResult(StrictModule, NonTrainableState):
         validated = validate_fidelity_witnesses(
             mesh, geometry, source, fidelity_witness, scoped
         )
+        cad_surface, cad_records = restore_native_cad_association_authority(
+            original, mesh, domain
+        )
         inputs = MeshCertificationInputs(
             mesh,
             geometry,
@@ -1402,16 +1406,8 @@ class CellMeshingResult(StrictModule, NonTrainableState):
                 if original.source_coverage_witness is None
                 else restore_model_archive_value(original.source_coverage_witness)
             ),
-            native_cad_surface=(
-                None
-                if original.native_cad_surface is None
-                else restore_model_archive_value(original.native_cad_surface)
-            ),
-            native_cad_records=(
-                None
-                if original.native_cad_records is None
-                else restore_model_archive_value(original.native_cad_records)
-            ),
+            native_cad_surface=cad_surface,
+            native_cad_records=cad_records,
         )
         if inputs.request_id != original.request_id:
             raise ValueError("Stored certification request changed.")

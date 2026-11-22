@@ -1,26 +1,16 @@
 """Source occurrence and association records of a native CAD solid.
 
-``cad_mesh_solid`` classifies every surface vertex (corner, curve or face row
-with its parameters), every boundary triangle (source face and the regions on
-its two sides) and every curve edge (curve row and the curve parameters at its
-ends). This module resolves those native arrays through the ``MeshingDomain``
-occurrence tables into
-
-- the B-Rep associations of every mesh dimension (vertices, edges, faces and
-  cells) (:func:`native_cad_associations`), and
-- :class:`NativeCadRecords`, the curve-edge authority a native CAD solid
-  carries in its certification inputs: the constructed curve edges (roots),
-  the exact curve association that partitions them, and the pole slivers.
-
-Adaptation (which keeps the boundary) carries the records and the native
-chart realization to its target (:meth:`NativeCadRecords.retarget`,
-:func:`retarget_native_cad_surface`); the native verifiers re-prove the chart.
+The native chart, the actual B-Rep occurrences and the tetrahedral mesh
+determine the B-Rep tables. Curve roots are issued by the original native
+chart. An adapted mesh retains that one origin, not a chain of association
+tables, so an archive can replay exact curve ancestry from independent
+operands instead of certifying the tables it is asked to restore.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -29,8 +19,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import CadChartResult, CadSurfaceResult, MeshcoreStatus
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
 from ..geometry.brep._projection_contracts import brep_entity_id
 from ._association import (
+    _fraction_rows_fingerprint,
     GeometryAssociation,
     GeometryAssociationKind,
     GeometryAssociationProvenance,
@@ -41,7 +33,6 @@ from ._native_cad_certificate import NativeCadSurfaceWitness
 
 if TYPE_CHECKING:
     from ..discretization._cell_mesh import CellMesh
-    from ..geometry._meshing_domain import MeshingDomain
     from ._lineage import MeshLineage, VertexInterpolationStencil
     from ._result import CellMeshingResult
 
@@ -52,6 +43,8 @@ _ROLES = (
     GeometrySourceEntityRole.FACET,
     GeometrySourceEntityRole.REGION,
 )
+
+type _CurveSplit = tuple[int, int, int, Fraction]
 # Edges (k, k + 1) of a chart triangle, the edge_chord column order.
 _CHART_EDGES = ((0, 1), (1, 2), (2, 0))
 
@@ -63,13 +56,18 @@ def _readonly(value: object, dtype: type[np.generic], /) -> np.ndarray:
 
 
 def _root_id(
-    source_id: str, source_revision: str, roots: np.ndarray, parameters: np.ndarray, /
+    source_id: str,
+    source_revision: str,
+    roots: np.ndarray,
+    parameters: np.ndarray,
+    vertices: np.ndarray,
+    /,
 ) -> str:
     return canonical_fingerprint(
         {
             "kind": "native-cad-curve-roots",
             "source": (source_id, source_revision),
-            "roots": array_tree_fingerprint((roots, parameters)),
+            "roots": array_tree_fingerprint((roots, parameters, vertices)),
         }
     )
 
@@ -132,19 +130,6 @@ class _Occurrences:
         return resolved
 
 
-def _domain_curve_rows(domain: MeshingDomain, /) -> np.ndarray:
-    """Domain curve of every native model curve row."""
-    from .providers._native_cad_bundle import cad_geometry_bundle
-
-    edge_curve_rows = np.asarray(
-        cad_geometry_bundle(domain).edge_curve_rows, dtype=np.int64
-    )
-    regular = np.flatnonzero(edge_curve_rows >= 0)
-    rows = np.empty((regular.size,), dtype=np.int64)
-    rows[edge_curve_rows[regular]] = regular
-    return rows
-
-
 def _sorted_rows(entities: np.ndarray, /) -> dict[tuple[int, ...], int]:
     return {
         tuple(int(value) for value in key): row
@@ -153,71 +138,89 @@ def _sorted_rows(entities: np.ndarray, /) -> dict[tuple[int, ...], int]:
 
 
 class NativeCadRecords(StrictModule, NonTrainableState):
-    """Curve-edge authority and pole slivers of one native CAD solid mesh.
+    """Complete native source association authority for one CAD solid mesh.
 
-    ``root_curves``/``root_parameters`` are the constructed curve edges
-    (domain curve row; curve parameter at their first and second canonical
-    vertex). ``curve`` maps the current curve edges to exact source intervals:
-    its ``parent_ids`` name roots, ``parent_association_id`` is ``root_id``,
-    and its children partition every root interval exactly.
+    The roots name original curve segments by source curve, oriented endpoint
+    parameters and endpoint global IDs. Adapted records retain the checked
+    origin mesh/chart needed to replay this historical claim on archive read.
+    ``association_keys`` bind the full B-Rep and curve tables, including
+    residuals (not part of ``GeometryAssociation.association_id``).
     ``sliver_vertices`` are the pole slivers' ``{P, Q}`` vertex global ids.
     """
 
     mesh_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
+    witness_id: str = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    origin_mesh: CellMesh | None
+    origin_chart: NativeCadSurfaceWitness | None
+    curve_splits: tuple[_CurveSplit, ...] = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     root_curves: np.ndarray
     root_parameters: np.ndarray
+    root_vertices: np.ndarray
     root_id: str = eqx.field(static=True)
     curve: GeometryAssociation | None
     sliver_vertices: np.ndarray
+    association_keys: tuple[str, ...] = eqx.field(static=True)
     records_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         mesh: CellMesh,
-        source_id: str,
-        source_revision: str,
-        root_curves: object,
-        root_parameters: object,
-        curve: GeometryAssociation | None,
-        sliver_vertices: object,
+        domain: MeshingDomain,
+        witness: NativeCadSurfaceWitness,
+        tolerance: float,
+        regions: np.ndarray,
+        origin_mesh: CellMesh | None,
+        origin_chart: NativeCadSurfaceWitness | None,
+        curve_splits: tuple[_CurveSplit, ...],
+        associations_out: list[tuple[GeometryAssociation, ...]],
         /,
     ) -> None:
-        roots = _readonly(root_curves, np.int64)
-        parameters = _readonly(root_parameters, np.float64)
-        slivers = _readonly(sliver_vertices, np.int64)
-        if (
-            roots.ndim != 1
-            or parameters.shape != (roots.size, 2)
-            or not np.all(np.isfinite(parameters))
-            or np.any(roots < 0)
-            or slivers.ndim != 2
-            or slivers.shape[1] != 2
-            or np.any(slivers[:, 0] >= slivers[:, 1])
-        ):
-            raise ValueError("Native CAD records are misaligned.")
+        roots, curve, slivers, tables = _derive_native_cad_tables(
+            mesh,
+            domain,
+            regions,
+            witness,
+            tolerance,
+            origin_mesh,
+            origin_chart,
+            curve_splits,
+        )
         self.mesh_id = mesh.mesh_id
         self.topology_id = mesh.topology_id
-        self.source_id = source_id
-        self.source_revision = source_revision
-        self.root_curves = roots
-        self.root_parameters = parameters
-        self.root_id = _root_id(source_id, source_revision, roots, parameters)
+        self.source_id = domain.source_id
+        self.source_revision = domain.source_revision
+        self.witness_id = witness.witness_id
+        self.tolerance = tolerance
+        self.origin_mesh = origin_mesh
+        self.origin_chart = origin_chart
+        self.curve_splits = curve_splits
+        self.root_curves, self.root_parameters, self.root_vertices = roots
+        self.root_id = _root_id(domain.source_id, domain.source_revision, *roots)
         self.curve = curve
         self.sliver_vertices = slivers
+        self.association_keys = tuple(_association_key(item) for item in tables)
         self.records_id = canonical_fingerprint(
             {
                 "kind": "native-cad-records",
                 "mesh": self.mesh_id,
+                "tolerance": self.tolerance,
                 "topology": self.topology_id,
+                "witness": self.witness_id,
+                "origin": None if origin_chart is None else origin_chart.witness_id,
+                "curve_splits": tuple(
+                    (vertex, first, second, weight.numerator, weight.denominator)
+                    for vertex, first, second, weight in curve_splits
+                ),
                 "roots": self.root_id,
-                "curve": None if curve is None else curve.association_id,
+                "associations": self.association_keys,
                 "slivers": array_tree_fingerprint(slivers),
             }
         )
-        self.require_mesh(mesh)
+        associations_out.append(tables)
 
     def require_mesh(self, mesh: CellMesh, /) -> None:
         """Require these records to bind ``mesh`` and partition every root."""
@@ -272,249 +275,924 @@ class NativeCadRecords(StrictModule, NonTrainableState):
 
     def require_curve(self, curve: GeometryAssociation | None, /) -> None:
         """Require ``curve`` to be these records' curve association."""
-        if (None if curve is None else curve.association_id) != (
-            None if self.curve is None else self.curve.association_id
+        if (None if curve is None else _association_key(curve)) != (
+            None if self.curve is None else self.association_keys[-1]
         ):
             raise ValueError("CAD curve association differs from its native records.")
 
     def require_associations(
-        self, associations: tuple[GeometryAssociation, ...], /
+        self, mesh: CellMesh, associations: tuple[GeometryAssociation, ...], /
     ) -> None:
-        """Require associations of this source to carry exactly ``curve``."""
-        own = tuple(
-            item
-            for item in associations
-            if (item.source_id, item.source_revision)
-            == (self.source_id, self.source_revision)
+        """Require every owned table, and only those tables, before consuming rows."""
+        if (mesh.mesh_id, mesh.topology_id) != (self.mesh_id, self.topology_id):
+            raise ValueError("Native CAD associations bind another mesh.")
+        targets = tuple(mesh.entity_set(dimension) for dimension in range(4))
+        slots = {
+            (GeometryAssociationKind.BREP, entity_set.entity_set_id): dimension
+            for dimension, entity_set in enumerate(targets)
+        }
+        if len(self.association_keys) == 5:
+            slots[(GeometryAssociationKind.CURVE, targets[1].entity_set_id)] = 4
+        seen: set[int] = set()
+        for table in associations:
+            if (table.source_id, table.source_revision) != (
+                self.source_id,
+                self.source_revision,
+            ):
+                continue
+            slot = slots.get((table.association_kind, table.target_entity_set_id))
+            if slot is None or slot in seen:
+                raise ValueError(
+                    "Native CAD associations have an unexpected or duplicate table."
+                )
+            if slot < 4 and not np.array_equal(
+                np.asarray(table.target_global_ids), np.asarray(targets[slot].entity_ids)
+            ):
+                raise ValueError(
+                    "Native CAD association does not cover its exact target rows."
+                )
+            if _association_key(table) != self.association_keys[slot]:
+                raise ValueError(
+                    "Native CAD association differs from its native records."
+                )
+            seen.add(slot)
+        if len(seen) != len(slots):
+            raise ValueError("Native CAD associations are missing an owned source table.")
+
+    def require_premises(
+        self,
+        mesh: CellMesh,
+        domain: MeshingDomain,
+        regions: np.ndarray,
+        witness: NativeCadSurfaceWitness,
+        tolerance: float,
+        /,
+    ) -> None:
+        _require_solid_region(mesh, domain, regions)
+        witness.require_binding(mesh)
+        self.require_mesh(mesh)
+        if (self.source_id, self.source_revision) != (
+            domain.source_id,
+            domain.source_revision,
+        ) or (self.witness_id, self.tolerance) != (witness.witness_id, tolerance):
+            raise ValueError(
+                "Native CAD association records bind another source chart or tolerance."
+            )
+
+    @classmethod
+    def from_stored_fields(
+        cls,
+        stored: NativeCadRecords,
+        mesh: CellMesh,
+        domain: MeshingDomain,
+        regions: np.ndarray,
+        witness: NativeCadSurfaceWitness,
+        tolerance: float,
+        /,
+    ) -> NativeCadRecords:
+        """Replay native ownership; archived table contents and IDs are not premises."""
+        from ..discretization._cell_geometry import CellGeometrySpec
+        from ..discretization._cell_mesh import CellMesh
+        from ._native_cad_certificate import _native_findings
+
+        witness.require_binding(mesh)
+        origin = stored.origin_mesh
+        origin_chart = stored.origin_chart
+        if origin is not None and origin_chart is not None:
+            # The original tetrahedra are used by the same independent
+            # embedding/tiling proof as a root result. No parent result or
+            # previously authored association is needed to replay the root.
+            origin = CellMesh.from_stored_fields(origin)
+            origin_chart.require_binding(origin)
+            findings, _, _ = _native_findings(
+                origin,
+                CellGeometrySpec.affine(origin),
+                domain,
+                origin_chart,
+                tolerance,
+                False,
+                False,
+            )
+            if findings:
+                raise ValueError(
+                    "Native CAD association archive has no verified original chart."
+                )
+        restored, _ = _issue_records(
+            mesh,
+            domain,
+            regions,
+            witness,
+            tolerance,
+            origin,
+            origin_chart,
+            stored.curve_splits,
         )
-        if not own:
-            return
-        curves = tuple(
-            item for item in own if item.association_kind is GeometryAssociationKind.CURVE
-        )
-        if len(curves) > 1:
-            raise ValueError("A native CAD solid carries one curve association.")
-        self.require_curve(curves[0] if curves else None)
+        if (
+            (stored.records_id, stored.root_id, stored.association_keys)
+            != (restored.records_id, restored.root_id, restored.association_keys)
+            or (stored.mesh_id, stored.topology_id, stored.witness_id, stored.tolerance)
+            != (
+                restored.mesh_id,
+                restored.topology_id,
+                restored.witness_id,
+                restored.tolerance,
+            )
+            or (stored.source_id, stored.source_revision)
+            != (domain.source_id, domain.source_revision)
+            or not np.array_equal(stored.root_curves, restored.root_curves)
+            or not np.array_equal(stored.root_parameters, restored.root_parameters)
+            or not np.array_equal(stored.root_vertices, restored.root_vertices)
+            or not np.array_equal(stored.sliver_vertices, restored.sliver_vertices)
+        ):
+            raise ValueError(
+                "Native CAD association archive differs from replayed source authority."
+            )
+        restored.require_curve(stored.curve)
+        return restored
 
     def retarget(
         self,
         source: CellMeshingResult,
         lineage: MeshLineage,
         target: CellMesh,
+        regions: np.ndarray,
         stencil: VertexInterpolationStencil | None,
         /,
-    ) -> NativeCadRecords:
-        """These records on an adapted ``target`` through its exact lineage.
-
-        The curve association follows the curve-edge lineage (a split curve
-        edge's children take the exact halves of its source interval, the
-        source occurrence inherited); the pole slivers keep their vertex ids,
-        and a split pole segment is refused (see
-        :func:`retarget_native_cad_surface`).
-        """
+    ) -> tuple[
+        NativeCadRecords, NativeCadSurfaceWitness, tuple[GeometryAssociation, ...]
+    ]:
+        """Rebuild one target association bank from checked chart and edge ancestry."""
+        from ._association_routes import require_transfer_lineage
         from ._surface_association_transfer import _curve_edges_with_root_ancestry
 
-        self.require_mesh(source.mesh)
-        curve = self.curve
-        if target.topology_id == source.mesh.topology_id:
-            return NativeCadRecords(
-                target,
-                self.source_id,
-                self.source_revision,
-                self.root_curves,
-                self.root_parameters,
-                curve,
-                self.sliver_vertices,
+        self.require_associations(source.mesh, source.associations)
+        report = source.certification
+        if report is None or report.inputs.native_cad_records is not self:
+            raise ValueError(
+                "Native CAD association transfer needs its certified source records."
             )
-        if stencil is None:
-            raise ValueError("Native CAD records require exact target vertex ancestry.")
-        if curve is not None:
-            curve = _curve_edges_with_root_ancestry(
-                source, lineage, target, stencil, curve
+        inputs = report.inputs
+        domain, chart = inputs.domain, inputs.native_cad_surface
+        if (
+            not isinstance(domain, MeshingDomain)
+            or chart is None
+            or inputs.cell_regions is None
+        ):
+            raise ValueError(
+                "Native CAD association transfer needs its source domain and chart."
             )
-        weights = _stencil_weights(source.mesh, target, stencil)
-        source_rows = {
-            int(value): row
-            for row, value in enumerate(
-                np.asarray(source.mesh.vertex_global_ids).tolist()
-            )
-        }
-        for first, second in self.sliver_vertices.tolist():
-            segment = {source_rows[first], source_rows[second]}
-            if any(set(row) == segment for row in weights):
-                raise ValueError(
-                    "Native CAD records refuse a split pole segment "
-                    f"{(first, second)}: a non-pole point has no collapsed chart image."
-                )
-        return NativeCadRecords(
-            target,
-            self.source_id,
-            self.source_revision,
-            self.root_curves,
-            self.root_parameters,
-            curve,
-            self.sliver_vertices,
+        self.require_premises(
+            source.mesh, domain, inputs.cell_regions, chart, self.tolerance
         )
+        report.require_passed()
+        if report.native_cad is None or report.native_cad.records_id != self.records_id:
+            raise ValueError(
+                "Native CAD association transfer has no matching accepted records."
+            )
+        require_transfer_lineage(source.mesh, lineage, target, dimensions=(0, 1))
+        target_chart = (
+            chart
+            if target.mesh_id == source.mesh.mesh_id
+            else retarget_native_cad_surface(chart, source.mesh, target, stencil)
+        )
+        origin_mesh = self.origin_mesh
+        origin_chart = self.origin_chart
+        if target.mesh_id != source.mesh.mesh_id and origin_mesh is None:
+            origin_mesh, origin_chart = source.mesh, chart
+        curve_splits = (
+            self.curve_splits
+            if target.topology_id == source.mesh.topology_id
+            else _capture_curve_splits(
+                source.mesh,
+                _chart_curve_segments(target, domain, target_chart),
+                stencil,
+                self.curve_splits,
+            )
+        )
+        records, tables = _issue_records(
+            target,
+            domain,
+            regions,
+            target_chart,
+            self.tolerance,
+            origin_mesh,
+            origin_chart,
+            curve_splits,
+        )
+        if self.root_id != records.root_id:
+            raise ValueError(
+                "Native CAD association transfer changed its original curve roots."
+            )
+        if target.topology_id != source.mesh.topology_id and self.curve is not None:
+            if stencil is None or records.curve is None:
+                raise ValueError(
+                    "Native CAD curve association requires exact vertex ancestry."
+                )
+            inherited = _curve_edges_with_root_ancestry(
+                source, lineage, target, stencil, self.curve
+            )
+            if _curve_lineage_rows(records.curve) != _curve_lineage_rows(inherited):
+                raise ValueError(
+                    "Native CAD curve association disagrees with exact transfer lineage."
+                )
+        return records, target_chart, tables
+
+
+def _association_key(table: GeometryAssociation, /) -> str:
+    """Commit to actual rows even when a retained association ID is stale."""
+    count = len(table.target_global_ids)
+    if table.source_boundary_witness_id is not None or any(
+        len(bank) != count or any(row is not None for row in bank)
+        for bank in (
+            table.target_reference_pieces,
+            table.target_parameter_intervals,
+            table.source_parameter_points,
+        )
+    ):
+        raise ValueError("Native CAD associations do not carry partial target supports.")
+    return canonical_fingerprint(
+        {
+            "kind": "native-cad-association",
+            "association": table.association_id,
+            "table": (table.association_kind.value, table.target_entity_set_id),
+            "source": (table.source_id, table.source_revision),
+            "entities": table.source_entity_ids,
+            "roles": tuple(
+                None if role is None else role.value for role in table.source_roles
+            ),
+            "paths": table.source_occurrence_paths,
+            "sides": table.source_region_sides,
+            "intervals": _fraction_rows_fingerprint(table.source_parameter_intervals),
+            "lineage": (table.exact, table.provenance.value, table.parent_association_id),
+            "arrays": array_tree_fingerprint(table),
+        }
+    )
+
+
+def _curve_lineage_rows(
+    curve: GeometryAssociation, /
+) -> dict[int, tuple[int, int, tuple[Fraction, Fraction] | None]]:
+    return dict(
+        zip(
+            np.asarray(curve.target_global_ids, dtype=np.int64).tolist(),
+            zip(
+                np.asarray(curve.parent_ids, dtype=np.int64).tolist(),
+                np.asarray(curve.orientations, dtype=np.int8).tolist(),
+                curve.source_parameter_intervals,
+                strict=True,
+            ),
+            strict=True,
+        )
+    )
+
+
+def _require_solid_region(
+    mesh: CellMesh, domain: MeshingDomain, regions: np.ndarray, /
+) -> None:
+    if (
+        len(domain.regions) != 1
+        or regions.shape != (mesh.entity_set(3).count,)
+        or np.any(regions != 0)
+    ):
+        raise ValueError(
+            "Native CAD associations require the sole solid to own every cell."
+        )
+
+
+class _CurveSegment(NamedTuple):
+    curve: int
+    low: float
+    high: float
+    start: int
+    stop: int
+
+
+def _chart_curve_segments(
+    mesh: CellMesh, domain: MeshingDomain, chart: NativeCadSurfaceWitness, /
+) -> tuple[_CurveSegment, ...]:
+    """In the curve owner's parameter gauge, directed from low to high."""
+    owners = {}
+    use_row = 0
+    for patch, face in enumerate(domain.patches):
+        for loop, uses in enumerate(face.loops):
+            for offset, use in enumerate(uses):
+                if isinstance(use, PatchCurveUse) and tuple(
+                    domain.curve_owners[use.curve]
+                ) == (patch, loop, offset):
+                    owners[use_row] = use.curve
+                use_row += 1
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    edge_chord = np.asarray(chart.edge_chord)
+    chord_use = np.asarray(chart.chord_use)
+    by_chord: dict[int, _CurveSegment] = {}
+    for row, local in zip(*np.nonzero(edge_chord >= 0), strict=True):
+        chord = int(edge_chord[row, local])
+        if not 0 <= chord < chord_use.size:
+            raise ValueError("Native CAD curve association names an absent chart chord.")
+        curve = owners.get(int(chord_use[chord]))
+        if curve is None:
+            continue
+        a, b = int(local), (int(local) + 1) % 3
+        uv = chart.chart_uv[row, [a, b]]
+        chord_uv = chart.chord_uv[chord]
+        if np.array_equal(uv, chord_uv[::-1]):
+            a, b = b, a
+        elif not np.array_equal(uv, chord_uv):
+            raise ValueError(
+                "Native CAD curve association chord endpoints differ from the chart."
+            )
+        start, stop = (
+            int(vertex_ids[vertex]) for vertex in chart.chart_triangles[row, [a, b]]
+        )
+        first, last = (float(value) for value in chart.chord_range[chord])
+        if (
+            not np.isfinite(first)
+            or not np.isfinite(last)
+            or first == last
+            or start == stop
+        ):
+            raise ValueError(
+                "Native CAD curve association has a degenerate chart segment."
+            )
+        segment = (
+            _CurveSegment(curve, first, last, start, stop)
+            if first < last
+            else _CurveSegment(curve, last, first, stop, start)
+        )
+        if by_chord.setdefault(chord, segment) != segment:
+            raise ValueError(
+                "Native CAD curve association chord has inconsistent mesh endpoints."
+            )
+    if sum(int(use) in owners for use in chord_use) != len(by_chord):
+        raise ValueError("Native CAD curve association is missing chart chord support.")
+    return tuple(sorted(by_chord.values()))
+
+
+def _root_banks(
+    mesh: CellMesh, segments: tuple[_CurveSegment, ...], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Issue canonical root rows from realized original curve chord edges."""
+    from .providers._native_plc_geometry import simplex_volume_entities
+
+    edges, _ = simplex_volume_entities(mesh)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    ordered = {frozenset(pair): tuple(pair) for pair in vertex_ids[edges].tolist()}
+    parameters = []
+    vertices = []
+    for segment in segments:
+        pair = ordered.get(frozenset((segment.start, segment.stop)))
+        if pair is None:
+            raise ValueError("Native CAD curve association root is not a mesh edge.")
+        vertices.append(pair)
+        parameters.append(
+            (segment.low, segment.high)
+            if pair[0] == segment.start
+            else (segment.high, segment.low)
+        )
+    return (
+        _readonly([item.curve for item in segments], np.int64),
+        _readonly(np.asarray(parameters, dtype=np.float64).reshape((-1, 2)), np.float64),
+        _readonly(np.asarray(vertices, dtype=np.int64).reshape((-1, 2)), np.int64),
+    )
+
+
+def _capture_curve_splits(
+    source: CellMesh,
+    segments: tuple[_CurveSegment, ...],
+    stencil: VertexInterpolationStencil | None,
+    retained: tuple[_CurveSplit, ...],
+    /,
+) -> tuple[_CurveSplit, ...]:
+    """Keep the represented stencil actions needed by live curve vertices."""
+    live = {vertex for segment in segments for vertex in (segment.start, segment.stop)}
+    created = live.difference(np.asarray(source.vertex_global_ids).tolist())
+    additions: list[_CurveSplit] = []
+    if created and stencil is not None:
+        sources = np.asarray(stencil.source_global_ids)
+        valid = np.asarray(stencil.valid)
+        for row, vertex in enumerate(np.asarray(stencil.target_global_ids).tolist()):
+            if vertex not in created:
+                continue
+            operands = sorted(
+                (parent, weight)
+                for parent, weight, active in zip(
+                    sources[row].tolist(),
+                    stencil.exact_weights[row],
+                    valid[row].tolist(),
+                    strict=True,
+                )
+                if active and weight != 0
+            )
+            if len(operands) != 2:
+                raise ValueError(
+                    "Native CAD curve association requires two source endpoints."
+                )
+            (first, left), (second, right) = operands
+            if (
+                not isinstance(left, Fraction)
+                or not isinstance(right, Fraction)
+                or left + right != 1
+            ):
+                raise ValueError(
+                    "Native CAD curve association requires affine dyadic weights."
+                )
+            additions.append((vertex, first, second, right))
+    if len(additions) != len(created):
+        raise ValueError("Native CAD curve association lost a created vertex's stencil.")
+    kept: list[_CurveSplit] = []
+    for split in reversed((*retained, *additions)):
+        vertex, first, second, _ = split
+        if vertex in live:
+            live.update((first, second))
+            kept.append(split)
+    return tuple(reversed(kept))
+
+
+def _is_curve_piece(
+    low: Fraction, high: Fraction, first: Fraction, last: Fraction, /
+) -> bool:
+    """Whether [low, high] is an aligned power-of-two subdivision of the root."""
+    if not first <= low < high <= last:
+        return False
+    width = high - low
+    ratio = (last - first) / width
+    return (
+        ratio.denominator == 1
+        and ratio.numerator & (ratio.numerator - 1) == 0
+        and ((low - first) / width).denominator == 1
+    )
+
+
+def _replay_curve_splits(
+    original: tuple[_CurveSegment, ...],
+    origin_points: dict[int, np.ndarray],
+    splits: tuple[_CurveSplit, ...],
+    /,
+) -> tuple[dict[int, np.ndarray], dict[int, dict[int, Fraction]]]:
+    """Recreate represented coordinates and exact curve addresses from one origin."""
+    result: dict[int, np.ndarray] = {}
+    addresses: dict[int, dict[int, Fraction]] = {}
+    root_intervals = tuple(_curve_interval(root.low, root.high)[0] for root in original)
+    for parent, (root, interval) in enumerate(zip(original, root_intervals, strict=True)):
+        for vertex, parameter in zip((root.start, root.stop), interval, strict=True):
+            result[vertex] = origin_points[vertex]
+            addresses.setdefault(vertex, {})[parent] = parameter
+    for vertex, first, second, right in splits:
+        if (
+            vertex in result
+            or first >= second
+            or first not in result
+            or second not in result
+            or not isinstance(right, Fraction)
+            or not 0 < right < 1
+            or right.denominator & (right.denominator - 1)
+        ):
+            raise ValueError("Native CAD curve association has an invalid split stencil.")
+        shared = addresses[first].keys() & addresses[second].keys()
+        if len(shared) != 1:
+            raise ValueError("Native CAD curve association split crosses original roots.")
+        (parent,) = shared
+        a, b = addresses[first][parent], addresses[second][parent]
+        if not _is_curve_piece(min(a, b), max(a, b), *root_intervals[parent]):
+            raise ValueError(
+                "Native CAD curve association split lacks a dyadic parent edge."
+            )
+        left = 1 - right
+        # Bisection sums two represented weighted endpoint coordinates; zero
+        # slots do not change the numeric result. Preserve the epoch grouping.
+        result[vertex] = float(left) * result[first] + float(right) * result[second]
+        addresses[vertex] = {parent: left * a + right * b}
+    return result, addresses
+
+
+def _replay_curve_intervals(
+    parent: int,
+    root: _CurveSegment,
+    parts: tuple[_CurveSegment, ...],
+    points: dict[int, np.ndarray],
+    expected_points: dict[int, np.ndarray],
+    addresses: dict[int, dict[int, Fraction]],
+    /,
+) -> tuple[tuple[Fraction, Fraction], ...]:
+    """Match every current curve edge to its represented and exact root ancestry."""
+    if (
+        not parts
+        or (parts[0].low, parts[0].start, parts[-1].high, parts[-1].stop)
+        != (root.low, root.start, root.high, root.stop)
+        or any(
+            (left.high, left.stop) != (right.low, right.start)
+            for left, right in zip(parts, parts[1:], strict=False)
+        )
+    ):
+        raise ValueError(
+            "Native CAD curve association does not partition its exact root endpoints."
+        )
+    root_low, root_high = _curve_interval(root.low, root.high)[0]
+    error = 8 * np.finfo(np.float64).eps * (abs(root.low) + abs(root.high))
+    intervals: list[tuple[Fraction, Fraction]] = []
+    for part in parts:
+        low, high = (
+            addresses.get(vertex, {}).get(parent) for vertex in (part.start, part.stop)
+        )
+        if (
+            low is None
+            or high is None
+            or not _is_curve_piece(low, high, root_low, root_high)
+        ):
+            raise ValueError(
+                "Native CAD curve association has no exact bisection ancestry."
+            )
+        # Interpolated chart parameter shadows may round; positions do not
+        # use this budget and must match their represented stencil exactly.
+        if abs(part.low - float(low)) > error or abs(part.high - float(high)) > error:
+            raise ValueError(
+                "Native CAD curve association has inconsistent parameter shadows."
+            )
+        for vertex in (part.start, part.stop):
+            if not np.array_equal(points[vertex], expected_points[vertex]):
+                if vertex in (root.start, root.stop):
+                    raise ValueError(
+                        "Native CAD curve association moved a retained root endpoint."
+                    )
+                raise ValueError(
+                    "Native CAD curve association vertex does not lie at its stencil combination."
+                )
+        intervals.append((low, high))
+    return tuple(intervals)
+
+
+def _curve_association(
+    mesh: CellMesh,
+    domain: MeshingDomain,
+    tolerance: float,
+    original_mesh: CellMesh,
+    original: tuple[_CurveSegment, ...],
+    current: tuple[_CurveSegment, ...],
+    roots: tuple[np.ndarray, np.ndarray, np.ndarray],
+    curve_splits: tuple[_CurveSplit, ...],
+    /,
+) -> GeometryAssociation | None:
+    from .providers._native_plc_geometry import simplex_volume_entities
+
+    if not original and not current:
+        return None
+    edges, _ = simplex_volume_entities(mesh)
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    ordered = {
+        frozenset(pair): (int(edge), pair[0])
+        for edge, pair in zip(
+            np.asarray(mesh.entity_set(1).entity_ids).tolist(),
+            vertex_ids[edges].tolist(),
+            strict=True,
+        )
+    }
+    points = dict(zip(vertex_ids.tolist(), np.asarray(mesh.coordinates), strict=True))
+    original_points = dict(
+        zip(
+            np.asarray(original_mesh.vertex_global_ids, dtype=np.int64).tolist(),
+            np.asarray(original_mesh.coordinates),
+            strict=True,
+        )
+    )
+    expected_points, addresses = _replay_curve_splits(
+        original, original_points, curve_splits
+    )
+    occurrences = _Occurrences(domain)
+    targets, indices, orientations, entity_ids, paths, intervals, parents = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
+    offset = 0
+    for parent, root in enumerate(original):
+        end = offset
+        while (
+            end < len(current)
+            and current[end].curve == root.curve
+            and current[end].high <= root.high
+        ):
+            end += 1
+        parts = current[offset:end]
+        exact_parts = _replay_curve_intervals(
+            parent, root, parts, points, expected_points, addresses
+        )
+        offset = end
+        index, entity_id, path = occurrences(1, root.curve)
+        for part, interval in zip(parts, exact_parts, strict=True):
+            edge = ordered.get(frozenset((part.start, part.stop)))
+            if edge is None:
+                raise ValueError(
+                    "Native CAD curve association chord is not a target mesh edge."
+                )
+            target, first = edge
+            targets.append(target)
+            indices.append(index)
+            orientations.append(1 if first == part.start else -1)
+            entity_ids.append(entity_id)
+            paths.append(path)
+            intervals.append(interval)
+            parents.append(parent)
+    if offset != len(current):
+        raise ValueError(
+            "Native CAD curve association contains a chord outside its original roots."
+        )
+    count = len(targets)
+    return GeometryAssociation(
+        GeometryAssociationKind.CURVE,
+        domain.source_id,
+        domain.source_revision,
+        mesh.entity_set(1).entity_set_id,
+        np.asarray(targets, dtype=np.int64),
+        tuple(entity_ids),
+        np.full(count, tolerance, dtype=np.float64),
+        source_dimensions=np.ones(count, dtype=np.int8),
+        source_indices=np.asarray(indices, dtype=np.int32),
+        source_roles=(GeometrySourceEntityRole.EDGE,) * count,
+        source_occurrence_paths=tuple(paths),
+        source_parameter_intervals=tuple(intervals),
+        orientations=np.asarray(orientations, dtype=np.int8),
+        parent_dimensions=np.ones(count, dtype=np.int8),
+        parent_ids=np.asarray(parents, dtype=np.int64),
+        parent_association_id=_root_id(domain.source_id, domain.source_revision, *roots),
+        provenance=GeometryAssociationProvenance.LINEAGE,
+        exact=False,
+    )
+
+
+def _derive_native_cad_tables(
+    mesh: CellMesh,
+    domain: MeshingDomain,
+    regions: np.ndarray,
+    witness: NativeCadSurfaceWitness,
+    tolerance: float,
+    origin_mesh: CellMesh | None,
+    origin_chart: NativeCadSurfaceWitness | None,
+    curve_splits: tuple[_CurveSplit, ...],
+    /,
+) -> tuple[
+    tuple[np.ndarray, np.ndarray, np.ndarray],
+    GeometryAssociation | None,
+    np.ndarray,
+    tuple[GeometryAssociation, ...],
+]:
+    _require_solid_region(mesh, domain, regions)
+    if (
+        witness.mesh_id != mesh.mesh_id
+        or (origin_mesh is None) != (origin_chart is None)
+        or (origin_mesh is None and curve_splits)
+    ):
+        raise ValueError("Native CAD association chart or origin binds another mesh.")
+    faces = _chart_face_rows(mesh, witness, domain)
+    current = _chart_curve_segments(mesh, domain, witness)
+    root_mesh = mesh if origin_mesh is None else origin_mesh
+    original = (
+        current
+        if origin_chart is None
+        else _chart_curve_segments(root_mesh, domain, origin_chart)
+    )
+    roots = _root_banks(root_mesh, original)
+    curve = _curve_association(
+        mesh, domain, tolerance, root_mesh, original, current, roots, curve_splits
+    )
+    ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    slivers = {
+        tuple(sorted({int(ids[vertex]) for vertex in row}))
+        for row in np.asarray(witness.chart_triangles)[
+            np.asarray(witness.chart_to_mesh) < 0
+        ].tolist()
+    }
+    if any(len(pair) != 2 for pair in slivers):
+        raise ValueError("A native CAD pole sliver does not pair two vertices.")
+    brep = _native_cad_associations(
+        mesh, witness, domain, tolerance, current, curve, roots[0], faces
+    )
+    sliver_vertices = _readonly(
+        np.asarray(sorted(slivers), dtype=np.int64).reshape((-1, 2)), np.int64
+    )
+    return roots, curve, sliver_vertices, brep if curve is None else (*brep, curve)
+
+
+def _issue_records(
+    mesh: CellMesh,
+    domain: MeshingDomain,
+    regions: np.ndarray,
+    witness: NativeCadSurfaceWitness,
+    tolerance: float,
+    origin_mesh: CellMesh | None,
+    origin_chart: NativeCadSurfaceWitness | None,
+    curve_splits: tuple[_CurveSplit, ...],
+    /,
+) -> tuple[NativeCadRecords, tuple[GeometryAssociation, ...]]:
+    tables: list[tuple[GeometryAssociation, ...]] = []
+    records = NativeCadRecords(
+        mesh,
+        domain,
+        witness,
+        tolerance,
+        regions,
+        origin_mesh,
+        origin_chart,
+        curve_splits,
+        tables,
+    )
+    return records, tables[0]
 
 
 def native_cad_records(
     mesh: CellMesh,
-    surface: CadSurfaceResult,
     domain: MeshingDomain,
+    regions: np.ndarray,
+    witness: NativeCadSurfaceWitness,
     tolerance: float,
     /,
-) -> NativeCadRecords:
-    """The records of a ``cad_mesh_solid`` mesh (surface vertices first).
+) -> tuple[NativeCadRecords, tuple[GeometryAssociation, ...]]:
+    """Issue native association authority from original construction operands."""
+    return _issue_records(mesh, domain, regions, witness, tolerance, None, None, ())
 
-    Curve-edge residuals are the request's source tolerance, the bound the
-    native certificate proves.
-    """
-    from .providers._native_plc_geometry import simplex_volume_entities
 
-    edges, _ = simplex_volume_entities(mesh)
-    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
-    edge_rows = _sorted_rows(edges)
-    curve_rows = _domain_curve_rows(domain)
-    occurrences = _Occurrences(domain)
-    curve_edges = np.asarray(surface.curve_edges, dtype=np.int64).reshape((-1, 2))
-    model_curves = np.asarray(surface.curve_edge_curves, dtype=np.int64)
-    parameters = np.asarray(surface.curve_edge_parameters, dtype=np.float64)
-    count = curve_edges.shape[0]
-    roots = np.empty((count,), dtype=np.int64)
-    root_parameters = np.empty((count, 2), dtype=np.float64)
-    targets = np.empty((count,), dtype=np.int64)
-    indices = np.empty((count,), dtype=np.int32)
-    orientations = np.empty((count,), dtype=np.int8)
-    entity_ids: list[str] = []
-    paths: list[tuple[str, ...]] = []
-    intervals: list[tuple[Fraction, Fraction]] = []
-    for row, ((a, b), model_curve, (first, second)) in enumerate(
-        zip(curve_edges.tolist(), model_curves.tolist(), parameters.tolist(), strict=True)
+def _chart_face_rows(
+    mesh: CellMesh, witness: NativeCadSurfaceWitness, domain: MeshingDomain, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve each boundary triangle's source patch from its chart row."""
+    triangles = np.asarray(witness.surface_triangles, dtype=np.int64)
+    charts = np.asarray(witness.chart_triangles, dtype=np.int64)
+    mapping = np.asarray(witness.chart_to_mesh, dtype=np.int64)
+    patch_rows = np.asarray(witness.chart_patches, dtype=np.int64)
+    uv = np.asarray(witness.chart_uv, dtype=np.float64)
+    if (
+        charts.ndim != 2
+        or charts.shape[1] != 3
+        or triangles.ndim != 2
+        or triangles.shape[1] != 3
+        or mapping.shape != (charts.shape[0],)
+        or patch_rows.shape != mapping.shape
+        or uv.shape != (*charts.shape, 2)
+        or np.asarray(witness.edge_chord).shape != charts.shape
+        or np.any(charts < 0)
+        or np.any(charts >= mesh.coordinates.shape[0])
+        or np.any(mapping < -1)
+        or np.any(patch_rows < 0)
+        or np.any(patch_rows >= len(domain.patches))
+        or not np.all(np.isfinite(uv))
     ):
-        edge_row = edge_rows.get((min(a, b), max(a, b)))
-        if edge_row is None:
-            raise ValueError("A native CAD curve edge is not a mesh edge.")
-        if int(edges[edge_row, 0]) != a:
-            first, second = second, first
-        curve = int(curve_rows[model_curve])
-        interval, orientation = _curve_interval(first, second)
-        index, entity_id, path = occurrences(1, curve)
-        roots[row] = curve
-        root_parameters[row] = (first, second)
-        targets[row] = edge_ids[edge_row]
-        indices[row] = index
-        orientations[row] = orientation
-        entity_ids.append(entity_id)
-        paths.append(path)
-        intervals.append(interval)
-    curve_association = (
-        GeometryAssociation(
-            GeometryAssociationKind.CURVE,
-            domain.source_id,
-            domain.source_revision,
-            mesh.entity_set(1).entity_set_id,
-            targets,
-            tuple(entity_ids),
-            np.full((count,), tolerance, dtype=np.float64),
-            source_dimensions=np.ones((count,), dtype=np.int8),
-            source_indices=indices,
-            source_roles=(GeometrySourceEntityRole.EDGE,) * count,
-            source_occurrence_paths=tuple(paths),
-            source_parameter_intervals=tuple(intervals),
-            orientations=orientations,
-            parent_dimensions=np.ones((count,), dtype=np.int8),
-            parent_ids=np.arange(count, dtype=np.int64),
-            parent_association_id=_root_id(
-                domain.source_id, domain.source_revision, roots, root_parameters
-            ),
-            provenance=GeometryAssociationProvenance.LINEAGE,
-            exact=False,
+        raise ValueError("Native CAD association chart rows are misaligned.")
+    physical = np.flatnonzero(mapping >= 0)
+    targets = mapping[physical]
+    if not np.array_equal(
+        np.sort(targets), np.arange(triangles.shape[0], dtype=np.int64)
+    ):
+        raise ValueError(
+            "Native CAD association chart must cover each boundary triangle."
         )
-        if count
-        else None
-    )
-    chart = surface.chart
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    slivers = {
-        tuple(sorted({int(vertex_ids[vertex]) for vertex in row}))
-        for row, target in zip(
-            np.asarray(chart.triangles, dtype=np.int64).tolist(),
-            np.asarray(chart.chart_to_mesh, dtype=np.int64).tolist(),
-            strict=True,
-        )
-        if target < 0
-    }
-    if any(len(pair) != 2 for pair in slivers):
-        raise ValueError("A native CAD pole sliver does not pair two vertices.")
-    return NativeCadRecords(
-        mesh,
-        domain.source_id,
-        domain.source_revision,
-        roots,
-        root_parameters,
-        curve_association,
-        np.asarray(sorted(slivers), dtype=np.int64).reshape((-1, 2)),
-    )
+    # Face orientation comes from the physical triangle. V4 separately decides
+    # whether the chart is oriented correctly, without changing proof dispatch.
+    if not np.array_equal(
+        np.sort(charts[physical], axis=1), np.sort(triangles[targets], axis=1)
+    ):
+        raise ValueError("Native CAD association chart changes its boundary triangle.")
+    patches = np.empty((triangles.shape[0],), dtype=np.int64)
+    patches[targets] = patch_rows[physical]
+    return triangles, patches
 
 
-def native_cad_associations(
+def _bind_chart_corners(
     mesh: CellMesh,
-    surface: CadSurfaceResult,
+    witness: NativeCadSurfaceWitness,
     domain: MeshingDomain,
-    cell_regions: np.ndarray,
+    segments: tuple[_CurveSegment, ...],
+    classes: np.ndarray,
+    parameters: np.ndarray,
+    /,
+) -> None:
+    """Classify corners from source-use endpoint incidence, not position lookup."""
+    vertex_rows = {
+        identifier: row
+        for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids).tolist())
+    }
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    corners: dict[int, int] = {}
+    rows_by_corner: dict[int, int] = {}
+
+    def bind(vertex: int, corner: int, /) -> None:
+        if (
+            corners.setdefault(vertex, corner) != corner
+            or rows_by_corner.setdefault(corner, vertex) != vertex
+            or not np.array_equal(points[vertex], domain.corner_points[corner])
+        ):
+            raise ValueError(
+                "Native CAD association corner disagrees with source incidence."
+            )
+
+    for segment in segments:
+        patch, loop, use = domain.curve_owners[segment.curve]
+        owner = domain.patches[patch].loops[loop][use]
+        source = domain.curves[segment.curve]
+        if owner.first < owner.last:
+            if segment.low == owner.first:
+                bind(vertex_rows[segment.start], source.start)
+            if segment.high == owner.last:
+                bind(vertex_rows[segment.stop], source.end)
+        else:
+            if segment.high == owner.first:
+                bind(vertex_rows[segment.stop], source.start)
+            if segment.low == owner.last:
+                bind(vertex_rows[segment.start], source.end)
+
+    uses = tuple(use for patch in domain.patches for loop in patch.loops for use in loop)
+    for row, local in zip(*np.nonzero(witness.edge_chord >= 0), strict=True):
+        chord = witness.edge_chord[row, local]
+        use = uses[witness.chord_use[chord]]
+        if isinstance(use, PatchCurveUse):
+            continue
+        for vertex in witness.chart_triangles[row, [local, (local + 1) % 3]]:
+            bind(vertex, use.corner)
+
+    for vertex, corner in corners.items():
+        classes[vertex] = (0, corner)
+        parameters[vertex] = np.nan
+
+
+def _vertex_sources(
+    mesh: CellMesh,
+    witness: NativeCadSurfaceWitness,
+    domain: MeshingDomain,
+    segments: tuple[_CurveSegment, ...],
+    curve: GeometryAssociation | None,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    classes = np.zeros((points.shape[0], 2), dtype=np.int64)
+    classes[:, 0] = 3
+    parameters = np.full((points.shape[0], 2), np.nan, dtype=np.float64)
+    triangles = np.asarray(witness.chart_triangles, dtype=np.int64)
+    patches = np.asarray(witness.chart_patches, dtype=np.int64)
+    classes[triangles.ravel(), 0] = 2
+    classes[triangles.ravel(), 1] = np.repeat(patches, 3)
+    parameters[triangles.ravel()] = np.asarray(witness.chart_uv).reshape((-1, 2))
+    _bind_chart_corners(mesh, witness, domain, segments, classes, parameters)
+    if curve is not None:
+        id_to_row = {
+            identifier: row
+            for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids).tolist())
+        }
+        for segment, interval in zip(
+            segments, curve.source_parameter_intervals, strict=True
+        ):
+            if interval is None:
+                raise ValueError(
+                    "Native CAD curve association is missing its exact interval."
+                )
+            for identifier, parameter in zip(
+                (segment.start, segment.stop), interval, strict=True
+            ):
+                vertex = id_to_row[identifier]
+                dimension, entity = classes[vertex]
+                if dimension == 0:
+                    continue
+                if dimension == 1 and (
+                    entity != segment.curve or parameters[vertex, 0] != float(parameter)
+                ):
+                    raise ValueError(
+                        "Native CAD association has conflicting curve vertex parameters."
+                    )
+                classes[vertex] = (1, segment.curve)
+                parameters[vertex] = (float(parameter), np.nan)
+    return classes, parameters
+
+
+def _native_cad_associations(
+    mesh: CellMesh,
+    witness: NativeCadSurfaceWitness,
+    domain: MeshingDomain,
     tolerance: float,
-    records: NativeCadRecords,
+    segments: tuple[_CurveSegment, ...],
+    curve: GeometryAssociation | None,
+    root_curves: np.ndarray,
+    boundary: tuple[np.ndarray, np.ndarray],
     /,
 ) -> tuple[GeometryAssociation, ...]:
-    """B-Rep associations of every mesh dimension, then the curve association.
-
-    Surface vertices, edges and triangles take their native corner, curve or
-    face classification; every other entity lies in the region of its cells.
-    Boundary rows carry the source tolerance as residual (the bound the
-    native certificate proves), region rows zero.
-    """
-    records.require_mesh(mesh)
+    """B-Rep rows tied to the actual chart, source occurrences and material side."""
     from .providers._native_plc_geometry import simplex_volume_entities
 
     edges, faces = simplex_volume_entities(mesh)
-    cells = np.concatenate(
-        [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
-    )
-    regions = np.asarray(cell_regions, dtype=np.int64)
-    triangles = np.asarray(surface.triangles, dtype=np.int64)
-    patches = np.asarray(surface.triangle_patches, dtype=np.int64)
-    facet_regions = np.asarray(surface.facet_regions, dtype=np.int64)
-    if regions.shape != (cells.shape[0],) or np.any(regions < 0):
-        raise ValueError("Native CAD cell regions are misaligned.")
+    triangles, patches = boundary
     occurrences = _Occurrences(domain)
-    curve_rows = _domain_curve_rows(domain)
-    region_keys = domain.stratum_entity_ids(3)
-    point_count = mesh.coordinates.shape[0]
-
-    # Source stratum (dimension, domain row) of every entity; regions first.
-    vertex_class = np.empty((point_count, 2), dtype=np.int64)
-    vertex_class[:, 0] = 3
-    vertex_class[cells.reshape(-1), 1] = np.repeat(regions, 4)
-    vertex_parameters = np.full((point_count, 2), np.nan, dtype=np.float64)
-    surface_count = np.asarray(surface.vertex_dimensions).shape[0]
-    dimensions = np.asarray(surface.vertex_dimensions, dtype=np.int64)
-    entities = np.asarray(surface.vertex_entities, dtype=np.int64)
-    native_parameters = np.asarray(surface.vertex_parameters, dtype=np.float64)
-    vertex_class[:surface_count, 0] = dimensions
-    vertex_class[:surface_count, 1] = entities
-    on_curve = np.flatnonzero(dimensions == 1)
-    on_face = np.flatnonzero(dimensions == 2)
-    vertex_class[on_curve, 1] = curve_rows[entities[on_curve]]
-    vertex_parameters[on_curve, 0] = native_parameters[on_curve, 0]
-    vertex_parameters[on_face] = native_parameters[on_face]
+    region_key = domain.stratum_entity_ids(3)[0]
+    patch_sides = {
+        patch: (None, region_key) if orientation > 0 else (region_key, None)
+        for patch, orientation in domain.regions[0].boundary
+    }
+    vertex_class, vertex_parameters = _vertex_sources(
+        mesh, witness, domain, segments, curve
+    )
 
     edge_rows = _sorted_rows(edges)
-    edge_class = np.empty((edges.shape[0], 2), dtype=np.int64)
+    edge_class = np.zeros((edges.shape[0], 2), dtype=np.int64)
     edge_class[:, 0] = 3
-    for a, b in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)):
-        pairs = np.sort(cells[:, [a, b]], axis=1)
-        rows = [edge_rows[(int(x), int(y))] for x, y in pairs.tolist()]
-        edge_class[rows, 1] = regions
     edge_orientations = np.zeros((edges.shape[0],), dtype=np.int8)
     for triangle, patch in zip(triangles.tolist(), patches.tolist(), strict=True):
         for a, b in _CHART_EDGES:
@@ -522,7 +1200,6 @@ def native_cad_associations(
                 (min(triangle[a], triangle[b]), max(triangle[a], triangle[b]))
             ]
             edge_class[row] = (2, patch)
-    curve = records.curve
     if curve is not None:
         edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
         edge_by_id = {int(value): row for row, value in enumerate(edge_ids.tolist())}
@@ -533,21 +1210,15 @@ def native_cad_associations(
             strict=True,
         ):
             row = edge_by_id[target]
-            edge_class[row] = (1, int(records.root_curves[parent]))
+            edge_class[row] = (1, int(root_curves[parent]))
             edge_orientations[row] = orientation
 
     face_rows = _sorted_rows(faces)
-    face_class = np.empty((faces.shape[0], 2), dtype=np.int64)
+    face_class = np.zeros((faces.shape[0], 2), dtype=np.int64)
     face_class[:, 0] = 3
-    for a, b, c in ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)):
-        triples = np.sort(cells[:, [a, b, c]], axis=1)
-        rows = [face_rows[tuple(int(value) for value in key)] for key in triples.tolist()]
-        face_class[rows, 1] = regions
     face_orientations = np.zeros((faces.shape[0],), dtype=np.int8)
     face_sides: list[tuple[str | None, str | None]] = [(None, None)] * faces.shape[0]
-    for triangle, patch, sides in zip(
-        triangles.tolist(), patches.tolist(), facet_regions.tolist(), strict=True
-    ):
+    for triangle, patch in zip(triangles.tolist(), patches.tolist(), strict=True):
         row = face_rows[tuple(sorted(triangle))]
         face_class[row] = (2, patch)
         # The canonical face order is an even permutation of the outward
@@ -555,11 +1226,11 @@ def native_cad_associations(
         canonical = [int(value) for value in faces[row]]
         rotations = {tuple(triangle[k:] + triangle[:k]) for k in range(3)}
         face_orientations[row] = 1 if tuple(canonical) in rotations else -1
-        face_sides[row] = (
-            None if sides[0] < 0 else region_keys[sides[0]],
-            None if sides[1] < 0 else region_keys[sides[1]],
-        )
-    cell_class = np.stack((np.full_like(regions, 3), regions), axis=1)
+        if patch not in patch_sides:
+            raise ValueError("Native CAD association patch does not bound the solid.")
+        face_sides[row] = patch_sides[patch]
+    cell_class = np.zeros((mesh.entity_set(3).count, 2), dtype=np.int64)
+    cell_class[:, 0] = 3
 
     def association(
         dimension: int,
@@ -598,13 +1269,12 @@ def native_cad_associations(
             exact=False,
         )
 
-    associations = (
+    return (
         association(0, vertex_class, vertex_parameters, None, None),
         association(1, edge_class, None, edge_orientations, None),
         association(2, face_class, None, face_orientations, face_sides),
         association(3, cell_class, None, None, None),
     )
-    return associations if curve is None else (*associations, curve)
 
 
 def _stencil_weights(
@@ -964,7 +1634,6 @@ def retarget_native_cad_surface(
 
 
 __all__ = [
-    "native_cad_associations",
     "native_cad_records",
     "NativeCadRecords",
     "retarget_native_cad_surface",

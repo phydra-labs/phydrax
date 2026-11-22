@@ -116,7 +116,17 @@ class NativeCadSurfaceWitness(StrictModule, NonTrainableState):
         self.chord_loop = _array(chart.chord_loop, np.int64)
         self.chord_uv = _array(chart.chord_uv, np.float64)
         self.chord_range = _array(chart.chord_range, np.float64)
-        self.witness_id = canonical_fingerprint(
+        self.witness_id = self._identity()
+
+    def require_binding(self, mesh: CellMesh, /) -> None:
+        """Check stored chart operands before using them as an association premise."""
+        if self.mesh_id != mesh.mesh_id or self.witness_id != self._identity():
+            raise ValueError(
+                "Native CAD association chart changed from its retained binding."
+            )
+
+    def _identity(self) -> str:
+        return canonical_fingerprint(
             {
                 "kind": "native-cad-surface-witness",
                 "mesh": self.mesh_id,

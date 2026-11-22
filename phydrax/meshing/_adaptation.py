@@ -137,6 +137,7 @@ from ._assembly import MeshPart
 from ._association import (
     AssociationTransfer,
     BRepAssociationTransfer,
+    GeometryAssociation,
     GeometrySourceEntityRole,
 )
 from ._association_composition import ComposedAssociationTransfer
@@ -188,7 +189,6 @@ from ._mixed_adaptation import (
     MixedCoarseningMap,
     MixedLayerColumns,
 )
-from ._native_cad_records import retarget_native_cad_surface
 from ._organization import MeshLabel, MeshPatch, MeshZone, RegionBoundaryEvidence
 from ._periodic import (
     periodic_quotient_facet_cell_classes,
@@ -1094,6 +1094,10 @@ def _require_native_source(
         raise ValueError(
             "Native adaptation of a boundary model requires an implicit, surface, or PLC association transfer."
         )
+    if not source.associations and source.certification is not None:
+        records = source.certification.inputs.native_cad_records
+        if records is not None:
+            records.require_associations(source.mesh, source.associations)
     if source.associations or source.boundary is not None:
         if transfer is None:
             raise ValueError(
@@ -5636,7 +5640,14 @@ def _renew_transition_certification_inputs(
     fidelity_witness_override: SourceFidelityWitness | None = None,
     renew_scoped_from_override: bool = False,
     computed_root: ComputedLayerCoreRoot | None = None,
-) -> tuple[MeshCertificationInputs, tuple[ValidatedSourceFidelityWitness, ...]] | None:
+) -> (
+    tuple[
+        MeshCertificationInputs,
+        tuple[ValidatedSourceFidelityWitness, ...],
+        tuple[GeometryAssociation, ...],
+    ]
+    | None
+):
     """Rebuild target-bound acceptance inputs without reducing retained claims.
 
     Returns the inputs and the validations of their fidelity witnesses on
@@ -5653,6 +5664,17 @@ def _renew_transition_certification_inputs(
     report.require_current(source.mesh, source.geometry)
     original = report.inputs
     regions = _transition_regions(original, target, lineage)
+    cad_records = original.native_cad_records
+    cad_surface = None
+    cad_tables: tuple[GeometryAssociation, ...] = ()
+    if cad_records is not None:
+        if regions is None:
+            raise ValueError(
+                "Native CAD association transfer requires material assignments."
+            )
+        cad_records, cad_surface, cad_tables = cad_records.retarget(
+            source, lineage, target, regions, vertex_stencil
+        )
     renewed_tokens: list[ValidatedSourceFidelityWitness] = []
 
     def renew_image(query: SourceBoundaryQuery, /) -> SourceBoundaryFaceImageWitness:
@@ -5836,22 +5858,10 @@ def _renew_transition_certification_inputs(
         source_coverage_witness=coverage,
         validated=validated,
         computed_root=computed_root,
-        native_cad_surface=(
-            None
-            if original.native_cad_surface is None
-            else retarget_native_cad_surface(
-                original.native_cad_surface, source.mesh, target, vertex_stencil
-            )
-        ),
-        native_cad_records=(
-            None
-            if original.native_cad_records is None
-            else original.native_cad_records.retarget(
-                source, lineage, target, vertex_stencil
-            )
-        ),
+        native_cad_surface=cad_surface,
+        native_cad_records=cad_records,
     )
-    return inputs, validated
+    return inputs, validated, cad_tables
 
 
 def _compose_material_reference_maps(
@@ -6783,8 +6793,8 @@ def _finalize_native(
         renew_scoped_from_override=implicit_fidelity_override is not None,
         computed_root=computed_root,
     )
-    certification_inputs, validated_witnesses = (
-        (None, ()) if renewed_inputs is None else renewed_inputs
+    certification_inputs, validated_witnesses, cad_tables = (
+        (None, (), ()) if renewed_inputs is None else renewed_inputs
     )
     patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
     column_certification = source.layer_core_column_certification
@@ -6817,7 +6827,12 @@ def _finalize_native(
     else:
         propagate_associations = None
     associations = (
-        propagate_associations(
+        cad_tables
+        if cad_tables
+        and type(association_transfer) is BRepAssociationTransfer
+        and association_transfer.source_namespaces[0]
+        == (cad_tables[0].source_id, cad_tables[0].source_revision)
+        else propagate_associations(
             source,
             lineage,
             mesh,
@@ -8142,8 +8157,8 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         reference_maps=hp_reference_maps,
         transition=hp_geometry_transition,
     )
-    certification_inputs, validated_witnesses = (
-        (None, ()) if renewed_inputs is None else renewed_inputs
+    certification_inputs, validated_witnesses, cad_tables = (
+        (None, (), ()) if renewed_inputs is None else renewed_inputs
     )
     patches, zones, labels, boundaries = _inherited_organization(source, mesh, lineage)
     association_transfer = prepared.policy.association_transfer
@@ -8152,7 +8167,12 @@ def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
             "The hp route needs an exact transfer for retained source associations."
         )
     associations = (
-        association_transfer.propagate(
+        cad_tables
+        if cad_tables
+        and type(association_transfer) is BRepAssociationTransfer
+        and association_transfer.source_namespaces[0]
+        == (cad_tables[0].source_id, cad_tables[0].source_revision)
+        else association_transfer.propagate(
             source,
             lineage,
             mesh,

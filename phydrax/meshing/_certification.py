@@ -729,6 +729,10 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             )
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
+        if inputs.native_cad_records is not None:
+            inputs.native_cad_records.require_associations(
+                inputs.mesh, organization_.associations
+            )
         multiregion = _multiregion_proof(inputs, organization_)
         policy = (
             _acceptance_audit_policy(inputs, multiregion)
@@ -1114,6 +1118,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored mesh acceptance differs from its rebuilt request or audit policy."
             )
+        if inputs.native_cad_records is not None:
+            records = inputs.native_cad_records
+            records.require_associations(inputs.mesh, organization.associations)
+            if self.associations is not organization.associations:
+                records.require_associations(inputs.mesh, self.associations)
         stored = (
             None if self.boundary is None else self.boundary.model_id,
             tuple(value.patch_id for value in self.patches),

@@ -3832,6 +3832,9 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
 
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
+        records = self._native_cad_records(source)
+        if records is not None:
+            records.require_associations(source.mesh, source.associations)
         dimensions = []
         curve = None
         vertex = None
@@ -3860,16 +3863,9 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         if len(set(dimensions)) != len(dimensions):
             raise ValueError("A source carries one association per mesh dimension.")
         _vertex_classes(source.mesh, vertex)
-        records = self._native_cad_records(source)
-        if records is not None:
-            # A native CAD solid: its records are the curve-edge authority.
-            records.require_mesh(source.mesh)
-            records.require_curve(curve)
-            if curve is not None:
-                self._require_curve_edge_table(source, curve)
-        elif curve is not None:
+        if records is None and curve is not None:
             self._validate_cad_curve(source, curve)
-        elif source.certification is not None:
+        elif records is None and source.certification is not None:
             witness = source.certification.inputs.fidelity_witness
             if (
                 isinstance(witness, SourceBoundaryChartWitness)
@@ -4055,6 +4051,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         """Propagate B-Rep associations with the accepted vertex stencil."""
+        records = self._native_cad_records(source)
+        if records is not None:
+            _, _, tables = records.retarget(
+                source,
+                lineage,
+                target,
+                np.zeros(target.entity_set(3).count, dtype=np.int64),
+                vertex_stencil,
+            )
+            return tables
         vertex, dimensions = self.source_associations(source)
         propagated = propagate_association(
             vertex,
@@ -4076,8 +4082,7 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             return output
         from ._surface_association_transfer import _curve_edges_with_root_ancestry
 
-        native = self._native_cad_records(source) is not None
-        if not native and (
+        if (
             not isinstance(target_fidelity_witness, SourceBoundaryChartWitness)
             or target_fidelity_witness.mesh_id != target.mesh_id
             or target_fidelity_witness.topology_id != target.topology_id
@@ -4099,13 +4104,8 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             curve = _curve_edges_with_root_ancestry(
                 source, lineage, target, vertex_stencil, curves[0]
             )
-        # A native CAD target's retargeted records are checked against this
-        # curve by its acceptance (``NativeCadRecords.require_associations``).
         if (
-            not native
-            and isinstance(target_fidelity_witness, SourceBoundaryChartWitness)
-            and target_fidelity_witness.cad_curve_association is not None
-            and curve.association_id
+            curve.association_id
             != target_fidelity_witness.cad_curve_association.association_id
         ):
             raise ValueError("CAD curve transfer differs from the target chart ancestry.")

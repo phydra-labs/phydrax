@@ -512,7 +512,7 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             domain,
             fidelity_witness,
         )
-        if native_cad_surface is not None:
+        if native_cad_surface is not None or native_cad_records is not None:
             from ..geometry._meshing_domain import MeshingDomain
 
             if (
@@ -522,6 +522,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 or fidelity_witness is not None
                 or source_coverage_witness is not None
                 or native_cad_surface.mesh_id != mesh.mesh_id
+                or regions is None
+                or fidelity_tolerance is None
                 or native_cad_records is None
             ):
                 raise ValueError(
@@ -529,17 +531,16 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                     "MeshingDomain and native records, without other fidelity or "
                     "coverage witnesses."
                 )
-        if native_cad_records is not None:
-            if (
-                type(native_cad_records) is not NativeCadRecords
-                or native_cad_surface is None
-                or (native_cad_records.source_id, native_cad_records.source_revision)
-                != (source_id_, source_revision_)
-            ):
+            if type(native_cad_records) is not NativeCadRecords or (
+                native_cad_records.source_id,
+                native_cad_records.source_revision,
+            ) != (source_id_, source_revision_):
                 raise ValueError(
-                    "Native CAD records bind a native CAD surface witness of their source."
+                    "Native CAD association records bind another source revision."
                 )
-            native_cad_records.require_mesh(mesh)
+            native_cad_records.require_premises(
+                mesh, domain, regions, native_cad_surface, float(fidelity_tolerance)
+            )
         domain_id = (
             None
             if domain is None

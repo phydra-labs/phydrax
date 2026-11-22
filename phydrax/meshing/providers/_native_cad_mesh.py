@@ -49,7 +49,7 @@ from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_cad_certificate import NativeCadSurfaceWitness
-from .._native_cad_records import native_cad_associations, native_cad_records
+from .._native_cad_records import native_cad_records
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -897,7 +897,12 @@ def execute_cad_solid(
         achieved=tuple(achieved),
     )
     regions = np.asarray(volume.tetrahedron_regions, dtype=np.int64)
-    records = native_cad_records(mesh, solid.surface, domain, float(deviation))
+    witness = NativeCadSurfaceWitness(
+        mesh, solid.surface, len(cad_geometry_bundle(domain).model.loop_surfaces)
+    )
+    records, associations = native_cad_records(
+        mesh, domain, regions, witness, float(deviation)
+    )
     certification = NativeCertificationRequest(
         MeshCertificationSchedule("volume_cad"),
         domain.source_id,
@@ -909,9 +914,7 @@ def execute_cad_solid(
         fidelity_tolerance=float(deviation),
         protected_features=specification.protected_features,
         feature_source=domain,
-        native_cad_surface=NativeCadSurfaceWitness(
-            mesh, solid.surface, len(cad_geometry_bundle(domain).model.loop_surfaces)
-        ),
+        native_cad_surface=witness,
         native_cad_records=records,
     )
     return NativeMeshConstruction(
@@ -920,14 +923,7 @@ def execute_cad_solid(
         compliance,
         certification,
         geometry=geometry,
-        organization=_organization(
-            prepared,
-            mesh,
-            solid,
-            native_cad_associations(
-                mesh, solid.surface, domain, regions, float(deviation), records
-            ),
-        ),
+        organization=_organization(prepared, mesh, solid, associations),
     )
 
 

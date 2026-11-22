@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from fractions import Fraction
 from pathlib import Path
 
@@ -11,8 +13,9 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry.brep import brep_box
+from phydrax.geometry.brep import brep_box, brep_entity_id
 from phydrax.meshing._adaptation import (
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
@@ -316,6 +319,193 @@ def test_native_curve_association_transfer_rejects_forgeries(
         transfer.validate_source(stale)
 
 
+def _rebuild_brep_table(
+    table: GeometryAssociation, /, *, change: str
+) -> GeometryAssociation:
+    """Author a fresh table, giving edited source rows canonical entity keys."""
+    dimensions = np.asarray(table.source_dimensions)
+    indices = np.asarray(table.source_indices).copy()
+    paths = list(table.source_occurrence_paths)
+    sides = list(table.source_region_sides)
+    residuals = np.asarray(table.residuals).copy()
+    rows = np.arange(len(indices), dtype=np.int64)
+    source_id = table.source_id
+    match change:
+        case "unchanged":
+            pass
+        case "face-entity":
+            first = int(np.flatnonzero(dimensions == 2)[0])
+            other = int(
+                np.flatnonzero((dimensions == 2) & (indices != indices[first]))[0]
+            )
+            assert paths[first] == paths[other]
+            indices[first] = indices[other]
+        case "face-occurrence":
+            first = int(np.flatnonzero(dimensions == 2)[0])
+            paths[first] = (*paths[first], "another-occurrence")
+        case "face-region-side":
+            first = next(row for row, (minus, plus) in enumerate(sides) if minus != plus)
+            minus, plus = sides[first]
+            sides[first] = (plus, minus)
+        case "face-residual":
+            first = int(np.flatnonzero(dimensions == 2)[0])
+            residuals[first] = 0.0
+        case "cell-occurrence":
+            paths[0] = (*paths[0], "another-occurrence")
+        case "missing-row":
+            first = int(np.flatnonzero(dimensions == 2)[0])
+            rows = rows[rows != first]
+        case "foreign-table":
+            source_id = "test:native-cad-records-foreign"
+        case _:
+            raise ValueError(f"Unknown B-Rep table test change: {change}")
+
+    def selected[T](values: Sequence[T]) -> tuple[T, ...]:
+        return tuple(values[int(row)] for row in rows)
+
+    return GeometryAssociation(
+        table.association_kind,
+        source_id,
+        table.source_revision,
+        table.target_entity_set_id,
+        np.asarray(table.target_global_ids)[rows],
+        tuple(
+            brep_entity_id(
+                source_id,
+                table.source_revision,
+                int(dimensions[row]),
+                int(indices[row]),
+                occurrence_path=paths[int(row)],
+            )
+            for row in rows
+        ),
+        residuals[rows],
+        resolved=np.asarray(table.resolved)[rows],
+        ambiguous=np.asarray(table.ambiguous)[rows],
+        exact=table.exact,
+        source_dimensions=dimensions[rows],
+        source_indices=indices[rows],
+        source_roles=selected(table.source_roles),
+        source_occurrence_paths=selected(paths),
+        source_region_sides=selected(sides),
+        source_parameter_intervals=selected(table.source_parameter_intervals),
+        target_parameter_intervals=selected(table.target_parameter_intervals),
+        target_reference_pieces=selected(table.target_reference_pieces),
+        source_boundary_witness_id=table.source_boundary_witness_id,
+        source_parameter_points=selected(table.source_parameter_points),
+        parameters=np.asarray(table.parameters)[rows],
+        orientations=np.asarray(table.orientations)[rows],
+        parent_dimensions=np.asarray(table.parent_dimensions)[rows],
+        parent_ids=np.asarray(table.parent_ids)[rows],
+        parent_association_id=table.parent_association_id,
+        provenance=table.provenance,
+    )
+
+
+def _cad_association_input(
+    source: CellMeshingResult, change: str, /
+) -> tuple[GeometryAssociation, ...]:
+    dimension = 3 if change == "cell-occurrence" else 2
+    table = _table(source, dimension)
+    if change == "missing-namespace":
+        return tuple(
+            item
+            for item in source.associations
+            if (item.source_id, item.source_revision)
+            != (table.source_id, table.source_revision)
+        )
+    if change == "missing-table":
+        return tuple(item for item in source.associations if item is not table)
+    replacement = _rebuild_brep_table(table, change=change)
+    replacement.validate_target(source.mesh.entity_set(dimension))
+    assert replacement is not table
+    # GeometryAssociation's general identity does not encode residuals.
+    assert (replacement.association_id == table.association_id) == (
+        change in ("unchanged", "face-residual")
+    )
+    return tuple(replacement if item is table else item for item in source.associations)
+
+
+def _recertify(
+    source: CellMeshingResult, associations: tuple[GeometryAssociation, ...], /
+) -> CellMeshingResult:
+    certification = source.certification
+    if certification is None:
+        raise ValueError("The native CAD fixture requires a certificate.")
+    return phx.meshing.certify_cell_mesh(
+        source.mesh,
+        source.coordinate_contract,
+        geometry=source.geometry,
+        audit_policy=certification.audit_policy,
+        certification_inputs=certification.inputs,
+        boundary=source.boundary,
+        patches=source.patches,
+        zones=source.zones,
+        labels=source.labels,
+        attributes=source.attributes,
+        associations=associations,
+        surface_source=source.surface_source,
+        region_boundary_evidence=source.region_boundary_evidence,
+    )
+
+
+_ASSOCIATION_AUTHORITY_ERROR = r"Native CAD.*association"
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "face-entity",
+        "face-occurrence",
+        "face-region-side",
+        "face-residual",
+        "cell-occurrence",
+        "missing-namespace",
+        "missing-table",
+        "missing-row",
+        "foreign-table",
+    ),
+)
+def test_native_cad_recertification_rejects_changed_source_tables(
+    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult], change: str
+) -> None:
+    # Curve-only validation admits these changes (or no owning tables at all).
+    _, source = box
+    associations = _cad_association_input(source, change)
+    with pytest.raises(ValueError, match=_ASSOCIATION_AUTHORITY_ERROR):
+        _recertify(source, associations)
+
+
+def test_native_cad_accepts_independently_rebuilt_source_table(
+    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult],
+) -> None:
+    # Authority binds content, not the Python identity of a table.
+    model, source = box
+    associations = _cad_association_input(source, "unchanged")
+    recertified = _recertify(source, associations)
+    assert recertified.certification is not None and recertified.certification.passed
+    _transfer(model).validate_source(recertified)
+
+
+@pytest.mark.parametrize("change", ("face-entity", "cell-occurrence", "missing-table"))
+def test_native_cad_adaptation_rejects_changed_tables_before_transfer(
+    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult], change: str
+) -> None:
+    # Higher-dimensional target rows are rebuilt from vertex data, so waiting
+    # until target certification can erase the evidence of a forged source.
+    model, source = box
+    transfer = _transfer(model)
+    request = MarkedMeshAdaptation(np.asarray(source.mesh.blocks[0].global_ids)[:1])
+    policy = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_BISECTION, association_transfer=transfer
+    )
+    prepare_mesh_adaptation(source, request, policy=policy)
+    associations = _cad_association_input(source, change)
+    forged = eqx.tree_at(lambda value: value.associations, source, associations)
+    with pytest.raises(ValueError, match=_ASSOCIATION_AUTHORITY_ERROR):
+        prepare_mesh_adaptation(forged, request, policy=policy)
+
+
 def _boundary_triangles(mesh: phx.discretization.CellMesh, /) -> np.ndarray:
     cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
     faces, counts = np.unique(
@@ -584,8 +774,70 @@ def test_native_cad_adaptation_refuses_a_split_pole_segment() -> None:
         _refine(current, transfer, pole_rows(current))
 
 
+@pytest.mark.parametrize("moved", ("root", "midpoint-normal", "midpoint-ulp"))
+def test_curve_archive_replay_refuses_unrealized_stencil(moved: str) -> None:
+    from phydrax.meshing._native_cad_records import (
+        _CurveSegment,
+        _replay_curve_intervals,
+        _replay_curve_splits,
+    )
+
+    abscissa = float(1 << 40)
+    start = np.array((abscissa, 0.0, 0.0), dtype=np.float64)
+    stop = np.array((abscissa, 2.0, 0.0), dtype=np.float64)
+    midpoint = np.array((abscissa, 1.0, 0.0), dtype=np.float64)
+    root = _CurveSegment(0, 0.0, 1.0, 0, 2)
+    parts = (_CurveSegment(0, 0.0, 0.5, 0, 1), _CurveSegment(0, 0.5, 1.0, 1, 2))
+    origin = {0: start, 2: stop}
+    points = {0: start, 1: midpoint, 2: stop}
+    expected, addresses = _replay_curve_splits(
+        (root,), origin, ((1, 0, 2, Fraction(1, 2)),)
+    )
+    assert _replay_curve_intervals(0, root, parts, points, expected, addresses) == (
+        (Fraction(0), Fraction(1, 2)),
+        (Fraction(1, 2), Fraction(1)),
+    )
+
+    row = 0 if moved == "root" else 1
+    points[row] = points[row].copy()
+    if moved == "midpoint-ulp":
+        points[row][0] = np.nextafter(abscissa, np.inf)
+    else:
+        points[row][2] = 2.0**-16
+    reason = "moved a retained root endpoint" if row == 0 else "stencil combination"
+    with pytest.raises(ValueError, match=reason):
+        _replay_curve_intervals(0, root, parts, points, expected, addresses)
+
+
+@pytest.mark.parametrize("composed", (True, False), ids=("one-epoch", "two-epochs"))
+def test_curve_archive_replay_preserves_stencil_grouping(composed: bool) -> None:
+    from phydrax.meshing._native_cad_records import _CurveSegment, _replay_curve_splits
+
+    base = float(1 << 40)
+    ulp = np.spacing(base)
+    origin = {
+        0: np.array((base + ulp, 0.0, 0.0), dtype=np.float64),
+        1: np.array((base + 7 * ulp, 2.0, 0.0), dtype=np.float64),
+    }
+    quarter = (3, 0, 1, Fraction(1, 4)) if composed else (3, 0, 2, Fraction(1, 2))
+    points, addresses = _replay_curve_splits(
+        (_CurveSegment(0, 0.0, 1.0, 0, 1),),
+        origin,
+        ((2, 0, 1, Fraction(1, 2)), quarter),
+    )
+    # Binary64 round-to-even gives different x coordinates at the same exact
+    # quarter parameter when the midpoint is rounded in an earlier epoch.
+    np.testing.assert_array_equal(
+        points[3], (base + (3 if composed else 2) * ulp, 0.5, 0.0)
+    )
+    assert addresses[3] == {0: Fraction(1, 4)}
+
+
+@pytest.mark.parametrize("adapted", (False, True), ids=("root", "split"))
 def test_native_cad_records_survive_the_archive(
-    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult], tmp_path: Path
+    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult],
+    tmp_path: Path,
+    adapted: bool,
 ) -> None:
     # Fault caught: records dropped or rebuilt differently by the codec.
     from phydrax.meshing._model_codec import (
@@ -597,6 +849,14 @@ def test_native_cad_records_survive_the_archive(
     )
 
     model, result = box
+    if adapted:
+        result = _native(model, 0.5)
+        root = _records(result)
+        transfer = _transfer(model)
+        for _ in range(2):
+            result = _refine(result, transfer, _curve_vertex_rows(result)).target
+        assert _records(result).root_id == root.root_id
+        assert len(_curve(result).target_global_ids) > root.root_curves.size
     path = tmp_path / "native-cad-records.phx"
     write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
     restored = read_model_artifact(
@@ -611,3 +871,100 @@ def test_native_cad_records_survive_the_archive(
         item.association_id for item in result.associations
     ]
     _transfer(model).validate_source(restored)
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "face-region-side",
+        "cell-occurrence",
+        "missing-namespace",
+        "foreign-table",
+        "rehashed-face",
+    ),
+)
+def test_native_cad_archive_rejects_changed_source_tables(
+    box: tuple[phx.geometry.brep.BRepModel, CellMeshingResult],
+    tmp_path: Path,
+    change: str,
+) -> None:
+    # An archive can present the same changed tables in the result and the
+    # stored report. Agreement between these two envelopes is not authority.
+    from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
+    from phydrax.meshing._model_codec import (
+        _write_model_archive_recipe,
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_archive,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._native_cad_records import _association_key
+
+    _, source = box
+    report = source.certification
+    if report is None:
+        raise ValueError("The native CAD fixture requires a certificate.")
+    associations = _cad_association_input(
+        source, "face-entity" if change == "rehashed-face" else change
+    )
+    stored_report = eqx.tree_at(lambda value: value.associations, report, associations)
+    forged = eqx.tree_at(
+        lambda value: (value.associations, value.certification),
+        source,
+        (associations, stored_report),
+    )
+    # Re-encode the complete manifest and array envelope from ordinary rows.
+    path = write_model_artifact(
+        tmp_path / "changed-cad-tables.phx", forged, limits=MODEL_ARCHIVE_LIMITS
+    )
+    if change == "rehashed-face":
+        records = _records(source)
+        assert records.origin_chart is None and not records.curve_splits
+        manifest, arrays = read_model_archive(path, limits=MODEL_ARCHIVE_LIMITS)
+        recipe = manifest["model_recipe"]
+        certificate = recipe["fields"]["certification"]["fields"]
+        saved = certificate["inputs"]["fields"]["native_cad_records"]["fields"]
+        keys = tuple(_association_key(item) for item in associations)
+        assert keys != records.association_keys
+        for item, key in zip(saved["association_keys"]["items"], keys, strict=True):
+            item["value"] = key
+        # Mutate the serialized expectation too and rehash it; the outer
+        # request/result IDs must not be the owner that discovers this forgery.
+        claimed_id = canonical_fingerprint(
+            {
+                "kind": "native-cad-records",
+                "mesh": records.mesh_id,
+                "tolerance": records.tolerance,
+                "topology": records.topology_id,
+                "witness": records.witness_id,
+                "origin": None,
+                "curve_splits": (),
+                "roots": records.root_id,
+                "associations": keys,
+                "slivers": array_tree_fingerprint(records.sliver_vertices),
+            }
+        )
+        saved["records_id"]["value"] = claimed_id
+        certificate["native_cad"]["fields"]["records_id"]["value"] = claimed_id
+        path = _write_model_archive_recipe(
+            tmp_path / "rehashed-cad-tables.phx", recipe, arrays, MODEL_ARCHIVE_LIMITS
+        )
+    with pytest.raises(ArrayArchiveCorruptionError) as refusal:
+        read_model_artifact(
+            path,
+            expected_type=CellMeshingResult,
+            restore=restore_model_archive_value,
+            expected_content_id=model_archive_content_id(
+                path, limits=MODEL_ARCHIVE_LIMITS
+            ),
+            limits=MODEL_ARCHIVE_LIMITS,
+        )
+    # The owner must refuse the CAD associations, not later catch a stale
+    # outer result ID or reject the archive structure before seeing the tables.
+    cause = refusal.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert re.search(_ASSOCIATION_AUTHORITY_ERROR, str(cause))
+    if change == "rehashed-face":
+        assert "differs from replayed source authority" in str(cause)
