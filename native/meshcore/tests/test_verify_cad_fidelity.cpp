@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <vector>
 
 #include "cad_geometry.hpp"
@@ -521,7 +522,7 @@ void use_and_loop_preconditions() {
 void sliver_edge_in_mesh() {
   Model m;
   const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
-  const double top = M_PI / 2;
+  const double top = std::numbers::pi / 2;
   const std::array<std::array<double, 2>, 4> c{{{0, top - 0.125}, {1, top - 0.125}, {1, top},
                                                 {0, top}}};
   m.surface(sphere);
@@ -1018,7 +1019,7 @@ void lens_index_overflow() {
 // sampled deviation or the jets miss S); a displaced pole or band vertex
 // must refuse at the tolerance; a non-sphere face is refused.
 void pole_chart_rows() {
-  const double r = 2.0, center[3] = {0.5, -0.25, 1.0}, top = M_PI / 2;
+  const double r = 2.0, center[3] = {0.5, -0.25, 1.0}, top = std::numbers::pi / 2;
   Model m;
   const int32_t sphere =
       m.add_template("sphere", {center[0], center[1], center[2], 1, 0, 0, 0, 1, 0, 0, 0, 1, r});
@@ -1068,9 +1069,10 @@ void pole_chart_rows() {
   struct Row { const char* name; std::array<double, 6> uv; int mask; };
   // Unit-sphere colatitudes 0.2 (ring 1) and 0.4 (ring 2), ring 1 every pi/4.
   const double r1 = top - 0.2, r2 = top - 0.4;
-  const Row rows[] = {{"fan", {0.3, top, 0.0, r1, M_PI / 4, r1}, 1},
-                      {"band", {0.0, r1, M_PI / 8, r2, M_PI / 4, r1}, 0},
-                      {"band outer", {M_PI / 4, r1, M_PI / 8, r2, 3 * M_PI / 8, r2}, 0}};
+  constexpr double pi = std::numbers::pi;
+  const Row rows[] = {{"fan", {0.3, top, 0.0, r1, pi / 4, r1}, 1},
+                      {"band", {0.0, r1, pi / 8, r2, pi / 4, r1}, 0},
+                      {"band outer", {pi / 4, r1, pi / 8, r2, 3 * pi / 8, r2}, 0}};
   const double tolerance = 0.01 * r * r;
   for (int sigma : {1, -1})
     for (const Row& row : rows) {
@@ -1156,8 +1158,8 @@ void seam_lens_charge() {
   struct Edge { double ua, ra, ub, rb; };
   for (const Edge edge : {Edge{0.0, 0.5, 1.2, 0.5}, Edge{0.0, 0.3, 1.5, 0.6}, Edge{0.25, 0.6, 1.15, 0.3}})
     for (int sigma : {1, -1}) {
-      const double uv_a[2] = {edge.ua, sigma * (M_PI / 2 - edge.ra)};
-      const double uv_b[2] = {edge.ub, sigma * (M_PI / 2 - edge.rb)};
+      const double uv_a[2] = {edge.ua, sigma * (std::numbers::pi / 2 - edge.ra)};
+      const double uv_b[2] = {edge.ub, sigma * (std::numbers::pi / 2 - edge.rb)};
       double image[4], c_a[2], c_b[2], x_a[3], x_b[3];
       for (int end = 0; end < 2; ++end) {
         const double* point = end == 0 ? uv_a : uv_b;
