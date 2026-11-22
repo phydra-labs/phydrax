@@ -25,11 +25,10 @@ using LocalEdgeKey = std::pair<std::int32_t, std::int32_t>;
 LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept;
 
 // A caller's exact stencil for a witness-free boundary vertex: rows of the
-// mesh's source points and binary64 weights, one per row. collapse_boundary
-// verifies it (it never trusts it): the rows are distinct source points, the
-// weights are finite and sum exactly to 1 (an affine combination), and the
-// exact weighted combination of the points equals the vertex's coordinates
-// exactly, axis by axis. Its support is the rows of nonzero weight.
+// mesh's source points and binary64 weights, one per row. Local edits verify
+// that the rows are distinct, the weights are finite and sum exactly to 1,
+// and the exact affine combination equals the candidate coordinates on all
+// three axes. Its support is the rows of nonzero weight.
 struct SourceStencil {
   std::span<const std::int32_t> points;
   std::span<const double> weights;
@@ -92,11 +91,16 @@ class LocalIncidence {
   // (dimension two or one) is decided on its star: the record's checks, the
   // facets and segments through it revalidated on their sources with the
   // moved record (in bank order) and exact positivity of the star cells, in
-  // TetMesh::apply_relocation_edit's order, so verdict and state equal it;
-  // a periodic or implicit-bound mesh is refused (kRejectedTopology).
+  // TetMesh::apply_relocation_edit's order. Without a stencil the verdict
+  // and state equal it; a periodic or implicit-bound mesh is refused.
+  // An optional `moved_stencil` additionally certifies the new coordinates
+  // of a witness-free facet or segment vertex. Its nonzero support must lie
+  // in every incident facet and segment source group. An invalid or
+  // inapplicable stencil is refused, not ignored. The stencil is not stored
+  // and does not replace any relocation check.
   TetEditStatus relocate(TetMesh& mesh,
                          std::span<const TetEditVertex> moved_vertices,
-                         const Star& star);
+                         const Star& star, const SourceStencil* moved_stencil = nullptr);
   // Commits an interior reconnection or collapse through the cavity-local
   // TetMesh route and updates this index. A collapse must pass this index's
   // current star of the removed vertex as the removed cells.
@@ -211,7 +215,8 @@ class LocalIncidence {
   TetEditStatus commit_boundary_edit(TetMesh& mesh, const TetEdit& operation,
                                      BoundaryEdit& edit);
   // The facet or segment vertex branch of relocate.
-  TetEditStatus relocate_boundary(TetMesh& mesh, const TetEditVertex& moved, const Star& star);
+  TetEditStatus relocate_boundary(TetMesh& mesh, const TetEditVertex& moved, const Star& star,
+                                  const SourceStencil* moved_stencil);
 
   const TetMesh* mesh_ = nullptr;
   // Per vertex slot: one incident cell (a hint, checked before use) and the

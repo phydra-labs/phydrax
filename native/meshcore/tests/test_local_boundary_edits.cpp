@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <optional>
 #include <random>
@@ -2478,6 +2479,115 @@ void boundary_lookups_require_bound_mesh() {
   PHX_CHECK(incidence.boundary_segment({0, 1}, segment) == TetEditStatus::kStaleGeneration);
 }
 
+void stencil_relocations_verify_the_candidate() {
+  const Box box = witness_free_box({4, 4, 4}, true);
+  TetMesh local(BoundaryPolicy::kConforming);
+  TetMesh batch(BoundaryPolicy::kConforming);
+  if (!build(local, box, {}) || !build(batch, box, {})) return;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local));
+  const auto plan_at = [&](std::int32_t slot, Point candidate) {
+    MovePlan plan{incidence.vertex_star(slot), {}};
+    plan.vertex.id = local.vertex_id(slot);
+    plan.vertex.carrier = candidate;
+    plan.vertex.witness = local.witness(slot);
+    return plan;
+  };
+  constexpr auto topology = TetEditStatus::kRejectedTopology;
+  const auto refuses = [&](const MovePlan& plan, SourceStencil stencil,
+                           TetEditStatus expected = TetEditStatus::kRejectedTopology) {
+    PHX_CHECK(incidence.relocate(local, std::span(&plan.vertex, 1), plan.star, &stencil) ==
+              expected);
+    PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+  };
+
+  // Move (1, 1, 0) on the left half of z = 0, whose corners include rows 0, 8, 2, 10.
+  const MovePlan move = plan_at(6, {1.25, 1.0, 0.0});
+  const std::array<std::int32_t, 3> rows{0, 8, 2};
+  const std::array<double, 3> weights{0.125, 0.625, 0.25};
+  refuses(move, {});
+  refuses(move, {rows, std::span(weights).first<2>()});
+  refuses(move, {rows, std::array{std::numeric_limits<double>::infinity(), 0.625, 0.25}});
+  // Changing the origin's weight preserves the coordinates but not the exact sum.
+  refuses(move, {rows, std::array{std::nextafter(weights[0], 1.0), 0.625, 0.25}});
+  // These weights certify the old coordinates, not the candidate.
+  refuses(move, {rows, std::array{0.25, 0.5, 0.25}});
+  // The sum is exactly one; the reconstructed x and y round to the candidate but differ exactly.
+  refuses(move, {std::array{0, 8, 2, 10}, std::array{0.125 - 0x1p-56, 0.625, 0.25, 0x1p-56}});
+  // Even rows of zero weight must exist and be distinct.
+  const auto zero_weight = std::array{0.125, 0.625, 0.25, 0.0};
+  refuses(move, {std::array{0, 8, 2, 0}, zero_weight});
+  refuses(move, {std::array{0, 8, 2, -1}, zero_weight});
+  refuses(move, {std::array{0, 8, 2, 12}, zero_weight});
+  // Row 1 is on the same plane, but not in the incident source group.
+  refuses(move, {std::array{0, 1, 2}, std::array{0.4375, 0.3125, 0.25}});
+
+  // An exact, supported affine extrapolation is not proof of source facet coverage.
+  const MovePlan outside = plan_at(6, {2.25, 1.0, 0.0});
+  refuses(outside, {rows, std::array{-0.375, 1.125, 0.25}}, TetEditStatus::kInvalidGeometry);
+
+  // Stencils cannot silently fall through the interior or witnessed relocation paths.
+  const MovePlan interior = plan_at(31, {1.25, 1.0, 1.0});
+  refuses(interior, {std::array{0, 1, 2, 4}, std::array{0.1875, 0.3125, 0.25, 0.25}});
+  MovePlan witnessed = plan_at(5, {0.0, 1.25, 0.0});
+  PHX_CHECK(segment_point(box, witnessed.vertex.witness.entity, 0.3125,
+                          witnessed.vertex.carrier.data(), witnessed.vertex.witness));
+  const std::array<std::int32_t, 2> edge_rows{0, 2};
+  const std::array<double, 2> edge_weights{0.6875, 0.3125};
+  refuses(witnessed, {edge_rows, edge_weights});
+  witnessed.vertex.witness = {};
+  refuses(witnessed, {edge_rows, edge_weights}, TetEditStatus::kRejectedProtected);
+
+  // Affine weights may be signed; a zero-weight row outside the group is not support.
+  const std::array<std::int32_t, 5> exact_rows{10, 8, 0, 2, 1};
+  const std::array<double, 5> exact_weights{-0.25, 0.875, -0.125, 0.5, -0.0};
+  const SourceStencil stencil{exact_rows, exact_weights};
+  PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star, &stencil) ==
+            TetEditStatus::kApplied);
+  TetEditStatus status = topology;
+  PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
+  PHX_CHECK(status == TetEditStatus::kApplied && same_state(local, batch) &&
+            consistent_complex(local) && incidence_current(local, incidence));
+}
+
+void stencil_relocations_respect_incident_segments() {
+  for (bool split_faces : {false, true}) {
+    Box box = witness_free_box({4, 4, 4}, split_faces);
+    box.witnesses[1] = {};  // (1, 0, 0), on the x-axis source segment.
+    TetMesh local(BoundaryPolicy::kConforming);
+    TetMesh batch(BoundaryPolicy::kConforming);
+    if (!build(local, box, {}) || !build(batch, box, {})) return;
+    LocalIncidence incidence;
+    PHX_CHECK(incidence.initialize(local));
+    MovePlan move{incidence.vertex_star(1), {}};
+    move.vertex.id = local.vertex_id(1);
+    move.vertex.carrier = {1.25, 0.0, 0.0};
+    const std::span<const TetEditVertex> candidate(&move.vertex, 1);
+    const std::array<std::int32_t, 2> segment_rows{0, 1};
+    const std::array<double, 2> segment_weights{0.6875, 0.3125};
+    const SourceStencil segment_stencil{segment_rows, segment_weights};
+    if (split_faces) {
+      // Each incident facet group ends at row 8; the source segment ends at row 1.
+      // Neither exact stencil lies in the intersection of all incident groups.
+      const std::array<std::int32_t, 2> face_rows{0, 8};
+      const std::array<double, 2> face_weights{0.375, 0.625};
+      const SourceStencil face_stencil{face_rows, face_weights};
+      for (const SourceStencil* stencil : {&face_stencil, &segment_stencil}) {
+        PHX_CHECK(incidence.relocate(local, candidate, move.star, stencil) ==
+                  TetEditStatus::kRejectedTopology);
+        PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+      }
+    }
+    PHX_CHECK(incidence.relocate(local, candidate, move.star,
+                                 split_faces ? nullptr : &segment_stencil) ==
+              TetEditStatus::kApplied);
+    TetEditStatus status = TetEditStatus::kRejectedTopology;
+    PHX_CHECK(batch.apply_relocation_edit(relocation_edit(batch, move), status));
+    PHX_CHECK(status == TetEditStatus::kApplied && same_state(local, batch) &&
+              consistent_complex(local) && incidence_current(local, incidence));
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -2488,5 +2598,7 @@ int main() {
   boundary_cavities_never_hold_a_non_disk_constrained_face();
   stencil_collapses_match_the_batch();
   boundary_lookups_require_bound_mesh();
+  stencil_relocations_verify_the_candidate();
+  stencil_relocations_respect_incident_segments();
   return phx::mc::test::finish("test_local_boundary_edits");
 }
