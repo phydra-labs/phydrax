@@ -2235,6 +2235,60 @@ def _finite_element_hybrid_owner(element: FiniteElementSpec, /) -> Any | None:
     return family_owner
 
 
+def _require_linear_prism_basis_operands(element: FiniteElementSpec, /) -> None:
+    """Bind the P1 prism's exact basis to the operands used by its tabulator."""
+    # Element identity does not include the hybrid's retained tabulation leaves.
+    # Check the operands before either reference-basis cache can return a hit.
+    if (element.cell_kind, element.family, element.degree) != (
+        "prism",
+        "HybridLagrange",
+        1,
+    ):
+        return
+    from .fem._high_order import SimplexNodalFamily
+    from .fem._spectral_hp_completion import HybridReferenceFamily
+
+    owner = _finite_element_hybrid_owner(element)
+    tabulator = element.tabulator
+    if (
+        type(owner) is not HybridReferenceFamily
+        or type(tabulator) is not type(owner.tabulate_with_gradients)
+        or (
+            getattr(tabulator, "__func__", None)
+            is not HybridReferenceFamily.tabulate_with_gradients
+        )
+        or owner.orders != (1, 1)
+        or owner.basis_permutation != (0, 2, 4, 1, 3, 5)
+    ):
+        raise ValueError("Linear prism basis requires its canonical hybrid tabulator.")
+    triangle = owner.triangle_family
+    if (
+        type(triangle) is not SimplexNodalFamily
+        or triangle.cell_kind != "triangle"
+        or triangle.order != 1
+        or triangle.multiindices != ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+    ):
+        raise ValueError("Linear prism basis requires its canonical P1 triangle.")
+    dtype = element.reference_nodes.dtype
+    if (
+        dtype not in (np.dtype(np.float32), np.dtype(np.float64))
+        or owner.nodes.dtype != dtype
+        or any(
+            host.dtype != dtype or not np.array_equal(host, expected)
+            for host, expected in (
+                (
+                    np.asarray(element.reference_nodes),
+                    reference_cell_topology("prism").vertices,
+                ),
+                (np.asarray(owner.axial_nodes), (0.0, 1.0)),
+                (np.asarray(triangle.nodes), reference_cell_topology("triangle").vertices),
+                (np.asarray(triangle.coefficients), np.eye(3, dtype=dtype)),
+            )
+        )
+    ):
+        raise ValueError("Linear prism basis requires canonical nodes and coefficients.")
+
+
 def _hybrid_shifted_jacobi_polynomial(
     degree: int, alpha: int, /
 ) -> dict[tuple[int, ...], Fraction]:
@@ -2608,6 +2662,8 @@ def coordinate_source_basis(
     elif not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_source_basis(element)
     else:
+        if isinstance(element, FiniteElementSpec):
+            _require_linear_prism_basis_operands(element)
         key = (type(element).__name__, element.element_id)
         basis = _SOURCE_BASES.get(key)
         if basis is None:
@@ -3006,13 +3062,14 @@ def _finite_element_execution_basis(
         triangle_degree, axial_degree = hybrid_owner.orders
         variables = axes(3)
         if (triangle_degree, axial_degree) == (1, 1):
-            from .fem._reference import lagrange_element
-
-            # The degree-one simplex collocation matrix is the identity in the
-            # P1 triangle's vertex order. The two Lobatto nodes shift exactly to
-            # (0, 1); their binary64 barycentric weights (-1, 1) give (1-z, z).
-            horizontal = coordinate_source_basis(lagrange_element("triangle", 1))
-            vertical = (add(constant(1, 3), scale(variables[2], -1)), variables[2])
+            triangle_family = hybrid_owner.triangle_family
+            if triangle_family is None:
+                raise ValueError("Linear prism basis lacks its prepared P1 triangle.")
+            horizontal = _simplex_nodal_execution_basis(triangle_family)
+            # The two shifted Lobatto nodes and their normalized weights are
+            # exact in either execution dtype. Keep the same axis expansion
+            # and stored term order, which the exact map digests record.
+            axial_basis = _execution_lagrange_axis((0.0, 1.0), (-1.0, 1.0))
         else:
             from .._polynomial._orthogonal import legendre_rule_data
             from .fem._high_order import (
@@ -3025,10 +3082,10 @@ def _finite_element_execution_basis(
             rule = legendre_rule_data(axial_degree + 1, "lobatto")
             z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
             z_weights = _default_barycentric_weights(z_nodes)
-            vertical = tuple(
-                compose_expression(value, (variables[2],))
-                for value in _execution_lagrange_axis(z_nodes, z_weights)
-            )
+            axial_basis = _execution_lagrange_axis(z_nodes, z_weights)
+        vertical = tuple(
+            compose_expression(value, (variables[2],)) for value in axial_basis
+        )
         product_basis = tuple(
             multiply(
                 compose_expression(value, variables[:2]),
@@ -3133,6 +3190,8 @@ def coordinate_execution_source_basis(
         return coordinate_execution_source_basis(element.source_element)
     if not isinstance(element, FiniteElementSpec | LayerColumnCellGeometryElement):
         return _root_execution_basis(element)
+    if isinstance(element, FiniteElementSpec):
+        _require_linear_prism_basis_operands(element)
     key = (type(element).__name__, element.element_id)
     basis = _EXECUTION_BASES.get(key)
     if basis is None:
