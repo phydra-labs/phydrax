@@ -34,7 +34,11 @@ bool read_bank(const T* values, int64_t count, std::vector<T>& bank) {
   if (count < 0 || !addressable(count, 1, sizeof(T)) || (count > 0 && values == nullptr)) {
     return false;
   }
-  bank.assign(values, values + count);
+  if (count == 0) {
+    bank.clear();
+  } else {
+    bank.assign(values, values + count);
+  }
   return true;
 }
 
@@ -42,7 +46,10 @@ bool read_request(const phx_mc_metric_adapt3d_request& request, AdaptInput& inpu
   const int64_t sources = request.source_count;
   const int64_t vertices = request.vertex_count;
   const int64_t cells = request.cell_count;
-  if (sources < 0 || vertices < 0 || cells < 0 || !addressable(sources, 9, sizeof(double)) ||
+  if (!addressable(sources, 9, sizeof(double)) ||
+      !addressable(vertices, 1, sizeof(uint64_t)) ||
+      !addressable(cells, 1, sizeof(uint64_t)) ||
+      !addressable(request.protected_edge_count, 2, sizeof(uint64_t)) ||
       request.stencil_offsets == nullptr || request.ancestry_offsets == nullptr) {
     return false;
   }

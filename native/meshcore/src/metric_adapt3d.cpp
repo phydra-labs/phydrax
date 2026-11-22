@@ -435,6 +435,20 @@ void Adapter::bind() {
     throw std::invalid_argument("The source banks disagree in size.");
   }
   for (std::uint64_t id : input_.source_vertex_ids) source_targets_.insert(id);
+  TetMeshSnapshot snapshot;
+  if (mesh_.snapshot(snapshot) != TetEditStatus::kApplied) {
+    throw std::invalid_argument("The mesh has no snapshot.");
+  }
+  // Counts and strictly increasing IDs, followed by the live-slot checks
+  // below, prove that every owner is bound exactly once before any edit.
+  const auto covers = [](const std::vector<std::uint64_t>& ids, std::size_t live) {
+    return ids.size() == live &&
+           std::adjacent_find(ids.begin(), ids.end(), std::greater_equal<>{}) == ids.end();
+  };
+  if (!covers(input_.vertex_ids, snapshot.vertices.size()) ||
+      !covers(input_.cell_ids, snapshot.cells.size())) {
+    throw std::invalid_argument("Vertex and cell IDs must cover the live mesh in ascending order.");
+  }
   const std::size_t vertices = input_.vertex_ids.size();
   if (input_.stencil_offsets.size() != vertices + 1 || input_.vertex_target_ids.size() != vertices) {
     throw std::invalid_argument("The vertex banks disagree in size.");
@@ -493,10 +507,6 @@ void Adapter::bind() {
   next_cell_id_ = input_.next_cell_id;
   next_target_vertex_ = input_.next_target_vertex;
   next_target_cell_ = input_.next_target_cell;
-  TetMeshSnapshot snapshot;
-  if (mesh_.snapshot(snapshot) != TetEditStatus::kApplied) {
-    throw std::invalid_argument("The mesh has no snapshot.");
-  }
   for (const TetSnapshotFacet& facet : snapshot.constrained_facets) {
     next_facet_id_ = std::max(next_facet_id_, facet.id + 1);
   }

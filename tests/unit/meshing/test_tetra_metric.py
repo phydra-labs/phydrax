@@ -2107,6 +2107,116 @@ def test_relocation_yields_after_native_admitted_collapse() -> None:
         state.native.close()
 
 
+@pytest.mark.parametrize(
+    ("bank", "defect", "message"),
+    (
+        pytest.param(
+            "vertex_target_ids", "short", "one entry per vertex", id="vertex-targets"
+        ),
+        pytest.param("cell_blocks", "short", "one entry per cell", id="cell-blocks"),
+        pytest.param("cell_target_ids", "short", "one entry per cell", id="cell-targets"),
+        pytest.param("ancestry_kinds", "short", "one entry per cell", id="cell-kinds"),
+        pytest.param("stencil_offsets", "short", "one more entry", id="missing-offset"),
+        pytest.param("stencil_offsets", "start", "start at zero", id="stencil-start"),
+        pytest.param("ancestry_offsets", "start", "start at zero", id="ancestry-start"),
+        pytest.param("stencil_offsets", "order", "nondecreasing", id="stencil-order"),
+        pytest.param("ancestry_offsets", "order", "nondecreasing", id="ancestry-order"),
+        pytest.param(
+            "stencil_rows", "short", "length of each values bank", id="stencil-rows"
+        ),
+        pytest.param(
+            "stencil_weights", "short", "length of each values bank", id="stencil-weights"
+        ),
+        pytest.param(
+            "ancestry_ids", "short", "length of each values bank", id="ancestry-ids"
+        ),
+    ),
+)
+def test_metric_adapt_refuses_inconsistent_buffer_extents(
+    bank: str,
+    defect: str,
+    message: str,
+) -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    state = _state(_source(), np.eye(3, dtype=np.float64))
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        values = banks[bank].copy()
+        match defect:
+            case "short":
+                values = values[:-1]
+            case "start":
+                values[0] = 1
+            case "order":
+                values[1] = values[-1] + 1
+            case _:
+                raise ValueError(f"Unknown test defect {defect!r}.")
+        banks[bank] = values
+        source_id, revision, map_id, frame_id = state.source_identity
+        generation = int(state.snapshot.generation)
+        with pytest.raises(ValueError, match=message):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=True,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
+@pytest.mark.parametrize("owner", ("vertex", "cell"))
+@pytest.mark.parametrize("missing", (True, False), ids=("missing", "duplicate"))
+def test_metric_adapt_requires_all_live_owners(owner: str, missing: bool) -> None:
+    from phydrax.meshing._tetra_metric import _LOWER, _metric_adapt_inputs
+
+    state = _state(_source(), np.eye(3, dtype=np.float64))
+    with state.native as native:
+        banks = _metric_adapt_inputs(state)
+        if owner == "vertex":
+            ids_name = "vertex_ids"
+            parallel = ("vertex_ids", "vertex_target_ids", "stencil_offsets")
+            entries = ("stencil_rows", "stencil_weights")
+        else:
+            ids_name = "cell_ids"
+            parallel = (
+                "cell_ids",
+                "cell_blocks",
+                "cell_target_ids",
+                "ancestry_kinds",
+                "ancestry_offsets",
+            )
+            entries = ("ancestry_ids",)
+        if missing:
+            # Preparation supplies one stencil term or ancestor per owner.
+            for name in (*parallel, *entries):
+                banks[name] = banks[name][:-1]
+        else:
+            ids = banks[ids_name].copy()
+            ids[-1] = ids[-2]
+            banks[ids_name] = ids
+        source_id, revision, map_id, frame_id = state.source_identity
+        generation = int(state.snapshot.generation)
+        with pytest.raises(ValueError, match=r"tet_mesh_metric_adapt: invalid input"):
+            native.metric_adapt(
+                generation,
+                **banks,
+                lower=_LOWER,
+                topology_operations=True,
+                relocation=True,
+                source_id=source_id,
+                source_revision=revision,
+                source_map_id=map_id,
+                frame_id=frame_id,
+            )
+        assert native.arrays().generation == generation
+
+
 def test_relocation_reopens_an_unrepresentable_split() -> None:
     from phydrax.meshing._tetra_metric import (
         _adapted_evidence,

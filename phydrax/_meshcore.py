@@ -12243,13 +12243,28 @@ class TetMesh3D:
         if (
             banks[0].shape[0] != sources
             or banks[1].shape[0] != sources
-            or (banks[2].shape[0] != sources)
+            or banks[2].shape[0] != sources
         ):
             raise ValueError("The source banks must hold one row per source vertex.")
-        if banks[5].size != banks[4].size + 1 or banks[12].size != banks[9].size + 1:
+        vertices, cells = banks[4].size, banks[9].size
+        if banks[8].size != vertices:
+            raise ValueError("vertex_target_ids must hold one entry per vertex.")
+        if any(banks[index].size != cells for index in (10, 11, 14)):
             raise ValueError(
-                "Stencil and ancestry offsets hold one row more than their owners."
+                "cell_blocks, cell_target_ids and ancestry_kinds must hold one entry per cell."
             )
+        # The native request has owner counts and raw pointers, not the
+        # lengths of the Python buffers. Check every extent before the call.
+        for offsets, owners, counts, name in (
+            (banks[5], vertices, (banks[6].size, banks[7].size), "stencil_offsets"),
+            (banks[12], cells, (banks[13].size,), "ancestry_offsets"),
+        ):
+            if offsets.size != owners + 1:
+                raise ValueError(f"{name} must hold one more entry than its owners.")
+            if offsets[0] != 0 or np.any(offsets[1:] < offsets[:-1]):
+                raise ValueError(f"{name} must start at zero and be nondecreasing.")
+            if any(offsets[-1] != count for count in counts):
+                raise ValueError(f"{name} must end at the length of each values bank.")
         request = _MetricAdaptRequest(
             sources,
             banks[0].ctypes.data,
@@ -12258,13 +12273,13 @@ class TetMesh3D:
             banks[3].ctypes.data,
             banks[16].shape[0],
             banks[16].ctypes.data,
-            banks[4].size,
+            vertices,
             banks[4].ctypes.data,
             banks[5].ctypes.data,
             banks[6].ctypes.data,
             banks[7].ctypes.data,
             banks[8].ctypes.data,
-            banks[9].size,
+            cells,
             banks[9].ctypes.data,
             banks[10].ctypes.data,
             banks[11].ctypes.data,
