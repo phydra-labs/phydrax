@@ -68,6 +68,25 @@
   shared read-only by validity, quality and audit. Hex-dominant rows certify
   in 220 to 285 s instead of 1,220 to 1,500 s; conforming Voronoi with about
   1e4 cells in about 96 s.
+- Native certification kernels (cell-map validity, polyhedral star validity
+  and decomposition, declared contacts, welded topology) run on meshcore's
+  deterministic worker pool: a `parallelism` argument (from Python, the
+  existing `exact_kernel_parallelism()` control) splits cells and pairs into
+  fixed chunks whose size does not depend on the worker count, and results
+  are byte-identical for every worker count. `PHX_MC_THREAD_SANITIZE` builds
+  meshcore and its tests with ThreadSanitizer.
+- `delaunay_3d` / `regular_3d` (`phx_mc_delaunay_3d` / `phx_mc_regular_3d`)
+  take a `parallelism` argument: from 16384 points, after a sequential
+  prefix, points are inserted by grid regions in parallel on the native
+  worker pool (a region commits a cavity only when it owns every neighboring
+  cell; border points are deferred to passes on shifted grids), and cells are
+  canonicalized in parallel. The canonical output is byte-identical for every
+  parallelism and insertion order (the symbolic perturbation is ordered by
+  input index); parallelism 1 runs the sequential build unchanged.
+- `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
+  (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
+  builders, which remain the path without meshcore; building over 1e6
+  tetrahedra takes 0.5 to 1.2 s instead of 5.4 to 8.3 s.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the
@@ -139,6 +158,15 @@
   The host route now groups equal padded row keys correctly when a column
   spans both the padding sentinel and vertex 0, and an out-of-range lookup
   raises `ValueError`.
+- Host cell-quality dihedral angles and solid corner measures run in meshcore
+  (`phx_mc_quality_dihedral_angles`, `phx_mc_quality_solid_corners`) in the
+  host formulas' binary64 operation order, bit-identical to the NumPy path,
+  which remains without meshcore. Audit patch-zone adjacency, organization
+  entity-id checks and `resolve_mesh_scope_rows` search all scopes of an
+  entity set at once instead of per patch. Certified icosphere L6 (703k
+  cells) executes in 7.6-7.8 s instead of 8.1-8.5 s with one facet, and in
+  19.6-20.3 s instead of 23.4-25.7 s with one facet per triangle (81,920
+  facets); certificate, association and result identities are unchanged.
 - Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
   a facet or segment vertex into a vertex on its carrier (in place or with a
   moved survivor) and swap an exactly coplanar boundary edge between two

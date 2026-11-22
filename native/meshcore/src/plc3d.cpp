@@ -33,6 +33,7 @@
 #include "topology_keys.hpp"
 #include "tet_mesh.hpp"
 #include "improve3d.hpp"
+#include "deterministic_float.hpp"
 
 namespace phx::mc {
 namespace {
@@ -1718,20 +1719,6 @@ class SourceFaceTable {
   std::set<Triple> fresh_;
 };
 
-// The cube root of a positive finite value by Newton's iteration from a power
-// of two: binary64 operations only, so a grid has the same cells on every
-// platform (std::cbrt is not the same double everywhere). Eight steps from a
-// start within a factor of two reach the last places; the value is a bucket
-// width and need not be correctly rounded. Other values are returned as given.
-double cube_root(double value) noexcept {
-  if (!(value > 0.0) || !std::isfinite(value)) return value;
-  int exponent = 0;
-  std::frexp(value, &exponent);
-  double root = std::ldexp(1.0, exponent / 3);
-  for (int step = 0; step < 8; ++step) root = (2.0 * root + value / (root * root)) / 3.0;
-  return root;
-}
-
 // Uniform hash grid of items with axis-aligned boxes (points or segments).
 // A box query visits a superset of the items whose boxes meet it, so the
 // exact decisions stay with the caller. Items spanning many cells are kept
@@ -1750,8 +1737,8 @@ class BoxGrid {
       extent = std::max(extent, upper[axis] - lower[axis]);
     }
     const double items = static_cast<double>(std::max<std::size_t>(count, 1));
-    double size = cube_root(volume / items);
-    if (!(size > extent * 0x1p-20)) size = extent / cube_root(items);
+    double size = deterministic::cube_root(volume / items);
+    if (!(size > extent * 0x1p-20)) size = extent / deterministic::cube_root(items);
     inverse_ = size > 0.0 && std::isfinite(size) ? 1.0 / size : 1.0;
   }
 

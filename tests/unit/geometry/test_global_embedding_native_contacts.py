@@ -16,7 +16,7 @@ from typing import cast
 import numpy as np
 import pytest
 
-from phydrax._meshcore import meshcore_available
+from phydrax._meshcore import meshcore_available, polyhedral_declared_contacts
 from phydrax.discretization._cell_geometry import CellGeometrySpec
 from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._exact_algebraic_geometry import ExactScalar
@@ -244,3 +244,28 @@ def test_native_contacts_refuse_a_zero_length_declared_edge() -> None:
         (((0, 1, 3), (0, 1, 4)), ((1, 0, 3), (0, 1, 5))),
         ((q, *below), (q, *above)),
     )
+
+
+def test_native_contacts_are_identical_for_every_parallelism() -> None:
+    # Every pair of a sheared 3^3 grid (several fixed chunks of pairs): the
+    # verdicts are byte-identical for every parallelism and across repeats.
+    generator = random.Random(5)
+    points, cells = _grid(3, generator)
+    matrix = np.eye(3) + np.asarray(
+        [[generator.randint(-2, 2) / 8 for _ in range(3)] for _ in range(3)]
+    )
+    mesh = CellMesh.from_polyhedra(points @ matrix.T, cells)
+    embedding_cells = prepare_embedding_cells(mesh, CellGeometrySpec.affine(mesh))
+    pieces = [_cell_simplices(cell) for cell in embedding_cells]
+    piece_filter = _VolumePieceFilter.prepare(mesh, embedding_cells, [*pieces])
+    assert piece_filter is not None and piece_filter.contacts is not None
+    first, second = np.triu_indices(len(cells), 1)
+    serial = polyhedral_declared_contacts(
+        piece_filter.contacts, first, second, parallelism=1
+    )
+    assert np.all(serial)
+    for parallelism in (2, 3, 4, 8, 8, 8, 8):
+        result = polyhedral_declared_contacts(
+            piece_filter.contacts, first, second, parallelism=parallelism
+        )
+        assert result.tobytes() == serial.tobytes()

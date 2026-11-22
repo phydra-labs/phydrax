@@ -1295,6 +1295,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_welded_topology": (
@@ -1323,15 +1324,16 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _P,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_polyhedral_star_validity": (
         _I32,
-        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P),
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _F64, _P, _P, _P, _P, _I32),
     ),
     "phx_mc_polyhedral_star_decomposition": (
         _I32,
-        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P),
+        (_I64, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
     ),
     "phx_mc_face_triangulation": (_I32, (_I64, _P, _P, _P, _P, _P, _P)),
     "phx_mc_polyhedral_declared_contacts": (
@@ -1358,6 +1360,7 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             _I64,
             _P,
             _P,
+            _I32,
         ),
     ),
     "phx_mc_cad_geometry_evaluate": (_I32, (_P, _I32, _I64, _I64, _P, _I32, _P)),
@@ -1441,6 +1444,10 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_separation_screen": (
         _I32,
         (_I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P, _I32),
+    ),
+    "phx_mc_bvh_build": (
+        _I32,
+        (_I32, _I64, _I32, _P, _P, _P, _I64, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
     ),
     "phx_mc_bvh_pair_stream_create": (
         _I32,
@@ -1815,8 +1822,8 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_tet_mesh_free": (None, (_P,)),
     "phx_mc_delaunay_2d": (_I32, (_I64, _P, _P)),
     "phx_mc_regular_2d": (_I32, (_I64, _P, _P, _P)),
-    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P)),
-    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_delaunay_3d": (_I32, (_I64, _P, _P, _I32)),
+    "phx_mc_regular_3d": (_I32, (_I64, _P, _P, _P, _I32)),
     "phx_mc_constrained_delaunay_2d": (
         _I32,
         (_I64, _P, _I64, _P, _I64, _P, _I32, _F64, _F64, _P),
@@ -1937,6 +1944,11 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_angle_arccosine": (_I32, (_I64, _P, _P)),
     "phx_mc_angle_between": (_I32, (_I64, _P, _P, _P)),
     "phx_mc_angle_arctangent2": (_I32, (_I64, _P, _P, _P)),
+    "phx_mc_quality_dihedral_angles": (_I32, (_I64, _I64, _P, _I64, _P, _P)),
+    "phx_mc_quality_solid_corners": (
+        _I32,
+        (_I64, _I64, _P, _I64, _P, _P, _P, _P, _P, _P, _P),
+    ),
     "phx_mc_metric_relocation_create": (
         _I32,
         (
@@ -3988,6 +4000,7 @@ def _triangulate(
     points: object,
     weights: object | None,
     width: int,
+    trailing: tuple[int, ...] = (),
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     library = load_meshcore()
@@ -3995,7 +4008,9 @@ def _triangulate(
     count = point_array.shape[0]
     handle = ctypes.c_void_p()
     if weights is None:
-        status = library[name](count, point_array.ctypes.data, ctypes.addressof(handle))
+        status = library[name](
+            count, point_array.ctypes.data, ctypes.addressof(handle), *trailing
+        )
     else:
         weight_array = _real_array(weights, "weights")
         if weight_array.shape != (count,):
@@ -4005,6 +4020,7 @@ def _triangulate(
             point_array.ctypes.data,
             weight_array.ctypes.data,
             ctypes.addressof(handle),
+            *trailing,
         )
     operation = name.removeprefix("phx_mc_")
     if status != MeshcoreStatus.OK:
@@ -4027,14 +4043,15 @@ def delaunay_2d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
     return _triangulate("phx_mc_delaunay_2d", points, None, 2)
 
 
-def delaunay_3d(points: object, /) -> tuple[np.ndarray, np.ndarray]:
+def delaunay_3d(points: object, /, *, parallelism: int) -> tuple[np.ndarray, np.ndarray]:
     """Exact Delaunay tetrahedralization of ``(n, 3)`` points.
 
     Returns positively oriented, canonically ordered tetrahedra and the input
-    vertex map.
+    vertex map. ``parallelism`` workers insert in rounds of conflict-free
+    cavities; the result does not depend on it.
     """
 
-    return _triangulate("phx_mc_delaunay_3d", points, None, 3)
+    return _triangulate("phx_mc_delaunay_3d", points, None, 3, (parallelism,))
 
 
 def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
@@ -4043,10 +4060,15 @@ def regular_2d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarr
     return _triangulate("phx_mc_regular_2d", points, weights, 2)
 
 
-def regular_3d(points: object, weights: object, /) -> tuple[np.ndarray, np.ndarray]:
-    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1."""
+def regular_3d(
+    points: object, weights: object, /, *, parallelism: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact regular (weighted Delaunay) tetrahedralization; redundant points map to -1.
 
-    return _triangulate("phx_mc_regular_3d", points, weights, 3)
+    ``parallelism`` workers insert in rounds; the result does not depend on it.
+    """
+
+    return _triangulate("phx_mc_regular_3d", points, weights, 3, (parallelism,))
 
 
 class VerdictStatus(IntEnum):
@@ -4486,6 +4508,8 @@ def cell_map_validity(
     routes: object,
     floor: float,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact root validity proof of dof-linear polynomial cell maps in 3D.
 
@@ -4545,6 +4569,7 @@ def cell_map_validity(
         lower.ctypes.data,
         upper.ctypes.data,
         digests.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "cell_map_validity")
     return decided.astype(np.bool_), status, lower, upper, digests
@@ -4568,6 +4593,7 @@ def welded_topology(
     embedded: bool,
     check_manifold: bool,
     check_watertight: bool,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Combinatorial welded-topology counts of one star complex.
 
@@ -4622,6 +4648,7 @@ def welded_topology(
         None if scope_array is None else scope_array.ctypes.data,
         counts.ctypes.data,
         boundary.ctypes.data,
+        parallelism,
     )
     _raise_for_call(
         status,
@@ -4680,6 +4707,8 @@ def polyhedral_star_validity(
     stars: np.ndarray,
     floor: float,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact star validity of polyhedra (``phx_mc_polyhedral_star_validity``).
 
@@ -4729,6 +4758,7 @@ def polyhedral_star_validity(
         status.ctypes.data,
         lower.ctypes.data,
         upper.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_star_validity")
     return decided.astype(np.bool_), status, lower, upper
@@ -4742,6 +4772,8 @@ def polyhedral_star_decomposition(
     face_vertex_offsets: np.ndarray,
     face_vertex_values: np.ndarray,
     /,
+    *,
+    parallelism: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Exact star decompositions of linear polytopes.
 
@@ -4795,6 +4827,7 @@ def polyhedral_star_decomposition(
         face_reversed.ctypes.data,
         triangles.ctypes.data,
         triangle_counts.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_star_decomposition")
     return (
@@ -4932,7 +4965,12 @@ def polyhedral_contact_bank(
 
 
 def polyhedral_declared_contacts(
-    bank: PolyhedralContactBank, first: np.ndarray, second: np.ndarray, /
+    bank: PolyhedralContactBank,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    parallelism: int,
 ) -> np.ndarray:
     """Pairs of ``bank`` cells whose every tetrahedron contact is proved to
     lie in one convex piece of their declared shared stratum
@@ -4966,6 +5004,7 @@ def polyhedral_declared_contacts(
         pairs.shape[0],
         pairs.ctypes.data,
         declared.ctypes.data,
+        parallelism,
     )
     _raise_for_call(result, "polyhedral_declared_contacts")
     return declared.astype(np.bool_)
@@ -13139,6 +13178,70 @@ def angle_between(across: np.ndarray, along: np.ndarray, /) -> np.ndarray:
     return results
 
 
+BVH_BUILD_MEDIAN = 0
+BVH_BUILD_SAH = 1
+BVH_BUILD_MORTON = 2
+
+
+def bvh_build(
+    kind: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    codes: np.ndarray | None,
+    leaf_size: int,
+    sah_bins: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Level-ordered BVH topology over item boxes (``phx_mc_bvh_build``).
+
+    Returns the item order and, per node in breadth-first level order, its
+    item range ``[start, stop)`` and children (``-1`` at leaves), with the
+    node offsets of every level. ``codes`` (uint64 per item) are required
+    for ``BVH_BUILD_MORTON`` and unused otherwise.
+    """
+    low = np.ascontiguousarray(lower, dtype=np.float64)
+    high = np.ascontiguousarray(upper, dtype=np.float64)
+    if low.ndim != 2 or high.shape != low.shape:
+        raise ValueError("lower and upper must share shape (items, dimension).")
+    count, dimension = low.shape
+    keys = None if codes is None else np.ascontiguousarray(codes, dtype=np.uint64)
+    if keys is not None and keys.shape != (count,):
+        raise ValueError("codes must hold one value per item.")
+    capacity = max(2 * count - 1, 1)
+    order = np.empty((count,), dtype=np.int64)
+    start, stop, left, right = (np.empty((capacity,), dtype=np.int64) for _ in range(4))
+    level_offsets = np.empty((capacity + 1,), dtype=np.int64)
+    node_count, level_count = _I64(), _I64()
+    status = load_meshcore()["phx_mc_bvh_build"](
+        kind,
+        count,
+        dimension,
+        low.ctypes.data,
+        high.ctypes.data,
+        None if keys is None else keys.ctypes.data,
+        leaf_size,
+        sah_bins,
+        order.ctypes.data,
+        start.ctypes.data,
+        stop.ctypes.data,
+        left.ctypes.data,
+        right.ctypes.data,
+        level_offsets.ctypes.data,
+        ctypes.addressof(node_count),
+        ctypes.addressof(level_count),
+    )
+    _raise_for_call(status, "bvh_build")
+    nodes = int(node_count.value)
+    return (
+        order,
+        start[:nodes],
+        stop[:nodes],
+        left[:nodes],
+        right[:nodes],
+        level_offsets[: int(level_count.value) + 1],
+    )
+
+
 def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.ndarray:
     """``atan2(ordinates, abscissas)`` in ``[-pi, pi]``, the same binary64
     result on every platform (within 7 units in the last place).
@@ -13159,6 +13262,74 @@ def angle_arctangent2(ordinates: np.ndarray, abscissas: np.ndarray, /) -> np.nda
     )
     _raise_for_call(status, "angle_arctangent2")
     return results
+
+
+def _quality_cells(
+    points: np.ndarray, rows: np.ndarray, width: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    corners = _real_array(points, "points")
+    table = np.ascontiguousarray(rows, dtype=np.int64)
+    if corners.ndim != 3 or corners.shape[2] != 3 or corners.shape[1] == 0:
+        raise ValueError("points must have shape (cells, corners, 3).")
+    if table.ndim != 2 or table.shape[1] != width:
+        raise ValueError(f"Corner index rows must have shape (rows, {width}).")
+    return corners, table
+
+
+def quality_dihedral_angles(points: np.ndarray, samples: np.ndarray, /) -> np.ndarray:
+    """Dihedral angles ``(cells, samples)`` of ``points`` ``(cells, corners,
+    3)`` with the host quality formula's rounded binary64 operations: per
+    sample row ``(origin, end, first, second)`` of corner indices, the angle
+    about the edge ``(origin, end)`` from the first to the second corner by
+    :func:`angle_arctangent2`, plus ``2 pi`` when negative.
+    """
+    corners, rows = _quality_cells(points, samples, 4)
+    angles = np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64)
+    status = load_meshcore()["phx_mc_quality_dihedral_angles"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        angles.ctypes.data,
+    )
+    _raise_for_call(status, "quality_dihedral_angles")
+    return angles
+
+
+def quality_solid_corners(
+    points: np.ndarray,
+    frames: np.ndarray,
+    ideal_inverse: np.ndarray,
+    ideal_scaled: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Corner measures ``(cells, rows)`` of ``points`` ``(cells, corners, 3)``
+    with the host quality formula's rounded binary64 operations: per frame
+    row ``(apex, n0, n1, n2)``, the frame determinant, the scaled Jacobian,
+    the shape ratio and the condition number against the row's ideal inverse
+    ``(3, 3)`` and ideal scaled Jacobian (``phx_mc_quality_solid_corners``).
+    """
+    corners, rows = _quality_cells(points, frames, 4)
+    inverse = np.ascontiguousarray(ideal_inverse, dtype=np.float64)
+    scale = np.ascontiguousarray(ideal_scaled, dtype=np.float64)
+    if inverse.shape != (rows.shape[0], 3, 3) or scale.shape != (rows.shape[0],):
+        raise ValueError("Ideal frames must align with the frame rows.")
+    results = tuple(
+        np.empty((corners.shape[0], rows.shape[0]), dtype=np.float64) for _ in range(4)
+    )
+    status = load_meshcore()["phx_mc_quality_solid_corners"](
+        corners.shape[0],
+        corners.shape[1],
+        corners.ctypes.data,
+        rows.shape[0],
+        rows.ctypes.data,
+        inverse.ctypes.data,
+        scale.ctypes.data,
+        *(result.ctypes.data for result in results),
+    )
+    _raise_for_call(status, "quality_solid_corners")
+    return results[0], results[1], results[2], results[3]
 
 
 def metric_hull_frame(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
@@ -14044,8 +14215,14 @@ class MetricRelocationSearch:
 
 
 __all__ = [
+    "BVH_BUILD_MEDIAN",
+    "BVH_BUILD_MORTON",
+    "BVH_BUILD_SAH",
+    "bvh_build",
     "angle_arccosine",
     "angle_arctangent2",
+    "quality_dihedral_angles",
+    "quality_solid_corners",
     "angle_arcsine",
     "angle_between",
     "angle_cosine",

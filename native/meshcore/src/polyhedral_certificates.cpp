@@ -37,6 +37,7 @@
 #include "dyadic.hpp"
 #include "exact_scalar.hpp"
 #include "floating_point_mode.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -48,6 +49,7 @@ using Vec = std::array<Dyadic, 3>;
 // least common multiple of the face sizes.
 constexpr int64_t kMaximumCount = 1 << 12;
 constexpr double kMaximumMultiple = 0x1p40;
+constexpr std::size_t kCellChunk = 16;
 constexpr int kUnknown = 2;
 
 // ---------------------------------------------------------------------------
@@ -221,7 +223,7 @@ extern "C" int32_t phx_mc_polyhedral_star_validity(
     const uint32_t* words, const int8_t* signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* star_offsets, const int64_t* stars, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper) {
+    int32_t* status, double* lower, double* upper, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     if (cell_count < 0 || point_offsets == nullptr || cell_face_offsets == nullptr ||
         face_vertex_offsets == nullptr || star_offsets == nullptr || !(floor >= 0.0) ||
@@ -230,7 +232,8 @@ extern "C" int32_t phx_mc_polyhedral_star_validity(
          (decided == nullptr || status == nullptr || lower == nullptr || upper == nullptr)) ||
         !valid_bank(3 * point_offsets[cell_count] + cell_count, word_offsets, words, signs) ||
         (face_vertex_offsets[cell_face_offsets[cell_count]] > 0 && face_vertex_values == nullptr) ||
-        star_offsets[0] != 0 || (star_offsets[cell_count] > 0 && stars == nullptr)) {
+        star_offsets[0] != 0 || (star_offsets[cell_count] > 0 && stars == nullptr) ||
+        parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (!valid_cells(cell_count, point_offsets, cell_face_offsets, face_vertex_offsets,
@@ -256,187 +259,205 @@ extern "C" int32_t phx_mc_polyhedral_star_validity(
     const Dyadic floor_squared = floor_value * floor_value;
     const Interval floor_interval = exact_interval(floor);
     const Interval floor_square_interval = floor_interval * floor_interval;
-    CellPoints cell_points;
-    for (int64_t cell = 0; cell < cell_count; ++cell) {
-      decided[cell] = 0;
-      const int64_t first_point = point_offsets[cell];
-      const int64_t vertex_total = point_offsets[cell + 1] - first_point;
-      const int64_t first_face = cell_face_offsets[cell];
-      const int64_t first_star = star_offsets[cell];
-      const int64_t star_total = star_offsets[cell + 1] - first_star;
-      if (star_total == 0) {
-        status[cell] = 2;
-        lower[cell] = std::numeric_limits<double>::quiet_NaN();
-        upper[cell] = std::numeric_limits<double>::quiet_NaN();
-        decided[cell] = 1;
-        continue;
-      }
-      if (vertex_total < 1 || vertex_total > kMaximumCount) continue;
-      double multiple = 1.0;
-      bool representable = true;
-      for (int64_t star = first_star; star < first_star + star_total && representable; ++star) {
-        const int64_t face = first_face + stars[3 * star];
-        const int64_t size = face_vertex_offsets[face + 1] - face_vertex_offsets[face];
-        representable = size >= 1 && size <= kMaximumCount;
-        if (representable) {
-          multiple = static_cast<double>(std::lcm(static_cast<int64_t>(multiple), size));
-          representable = multiple <= kMaximumMultiple;
-        }
-      }
-      if (!representable) continue;
-      load_cell(bank, first_point, vertex_total, scale_base + cell, cell_points);
-      const double count = static_cast<double>(vertex_total);
-      Box center;
-      for (const Box& box : cell_points.boxes) center = add(center, box);
-      center = {divide(center[0], exact_interval(count)), divide(center[1], exact_interval(count)),
-                divide(center[2], exact_interval(count))};
-      // Enclosures of every star volume v_r and of v_r^2 - floor^2 w_r.
-      std::map<int64_t, Box> face_centers;
-      std::vector<Interval> volumes(static_cast<std::size_t>(star_total));
-      bool enclosed_positive = true;
-      for (int64_t row = 0; row < star_total; ++row) {
-        const int64_t star = first_star + row;
-        const int64_t face = first_face + stars[3 * star];
-        auto found = face_centers.find(face);
-        if (found == face_centers.end()) {
-          Box sum;
-          for (int64_t entry = face_vertex_offsets[face]; entry < face_vertex_offsets[face + 1];
-               ++entry) {
-            sum = add(sum, cell_points.boxes[static_cast<std::size_t>(face_vertex_values[entry])]);
+    // Cells are independent; chunks of kCellChunk cells (fixed, so results do
+    // not depend on parallelism) write only their own cells' outputs.
+    return phx::mc::parallel_for(
+        static_cast<std::size_t>(cell_count),
+        phx::mc::ParallelRequest{kCellChunk, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const phx::mc::GradualNearestScope chunk_mode;
+          CellPoints cell_points;
+          for (int64_t cell = static_cast<int64_t>(begin); cell < static_cast<int64_t>(end);
+               ++cell) {
+            decided[cell] = 0;
+            const int64_t first_point = point_offsets[cell];
+            const int64_t vertex_total = point_offsets[cell + 1] - first_point;
+            const int64_t first_face = cell_face_offsets[cell];
+            const int64_t first_star = star_offsets[cell];
+            const int64_t star_total = star_offsets[cell + 1] - first_star;
+            if (star_total == 0) {
+              status[cell] = 2;
+              lower[cell] = std::numeric_limits<double>::quiet_NaN();
+              upper[cell] = std::numeric_limits<double>::quiet_NaN();
+              decided[cell] = 1;
+              continue;
+            }
+            if (vertex_total < 1 || vertex_total > kMaximumCount) continue;
+            double multiple = 1.0;
+            bool representable = true;
+            for (int64_t star = first_star; star < first_star + star_total && representable;
+                 ++star) {
+              const int64_t face = first_face + stars[3 * star];
+              const int64_t size = face_vertex_offsets[face + 1] - face_vertex_offsets[face];
+              representable = size >= 1 && size <= kMaximumCount;
+              if (representable) {
+                multiple = static_cast<double>(std::lcm(static_cast<int64_t>(multiple), size));
+                representable = multiple <= kMaximumMultiple;
+              }
+            }
+            if (!representable) continue;
+            load_cell(bank, first_point, vertex_total, scale_base + cell, cell_points);
+            const double count = static_cast<double>(vertex_total);
+            Box center;
+            for (const Box& box : cell_points.boxes) center = add(center, box);
+            center = {divide(center[0], exact_interval(count)),
+                      divide(center[1], exact_interval(count)),
+                      divide(center[2], exact_interval(count))};
+            // Enclosures of every star volume v_r and of v_r^2 - floor^2 w_r.
+            std::map<int64_t, Box> face_centers;
+            std::vector<Interval> volumes(static_cast<std::size_t>(star_total));
+            bool enclosed_positive = true;
+            for (int64_t row = 0; row < star_total; ++row) {
+              const int64_t star = first_star + row;
+              const int64_t face = first_face + stars[3 * star];
+              auto found = face_centers.find(face);
+              if (found == face_centers.end()) {
+                Box sum;
+                for (int64_t entry = face_vertex_offsets[face];
+                     entry < face_vertex_offsets[face + 1]; ++entry) {
+                  sum = add(sum,
+                            cell_points.boxes[static_cast<std::size_t>(face_vertex_values[entry])]);
+                }
+                const Interval size = exact_interval(
+                    static_cast<double>(face_vertex_offsets[face + 1] - face_vertex_offsets[face]));
+                found = face_centers
+                            .emplace(face, Box{divide(sum[0], size), divide(sum[1], size),
+                                               divide(sum[2], size)})
+                            .first;
+              }
+              const Box a = sub(found->second, center);
+              const Box b =
+                  sub(cell_points.boxes[static_cast<std::size_t>(stars[3 * star + 1])], center);
+              const Box c =
+                  sub(cell_points.boxes[static_cast<std::size_t>(stars[3 * star + 2])], center);
+              const Interval volume = dot(a, cross(b, c));
+              volumes[static_cast<std::size_t>(row)] = volume;
+              if (enclosed_positive) {
+                enclosed_positive =
+                    sign_of(volume) == 1 &&
+                    (floor == 0.0 ||
+                     sign_of(volume * volume -
+                             floor_square_interval * (dot(a, a) * dot(b, b) * dot(c, c))) == 1);
+              }
+            }
+            const Dyadic n = count_value(vertex_total);
+            const Dyadic cube =
+                n * n * n * cell_points.common * cell_points.common * cell_points.common;
+            Vec center_sum;
+            for (const Vec& point : cell_points.exact) center_sum = add(center_sum, point);
+            std::map<int64_t, std::pair<Vec, Dyadic>> face_sums;
+            const auto face_sum = [&](int64_t face) -> const std::pair<Vec, Dyadic>& {
+              auto found = face_sums.find(face);
+              if (found != face_sums.end()) return found->second;
+              Vec sum;
+              for (int64_t entry = face_vertex_offsets[face]; entry < face_vertex_offsets[face + 1];
+                   ++entry) {
+                sum = add(sum,
+                          cell_points.exact[static_cast<std::size_t>(face_vertex_values[entry])]);
+              }
+              return face_sums
+                  .emplace(face, std::make_pair(std::move(sum),
+                                                count_value(face_vertex_offsets[face + 1] -
+                                                            face_vertex_offsets[face])))
+                  .first->second;
+            };
+            std::vector<ExactStar> exact(static_cast<std::size_t>(star_total));
+            std::vector<int8_t> computed(static_cast<std::size_t>(star_total), 0);
+            const auto star_value = [&](int64_t row) -> const ExactStar& {
+              auto& value = exact[static_cast<std::size_t>(row)];
+              if (!computed[static_cast<std::size_t>(row)]) {
+                const int64_t star = first_star + row;
+                const auto& [sum, size] = face_sum(first_face + stars[3 * star]);
+                value = exact_star(cell_points, center_sum, n, sum, size, stars[3 * star + 1],
+                                   stars[3 * star + 2]);
+                computed[static_cast<std::size_t>(row)] = 1;
+              }
+              return value;
+            };
+            const auto size_of = [&](int64_t row) {
+              const int64_t face = first_face + stars[3 * (first_star + row)];
+              return face_vertex_offsets[face + 1] - face_vertex_offsets[face];
+            };
+            // D_r / m_r against D_s / m_s (common n^3 L^3).
+            const auto exact_compare = [&](int64_t left, int64_t right) {
+              return compare(star_value(left).numerator * count_value(size_of(right)),
+                             star_value(right).numerator * count_value(size_of(left)));
+            };
+            // The extremes: only stars whose enclosures reach the extreme enclosure
+            // are compared exactly.
+            double least_upper = std::numeric_limits<double>::infinity();
+            double greatest_lower = -std::numeric_limits<double>::infinity();
+            for (const Interval& volume : volumes) {
+              least_upper = std::min(least_upper, volume.hi);
+              greatest_lower = std::max(greatest_lower, volume.lo);
+            }
+            int64_t smallest = -1;
+            int64_t largest = -1;
+            for (int64_t row = 0; row < star_total; ++row) {
+              const Interval& volume = volumes[static_cast<std::size_t>(row)];
+              if (!(volume.lo > least_upper) &&
+                  (smallest < 0 || exact_compare(row, smallest) < 0)) {
+                smallest = row;
+              }
+              if (!(volume.hi < greatest_lower) &&
+                  (largest < 0 || exact_compare(row, largest) > 0)) {
+                largest = row;
+              }
+            }
+            lower[cell] = phx::mc::exact::directed_quotient_bounds(
+                              star_value(smallest).numerator, count_value(size_of(smallest)) * cube)
+                              .lower;
+            upper[cell] = phx::mc::exact::directed_quotient_bounds(
+                              star_value(largest).numerator, count_value(size_of(largest)) * cube)
+                              .upper;
+            bool positive = enclosed_positive;
+            if (!positive) {
+              positive = true;
+              for (int64_t row = 0; row < star_total && positive; ++row) {
+                const ExactStar& value = star_value(row);
+                positive =
+                    value.numerator.sign() > 0 &&
+                    (floor == 0.0 ||
+                     (value.numerator * value.numerator - floor_squared * value.scale).sign() > 0);
+              }
+            }
+            if (positive) {
+              status[cell] = 0;
+              decided[cell] = 1;
+              continue;
+            }
+            // Total volume T / (M n^3 L^3) over the common face-size multiple M;
+            // the widest scale product S_w / m_w^2 is compared exactly.
+            Dyadic total;
+            int64_t widest = 0;
+            for (int64_t row = 0; row < star_total; ++row) {
+              const ExactStar& value = star_value(row);
+              total =
+                  total + value.numerator * Dyadic(multiple / static_cast<double>(size_of(row)));
+              const Dyadic row_size = count_value(size_of(row));
+              const Dyadic widest_size = count_value(size_of(widest));
+              if (compare(value.scale * widest_size * widest_size,
+                          star_value(widest).scale * row_size * row_size) > 0) {
+                widest = row;
+              }
+            }
+            bool below = total.sign() < 0;
+            const ExactStar& wide = star_value(widest);
+            if (floor > 0.0 && wide.scale.sign() > 0) {
+              if (total.sign() <= 0) {
+                below = true;
+              } else {
+                const Dyadic widest_size = count_value(size_of(widest));
+                const Dyadic common_multiple(multiple);
+                below = compare(total * total * widest_size * widest_size,
+                                floor_squared * wide.scale * common_multiple * common_multiple) < 0;
+              }
+            }
+            status[cell] = below ? 1 : 2;
+            decided[cell] = 1;
           }
-          const Interval size = exact_interval(
-              static_cast<double>(face_vertex_offsets[face + 1] - face_vertex_offsets[face]));
-          found = face_centers
-                      .emplace(face, Box{divide(sum[0], size), divide(sum[1], size),
-                                         divide(sum[2], size)})
-                      .first;
-        }
-        const Box a = sub(found->second, center);
-        const Box b = sub(cell_points.boxes[static_cast<std::size_t>(stars[3 * star + 1])], center);
-        const Box c = sub(cell_points.boxes[static_cast<std::size_t>(stars[3 * star + 2])], center);
-        const Interval volume = dot(a, cross(b, c));
-        volumes[static_cast<std::size_t>(row)] = volume;
-        if (enclosed_positive) {
-          enclosed_positive =
-              sign_of(volume) == 1 &&
-              (floor == 0.0 ||
-               sign_of(volume * volume -
-                       floor_square_interval * (dot(a, a) * dot(b, b) * dot(c, c))) == 1);
-        }
-      }
-      const Dyadic n = count_value(vertex_total);
-      const Dyadic cube = n * n * n * cell_points.common * cell_points.common * cell_points.common;
-      Vec center_sum;
-      for (const Vec& point : cell_points.exact) center_sum = add(center_sum, point);
-      std::map<int64_t, std::pair<Vec, Dyadic>> face_sums;
-      const auto face_sum = [&](int64_t face) -> const std::pair<Vec, Dyadic>& {
-        auto found = face_sums.find(face);
-        if (found != face_sums.end()) return found->second;
-        Vec sum;
-        for (int64_t entry = face_vertex_offsets[face]; entry < face_vertex_offsets[face + 1];
-             ++entry) {
-          sum = add(sum, cell_points.exact[static_cast<std::size_t>(face_vertex_values[entry])]);
-        }
-        return face_sums
-            .emplace(face, std::make_pair(std::move(sum),
-                                          count_value(face_vertex_offsets[face + 1] -
-                                                      face_vertex_offsets[face])))
-            .first->second;
-      };
-      std::vector<ExactStar> exact(static_cast<std::size_t>(star_total));
-      std::vector<int8_t> computed(static_cast<std::size_t>(star_total), 0);
-      const auto star_value = [&](int64_t row) -> const ExactStar& {
-        auto& value = exact[static_cast<std::size_t>(row)];
-        if (!computed[static_cast<std::size_t>(row)]) {
-          const int64_t star = first_star + row;
-          const auto& [sum, size] = face_sum(first_face + stars[3 * star]);
-          value = exact_star(cell_points, center_sum, n, sum, size, stars[3 * star + 1],
-                             stars[3 * star + 2]);
-          computed[static_cast<std::size_t>(row)] = 1;
-        }
-        return value;
-      };
-      const auto size_of = [&](int64_t row) {
-        const int64_t face = first_face + stars[3 * (first_star + row)];
-        return face_vertex_offsets[face + 1] - face_vertex_offsets[face];
-      };
-      // D_r / m_r against D_s / m_s (common n^3 L^3).
-      const auto exact_compare = [&](int64_t left, int64_t right) {
-        return compare(star_value(left).numerator * count_value(size_of(right)),
-                       star_value(right).numerator * count_value(size_of(left)));
-      };
-      // The extremes: only stars whose enclosures reach the extreme enclosure
-      // are compared exactly.
-      double least_upper = std::numeric_limits<double>::infinity();
-      double greatest_lower = -std::numeric_limits<double>::infinity();
-      for (const Interval& volume : volumes) {
-        least_upper = std::min(least_upper, volume.hi);
-        greatest_lower = std::max(greatest_lower, volume.lo);
-      }
-      int64_t smallest = -1;
-      int64_t largest = -1;
-      for (int64_t row = 0; row < star_total; ++row) {
-        const Interval& volume = volumes[static_cast<std::size_t>(row)];
-        if (!(volume.lo > least_upper) &&
-            (smallest < 0 || exact_compare(row, smallest) < 0)) {
-          smallest = row;
-        }
-        if (!(volume.hi < greatest_lower) &&
-            (largest < 0 || exact_compare(row, largest) > 0)) {
-          largest = row;
-        }
-      }
-      lower[cell] = phx::mc::exact::directed_quotient_bounds(
-                        star_value(smallest).numerator, count_value(size_of(smallest)) * cube)
-                        .lower;
-      upper[cell] = phx::mc::exact::directed_quotient_bounds(
-                        star_value(largest).numerator, count_value(size_of(largest)) * cube)
-                        .upper;
-      bool positive = enclosed_positive;
-      if (!positive) {
-        positive = true;
-        for (int64_t row = 0; row < star_total && positive; ++row) {
-          const ExactStar& value = star_value(row);
-          positive = value.numerator.sign() > 0 &&
-                     (floor == 0.0 ||
-                      (value.numerator * value.numerator - floor_squared * value.scale).sign() > 0);
-        }
-      }
-      if (positive) {
-        status[cell] = 0;
-        decided[cell] = 1;
-        continue;
-      }
-      // Total volume T / (M n^3 L^3) over the common face-size multiple M;
-      // the widest scale product S_w / m_w^2 is compared exactly.
-      Dyadic total;
-      int64_t widest = 0;
-      for (int64_t row = 0; row < star_total; ++row) {
-        const ExactStar& value = star_value(row);
-        total = total + value.numerator * Dyadic(multiple / static_cast<double>(size_of(row)));
-        const Dyadic row_size = count_value(size_of(row));
-        const Dyadic widest_size = count_value(size_of(widest));
-        if (compare(value.scale * widest_size * widest_size,
-                    star_value(widest).scale * row_size * row_size) > 0) {
-          widest = row;
-        }
-      }
-      bool below = total.sign() < 0;
-      const ExactStar& wide = star_value(widest);
-      if (floor > 0.0 && wide.scale.sign() > 0) {
-        if (total.sign() <= 0) {
-          below = true;
-        } else {
-          const Dyadic widest_size = count_value(size_of(widest));
-          const Dyadic common_multiple(multiple);
-          below = compare(total * total * widest_size * widest_size,
-                          floor_squared * wide.scale * common_multiple * common_multiple) < 0;
-        }
-      }
-      status[cell] = below ? 1 : 2;
-      decided[cell] = 1;
-    }
-    return PHX_MC_OK;
+          return PHX_MC_OK;
+        });
   });
 }
 
@@ -1038,7 +1059,7 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
     const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
-    int64_t* triangle_counts) {
+    int64_t* triangle_counts, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     if (cell_count < 0 || point_offsets == nullptr || cell_face_offsets == nullptr ||
         face_vertex_offsets == nullptr || triangle_offsets == nullptr ||
@@ -1064,7 +1085,7 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
       }
     }
     if ((cell_face_offsets[cell_count] > 0 && face_reversed == nullptr) ||
-        (triangle_offsets[cell_count] > 0 && triangles == nullptr)) {
+        (triangle_offsets[cell_count] > 0 && triangles == nullptr) || parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     const phx::mc::GradualNearestScope mode;
@@ -1072,39 +1093,48 @@ extern "C" int32_t phx_mc_polyhedral_star_decomposition(
     const IntegerBank bank{word_offsets, words, signs};
     const IntegerBank face_bank{face_word_offsets, face_words, face_signs};
     const int64_t scale_base = 3 * point_offsets[cell_count];
-    CellPoints cell_points;
-    std::vector<int64_t> offsets;
-    std::vector<std::vector<Vec>> face_points;
-    for (int64_t cell = 0; cell < cell_count; ++cell) {
-      const int64_t first_face = cell_face_offsets[cell];
-      const int64_t face_count = cell_face_offsets[cell + 1] - first_face;
-      if (point_offsets[cell + 1] - point_offsets[cell] > kMaximumCount) {
-        codes[cell] = kUndecided;
-        continue;
-      }
-      if (point_offsets[cell + 1] == point_offsets[cell]) {
-        codes[cell] = face_count == 0 ? kNoFaces : kFaceIncidence;
-        continue;
-      }
-      load_cell(bank, point_offsets[cell], point_offsets[cell + 1] - point_offsets[cell],
-                scale_base + cell, cell_points);
-      offsets.clear();
-      face_points.assign(static_cast<std::size_t>(face_count), {});
-      for (int64_t face = first_face; face <= cell_face_offsets[cell + 1]; ++face) {
-        offsets.push_back(face_vertex_offsets[face] - face_vertex_offsets[first_face]);
-        if (face == cell_face_offsets[cell + 1]) break;
-        auto& rows = face_points[static_cast<std::size_t>(face - first_face)];
-        for (int64_t entry = face_vertex_offsets[face]; entry < face_vertex_offsets[face + 1];
-             ++entry) {
-          rows.push_back(face_bank.point(entry));
-        }
-      }
-      codes[cell] = decompose(cell_points, offsets.data(),
-                              face_vertex_values + face_vertex_offsets[first_face], face_count,
-                              face_points, face_reversed + first_face,
-                              triangles + 4 * triangle_offsets[cell], triangle_counts[cell]);
-    }
-    return PHX_MC_OK;
+    // Cells are independent; chunks of kCellChunk cells (fixed, so results do
+    // not depend on parallelism) write only their own cells' outputs.
+    return phx::mc::parallel_for(
+        static_cast<std::size_t>(cell_count),
+        phx::mc::ParallelRequest{kCellChunk, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const phx::mc::GradualNearestScope chunk_mode;
+          CellPoints cell_points;
+          std::vector<int64_t> offsets;
+          std::vector<std::vector<Vec>> face_points;
+          for (int64_t cell = static_cast<int64_t>(begin); cell < static_cast<int64_t>(end);
+               ++cell) {
+            const int64_t first_face = cell_face_offsets[cell];
+            const int64_t face_count = cell_face_offsets[cell + 1] - first_face;
+            if (point_offsets[cell + 1] - point_offsets[cell] > kMaximumCount) {
+              codes[cell] = kUndecided;
+              continue;
+            }
+            if (point_offsets[cell + 1] == point_offsets[cell]) {
+              codes[cell] = face_count == 0 ? kNoFaces : kFaceIncidence;
+              continue;
+            }
+            load_cell(bank, point_offsets[cell], point_offsets[cell + 1] - point_offsets[cell],
+                      scale_base + cell, cell_points);
+            offsets.clear();
+            face_points.assign(static_cast<std::size_t>(face_count), {});
+            for (int64_t face = first_face; face <= cell_face_offsets[cell + 1]; ++face) {
+              offsets.push_back(face_vertex_offsets[face] - face_vertex_offsets[first_face]);
+              if (face == cell_face_offsets[cell + 1]) break;
+              auto& rows = face_points[static_cast<std::size_t>(face - first_face)];
+              for (int64_t entry = face_vertex_offsets[face]; entry < face_vertex_offsets[face + 1];
+                   ++entry) {
+                rows.push_back(face_bank.point(entry));
+              }
+            }
+            codes[cell] = decompose(cell_points, offsets.data(),
+                                    face_vertex_values + face_vertex_offsets[first_face],
+                                    face_count, face_points, face_reversed + first_face,
+                                    triangles + 4 * triangle_offsets[cell], triangle_counts[cell]);
+          }
+          return PHX_MC_OK;
+        });
   });
 }
 

@@ -40,6 +40,7 @@
 
 #include "capi_guard.hpp"
 #include "floating_point_mode.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -963,6 +964,8 @@ bool prove_prism(const std::array<Expression, 3>& axes, std::int64_t scale, doub
   return true;
 }
 
+constexpr std::size_t kCellChunk = 16;
+
 }  // namespace
 
 extern "C" int32_t phx_mc_cell_map_validity(
@@ -971,7 +974,7 @@ extern "C" int32_t phx_mc_cell_map_validity(
     int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper, uint8_t* digests) {
+    int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism) {
   return phx::mc::guarded([&]() -> int32_t {
     if (domain < 0 || domain > 2 || dof_count < 1 || term_starts == nullptr ||
         kind == nullptr || kind_length < 1 || kind_length > 64 || row_count < 0 ||
@@ -982,7 +985,8 @@ extern "C" int32_t phx_mc_cell_map_validity(
         !phx::mc::addressable(cell_count, 16, 1) ||
         (row_count > 0 && (significands == nullptr || exponents == nullptr)) ||
         (cell_count > 0 && (routes == nullptr || decided == nullptr || status == nullptr ||
-                            lower == nullptr || upper == nullptr || digests == nullptr))) {
+                            lower == nullptr || upper == nullptr || digests == nullptr)) ||
+        parallelism < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     const std::int64_t term_count = term_starts[dof_count];
@@ -1014,61 +1018,71 @@ extern "C" int32_t phx_mc_cell_map_validity(
     for (int64_t index = 0; index < cell_count * dof_count; ++index) {
       if (routes[index] < 0 || routes[index] >= row_count) return PHX_MC_INVALID_INPUT;
     }
-    const phx::mc::GradualNearestScope mode;
-    std::vector<Big> values(static_cast<std::size_t>(dof_count));
-    std::array<Expression, 3> axes;
-    std::string record;
-    for (int64_t cell = 0; cell < cell_count; ++cell) {
-      decided[cell] = 0;
-      const int64_t* route = routes + cell * dof_count;
-      bool dense = true;
-      std::int64_t minimum = std::numeric_limits<std::int64_t>::max();
-      for (int64_t dof = 0; dof < dof_count && dense; ++dof) {
-        for (int axis = 0; axis < 3; ++axis) {
-          const int64_t flat = 3 * route[dof] + axis;
-          if (exponents[flat] == sparse_exponent) {
-            dense = false;
-            break;
+    // Cells are independent: each chunk of kCellChunk cells (fixed, so results
+    // do not depend on parallelism) writes only its own cells' outputs.
+    return phx::mc::parallel_for(
+        static_cast<std::size_t>(cell_count),
+        phx::mc::ParallelRequest{kCellChunk, static_cast<uint32_t>(parallelism)},
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) -> int32_t {
+          const phx::mc::GradualNearestScope mode;
+          std::vector<Big> values(static_cast<std::size_t>(dof_count));
+          std::array<Expression, 3> axes;
+          std::string record;
+          for (int64_t cell = static_cast<int64_t>(begin); cell < static_cast<int64_t>(end);
+               ++cell) {
+            decided[cell] = 0;
+            const int64_t* route = routes + cell * dof_count;
+            bool dense = true;
+            std::int64_t minimum = std::numeric_limits<std::int64_t>::max();
+            for (int64_t dof = 0; dof < dof_count && dense; ++dof) {
+              for (int axis = 0; axis < 3; ++axis) {
+                const int64_t flat = 3 * route[dof] + axis;
+                if (exponents[flat] == sparse_exponent) {
+                  dense = false;
+                  break;
+                }
+                if (significands[flat] != 0)
+                  minimum = std::min<std::int64_t>(minimum, exponents[flat]);
+              }
+            }
+            if (!dense) continue;
+            if (minimum == std::numeric_limits<std::int64_t>::max()) minimum = 0;
+            try {
+              for (int axis = 0; axis < 3; ++axis) {
+                for (int64_t dof = 0; dof < dof_count; ++dof) {
+                  const int64_t flat = 3 * route[dof] + axis;
+                  values[static_cast<std::size_t>(dof)] =
+                      shift_left(from_int64(significands[flat]), exponents[flat] - minimum);
+                }
+                combine(basis, values, axes[axis]);
+              }
+              const std::int64_t scale = minimum - basis_denominator_log2;
+              map_digest(kind_name, axes, scale, record, digests + 16 * cell);
+              Proof proof;
+              const bool affine =
+                  std::all_of(axes.begin(), axes.end(), [](const Expression& value) {
+                    return std::all_of(value.begin(), value.end(), [](const Term& term) {
+                      return term.exponent[0] + term.exponent[1] + term.exponent[2] <= 1;
+                    });
+                  });
+              bool done = false;
+              if (affine) {
+                done = prove_affine(axes, scale, floor, proof);
+              } else if (domain == 1) {
+                done = prove_multilinear(axes, scale, floor, proof);
+              } else if (domain == 2) {
+                done = prove_prism(axes, scale, floor, proof);
+              }
+              if (!done) continue;
+              status[cell] = proof.status;
+              lower[cell] = proof.lower;
+              upper[cell] = proof.upper;
+              decided[cell] = 1;
+            } catch (const Undecided&) {
+              decided[cell] = 0;
+            }
           }
-          if (significands[flat] != 0) minimum = std::min<std::int64_t>(minimum, exponents[flat]);
-        }
-      }
-      if (!dense) continue;
-      if (minimum == std::numeric_limits<std::int64_t>::max()) minimum = 0;
-      try {
-        for (int axis = 0; axis < 3; ++axis) {
-          for (int64_t dof = 0; dof < dof_count; ++dof) {
-            const int64_t flat = 3 * route[dof] + axis;
-            values[static_cast<std::size_t>(dof)] =
-                shift_left(from_int64(significands[flat]), exponents[flat] - minimum);
-          }
-          combine(basis, values, axes[axis]);
-        }
-        const std::int64_t scale = minimum - basis_denominator_log2;
-        map_digest(kind_name, axes, scale, record, digests + 16 * cell);
-        Proof proof;
-        const bool affine = std::all_of(axes.begin(), axes.end(), [](const Expression& value) {
-          return std::all_of(value.begin(), value.end(), [](const Term& term) {
-            return term.exponent[0] + term.exponent[1] + term.exponent[2] <= 1;
-          });
+          return PHX_MC_OK;
         });
-        bool done = false;
-        if (affine) {
-          done = prove_affine(axes, scale, floor, proof);
-        } else if (domain == 1) {
-          done = prove_multilinear(axes, scale, floor, proof);
-        } else if (domain == 2) {
-          done = prove_prism(axes, scale, floor, proof);
-        }
-        if (!done) continue;
-        status[cell] = proof.status;
-        lower[cell] = proof.lower;
-        upper[cell] = proof.upper;
-        decided[cell] = 1;
-      } catch (const Undecided&) {
-        decided[cell] = 0;
-      }
-    }
-    return PHX_MC_OK;
   });
 }

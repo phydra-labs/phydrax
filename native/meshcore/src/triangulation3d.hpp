@@ -7,12 +7,22 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <bit>
+#include <cmath>
 #include <cstdint>
+#include <functional>
+#include <limits>
+#include <mutex>
+#include <numeric>
 #include <span>
 #include <vector>
 
 #include "cavity.hpp"
+#include "floating_point_mode.hpp"
 #include "geometry3.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "prefetch.hpp"
@@ -245,6 +255,46 @@ class Triangulation3D {
     for (std::size_t k = 0; k < points.size() && status == PHX_MC_OK; ++k) {
       status = insert(points[k], alive);
     }
+    building_ = false;
+    return status;
+  }
+
+  // build() with the points after the first four inserted by
+  // insert_batches on `parallelism` workers when parallelism > 1 and the
+  // point set holds at least kParallelPoints (below it the rounds cost more
+  // than they save: measured even at 10^4 points, ahead from 3 * 10^4); the
+  // same triangulation as build(), its cells canonicalized by the caller.
+  int32_t build(std::span<const int32_t> order, std::span<char> alive, int32_t parallelism) {
+    constexpr std::size_t kParallelPoints = 16384;
+    const std::size_t count = order.size();
+    if (parallelism <= 1 || count < kParallelPoints) return build(order, alive);
+    const int32_t a = order[0];
+    int32_t b = order[1];
+    std::size_t third = 2;
+    while (third < count && collinear(ref(a), ref(b), ref(order[third]))) ++third;
+    if (third == count) return PHX_MC_DEGENERATE_INPUT;
+    int32_t c = order[third];
+    std::size_t fourth = third + 1;
+    int sign = 0;
+    while (fourth < count) {
+      sign = orient3d(ref(a), ref(b), ref(c), ref(order[fourth]));
+      if (sign != 0) break;
+      ++fourth;
+    }
+    if (fourth == count) return PHX_MC_DEGENERATE_INPUT;
+    const int32_t d = order[fourth];
+    if (sign < 0) std::swap(b, c);
+    // Rounds keep unused slots of their blocks free: room for them too.
+    complex_.tets.reserve(9 * count + 16);
+    const int32_t initialized = initialize(a, b, c, d);
+    if (initialized != PHX_MC_OK) return initialized;
+    std::vector<int32_t> rest;
+    rest.reserve(count);
+    for (std::size_t k = 2; k < count; ++k) {
+      if (k != third && k != fourth) rest.push_back(order[k]);
+    }
+    building_ = true;
+    const int32_t status = insert_batches(rest, alive, parallelism);
     building_ = false;
     return status;
   }
@@ -504,9 +554,561 @@ class Triangulation3D {
   }
   // Cell validation, skipped while build() owns the complex.
   bool checked(int32_t cell) const noexcept { return building_ || valid_point_tet(cell); }
+  // Batched insertion (insert_batches): per worker, its search stamp, vertex
+  // stamps (weighted), walk state and scratch.
+  struct BatchWorker {
+    std::uint32_t stamp = 0;
+    std::vector<std::uint32_t> vertex_stamps;
+    std::uint32_t vertex_stamp = 0;
+    std::uint64_t walk_step = 0;
+    std::vector<int32_t> stack;
+    std::vector<std::array<int32_t, 4>> cone;
+    // Open-addressed boundary edges of one cone (keys valid at edge_mark).
+    std::vector<std::uint64_t> edge_keys;
+    std::vector<std::uint32_t> edge_marks;
+    std::vector<int32_t> edge_values;
+    std::uint32_t edge_mark = 0;
+  };
+  // A point being inserted by a region: its conflict cavity, whether it is
+  // hidden (weighted, conflicting with no cell), the vertices its cavity
+  // buries, and the slots of its cone.
+  struct BatchPoint {
+    int32_t point = -1;
+    int32_t status = PHX_MC_OK;
+    bool hidden = false;
+    std::vector<int32_t> cavity;
+    std::vector<BoundaryFacet> boundary;
+    std::vector<int32_t> removed;
+    std::vector<int32_t> ids;
+    int64_t finite_change = 0;
+  };
+
+  // conflict() on the region's own cells (only owned cells are tested, so
+  // their stamps are the worker's to write), with the worker's stamp.
+  bool batch_conflict(BatchWorker& worker, int32_t t, int32_t p) {
+    Tetrahedron& current = mutable_tet(t);
+    if (current.stamp == worker.stamp) return current.state != kNoConflict;
+    const bool result = finite_conflict(current, p);
+    current.stamp = worker.stamp;
+    current.state = result ? kConflict : kNoConflict;
+    return result;
+  }
+
+  // locate() from `start` with the worker's walk state, within the cells
+  // `region` owns: -1 when the walk would leave them.
+  int32_t batch_locate(BatchWorker& worker, int32_t start, const ExactPointRef& p,
+                       int32_t region) {
+    int32_t t = start;
+    int32_t previous = -1;
+    for (;;) {
+      const Tetrahedron& current = tet(t);
+      const int first = static_cast<int>(splitmix64(worker.walk_step++) & 3U);
+      int32_t next = -1;
+      for (int i = 0; i < 4; ++i) {
+        const int k = (first + i) & 3;
+        if (current.n[k] == previous) continue;
+        if (orient_with(current, k, p) < 0) {
+          next = current.n[k];
+          break;
+        }
+      }
+      if (next < 0) return t;
+      if (!owned(next, region)) return -1;
+      previous = t;
+      t = next;
+    }
+  }
+
+  // The conflict cavity of `entry.point` (grow_cavity of an unconstrained
+  // complex, on the worker's visit table) and its buried vertices when
+  // weighted, walked to from `start`; status kDeferred when the walk, the
+  // cavity or a cell beyond it leaves the cells `region` owns.
+  void batch_cavity(BatchWorker& worker, BatchPoint& entry, int32_t region,
+                    int32_t start) {
+    const int32_t p = entry.point;
+    entry.status = kDeferred;
+    entry.hidden = false;
+    entry.cavity.clear();
+    entry.boundary.clear();
+    entry.removed.clear();
+    worker.stamp = std::atomic_ref<std::uint32_t>(batch_stamp_).fetch_add(
+                       1, std::memory_order_relaxed) + 1;
+    if (start < 0 || !complex_.live(start) || !owned(start, region)) return;
+    const int32_t origin = batch_locate(worker, start, ref(p), region);
+    if (origin < 0) return;
+    if (!batch_conflict(worker, origin, p)) {
+      entry.status = weights_.empty() ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+      entry.hidden = true;
+      return;
+    }
+    // A neighbor of an owned cell shares three of the region's vertices, so
+    // no other region stamps it.
+    const auto in_cavity = [&](int32_t cell) {
+      const Tetrahedron& current = tet(cell);
+      return current.stamp == worker.stamp && current.state == kInCavity;
+    };
+    mutable_tet(origin).state = kInCavity;
+    entry.cavity.push_back(origin);
+    worker.stack.assign(1, origin);
+    while (!worker.stack.empty()) {
+      const int32_t t = worker.stack.back();
+      worker.stack.pop_back();
+      for (int k = 0; k < 4; ++k) {
+        const int32_t neighbor = tet(t).n[k];
+        if (in_cavity(neighbor)) continue;
+        // Cavity and boundary cells are edited: both must be owned.
+        if (!owned(neighbor, region)) return;
+        if (batch_conflict(worker, neighbor, p)) {
+          mutable_tet(neighbor).state = kInCavity;
+          for (int32_t next : tet(neighbor).n) {
+            if (static_cast<std::size_t>(next) < complex_.tets.size()) {
+              prefetch(&complex_.tets[static_cast<std::size_t>(next)]);
+            }
+          }
+          entry.cavity.push_back(neighbor);
+          worker.stack.push_back(neighbor);
+        } else {
+          const int32_t* around = tet(neighbor).n;
+          const int back = (around[1] == t ? 1 : 0) | (around[2] == t ? 2 : 0) |
+                           (around[3] == t ? 3 : 0);
+          if (around[back] != t) {
+            entry.status = PHX_MC_INTERNAL_ERROR;
+            return;
+          }
+          entry.boundary.push_back({t, k, neighbor, back});
+        }
+      }
+    }
+    entry.status = PHX_MC_OK;
+    if (weights_.empty()) return;
+    if (++worker.vertex_stamp == 0) {
+      std::fill(worker.vertex_stamps.begin(), worker.vertex_stamps.end(), 0U);
+      worker.vertex_stamp = 1;
+    }
+    for (const BoundaryFacet& face : entry.boundary) {
+      const Tetrahedron& current = tet(face.tet);
+      for (int slot = 0; slot < 4; ++slot) {
+        if (slot != face.slot && current.v[slot] >= 0) {
+          worker.vertex_stamps[static_cast<std::size_t>(current.v[slot])] = worker.vertex_stamp;
+        }
+      }
+    }
+    for (int32_t t : entry.cavity) {
+      for (int32_t vertex : tet(t).v) {
+        if (vertex >= 0 &&
+            worker.vertex_stamps[static_cast<std::size_t>(vertex)] != worker.vertex_stamp) {
+          worker.vertex_stamps[static_cast<std::size_t>(vertex)] = worker.vertex_stamp;
+          entry.removed.push_back(vertex);
+        }
+      }
+    }
+  }
+
+  // Writes the cone of `entry` into its slots `entry.ids` (its cavity's,
+  // then the region's), linking the cone cells across the edges of the
+  // cavity boundary and to the cells beyond it. All of them are cells the
+  // region owns, so cones of concurrent regions never share a cell.
+  void batch_commit(BatchWorker& worker, BatchPoint& entry) {
+    const std::size_t count = entry.boundary.size();
+    std::vector<Tetrahedron>& tets = complex_.tets;
+    worker.cone.resize(count);
+    int64_t created_finite = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = entry.boundary[i];
+      std::array<int32_t, 4>& cell = worker.cone[i];
+      std::copy_n(tet(face.tet).v, 4, cell.begin());
+      cell[static_cast<std::size_t>(face.slot)] = entry.point;
+      created_finite += (cell[0] | cell[1] | cell[2] | cell[3]) >= 0 ? 1 : 0;
+    }
+    int64_t removed_finite = 0;
+    for (int32_t t : entry.cavity) removed_finite += is_ghost(tet(t)) ? 0 : 1;
+    entry.finite_change = created_finite - removed_finite;
+    // Each boundary edge bounds two cone faces: the first one seen waits in
+    // the worker's edge table for the second.
+    std::size_t size = worker.edge_keys.size();
+    if (size < 4 * 3 * count) {
+      size = std::bit_ceil(4 * 3 * count);
+      worker.edge_keys.assign(size, 0);
+      worker.edge_marks.assign(size, 0U);
+      worker.edge_values.assign(size, 0);
+      worker.edge_mark = 0;
+    }
+    if (++worker.edge_mark == 0) {
+      std::fill(worker.edge_marks.begin(), worker.edge_marks.end(), 0U);
+      worker.edge_mark = 1;
+    }
+    const std::size_t mask = size - 1;
+    for (std::size_t i = 0; i < count; ++i) {
+      const BoundaryFacet& face = entry.boundary[i];
+      const std::array<int32_t, 4>& cell = worker.cone[i];
+      const int32_t id = entry.ids[i];
+      Tetrahedron& created = tets[static_cast<std::size_t>(id)];
+      created = Tetrahedron{{cell[0], cell[1], cell[2], cell[3]}, {-1, -1, -1, -1}, 0, 0, 0,
+                            kNoRegion};
+      created.n[face.slot] = face.outside;
+      tets[static_cast<std::size_t>(face.outside)].n[face.back] = id;
+      for (int k = 0; k < 4; ++k) {
+        if (k == face.slot) continue;
+        // The face opposite cell[k] is the center and the boundary edge
+        // without cell[k].
+        int32_t edge[2];
+        int at = 0;
+        for (int r = 0; r < 4; ++r) {
+          if (r != k && r != face.slot) edge[at++] = cell[static_cast<std::size_t>(r)];
+        }
+        const std::uint64_t key =
+            (std::uint64_t{static_cast<std::uint32_t>(std::min(edge[0], edge[1]))} << 32) |
+            static_cast<std::uint32_t>(std::max(edge[0], edge[1]));
+        std::size_t slot = static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & mask;
+        while (worker.edge_marks[slot] == worker.edge_mark && worker.edge_keys[slot] != key) {
+          slot = (slot + 1) & mask;
+        }
+        if (worker.edge_marks[slot] != worker.edge_mark) {
+          worker.edge_marks[slot] = worker.edge_mark;
+          worker.edge_keys[slot] = key;
+          worker.edge_values[slot] = 4 * static_cast<int32_t>(i) + k;
+          continue;
+        }
+        const int32_t other = worker.edge_values[slot];
+        const int32_t twin = entry.ids[static_cast<std::size_t>(other / 4)];
+        created.n[k] = twin;
+        tets[static_cast<std::size_t>(twin)].n[other % 4] = id;
+      }
+    }
+  }
+
+  // A region of one pass: its points (in the caller's order), the
+  // deferred ones, its slots (released cavity slots, then a block of fresh
+  // ones), the walk start and the finite-cell change of its commits.
+  struct RegionWork {
+    int32_t region = -1;
+    std::vector<int32_t> points;
+    std::vector<int32_t> deferred;
+    std::vector<int32_t> free;
+    int32_t fresh = 0;
+    int32_t fresh_end = 0;
+    int32_t start = -1;
+    int64_t finite_change = 0;
+    int32_t status = PHX_MC_OK;
+    // Whether points in the outer eighth of the region are deferred unseen.
+    bool screen = false;
+  };
+
+  // Whether every vertex of `cell` lies in `region` (vertex_region_), so
+  // only that region's worker edits it in a pass. An owned cell
+  // keeps (pass epoch, region) in its region field, unused by a point-set
+  // triangulation, so later tests read one field; only the owning region
+  // writes it.
+  bool owned(int32_t cell, int32_t region) {
+    Tetrahedron& current = mutable_tet(cell);
+    const int32_t tag = (owner_epoch_ << 16) | region;
+    if (current.region == tag) return true;
+    for (const int32_t vertex : current.v) {
+      if (vertex < 0 || vertex_region_[static_cast<std::size_t>(vertex)] != region) {
+        return false;
+      }
+    }
+    current.region = tag;
+    return true;
+  }
+
+  // Inserts the points of `work` one at a time as insert() does, but only
+  // where the walk, the cavity and the cells beyond it are owned by the
+  // region; any other point is deferred. A cell next to an owned cell shares
+  // three of the region's vertices, so no other region edits it either: the
+  // reads stay within cells no concurrent worker writes.
+  void insert_region(BatchWorker& worker, RegionWork& work, std::span<char> alive) {
+    BatchPoint entry;
+    int32_t start = work.start;
+    std::array<int32_t, 512> anchors;
+    anchors.fill(-1);
+    for (const int32_t p : work.points) {
+      const int32_t anchor = anchors[vertex_fine_[static_cast<std::size_t>(p)]];
+      if (anchor >= 0 && complex_.live(anchor) && owned(anchor, work.region)) start = anchor;
+      entry.point = p;
+      // On the first two passes a point in the outer eighth of its region
+      // (by the 8^3 subdivision) is left to the next pass, whose shifted
+      // grid puts it near a region centre: its cavity would likely leave.
+      const std::uint16_t fine = vertex_fine_[static_cast<std::size_t>(p)];
+      const auto border = [](unsigned index) { return index == 0 || index == 7; };
+      if (work.screen &&
+          (border(fine & 7U) || border((fine >> 3) & 7U) || border((fine >> 6) & 7U))) {
+        work.deferred.push_back(p);
+        continue;
+      }
+      batch_cavity(worker, entry, work.region, start);
+      if (entry.status == kDeferred) {
+        work.deferred.push_back(p);
+        continue;
+      }
+      if (entry.status != PHX_MC_OK) {
+        work.status = entry.status;
+        return;
+      }
+      if (entry.hidden) {
+        alive[static_cast<std::size_t>(p)] = 0;
+        continue;
+      }
+      const std::size_t needed = entry.boundary.size();
+      const std::size_t reused = std::min(entry.cavity.size(), needed);
+      const std::size_t extra = needed - reused;
+      if (extra > work.free.size() + static_cast<std::size_t>(work.fresh_end - work.fresh)) {
+        work.deferred.push_back(p);
+        continue;
+      }
+      entry.ids.assign(entry.cavity.begin(),
+                       entry.cavity.begin() + static_cast<std::ptrdiff_t>(reused));
+      while (entry.ids.size() < needed && !work.free.empty()) {
+        entry.ids.push_back(work.free.back());
+        work.free.pop_back();
+      }
+      while (entry.ids.size() < needed) entry.ids.push_back(work.fresh++);
+      batch_commit(worker, entry);
+      for (std::size_t i = needed; i < entry.cavity.size(); ++i) {
+        complex_.tets[static_cast<std::size_t>(entry.cavity[i])] =
+            Tetrahedron{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
+                        {-1, -1, -1, -1}, 0, 0};
+        work.free.push_back(entry.cavity[i]);
+      }
+      for (const int32_t vertex : entry.removed) alive[static_cast<std::size_t>(vertex)] = 0;
+      work.finite_change += entry.finite_change;
+      start = entry.ids.front();
+      vertex_cell_[static_cast<std::size_t>(p)] = start;
+      anchors[vertex_fine_[static_cast<std::size_t>(p)]] = start;
+    }
+  }
+
+  // Inserts `points` (in order, into the triangulation build() owns) on
+  // `parallelism` workers. After a sequential prefix, windows of points
+  // (each at most as many as are inserted) are split by a grid of regions
+  // that insert their points in parallel, handed out largest first, each only
+  // where its walk, its cavity and every neighbour of the cavity lie in cells
+  // whose vertices all lie in the region (insert_region), deferring the
+  // others (on the first two passes, also every point in the outer eighth of
+  // its region). Passes on the grid shifted by 1/2, 1/4 and 3/4 of a region
+  // take the deferred points, and insert() the few left. Every insertion is
+  // the conflict cavity of its point in the
+  // current triangulation, so the result is the regular triangulation of the
+  // perturbed lifting of all points, which is unique: the sequential build's
+  // (as a set of cells; slots differ), for every parallelism. Uniqueness on
+  // degenerate inputs rests on the perturbation ordered by identity(v), the
+  // caller's fixed input index, which insertion order never changes.
+  int32_t insert_batches(std::span<const int32_t> points, std::span<char> alive,
+                         int32_t parallelism) {
+    // In a small triangulation every cavity reaches far: the first
+    // kSequentialPoints points are inserted one at a time. Regions hold
+    // about kRegionPoints points of a window.
+    constexpr std::size_t kSequentialPoints = 4096;
+    constexpr double kRegionPoints = 16384.0;
+    vertex_cell_.assign(points_.size() / 3, -1);
+    std::size_t next = 0;
+    for (; next < points.size() && next < kSequentialPoints; ++next) {
+      if (const int32_t status = insert(points[next], alive); status != PHX_MC_OK) return status;
+      vertex_cell_[static_cast<std::size_t>(points[next])] = hint_;
+    }
+    if (next == points.size()) return PHX_MC_OK;
+    const std::size_t vertices = points_.size() / 3;
+    double lower[3], upper[3];
+    for (int axis = 0; axis < 3; ++axis) {
+      lower[axis] = std::numeric_limits<double>::infinity();
+      upper[axis] = -std::numeric_limits<double>::infinity();
+    }
+    for (std::size_t vertex = 0; vertex < vertices; ++vertex) {
+      for (int axis = 0; axis < 3; ++axis) {
+        lower[axis] = std::min(lower[axis], points_[3 * vertex + static_cast<std::size_t>(axis)]);
+        upper[axis] = std::max(upper[axis], points_[3 * vertex + static_cast<std::size_t>(axis)]);
+      }
+    }
+    const auto workers = static_cast<std::size_t>(parallelism);
+    workers_.resize(workers);
+    vertex_region_.assign(vertices, 0);
+    vertex_fine_.assign(vertices, 0);
+    std::vector<int32_t> pending;
+    std::vector<RegionWork> regions;
+    std::vector<int32_t> deferred;
+    while (next < points.size()) {
+      const std::size_t count = std::min(points.size() - next, next);
+      pending.assign(points.begin() + static_cast<std::ptrdiff_t>(next),
+                     points.begin() + static_cast<std::ptrdiff_t>(next + count));
+      next += count;
+      // At most 40 regions per axis (region numbers fit 16 bits).
+      const auto grid = static_cast<int64_t>(std::clamp(
+          std::round(std::cbrt(static_cast<double>(count) / kRegionPoints)), 2.0, 40.0));
+      // Passes on the grid shifted by 0, 1/2, 1/4 and 3/4 of a region: a
+      // point deferred near a region border lies inside a region of a later
+      // pass.
+      constexpr std::array<double, 4> kShifts{0.0, 0.5, 0.25, 0.75};
+      for (std::size_t pass = 0; pass < kShifts.size() && !pending.empty(); ++pass) {
+        if (++owner_epoch_ == (1 << 15)) {
+          for (Tetrahedron& tetrahedron : complex_.tets) tetrahedron.region = kNoRegion;
+          owner_epoch_ = 1;
+        }
+        // Grid coordinates of every vertex; regions are numbered by them.
+        const double shift = kShifts[pass];
+        const int64_t side = grid + (shift > 0.0 ? 1 : 0);
+        const auto coordinate = [&](std::size_t vertex, int axis) {
+          const double extent = upper[axis] - lower[axis];
+          const double unit = extent > 0.0
+              ? (points_[3 * vertex + static_cast<std::size_t>(axis)] - lower[axis]) / extent
+              : 0.0;
+          return std::clamp<int64_t>(static_cast<int64_t>(std::floor(
+                                         unit * static_cast<double>(grid) + shift)),
+                                     0, side - 1);
+        };
+        // Each vertex's cell of a grid eight times finer, by its position
+        // within its region (the region walks start at a cell committed in
+        // the same fine cell).
+        const auto fine = [&](std::size_t vertex, int axis) {
+          const double extent = upper[axis] - lower[axis];
+          const double unit = extent > 0.0
+              ? (points_[3 * vertex + static_cast<std::size_t>(axis)] - lower[axis]) / extent
+              : 0.0;
+          return static_cast<int64_t>(
+                     std::floor(8.0 * (unit * static_cast<double>(grid) + shift))) & 7;
+        };
+        const int32_t mapped = parallel_for(
+            vertices, ParallelRequest{65536, static_cast<uint32_t>(workers)},
+            [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
+              for (std::size_t vertex = first; vertex < last; ++vertex) {
+                vertex_region_[vertex] = static_cast<std::uint16_t>(
+                    (coordinate(vertex, 2) * side + coordinate(vertex, 1)) * side +
+                    coordinate(vertex, 0));
+                vertex_fine_[vertex] = static_cast<std::uint16_t>(
+                    (fine(vertex, 2) * 8 + fine(vertex, 1)) * 8 + fine(vertex, 0));
+              }
+              return PHX_MC_OK;
+            });
+        if (mapped != PHX_MC_OK) return mapped;
+        // A start cell per region: the recorded cell of its first vertex
+        // that still holds that vertex and is owned by the region (no other
+        // region edits it before this region's phase).
+        std::vector<int32_t> region_start(static_cast<std::size_t>(side * side * side), -1);
+        std::size_t unstarted = region_start.size();
+        for (std::size_t vertex = 0; vertex < vertices && unstarted > 0; ++vertex) {
+          const std::size_t region = vertex_region_[vertex];
+          const int32_t cell = vertex_cell_[vertex];
+          if (region_start[region] >= 0 || !complex_.live(cell) ||
+              vertex_slot(tet(cell), static_cast<int32_t>(vertex)) < 0 ||
+              !owned(cell, static_cast<int32_t>(region))) {
+            continue;
+          }
+          region_start[region] = cell;
+          --unstarted;
+        }
+        deferred.clear();
+        {
+          // Every region with pending points, each with its points in the
+          // pending order. Regions run concurrently without colouring: a
+          // region commits only cavities whose every neighbour it owns, so
+          // its edits never touch a cell another region reads.
+          std::vector<int32_t> region_index(static_cast<std::size_t>(side * side * side), -1);
+          regions.clear();
+          for (const int32_t p : pending) {
+            const int32_t region = vertex_region_[static_cast<std::size_t>(p)];
+            int32_t& at = region_index[static_cast<std::size_t>(region)];
+            if (at < 0) {
+              at = static_cast<int32_t>(regions.size());
+              regions.emplace_back();
+              regions.back().region = region;
+            }
+            regions[static_cast<std::size_t>(at)].points.push_back(p);
+          }
+          std::sort(regions.begin(), regions.end(), [](const RegionWork& a, const RegionWork& b) {
+            return a.points.size() != b.points.size() ? a.points.size() > b.points.size()
+                                                      : a.region < b.region;
+          });
+          // Slots: about eight cells per point, first from the free slots,
+          // then a fresh block.
+          std::size_t fresh = 0;
+          for (RegionWork& work : regions) {
+            const std::size_t block = 8 * work.points.size() + 64;
+            const std::size_t taken = std::min(block, complex_.free_slots.size());
+            work.free.assign(complex_.free_slots.end() - static_cast<std::ptrdiff_t>(taken),
+                             complex_.free_slots.end());
+            complex_.free_slots.resize(complex_.free_slots.size() - taken);
+            work.fresh = static_cast<int32_t>(complex_.tets.size() + fresh);
+            work.fresh_end = work.fresh + static_cast<int32_t>(block - taken);
+            fresh += block - taken;
+            work.start = region_start[static_cast<std::size_t>(work.region)];
+            work.screen = pass < 2;
+          }
+          if (fresh > static_cast<std::size_t>(kMaxTetrahedronSlots) - complex_.tets.size()) {
+            return PHX_MC_INDEX_RANGE_ERROR;
+          }
+          complex_.tets.resize(complex_.tets.size() + fresh,
+                               Tetrahedron{{kDeadVertex, kDeadVertex, kDeadVertex, kDeadVertex},
+                                           {-1, -1, -1, -1}, 0, 0});
+          for (BatchWorker& worker : workers_) {
+            if (worker.vertex_stamps.size() < vertex_stamp_.size()) {
+              worker.vertex_stamps.resize(vertex_stamp_.size(), 0U);
+            }
+          }
+          // Regions are handed out one at a time, largest first; a task takes
+          // a free worker scratch for its region and returns it.
+          std::vector<std::size_t> idle(workers);
+          std::iota(idle.begin(), idle.end(), std::size_t{0});
+          std::mutex idle_lock;
+          // The searches take the stamps after the sequential ones.
+          if (stamp_value_ > 0xC0000000U) {
+            for (Tetrahedron& tetrahedron : complex_.tets) tetrahedron.stamp = 0;
+            stamp_value_ = 0;
+          }
+          batch_stamp_ = stamp_value_;
+          const int32_t status = parallel_for(
+              regions.size(), ParallelRequest{1, static_cast<uint32_t>(workers)},
+              [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
+                const GradualNearestScope mode;
+                std::size_t scratch = 0;
+                {
+                  const std::lock_guard guard(idle_lock);
+                  scratch = idle.back();
+                  idle.pop_back();
+                }
+                for (std::size_t at = first; at < last; ++at) {
+                  insert_region(workers_[scratch], regions[at], alive);
+                }
+                const std::lock_guard guard(idle_lock);
+                idle.push_back(scratch);
+                return PHX_MC_OK;
+              });
+          stamp_value_ = batch_stamp_;
+          if (status != PHX_MC_OK) return status;
+          for (RegionWork& work : regions) {
+            if (work.status != PHX_MC_OK) return work.status;
+            complex_.finite_count += work.finite_change;
+            for (int32_t slot = work.fresh; slot < work.fresh_end; ++slot) work.free.push_back(slot);
+            std::sort(work.free.begin(), work.free.end(), std::greater<>());
+            complex_.free_slots.insert(complex_.free_slots.end(), work.free.begin(),
+                                       work.free.end());
+            deferred.insert(deferred.end(), work.deferred.begin(), work.deferred.end());
+          }
+          if (!complex_.live(hint_)) {
+            for (const RegionWork& work : regions) {
+              if (complex_.live(work.start)) hint_ = work.start;
+            }
+          }
+        }
+        pending.swap(deferred);
+      }
+      // The points neither pass placed, one at a time.
+      if (!complex_.live(hint_)) {
+        hint_ = 0;
+        while (!complex_.live(hint_)) ++hint_;
+      }
+      for (const int32_t p : pending) {
+        if (const int32_t status = insert(p, alive); status != PHX_MC_OK) return status;
+        vertex_cell_[static_cast<std::size_t>(p)] = hint_;
+      }
+    }
+    // The ownership tags held in the (unlabeled) region field go.
+    for (Tetrahedron& tetrahedron : complex_.tets) tetrahedron.region = kNoRegion;
+    return PHX_MC_OK;
+  }
   static constexpr std::uint8_t kNoConflict = 0;
   static constexpr std::uint8_t kConflict = 1;
   static constexpr std::uint8_t kInCavity = 2;
+  // batch_cavity: the point is left to a later pass.
+  static constexpr int32_t kDeferred = std::numeric_limits<int32_t>::min();
 
   Tetrahedron& mutable_tet(int32_t t) { return complex_.tets[static_cast<std::size_t>(t)]; }
   void next_stamp() {
@@ -731,6 +1333,19 @@ class Triangulation3D {
   std::size_t largest_cavity_ = 0;
   std::vector<int32_t> cavity_, stack_, removed_;
   std::vector<BoundaryFacet> boundary_;
+
+  std::vector<BatchWorker> workers_;
+  // The region of every vertex in the current pass of insert_batches, and
+  // its cell of the 8^3 subdivision of that region.
+  std::vector<std::uint16_t> vertex_region_;
+  std::vector<std::uint16_t> vertex_fine_;
+  // The last cell stamp a region search took (atomically, so concurrent
+  // searches never share a stamp).
+  std::uint32_t batch_stamp_ = 0;
+  // A cell created with each vertex (insert_batches; it may since be gone).
+  std::vector<int32_t> vertex_cell_;
+  // The pass of insert_batches whose ownership tags are current (owned()).
+  int32_t owner_epoch_ = 0;
 };
 
 }  // namespace phx::mc

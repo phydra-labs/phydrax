@@ -23,6 +23,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._exact_kernels import exact_kernel_parallelism
 from .._geometry_predicates import (
     orient2d,
     orient3d,
@@ -1289,6 +1290,7 @@ def _native_topology_counts(
         embedded=embedded,
         check_manifold=check_manifold,
         check_watertight=check_watertight,
+        parallelism=exact_kernel_parallelism(),
     )
     return _TopologyCounts(
         collapsed_cells=int(counts[0]),

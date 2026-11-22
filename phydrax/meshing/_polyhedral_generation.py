@@ -11,6 +11,7 @@ import equinox as eqx
 import numpy as np
 
 import phydrax._meshcore as meshcore
+from phydrax._exact_kernels import exact_kernel_parallelism
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
@@ -408,7 +409,9 @@ def _regular_neighbor_csr(
     """Build complete site adjacency from the native regular tetrahedralization."""
     if sites.shape[0] == 1:
         return np.zeros((2,), dtype=np.int64), np.zeros((0,), dtype=np.int32)
-    tetrahedra, _ = meshcore.regular_3d(sites, weights)
+    tetrahedra, _ = meshcore.regular_3d(
+        sites, weights, parallelism=exact_kernel_parallelism()
+    )
     if tetrahedra.ndim != 2 or tetrahedra.shape[1] != 4:
         raise RuntimeError("Native regular triangulation returned malformed tetrahedra.")
     if not tetrahedra.shape[0]:

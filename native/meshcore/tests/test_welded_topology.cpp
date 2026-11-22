@@ -36,7 +36,8 @@ struct Result {
   std::vector<int8_t> boundary;
 };
 
-Result audit(const std::vector<std::array<int64_t, 4>>& rows, int64_t key_count) {
+Result audit(const std::vector<std::array<int64_t, 4>>& rows, int64_t key_count,
+             int32_t parallelism = 1) {
   std::vector<int64_t> cells, facets, facet_cells, edges, edge_cells;
   for (std::size_t cell = 0; cell < rows.size(); ++cell) {
     tetrahedron(rows[cell], static_cast<int64_t>(cell), cells, facets, facet_cells, edges,
@@ -50,7 +51,7 @@ Result audit(const std::vector<std::array<int64_t, 4>>& rows, int64_t key_count)
   result.status = phx_mc_welded_topology(
       3, 0, 1, 1, key_count, cell_count, cell_count, 4, cells.data(), facet_count, facet_count,
       3, 3, facets.data(), facet_cells.data(), signs.data(), 6 * cell_count, edges.data(),
-      edge_cells.data(), -1, nullptr, result.counts.data(), result.boundary.data());
+      edge_cells.data(), -1, nullptr, result.counts.data(), result.boundary.data(), parallelism);
   return result;
 }
 
@@ -99,15 +100,39 @@ int main() {
     std::array<int8_t, 2> boundary{};
     PHX_CHECK(phx_mc_welded_topology(3, 0, 0, 0, 1, 2, 2, 1, cells.data(), 2, 2, 3, 3,
                                      facets.data(), owners.data(), signs.data(), 0, nullptr,
-                                     nullptr, -1, nullptr, counts.data(),
-                                     boundary.data()) == PHX_MC_OK);
+                                     nullptr, -1, nullptr, counts.data(), boundary.data(),
+                                     1) == PHX_MC_OK);
     PHX_CHECK(counts[3] == 0);
     PHX_CHECK(phx_mc_welded_topology(2, 0, 0, 0, 1, 2, 2, 1, cells.data(), 2, 2, 1, 1,
                                      facets.data(), owners.data(), signs.data(), 0, nullptr,
-                                     nullptr, -1, nullptr, counts.data(),
-                                     boundary.data()) == PHX_MC_INVALID_ARGUMENT);
+                                     nullptr, -1, nullptr, counts.data(), boundary.data(),
+                                     1) == PHX_MC_INVALID_ARGUMENT);
   }
   // Keys at or beyond key_count are refused.
   PHX_CHECK(audit({{0, 1, 2, 3}}, 3).status == PHX_MC_INVALID_ARGUMENT);
+  // Random tetrahedra over few keys (collapsed cells, pinched vertices and
+  // edges, open boundary): identical counts and boundary for every parallelism and
+  // across repeated runs; parallelism must be positive.
+  {
+    uint64_t state = 0x853c49e6748fea9bu;
+    std::vector<std::array<int64_t, 4>> rows;
+    for (int cell = 0; cell < 400; ++cell) {
+      std::array<int64_t, 4> row{};
+      for (auto& key : row) {
+        state = state * 6364136223846793005u + 1442695040888963407u;
+        key = static_cast<int64_t>((state >> 33) % 120);
+      }
+      rows.push_back(row);
+    }
+    const Result serial = audit(rows, 120, 1);
+    PHX_CHECK(serial.status == PHX_MC_OK);
+    PHX_CHECK(serial.counts[0] > 0 && serial.counts[5] > 0 && serial.counts[6] > 0);
+    for (const int32_t parallelism : {2, 3, 4, 8, 8, 8, 8}) {
+      const Result result = audit(rows, 120, parallelism);
+      PHX_CHECK(result.status == serial.status && result.counts == serial.counts &&
+                result.boundary == serial.boundary);
+    }
+    PHX_CHECK(audit(rows, 120, 0).status == PHX_MC_INVALID_ARGUMENT);
+  }
   return phx::mc::test::finish("test_welded_topology");
 }
