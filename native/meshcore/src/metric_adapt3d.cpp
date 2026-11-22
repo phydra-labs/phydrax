@@ -71,6 +71,8 @@ constexpr double kDeterminantFloor = 0x1p-22;
 constexpr double kImprovement = 1e-6;
 constexpr int kSplitBits = 5;
 constexpr std::int32_t kNoBlock = -1;
+constexpr std::size_t kRelocationCacheSlots = 4096;
+constexpr std::size_t kRelocationCacheStarCells = 64;
 
 using detail::LocalIncidence;
 
@@ -266,6 +268,16 @@ class Adapter {
   // Relocations of interior vertices to exact source carriers (in place).
   std::int64_t relocate_sweep();
   TetEditStatus relocate(std::int32_t vertex, bool& applied);
+  struct RelocationAttempt {
+    std::vector<std::uint64_t> cells;
+    std::span<const CarrierSimplex> chart;
+    std::uint64_t vertex_id = 0;
+    std::uint64_t carrier_revision = 0;
+    unsigned exhausted_modes = 0;
+  };
+  RelocationAttempt& bind_relocation_attempt(std::int32_t vertex,
+                                             const LocalIncidence::Star& star,
+                                             CarrierChartView chart);
   // Moves both interior ends of an out-of-band edge at once, symmetrically
   // along it toward unit length (halved down to 2^-40 of that step), each to
   // a source carrier near its goal, when the joint move decreases the
@@ -330,6 +342,8 @@ class Adapter {
   // (both band improvements only), 3 every vertex, 4 also pairs of ends of
   // out-of-band edges; back to 0 after a topology edit.
   int relocation_stage_ = 0;
+  // Direct-mapped, bounded, and local to this adaptation call.
+  std::vector<RelocationAttempt> relocation_attempts_;
   // Failed carrier searches depend on both endpoint states and the shell's
   // coverage rule. A move can make a previously refused edge splittable.
   struct SplitRefusal {
@@ -2375,6 +2389,39 @@ std::optional<SourceWitness> Adapter::relocation_witness(std::int32_t vertex,
   return std::nullopt;
 }
 
+Adapter::RelocationAttempt& Adapter::bind_relocation_attempt(
+    std::int32_t vertex, const LocalIncidence::Star& star, CarrierChartView chart) {
+  if (relocation_attempts_.empty()) {
+    relocation_attempts_.resize(std::min(mesh_.vertex_slot_count(), kRelocationCacheSlots));
+  }
+  RelocationAttempt& attempt =
+      relocation_attempts_[static_cast<std::size_t>(vertex) % relocation_attempts_.size()];
+  // In an unchanged cell set every changed point or tensor has a revision
+  // newer than the prior maximum. Cell order also binds the spoke order.
+  std::uint64_t revision = 0;
+  for (std::int32_t slot : star) {
+    for (std::int32_t row : mesh_.tet(slot).v) {
+      revision = std::max(revision, carrier_revisions_[static_cast<std::size_t>(row)]);
+    }
+  }
+  const std::uint64_t id = mesh_.vertex_id(vertex);
+  if (attempt.vertex_id == id && attempt.carrier_revision == revision &&
+      attempt.chart.data() == chart.simplices.data() &&
+      attempt.chart.size() == chart.simplices.size() &&
+      std::ranges::equal(star.cells(), attempt.cells, {},
+                         [&](std::int32_t slot) { return mesh_.cell_id(slot); })) {
+    return attempt;
+  }
+  attempt.vertex_id = id;
+  attempt.carrier_revision = revision;
+  attempt.chart = chart.simplices;
+  attempt.exhausted_modes = 0;
+  attempt.cells.resize(star.size());
+  std::ranges::transform(star.cells(), attempt.cells.begin(),
+                         [&](std::int32_t slot) { return mesh_.cell_id(slot); });
+  return attempt;
+}
+
 TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   applied = false;
   if (!carriers_ || mesh_.protected_vertex(vertex) || mesh_.protection_radius(vertex) > 0.0) {
@@ -2386,6 +2433,14 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
   if (!chart) return TetEditStatus::kApplied;
   const bool interior = chart->simplices.empty();
   if (!interior && !boundary_moves_) return TetEditStatus::kApplied;
+  const bool deep_stage = relocation_stage_ == 1 || relocation_stage_ == 2;
+  RelocationAttempt* attempt = nullptr;
+  unsigned mode_bit = 0;
+  if (deep_stage && !mesh_.implicit_source() && star.size() <= kRelocationCacheStarCells) {
+    attempt = &bind_relocation_attempt(vertex, star, *chart);
+    mode_bit = 1U << relocation_stage_;
+    if ((attempt->exhausted_modes & mode_bit) != 0) return TetEditStatus::kApplied;
+  }
   // Star rows: the vertex, then its link in first-seen order.
   std::vector<std::int32_t> rows{vertex};
   std::vector<std::int64_t> cells;
@@ -2475,8 +2530,17 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
                           interior ? nullptr : projector.data(), *chart, mode);
   std::vector<RelocationCandidate> group;
   std::vector<double> candidate_lengths;
+  bool saw_candidate = false;
   for (;;) {
-    if (search.next(group, candidate_lengths) != RelocationEnd::kGroup) return TetEditStatus::kApplied;
+    const RelocationEnd end = search.next(group, candidate_lengths);
+    if (end != RelocationEnd::kGroup) {
+      // Refusals arise in the native edit path, and are never cached.
+      if (attempt != nullptr && !saw_candidate && end == RelocationEnd::kExhausted) {
+        attempt->exhausted_modes |= mode_bit;
+      }
+      return TetEditStatus::kApplied;
+    }
+    saw_candidate = true;
     for (const RelocationCandidate& candidate : group) {
       TetEditVertex moved;
       moved.id = mesh_.vertex_id(vertex);
