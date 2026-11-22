@@ -2855,19 +2855,16 @@ cells), performs one transfer, and returns the `MeshAdaptationResult` with `Devi
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 
-`NATIVE_METRIC_3D` is the independent serial reference for SPD-metric tetrahedral
-split, collapse, flip, ring-reconnection, and relocation edits. `DEVICE_METRIC_3D`
-is a hybrid host/device route: compiled evaluation uses the full tensor metric on
-live edges, then stable-ID priority selects independent split cavities. The
-owning host resolves every proposed child-cell orientation exactly as one batch
-barrier before the native edit owner mutates its provisional state. An invalid
-batch discards provisional edits and returns the unchanged source with
-`NUMERICAL_STOP`; accepted edits retain the serial route's metric and lineage
-semantics. Only split-batch selection and its exact barrier are
-device-specific; the phase schedule, native edit owner and stable target-ID
-numbering are shared with `NATIVE_METRIC_3D`, so both routes publish the same
-target mesh. `DeviceTetraMetricEvidence` exposes candidate ordering, exact-predicate
-and host-barrier counts, the native metric evidence, and whether edits committed.
+`NATIVE_METRIC_3D` performs SPD-metric tetrahedral split, collapse, flip,
+ring-reconnection, and relocation edits in one native adaptation loop
+(`TetMesh3D.metric_adapt`). Every edit strictly decreases the termination
+objective; when no edit applies, the loop enables in turn boundary relocation,
+collapses that move their survivor on its source carrier, deeper relocation
+searches, and joint moves of both ends of an out-of-band edge, and reports
+STALLED only after the last of these applies nothing. The route returns the
+exact dyadic source stencils, source-cell lineage, and `TetraMetricEvidence`
+measured on the final mesh. A periodic lift is adapted by the host phase
+schedule until native periodic local commits exist.
 
 `MetricMeshAdaptation(metric, accepted_minimum_length=...)` declares the
 smallest metric edge length a `NATIVE_METRIC_3D` request accepts as complete.

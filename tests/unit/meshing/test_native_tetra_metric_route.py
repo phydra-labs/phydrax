@@ -4,10 +4,8 @@ from itertools import permutations
 from typing import Any
 
 import numpy as np
-import pytest
 
 import phydrax as phx
-import phydrax.meshing._device_tetra_metric as _device_tetra_metric
 from phydrax._geometry_predicates import orient3d, PredicateMode
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
 from phydrax.meshing import (
@@ -22,7 +20,6 @@ from phydrax.meshing import (
     prepare_mesh_adaptation,
 )
 from phydrax.meshing._metric import metric_edge_lengths
-from phydrax.meshing._tetra_metric import TetraMetricStatus
 from phydrax.meshing._topology_edit import key_rows
 
 
@@ -147,91 +144,32 @@ def _assert_valid_metric_mesh(result: Any) -> None:
     assert np.all(np.asarray(orientation.signs, dtype=np.int8) > 0)
 
 
-def test_device_tetra_metric_agrees_with_native_on_cube_and_curved_boundary() -> None:
-    for curved_boundary in (False, True):
-        source = _source(curved_boundary=curved_boundary)
-        request = _request(source)
-        native = _run(source, request, MeshAdaptationRoute.NATIVE_METRIC_3D)
-        device = _run(source, request, MeshAdaptationRoute.DEVICE_METRIC_3D)
+def test_native_metric_route_refines_a_kuhn_cube_with_exact_lineage() -> None:
+    from fractions import Fraction
 
-        assert native.status is device.status
-        assert device.status is MeshAdaptationStatus.COMPLETE
-        assert device.evidence is not None
-        assert device.evidence.status is TetraMetricStatus.COMPLETE
-        assert device.evidence.metric_evidence is not None
-        assert device.evidence.metric_evidence.out_of_range_edges == 0
-        assert device.evidence.host_barriers > 0
-        assert device.evidence.committed
-        _assert_valid_metric_mesh(native)
-        _assert_valid_metric_mesh(device)
-        np.testing.assert_array_equal(
-            device.target.mesh.vertex_global_ids, native.target.mesh.vertex_global_ids
-        )
-        np.testing.assert_array_equal(
-            device.target.mesh.blocks[0].global_ids,
-            native.target.mesh.blocks[0].global_ids,
-        )
-        np.testing.assert_array_equal(
-            device.target.mesh.blocks[0].vertices, native.target.mesh.blocks[0].vertices
-        )
-        np.testing.assert_array_equal(
-            device.target.mesh.coordinates, native.target.mesh.coordinates
-        )
+    from phydrax.meshing._tetra_metric import TetraMetricEvidence, TetraMetricStatus
 
-        selected = device.evidence.candidate_edge_keys
-        assert len(selected) == device.evidence.independent_split_candidates
-        assert selected
-        assert all(first < second for first, second in selected)
-        row_by_id = {
-            int(identifier): row
-            for row, identifier in enumerate(source.mesh.vertex_global_ids.tolist())
-        }
-        source_edges = np.asarray(
-            [[row_by_id[first], row_by_id[second]] for first, second in selected],
-            dtype=np.int32,
-        )
-        metric_rows = np.asarray(request.metric.values, dtype=np.float64)
-        selected_lengths = np.asarray(
-            metric_edge_lengths(
-                metric_rows,
-                np.asarray(source.mesh.coordinates, dtype=np.float64),
-                source_edges,
-            ),
-            dtype=np.float64,
-        )
-        priority = [
-            (-float(length), key[0], key[1])
-            for key, length in zip(selected, selected_lengths, strict=True)
-        ]
-        assert priority == sorted(priority)
-
-
-def test_device_tetra_metric_rolls_back_an_invalid_exact_candidate_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
     source = _source()
-    request = _request(source)
+    result = _run(source, _request(source), MeshAdaptationRoute.NATIVE_METRIC_3D)
 
-    def reject_batch(
-        points: np.ndarray,
-        metric: np.ndarray,
-        cells: np.ndarray,
-        edge_rows: np.ndarray,
-        cavities: tuple[tuple[int, ...], ...],
-        selected: tuple[int, ...],
-        /,
-    ) -> tuple[bool, int]:
-        return False, 2 * len(selected)
+    assert result.status in (MeshAdaptationStatus.COMPLETE, MeshAdaptationStatus.STALLED)
+    evidence = result.evidence
+    assert isinstance(evidence, TetraMetricEvidence)
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.splits > 0
+    assert evidence.out_of_range_edges == 0
+    _assert_valid_metric_mesh(result)
+    assert result.lineage is not None and result.transition is not None
 
-    monkeypatch.setattr(_device_tetra_metric, "_resolve_exact_split_batch", reject_batch)
-    result = _run(source, request, MeshAdaptationRoute.DEVICE_METRIC_3D)
-
-    assert result.status is MeshAdaptationStatus.NUMERICAL_STOP
-    assert result.target is source
-    assert result.transition is None
-    assert result.lineage is None
-    assert result.evidence.status is TetraMetricStatus.NUMERICAL_STOP
-    assert result.evidence.metric_evidence is None
-    assert result.evidence.exact_predicates_resolved > 0
-    assert not result.evidence.committed
-    assert result.target.mesh.mesh_id == source.mesh.mesh_id
+    stencil = result.stencil
+    assert stencil is not None
+    target_ids = np.asarray(stencil.target_global_ids, dtype=np.int64)
+    source_ids = set(np.asarray(source.mesh.vertex_global_ids).tolist())
+    new_vertices = 0
+    for row, weights in enumerate(np.asarray(stencil.weights, dtype=np.float64)):
+        valid = np.asarray(stencil.valid, dtype=np.bool_)[row]
+        exact = [Fraction(float(value)) for value in weights[valid]]
+        assert sum(exact, Fraction(0)) == 1
+        assert all(value.denominator.bit_count() == 1 for value in exact)
+        new_vertices += int(target_ids[row]) not in source_ids
+    assert new_vertices > 0

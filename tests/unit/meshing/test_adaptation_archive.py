@@ -289,13 +289,8 @@ def test_overset_registration_with_uncertified_parts_restores(tmp_path: Path) ->
     assert rebuilt.assembly.assembly_id == connectivity.assembly.assembly_id
 
 
-@pytest.mark.parametrize(
-    "route",
-    (MeshAdaptationRoute.NATIVE_METRIC_3D, MeshAdaptationRoute.DEVICE_METRIC_3D),
-)
-def test_tetra_metric_adaptation_round_trips_and_refuses_tamper(
-    tmp_path: Path, route: MeshAdaptationRoute
-) -> None:
+def test_tetra_metric_adaptation_round_trips_and_refuses_tamper(tmp_path: Path) -> None:
+    route = MeshAdaptationRoute.NATIVE_METRIC_3D
     source = _certified(_kuhn_cube())
     original = _adapt(source, _metric_request(source, (4.0, 3.8, 3.6)), route)
     assert original.status is MeshAdaptationStatus.COMPLETE
@@ -333,7 +328,7 @@ def test_accepted_minimum_length_is_a_declared_request_input(tmp_path: Path) -> 
             source,
             declared,
             policy=MeshAdaptationPolicy(
-                MeshAdaptationRoute.DEVICE_METRIC_3D, relocation=False
+                MeshAdaptationRoute.NATIVE_BISECTION, relocation=False
             ),
         )
 

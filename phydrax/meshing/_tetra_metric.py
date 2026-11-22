@@ -53,6 +53,7 @@ from .._meshcore import (
     TetMeshEditKind,
     TetMeshEditStatus,
     TetMeshImplicitSource,
+    TetMeshMetricAdaptation,
     TetMeshPeriodicState,
     TetMeshSourceComplex,
 )
@@ -306,8 +307,6 @@ class TetraMetricEvidence(StrictModule, NonTrainableState):
         self.unimproved_edges = kinds.count(TetraMetricUnmetKind.UNIMPROVED)
         self.unmet_edges = unmet
         self.implicit_refusals = implicit_refusals
-        from .._fingerprint import canonical_fingerprint
-
         identity = {
             "kind": "tetra-metric-evidence",
             "status": status.value,
@@ -399,15 +398,6 @@ class _EditCounters(NamedTuple):
     rejected_protected: int = 0
     rejected_uncertain: int = 0
     rejected_invalid: int = 0
-
-
-class _NativeWorkSeed(NamedTuple):
-    checkpoint_id: str
-    state_binding: str
-    counters: _EditCounters
-    passes: int
-    implicit_refusals: tuple[int, int] | None
-    native_refusal_baseline: tuple[int, int] | None
 
 
 @final
@@ -3867,12 +3857,20 @@ class _BoundaryRecords(NamedTuple):
 def _boundary_records(state: _NativeState, /) -> _BoundaryRecords:
     tables = _snapshot_tables(state)
     if tables.boundary_records is None:
-        tables.boundary_records = _snapshot_boundary_records(state)
+        tables.boundary_records = _snapshot_boundary_records(
+            state.snapshot,
+            state.source_face_group_rows,
+            state.source_segment_group_rows,
+        )
     return tables.boundary_records
 
 
-def _snapshot_boundary_records(state: _NativeState, /) -> _BoundaryRecords:
-    snapshot = state.snapshot
+def _snapshot_boundary_records(
+    snapshot: TetMeshArrays,
+    face_group_rows: Mapping[int, int],
+    segment_group_rows: Mapping[int, int],
+    /,
+) -> _BoundaryRecords:
     vertex_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
     facets: dict[
         tuple[int, int, int], tuple[int, int, tuple[int, int, int], int, bool]
@@ -3886,7 +3884,7 @@ def _snapshot_boundary_records(state: _NativeState, /) -> _BoundaryRecords:
         np.asarray(snapshot.protected_facets, dtype=np.bool_).tolist(),
         strict=True,
     ):
-        group = state.source_face_group_rows.get(int(source_id))
+        group = face_group_rows.get(int(source_id))
         if group is None:
             raise ValueError("A constrained native facet lost its source group.")
         ordered = (int(row[0]), int(row[1]), int(row[2]))
@@ -3905,7 +3903,7 @@ def _snapshot_boundary_records(state: _NativeState, /) -> _BoundaryRecords:
         np.asarray(snapshot.protected_segments, dtype=np.bool_).tolist(),
         strict=True,
     ):
-        group = state.source_segment_group_rows.get(int(source_id))
+        group = segment_group_rows.get(int(source_id))
         if group is None:
             raise ValueError("A constrained native segment lost its source group.")
         ordered_segment = (int(row[0]), int(row[1]))
@@ -4058,13 +4056,33 @@ def _source_permits_collapse(
     refused staged quotient edit (off the lift the proposal set is unchanged).
     """
     protected_vertices = np.asarray(state.snapshot.protected_vertices)
-    if removed in state.fixed_vertices or bool(
-        protected_vertices[topology.vertex_row[removed]]
-    ):
+    return _collapse_admitted(
+        state,
+        records,
+        removed,
+        kept,
+        removed_protected=bool(protected_vertices[topology.vertex_row[removed]]),
+        kept_protected=bool(protected_vertices[topology.vertex_row[kept]]),
+        kept_support=frozenset(state.vertex_stencils[kept]),
+    )
+
+
+def _collapse_admitted(
+    state: _NativeState,
+    records: _BoundaryRecords,
+    removed: int,
+    kept: int,
+    /,
+    *,
+    removed_protected: bool,
+    kept_protected: bool,
+    kept_support: frozenset[int],
+) -> bool:
+    """``_source_permits_collapse`` given the endpoints' protection flags and
+    the source vertex IDs of the survivor's stencil."""
+    if removed in state.fixed_vertices or removed_protected:
         return False
-    if state.target_mesh.periodic_topology is not None and bool(
-        protected_vertices[topology.vertex_row[kept]]
-    ):
+    if state.target_mesh.periodic_topology is not None and kept_protected:
         return False
     implicit_edge = (
         bool(state.implicit_groups)
@@ -4072,9 +4090,7 @@ def _source_permits_collapse(
         and _implicit_only_vertex(state, records, kept)
     )
     entity = None if implicit_edge else _carrier_entity(state, records, removed)
-    if entity is not None and (
-        len(entity) < 2 or not set(state.vertex_stencils[kept]) <= entity
-    ):
+    if entity is not None and (len(entity) < 2 or not kept_support <= entity):
         return False
     if records.vertex_segments.get(removed) and (
         _edge_key((removed, kept)) not in records.segments
@@ -7295,17 +7311,52 @@ def _unmet_edges(
 
 def _tetra_evidence(
     state: _NativeState,
-    counters: dict[str, int],
+    counters: Mapping[str, int],
     passes: int,
     status: TetraMetricStatus,
     /,
     *,
-    work: _NativeWorkSeed | None = None,
     lower: float = _LOWER,
 ) -> TetraMetricEvidence:
     edge_keys, lengths, protected, qualities, _, volume_error = (
         _native_metric_measurements(state)
     )
+    return _metric_evidence(
+        status,
+        passes,
+        counters,
+        lengths,
+        protected,
+        qualities,
+        volume_error,
+        lambda rows: _unmet_edges(
+            state, tuple(edge_keys[row] for row in rows.tolist()), lengths[rows]
+        ),
+        state.native.implicit_refusals,
+        lower=lower,
+    )
+
+
+def _metric_evidence(
+    status: TetraMetricStatus,
+    passes: int,
+    counters: Mapping[str, int],
+    lengths: np.ndarray,
+    protected: np.ndarray,
+    qualities: np.ndarray,
+    volume_error: float,
+    unmet: Callable[[np.ndarray], tuple[TetraMetricUnmetEdge, ...]],
+    implicit_refusals: tuple[int, int] | None,
+    /,
+    *,
+    lower: float,
+) -> TetraMetricEvidence:
+    """Evidence of a final mesh: ``unmet`` types the out-of-band edge rows.
+
+    Protected edges are not measured unless every edge is protected; a
+    nominally complete run whose measured edges leave ``[lower, sqrt(2)]`` is
+    stalled, and an infinite region volume error is a numerical stop.
+    """
     measured = ~protected
     if not np.any(measured):
         measured = np.ones(protected.shape, dtype=np.bool_)
@@ -7316,7 +7367,6 @@ def _tetra_evidence(
     if not np.isfinite(volume_error):
         status = TetraMetricStatus.NUMERICAL_STOP
         volume_error = np.finfo(np.float64).max
-    outside = np.flatnonzero(measured)[~inside]
     return TetraMetricEvidence(
         status=status,
         passes=int(passes),
@@ -7336,10 +7386,8 @@ def _tetra_evidence(
         maximum_metric_length=float(np.max(values)),
         minimum_metric_quality=float(np.min(qualities)),
         maximum_region_volume_error=float(volume_error),
-        unmet_edges=_unmet_edges(
-            state, tuple(edge_keys[row] for row in outside.tolist()), lengths[outside]
-        ),
-        implicit_refusals=_continued_implicit_refusals(state, work),
+        unmet_edges=unmet(np.flatnonzero(measured)[~inside]),
+        implicit_refusals=implicit_refusals,
     )
 
 
@@ -7358,9 +7406,12 @@ def execute_tetra_metric_adaptation(
     relocation: bool,
     accepted_minimum_length: float | None = None,
 ) -> TetraMetricOutcome:
-    """Execute quota-free native SPD split/collapse/flip/ring/relocation phases.
+    """Adapt a tetrahedral source toward a unit SPD-metric mesh.
 
-    The route accepts an exact P1 source coordinate map, keeps source identities
+    A nonperiodic source runs the native split/collapse/flip/ring/relocation
+    loop (``TetMesh3D.metric_adapt``) in one call; a periodic lift runs the
+    host phase schedule. The route accepts an exact P1 source coordinate map,
+    keeps source identities
     in the native handle, and returns one generalized topology edit for the
     canonical transfer/certification owner. It never infers source ancestry from
     output samples. ``accepted_minimum_length`` is the request's declared
@@ -7385,226 +7436,340 @@ def execute_tetra_metric_adaptation(
         fixed_vertices=fixed_vertices,
         implicit_source=_implicit_metric_source(source),
     )
-    return _execute_native_state(
-        state,
-        predicate_mode,
+    lower = _LOWER if accepted_minimum_length is None else accepted_minimum_length
+    if state.periodic_state is not None:
+        # periodic lift: pending S4-3D Q6
+        return _execute_native_state(
+            state,
+            predicate_mode,
+            topology_operations=topology_operations,
+            relocation=relocation,
+            lower=lower,
+        )
+    adaptation = state.native.metric_adapt(
+        int(state.snapshot.generation),
+        **_metric_adapt_inputs(state),
+        lower=lower,
         topology_operations=topology_operations,
         relocation=relocation,
-        accepted_minimum_length=accepted_minimum_length,
+        source_id=state.source_identity[0],
+        source_revision=state.source_identity[1],
+        source_map_id=state.source_identity[2],
+        frame_id=state.source_identity[3],
     )
+    snapshot = state.native.arrays()
+    edit, target_metric = _adapted_edit(state, adaptation, snapshot)
+    evidence = _adapted_evidence(state, adaptation, snapshot, lower)
+    return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
 
 
-def _one_split_batch(state: _NativeState, counters: dict[str, int], /) -> int:
-    return _split_phase(state, counters, one_batch=True)
+def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
+    """``TetMesh3D.metric_adapt`` banks of a freshly prepared source mesh.
 
-
-def _native_work_binding(
-    state: _NativeState,
-    checkpoint_id: str,
-    predicate_mode: PredicateMode,
-    topology_operations: bool,
-    relocation: bool,
-) -> str:
-    """Bind physical/source/control state, excluding only derived search caches."""
-    if (
-        state.periodic_state is not None
-        or state.target_mesh.periodic_topology is not None
-    ):
-        raise ValueError("Native work continuation requires a nonperiodic checkpoint.")
-
-    def physical(snapshot: TetMeshArrays) -> str:
-        return canonical_fingerprint(
-            (
-                snapshot[:-1],
-                None
-                if snapshot.implicit_source is None
-                else snapshot.implicit_source.source,
-            )
-        )
-
-    live = physical(state.native.arrays())
-    if live != physical(state.snapshot):
-        raise ValueError(
-            "Native work checkpoint has inconsistent host/native physical state."
-        )
-    return canonical_fingerprint(
-        {
-            "checkpoint": checkpoint_id,
-            "physical": live,
-            "controls": (predicate_mode.value, topology_operations, relocation),
-            "source_identity": state.source_identity,
-            "meshes": (state.source_mesh.mesh_id, state.target_mesh.mesh_id),
-            "source_arrays": (
-                state.source_points,
-                state.source_metric,
-                state.source_metric_log,
-                state.source_vertex_ids,
-                state.source_cell_ids,
-                state.source_cell_vertices,
-                state.source_cell_regions,
-                state.source_cell_blocks,
-            ),
-            "exact_points": tuple(
-                tuple((value.numerator, value.denominator) for value in row)
-                for row in state.source_exact_points
-            ),
-            "id_maps": (
-                sorted(state.source_vertex_rows.items()),
-                sorted(state.vertex_target_ids.items()),
-                sorted(state.cell_target_ids.items()),
-                sorted(state.cell_blocks.items()),
-            ),
-            "stencils": tuple(
-                (
-                    vertex,
-                    tuple(
-                        (source, value.numerator, value.denominator)
-                        for source, value in sorted(stencil.items())
-                    ),
-                )
-                for vertex, stencil in sorted(state.vertex_stencils.items())
-            ),
-            "cell_ancestry": tuple(
-                (
-                    cell,
-                    tuple(
-                        (source, kind.value) for source, kind in sorted(ancestry.items())
-                    ),
-                )
-                for cell, ancestry in sorted(state.cell_ancestry.items())
-            ),
-            "current_metrics": sorted(state.metric_by_vertex.items()),
-            "constraints": (
-                sorted(state.fixed_vertices),
-                sorted(state.protected_edge_ids),
-                sorted(state.edge_classes.items()),
-                sorted(state.face_classes.items()),
-                sorted(state.source_edge_ids.items()),
-                sorted(state.source_face_ids.items()),
-                sorted(state.source_face_group_rows.items()),
-                sorted(state.source_segment_group_rows.items()),
-                tuple(
-                    (group, tuple(sorted(vertices)))
-                    for group, vertices in sorted(state.source_face_vertices.items())
-                ),
-                tuple(
-                    (group, tuple(sorted(vertices)))
-                    for group, vertices in sorted(state.source_segment_vertices.items())
-                ),
-                tuple(
-                    sorted(tuple(sorted(face)) for face in state.declared_source_faces)
-                ),
-                sorted(state.source_group_triangles.items()),
-                sorted(state.implicit_groups),
-            ),
-            "history": (
-                tuple(
-                    (source, target, kind.value)
-                    for source, target, kind in state.history_vertex
-                ),
-                tuple(
-                    (source, target, kind.value)
-                    for source, target, kind in state.history_cells
-                ),
-                sorted(state.changed_source_cell_ids),
-                sorted(state.unrepresentable_edges),
-            ),
-            "allocation": (
-                state.next_native_vertex,
-                state.next_native_cell,
-                state.next_native_facet,
-                state.next_native_segment,
-                state.next_target_vertex,
-                state.next_target_cell,
-            ),
-            "families": state.block_families,
-            "source_volumes": sorted(state.source_region_volumes.items()),
-        }
-    )
-
-
-def _native_work_seed(
-    state: _NativeState,
-    counters: Mapping[str, int],
-    passes: int,
-    implicit_refusals: tuple[int, int] | None,
-    /,
-    *,
-    checkpoint_id: str,
-    predicate_mode: PredicateMode,
-    topology_operations: bool,
-    relocation: bool,
-) -> _NativeWorkSeed:
-    """Prepare immutable actual work after the caller authenticates its checkpoint."""
-    if not isinstance(checkpoint_id, str):
-        raise TypeError("Native work checkpoint identity must be a string.")
-    if len(checkpoint_id) != 64 or any(
-        value not in "0123456789abcdef" for value in checkpoint_id
-    ):
-        raise ValueError(
-            "Native work checkpoint identity must be an authenticated SHA-256."
-        )
-    if set(counters) != set(_EditCounters._fields):
-        raise ValueError(
-            "Native work checkpoint must contain every canonical edit counter."
-        )
-    values = tuple(counters[name] for name in _EditCounters._fields)
-    if any(type(value) is not int for value in (*values, passes)):
-        raise TypeError("Native work counters and passes must be integers.")
-    if any(value < 0 for value in (*values, passes)):
-        raise ValueError("Native work counters and passes must be nonnegative.")
-    if not isinstance(predicate_mode, PredicateMode):
-        raise TypeError("predicate_mode must be PredicateMode.")
-    if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
-        raise TypeError("topology_operations and relocation must be bool.")
-    baseline = state.native.implicit_refusals
-    if (baseline is None) != (implicit_refusals is None):
-        raise ValueError("Native work refusal observations do not match the source kind.")
-    if implicit_refusals is not None:
-        if not isinstance(implicit_refusals, tuple) or len(implicit_refusals) != 2:
-            raise TypeError("Native work requires both per-reason refusal observations.")
-        if any(type(value) is not int for value in implicit_refusals):
-            raise TypeError("Native work refusal observations must be integers.")
-        if any(value < 0 for value in implicit_refusals):
-            raise ValueError("Native work refusal observations must be nonnegative.")
-    return _NativeWorkSeed(
-        checkpoint_id,
-        canonical_fingerprint(
-            (
-                _native_work_binding(
-                    state, checkpoint_id, predicate_mode, topology_operations, relocation
-                ),
-                values,
-                passes,
-                implicit_refusals,
-                baseline,
-            )
+    Every live vertex is its own source vertex (stencil ``{itself: 1}``) and
+    every live cell its own preserved source cell; native, source and target
+    IDs coincide.
+    """
+    source_ids = state.source_vertex_ids
+    vertex_order = np.argsort(source_ids, kind="stable")
+    vertex_ids = source_ids[vertex_order]
+    cell_ids = state.source_cell_ids
+    return {
+        "source_points": state.source_points,
+        "source_metrics": state.source_metric,
+        "source_logarithms": state.source_metric_log,
+        "source_vertex_ids": source_ids,
+        "source_cells": state.source_cell_vertices,
+        "vertex_ids": vertex_ids,
+        "stencil_offsets": np.arange(vertex_ids.size + 1, dtype=np.int64),
+        "stencil_rows": vertex_order.astype(np.int32),
+        "stencil_weights": np.ones(vertex_ids.size, dtype=np.float64),
+        "vertex_target_ids": vertex_ids,
+        "cell_ids": cell_ids,
+        "cell_blocks": state.source_cell_blocks,
+        "cell_target_ids": cell_ids,
+        "ancestry_offsets": np.arange(cell_ids.size + 1, dtype=np.int64),
+        "ancestry_ids": cell_ids,
+        "ancestry_kinds": np.full(
+            cell_ids.size, int(EntityLineageKind.PRESERVED), dtype=np.int32
         ),
-        _EditCounters(*values),
-        passes,
-        implicit_refusals,
-        baseline,
+        "protected_edges": np.asarray(
+            sorted(state.protected_edge_ids), dtype=np.int64
+        ).reshape((-1, 2)),
+        "next_ids": (
+            state.next_native_vertex,
+            state.next_native_cell,
+            state.next_target_vertex,
+            state.next_target_cell,
+        ),
+    }
+
+
+def _id_relations(
+    dimension: int,
+    sources: np.ndarray,
+    targets: np.ndarray,
+    kinds: np.ndarray,
+    /,
+) -> EntityRelations:
+    """Distinct single-ID relations ordered by (source, target, kind)."""
+    records = np.unique(
+        np.stack(
+            (
+                sources.astype(np.int64),
+                targets.astype(np.int64),
+                kinds.astype(np.int64),
+            ),
+            axis=1,
+        ).reshape((-1, 3)),
+        axis=0,
+    )
+    return EntityRelations(
+        dimension,
+        records[:, :1].copy(),
+        records[:, 1:2].copy(),
+        records[:, 2].astype(np.int32),
     )
 
 
-def _continued_implicit_refusals(
-    state: _NativeState, work: _NativeWorkSeed | None, /
-) -> tuple[int, int] | None:
-    current = state.native.implicit_refusals
-    if work is None:
-        return current
-    previous, baseline = work.implicit_refusals, work.native_refusal_baseline
-    if previous is None and baseline is None and current is None:
-        return None
-    if previous is None or baseline is None or current is None:
-        raise ValueError("Native work continuation changed its implicit source kind.")
-    if any(value < before for value, before in zip(current, baseline, strict=True)):
-        raise ValueError(
-            "Native refusal observations moved backward during continuation."
+def _adapted_edit(
+    state: _NativeState,
+    adaptation: TetMeshMetricAdaptation,
+    snapshot: TetMeshArrays,
+    /,
+) -> tuple[CellTopologyEdit, np.ndarray]:
+    """Topology edit and target metric of a native ``metric_adapt`` result.
+
+    Vertices are ordered by target ID; each block lists its cells by target
+    cell ID; stencils name source vertex IDs in ascending order.
+    """
+    native_ids = adaptation.vertex_ids.astype(np.int64)
+    target_ids = adaptation.vertex_target_ids.astype(np.int64)
+    rows = np.searchsorted(native_ids, np.asarray(snapshot.vertex_ids, dtype=np.int64))
+    points = np.empty((native_ids.size, 3), dtype=np.float64)
+    points[rows] = np.asarray(snapshot.points, dtype=np.float64)
+    order = np.argsort(target_ids, kind="stable")
+    rank = np.empty_like(order)
+    rank[order] = np.arange(order.size)
+    target_vertex_ids = target_ids[order]
+
+    counts = np.diff(adaptation.stencil_offsets)
+    term_rows = rank[np.repeat(np.arange(counts.size), counts)]
+    term_sources = state.source_vertex_ids[adaptation.stencil_rows]
+    term_order = np.lexsort((term_sources, term_rows))
+    term_rows = term_rows[term_order]
+    term_sources = term_sources[term_order]
+    starts = np.zeros(order.size + 1, dtype=np.int64)
+    starts[1:] = np.cumsum(np.bincount(term_rows, minlength=order.size))
+    columns = np.arange(term_rows.size) - starts[term_rows]
+    width = max(int(np.max(counts, initial=0)), 1)
+    stencil_sources = np.full((order.size, width), -1, dtype=np.int64)
+    stencil_weights = np.zeros((order.size, width), dtype=np.float64)
+    stencil_valid = np.zeros((order.size, width), dtype=np.bool_)
+    stencil_sources[term_rows, columns] = term_sources
+    stencil_weights[term_rows, columns] = adaptation.stencil_weights[term_order]
+    stencil_valid[term_rows, columns] = True
+    supports = dict(
+        zip(
+            target_vertex_ids.tolist(),
+            (frozenset(part.tolist()) for part in np.split(term_sources, starts[1:-1])),
+            strict=True,
         )
-    return (
-        previous[0] + current[0] - baseline[0],
-        previous[1] + current[1] - baseline[1],
+    )
+
+    cell_target_ids = adaptation.cell_target_ids.astype(np.int64)
+    cell_rows = np.searchsorted(
+        adaptation.cell_ids.astype(np.int64),
+        np.asarray(snapshot.cell_ids, dtype=np.int64),
+    )
+    cells = np.empty((cell_target_ids.size, 4), dtype=np.int32)
+    cells[cell_rows] = rank[rows[np.asarray(snapshot.tetrahedra, dtype=np.int64)]]
+    block_ids: list[np.ndarray] = []
+    block_cells: list[np.ndarray] = []
+    for block_index in range(len(state.block_families)):
+        members = np.flatnonzero(adaptation.cell_blocks == block_index)
+        members = members[np.argsort(cell_target_ids[members], kind="stable")]
+        block_cells.append(cells[members])
+        block_ids.append(cell_target_ids[members])
+    corners = target_vertex_ids[cells]
+    edge_keys = np.unique(
+        np.sort(corners[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0
+    )
+    face_keys = np.unique(
+        np.sort(corners[:, _TETRA_FACES], axis=2).reshape((-1, 3)), axis=0
+    )
+
+    relation_sources = adaptation.vertex_relations[:, 0].astype(np.int64)
+    preserved = np.setdiff1d(
+        np.intersect1d(state.source_vertex_ids, target_vertex_ids), relation_sources
+    )
+    owners = np.repeat(
+        np.arange(cell_target_ids.size), np.diff(adaptation.ancestry_offsets)
+    )
+    ancestors = adaptation.ancestry_ids.astype(np.int64)
+    relocated = adaptation.cell_relocated[owners] != 0
+    relations = (
+        _id_relations(
+            0,
+            np.concatenate((relation_sources, preserved)),
+            np.concatenate(
+                (adaptation.vertex_relations[:, 1].astype(np.int64), preserved)
+            ),
+            np.concatenate(
+                (
+                    adaptation.vertex_relation_kinds,
+                    np.full(preserved.size, int(EntityLineageKind.PRESERVED)),
+                )
+            ),
+        ),
+        _intermediate_relations(
+            state.source_mesh, 1, [tuple(key) for key in edge_keys.tolist()], supports
+        ),
+        _intermediate_relations(
+            state.source_mesh, 2, [tuple(key) for key in face_keys.tolist()], supports
+        ),
+        _id_relations(
+            3,
+            np.concatenate((ancestors, ancestors[relocated])),
+            np.concatenate((cell_target_ids[owners], cell_target_ids[owners[relocated]])),
+            np.concatenate(
+                (
+                    adaptation.ancestry_kinds[owners],
+                    np.full(
+                        int(np.count_nonzero(relocated)),
+                        int(EntityLineageKind.RELOCATED),
+                    ),
+                )
+            ),
+        ),
+    )
+    edit = CellTopologyEdit(
+        coordinates=points[order],
+        vertex_global_ids=target_vertex_ids,
+        blocks=source_family_blocks(
+            state.block_families, tuple(block_cells), tuple(block_ids)
+        ),
+        stencil_sources=stencil_sources,
+        stencil_weights=stencil_weights,
+        stencil_valid=stencil_valid,
+        relations=relations,
+    )
+    return edit, adaptation.metrics[order]
+
+
+def _row_member(rows: np.ndarray, table: np.ndarray, /) -> np.ndarray:
+    """Whether each ``(n, 2)`` integer row occurs in the ``(k, 2)`` table."""
+
+    def keys(values: np.ndarray) -> np.ndarray:
+        pairs = np.ascontiguousarray(values, dtype=np.int64).reshape((-1, 2))
+        return pairs.view(np.dtype((np.void, 16))).reshape((-1,))
+
+    return np.isin(keys(rows), keys(table))
+
+
+def _adapted_evidence(
+    state: _NativeState,
+    adaptation: TetMeshMetricAdaptation,
+    snapshot: TetMeshArrays,
+    lower: float,
+    /,
+) -> TetraMetricEvidence:
+    """Measured evidence of the final native mesh (``_tetra_evidence`` semantics).
+
+    Out-of-band long edges are unrepresentable when the native reports no
+    exact split point for them; out-of-band short edges are source-boundary
+    edges when the source boundary forbids their collapse both ways.
+    """
+    native_ids = adaptation.vertex_ids.astype(np.int64)
+    snapshot_ids = np.asarray(snapshot.vertex_ids, dtype=np.int64)
+    rows = np.searchsorted(native_ids, snapshot_ids)
+    targets = adaptation.vertex_target_ids.astype(np.int64)[rows]
+    points = np.asarray(snapshot.points, dtype=np.float64)
+    metrics = adaptation.metrics[rows]
+    cells = np.asarray(snapshot.tetrahedra, dtype=np.int64).reshape((-1, 4))
+    edges = np.unique(np.sort(cells[:, _TETRA_EDGES], axis=2).reshape((-1, 2)), axis=0)
+    lengths = metric_lengths(points, metrics, edges)
+    segments = np.sort(np.asarray(snapshot.segments, dtype=np.int64), axis=1)
+    protected = _row_member(
+        np.sort(targets[edges], axis=1),
+        np.asarray(sorted(state.protected_edge_ids), dtype=np.int64),
+    ) | _row_member(
+        edges, segments[np.asarray(snapshot.protected_segments, dtype=np.bool_)]
+    )
+    regions = np.asarray(snapshot.tetrahedron_regions, dtype=np.int64)
+    volume_error = _relative_region_error(
+        state.source_region_volumes, _region_volumes(points, cells, regions)
+    )
+    unrepresentable = np.sort(adaptation.unrepresentable_edges.astype(np.int64), axis=1)
+
+    def unmet(outside: np.ndarray) -> tuple[TetraMetricUnmetEdge, ...]:
+        records = _snapshot_boundary_records(
+            snapshot, state.source_face_group_rows, state.source_segment_group_rows
+        )
+        protected_vertices = np.asarray(snapshot.protected_vertices, dtype=np.bool_)
+        row_by_id = {
+            identifier: row for row, identifier in enumerate(snapshot_ids.tolist())
+        }
+        offsets = adaptation.stencil_offsets
+
+        def admitted(removed: int, kept: int) -> bool:
+            kept_row = int(rows[row_by_id[kept]])
+            support = state.source_vertex_ids[
+                adaptation.stencil_rows[offsets[kept_row] : offsets[kept_row + 1]]
+            ]
+            return _collapse_admitted(
+                state,
+                records,
+                removed,
+                kept,
+                removed_protected=bool(protected_vertices[row_by_id[removed]]),
+                kept_protected=bool(protected_vertices[row_by_id[kept]]),
+                kept_support=frozenset(support.tolist()),
+            )
+
+        pairs = np.sort(targets[edges[outside]], axis=1)
+        split_refused = _row_member(pairs, unrepresentable)
+        witnesses = []
+        for edge, pair, length, refused in zip(
+            snapshot_ids[edges[outside]].tolist(),
+            pairs.tolist(),
+            lengths[outside].tolist(),
+            split_refused.tolist(),
+            strict=True,
+        ):
+            if length > _UPPER:
+                kind = (
+                    TetraMetricUnmetKind.UNREPRESENTABLE
+                    if refused
+                    else TetraMetricUnmetKind.UNIMPROVED
+                )
+            elif admitted(edge[0], edge[1]) or admitted(edge[1], edge[0]):
+                kind = TetraMetricUnmetKind.UNIMPROVED
+            else:
+                kind = TetraMetricUnmetKind.SOURCE_BOUNDARY
+            witnesses.append(TetraMetricUnmetEdge(kind, (pair[0], pair[1]), length))
+        return tuple(sorted(witnesses, key=lambda row: (row.kind.value, row.vertex_ids)))
+
+    match adaptation.status:
+        case 0:
+            status = TetraMetricStatus.COMPLETE
+        case 1:
+            status = TetraMetricStatus.STALLED
+        case 2:
+            status = TetraMetricStatus.NUMERICAL_STOP
+        case other:
+            raise ValueError(f"The native metric adaptation reported status {other}.")
+    return _metric_evidence(
+        status,
+        adaptation.passes,
+        dict(zip(_EditCounters._fields, adaptation.counters.tolist(), strict=True)),
+        lengths,
+        protected,
+        metric_tetra_quality(points, metrics, cells),
+        volume_error,
+        unmet,
+        state.native.implicit_refusals,
+        lower=lower,
     )
 
 
@@ -7615,54 +7780,15 @@ def _execute_native_state(
     *,
     topology_operations: bool,
     relocation: bool,
-    split_batch: Callable[[_NativeState, dict[str, int]], int] = _one_split_batch,
-    work: _NativeWorkSeed | None = None,
-    accepted_minimum_length: float | None = None,
+    lower: float,
 ) -> TetraMetricOutcome:
-    """Run the canonical phase schedule on one native owner.
+    """Run the host phase schedule on one native owner (periodic lift only).
 
-    ``split_batch`` applies at most one disjoint split batch per pass and
-    returns the number of edges split; the default is the host evaluation
-    ``_split_phase(..., one_batch=True)``. The schedule, the native owner,
-    and its stable target-ID numbering stay shared by every route.
-    A private continuation seed carries authenticated prior work, not suspended
-    generators. Every invocation prepares fresh worksets from the real state.
-    ``accepted_minimum_length`` widens only the completion criterion: every
-    phase still targets the unit band, and the evidence counts unmet edges
-    against the accepted band.
+    ``lower`` widens only the completion criterion: every phase still targets
+    the unit band, and the evidence counts unmet edges against ``lower``.
     """
-    lower = _LOWER if accepted_minimum_length is None else accepted_minimum_length
-    if work is None:
-        counters = dict(zip(_EditCounters._fields, _EditCounters(), strict=True))
-        passes = 0
-    else:
-        if not isinstance(work, _NativeWorkSeed):
-            raise TypeError("Native continuation work must be an owning work seed.")
-        if split_batch is not _one_split_batch:
-            raise ValueError(
-                "Native work continuation requires the canonical host split evaluator."
-            )
-        expected_binding = canonical_fingerprint(
-            (
-                _native_work_binding(
-                    state,
-                    work.checkpoint_id,
-                    predicate_mode,
-                    topology_operations,
-                    relocation,
-                ),
-                tuple(work.counters),
-                work.passes,
-                work.implicit_refusals,
-                work.native_refusal_baseline,
-            )
-        )
-        if work.state_binding != expected_binding:
-            raise ValueError(
-                "Native work seed differs from the physical/source/control checkpoint."
-            )
-        counters = dict(zip(_EditCounters._fields, work.counters, strict=True))
-        passes = work.passes
+    counters = dict(zip(_EditCounters._fields, _EditCounters(), strict=True))
+    passes = 0
     status = TetraMetricStatus.COMPLETE
     negative_rings: dict[tuple[int, int], tuple[Any, ...]] = {}
     replacement_memos = {
@@ -7687,7 +7813,7 @@ def _execute_native_state(
         passes += 1
         applied = 0
         if topology_operations:
-            split = split_batch(state, counters)
+            split = _split_phase(state, counters, one_batch=True)
             applied += split
             applied += _collapse_phase(state, counters, cache=collapse_cache)
             if split:
@@ -7733,7 +7859,7 @@ def _execute_native_state(
             status = TetraMetricStatus.STALLED
             break
     edit, target_metric = _assemble_native_edit(state)
-    evidence = _tetra_evidence(state, counters, passes, status, work=work, lower=lower)
+    evidence = _tetra_evidence(state, counters, passes, status, lower=lower)
     return TetraMetricOutcome(edit, target_metric, evidence, state.source_exact_points)
 
 
@@ -7741,7 +7867,7 @@ def _intermediate_relations(
     source: CellMesh,
     dimension: int,
     target_keys: list[tuple[int, ...]],
-    stencils: dict[int, dict[int, Fraction]],
+    stencils: Mapping[int, Iterable[int]],
     /,
 ) -> EntityRelations:
     source_rows = entity_keys(source, dimension)

@@ -48,8 +48,10 @@ from phydrax.meshing.providers._native_implicit import (
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
 from phydrax.meshing.providers._native_sources import NativeImplicitSource
 from tests._ported_models import full_port, in_order, PortedAffine
-from tests.unit.meshing.test_device_tetra_metric import _source as _tetrahedral_source
 from tests.unit.meshing.test_native_implicit_routes import _geometry_and_grid
+from tests.unit.meshing.test_native_tetra_metric_route import (
+    _source as _tetrahedral_source,
+)
 
 
 def _source() -> Any:

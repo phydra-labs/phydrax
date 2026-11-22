@@ -15,7 +15,6 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from ._bisection import BisectionEvidence, BisectionHierarchy
 from ._device_metric import DeviceMetricEvidence
-from ._device_tetra_metric import DeviceTetraMetricEvidence
 from ._lineage import (
     CellMeshTransition,
     EntityLineage,
@@ -605,7 +604,6 @@ _RouteEvidence = (
     LocalMetricEvidence
     | DeviceMetricEvidence
     | TetraMetricEvidence
-    | DeviceTetraMetricEvidence
     | BisectionEvidence
     | PolyhedralAdaptationEvidence
     | MmgAdaptationResult
@@ -617,7 +615,6 @@ _ROUTE_EVIDENCE: dict[str, type] = {
     "native_metric_2d": LocalMetricEvidence,
     "device_metric_2d": DeviceMetricEvidence,
     "native_metric_3d": TetraMetricEvidence,
-    "device_metric_3d": DeviceTetraMetricEvidence,
     "native_bisection": BisectionEvidence,
     "device_bisection": BisectionEvidence,
     "native_polyhedral": PolyhedralAdaptationEvidence,
@@ -833,20 +830,6 @@ def _route_evidence(value: Any, route: str, /) -> _RouteEvidence:
         return _surface_outcome(value)
     if type(value) is PolyhedralAdaptationEvidence:
         return _polyhedral_evidence(value)
-    if type(value) is DeviceTetraMetricEvidence:
-        nested = value.metric_evidence
-        if nested is not None and type(nested) is not TetraMetricEvidence:
-            raise TypeError("Stored device tetra evidence lost its native evidence.")
-        return _reconstructed(
-            value,
-            "evidence_id",
-            "adaptation evidence",
-            metric_evidence=(
-                None
-                if nested is None
-                else _reconstructed(nested, "evidence_id", "tetra metric evidence")
-            ),
-        )
     return _reconstructed(value, "evidence_id", "adaptation evidence")
 
 
@@ -883,9 +866,6 @@ def _route_decision(
             )
             status = tetra_status[evidence.status]
             return applied > 0, status, MeshTransitionKind.REMESH, False
-        case DeviceTetraMetricEvidence():
-            status = tetra_status[evidence.status]
-            return evidence.committed, status, MeshTransitionKind.REMESH, False
         case BisectionEvidence():
             refined = evidence.bisections > 0 or evidence.uniform_refinement_applied
             coarsened = evidence.coarsened_vertices > 0

@@ -1035,6 +1035,65 @@ class _TetMeshEditRequest(ctypes.Structure):
     )
 
 
+class _MetricAdaptRequest(ctypes.Structure):
+    _fields_ = (
+        ("source_count", _I64),
+        ("source_points", _P),
+        ("source_metrics", _P),
+        ("source_logarithms", _P),
+        ("source_vertex_ids", _P),
+        ("source_cell_count", _I64),
+        ("source_cells", _P),
+        ("vertex_count", _I64),
+        ("vertex_ids", _P),
+        ("stencil_offsets", _P),
+        ("stencil_rows", _P),
+        ("stencil_weights", _P),
+        ("vertex_target_ids", _P),
+        ("cell_count", _I64),
+        ("cell_ids", _P),
+        ("cell_blocks", _P),
+        ("cell_target_ids", _P),
+        ("ancestry_offsets", _P),
+        ("ancestry_ids", _P),
+        ("ancestry_kinds", _P),
+        ("protected_edge_count", _I64),
+        ("protected_edges", _P),
+        ("next_vertex_id", _U64),
+        ("next_cell_id", _U64),
+        ("next_target_vertex", _U64),
+        ("next_target_cell", _U64),
+        ("lower", ctypes.c_double),
+        ("topology_operations", _I32),
+        ("relocation", _I32),
+    )
+
+
+class _MetricAdaptationOutput(ctypes.Structure):
+    _fields_ = (
+        ("status", _P),
+        ("passes", _P),
+        ("counters", _P),
+        ("vertex_ids", _P),
+        ("vertex_target_ids", _P),
+        ("stencil_offsets", _P),
+        ("stencil_rows", _P),
+        ("stencil_weights", _P),
+        ("metrics", _P),
+        ("cell_ids", _P),
+        ("cell_target_ids", _P),
+        ("cell_blocks", _P),
+        ("ancestry_offsets", _P),
+        ("ancestry_ids", _P),
+        ("ancestry_kinds", _P),
+        ("cell_relocated", _P),
+        ("vertex_relation_sources", _P),
+        ("vertex_relation_targets", _P),
+        ("vertex_relation_kinds", _P),
+        ("unrepresentable_edges", _P),
+    )
+
+
 _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     "phx_mc_version": (ctypes.c_char_p, ()),
     "phx_mc_build_hash": (ctypes.c_char_p, ()),
@@ -1547,6 +1606,31 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
             ctypes.POINTER(_I32),
         ),
     ),
+    "phx_mc_tet_mesh_metric_adapt": (
+        _I32,
+        (
+            _P,
+            _U64,
+            _I32,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            _P,
+            _I64,
+            ctypes.POINTER(_MetricAdaptRequest),
+            ctypes.POINTER(_I32),
+            ctypes.POINTER(_P),
+        ),
+    ),
+    "phx_mc_metric_adaptation_sizes": (_I32, (_P, _P)),
+    "phx_mc_metric_adaptation_read": (
+        _I32,
+        (_P, ctypes.POINTER(_MetricAdaptationOutput)),
+    ),
+    "phx_mc_metric_adaptation_free": (None, (_P,)),
     "phx_mc_tet_mesh_implicit_facet_refusal": (
         _I32,
         (_P, ctypes.POINTER(_TetMeshImplicitFacetRefusal)),
@@ -9423,6 +9507,44 @@ def relocated_tet_mesh_arrays(
 
 
 @final
+@dataclass(frozen=True, slots=True)
+class TetMeshMetricAdaptation:
+    """Result of :meth:`TetMesh3D.metric_adapt` (ascending native IDs).
+
+    ``status`` is 0 complete, 1 stalled, 2 numerical stop; ``counters`` the
+    splits, collapses, flips 2-3, flips 3-2, ring reconnections, relocations
+    and the refusals for topology, protection, uncertainty and invalidity.
+    Per live vertex: native and target ID, stencil (CSR over source rows,
+    binary64 weights) and tensor. Per live cell: native and target ID, block,
+    source-cell ancestry (CSR) with its ``EntityLineageKind`` value and whether
+    a relocation changed it. ``vertex_relations`` are (source target ID,
+    target ID) rows with their kinds for collapsed and relocated source
+    vertices and ``unrepresentable_edges`` the long edges without an exact
+    split point (target vertex ID pairs).
+    """
+
+    status: int
+    passes: int
+    counters: np.ndarray
+    vertex_ids: np.ndarray
+    vertex_target_ids: np.ndarray
+    stencil_offsets: np.ndarray
+    stencil_rows: np.ndarray
+    stencil_weights: np.ndarray
+    metrics: np.ndarray
+    cell_ids: np.ndarray
+    cell_target_ids: np.ndarray
+    cell_blocks: np.ndarray
+    ancestry_offsets: np.ndarray
+    ancestry_ids: np.ndarray
+    ancestry_kinds: np.ndarray
+    cell_relocated: np.ndarray
+    vertex_relations: np.ndarray
+    vertex_relation_kinds: np.ndarray
+    unrepresentable_edges: np.ndarray
+
+
+@final
 class TetMesh3D:
     """Owned native tetrahedral mesh with atomic edits and checked snapshots.
 
@@ -10771,6 +10893,199 @@ class TetMesh3D:
                 "tet_mesh_apply_relocation",
             )
         return TetMeshEditStatus(edit_status.value) if decided.value else None
+
+    def metric_adapt(
+        self,
+        expected_generation: int,
+        *,
+        source_points: np.ndarray,
+        source_metrics: np.ndarray,
+        source_logarithms: np.ndarray,
+        source_vertex_ids: np.ndarray,
+        source_cells: np.ndarray,
+        vertex_ids: np.ndarray,
+        stencil_offsets: np.ndarray,
+        stencil_rows: np.ndarray,
+        stencil_weights: np.ndarray,
+        vertex_target_ids: np.ndarray,
+        cell_ids: np.ndarray,
+        cell_blocks: np.ndarray,
+        cell_target_ids: np.ndarray,
+        ancestry_offsets: np.ndarray,
+        ancestry_ids: np.ndarray,
+        ancestry_kinds: np.ndarray,
+        protected_edges: np.ndarray,
+        next_ids: tuple[int, int, int, int],
+        lower: float,
+        topology_operations: bool,
+        relocation: bool,
+        source_id: str | None = None,
+        source_revision: str | None = None,
+        source_map_id: str | None = None,
+        frame_id: str | None = None,
+    ) -> TetMeshMetricAdaptation:
+        """Adapt this mesh in place toward unit metric edge length.
+
+        The source is the exact P1 complex (binary64 points, SPD tensors and
+        their logarithms, target vertex IDs); every live vertex and cell
+        (ascending native ID) carries its stencil, target ID, block and
+        source-cell ancestry; ``next_ids`` are fresh native vertex, native
+        cell, target vertex and target cell IDs. A fatal commit status
+        (stale state, allocation, identifier range) raises.
+        """
+        generation = _tet_mesh_uint64(expected_generation, "expected_generation")
+        banks = (
+            np.ascontiguousarray(source_points, dtype=np.float64).reshape((-1, 3)),
+            np.ascontiguousarray(source_metrics, dtype=np.float64).reshape((-1, 3, 3)),
+            np.ascontiguousarray(source_logarithms, dtype=np.float64).reshape((-1, 3, 3)),
+            _tet_mesh_vector(source_vertex_ids, "source_vertex_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(vertex_ids, "vertex_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(stencil_offsets, "stencil_offsets", np.dtype(np.int64)),
+            _tet_mesh_vector(stencil_rows, "stencil_rows", np.dtype(np.int32)),
+            np.ascontiguousarray(stencil_weights, dtype=np.float64).reshape((-1,)),
+            _tet_mesh_vector(vertex_target_ids, "vertex_target_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(cell_ids, "cell_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(cell_blocks, "cell_blocks", np.dtype(np.int32)),
+            _tet_mesh_vector(cell_target_ids, "cell_target_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(ancestry_offsets, "ancestry_offsets", np.dtype(np.int64)),
+            _tet_mesh_vector(ancestry_ids, "ancestry_ids", np.dtype(np.uint64)),
+            _tet_mesh_vector(ancestry_kinds, "ancestry_kinds", np.dtype(np.int32)),
+            np.ascontiguousarray(protected_edges, dtype=np.uint64).reshape((-1, 2)),
+            np.ascontiguousarray(source_cells, dtype=np.int64).reshape((-1, 4)),
+        )
+        sources = banks[3].size
+        if (
+            banks[0].shape[0] != sources
+            or banks[1].shape[0] != sources
+            or (banks[2].shape[0] != sources)
+        ):
+            raise ValueError("The source banks must hold one row per source vertex.")
+        if banks[5].size != banks[4].size + 1 or banks[12].size != banks[9].size + 1:
+            raise ValueError(
+                "Stencil and ancestry offsets hold one row more than their owners."
+            )
+        request = _MetricAdaptRequest(
+            sources,
+            banks[0].ctypes.data,
+            banks[1].ctypes.data,
+            banks[2].ctypes.data,
+            banks[3].ctypes.data,
+            banks[16].shape[0],
+            banks[16].ctypes.data,
+            banks[4].size,
+            banks[4].ctypes.data,
+            banks[5].ctypes.data,
+            banks[6].ctypes.data,
+            banks[7].ctypes.data,
+            banks[8].ctypes.data,
+            banks[9].size,
+            banks[9].ctypes.data,
+            banks[10].ctypes.data,
+            banks[11].ctypes.data,
+            banks[12].ctypes.data,
+            banks[13].ctypes.data,
+            banks[14].ctypes.data,
+            banks[15].shape[0],
+            banks[15].ctypes.data,
+            *(_tet_mesh_uint64(value, "next_ids") for value in next_ids),
+            lower,
+            topology_operations,
+            relocation,
+        )
+        edit_status = _I32(0)
+        handle = _P()
+        identity_bound, identity_bytes, identity_buffers = _tet_mesh_identity_payload(
+            source_id, source_revision, source_map_id, frame_id
+        )
+        with self._lock:
+            _raise_for_call(
+                self._library["phx_mc_tet_mesh_metric_adapt"](
+                    self._live(),
+                    generation,
+                    identity_bound,
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[0]),
+                    len(identity_bytes[0]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[1]),
+                    len(identity_bytes[1]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[2]),
+                    len(identity_bytes[2]),
+                    _tet_mesh_identity_pointer(identity_bound, identity_buffers[3]),
+                    len(identity_bytes[3]),
+                    ctypes.byref(request),
+                    ctypes.byref(edit_status),
+                    ctypes.byref(handle),
+                ),
+                "tet_mesh_metric_adapt",
+            )
+        status = TetMeshEditStatus(edit_status.value)
+        if status is not TetMeshEditStatus.APPLIED or not handle.value:
+            raise RuntimeError(f"Native metric adaptation failed with {status.name}.")
+        result = self._metric_adaptation(handle)
+        self._library["phx_mc_metric_adaptation_free"](handle)
+        return result
+
+    def _metric_adaptation(self, handle: ctypes.c_void_p, /) -> TetMeshMetricAdaptation:
+        sizes = np.zeros(6, dtype=np.int64)
+        _raise_for_call(
+            self._library["phx_mc_metric_adaptation_sizes"](handle, sizes.ctypes.data),
+            "metric_adaptation_sizes",
+        )
+        vertices, terms, cells, ancestors, relations, unrepresentable = sizes.tolist()
+        status = np.zeros(1, dtype=np.int32)
+        passes = np.zeros(1, dtype=np.int64)
+        counters = np.zeros(10, dtype=np.int64)
+        out = {
+            "vertex_ids": np.zeros(vertices, dtype=np.uint64),
+            "vertex_target_ids": np.zeros(vertices, dtype=np.uint64),
+            "stencil_offsets": np.zeros(vertices + 1, dtype=np.int64),
+            "stencil_rows": np.zeros(terms, dtype=np.int32),
+            "stencil_weights": np.zeros(terms, dtype=np.float64),
+            "metrics": np.zeros((vertices, 3, 3), dtype=np.float64),
+            "cell_ids": np.zeros(cells, dtype=np.uint64),
+            "cell_target_ids": np.zeros(cells, dtype=np.uint64),
+            "cell_blocks": np.zeros(cells, dtype=np.int32),
+            "ancestry_offsets": np.zeros(cells + 1, dtype=np.int64),
+            "ancestry_ids": np.zeros(ancestors, dtype=np.uint64),
+            "ancestry_kinds": np.zeros(cells, dtype=np.int32),
+            "cell_relocated": np.zeros(cells, dtype=np.int8),
+            "vertex_relation_sources": np.zeros(relations, dtype=np.uint64),
+            "vertex_relation_targets": np.zeros(relations, dtype=np.uint64),
+            "vertex_relation_kinds": np.zeros(relations, dtype=np.int32),
+            "unrepresentable_edges": np.zeros((unrepresentable, 2), dtype=np.uint64),
+        }
+        banks = _MetricAdaptationOutput(
+            status.ctypes.data,
+            passes.ctypes.data,
+            counters.ctypes.data,
+            *(array.ctypes.data for array in out.values()),
+        )
+        _raise_for_call(
+            self._library["phx_mc_metric_adaptation_read"](handle, ctypes.byref(banks)),
+            "metric_adaptation_read",
+        )
+        return TetMeshMetricAdaptation(
+            int(status[0]),
+            int(passes[0]),
+            counters,
+            out["vertex_ids"],
+            out["vertex_target_ids"],
+            out["stencil_offsets"],
+            out["stencil_rows"],
+            out["stencil_weights"],
+            out["metrics"],
+            out["cell_ids"],
+            out["cell_target_ids"],
+            out["cell_blocks"],
+            out["ancestry_offsets"],
+            out["ancestry_ids"],
+            out["ancestry_kinds"],
+            out["cell_relocated"],
+            np.stack(
+                (out["vertex_relation_sources"], out["vertex_relation_targets"]), axis=1
+            ),
+            out["vertex_relation_kinds"],
+            out["unrepresentable_edges"],
+        )
 
     def apply_edit(self, edit: TetMeshEdit) -> TetMeshEditStatus:
         with self._lock:
@@ -12852,6 +13167,7 @@ __all__ = [
     "recover_plc",
     "recover_plc_3d",
     "TetMesh3D",
+    "TetMeshMetricAdaptation",
     "TetMeshArrays",
     "TetMeshEdit",
     "TetMeshEditKind",
