@@ -270,6 +270,31 @@ def test_tetra_metric_seeds_authoritative_exact_source_vertices() -> None:
     assert located[2] == (Fraction(0), Fraction(1), Fraction(0), Fraction(0))
 
 
+def test_canonical_tetra_element_does_not_authorize_a_permuted_route() -> None:
+    source = _source(2)
+    mesh = source.mesh
+    block = mesh.blocks[0]
+    route = np.asarray(block.vertices).copy()
+    route[0, :2] = route[0, 1::-1]
+    geometry = phx.discretization.CellGeometrySpec(
+        {block.name: source.geometry.elements[0]},
+        {block.name: route},
+        mesh.coordinates,
+    )
+    with pytest.raises(ValueError, match="requires an exact P1 source map"):
+        _prepare_native_state(
+            mesh,
+            geometry,
+            source.coordinate_contract,
+            np.broadcast_to(np.eye(3), (mesh.vertex_global_ids.size, 3, 3)).copy(),
+            cell_classes=np.zeros(mesh.entity_set(3).entity_ids.size, dtype=np.int64),
+            facet_classes=np.zeros(mesh.entity_set(2).entity_ids.size, dtype=np.int64),
+            edge_classes=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.int64),
+            protected_edges=np.zeros(mesh.entity_set(1).entity_ids.size, dtype=np.bool_),
+            fixed_vertices=np.zeros(mesh.vertex_global_ids.size, dtype=np.bool_),
+        )
+
+
 def test_native_tetra_split_rounds_authored_stencil_before_certification() -> None:
     from phydrax.discretization._exact_plc_geometry import ExactPlcCellGeometrySource
     from phydrax.meshing import (

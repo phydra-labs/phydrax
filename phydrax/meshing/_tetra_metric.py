@@ -1619,6 +1619,40 @@ def _implicit_metric_source(source: CellMeshingResult, /) -> _ImplicitMetricSour
     )
 
 
+def _canonical_lagrange_vertices(
+    mesh: CellMesh, geometry: CellGeometrySpec, points: np.ndarray, /
+) -> tuple[tuple[Fraction, Fraction, Fraction], ...] | None:
+    """Recognize the exact binary64 nodal map without expanding its cells."""
+    from ..discretization.fem import lagrange_element
+
+    if (
+        mesh.periodic_topology is not None
+        or geometry.source_map is not None
+        or geometry.source_mesh_id is not None
+        or geometry.exact_coordinate_bank is not None
+        or geometry.restriction_source is not None
+        or geometry.block_names != tuple(block.name for block in mesh.blocks)
+        or not np.array_equal(np.asarray(geometry.coordinates), points)
+    ):
+        return None
+    linear = lagrange_element("tetrahedron", 1)
+    covered = np.zeros(points.shape[0], dtype=np.bool_)
+    for block, element, route in zip(
+        mesh.blocks, geometry.elements, geometry.geometry_dofs, strict=True
+    ):
+        if block.cell_kind != "tetrahedron" or element is not linear:
+            return None
+        vertices = np.asarray(block.vertices)
+        if not np.array_equal(np.asarray(route), vertices):
+            return None
+        covered[vertices] = True
+    if not np.all(covered):
+        raise ValueError("Exact source geometry does not cover every metric vertex.")
+    return tuple(
+        (Fraction(float(x)), Fraction(float(y)), Fraction(float(z))) for x, y, z in points
+    )
+
+
 def _prepare_native_state(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -1646,23 +1680,24 @@ def _prepare_native_state(
     ):
         raise ValueError("Native tetra metric adaptation requires 3D tetrahedron blocks.")
     from ._adaptation import _metric_exact_source_vertices, _piecewise_linear_geometry
-
-    if not _piecewise_linear_geometry(mesh, geometry):
-        raise ValueError(
-            "Native tetra metric adaptation requires an exact P1 source map."
-        )
     from ._local_metric import _boolean_array, _integer_array
 
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    exact_rows = _metric_exact_source_vertices(mesh, geometry)
-    exact_source_points = tuple((row[0], row[1], row[2]) for row in exact_rows)
-    if not np.array_equal(
-        np.asarray([[float(value) for value in row] for row in exact_source_points]),
-        points,
-    ):
-        raise ValueError(
-            "Tetra source vertices are not canonical exact-source roundings."
-        )
+    exact_source_points = _canonical_lagrange_vertices(mesh, geometry, points)
+    if exact_source_points is None:
+        if not _piecewise_linear_geometry(mesh, geometry):
+            raise ValueError(
+                "Native tetra metric adaptation requires an exact P1 source map."
+            )
+        exact_rows = _metric_exact_source_vertices(mesh, geometry)
+        exact_source_points = tuple((row[0], row[1], row[2]) for row in exact_rows)
+        if not np.array_equal(
+            np.asarray([[float(value) for value in row] for row in exact_source_points]),
+            points,
+        ):
+            raise ValueError(
+                "Tetra source vertices are not canonical exact-source roundings."
+            )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     if vertex_ids.shape != (points.shape[0],):
         raise ValueError("Source vertex identities do not align with coordinates.")
