@@ -78,6 +78,8 @@ def tree_view(
     ):
         raise ValueError("node bounds must share one nonempty (nodes, dimension) shape.")
     node_count, dimension = node_min.shape
+    if point_query and dimension != 3:
+        raise ValueError("Native point queries require three-dimensional tree bounds.")
     if any(value.shape != (node_count,) for value in (left, right, leaf)):
         raise ValueError("node metadata must have one entry per node.")
     if leaf_items.ndim != 2 or leaf_items.shape[1] < 1:
@@ -136,7 +138,7 @@ def _points(points: np.ndarray, /) -> np.ndarray:
 
 
 def _simplices(
-    vertices: np.ndarray, simplices: np.ndarray, corners: int, /
+    vertices: np.ndarray, simplices: np.ndarray, corners: int, item_count: int, /
 ) -> tuple[np.ndarray, np.ndarray]:
     vertex_values = np.ascontiguousarray(vertices, dtype=np.float64)
     simplex_values = np.ascontiguousarray(simplices, dtype=np.int32)
@@ -144,6 +146,8 @@ def _simplices(
         raise ValueError("vertices must have shape (vertices, 3).")
     if simplex_values.ndim != 2 or simplex_values.shape[1] != corners:
         raise ValueError(f"simplices must have shape (items, {corners}).")
+    if simplex_values.shape[0] != item_count:
+        raise ValueError("Native point queries require one simplex per tree item.")
     return vertex_values, simplex_values
 
 
@@ -174,7 +178,7 @@ def triangle_nearest(
     from ._exact_kernels import exact_kernel_parallelism
 
     view, arrays = tree_view(tree, point_query=True)
-    vertex_values, face_values = _simplices(vertices, faces, 3)
+    vertex_values, face_values = _simplices(vertices, faces, 3, tree[6].shape[0])
     queries = _points(points)
     count = queries.shape[0]
     found = np.empty((count, k), dtype=np.int32)
@@ -212,7 +216,7 @@ def triangle_signed_distance(
     from ._exact_kernels import exact_kernel_parallelism
 
     view, arrays = tree_view(tree, point_query=True)
-    vertex_values, face_values = _simplices(vertices, faces, 3)
+    vertex_values, face_values = _simplices(vertices, faces, 3, tree[6].shape[0])
     normals = np.ascontiguousarray(feature_normals, dtype=np.float64)
     if normals.shape != (face_values.shape[0], 7, 3):
         raise ValueError("feature normals must have shape (faces, 7, 3).")
@@ -254,7 +258,7 @@ def _winding(
     from ._exact_kernels import exact_kernel_parallelism
 
     view, arrays = tree_view(tree, point_query=True)
-    vertex_values, face_values = _simplices(vertices, faces, 3)
+    vertex_values, face_values = _simplices(vertices, faces, 3, tree[6].shape[0])
     queries = _points(points)
     values = np.empty((queries.shape[0],), dtype=np.float64)
     status = load_meshcore()["phx_mc_bvh_query_winding"](
@@ -399,7 +403,7 @@ def tetrahedron_locate(
     few points beyond the first pass's width are located again at full width.
     """
     view, arrays = tree_view(tree, point_query=True)
-    vertex_values, cell_values = _simplices(vertices, cells, 4)
+    vertex_values, cell_values = _simplices(vertices, cells, 4, tree[6].shape[0])
     mask = None
     if cell_mask is not None:
         mask = np.ascontiguousarray(cell_mask, dtype=np.uint8)

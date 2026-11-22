@@ -284,6 +284,41 @@ def test_native_signed_distance_equals_traced_route(case: Any) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("dimension", "item_count", "message"),
+    (
+        pytest.param(2, 1, "three-dimensional tree bounds", id="tree-dimension"),
+        pytest.param(3, 2, "one simplex per tree item", id="simplex-count"),
+    ),
+)
+def test_native_point_queries_refuse_mismatched_buffer_extents(
+    dimension: int, item_count: int, message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax import _bvh_native
+
+    monkeypatch.setattr(
+        _bvh_native,
+        "load_meshcore",
+        lambda: pytest.fail("Mismatched buffers reached the native query boundary."),
+    )
+
+    tree = (
+        np.zeros((1, dimension), dtype=np.float64),
+        np.ones((1, dimension), dtype=np.float64),
+        np.asarray((-1,), dtype=np.int64),
+        np.asarray((-1,), dtype=np.int64),
+        np.asarray((0,), dtype=np.int64),
+        np.arange(item_count, dtype=np.int64)[None, :],
+        np.zeros((item_count, dimension), dtype=np.float64),
+        np.ones((item_count, dimension), dtype=np.float64),
+    )
+    vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0)), dtype=np.float64)
+    faces = np.asarray(((0, 1, 2),), dtype=np.int32)
+    points = np.asarray(((0.25, 0.25, 1.0),), dtype=np.float64)
+    with pytest.raises(ValueError, match=message):
+        _bvh_native.triangle_nearest(tree, vertices, faces, points, k=1)
+
+
 @_NATIVE_CASES
 def test_queries_without_native_library_equal_traced_route(
     case: Any, monkeypatch: pytest.MonkeyPatch

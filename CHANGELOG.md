@@ -557,6 +557,8 @@
   prepared tree is shared by all workers, and each output row retains its
   serial arithmetic and tie breaks. Queries no longer build pair-stream
   extent data. Rebuild meshcore with Phydrax for the updated query ABI.
+- Native BVH point queries reject non-3D tree bounds and mismatched simplex
+  counts before passing buffers to meshcore.
 - Native affine CAD meshing certifies exact planar material regions with
   convex trims and a manifold exterior, including shared interfaces, labeled
   refinement, and archive replay. Certificates bind the actual coordinate
