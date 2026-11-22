@@ -151,6 +151,56 @@ bool link_condition(const TetMesh& mesh, std::span<const std::int32_t> cells, st
   return common_vertices == edge_vertices && common_edges == edge_edges && !common_face;
 }
 
+bool source_stencil_matches(const SourceStencil& stencil, std::span<const double> source_points,
+                            const double* carrier) {
+  const std::size_t point_count = source_points.size() / 3;
+  if (stencil.points.empty() || stencil.points.size() != stencil.weights.size() ||
+      stencil.points.size() > point_count) {
+    return false;
+  }
+  auto rows = stencil.points;
+  std::vector<std::int32_t> sorted;
+  if (!std::is_sorted(rows.begin(), rows.end())) {
+    sorted.assign(rows.begin(), rows.end());
+    std::sort(sorted.begin(), sorted.end());
+    rows = sorted;
+  }
+  if (rows.front() < 0 || static_cast<std::size_t>(rows.back()) >= point_count ||
+      std::adjacent_find(rows.begin(), rows.end()) != rows.end()) {
+    return false;
+  }
+  Dyadic weight_sum;
+  std::array<Dyadic, 3> combination{};
+  for (std::size_t k = 0; k < stencil.points.size(); ++k) {
+    const double weight = stencil.weights[k];
+    if (!std::isfinite(weight)) return false;
+    if (weight == 0.0) continue;
+    const Dyadic exact_weight(weight);
+    weight_sum = weight_sum + exact_weight;
+    const double* p = source_points.data() + 3 * static_cast<std::size_t>(stencil.points[k]);
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      combination[axis] = combination[axis] + Dyadic(p[axis]) * exact_weight;
+    }
+  }
+  if (!weight_sum.is_positive_one()) return false;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (!std::isfinite(carrier[axis]) || !(combination[axis] - Dyadic(carrier[axis])).is_zero()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool source_stencil_supported(const SourceStencil& stencil, std::span<const std::int32_t> entity) {
+  for (std::size_t k = 0; k < stencil.points.size(); ++k) {
+    if (stencil.weights[k] != 0.0 &&
+        !std::binary_search(entity.begin(), entity.end(), stencil.points[k])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 // A boundary edit resolved against the index: the cavity and the rows of the
@@ -389,41 +439,8 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
           });
           break;
         }
-        // The caller's stencil, verified exactly: distinct source points,
-        // finite weights summing to 1, their combination the survivor's
-        // coordinates; its support on the carrier.
-        const SourceStencil& stencil = *survivor_stencil;
-        const std::size_t point_count = mesh.source_points_.size() / 3;
-        if (stencil.points.empty() || stencil.points.size() != stencil.weights.size()) {
-          return TetEditStatus::kRejectedTopology;
-        }
-        std::vector<std::int32_t> seen(stencil.points.begin(), stencil.points.end());
-        std::sort(seen.begin(), seen.end());
-        if (seen.front() < 0 || static_cast<std::size_t>(seen.back()) >= point_count ||
-            std::adjacent_find(seen.begin(), seen.end()) != seen.end()) {
-          return TetEditStatus::kRejectedTopology;
-        }
-        Dyadic weight_sum(0.0);
-        std::array<Dyadic, 3> combination{Dyadic(0.0), Dyadic(0.0), Dyadic(0.0)};
-        for (std::size_t k = 0; k < stencil.points.size(); ++k) {
-          const double weight = stencil.weights[k];
-          if (!std::isfinite(weight)) return TetEditStatus::kRejectedTopology;
-          if (weight == 0.0) continue;
-          if (!on_entity(stencil.points[k])) supported = false;
-          const Dyadic exact_weight(weight);
-          weight_sum = weight_sum + exact_weight;
-          const double* p =
-              mesh.source_points_.data() + 3 * static_cast<std::size_t>(stencil.points[k]);
-          for (std::size_t axis = 0; axis < 3; ++axis) {
-            combination[axis] = combination[axis] + Dyadic(p[axis]) * exact_weight;
-          }
-        }
-        if (!(weight_sum - Dyadic(1.0)).is_zero()) return TetEditStatus::kRejectedTopology;
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-          if (!(combination[axis] - Dyadic(s_carrier[axis])).is_zero()) {
-            return TetEditStatus::kRejectedTopology;
-          }
-        }
+        supported = source_stencil_matches(*survivor_stencil, mesh.source_points_, s_carrier) &&
+                    source_stencil_supported(*survivor_stencil, entity);
         break;
       }
     }
@@ -908,7 +925,8 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
 }
 
 TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVertex& moved,
-                                                const Star& star) {
+                                               const Star& star,
+                                               const SourceStencil* moved_stencil) {
   mesh.clear_implicit_facet_refusal();
   try {
     // TetMesh::apply_relocation_edit's domain, without an implicit source.
@@ -927,6 +945,9 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
         moved.protection_radius != mesh.protection_radius(slot) ||
         moved.witness.stratum != mesh.witness(slot).stratum) {
       return TetEditStatus::kRejectedProtected;
+    }
+    if (moved_stencil != nullptr && moved.witness.stratum != SourceStratum::kNone) {
+      return TetEditStatus::kRejectedTopology;
     }
     TetEditVertex checked = moved;
     const auto index = static_cast<std::size_t>(slot);
@@ -982,14 +1003,31 @@ TetEditStatus LocalIncidence::relocate_boundary(TetMesh& mesh, const TetEditVert
       std::sort(rows->begin(), rows->end());
       rows->erase(std::unique(rows->begin(), rows->end()), rows->end());
     }
+    if (moved_stencil != nullptr &&
+        ((facet_rows.empty() && segment_rows.empty()) ||
+         !source_stencil_matches(*moved_stencil, mesh.source_points_, moved.carrier.data()))) {
+      return TetEditStatus::kRejectedTopology;
+    }
+    const auto supports_stencil = [&](const auto& groups, std::int32_t source) {
+      const auto group = groups.find(source);
+      return group != groups.end() && source_stencil_supported(*moved_stencil, group->second);
+    };
     const TetMesh::RelocationOverlay overlay{std::span<const TetEditVertex>(&moved, 1)};
     for (std::size_t row : facet_rows) {
       const TetSnapshotFacet& facet = mesh.facets_[row];
+      if (moved_stencil != nullptr &&
+          !supports_stencil(boundary_index_.face_group_points, facet.source)) {
+        return TetEditStatus::kRejectedTopology;
+      }
       const TetEditFacet check{facet.id, facet.vertices, facet.source, facet.orientation, false};
       if (!mesh.source_face_valid(check, &overlay)) return mesh.source_face_refusal_status();
     }
     for (std::size_t row : segment_rows) {
       const TetSnapshotSegment& segment = mesh.segments_[row];
+      if (moved_stencil != nullptr &&
+          !supports_stencil(boundary_index_.segment_group_points, segment.source)) {
+        return TetEditStatus::kRejectedTopology;
+      }
       const TetEditSegment check{segment.id, segment.vertices, segment.source, false};
       if (!mesh.source_segment_valid(check, &overlay)) return TetEditStatus::kInvalidGeometry;
     }
