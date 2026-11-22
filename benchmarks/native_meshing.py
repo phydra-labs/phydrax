@@ -31,6 +31,7 @@ from jax import Array
 from benchmarks._meshing_surfaces import icosphere
 from benchmarks._runtime import capture_environment, measure_host
 from phydrax import _meshcore
+from phydrax._exact_kernels import exact_kernel_parallelism
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from phydrax.discretization._cell_complex import TetrahedralConnectivity
@@ -128,7 +129,9 @@ def _delaunay_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
             _Row(
                 "delaunay-3d",
                 size,
-                lambda points=spatial: _meshcore.delaunay_3d(points),
+                lambda points=spatial: _meshcore.delaunay_3d(
+                    points, parallelism=exact_kernel_parallelism()
+                ),
                 _cells,
             )
         )
@@ -222,7 +225,7 @@ def _regular_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 "regular-3d",
                 size,
                 lambda points=points, weights=weights: _meshcore.regular_3d(
-                    points, weights
+                    points, weights, parallelism=exact_kernel_parallelism()
                 ),
                 _cells,
             )
@@ -3168,8 +3171,8 @@ def _hexdom_quality(
     # Distances (the ledger's meas.py): wall faces fanned about their vertex
     # mean; mesh -> surface at 28 lattice points per triangle, surface ->
     # mesh at 2e5 surface points, exact: the 16 nearest triangles bound the
-    # distance, then every triangle whose centroid distance minus its
-    # circumradius about the centroid is within the bound is checked.
+    # distance, then every triangle whose centroid distance minus its largest
+    # vertex distance from the centroid is within the bound is checked.
     wall_rows = np.flatnonzero(~inner[rows])
     fan = np.stack(
         (first[wall_rows], second[wall_rows], average[rows[wall_rows]]), axis=1
@@ -3186,9 +3189,9 @@ def _hexdom_quality(
             float(np.max(_f8_distance(case.model, block.reshape((-1, 3))))),
         )
     samples = _f8_samples(case.model, 200_000)
-    centres = fan.mean(axis=1)
-    radius = np.max(np.linalg.norm(fan - centres[:, None, :], axis=2), axis=1)
-    tree = cKDTree(centres)
+    centers = fan.mean(axis=1)
+    radius = np.max(np.linalg.norm(fan - centers[:, None, :], axis=2), axis=1)
+    tree = cKDTree(centers)
     _, nearest = tree.query(samples, k=16)
     best = np.min(
         _point_triangle_distances(
@@ -3210,7 +3213,7 @@ def _hexdom_quality(
             count=sample_rows.size,
         )
         keep = (
-            np.linalg.norm(samples[sample_rows] - centres[candidates], axis=1)
+            np.linalg.norm(samples[sample_rows] - centers[candidates], axis=1)
             - radius[candidates]
             <= best[sample_rows]
         )
@@ -3342,14 +3345,6 @@ def main(argv: list[str] | None = None) -> int:
         "the overset-tet rows run only with it",
     )
     parser.add_argument(
-        "--reference-mesh",
-        nargs=2,
-        metavar=("NPZ", "H"),
-        default=None,
-        help="print the CAD rows' size statement of a reference mesh (X, F, T arrays "
-        "as the Gmsh reference script exports them) at h and exit; reported, not judged",
-    )
-    parser.add_argument(
         "--layer-inputs",
         type=Path,
         default=None,
@@ -3369,6 +3364,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="directory of the ledger's F8 surfaces (<model>-stl.npz with X and F); "
         "the hexdom rows run only with it",
+    )
+    parser.add_argument(
+        "--reference-mesh",
+        nargs=2,
+        metavar=("NPZ", "H"),
+        default=None,
+        help="print the CAD rows' size statement of a reference mesh (X, F, T arrays "
+        "as the Gmsh reference script exports them) at h and exit; reported, not judged",
     )
     arguments = parser.parse_args(argv)
     if arguments.reference_mesh is not None:

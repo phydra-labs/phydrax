@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "phydrax_meshcore.h"
+#include "parallel.hpp"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
 
@@ -281,38 +282,6 @@ void rank_sort_group(int32_t* rows, std::size_t count, std::size_t columns) {
   }
 }
 
-// Sorts the tetrahedra lexicographically by their vertices (distinct
-// tuples). A radix sort by the first vertex groups the cells by it (a few
-// per vertex, at most its degree); each group is ordered by rank, or by
-// radix sort when it is large, so the time is linear in the cell count.
-inline void sort_tetrahedra(phx_mc_mesh& mesh) {
-  constexpr std::size_t kWidth = 4;
-  constexpr std::size_t kRankGroup = 64;
-  const auto count = static_cast<std::size_t>(mesh.cell_count());
-  // Vertices are point indices in [0, largest].
-  int32_t largest = 1;
-  for (int32_t vertex : mesh.cells) largest = std::max(largest, vertex);
-  int bits = 1;
-  while ((std::uint64_t{1} << bits) <= static_cast<std::uint64_t>(largest)) ++bits;
-  int32_t* rows = mesh.cells.data();
-  const std::unique_ptr<int32_t[]> scratch(new int32_t[kWidth * count]);
-  std::vector<std::size_t> offsets;
-  radix_sort_rows<kWidth>(rows, scratch.get(), count, 0, 1, bits, offsets);
-  std::size_t begin = 0;
-  while (begin < count) {
-    std::size_t end = begin + 1;
-    while (end < count && rows[kWidth * end] == rows[kWidth * begin]) ++end;
-    const std::size_t size = end - begin;
-    if (size > kRankGroup) {
-      radix_sort_rows<kWidth>(rows + kWidth * begin, scratch.get(), size, 1, kWidth, bits,
-                              offsets);
-    } else if (size > 1) {
-      rank_sort_group<kWidth, kRankGroup>(rows + kWidth * begin, size, kWidth);
-    }
-    begin = end;
-  }
-}
-
 // Rotates every triangle to start at its smallest vertex while preserving
 // orientation (cell_segments, edge k opposite vertex k, rotate with it),
 // then sorts the triangles lexicographically: a counting sort of the cell
@@ -386,13 +355,15 @@ inline void canonicalize_triangles(phx_mc_mesh& mesh) {
 
 // Rotates every cell to start at its smallest vertex while preserving
 // orientation, then sorts cells lexicographically (cell_segments follow their
-// cells when present, with edge k opposite vertex k).
-inline void canonicalize_cells(phx_mc_mesh& mesh) {
+// cells when present, with edge k opposite vertex k). Tetrahedra are
+// rotated and sorted on `parallelism` workers (the result does not depend on
+// it).
+inline int32_t canonicalize_cells(phx_mc_mesh& mesh, int32_t parallelism) {
   if (mesh.dimension == 2) {
     canonicalize_triangles(mesh);
-    return;
+    return PHX_MC_OK;
   }
-  const int64_t count = mesh.cell_count();
+  const auto count = static_cast<std::size_t>(mesh.cell_count());
   // The position of the smallest of `count` distinct values, by selects (its
   // place in a cell is unpredictable).
   const auto smallest = [](const int32_t* values, int size) {
@@ -400,28 +371,79 @@ inline void canonicalize_cells(phx_mc_mesh& mesh) {
     for (int k = 1; k < size; ++k) position = values[k] < values[position] ? k : position;
     return position;
   };
-  for (int64_t cell = 0; cell < count; ++cell) {
-    int32_t* v = mesh.cells.data() + cell * 4;
-    // Even permutations of a tetrahedron: the double transposition that
-    // brings the minimum to slot 0, then the rotation of the remaining
-    // three that brings their minimum to slot 1.
-    static constexpr int kLead[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
-    const int* lead = kLead[smallest(v, 4)];
-    const int32_t w[4] = {v[lead[0]], v[lead[1]], v[lead[2]], v[lead[3]]};
-    const int second = smallest(w + 1, 3);
-    v[0] = w[0];
-    v[1] = w[1 + second];
-    v[2] = w[1 + (second + 1) % 3];
-    v[3] = w[1 + (second + 2) % 3];
+  const ParallelRequest request{65536, static_cast<uint32_t>(parallelism)};
+  int32_t status = parallel_for(count, request, [&](std::size_t first, std::size_t last,
+                                                    ChunkContext&) {
+    for (std::size_t cell = first; cell < last; ++cell) {
+      int32_t* v = mesh.cells.data() + cell * 4;
+      // Even permutations of a tetrahedron: the double transposition that
+      // brings the minimum to slot 0, then the rotation of the remaining
+      // three that brings their minimum to slot 1.
+      static constexpr int kLead[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+      const int* lead = kLead[smallest(v, 4)];
+      const int32_t w[4] = {v[lead[0]], v[lead[1]], v[lead[2]], v[lead[3]]};
+      const int second = smallest(w + 1, 3);
+      v[0] = w[0];
+      v[1] = w[1 + second];
+      v[2] = w[1 + (second + 1) % 3];
+      v[3] = w[1 + (second + 2) % 3];
+    }
+  });
+  if (status != PHX_MC_OK) return status;
+  // Lexicographic order: a counting sort of the rows by first vertex, then
+  // each first vertex's few rows ordered by the other three (distinct) by
+  // rank, or by radix sort when many, in parallel by ranges of first
+  // vertices.
+  constexpr std::size_t kRankGroup = 64;
+  const int32_t* cells = mesh.cells.data();
+  int32_t largest = 1;
+  for (std::size_t k = 0; k < 4 * count; ++k) largest = std::max(largest, cells[k]);
+  int bits = 1;
+  while ((std::uint64_t{1} << bits) <= static_cast<std::uint64_t>(largest)) ++bits;
+  const auto vertices = static_cast<std::size_t>(largest) + 1;
+  std::vector<std::uint32_t> offsets(vertices + 1, 0);
+  for (std::size_t cell = 0; cell < count; ++cell) {
+    ++offsets[static_cast<std::size_t>(cells[4 * cell]) + 1];
   }
-  sort_tetrahedra(mesh);
+  std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+  std::vector<int32_t> sorted(4 * count);
+  {
+    std::vector<std::uint32_t> cursor(offsets.begin(), offsets.end() - 1);
+    for (std::size_t cell = 0; cell < count; ++cell) {
+      const int32_t* row = cells + 4 * cell;
+      std::copy_n(row, 4, sorted.data() + 4 * cursor[static_cast<std::size_t>(row[0])]++);
+    }
+  }
+  status = parallel_for(
+      vertices, ParallelRequest{4096, static_cast<uint32_t>(parallelism)},
+      [&](std::size_t first, std::size_t last, ChunkContext&) {
+        std::vector<int32_t> scratch;
+        std::vector<std::size_t> digits;
+        for (std::size_t vertex = first; vertex < last; ++vertex) {
+          const std::size_t begin = offsets[vertex];
+          const std::size_t size = offsets[vertex + 1] - begin;
+          int32_t* rows = sorted.data() + 4 * begin;
+          if (size > kRankGroup) {
+            scratch.resize(4 * size);
+            radix_sort_rows<4>(rows, scratch.data(), size, 1, 4, bits, digits);
+          } else if (size > 1) {
+            rank_sort_group<4, kRankGroup>(rows, size, 4);
+          }
+        }
+      });
+  if (status != PHX_MC_OK) return status;
+  mesh.cells.swap(sorted);
+  return PHX_MC_OK;
 }
 
 // Point-set triangulations behind phx_mc_delaunay_2d/3d, phx_mc_regular_2d/3d
 // and phx_mc_triangulate; `canonical` applies canonicalize_cells.
 int32_t triangulate_2d(int64_t point_count, const double* points, const double* weights,
                        bool weighted, bool canonical, phx_mc_mesh** mesh);
+// `parallelism` workers insert in rounds when `canonical` (the cell order of a
+// non-canonical result is the sequential construction's, built on one).
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
-                       bool weighted, bool canonical, phx_mc_mesh** mesh);
+                       bool weighted, bool canonical, phx_mc_mesh** mesh,
+                       int32_t parallelism);
 
 }  // namespace phx::mc

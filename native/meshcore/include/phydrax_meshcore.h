@@ -227,10 +227,14 @@ PHX_MC_API int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points,
                                       phx_mc_mesh** mesh);
 PHX_MC_API int32_t phx_mc_regular_2d(int64_t point_count, const double* points,
                                      const double* weights, phx_mc_mesh** mesh);
+/* The 3D triangulations insert in rounds of conflict-free cavities on
+ * parallelism >= 1 workers; their cells are canonical, so the result is the
+ * same for every parallelism. */
 PHX_MC_API int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points,
-                                      phx_mc_mesh** mesh);
+                                      phx_mc_mesh** mesh, int32_t parallelism);
 PHX_MC_API int32_t phx_mc_regular_3d(int64_t point_count, const double* points,
-                                     const double* weights, phx_mc_mesh** mesh);
+                                     const double* weights, phx_mc_mesh** mesh,
+                                     int32_t parallelism);
 
 /* The triangulations above, of dimension 2 or 3, with options. weights NULL
  * gives the Delaunay triangulation, otherwise the regular one. Without
@@ -1223,6 +1227,33 @@ PHX_MC_API int32_t phx_mc_angle_between(int64_t count, const double* across,
                                         const double* along, double* results);
 PHX_MC_API int32_t phx_mc_angle_arctangent2(int64_t count, const double* ordinates,
                                             const double* abscissas, double* results);
+/* Host cell-quality kernels: the rounded binary64 operations of phydrax's
+ * host quality formulas, in their order, so every value is the same double.
+ * points holds cell_count cells of corner_count corners of 3 coordinates;
+ * index rows name corners; results are written to [cell * rows + row]. Sums
+ * run in axis order: norms from the first square, other dot products from
+ * +0; max(x, DBL_MIN) keeps a NaN x.
+ *
+ * phx_mc_quality_dihedral_angles: per sample row (origin, end, first,
+ * second), with e = end - origin, f = first - origin, s = second - origin
+ * and u = e / max(|e|, DBL_MIN), phx_mc_angle_arctangent2((f x s) . u,
+ * f . s - (f . u)(s . u)), plus 2 pi when negative.
+ *
+ * phx_mc_quality_solid_corners: per frame row (apex, n0, n1, n2), with the
+ * frame F whose column d is n_d - apex, its ideal inverse rows
+ * ideal_inverse[9 row ..] (I[i][c] at 3 i + c) and the target T = F I with
+ * Gram matrix G = T^T T: det F by first-row cofactors; det F over
+ * max(|F_0| |F_1| |F_2|, DBL_MIN) over ideal_scaled[row]; the shape ratio
+ * 3 cbrt(max(det G, DBL_MIN)) / max(tr G, DBL_MIN) (Newton cube root, 0 when
+ * det F <= 0); and the condition sqrt(tr G tr adj G / max(det G, DBL_MIN)) / 3
+ * (+inf when det F <= 0). */
+PHX_MC_API int32_t phx_mc_quality_dihedral_angles(int64_t cell_count, int64_t corner_count,
+                                                  const double* points, int64_t sample_count,
+                                                  const int64_t* samples, double* angles);
+PHX_MC_API int32_t phx_mc_quality_solid_corners(
+    int64_t cell_count, int64_t corner_count, const double* points, int64_t row_count,
+    const int64_t* frames, const double* ideal_inverse, const double* ideal_scaled,
+    double* determinants, double* scaled, double* ratios, double* conditions);
 /* Candidate positions of one relocated vertex, as a sequence.
  *
  * The star: row 0 of points and metrics is the vertex, rows 1.. its
@@ -1596,8 +1627,8 @@ PHX_MC_API int32_t phx_mc_separation_screen(
  * leaf_width) with -1 padding, item bounds (items, dimension). Node 0 is the
  * root; reachable nodes must form a rooted tree (no cycles or shared
  * children); leaf nodes have left = right = -1. Every consumer validates the
- * view iteratively without a depth cap and only traverses it: the native side
- * never builds or changes a tree. */
+ * view iteratively without a depth cap and only traverses it; the topology
+ * comes from phx_mc_bvh_build. */
 typedef struct phx_mc_bvh_tree_view {
   int64_t node_count;
   int64_t leaf_count;
@@ -1613,6 +1644,29 @@ typedef struct phx_mc_bvh_tree_view {
   const double* item_min;
   const double* item_max;
 } phx_mc_bvh_tree_view;
+/* Level-ordered BVH topology over item_count boxes (lower, upper: items x
+ * dimension, row-major), a function of the boxes alone (ties break by item):
+ * order (item_count) the item order, and per node in breadth-first level
+ * order its item range [start, stop) of `order` and its children (left,
+ * right; -1 for a leaf of at most leaf_size items). node_count <= 2
+ * item_count - 1 nodes are written; level_offsets (capacity 2 item_count)
+ * receives level_count + 1 node offsets. MEDIAN splits at the middle by
+ * (center on the longest node-box axis, item); SAH by the binned
+ * surface-area heuristic over sah_bins center bins (first plane and axis on
+ * ties, the middle position when no plane separates), each side in item
+ * order; MORTON is the Karras radix tree over the items sorted by (codes,
+ * item), collapsed to leaves (lower and upper unused). */
+enum phx_mc_bvh_build_kind {
+  PHX_MC_BVH_BUILD_MEDIAN = 0,
+  PHX_MC_BVH_BUILD_SAH = 1,
+  PHX_MC_BVH_BUILD_MORTON = 2
+};
+PHX_MC_API int32_t phx_mc_bvh_build(int32_t kind, int64_t item_count, int32_t dimension,
+                                    const double* lower, const double* upper,
+                                    const uint64_t* codes, int64_t leaf_size, int32_t sah_bins,
+                                    int64_t* order, int64_t* start, int64_t* stop,
+                                    int64_t* left, int64_t* right, int64_t* level_offsets,
+                                    int64_t* node_count, int64_t* level_count);
 
 /* Simultaneous traversal of two views yielding overlapping item pairs in
  * bounded blocks. The caller keeps every array alive and unchanged until
@@ -3158,14 +3212,47 @@ PHX_MC_API int32_t phx_mc_tetrahedra_validity(int64_t point_count, const double*
  * bytes) is the cell's exact-map digest for cell kind `kind` (printable
  * ASCII without quote or backslash). Undecided cells (subdivision, the
  * expanded Hadamard margin, values beyond the exact range) are left to the
- * rational proof with their other outputs unspecified. floor in [0, 1). */
+ * rational proof with their other outputs unspecified. floor in [0, 1).
+ * Cells are decided in fixed chunks on parallelism >= 1 workers; results are
+ * bit-identical for every parallelism. */
 PHX_MC_API int32_t phx_mc_cell_map_validity(
     int32_t domain, int64_t dof_count, const int64_t* term_starts,
     const int32_t* term_exponents, const int64_t* term_numerators,
     int32_t basis_denominator_log2, const char* kind, int64_t kind_length, int64_t row_count,
     const int64_t* significands, const int16_t* exponents, int16_t sparse_exponent,
     int64_t cell_count, const int64_t* routes, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper, uint8_t* digests);
+    int32_t* status, double* lower, double* upper, uint8_t* digests, int32_t parallelism);
+
+/* Combinatorial counts of phydrax's welded-topology audit, identical to its
+ * host route. Rows hold vertex keys in [0, key_count) padded with negative
+ * entries; a row's key is the multiset of its nonnegative entries. The star
+ * complex has cells (cell_count, cell_width), oriented facet occurrences
+ * (facet_count, facet_width) of cells facet_cells with dimension-1 signs
+ * facet_signs, and (dimension 3) nonnegative cell edges (edge_count, 2) of
+ * cells edge_cells; its first audited_cell_count cells and audited_facet_count
+ * facets (whose entries fit in audited_facet_width leading columns) are the
+ * audited mesh (dimension 2 requires facet_width >= 2). Outputs: counts[0..6] =
+ * collapsed audited cells, duplicate
+ * audited cells, audited facet keys of more than two occurrences,
+ * two-occurrence keys with inconsistent orientation, open boundary (when
+ * check_watertight: one-occurrence keys if embedded, else boundary ridges not
+ * shared by exactly two boundary facets), vertices and (dimension 3) edges
+ * whose star cells split into several components linked through shared star
+ * facets (when check_manifold and dimension >= 2, restricted to entities with
+ * a vertex among the scope_count keys of scope unless scope_count is -1);
+ * boundary[f] = 1 when audited facet f's key occurs once among the audited
+ * facets. A facet link without its incidence yields PHX_MC_INVALID_INPUT.
+ * The four independent phases (facet groups, cells, vertex stars, edge stars)
+ * run on up to parallelism >= 1 workers; results are identical for every
+ * parallelism. */
+PHX_MC_API int32_t phx_mc_welded_topology(
+    int32_t dimension, int32_t embedded, int32_t check_manifold, int32_t check_watertight,
+    int64_t key_count, int64_t cell_count, int64_t audited_cell_count, int64_t cell_width,
+    const int64_t* cells, int64_t facet_count, int64_t audited_facet_count, int64_t facet_width,
+    int64_t audited_facet_width, const int64_t* facets, const int64_t* facet_cells,
+    const int8_t* facet_signs, int64_t edge_count, const int64_t* edges,
+    const int64_t* edge_cells, int64_t scope_count, const int64_t* scope, int64_t* counts,
+    int8_t* boundary, int32_t parallelism);
 
 /* Polyhedral cells for the two exact star proofs below. Cell k has local
  * points [point_offsets[k], ...+1) given as integer rows X = L x over one
@@ -3189,13 +3276,14 @@ PHX_MC_API int32_t phx_mc_cell_map_validity(
  * lower[k], upper[k] are the directed binary64 endpoints of min v_s and max
  * v_s (NaN without star rows). decided[k] = 0 leaves a cell with more than
  * 4096 vertices or face sizes of least common multiple above 2^40 to the
- * rational proof. */
+ * rational proof. Cells are decided in fixed chunks on parallelism >= 1
+ * workers; results are bit-identical for every parallelism. */
 PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
     int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
     const uint32_t* words, const int8_t* signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* star_offsets, const int64_t* stars, double floor, int8_t* decided,
-    int32_t* status, double* lower, double* upper);
+    int32_t* status, double* lower, double* upper, int32_t parallelism);
 
 /* Exact star decomposition of linear polytopes, identical to phydrax's
  * rational `_volume_tetrahedra` (faces as `polytope_face_routes`: an exactly
@@ -3215,14 +3303,16 @@ PHX_MC_API int32_t phx_mc_polyhedral_star_validity(
  * and the first triangle_counts[k] rows from triangle_offsets[k] of triangles
  * hold (face, i, j, k): oriented local loop indices of the face triangles,
  * where index -1 is the face's exact vertex average (fan apex).
- * triangle_offsets must count the face sizes per cell. */
+ * triangle_offsets must count the face sizes per cell. Cells are decided in
+ * fixed chunks on parallelism >= 1 workers; results are bit-identical for
+ * every parallelism. */
 PHX_MC_API int32_t phx_mc_polyhedral_star_decomposition(
     int64_t cell_count, const int64_t* point_offsets, const int64_t* word_offsets,
     const uint32_t* words, const int8_t* signs, const int64_t* face_word_offsets,
     const uint32_t* face_words, const int8_t* face_signs, const int64_t* cell_face_offsets,
     const int64_t* face_vertex_offsets, const int64_t* face_vertex_values,
     const int64_t* triangle_offsets, int32_t* codes, int8_t* face_reversed, int32_t* triangles,
-    int64_t* triangle_counts);
+    int64_t* triangle_counts, int32_t parallelism);
 
 /* Exact ear-clipping triangulation of planar face loops, identical to
  * phydrax's rational `triangulate_planar_polygon` and to the face triangles of
@@ -3237,6 +3327,36 @@ PHX_MC_API int32_t phx_mc_face_triangulation(int64_t face_count,
                                              const int64_t* word_offsets, const uint32_t* words,
                                              const int8_t* signs, int32_t* codes,
                                              int32_t* triangles);
+
+/* Declared-stratum contacts of star-decomposed linear polyhedral cell pairs:
+ * declared[p] = 1 proves that every intersection of a tetrahedron of cell
+ * pairs[2p] with one of cell pairs[2p + 1] lies in one convex piece of the
+ * pair's declared shared stratum (phydrax `_declared_stratum`: shared vertex
+ * images, shared loop edges, shared face loops that are exactly convex, and
+ * the vertex-average fan triangles of non-planar shared loops, at the first
+ * cell's corner images); 0 decides nothing. Point v is X / W with integer
+ * values 4v..4v + 3 = (X, W), W > 0, of the point word bank and outward
+ * binary64 enclosure rows point_lower[v], point_upper[v]; tet_points holds
+ * four point indices per tetrahedron. Cell c owns tetrahedra
+ * [cell_tet_offsets[c], cell_tet_offsets[c + 1]) and corners
+ * [cell_corner_offsets[c], cell_corner_offsets[c + 1]) with point indices,
+ * mesh vertex identifiers and integer rows (values 3k..3k + 2 of the row
+ * bank) over the cell's positive common denominator (row bank value
+ * 3 K + c, K the corner count); its faces [cell_face_offsets[c],
+ * cell_face_offsets[c + 1]) are loops of local corner indices in
+ * face_offsets CSR. Every corner coordinate is a Fraction (the rational
+ * convex-loop decision requires it). Signs are decided in outward interval
+ * arithmetic, else exactly. Pairs are decided in fixed chunks on parallelism
+ * >= 1 workers; results are bit-identical for every parallelism. */
+PHX_MC_API int32_t phx_mc_polyhedral_declared_contacts(
+    int64_t point_count, const int64_t* point_word_offsets, const uint32_t* point_words,
+    const int8_t* point_signs, const double* point_lower, const double* point_upper,
+    const int64_t* tet_points, int64_t cell_count, const int64_t* cell_tet_offsets,
+    const int64_t* cell_corner_offsets, const int64_t* corner_points,
+    const int64_t* corner_vertices, const int64_t* row_word_offsets, const uint32_t* row_words,
+    const int8_t* row_signs, const int64_t* cell_face_offsets, const int64_t* face_offsets,
+    const int64_t* face_corners, int64_t pair_count,
+    const int64_t* pairs, int8_t* declared, int32_t parallelism);
 
 /* Tetrahedral mesh of {f <= 0} by restricted Delaunay refinement, surface
  * first (Boissonnat and Oudot; Rineau and Yvinec). f is entry output_entry of

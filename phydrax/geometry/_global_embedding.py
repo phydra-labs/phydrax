@@ -19,9 +19,19 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
-from .._exact_kernels import separation_screen, SeparationDecision
+from .._exact_kernels import (
+    exact_kernel_parallelism,
+    separation_screen,
+    SeparationDecision,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import meshcore_available
+from .._meshcore import (
+    common_denominator_rows,
+    meshcore_available,
+    polyhedral_contact_bank,
+    polyhedral_declared_contacts,
+    PolyhedralContactBank,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import (
@@ -102,14 +112,15 @@ from ._exact_polyhedral_geometry import (
     _sub3,
     contact_is_declared,
     determinant3,
+    exact_point_identities,
     outward_spatial_triangle_enclosures,
-    outward_tetrahedron_enclosures,
     Point2,
     Point3,
     point_in_tetrahedron,
     point_in_triangle3,
     point_on_segment2,
     point_on_segment3,
+    rational_point_enclosures,
     segment_contact_points3,
     SpatialTriangleEnclosures,
     tetrahedron_contact_points,
@@ -459,7 +470,31 @@ def _convex_planar_face_union(
         )
         if dot(turn, normal) < 0:
             return False
+    # Every turn is forward; the fan from one corner then has no backward
+    # triangle exactly when the boundary winds once (a star loop does not).
+    origin_point = points[loop[0]]
+    for current, following in zip(loop[1:-1], loop[2:], strict=True):
+        fan = cross(
+            difference(points[current], origin_point),
+            difference(points[following], origin_point),
+        )
+        if dot(fan, normal) < 0:
+            return False
     return True
+
+
+def _off_hull_plane(
+    points: tuple[tuple[ExactScalar, ...], ...],
+    vertices: tuple[tuple[ExactScalar, ...], ...],
+    /,
+) -> bool:
+    """Whether some spatial point lies off the plane of coplanar ``vertices``."""
+    if any(len(point) != 3 for point in (*points, *vertices)):
+        return False
+    spatial = tuple(_point3(vertex) for vertex in vertices)
+    if _noncoplanar(spatial):
+        return False
+    return any(_noncoplanar((*spatial, _point3(point))) for point in points)
 
 
 def _shared_edge_chain(
@@ -547,6 +582,11 @@ class _DeclaredStratum:
         undecided = self._undecided
         for hull in self._hulls:
             try:
+                if len(hull) > 2 and _off_hull_plane(
+                    points, tuple(self._points_by_id[vertex] for vertex in hull)
+                ):
+                    # A coplanar convex face holds no point off its plane.
+                    continue
                 if all(
                     _point_in_declared_stratum(point, hull, self._points_by_id)
                     for point in points
@@ -713,17 +753,16 @@ def _contact_is_declared(
 
 def _common_corner_keys(
     first: tuple[tuple[int, ...], ...], second: tuple[tuple[int, ...], ...], /
-) -> list[int]:
-    """Row-major per piece pair, an integer naming its set of common corner ids.
+) -> list[tuple[int, ...]]:
+    """Row-major per piece pair, its sorted common corner ids (``-1`` padded).
 
-    Equal integers name equal sets; corners are interned point identities.
+    Equal keys name equal sets; corners are interned point identities.
     """
     left = np.asarray(first, dtype=np.int64)
     right = np.asarray(second, dtype=np.int64)
     member = np.any(left[:, None, :, None] == right[None, :, None, :], axis=3)
     common = np.sort(np.where(member, left[:, None, :], -1), axis=2)
-    _, keys = np.unique(common.reshape((-1, left.shape[1])), axis=0, return_inverse=True)
-    return keys.reshape(-1).tolist()
+    return list(map(tuple, common.reshape((-1, left.shape[1])).tolist()))
 
 
 class _PairStratum:
@@ -927,6 +966,7 @@ def _native_volume_tetrahedra(
             np.asarray(cell_faces, dtype=np.int64),
             np.asarray(face_offsets, dtype=np.int64),
             np.asarray(face_values, dtype=np.int64),
+            parallelism=exact_kernel_parallelism(),
         )
     )
     for local, row in enumerate(rows):
@@ -6179,10 +6219,12 @@ class _VertexConeFilter:
 
 @dataclass(frozen=True, slots=True)
 class _VolumePieceFilter:
-    """Binary64 contact certificates for the exact tetrahedra of straight cells in R3.
+    """Contact certificates for the exact tetrahedra of straight cells in R3.
 
     Cells with `counts == 0` are not filtered.  Simplex cells contribute their own
-    corners as their single piece, in vertex-identifier order.
+    corners as their single piece, in vertex-identifier order.  `contacts` holds
+    the native declared-contact proof operands of the filtered cells with
+    rational corners (``None`` without the native library).
     """
 
     enclosures: TetrahedronEnclosures
@@ -6190,6 +6232,7 @@ class _VolumePieceFilter:
     counts: NDArray[np.intp]
     vertex_ids: NDArray[np.int64]
     simplex: NDArray[np.bool_]
+    contacts: PolyhedralContactBank | None
 
     @classmethod
     def prepare(
@@ -6227,25 +6270,60 @@ class _VolumePieceFilter:
             return None
         offsets = np.zeros((len(cells) + 1,), dtype=np.intp)
         np.cumsum(counts, out=offsets[1:])
+        native = meshcore_available()
+        corners = (
+            tuple(
+                _point3(point)
+                for index in np.flatnonzero(counts).tolist()
+                for point in cells[index].corner_images
+                if len(point) == 3
+            )
+            if native
+            else ()
+        )
+        rows, points = exact_point_identities(
+            chain(chain.from_iterable(tetrahedra), corners)
+        )
+        point_ids = rows[: 4 * len(tetrahedra)].reshape((len(tetrahedra), 4))
+        lower, upper = rational_point_enclosures(points)
         return cls(
-            outward_tetrahedron_enclosures(tetrahedra),
+            TetrahedronEnclosures.prepare(lower[point_ids], upper[point_ids], point_ids),
             offsets,
             counts,
             vertex_ids,
             simplex,
+            _polyhedral_contact_bank(
+                cells,
+                counts,
+                offsets,
+                point_ids,
+                rows[4 * len(tetrahedra) :],
+                points,
+                lower,
+                upper,
+            )
+            if native
+            else None,
         )
 
     def certify(
         self, first: NDArray[np.intp], second: NDArray[np.intp], /
-    ) -> tuple[NDArray[np.bool_], dict[tuple[int, int], NDArray[np.bool_]]]:
-        """Cell pairs with no exact finding, and certified piece pairs of the others.
+    ) -> tuple[
+        NDArray[np.bool_],
+        dict[tuple[int, int], NDArray[np.bool_]],
+        set[tuple[int, int]],
+    ]:
+        """Cell pairs with no exact finding, certified piece pairs of the others,
+        and the others whose every piece contact is declared.
 
         A cleared pair of simplex cells has equal corner images exactly on its
         shared vertex identifiers, so its exact restriction trace holds, and its
         intersection lies in the hull of those images, every point of which lies
-        in the declared shared stratum.  For other filtered cell pairs the
-        returned `(first pieces, second pieces)` mask marks piece pairs whose
-        intersection lies in the hull of their common corners.
+        in the declared shared stratum.  For the other filtered cell pairs either
+        the native proof places every piece intersection in one convex piece of
+        the declared stratum (the exact rational contact pass then accepts every
+        piece pair), or the returned `(first pieces, second pieces)` mask marks
+        piece pairs whose intersection lies in the hull of their common corners.
         """
         cleared = np.zeros(first.shape, dtype=np.bool_)
         simplex_rows = np.flatnonzero(self.simplex[first] & self.simplex[second])
@@ -6273,11 +6351,22 @@ class _VolumePieceFilter:
         )
         certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
         if not general.size:
-            return cleared, certificates
+            return cleared, certificates, set()
         left, right = first[general], second[general]
+        proved = (
+            polyhedral_declared_contacts(
+                self.contacts, left, right, parallelism=exact_kernel_parallelism()
+            )
+            if self.contacts is not None
+            else np.zeros(left.shape, dtype=np.bool_)
+        )
+        declared = set(zip(left[proved].tolist(), right[proved].tolist(), strict=True))
+        left, right = left[~proved], right[~proved]
+        if not left.size:
+            return cleared, certificates, declared
         left_counts, right_counts = self.counts[left], self.counts[right]
         sizes = left_counts * right_counts
-        row = np.repeat(np.arange(general.size), sizes)
+        row = np.repeat(np.arange(left.size), sizes)
         local = np.arange(row.size) - np.repeat(np.cumsum(sizes) - sizes, sizes)
         certified = self.enclosures.common_hull_contacts(
             self.offsets[left][row] + local // right_counts[row],
@@ -6294,7 +6383,108 @@ class _VolumePieceFilter:
             certificates[first_index, second_index] = block.reshape(
                 (int(left_counts[position]), int(right_counts[position]))
             )
-        return cleared, certificates
+        return cleared, certificates, declared
+
+
+def _polyhedral_contact_bank(
+    cells: tuple[EmbeddingCell, ...],
+    counts: NDArray[np.intp],
+    offsets: NDArray[np.intp],
+    point_ids: NDArray[np.int64],
+    corner_ids: NDArray[np.int64],
+    points: list[Point3],
+    lower: NDArray[np.float64],
+    upper: NDArray[np.float64],
+    /,
+) -> PolyhedralContactBank:
+    """Native contact operands of the filtered cells, in filter order.
+
+    `corner_ids` are the identities of the filtered cells' three-dimensional
+    corner images in order.  A cell keeps its tetrahedra only when all its
+    corners are distinct rational vertices in R3 and every point it names is
+    rational and binary64-bounded; points of other cells stay placeholders.
+    """
+    point_integers: list[int] = []
+    rational = np.zeros((len(points),), dtype=np.bool_)
+    for index, point in enumerate(points):
+        integer_row = common_denominator_rows((point,))
+        rational[index] = integer_row is not None
+        point_integers.extend(
+            (*integer_row[0], integer_row[1]) if integer_row is not None else (0, 0, 0, 1)
+        )
+    # Rational points with finite enclosures: the rational pass orders contact
+    # vertices by their binary64 values.
+    bounded = rational & np.all(np.isfinite(lower) & np.isfinite(upper), axis=1)
+    tet_rows: list[NDArray[np.int64]] = []
+    tet_offsets = [0]
+    corner_offsets = [0]
+    corner_points: list[int] = []
+    corner_vertices: list[int] = []
+    corner_integers: list[int] = []
+    face_offsets = [0]
+    cell_faces = [0]
+    face_corners: list[int] = []
+    scales = [1 for _ in cells]
+    cursor = 0
+    for index, cell in enumerate(cells):
+        size = (
+            sum(len(point) == 3 for point in cell.corner_images) if counts[index] else 0
+        )
+        own = corner_ids[cursor : cursor + size]
+        cursor += size
+        tets = point_ids[offsets[index] : offsets[index + 1]]
+        integer_rows = (
+            common_denominator_rows(cell.corner_images)
+            if size == len(cell.corner_images) and size
+            else None
+        )
+        if (
+            integer_rows is None
+            # The rational convex-loop decision and contact arithmetic stay
+            # exact only on Fraction corners.
+            or not all(
+                isinstance(value, Fraction)
+                for point in cell.corner_images
+                for value in point
+            )
+            or len(cell.vertex_ids) != size
+            or len(set(cell.vertex_ids)) != size
+            or not bool(np.all(bounded[tets]))
+            or any(
+                corner < 0 or corner >= size
+                for route in cell.facet_routes
+                for corner in route
+            )
+        ):
+            tet_offsets.append(tet_offsets[-1])
+            corner_offsets.append(corner_offsets[-1])
+            cell_faces.append(cell_faces[-1])
+            continue
+        tet_rows.append(tets)
+        tet_offsets.append(tet_offsets[-1] + len(tets))
+        corner_points.extend(own.tolist())
+        corner_vertices.extend(cell.vertex_ids)
+        corner_integers.extend(integer_rows[0])
+        scales[index] = integer_rows[1]
+        corner_offsets.append(len(corner_points))
+        for route in cell.facet_routes:
+            face_corners.extend(route)
+            face_offsets.append(len(face_corners))
+        cell_faces.append(len(face_offsets) - 1)
+    return polyhedral_contact_bank(
+        point_integers,
+        lower,
+        upper,
+        np.concatenate(tet_rows) if tet_rows else np.zeros((0, 4), dtype=np.int64),
+        np.asarray(tet_offsets, dtype=np.int64),
+        np.asarray(corner_offsets, dtype=np.int64),
+        np.asarray(corner_points, dtype=np.int64),
+        np.asarray(corner_vertices, dtype=np.int64),
+        corner_integers + scales,
+        np.asarray(cell_faces, dtype=np.int64),
+        np.asarray(face_offsets, dtype=np.int64),
+        np.asarray(face_corners, dtype=np.int64),
+    )
 
 
 def _rational_planar_corners(
@@ -6636,8 +6826,11 @@ def _nonperiodic_contacts(
         ordered = first_block < second_block
         first_block, second_block = first_block[ordered], second_block[ordered]
         piece_certificates: dict[tuple[int, int], NDArray[np.bool_]] = {}
+        declared_pairs: set[tuple[int, int]] = set()
         if piece_filter is not None:
-            cleared, piece_certificates = piece_filter.certify(first_block, second_block)
+            cleared, piece_certificates, declared_pairs = piece_filter.certify(
+                first_block, second_block
+            )
             first_block, second_block = first_block[~cleared], second_block[~cleared]
         if planar_filter is not None:
             cleared = planar_filter.certify(first_block, second_block)
@@ -7194,10 +7387,14 @@ def _nonperiodic_contacts(
                         detail="The shared mapped stratum has no completed exact restriction proof.",
                     )
                 )
-            if first_pieces is None or second_pieces is None:
+            if (
+                first_pieces is None
+                or second_pieces is None
+                or (first_index, second_index) in declared_pairs
+            ):
                 continue
             certified_pieces = piece_certificates.get((first_index, second_index))
-            declared_common: dict[int, bool] = {}
+            declared_common: dict[tuple[int, ...], bool] = {}
             first_ids = corner_ids(first_pieces) if certified_pieces is not None else ()
             second_ids = corner_ids(second_pieces) if certified_pieces is not None else ()
             certified_flags, common_keys = (

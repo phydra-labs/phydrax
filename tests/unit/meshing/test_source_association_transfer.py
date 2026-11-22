@@ -1044,7 +1044,12 @@ def test_implicit_chart_restriction_replays_in_an_independent_cold_process(
 
 @pytest.fixture(scope="module")
 def accepted_native_layer_core() -> _NativeLayerCoreFixture:
-    """Generate the original ridge with its explicitly approved conforming cap."""
+    """Generate the ridge with its explicitly approved conforming cap.
+
+    A 0.12 core offset keeps every layer/core topology class of the archived
+    0.03 ridge on an 8x8 instead of a 32x32 dyadic cap division (1,280 cells,
+    not 20,480).
+    """
     from phydrax.meshing._layer_core_association_transfer import (
         NativeLayerCoreAssociationTransfer,
     )
@@ -1054,7 +1059,7 @@ def accepted_native_layer_core() -> _NativeLayerCoreFixture:
         _periodic_layer_core_specification,
     )
 
-    source, _, _ = _archived_ridge_source(cap_refinement="conforming")
+    source, _, _ = _archived_ridge_source(cap_refinement="conforming", core_offset=0.12)
     specification = _periodic_layer_core_specification(source)
     result = (
         NativeMeshingProvider(NativeMeshingOptions("layer_core"))

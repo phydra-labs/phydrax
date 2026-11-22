@@ -14,8 +14,10 @@
   from its exact vertex average; requests use
   `CellFamilyPolicy(required=("polyhedron",))`, and a `cell_shape` marker
   gives the hexahedron fraction by shape); `prove=True` certifies cell
-  validity, the global embedding and the boundary fidelity (quadric without
-  layers, 77k cells: about 23 min and 14 GB), the proof-only fidelity
+  validity (every cell a star about both its centroid and its exact vertex
+  average, which smoothing and repair maintain), the global embedding and the
+  boundary fidelity (220 to 285 s on the 77k to 98k cell rows, process peak
+  13 to 22 GB, against about 5 s for `prove=False`), the proof-only fidelity
   preparation built on the first proved execution. `plc_hex_dominant`
   remains the route for trilinear
   hexahedra. Publication builds polyhedral connectivity from packed native
@@ -24,10 +26,9 @@
   centroid geometry it has computed and the final repair search stops scoring
   a move that cannot improve (about 25 % faster, identical meshes). New
   benchmark rows `hexdom-{sphere,quadric}-{L0,L2}` (ledger F8, cfMesh
-  `cartesianMesh` ceilings, measured with `prove=False`): all four are faster
-  than cfMesh with every quality field at least as good; with wall layers
-  `prove=True` currently refuses on the quadric (a few cells are not
-  star-shaped about their vertex average). At convex feature curves wall layers do not
+  `cartesianMesh` ceilings, timed with `prove=False`): all four are faster
+  than cfMesh with every quality field at least as good, and each row's mesh
+  certifies with `prove=True`. At convex feature curves wall layers do not
   wrap the curve: each side's layers stop at a corner hexahedron column along
   the curve, a curve segment whose chord lies farther from the curve than any
   wall edge from its patch gains a midpoint on the exact curve, and patch
@@ -58,6 +59,34 @@
   when one piece holds it. Pairs sharing a bent edge chain through a 2:1
   hanging vertex now certify, and a notch of a non-convex shared face filled
   differently by the two cells is refused.
+- Exact contacts of star-decomposed polyhedral cells are proved natively
+  (`phx_mc_polyhedral_declared_contacts`: interval filter with exact
+  fallback, on cells whose corners are exact rationals) against the declared
+  shared vertices, edges, convex faces and face fans; only pairs it does not
+  prove run the rational contact pass, so certificate decisions and digests
+  are unchanged. Polyhedral star tables are built once per connectivity and
+  shared read-only by validity, quality and audit. Hex-dominant rows certify
+  in 220 to 285 s instead of 1,220 to 1,500 s; conforming Voronoi with about
+  1e4 cells in about 96 s.
+- Native certification kernels (cell-map validity, polyhedral star validity
+  and decomposition, declared contacts, welded topology) run on meshcore's
+  deterministic worker pool: a `parallelism` argument (from Python, the
+  existing `exact_kernel_parallelism()` control) splits cells and pairs into
+  fixed chunks whose size does not depend on the worker count, and results
+  are byte-identical for every worker count. `PHX_MC_THREAD_SANITIZE` builds
+  meshcore and its tests with ThreadSanitizer.
+- `delaunay_3d` / `regular_3d` (`phx_mc_delaunay_3d` / `phx_mc_regular_3d`)
+  take a `parallelism` argument: from 16384 points, after a sequential
+  prefix, points are inserted by grid regions in parallel on the native
+  worker pool (a region commits a cavity only when it owns every neighboring
+  cell; border points are deferred to passes on shifted grids), and cells are
+  canonicalized in parallel. The canonical output is byte-identical for every
+  parallelism and insertion order (the symbolic perturbation is ordered by
+  input index); parallelism 1 runs the sequential build unchanged.
+- `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
+  (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
+  builders, which remain the path without meshcore; building over 1e6
+  tetrahedra takes 0.5 to 1.2 s instead of 5.4 to 8.3 s.
 - Native conforming Voronoi meshing (`plc_conforming_voronoi`, opt-in; the
   restricted-power route stays the default polyhedral fill for PLCs): one
   native call places conforming seeds (interior seeds mirrored across the
@@ -121,6 +150,23 @@
   remains the only path without meshcore and for subdivision, expanded
   margins or out-of-range values. `certify_cell_mesh` on a 967k-tetrahedron
   cube takes 17 s instead of 79 s, on the 1e6-cell F13 hexahedral parts 43 s.
+- Welded-topology audit counts (facet grouping, orientation, open boundary,
+  collapsed and duplicate cells, vertex and edge star manifoldness) run in the
+  native `phx_mc_welded_topology` kernel when meshcore is loaded, with results
+  identical to the host route (a 68-case differential on adversarial meshes);
+  on a 1e6-tetrahedron cube `certify_cell_mesh` takes 7.8 s instead of 13.1 s.
+  The host route now groups equal padded row keys correctly when a column
+  spans both the padding sentinel and vertex 0, and an out-of-range lookup
+  raises `ValueError`.
+- Host cell-quality dihedral angles and solid corner measures run in meshcore
+  (`phx_mc_quality_dihedral_angles`, `phx_mc_quality_solid_corners`) in the
+  host formulas' binary64 operation order, bit-identical to the NumPy path,
+  which remains without meshcore. Audit patch-zone adjacency, organization
+  entity-id checks and `resolve_mesh_scope_rows` search all scopes of an
+  entity set at once instead of per patch. Certified icosphere L6 (703k
+  cells) executes in 7.6-7.8 s instead of 8.1-8.5 s with one facet, and in
+  19.6-20.3 s instead of 23.4-25.7 s with one facet per triangle (81,920
+  facets); certificate, association and result identities are unchanged.
 - Native `LocalIncidence::collapse_boundary` and `swap_boundary_edge` collapse
   a facet or segment vertex into a vertex on its carrier (in place or with a
   moved survivor) and swap an exactly coplanar boundary edge between two
@@ -499,6 +545,12 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Tests: the layer/core mixed round-trip strata test runs in the normal suite
+  again (447 s, 3.3 GB peak; it was deselected after exceeding 16 GB). The
+  exact layer/core adaptation pipeline costs about 75 ms and 0.5 MB per cell,
+  so the fixture uses a 0.12 core offset (1,280 cells, same topology classes)
+  instead of the archived 0.03 ridge (20,480 cells); `_archived_ridge_source`
+  takes `core_offset`, whose 0.03 default keeps the archived profile.
 - Certified polyhedral meshes (`prove=True`): exact star validity and star
   decomposition of vertex-defined polyhedra run natively
   (`phx_mc_polyhedral_star_validity`, `phx_mc_polyhedral_star_decomposition`)

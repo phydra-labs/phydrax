@@ -79,7 +79,10 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   }
   result->points.assign(points, points + 2 * point_count);
   triangulation.finite_cells(result->cells);  // input indices (identities)
-  if (canonical) canonicalize_cells(*result);
+  if (canonical) {
+    const int32_t canonicalized = canonicalize_cells(*result, 1);
+    if (canonicalized != PHX_MC_OK) return canonicalized;
+  }
   *mesh = result.release();
   return PHX_MC_OK;
 }

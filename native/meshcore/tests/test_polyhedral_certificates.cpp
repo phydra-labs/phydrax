@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "check.hpp"
@@ -80,7 +81,7 @@ Decomposition decompose(const std::vector<int64_t>& points,
                 bank.signs.data(), face_bank.offsets.data(), face_bank.words.data(),
                 face_bank.signs.data(), table.cells.data(), table.offsets.data(),
                 table.values.data(), triangle_offsets.data(), &result.code,
-                result.reversed.data(), result.triangles.data(), &count) == PHX_MC_OK);
+                result.reversed.data(), result.triangles.data(), &count, 1) == PHX_MC_OK);
   result.triangles.resize(static_cast<std::size_t>(4 * std::max<int64_t>(count, 0)));
   return result;
 }
@@ -177,7 +178,7 @@ Validity validity(int64_t common, bool inward) {
                 1, point_offsets.data(), bank.offsets.data(), bank.words.data(),
                 bank.signs.data(), table.cells.data(), table.offsets.data(), table.values.data(),
                 star_offsets.data(), stars.data(), 1e-6, &result.decided, &result.status,
-                &result.lower, &result.upper) == PHX_MC_OK);
+                &result.lower, &result.upper, 1) == PHX_MC_OK);
   return result;
 }
 
@@ -192,6 +193,103 @@ void test_cube_validity() {
   }
 }
 
+// Many jittered cubes (several fixed chunks; every fifth inward, every
+// seventh with a bent top face): decompositions and star verdicts are
+// byte-identical for every parallelism and across repeated runs.
+struct Batch {
+  int32_t validity_code = 0, decomposition_code = 0;
+  std::vector<int8_t> decided, reversed;
+  std::vector<int32_t> status, codes, triangles;
+  std::vector<double> lower, upper;
+  std::vector<int64_t> counts;
+
+  bool operator==(const Batch& other) const {
+    const auto bytes = [](const auto& left, const auto& right) {
+      return left.size() == right.size() &&
+             std::memcmp(left.data(), right.data(), left.size() * sizeof(left[0])) == 0;
+    };
+    return validity_code == other.validity_code &&
+           decomposition_code == other.decomposition_code && bytes(decided, other.decided) &&
+           bytes(reversed, other.reversed) && bytes(status, other.status) &&
+           bytes(codes, other.codes) && bytes(triangles, other.triangles) &&
+           bytes(lower, other.lower) && bytes(upper, other.upper) && bytes(counts, other.counts);
+  }
+};
+
+void test_parallelism() {
+  constexpr int64_t kCells = 150;
+  uint64_t state = 0x2545f4914f6cdd1du;
+  const auto next = [&state](uint64_t bound) {
+    state = state * 6364136223846793005u + 1442695040888963407u;
+    return static_cast<int64_t>((state >> 33) % bound);
+  };
+  Bank bank, face_bank;
+  std::vector<int64_t> point_offsets{0}, cell_faces{0}, face_offsets{0}, face_values, stars,
+      star_offsets{0}, triangle_offsets{0};
+  std::vector<int64_t> scales;
+  for (int64_t cell = 0; cell < kCells; ++cell) {
+    std::vector<int64_t> points;
+    for (const int64_t value : kCube) points.push_back(8 * value + next(3) - 1);
+    if (cell % 7 == 0) points[3 * 7 + 2] += 3;
+    const int64_t common = 1 + 2 * next(2);
+    for (const int64_t value : points) bank.add(value * common);
+    scales.push_back(common);
+    point_offsets.push_back(point_offsets.back() + 8);
+    const bool inward = cell % 5 == 0;
+    int64_t sizes = 0;
+    for (std::size_t face = 0; face < kFaces.size(); ++face) {
+      auto loop = kFaces[face];
+      if (inward) std::reverse(loop.begin(), loop.end());
+      for (std::size_t index = 0; index < loop.size(); ++index) {
+        face_values.push_back(loop[index]);
+        for (int axis = 0; axis < 3; ++axis) face_bank.add(points[3 * loop[index] + axis]);
+        stars.insert(stars.end(), {static_cast<int64_t>(face), loop[index],
+                                   loop[(index + 1) % loop.size()]});
+      }
+      face_offsets.push_back(static_cast<int64_t>(face_values.size()));
+      sizes += static_cast<int64_t>(loop.size());
+    }
+    cell_faces.push_back(static_cast<int64_t>(face_offsets.size()) - 1);
+    star_offsets.push_back(static_cast<int64_t>(stars.size() / 3));
+    triangle_offsets.push_back(triangle_offsets.back() + sizes);
+  }
+  for (const int64_t common : scales) bank.add(common);
+  const auto run = [&](int32_t parallelism) {
+    Batch batch;
+    batch.decided.assign(kCells, -1);
+    batch.status.assign(kCells, -1);
+    batch.lower.assign(kCells, 0.0);
+    batch.upper.assign(kCells, 0.0);
+    batch.codes.assign(kCells, -2);
+    batch.counts.assign(kCells, -1);
+    batch.reversed.assign(face_offsets.size() - 1, -1);
+    batch.triangles.assign(static_cast<std::size_t>(4 * triangle_offsets.back()), -2);
+    batch.validity_code = phx_mc_polyhedral_star_validity(
+        kCells, point_offsets.data(), bank.offsets.data(), bank.words.data(), bank.signs.data(),
+        cell_faces.data(), face_offsets.data(), face_values.data(), star_offsets.data(),
+        stars.data(), 1e-6, batch.decided.data(), batch.status.data(), batch.lower.data(),
+        batch.upper.data(), parallelism);
+    batch.decomposition_code = phx_mc_polyhedral_star_decomposition(
+        kCells, point_offsets.data(), bank.offsets.data(), bank.words.data(), bank.signs.data(),
+        face_bank.offsets.data(), face_bank.words.data(), face_bank.signs.data(),
+        cell_faces.data(), face_offsets.data(), face_values.data(), triangle_offsets.data(),
+        batch.codes.data(), batch.reversed.data(), batch.triangles.data(), batch.counts.data(),
+        parallelism);
+    return batch;
+  };
+  const Batch serial = run(1);
+  PHX_CHECK(serial.validity_code == PHX_MC_OK && serial.decomposition_code == PHX_MC_OK);
+  int certified = 0, invalid = 0, decomposed = 0;
+  for (int64_t cell = 0; cell < kCells; ++cell) {
+    certified += serial.decided[cell] == 1 && serial.status[cell] == 0;
+    invalid += serial.decided[cell] == 1 && serial.status[cell] == 1;
+    decomposed += serial.codes[cell] == 0;
+  }
+  PHX_CHECK(certified > 0 && invalid > 0 && decomposed > 0);
+  for (const int32_t parallelism : {2, 3, 4, 8, 8, 8, 8}) PHX_CHECK(run(parallelism) == serial);
+  PHX_CHECK(run(0).validity_code == PHX_MC_INVALID_ARGUMENT);
+}
+
 }  // namespace
 
 int main() {
@@ -201,5 +299,6 @@ int main() {
   test_bent_cube_fans();
   test_face_triangulation();
   test_cube_validity();
+  test_parallelism();
   return phx::mc::test::finish("test_polyhedral_certificates");
 }

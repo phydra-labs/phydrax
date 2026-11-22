@@ -27,7 +27,13 @@ from jax.typing import ArrayLike, DTypeLike
 from ._exact_kernels import bvh_pair_blocks
 from ._fixed_order import ordered_sum, product
 from ._jax_config import x64_enabled
-from ._meshcore import meshcore_available
+from ._meshcore import (
+    bvh_build,
+    BVH_BUILD_MEDIAN,
+    BVH_BUILD_MORTON,
+    BVH_BUILD_SAH,
+    meshcore_available,
+)
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
@@ -541,6 +547,8 @@ def prepare_bvh(
         raise ValueError("every item_bbox_min component must be <= item_bbox_max.")
     centers = 0.5 * (lower + upper)
     item_count = lower.shape[0]
+    if meshcore_available():
+        return _pack(lower, upper, _native_levels(lower, upper, policy), policy, storage)
     match policy.kind:
         case BVHBuildKind.MEDIAN:
             levels = _build_split_levels(
@@ -559,6 +567,39 @@ def prepare_bvh(
         case _:
             raise ValueError(f"Unsupported BVH build kind {policy.kind!r}.")
     return _pack(lower, upper, levels, policy, storage)
+
+
+def _native_levels(
+    lower: np.ndarray, upper: np.ndarray, policy: BVHBuildPolicy, /
+) -> _Levels:
+    """The topology of the host builders, built by ``phx_mc_bvh_build``."""
+    codes = None
+    match policy.kind:
+        case BVHBuildKind.MEDIAN:
+            kind = BVH_BUILD_MEDIAN
+        case BVHBuildKind.SAH:
+            kind = BVH_BUILD_SAH
+        case BVHBuildKind.MORTON:
+            if lower.shape[1] > 3:
+                raise ValueError(
+                    "MORTON BVH construction supports dimensions 1, 2, and 3."
+                )
+            kind = BVH_BUILD_MORTON
+            codes = _morton_codes(0.5 * (lower + upper), policy.morton_code_bits)
+        case _:
+            raise ValueError(f"Unsupported BVH build kind {policy.kind!r}.")
+    order, start, stop, left, right, offsets = bvh_build(
+        kind, lower, upper, codes, policy.leaf_size, policy.sah_bins
+    )
+    bounds = offsets.tolist()
+    levels = [slice(first, last) for first, last in zip(bounds, bounds[1:], strict=False)]
+    return (
+        order,
+        [start[level] for level in levels],
+        [stop[level] for level in levels],
+        [left[level] for level in levels],
+        [right[level] for level in levels],
+    )
 
 
 class _MedianBVHLayout(StrictModule):

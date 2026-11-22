@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -94,7 +95,8 @@ struct Result {
 };
 
 Result run(int32_t domain, const Basis& basis, const char* kind, const std::vector<double>& points,
-           const std::vector<int64_t>& routes, int16_t sparse_row = -1) {
+           const std::vector<int64_t>& routes, int16_t sparse_row = -1,
+           int32_t parallelism = 1) {
   std::vector<int64_t> significands;
   std::vector<int16_t> exponents;
   dyadic(points, significands, exponents);
@@ -115,7 +117,7 @@ Result run(int32_t domain, const Basis& basis, const char* kind, const std::vect
       kind, static_cast<int64_t>(std::string(kind).size()),
       static_cast<int64_t>(points.size() / 3), significands.data(), exponents.data(), -32768,
       cells, routes.data(), 0x1p-35, result.decided.data(), result.status.data(),
-      result.lower.data(), result.upper.data(), result.digests.data());
+      result.lower.data(), result.upper.data(), result.digests.data(), parallelism);
   return result;
 }
 
@@ -168,17 +170,87 @@ void check_arguments() {
                                      basis.numerators.data(), 0, "tetrahedron", 11, 4,
                                      significands.data(), exponents.data(), -32768, 1,
                                      outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest) == PHX_MC_INVALID_ARGUMENT);
+                                     digest, 1) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
                                      basis.numerators.data(), 0, "tetrahedron", 11, 4,
                                      significands.data(), exponents.data(), -32768, 1,
                                      outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest) == PHX_MC_INVALID_INPUT);
+                                     digest, 1) == PHX_MC_INVALID_INPUT);
   PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
                                      basis.numerators.data(), 0, "tet'", 4, 4,
                                      significands.data(), exponents.data(), -32768, 0,
                                      outside.data(), 0.0, &decided, &status, &lower, &upper,
-                                     digest) == PHX_MC_INVALID_ARGUMENT);
+                                     digest, 1) == PHX_MC_INVALID_ARGUMENT);
+  // parallelism must be positive.
+  PHX_CHECK(phx_mc_cell_map_validity(0, 4, basis.starts.data(), basis.exponents.data(),
+                                     basis.numerators.data(), 0, "tetrahedron", 11, 4,
+                                     significands.data(), exponents.data(), -32768, 0,
+                                     outside.data(), 0.0, &decided, &status, &lower, &upper,
+                                     digest, 0) == PHX_MC_INVALID_ARGUMENT);
+}
+
+// Byte-identical results for every parallelism, and across repeated runs at
+// eight workers, on many cells (several fixed chunks): jittered lattice
+// tetrahedra on random corner quadruples (valid, inverted and flat) and
+// jittered Q1 hexahedra.
+bool same(const Result& a, const Result& b) {
+  const auto bytes = [](const auto& left, const auto& right) {
+    return left.size() == right.size() &&
+           std::memcmp(left.data(), right.data(), left.size() * sizeof(left[0])) == 0;
+  };
+  return a.code == b.code && bytes(a.decided, b.decided) && bytes(a.status, b.status) &&
+         bytes(a.lower, b.lower) && bytes(a.upper, b.upper) && bytes(a.digests, b.digests);
+}
+
+void check_parallelism() {
+  constexpr int kSide = 6;
+  const auto corner = [](int x, int y, int z) {
+    return static_cast<int64_t>((z * (kSide + 1) + y) * (kSide + 1) + x);
+  };
+  uint64_t state = 0x9e3779b97f4a7c15u;
+  const auto next = [&state](uint64_t bound) {
+    state = state * 6364136223846793005u + 1442695040888963407u;
+    return (state >> 33) % bound;
+  };
+  std::vector<double> points;
+  for (int z = 0; z <= kSide; ++z) {
+    for (int y = 0; y <= kSide; ++y) {
+      for (int x = 0; x <= kSide; ++x) {
+        for (const int value : {x, y, z}) {
+          points.push_back(value + (static_cast<double>(next(13)) - 6.0) / 16.0);
+        }
+      }
+    }
+  }
+  std::vector<int64_t> tetrahedra, hexahedra;
+  for (int z = 0; z < kSide; ++z) {
+    for (int y = 0; y < kSide; ++y) {
+      for (int x = 0; x < kSide; ++x) {
+        const std::array<int64_t, 8> cube{corner(x, y, z),         corner(x + 1, y, z),
+                                          corner(x, y + 1, z),     corner(x + 1, y + 1, z),
+                                          corner(x, y, z + 1),     corner(x + 1, y, z + 1),
+                                          corner(x, y + 1, z + 1), corner(x + 1, y + 1, z + 1)};
+        for (const int order : {0, 1, 3, 2, 4, 5, 7, 6}) hexahedra.push_back(cube[order]);
+        for (int tet = 0; tet < 2; ++tet) {
+          for (int vertex = 0; vertex < 4; ++vertex) tetrahedra.push_back(cube[next(8)]);
+        }
+      }
+    }
+  }
+  const Result tet = run(0, p1(), "tetrahedron", points, tetrahedra, -1, 1);
+  const Result hex = run(1, q1(), "hexahedron", points, hexahedra, -1, 1);
+  PHX_CHECK(tet.code == PHX_MC_OK && hex.code == PHX_MC_OK);
+  // The tetrahedra hold certified and invalid decided cells.
+  int certified = 0, invalid = 0;
+  for (std::size_t cell = 0; cell < tet.decided.size(); ++cell) {
+    certified += tet.decided[cell] == 1 && tet.status[cell] == 0;
+    invalid += tet.decided[cell] == 1 && tet.status[cell] == 1;
+  }
+  PHX_CHECK(certified > 0 && invalid > 0);
+  for (const int32_t parallelism : {2, 3, 4, 8, 8, 8, 8}) {
+    PHX_CHECK(same(tet, run(0, p1(), "tetrahedron", points, tetrahedra, -1, parallelism)));
+    PHX_CHECK(same(hex, run(1, q1(), "hexahedron", points, hexahedra, -1, parallelism)));
+  }
 }
 
 }  // namespace
@@ -187,5 +259,6 @@ int main() {
   check_tetrahedra();
   check_hexahedron();
   check_arguments();
+  check_parallelism();
   return phx::mc::test::finish("test_cell_map_validity");
 }

@@ -33,6 +33,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import Delaunay, QhullError
 
+from .._exact_kernels import exact_kernel_parallelism
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import orient2d, orient3d, PredicateMode
 from .._meshcore import (
@@ -314,7 +315,9 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
                 if dimension == 2:
                     simplices, vertex_map = delaunay_2d(point_array)
                 else:
-                    simplices, vertex_map = delaunay_3d(point_array)
+                    simplices, vertex_map = delaunay_3d(
+                        point_array, parallelism=exact_kernel_parallelism()
+                    )
                 duplicates = int(np.count_nonzero(vertex_map != np.arange(count)))
                 redundant = 0
             case "qhull":
@@ -1107,7 +1110,9 @@ class PowerDiagram(StrictModule, NonTrainableState):
             if dimension == 2:
                 simplices, vertex_map = regular_2d(point_array, weight_array)
             else:
-                simplices, vertex_map = regular_3d(point_array, weight_array)
+                simplices, vertex_map = regular_3d(
+                    point_array, weight_array, parallelism=exact_kernel_parallelism()
+                )
             neighbors = _simplex_edges(simplices)
             active = vertex_map == np.arange(count)
             dual_simplices: np.ndarray | None = _frozen(simplices)
