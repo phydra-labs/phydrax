@@ -665,38 +665,12 @@ def _seed_regions(solid: CadSolidResult, seeds: np.ndarray, /) -> np.ndarray:
             raise MeshingFailure(
                 MeshingFailureCategory.REGION_RESOLUTION_FAILED,
                 f"Native CAD seed {seed.tolist()!r} lies on the certified surface.",
-                provider_code="native_cad_seed_on_surface",
+                # The PLC recovery refuses a seed on a constrained face.
+                provider_code="plc_source_invalid_seed",
                 stage="volume_meshing",
             )
         result[row] = int(regions[holders[0]])
     return result
-
-
-def _require_in_hull(solid: CadSolidResult, seeds: np.ndarray, /) -> None:
-    """Refuse seeds strictly outside the convex hull of the surface points.
-
-    The hull facets are qhull's; each facet is oriented by an exact
-    orientation of a hull-interior point, and a seed is outside when one
-    facet has it exactly on the other side.
-    """
-    from scipy.spatial import ConvexHull
-
-    points = np.asarray(solid.surface.points, dtype=np.float64)
-    facets = np.asarray(ConvexHull(points).simplices, dtype=np.int64)
-    a, b, c = (points[facets[:, slot]] for slot in range(3))
-    inside = np.broadcast_to(points[np.unique(facets)].mean(axis=0), a.shape)
-    reference = exact_orient3d(a, b, c, inside).astype(np.int64)
-    for seed in seeds:
-        side = exact_orient3d(a, b, c, np.broadcast_to(seed, a.shape)).astype(np.int64)
-        if np.any(side * reference < 0):
-            raise MeshingFailure(
-                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                "Native CAD source preparation failed (INVALID_SEED): seed "
-                f"{seed.tolist()!r} lies outside the convex hull of the source "
-                "points.",
-                provider_code="plc_source_invalid_seed",
-                stage="volume_meshing",
-            )
 
 
 def _check_seeds(
@@ -707,9 +681,9 @@ def _check_seeds(
     A single-region seed classification is the source's own: a hole seed in
     a source region would leak through its bounding faces, and a region seed
     elsewhere contradicts them, both refused as the PLC recovery refuses
-    them (REGION_LEAK, INCONSISTENT_REGIONS); a seed beyond the convex hull
-    of the source points is refused as INVALID_SEED, as the PLC recovery
-    locates seeds in that hull.
+    them (REGION_LEAK, INCONSISTENT_REGIONS). Outside the solid every seed
+    is in the void, as on the existing route: a hole seed there is a no-op
+    and a region seed leaks, wherever it lies relative to the hull.
     """
     domain = prepared.domain
     specification = prepared.specification
@@ -724,9 +698,6 @@ def _check_seeds(
     if any(point.shape != (3,) for point in points):
         raise ValueError("CAD volume seeds must be three-dimensional points.")
     found = _seed_regions(solid, np.stack(points))
-    outside = [point for point, region in zip(points, found.tolist()) if region < 0]
-    if outside:
-        _require_in_hull(solid, np.stack(outside))
     expected = [
         _region_row(domain, seed.region_name) for seed in specification.region_seeds
     ] + [-1] * len(specification.hole_seeds)
@@ -740,7 +711,13 @@ def _check_seeds(
             f"{point.tolist()!r} lies {located}"
             + ("" if wanted < 0 else f", not in its source region {wanted}")
             + ".",
-            provider_code="native_cad_seed_region",
+            # The PLC recovery's codes: a void label meeting a region leaks,
+            # two regions are inconsistent.
+            provider_code=(
+                "plc_source_region_leak"
+                if region < 0 or wanted < 0
+                else "plc_source_inconsistent_regions"
+            ),
             stage="volume_meshing",
         )
 

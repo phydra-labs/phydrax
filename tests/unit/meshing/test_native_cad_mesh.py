@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -2176,10 +2177,9 @@ def test_cad_solid_organization_is_native_and_matches_existing_route(
 
 
 _SEED_OUTCOMES = (
-    ("hole_inside", None, (0.5, 0.5, 0.5), "Native CAD hole seed"),
-    ("region_outside", (2.0, 2.0, 2.0), None, "INVALID_SEED"),
-    ("region_on_surface", (0.5, 0.5, 0.0), None, "lies on the certified surface"),
-    ("hole_outside", None, (2.0, 2.0, 2.0), "INVALID_SEED"),
+    ("hole_inside", None, (0.5, 0.5, 0.5), "plc_source_region_leak"),
+    ("region_outside", (2.0, 2.0, 2.0), None, "plc_source_region_leak"),
+    ("region_on_surface", (0.5, 0.5, 0.0), None, "plc_source_invalid_seed"),
 )
 
 
@@ -2195,9 +2195,8 @@ def test_cad_solid_seeds_classify_by_the_certified_surface(
     refusal: str,
 ) -> None:
     # A region seed must lie inside its region and a hole seed outside the
-    # solid (exact point-in-shell test); a seed on a surface triangle refuses,
-    # and one beyond the convex hull of the source points refuses as the
-    # existing route does (INVALID_SEED).
+    # solid (exact point-in-shell test); a seed on a surface triangle refuses.
+    # Provider codes are the existing route's (PLC recovery reasons).
     from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
 
     plan = _organized_plan(
@@ -2207,11 +2206,77 @@ def test_cad_solid_seeds_classify_by_the_certified_surface(
         hole_seed=hole_seed,
         controls=False,
     )
-    with pytest.raises(MeshingFailure, match=re.escape(refusal)) as error:
+    with pytest.raises(MeshingFailure) as error:
         plan.execute(prove=False)
     assert error.value.category is MeshingFailureCategory.REGION_RESOLUTION_FAILED
-    if refusal == "INVALID_SEED":
-        assert error.value.provider_code == "plc_source_invalid_seed"
+    assert error.value.provider_code == refusal
+
+
+def _l_solid() -> phx.geometry.brep.BRepModel:
+    """An L-shaped solid: its notch is outside the solid, inside its hull."""
+    contract = phx.SpatialCoordinateContract.si()
+    first = phx.geometry.brep.brep_box(
+        np.zeros(3), np.asarray((2.0, 1.0, 1.0)), coordinate_contract=contract
+    )
+    second = phx.geometry.brep.brep_box(
+        np.zeros(3), np.asarray((1.0, 2.0, 1.0)), coordinate_contract=contract
+    )
+    return phx.geometry.brep.boolean_brep(
+        first, second, "union", policy=phx.geometry.brep.BRepBooleanPolicy()
+    ).model
+
+
+def _seed_outcome(execute: Callable[[], object], /) -> tuple[object, ...]:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    try:
+        execute()
+    except MeshingFailure as error:
+        return (error.category, error.provider_code)
+    return ("meshed",)
+
+
+_NOTCH_SEEDS = (
+    ("hole", (1.3, 1.3, 0.5)),
+    ("region", (1.3, 1.3, 0.5)),
+    ("hole", (0.5, 0.5, 0.5)),
+    ("region", (0.5, 0.5, 0.0)),
+    ("region", (3.0, 3.0, 3.0)),
+    ("hole", (3.0, 3.0, 3.0)),
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "point"),
+    _NOTCH_SEEDS,
+    ids=[
+        "hole-notch",
+        "region-notch",
+        "hole-inside",
+        "region-surface",
+        "region-hull",
+        "hole-hull",
+    ],
+)
+def test_seed_outcome_matches_existing_route(
+    kind: str, point: tuple[float, float, float]
+) -> None:
+    # Seeds of an L-shaped solid: in the notch (outside the solid, inside the
+    # hull of its source points, where the routes could diverge), inside the
+    # solid, on its surface and beyond its hull. Both routes reach one
+    # outcome (meshed, or the same category and provider code).
+    plan = _organized_plan(
+        _l_solid(),
+        0.4,
+        region_seed=point if kind == "region" else None,
+        hole_seed=point if kind == "hole" else None,
+        controls=False,
+    )
+    prepared = plan.prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    existing = _seed_outcome(prepared.execute)
+    native = _seed_outcome(lambda: plan.execute(prove=False))
+    assert native == existing
 
 
 def _field_specification(
