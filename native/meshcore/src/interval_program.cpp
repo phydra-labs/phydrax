@@ -848,11 +848,21 @@ inline double float_power(double base, double exponent, double& invalid) noexcep
   return std::pow(base, exponent);
 }
 
-void execute_float(const int64_t* instructions, int64_t instruction_count,
-                   const int64_t* indices, double* values, int64_t count) noexcept {
+void execute_float(const phx::mc::ProgramView& program, double* values, int64_t count) noexcept {
   const auto column = [&](int64_t entry) { return values + entry * count; };
-  for (int64_t row_index = 0; row_index < instruction_count; ++row_index) {
-    const Row row = row_at(instructions, row_index);
+  const int64_t* indices = program.indices;
+  // Coordinates are already gathered. Validated rows read only before their
+  // output and write their entire range in ascending, nonoverlapping spans.
+  // Only the gaps need seeds, including the tail that outputs may name.
+  int64_t seed_entry = program.input_dimension;
+  const auto seed_until = [&](int64_t end) {
+    for (; seed_entry < end; ++seed_entry)
+      std::fill_n(column(seed_entry), count, program.seeds[seed_entry]);
+  };
+  for (int64_t row_index = 0; row_index < program.instruction_count; ++row_index) {
+    const Row row = row_at(program.instructions, row_index);
+    seed_until(row.out);
+    seed_entry = std::max(seed_entry, row.out + row_extent(row));
     for (int64_t k = 0; k < row.size; ++k) {
       double* out = column(row.out + k);
       switch (row.opcode) {
@@ -969,6 +979,7 @@ void execute_float(const int64_t* instructions, int64_t instruction_count,
       }
     }
   }
+  seed_until(program.workspace_size);
 }
 
 // Second-order forward jets in up to three variables: value, gradient (n) and
@@ -1605,13 +1616,10 @@ void phx::mc::evaluate_point(const ProgramView& program, const double* points,
   double* values = workspace.values.data();
   for (int64_t start = 0; start < count; start += kPointBlock) {
     const int64_t block = std::min(kPointBlock, count - start);
-    for (int64_t entry = 0; entry < program.workspace_size; ++entry)
-      std::fill_n(values + entry * block, block, program.seeds[entry]);
     for (int64_t d = 0; d < program.input_dimension; ++d)
       for (int64_t j = 0; j < block; ++j)
         values[d * block + j] = points[(start + j) * program.input_dimension + d];
-    execute_float(program.instructions, program.instruction_count, program.indices, values,
-                  block);
+    execute_float(program, values, block);
     for (int64_t j = 0; j < block; ++j)
       for (int64_t k = 0; k < program.output_count; ++k)
         result[(start + j) * program.output_count + k] =
