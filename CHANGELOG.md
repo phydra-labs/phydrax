@@ -545,6 +545,11 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- Native local boundary edits can validate a caller-supplied affine source
+  stencil for a witness-free collapse survivor or relocated vertex. The
+  stored coordinates must match the combination exactly and its nonzero
+  support must belong to every required source group. Existing geometry
+  checks still apply; invalid stencils leave the mesh unchanged.
 - Tests: the layer/core mixed round-trip strata test runs in the normal suite
   again (447 s, 3.3 GB peak; it was deselected after exceeding 16 GB). The
   exact layer/core adaptation pipeline costs about 75 ms and 0.5 MB per cell,
