@@ -27,6 +27,7 @@
 
 #include "cavity.hpp"
 #include "check.hpp"
+#include "dyadic.hpp"
 #include "local_incidence.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
@@ -37,6 +38,7 @@
 
 using namespace phx::mc;
 using detail::LocalIncidence;
+using detail::SourceStencil;
 
 namespace {
 
@@ -486,12 +488,15 @@ class Generator {
   }
 
   // A collapse of a facet or segment vertex into a link vertex, in the
-  // contract's domain unless `out_of_domain`.
+  // contract's domain unless `out_of_domain`; with `fixed` (r, s), of r into
+  // s, without a move, whatever its domain.
   std::optional<Planned> collapse(const TetMesh& mesh, const LocalIncidence& incidence,
                                   const Banks& banks, Perturbation perturbation,
-                                  bool allow_move, bool allow_out_of_domain) {
+                                  bool allow_move, bool allow_out_of_domain,
+                                  std::optional<std::pair<std::int32_t, std::int32_t>> fixed =
+                                      std::nullopt) {
     Planned plan;
-    std::int32_t r = -1;
+    std::int32_t r = fixed ? fixed->first : -1;
     for (int attempt = 0; attempt < 64 && r < 0; ++attempt) {
       const auto slot = static_cast<std::int32_t>(pick(mesh.vertex_slot_count()));
       const std::int8_t dimension = mesh.vertex_dimension(slot);
@@ -499,7 +504,7 @@ class Generator {
     }
     if (r < 0) return std::nullopt;
     const std::vector<std::int32_t> neighbors = link(mesh, incidence, r);
-    const std::int32_t s = neighbors[pick(neighbors.size())];
+    const std::int32_t s = fixed ? fixed->second : neighbors[pick(neighbors.size())];
     if (s < 0) return std::nullopt;
     const std::uint64_t r_id = mesh.vertex_id(r);
     const std::uint64_t s_id = mesh.vertex_id(s);
@@ -568,7 +573,7 @@ class Generator {
     bool in_domain = entity && entity->size() >= 2 &&
                      std::includes(entity->begin(), entity->end(), stencil.begin(), stencil.end());
     if (!r_segments.empty() && !banks.segments.contains(sorted_edge(r_id, s_id))) in_domain = false;
-    if (!in_domain && !(allow_out_of_domain && chance(0.15))) return std::nullopt;
+    if (!in_domain && !fixed && !(allow_out_of_domain && chance(0.15))) return std::nullopt;
     plan.out_of_domain = !in_domain;
     plan.removed = r;
     plan.survivor = s;
@@ -2205,6 +2210,243 @@ void boundary_cavities_never_hold_a_non_disk_constrained_face() {
   PHX_CHECK(found > 0);
 }
 
+// The corners (u0, v0), (u1, v0), (u0, v1) of the in-plane bounding
+// rectangle of `points` (plane axis `axis`, u and v the next two axes), when
+// all three are among them.
+std::optional<std::array<std::int32_t, 3>> rectangle_corners(const Box& box,
+                                                             const std::set<std::int32_t>& points,
+                                                             int axis) {
+  const auto u = static_cast<std::size_t>((axis + 1) % 3);
+  const auto v = static_cast<std::size_t>((axis + 2) % 3);
+  const auto at = [&](std::int32_t row, std::size_t k) {
+    return box.source_points[3 * static_cast<std::size_t>(row) + k];
+  };
+  double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+  for (std::int32_t row : points) {
+    u0 = std::min(u0, at(row, u));
+    u1 = std::max(u1, at(row, u));
+    v0 = std::min(v0, at(row, v));
+    v1 = std::max(v1, at(row, v));
+  }
+  std::array<std::int32_t, 3> corners{-1, -1, -1};
+  for (std::int32_t row : points) {
+    if (at(row, u) == u0 && at(row, v) == v0) corners[0] = row;
+    if (at(row, u) == u1 && at(row, v) == v0) corners[1] = row;
+    if (at(row, u) == u0 && at(row, v) == v1) corners[2] = row;
+  }
+  if (corners[0] < 0 || corners[1] < 0 || corners[2] < 0 || u0 == u1 || v0 == v1) {
+    return std::nullopt;
+  }
+  return corners;
+}
+
+// Whether `weights` on `corners` are an exact affine combination equal to p.
+bool exact_stencil(const Box& box, const std::array<std::int32_t, 3>& corners,
+                   const std::array<double, 3>& weights, const double* p) {
+  Dyadic sum(0.0);
+  std::array<Dyadic, 3> combination{Dyadic(0.0), Dyadic(0.0), Dyadic(0.0)};
+  for (std::size_t k = 0; k < 3; ++k) {
+    const Dyadic weight(weights[k]);
+    sum = sum + weight;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      combination[axis] =
+          combination[axis] +
+          Dyadic(box.source_points[3 * static_cast<std::size_t>(corners[k]) + axis]) * weight;
+    }
+  }
+  if (!(sum - Dyadic(1.0)).is_zero()) return false;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (!(combination[axis] - Dyadic(p[axis])).is_zero()) return false;
+  }
+  return true;
+}
+
+struct StencilTally {
+  int applied = 0;
+  int refused_without_stencil = 0;
+  int refused_inexact = 0;
+  int refused_outside = 0;
+};
+
+// Moves witness-free facet vertices s to dyadic points of their face
+// group's rectangle (no source point), then collapses a witness-free
+// neighbour r of the same group into s: refused without a stencil, refused
+// with a stencil whose combination misses s (one weight quantum moved
+// between two points) or whose exact support leaves r's carrier, and with
+// the exact stencil equal to apply_edit_batch in verdict and state.
+void stencil_collapse_case(const char* name, const Box& box, std::uint32_t seed,
+                           StencilTally& tally) {
+  TetMesh local(BoundaryPolicy::kConforming);
+  TetMesh batch(BoundaryPolicy::kConforming);
+  if (!build(local, box, {}) || !build(batch, box, {})) return;
+  LocalIncidence incidence;
+  PHX_CHECK(incidence.initialize(local));
+  Banks banks(local);
+  Generator generator(box, seed);
+  const auto source_point = [&](const double* p) {
+    for (std::size_t row = 0; row < box.source_points.size() / 3; ++row) {
+      if (std::equal(p, p + 3, box.source_points.data() + 3 * row)) return true;
+    }
+    return false;
+  };
+  // The face group of a vertex on one group's facets and no segment.
+  const auto facet_group = [&](std::uint64_t id) -> std::optional<std::int32_t> {
+    std::optional<std::int32_t> group;
+    for (const auto& [key, facet] : banks.facets) {
+      if (std::find(key.begin(), key.end(), id) == key.end()) continue;
+      if (group && *group != facet.source) return std::nullopt;
+      group = facet.source;
+    }
+    for (const auto& [key, segment] : banks.segments) {
+      if (key[0] == id || key[1] == id) return std::nullopt;
+    }
+    return group;
+  };
+  const auto slots = local.vertex_slot_count();
+  for (std::size_t slot = 0; slot < slots; ++slot) {
+    const auto s = static_cast<std::int32_t>(slot);
+    if (!local.live_vertex(s) || local.vertex_dimension(s) != 2 ||
+        local.witness(s).stratum != SourceStratum::kNone) {
+      continue;
+    }
+    const std::optional<std::int32_t> group = facet_group(local.vertex_id(s));
+    if (!group) continue;
+    const Piece& piece = box.pieces.at(*group);
+    const auto corners = rectangle_corners(box, box.face_group_points.at(*group), piece.axis);
+    if (!corners) continue;
+    const auto axis = static_cast<std::size_t>(piece.axis);
+    const auto u = (axis + 1) % 3;
+    const auto v = (axis + 2) % 3;
+    const double* p0 = box.source_points.data() + 3 * static_cast<std::size_t>((*corners)[0]);
+    const double* p1 = box.source_points.data() + 3 * static_cast<std::size_t>((*corners)[1]);
+    const double* p2 = box.source_points.data() + 3 * static_cast<std::size_t>((*corners)[2]);
+    const auto parameter = [](double x, double low, double high) {
+      return std::clamp(std::round((x - low) / (high - low) * 64.0) / 64.0, 1.0 / 64.0,
+                        63.0 / 64.0);
+    };
+    const double a = parameter(local.point(s)[u], p0[u], p1[u]);
+    const double b = parameter(local.point(s)[v], p0[v], p2[v]);
+    TetEditVertex moved;
+    moved.id = local.vertex_id(s);
+    moved.carrier[axis] = p0[axis];
+    moved.carrier[u] = p0[u] + a * (p1[u] - p0[u]);
+    moved.carrier[v] = p0[v] + b * (p2[v] - p0[v]);
+    moved.protection_radius = local.protection_radius(s);
+    moved.protected_vertex = local.protected_vertex(s);
+    const std::array<double, 3> weights{1.0 - a - b, a, b};
+    if (source_point(moved.carrier.data()) ||
+        !exact_stencil(box, *corners, weights, moved.carrier.data())) {
+      continue;
+    }
+    const LocalIncidence::Star star = incidence.vertex_star(s);
+    TetEdit relocation;
+    relocation.kind = TetEditKind::kRelocate;
+    for (std::int32_t cell : star) relocation.removed_cell_ids.push_back(local.cell_id(cell));
+    relocation.changed_vertices.push_back(moved);
+    if (incidence.relocate(local, std::span<const TetEditVertex>(&moved, 1), star) !=
+        TetEditStatus::kApplied) {
+      continue;
+    }
+    TetEditStatus relocated = TetEditStatus::kApplied;
+    PHX_CHECK(batch.apply_relocation_edit(relocation, relocated));
+    PHX_CHECK(relocated == TetEditStatus::kApplied && same_state(local, batch));
+
+    // r: a witness-free link vertex on the same group alone.
+    std::int32_t r = -1;
+    for (std::int32_t other : generator.link(local, incidence, s)) {
+      if (other >= 0 && local.vertex_dimension(other) == 2 &&
+          local.witness(other).stratum == SourceStratum::kNone &&
+          facet_group(local.vertex_id(other)) == group) {
+        r = other;
+        break;
+      }
+    }
+    if (r < 0) continue;
+    const std::optional<Planned> plan = generator.collapse(
+        local, incidence, banks, Perturbation::kNone, false, false, std::pair{r, s});
+    if (!plan) continue;
+    const LocalIncidence::Star removed = incidence.vertex_star(r);
+    const std::array<std::int32_t, 3> points = *corners;
+
+    // Refusals leave the mesh as it is.
+    const TetEditStatus bare = incidence.collapse_boundary(local, plan->operation, removed, nullptr);
+    PHX_CHECK(bare == TetEditStatus::kRejectedTopology);
+    tally.refused_without_stencil += bare == TetEditStatus::kRejectedTopology ? 1 : 0;
+    const std::array<double, 3> inexact{weights[0] - 0x1p-52, weights[1] + 0x1p-52, weights[2]};
+    PHX_CHECK(!exact_stencil(box, points, inexact, moved.carrier.data()));
+    const SourceStencil off{points, inexact};
+    const TetEditStatus missed =
+        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &off);
+    PHX_CHECK(missed == TetEditStatus::kRejectedTopology);
+    tally.refused_inexact += missed == TetEditStatus::kRejectedTopology ? 1 : 0;
+    // The same point through the corners of the whole plane, when one of
+    // them lies outside r's carrier (a side split into two groups).
+    std::set<std::int32_t> plane;
+    for (std::size_t row = 0; row < box.source_points.size() / 3; ++row) {
+      if (box.source_points[3 * row + axis] == p0[axis]) plane.insert(static_cast<std::int32_t>(row));
+    }
+    const auto wide = rectangle_corners(box, plane, piece.axis);
+    if (wide && std::any_of(wide->begin(), wide->end(), [&](std::int32_t row) {
+          return !box.face_group_points.at(*group).contains(row);
+        })) {
+      const double* q0 = box.source_points.data() + 3 * static_cast<std::size_t>((*wide)[0]);
+      const double* q1 = box.source_points.data() + 3 * static_cast<std::size_t>((*wide)[1]);
+      const double* q2 = box.source_points.data() + 3 * static_cast<std::size_t>((*wide)[2]);
+      const double wa = (moved.carrier[u] - q0[u]) / (q1[u] - q0[u]);
+      const double wb = (moved.carrier[v] - q0[v]) / (q2[v] - q0[v]);
+      const std::array<double, 3> wide_weights{1.0 - wa - wb, wa, wb};
+      // Only an exact combination isolates the support rule.
+      if (wa != 0.0 && wb != 0.0 &&
+          exact_stencil(box, *wide, wide_weights, moved.carrier.data())) {
+        const SourceStencil outside{*wide, wide_weights};
+        const TetEditStatus left =
+            incidence.collapse_boundary(local, plan->operation, removed, nullptr, &outside);
+        PHX_CHECK(left == TetEditStatus::kRejectedTopology);
+        tally.refused_outside += left == TetEditStatus::kRejectedTopology ? 1 : 0;
+      }
+    }
+    PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
+
+    // The exact stencil: the local verdict and state are the batch's.
+    const SourceStencil exact{points, weights};
+    const TetEditStatus local_status =
+        incidence.collapse_boundary(local, plan->operation, removed, nullptr, &exact);
+    const TetEditStatus batch_status = apply_batch(batch, plan->operation);
+    if (local_status != batch_status) {
+      std::fprintf(stderr, "%s stencil collapse: local %s, batch %s\n", name,
+                   status_name(local_status), status_name(batch_status));
+    }
+    PHX_CHECK(local_status == batch_status);
+    PHX_CHECK(same_state(local, batch) && consistent_complex(local) &&
+              incidence_current(local, incidence));
+    if (local_status == TetEditStatus::kApplied) {
+      banks.apply(plan->operation);
+      ++tally.applied;
+    }
+  }
+}
+
+// A box whose facet vertices are witness-free (their own exact points);
+// segment vertices keep their segment witnesses.
+Box witness_free_box(std::array<int, 3> n, bool two_regions) {
+  Box box = make_box(n, two_regions);
+  for (SourceWitness& witness : box.witnesses) {
+    if (witness.stratum != SourceStratum::kSegment) witness = SourceWitness{};
+  }
+  return box;
+}
+
+void stencil_collapses_match_the_batch() {
+  StencilTally tally;
+  stencil_collapse_case("box", witness_free_box({4, 4, 4}, false), 41, tally);
+  stencil_collapse_case("two-region box", witness_free_box({4, 4, 2}, true), 42, tally);
+  std::printf(
+      "stencil collapses: %d applied; refused %d without a stencil, %d inexact, %d off the "
+      "carrier\n",
+      tally.applied, tally.refused_without_stencil, tally.refused_inexact, tally.refused_outside);
+  PHX_CHECK(tally.applied > 0 && tally.refused_inexact > 0 && tally.refused_outside > 0);
+}
+
 }  // namespace
 
 int main() {
@@ -2213,5 +2455,6 @@ int main() {
   splits_and_relocations_match_the_batch();
   boundary_edits_are_star_local();
   boundary_cavities_never_hold_a_non_disk_constrained_face();
+  stencil_collapses_match_the_batch();
   return phx::mc::test::finish("test_local_boundary_edits");
 }

@@ -250,7 +250,8 @@ bool LocalIncidence::ensure_boundary_index(const TetMesh& mesh) {
 
 TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& operation,
                                                 const Star& removed_star,
-                                                const Star* survivor_star) {
+                                                const Star* survivor_star,
+                                                const SourceStencil* survivor_stencil) {
   mesh.clear_implicit_facet_refusal();
   try {
     if (mesh_ != &mesh || operation.kind != TetEditKind::kCollapse ||
@@ -344,6 +345,9 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
     const auto on_entity = [&](std::int32_t point) {
       return std::binary_search(entity.begin(), entity.end(), point);
     };
+    if (survivor_stencil != nullptr && s_witness.stratum != SourceStratum::kNone) {
+      return TetEditStatus::kRejectedTopology;
+    }
     bool supported = true;
     const auto row = static_cast<std::size_t>(s_witness.entity);
     switch (s_witness.stratum) {
@@ -377,11 +381,49 @@ TetEditStatus LocalIncidence::collapse_boundary(TetMesh& mesh, const TetEdit& op
         break;
       }
       case SourceStratum::kNone: {
-        // A witness-free vertex is its own exact point: one of the carrier's.
-        supported = std::any_of(entity.begin(), entity.end(), [&](std::int32_t point) {
-          const double* p = mesh.source_points_.data() + 3 * static_cast<std::size_t>(point);
-          return p[0] == s_carrier[0] && p[1] == s_carrier[1] && p[2] == s_carrier[2];
-        });
+        if (survivor_stencil == nullptr) {
+          // A witness-free vertex is its own exact point: one of the carrier's.
+          supported = std::any_of(entity.begin(), entity.end(), [&](std::int32_t point) {
+            const double* p = mesh.source_points_.data() + 3 * static_cast<std::size_t>(point);
+            return p[0] == s_carrier[0] && p[1] == s_carrier[1] && p[2] == s_carrier[2];
+          });
+          break;
+        }
+        // The caller's stencil, verified exactly: distinct source points,
+        // finite weights summing to 1, their combination the survivor's
+        // coordinates; its support on the carrier.
+        const SourceStencil& stencil = *survivor_stencil;
+        const std::size_t point_count = mesh.source_points_.size() / 3;
+        if (stencil.points.empty() || stencil.points.size() != stencil.weights.size()) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        std::vector<std::int32_t> seen(stencil.points.begin(), stencil.points.end());
+        std::sort(seen.begin(), seen.end());
+        if (seen.front() < 0 || static_cast<std::size_t>(seen.back()) >= point_count ||
+            std::adjacent_find(seen.begin(), seen.end()) != seen.end()) {
+          return TetEditStatus::kRejectedTopology;
+        }
+        Dyadic weight_sum(0.0);
+        std::array<Dyadic, 3> combination{Dyadic(0.0), Dyadic(0.0), Dyadic(0.0)};
+        for (std::size_t k = 0; k < stencil.points.size(); ++k) {
+          const double weight = stencil.weights[k];
+          if (!std::isfinite(weight)) return TetEditStatus::kRejectedTopology;
+          if (weight == 0.0) continue;
+          if (!on_entity(stencil.points[k])) supported = false;
+          const Dyadic exact_weight(weight);
+          weight_sum = weight_sum + exact_weight;
+          const double* p =
+              mesh.source_points_.data() + 3 * static_cast<std::size_t>(stencil.points[k]);
+          for (std::size_t axis = 0; axis < 3; ++axis) {
+            combination[axis] = combination[axis] + Dyadic(p[axis]) * exact_weight;
+          }
+        }
+        if (!(weight_sum - Dyadic(1.0)).is_zero()) return TetEditStatus::kRejectedTopology;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+          if (!(combination[axis] - Dyadic(s_carrier[axis])).is_zero()) {
+            return TetEditStatus::kRejectedTopology;
+          }
+        }
         break;
       }
     }

@@ -24,6 +24,17 @@ using LocalEdgeKey = std::pair<std::int32_t, std::int32_t>;
 
 LocalEdgeKey sorted_local_edge(std::int32_t first, std::int32_t second) noexcept;
 
+// A caller's exact stencil for a witness-free boundary vertex: rows of the
+// mesh's source points and binary64 weights, one per row. collapse_boundary
+// verifies it (it never trusts it): the rows are distinct source points, the
+// weights are finite and sum exactly to 1 (an affine combination), and the
+// exact weighted combination of the points equals the vertex's coordinates
+// exactly, axis by axis. Its support is the rows of nonzero weight.
+struct SourceStencil {
+  std::span<const std::int32_t> points;
+  std::span<const double> weights;
+};
+
 class LocalIncidence {
  public:
   class Star {
@@ -122,8 +133,15 @@ class LocalIncidence {
   // periodic or implicit-bound mesh and an operation outside this contract
   // are refused (kRejectedTopology) and the facet and segment banks are not
   // kept in ID order (a removed row takes the bank's last row).
+  // A witness-free survivor (after its move when s moves) is supported where
+  // it is a source point of r's carrier or, with `survivor_stencil`, where
+  // the verified stencil (SourceStencil) of its coordinates has its support
+  // within the source points common to the groups of r's constrained facets
+  // and segments; a stencil for a witnessed survivor, or one that fails
+  // verification, is refused (kRejectedTopology).
   TetEditStatus collapse_boundary(TetMesh& mesh, const TetEdit& operation,
-                                  const Star& removed_star, const Star* survivor_star);
+                                  const Star& removed_star, const Star* survivor_star,
+                                  const SourceStencil* survivor_stencil = nullptr);
   // Swaps the boundary edge ab for cd (a kRingReconnect `operation`): ab is
   // no constrained segment and lies in exactly two constrained facets, abc
   // and abd (operation.removed_facet_ids), of one source group and
