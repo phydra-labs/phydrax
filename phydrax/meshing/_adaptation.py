@@ -230,6 +230,7 @@ from ._surface_metric_controller import SurfaceMetricController
 from ._tetra_metric import (
     execute_tetra_metric_adaptation,
     TetraMetricEvidence,
+    TetraMetricOutcome,
     TetraMetricStatus,
 )
 from ._topology_edit import (
@@ -7486,9 +7487,16 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
     request = prepared.request
     if not isinstance(request, MetricMeshAdaptation):
         raise TypeError("The 3D tetra metric route requires MetricMeshAdaptation.")
+    outcome = _construct_tetra_metric_edit(prepared, request)
+    return _finish_tetra_metric_route(prepared, request, outcome)
+
+
+def _construct_tetra_metric_edit(
+    prepared: PreparedMeshAdaptation, request: MetricMeshAdaptation, /
+) -> TetraMetricOutcome:
     policy = prepared.policy
     constraints = prepared.constraints
-    outcome = execute_tetra_metric_adaptation(
+    return execute_tetra_metric_adaptation(
         prepared.source,
         constraints.metric_values,
         cell_classes=constraints.cell_classes,
@@ -7501,6 +7509,14 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         relocation=policy.relocation,
         accepted_minimum_length=request.accepted_minimum_length,
     )
+
+
+def _finish_tetra_metric_route(
+    prepared: PreparedMeshAdaptation,
+    request: MetricMeshAdaptation,
+    outcome: TetraMetricOutcome,
+    /,
+) -> _RouteOutcome:
     evidence = outcome.evidence
     match evidence.status:
         case TetraMetricStatus.COMPLETE:

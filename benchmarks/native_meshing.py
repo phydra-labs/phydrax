@@ -29,7 +29,7 @@ import numpy as np
 from jax import Array
 
 from benchmarks._meshing_surfaces import icosphere
-from benchmarks._runtime import capture_environment, measure_host
+from benchmarks._runtime import capture_environment, measure_host, measure_synchronized
 from phydrax import _meshcore
 from phydrax._exact_kernels import exact_kernel_parallelism
 from phydrax._physical import SpatialCoordinateContract
@@ -67,7 +67,9 @@ from phydrax.meshing._overset import (
 
 if TYPE_CHECKING:
     from phydrax.discretization import PreparedSimplicialCellLocator
-    from phydrax.meshing import CellMeshingCandidate, NativeMeshingPlan
+    from phydrax.meshing import CellMeshingCandidate, CellMeshingResult, NativeMeshingPlan
+    from phydrax.meshing._adaptation import _RouteOutcome
+    from phydrax.meshing._tetra_metric import TetraMetricOutcome
 
 
 _CEILINGS = Path(__file__).with_name("native_meshing_ceilings.json")
@@ -1393,6 +1395,9 @@ def _constructed_cells(result: object, /) -> int:
 # |pq|), anisotropically for the anisotropic target. The references are
 # MMG3D's, whose share of metric lengths in [0.7, 1.4] and mean quality a row
 # may not fall below.
+# The ceiling covers grading and construction of the topology edit. The
+# published target is still certified; certification and transfer are timed
+# separately from the construction samples.
 _F6_SIZES = {10_000: 0.0782, 100_000: 0.0363, 1_000_000: 0.01685}
 _F6_REFERENCE = {
     ("iso", 10_000): (0.774, 0.845),
@@ -1480,11 +1485,22 @@ def _coarsen_sizes(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
     return 2.0 * total / count
 
 
+class _F6Run(NamedTuple):
+    outcome: _RouteOutcome
+    construction_seconds: float
+    finalization_seconds: float
+
+
+def _f6_stage_seconds(result: object, /) -> float:
+    if not isinstance(result, _F6Run):
+        raise TypeError("The F6 row returns construction and finalization evidence.")
+    return result.construction_seconds
+
+
 def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
     from phydrax._physical import SpatialCoordinateContract
     from phydrax.discretization._cell_mesh import CellBlock, CellMesh
     from phydrax.meshing import (
-        execute_mesh_adaptation,
         grade_mesh_metric,
         MeshAdaptationPolicy,
         MeshAdaptationRoute,
@@ -1494,6 +1510,11 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
         MetricGradationPolicy,
         MetricMeshAdaptation,
         prepare_mesh_adaptation,
+        PreparedMeshAdaptation,
+    )
+    from phydrax.meshing._adaptation import (
+        _construct_tetra_metric_edit,
+        _finish_tetra_metric_route,
     )
     from phydrax.meshing._canonical import certify_cell_mesh
 
@@ -1541,20 +1562,31 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
             )
 
             def run(
-                source: Any = source,
-                target: Any = target,
-                gradation: Any = gradation,
+                source: CellMeshingResult = source,
+                target: MeshMetricField = target,
+                gradation: MetricGradationPolicy = gradation,
                 edges: np.ndarray = edges,
                 points: np.ndarray = points,
-            ) -> object:
-                graded, _ = grade_mesh_metric(
-                    target, policy=gradation, adjacency=edges, coordinates=points
-                )
-                return execute_mesh_adaptation(
-                    prepare_mesh_adaptation(
-                        source, MetricMeshAdaptation(graded), policy=policy
+            ) -> _F6Run:
+                def construct() -> tuple[
+                    PreparedMeshAdaptation, MetricMeshAdaptation, TetraMetricOutcome
+                ]:
+                    graded, _ = grade_mesh_metric(
+                        target, policy=gradation, adjacency=edges, coordinates=points
                     )
+                    request = MetricMeshAdaptation(graded)
+                    prepared = prepare_mesh_adaptation(source, request, policy=policy)
+                    return (
+                        prepared,
+                        request,
+                        _construct_tetra_metric_edit(prepared, request),
+                    )
+
+                construction, construction_seconds = measure_host(construct)
+                outcome, finalization_seconds = measure_synchronized(
+                    partial(_finish_tetra_metric_route, *construction)
                 )
+                return _F6Run(outcome, construction_seconds, finalization_seconds)
 
             rows.append(
                 _Row(
@@ -1565,6 +1597,7 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                     quality=lambda result, field=field, size=size: _f6_quality(
                         result, field, _F6_REFERENCE[field, size]
                     ),
+                    stage_seconds=_f6_stage_seconds,
                 )
             )
     return tuple(rows)
@@ -2286,40 +2319,35 @@ def _overset_rows(sizes: tuple[int, ...], inputs: Path | None, /) -> tuple[_Row,
     return tuple(rows)
 
 
-def _adapted_arrays(result: object, /) -> tuple[np.ndarray, np.ndarray]:
-    from phydrax.meshing import MeshAdaptationResult
-
-    if not isinstance(result, MeshAdaptationResult):
-        raise TypeError("The metric row returns a MeshAdaptationResult.")
-    mesh = result.target.mesh
+def _adapted_arrays(result: _F6Run, /) -> tuple[np.ndarray, np.ndarray]:
+    mesh = result.outcome.target.mesh
     cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
     return np.asarray(mesh.coordinates, dtype=np.float64), cells
 
 
 def _adapted_cells(result: object, /) -> int:
-    return _adapted_arrays(result)[1].shape[0]
+    if not isinstance(result, _F6Run):
+        raise TypeError("The F6 row returns construction and finalization evidence.")
+    return sum(block.vertices.shape[0] for block in result.outcome.target.mesh.blocks)
 
 
 def _f6_quality(
     result: object, field: str, reference: tuple[float, float], /
 ) -> tuple[int, dict[str, float]]:
-    # As the ledger's f6_ana: metric edge lengths against the target at the
-    # edge midpoint (the coarsening target as the adapted metric's
-    # log-Euclidean edge mean), the mean-ratio quality of every cell in the
-    # metric of its centroid, and the inverted cells. A miss: any inverted
-    # cell, a share or a mean quality below MMG3D's, a status that is not
-    # COMPLETE.
-    from phydrax.meshing import MeshAdaptationResult, MeshAdaptationStatus
+    # Ledger F6: midpoint lengths, centroid metric mean ratio, and inverted
+    # cells. Coarsening uses the adapted tensors. A stall or a quality miss
+    # fails the row even when its timing is within the ceiling.
+    from phydrax.meshing import MeshAdaptationStatus
 
-    if not isinstance(result, MeshAdaptationResult):
-        raise TypeError("The metric row returns a MeshAdaptationResult.")
+    if not isinstance(result, _F6Run):
+        raise TypeError("The F6 row returns construction and finalization evidence.")
     points, cells = _adapted_arrays(result)
     edges = _tet_edges(cells)
     vector = points[edges[:, 1]] - points[edges[:, 0]]
     if field == "coarsen":
-        if result.metric is None:
+        if result.outcome.metric is None:
             raise ValueError("A metric route publishes its target metric.")
-        tensors = np.asarray(result.metric.values, dtype=np.float64)
+        tensors = np.asarray(result.outcome.metric.values, dtype=np.float64)
         midpoint = 0.5 * (tensors[edges[:, 0]] + tensors[edges[:, 1]])
         centroid = tensors[cells].mean(axis=1)
     else:
@@ -2350,13 +2378,14 @@ def _f6_quality(
         inverted
         + int(share < reference[0])
         + int(float(quality.mean()) < reference[1])
-        + int(result.status is not MeshAdaptationStatus.COMPLETE)
+        + int(result.outcome.status is not MeshAdaptationStatus.COMPLETE)
     )
     return missed, {
         "share_0_7_1_4": share,
         "quality_min": float(quality.min()),
         "quality_mean": float(quality.mean()),
         "inverted": float(inverted),
+        "certification_and_transfer_seconds": result.finalization_seconds,
         "reference_share": reference[0],
         "reference_quality_mean": reference[1],
     }
