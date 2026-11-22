@@ -149,7 +149,7 @@ class RelocationSearch {
   std::int64_t pull_ = 0;
   std::int64_t step_ = 0;
   std::set<std::array<std::uint64_t, 3>> seen_;
-  std::set<std::vector<std::int64_t>> examined_;
+  std::set<std::array<std::int64_t, 9>> examined_;
   std::vector<double> admitted_goals_;
   bool second_pass_ = false;
   std::size_t revisit_ = 0;

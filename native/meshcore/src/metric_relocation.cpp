@@ -239,17 +239,22 @@ RelocationEnd RelocationSearch::next(std::vector<RelocationCandidate>& group,
         occupied = same_point(position, point(row));
       }
       if (occupied) continue;
-      // One stencil has one key: its rows with their weights in lowest terms.
-      std::vector<std::int64_t> stencil;
-      stencil.reserve(3 * static_cast<std::size_t>(carrier.size));
-      for (int slot = 0; slot < carrier.size; ++slot) {
-        const std::size_t at = static_cast<std::size_t>(slot);
-        const int zeros = std::countr_zero(static_cast<std::uint64_t>(carrier.weights[at]));
-        stencil.push_back(carrier.rows[at]);
-        stencil.push_back(carrier.weights[at] >> zeros);
-        stencil.push_back(carrier.bits - zeros);
+      // A common reduced denominator identifies the same fractions as
+      // reducing each term separately. Positive weights distinguish active
+      // rows from zero padding, even when source row zero is used.
+      std::uint64_t combined = 0;
+      const auto count = static_cast<std::size_t>(carrier.size);
+      for (std::size_t row = 0; row < count; ++row) {
+        combined |= static_cast<std::uint64_t>(carrier.weights[row]);
       }
-      if (!examined_.insert(std::move(stencil)).second) continue;
+      const int shift = std::countr_zero(combined);
+      std::array<std::int64_t, 9> stencil{};
+      stencil[0] = carrier.bits - shift;
+      for (std::size_t row = 0; row < count; ++row) {
+        stencil[1 + 2 * row] = carrier.rows[row];
+        stencil[2 + 2 * row] = carrier.weights[row] >> shift;
+      }
+      if (!examined_.insert(stencil).second) continue;
 
       RelocationCandidate candidate;
       candidate.carrier = carrier;
