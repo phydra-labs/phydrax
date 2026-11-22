@@ -320,7 +320,16 @@ class Adapter {
   // (both band improvements only), 3 every vertex, 4 also pairs of ends of
   // out-of-band edges; back to 0 after a topology edit.
   int relocation_stage_ = 0;
-  std::unordered_set<std::uint64_t> unrepresentable_;
+  // Failed carrier searches depend on both endpoint states and the shell's
+  // coverage rule. A move can make a previously refused edge splittable.
+  struct SplitRefusal {
+    std::uint64_t first_revision;
+    std::uint64_t second_revision;
+    EdgeSupport support;
+    bool operator==(const SplitRefusal&) const noexcept = default;
+  };
+  std::vector<std::uint64_t> carrier_revisions_;
+  std::unordered_map<std::uint64_t, SplitRefusal> unrepresentable_;
   std::uint64_t next_vertex_id_ = 0;
   std::uint64_t next_cell_id_ = 0;
   std::uint64_t next_target_vertex_ = 0;
@@ -340,6 +349,7 @@ void Adapter::ensure_vertex(std::int32_t slot) {
     stencils_.resize(size);
     metrics_.resize(9 * size, 0.0);
     log_dets_.resize(size, 0.0);
+    carrier_revisions_.resize(size, 0);
     vertex_targets_.resize(size, std::numeric_limits<std::uint64_t>::max());
     for (auto& flags : dirty_flags_) flags.resize(size, 0);
   }
@@ -709,6 +719,13 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   }
   const auto support = edge_support(a, b, shell);
   if (!support) return TetEditStatus::kStaleGeneration;
+  const std::uint64_t key = edge_key(a, b);
+  const SplitRefusal current{carrier_revisions_[static_cast<std::size_t>(a)],
+                             carrier_revisions_[static_cast<std::size_t>(b)], *support};
+  if (const auto failed = unrepresentable_.find(key); failed != unrepresentable_.end()) {
+    if (failed->second == current) return TetEditStatus::kApplied;
+    unrepresentable_.erase(failed);
+  }
 
   Stencil stencil;
   std::array<double, 3> point{};
@@ -722,7 +739,7 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
     have_point = split_parameter(a, b, false, stencil, point.data(), parameter);
   }
   if (!have_point) {
-    unrepresentable_.insert(edge_key(a, b));
+    unrepresentable_.emplace(key, current);
     ++counters_.rejected_invalid;
     return TetEditStatus::kApplied;
   }
@@ -1044,7 +1061,6 @@ TetEditStatus Adapter::commit_pending(std::int64_t& applied) {
 std::int64_t Adapter::split_sweep() {
   std::vector<std::pair<double, std::uint64_t>> long_edges;
   dirty_edges(kSplitPhase, [](double value) { return value > kUpperLength; }, long_edges);
-  std::erase_if(long_edges, [&](const auto& entry) { return unrepresentable_.contains(entry.second); });
   std::sort(long_edges.begin(), long_edges.end(),
             [](const auto& x, const auto& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
   std::int64_t applied = 0;
@@ -2397,6 +2413,7 @@ void Adapter::assign_carrier(std::int32_t vertex, const Carrier& carrier, const 
   // The new exact stencil: the carrier's dyadic weights.
   stencils_[static_cast<std::size_t>(vertex)] = carrier_stencil(carrier);
   set_metric(vertex, tensor);
+  carrier_revisions_[static_cast<std::size_t>(vertex)] = mesh_.generation();
   // A move ends the relocated record of everything that continues into the
   // vertex and starts its own.
   const std::uint64_t target = vertex_targets_[static_cast<std::size_t>(vertex)];
@@ -2657,10 +2674,15 @@ void Adapter::write(AdaptOutput& output) const {
     output.vertex_relation_kinds.push_back(static_cast<std::int32_t>(AdaptLineage::kRelocated));
   }
   std::vector<std::pair<std::uint64_t, std::uint64_t>> unrepresentable;
-  for (std::uint64_t key : unrepresentable_) {
+  for (const auto& [key, failure] : unrepresentable_) {
     const auto a = static_cast<std::int32_t>(key >> 32);
     const auto b = static_cast<std::int32_t>(key & 0xffffffffU);
     if (!mesh_.live_vertex(a) || !mesh_.live_vertex(b)) continue;
+    if (failure.first_revision != carrier_revisions_[static_cast<std::size_t>(a)] ||
+        failure.second_revision != carrier_revisions_[static_cast<std::size_t>(b)] ||
+        !(edge_length(a, b) > kUpperLength) || incidence_.edge_star(a, b).empty()) {
+      continue;
+    }
     const std::uint64_t x = vertex_targets_[static_cast<std::size_t>(a)];
     const std::uint64_t y = vertex_targets_[static_cast<std::size_t>(b)];
     unrepresentable.emplace_back(std::min(x, y), std::max(x, y));

@@ -2107,6 +2107,66 @@ def test_relocation_yields_after_native_admitted_collapse() -> None:
         state.native.close()
 
 
+def test_relocation_reopens_an_unrepresentable_split() -> None:
+    from phydrax.meshing._tetra_metric import (
+        _adapted_evidence,
+        _LOWER,
+        _metric_adapt_inputs,
+    )
+
+    mesh = _source(5).mesh
+    points = np.asarray(mesh.coordinates).copy()
+    center = 0.5625
+    points[points[:, 0] == 0.5, 0] = center
+    source = _mesh_result(points, np.asarray(mesh.blocks[0].vertices).tolist())
+    state = _state(source, np.diag(np.asarray((144.0, 16.0, 16.0))))
+    banks = _metric_adapt_inputs(state)
+
+    # Exact identity of the center plane, using a small weight at each
+    # adjacent x-plane. A midpoint with either adjacent plane initially
+    # requires a weight 1/2 + 2^-54, which binary64 cannot encode.
+    epsilon = 2.0**-53
+    source_rows = {tuple(point): i for i, point in enumerate(state.source_points)}
+    offsets = [0]
+    rows: list[int] = []
+    weights: list[float] = []
+    for row in banks["stencil_rows"].tolist():
+        x, y, z = state.source_points[row]
+        if x == center:
+            for sx, weight in (
+                (0.0, 1.0 - center - epsilon),
+                (0.25, epsilon),
+                (0.75, epsilon),
+                (1.0, center - epsilon),
+            ):
+                rows.append(source_rows[sx, y, z])
+                weights.append(weight)
+        else:
+            rows.append(row)
+            weights.append(1.0)
+        offsets.append(len(rows))
+    banks["stencil_offsets"] = np.asarray(offsets, dtype=np.int64)
+    banks["stencil_rows"] = np.asarray(rows, dtype=np.int32)
+    banks["stencil_weights"] = np.asarray(weights, dtype=np.float64)
+    source_id, revision, map_id, frame_id = state.source_identity
+    result = state.native.metric_adapt(
+        int(state.snapshot.generation),
+        **banks,
+        lower=_LOWER,
+        topology_operations=True,
+        relocation=True,
+        source_id=source_id,
+        source_revision=revision,
+        source_map_id=map_id,
+        frame_id=frame_id,
+    )
+    evidence = _adapted_evidence(state, result, state.native.arrays(), _LOWER)
+    assert evidence.rejected_invalid > 0 and evidence.relocations > 0
+    assert evidence.status is TetraMetricStatus.COMPLETE
+    assert evidence.out_of_range_edges == 0
+    assert result.unrepresentable_edges.size == 0
+
+
 def test_relocation_progress_survives_topology_edits() -> None:
     source = _source(4, nonuniform=True)
     outcome = _adapt(source, np.eye(3, dtype=np.float64) * 4.0)
