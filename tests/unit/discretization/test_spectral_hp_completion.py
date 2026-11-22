@@ -41,6 +41,7 @@ from phydrax.exterior._algebra import map_reference_values
 from phydrax.exterior._form_type import FormType, FormValueSpec
 
 
+@pytest.mark.strict_jax
 @pytest.mark.parametrize("x64", (False, True))
 def test_linear_prism_certifies_the_exact_unit_map(x64: bool) -> None:
     with jax.enable_x64(x64):

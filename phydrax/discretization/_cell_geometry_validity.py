@@ -630,11 +630,11 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             "source_determinant_lower": jnp.asarray(source.lower),
             "source_determinant_upper": jnp.asarray(source.upper),
             "source_depth": jnp.asarray(source.depth),
-            "maximum_coefficient_rounding_error": jnp.asarray(
-                rounding_error, dtype=jnp.float64
-            ),
+            # Keep the binary64 host value until the configured JAX
+            # precision selects the stored diagnostic dtype.
+            "maximum_coefficient_rounding_error": jnp.asarray(np.float64(rounding_error)),
             "maximum_element_coefficient_rounding_error": jnp.asarray(
-                element_rounding_error, dtype=jnp.float64
+                np.float64(element_rounding_error)
             ),
             "apex_derivative_unique": jnp.asarray(apex_unique, dtype=jnp.bool_),
             "geometry": geometry,

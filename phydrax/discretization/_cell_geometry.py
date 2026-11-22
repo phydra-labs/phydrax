@@ -2281,7 +2281,10 @@ def _require_linear_prism_basis_operands(element: FiniteElementSpec, /) -> None:
                     reference_cell_topology("prism").vertices,
                 ),
                 (np.asarray(owner.axial_nodes), (0.0, 1.0)),
-                (np.asarray(triangle.nodes), reference_cell_topology("triangle").vertices),
+                (
+                    np.asarray(triangle.nodes),
+                    reference_cell_topology("triangle").vertices,
+                ),
                 (np.asarray(triangle.coefficients), np.eye(3, dtype=dtype)),
             )
         )
@@ -3069,7 +3072,10 @@ def _finite_element_execution_basis(
             # The two shifted Lobatto nodes and their normalized weights are
             # exact in either execution dtype. Keep the same axis expansion
             # and stored term order, which the exact map digests record.
-            axial_basis = _execution_lagrange_axis((0.0, 1.0), (-1.0, 1.0))
+            axial_basis = _execution_lagrange_axis(
+                np.asarray(hybrid_owner.axial_nodes),
+                np.asarray((-1.0, 1.0), dtype=np.float64),
+            )
         else:
             from .._polynomial._orthogonal import legendre_rule_data
             from .fem._high_order import (
