@@ -252,7 +252,10 @@ def certify_native_trim_references(
             loops = _reference_loops(domain, model, witness, patch)
             if loops is None:
                 return (), f"chord loops of source patch {patch}"
-            certify_trim_reference_homotopy(loops, preparation)
+            # A ring torus proves its exact rectangular homotopy together
+            # with both paired chord chains in certify_reference_trim_sheet.
+            if native.embedding.deck_axes != (0, 1):
+                certify_trim_reference_homotopy(loops, preparation)
         except _UNDECIDED as error:
             return (), (
                 f"trim homotopy of source patch {patch} ({type(error).__name__}: {error})"

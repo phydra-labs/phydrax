@@ -1,4 +1,5 @@
 from fractions import Fraction as F
+from math import inf, nextafter, tau
 
 import equinox as eqx
 import jax
@@ -6,11 +7,30 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry._approximate_source_coverage import _cad_trim_root_box
 from phydrax.geometry._brep_torus_material import (
     _certify_full_torus,
     _normal_fiber_sign,
     BRepTorusMaterialMap,
 )
+from phydrax.geometry._domain_boundary import _rooted_patch_chart_junctions
+from phydrax.geometry._meshing_domain import (
+    MeshingDomain,
+    PatchCurveUse,
+    SourcePreparation,
+)
+from phydrax.geometry.brep import brep_torus
+from phydrax.geometry.brep._boolean_core import PeriodicPCurve
+from phydrax.geometry.brep._curve_approximation_topology import TrimReferenceSegment
+from phydrax.geometry.brep._intersection import ConicParameterEndpoint
+from phydrax.geometry.brep._patches import ConicParameterRoot
+from phydrax.geometry.brep._source_embedding import (
+    _torus_trim_sides,
+    certify_brep_trim_sheet,
+    certify_reference_trim_sheet,
+)
+from phydrax.geometry.brep._trim_helpers import PeriodOffset
 from phydrax.meshing._result import CellMeshingResult
 from tools.meshing_qualification.scenarios import native_planar_profiles as profiles
 
@@ -116,3 +136,203 @@ def test_changed_torus_seam_authority_is_rejected(
     )
     with pytest.raises(ValueError):
         _certify_full_torus(forged)
+
+
+@pytest.fixture(scope="module")
+def _torus_source() -> MeshingDomain:
+    return MeshingDomain.from_brep(
+        brep_torus(1.0, 0.25, coordinate_contract=SpatialCoordinateContract.si())
+    )
+
+
+def test_torus_source_sheet_replays_both_exact_decks(
+    _torus_source: MeshingDomain,
+) -> None:
+    proof = certify_brep_trim_sheet(_torus_source, 0)
+    assert proof is not None and proof.replay(_torus_source, 0)
+    turn = PeriodOffset(F(0), F(1))
+    assert proof.embedding.bounds == ((F(0), F(0)), (turn, turn))
+    assert proof.embedding.deck_axes == (0, 1)
+
+
+@pytest.mark.parametrize("fault", ("missing", "extra-turn", "rounded", "short-range"))
+def test_torus_deck_refuses_changed_profile_turn(
+    _torus_source: MeshingDomain, fault: str
+) -> None:
+    model = _torus_source.brep_authority
+    assert model is not None
+    geometry = model.geometry
+    coedge = geometry.face_loops[0][0][1]
+    roots = list(geometry.coedge_endpoint_roots)
+    start, stop = roots[coedge]
+    assert isinstance(stop, ConicParameterEndpoint)
+    if fault == "short-range":
+        uses = list(_torus_source.patches[0].loops[0])
+        use = uses[1]
+        assert isinstance(use, PatchCurveUse)
+        uses[1] = PatchCurveUse(
+            use.curve, use.pcurve, use.first, nextafter(tau, 0.0), sense=use.sense
+        )
+        changed = eqx.tree_at(
+            lambda domain: domain.patches[0].loops, _torus_source, (tuple(uses),)
+        )
+    else:
+        if fault == "missing":
+            end = None
+        elif fault == "rounded":
+            end = ConicParameterEndpoint(
+                stop.root, stop.carrier, F.from_float(tau), stop.point_exact
+            )
+        else:
+            conic = ConicParameterRoot(stop.root.conic, F(1), F(0), turns=2)
+            end = ConicParameterEndpoint(conic, stop.carrier, None, stop.point_exact)
+        roots[coedge] = start, end
+        changed_model = eqx.tree_at(
+            lambda authority: authority.geometry.coedge_endpoint_roots,
+            model,
+            tuple(roots),
+        )
+        changed = eqx.tree_at(
+            lambda domain: domain.brep_authority, _torus_source, changed_model
+        )
+    # Exercise the deck evidence itself, not the stale-domain fingerprint.
+    assert _torus_trim_sides(changed, 0) is None
+
+
+@pytest.mark.parametrize("fault", ("edge", "sense", "shift"))
+def test_torus_deck_refuses_mismatched_seam_authority(
+    _torus_source: MeshingDomain, fault: str
+) -> None:
+    model = _torus_source.brep_authority
+    assert model is not None
+    geometry = model.geometry
+    bottom, _, top, _ = geometry.face_loops[0][0]
+    uses = list(_torus_source.patches[0].loops[0])
+    if fault in ("edge", "sense"):
+        use = uses[2]
+        assert isinstance(use, PatchCurveUse)
+        other = uses[1 if fault == "edge" else 0]
+        assert isinstance(other, PatchCurveUse)
+        uses[2] = PatchCurveUse(
+            other.curve if fault == "edge" else use.curve,
+            use.pcurve,
+            use.first,
+            use.last,
+            sense=other.sense if fault == "sense" else use.sense,
+        )
+        changed = eqx.tree_at(
+            lambda domain: domain.patches[0].loops, _torus_source, (tuple(uses),)
+        )
+    else:
+        curves = list(geometry.pcurves)
+        curves[top] = PeriodicPCurve(curves[bottom], model.patches[0], (0, 2))
+        uses[2] = eqx.tree_at(lambda use: use.pcurve, uses[2], curves[top])
+        changed_model = eqx.tree_at(
+            lambda authority: authority.geometry.pcurves, model, tuple(curves)
+        )
+        changed = eqx.tree_at(
+            lambda domain: (domain.brep_authority, domain.patches[0].loops),
+            _torus_source,
+            (changed_model, (tuple(uses),)),
+        )
+    assert _torus_trim_sides(changed, 0) is None
+
+
+@pytest.fixture(scope="module")
+def _torus_reference(_torus_source: MeshingDomain) -> tuple[TrimReferenceSegment, ...]:
+    """Split each of the four authored sides at the same exact parameter."""
+    model = _torus_source.brep_authority
+    assert model is not None
+    limit = F.from_float(tau)
+    corners = ((F(0), F(0)), (limit, F(0)), (limit, limit), (F(0), limit))
+    junctions = _rooted_patch_chart_junctions(_torus_source, 0)[0]
+    segments = []
+    for slot, (use, coedge) in enumerate(
+        zip(
+            _torus_source.patches[0].loops[0],
+            model.geometry.face_loops[0][0],
+            strict=True,
+        )
+    ):
+        start, stop = corners[slot], corners[(slot + 1) % 4]
+        midpoint = ((start[0] + stop[0]) / 2, (start[1] + stop[1]) / 2)
+        a, b = (F(0), limit) if use.sense > 0 else (limit, F(0))
+        roots = model.geometry.coedge_endpoint_roots[coedge]
+        first, last = roots if use.sense > 0 else roots[::-1]
+        assert first is not None and last is not None
+        segments.extend(
+            (
+                TrimReferenceSegment(
+                    use.pcurve,
+                    a,
+                    limit / 2,
+                    start,
+                    midpoint,
+                    _cad_trim_root_box(junctions[slot - 1]),
+                    None,
+                    first.parameter_enclosure(),
+                    None,
+                ),
+                TrimReferenceSegment(
+                    use.pcurve,
+                    limit / 2,
+                    b,
+                    midpoint,
+                    stop,
+                    None,
+                    _cad_trim_root_box(junctions[slot]),
+                    None,
+                    last.parameter_enclosure(),
+                ),
+            )
+        )
+    return tuple(segments)
+
+
+def test_torus_reference_sheet_proves_each_paired_chain(
+    _torus_source: MeshingDomain, _torus_reference: tuple[TrimReferenceSegment, ...]
+) -> None:
+    native = certify_brep_trim_sheet(_torus_source, 0)
+    assert native is not None
+    certified = certify_reference_trim_sheet(
+        _torus_source, 0, native, (_torus_reference,), SourcePreparation(_torus_source)
+    )
+    assert certified is not None
+    assert certified[1].bounds == native.embedding.bounds
+    assert certified[1].deck_axes == (0, 1)
+
+
+@pytest.mark.parametrize("axis", (0, 1))
+@pytest.mark.parametrize("fault", ("chord", "cuts", "root", "outside"))
+def test_torus_reference_sheet_refuses_unproved_correspondence(
+    _torus_source: MeshingDomain,
+    _torus_reference: tuple[TrimReferenceSegment, ...],
+    axis: int,
+    fault: str,
+) -> None:
+    native = certify_brep_trim_sheet(_torus_source, 0)
+    assert native is not None
+    segments = list(_torus_reference)
+    slot = 2 if axis == 0 else 4  # The positive-side chord chain.
+    left, right = segments[slot : slot + 2]
+    if fault == "root":
+        segments[slot] = left._replace(start_parameter_box=None)
+    elif fault == "outside":
+        outside = F.from_float(nextafter(tau, inf))
+        point = (outside, left.stop[1]) if axis == 0 else (left.stop[0], outside)
+        segments[slot] = left._replace(stop=point)
+        segments[slot + 1] = right._replace(start=point)
+    else:
+        shifted = left.last + F(1, 8)
+        point = (left.stop[0], shifted) if axis == 0 else (shifted, left.stop[1])
+        if fault == "cuts":
+            # Alter both the source cut and chord point on just one side.
+            left, right = left._replace(last=shifted), right._replace(first=shifted)
+        segments[slot] = left._replace(stop=point)
+        segments[slot + 1] = right._replace(start=point)
+    assert (
+        certify_reference_trim_sheet(
+            _torus_source, 0, native, (tuple(segments),), SourcePreparation(_torus_source)
+        )
+        is None
+    )
