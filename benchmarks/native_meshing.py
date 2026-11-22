@@ -3535,6 +3535,11 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     missed, quality = row.quality(result)
     if isinstance(result, _meshcore.ConstrainedDelaunay2D):
         quality = {**quality, "minimum_angle_degrees": _planar_minimum_angle(result)}
+    status = (
+        {"adaptation_status": result.outcome.status.value}
+        if isinstance(result, _F6Run)
+        else {}
+    )
     return {
         "elements": row.count(result),
         "unmet": row.unmet(result),
@@ -3542,6 +3547,7 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
         "quality": quality,
         "seconds": samples,
         "minimum_seconds": min(samples),
+        **status,
     }
 
 
