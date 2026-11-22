@@ -932,8 +932,6 @@ def _certify_cad_trim_sheet_validated(
 ) -> CadTrimSheetProof | None:
     """Compose a sheet using ancestry replayed by the enclosing proof."""
     from .._approximate_source_coverage import _cad_trim_reference_loops
-    from ._boolean_core import _coedge_affine_axis
-    from ._curve_approximation_topology import _trim_reference_box
 
     try:
         native = certify_brep_trim_sheet(charts.domain, patch)
@@ -941,6 +939,42 @@ def _certify_cad_trim_sheet_validated(
             return None
         if reference is None:
             reference = _cad_trim_reference_loops(charts, bindings, patch)
+    except (
+        ArithmeticError,
+        IndexError,
+        KeyError,
+        NotImplementedError,
+        TypeError,
+        ValueError,
+    ):
+        return None
+    sheet = certify_reference_trim_sheet(
+        charts.domain, patch, native, reference, preparation
+    )
+    if sheet is None:
+        return None
+    return CadTrimSheetProof(charts, charts.source_chart_id, patch, *sheet)
+
+
+def certify_reference_trim_sheet(
+    domain: MeshingDomain,
+    patch: int,
+    native: BRepTrimSheetProof,
+    reference: tuple[tuple[TrimReferenceSegment, ...], ...],
+    preparation: SourcePreparation,
+    /,
+) -> tuple[str, SourceEmbeddingProof] | None:
+    """Widen a native trim sheet over reference loops and prove its embedding.
+
+    ``native`` is ``certify_brep_trim_sheet(domain, patch)``. The sheet bounds
+    grow to every reference chord and source-interval enclosure (exact
+    latitudes where a sphere use binds them); the widened chart must still be
+    an embedding. Returns the reference identity and that embedding.
+    """
+    from ._boolean_core import _coedge_affine_axis
+    from ._curve_approximation_topology import _trim_reference_box
+
+    try:
         pieces = tuple(segment for loop in reference for segment in loop)
         if not pieces:
             return None
@@ -976,14 +1010,14 @@ def _certify_cad_trim_sheet_validated(
                 or not isinstance(native_v_high, Fraction)
             ):
                 return None
-            latitudes = _sphere_trim_latitudes(charts.domain, patch) if sphere else None
+            latitudes = _sphere_trim_latitudes(domain, patch) if sphere else None
             if sphere and latitudes is None:
                 return None
             owners: list[tuple[int, int] | None] = [None] * len(pieces)
             if latitudes is not None:
                 owners = []
                 for li, loop in enumerate(reference):
-                    uses = charts.domain.patches[patch].loops[li]
+                    uses = domain.patches[patch].loops[li]
                     for segment in loop:
                         matches = [
                             ui
@@ -1059,7 +1093,7 @@ def _certify_cad_trim_sheet_validated(
                         u_high = point[0]
             bounds = ((u_low, v_low), (u_high, v_high))
         embedding = certify_source_embedding(
-            charts.domain.patches[patch].surface,
+            domain.patches[patch].surface,
             bounds,
             deck_axes=native.embedding.deck_axes,
             pole_roots=native.embedding.pole_roots,
@@ -1093,9 +1127,7 @@ def _certify_cad_trim_sheet_validated(
                 for loop in reference
             )
         )
-        return CadTrimSheetProof(
-            charts, charts.source_chart_id, patch, reference_id, embedding
-        )
+        return reference_id, embedding
     except (
         ArithmeticError,
         IndexError,
@@ -1114,5 +1146,6 @@ __all__ = [
     "SourceEmbeddingProof",
     "certify_brep_trim_sheet",
     "certify_cad_trim_sheet",
+    "certify_reference_trim_sheet",
     "certify_source_embedding",
 ]

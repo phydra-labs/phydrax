@@ -90,6 +90,7 @@ if TYPE_CHECKING:
     from ._certification_inputs import ScopedFidelityInput
     from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
     from ._lineage import MeshLineage, VertexInterpolationStencil
+    from ._native_cad_records import NativeCadRecords
     from ._result import CellMeshingResult
     from .providers._native_sources import NativeLayerCoreSource
 
@@ -3715,6 +3716,73 @@ def _target_dimension(mesh: CellMesh, association: GeometryAssociation, /) -> in
     raise ValueError("A B-Rep association does not target the source mesh entities.")
 
 
+def _with_curve_edges(
+    table: GeometryAssociation, curve: GeometryAssociation, /
+) -> GeometryAssociation:
+    """The edge table with the curve association's rows as source-edge rows.
+
+    Projection classifies a chord of a curved source edge by its midpoint,
+    which is equidistant from the edge and its faces (a seam, a circle); the
+    exact curve lineage names the source edge of every curve row instead.
+    """
+    rows = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(table.target_global_ids).tolist())
+    }
+    dimensions = np.asarray(table.source_dimensions, dtype=np.int8).copy()
+    indices = np.asarray(table.source_indices, dtype=np.int32).copy()
+    residuals = np.asarray(table.residuals, dtype=np.float64).copy()
+    resolved = np.asarray(table.resolved, dtype=np.bool_).copy()
+    ambiguous = np.asarray(table.ambiguous, dtype=np.bool_).copy()
+    parameters = np.asarray(table.parameters, dtype=np.float64).copy()
+    orientations = np.asarray(table.orientations, dtype=np.int8).copy()
+    entity_ids = list(table.source_entity_ids)
+    roles = list(table.source_roles)
+    paths = list(table.source_occurrence_paths)
+    sides = list(table.source_region_sides)
+    for curve_row, identifier in enumerate(np.asarray(curve.target_global_ids).tolist()):
+        row = rows[int(identifier)]
+        dimensions[row] = 1
+        indices[row] = int(curve.source_indices[curve_row])
+        residuals[row] = float(curve.residuals[curve_row])
+        resolved[row] = True
+        ambiguous[row] = False
+        parameters[row] = np.nan
+        orientations[row] = int(curve.orientations[curve_row])
+        entity_ids[row] = curve.source_entity_ids[curve_row]
+        roles[row] = GeometrySourceEntityRole.EDGE
+        paths[row] = curve.source_occurrence_paths[curve_row]
+        sides[row] = (None, None)
+    return GeometryAssociation(
+        table.association_kind,
+        table.source_id,
+        table.source_revision,
+        table.target_entity_set_id,
+        np.asarray(table.target_global_ids),
+        tuple(entity_ids),
+        residuals,
+        resolved=resolved,
+        ambiguous=ambiguous,
+        exact=table.exact,
+        source_dimensions=dimensions,
+        source_indices=indices,
+        source_roles=tuple(roles),
+        source_occurrence_paths=tuple(paths),
+        source_region_sides=tuple(sides),
+        source_parameter_intervals=table.source_parameter_intervals,
+        target_parameter_intervals=table.target_parameter_intervals,
+        target_reference_pieces=table.target_reference_pieces,
+        source_boundary_witness_id=table.source_boundary_witness_id,
+        source_parameter_points=table.source_parameter_points,
+        parameters=parameters,
+        orientations=orientations,
+        parent_dimensions=np.asarray(table.parent_dimensions),
+        parent_ids=np.asarray(table.parent_ids),
+        parent_association_id=table.parent_association_id,
+        provenance=table.provenance,
+    )
+
+
 @final
 class BRepAssociationTransfer(StrictModule, NonTrainableState):
     """Carries a result's B-Rep associations through topology changes.
@@ -3764,6 +3832,9 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
 
         if not isinstance(source, CellMeshingResult):
             raise TypeError("source must be CellMeshingResult.")
+        records = self._native_cad_records(source)
+        if records is not None:
+            records.require_associations(source.mesh, source.associations)
         dimensions = []
         curve = None
         vertex = None
@@ -3792,9 +3863,9 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         if len(set(dimensions)) != len(dimensions):
             raise ValueError("A source carries one association per mesh dimension.")
         _vertex_classes(source.mesh, vertex)
-        if curve is not None:
+        if records is None and curve is not None:
             self._validate_cad_curve(source, curve)
-        elif source.certification is not None:
+        elif records is None and source.certification is not None:
             witness = source.certification.inputs.fidelity_witness
             if (
                 isinstance(witness, SourceBoundaryChartWitness)
@@ -3866,6 +3937,31 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         _cad_target_root_partition(
             charts.domain, source.mesh, witness, patch_rows, plc.cad_fidelity_tolerance
         )
+        self._require_curve_edge_table(source, curve)
+
+    def _native_cad_records(
+        self, source: CellMeshingResult, /
+    ) -> NativeCadRecords | None:
+        """The native CAD solid records of ``source`` in this namespace."""
+        certification = source.certification
+        records = (
+            None if certification is None else certification.inputs.native_cad_records
+        )
+        if (
+            records is None
+            or (
+                records.source_id,
+                records.source_revision,
+            )
+            != self.source_namespaces[0]
+        ):
+            return None
+        return records
+
+    def _require_curve_edge_table(
+        self, source: CellMeshingResult, curve: GeometryAssociation, /
+    ) -> None:
+        """Require the B-Rep edge table to name the curve rows' source edges."""
         edge_tables = tuple(
             item
             for item in source.associations
@@ -3955,6 +4051,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         validated_fidelity: tuple[ValidatedSourceFidelityWitness, ...],
     ) -> tuple[GeometryAssociation, ...]:
         """Propagate B-Rep associations with the accepted vertex stencil."""
+        records = self._native_cad_records(source)
+        if records is not None:
+            _, _, tables = records.retarget(
+                source,
+                lineage,
+                target,
+                np.zeros(target.entity_set(3).count, dtype=np.int64),
+                vertex_stencil,
+            )
+            return tables
         vertex, dimensions = self.source_associations(source)
         propagated = propagate_association(
             vertex,
@@ -4004,7 +4110,16 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         ):
             raise ValueError("CAD curve transfer differs from the target chart ancestry.")
         curve.validate_target(target.entity_set(1))
-        return (*output, curve)
+        edge_set = target.entity_set(1).entity_set_id
+        return (
+            *(
+                _with_curve_edges(item, curve)
+                if item.target_entity_set_id == edge_set
+                else item
+                for item in output
+            ),
+            curve,
+        )
 
     def rederive(
         self, source: CellMeshingResult, target: CellMeshingResult, /

@@ -21,6 +21,7 @@ Direct smoke recipe::
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -63,8 +64,9 @@ from ._exact import rational_determinant
 from ._intersection import _prepare_plane_cylinder_angular_data, _straight_revolution
 from ._intersection_curve import (
     IntersectionPCurve,
-    IntersectionSide,
+    orthogonal_chart_parameters,
     orthogonal_cylinder_family,
+    OrthogonalChartStructure,
 )
 from ._model import BRepEntityId, BRepGeometry, BRepModel
 from ._patches import (
@@ -786,176 +788,124 @@ class _PeriodBoundProgram:
 
 
 type _IntervalProgram = PreparedIntervalFunction | _PeriodBoundProgram | _BoundProgram
-type _StripStructure = tuple[int, int, int, int, int, bool, IntersectionSide]
-type _StripPrograms = dict[
-    tuple[int, int, type[float], str, bool, _StripStructure],
-    tuple[AbstractSurfacePatch, AbstractCurve, PreparedIntervalFunction],
-]
+type _Slice = tuple[int, int]
+type _ChartPoint = Callable[[Array, Array, Array], Array]
 
 
-def _green_strip_program(
-    patch: AbstractSurfacePatch,
-    pcurve: AbstractCurve,
-    origin: float,
-    /,
-    *,
-    chart: int | None = None,
-    cylinder: bool = False,
-    programs: _StripPrograms | None = None,
-) -> _IntervalProgram:
-    """``g(u0 + s (u(t) - u0), v(t)) (u(t) - u0) v'(t)`` on the strip ``(t, s)``.
+@dataclass(frozen=True, slots=True)
+class _ChartInputs:
+    """Bound chart coefficients, the native period input and the chart point.
 
-    Its integral over ``s`` in ``[0, 1]`` is ``G(u(t), v(t)) v'(t)`` with
-    ``G(u, v) = int_u0^u g(r, v) dr``, so summing the p-curves' strip integrals
-    gives the trimmed face integral by Green's theorem.
+    ``point`` is the static chart structure of a parameterized analytic chart
+    (the chart index is then the last coefficient input), or the folded chart
+    evaluator of the live p-curve, which a shared layout never holds.
     """
 
-    lower: list[float] = []
-    upper: list[float] = []
-    chart_evaluator = None
-    chart_slice = None
-    program_key = None
-    if chart is not None and isinstance(pcurve, IntersectionPCurve):
-        if (
-            programs is not None
-            and orthogonal_cylinder_family(pcurve.curve.first, pcurve.curve.second)
-            is not None
-        ):
-            evaluate_chart, chart_lower, chart_upper, structure = (
-                pcurve._parameterized_chart_evaluator_with_source_bounds(chart)
-            )
-            # The chart index is an exact, non-integrated singleton input.
-            chart_lower = np.append(chart_lower, np.float64(chart))
-            chart_upper = np.append(chart_upper, np.float64(chart))
-            program_key = (
-                id(patch),
-                id(pcurve),
-                type(origin),
-                repr(origin),
-                cylinder,
-                structure,
-            )
+    values: _Slice
+    period: int
+    point: OrthogonalChartStructure | _ChartPoint
 
-            def chart_evaluator(
-                parameter: Array, period: Array, values: Array, /
-            ) -> Array:
-                return evaluate_chart(parameter, period, values[:-1], values[-1])
+
+@dataclass(frozen=True, slots=True)
+class _StripLayout:
+    """Static structure of a Green strip integrand over ``(t[, s], bound)``.
+
+    Every exact source scalar is a bound input at one of these slices, so a
+    shared layout (whose integrand reads no live patch or curve) traces one
+    program whatever source supplies its bounds.
+    """
+
+    # The strip origin ``u0`` as ``float.hex`` (signed zeros stay distinct).
+    origin: str
+    width: int
+    cylinder: bool
+    fourth: bool
+    chart: _ChartInputs | None
+    section_slice: _Slice | None
+    root_slice: _Slice | None
+    line_slice: _Slice | None
+    shift_slice: _Slice | None
+    cylinder_slice: _Slice | None
+    revolution_slice: _Slice | None
+    torus_slice: _Slice | None
+
+    @property
+    def shared(self) -> bool:
+        """Whether the integrand reads its bound inputs and this layout only."""
+        if self.chart is not None:
+            located = isinstance(self.chart.point, tuple)
         else:
-            chart_evaluator, chart_lower, chart_upper = _intersection_chart_evaluator(
-                pcurve, chart
+            located = any(
+                span is not None
+                for span in (self.section_slice, self.root_slice, self.line_slice)
             )
-        chart_slice = slice(len(lower), len(lower) + chart_lower.size)
-        lower.extend(chart_lower.tolist())
-        upper.extend(chart_upper.tolist())
+        if self.cylinder:
+            closed = self.cylinder_slice is not None or self.revolution_slice is not None
+        else:
+            closed = self.torus_slice is not None
+        return located and closed
 
-    def bind(values: Sequence[ExactScalar], /) -> slice:
-        start = len(lower)
-        for value in values:
-            lo, hi = coefficient_interval(value, bits=128)
-            lower.append(fraction_down(lo))
-            upper.append(fraction_up(hi))
-        return slice(start, len(lower))
 
-    shifts = (0, 0)
-    line = pcurve
-    while isinstance(line, PeriodicPCurve):
-        shifts = tuple(a + b for a, b in zip(shifts, line.period_shifts, strict=True))
-        line = line.source_curve
-    section_slice = None
-    if isinstance(line, PlaneCylinderSectionPCurve):
-        section_slice = slice(len(lower), len(lower) + 9)
-        section_low, section_high = _section_source_bounds(line)
-        lower.extend(section_low.tolist())
-        upper.extend(section_high.tolist())
-    line_slice = None
-    root_slice = None
-    if isinstance(line, LineCurve):
-        line_slice = bind((*line.origin_exact, *line.direction_exact))
-    elif isinstance(line, ExactLineCurve):
-        line_slice = bind(
-            (
-                *line.first_exact,
-                *(
-                    last - first
-                    for first, last in zip(line.first_exact, line.last_exact, strict=True)
-                ),
-            )
-        )
-    elif isinstance(line, ConicRootLinePCurve):
-        root_slice = slice(len(lower), len(lower) + 3)
-        domain = line.parameter_domain
-        parameter = 0.0 if domain is None else domain[0]
-        box = line.bounding_box(parameter, parameter)
-        lower.append(float(box[0, 0]))
-        upper.append(float(box[1, 0]))
-        bind((line.height_origin_exact, line.height_direction_exact))
-    elif section_slice is None:
-        shifts = (0, 0)
-    period_index = None
-    if chart_evaluator is not None:
-        period_index = len(lower)
-        period_low, period_high = period_scalar_bounds(
-            PeriodOffset(Fraction(0), Fraction(1))
-        )
-        lower.append(float(period_low))
-        upper.append(float(period_high))
-    shift_slice = None
-    if any(shifts):
-        shift_slice = slice(len(lower), len(lower) + 2)
-        for shift in shifts:
-            lo, hi = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
-            lower.append(float(lo))
-            upper.append(float(hi))
-    cylinder_slice = None
-    if cylinder and isinstance(patch, CylinderPatch):
-        cylinder_slice = bind(
-            (
-                *patch.origin_exact,
-                *patch.first_axis_exact,
-                *patch.second_axis_exact,
-                *patch.axis_exact,
-                patch.radius_exact,
-            )
-        )
-    revolution_slice = None
-    straight = (
-        _straight_revolution(patch) if isinstance(patch, RevolutionSurface) else None
-    )
-    if cylinder and straight is not None and straight.slope == 0:
-        revolution_slice = bind(
-            (
-                *straight.origin,
-                *straight.radial,
-                *straight.tangent,
-                *straight.axis,
-                straight.axial_rate,
-                straight.scale_origin,
-            )
-        )
-    torus_slice = None
-    if isinstance(patch, TorusPatch):
-        torus_slice = bind(
-            (
-                *patch.center_exact,
-                *patch.first_axis_exact,
-                *patch.second_axis_exact,
-                *patch.axis_exact,
-                patch.major_radius_exact,
-                patch.minor_radius_exact,
-            )
-        )
+@dataclass(frozen=True, slots=True)
+class _LiveStrip:
+    """The live carrier and p-curve that a non-shared strip integrand reads."""
+
+    patch: AbstractSurfacePatch
+    pcurve: AbstractCurve
+
+
+def _live_source(live: _LiveStrip | None, /) -> _LiveStrip:
+    if live is None:
+        raise RuntimeError("A shared Green strip layout read a live patch or curve.")
+    return live
+
+
+def _window(span: _Slice | None, /) -> slice | None:
+    return None if span is None else slice(*span)
+
+
+def _strip_integrand(
+    layout: _StripLayout, live: _LiveStrip | None, /
+) -> tuple[Callable[[Array, Array], Array], int]:
+    """The strip integrand of ``(parameters, bound)`` and its integrated dimension.
+
+    ``live`` is read only by a layout that is not shared, which is prepared
+    without it (``None``) so no live source outlives the prepared program.
+    """
+    origin = float.fromhex(layout.origin)
+    chart = layout.chart
+    section_slice = _window(layout.section_slice)
+    root_slice = _window(layout.root_slice)
+    line_slice = _window(layout.line_slice)
+    shift_slice = _window(layout.shift_slice)
+    cylinder_slice = _window(layout.cylinder_slice)
+    revolution_slice = _window(layout.revolution_slice)
+    torus_slice = _window(layout.torus_slice)
 
     def evaluator(bound: Array) -> Callable[[Array], Array]:
-        if chart_evaluator is not None:
-            assert period_index is not None and chart_slice is not None
-            return lambda parameter: chart_evaluator(
-                parameter, bound[period_index], bound[chart_slice]
+        if chart is not None:
+            period_index, values_slice = chart.period, slice(*chart.values)
+            point = chart.point
+            if not isinstance(point, tuple):
+                folded = point
+                return lambda parameter: folded(
+                    parameter, bound[period_index], bound[values_slice]
+                )
+            structure = point
+
+            def chart_point(parameter: Array, period: Array, values: Array, /) -> Array:
+                # The chart index is an exact, non-integrated singleton input.
+                return orthogonal_chart_parameters(
+                    structure, parameter, period, values[:-1], values[-1]
+                )
+
+            return lambda parameter: chart_point(
+                parameter, bound[period_index], bound[values_slice]
             )
         if section_slice is not None:
+            window = section_slice
             shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
-            return lambda parameter: (
-                _section_point(parameter, bound[section_slice]) + shift
-            )
+            return lambda parameter: _section_point(parameter, bound[window]) + shift
         if root_slice is not None:
             root = bound[root_slice]
             shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
@@ -966,9 +916,10 @@ def _green_strip_program(
             line = bound[line_slice]
             shift = bound[shift_slice] if shift_slice is not None else jnp.zeros((2,))
             return lambda parameter: line[:2] + parameter * line[2:4] + shift
-        return lambda parameter: _pcurve_point(pcurve, parameter)
+        curve = _live_source(live).pcurve
+        return lambda parameter: _pcurve_point(curve, parameter)
 
-    if cylinder:
+    if layout.cylinder:
 
         def cylinder_density(parameters: Array, bound: Array) -> Array:
             evaluate = evaluator(bound)
@@ -1020,9 +971,12 @@ def _green_strip_program(
                         )
                     )
             else:
+                surface = _live_source(live).patch
 
                 def flux_at(angle: Array, /) -> Array:
-                    return _surface_flux(patch, jnp.stack((angle, jnp.zeros_like(angle))))
+                    return _surface_flux(
+                        surface, jnp.stack((angle, jnp.zeros_like(angle)))
+                    )
 
                 zero = parameters[0] * 0.0
                 value = flux_at(zero)
@@ -1040,14 +994,13 @@ def _green_strip_program(
             tangent = jax.jacfwd(evaluate)(parameters[0])
             return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
 
-        dimension = 1
-        integrand = cylinder_density
-    elif torus_slice is not None:
-        dimension = 1
+        return cylinder_density, 1
+    if torus_slice is not None:
+        torus_window = torus_slice
 
         def torus_density(parameters: Array, bound: Array) -> Array:
             evaluate = evaluator(bound)
-            values = bound[torus_slice]
+            values = bound[torus_window]
             center, first_axis, second_axis, axis = (
                 values[:3],
                 values[3:6],
@@ -1079,55 +1032,239 @@ def _green_strip_program(
 
             return (primitive(point[0]) - primitive(jnp.asarray(origin))) * tangent[1]
 
-        integrand = torus_density
-    else:
-        dimension = 2
+        return torus_density, 1
+    surface = _live_source(live).patch
 
-        def density(parameters: Array, bound: Array) -> Array:
-            evaluate = evaluator(bound)
-            point = evaluate(parameters[0])
-            tangent = jax.jacfwd(evaluate)(parameters[0])
-            width = point[0] - origin
-            chart_point = jnp.stack((origin + parameters[1] * width, point[1]))
-            return _surface_flux(patch, chart_point) * width * tangent[1]
+    def density(parameters: Array, bound: Array) -> Array:
+        evaluate = evaluator(bound)
+        point = evaluate(parameters[0])
+        tangent = jax.jacfwd(evaluate)(parameters[0])
+        width = point[0] - origin
+        chart_point = jnp.stack((origin + parameters[1] * width, point[1]))
+        return _surface_flux(surface, chart_point) * width * tangent[1]
 
-        integrand = density
+    return density, 2
 
-    fourth = (cylinder or torus_slice is not None) and (
-        isinstance(
-            pcurve,
-            (IntersectionPCurve, PlaneCylinderSectionPCurve, LineCurve, ExactLineCurve),
-        )
-        or line_slice is not None
-        or section_slice is not None
-    )
-    if not lower:
-        return _cell_program(
-            _with_hessian(lambda x: integrand(x, x[:0]), fourth=fourth),
-            dimension,
-        )
+
+def _strip_jet(
+    layout: _StripLayout,
+    integrand: Callable[[Array, Array], Array],
+    dimension: int,
+    /,
+) -> Callable[[Array], Array]:
+    if not layout.width:
+        return _with_hessian(lambda x: integrand(x, x[:0]), fourth=layout.fourth)
 
     def jet_with_bounds(parameters: Array, /) -> Array:
         bound = parameters[dimension:]
-        return _with_hessian(lambda x: integrand(x, bound), fourth=fourth)(
+        return _with_hessian(lambda x: integrand(x, bound), fourth=layout.fourth)(
             parameters[:dimension]
         )
 
-    if program_key is None or programs is None:
-        program = _cell_program(jet_with_bounds, dimension + len(lower))
-    else:
-        entry = programs.get(program_key)
-        if entry is not None and entry[0] is patch and entry[1] is pcurve:
-            program = entry[2]
+    return jet_with_bounds
+
+
+# Shared strip programs by layout, least recently used first. A shared layout's
+# integrand reads only its layout, so an entry retains no patch, curve or source
+# array, and a fresh domain with the same carrier structure reuses its program.
+_STRIP_PROGRAMS: OrderedDict[_StripLayout, PreparedIntervalFunction] = OrderedDict()
+_STRIP_PROGRAM_CAPACITY = 64
+
+
+def _green_strip_program(
+    patch: AbstractSurfacePatch,
+    pcurve: AbstractCurve,
+    origin: float,
+    /,
+    *,
+    chart: int | None = None,
+    cylinder: bool = False,
+    parameterized_chart: bool = True,
+) -> _IntervalProgram:
+    """``g(u0 + s (u(t) - u0), v(t)) (u(t) - u0) v'(t)`` on the strip ``(t, s)``.
+
+    Its integral over ``s`` in ``[0, 1]`` is ``G(u(t), v(t)) v'(t)`` with
+    ``G(u, v) = int_u0^u g(r, v) dr``, so summing the p-curves' strip integrals
+    gives the trimmed face integral by Green's theorem. An orthogonal-cylinder
+    chart takes its exact coefficients and index as bound inputs unless
+    ``parameterized_chart`` is false, which folds them into the program.
+    """
+
+    lower: list[float] = []
+    upper: list[float] = []
+    chart_point: OrthogonalChartStructure | _ChartPoint | None = None
+    chart_values = (0, 0)
+    if chart is not None and isinstance(pcurve, IntersectionPCurve):
+        if (
+            parameterized_chart
+            and orthogonal_cylinder_family(pcurve.curve.first, pcurve.curve.second)
+            is not None
+        ):
+            _, chart_lower, chart_upper, chart_point = (
+                pcurve._parameterized_chart_evaluator_with_source_bounds(chart)
+            )
+            # The chart index is an exact, non-integrated singleton input.
+            chart_lower = np.append(chart_lower, np.float64(chart))
+            chart_upper = np.append(chart_upper, np.float64(chart))
         else:
-            program = _cell_program(jet_with_bounds, dimension + len(lower))
-            if program.execution != "batched":
-                # Only batched lowering is known to preserve endpoints when a
-                # formerly folded chart constant becomes an interval input.
-                return _green_strip_program(
-                    patch, pcurve, origin, chart=chart, cylinder=cylinder
-                )
-            programs[program_key] = (patch, pcurve, program)
+            chart_point, chart_lower, chart_upper = _intersection_chart_evaluator(
+                pcurve, chart
+            )
+        chart_values = (len(lower), len(lower) + chart_lower.size)
+        lower.extend(chart_lower.tolist())
+        upper.extend(chart_upper.tolist())
+
+    def bind(values: Sequence[ExactScalar], /) -> _Slice:
+        start = len(lower)
+        for value in values:
+            lo, hi = coefficient_interval(value, bits=128)
+            lower.append(fraction_down(lo))
+            upper.append(fraction_up(hi))
+        return start, len(lower)
+
+    shifts = (0, 0)
+    line = pcurve
+    while isinstance(line, PeriodicPCurve):
+        shifts = tuple(a + b for a, b in zip(shifts, line.period_shifts, strict=True))
+        line = line.source_curve
+    section_slice = None
+    if isinstance(line, PlaneCylinderSectionPCurve):
+        section_slice = (len(lower), len(lower) + 9)
+        section_low, section_high = _section_source_bounds(line)
+        lower.extend(section_low.tolist())
+        upper.extend(section_high.tolist())
+    line_slice = None
+    root_slice = None
+    if isinstance(line, LineCurve):
+        line_slice = bind((*line.origin_exact, *line.direction_exact))
+    elif isinstance(line, ExactLineCurve):
+        line_slice = bind(
+            (
+                *line.first_exact,
+                *(
+                    last - first
+                    for first, last in zip(line.first_exact, line.last_exact, strict=True)
+                ),
+            )
+        )
+    elif isinstance(line, ConicRootLinePCurve):
+        root_slice = (len(lower), len(lower) + 3)
+        domain = line.parameter_domain
+        parameter = 0.0 if domain is None else domain[0]
+        box = line.bounding_box(parameter, parameter)
+        lower.append(float(box[0, 0]))
+        upper.append(float(box[1, 0]))
+        bind((line.height_origin_exact, line.height_direction_exact))
+    elif section_slice is None:
+        shifts = (0, 0)
+    chart_inputs = None
+    if chart_point is not None:
+        chart_inputs = _ChartInputs(chart_values, len(lower), chart_point)
+        period_low, period_high = period_scalar_bounds(
+            PeriodOffset(Fraction(0), Fraction(1))
+        )
+        lower.append(float(period_low))
+        upper.append(float(period_high))
+    shift_slice = None
+    if any(shifts):
+        shift_slice = (len(lower), len(lower) + 2)
+        for shift in shifts:
+            lo, hi = period_scalar_bounds(PeriodOffset(Fraction(0), Fraction(shift)))
+            lower.append(float(lo))
+            upper.append(float(hi))
+    cylinder_slice = None
+    if cylinder and isinstance(patch, CylinderPatch):
+        cylinder_slice = bind(
+            (
+                *patch.origin_exact,
+                *patch.first_axis_exact,
+                *patch.second_axis_exact,
+                *patch.axis_exact,
+                patch.radius_exact,
+            )
+        )
+    revolution_slice = None
+    straight = (
+        _straight_revolution(patch) if isinstance(patch, RevolutionSurface) else None
+    )
+    if cylinder and straight is not None and straight.slope == 0:
+        revolution_slice = bind(
+            (
+                *straight.origin,
+                *straight.radial,
+                *straight.tangent,
+                *straight.axis,
+                straight.axial_rate,
+                straight.scale_origin,
+            )
+        )
+    torus_slice = None
+    if isinstance(patch, TorusPatch):
+        torus_slice = bind(
+            (
+                *patch.center_exact,
+                *patch.first_axis_exact,
+                *patch.second_axis_exact,
+                *patch.axis_exact,
+                patch.major_radius_exact,
+                patch.minor_radius_exact,
+            )
+        )
+    layout = _StripLayout(
+        origin=float(origin).hex(),
+        width=len(lower),
+        cylinder=cylinder,
+        fourth=(cylinder or torus_slice is not None)
+        and (
+            isinstance(
+                pcurve,
+                (
+                    IntersectionPCurve,
+                    PlaneCylinderSectionPCurve,
+                    LineCurve,
+                    ExactLineCurve,
+                ),
+            )
+            or line_slice is not None
+            or section_slice is not None
+        ),
+        chart=chart_inputs,
+        section_slice=section_slice,
+        root_slice=root_slice,
+        line_slice=line_slice,
+        shift_slice=shift_slice,
+        cylinder_slice=cylinder_slice,
+        revolution_slice=revolution_slice,
+        torus_slice=torus_slice,
+    )
+    shared = layout.shared
+    program = _STRIP_PROGRAMS.get(layout) if shared else None
+    if program is not None:
+        _STRIP_PROGRAMS.move_to_end(layout)
+    else:
+        integrand, dimension = _strip_integrand(
+            layout, None if shared else _LiveStrip(patch, pcurve)
+        )
+        program = _cell_program(
+            _strip_jet(layout, integrand, dimension), dimension + layout.width
+        )
+        if isinstance(chart_point, tuple) and program.execution != "batched":
+            # Only batched lowering is known to preserve endpoints when a
+            # formerly folded chart constant becomes an interval input.
+            return _green_strip_program(
+                patch,
+                pcurve,
+                origin,
+                chart=chart,
+                cylinder=cylinder,
+                parameterized_chart=False,
+            )
+        if shared:
+            _STRIP_PROGRAMS[layout] = program
+            if len(_STRIP_PROGRAMS) > _STRIP_PROGRAM_CAPACITY:
+                _STRIP_PROGRAMS.popitem(last=False)
+    if not lower:
+        return program
     return _BoundProgram(program, np.asarray(lower), np.asarray(upper))
 
 
@@ -2262,7 +2399,6 @@ def _plan_face(
     face: int,
     sign: int,
     ends: _LoopEnds,
-    programs: _StripPrograms,
     /,
 ) -> _FacePlan:
     geometry, patch = source.geometry, source.patches[face]
@@ -2432,7 +2568,6 @@ def _plan_face(
                         float(bounds[0, 0]),
                         chart=chart,
                         cylinder=cylinder,
-                        programs=programs,
                     ),
                 )
                 strip_programs[key] = program
@@ -2632,13 +2767,11 @@ def _volume_integral(
     fixed_upper: list[float] = []
     jacobians: dict[int, tuple[float, float]] = {}
     ends: dict[int, _LoopEnds] = {}
-    # Entries retain their live patch and curve for this operation.
-    programs: _StripPrograms = {}
     for face, sign in zip(faces, signs, strict=True):
         if sign not in (-1, 1):
             raise ValueError("Source face volume signs must be -1 or 1.")
         ends[face] = _loop_ends(source, face)
-        plan = _plan_face(source, face, sign, ends[face], programs)
+        plan = _plan_face(source, face, sign, ends[face])
         families.extend(plan.families)
         exact += plan.exact
         if plan.fixed != (0.0, 0.0):

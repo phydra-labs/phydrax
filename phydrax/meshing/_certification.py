@@ -81,6 +81,7 @@ from ._audit import (
 from ._certification_inputs import MeshCertificationInputs, validated_fidelity_witness
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._layer_core_root_geometry import ComputedLayerCoreRoot
+from ._native_cad_certificate import NativeCadCertificate
 from ._native_construction import NativeMeshOrganization
 from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
 
@@ -610,6 +611,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     embedding: GlobalEmbeddingCertificate
     coverage: DomainCoverageCertificate | None
     fidelity: SourceFidelityCertificate | None
+    native_cad: NativeCadCertificate | None
     scoped_fidelity: tuple[SourceFidelityCertificate, ...]
     findings: tuple[MeshCertificateFinding, ...]
     recorded: tuple[MeshCertificateFinding, ...]
@@ -673,7 +675,8 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             (None, ()) if stored_fidelity is None else stored_fidelity
         )
         if stored_fidelity is not None and (
-            (stored_main is None) != (inputs.source is None)
+            (stored_main is None)
+            != (inputs.source is None or inputs.native_cad_surface is not None)
             or len(stored_scoped) != len(inputs.scoped_fidelity)
             or any(
                 type(value) is not SourceFidelityCertificate
@@ -726,6 +729,10 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             )
         _require_route_geometry(inputs)
         organization_ = NativeMeshOrganization() if organization is None else organization
+        if inputs.native_cad_records is not None:
+            inputs.native_cad_records.require_associations(
+                inputs.mesh, organization_.associations
+            )
         multiregion = _multiregion_proof(inputs, organization_)
         policy = (
             _acceptance_audit_policy(inputs, multiregion)
@@ -839,7 +846,24 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             else None
         )
         fidelity = None
-        if inputs.source is not None:
+        native_cad = None
+        if inputs.native_cad_surface is not None:
+            # The native verifiers own source fidelity and material coverage.
+            assert isinstance(inputs.domain, MeshingDomain)
+            assert inputs.fidelity_tolerance is not None
+            assert inputs.native_cad_records is not None
+            native_cad = NativeCadCertificate(
+                inputs.mesh,
+                inputs.geometry,
+                inputs.domain,
+                inputs.native_cad_surface,
+                inputs.native_cad_records,
+                inputs.fidelity_tolerance,
+                inputs.protected_features,
+                inputs.maximum_normal_deviation,
+            )
+            findings.extend(native_cad.findings)
+        elif inputs.source is not None:
             if inputs.fidelity_tolerance is None:
                 raise ValueError("Fidelity source requires its physical tolerance.")
             if reuse_surface:
@@ -917,7 +941,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         for certificate in scoped:
             findings.extend(certificate.findings)
         coverage = None
-        if inputs.domain is not None:
+        if inputs.domain is not None and native_cad is None:
             if inputs.cell_regions is None:
                 raise ValueError("Domain coverage requires its material assignments.")
             if embedding.status == "certified":
@@ -984,6 +1008,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         self.embedding = embedding
         self.coverage = coverage
         self.fidelity = fidelity
+        self.native_cad = native_cad
         self.scoped_fidelity = scoped
         self.findings = tuple(
             sorted(
@@ -1011,6 +1036,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 "fidelity": None
                 if self.fidelity is None
                 else self.fidelity.certificate_id,
+                **(
+                    {}
+                    if self.native_cad is None
+                    else {"native_cad": self.native_cad.certificate_id}
+                ),
                 "scoped_fidelity": tuple(
                     value.certificate_id for value in self.scoped_fidelity
                 ),
@@ -1088,6 +1118,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored mesh acceptance differs from its rebuilt request or audit policy."
             )
+        if inputs.native_cad_records is not None:
+            records = inputs.native_cad_records
+            records.require_associations(inputs.mesh, organization.associations)
+            if self.associations is not organization.associations:
+                records.require_associations(inputs.mesh, self.associations)
         stored = (
             None if self.boundary is None else self.boundary.model_id,
             tuple(value.patch_id for value in self.patches),
@@ -1126,10 +1161,25 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stored global embedding binds another mesh, coordinate map, or junction set."
             )
-        if (inputs.source is None) != (self.fidelity is None) or len(
-            inputs.scoped_fidelity
-        ) != len(self.scoped_fidelity):
+        native = inputs.native_cad_surface is not None
+        if (
+            (inputs.source is not None and not native) != (self.fidelity is not None)
+            or native != (self.native_cad is not None)
+            or len(inputs.scoped_fidelity) != len(self.scoped_fidelity)
+        ):
             raise ValueError("Stored source fidelity differs from its rebuilt premises.")
+        if (
+            self.native_cad is not None
+            and inputs.native_cad_surface is not None
+            and inputs.native_cad_records is not None
+            and (
+                self.native_cad.witness.witness_id != inputs.native_cad_surface.witness_id
+                or self.native_cad.records_id != inputs.native_cad_records.records_id
+            )
+        ):
+            raise ValueError(
+                "Stored native CAD certificate binds another witness or records."
+            )
         if (
             self.fidelity is not None
             and inputs.source is not None
@@ -1145,7 +1195,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     def _require_coverage_premises(self, inputs: MeshCertificationInputs, /) -> None:
         coverage = self.coverage
         domain = inputs.domain
-        if domain is None or self.embedding.status != "certified":
+        if (
+            domain is None
+            or self.embedding.status != "certified"
+            or inputs.native_cad_surface is not None
+        ):
             if coverage is not None:
                 raise ValueError(
                     "Stored material coverage has no admissible domain or embedding premise."

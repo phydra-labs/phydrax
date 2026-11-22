@@ -900,25 +900,19 @@ def _orthogonal_green_sources() -> tuple[object, object]:
 
 def test_chart_green_programs_match_general_route_across_charts() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
-    from phydrax.geometry.brep._measure import _green_strip_program, _StripPrograms
+    from phydrax.geometry.brep._measure import _green_strip_program
     from phydrax.geometry.brep._patches import CylinderPatch
 
     patch, curve = _orthogonal_green_sources()
     assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
     pcurve = curve.p_curve("first")
-    programs: _StripPrograms = {}
     for chart in range(curve.num_charts):
         low = np.asarray(((chart + 0.2,), (chart + 0.4,)))
         high = np.asarray(((chart + 0.3,), (chart + 0.5,)))
-        reference = _green_strip_program(patch, pcurve, 0.0, chart=chart, cylinder=True)
-        actual = _green_strip_program(
-            patch,
-            pcurve,
-            0.0,
-            chart=chart,
-            cylinder=True,
-            programs=programs,
+        reference = _green_strip_program(
+            patch, pcurve, 0.0, chart=chart, cylinder=True, parameterized_chart=False
         )
+        actual = _green_strip_program(patch, pcurve, 0.0, chart=chart, cylinder=True)
         for expected, value in zip(
             reference.evaluate(low, high), actual.evaluate(low, high), strict=True
         ):
@@ -930,12 +924,11 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
         IntersectionCurve,
         IntersectionPCurve,
     )
-    from phydrax.geometry.brep._measure import _green_strip_program, _StripPrograms
+    from phydrax.geometry.brep._measure import _green_strip_program
     from phydrax.geometry.brep._patches import CylinderPatch
 
     patch, curve = _orthogonal_green_sources()
     assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
-    programs: _StripPrograms = {}
     for side in ("first", "second"):
         for reversed_source in (False, True):
             pcurve = IntersectionPCurve(curve, side, reversed=reversed_source)
@@ -945,15 +938,15 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
                     parameter = curve.num_charts - parameter
                 box = np.asarray(((parameter,),))
                 reference = _green_strip_program(
-                    patch, pcurve, 0.0, chart=chart, cylinder=True
-                )
-                actual = _green_strip_program(
                     patch,
                     pcurve,
                     0.0,
                     chart=chart,
                     cylinder=True,
-                    programs=programs,
+                    parameterized_chart=False,
+                )
+                actual = _green_strip_program(
+                    patch, pcurve, 0.0, chart=chart, cylinder=True
                 )
                 for expected, value in zip(
                     reference.evaluate(box, box), actual.evaluate(box, box), strict=True
@@ -963,22 +956,19 @@ def test_chart_green_programs_keep_curve_structures_distinct() -> None:
 
 def test_chart_green_programs_keep_origins_distinct() -> None:
     from phydrax.geometry.brep._intersection_curve import IntersectionCurve
-    from phydrax.geometry.brep._measure import _green_strip_program, _StripPrograms
+    from phydrax.geometry.brep._measure import _green_strip_program
     from phydrax.geometry.brep._patches import CylinderPatch
 
     patch, curve = _orthogonal_green_sources()
     assert isinstance(patch, CylinderPatch) and isinstance(curve, IntersectionCurve)
     pcurve = curve.p_curve("first")
-    programs: _StripPrograms = {}
     for chart, origin in ((0, 0.0), (1, 0.75), (2, -0.0)):
         low = np.asarray(((chart + 0.2,),))
         high = np.asarray(((chart + 0.3,),))
         reference = _green_strip_program(
-            patch, pcurve, origin, chart=chart, cylinder=True
+            patch, pcurve, origin, chart=chart, cylinder=True, parameterized_chart=False
         )
-        actual = _green_strip_program(
-            patch, pcurve, origin, chart=chart, cylinder=True, programs=programs
-        )
+        actual = _green_strip_program(patch, pcurve, origin, chart=chart, cylinder=True)
         for expected, value in zip(
             reference.evaluate(low, high), actual.evaluate(low, high), strict=True
         ):
@@ -1015,6 +1005,51 @@ def test_chart_green_program_owner_does_not_outlive_operation(tmp_path: Path) ->
     assert reference() is None
 
 
+def test_fresh_sources_reuse_shared_strip_programs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from collections import OrderedDict
+    from typing import Any
+
+    from jax import Array
+
+    from phydrax.geometry._interval_enclosure import PreparedIntervalFunction
+    from phydrax.geometry.brep import _measure
+    from phydrax.geometry.brep._measure import _StripLayout
+
+    prepare = _measure.prepare_interval_function
+    prepared: list[int] = []
+
+    def counted(
+        function: Callable[[Array], Array], dimension: int, /, **options: Any
+    ) -> PreparedIntervalFunction:
+        prepared.append(dimension)
+        return prepare(function, dimension, **options)
+
+    programs: OrderedDict[_StripLayout, PreparedIntervalFunction] = OrderedDict()
+    monkeypatch.setattr(_measure, "_STRIP_PROGRAMS", programs)
+    monkeypatch.setattr(_measure, "prepare_interval_function", counted)
+    contract = SpatialCoordinateContract.si()
+    cold = brep_mass_properties(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract), relative_tolerance=1e-6
+    )
+    cold_count, shared = len(prepared), len(programs)
+    # The side face's line strips read only their layout and bound inputs.
+    assert shared > 0
+    prepared.clear()
+    warm = brep_mass_properties(
+        brep_cylinder(0.5, 1.0, coordinate_contract=contract), relative_tolerance=1e-6
+    )
+    # A fresh source of the same carrier structure prepares no shared program
+    # again and reaches a bitwise identical enclosure.
+    assert len(programs) == shared
+    assert len(prepared) == cold_count - shared
+    assert warm.status == cold.status == ("certified",)
+    assert np.array_equal(
+        warm.reached_enclosures.view(np.uint64), cold.reached_enclosures.view(np.uint64)
+    )
+
+
 def test_chart_green_program_native_unavailable_refusal_is_unchanged(
     tmp_path: Path,
 ) -> None:
@@ -1040,10 +1075,11 @@ from phydrax.geometry.brep._measure import _green_strip_program
 with open(sys.argv[1], "rb") as handle:
     patch, curve = pickle.load(handle)
 box = np.asarray(((0.25,),), dtype=np.float64)
-programs = {}
 messages = []
-for cache in (None, programs):
-    program = _green_strip_program(patch, curve, 0.0, chart=0, cylinder=True, programs=cache)
+for parameterized in (False, True):
+    program = _green_strip_program(
+        patch, curve, 0.0, chart=0, cylinder=True, parameterized_chart=parameterized
+    )
     try:
         program.evaluate(box, box)
     except IntervalExtensionError as error:

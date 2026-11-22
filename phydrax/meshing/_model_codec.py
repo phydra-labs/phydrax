@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .._array_archive import (
     _read_array_archive,
@@ -106,6 +106,13 @@ from .._model._structure import (
 )
 from .._strict import Strict
 from .._typing_plan import validate_tree
+
+
+if TYPE_CHECKING:
+    from ..discretization._cell_mesh import CellMesh
+    from ._certification_inputs import CoverageDomain, MeshCertificationInputs
+    from ._native_cad_certificate import NativeCadSurfaceWitness
+    from ._native_cad_records import NativeCadRecords
 
 
 _MODEL_KIND = "phydrax-native-model-artifact"
@@ -819,6 +826,11 @@ def _register_model_archive_types() -> None:
         TransfiniteSurfaceControl,
     )
     from ..meshing._metric import MeshMetricField
+    from ..meshing._native_cad_certificate import (
+        NativeCadCertificate,
+        NativeCadSurfaceWitness,
+    )
+    from ..meshing._native_cad_records import NativeCadRecords
     from ..meshing._organization import (
         MeshAttribute,
         MeshAttributeRole,
@@ -1488,6 +1500,9 @@ def _register_model_archive_types() -> None:
         ("phydrax.meshing", MeshCertificationInputs),
         ("phydrax.meshing", MeshCertificationSchedule),
         ("phydrax.meshing", MeshCertificationReport),
+        ("phydrax.meshing", NativeCadSurfaceWitness),
+        ("phydrax.meshing", NativeCadCertificate),
+        ("phydrax.meshing", NativeCadRecords),
         ("phydrax.meshing", BlockInterfaceControl),
         ("phydrax.meshing", TransfiniteCurveControl),
         ("phydrax.meshing", TransfiniteSurfaceControl),
@@ -1752,6 +1767,40 @@ def _restore_owner_local_dependencies(
         value,
         is_leaf=lambda node: type(node) in recipe_types,
     )
+
+
+def restore_native_cad_association_authority(
+    original: MeshCertificationInputs, mesh: CellMesh, domain: CoverageDomain | None, /
+) -> tuple[NativeCadSurfaceWitness | None, NativeCadRecords | None]:
+    """Restore native association authority only with its actual source and mesh."""
+    import numpy as np
+
+    from ..geometry._meshing_domain import MeshingDomain
+    from ._native_cad_certificate import NativeCadSurfaceWitness
+    from ._native_cad_records import NativeCadRecords
+
+    witness, records = original.native_cad_surface, original.native_cad_records
+    if witness is None and records is None:
+        return None, None
+    if (
+        type(witness) is not NativeCadSurfaceWitness
+        or type(records) is not NativeCadRecords
+        or not isinstance(domain, MeshingDomain)
+        or original.cell_regions is None
+        or original.fidelity_tolerance is None
+    ):
+        raise ValueError(
+            "Native CAD association archive lacks its domain, chart or material operands."
+        )
+    rebuilt = NativeCadRecords.from_stored_fields(
+        records,
+        mesh,
+        domain,
+        np.asarray(original.cell_regions, dtype=np.int64),
+        witness,
+        original.fidelity_tolerance,
+    )
+    return witness, rebuilt
 
 
 def restore_model_archive_value(

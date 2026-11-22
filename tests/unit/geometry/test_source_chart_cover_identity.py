@@ -41,6 +41,7 @@ from phydrax.meshing._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._controls import FeatureKind, ProtectedFeature
 from phydrax.meshing._result import CellMeshingResult
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import UniformSizeControl
@@ -197,9 +198,16 @@ def _cad_cylinder_volume() -> CellMeshingResult:
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        # A (soft) protected feature keeps the existing CAD construction and
+        # its stored chart cover, which these tests pin.
+        protected_features=(
+            ProtectedFeature(
+                boundary, FeatureKind.SURFACE, maximum_deviation=0.05, hard=False
+            ),
+        ),
         maximum_deviation=0.05,
     )
-    return (
+    result = (
         phx.meshing.NativeMeshingProvider(
             NativeMeshingOptions(
                 "cad_tetrahedral",
@@ -211,6 +219,8 @@ def _cad_cylinder_volume() -> CellMeshingResult:
         .plan(model, specification)
         .execute()
     )
+    assert isinstance(result, CellMeshingResult)
+    return result
 
 
 @pytest.fixture(scope="module")

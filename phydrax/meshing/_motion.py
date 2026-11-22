@@ -927,7 +927,7 @@ def _motion_target(
                 transition=transition,
             )
             if renewed_inputs is not None:
-                inputs, validated_witnesses = renewed_inputs
+                inputs, validated_witnesses, _ = renewed_inputs
         else:
             inputs, validated_witnesses, associations = renew_planar_motion_source(
                 source, mesh, geometry, source_transition

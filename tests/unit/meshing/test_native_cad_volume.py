@@ -2053,6 +2053,19 @@ def test_rooted_plane_partition_rejects_overlap_across_blocks() -> None:
     assert failure.value.status == "violated"
 
 
+def _python_route_feature(model: BRepModel) -> tuple[ProtectedFeature, ...]:
+    # A protected feature keeps the existing CAD construction (its chart
+    # witness is what these tests pin); a soft one adds no scoped fidelity.
+    return (
+        ProtectedFeature(
+            MeshingScope.whole(model, 2),
+            FeatureKind.SURFACE,
+            maximum_deviation=0.05,
+            hard=False,
+        ),
+    )
+
+
 def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> None:
     # The sphere's chart has two collapsed pole sides and a seam whose u = 2*pi
     # use is a native-period gauge of the u = 0 line. Pole fans leave chart
@@ -2066,6 +2079,7 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        protected_features=_python_route_feature(model),
         maximum_deviation=0.05,
     )
     result = (
@@ -2080,6 +2094,7 @@ def test_cad_sphere_volume_certifies_collapsed_poles_and_its_periodic_seam() -> 
         .plan(model, specification)
         .execute()
     )
+    assert isinstance(result, CellMeshingResult)
 
     assert result.certification is not None and result.certification.passed
     witness = result.certification.inputs.fidelity_witness
@@ -2122,6 +2137,7 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.3),),
+        protected_features=_python_route_feature(model),
         maximum_deviation=0.05,
     )
     result = (
@@ -2136,6 +2152,7 @@ def test_cad_cylinder_volume_charts_planar_caps_in_their_exact_plane() -> None:
         .plan(model, specification)
         .execute()
     )
+    assert isinstance(result, CellMeshingResult)
 
     assert result.certification is not None and result.certification.passed
     assert result.compliance.issues == ()
@@ -2277,6 +2294,8 @@ def test_cad_volume_recorded_vertex_classes_agree_with_geometric_classification(
         .plan(model, specification)
         .execute()
     )
+    assert isinstance(result, CellMeshingResult)
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
     vertex_set = result.mesh.entity_set(0).entity_set_id
     (recorded,) = (
         association

@@ -38,6 +38,7 @@ from ._source_embedding import certify_source_embedding
 
 
 if TYPE_CHECKING:
+    from .._meshing_domain import MeshingDomain
     from .._surface_source_support import SurfaceSourceCharts
     from ._curve_approximation_topology import TrimReferenceSegment
     from ._intersection_curve import IntersectionSide
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
 
 
 _IntervalBox = tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
+_Vector = tuple[Fraction, ...]
 
 
 def _rational_frame(
@@ -1316,6 +1318,287 @@ def certify_revolution_rim_pair(
 
 
 @dataclass(frozen=True, slots=True)
+class SourcePlanePlanePair:
+    """Exact proof that two straight-edged plane faces meet only on shared topology."""
+
+    source_id: str
+    model_id: str
+    source_revision: str
+    faces: tuple[int, int]
+    shared_edges: tuple[int, ...]
+    shared_vertices: tuple[int, ...]
+    certificate_id: str
+
+    def replay(self, model: BRepModel, /) -> bool:
+        return certify_plane_plane_pair(model, *self.faces) == self
+
+
+def _exact_plane(model: BRepModel, face: int, /) -> tuple[_Vector, _Vector] | None:
+    """The exact origin and normal of a plane carrier (its binary64 values)."""
+    from .._rational import rational_cross, rational_vector
+    from ._patches import PlanePatch
+
+    patch = model.patches[face]
+    if type(patch) is not PlanePatch:
+        return None
+    normal = rational_cross(
+        rational_vector(np.asarray(patch.first_axis, dtype=np.float64)),
+        rational_vector(np.asarray(patch.second_axis, dtype=np.float64)),
+    )
+    if all(value == 0 for value in normal):
+        return None
+    return rational_vector(np.asarray(patch.origin, dtype=np.float64)), normal
+
+
+def _exact_line_polygon(
+    model: BRepModel, face: int, /
+) -> tuple[dict[int, _Vector], dict[int, tuple[int, int]]] | None:
+    """Exact vertices and edges of a face bounded by straight source edges only.
+
+    Every edge must be an exact line (a ``LineCurve`` with rational origin and
+    direction, or an ``ExactLineCurve`` from ``first_exact`` to ``last_exact``
+    over its unit parameter domain) whose interval endpoints are its exact
+    vertices, so the face (a bounded plane region whose boundary is these
+    segments) lies in the convex hull of the returned vertices.
+    """
+    from ._patches import ExactLineCurve, LineCurve
+
+    geometry = model.geometry
+    vertices: dict[int, _Vector] = {}
+    edges: dict[int, tuple[int, int]] = {}
+    for loop in geometry.face_loops[face]:
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            curve_index = geometry.edge_curves[edge]
+            if curve_index < 0:
+                return None
+            curve = geometry.curves[curve_index]
+            if type(curve) is ExactLineCurve and curve.ambient_dimension == 3:
+                origin = curve.first_exact
+                direction = tuple(
+                    stop - start
+                    for start, stop in zip(
+                        curve.first_exact, curve.last_exact, strict=True
+                    )
+                )
+            elif (
+                type(curve) is LineCurve
+                and curve.ambient_dimension == 3
+                and _rational_components(curve.origin_exact)
+                and _rational_components(curve.direction_exact)
+            ):
+                origin, direction = curve.origin_exact, curve.direction_exact
+            else:
+                return None
+            ends = tuple(
+                Fraction.from_float(float(value)) for value in geometry.edge_ranges[edge]
+            )
+            for vertex, parameter in zip(geometry.edge_vertices[edge], ends, strict=True):
+                exact = geometry.vertex_exact_points[vertex]
+                point = tuple(
+                    o + parameter * d for o, d in zip(origin, direction, strict=True)
+                )
+                if exact is None or tuple(exact) != point:
+                    return None
+                vertices[vertex] = point
+            first, second = geometry.edge_vertices[edge]
+            edges[edge] = (first, second)
+    if not edges:
+        return None
+    return vertices, edges
+
+
+def _dot(first: _Vector, second: _Vector, /) -> Fraction:
+    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
+
+
+def _on_segment(point: _Vector, start: _Vector, stop: _Vector, /) -> bool:
+    """Whether ``point`` lies on the closed segment (exact)."""
+    from .._rational import rational_cross
+
+    offset = tuple(p - s for p, s in zip(point, start, strict=True))
+    direction = tuple(e - s for e, s in zip(stop, start, strict=True))
+    if any(value != 0 for value in rational_cross(offset, direction)):
+        return False
+    along = _dot(offset, direction)
+    return 0 <= along <= _dot(direction, direction)
+
+
+def _in_closed_polygon(
+    point: _Vector,
+    normal: _Vector,
+    polygon: tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+    /,
+) -> bool:
+    """Whether a point of the polygon's plane lies in the closed polygon.
+
+    On an edge counts as inside; otherwise the even-odd crossing rule over all
+    loops, in the coordinate projection dropping the normal's largest axis.
+    """
+    vertices, edges = polygon
+    segments = tuple((vertices[a], vertices[b]) for a, b in edges.values())
+    if any(_on_segment(point, start, stop) for start, stop in segments):
+        return True
+    drop = max(range(3), key=lambda axis: abs(normal[axis]))
+    u, v = (axis for axis in range(3) if axis != drop)
+    inside = False
+    for start, stop in segments:
+        if (start[v] > point[v]) != (stop[v] > point[v]):
+            crossing = start[u] + (point[v] - start[v]) * (stop[u] - start[u]) / (
+                stop[v] - start[v]
+            )
+            if crossing > point[u]:
+                inside = not inside
+    return inside
+
+
+def _plane_faces_meet_only_shared(
+    planes: tuple[tuple[_Vector, _Vector], tuple[_Vector, _Vector]],
+    polygons: tuple[
+        tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+        tuple[dict[int, _Vector], dict[int, tuple[int, int]]],
+    ],
+    shared_edges: set[int],
+    shared_vertices: set[int],
+    /,
+) -> bool:
+    """Whether two plane polygons meet only on their shared edges and vertices.
+
+    Parallel distinct planes are disjoint; coplanar faces are refused. Else
+    both polygons meet only on the line L of the two planes. Every point where
+    an edge of either polygon meets the other plane is a breakpoint on L;
+    membership in each closed polygon is constant between breakpoints, so
+    checking every breakpoint and every gap midpoint decides exactly whether a
+    common point lies off the shared topology.
+    """
+    from .._rational import rational_cross
+
+    (origin_a, normal_a), (origin_b, normal_b) = planes
+    direction = rational_cross(normal_a, normal_b)
+    if all(value == 0 for value in direction):
+        offset = tuple(b - a for a, b in zip(origin_a, origin_b, strict=True))
+        return _dot(offset, normal_a) != 0
+    height_a, height_b = _dot(normal_a, origin_a), _dot(normal_b, origin_b)
+    scale = _dot(direction, direction)
+    base = tuple(
+        (height_a * x + height_b * y) / scale
+        for x, y in zip(
+            rational_cross(normal_b, direction),
+            rational_cross(direction, normal_a),
+            strict=True,
+        )
+    )
+
+    def at(parameter: Fraction, /) -> _Vector:
+        return tuple(b + parameter * d for b, d in zip(base, direction, strict=True))
+
+    breakpoints: set[Fraction] = set()
+    for polygon, (origin, normal) in (
+        (polygons[0], planes[1]),
+        (polygons[1], planes[0]),
+    ):
+        vertices, edges = polygon
+        for a, b in edges.values():
+            start, stop = vertices[a], vertices[b]
+            first = _dot(tuple(p - o for p, o in zip(start, origin, strict=True)), normal)
+            last = _dot(tuple(p - o for p, o in zip(stop, origin, strict=True)), normal)
+            if (first > 0 and last > 0) or (first < 0 and last < 0):
+                continue
+            points = (
+                (start, stop)
+                if first == last == 0
+                else (
+                    tuple(
+                        s + first / (first - last) * (e - s)
+                        for s, e in zip(start, stop, strict=True)
+                    ),
+                )
+            )
+            breakpoints.update(
+                _dot(tuple(p - b for p, b in zip(point, base, strict=True)), direction)
+                / scale
+                for point in points
+            )
+    ordered = sorted(breakpoints)
+    samples = (*ordered, *((x + y) / 2 for x, y in zip(ordered, ordered[1:])))
+    shared = tuple(
+        (polygons[0][0][a], polygons[0][0][b])
+        for edge, (a, b) in polygons[0][1].items()
+        if edge in shared_edges
+    )
+    corners = tuple(polygons[0][0][vertex] for vertex in shared_vertices)
+    for parameter in samples:
+        point = at(parameter)
+        if (
+            _in_closed_polygon(point, normal_a, polygons[0])
+            and _in_closed_polygon(point, normal_b, polygons[1])
+            and point not in corners
+            and not any(_on_segment(point, start, stop) for start, stop in shared)
+        ):
+            return False
+    return True
+
+
+def certify_plane_plane_pair(
+    model: BRepModel, first: int, second: int, /
+) -> SourcePlanePlanePair | None:
+    """Prove two straight-edged plane faces meet only on their shared edges and vertices.
+
+    Decided exactly from the binary64 plane carriers and the exact line edges
+    on the line common to both planes (``_plane_faces_meet_only_shared``).
+    Coplanar faces are refused (another family decides them).
+    """
+    if (
+        not isinstance(model, BRepModel)
+        or type(first) is not int
+        or type(second) is not int
+        or not 0 <= first < second < len(model.patches)
+    ):
+        return None
+    model.require_current()
+    first_plane, second_plane = _exact_plane(model, first), _exact_plane(model, second)
+    first_polygon = _exact_line_polygon(model, first)
+    second_polygon = _exact_line_polygon(model, second)
+    if (
+        first_plane is None
+        or second_plane is None
+        or first_polygon is None
+        or second_polygon is None
+    ):
+        return None
+    shared_edges = set(first_polygon[1]) & set(second_polygon[1])
+    shared_vertices = set(first_polygon[0]) & set(second_polygon[0])
+    if not _plane_faces_meet_only_shared(
+        (first_plane, second_plane),
+        (first_polygon, second_polygon),
+        shared_edges,
+        shared_vertices,
+    ):
+        return None
+    edges, vertices = tuple(sorted(shared_edges)), tuple(sorted(shared_vertices))
+    identity = canonical_fingerprint(
+        {
+            "kind": "cad-source-plane-plane-pair",
+            "source": model.source_id,
+            "model": model.model_id,
+            "revision": model.source_revision,
+            "faces": (first, second),
+            "edges": edges,
+            "vertices": vertices,
+        }
+    )
+    return SourcePlanePlanePair(
+        model.source_id,
+        model.model_id,
+        model.source_revision,
+        (first, second),
+        edges,
+        vertices,
+        identity,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class SourceShellAdmissibility:
     """Source-bound proof of one embedded, outward, closed material shell."""
 
@@ -1615,15 +1898,150 @@ def certify_single_source_shell(
     return admissibility
 
 
+def certify_source_face_pairs(model: BRepModel, /) -> tuple[str, ...] | None:
+    """Prove every pair of source faces meets only on its shared topology.
+
+    Candidate pairs are those whose trim-enclosure boxes touch (every
+    edge-adjacent pair must be one); each must be certified by one pair
+    family. Returns the pair certificates in candidate order, or None.
+    Unsupported sources may raise the source evaluators' exceptions.
+    """
+    from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
+    from .._rational import fraction_down, fraction_up
+    from ._boolean_full_overlay import _coaxial_faces_meet_on_shared_circle
+
+    boxes = []
+    for face, patch in enumerate(model.patches):
+        trim = _trim_enclosure(model, face)
+        if trim is None:
+            return None
+        uv = np.asarray(
+            (
+                (fraction_down(trim[0][0]), fraction_down(trim[0][1])),
+                (fraction_up(trim[1][0]), fraction_up(trim[1][1])),
+            ),
+            dtype=np.float64,
+        )
+        box = np.asarray(patch.bounding_box(uv), dtype=np.float64)
+        if box.shape != (2, 3) or not np.all(np.isfinite(box)) or np.any(box[0] > box[1]):
+            return None
+        boxes.append(box)
+    bank = np.stack(boxes)
+    tree = prepare_bvh(bank[:, 0, :], bank[:, 1, :], dtype=np.float64)
+    candidates: set[tuple[int, int]] = set()
+    for left, right in bvh_overlap_pair_blocks(tree, tree, include_touching=True):
+        candidates.update(
+            (int(a), int(b)) for a, b in zip(left, right, strict=True) if a < b
+        )
+    for first in range(len(model.patches)):
+        for edge in model.geometry.topology.face_edges[first]:
+            for second in model.geometry.topology.edge_faces[edge]:
+                if first < second and (first, second) not in candidates:
+                    return None
+    pair_certificates: list[str] = []
+    for first, second in sorted(candidates):
+        common = set(model.geometry.topology.face_edges[first]) & set(
+            model.geometry.topology.face_edges[second]
+        )
+        separate = certify_same_chart_face_separation(model, first, second)
+        if separate is not None:
+            if common:
+                return None
+            pair_certificates.append(separate.certificate_id)
+            continue
+        planes = certify_plane_plane_pair(model, first, second)
+        if planes is not None and set(planes.shared_edges) == common:
+            pair_certificates.append(planes.certificate_id)
+            continue
+        radial = certify_coaxial_radial_separation(model, first, second)
+        if radial is not None:
+            pair_certificates.append(radial.certificate_id)
+            continue
+        ring = certify_source_ring_face_pair(model, first, second)
+        if ring is not None:
+            pair_certificates.append(ring.certificate_id)
+            continue
+        tangent = certify_tangent_cylinder_torus_pair(model, first, second)
+        if tangent is not None:
+            pair_certificates.append(tangent.certificate_id)
+            continue
+        plane_torus = certify_plane_torus_pair(model, first, second)
+        if plane_torus is not None:
+            pair_certificates.append(plane_torus.certificate_id)
+            continue
+        regions = (
+            SurfaceRegion(model.patches[first], boolean_face_chart_box(model, first)),
+            SurfaceRegion(model.patches[second], boolean_face_chart_box(model, second)),
+        )
+        if not common and _coaxial_faces_meet_on_shared_circle(
+            model, (first, second), regions
+        ):
+            pair_certificates.append(
+                canonical_fingerprint(
+                    {
+                        "kind": "cad-source-coaxial-pair",
+                        "model": model.model_id,
+                        "faces": (first, second),
+                        "edges": tuple(sorted(common)),
+                    }
+                )
+            )
+            continue
+        # Rims stored as exact circles bind through the exact coaxial meridian
+        # proof; it runs before the interval branch route, which never binds
+        # such a rim (its branch is not an intersection curve of the pair).
+        rim = certify_revolution_rim_pair(model, first, second)
+        if rim is not None:
+            pair_certificates.append(rim.certificate_id)
+            continue
+        pair = certify_retained_branch_pair(model, first, second)
+        if pair is None or set(pair.shared_edges) != common:
+            return None
+        pair_certificates.append(pair.certificate_id)
+    return tuple(pair_certificates)
+
+
+def shell_source_model(domain: MeshingDomain, /) -> BRepModel | None:
+    """The current BRep authority of ``domain`` if it is a single-shell source.
+
+    The domain must represent its BRep exactly, name every model face once,
+    carry each face's carrier unplaced (or identity-placed) and satisfy the
+    single-shell topology (edge balance, cyclic vertex links, exact lifts).
+    """
+    from .._meshing_domain import _PlacedSurfacePatch
+    from ._assembly import BRepAffinePlacement
+
+    model = domain.brep_authority
+    if (
+        not isinstance(model, BRepModel)
+        or domain.accuracy != "exact_represented"
+        or domain.tolerance != 0.0
+    ):
+        return None
+    model.require_current()
+    patch_faces = tuple(int(value) for value in domain.source_indices[2])
+    if len(patch_faces) != len(model.patches) or set(patch_faces) != set(
+        range(len(model.patches))
+    ):
+        return None
+    identity = BRepAffinePlacement.identity().identity_payload()
+    for patch, face in enumerate(patch_faces):
+        surface = domain.patches[patch].surface
+        if isinstance(surface, _PlacedSurfacePatch):
+            if surface.placement.identity_payload() != identity:
+                return None
+            surface = surface.source
+        if not _same_tree_content(surface, model.patches[face]):
+            return None
+    return model if _single_shell_topology(model, domain) else None
+
+
 def _prove_single_source_shell(
     charts: SurfaceSourceCharts, tolerance: float, /
 ) -> SourceShellAdmissibility | None:
-    from ..._bvh import bvh_overlap_pair_blocks, prepare_bvh
     from .._approximate_source_coverage import _cad_trim_reference_loops_prepared
-    from .._meshing_domain import _PlacedSurfacePatch, SourcePreparation
-    from .._rational import fraction_down, fraction_up
+    from .._meshing_domain import SourcePreparation
     from .._surface_source_support import _cad_root_edges, validate_cad_curve_ancestry
-    from ._assembly import BRepAffinePlacement
     from ._curve_approximation_topology import certify_trim_reference_homotopy
     from ._measure import brep_shell_volume_sign
     from ._source_embedding import _certify_cad_trim_sheet_validated
@@ -1631,32 +2049,14 @@ def _prove_single_source_shell(
     try:
         charts.require_current()
         domain = charts.domain
-        model = domain.brep_authority
+        model = shell_source_model(domain)
         if (
-            not isinstance(model, BRepModel)
-            or domain.accuracy != "exact_represented"
-            or domain.tolerance != 0.0
+            model is None
             or model.source_id != charts.source_id
             or model.source_revision != charts.source_revision
         ):
             return None
-        model.require_current()
         patch_faces = tuple(int(value) for value in domain.source_indices[2])
-        if len(patch_faces) != len(model.patches) or set(patch_faces) != set(
-            range(len(model.patches))
-        ):
-            return None
-        identity = BRepAffinePlacement.identity().identity_payload()
-        for patch, face in enumerate(patch_faces):
-            surface = domain.patches[patch].surface
-            if isinstance(surface, _PlacedSurfacePatch):
-                if surface.placement.identity_payload() != identity:
-                    return None
-                surface = surface.source
-            if not _same_tree_content(surface, model.patches[face]):
-                return None
-        if not _single_shell_topology(model, domain):
-            return None
         bindings = validate_cad_curve_ancestry(charts, tolerance)
         preparation = SourcePreparation(domain)
         _, adjacency = _cad_root_edges(charts)
@@ -1682,101 +2082,12 @@ def _prove_single_source_shell(
                     }
                 )
             )
-        boxes = []
-        for face, patch in enumerate(model.patches):
-            trim = _trim_enclosure(model, face)
-            if trim is None:
-                return None
-            uv = np.asarray(
-                (
-                    (fraction_down(trim[0][0]), fraction_down(trim[0][1])),
-                    (fraction_up(trim[1][0]), fraction_up(trim[1][1])),
-                ),
-                dtype=np.float64,
-            )
-            box = np.asarray(patch.bounding_box(uv), dtype=np.float64)
-            if (
-                box.shape != (2, 3)
-                or not np.all(np.isfinite(box))
-                or np.any(box[0] > box[1])
-            ):
-                return None
-            boxes.append(box)
-        bank = np.stack(boxes)
-        tree = prepare_bvh(bank[:, 0, :], bank[:, 1, :], dtype=np.float64)
-        candidates: set[tuple[int, int]] = set()
-        for left, right in bvh_overlap_pair_blocks(tree, tree, include_touching=True):
-            candidates.update(
-                (int(a), int(b)) for a, b in zip(left, right, strict=True) if a < b
-            )
-        for first in range(len(model.patches)):
-            for edge in model.geometry.topology.face_edges[first]:
-                for second in model.geometry.topology.edge_faces[edge]:
-                    if first < second and (first, second) not in candidates:
-                        return None
-        pair_certificates: list[str] = []
-        for first, second in sorted(candidates):
-            common = set(model.geometry.topology.face_edges[first]) & set(
-                model.geometry.topology.face_edges[second]
-            )
-            separate = certify_same_chart_face_separation(model, first, second)
-            if separate is not None:
-                if common:
-                    return None
-                pair_certificates.append(separate.certificate_id)
-                continue
-            radial = certify_coaxial_radial_separation(model, first, second)
-            if radial is not None:
-                pair_certificates.append(radial.certificate_id)
-                continue
-            ring = certify_source_ring_face_pair(model, first, second)
-            if ring is not None:
-                pair_certificates.append(ring.certificate_id)
-                continue
-            tangent = certify_tangent_cylinder_torus_pair(model, first, second)
-            if tangent is not None:
-                pair_certificates.append(tangent.certificate_id)
-                continue
-            plane_torus = certify_plane_torus_pair(model, first, second)
-            if plane_torus is not None:
-                pair_certificates.append(plane_torus.certificate_id)
-                continue
-            from ._boolean_full_overlay import _coaxial_faces_meet_on_shared_circle
-
-            regions = (
-                SurfaceRegion(model.patches[first], boolean_face_chart_box(model, first)),
-                SurfaceRegion(
-                    model.patches[second], boolean_face_chart_box(model, second)
-                ),
-            )
-            if not common and _coaxial_faces_meet_on_shared_circle(
-                model, (first, second), regions
-            ):
-                pair_certificates.append(
-                    canonical_fingerprint(
-                        {
-                            "kind": "cad-source-coaxial-pair",
-                            "model": model.model_id,
-                            "faces": (first, second),
-                            "edges": tuple(sorted(common)),
-                        }
-                    )
-                )
-                continue
-            pair = certify_retained_branch_pair(model, first, second)
-            if pair is not None and set(pair.shared_edges) == common:
-                pair_certificates.append(pair.certificate_id)
-                continue
-            # Rims stored as exact circles, not intersection branches, bind
-            # only through the coaxial meridian proof.
-            rim = certify_revolution_rim_pair(model, first, second)
-            if rim is None:
-                return None
-            pair_certificates.append(rim.certificate_id)
+        pairs = certify_source_face_pairs(model)
+        if pairs is None:
+            return None
         shell = model.geometry.solid_shells[0][0]
         if brep_shell_volume_sign(model, shell) != 1:
             return None
-        pairs = tuple(pair_certificates)
         sheets = tuple(sheet_certificates)
         identity = canonical_fingerprint(
             {

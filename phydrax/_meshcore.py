@@ -5350,6 +5350,134 @@ def verify_cad_fidelity(
     )
 
 
+# Surface embedding (V2) and chart partition (V4) verifiers.
+_SURFACE_FINDING_DTYPE = np.dtype(
+    [
+        ("kind", np.int32),
+        ("first", np.int64),
+        ("second", np.int64),
+        ("classification", np.int32),
+    ],
+    align=True,
+)
+_CHART_FAILURE_DTYPE = np.dtype(
+    [("kind", np.int32), ("patch", np.int64), ("row", np.int64), ("other", np.int64)],
+    align=True,
+)
+
+
+class _SurfaceEmbeddingVerdict(ctypes.Structure):
+    _fields_ = (("status", ctypes.c_int32), ("finding_count", ctypes.c_int64))
+
+
+class SurfaceFindingKind(IntEnum):
+    """Finding kinds of ``verify_surface_embedding``."""
+
+    OUTSIDE_DOMAIN = 1
+    DEGENERATE = 2
+    EDGE = 3
+    VERTEX_LINK = 4
+    CONTACT = 5
+    EMPTY = 6
+
+
+class ChartFailureKind(IntEnum):
+    """Failure kinds of ``verify_chart_partition``."""
+
+    ORIENTATION = 1
+    EDGE = 2
+    USE_COVERAGE = 3
+    LOOP = 4
+    OVERLAP = 5
+
+
+class SurfaceEmbeddingResult(NamedTuple):
+    """Exact embedding verdict of a closed triangle surface and its findings."""
+
+    status: VerdictStatus
+    findings: np.ndarray
+
+
+def verify_surface_embedding(
+    points: object, triangles: object, /
+) -> SurfaceEmbeddingResult:
+    """Certify that ``(m, 3)`` triangles form an embedded edge-manifold surface."""
+    point_array = np.ascontiguousarray(points, dtype=np.float64)
+    triangle_array = _cad_fidelity_array(np.asarray(triangles), np.int64, "triangles")
+    if point_array.ndim != 2 or point_array.shape[1] != 3:
+        raise ValueError("points must have shape (n, 3).")
+    if triangle_array.ndim != 2 or triangle_array.shape[1] != 3:
+        raise ValueError("triangles must have shape (m, 3).")
+    capacity = 3 * triangle_array.shape[0] + point_array.shape[0] + 64
+    while True:
+        findings = np.empty(capacity, dtype=_SURFACE_FINDING_DTYPE)
+        verdict = _SurfaceEmbeddingVerdict()
+        status = load_meshcore()["phx_mc_verify_surface_embedding"](
+            point_array.shape[0],
+            point_array.ctypes.data,
+            triangle_array.shape[0],
+            triangle_array.ctypes.data,
+            capacity,
+            findings.ctypes.data,
+            ctypes.addressof(verdict),
+        )
+        if status != MeshcoreStatus.CAPACITY_EXCEEDED:
+            break
+        capacity *= 2
+    _raise_for_call(status, "verify_surface_embedding")
+    return SurfaceEmbeddingResult(
+        VerdictStatus(verdict.status), findings[: verdict.finding_count]
+    )
+
+
+def verify_chart_partition(
+    patch_count: int,
+    triangle_patches: np.ndarray,
+    triangle_uv: np.ndarray,
+    chords: CadFidelityChords,
+    /,
+) -> np.ndarray:
+    """Chart partition failures (orientation, edges, uses, loops, overlap); empty certifies."""
+    patches = _cad_fidelity_array(triangle_patches, np.int32, "triangle_patches")
+    uv = _cad_fidelity_array(triangle_uv, np.float64, "triangle_uv")
+    count = patches.shape[0]
+    if patches.shape != (count,) or uv.shape != (count, 3, 2):
+        raise ValueError("triangle_patches and triangle_uv must align.")
+    use_patch = _cad_fidelity_array(chords.use_patch, np.int64, "use_patch")
+    use_range = _cad_fidelity_array(chords.use_range, np.float64, "use_range")
+    chord_use = _cad_fidelity_array(chords.chord_use, np.int64, "chord_use")
+    chord_loop = _cad_fidelity_array(chords.chord_loop, np.int64, "chord_loop")
+    chord_uv = _cad_fidelity_array(chords.chord_uv, np.float64, "chord_uv")
+    chord_range = _cad_fidelity_array(chords.chord_range, np.float64, "chord_range")
+    evidence_count = ctypes.c_int64()
+    capacity = 3 * count + chord_use.size + 16
+    while True:
+        evidence = np.empty(capacity, dtype=_CHART_FAILURE_DTYPE)
+        status = load_meshcore()["phx_mc_verify_chart_partition"](
+            patch_count,
+            count,
+            patches.ctypes.data,
+            uv.ctypes.data,
+            use_patch.size,
+            use_patch.ctypes.data,
+            use_range.ctypes.data,
+            chords.loop_count,
+            chord_use.size,
+            chord_use.ctypes.data,
+            chord_loop.ctypes.data,
+            chord_uv.ctypes.data,
+            chord_range.ctypes.data,
+            capacity,
+            evidence.ctypes.data,
+            ctypes.addressof(evidence_count),
+        )
+        if status != MeshcoreStatus.CAPACITY_EXCEEDED:
+            break
+        capacity = evidence_count.value
+    _raise_for_call(status, "verify_chart_partition")
+    return evidence[: evidence_count.value]
+
+
 class RestrictedDelaunayCriteria(NamedTuple):
     """Refinement targets of `implicit_restricted_delaunay`.
 
@@ -14387,6 +14515,11 @@ __all__ += [
     "CadFidelityMesh",
     "CadFidelityResult",
     "verify_cad_fidelity",
+    "ChartFailureKind",
+    "SurfaceEmbeddingResult",
+    "SurfaceFindingKind",
+    "verify_chart_partition",
+    "verify_surface_embedding",
 ]
 
 
@@ -14649,6 +14782,8 @@ _CAD_VOLUME_STATS_DTYPE = np.dtype(
         ("failure_measure", np.float64),
         ("unmet_forced_cells", np.int64),
         ("unmet_unforced_cells", np.int64),
+        ("unmet_shape_rows", np.int64),
+        ("unmet_hard_cells", np.int64),
     ],
     align=True,
 )

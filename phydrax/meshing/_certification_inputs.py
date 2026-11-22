@@ -43,6 +43,8 @@ from ..typing import checked
 from ._certification_schedule import MeshCertificationSchedule
 from ._controls import ProtectedFeature
 from ._layer_core_root_geometry import ComputedLayerCoreRoot, LayerCoreRootGeometry
+from ._native_cad_certificate import NativeCadSurfaceWitness
+from ._native_cad_records import NativeCadRecords
 from ._scope import _SourceEntityScopes
 
 
@@ -370,6 +372,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
     feature_source: _SourceEntityScopes | None
     layer_core_root_geometry: LayerCoreRootGeometry | None
     source_coverage_witness: SourceCoverageWitness | None
+    native_cad_surface: NativeCadSurfaceWitness | None
+    native_cad_records: NativeCadRecords | None
     mesh_id: str
     topology_id: str
     geometry_id: str
@@ -403,8 +407,17 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         source_coverage_witness: SourceCoverageWitness | None = None,
         validated: tuple[ValidatedSourceFidelityWitness, ...] = (),
         computed_root: ComputedLayerCoreRoot | None = None,
+        native_cad_surface: NativeCadSurfaceWitness | None = None,
+        native_cad_records: NativeCadRecords | None = None,
     ) -> None:
         """Retain the inputs; their fidelity witnesses must validate on ``mesh``.
+
+        ``native_cad_surface`` makes the native CAD verifiers (V4, V2, V3 and
+        the volume tiling) the source-fidelity and coverage proof of a
+        ``volume_cad`` schedule; it excludes a chart fidelity witness.
+        ``native_cad_records`` (required with it, only with it) are the native
+        solid's occurrence and curve-edge records: the native certificate
+        binds them, and association transfer and adaptation consume them.
 
         ``validated`` holds validations the caller already made for exactly
         these operands; a witness with one is not validated again.
@@ -499,6 +512,35 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             domain,
             fidelity_witness,
         )
+        if native_cad_surface is not None or native_cad_records is not None:
+            from ..geometry._meshing_domain import MeshingDomain
+
+            if (
+                type(native_cad_surface) is not NativeCadSurfaceWitness
+                or schedule.route != "volume_cad"
+                or not isinstance(domain, MeshingDomain)
+                or fidelity_witness is not None
+                or source_coverage_witness is not None
+                or native_cad_surface.mesh_id != mesh.mesh_id
+                or regions is None
+                or fidelity_tolerance is None
+                or native_cad_records is None
+            ):
+                raise ValueError(
+                    "A native CAD surface witness binds its own volume_cad mesh, "
+                    "MeshingDomain and native records, without other fidelity or "
+                    "coverage witnesses."
+                )
+            if type(native_cad_records) is not NativeCadRecords or (
+                native_cad_records.source_id,
+                native_cad_records.source_revision,
+            ) != (source_id_, source_revision_):
+                raise ValueError(
+                    "Native CAD association records bind another source revision."
+                )
+            native_cad_records.require_premises(
+                mesh, domain, regions, native_cad_surface, float(fidelity_tolerance)
+            )
         domain_id = (
             None
             if domain is None
@@ -521,6 +563,8 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
         self.feature_source = feature_source
         self.layer_core_root_geometry = layer_core_root_geometry
         self.source_coverage_witness = source_coverage_witness
+        self.native_cad_surface = native_cad_surface
+        self.native_cad_records = native_cad_records
         self.mesh_id = mesh.mesh_id
         self.topology_id = mesh.topology_id
         self.geometry_id = cell_geometry_id(geometry)
@@ -546,6 +590,16 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
                 "source_coverage_witness": None
                 if source_coverage_witness is None
                 else source_coverage_witness.witness_id,
+                **(
+                    {}
+                    if native_cad_surface is None
+                    else {"native_cad_surface": native_cad_surface.witness_id}
+                ),
+                **(
+                    {}
+                    if native_cad_records is None
+                    else {"native_cad_records": native_cad_records.records_id}
+                ),
                 "feature_source": None
                 if feature_source is None
                 else (

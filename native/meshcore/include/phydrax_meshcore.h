@@ -3927,11 +3927,11 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * export of the same handle shows the split surface. Returns the handle on
  * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
  * recovery still refused: zero cells, stats name the refusal). A surface
- * triangle whose relative area 2 A / l_max^2 has a square below the
- * determinant floor 2^-22 (zero-length edges included) is refused before
- * recovery: UNRESOLVED, zero cells, recovery_status UNRESOLVED,
- * recovery_reason INVALID_FACET, failure_kind FACET, failure_entity the
- * first such triangle row and failure_measure its relative area. */
+ * triangle flat to rounding is refused by recovery (smallest-angle sine
+ * below the determinant floor 2^-22, see phx_mc_plc3d_export): UNRESOLVED,
+ * zero cells, recovery_status UNRESOLVED, recovery_reason INVALID_FACET,
+ * failure_kind FACET, failure_entity the triangle row and failure_measure
+ * its smallest-angle sine. */
 /* Proximity size control (ProximitySizeControl) of the CAD solid: two
  * disjoint face-row sets. At a point of a scoped face the size is the local
  * gap (its distance to the other set's faces) over elements_per_gap,
@@ -3970,8 +3970,8 @@ typedef struct phx_mc_cad_volume_stats {
   int32_t recovery_status, recovery_reason, failure_kind;
   int64_t failure_entity;
   phx_mc_cad_quadratic_stats quadratic;
-  /* The refused triangle's relative area with recovery_reason INVALID_FACET
-   * before recovery (above), else 0. */
+  /* With recovery_reason INVALID_FACET the refused triangle's smallest-angle
+   * sine (phx_mc_plc3d_failure's certified_deviation), else 0. */
   double failure_measure;
   /* Unmet cells (of unmet_cells) forced by the input: every record of the
    * cell is a dihedral record and every edge below min_dihedral_degrees is a
@@ -3979,6 +3979,13 @@ typedef struct phx_mc_cad_volume_stats {
   int64_t unmet_forced_cells;
   /* Unmet cells not forced; the status is UNRESOLVED iff this is nonzero. */
   int64_t unmet_unforced_cells;
+  /* The final unmet quality rows (phx_mc_tet_mesh_unmet criteria) after
+   * improvement, split for a soft shape schedule: shape rows are RADIUS_EDGE
+   * or DIHEDRAL rows whose reason is not NONREPRESENTABLE (the schedule's
+   * shape targets); hard cells are unforced cells with any other non-SIZE
+   * row (validity, relative determinant, construction or a nonrepresentable
+   * shape). unmet_cells counts cells with any row. */
+  int64_t unmet_shape_rows, unmet_hard_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */

@@ -606,8 +606,8 @@ def _cad_boundary_specification(
     if specification.layer_controls:
         target_issues = _layer_target_support(specification)
     else:
-        # Order 2 is constructed by the native route; the proved Python route
-        # refuses it at execution.
+        # Order 2 is constructed by the native route; the existing route
+        # (gated plans) refuses it at execution.
         target_issues = _target_support(specification, maximum_geometry_order=2)
     if target_issues:
         raise _failure(
@@ -806,15 +806,13 @@ class _PreparedDirectBRepCadVolume(StrictModule, NonTrainableState):
         )
 
     def execute(self, /) -> NativeMeshConstruction:
+        """The existing construction, for plans the native route does not take."""
         if self.specification.target.geometry_order != 1:
             raise _failure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A proved CAD volume is affine; geometry order 2 is constructed "
-                "unproved only (prove=False).",
+                "The existing CAD volume construction is affine; geometry order 2 "
+                "is constructed by the native route only.",
             )
-        return self._execute_python()
-
-    def _execute_python(self, /) -> NativeMeshConstruction:
         boundary_construction = self.boundary_proof.get().execute()
         surface_proofs: list[_ComputedSurfaceAcceptance] = []
         boundary_result = _accept_native_construction(
@@ -1539,9 +1537,13 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
                 raise TypeError("An owner-local native route must return MeshAssembly.")
             return assembly
         construction: object
-        if not prove and isinstance(self.prepared, _PreparedDirectBRepCadVolume):
-            # Unproved CAD solids are constructed by the one native call;
-            # prove=True keeps the Python construction and its certification.
+        if isinstance(self.prepared, _PreparedDirectBRepCadVolume):
+            # CAD solids are constructed by the one native call at every proof
+            # level (with their patch/region controls and seeds); acceptance
+            # certifies them with the native verifiers. Multi-solid domains,
+            # protected features, layer controls and source kinds without
+            # native geometry keep the existing construction
+            # (cad_solid_support_issues).
             from ._native_cad_mesh import cad_solid_support_issues, execute_cad_solid
 
             construction = (

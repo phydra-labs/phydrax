@@ -75,9 +75,11 @@ from ._native_plc_geometry import (
 )
 from ._native_sources import NativePlcSource
 from ._native_volume import (
-    _organization as _plc_organization,
+    _plc_layout,
+    _source_associations,
     _target_support,
     _volume_compliance,
+    source_organization,
     volume_support_issues,
 )
 
@@ -578,23 +580,7 @@ def _cad_plc_data(
             "Accepted surface boundary must cover every declared CAD source patch."
         )
 
-    facet_regions = np.full((len(domain.patches), 2), -1, dtype=np.int64)
-    for region_row, region in enumerate(domain.regions):
-        for patch, sign in region.boundary:
-            # The accepted loop is already oriented to the source patch normal,
-            # including patch.orientation; do not apply that sign again here.
-            # A positive region boundary sign puts the region on the opposite
-            # (negative) side in the CAPI (positive, negative) pair.
-            side = 1 if sign > 0 else 0
-            if facet_regions[patch, side] >= 0:
-                raise ValueError(
-                    "CAD source patch has ambiguous oriented material-side incidence."
-                )
-            facet_regions[patch, side] = region_row
-    if np.any(np.all(facet_regions < 0, axis=1)):
-        raise ValueError(
-            "Every CAD source patch must bound at least one material region."
-        )
+    facet_regions = cad_facet_regions(domain)
 
     segments: list[tuple[int, int]] = []
     segment_ids: list[str] = []
@@ -1173,6 +1159,112 @@ def _plc_feature_ids(
     raise ValueError("CAD protected feature dimension and kind are incompatible.")
 
 
+def cad_facet_regions(domain: MeshingDomain, /) -> np.ndarray:
+    """(positive, negative) side region rows of every source face, or -1."""
+    facet_regions = np.full((len(domain.patches), 2), -1, dtype=np.int64)
+    for region_row, region in enumerate(domain.regions):
+        for patch, sign in region.boundary:
+            # The accepted loop is already oriented to the source patch normal,
+            # including patch.orientation; do not apply that sign again here.
+            # A positive region boundary sign puts the region on the opposite
+            # (negative) side in the CAPI (positive, negative) pair.
+            side = 1 if sign > 0 else 0
+            if facet_regions[patch, side] >= 0:
+                raise ValueError(
+                    "CAD source patch has ambiguous oriented material-side incidence."
+                )
+            facet_regions[patch, side] = region_row
+    if np.any(np.all(facet_regions < 0, axis=1)):
+        raise ValueError(
+            "Every CAD source patch must bound at least one material region."
+        )
+    return facet_regions
+
+
+def cad_region_control_rows(
+    domain: MeshingDomain, specification: VolumeMeshingSpec, /
+) -> tuple[int, ...]:
+    """The source region row of every region control, in request order."""
+    rows: list[int] = []
+    for control in specification.region_controls:
+        selected_rows = _domain_scope_rows(domain, control.scope, 3)
+        if selected_rows.size != 1:
+            raise ValueError(
+                "CAD region control scope must identify exactly one source region."
+            )
+        rows.append(int(selected_rows[0]))
+    return tuple(rows)
+
+
+def cad_patch_control_rows(
+    domain: MeshingDomain,
+    specification: VolumeMeshingSpec,
+    facet_regions: np.ndarray,
+    /,
+) -> tuple[np.ndarray, ...]:
+    """The source face rows of every patch control, checked against adjacency.
+
+    Adjacent region names are the source region names, renamed by their
+    region controls.
+    """
+    region_names = [region.name for region in domain.regions]
+    for control, row in zip(
+        specification.region_controls,
+        cad_region_control_rows(domain, specification),
+        strict=True,
+    ):
+        region_names[row] = control.region_name
+    result: list[np.ndarray] = []
+    for control in specification.patch_controls:
+        rows = _domain_scope_rows(domain, control.scope, 2)
+        if control.scope.side_records:
+            unqualified = set(control.scope.unqualified_entity_ids)
+            side_counts: dict[int, int] = {}
+            for side in control.scope.side_records:
+                side_counts[side.entity_id] = side_counts.get(side.entity_id, 0) + 1
+            for identifier, row in zip(
+                np.asarray(control.scope.entity_ids), rows, strict=True
+            ):
+                if int(identifier) in unqualified:
+                    continue
+                adjacent_count = sum(
+                    int(region) >= 0 for region in facet_regions[int(row)]
+                )
+                if side_counts.get(int(identifier), 0) != adjacent_count:
+                    raise ValueError(
+                        "A single interface side cannot be flattened into a patch control; "
+                        "mesh the shared facet and resolve its sided integration route."
+                    )
+        expected_names = set(control.adjacent_region_names)
+        for facet in rows.tolist():
+            facet_names = {
+                region_names[int(region)]
+                for region in facet_regions[int(facet)]
+                if int(region) >= 0
+            }
+            if facet_names != expected_names:
+                raise ValueError(
+                    "CAD patch control adjacency differs from its selected source facets."
+                )
+        result.append(rows)
+    return tuple(result)
+
+
+def cad_region_seeds(
+    domain: MeshingDomain, specification: VolumeMeshingSpec, /
+) -> tuple[RegionSeed, ...]:
+    """Region seeds naming their source region by its source entity id."""
+    return tuple(
+        RegionSeed(
+            np.asarray(seed.point, dtype=np.float64),
+            domain.entity_id(3, _region_row(domain, seed.region_name)),
+            seed.material_id,
+            seed.role,
+        )
+        for seed in specification.region_seeds
+    )
+
+
 def _translate_specification(
     source: NativeCadVolumeSource, specification: VolumeMeshingSpec, /
 ) -> VolumeMeshingSpec:
@@ -1221,93 +1313,48 @@ def _translate_specification(
                 hard=feature.hard,
             )
         )
-    region_controls: list[RegionControl] = []
-    region_names = [region.name for region in domain.regions]
-    for control in specification.region_controls:
-        selected_rows = _domain_scope_rows(domain, control.scope, 3)
-        if selected_rows.size != 1:
-            raise ValueError(
-                "CAD region control scope must identify exactly one source region."
-            )
-        row = int(selected_rows[0])
-        region_names[row] = control.region_name
-        region_controls.append(
-            RegionControl(
-                _plc_scope(
-                    source,
-                    3,
-                    np.asarray((complex_.region_entity_ids[row],), dtype=np.int64),
-                ),
-                complex_.region_ids[row],
-                control.material_id,
-                control.role,
-                meshing_enabled=control.meshing_enabled,
-            )
+    region_controls = tuple(
+        RegionControl(
+            _plc_scope(
+                source,
+                3,
+                np.asarray((complex_.region_entity_ids[row],), dtype=np.int64),
+            ),
+            complex_.region_ids[row],
+            control.material_id,
+            control.role,
+            meshing_enabled=control.meshing_enabled,
         )
-    patch_controls: list[PatchControl] = []
-    for control in specification.patch_controls:
-        rows = _domain_scope_rows(domain, control.scope, 2)
-        if control.scope.side_records:
-            unqualified = set(control.scope.unqualified_entity_ids)
-            side_counts: dict[int, int] = {}
-            for side in control.scope.side_records:
-                side_counts[side.entity_id] = side_counts.get(side.entity_id, 0) + 1
-            for identifier, row in zip(
-                np.asarray(control.scope.entity_ids), rows, strict=True
-            ):
-                if int(identifier) in unqualified:
-                    continue
-                adjacent_count = sum(
-                    int(region) >= 0 for region in complex_.facet_regions[int(row)]
-                )
-                if side_counts.get(int(identifier), 0) != adjacent_count:
-                    raise ValueError(
-                        "A single interface side cannot be flattened into a patch control; "
-                        "mesh the shared facet and resolve its sided integration route."
-                    )
-        expected_names = set(control.adjacent_region_names)
-        adjacent_rows = sorted(
-            {
-                int(region)
-                for facet in rows.tolist()
-                for region in complex_.facet_regions[int(facet)]
-                if int(region) >= 0
-            }
+        for control, row in zip(
+            specification.region_controls,
+            cad_region_control_rows(domain, specification),
+            strict=True,
         )
-        for facet in rows.tolist():
-            facet_names = {
-                region_names[int(region)]
-                for region in complex_.facet_regions[int(facet)]
-                if int(region) >= 0
-            }
-            if facet_names != expected_names:
-                raise ValueError(
-                    "CAD patch control adjacency differs from its selected source facets."
-                )
-        adjacent = tuple(complex_.region_ids[row] for row in adjacent_rows)
-        patch_controls.append(
-            PatchControl(
-                control.name,
-                _plc_scope(
-                    source,
-                    2,
-                    np.asarray(complex_.facet_entity_ids, dtype=np.int64)[rows],
-                ),
-                adjacent,
-                required=control.required,
-            )
+    )
+    patch_controls = tuple(
+        PatchControl(
+            control.name,
+            _plc_scope(
+                source,
+                2,
+                np.asarray(complex_.facet_entity_ids, dtype=np.int64)[rows],
+            ),
+            tuple(
+                complex_.region_ids[row]
+                for row in np.unique(complex_.facet_regions[rows]).tolist()
+                if row >= 0
+            ),
+            required=control.required,
         )
-    region_seeds: list[RegionSeed] = []
-    for seed in specification.region_seeds:
-        row = _region_row(domain, seed.region_name)
-        region_seeds.append(
-            RegionSeed(
-                np.asarray(seed.point, dtype=np.float64),
-                complex_.region_ids[row],
-                seed.material_id,
-                seed.role,
-            )
+        for control, rows in zip(
+            specification.patch_controls,
+            cad_patch_control_rows(
+                domain, specification, np.asarray(complex_.facet_regions)
+            ),
+            strict=True,
         )
+    )
+    region_seeds = cad_region_seeds(domain, specification)
     hole_seeds: list[HoleSeed] = []
     for seed in specification.hole_seeds:
         rows = _domain_scope_rows(domain, seed.scope, 3)
@@ -2017,7 +2064,7 @@ def _cad_volume_chart_witness(
 
     boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
     target_face_ids = np.asarray(
-        _boundary_face_entities(mesh, construction), dtype=np.int64
+        _boundary_face_entities(mesh, construction.boundary_faces), dtype=np.int64
     )
     face_source_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
     face_sources = np.asarray(construction.face_sources, dtype=np.int64)
@@ -2987,7 +3034,7 @@ def _cad_curve_feature_witness(
         raise ValueError("CAD target edge identities are misaligned.")
     boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
     boundary_face_ids = np.asarray(
-        _boundary_face_entities(mesh, construction), dtype=np.int64
+        _boundary_face_entities(mesh, construction.boundary_faces), dtype=np.int64
     )
     face_patches = np.asarray(construction.face_source_facets, dtype=np.int64)
     if (
@@ -3518,27 +3565,39 @@ class PreparedCadVolume(StrictModule, NonTrainableState):
             self.specification, translated, native_compliance
         )
         fidelity_tolerance = _cad_source_tolerance(self.source, self.specification)
-        organization = _plc_organization(
-            self.source.plc_source,
-            translated,
-            construction,
-            source_scope_owner=self.source.domain,
-            region_controls=self.specification.region_controls,
+        plc_source = self.source.plc_source
+        patches, zones, labels, region_boundary_evidence = source_organization(
+            self.source.domain,
+            _plc_layout(plc_source, construction),
+            tuple(
+                zip(
+                    (control.name for control in self.specification.patch_controls),
+                    cad_patch_control_rows(
+                        self.source.domain,
+                        self.specification,
+                        np.asarray(plc_source.complex.facet_regions),
+                    ),
+                    strict=True,
+                )
+            ),
+            self.specification.region_controls,
+            translated.region_seeds,
         )
         associations = _brep_associations(
-            self.source, construction, physical.points, organization.associations
+            self.source,
+            construction,
+            physical.points,
+            _source_associations(plc_source, construction),
         )
         curve_association = _cad_curve_association(self.source, construction)
         if curve_association is not None:
             associations += (curve_association,)
         organization = NativeMeshOrganization(
-            boundary=organization.boundary,
-            patches=organization.patches,
-            zones=organization.zones,
-            labels=organization.labels,
-            attributes=organization.attributes,
+            patches=patches,
+            zones=zones,
+            labels=labels,
             associations=associations,
-            region_boundary_evidence=organization.region_boundary_evidence,
+            region_boundary_evidence=region_boundary_evidence,
             surface_source=self.source.surface_source,
         )
         fidelity_witness = _cad_volume_chart_witness(

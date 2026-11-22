@@ -546,11 +546,13 @@ double squared_length(const Point& p, const Point& q) {
 // decidable cell by cell, so its cells stay unforced.
 // curve_wedges (when given, one per model curve, NaN where undefined): the
 // smallest true wedge in degrees over the curve edges' defined ends, filled
-// only when some unmet cell is unforced.
+// only when some unmet cell is unforced. forced_ids (when given) receives the
+// forced cells' ids in ascending order.
 int32_t count_forced_cells(const cad::CadGeometry& geometry, const CadSurfaceMesh& surface,
                            const TetMesh& state, const std::vector<TetUnmetRecord>& records,
                            double target_degrees, int64_t& forced, int64_t& unforced,
-                           std::vector<double>* curve_wedges) {
+                           std::vector<double>* curve_wedges,
+                           std::vector<uint64_t>* forced_ids) {
   forced = 0;
   unforced = 0;
   const double target = target_degrees * (std::numbers::pi / 180.0);
@@ -705,6 +707,7 @@ int32_t count_forced_cells(const cad::CadGeometry& geometry, const CadSurfaceMes
     // (at the threshold) is not explained by a forced edge.
     is_forced = is_forced && any_small;
     (is_forced ? forced : unforced) += 1;
+    if (is_forced && forced_ids) forced_ids->push_back(id);
   }
   if (unforced == 0 || !curve_wedges) return PHX_MC_OK;
   // Every rim edge once, its side decided by the centroid of a cell on it.
@@ -755,35 +758,6 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
   if (!sizes || (controls.geometry_order != 1 && controls.geometry_order != 2))
     return PHX_MC_INVALID_ARGUMENT;
   const auto volume_start = std::chrono::steady_clock::now();
-  // A fixed boundary triangle that is flat to rounding (a zero-length edge or
-  // a zero-area sliver) leaves no tetrahedron beside it that can meet the
-  // quality targets, and improvement then churns without end (measured: the
-  // sphere's coincident equator rings, 2 ulps apart, ran 115 s to 30k
-  // improvement insertions). Its relative area r = 2 A / l_max^2 (sqrt(3)/2
-  // for an equilateral triangle) is refused before recovery when r^2 is below
-  // the determinant floor 2^-22, the improvement's floor for cells.
-  for (std::size_t t = 0; t < surface.triangles.size(); ++t) {
-    const auto& tri = surface.triangles[t];
-    const Point& a = surface.points[tri[0]];
-    const Point& b = surface.points[tri[1]];
-    const Point& c = surface.points[tri[2]];
-    const Point u{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-    const Point v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const Point n{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
-    const double longest =
-        std::max({squared_length(a, b), squared_length(b, c), squared_length(c, a)});
-    const double area2 = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-    const double relative = longest > 0.0 ? area2 / longest : 0.0;
-    if (!(relative * relative >= kMetricDeterminantFloor)) {
-      stats.recovery_status = PHX_MC_UNRESOLVED;
-      stats.recovery_reason = PHX_MC_PLC_INVALID_FACET;
-      stats.failure_kind = PHX_MC_PLC_ENTITY_FACET;
-      stats.failure_entity = static_cast<int64_t>(t);
-      stats.failure_measure = relative;
-      stats.volume_ns = elapsed_ns(volume_start);
-      return PHX_MC_UNRESOLVED;
-    }
-  }
   PlcHandle recovery;
   for (int attempt = 0;; ++attempt) {
     phx_mc_cad_boundary_split split{};
@@ -807,6 +781,9 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
       stats.recovery_reason = reason;
       stats.failure_kind = first_kind;
       stats.failure_entity = first;
+      // S3 refuses a flat-to-rounding triangle (smallest-angle sine below the
+      // determinant floor) before recovery; its sine is the evidence.
+      if (reason == PHX_MC_PLC_INVALID_FACET) stats.failure_measure = deviation;
       if (reason == PHX_MC_PLC_FIXED_SEGMENT || reason == PHX_MC_PLC_FIXED_FACET ||
           reason == PHX_MC_PLC_STEINER_SUPPRESSION) {
         const auto& edges = recovery->recovery.plc_edges;
@@ -898,14 +875,31 @@ int32_t cad_mesh_volume(const cad::CadGeometry& geometry, cad::CurveDiscretizati
     // unmet cell, the set unmet_cells counts), not a second evaluation:
     // evaluate_mesh_quality also checks size targets and a determinant
     // floor, so it can name cells improve_mesh does not count.
+    std::vector<uint64_t> forced;
     const int32_t counted = count_forced_cells(geometry, surface, state, state.unmet_records(),
                                                controls.minimum_dihedral_degrees,
                                                stats.unmet_forced_cells,
                                                stats.unmet_unforced_cells,
-                                               &result.curve_rim_wedges);
+                                               &result.curve_rim_wedges, &forced);
     if (counted != PHX_MC_OK) return counted;
     if (stats.unmet_forced_cells + stats.unmet_unforced_cells != stats.unmet_cells)
       return PHX_MC_INTERNAL_ERROR;
+    // Split the final rows for a soft shape schedule (see the stats doc); a
+    // forced cell is never a hard cell.
+    std::vector<uint64_t> hard;
+    for (const TetUnmetRecord& record : state.unmet_records()) {
+      if (record.criterion == PHX_MC_TET_UNMET_SIZE) continue;
+      const bool shape = (record.criterion == PHX_MC_TET_UNMET_RADIUS_EDGE ||
+                          record.criterion == PHX_MC_TET_UNMET_DIHEDRAL) &&
+                         record.reason != PHX_MC_TET_UNMET_NONREPRESENTABLE;
+      if (shape)
+        ++stats.unmet_shape_rows;
+      else if (!std::binary_search(forced.begin(), forced.end(), record.cell_id))
+        hard.push_back(record.cell_id);
+    }
+    std::sort(hard.begin(), hard.end());
+    stats.unmet_hard_cells =
+        static_cast<int64_t>(std::unique(hard.begin(), hard.end()) - hard.begin());
   }
   // Live vertex slots in order; the surface keeps its rows.
   std::vector<int32_t> rows(state.vertex_slot_count(), -1);

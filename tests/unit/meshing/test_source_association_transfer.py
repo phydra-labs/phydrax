@@ -2002,10 +2002,14 @@ def test_native_layer_core_refuses_stale_forged_and_conflicting_sources(
 def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     forgery: str,
 ) -> None:
+    # A (soft) protected feature keeps the CAD solid on the existing (Python)
+    # route, whose chart witness this pins; native CAD solids are covered by
+    # test_native_cad_records.py.
     from copy import copy
 
     import phydrax as phx
     from phydrax.geometry.brep import brep_box
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
     from phydrax.meshing._sizing import UniformSizeControl
 
     model = brep_box(
@@ -2020,6 +2024,11 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
         boundary,
         VolumeFillStrategy.SIMPLEX,
         size_controls=(UniformSizeControl(boundary, 0.5),),
+        protected_features=(
+            ProtectedFeature(
+                boundary, FeatureKind.SURFACE, maximum_deviation=0.02, hard=False
+            ),
+        ),
         maximum_deviation=0.02,
     )
     source = (

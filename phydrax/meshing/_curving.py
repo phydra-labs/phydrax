@@ -1643,7 +1643,7 @@ def _curving_target_result(
                 transition=coordinate_transition,
             )
             if renewed_inputs is not None:
-                inputs, validated_witnesses = renewed_inputs
+                inputs, validated_witnesses, _ = renewed_inputs
             audit_policy = source_result.certification.audit_policy
         # The in-hand proofs are reused only when they answer the same premises.
         reuse = (

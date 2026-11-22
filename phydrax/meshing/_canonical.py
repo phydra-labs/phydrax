@@ -890,6 +890,8 @@ def _accept_native_construction(
         scoped_fidelity=request.scoped_fidelity,
         fidelity_witness=request.fidelity_witness,
         source_coverage_witness=request.source_coverage_witness,
+        native_cad_surface=request.native_cad_surface,
+        native_cad_records=request.native_cad_records,
         validated=validated,
     )
     organization = construction.organization

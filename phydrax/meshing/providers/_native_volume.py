@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import final
 
@@ -313,12 +313,61 @@ def volume_support_issues(
     return issues
 
 
-def _source_region_scopes(
-    source: NativePlcSource,
+@dataclass(frozen=True, slots=True)
+class SourceOrganizationLayout:
+    """Source faces and regions of a constrained tetrahedral mesh.
+
+    Rows of ``region_ids`` are source regions (``cell_regions`` names one per
+    cell) and rows of ``facet_ids`` source faces; ``facet_regions`` holds each
+    face's (positive, negative) side region row or -1. ``boundary_faces`` are
+    the constrained mesh triangles (vertex rows), ``face_facets`` their source
+    face rows and ``internal_curves`` the mesh edges (vertex pairs) of
+    authored internal curves.
+    """
+
+    mesh: CellMesh
+    region_ids: tuple[str, ...]
+    region_occurrence_paths: tuple[tuple[str, ...], ...]
+    cell_regions: np.ndarray
+    facet_ids: tuple[str, ...]
+    facet_occurrence_paths: tuple[tuple[str, ...], ...]
+    facet_regions: np.ndarray
+    boundary_faces: np.ndarray
+    face_facets: np.ndarray
+    internal_curves: np.ndarray
+
+
+def source_organization(
     owner: _SourceEntityScopes,
+    layout: SourceOrganizationLayout,
+    patch_controls: tuple[tuple[str, np.ndarray], ...],
+    region_controls: tuple[RegionControl, ...],
+    region_seeds: tuple[RegionSeed, ...],
     /,
+) -> tuple[
+    tuple[MeshPatch, ...],
+    tuple[MeshZone, ...],
+    tuple[MeshLabel, ...],
+    tuple[RegionBoundaryEvidence, ...],
+]:
+    """Patches, zones, labels and region evidence of a source layout.
+
+    ``owner`` scopes the source regions; ``patch_controls`` are (name, source
+    face rows) pairs; region seeds name a source region id of the layout.
+    """
+    region_scopes = _source_region_scopes(owner, layout)
+    controls = _region_controls_by_row(region_scopes, region_controls)
+    seeds = _region_seeds_by_row(region_scopes, region_seeds)
+    zones, zone_ids = _region_zones(layout, region_scopes, controls, seeds)
+    patches, labels, evidence = _patches_and_labels(
+        layout, patch_controls, zone_ids, region_scopes, controls, seeds
+    )
+    return patches, zones, labels, evidence
+
+
+def _source_region_scopes(
+    owner: _SourceEntityScopes, layout: SourceOrganizationLayout, /
 ) -> tuple[tuple[str, tuple[str, ...], MeshingScope], ...]:
-    complex_ = source.complex
     owner_ids = np.asarray(owner.scope_entity_ids(3), dtype=np.int64)
     owner_ids_by_key: dict[tuple[str, tuple[str, ...]], int] = {}
     for identifier in owner_ids.tolist():
@@ -326,24 +375,18 @@ def _source_region_scopes(
         if key in owner_ids_by_key:
             raise ValueError("Source region keys must resolve to unique owner scope IDs.")
         owner_ids_by_key[key] = int(identifier)
-    region_ids = np.asarray(complex_.region_entity_ids, dtype=np.int64)
-    if region_ids.shape != (len(complex_.region_ids),) or len(
-        complex_.region_occurrence_paths
-    ) != len(complex_.region_ids):
-        raise ValueError("PLC source region identities and occurrence paths must align.")
+    if len(layout.region_occurrence_paths) != len(layout.region_ids):
+        raise ValueError("Source region identities and occurrence paths must align.")
     records = []
-    for row, identifier in enumerate(region_ids.tolist()):
-        region_id, occurrence_path = source.source_entity_key_for_scope(
-            3, int(identifier)
-        )
-        expected_path = tuple(complex_.region_occurrence_paths[row])
-        if (region_id, occurrence_path) != (complex_.region_ids[row], expected_path):
-            raise ValueError("PLC region key differs from its declared occurrence path.")
+    for region_id, path in zip(
+        layout.region_ids, layout.region_occurrence_paths, strict=True
+    ):
+        occurrence_path = tuple(path)
         try:
             owner_identifier = owner_ids_by_key[(region_id, occurrence_path)]
         except KeyError as error:
             raise ValueError(
-                "PLC region occurrence is absent from the authoritative source scope."
+                "Source region occurrence is absent from the authoritative source scope."
             ) from error
         scope = MeshingScope(
             owner.source_id,
@@ -400,37 +443,28 @@ def _region_seeds_by_row(
 
 
 def _region_zones(
-    construction: VolumeConstruction,
+    layout: SourceOrganizationLayout,
     region_scopes: tuple[tuple[str, tuple[str, ...], MeshingScope], ...],
     controls: dict[int, RegionControl],
     seeds: dict[int, RegionSeed],
     /,
 ) -> tuple[tuple[MeshZone, ...], dict[int, str]]:
-    mesh = construction.mesh
+    mesh = layout.mesh
     cell_set = mesh.entity_set(3)
     cell_ids = np.asarray(cell_set.entity_ids, dtype=np.int64)
-    if (
-        len(construction.region_ids) != len(region_scopes)
-        or len(construction.region_occurrence_paths) != len(region_scopes)
-        or any(
-            (construction.region_ids[row], construction.region_occurrence_paths[row])
-            != (region_id, occurrence_path)
-            for row, (region_id, occurrence_path, _) in enumerate(region_scopes)
-        )
-    ):
-        raise ValueError(
-            "Volume region assignments differ from their source occurrences."
-        )
+    cell_regions = np.asarray(layout.cell_regions, dtype=np.int64)
+    if cell_regions.shape != cell_ids.shape:
+        raise ValueError("Volume cell regions must align with mesh cells.")
     multiplicity = {
-        name: construction.region_ids.count(name) for name in set(construction.region_ids)
+        name: layout.region_ids.count(name) for name in set(layout.region_ids)
     }
     zones: list[MeshZone] = []
     zone_ids: dict[int, str] = {}
-    for region, name in enumerate(construction.region_ids):
+    for region, name in enumerate(layout.region_ids):
         source_scope = region_scopes[region][2]
-        selected = cell_ids[construction.cell_regions == region]
+        selected = cell_ids[cell_regions == region]
         if selected.size == 0:
-            raise ValueError(f"PLC region {name!r} has no volume cells.")
+            raise ValueError(f"Source region {name!r} has no volume cells.")
         control = controls.get(region)
         seed = seeds.get(region)
         role = (
@@ -460,16 +494,12 @@ def _region_zones(
     return tuple(zones), zone_ids
 
 
-def _boundary_face_entities(
-    mesh: CellMesh, construction: VolumeConstruction, /
-) -> np.ndarray:
+def _boundary_face_entities(mesh: CellMesh, faces: np.ndarray, /) -> np.ndarray:
     _, connectivity_faces = simplex_volume_entities(mesh)
     identifiers = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     if connectivity_faces.shape[0] != identifiers.size:
         raise ValueError("Canonical face incidence and face entity IDs are misaligned.")
-    rows = _rows_of_simplices(
-        connectivity_faces, np.asarray(construction.boundary_faces, dtype=np.int64)
-    )
+    rows = _rows_of_simplices(connectivity_faces, np.asarray(faces, dtype=np.int64))
     if np.any(rows < 0):
         raise ValueError(
             "A recovered boundary face is absent from canonical mesh incidence."
@@ -510,9 +540,8 @@ def _faces_connected(faces: np.ndarray, /) -> bool:
 
 
 def _patches_and_labels(
-    source: NativePlcSource,
-    specification: VolumeMeshingSpec,
-    construction: VolumeConstruction,
+    layout: SourceOrganizationLayout,
+    patch_controls: tuple[tuple[str, np.ndarray], ...],
     zone_ids: dict[int, str],
     region_scopes: tuple[tuple[str, tuple[str, ...], MeshingScope], ...],
     controls: dict[int, RegionControl],
@@ -523,13 +552,13 @@ def _patches_and_labels(
     tuple[MeshLabel, ...],
     tuple[RegionBoundaryEvidence, ...],
 ]:
-    mesh = construction.mesh
-    boundary_face_ids = _boundary_face_entities(mesh, construction)
-    boundary_faces = np.asarray(construction.boundary_faces, dtype=np.int64)
-    face_facets = np.asarray(construction.face_source_facets, dtype=np.int64)
-    facet_regions = np.asarray(source.complex.facet_regions, dtype=np.int64)
-    if facet_regions.shape != (len(construction.facet_ids), 2):
-        raise ValueError("PLC facet region incidence must align with source facets.")
+    mesh = layout.mesh
+    boundary_faces = np.asarray(layout.boundary_faces, dtype=np.int64)
+    boundary_face_ids = _boundary_face_entities(mesh, boundary_faces)
+    face_facets = np.asarray(layout.face_facets, dtype=np.int64)
+    facet_regions = np.asarray(layout.facet_regions, dtype=np.int64)
+    if facet_regions.shape != (len(layout.facet_ids), 2):
+        raise ValueError("Source face region incidence must align with source faces.")
     patches: list[MeshPatch] = []
     region_patch_sides: list[list[tuple[str, int]]] = [
         [] for _ in range(len(region_scopes))
@@ -538,18 +567,18 @@ def _patches_and_labels(
     facet_order = np.argsort(face_facets, kind="stable")
     facet_bounds = np.searchsorted(
         face_facets[facet_order],
-        np.arange(len(construction.facet_ids) + 1, dtype=np.int64),
+        np.arange(len(layout.facet_ids) + 1, dtype=np.int64),
     )
-    for facet, identity in enumerate(construction.facet_ids):
+    for facet, identity in enumerate(layout.facet_ids):
         selected_rows = facet_order[facet_bounds[facet] : facet_bounds[facet + 1]]
         selected = boundary_face_ids[selected_rows]
         if selected.size == 0:
-            raise ValueError(f"PLC facet {identity!r} has no constrained mesh faces.")
+            raise ValueError(f"Source face {identity!r} has no constrained mesh faces.")
         first = int(facet_regions[facet, 0])
         second = int(facet_regions[facet, 1])
         sides = (first, second)
         if any(region < -1 or region >= len(region_scopes) for region in sides):
-            raise ValueError("PLC facet incidence names an undeclared source region.")
+            raise ValueError("Source face incidence names an undeclared source region.")
         source_pair = (
             None if first < 0 else region_scopes[first][0],
             None if second < 0 else region_scopes[second][0],
@@ -561,7 +590,7 @@ def _patches_and_labels(
         adjacent = tuple(
             dict.fromkeys(zone_ids[region] for region in sides if region >= 0)
         )
-        path = construction.facet_occurrence_paths[facet]
+        path = layout.facet_occurrence_paths[facet]
         patch = MeshPatch(
             f"source-facet:{identity}:{'/'.join(path)}",
             _mesh_scope(mesh, 2, selected),
@@ -577,17 +606,12 @@ def _patches_and_labels(
                     region_patch_sides[region].append(
                         (patch.patch_id, 1 if side_index == 0 else -1)
                     )
-    for control in specification.patch_controls:
-        selected_facets = _rows_from_stable_ids(
-            np.asarray(control.scope.entity_ids, dtype=np.int64),
-            source.complex.facet_entity_ids,
-            "facet",
-        )
+    for name, selected_facets in patch_controls:
         selected_rows = np.flatnonzero(np.isin(face_facets, selected_facets))
         adjacent_rows = np.unique(facet_regions[selected_facets])
         patches.append(
             MeshPatch(
-                control.name,
+                name,
                 _mesh_scope(mesh, 2, boundary_face_ids[selected_rows]),
                 connected=_faces_connected(boundary_faces[selected_rows]),
                 adjacent_zone_ids=tuple(
@@ -608,7 +632,7 @@ def _patches_and_labels(
         )
         if selected.size == 0 or not region_patch_sides[region]:
             raise ValueError(
-                f"PLC region occurrence {region_id!r} has no oriented boundary patches."
+                f"Source region occurrence {region_id!r} has no oriented boundary patches."
             )
         label = MeshLabel(
             f"region-boundary:{source_scope.scope_id}",
@@ -644,14 +668,7 @@ def _patches_and_labels(
     ):
         if selected.size:
             labels.append(MeshLabel(name, _mesh_scope(mesh, 2, selected)))
-    explicit = source.complex.segments.shape[0]
-    internal = (
-        np.asarray(construction.source_segment_complex_rows, dtype=np.int64)[
-            np.asarray(construction.segment_source_edges, dtype=np.int64)
-        ]
-        < explicit
-    )
-    if np.any(internal):
+    if layout.internal_curves.shape[0]:
         labels.append(
             MeshLabel(
                 "internal_curve",
@@ -659,7 +676,7 @@ def _patches_and_labels(
                     mesh,
                     1,
                     _edge_entities(
-                        mesh, np.asarray(construction.segments, dtype=np.int64)[internal]
+                        mesh, np.asarray(layout.internal_curves, dtype=np.int64)
                     ),
                 ),
             )
@@ -1249,31 +1266,72 @@ def _plc_source_point_witness(
     )
 
 
+def _plc_layout(
+    source: NativePlcSource, construction: VolumeConstruction, /
+) -> SourceOrganizationLayout:
+    """The source layout of a PLC volume, checked against its source keys."""
+    complex_ = source.complex
+    region_ids = np.asarray(complex_.region_entity_ids, dtype=np.int64)
+    if region_ids.shape != (len(complex_.region_ids),) or len(
+        complex_.region_occurrence_paths
+    ) != len(complex_.region_ids):
+        raise ValueError("PLC source region identities and occurrence paths must align.")
+    for row, identifier in enumerate(region_ids.tolist()):
+        key = source.source_entity_key_for_scope(3, int(identifier))
+        if key != (
+            complex_.region_ids[row],
+            tuple(complex_.region_occurrence_paths[row]),
+        ):
+            raise ValueError("PLC region key differs from its declared occurrence path.")
+    if construction.region_ids != tuple(complex_.region_ids) or tuple(
+        tuple(path) for path in construction.region_occurrence_paths
+    ) != tuple(tuple(path) for path in complex_.region_occurrence_paths):
+        raise ValueError(
+            "Volume region assignments differ from their source occurrences."
+        )
+    explicit = complex_.segments.shape[0]
+    internal = (
+        np.asarray(construction.source_segment_complex_rows, dtype=np.int64)[
+            np.asarray(construction.segment_source_edges, dtype=np.int64)
+        ]
+        < explicit
+    )
+    return SourceOrganizationLayout(
+        construction.mesh,
+        construction.region_ids,
+        construction.region_occurrence_paths,
+        np.asarray(construction.cell_regions, dtype=np.int64),
+        construction.facet_ids,
+        construction.facet_occurrence_paths,
+        np.asarray(complex_.facet_regions, dtype=np.int64),
+        np.asarray(construction.boundary_faces, dtype=np.int64),
+        np.asarray(construction.face_source_facets, dtype=np.int64),
+        np.asarray(construction.segments, dtype=np.int64).reshape((-1, 2))[internal],
+    )
+
+
 def _organization(
     source: NativePlcSource,
     specification: VolumeMeshingSpec,
     construction: VolumeConstruction,
     /,
-    *,
-    source_scope_owner: _SourceEntityScopes | None = None,
-    region_controls: tuple[RegionControl, ...] | None = None,
 ) -> NativeMeshOrganization:
-    owner = source if source_scope_owner is None else source_scope_owner
-    region_scopes = _source_region_scopes(source, owner)
-    controls = _region_controls_by_row(
-        region_scopes,
-        specification.region_controls if region_controls is None else region_controls,
-    )
-    seeds = _region_seeds_by_row(region_scopes, specification.region_seeds)
-    zones, zone_ids = _region_zones(construction, region_scopes, controls, seeds)
-    patches, labels, region_boundary_evidence = _patches_and_labels(
+    patches, zones, labels, region_boundary_evidence = source_organization(
         source,
-        specification,
-        construction,
-        zone_ids,
-        region_scopes,
-        controls,
-        seeds,
+        _plc_layout(source, construction),
+        tuple(
+            (
+                control.name,
+                _rows_from_stable_ids(
+                    np.asarray(control.scope.entity_ids, dtype=np.int64),
+                    source.complex.facet_entity_ids,
+                    "facet",
+                ),
+            )
+            for control in specification.patch_controls
+        ),
+        specification.region_controls,
+        specification.region_seeds,
     )
     return NativeMeshOrganization(
         patches=patches,

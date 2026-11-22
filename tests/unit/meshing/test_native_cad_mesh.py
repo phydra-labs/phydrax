@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -19,6 +20,7 @@ from phydrax._meshcore import (
     CadFidelityChords,
     CadFidelityMesh,
     CadModel,
+    CadProximityControl,
     CadSolidResult,
     CadSurfaceResult,
     load_meshcore,
@@ -28,8 +30,15 @@ from phydrax._meshcore import (
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.meshing import CellMeshingCandidate
 from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._organization import (
+    MeshLabel,
+    MeshPatch,
+    MeshZone,
+    RegionBoundaryEvidence,
+)
 from phydrax.meshing._scope import MeshingScope
 from phydrax.meshing._sizing import ProximitySizeControl
+from phydrax.meshing.providers._native import _PreparedDirectBRepCadVolume
 from phydrax.meshing.providers._native_cad_bundle import (
     cad_geometry_bundle,
     coefficient_bounds,
@@ -976,6 +985,48 @@ def test_unmet_cells_split_into_forced_and_unforced_per_cell() -> None:
     assert abs(float(wedges[below[0]]) - np.degrees(np.arctan(0.25))) < 1e-9
 
 
+def test_soft_shape_schedule_and_forced_cells_agree() -> None:
+    # The rim cone of height 0.25 at h 0.2 has forced and unforced unmet
+    # cells. A hard schedule makes the unforced cells an issue (with the rim
+    # finding); a soft one publishes the unmet shape rows and only unforced
+    # hard cells (validity, determinant, nonrepresentable shape) stay issues:
+    # a forced cell is never a hard cell (fails if the native hard count
+    # includes forced cells or the soft route reports shape-only cells).
+    from phydrax.meshing.providers._native_cad_mesh import construct_cad_solid
+
+    reports = {}
+    for soft in (False, True):
+        plan = _cad_volume_plan(
+            _rim_cone(0.25), 0.2, 1, radius_edge=2.0, dihedral=15.5, soft_shape=soft
+        )
+        prepared = plan.prepared
+        assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+        stats = construct_cad_solid(prepared).volume.stats[0]
+        forced = int(stats["unmet_forced_cells"])
+        unforced = int(stats["unmet_unforced_cells"])
+        hard = int(stats["unmet_hard_cells"])
+        assert forced > 0 and unforced > 0
+        assert hard <= unforced
+        candidate = plan.execute(prove=False)
+        report = candidate._construction.compliance
+        achieved = dict(report.achieved)
+        assert achieved["unmet_forced_quality_cells"] == forced
+        assert achieved["unmet_unforced_quality_cells"] == unforced
+        reports[soft] = (report, hard, int(stats["unmet_shape_rows"]))
+    report, _, _ = reports[False]
+    unforced = int(dict(report.achieved)["unmet_unforced_quality_cells"])
+    assert f"native_unmet_quality_cells:{unforced}" in report.issues
+    assert any(
+        issue.startswith("input_rim_wedge_below_dihedral_target:")
+        for issue in report.issues
+    )
+    report, hard, shape_rows = reports[True]
+    assert dict(report.achieved)["soft_shape_target_unmet_count"] == shape_rows > 0
+    quality = [issue for issue in report.issues if issue.startswith("native_unmet_")]
+    assert quality == ([f"native_unmet_quality_cells:{hard}"] if hard else [])
+    assert not any(issue.startswith("input_rim_wedge") for issue in report.issues)
+
+
 def _washer() -> phx.geometry.brep.BRepModel:
     brep = phx.geometry.brep
     return brep.brep_revolution(
@@ -1157,13 +1208,14 @@ def test_quadric_solid(domain: MeshingDomain, order: int) -> None:
 
 
 def _cad_volume_plan(
-    model: phx.geometry.brep.BRepModel,
+    model: phx.geometry.brep.BRepModel | MeshingDomain,
     size: float,
     order: int,
     /,
     *,
     radius_edge: float = 2.0,
     dihedral: float = 15.5,
+    soft_shape: bool = False,
 ) -> phx.meshing.NativeMeshingPlan:
     from phydrax.meshing._contracts import (
         CellFamilyPolicy,
@@ -1172,7 +1224,7 @@ def _cad_volume_plan(
         VolumeMeshingSpec,
     )
     from phydrax.meshing._scope import MeshingScope
-    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._sizing import SizeControlStrength, UniformSizeControl
     from phydrax.meshing._volume_generation import NativeVolumeSchedule
     from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
@@ -1190,10 +1242,86 @@ def _cad_volume_plan(
         NativeMeshingOptions(
             "cad_tetrahedral",
             volume_schedule=NativeVolumeSchedule(
-                radius_edge_bound=radius_edge, minimum_dihedral_degrees=dihedral
+                radius_edge_bound=radius_edge,
+                minimum_dihedral_degrees=dihedral,
+                shape_strength=SizeControlStrength.SOFT
+                if soft_shape
+                else SizeControlStrength.HARD,
             ),
         )
     ).plan(model, specification)
+
+
+def test_shape_strength_decides_whether_unmet_shape_cells_are_issues() -> None:
+    # A dihedral aim the box cannot reach leaves unmet shape cells: a hard
+    # schedule makes them an issue, a soft one publishes their count.
+    box = phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    for soft in (False, True):
+        candidate = _cad_volume_plan(
+            box, 0.5, 1, radius_edge=1.0, dihedral=60.0, soft_shape=soft
+        ).execute(prove=False)
+        report = candidate._construction.compliance
+        achieved = dict(report.achieved)
+        assert achieved["unmet_quality_cells"] > 0
+        unmet = [issue for issue in report.issues if issue.startswith("native_unmet")]
+        if soft:
+            assert not unmet
+            assert achieved["soft_shape_target_unmet_count"] > 0
+        else:
+            assert unmet
+            assert "soft_shape_target_unmet_count" not in achieved
+
+
+def test_soft_shape_keeps_a_determinant_failure_hard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The schedule's determinant floor is fixed; raising it in the native call
+    # makes validity rows, which a soft shape schedule must still gate.
+    import phydrax.meshing.providers._native_cad_mesh as native_cad_mesh
+
+    construct = native_cad_mesh.cad_mesh_solid
+
+    def strict(
+        model: CadModel,
+        face_sizes: object,
+        face_tolerances: object,
+        curve_tolerances: object,
+        /,
+        *,
+        radius_edge_bound: float,
+        min_dihedral_degrees: float,
+        min_relative_determinant: float,
+        geometry_order: int,
+        proximity_controls: tuple[CadProximityControl, ...],
+    ) -> CadSolidResult:
+        assert min_relative_determinant < 0.9
+        return construct(
+            model,
+            face_sizes,
+            face_tolerances,
+            curve_tolerances,
+            radius_edge_bound=radius_edge_bound,
+            min_dihedral_degrees=min_dihedral_degrees,
+            min_relative_determinant=0.9,
+            geometry_order=geometry_order,
+            proximity_controls=proximity_controls,
+        )
+
+    monkeypatch.setattr(native_cad_mesh, "cad_mesh_solid", strict)
+    box = phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+    )
+    candidate = _cad_volume_plan(
+        box, 0.5, 1, radius_edge=8.0, dihedral=0.0, soft_shape=True
+    ).execute(prove=False)
+    report = candidate._construction.compliance
+    assert any(issue.startswith("native_unmet_quality_cells:") for issue in report.issues)
 
 
 def _sphere_model() -> phx.geometry.brep.BRepModel:
@@ -1500,135 +1628,305 @@ def test_triangle_circumradii_are_exact_and_refuse_degenerate_rows() -> None:
     assert np.isinf(radii[2])
 
 
-def test_proved_cad_solid_keeps_the_python_route() -> None:
-    from phydrax.geometry._source_boundary_records import SourceBoundaryChartWitness
+_CERTIFIED_FIXTURES = {
+    "quadric": (_quadric_model, 0.2293),
+    "sphere": (_sphere_model, 0.2),
+    "cylinder": (
+        lambda: phx.geometry.brep.brep_cylinder(
+            0.5, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+    "box": (
+        lambda: phx.geometry.brep.brep_box(
+            np.zeros(3),
+            np.asarray((1.0, 0.5, 0.25)),
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        ),
+        0.3,
+    ),
+}
+
+# Their native trim sheets are unproved, as on the Python route.
+_UNPROVED_SHELL_FIXTURES = {
+    "cone": (
+        lambda: phx.geometry.brep.brep_cone(
+            0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+    "torus": (
+        lambda: phx.geometry.brep.brep_torus(
+            1.0, 0.25, coordinate_contract=phx.SpatialCoordinateContract.si()
+        ),
+        0.3,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_CERTIFIED_FIXTURES))
+def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
     from phydrax.meshing._result import CellMeshingResult
 
-    result = _cad_volume_plan(
-        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
-    ).execute()
+    factory, size = _CERTIFIED_FIXTURES[name]
+    plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
+    result = plan.execute()
     assert isinstance(result, CellMeshingResult)
-    assert result.certification is not None and result.certification.passed
-    witness = result.certification.inputs.fidelity_witness
-    # The Python construction's CAD ancestry, absent from the native route.
-    assert isinstance(witness, SourceBoundaryChartWitness)
-    assert witness.cad_plc is not None
-    assert result.mesh.blocks[0].name != "native-cad-tetrahedra"
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
+    certification = result.certification
+    assert certification is not None and certification.passed
+    native = certification.native_cad
+    assert native is not None and native.status == "certified"
+    # V3's certified bound reaches the report against the request tolerance.
+    assert native.tolerance == 0.05
+    assert native.maximum_deviation is not None
+    assert 0.0 <= native.maximum_deviation <= 0.05
+    # The source shell and the occurrence records are proved, not premises.
+    assert native.source_shell is not None
+    records = certification.inputs.native_cad_records
+    assert records is not None and native.records_id == records.records_id
+    # One construction, then certification: the same candidate and report.
+    again = plan.execute(prove=False).prove()
+    assert again.mesh.mesh_id == result.mesh.mesh_id
+    assert again.certification is not None
+    assert again.certification.report_id == certification.report_id
+
+
+@pytest.mark.parametrize("name", sorted(_UNPROVED_SHELL_FIXTURES))
+def test_unproved_source_shell_refuses_the_cad_solid(name: str) -> None:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    factory, size = _UNPROVED_SHELL_FIXTURES[name]
+    plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
+    with pytest.raises(
+        MeshingFailure,
+        match="Rooted CAD source shell embedding or material orientation remains "
+        r"unresolved \(refused at: trim sheet of source patch",
+    ):
+        plan.execute()
+
+
+def test_source_shell_is_proved_once_per_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax.meshing._native_cad_shell as native_shell
+
+    calls: list[MeshingDomain] = []
+    prove = native_shell.prove_source_shell
+
+    def counted(domain: MeshingDomain, /) -> native_shell.NativeSourceShell:
+        calls.append(domain)
+        return prove(domain)
+
+    monkeypatch.setattr(native_shell, "prove_source_shell", counted)
+    domain = MeshingDomain.from_brep(_sphere_model())
+    first = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    # Another mesh of the same domain reuses the model part of the proof.
+    second = _cad_volume_plan(domain, 0.2, 1, radius_edge=8.0, dihedral=0.0).execute()
+    assert calls == [domain]
+    shells = []
+    for result in (first, second):
+        assert result.certification is not None and result.certification.passed
+        native = result.certification.native_cad
+        assert native is not None and native.source_shell is not None
+        shells.append(native.source_shell)
+    # The chart part is per mesh.
+    assert first.mesh.mesh_id != second.mesh.mesh_id
+    assert shells[0] != shells[1]
+
+
+def test_reversed_source_shell_is_refused() -> None:
+    from phydrax.meshing._native_cad_shell import prove_source_shell
+
+    box = _CERTIFIED_FIXTURES["box"][0]()
+    assert prove_source_shell(MeshingDomain.from_brep(box)).refusal is None
+    # The same faces with every orientation flipped bound an inward shell.
+    reversed_box = phx.geometry.brep.BRepModel(
+        geometry=box.geometry,
+        patches=box.patches,
+        parameter_bounds=np.asarray(box.parameter_bounds),
+        orientation=-np.asarray(box.orientation),
+        physical_tags=box.physical_tags,
+        coordinate_contract=box.coordinate_contract,
+        report=box.report,
+        trim_domains=box.trim_domains,
+    )
+    shell = prove_source_shell(MeshingDomain.from_brep(reversed_box))
+    assert shell.refusal == "shell volume sign"
+
+
+@pytest.mark.parametrize("request_field", ["protected features", "normal deviation"])
+def test_native_cad_certificate_refuses_requests_without_native_owner(
+    request_field: str,
+) -> None:
+    # Neither request reaches the native route today (protected features keep
+    # the existing construction; volume specifications have no normal bound);
+    # given one, the native certificate refuses it rather than dropping it.
+    from phydrax.meshing._controls import FeatureKind, ProtectedFeature
+    from phydrax.meshing._native_cad_certificate import NativeCadCertificate
+    from phydrax.meshing._scope import MeshingScope
+
+    candidate = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute(prove=False)
+    request = candidate._construction.certification
+    witness = request.native_cad_surface
+    domain = request.domain
+    records = request.native_cad_records
+    assert witness is not None and records is not None
+    assert isinstance(domain, MeshingDomain)
+    features = (
+        (ProtectedFeature(MeshingScope.whole(domain, 2), FeatureKind.SURFACE),)
+        if request_field == "protected features"
+        else ()
+    )
+    normal = 0.5 if request_field == "normal deviation" else None
+    certificate = NativeCadCertificate(
+        candidate.mesh,
+        candidate.geometry,
+        domain,
+        witness,
+        records,
+        0.05,
+        features,
+        normal,
+    )
+    assert certificate.status == "unresolved"
+    assert certificate.source_shell is None
+    (finding,) = certificate.findings
+    assert finding.check == "cad_native_unsupported_request"
+    assert (
+        "protected features" if features else "maximum_normal_deviation"
+    ) in finding.detail
 
 
 def test_proved_quadratic_cad_solid_is_refused() -> None:
     from phydrax.meshing._contracts import MeshingFailure
 
     plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
-    with pytest.raises(MeshingFailure, match="geometry order 2 is constructed unproved"):
+    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
         plan.execute()
+    with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
+        plan.execute(prove=False).prove()
 
 
-@pytest.mark.parametrize("order", [1, 2])
-def test_native_cad_candidate_prove_is_refused(order: int) -> None:
-    # Until the native verifiers are accepted, a native candidate has no
-    # witness: prove() refuses it rather than certify it or rebuild the
-    # Python mesh.
-    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
-    from phydrax.meshing.providers._native_cad_mesh import (
-        NATIVE_CAD_SOLID_UNCERTIFIABLE,
-    )
+@pytest.mark.parametrize("prove_later", [False, True])
+def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
+    monkeypatch: pytest.MonkeyPatch, prove_later: bool
+) -> None:
+    # One boundary triangle reversed in its face chart (as a construction
+    # defect would emit it): V4 refuses its orientation and prove() reports it.
+    import phydrax.meshing.providers._native_cad_mesh as route
+    from phydrax.meshing._contracts import MeshingFailure
 
-    candidate = _cad_volume_plan(_sphere_model(), 0.3, order).execute(prove=False)
+    construct = route.construct_cad_solid
+
+    def flipped(prepared: _PreparedDirectBRepCadVolume) -> CadSolidResult:
+        solid = construct(prepared)
+        chart = solid.surface.chart
+        row = int(np.flatnonzero(chart.chart_to_mesh >= 0)[0])
+        triangles, uv = chart.triangles.copy(), chart.uv.copy()
+        triangles[row, [1, 2]] = triangles[row, [2, 1]]
+        uv[row, [1, 2]] = uv[row, [2, 1]]
+        surface = solid.surface._replace(chart=chart._replace(triangles=triangles, uv=uv))
+        return solid._replace(surface=surface)
+
+    monkeypatch.setattr(route, "construct_cad_solid", flipped)
+    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
     with pytest.raises(MeshingFailure) as failure:
-        candidate.prove()
-    assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_COMBINATION
-    assert str(failure.value) == NATIVE_CAD_SOLID_UNCERTIFIABLE
-    assert "V3 CAD fidelity" in NATIVE_CAD_SOLID_UNCERTIFIABLE
+        plan.execute(prove=False).prove() if prove_later else plan.execute()
+    assert "cad_chart_partition: violated" in str(failure.value)
+    assert "ORIENTATION" in str(failure.value)
 
 
-def test_invalid_trim_cad_solid_is_refused_at_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A p-curve without a chart enclosure is invalid source for every proof
-    # level: planning refuses it before any construction.
-    from phydrax.geometry._meshing_domain import SourcePreparation
-    from phydrax.meshing._contracts import MeshingFailure
+def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
+    import subprocess
+    import sys
 
-    def no_enclosure(*_: object) -> np.ndarray:
-        raise ValueError("p-curve enclosure diverges")
-
-    monkeypatch.setattr(SourcePreparation, "curve_box", no_enclosure)
-    with pytest.raises(MeshingFailure, match="requires a continuous p-curve enclosure"):
-        _cad_volume_plan(_sphere_model(), 0.3, 1)
-
-
-def test_incomplete_trim_cover_is_refused_at_proof_not_plan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Trim cover coverage is proof preparation: the plan and the unproved
-    # native candidate do not consume it; the proved execution refuses.
-    from types import SimpleNamespace
-
-    from phydrax.geometry._domain_boundary import MeshingDomainBoundarySource
-    from phydrax.meshing import CellMeshingCandidate
-    from phydrax.meshing._contracts import MeshingFailure
-
-    monkeypatch.setattr(
-        MeshingDomainBoundarySource,
-        "boundary_chart_cover",
-        lambda *_, **__: SimpleNamespace(complete=False),
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        write_model_artifact,
     )
-    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    assert isinstance(plan.execute(prove=False), CellMeshingCandidate)
-    with pytest.raises(
-        MeshingFailure,
-        match="does not provide complete selected-patch coverage",
-    ):
-        plan.execute()
 
-
-def test_cad_volume_proof_preparation_runs_once_on_first_proof(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import phydrax.meshing.providers._native_surface as native_surface
-
-    calls: list[native_surface.NativeSurfaceRequest] = []
-    prepare = native_surface.prepare_native_surface_proof
-
-    def counted(
-        request: native_surface.NativeSurfaceRequest,
-    ) -> native_surface._PreparedNativeSurface:
-        calls.append(request)
-        return prepare(request)
-
-    monkeypatch.setattr(native_surface, "prepare_native_surface_proof", counted)
-    plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
-    plan.execute(prove=False)
-    assert not calls
-    first = plan.execute()
-    second = plan.execute()
-    assert len(calls) == 1
-    assert first.certification is not None and first.certification.passed
-    assert second.mesh.mesh_id == first.mesh.mesh_id
-
-
-def test_unproved_cad_solid_with_region_control_honors_it() -> None:
-    # The native candidate has no organization records, so a region control
-    # keeps the existing construction, whose candidate carries the control.
-    from phydrax.meshing import CellMeshingCandidate
-    from phydrax.meshing._contracts import (
-        CellFamilyPolicy,
-        CellMeshingTarget,
-        VolumeFillStrategy,
-        VolumeMeshingSpec,
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    path = tmp_path / "native-cad-result.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    content_id = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
+    assert result.certification is not None
+    native = result.certification.native_cad
+    assert native is not None
+    records = result.certification.inputs.native_cad_records
+    assert records is not None and native.records_id == records.records_id
+    associations = ",".join(item.association_id for item in result.associations)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from phydrax.meshing._model_codec import MODEL_ARCHIVE_LIMITS, read_model_artifact, restore_model_archive_value
+from phydrax.meshing._result import CellMeshingResult
+r = read_model_artifact(sys.argv[1], expected_type=CellMeshingResult,
+    restore=restore_model_archive_value, expected_content_id=sys.argv[2], limits=MODEL_ARCHIVE_LIMITS)
+assert r.certification.report_id == sys.argv[3]
+assert r.certification.native_cad.certificate_id == sys.argv[4]
+assert r.certification.inputs.native_cad_records.records_id == sys.argv[5]
+assert r.certification.native_cad.records_id == sys.argv[5]
+assert ",".join(item.association_id for item in r.associations) == sys.argv[6]
+""",
+            str(path),
+            content_id,
+            result.certification.report_id,
+            native.certificate_id,
+            records.records_id,
+            associations,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=900,
     )
-    from phydrax.meshing._controls import RegionControl, RegionSeed
-    from phydrax.meshing._organization import RegionRole
-    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-    from phydrax.meshing._sizing import UniformSizeControl
-    from phydrax.meshing._volume_generation import NativeVolumeSchedule
-    from phydrax.meshing.providers._native_options import NativeMeshingOptions
 
-    model = _sphere_model()
-    domain = MeshingDomain.from_brep(model)
-    boundary = MeshingScope.whole(model, 2)
-    region_scope = MeshingScope(
+
+def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
+    # An archive-restored domain holds equal, unshared copies of the source
+    # objects; in the same process (bundle cache warm) it proves the solid.
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._result import CellMeshingResult
+
+    result = _cad_volume_plan(
+        _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
+    ).execute()
+    path = tmp_path / "native-cad-domain.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        expected_content_id=model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.certification is not None and result.certification is not None
+    assert restored.certification.report_id == result.certification.report_id
+    domain = restored.certification.inputs.domain
+    assert isinstance(domain, MeshingDomain)
+    again = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    assert again.certification is not None and again.certification.passed
+
+
+def _region_scope(domain: MeshingDomain, /) -> MeshingScope:
+    from phydrax.meshing._scope import MeshingEntityKind
+
+    return MeshingScope(
         domain.source_id,
         domain.source_revision,
         MeshingEntityKind.GEOMETRY,
@@ -1636,27 +1934,73 @@ def test_unproved_cad_solid_with_region_control_honors_it() -> None:
         domain.scope_entity_set_id(3),
         np.asarray(domain.scope_entity_ids(3)[:1], dtype=np.int64),
     )
-    region_name = domain.regions[0].name
-    control = RegionControl(
-        region_scope, region_name, "controlled-solid", RegionRole.SOLID
+
+
+def _organized_plan(
+    model: phx.geometry.brep.BRepModel,
+    size: float,
+    *,
+    region_seed: tuple[float, float, float] | None,
+    hole_seed: tuple[float, float, float] | None = None,
+    controls: bool = True,
+) -> phx.meshing.NativeMeshingPlan:
+    """A coarse CAD solid with a patch control, a region control and seeds."""
+    from phydrax.meshing._contracts import (
+        CellFamilyPolicy,
+        CellMeshingTarget,
+        VolumeFillStrategy,
     )
+    from phydrax.meshing._controls import (
+        HoleSeed,
+        PatchControl,
+        RegionControl,
+        RegionSeed,
+    )
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._scope import MeshingEntityKind
+    from phydrax.meshing._sizing import UniformSizeControl
+    from phydrax.meshing._volume_generation import NativeVolumeSchedule
+    from phydrax.meshing.providers._native_options import NativeMeshingOptions
+
+    domain = MeshingDomain.from_brep(model)
+    boundary = MeshingScope.whole(model, 2)
+    faces = MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        MeshingEntityKind.GEOMETRY,
+        2,
+        domain.scope_entity_set_id(2),
+        np.asarray(domain.scope_entity_ids(2)[:2], dtype=np.int64),
+    )
+    region = domain.regions[0].name
     specification = VolumeMeshingSpec(
         CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))),
         boundary,
         VolumeFillStrategy.SIMPLEX,
-        size_controls=(UniformSizeControl(boundary, 0.3),),
-        region_controls=(control,),
+        size_controls=(UniformSizeControl(boundary, size),),
+        region_controls=(
+            (RegionControl(_region_scope(domain), "renamed", "steel", RegionRole.SOLID),)
+            if controls
+            else ()
+        ),
+        patch_controls=(
+            (PatchControl("inlet", faces, ("renamed",)),) if controls else ()
+        ),
         region_seeds=(
-            RegionSeed(
-                np.zeros(3, dtype=np.float64),
-                region_name,
-                "seed-material",
-                RegionRole.SOLID,
-            ),
+            ()
+            if region_seed is None
+            else (
+                RegionSeed(np.asarray(region_seed), region, "seeded", RegionRole.FLUID),
+            )
+        ),
+        hole_seeds=(
+            ()
+            if hole_seed is None
+            else (HoleSeed(np.asarray(hole_seed), MeshingScope.whole(model, 3)),)
         ),
         maximum_deviation=0.05,
     )
-    plan = phx.meshing.NativeMeshingProvider(
+    return phx.meshing.NativeMeshingProvider(
         NativeMeshingOptions(
             "cad_tetrahedral",
             volume_schedule=NativeVolumeSchedule(
@@ -1664,12 +2008,275 @@ def test_unproved_cad_solid_with_region_control_honors_it() -> None:
             ),
         )
     ).plan(model, specification)
-    candidate = plan.execute(prove=False)
-    assert isinstance(candidate, CellMeshingCandidate)
-    assert candidate.mesh.blocks[0].name != "native-cad-tetrahedra"
-    (evidence,) = candidate._construction.organization.region_boundary_evidence
-    assert evidence.control_id == control.control_id
-    assert evidence.material_id == "controlled-solid"
+
+
+type _ViewRows = tuple[tuple[object, ...], ...]
+
+
+def _organization_view(
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    labels: tuple[MeshLabel, ...],
+    evidence: tuple[RegionBoundaryEvidence, ...],
+) -> tuple[_ViewRows, _ViewRows, _ViewRows, _ViewRows]:
+    """Mesh-independent organization semantics (names, adjacency, evidence)."""
+    zone_names = {zone.zone_id: zone.name for zone in zones}
+    patch_names = {patch.patch_id: patch.name for patch in patches}
+    return (
+        tuple(
+            (
+                patch.name,
+                patch.scope.entity_ids.size > 0,
+                patch.connected,
+                tuple(zone_names[zone] for zone in patch.adjacent_zone_ids),
+                patch.source_adjacent_region_ids,
+                patch.source_adjacent_region_occurrence_paths,
+            )
+            for patch in patches
+        ),
+        tuple(
+            (zone.name, zone.role, zone.material_id, zone.region_role) for zone in zones
+        ),
+        tuple(
+            sorted(
+                (
+                    label.name,
+                    label.scope.entity_dimension,
+                    label.scope.entity_ids.size > 0,
+                )
+                for label in labels
+            )
+        ),
+        tuple(
+            (
+                item.source_region_id,
+                item.source_scope.scope_id,
+                item.control_id,
+                item.material_id,
+                item.role,
+                tuple(
+                    sorted((patch_names[patch], side) for patch, side in item.patch_sides)
+                ),
+                item.source_occurrence_path,
+            )
+            for item in evidence
+        ),
+    )
+
+
+_ORGANIZED_SOLIDS = (
+    ("box", 0.3, (0.5, 0.5, 0.5)),
+    ("quadric", 0.6, (0.0, 0.0, 0.0)),
+)
+
+
+def _organized_model(name: str, /) -> phx.geometry.brep.BRepModel:
+    if name == "quadric":
+        return _quadric_model()
+    return phx.geometry.brep.brep_box(
+        np.zeros(3),
+        np.ones(3),
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="native-cad-route-organized-box",
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "size", "seed"), _ORGANIZED_SOLIDS, ids=[row[0] for row in _ORGANIZED_SOLIDS]
+)
+@pytest.mark.parametrize("prove", [False, True], ids=["candidate", "proved"])
+def test_cad_solid_organization_is_native_and_matches_existing_route(
+    name: str,
+    size: float,
+    seed: tuple[float, float, float],
+    prove: bool,
+    tmp_path: Path,
+) -> None:
+    # Patch and region controls and region seeds take the native route, whose
+    # patches, zones, labels and region evidence carry the existing route's
+    # semantics; the proved result certifies and survives the archive.
+    from phydrax.meshing._model_codec import (
+        model_archive_content_id,
+        MODEL_ARCHIVE_LIMITS,
+        read_model_artifact,
+        restore_model_archive_value,
+        write_model_artifact,
+    )
+    from phydrax.meshing._native_construction import NativeMeshConstruction
+    from phydrax.meshing._organization import RegionRole
+    from phydrax.meshing._result import CellMeshingResult
+
+    plan = _organized_plan(_organized_model(name), size, region_seed=seed)
+    prepared = plan.prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    existing = prepared.execute()
+    assert isinstance(existing, NativeMeshConstruction)
+    assert existing.mesh.blocks[0].name != "native-cad-tetrahedra"
+    expected = _organization_view(
+        existing.organization.patches,
+        existing.organization.zones,
+        existing.organization.labels,
+        existing.organization.region_boundary_evidence,
+    )
+    patches, zones, _, evidence = expected
+    assert [row[0] for row in patches][-1] == "inlet"
+    assert [(row[2], row[3]) for row in zones] == [("steel", RegionRole.SOLID)]
+    assert evidence[0][3:5] == ("steel", RegionRole.SOLID)
+    if not prove:
+        candidate = plan.execute(prove=False)
+        assert isinstance(candidate, CellMeshingCandidate)
+        assert candidate.mesh.blocks[0].name == "native-cad-tetrahedra"
+        organization = candidate._construction.organization
+        assert (
+            _organization_view(
+                organization.patches,
+                organization.zones,
+                organization.labels,
+                organization.region_boundary_evidence,
+            )
+            == expected
+        )
+        return
+    result = plan.execute()
+    assert isinstance(result, CellMeshingResult)
+    assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
+    assert result.certification is not None and result.certification.passed
+    view = _organization_view(
+        result.patches, result.zones, result.labels, result.region_boundary_evidence
+    )
+    assert view == expected
+    path = tmp_path / "native-cad-organized.phx"
+    write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
+    restored = read_model_artifact(
+        path,
+        expected_type=CellMeshingResult,
+        restore=restore_model_archive_value,
+        expected_content_id=model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS),
+        limits=MODEL_ARCHIVE_LIMITS,
+    )
+    assert restored.certification is not None
+    assert restored.certification.report_id == result.certification.report_id
+    assert [patch.patch_id for patch in restored.patches] == [
+        patch.patch_id for patch in result.patches
+    ]
+    assert [zone.zone_id for zone in restored.zones] == [
+        zone.zone_id for zone in result.zones
+    ]
+    assert [item.evidence_id for item in restored.region_boundary_evidence] == [
+        item.evidence_id for item in result.region_boundary_evidence
+    ]
+    assert (
+        _organization_view(
+            restored.patches,
+            restored.zones,
+            restored.labels,
+            restored.region_boundary_evidence,
+        )
+        == view
+    )
+
+
+_SEED_OUTCOMES = (
+    ("hole_inside", None, (0.5, 0.5, 0.5), "plc_source_region_leak"),
+    ("region_outside", (2.0, 2.0, 2.0), None, "plc_source_region_leak"),
+    ("region_on_surface", (0.5, 0.5, 0.0), None, "plc_source_invalid_seed"),
+)
+
+
+@pytest.mark.parametrize(
+    ("case", "region_seed", "hole_seed", "refusal"),
+    _SEED_OUTCOMES,
+    ids=[row[0] for row in _SEED_OUTCOMES],
+)
+def test_cad_solid_seeds_classify_by_the_certified_surface(
+    case: str,
+    region_seed: tuple[float, float, float] | None,
+    hole_seed: tuple[float, float, float] | None,
+    refusal: str,
+) -> None:
+    # A region seed must lie inside its region and a hole seed outside the
+    # solid (exact point-in-shell test); a seed on a surface triangle refuses.
+    # Provider codes are the existing route's (PLC recovery reasons).
+    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+
+    plan = _organized_plan(
+        _organized_model("box"),
+        0.3,
+        region_seed=region_seed,
+        hole_seed=hole_seed,
+        controls=False,
+    )
+    with pytest.raises(MeshingFailure) as error:
+        plan.execute(prove=False)
+    assert error.value.category is MeshingFailureCategory.REGION_RESOLUTION_FAILED
+    assert error.value.provider_code == refusal
+
+
+def _l_solid() -> phx.geometry.brep.BRepModel:
+    """An L-shaped solid: its notch is outside the solid, inside its hull."""
+    contract = phx.SpatialCoordinateContract.si()
+    first = phx.geometry.brep.brep_box(
+        np.zeros(3), np.asarray((2.0, 1.0, 1.0)), coordinate_contract=contract
+    )
+    second = phx.geometry.brep.brep_box(
+        np.zeros(3), np.asarray((1.0, 2.0, 1.0)), coordinate_contract=contract
+    )
+    return phx.geometry.brep.boolean_brep(
+        first, second, "union", policy=phx.geometry.brep.BRepBooleanPolicy()
+    ).model
+
+
+def _seed_outcome(execute: Callable[[], object], /) -> tuple[object, ...]:
+    from phydrax.meshing._contracts import MeshingFailure
+
+    try:
+        execute()
+    except MeshingFailure as error:
+        return (error.category, error.provider_code)
+    return ("meshed",)
+
+
+_NOTCH_SEEDS = (
+    ("hole", (1.3, 1.3, 0.5)),
+    ("region", (1.3, 1.3, 0.5)),
+    ("hole", (0.5, 0.5, 0.5)),
+    ("region", (0.5, 0.5, 0.0)),
+    ("region", (3.0, 3.0, 3.0)),
+    ("hole", (3.0, 3.0, 3.0)),
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "point"),
+    _NOTCH_SEEDS,
+    ids=[
+        "hole-notch",
+        "region-notch",
+        "hole-inside",
+        "region-surface",
+        "region-hull",
+        "hole-hull",
+    ],
+)
+def test_seed_outcome_matches_existing_route(
+    kind: str, point: tuple[float, float, float]
+) -> None:
+    # Seeds of an L-shaped solid: in the notch (outside the solid, inside the
+    # hull of its source points, where the routes could diverge), inside the
+    # solid, on its surface and beyond its hull. Both routes reach one
+    # outcome (meshed, or the same category and provider code).
+    plan = _organized_plan(
+        _l_solid(),
+        0.4,
+        region_seed=point if kind == "region" else None,
+        hole_seed=point if kind == "hole" else None,
+        controls=False,
+    )
+    prepared = plan.prepared
+    assert isinstance(prepared, _PreparedDirectBRepCadVolume)
+    existing = _seed_outcome(prepared.execute)
+    native = _seed_outcome(lambda: plan.execute(prove=False))
+    assert native == existing
 
 
 def _field_specification(
@@ -1779,8 +2386,8 @@ def _field_specification(
 
 _FIELD_OUTCOMES = (
     ("protected_features", "existing"),
-    ("region_seeds", "existing"),
-    ("hole_seeds", "PLC source preparation failed (REGION_LEAK"),
+    ("region_seeds", "native"),
+    ("hole_seeds", "Native CAD hole seed"),
     ("size_maximum", "native"),
     ("size_compliance", "native"),
     ("size_curvature", "supports uniform and proximity size controls on source faces"),

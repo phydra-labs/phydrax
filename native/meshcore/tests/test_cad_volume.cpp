@@ -417,8 +417,8 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
 }
 
 // A surface with zero-area triangles (the sphere's former coincident equator
-// rings) is refused before recovery, naming the first such triangle and its
-// relative area, instead of minutes of improvement against it.
+// rings) is refused by recovery (S3's flat-facet refusal), naming the first
+// such triangle and its smallest-angle sine, instead of minutes of improvement.
 void flat_surface_triangle() {
   const Bank sphere = sphere_bank();
   const phx_mc_cad_model model = sphere.model();
@@ -434,6 +434,7 @@ void flat_surface_triangle() {
   surface.points = kEquatorRingPoints;
   surface.triangles = kEquatorRingTriangles;
   surface.triangle_patches.assign(surface.triangles.size(), 0);
+  surface.facet_regions.assign(surface.triangles.size(), {0, -1});
   phx::mc::CadVolumeMesh volume;
   const int32_t status = phx::mc::cad_mesh_volume(
       geometry, curves, surface, sizes.data(),
@@ -441,7 +442,7 @@ void flat_surface_triangle() {
   PHX_CHECK(status == PHX_MC_UNRESOLVED);
   PHX_CHECK(volume.tetrahedra.empty() && volume.points.empty());
   const auto& stats = volume.stats;
-  PHX_CHECK(stats.recovery_attempts == 0 && stats.refine_inserted == 0 &&
+  PHX_CHECK(stats.recovery_attempts == 1 && stats.refine_inserted == 0 &&
             stats.improve_inserted == 0);
   PHX_CHECK(stats.recovery_status == PHX_MC_UNRESOLVED);
   PHX_CHECK(stats.recovery_reason == PHX_MC_PLC_INVALID_FACET);
