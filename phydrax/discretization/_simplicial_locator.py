@@ -363,7 +363,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         """Affine tetrahedra by exact signed-volume ratios, lowest accepting cell.
 
         The schedule of `phydrax._fixed_order` and the native
-        `phx_mc_bvh_tetrahedron_locate` agree bit for bit: a candidate with a
+        `phx_mc_bvh_query_locate_tetrahedra` agree bit for bit: a candidate with a
         finite positive determinant accepts `r >= -tol`, `sum(r) <= 1 + tol`.
         Reference coordinates are exact, so located points report zero
         iterations and no seed fallback.

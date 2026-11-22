@@ -1,8 +1,7 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// C entries of the BVH point queries: argument validation, then one
-// single-threaded batched kernel of bvh_query.cpp.
+// C entries of the BVH point queries: argument validation and dispatch.
 #include <cmath>
 #include <cstdint>
 
@@ -41,10 +40,12 @@ bool simplex_queries_valid(const phx_mc_bvh_tree_view* tree, int64_t vertex_coun
 
 extern "C" {
 
-int32_t phx_mc_bvh_triangle_nearest(const phx_mc_bvh_tree_view* tree, int64_t vertex_count,
-                                    const double* vertices, const int32_t* faces, int64_t count,
-                                    const double* points, int32_t k, int32_t* faces_out,
-                                    double* distance_squared, double* closest, int8_t* features) {
+int32_t phx_mc_bvh_query_nearest_triangles(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int64_t count, const double* points, int32_t k,
+    int32_t* faces_out, double* distance_squared, double* closest, int8_t* features,
+    int32_t parallelism) {
+  if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -54,17 +55,18 @@ int32_t phx_mc_bvh_triangle_nearest(const phx_mc_bvh_tree_view* tree, int64_t ve
                        closest == nullptr || features == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    phx::mc::bvh::triangle_nearest(*tree, {vertices, faces}, count, points, k,
-                                   {faces_out, distance_squared, closest, features});
-    return PHX_MC_OK;
+    return phx::mc::bvh::triangle_nearest(
+        *tree, {vertices, faces}, count, points, k, {faces_out, distance_squared, closest, features},
+        parallelism);
   });
 }
 
-int32_t phx_mc_bvh_triangle_signed_distance(const phx_mc_bvh_tree_view* tree,
-                                            int64_t vertex_count, const double* vertices,
-                                            const int32_t* faces, const double* feature_normals,
-                                            int64_t count, const double* points, double* distance,
-                                            int32_t* faces_out, double* closest) {
+int32_t phx_mc_bvh_query_signed_distance(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, const double* feature_normals, int64_t count,
+    const double* points, double* distance, int32_t* faces_out, double* closest,
+    int32_t parallelism) {
+  if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -75,18 +77,19 @@ int32_t phx_mc_bvh_triangle_signed_distance(const phx_mc_bvh_tree_view* tree,
         (count > 0 && (distance == nullptr || faces_out == nullptr || closest == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    phx::mc::bvh::triangle_signed_distance(*tree, {vertices, faces}, feature_normals, count,
-                                           points, distance, faces_out, closest);
-    return PHX_MC_OK;
+    return phx::mc::bvh::triangle_signed_distance(
+        *tree, {vertices, faces}, feature_normals, count, points, distance, faces_out, closest,
+        parallelism);
   });
 }
 
-int32_t phx_mc_bvh_triangle_winding(const phx_mc_bvh_tree_view* tree, int64_t vertex_count,
-                                    const double* vertices, const int32_t* faces, int32_t route,
-                                    const int64_t* boundary_offsets, int64_t boundary_edge_count,
-                                    const int32_t* boundary_edges, const double* dipoles,
-                                    double opening_angle, int64_t count, const double* points,
-                                    double* values) {
+int32_t phx_mc_bvh_query_winding(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* faces, int32_t route, const int64_t* boundary_offsets,
+    int64_t boundary_edge_count, const int32_t* boundary_edges, const double* dipoles,
+    double opening_angle, int64_t count, const double* points, double* values,
+    int32_t parallelism) {
+  if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -107,31 +110,29 @@ int32_t phx_mc_bvh_triangle_winding(const phx_mc_bvh_tree_view* tree, int64_t ve
         for (int64_t node = 0; node < tree->node_count; ++node) {
           if (boundary_offsets[node + 1] < boundary_offsets[node]) return PHX_MC_INVALID_ARGUMENT;
         }
-        phx::mc::bvh::triangle_winding_exact(*tree, soup, {boundary_offsets, boundary_edges}, count,
-                                             points, values);
-        return PHX_MC_OK;
+        return phx::mc::bvh::triangle_winding_exact(
+            *tree, soup, {boundary_offsets, boundary_edges}, count, points, values, parallelism);
       }
       case PHX_MC_WINDING_FAST_DIPOLE:
         if (dipoles == nullptr || !std::isfinite(opening_angle) || !(opening_angle > 0.0) ||
             !phx::mc::addressable(tree->node_count, 7, sizeof(double))) {
           return PHX_MC_INVALID_ARGUMENT;
         }
-        phx::mc::bvh::triangle_winding_dipole(*tree, soup, dipoles, opening_angle, count, points,
-                                              values);
-        return PHX_MC_OK;
+        return phx::mc::bvh::triangle_winding_dipole(
+            *tree, soup, dipoles, opening_angle, count, points, values, parallelism);
       default:
         return PHX_MC_INVALID_ARGUMENT;
     }
   });
 }
 
-int32_t phx_mc_bvh_tetrahedron_locate(const phx_mc_bvh_tree_view* tree, int64_t vertex_count,
-                                      const double* vertices, const int32_t* cells,
-                                      const uint8_t* cell_mask, double tolerance, int64_t count,
-                                      const double* points, int32_t capacity, int32_t* cells_out,
-                                      double* reference, double* residual, double* condition,
-                                      int32_t* status, int32_t* containing, int32_t* candidates,
-                                      double* candidate_reference) {
+int32_t phx_mc_bvh_query_locate_tetrahedra(
+    const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
+    const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
+    const double* points, int32_t capacity, int32_t* cells_out, double* reference,
+    double* residual, double* condition, int32_t* status, int32_t* containing,
+    int32_t* candidates, double* candidate_reference, int32_t parallelism) {
+  if (parallelism < 1) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::GradualNearestScope mode;
     if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
@@ -143,11 +144,11 @@ int32_t phx_mc_bvh_tetrahedron_locate(const phx_mc_bvh_tree_view* tree, int64_t 
                        candidates == nullptr || candidate_reference == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    phx::mc::bvh::tetrahedron_locate(
+    return phx::mc::bvh::tetrahedron_locate(
         *tree, vertices, cells, cell_mask, tolerance, count, points, capacity,
         {cells_out, reference, residual, condition, status, containing, candidates,
-         candidate_reference});
-    return PHX_MC_OK;
+         candidate_reference},
+        parallelism);
   });
 }
 

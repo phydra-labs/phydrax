@@ -5,9 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <random>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -17,6 +19,7 @@
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr std::size_t kParallelQueryCount = 4099;
 
 struct Tree {
   std::vector<double> node_min, node_max, node_size;
@@ -203,6 +206,28 @@ std::vector<double> random_points(std::size_t count, double extent, unsigned see
   return points;
 }
 
+template <class Query, class... T>
+void check_query_workers(Query query, std::vector<T>&... serial) {
+  // Use distinct initial values so an unwritten output cannot compare equal.
+  auto trial = std::tuple{std::vector<T>(serial.size(), T{42})...};
+  std::apply(
+      [&](auto&... output) {
+        for (const int32_t workers : {0, -1}) {
+          PHX_CHECK(query(workers, output...) == PHX_MC_INVALID_ARGUMENT);
+          PHX_CHECK((std::all_of(output.begin(), output.end(),
+                                 [](auto value) { return value == 42; }) && ...));
+        }
+        PHX_CHECK(query(1, serial...) == PHX_MC_OK);
+        for (const int32_t workers : {2, 3, 4, 8}) {
+          (std::fill(output.begin(), output.end(), T{42}), ...);
+          PHX_CHECK(query(workers, output...) == PHX_MC_OK);
+          PHX_CHECK(((std::memcmp(serial.data(), output.data(), serial.size() * sizeof(T)) == 0) &&
+                     ...));
+        }
+      },
+      trial);
+}
+
 void test_nearest_matches_brute_force() {
   std::vector<double> vertices;
   std::vector<int32_t> faces;
@@ -215,10 +240,10 @@ void test_nearest_matches_brute_force() {
   std::vector<int32_t> found(count * k);
   std::vector<double> squared(count * k), closest(count * k * 3);
   std::vector<int8_t> features(count * k);
-  PHX_CHECK(phx_mc_bvh_triangle_nearest(&view, static_cast<int64_t>(vertices.size() / 3),
-                                        vertices.data(), faces.data(), static_cast<int64_t>(count),
-                                        points.data(), k, found.data(), squared.data(),
-                                        closest.data(), features.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_bvh_query_nearest_triangles(
+                &view, static_cast<int64_t>(vertices.size() / 3), vertices.data(), faces.data(),
+                static_cast<int64_t>(count), points.data(), k, found.data(), squared.data(),
+                closest.data(), features.data(), 1) == PHX_MC_OK);
   const std::size_t face_count = faces.size() / 3;
   for (std::size_t query = 0; query < count; ++query) {
     std::vector<std::pair<double, int32_t>> ranked;
@@ -250,28 +275,54 @@ void test_nearest_ties_and_padding() {
   const std::vector<double> vertices = {0, 0, 0, 1, 0, 0, 0, 1, 0};
   const std::vector<int32_t> faces = {0, 1, 2, 0, 1, 2};
   const Tree tree = build_tree(vertices, faces, 3, 1);
-  const phx_mc_bvh_tree_view view = tree.view();
-  const double point[3] = {0.25, 0.25, 2.0};
-  int32_t found[3];
-  double squared[3], closest[9];
-  int8_t features[3];
-  PHX_CHECK(phx_mc_bvh_triangle_nearest(&view, 3, vertices.data(), faces.data(), 1, point, 3,
-                                        found, squared, closest, features) == PHX_MC_OK);
-  PHX_CHECK(found[0] == 0 && found[1] == 1 && found[2] == -1);
-  PHX_CHECK(squared[0] == 4.0 && squared[1] == 4.0 && std::isinf(squared[2]));
-  PHX_CHECK(features[0] == 0 && features[2] == -1);
+  phx_mc_bvh_tree_view view = tree.view();
+  view.node_size = nullptr;  // Point-query input does not need pair ordering.
+  const double samples[][3] = {{0.25, 0.25, 2.0}, {NAN, 0.0, 0.0}, {0.75, 0.75, -1.0}};
+  std::vector<double> points(3 * kParallelQueryCount);
+  for (std::size_t row = 0; row < kParallelQueryCount; ++row) {
+    std::copy_n(samples[row % 3], 3, &points[3 * row]);
+  }
+  constexpr int32_t k = 3;
+  std::vector<int32_t> found(kParallelQueryCount * k);
+  std::vector<double> squared(kParallelQueryCount * k), closest(kParallelQueryCount * k * 3);
+  std::vector<int8_t> features(kParallelQueryCount * k);
+  check_query_workers(
+      [&](int32_t workers, auto&... output) {
+        return phx_mc_bvh_query_nearest_triangles(
+            &view, 3, vertices.data(), faces.data(), static_cast<int64_t>(kParallelQueryCount),
+            points.data(), k, output.data()..., workers);
+      },
+      found, squared, closest, features);
+  for (std::size_t row = 0; row < kParallelQueryCount; ++row) {
+    const std::size_t entry = row * k;
+    if (row % 3 != 1) {
+      const double distance = row % 3 == 0 ? 4.0 : 1.125;
+      const int8_t feature = row % 3 == 0 ? 0 : 2;
+      PHX_CHECK(found[entry] == 0 && found[entry + 1] == 1);
+      PHX_CHECK(squared[entry] == distance && squared[entry + 1] == distance);
+      PHX_CHECK(features[entry] == feature && features[entry + 1] == feature);
+    }
+    for (std::size_t slot = row % 3 == 1 ? 0 : 2; slot < k; ++slot) {
+      const std::size_t padded = entry + slot;
+      PHX_CHECK(found[padded] == -1 && features[padded] == -1);
+      PHX_CHECK(squared[padded] == std::numeric_limits<double>::infinity());
+      PHX_CHECK(std::isnan(closest[3 * padded]) && std::isnan(closest[3 * padded + 1]) &&
+                std::isnan(closest[3 * padded + 2]));
+    }
+  }
   // Corner and edge features: beyond corner b, beside edge (a, b).
   const double beyond[6] = {2.0, -1.0, 0.0, 0.5, -1.0, 0.0};
-  PHX_CHECK(phx_mc_bvh_triangle_nearest(&view, 3, vertices.data(), faces.data(), 2, beyond, 1,
-                                        found, squared, closest, features) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_bvh_query_nearest_triangles(
+                &view, 3, vertices.data(), faces.data(), 2, beyond, 1, found.data(),
+                squared.data(), closest.data(), features.data(), 1) == PHX_MC_OK);
   PHX_CHECK(features[0] == 5 && features[1] == 1);
-  PHX_CHECK(phx_mc_bvh_triangle_nearest(&view, 3, vertices.data(), faces.data(), 1, point, 0,
-                                        found, squared, closest, features) ==
-            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bvh_query_nearest_triangles(
+                &view, 3, vertices.data(), faces.data(), 1, samples[0], 0, found.data(),
+                squared.data(), closest.data(), features.data(), 1) == PHX_MC_INVALID_ARGUMENT);
   const std::vector<int32_t> bad_faces = {0, 1, 3, 0, 1, 2};
-  PHX_CHECK(phx_mc_bvh_triangle_nearest(&view, 3, vertices.data(), bad_faces.data(), 1, point, 1,
-                                        found, squared, closest, features) ==
-            PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bvh_query_nearest_triangles(
+                &view, 3, vertices.data(), bad_faces.data(), 1, samples[0], 1, found.data(),
+                squared.data(), closest.data(), features.data(), 1) == PHX_MC_INVALID_ARGUMENT);
 }
 
 // Angle-weighted pseudonormals per (face, feature), the table of the Python owner.
@@ -341,22 +392,27 @@ void test_signed_distance_sign() {
   const Tree tree = build_tree(vertices, faces, 3, 4);
   const phx_mc_bvh_tree_view view = tree.view();
   const std::vector<double> normals = feature_normals(vertices, faces);
-  const std::size_t count = 2000;
-  const std::vector<double> points = random_points(count, 1.5, 11);
+  const std::size_t count = kParallelQueryCount;
+  std::vector<double> points = random_points(count, 1.5, 11);
+  points.back() = NAN;
   std::vector<double> distance(count), closest(3 * count);
   std::vector<int32_t> found(count);
-  PHX_CHECK(phx_mc_bvh_triangle_signed_distance(
-                &view, static_cast<int64_t>(vertices.size() / 3), vertices.data(), faces.data(),
-                normals.data(), static_cast<int64_t>(count), points.data(), distance.data(),
-                found.data(), closest.data()) == PHX_MC_OK);
+  check_query_workers(
+      [&](int32_t workers, auto&... output) {
+        return phx_mc_bvh_query_signed_distance(
+            &view, static_cast<int64_t>(vertices.size() / 3), vertices.data(), faces.data(),
+            normals.data(), static_cast<int64_t>(count), points.data(), output.data()..., workers);
+      },
+      distance, found, closest);
   int mismatched = 0;
-  for (std::size_t query = 0; query < count; ++query) {
+  for (std::size_t query = 0; query + 1 < count; ++query) {
     const double truth = torus_distance(&points[3 * query]);
     // The chord error of this torus stays below 0.02.
     if (std::fabs(truth) > 0.02 && (truth < 0.0) != (distance[query] < 0.0)) ++mismatched;
     PHX_CHECK(found[query] >= 0);
   }
   PHX_CHECK(mismatched == 0);
+  PHX_CHECK(std::isnan(distance.back()) && found.back() == -1 && std::isnan(closest.back()));
 }
 
 // Oriented boundary chain of every node's patch as (offsets, edges).
@@ -397,15 +453,19 @@ void test_winding_routes() {
     std::vector<int64_t> offsets;
     std::vector<int32_t> edges;
     closing_fans(tree, surface, offsets, edges);
-    const std::size_t count = 150;
+    const std::size_t count = kParallelQueryCount;
     const std::vector<double> points = random_points(count, 1.5, 5);
     std::vector<double> exact(count);
-    PHX_CHECK(phx_mc_bvh_triangle_winding(&view, static_cast<int64_t>(vertices.size() / 3),
-                                          vertices.data(), surface.data(), PHX_MC_WINDING_EXACT,
-                                          offsets.data(), static_cast<int64_t>(edges.size() / 2),
-                                          edges.data(), nullptr, 0.0, static_cast<int64_t>(count),
-                                          points.data(), exact.data()) == PHX_MC_OK);
-    for (std::size_t query = 0; query < count; ++query) {
+    check_query_workers(
+        [&](int32_t workers, auto&... output) {
+          return phx_mc_bvh_query_winding(
+              &view, static_cast<int64_t>(vertices.size() / 3), vertices.data(), surface.data(),
+              PHX_MC_WINDING_EXACT, offsets.data(), static_cast<int64_t>(edges.size() / 2),
+              edges.data(), nullptr, 0.0, static_cast<int64_t>(count), points.data(),
+              output.data()..., workers);
+        },
+        exact);
+    for (std::size_t query = 0; query < 150; ++query) {
       double reference = 0.0;
       for (std::size_t face = 0; face < surface.size() / 3; ++face) {
         reference += solid_angle(&points[3 * query], corner(vertices, surface[3 * face]),
@@ -451,20 +511,24 @@ void test_winding_routes() {
     dipoles.insert(dipoles.end(), {normal[0], normal[1], normal[2], center[0], center[1], center[2],
                                    std::sqrt(reach)});
   }
-  const std::size_t count = 400;
+  const std::size_t count = kParallelQueryCount;
   const std::vector<double> points = random_points(count, 1.5, 9);
-  std::vector<double> opened(count), fast(count);
+  std::vector<double> opened(400), fast(count);
   const int64_t vertex_count = static_cast<int64_t>(vertices.size() / 3);
-  PHX_CHECK(phx_mc_bvh_triangle_winding(&view, vertex_count, vertices.data(), faces.data(),
-                                        PHX_MC_WINDING_FAST_DIPOLE, nullptr, 0, nullptr,
-                                        dipoles.data(), 1.0e9, static_cast<int64_t>(count),
-                                        points.data(), opened.data()) == PHX_MC_OK);
-  PHX_CHECK(phx_mc_bvh_triangle_winding(&view, vertex_count, vertices.data(), faces.data(),
-                                        PHX_MC_WINDING_FAST_DIPOLE, nullptr, 0, nullptr,
-                                        dipoles.data(), 2.0, static_cast<int64_t>(count),
-                                        points.data(), fast.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_bvh_query_winding(
+                &view, vertex_count, vertices.data(), faces.data(), PHX_MC_WINDING_FAST_DIPOLE,
+                nullptr, 0, nullptr, dipoles.data(), 1.0e9, static_cast<int64_t>(opened.size()),
+                points.data(), opened.data(), 1) == PHX_MC_OK);
+  check_query_workers(
+      [&](int32_t workers, auto&... output) {
+        return phx_mc_bvh_query_winding(
+            &view, vertex_count, vertices.data(), faces.data(), PHX_MC_WINDING_FAST_DIPOLE,
+            nullptr, 0, nullptr, dipoles.data(), 2.0, static_cast<int64_t>(count), points.data(),
+            output.data()..., workers);
+      },
+      fast);
   int mismatched = 0;
-  for (std::size_t query = 0; query < count; ++query) {
+  for (std::size_t query = 0; query < opened.size(); ++query) {
     double reference = 0.0;
     for (std::size_t face = 0; face < faces.size() / 3; ++face) {
       reference += solid_angle(&points[3 * query], corner(vertices, faces[3 * face]),
@@ -476,13 +540,13 @@ void test_winding_routes() {
     if (std::fabs(truth) > 0.05 && (fast[query] > 0.5) != (truth < 0.0)) ++mismatched;
   }
   PHX_CHECK(mismatched == 0);
-  PHX_CHECK(phx_mc_bvh_triangle_winding(&view, vertex_count, vertices.data(), faces.data(), 2,
-                                        nullptr, 0, nullptr, dipoles.data(), 2.0, 1,
-                                        points.data(), fast.data()) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_bvh_triangle_winding(&view, vertex_count, vertices.data(), faces.data(),
-                                        PHX_MC_WINDING_FAST_DIPOLE, nullptr, 0, nullptr,
-                                        dipoles.data(), 0.0, 1, points.data(),
-                                        fast.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bvh_query_winding(
+                &view, vertex_count, vertices.data(), faces.data(), 2, nullptr, 0, nullptr,
+                dipoles.data(), 2.0, 1, points.data(), fast.data(), 1) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bvh_query_winding(
+                &view, vertex_count, vertices.data(), faces.data(), PHX_MC_WINDING_FAST_DIPOLE,
+                nullptr, 0, nullptr, dipoles.data(), 0.0, 1, points.data(), fast.data(), 1) ==
+            PHX_MC_INVALID_ARGUMENT);
 }
 
 // Barycentric reference coordinates of a point in one tetrahedron by Cramer's rule.
@@ -541,7 +605,7 @@ void test_tetrahedron_locate() {
   }
   const Tree tree = build_tree(vertices, cells, 4, 4);
   const phx_mc_bvh_tree_view view = tree.view();
-  std::vector<double> points = random_points(300, 1.6, 13);
+  std::vector<double> points = random_points(kParallelQueryCount - 3, 1.6, 13);
   for (double& value : points) value += 1.5;
   // A shared vertex, a shared face point, and a nonfinite point.
   points.insert(points.end(), {1.0, 1.0, 1.0, 0.5, 0.5, 0.5, NAN, 0.0, 0.0});
@@ -552,16 +616,20 @@ void test_tetrahedron_locate() {
   std::vector<double> reference(3 * count), residual(count), condition(count),
       candidate_reference(3 * count * capacity);
   const int64_t vertex_count = static_cast<int64_t>(vertices.size() / 3);
-  const auto locate = [&](const uint8_t* mask) {
-    return phx_mc_bvh_tetrahedron_locate(&view, vertex_count, vertices.data(), cells.data(), mask,
-                                         tolerance, static_cast<int64_t>(count), points.data(),
-                                         capacity, found.data(), reference.data(), residual.data(),
-                                         condition.data(), status.data(), containing.data(),
-                                         candidates.data(), candidate_reference.data());
+  const auto locate = [&](const uint8_t* mask, int32_t workers, auto&... output) {
+    return phx_mc_bvh_query_locate_tetrahedra(
+        &view, vertex_count, vertices.data(), cells.data(), mask, tolerance,
+        static_cast<int64_t>(count), points.data(), capacity, output.data()..., workers);
   };
-  PHX_CHECK(locate(nullptr) == PHX_MC_OK);
+  check_query_workers(
+      [&](int32_t workers, auto&... output) { return locate(nullptr, workers, output...); },
+      found, reference, residual, condition, status, containing, candidates, candidate_reference);
   const std::size_t cell_count = cells.size() / 4;
-  for (std::size_t query = 0; query + 1 < count; ++query) {
+  // Keep the brute-force reference bounded, including the two shared-boundary points.
+  constexpr std::size_t random_reference_count = 300;
+  for (std::size_t sample = 0; sample < random_reference_count + 2; ++sample) {
+    const std::size_t query =
+        sample < random_reference_count ? sample : count - 3 + (sample - random_reference_count);
     std::vector<int32_t> containing_cells;
     for (std::size_t cell = 0; cell < cell_count; ++cell) {
       const std::vector<double> r = reference_of(vertices, &cells[4 * cell], &points[3 * query]);
@@ -591,27 +659,30 @@ void test_tetrahedron_locate() {
   // Masking the lowest containing cell selects the next one.
   std::vector<uint8_t> mask(cell_count, 1);
   const int32_t first = found[count - 2];
-  mask[static_cast<std::size_t>(first)] = 0;
-  const int32_t second = candidates[(count - 2) * capacity + 1];
-  PHX_CHECK(locate(mask.data()) == PHX_MC_OK);
-  PHX_CHECK(found[count - 2] == second);
+  PHX_CHECK(first >= 0 && static_cast<std::size_t>(first) < mask.size());
+  if (first >= 0 && static_cast<std::size_t>(first) < mask.size()) {
+    mask[static_cast<std::size_t>(first)] = 0;
+    const int32_t second = candidates[(count - 2) * capacity + 1];
+    PHX_CHECK(locate(mask.data(), 4, found, reference, residual, condition, status, containing,
+                     candidates, candidate_reference) == PHX_MC_OK);
+    PHX_CHECK(found[count - 2] == second);
+  }
   // A flattened cell is degenerate, not outside.
   std::vector<double> flat = {0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
   const std::vector<int32_t> flat_cell = {0, 1, 2, 3};
   const Tree flat_tree = build_tree(flat, flat_cell, 4, 1);
   const phx_mc_bvh_tree_view flat_view = flat_tree.view();
   const double inside[3] = {0.2, 0.2, 0.0};
-  PHX_CHECK(phx_mc_bvh_tetrahedron_locate(&flat_view, 4, flat.data(), flat_cell.data(), nullptr,
-                                          0.0, 1, inside, 1, found.data(), reference.data(),
-                                          residual.data(), condition.data(), status.data(),
-                                          containing.data(), candidates.data(),
-                                          candidate_reference.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
+                &flat_view, 4, flat.data(), flat_cell.data(), nullptr, 0.0, 1, inside, 1,
+                found.data(), reference.data(), residual.data(), condition.data(), status.data(),
+                containing.data(), candidates.data(), candidate_reference.data(), 1) == PHX_MC_OK);
   PHX_CHECK(status[0] == PHX_MC_LOCATE_DEGENERATE_CELL && found[0] == -1);
-  PHX_CHECK(phx_mc_bvh_tetrahedron_locate(&flat_view, 4, flat.data(), flat_cell.data(), nullptr,
-                                          -1.0, 1, inside, 1, found.data(), reference.data(),
-                                          residual.data(), condition.data(), status.data(),
-                                          containing.data(), candidates.data(),
-                                          candidate_reference.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_bvh_query_locate_tetrahedra(
+                &flat_view, 4, flat.data(), flat_cell.data(), nullptr, -1.0, 1, inside, 1,
+                found.data(), reference.data(), residual.data(), condition.data(), status.data(),
+                containing.data(), candidates.data(), candidate_reference.data(), 1) ==
+            PHX_MC_INVALID_ARGUMENT);
 }
 
 }  // namespace

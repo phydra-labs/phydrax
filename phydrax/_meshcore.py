@@ -1455,21 +1455,40 @@ _SIGNATURES: dict[str, tuple[object, tuple[object, ...]]] = {
     ),
     "phx_mc_bvh_pair_stream_next": (_I32, (_P, _I64, _I64, _P, _P, _P, _P)),
     "phx_mc_bvh_pair_stream_free": (None, (_P,)),
-    "phx_mc_bvh_triangle_nearest": (
+    "phx_mc_bvh_query_nearest_triangles": (
         _I32,
-        (_P, _I64, _P, _P, _I64, _P, _I32, _P, _P, _P, _P),
+        (_P, _I64, _P, _P, _I64, _P, _I32, _P, _P, _P, _P, _I32),
     ),
-    "phx_mc_bvh_triangle_signed_distance": (
+    "phx_mc_bvh_query_signed_distance": (
         _I32,
-        (_P, _I64, _P, _P, _P, _I64, _P, _P, _P, _P),
+        (_P, _I64, _P, _P, _P, _I64, _P, _P, _P, _P, _I32),
     ),
-    "phx_mc_bvh_triangle_winding": (
+    "phx_mc_bvh_query_winding": (
         _I32,
-        (_P, _I64, _P, _P, _I32, _P, _I64, _P, _P, _F64, _I64, _P, _P),
+        (_P, _I64, _P, _P, _I32, _P, _I64, _P, _P, _F64, _I64, _P, _P, _I32),
     ),
-    "phx_mc_bvh_tetrahedron_locate": (
+    "phx_mc_bvh_query_locate_tetrahedra": (
         _I32,
-        (_P, _I64, _P, _P, _P, _F64, _I64, _P, _I32, _P, _P, _P, _P, _P, _P, _P, _P),
+        (
+            _P,
+            _I64,
+            _P,
+            _P,
+            _P,
+            _F64,
+            _I64,
+            _P,
+            _I32,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _P,
+            _I32,
+        ),
     ),
     "phx_mc_overset_assemble": (
         _I32,

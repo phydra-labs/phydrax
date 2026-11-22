@@ -1698,11 +1698,19 @@ PHX_MC_API int32_t phx_mc_bvh_pair_stream_next(
 PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
 
 /* ---------------------------------------------------- BVH point queries */
-/* Batched single-threaded point queries over one three-dimensional view whose
- * items are triangles (faces, int32 (items, 3) into vertices (vertex_count, 3))
- * or tetrahedra (cells, int32 (items, 4)). Item bounds must enclose their
- * items. Every output is caller-owned with one row per query; an invalid view,
- * index or argument returns PHX_MC_INVALID_ARGUMENT before writing.
+/* Batched point queries over one three-dimensional view whose items are
+ * triangles (faces, int32 (items, 3) into vertices (vertex_count, 3)) or
+ * tetrahedra (cells, int32 (items, 4)). Item bounds must enclose their items.
+ * Inputs remain unchanged during the call. Caller-owned output buffers have
+ * one row per query and must be disjoint from one another and from inputs.
+ * The query kernels do not use node_size; it may be null.
+ * parallelism must be at least 1; workers process independent rows and results
+ * are bit-identical for every valid parallelism.
+ *
+ * An invalid view, index or argument returns PHX_MC_INVALID_ARGUMENT before
+ * writing. Operational failures (including PHX_MC_ALLOCATION_FAILURE and
+ * PHX_MC_INTERNAL_ERROR) are returned to the caller; outputs are unspecified
+ * on such a failure.
  *
  * Arithmetic: every query evaluates the expressions of the JAX owners
  * (phydrax._fixed_order: products rounded on their own, sums left to right,
@@ -1719,19 +1727,21 @@ PHX_MC_API void phx_mc_bvh_pair_stream_free(phx_mc_bvh_pair_stream* stream);
  * clamped edge point, first minimum in face/(a,b)/(b,c)/(c,a) order). Rows with
  * fewer than k finite distances are padded with -1, +inf, and feature -1.
  * faces_out/distance_squared/features are (count, k); closest (count, k, 3). */
-PHX_MC_API int32_t phx_mc_bvh_triangle_nearest(
+PHX_MC_API int32_t phx_mc_bvh_query_nearest_triangles(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
     const int32_t* faces, int64_t count, const double* points, int32_t k,
-    int32_t* faces_out, double* distance_squared, double* closest, int8_t* features);
+    int32_t* faces_out, double* distance_squared, double* closest, int8_t* features,
+    int32_t parallelism);
 /* Signed distance by angle-weighted pseudonormals: the nearest face (k = 1 as
  * above), and the sign of dot(point - closest, feature_normals[face, feature])
  * with feature_normals (items, 7, 3) indexed by closest feature; a zero dot is
  * outside (positive). distance (count), faces_out (count), closest (count, 3);
  * a point without a finite nearest face gets NaN, -1 and NaN. */
-PHX_MC_API int32_t phx_mc_bvh_triangle_signed_distance(
+PHX_MC_API int32_t phx_mc_bvh_query_signed_distance(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
     const int32_t* faces, const double* feature_normals, int64_t count,
-    const double* points, double* distance, int32_t* faces_out, double* closest);
+    const double* points, double* distance, int32_t* faces_out, double* closest,
+    int32_t parallelism);
 /* Generalized winding numbers by a hierarchical cut from the root (children
  * visited left first). EXACT (route 0): a node whose closed box excludes the
  * point contributes the solid angle of its closing fan, the boundary edges
@@ -1748,11 +1758,12 @@ PHX_MC_API int32_t phx_mc_bvh_triangle_signed_distance(
 #define PHX_MC_WINDING_EXACT 0
 #define PHX_MC_WINDING_FAST_DIPOLE 1
 #define PHX_MC_WINDING_FAN_CHUNK 8
-PHX_MC_API int32_t phx_mc_bvh_triangle_winding(
+PHX_MC_API int32_t phx_mc_bvh_query_winding(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
     const int32_t* faces, int32_t route, const int64_t* boundary_offsets,
     int64_t boundary_edge_count, const int32_t* boundary_edges, const double* dipoles,
-    double opening_angle, int64_t count, const double* points, double* values);
+    double opening_angle, int64_t count, const double* points, double* values,
+    int32_t parallelism);
 /* Point location in positively oriented affine tetrahedra. Candidates are the
  * cells (with a nonzero cell_mask entry; cell_mask may be null) whose item box
  * padded by tolerance contains the point, reached through node boxes padded
@@ -1771,12 +1782,12 @@ enum phx_mc_locate_status {
   PHX_MC_LOCATE_DEGENERATE_CELL = 2,
   PHX_MC_LOCATE_NONFINITE = 3
 };
-PHX_MC_API int32_t phx_mc_bvh_tetrahedron_locate(
+PHX_MC_API int32_t phx_mc_bvh_query_locate_tetrahedra(
     const phx_mc_bvh_tree_view* tree, int64_t vertex_count, const double* vertices,
     const int32_t* cells, const uint8_t* cell_mask, double tolerance, int64_t count,
     const double* points, int32_t capacity, int32_t* cells_out, double* reference,
     double* residual, double* condition, int32_t* status, int32_t* containing,
-    int32_t* candidates, double* candidate_reference);
+    int32_t* candidates, double* candidate_reference, int32_t parallelism);
 
 /* ------------------------------------------------------ overset assembly */
 /* Overset assembly of P three-dimensional parts in one call. Vertices are

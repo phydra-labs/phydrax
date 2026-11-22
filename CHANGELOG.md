@@ -201,9 +201,9 @@
   0.26 / 0.43 / 1.42 and 0.053 / 0.49 / 0.90 s. The public call on the 1e4
   tetrahedral case took 72.9 s and left 116 orphans before.
 - Native BVH point queries over the one packed `PackedBVH`
-  (`phx_mc_bvh_triangle_nearest`, `phx_mc_bvh_triangle_signed_distance`,
-  `phx_mc_bvh_triangle_winding`, `phx_mc_bvh_tetrahedron_locate`), batched and
-  single-threaded. `TriangleBVH.query`, `nearest_faces`, `winding_number`,
+  (`phx_mc_bvh_query_nearest_triangles`, `phx_mc_bvh_query_signed_distance`,
+  `phx_mc_bvh_query_winding`, `phx_mc_bvh_query_locate_tetrahedra`).
+  `TriangleBVH.query`, `nearest_faces`, `winding_number`,
   `fast_winding_number`, the new `signed_distance(points, sign=...)`
   (`SignedDistanceSign`: `"pseudonormal"` or `"winding_number"`) and
   affine-tetrahedron `PreparedSimplicialCellLocator.locate` run them for
@@ -553,6 +553,10 @@
   The trigonometric interval benchmark rises from 0.88 to 10.16 million boxes
   per second without loosening the enclosure. Endpoints with uncertain
   rounding and boxes outside the small-angle range use the original proof.
+- Large native BVH query batches honor `PHX_MESHCORE_THREADS`. The same
+  prepared tree is shared by all workers, and each output row retains its
+  serial arithmetic and tie breaks. Queries no longer build pair-stream
+  extent data. Rebuild meshcore with Phydrax for the updated query ABI.
 - Planar refinement reuses cavity point lookups and writes triangle slots
   with their final neighbors, preserving mesh output and constraint ancestry.
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs

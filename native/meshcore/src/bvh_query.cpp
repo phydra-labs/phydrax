@@ -9,14 +9,20 @@
 #include "bvh_query.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <memory>
+#include <numeric>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "floating_point_mode.hpp"
+#include "parallel.hpp"
 
 namespace phx::mc::bvh {
 
@@ -369,10 +375,17 @@ double hierarchical_sum(const phx_mc_bvh_tree_view& tree, const TriangleSoup& so
 
 constexpr double kFourPi = 4.0 * 3.14159265358979323846;
 
-// Morton order of the queries over their finite bounding box. Queries are
-// independent, so the order changes no result; consecutive nearby queries
-// reuse the cached tree path and geometry.
-std::vector<int64_t> spatial_order(const double* points, int64_t count) {
+// Group nearby independent queries without sorting every key. The original
+// row identifies the query and every result, regardless of traversal order.
+constexpr std::size_t kQueryChunk = 512;
+
+std::unique_ptr<int64_t[]> spatial_order(const double* points, int64_t count) {
+  const auto size = static_cast<std::size_t>(count);
+  auto order = std::make_unique_for_overwrite<int64_t[]>(size);
+  if (size <= kQueryChunk) {
+    std::iota(order.get(), order.get() + size, int64_t{0});
+    return order;
+  }
   double lower[3] = {kInfinity, kInfinity, kInfinity};
   double upper[3] = {-kInfinity, -kInfinity, -kInfinity};
   for (int64_t query = 0; query < count; ++query) {
@@ -383,32 +396,51 @@ std::vector<int64_t> spatial_order(const double* points, int64_t count) {
       upper[axis] = std::max(upper[axis], value);
     }
   }
-  constexpr double kCells = 2097151.0;  // 2^21 - 1 per axis
-  const auto spread = [](uint64_t value) {
-    value &= 0x1fffffULL;
-    value = (value | (value << 32)) & 0x1f00000000ffffULL;
-    value = (value | (value << 16)) & 0x1f0000ff0000ffULL;
-    value = (value | (value << 8)) & 0x100f00f00f00f00fULL;
-    value = (value | (value << 4)) & 0x10c30c30c30c30c3ULL;
-    value = (value | (value << 2)) & 0x1249249249249249ULL;
-    return value;
-  };
-  std::vector<std::pair<uint64_t, int64_t>> keyed(static_cast<std::size_t>(count));
+  constexpr std::size_t kSide = 16;
+  constexpr std::size_t kBins = kSide * kSide * kSide;
+  auto key = std::make_unique_for_overwrite<std::uint16_t[]>(size);
+  std::array<std::size_t, kBins + 1> offsets{};
+  const double extent[3] = {upper[0] - lower[0], upper[1] - lower[1], upper[2] - lower[2]};
   for (int64_t query = 0; query < count; ++query) {
-    uint64_t key = 0;
+    std::size_t bin = 0;
     for (int axis = 0; axis < 3; ++axis) {
-      const double extent = upper[axis] - lower[axis];
       const double value = points[3 * query + axis];
-      double scaled = extent > 0.0 ? (value - lower[axis]) / extent * kCells : 0.0;
-      if (!(scaled >= 0.0)) scaled = 0.0;  // nonfinite coordinates sort first
-      key |= spread(static_cast<uint64_t>(std::min(scaled, kCells))) << axis;
+      double scaled = extent[axis] > 0.0
+          ? (value - lower[axis]) / extent[axis] * static_cast<double>(kSide) : 0.0;
+      if (!(scaled >= 0.0)) scaled = 0.0;
+      bin = bin * kSide + static_cast<std::size_t>(
+          std::min(scaled, static_cast<double>(kSide - 1)));
     }
-    keyed[static_cast<std::size_t>(query)] = {key, query};
+    key[query] = static_cast<std::uint16_t>(bin);
+    ++offsets[bin + 1];
   }
-  std::sort(keyed.begin(), keyed.end());
-  std::vector<int64_t> order(keyed.size());
-  for (std::size_t slot = 0; slot < keyed.size(); ++slot) order[slot] = keyed[slot].second;
+  std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
+  for (int64_t query = 0; query < count; ++query) {
+    order[offsets[key[query]]++] = query;
+  }
   return order;
+}
+
+// Prepare one order for the whole call. Chunks share it read-only, reuse local
+// traversal scratch, and write disjoint output rows by original query index.
+template <class RunChunk>
+int32_t query_chunks(const double* points, int64_t count, int32_t parallelism,
+                     const RunChunk& run_chunk) {
+  if (count == 0) return PHX_MC_OK;
+  const auto order = spatial_order(points, count);
+  const std::span<const int64_t> queries(order.get(), static_cast<std::size_t>(count));
+  if (parallelism == 1 || queries.size() <= kQueryChunk) {
+    run_chunk(queries);
+    return PHX_MC_OK;
+  }
+  return parallel_for(
+      queries.size(), ParallelRequest{kQueryChunk, static_cast<uint32_t>(parallelism)},
+      [&](std::size_t begin, std::size_t end, ChunkContext&) -> int32_t {
+        const GradualNearestScope mode;
+        if (!mode.established()) return PHX_MC_INTERNAL_ERROR;
+        run_chunk(queries.subspan(begin, end - begin));
+        return PHX_MC_OK;
+      });
 }
 
 }  // namespace
@@ -416,8 +448,8 @@ std::vector<int64_t> spatial_order(const double* points, int64_t count) {
 bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
   if (tree == nullptr || tree->node_count < 1 || tree->leaf_count < 0 || tree->leaf_width < 1 ||
       tree->item_count < 0 || tree->node_min == nullptr || tree->node_max == nullptr ||
-      tree->node_size == nullptr || tree->left == nullptr || tree->right == nullptr ||
-      tree->leaf == nullptr || (tree->leaf_count > 0 && tree->leaf_items == nullptr) ||
+      tree->left == nullptr || tree->right == nullptr || tree->leaf == nullptr ||
+      (tree->leaf_count > 0 && tree->leaf_items == nullptr) ||
       (tree->item_count > 0 && (tree->item_min == nullptr || tree->item_max == nullptr)) ||
       !addressable(tree->node_count, dimension, sizeof(double)) ||
       !addressable(tree->leaf_count, tree->leaf_width, sizeof(int64_t)) ||
@@ -457,108 +489,116 @@ bool tree_valid(const phx_mc_bvh_tree_view* tree, int32_t dimension) {
   return true;
 }
 
-void triangle_nearest(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup, int64_t count,
-                      const double* points, int32_t k, const NearestOutput& output) {
-  NearestList list(k);
-  std::vector<Pending> stack;
-  stack.reserve(128);
+int32_t triangle_nearest(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup, int64_t count,
+                         const double* points, int32_t k, const NearestOutput& output,
+                         int32_t parallelism) {
   const std::size_t width = static_cast<std::size_t>(k);
-  for (const int64_t query : spatial_order(points, count)) {
-    nearest_one(tree, soup, points + 3 * query, list, stack);
-    const std::vector<Ranked>& ranked = list.ranked();
-    const std::size_t row = static_cast<std::size_t>(query) * width;
-    for (std::size_t slot = 0; slot < width; ++slot) {
-      double* point = output.closest + 3 * (row + slot);
-      if (slot < ranked.size()) {
-        output.faces[row + slot] = ranked[slot].face;
-        output.distance_squared[row + slot] = ranked[slot].squared;
-        output.features[row + slot] = ranked[slot].feature;
-        std::copy(ranked[slot].point, ranked[slot].point + 3, point);
-      } else {
-        output.faces[row + slot] = -1;
-        output.distance_squared[row + slot] = kInfinity;
-        output.features[row + slot] = -1;
-        std::fill(point, point + 3, kQuietNaN);
-      }
-    }
-  }
-}
-
-void triangle_signed_distance(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
-                              const double* feature_normals, int64_t count, const double* points,
-                              double* distance, int32_t* faces, double* closest) {
-  NearestList list(1);
-  std::vector<Pending> stack;
-  stack.reserve(128);
-  for (const int64_t query : spatial_order(points, count)) {
-    const double* point = points + 3 * query;
-    nearest_one(tree, soup, point, list, stack);
-    double* out = closest + 3 * query;
-    if (list.ranked().empty()) {
-      distance[query] = kQuietNaN;
-      faces[query] = -1;
-      std::fill(out, out + 3, kQuietNaN);
-      continue;
-    }
-    const Ranked& best = list.ranked().front();
-    double away[3];
-    subtract3(point, best.point, away);
-    const double* normal =
-        feature_normals + 3 * (static_cast<int64_t>(best.face) * PHX_MC_BVH_FEATURE_COUNT + best.feature);
-    const double magnitude = std::sqrt(best.squared);
-    distance[query] = dot3(away, normal) < 0.0 ? -magnitude : magnitude;
-    faces[query] = best.face;
-    std::copy(best.point, best.point + 3, out);
-  }
-}
-
-void triangle_winding_exact(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
-                            const ClosingFans& fans, int64_t count, const double* points,
-                            double* values) {
-  std::vector<int64_t> stack;
-  stack.reserve(128);
-  for (const int64_t query : spatial_order(points, count)) {
-    const double* point = points + 3 * query;
-    const auto open = [&](int64_t node) {
-      return box_contains(point, tree.node_min + 3 * node, tree.node_max + 3 * node, 0.0);
-    };
-    // The closing fan of a node's boundary from its box center reproduces the
-    // patch's solid angle at every point outside the box.
-    const auto far = [&](int64_t node) {
-      const double* lower = tree.node_min + 3 * node;
-      const double* upper = tree.node_max + 3 * node;
-      const double apex[3] = {0.5 * (lower[0] + upper[0]), 0.5 * (lower[1] + upper[1]),
-                              0.5 * (lower[2] + upper[2])};
-      // Fixed-width chunks, each summed left to right with zero padding, then
-      // added to the running total: the JAX closing-fan schedule.
-      const int64_t start = fans.offsets[node];
-      const int64_t stop = fans.offsets[node + 1];
-      double total = 0.0;
-      for (int64_t offset = start; offset < stop; offset += PHX_MC_WINDING_FAN_CHUNK) {
-        double chunk = 0.0;
-        for (int64_t lane = 0; lane < PHX_MC_WINDING_FAN_CHUNK; ++lane) {
-          const int64_t edge = offset + lane;
-          const double angle =
-              edge < stop
-                  ? solid_angle(point, apex,
-                                soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge]),
-                                soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge + 1]))
-                  : 0.0;
-          chunk = lane == 0 ? angle : chunk + angle;
+  return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
+    NearestList list(k);
+    std::vector<Pending> stack;
+    stack.reserve(128);
+    for (const int64_t query : queries) {
+      nearest_one(tree, soup, points + 3 * query, list, stack);
+      const std::vector<Ranked>& ranked = list.ranked();
+      const std::size_t row = static_cast<std::size_t>(query) * width;
+      for (std::size_t slot = 0; slot < width; ++slot) {
+        double* point = output.closest + 3 * (row + slot);
+        if (slot < ranked.size()) {
+          output.faces[row + slot] = ranked[slot].face;
+          output.distance_squared[row + slot] = ranked[slot].squared;
+          output.features[row + slot] = ranked[slot].feature;
+          std::copy(ranked[slot].point, ranked[slot].point + 3, point);
+        } else {
+          output.faces[row + slot] = -1;
+          output.distance_squared[row + slot] = kInfinity;
+          output.features[row + slot] = -1;
+          std::fill(point, point + 3, kQuietNaN);
         }
-        total = total + chunk;
       }
-      return total;
-    };
-    values[query] = hierarchical_sum(tree, soup, point, stack, open, far) / kFourPi;
-  }
+    }
+  });
 }
 
-void triangle_winding_dipole(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
-                             const double* dipoles, double opening_angle, int64_t count,
-                             const double* points, double* values) {
-  // One cache-friendly record per node: everything the cut test, the far
-  // value, and the descent read.
+int32_t triangle_signed_distance(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
+                                 const double* feature_normals, int64_t count, const double* points,
+                                 double* distance, int32_t* faces, double* closest,
+                                 int32_t parallelism) {
+  return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
+    NearestList list(1);
+    std::vector<Pending> stack;
+    stack.reserve(128);
+    for (const int64_t query : queries) {
+      const double* point = points + 3 * query;
+      nearest_one(tree, soup, point, list, stack);
+      double* out = closest + 3 * query;
+      if (list.ranked().empty()) {
+        distance[query] = kQuietNaN;
+        faces[query] = -1;
+        std::fill(out, out + 3, kQuietNaN);
+        continue;
+      }
+      const Ranked& best = list.ranked().front();
+      double away[3];
+      subtract3(point, best.point, away);
+      const double* normal =
+          feature_normals + 3 * (static_cast<int64_t>(best.face) * PHX_MC_BVH_FEATURE_COUNT + best.feature);
+      const double magnitude = std::sqrt(best.squared);
+      distance[query] = dot3(away, normal) < 0.0 ? -magnitude : magnitude;
+      faces[query] = best.face;
+      std::copy(best.point, best.point + 3, out);
+    }
+  });
+}
+
+int32_t triangle_winding_exact(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
+                               const ClosingFans& fans, int64_t count, const double* points,
+                               double* values, int32_t parallelism) {
+  return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
+    std::vector<int64_t> stack;
+    stack.reserve(128);
+    for (const int64_t query : queries) {
+      const double* point = points + 3 * query;
+      const auto open = [&](int64_t node) {
+        return box_contains(point, tree.node_min + 3 * node, tree.node_max + 3 * node, 0.0);
+      };
+      // The closing fan of a node's boundary from its box center reproduces the
+      // patch's solid angle at every point outside the box.
+      const auto far = [&](int64_t node) {
+        const double* lower = tree.node_min + 3 * node;
+        const double* upper = tree.node_max + 3 * node;
+        const double apex[3] = {0.5 * (lower[0] + upper[0]), 0.5 * (lower[1] + upper[1]),
+                                0.5 * (lower[2] + upper[2])};
+        // Fixed-width chunks, each summed left to right with zero padding, then
+        // added to the running total: the JAX closing-fan schedule.
+        const int64_t start = fans.offsets[node];
+        const int64_t stop = fans.offsets[node + 1];
+        double total = 0.0;
+        for (int64_t offset = start; offset < stop; offset += PHX_MC_WINDING_FAN_CHUNK) {
+          double chunk = 0.0;
+          for (int64_t lane = 0; lane < PHX_MC_WINDING_FAN_CHUNK; ++lane) {
+            const int64_t edge = offset + lane;
+            const double angle =
+                edge < stop
+                    ? solid_angle(point, apex,
+                                  soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge]),
+                                  soup.vertices + 3 * static_cast<int64_t>(fans.edges[2 * edge + 1]))
+                    : 0.0;
+            chunk = lane == 0 ? angle : chunk + angle;
+          }
+          total = total + chunk;
+        }
+        return total;
+      };
+      values[query] = hierarchical_sum(tree, soup, point, stack, open, far) / kFourPi;
+    }
+  });
+}
+
+int32_t triangle_winding_dipole(const phx_mc_bvh_tree_view& tree, const TriangleSoup& soup,
+                                const double* dipoles, double opening_angle, int64_t count,
+                                const double* points, double* values, int32_t parallelism) {
+  // Pack once per call: each record contains everything the cut test, the
+  // far value, and the descent read.
   struct Node {
     double normal[3];
     double center[3];
@@ -578,30 +618,32 @@ void triangle_winding_dipole(const phx_mc_bvh_tree_view& tree, const TriangleSou
     record.right = tree.right[node];
     record.leaf = tree.leaf[node];
   }
-  std::vector<int64_t> stack;
-  stack.reserve(128);
-  for (const int64_t query : spatial_order(points, count)) {
-    const double* point = points + 3 * query;
-    double total = 0.0;
-    stack.clear();
-    stack.push_back(0);
-    while (!stack.empty()) {
-      const Node& node = nodes[static_cast<std::size_t>(stack.back())];
-      stack.pop_back();
-      double offset[3];
-      subtract3(node.center, point, offset);
-      const double distance = std::sqrt(dot3(offset, offset));
-      if (!(distance <= node.reach)) {
-        total += dot3(node.normal, offset) / (distance * distance * distance);
-      } else if (node.leaf >= 0) {
-        total += leaf_solid_angle(tree, soup, node.leaf, point);
-      } else {
-        stack.push_back(node.right);
-        stack.push_back(node.left);
+  return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
+    std::vector<int64_t> stack;
+    stack.reserve(128);
+    for (const int64_t query : queries) {
+      const double* point = points + 3 * query;
+      double total = 0.0;
+      stack.clear();
+      stack.push_back(0);
+      while (!stack.empty()) {
+        const Node& node = nodes[static_cast<std::size_t>(stack.back())];
+        stack.pop_back();
+        double offset[3];
+        subtract3(node.center, point, offset);
+        const double distance = std::sqrt(dot3(offset, offset));
+        if (!(distance <= node.reach)) {
+          total += dot3(node.normal, offset) / (distance * distance * distance);
+        } else if (node.leaf >= 0) {
+          total += leaf_solid_angle(tree, soup, node.leaf, point);
+        } else {
+          stack.push_back(node.right);
+          stack.push_back(node.left);
+        }
       }
+      values[query] = total / kFourPi;
     }
-    values[query] = total / kFourPi;
-  }
+  });
 }
 
 namespace {
@@ -620,8 +662,8 @@ struct BoxNode {
   int64_t leaf;
 };
 
-std::vector<BoxNode> box_nodes(const phx_mc_bvh_tree_view& tree) {
-  std::vector<BoxNode> nodes(static_cast<std::size_t>(tree.node_count));
+std::unique_ptr<BoxNode[]> box_nodes(const phx_mc_bvh_tree_view& tree) {
+  auto nodes = std::make_unique_for_overwrite<BoxNode[]>(static_cast<std::size_t>(tree.node_count));
   for (int64_t node = 0; node < tree.node_count; ++node) {
     BoxNode& record = nodes[static_cast<std::size_t>(node)];
     std::copy(tree.node_min + 3 * node, tree.node_min + 3 * node + 3, record.lower);
@@ -634,7 +676,7 @@ std::vector<BoxNode> box_nodes(const phx_mc_bvh_tree_view& tree) {
 }
 
 // Locates one finite point; returns its status.
-int32_t locate_one(const phx_mc_bvh_tree_view& tree, const std::vector<BoxNode>& nodes,
+int32_t locate_one(const phx_mc_bvh_tree_view& tree, const BoxNode* nodes,
                    const double* vertices, const int32_t* cells, const uint8_t* cell_mask,
                    double tolerance, const double* point, std::vector<int64_t>& stack,
                    std::vector<Accepted>& accepted) {
@@ -733,51 +775,53 @@ void cell_evidence(const double* vertices, const int32_t* cell, const double* re
 
 }  // namespace
 
-void tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* vertices,
-                        const int32_t* cells, const uint8_t* cell_mask, double tolerance,
-                        int64_t count, const double* points, int32_t capacity,
-                        const LocateOutput& output) {
-  const std::vector<BoxNode> nodes = box_nodes(tree);
-  std::vector<int64_t> stack;
-  stack.reserve(128);
-  std::vector<Accepted> accepted;
+int32_t tetrahedron_locate(const phx_mc_bvh_tree_view& tree, const double* vertices,
+                           const int32_t* cells, const uint8_t* cell_mask, double tolerance,
+                           int64_t count, const double* points, int32_t capacity,
+                           const LocateOutput& output, int32_t parallelism) {
+  const auto nodes = box_nodes(tree);
   const std::size_t width = static_cast<std::size_t>(capacity);
-  for (const int64_t query : spatial_order(points, count)) {
-    const double* point = points + 3 * query;
-    const std::size_t row = static_cast<std::size_t>(query) * width;
-    int32_t* candidates = output.candidates + row;
-    double* candidate_reference = output.candidate_reference + 3 * row;
-    std::fill(candidates, candidates + width, -1);
-    std::fill(candidate_reference, candidate_reference + 3 * width, 0.0);
-    double* reference = output.reference + 3 * query;
-    const bool finite =
-        std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]);
-    const int32_t status = finite ? locate_one(tree, nodes, vertices, cells, cell_mask, tolerance,
-                                               point, stack, accepted)
-                                  : PHX_MC_LOCATE_NONFINITE;
-    output.status[query] = status;
-    if (status != PHX_MC_LOCATE_LOCATED) {
-      output.cells[query] = -1;
-      output.containing[query] = 0;
-      std::fill(reference, reference + 3, 0.0);
-      output.residual[query] = kInfinity;
-      output.condition[query] = kInfinity;
-      continue;
+  return query_chunks(points, count, parallelism, [&](std::span<const int64_t> queries) {
+    std::vector<int64_t> stack;
+    stack.reserve(128);
+    std::vector<Accepted> accepted;
+    for (const int64_t query : queries) {
+      const double* point = points + 3 * query;
+      const std::size_t row = static_cast<std::size_t>(query) * width;
+      int32_t* candidates = output.candidates + row;
+      double* candidate_reference = output.candidate_reference + 3 * row;
+      std::fill(candidates, candidates + width, -1);
+      std::fill(candidate_reference, candidate_reference + 3 * width, 0.0);
+      double* reference = output.reference + 3 * query;
+      const bool finite =
+          std::isfinite(point[0]) && std::isfinite(point[1]) && std::isfinite(point[2]);
+      const int32_t status = finite
+          ? locate_one(tree, nodes.get(), vertices, cells, cell_mask, tolerance, point, stack, accepted)
+          : PHX_MC_LOCATE_NONFINITE;
+      output.status[query] = status;
+      if (status != PHX_MC_LOCATE_LOCATED) {
+        output.cells[query] = -1;
+        output.containing[query] = 0;
+        std::fill(reference, reference + 3, 0.0);
+        output.residual[query] = kInfinity;
+        output.condition[query] = kInfinity;
+        continue;
+      }
+      std::sort(accepted.begin(), accepted.end(),
+                [](const Accepted& a, const Accepted& b) { return a.cell < b.cell; });
+      output.containing[query] = static_cast<int32_t>(accepted.size());
+      const std::size_t kept = std::min(width, accepted.size());
+      for (std::size_t slot = 0; slot < kept; ++slot) {
+        candidates[slot] = accepted[slot].cell;
+        std::copy(accepted[slot].reference, accepted[slot].reference + 3, candidate_reference + 3 * slot);
+      }
+      const Accepted& lowest = accepted.front();
+      output.cells[query] = lowest.cell;
+      std::copy(lowest.reference, lowest.reference + 3, reference);
+      cell_evidence(vertices, cells + 4 * static_cast<int64_t>(lowest.cell), lowest.reference, point,
+                    output.residual[query], output.condition[query]);
     }
-    std::sort(accepted.begin(), accepted.end(),
-              [](const Accepted& a, const Accepted& b) { return a.cell < b.cell; });
-    output.containing[query] = static_cast<int32_t>(accepted.size());
-    const std::size_t kept = std::min(width, accepted.size());
-    for (std::size_t slot = 0; slot < kept; ++slot) {
-      candidates[slot] = accepted[slot].cell;
-      std::copy(accepted[slot].reference, accepted[slot].reference + 3, candidate_reference + 3 * slot);
-    }
-    const Accepted& lowest = accepted.front();
-    output.cells[query] = lowest.cell;
-    std::copy(lowest.reference, lowest.reference + 3, reference);
-    cell_evidence(vertices, cells + 4 * static_cast<int64_t>(lowest.cell), lowest.reference, point,
-                  output.residual[query], output.condition[query]);
-  }
+  });
 }
 
 }  // namespace phx::mc::bvh
