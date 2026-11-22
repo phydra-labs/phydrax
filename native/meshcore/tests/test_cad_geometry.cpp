@@ -14,6 +14,7 @@
 #include <functional>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
 #include <random>
 #include <vector>
 
@@ -925,7 +926,7 @@ void anchored_trigonometry() {
     starts.insert(starts.end(), {a, std::nextafter(a, -1e9), std::nextafter(a, 1e9), a + 1.0 / 128,
                                  a + 0.37 / 64});
   }
-  for (int k = -16; k <= 16; ++k) starts.push_back(k * (M_PI / 2));
+  for (int k = -16; k <= 16; ++k) starts.push_back(k * (std::numbers::pi / 2));
   starts.insert(starts.end(), {0.0, 1e-300, -1e-300, 5e-324});
   const double widths[] = {0.0, 1e-300, 1e-15, 1e-9, 1e-3, 0.03, 0x1p-4, 0.07, 0.5, 3.0};
   std::mt19937_64 random(5);
