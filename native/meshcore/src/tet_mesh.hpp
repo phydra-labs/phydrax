@@ -882,6 +882,7 @@ class TetMesh {
                                        std::span<const BoundaryFacet> boundary,
                                        std::span<const std::int32_t> vertices,
                                        std::vector<std::int32_t>& created);
+  bool link_interior_cone(std::uint32_t local_count);
   // Called by refinement through LocalIncidence: inserts the source-witnessed
   // vertex `vertex` into a constrained facet, or into the constrained segment
   // of `segment_rows` (at most one row). `cavity` holds the finite and hull
@@ -1096,13 +1097,12 @@ class TetMesh {
     std::int32_t constraint = kNoConstraint;
     std::int32_t apex = -1;
     std::array<std::int32_t, 4> vertices{};
-    // Local indices of the corners of the facet opposite the center, in
-    // kOrientedFacet[apex] order.
+    // Indexed by the corner in kOrientedFacet[apex]. Initially dense
+    // boundary-vertex indices; after preflight, the three neighboring cone rows.
     std::array<std::uint32_t, 3> locals{};
   };
-  // An outer edge of a cone cell's face through the center, waiting for the
-  // second cone cell that holds it (`cell` -1 once paired); cones over more
-  // than kDenseConeVertices boundary vertices pair their edges this way.
+  // An unmatched outer edge with its cone row and local facet corner.
+  // For a cone too large for the dense owner table.
   struct ConeEdge {
     static constexpr std::uint64_t kEmpty = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t key = kEmpty;
