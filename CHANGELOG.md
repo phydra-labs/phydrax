@@ -91,6 +91,9 @@
 - The standalone native quadratic CAD verifier bounds both directed
   distances against the actual embedded P2 map, including polar slivers
   and shared trimmed traces. Public P2 CAD acceptance remains unavailable.
+- Tetrahedral refinement screens the live complex after lattice seeding
+  instead of maintaining a queue of cells that may be removed by later
+  seeds. The first refinement round keeps its Hilbert and cell-ID order.
 - `prepare_bvh` builds its MEDIAN, SAH and MORTON topologies in meshcore
   (`phx_mc_bvh_build`), deterministic and byte-identical to the NumPy
   builders, which remain the path without meshcore; building over 1e6

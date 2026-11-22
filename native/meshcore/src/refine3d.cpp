@@ -2137,11 +2137,12 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return UnmetCause{PHX_MC_TET_UNMET_INPUT_ANGLE, mesh.vertex_id(acute.apex), acute.angle};
   };
 
-  // Cells to evaluate in the next refinement round, deduplicated per round.
+  // Cells to evaluate after the first census, deduplicated per round.
   std::vector<std::int32_t> pending;
   std::vector<std::uint32_t> pending_round;
   std::uint32_t round = 1;
   const auto enqueue_slot = [&](std::int32_t slot) {
+    if (round == 1) return;
     if (slot < 0 || !mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) return;
     if (pending_round.size() <= static_cast<std::size_t>(slot)) {
       pending_round.resize(mesh.complex_.tets.size() + 1, 0U);
@@ -2162,9 +2163,6 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     for (std::uint64_t id : flipped) enqueue(id);
     return status;
   };
-  for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
-    enqueue_slot(static_cast<std::int32_t>(row));
-  }
 
   const auto edit_error = [](TetEditStatus status) -> std::int32_t {
     if (status == TetEditStatus::kAllocationFailure) return PHX_MC_ALLOCATION_FAILURE;
@@ -2850,7 +2848,8 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     for (std::size_t row = 0; row < removed_cells.size(); ++row) {
       if (!incidence.erase(interior.cells[row], removed_cells[row])) return PHX_MC_INTERNAL_ERROR;
     }
-    for (std::size_t row = 0; row < created_slots.size(); ++row) {
+    for (std::size_t row = 0; (boundary_splittable || round != 1) &&
+                             row < created_slots.size(); ++row) {
       const std::int32_t slot = created_slots[row];
       if (boundary_splittable) {
         detail::LocalCell vertices{};
@@ -3968,21 +3967,25 @@ std::int32_t refine_mesh(TetMesh& mesh, double radius_edge_bound,
     return PHX_MC_OK;
   };
   if (const std::int32_t error = seed_lattice(); error != PHX_MC_OK) return error;
-  for (int pass = 0; pass < kMaxRounds && !pending.empty(); ++pass) {
+  for (int pass = 0; pass < kMaxRounds && (pass == 0 || !pending.empty()); ++pass) {
     proposals.clear();
-    for (std::int32_t slot : pending) {
-      Proposal proposal{};
-      proposal.cell_id = mesh.cell_id(slot);
-      proposal.slot = slot;
-      // The first round is screened now and sorted by circumcenter (below);
-      // a later round's cell is screened at its turn, if it is still live.
-      if (pass == 0) {
+    if (pass == 0) {
+      // Initial cells and every cone from lattice seeding were due for
+      // screening, so visit the live finite complex once after seeding.
+      // The sort by Hilbert key and persistent cell ID below owns the order.
+      for (std::size_t row = 0; row < mesh.complex_.tets.size(); ++row) {
+        const auto slot = static_cast<std::int32_t>(row);
         if (!mesh.complex_.live(slot) || is_ghost(mesh.tet(slot))) continue;
+        Proposal proposal{0, mesh.cell_id(slot), slot, false, 0.0};
         double center[3];
         if (!violates(slot, proposal, center)) continue;
         proposal_grids.push_back(frame.grid(center));
+        proposals.push_back(proposal);
       }
-      proposals.push_back(proposal);
+    } else {
+      for (const std::int32_t slot : pending) {
+        proposals.push_back({0, mesh.cell_id(slot), slot, false, 0.0});
+      }
     }
     pending.clear();
     if (++round == 0) {
