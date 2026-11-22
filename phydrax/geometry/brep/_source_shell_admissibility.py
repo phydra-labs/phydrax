@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
 _IntervalBox = tuple[tuple[Fraction, Fraction], tuple[Fraction, Fraction]]
 _Vector = tuple[Fraction, ...]
+_LinePolygon = tuple[dict[int, _Vector], dict[int, tuple[int, int]]]
+_FaceSides = tuple[int, int]
 
 
 def _rational_frame(
@@ -1617,9 +1619,7 @@ class SourceShellAdmissibility:
 
 def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
     """Prove edge balance and cyclic vertex links after exact pole quotient."""
-    from .._domain_boundary import _exact_line_junction_box
-    from .._meshing_domain import _same_brep_trim_endpoint, MeshingDomain
-    from ._correspondence import _exact_brep_pole_collapse
+    from .._meshing_domain import MeshingDomain
 
     if not isinstance(domain, MeshingDomain) or domain.brep_authority is not model:
         return False
@@ -1629,9 +1629,22 @@ def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
     shell = geometry.solid_shells[0][0]
     if not 0 <= shell < len(geometry.shell_faces):
         return False
+    if set(model.geometry.shell_faces[shell]) != set(range(len(model.patches))):
+        return False
+    return _source_shell_topology(model, domain, shell)
+
+
+def _source_shell_topology(
+    model: BRepModel, domain: MeshingDomain, shell: int, /
+) -> bool:
+    from .._domain_boundary import _exact_line_junction_box
+    from .._meshing_domain import _same_brep_trim_endpoint
+    from ._correspondence import _exact_brep_pole_collapse
+
+    geometry = model.geometry
     faces = geometry.shell_faces[shell]
     signs = geometry.shell_orientations[shell]
-    if len(set(faces)) != len(faces) or set(faces) != set(range(len(model.patches))):
+    if not faces or len(set(faces)) != len(faces):
         return False
     orientation = np.asarray(model.orientation, dtype=np.int8)
     face_graph: dict[int, set[int]] = {face: set() for face in faces}
@@ -2008,6 +2021,12 @@ def shell_source_model(domain: MeshingDomain, /) -> BRepModel | None:
     carry each face's carrier unplaced (or identity-placed) and satisfy the
     single-shell topology (edge balance, cyclic vertex links, exact lifts).
     """
+    model = _bound_shell_source_model(domain)
+    return model if model is not None and _single_shell_topology(model, domain) else None
+
+
+def _bound_shell_source_model(domain: MeshingDomain, /) -> BRepModel | None:
+    """Bind the complete, unplaced face bank to its exact domain patches."""
     from .._meshing_domain import _PlacedSurfacePatch
     from ._assembly import BRepAffinePlacement
 
@@ -2033,7 +2052,345 @@ def shell_source_model(domain: MeshingDomain, /) -> BRepModel | None:
             surface = surface.source
         if not _same_tree_content(surface, model.patches[face]):
             return None
-    return model if _single_shell_topology(model, domain) else None
+    return model
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRegionAdmissibility:
+    """Embedded, consistently outward, interior-disjoint source regions.
+
+    ``face_sides`` is indexed by BRep face, with source solid indices in
+    (behind, in front) order relative to the oriented model face normal.
+    The unclaimed side is -1. The domain binds these indices to occurrences.
+    """
+
+    domain_id: str
+    source_revision: str
+    face_sides: tuple[_FaceSides, ...]
+    certificate_id: str
+
+    def replay(self, domain: MeshingDomain, /) -> bool:
+        return certify_source_regions(domain) == self
+
+
+@dataclass(frozen=True, slots=True)
+class _ConvexSourceFace:
+    plane: tuple[_Vector, _Vector]
+    polygon: _LinePolygon
+    inward: tuple[tuple[_Vector, Fraction], ...]
+    center: _Vector
+
+
+def _convex_source_face(model: BRepModel, face: int, /) -> _ConvexSourceFace | None:
+    """Prove one affine disk: its exact lifted loop is strictly convex and CCW."""
+    from .._rational import rational_cross
+
+    plane = _exact_plane(model, face)
+    polygon = _exact_line_polygon(model, face)
+    loops = model.geometry.face_loops[face]
+    if plane is None or polygon is None or len(loops) != 1:
+        return None
+    vertices, edges = polygon
+    origin, normal = plane
+    plane_height = _dot(origin, normal)
+    loop = loops[0]
+    if (
+        len(vertices) < 3
+        or len(loop) != len(vertices)
+        or len(loop) != len(edges)
+        or any(_dot(point, normal) != plane_height for point in vertices.values())
+    ):
+        return None
+    geometry = model.geometry
+    inward = []
+    for coedge in loop:
+        a, b = edges[geometry.coedge_edges[coedge]]
+        if geometry.coedge_senses[coedge] < 0:
+            a, b = b, a
+        start, stop = vertices[a], vertices[b]
+        direction = tuple(y - x for x, y in zip(start, stop, strict=True))
+        side = rational_cross(normal, direction)
+        height = _dot(start, side)
+        if any(
+            _dot(point, side) <= height
+            for vertex, point in vertices.items()
+            if vertex not in (a, b)
+        ):
+            return None
+        inward.append((side, height))
+    center = tuple(
+        sum(axis, Fraction(0)) / len(vertices)
+        for axis in zip(*vertices.values(), strict=True)
+    )
+    return _ConvexSourceFace(plane, polygon, tuple(inward), center)
+
+
+def _clip_source_edge(
+    start: _Vector, stop: _Vector, face: _ConvexSourceFace, /
+) -> tuple[_Vector, ...]:
+    """Intersect one coplanar segment with the closed convex face."""
+    lower, upper = Fraction(0), Fraction(1)
+    for side, height in face.inward:
+        first = _dot(start, side) - height
+        last = _dot(stop, side) - height
+        if first < 0 and last < 0:
+            return ()
+        if first < 0:
+            lower = max(lower, first / (first - last))
+        elif last < 0:
+            upper = min(upper, first / (first - last))
+    if lower > upper:
+        return ()
+    return tuple(
+        tuple(x + parameter * (y - x) for x, y in zip(start, stop, strict=True))
+        for parameter in (lower, upper)
+    )
+
+
+def _convex_faces_meet_only_shared(
+    first: _ConvexSourceFace,
+    second: _ConvexSourceFace,
+    edges: set[int],
+    vertices: set[int],
+    /,
+) -> bool:
+    from .._rational import rational_cross
+
+    planes = first.plane, second.plane
+    polygons = first.polygon, second.polygon
+    first_origin, first_normal = planes[0]
+    second_origin, second_normal = planes[1]
+    if any(rational_cross(first_normal, second_normal)):
+        return _plane_faces_meet_only_shared(planes, polygons, edges, vertices)
+    if _dot(first_origin, first_normal) != _dot(second_origin, first_normal):
+        return True
+
+    # Every extreme point of a coplanar convex intersection is on an edge
+    # of an input polygon. The only supported shared sets are convex (empty,
+    # one vertex, or one complete edge), so clipping both edge banks suffices.
+    points, segments = first.polygon
+    if edges:
+        if len(edges) != 1:
+            return False
+        a, b = segments[next(iter(edges))]
+        if vertices != {a, b}:
+            return False
+    elif len(vertices) > 1:
+        return False
+    else:
+        a = b = next(iter(vertices), -1)
+    for source, target in ((first, second), (second, first)):
+        points_by_id, segments_by_id = source.polygon
+        for start, stop in segments_by_id.values():
+            for point in _clip_source_edge(
+                points_by_id[start], points_by_id[stop], target
+            ):
+                if a == -1 or not _on_segment(point, points[a], points[b]):
+                    return False
+    return True
+
+
+def _source_region_sides(model: BRepModel, /) -> tuple[_FaceSides, ...] | None:
+    """Read authoritative solid ownership; an interface has opposite uses."""
+    negative = [-1] * len(model.patches)
+    positive = [-1] * len(model.patches)
+    for solid, (faces, signs) in enumerate(
+        zip(
+            model.topology.solid_faces,
+            model.topology.solid_face_orientations,
+            strict=True,
+        )
+    ):
+        if not faces:
+            return None
+        for face, sign in zip(faces, signs, strict=True):
+            side = negative if sign == 1 else positive
+            if side[face] != -1:
+                return None
+            side[face] = solid
+    sides = tuple(zip(negative, positive, strict=True))
+    return sides if all(side != (-1, -1) for side in sides) else None
+
+
+def _source_region_contacts(
+    model: BRepModel,
+    faces: tuple[_ConvexSourceFace, ...],
+    sides: tuple[_FaceSides, ...],
+    /,
+) -> bool:
+    # An interface declares its own rim, not contacts between other region
+    # pairs. Entity identities below are never inferred from coincident points.
+    rims: dict[tuple[int, ...], tuple[set[int], set[int]]] = {}
+    for face, (negative, positive) in zip(faces, sides, strict=True):
+        if min(negative, positive) >= 0:
+            vertices, edges = face.polygon
+            rim_edges, rim_vertices = rims.setdefault(
+                tuple(sorted((negative, positive))), (set(), set())
+            )
+            rim_edges.update(edges)
+            rim_vertices.update(vertices)
+    owners = model.topology.face_solids
+    for i, first in enumerate(faces):
+        for j in range(i + 1, len(faces)):
+            second = faces[j]
+            edges = first.polygon[1].keys() & second.polygon[1].keys()
+            vertices = first.polygon[0].keys() & second.polygon[0].keys()
+            if edges or vertices:
+                for a in owners[i]:
+                    for b in owners[j]:
+                        if a != b:
+                            rim = rims.get(tuple(sorted((a, b))))
+                            if rim is None or not (
+                                edges <= rim[0] and vertices <= rim[1]
+                            ):
+                                return False
+            if not _convex_faces_meet_only_shared(first, second, edges, vertices):
+                return False
+    return True
+
+
+def _source_region_shells(
+    model: BRepModel, domain: MeshingDomain, faces: tuple[_ConvexSourceFace, ...], /
+) -> bool:
+    # Each component has its own cyclic links. Components of one region may
+    # nest, but may not touch, including at a single source vertex.
+    checked: set[int] = set()
+    for shells in model.geometry.solid_shells:
+        vertices: set[int] = set()
+        for shell in shells:
+            if shell not in checked and not _source_shell_topology(model, domain, shell):
+                return False
+            checked.add(shell)
+            corners = {
+                vertex
+                for face in model.geometry.shell_faces[shell]
+                for vertex in faces[face].polygon[0]
+            }
+            if not vertices.isdisjoint(corners):
+                return False
+            vertices.update(corners)
+    return True
+
+
+def _source_ray_crossings(
+    faces: tuple[_ConvexSourceFace, ...], origin: _Vector, direction: _Vector, /
+) -> tuple[int, ...] | None:
+    """Exact trimmed face crossings at strictly positive ray parameters."""
+    crossed = []
+    for index, face in enumerate(faces):
+        plane_origin, normal = face.plane
+        denominator = _dot(direction, normal)
+        if not denominator:
+            return None
+        parameter = (_dot(plane_origin, normal) - _dot(origin, normal)) / denominator
+        if parameter <= 0:
+            continue
+        point = tuple(x + parameter * d for x, d in zip(origin, direction, strict=True))
+        margin = min(_dot(point, side) - height for side, height in face.inward)
+        if margin < 0:
+            continue
+        if not margin:
+            return None
+        crossed.append(index)
+    return tuple(crossed)
+
+
+def _source_face_occupancy(
+    faces: tuple[_ConvexSourceFace, ...],
+    model: BRepModel,
+    index: int,
+    orientation: int,
+    /,
+) -> tuple[set[int], set[int]]:
+    """Material on the two germ sides of a source face, by exact ray parity."""
+    from ._projection import _containment_ray_directions
+
+    face = faces[index]
+    owners = model.topology.face_solids
+    # The exact centroid lies strictly inside the face. Pair separation leaves
+    # no other face there. Generic directions form an open dense set: avoid
+    # parallel planes and the projected finite set of trim segments.
+    for direction in _containment_ray_directions():
+        crossings = _source_ray_crossings(faces, face.center, direction)
+        if crossings is None:
+            continue
+        forward: set[int] = set()
+        for crossed in crossings:
+            forward.symmetric_difference_update(owners[crossed])
+        backward = forward.symmetric_difference(owners[index])
+        if orientation * _dot(direction, face.plane[1]) > 0:
+            return backward, forward
+        return forward, backward
+    raise AssertionError("the containment ray sequence is unbounded")
+
+
+def certify_source_regions(domain: MeshingDomain, /) -> SourceRegionAdmissibility | None:
+    """Prove only identity-placed BRep solids with strictly convex planar trims.
+
+    With complete pair separation, each connected open face has constant
+    occupancy on each local side. Every complement component either meets one
+    of those sides or is unbounded: from an interior point a generic ray
+    either first hits an open face transversally or goes to infinity. Parity
+    is constant in that component and zero at infinity. Thus checking both
+    sides of *every* face proves all material occupancy, including nested
+    cavities and multiple disconnected shells; shell contact alone cannot.
+    """
+    from ._assembly import BRepAffinePlacement
+
+    try:
+        domain.require_current()
+        model = _bound_shell_source_model(domain)
+        if model is None or model.topology.num_solids < 2:
+            return None
+        solids = set(range(model.topology.num_solids))
+        if (
+            len(domain.regions) != len(solids)
+            or set(domain.region_source_indices) != solids
+        ):
+            return None
+        identity = BRepAffinePlacement.identity().identity_payload()
+        if any(
+            occurrence.placement.identity_payload() != identity
+            for occurrence in model.geometry.iter_occurrences()
+        ):
+            return None
+        sides = _source_region_sides(model)
+        if sides is None:
+            return None
+        face_bank: list[_ConvexSourceFace] = []
+        for index in range(len(model.patches)):
+            face = _convex_source_face(model, index)
+            if face is None:
+                return None
+            face_bank.append(face)
+        faces = tuple(face_bank)
+        if not _source_region_shells(model, domain, faces) or not _source_region_contacts(
+            model, faces, sides
+        ):
+            return None
+        orientation = np.asarray(model.orientation, dtype=np.int8)
+        for index, (negative, positive) in enumerate(sides):
+            observed = _source_face_occupancy(
+                faces, model, index, int(orientation[index])
+            )
+            if observed != (
+                {negative} - {-1},
+                {positive} - {-1},
+            ):
+                return None
+    except (ArithmeticError, TypeError, ValueError, NotImplementedError):
+        return None
+    certificate_id = canonical_fingerprint(
+        {
+            "kind": "cad-source-region-admissibility",
+            "domain": domain.domain_id,
+            "revision": model.source_revision,
+            "face_sides": sides,
+        }
+    )
+    return SourceRegionAdmissibility(
+        domain.domain_id, model.source_revision, sides, certificate_id
+    )
 
 
 def _prove_single_source_shell(

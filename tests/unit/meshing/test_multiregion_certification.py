@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -7,13 +7,31 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import (
+    cad_mesh_solid,
+    CadSolidResult,
+    SurfaceFindingKind,
+    VerdictStatus,
+    verify_chart_partition,
+    verify_surface_embedding,
+    verify_tetrahedra,
+    verify_volume,
+)
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.geometry._meshing_domain import MeshingDomain
 from phydrax.geometry._surface_source_support import SurfaceSourceCharts
+from phydrax.geometry.brep._model import BRepModel
+from phydrax.geometry.brep._projection_contracts import brep_entity_id
 from phydrax.geometry.multiregion_surface import MultiRegionSurfaceTopology
 from phydrax.meshing._certification import (
     _audit_findings,
     _multiregion_proof,
     MeshCertificationReport,
+)
+from phydrax.meshing._native_cad_certificate import NativeCadSurfaceWitness
+from phydrax.meshing._native_cad_records import (
+    _native_cad_regional_surface,
+    _RegionalSurfaceRows,
 )
 from phydrax.meshing._native_construction import NativeMeshOrganization
 from phydrax.meshing._plc_source import (
@@ -21,6 +39,7 @@ from phydrax.meshing._plc_source import (
     PiecewiseLinearComplex,
 )
 from phydrax.meshing._result import CellMeshingResult
+from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
 from phydrax.meshing.providers._native_cad_volume import _cad_plc_data
 from phydrax.meshing.providers._native_volume import _face_order_sign
 
@@ -49,9 +68,7 @@ def test_recovered_face_orientation_rejects_other_vertex_identity() -> None:
 
 
 @pytest.fixture(scope="module")
-def multiregion_surface() -> tuple[
-    MeshCertificationReport, NativeMeshOrganization, CellMeshingResult
-]:
+def split_box_model() -> BRepModel:
     pytest.importorskip("OCP")
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
@@ -67,9 +84,16 @@ def multiregion_surface() -> tuple[
         )
     splitter.Perform()
     assert not splitter.HasErrors()
-    model = import_occt_shape(
+    return import_occt_shape(
         splitter.Shape(), coordinate_contract=SpatialCoordinateContract.si()
     ).model
+
+
+@pytest.fixture(scope="module")
+def multiregion_surface(
+    split_box_model: BRepModel,
+) -> tuple[MeshCertificationReport, NativeMeshOrganization, CellMeshingResult]:
+    model = split_box_model
     scope = phx.meshing.MeshingScope.whole(model, 2)
     spec = phx.meshing.SurfaceMeshingSpec(
         phx.meshing.CellMeshingTarget(
@@ -79,7 +103,7 @@ def multiregion_surface() -> tuple[
         size_controls=(phx.meshing.UniformSizeControl(scope, 0.5),),
         maximum_deviation=0.05,
     )
-    result = phx.meshing.NativeMeshingProvider().plan(model, spec).execute()
+    result = phx.meshing.NativeMeshingProvider().plan(model, spec).execute(prove=True)
     report = result.certification
     assert report is not None and report.multiregion_surface is not None
     organization = NativeMeshOrganization(
@@ -613,3 +637,294 @@ def test_native_surface_proofs_revalidate_scientific_content(
             0.05,
             computed_surface=acceptance,
         )
+
+
+class _NativeSplitBox(NamedTuple):
+    domain: MeshingDomain
+    mesh: CellMesh
+    solid: CadSolidResult
+    witness: NativeCadSurfaceWitness
+    rows: _RegionalSurfaceRows
+    interface: np.ndarray
+
+
+@pytest.fixture(scope="module")
+def native_split_box(split_box_model: BRepModel) -> _NativeSplitBox:
+    domain = MeshingDomain.from_brep(split_box_model)
+    model = cad_geometry_bundle(domain).model
+    # Exercise the native construction itself without changing provider
+    # admission: this component does not yet prove BRep material occupancy.
+    solid = cad_mesh_solid(
+        model,
+        np.full(model.surface_nodes.size, 0.4),
+        np.full(model.surface_nodes.size, 0.05),
+        np.full(model.curve_nodes.size, 0.05),
+        radius_edge_bound=8.0,
+        min_dihedral_degrees=0.0,
+    )
+    assert len(solid.volume.tetrahedra) > 0, solid.volume.stats
+    mesh = CellMesh.from_simplices(
+        solid.volume.points,
+        solid.volume.tetrahedra,
+        dimension=3,
+        numeric_version=domain.source_revision,
+    )
+    np.testing.assert_array_equal(mesh.coordinates, solid.volume.points)
+    np.testing.assert_array_equal(mesh.blocks[0].vertices, solid.volume.tetrahedra)
+    witness = NativeCadSurfaceWitness(mesh, solid.surface, model.loop_surfaces.size)
+    rows = _native_cad_regional_surface(
+        mesh, domain, witness, native_surface=solid.surface
+    )
+    interface = np.flatnonzero(np.all(rows.regions >= 0, axis=1))
+    assert interface.size > 1
+    return _NativeSplitBox(domain, mesh, solid, witness, rows, interface)
+
+
+def test_native_split_box_regional_boundary_and_exact_volume(
+    native_split_box: _NativeSplitBox,
+) -> None:
+    domain, mesh, solid, witness, rows, interface = native_split_box
+    points, cells = np.asarray(mesh.coordinates), np.asarray(mesh.blocks[0].vertices)
+    cell_regions = solid.volume.tetrahedron_regions
+    assert len(domain.regions) == 2
+    np.testing.assert_array_equal(np.unique(cell_regions), [0, 1])
+    assert not verify_chart_partition(
+        len(domain.patches), witness.chart_patches, witness.chart_uv, witness.chords()
+    ).size
+    replay = _native_cad_regional_surface(mesh, domain, witness)
+    np.testing.assert_array_equal(replay.patches, rows.patches)
+    np.testing.assert_array_equal(replay.regions, rows.regions)
+
+    # The shared patch is one actual BRep face occurrence. Its sign in each
+    # solid, not the labels on incident tetrahedra, fixes the declaration.
+    (patch,) = np.unique(rows.patches[interface])
+    source, identifier, occurrence = rows.patch_occurrences[patch]
+    assert source == domain.source_indices[2][patch]
+    assert occurrence == domain.source_occurrences[2][patch]
+    assert identifier == brep_entity_id(
+        domain.source_id, domain.source_revision, 2, source, occurrence_path=occurrence
+    )
+    authority = domain.brep_authority
+    assert isinstance(authority, BRepModel)
+    topo = authority.topology
+    for region, solid_id in enumerate(domain.region_source_indices):
+        source_slot = topo.solid_faces[solid_id].index(source)
+        sign = topo.solid_face_orientations[solid_id][source_slot]
+        assert np.all(rows.regions[interface, 0 if sign == 1 else 1] == region)
+
+    aggregate = verify_surface_embedding(points, rows.triangles)
+    assert aggregate.status is VerdictStatus.VIOLATED
+    assert SurfaceFindingKind.EDGE in aggregate.findings["kind"]
+    exterior_rows, exterior = rows.outward(None)
+    assert not np.intersect1d(exterior_rows, interface).size
+    assert len(exterior_rows) + len(interface) == len(rows.triangles)
+    assert verify_surface_embedding(points, exterior).status is VerdictStatus.CERTIFIED
+
+    interface_uses = []
+    for region in range(len(domain.regions)):
+        original, outward = rows.outward(region)
+        verdict = verify_surface_embedding(points, outward)
+        assert verdict.status is VerdictStatus.CERTIFIED, verdict.findings
+        offsets = np.searchsorted(original, interface)
+        np.testing.assert_array_equal(original[offsets], interface)
+        interface_uses.append(outward[offsets])
+    np.testing.assert_array_equal(interface_uses[0], interface_uses[1][:, ::-1])
+
+    tiling = verify_tetrahedra(points, cells)
+    assert tiling.status is VerdictStatus.CERTIFIED, tiling
+    assert tiling.boundary_faces == len(exterior_rows)
+    coverage = verify_volume(
+        points,
+        cells,
+        rows.triangles,
+        cell_regions=cell_regions,
+        surface_regions=rows.regions,
+    )
+    assert coverage.certified, coverage
+    assert coverage.boundary_faces == len(exterior_rows)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "swapped-sides",
+        "reversed-triangle",
+        "reversed-chart-and-triangle",
+        "wrong-chart-patch",
+        "wrong-occurrence",
+    ),
+)
+def test_native_split_box_refuses_invalid_chart_incidence(
+    native_split_box: _NativeSplitBox, defect: str
+) -> None:
+    domain, mesh, solid, witness, rows, interface = native_split_box
+    surface = solid.surface
+    triangle = int(interface[0])
+    chart_row = int(np.flatnonzero(witness.chart_to_mesh == triangle)[0])
+    patch = int(rows.patches[triangle])
+    match = rf"triangle row {triangle}\."
+    if defect == "swapped-sides":
+        sides = surface.facet_regions.copy()
+        sides[triangle] = sides[triangle, ::-1]
+        surface = surface._replace(facet_regions=sides)
+    elif defect in ("reversed-triangle", "reversed-chart-and-triangle"):
+        triangles = surface.triangles.copy()
+        triangles[triangle] = triangles[triangle, ::-1]
+        surface = surface._replace(triangles=triangles)
+        match = rf"chart row {chart_row}.*oriented boundary triangle row {triangle}\."
+        if defect == "reversed-chart-and-triangle":
+            chart = surface.chart
+            chart_triangles, uv = chart.triangles.copy(), chart.uv.copy()
+            chart_triangles[chart_row] = chart_triangles[chart_row, ::-1]
+            uv[chart_row] = uv[chart_row, ::-1]
+            surface = surface._replace(
+                chart=chart._replace(triangles=chart_triangles, uv=uv)
+            )
+            match = (
+                rf"chart row {chart_row} reverses or degenerates source patch row {patch}"
+            )
+        witness = NativeCadSurfaceWitness(mesh, surface, witness.loop_count)
+    elif defect == "wrong-chart-patch":
+        patches = surface.chart.patches.copy()
+        wrong_patch = next(
+            row
+            for row, face in enumerate(domain.patches)
+            if row != patch and face.orientation == domain.patches[patch].orientation
+        )
+        patches[chart_row] = wrong_patch
+        witness = NativeCadSurfaceWitness(
+            mesh,
+            surface._replace(chart=surface.chart._replace(patches=patches)),
+            witness.loop_count,
+        )
+        findings = verify_chart_partition(
+            len(domain.patches), witness.chart_patches, witness.chart_uv, witness.chords()
+        )
+        assert np.any(np.isin(findings["patch"], [patch, wrong_patch]))
+    else:
+        vertices, edges, faces = domain.source_occurrences
+        wrong_faces = (*faces[:patch], ("wrong-occurrence",), *faces[patch + 1 :])
+        domain = eqx.tree_at(
+            lambda value: value.source_occurrences, domain, (vertices, edges, wrong_faces)
+        )
+        match = "MeshingDomain content changed"
+    with pytest.raises(ValueError, match=match):
+        _native_cad_regional_surface(mesh, domain, witness, native_surface=surface)
+
+
+@pytest.mark.parametrize("defect", ("missing", "duplicate"))
+def test_native_split_box_refuses_invalid_physical_facet_rows(
+    native_split_box: _NativeSplitBox, defect: str
+) -> None:
+    domain, mesh, solid, witness, rows, interface = native_split_box
+    surface = solid.surface
+    triangle = int(interface[0])
+    chart_row = int(np.flatnonzero(witness.chart_to_mesh == triangle)[0])
+    chart = surface.chart
+    if defect == "missing":
+        mapping = chart.chart_to_mesh.copy()
+        mapping[chart_row] = -1
+        surface = surface._replace(chart=chart._replace(chart_to_mesh=mapping))
+        match = rf"triangle row {triangle} has 0 chart images"
+    else:
+        duplicate = len(rows.triangles)
+        chart = chart._replace(
+            triangles=np.concatenate((chart.triangles, chart.triangles[[chart_row]])),
+            patches=np.append(chart.patches, chart.patches[chart_row]),
+            uv=np.concatenate((chart.uv, chart.uv[[chart_row]])),
+            chart_to_mesh=np.append(chart.chart_to_mesh, duplicate),
+            edge_chord=np.concatenate((chart.edge_chord, chart.edge_chord[[chart_row]])),
+        )
+        surface = surface._replace(
+            triangles=np.concatenate((surface.triangles, surface.triangles[[triangle]])),
+            chart=chart,
+        )
+        match = rf"triangle row {duplicate} duplicates a facet"
+    changed = NativeCadSurfaceWitness(mesh, surface, witness.loop_count)
+    with pytest.raises(ValueError, match=match):
+        _native_cad_regional_surface(mesh, domain, changed)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "swapped",
+        "reversed",
+        "undeclared",
+        "duplicate",
+        "missing-exterior",
+        "wrong-cell-label",
+    ),
+)
+def test_native_split_box_rejects_wrong_exact_regional_coverage(
+    native_split_box: _NativeSplitBox, defect: str
+) -> None:
+    _, mesh, solid, _, rows, interface = native_split_box
+    points, cells = np.asarray(mesh.coordinates), np.asarray(mesh.blocks[0].vertices)
+    cell_regions = solid.volume.tetrahedron_regions.copy()
+    triangles, sides = rows.triangles.copy(), rows.regions.copy()
+    row = int(rows.outward(None)[0][0] if defect == "missing-exterior" else interface[0])
+    # Only for checking the exact diagnostic row, not for declaring any facet.
+    incident = np.flatnonzero(
+        np.count_nonzero(np.isin(cells, triangles[row]), axis=1) == 3
+    )
+    assert incident.size == (1 if defect == "missing-exterior" else 2)
+    if defect == "swapped":
+        sides[row] = sides[row, ::-1]
+    elif defect == "reversed":
+        triangles[row] = triangles[row, ::-1]
+    elif defect in ("undeclared", "missing-exterior"):
+        triangles = np.delete(triangles, row, axis=0)
+        sides = np.delete(sides, row, axis=0)
+    elif defect == "duplicate":
+        triangles = np.concatenate((triangles, triangles[[row]]))
+        sides = np.concatenate((sides, sides[[row]]))
+    else:
+        cell_regions[0] = 1 - cell_regions[0]
+
+    coverage = verify_volume(
+        points, cells, triangles, cell_regions=cell_regions, surface_regions=sides
+    )
+    assert not coverage.certified
+    if defect == "duplicate":
+        assert coverage.unmatched_surface_triangles == 1
+        # The last declaration in the key group is used; the original row
+        # is the extra one in the native verifier's ordering.
+        assert coverage.first_unmatched_surface_triangle == row
+    elif defect == "missing-exterior":
+        assert coverage.unmatched_boundary_faces == 1
+        assert coverage.first_unmatched_cell == incident[0]
+    elif defect == "wrong-cell-label":
+        assert coverage.region_mismatches == 4
+        assert coverage.first_region_mismatch_cell == 0
+    else:
+        assert coverage.region_mismatches == 1
+        assert coverage.first_region_mismatch_cell == incident[0]
+
+
+def test_native_split_box_v2_reports_edges_of_missing_interface_facet(
+    native_split_box: _NativeSplitBox,
+) -> None:
+    _, mesh, _, _, rows, interface = native_split_box
+    points = np.asarray(mesh.coordinates)
+    omitted = interface[0]
+    a, b, c = (int(vertex) for vertex in rows.triangles[omitted])
+    open_edges = sorted(tuple(sorted(edge)) for edge in ((a, b), (b, c), (c, a)))
+    for region in (0, 1):
+        original, outward = rows.outward(region)
+        verdict = verify_surface_embedding(points, outward[original != omitted])
+        assert verdict.status is VerdictStatus.VIOLATED
+        findings = verdict.findings[verdict.findings["kind"] == SurfaceFindingKind.EDGE]
+        assert list(zip(findings["first"], findings["second"], strict=True)) == open_edges
+
+
+def test_native_split_box_rejects_inverted_tetrahedron_in_union(
+    native_split_box: _NativeSplitBox,
+) -> None:
+    _, mesh, _, _, _, _ = native_split_box
+    points, cells = np.asarray(mesh.coordinates), np.array(mesh.blocks[0].vertices)
+    cells[0, [0, 1]] = cells[0, [1, 0]]
+    verdict = verify_tetrahedra(points, cells)
+    assert verdict.status is VerdictStatus.VIOLATED
+    assert verdict.nonpositive_cells == 1
+    assert verdict.first_nonpositive_cell == 0

@@ -16,10 +16,11 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import CadChartResult, CadSurfaceResult, MeshcoreStatus
+from .._meshcore import CadChartResult, CadSurfaceResult, exact_orient2d, MeshcoreStatus
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse
+from ..geometry.brep._model import BRepModel
 from ..geometry.brep._projection_contracts import brep_entity_id
 from ._association import (
     _fraction_rows_fingerprint,
@@ -1015,7 +1016,12 @@ def native_cad_records(
 
 
 def _chart_face_rows(
-    mesh: CellMesh, witness: NativeCadSurfaceWitness, domain: MeshingDomain, /
+    mesh: CellMesh,
+    witness: NativeCadSurfaceWitness,
+    domain: MeshingDomain,
+    /,
+    *,
+    oriented: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resolve each boundary triangle's source patch from its chart row."""
     triangles = np.asarray(witness.surface_triangles, dtype=np.int64)
@@ -1042,21 +1048,139 @@ def _chart_face_rows(
         raise ValueError("Native CAD association chart rows are misaligned.")
     physical = np.flatnonzero(mapping >= 0)
     targets = mapping[physical]
-    if not np.array_equal(
-        np.sort(targets), np.arange(triangles.shape[0], dtype=np.int64)
-    ):
+    outside = np.flatnonzero(targets >= len(triangles))
+    if outside.size:
+        bad = outside[0]
         raise ValueError(
-            "Native CAD association chart must cover each boundary triangle."
+            f"Native CAD chart row {physical[bad]} names absent boundary triangle "
+            f"row {targets[bad]}."
         )
-    # Face orientation comes from the physical triangle. V4 separately decides
-    # whether the chart is oriented correctly, without changing proof dispatch.
-    if not np.array_equal(
-        np.sort(charts[physical], axis=1), np.sort(triangles[targets], axis=1)
-    ):
-        raise ValueError("Native CAD association chart changes its boundary triangle.")
+    counts = np.bincount(targets, minlength=len(triangles))
+    bad_rows = np.flatnonzero(counts != 1)
+    if bad_rows.size:
+        bad = bad_rows[0]
+        raise ValueError(
+            f"Native CAD boundary triangle row {bad} has {counts[bad]} chart images."
+        )
+    chart_faces, physical_faces = charts[physical], triangles[targets]
+    if oriented:
+        same = (
+            np.all(chart_faces == physical_faces, axis=1)
+            | np.all(chart_faces == physical_faces[:, (1, 2, 0)], axis=1)
+            | np.all(chart_faces == physical_faces[:, (2, 0, 1)], axis=1)
+        )
+        orientations = np.asarray([patch.orientation for patch in domain.patches])
+        parity = exact_orient2d(uv[:, 0], uv[:, 1], uv[:, 2])
+        wrong_chart = np.flatnonzero(parity != orientations[patch_rows])
+        if wrong_chart.size:
+            bad = wrong_chart[0]
+            raise ValueError(
+                f"Native CAD chart row {bad} reverses or degenerates source patch "
+                f"row {patch_rows[bad]}."
+            )
+    else:
+        # Association construction only needs unordered face identity. The
+        # certificate verifies the chart and physical orientation separately.
+        same = np.all(
+            np.sort(chart_faces, axis=1) == np.sort(physical_faces, axis=1), axis=1
+        )
+    changed = np.flatnonzero(~same)
+    if changed.size:
+        bad = changed[0]
+        raise ValueError(
+            f"Native CAD chart row {physical[bad]} changes its "
+            f"{'oriented ' if oriented else ''}boundary triangle row {targets[bad]}."
+        )
     patches = np.empty((triangles.shape[0],), dtype=np.int64)
     patches[targets] = patch_rows[physical]
     return triangles, patches
+
+
+class _RegionalSurfaceRows(NamedTuple):
+    """One declaration per physical facet, in original surface row order."""
+
+    triangles: np.ndarray
+    patches: np.ndarray
+    regions: np.ndarray
+    patch_occurrences: tuple[tuple[int, str, tuple[str, ...]], ...]
+
+    def outward(self, region: int | None, /) -> tuple[np.ndarray, np.ndarray]:
+        """Return original rows and outward triangles for a region or the union."""
+        negative, positive = self.regions.T
+        if region is None:
+            rows = np.flatnonzero((negative < 0) | (positive < 0))
+            flip = negative[rows] < 0
+        else:
+            rows = np.flatnonzero((negative == region) | (positive == region))
+            flip = positive[rows] == region
+        triangles = self.triangles[rows]
+        triangles[flip] = triangles[flip, ::-1]
+        return rows, triangles
+
+
+def _native_cad_regional_surface(
+    mesh: CellMesh,
+    domain: MeshingDomain,
+    witness: NativeCadSurfaceWitness,
+    /,
+    *,
+    native_surface: CadSurfaceResult | None = None,
+) -> _RegionalSurfaceRows:
+    """Bind chart ancestry to source incidences; no cell or cell label is read.
+
+    This is an incidence adapter, not a certificate. The chart must still pass
+    V4/V3 against this same domain and mesh (including trim/use and physical
+    lift checks), and source material occupancy is a separate premise.
+    """
+    from .providers._native_cad_volume import cad_facet_regions
+
+    if not isinstance(domain.brep_authority, BRepModel) or not domain.regions:
+        raise ValueError("Native CAD regional incidence requires BRep solid occurrences.")
+    # Domain admission checks complete oriented solid boundaries against the
+    # authoritative BRep, including the placed face occurrence at each use.
+    domain.require_current()
+    witness.require_binding(mesh)
+    triangles, patches = _chart_face_rows(mesh, witness, domain, oriented=True)
+    sorted_faces = np.sort(triangles, axis=1)
+    _, first = np.unique(sorted_faces, axis=0, return_index=True)
+    if first.size != len(triangles):
+        unique = np.zeros(len(triangles), dtype=np.bool_)
+        unique[first] = True
+        bad = np.flatnonzero(~unique)[0]
+        raise ValueError(f"Native CAD boundary triangle row {bad} duplicates a facet.")
+    absent = np.flatnonzero(np.bincount(patches, minlength=len(domain.patches)) == 0)
+    if absent.size:
+        raise ValueError(
+            f"Native CAD source patch row {absent[0]} has no physical facets."
+        )
+
+    occurrences = _Occurrences(domain)
+    patch_occurrences = tuple(
+        occurrences(2, patch) for patch in range(len(domain.patches))
+    )
+    # CAD's table is (positive, negative); verify_volume requires the normal
+    # to point from column 0 into column 1, i.e. (negative, positive).
+    regions = cad_facet_regions(domain)[patches, ::-1]
+    if native_surface is not None:
+        for name, actual, expected in (
+            ("triangles", native_surface.triangles, triangles),
+            ("triangle_patches", native_surface.triangle_patches, patches),
+            ("facet_regions", native_surface.facet_regions, regions[:, ::-1]),
+        ):
+            if actual.shape != expected.shape:
+                raise ValueError(f"Native CAD {name} does not align with source facets.")
+            differences = actual != expected
+            if differences.ndim == 2:
+                differences = np.any(differences, axis=1)
+            different = np.flatnonzero(differences)
+            if different.size:
+                raise ValueError(
+                    f"Native CAD {name} disagrees with source at triangle "
+                    f"row {different[0]}."
+                )
+    patches.setflags(write=False)
+    regions.setflags(write=False)
+    return _RegionalSurfaceRows(triangles, patches, regions, patch_occurrences)
 
 
 def _bind_chart_corners(
