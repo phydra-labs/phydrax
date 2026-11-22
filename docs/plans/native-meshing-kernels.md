@@ -406,3 +406,17 @@ same points, segments, hole seeds, and equilateral area limit on both sides.
 Measure covered area, positive orientation, and maximum area as well as the
 minimum angle. The star's input tips force angles smaller than 30 degrees;
 report the actual minimum and the number of triangles below the requested target.
+
+### Qualified sequential routes in the thread matrix
+
+- F13 overset remains sequential. On the same ordered binary input, it beats
+  TIOGA at 1, 2, 4, and 8 MPI ranks for all three hex and all three tet sizes
+  (three interleaved calls per row). At the largest sizes and eight ranks, the
+  prepared candidate call takes 0.274 s vs 0.649 s for hexes and 0.182 s vs
+  0.517 s for tets. All native connectivity IDs are invariant under worker
+  requests; certified donors pass the independent check. These are assembly
+  clocks, not cold process or proof times.
+- Periodic Delaunay and fixed-boundary recovery remain sequential in the
+  matched comparisons against the sequential CGAL providers. All Phydrax
+  output banks are invariant under worker requests. This does not qualify
+  fixed-boundary volume refinement against threaded HXT.
