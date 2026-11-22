@@ -16,11 +16,20 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "dyadic.hpp"
 
+struct phx_mc_metric_source;
+
 namespace phx::mc::metric {
+
+// One term of a stencil: source point row and its binary64 weight.
+struct StencilTerm {
+  std::int32_t row = 0;
+  double weight = 0.0;
+};
 
 // One carrier: the exact point sum_i weights[i] / 2^bits * X(rows[i]) over
 // `size` distinct source points, in ascending row order, with positive
@@ -79,6 +88,11 @@ class CarrierSource {
   // Identify a coordinate-subspace hull with exact source numerators.
   CarrierSimplex prepare_simplex(CarrierSimplex simplex) const;
 
+  bool matches_roundings(std::span<const double> points, std::span<const std::int64_t> cells) const;
+  // Correctly rounded image of one coordinate of a dyadic stencil.
+  double stencil_coordinate(std::span<const StencilTerm> stencil, int axis,
+                            bool require_exact, bool& admitted) const;
+
   // Carriers of `target` closer to it than `current`, at most `limit`, in the
   // order of `order`.
   //
@@ -129,5 +143,7 @@ class CarrierSource {
   std::vector<std::uint32_t> inline_offsets_;
   std::vector<std::uint8_t> inline_negative_;
 };
+
+const CarrierSource& metric_carrier_source(const phx_mc_metric_source& source) noexcept;
 
 }  // namespace phx::mc::metric

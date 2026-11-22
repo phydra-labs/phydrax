@@ -88,6 +88,9 @@ bool read_request(const phx_mc_metric_adapt3d_request& request, AdaptInput& inpu
       !read_bank(request.ancestry_ids, ancestors, input.ancestry_ids)) {
     return false;
   }
+  if (request.exact_source != nullptr) {
+    input.exact_source = &phx::mc::metric::metric_carrier_source(*request.exact_source);
+  }
   input.next_vertex_id = request.next_vertex_id;
   input.next_cell_id = request.next_cell_id;
   input.next_target_vertex = request.next_target_vertex;

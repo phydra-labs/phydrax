@@ -24,6 +24,11 @@ struct phx_mc_metric_source {
   std::vector<double> logarithms;
 };
 
+const phx::mc::metric::CarrierSource& phx::mc::metric::metric_carrier_source(
+    const phx_mc_metric_source& source) noexcept {
+  return source.source;
+}
+
 struct phx_mc_metric_relocation {
   phx::mc::metric::RelocationSearch search;
 };

@@ -9,7 +9,6 @@
 #include <functional>
 #include <iterator>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -308,7 +307,8 @@ class Adapter {
   std::unordered_set<std::uint64_t> relocated_sources_;
   // Per live target vertex: the collapsed source vertices that continue into it.
   std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> absorbed_;
-  std::unique_ptr<CarrierSource> carriers_;
+  std::optional<CarrierSource> binary64_carriers_;
+  const CarrierSource* carriers_ = nullptr;
   // Source triangles (rows into the source points) of each facet group, and
   // whether the mesh's source points are the adaptation's (boundary vertices
   // move on them only then).
@@ -526,22 +526,29 @@ void Adapter::bind() {
       declared_groups_.insert(snapshot.source_face_groups[row]);
     }
   }
+  if (input_.exact_source != nullptr &&
+      !input_.exact_source->matches_roundings(input_.source_points, input_.source_cells)) {
+    throw std::invalid_argument("The authored source must match the adaptation point and cell rows.");
+  }
   if (input_.relocation) {
-    if (input_.source_cells.size() % 4 != 0) {
-      throw std::invalid_argument("Source cells are four point rows each.");
+    carriers_ = input_.exact_source;
+    if (carriers_ == nullptr) {
+      if (input_.source_cells.size() % 4 != 0) {
+        throw std::invalid_argument("Source cells are four point rows each.");
+      }
+      // Binary64 source points share the denominator 2^shift.
+      std::vector<Dyadic> numerators;
+      numerators.reserve(input_.source_points.size());
+      std::int64_t shift = 0;
+      for (double value : input_.source_points) {
+        numerators.emplace_back(value);
+        if (!numerators.back().is_zero()) shift = std::max(shift, -numerators.back().exponent());
+      }
+      for (Dyadic& numerator : numerators) numerator = numerator.scaled_power(shift);
+      binary64_carriers_.emplace(input_.source_points, std::move(numerators),
+                                 Dyadic(1.0).scaled_power(shift), input_.source_cells);
+      carriers_ = &*binary64_carriers_;
     }
-    // Exact points as integers over one power of two (the carrier source's
-    // representation): binary64 values share the denominator 2^shift.
-    std::vector<Dyadic> numerators;
-    numerators.reserve(input_.source_points.size());
-    std::int64_t shift = 0;
-    for (double value : input_.source_points) {
-      numerators.emplace_back(value);
-      if (!numerators.back().is_zero()) shift = std::max(shift, -numerators.back().exponent());
-    }
-    for (Dyadic& numerator : numerators) numerator = numerator.scaled_power(shift);
-    carriers_ = std::make_unique<CarrierSource>(input_.source_points, std::move(numerators),
-                                                Dyadic(1.0).scaled_power(shift), input_.source_cells);
     // Facet groups of the mesh's own source complex, when it is this source.
     const std::size_t faces = snapshot.source_faces.size() / 3;
     for (std::size_t row = 0; source_banks_match_ && row < faces; ++row) {
@@ -708,6 +715,15 @@ bool Adapter::split_parameter(std::int32_t a, std::int32_t b, bool exact_edge,
     // point, and representable, so the children cover the facet exactly.
     bool admissible = true;
     for (int axis = 0; axis < 3 && admissible; ++axis) {
+      if (input_.exact_source != nullptr) {
+        point[axis] = input_.exact_source->stencil_coordinate(stencil, axis, exact_edge, admissible);
+        if (exact_edge && admissible) {
+          const Expansion edge =
+              Expansion(pa[axis]) + Expansion::difference(pb[axis], pa[axis]).scaled(t);
+          admissible = (edge - Expansion(point[axis])).is_zero();
+        }
+        continue;
+      }
       Expansion image;
       for (const StencilTerm& term : stencil) {
         image = image + Expansion::product(
@@ -1428,10 +1444,10 @@ std::optional<TetEditStatus> Adapter::collapse_boundary(
   }
   // An affine image that had to be rounded is not in the exact-stencil
   // contract. A refusal for an exact image is authoritative.
-  if (plan.moved) {
+  if (plan.moved && input_.exact_source == nullptr) {
     if (!plan.carrier.exact) return std::nullopt;
   } else {
-    const double* point = mesh_.point(plan.kept);
+    const double* point = plan.moved ? plan.carrier.point.data() : mesh_.point(plan.kept);
     for (std::size_t axis = 0; axis < 3; ++axis) {
       Expansion image;
       for (const StencilTerm& term : support) {
@@ -2325,7 +2341,11 @@ std::optional<SourceWitness> Adapter::relocation_witness(std::int32_t vertex,
     next.entity = static_cast<std::int32_t>(row);
     next.parameters[0] = std::ldexp(static_cast<double>(weights[1]), -carrier.bits);
     next.parameters[1] = std::ldexp(static_cast<double>(weights[2]), -carrier.bits);
-    return source_parameters_valid(SourceStratum::kFacet, next.parameters);
+    if (!source_parameters_valid(SourceStratum::kFacet, next.parameters)) return false;
+    if (input_.exact_source == nullptr) return true;
+    const double* corners[3]{};
+    return mesh_.source_corners(next.stratum, next.entity, corners) &&
+           source_point(corners, next.stratum, next.parameters, image) && matches(image);
   };
   // The dyadic carrier already realizes these exact barycentric weights.
   // Prefer the existing source triangle, then any triangle in its group.
@@ -2445,7 +2465,12 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
       moved.witness = *witness;
       TetEditStatus status = TetEditStatus::kRejectedTopology;
       const std::span<const TetEditVertex> records(&moved, 1);
-      if (interior || (!mesh_.implicit_source() && moved.witness.stratum != SourceStratum::kNone)) {
+      // Boundary stencil verification uses the mesh's binary64 source bank.
+      // When the carrier uses an authored rational bank, the source facets
+      // and segments are instead checked by the ordinary relocation route.
+      if (interior || (!mesh_.implicit_source() &&
+                      (moved.witness.stratum != SourceStratum::kNone ||
+                       input_.exact_source != nullptr))) {
         status = incidence_.relocate(mesh_, records, star);
       } else if (!mesh_.implicit_source()) {
         const Carrier& carrier = candidate.carrier;

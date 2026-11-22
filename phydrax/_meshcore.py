@@ -1163,6 +1163,7 @@ class _MetricAdaptRequest(ctypes.Structure):
         ("lower", ctypes.c_double),
         ("topology_operations", _I32),
         ("relocation", _I32),
+        ("exact_source", _P),
     )
 
 
@@ -12209,6 +12210,7 @@ class TetMesh3D:
         source_revision: str | None = None,
         source_map_id: str | None = None,
         frame_id: str | None = None,
+        exact_source_points: Sequence[Sequence[Fraction]] | None = None,
     ) -> TetMeshMetricAdaptation:
         """Adapt this mesh in place toward unit metric edge length.
 
@@ -12218,6 +12220,8 @@ class TetMesh3D:
         source-cell ancestry; ``next_ids`` are fresh native vertex, native
         cell, target vertex and target cell IDs. A fatal commit status
         (stale state, allocation, identifier range) raises.
+        ``exact_source_points`` supplies the authored P1 vertex bank when it
+        differs from its binary64 realization in ``source_points``.
         """
         generation = _tet_mesh_uint64(expected_generation, "expected_generation")
         banks = (
@@ -12265,6 +12269,15 @@ class TetMesh3D:
                 raise ValueError(f"{name} must start at zero and be nondecreasing.")
             if any(offsets[-1] != count for count in counts):
                 raise ValueError(f"{name} must end at the length of each values bank.")
+        exact_source = None
+        if exact_source_points is not None:
+            exact_source = MetricSource(
+                banks[0], exact_source_points, banks[16], banks[1], banks[2]
+            )
+            if exact_source._library is not self._library:
+                raise ValueError(
+                    "The authored source and mesh must use the same meshcore library."
+                )
         request = _MetricAdaptRequest(
             sources,
             banks[0].ctypes.data,
@@ -12292,6 +12305,7 @@ class TetMesh3D:
             lower,
             topology_operations,
             relocation,
+            None if exact_source is None else exact_source._handle,
         )
         edit_status = _I32(0)
         handle = _P()

@@ -7482,12 +7482,17 @@ def _metric_adapt_inputs(state: _NativeState, /) -> dict[str, Any]:
     vertex_order = np.argsort(source_ids, kind="stable")
     vertex_ids = source_ids[vertex_order]
     cell_ids = state.source_cell_ids
+    exact = state.source_exact_points
+    has_authored_rounding = any(
+        value != float(value) for point in exact for value in point
+    )
     return {
         "source_points": state.source_points,
         "source_metrics": state.source_metric,
         "source_logarithms": state.source_metric_log,
         "source_vertex_ids": source_ids,
         "source_cells": state.source_cell_vertices,
+        "exact_source_points": exact if has_authored_rounding else None,
         "vertex_ids": vertex_ids,
         "stencil_offsets": np.arange(vertex_ids.size + 1, dtype=np.int64),
         "stencil_rows": vertex_order.astype(np.int32),

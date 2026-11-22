@@ -2941,7 +2941,9 @@ Geometry validity, source fidelity, and embedding certification are not
 relaxed. Every other route refuses a declared value.
 
 Tetrahedral relocation rounds located source barycentric weights to dyadic
-weights, retaining their exact source image and binary64 carrier. Boundary
+weights, retaining their exact source image and binary64 carrier. If a P1 map
+has authored rational vertices, split and relocation carriers round the
+exact stencil images, not images of the already-rounded coordinates. Boundary
 vertices remain on their source facet or segment; source corners stay pinned.
 A collapse may relocate its survivor while replacing both endpoint stars.
 Its smallest-enclosing-ball goal uses a finite support search (at most four

@@ -880,10 +880,10 @@ PHX_MC_API int32_t phx_mc_tet_mesh_improve_quality(
     int64_t* collapsed_vertices, int64_t* relocated_vertices, int64_t* unmet_cells,
     double* score_quantum);
 /* Metric adaptation of a live, unbound, nonperiodic mesh toward unit metric
- * edge length, in place (metric_adapt3d.hpp). The source holds the exact P1
- * points (binary64), their SPD tensors and tensor logarithms (nine values
- * each), their target vertex IDs and the source cells (four point rows each,
- * where relocation carriers are located). Every live mesh vertex (ascending
+ * edge length, in place (metric_adapt3d.hpp). The source holds the P1 point
+ * roundings (exact when exact_source is null), SPD tensors and tensor
+ * logarithms (nine values each), target vertex IDs and source cells (four
+ * point rows each, where relocation carriers are located). Every live mesh vertex (ascending
  * native ID) carries a stencil, ascending source rows with binary64 weights
  * (CSR), and a target ID; every live cell (ascending native ID) its block,
  * target ID and source-cell ancestry (CSR) with its lineage kind (the
@@ -925,6 +925,9 @@ typedef struct phx_mc_metric_adapt3d_request {
   double lower;
   int32_t topology_operations;
   int32_t relocation;
+  /* Optional authored rational source; the point and cell rows above must
+   * match this bank's binary64 points and cells. Borrowed for this call. */
+  const struct phx_mc_metric_source* exact_source;
 } phx_mc_metric_adapt3d_request;
 typedef struct phx_mc_metric_adaptation phx_mc_metric_adaptation;
 PHX_MC_API int32_t phx_mc_tet_mesh_metric_adapt(

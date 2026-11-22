@@ -946,6 +946,27 @@ CarrierSimplex CarrierSource::prepare_simplex(CarrierSimplex simplex) const {
   return simplex;
 }
 
+bool CarrierSource::matches_roundings(std::span<const double> points,
+                                      std::span<const std::int64_t> cells) const {
+  if (!std::ranges::equal(points_, points) || !std::ranges::equal(cells_, cells)) return false;
+  for (std::size_t index = 0; index < points.size(); ++index) {
+    if (exact::rounded_quotient(numerators_[index], denominator_) != points[index]) return false;
+  }
+  return true;
+}
+
+double CarrierSource::stencil_coordinate(std::span<const StencilTerm> stencil, int axis,
+                                         bool require_exact, bool& admitted) const {
+  Dyadic numerator;
+  for (const StencilTerm& term : stencil) {
+    const auto row = static_cast<std::size_t>(term.row);
+    numerator = numerator + Dyadic(term.weight) * numerators_[3 * row + axis];
+  }
+  const double rounded = exact::rounded_quotient(numerator, denominator_);
+  admitted = !require_exact || (numerator - Dyadic(rounded) * denominator_).is_zero();
+  return rounded;
+}
+
 std::vector<Carrier> CarrierSource::carriers(const double* target, const double* current,
                                              const std::vector<CarrierSimplex>& simplices,
                                              std::int64_t cell, CarrierOrder order,

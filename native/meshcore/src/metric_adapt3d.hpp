@@ -29,15 +29,11 @@
 #include <vector>
 
 #include "local_incidence.hpp"
+#include "metric_carrier.hpp"
 #include "tet_mesh.hpp"
 
 namespace phx::mc::metric {
 
-// One term of a stencil: source point row and its binary64 weight.
-struct StencilTerm {
-  std::int32_t row = 0;
-  double weight = 0.0;
-};
 using Stencil = std::vector<StencilTerm>;
 
 // (1 - t) a + t b over ascending rows, zero terms dropped. False when a
@@ -76,14 +72,14 @@ struct AdaptCounters {
 
 // The exact P1 source and the starting state of the live mesh.
 struct AdaptInput {
-  // Source points (binary64, exact), their tensors and logarithms, rows in
-  // source vertex order; source vertex IDs (target identity); the source
-  // cells as four point rows each (relocation carriers are located in them).
+  // Binary64 source points, tensors and logarithms in source vertex order,
+  // with target identities and four point rows per source cell.
   std::vector<double> source_points;
   std::vector<double> source_metrics;
   std::vector<double> source_logarithms;
   std::vector<std::uint64_t> source_vertex_ids;
   std::vector<std::int64_t> source_cells;
+  const CarrierSource* exact_source = nullptr;
   // Per live mesh vertex (ascending native ID): its stencil (CSR over
   // source rows) and its target vertex ID.
   std::vector<std::uint64_t> vertex_ids;
