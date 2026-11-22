@@ -267,7 +267,7 @@ std::int32_t LocalIncidence::edge_cell_outside(
 
 TetEditStatus LocalIncidence::relocate(
     TetMesh& mesh, std::span<const TetEditVertex> moved_vertices,
-    const Star& star) {
+    const Star& star, const SourceStencil* moved_stencil) {
   if (mesh.periodic_identity_.bound || moved_vertices.empty()) {
     return TetEditStatus::kRejectedTopology;
   }
@@ -314,7 +314,10 @@ TetEditStatus LocalIncidence::relocate(
     has_previous_cell = true;
   }
   const std::int8_t dimension = mesh.vertex_dimension(slot);
-  if (dimension == 1 || dimension == 2) return relocate_boundary(mesh, moved, star);
+  if (dimension == 1 || dimension == 2) {
+    return relocate_boundary(mesh, moved, star, moved_stencil);
+  }
+  if (moved_stencil != nullptr) return TetEditStatus::kRejectedTopology;
   // Exact positivity of every moved star cell excludes a move onto another
   // vertex, so no position index is kept. A relocation moves a point, not
   // the topology: the star stays current.
