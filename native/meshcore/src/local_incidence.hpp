@@ -168,8 +168,9 @@ class LocalIncidence {
   // around ab by its halves (b, then a, replaced by the vertex; IDs from the
   // mesh's next cell ID, each with its parent as ancestor) and abc, abd by
   // (a, m, c), (m, b, c), (b, m, d), (m, a, d) (vertex order, source and
-  // orientation kept; IDs from the next facet ID), whose finite cell IDs
-  // are returned. Verdict and state equal TetMesh::apply_edit_batch on that
+  // orientation kept; IDs from the next facet ID). Allocation follows each
+  // bank's parent IDs, not slot order. The created finite cell IDs are
+  // returned. Verdict and state equal TetMesh::apply_edit_batch on that
   // edit (whose coverage proof is exact, or the declared pair's of
   // TetMesh::declared_split_pair), except that a periodic or implicit-bound
   // mesh and a split outside this contract are refused (kRejectedTopology)

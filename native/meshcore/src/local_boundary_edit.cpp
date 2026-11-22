@@ -1018,6 +1018,10 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
     operation.removed_cell_ids.reserve(edit.removed.size());
     operation.replacement_cells.reserve(2 * edit.removed.size());
     std::uint64_t next_cell = mesh.next_cell_id_;
+    // Fresh IDs follow logical parents, independent of cavity slot reuse.
+    std::sort(edit.removed.begin(), edit.removed.end(), [&](std::int32_t p, std::int32_t q) {
+      return mesh.cell_id(p) < mesh.cell_id(q);
+    });
     for (std::int32_t cell : edit.removed) {
       const Tetrahedron& tet = mesh.tet(cell);
       const std::uint64_t parent = mesh.cell_id(cell);
@@ -1040,6 +1044,10 @@ TetEditStatus LocalIncidence::split_boundary_edge(TetMesh& mesh, std::int32_t a,
         operation.replacement_cells.push_back(child);
       }
     }
+    std::sort(edit.removed.begin(), edit.removed.end());
+    std::sort(edit.facet_rows.begin(), edit.facet_rows.end(), [&](std::size_t p, std::size_t q) {
+      return mesh.facets_[p].id < mesh.facets_[q].id;
+    });
     std::uint64_t next_facet = mesh.next_facet_id_;
     for (std::size_t row : edit.facet_rows) {
       const TetSnapshotFacet& facet = mesh.facets_[row];

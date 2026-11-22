@@ -1474,8 +1474,11 @@ TetEdit contract_split(const TetMesh& mesh, const LocalIncidence& incidence, con
   operation.kind = TetEditKind::kSplit;
   operation.split_edges.push_back({a_id, b_id});
   operation.changed_vertices.push_back(plan.vertex);
-  const std::vector<std::int32_t> star(incidence.edge_star(plan.a, plan.b).begin(),
-                                       incidence.edge_star(plan.a, plan.b).end());
+  const auto shell = incidence.edge_star(plan.a, plan.b);
+  std::vector<std::int32_t> star(shell.begin(), shell.end());
+  std::sort(star.begin(), star.end(), [&](std::int32_t p, std::int32_t q) {
+    return mesh.cell_id(p) < mesh.cell_id(q);
+  });
   for (std::int32_t cell : star) {
     const Tetrahedron& tet = mesh.tet(cell);
     operation.removed_cell_ids.push_back(mesh.cell_id(cell));
@@ -1496,11 +1499,17 @@ TetEdit contract_split(const TetMesh& mesh, const LocalIncidence& incidence, con
       operation.replacement_cells.push_back(child);
     }
   }
+  std::vector<const TetSnapshotFacet*> parents;
   for (const auto& [key, facet] : banks.facets) {
     if (std::find(key.begin(), key.end(), a_id) == key.end() ||
         std::find(key.begin(), key.end(), b_id) == key.end()) {
       continue;
     }
+    parents.push_back(&facet);
+  }
+  std::ranges::sort(parents, {}, [](const TetSnapshotFacet* parent) { return parent->id; });
+  for (const TetSnapshotFacet* parent : parents) {
+    const auto& facet = *parent;
     operation.removed_facet_ids.push_back(facet.id);
     for (const std::uint64_t replaced : {b_id, a_id}) {
       TetEditFacet half{generator.fresh_id(), facet.vertices, facet.source, facet.orientation, false};
@@ -1659,6 +1668,7 @@ bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
       PHX_CHECK(incidence.boundary_facet(key, retired) == TetEditStatus::kApplied);
       PHX_CHECK(retired == nullptr);
     }
+    std::optional<std::uint64_t> previous_facet_id;
     for (TetEditFacet& facet : operation.replacement_facets) {
       const auto found = std::find_if(
           after.constrained_facets.begin(), after.constrained_facets.end(),
@@ -1671,6 +1681,8 @@ bool compare_split(const char* name, int edit, TetMesh& local, TetMesh& batch,
       PHX_CHECK(record != nullptr && record->id == found->id &&
                 record->vertices == found->vertices && record->source == found->source &&
                 record->orientation == found->orientation);
+      PHX_CHECK(!previous_facet_id || found->id > *previous_facet_id);
+      previous_facet_id = found->id;
       facet.id = found->id;
     }
   }

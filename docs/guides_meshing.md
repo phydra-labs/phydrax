@@ -2960,6 +2960,9 @@ can use the local commit when the exact image and its binary64 realization
 both lie inside the same declared axis-aligned source facet group. Crossing
 an internal source triangle edge is allowed; a group rim, source segment,
 or cross-group seam does not qualify for this route.
+Edge worksets measure the ordered endpoint pair consistently, and split
+parent IDs, not storage slots, order the allocation of child cell and facet
+IDs.
 For an adaptive implicit volume, a nonnested metric edit proposes root-chart
 ancestry from the actual oriented target boundary. The candidate ancestry is
 not a certificate: source fidelity, coverage, and embedding are checked again.

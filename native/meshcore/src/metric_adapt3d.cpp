@@ -388,7 +388,8 @@ void Adapter::dirty_edges(Phase phase, const std::function<bool(double)>& wanted
       for (int corner = 0; corner < 4; ++corner) {
         const std::int32_t other = cell.v[corner];
         if (other == vertex || other < 0) continue;
-        const double value = edge_length(vertex, other);
+        // Match the direction used by the workset's stale-length check.
+        const double value = edge_length(std::min(vertex, other), std::max(vertex, other));
         if (wanted(value)) edges.emplace_back(value, edge_key(vertex, other));
       }
     }
@@ -751,7 +752,10 @@ TetEditStatus Adapter::split(std::int32_t a, std::int32_t b, bool& applied) {
   applied = false;
   const std::span<const std::int32_t> shell_view = incidence_.edge_star(a, b);
   if (shell_view.empty()) return TetEditStatus::kApplied;
-  const std::vector<std::int32_t> shell(shell_view.begin(), shell_view.end());
+  std::vector<std::int32_t> shell(shell_view.begin(), shell_view.end());
+  std::sort(shell.begin(), shell.end(), [&](std::int32_t p, std::int32_t q) {
+    return mesh_.cell_id(p) < mesh_.cell_id(q);
+  });
   for (std::int32_t slot : shell) {
     if (static_cast<std::size_t>(slot) < occupied_.size() &&
         occupied_[static_cast<std::size_t>(slot)] != 0) {
@@ -2729,7 +2733,7 @@ std::int64_t Adapter::pair_sweep(std::span<const std::int32_t> vertices) {
     for (std::int32_t slot : star) {
       for (std::int32_t other : mesh_.tet(slot).v) {
         if (other == vertex || protected_edge(vertex, other)) continue;
-        const double value = edge_length(vertex, other);
+        const double value = edge_length(std::min(vertex, other), std::max(vertex, other));
         if (!(value >= kLowerLength && value <= kUpperLength)) {
           edges.emplace_back(value, edge_key(vertex, other));
         }
