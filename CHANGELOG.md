@@ -2366,6 +2366,10 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Linear prism coordinate proofs verify that the retained tabulator uses the
+  canonical triangle coefficients and axial nodes before reusing a cached
+  basis. Altered operands leave the cell unresolved. Canonical prisms build
+  their execution shadow on the host with unchanged map digests.
 - Native cell-map certification builds on MSVC x64 using the shared
   wide-integer arithmetic. Decimal certificate encoding and digests are
   unchanged.
