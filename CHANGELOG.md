@@ -573,6 +573,9 @@
   through the current insertion window and reuse unused slot ranges in order.
   The million-point comparison is about 4–5% faster at four and eight workers
   with identical cell and vertex-map bytes.
+- Parallel 3D Delaunay and regular triangulation reserve disjoint cavity
+  stamp ranges per region, removing the atomic increment per insertion.
+  Cone linking uses fixed corner indices and preserves canonical output.
 - Point-set triangulation exports only the cells and vertex map it returns.
   A million-point 3D run uses about 90 MB less peak resident memory on
   macOS. Constrained meshes still export their boundary and source records.

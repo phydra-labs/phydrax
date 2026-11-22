@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -636,8 +635,7 @@ class Triangulation3D {
     entry.cavity.clear();
     entry.boundary.clear();
     entry.removed.clear();
-    worker.stamp = std::atomic_ref<std::uint32_t>(batch_stamp_).fetch_add(
-                       1, std::memory_order_relaxed) + 1;
+    ++worker.stamp;
     if (start < 0 || !complex_.live(start) || !owned(start, region)) return;
     const int32_t origin = batch_locate(worker, start, ref(p), region);
     if (origin < 0) return;
@@ -717,17 +715,15 @@ class Triangulation3D {
     const std::size_t count = entry.boundary.size();
     std::vector<Tetrahedron>& tets = complex_.tets;
     worker.cone.resize(count);
-    int64_t created_finite = 0;
     for (std::size_t i = 0; i < count; ++i) {
       const BoundaryFacet& face = entry.boundary[i];
       std::array<int32_t, 4>& cell = worker.cone[i];
       std::copy_n(tet(face.tet).v, 4, cell.begin());
       cell[static_cast<std::size_t>(face.slot)] = entry.point;
-      created_finite += (cell[0] | cell[1] | cell[2] | cell[3]) >= 0 ? 1 : 0;
     }
-    int64_t removed_finite = 0;
-    for (int32_t t : entry.cavity) removed_finite += is_ghost(tet(t)) ? 0 : 1;
-    entry.finite_change = created_finite - removed_finite;
+    // Region ownership admits only finite cells in the cavity and its cone.
+    entry.finite_change = static_cast<int64_t>(count) -
+                          static_cast<int64_t>(entry.cavity.size());
     // Each boundary edge bounds two cone faces: the first one seen waits in
     // the worker's edge table for the second.
     std::size_t size = worker.edge_keys.size();
@@ -752,15 +748,13 @@ class Triangulation3D {
                             kNoRegion};
       created.n[face.slot] = face.outside;
       tets[static_cast<std::size_t>(face.outside)].n[face.back] = id;
-      for (int k = 0; k < 4; ++k) {
-        if (k == face.slot) continue;
-        // The face opposite cell[k] is the center and the boundary edge
-        // without cell[k].
-        int32_t edge[2];
-        int at = 0;
-        for (int r = 0; r < 4; ++r) {
-          if (r != k && r != face.slot) edge[at++] = cell[static_cast<std::size_t>(r)];
-        }
+      // Visit the three non-apex corners in slot order, linking the face
+      // opposite each corner through the edge between the other two.
+      static constexpr int kFaceCorners[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+      const int* facet = kFaceCorners[face.slot];
+      for (int j = 0; j < 3; ++j) {
+        const int k = facet[j];
+        const int32_t edge[2] = {cell[facet[(j + 1) % 3]], cell[facet[(j + 2) % 3]]};
         const std::uint64_t key =
             (std::uint64_t{static_cast<std::uint32_t>(std::min(edge[0], edge[1]))} << 32) |
             static_cast<std::uint32_t>(std::max(edge[0], edge[1]));
@@ -793,6 +787,7 @@ class Triangulation3D {
     int32_t fresh = 0;
     int32_t fresh_end = 0;
     int32_t start = -1;
+    std::uint32_t stamp_start = 0;
     int64_t finite_change = 0;
     int32_t status = PHX_MC_OK;
     // Whether points in the outer eighth of the region are deferred unseen.
@@ -824,6 +819,7 @@ class Triangulation3D {
   // reads stay within cells no concurrent worker writes.
   void insert_region(BatchWorker& worker, RegionWork& work, std::span<char> alive) {
     BatchPoint entry;
+    worker.stamp = work.stamp_start;
     int32_t start = work.start;
     std::array<int32_t, 512> anchors;
     anchors.fill(-1);
@@ -1051,12 +1047,17 @@ class Triangulation3D {
           std::vector<std::size_t> idle(workers);
           std::iota(idle.begin(), idle.end(), std::size_t{0});
           std::mutex idle_lock;
-          // The searches take the stamps after the sequential ones.
-          if (stamp_value_ > 0xC0000000U) {
+          // Reserve disjoint visit-stamp ranges before launching any worker.
+          // Each candidate consumes at most one stamp, including refusals.
+          if (pending.size() > std::numeric_limits<std::uint32_t>::max() - stamp_value_) {
             for (Tetrahedron& tetrahedron : complex_.tets) tetrahedron.stamp = 0;
+            std::fill(vertex_stamp_.begin(), vertex_stamp_.end(), 0U);
             stamp_value_ = 0;
           }
-          batch_stamp_ = stamp_value_;
+          for (RegionWork& work : regions) {
+            work.stamp_start = stamp_value_;
+            stamp_value_ += static_cast<std::uint32_t>(work.points.size());
+          }
           const int32_t status = parallel_for(
               regions.size(), ParallelRequest{1, static_cast<uint32_t>(workers)},
               [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
@@ -1074,7 +1075,6 @@ class Triangulation3D {
                 idle.push_back(scratch);
                 return PHX_MC_OK;
               });
-          stamp_value_ = batch_stamp_;
           if (status != PHX_MC_OK) return status;
           for (RegionWork& work : regions) {
             if (work.status != PHX_MC_OK) return work.status;
@@ -1346,9 +1346,6 @@ class Triangulation3D {
   // its cell of the 8^3 subdivision of that region.
   std::vector<std::uint16_t> vertex_region_;
   std::vector<std::uint16_t> vertex_fine_;
-  // The last cell stamp a region search took (atomically, so concurrent
-  // searches never share a stamp).
-  std::uint32_t batch_stamp_ = 0;
   // A cell created with each vertex (insert_batches; it may since be gone).
   std::vector<int32_t> vertex_cell_;
   // The pass of insert_batches whose ownership tags are current (owned()).
