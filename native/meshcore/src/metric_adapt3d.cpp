@@ -2341,8 +2341,21 @@ TetEditStatus Adapter::relocate(std::int32_t vertex, bool& applied) {
       moved.carrier = candidate.carrier.point;
       moved.edge_witness_supplied = true;
       TetEditStatus status = TetEditStatus::kRejectedTopology;
-      if (interior || !mesh_.implicit_source()) {
-        status = incidence_.relocate(mesh_, std::span<const TetEditVertex>(&moved, 1), star);
+      const std::span<const TetEditVertex> records(&moved, 1);
+      if (interior) {
+        status = incidence_.relocate(mesh_, records, star);
+      } else if (!mesh_.implicit_source()) {
+        const Carrier& carrier = candidate.carrier;
+        std::array<std::int32_t, 4> source_rows{};
+        std::array<double, 4> weights{};
+        const auto count = static_cast<std::size_t>(carrier.size);
+        for (std::size_t term = 0; term < count; ++term) {
+          source_rows[term] = static_cast<std::int32_t>(carrier.rows[term]);
+          weights[term] = std::ldexp(static_cast<double>(carrier.weights[term]), -carrier.bits);
+        }
+        const detail::SourceStencil stencil{std::span(source_rows).first(count),
+                                             std::span(weights).first(count)};
+        status = incidence_.relocate(mesh_, records, star, &stencil);
       } else {
         // The star-local route does not admit an implicit-boundary mesh.
         TetEdit edit;
