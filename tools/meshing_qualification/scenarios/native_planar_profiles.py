@@ -1002,7 +1002,7 @@ def _qualify_surface(
         specification,
         coordinate_contract=SpatialCoordinateContract.si(),
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     topology = _topology_record(result, definition.euler, definition.boundary_loops)
     certification = result.certification
@@ -1487,7 +1487,7 @@ def _qualify_planar(
         specification,
         coordinate_contract=SpatialCoordinateContract.si(),
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     expected_labels = {"region:0"}
     if source.embedded is not None:
@@ -1599,7 +1599,7 @@ def _qualify_junction_network() -> dict[str, object]:
         specification,
         coordinate_contract=SpatialCoordinateContract.si(),
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     if not result.mesh.blocks or any(
         block.cell_kind != "interval" for block in result.mesh.blocks

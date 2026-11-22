@@ -291,7 +291,7 @@ def mesh_lattice_specimen(
             )
         )
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     filled = construction.mesh
     result = certify_cell_mesh(

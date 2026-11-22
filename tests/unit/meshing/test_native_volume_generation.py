@@ -1359,7 +1359,7 @@ def test_small_angle_wedge_soft_shape_targets_publish_unmet_rows() -> None:
     plan = NativeMeshingProvider(
         NativeMeshingOptions("plc_tetrahedral", volume_schedule=soft)
     ).plan(source, specification, coordinate_contract=scenario._CONTRACT)
-    result = plan.execute()
+    result = plan.execute(prove=True)
     assert result.compliance.issues == ()
     result_achieved = dict(result.compliance.achieved)
     assert result_achieved["soft_shape_target_unmet_count"] > 0
@@ -2354,7 +2354,7 @@ def _conforming_route(source: NativePlcSource, size: float) -> CellMeshingResult
     return (
         NativeMeshingProvider(options)
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
 
 

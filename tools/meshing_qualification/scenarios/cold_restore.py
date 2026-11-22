@@ -79,7 +79,7 @@ save_brep_archive(model, {str(source_archive)!r})
 boundary = MeshingScope.whole(model, 2)
 specification = VolumeMeshingSpec(CellMeshingTarget(3, 3, CellFamilyPolicy(required=("tetrahedron",))), boundary, VolumeFillStrategy.SIMPLEX, size_controls=(UniformSizeControl(boundary, 0.5),), maximum_deviation=0.02)
 plan = NativeMeshingProvider().plan(model, specification, coordinate_contract=contract)
-result = plan.execute()
+result = plan.execute(prove=True)
 result.audit.require_passed()
 if result.certification is None:
     raise RuntimeError("Cold producer omitted computed mesh certification.")

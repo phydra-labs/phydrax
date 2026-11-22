@@ -302,7 +302,7 @@ def test_polyhedral_power_keeps_region_sites_and_fv_field_measure() -> None:
         )
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -415,7 +415,7 @@ def test_public_planar_dual_quad_route_executes_feature_guided_acceptance() -> N
     )
 
     assert plan.route == "planar_dual_quad"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     assert {block.cell_kind for block in result.mesh.blocks} == {"quadrilateral"}
@@ -442,7 +442,7 @@ def test_public_plc_dual_hex_route_keeps_material_and_facet_ancestry() -> None:
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_dual_hex"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -478,7 +478,7 @@ def test_public_plc_hex_dominant_route_reports_real_mixed_transitions() -> None:
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_hex_dominant"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -513,7 +513,7 @@ def test_public_plc_balanced_grid_route_accepts_cut_cell_hexes() -> None:
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_balanced_grid_hex"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -546,7 +546,7 @@ def test_public_plc_frame_grid_route_uses_varying_integer_layout() -> None:
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_frame_grid_hex"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -740,7 +740,7 @@ def test_public_plc_balanced_grid_accepts_source_authored_curved_chart() -> None
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_balanced_grid_hex"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)
@@ -833,7 +833,7 @@ def test_public_plc_hex_dominant_composes_the_mapped_curved_source() -> None:
     ).plan(source, specification, coordinate_contract=_COORDINATES)
 
     assert plan.route == "plc_hex_dominant"
-    result = plan.execute()
+    result = plan.execute(prove=True)
 
     _accepted_public_result(result, source)
     _assert_plc_facet_associations(result)

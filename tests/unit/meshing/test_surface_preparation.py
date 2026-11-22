@@ -785,7 +785,7 @@ def test_native_provider_maps_multi_patch_root_ids_by_entity_occurrence() -> Non
     result = (
         NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(domain, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     source = result.surface_source
     assert source is not None

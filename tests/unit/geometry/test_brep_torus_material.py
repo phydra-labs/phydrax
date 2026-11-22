@@ -78,7 +78,7 @@ def _torus_result() -> CellMeshingResult:
             profiles.NativeMeshingOptions("parametric_surface")
         )
         .plan(domain, spec, coordinate_contract=profiles.SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
 
 

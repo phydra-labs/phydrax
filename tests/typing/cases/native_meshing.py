@@ -21,15 +21,15 @@ def native_volume(
 ) -> None:
     plan = NativeMeshingProvider().plan(source, specification)
     assert_type(plan, NativeMeshingPlan)
-    assert_type(plan.execute(), phx.meshing.CellMeshingResult)
+    assert_type(plan.execute(), phx.meshing.CellMeshingCandidate)
     assert_type(plan.execute(prove=True), phx.meshing.CellMeshingResult)
     assert_type(plan.execute(prove=False), phx.meshing.CellMeshingCandidate)
-    assert_type(plan.execute(prove=False).prove(), phx.meshing.CellMeshingResult)
+    assert_type(plan.execute().prove(), phx.meshing.CellMeshingResult)
     assert_type(
         plan.execute(prove=prove),
         phx.meshing.CellMeshingCandidate | phx.meshing.CellMeshingResult,
     )
-    assert_type(plan.execute(execution_group=group), phx.meshing.MeshAssembly)
+    assert_type(plan.execute(execution_group=group, prove=True), phx.meshing.MeshAssembly)
 
 
 def fixed_surface(
@@ -39,7 +39,7 @@ def fixed_surface(
 ) -> None:
     plan = NativeMeshingProvider().plan(source, specification, fixed_plan=prior)
     assert_type(plan, NativeMeshingPlan)
-    assert_type(plan.execute(), phx.meshing.CellMeshingResult)
+    assert_type(plan.execute(), phx.meshing.CellMeshingCandidate)
 
 
 def fixed_boundary_volume(

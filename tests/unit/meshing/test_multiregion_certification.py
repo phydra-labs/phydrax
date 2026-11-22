@@ -79,7 +79,7 @@ def multiregion_surface() -> tuple[
         size_controls=(phx.meshing.UniformSizeControl(scope, 0.5),),
         maximum_deviation=0.05,
     )
-    result = phx.meshing.NativeMeshingProvider().plan(model, spec).execute()
+    result = phx.meshing.NativeMeshingProvider().plan(model, spec).execute(prove=True)
     report = result.certification
     assert report is not None and report.multiregion_surface is not None
     organization = NativeMeshOrganization(

@@ -67,7 +67,7 @@ def test_source_immersion_matches_both_sides_of_every_interior_edge(
             profiles.NativeMeshingOptions("parametric_surface")
         )
         .plan(domain, spec, coordinate_contract=profiles.SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     assert result.certification.inputs.source is not None

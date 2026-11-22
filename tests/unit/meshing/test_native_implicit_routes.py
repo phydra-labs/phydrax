@@ -1499,7 +1499,7 @@ def test_remeshed_implicit_carrier_certifies_charts_and_coverage(
             )
         )
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     achieved = dict(result.compliance.achieved)
 
@@ -2279,7 +2279,7 @@ def test_restricted_acceptance_replays_analytic_distance_evidence_once(
             )
         )
         .plan(profile, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     certification = result.certification
     assert certification is not None and certification.passed

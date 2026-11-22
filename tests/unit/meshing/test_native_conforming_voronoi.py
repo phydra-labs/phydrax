@@ -254,7 +254,7 @@ def test_route_proves_a_small_cube() -> None:
             _specification(source, 0.45),
             coordinate_contract=SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     certification = result.certification
@@ -327,7 +327,7 @@ def _sphere_plan(maximum_deviation: float | None) -> NativeMeshingPlan:
 
 
 def test_route_certifies_a_curved_plc_under_its_fidelity_contract() -> None:
-    result = _sphere_plan(0.05).execute()
+    result = _sphere_plan(0.05).execute(prove=True)
 
     certification = result.certification
     assert certification is not None and certification.passed
@@ -346,7 +346,7 @@ def test_route_certifies_a_curved_plc_under_its_fidelity_contract() -> None:
 
 def test_route_refuses_a_tolerance_below_the_certified_bound() -> None:
     with pytest.raises(MeshingFailure, match="source_fidelity_tolerance"):
-        _sphere_plan(1e-4).execute()
+        _sphere_plan(1e-4).execute(prove=True)
 
 
 def test_polyhedral_fill_of_a_plc_still_resolves_to_restricted_power() -> None:

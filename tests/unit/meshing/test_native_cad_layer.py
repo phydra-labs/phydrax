@@ -114,7 +114,11 @@ def _execute(model: Any, specification: Any) -> Any:
             radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
         ),
     )
-    return phx.meshing.NativeMeshingProvider(options).plan(model, specification).execute()
+    return (
+        phx.meshing.NativeMeshingProvider(options)
+        .plan(model, specification)
+        .execute(prove=True)
+    )
 
 
 def _blocks(mesh: Any, kind: str) -> np.ndarray:
@@ -529,7 +533,7 @@ def test_cylinder_layer_source_frames_are_retained_through_a_cold_restore(
         model, whole, size=0.3, deviation=0.05, schedule=SCHEDULE
     )
     source = brep_layer_core_source(
-        domain, surface_plan.execute(), specification, schedule
+        domain, surface_plan.execute(prove=True), specification, schedule
     )
     layers = source.layers
     assert source.layer_control is not None and source.layer_policy is not None

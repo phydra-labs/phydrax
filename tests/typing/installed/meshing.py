@@ -40,10 +40,11 @@ def native_volume(
 ) -> None:
     plan = NativeMeshingProvider().plan(source, specification)
     assert_type(plan, NativeMeshingPlan)
-    assert_type(plan.execute(), CellMeshingResult)
+    assert_type(plan.execute(), CellMeshingCandidate)
     assert_type(plan.execute(prove=False), CellMeshingCandidate)
-    assert_type(plan.execute(prove=False).prove(), CellMeshingResult)
-    assert_type(plan.execute(execution_group=group), MeshAssembly)
+    assert_type(plan.execute().prove(), CellMeshingResult)
+    assert_type(plan.execute(prove=True), CellMeshingResult)
+    assert_type(plan.execute(execution_group=group, prove=True), MeshAssembly)
 
 
 def fixed_boundary_volume(

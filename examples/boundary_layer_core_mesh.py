@@ -201,7 +201,7 @@ result = (
         phx.meshing.NativeMeshingOptions("layer_core", volume_schedule=volume_schedule)
     )
     .plan(source, specification, coordinate_contract=contract)
-    .execute()
+    .execute(prove=True)
 )
 certificate = phx.discretization.certify_cell_geometry_validity(result.mesh)
 cells = sum(block.cell_count for block in result.mesh.blocks)

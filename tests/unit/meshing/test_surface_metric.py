@@ -134,7 +134,7 @@ def _trimmed_sheet() -> tuple[MeshingDomain, CellMeshingResult]:
     source = (
         NativeMeshingProvider(options)
         .plan(domain, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     if source.surface_source is None:
         raise AssertionError("Native trimmed-sheet acceptance lost its source charts.")
@@ -337,7 +337,7 @@ def _implicit_sphere_source(
     source = (
         NativeMeshingProvider(options)
         .plan(native_source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     return profile, source, contract
 

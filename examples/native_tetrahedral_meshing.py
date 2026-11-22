@@ -154,7 +154,7 @@ def generate(complex_: PiecewiseLinearComplex) -> CellMeshingResult:
     provider = M.NativeMeshingProvider(M.NativeMeshingOptions("plc_tetrahedral"))
     result = provider.plan(
         source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
-    ).execute()
+    ).execute(prove=True)
     result.audit.require_passed()
     if result.certification is None:
         raise RuntimeError("The cavity mesh requires computed certification.")

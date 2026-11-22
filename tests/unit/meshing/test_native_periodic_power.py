@@ -89,7 +89,7 @@ def test_periodic_power_constructs_source_bound_polyhedral_quotient_cells() -> N
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
     mesh = construction.mesh
 

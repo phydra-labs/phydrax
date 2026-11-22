@@ -1062,7 +1062,8 @@ plan = NativeMeshingProvider().plan(
     specification,
     coordinate_contract=coordinates,
 )
-result = plan.execute()
+candidate = plan.execute()
+result = candidate.prove()
 ```
 
 `NativeMeshingOptions.route` may select a route explicitly. When omitted,
@@ -1072,12 +1073,12 @@ algorithm. The result is published only after canonical mathematical
 acceptance. Sources that own a coordinate contract bind it directly; otherwise
 the caller must supply the actual units and reference frame.
 
-Construction and certification are separate steps. `plan.execute()` is
-`plan.execute(prove=True)`: it constructs and then certifies. `plan.execute(prove=False)`
-returns the constructed `CellMeshingCandidate` (its `mesh`, `geometry` and
-`coordinate_contract`) with nothing on it certified; `candidate.prove()` runs the
-canonical acceptance of exactly that mesh, without construction or repair, and
-returns the same `CellMeshingResult` (equal identities) or raises its findings.
+Construction and certification are separate steps. `plan.execute()` (or
+`plan.execute(prove=False)`) returns a `CellMeshingCandidate` with a `mesh`,
+`geometry`, and `coordinate_contract`, but no acceptance proof.
+`candidate.prove()` certifies exactly that mesh without reconstruction or repair.
+Use `plan.execute(prove=True)` to construct and certify in one call. Both proof
+paths return the same `CellMeshingResult` (equal identities) or raise findings.
 Acceptance of the PLC tetrahedral route decides embedding and region coverage
 by exact native theorems over affine tetrahedra (`tetrahedral_degree`): every
 cell is positively oriented, every face lies in at most two oppositely oriented
@@ -2065,8 +2066,8 @@ cell family.
 `PeriodicPointOrbits` binds authored site IDs to a fully periodic lattice;
 `NativePeriodicSource` adds the source revision, optional fixed power weights,
 and, for owner-local execution, one execution-group owner slot per local site.
-`NativeMeshingProvider.plan(source, specification).execute()` is the public
-route. Periodic surface and simplex-volume requests use periodic Delaunay.
+Periodic surface and simplex-volume requests use periodic Delaunay via the
+native provider's plan and execute API.
 Three-dimensional `POLYHEDRAL` volume requests that require the `polyhedron`
 family select periodic power cells. Power sites and weights remain scientific
 source identity: the route computes exact source-bound carrier/power
@@ -2077,11 +2078,11 @@ shadow; transforming an already-rounded representative need not reproduce a
 separately rounded lifted vertex bit for bit.
 
 For owner-local execution, each rank supplies its owned and resident ghost site
-rows and calls `plan.execute(execution_group=group)`. Generation closes native
-support by exact periodic predicates and returns a `MeshAssembly` containing a
-compact local `OwnerLocalCellGeometry` without a global mesh gather. The local
-view retains stable cell owners, exact quotient keys, absolute deck windings,
-source/map context, and the collectively proved quotient-facet coverage.
+rows and calls `plan.execute(execution_group=group, prove=True)`. Generation
+closes native support by exact periodic predicates and returns a `MeshAssembly`
+containing a compact local `OwnerLocalCellGeometry` without a global mesh gather.
+The local view retains stable cell owners, exact quotient keys, absolute deck
+windings, source/map context, and the collectively proved quotient-facet coverage.
 
 Periodic Delaunay views exchange every face-neighbor cell of an owned cell that
 is not already resident before publication. The owner-pair transfer retains

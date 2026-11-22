@@ -1462,12 +1462,12 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
 
     @overload
     def execute(
-        self, /, *, execution_group: None = None, prove: Literal[True] = True
+        self, /, *, execution_group: None = None, prove: Literal[True]
     ) -> CellMeshingResult: ...
 
     @overload
     def execute(
-        self, /, *, execution_group: None = None, prove: Literal[False]
+        self, /, *, execution_group: None = None, prove: Literal[False] = False
     ) -> CellMeshingCandidate: ...
 
     @overload
@@ -1482,7 +1482,7 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         *,
         execution_group: ExecutionGroup,
         graph_partition_plan: GraphPartitionPlan | None = None,
-        prove: Literal[True] = True,
+        prove: Literal[True],
     ) -> MeshAssembly: ...
 
     @collection_scope()
@@ -1492,12 +1492,12 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         *,
         execution_group: ExecutionGroup | None = None,
         graph_partition_plan: GraphPartitionPlan | None = None,
-        prove: bool = True,
+        prove: bool = False,
     ) -> CellMeshingCandidate | CellMeshingResult | MeshAssembly:
         """Construct the mesh and, with ``prove=True``, certify it.
 
-        ``prove=False`` returns the constructed :class:`CellMeshingCandidate`
-        without any acceptance proof; ``candidate.prove()`` later certifies
+        By default this returns the constructed :class:`CellMeshingCandidate`
+        without an acceptance proof; ``candidate.prove()`` later certifies
         exactly that mesh. Owner-local execution requires ``prove=True``.
         """
         if not isinstance(prove, bool):

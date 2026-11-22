@@ -1894,7 +1894,7 @@ def _native_result(
             specification,
             coordinate_contract=phx.SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
 

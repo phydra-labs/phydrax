@@ -183,7 +183,7 @@ def _native_compartment_mesh(
     return (
         phx.meshing.NativeMeshingProvider(options)
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
 
 

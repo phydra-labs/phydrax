@@ -86,7 +86,7 @@ def test_native_provider_plans_and_accepts_a_curve_mesh() -> None:
     assert isinstance(first, NativeMeshingPlan)
     assert first.route == "curve_arc_length"
     assert first.plan_id == second.plan_id
-    result = first.execute()
+    result = first.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
     assert result.provider.name == "phydrax-native"
@@ -190,7 +190,7 @@ def test_native_provider_builds_a_direct_brep_volume_boundary_internally() -> No
     plan = NativeMeshingProvider().plan(source, specification)
 
     assert plan.route == "cad_tetrahedral"
-    result = plan.execute()
+    result = plan.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
 
@@ -219,7 +219,9 @@ def test_native_cad_volume_geometry_is_independent_of_source_id() -> None:
                 radius_edge_bound=8.0, minimum_dihedral_degrees=0.0
             ),
         )
-        result = NativeMeshingProvider(options).plan(source, specification).execute()
+        result = (
+            NativeMeshingProvider(options).plan(source, specification).execute(prove=True)
+        )
         assert result.certification is not None and result.certification.passed
         meshes.append(result.mesh)
 
@@ -263,7 +265,7 @@ def test_native_cad_volume_soft_shape_strength_softens_boundary_angle() -> None:
     soft_target = boundary_target(soft_plan)
     assert hard_target.hard and not soft_target.hard
     assert soft_target.minimum_angle == hard_target.minimum_angle
-    result = soft_plan.execute()
+    result = soft_plan.execute(prove=True)
     assert result.certification is not None and result.certification.passed
     assert result.compliance.issues == ()
     assert "soft_shape_target_unmet_count" in dict(result.compliance.achieved)
@@ -356,7 +358,7 @@ def test_native_provider_accepts_bounded_implicit_volume_region_and_patch() -> N
             )
         )
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.certification is not None and result.certification.passed

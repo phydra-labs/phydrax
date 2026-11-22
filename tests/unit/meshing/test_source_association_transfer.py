@@ -180,7 +180,7 @@ def _implicit_surface_result(
     return (
         NativeMeshingProvider(options)
         .plan(native_source, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
 
 
@@ -491,7 +491,7 @@ def test_trimmed_sheet_association_transfer_retains_patches_and_curve_intervals(
     source = (
         NativeMeshingProvider(options)
         .plan(domain, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     transfer = SurfaceAssociationTransfer(domain)
     transfer.validate_source(source)
@@ -800,7 +800,7 @@ def _implicit_ball_volume(
     source = (
         NativeMeshingProvider(options)
         .plan(namespace, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     certification = source.certification
     if certification is None:
@@ -1064,7 +1064,7 @@ def accepted_native_layer_core() -> _NativeLayerCoreFixture:
     result = (
         NativeMeshingProvider(NativeMeshingOptions("layer_core"))
         .plan(source, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None and result.certification.passed
     adapter = NativeLayerCoreAssociationTransfer(source, specification)
@@ -2034,7 +2034,7 @@ def test_brep_volume_curve_association_survives_refinement_and_rejects_stale(
     source = (
         NativeMeshingProvider()
         .plan(model, specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert source.certification is not None
     assert isinstance(

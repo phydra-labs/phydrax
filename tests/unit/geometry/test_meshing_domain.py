@@ -630,7 +630,7 @@ def test_rebuilt_restriction_query_reprepares_its_live_root_domain() -> None:
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     inputs = result.certification.inputs

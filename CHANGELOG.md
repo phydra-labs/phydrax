@@ -545,6 +545,10 @@
   immutable, and purely rational radicals canonicalize to `Fraction`.
 
 ### Changed
+- `NativeMeshingPlan.execute()` now returns an unproved mesh candidate.
+  Use `candidate.prove()` to certify that mesh later or pass `prove=True`
+  to construct and certify in one call. Owner-local execution requires
+  explicit `prove=True`.
 - Native 3D Delaunay and regular triangulation emit original input vertex IDs
   when collecting finite cells, avoiding a separate remapping pass. Output
   order and vertex maps are unchanged.

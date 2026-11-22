@@ -148,8 +148,8 @@ def _bipyramid_plan() -> NativeMeshingPlan:
     )
 
 
-def test_unproved_execution_returns_an_uncertified_candidate() -> None:
-    candidate = _icosphere_plan().execute(prove=False)
+def test_execution_defers_proof_by_default() -> None:
+    candidate = _icosphere_plan().execute()
     assert isinstance(candidate, CellMeshingCandidate)
     assert not isinstance(candidate, CellMeshingResult)
     assert candidate.mesh.blocks[0].cell_count > 0
@@ -167,7 +167,7 @@ def test_proving_the_candidate_certifies_by_the_native_degree_theorems() -> None
     assert certification.embedding.witnesses == ()
     assert certification.coverage is not None
     assert certification.coverage.coverage_method == "tetrahedral_degree"
-    direct = plan.execute()
+    direct = plan.execute(prove=True)
     assert direct.certification is not None
     assert direct.certification.report_id == certification.report_id
 
@@ -176,7 +176,7 @@ def test_stored_degree_certificates_reprove_natively() -> None:
     from phydrax.geometry._domain_certification import DomainCoverageCertificate
     from phydrax.geometry._global_embedding import GlobalEmbeddingCertificate
 
-    certification = _icosphere_plan().execute().certification
+    certification = _icosphere_plan().execute(prove=True).certification
     assert certification is not None and certification.coverage is not None
     embedding = GlobalEmbeddingCertificate.from_stored_fields(certification.embedding)
     assert embedding.certificate_id == certification.embedding.certificate_id
@@ -264,7 +264,7 @@ def _tampered(
 def test_recertified_route_mesh_certifies_by_the_degree_theorems(
     plan: Callable[[], NativeMeshingPlan],
 ) -> None:
-    result = plan().execute()
+    result = plan().execute(prove=True)
     certification = result.certification
     assert certification is not None and certification.inputs.cell_regions is not None
     report = _recertified(
@@ -292,7 +292,7 @@ def test_recertified_route_mesh_certifies_by_the_degree_theorems(
 def test_route_certificate_rejects_a_tampered_mesh(
     kind: str, plan: Callable[[], NativeMeshingPlan], checks: set[str]
 ) -> None:
-    result = plan().execute()
+    result = plan().execute(prove=True)
     report = _recertified(result, *_tampered(result, kind))
     assert report.status != "certified"
     observed = {finding.check for finding in report.findings}
@@ -330,7 +330,7 @@ def _restored_in_a_fresh_process(path: Path, /) -> list[str]:
 
 
 def test_degree_certified_result_round_trips_in_a_fresh_process(tmp_path: Path) -> None:
-    original = _bipyramid_plan().execute()
+    original = _bipyramid_plan().execute(prove=True)
     report = original.certification
     assert report is not None and report.coverage is not None
     assert report.embedding.validity.native_affine_tetrahedra

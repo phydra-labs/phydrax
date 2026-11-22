@@ -47,7 +47,7 @@ def test_restriction_proof_is_reused_only_for_its_exact_live_operands(
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     source = result.certification.inputs.source

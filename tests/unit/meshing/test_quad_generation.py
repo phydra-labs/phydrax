@@ -897,7 +897,7 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
     triangle = (
         NativeMeshingProvider(NativeMeshingOptions("planar_constrained_delaunay"))
         .plan(source, triangle_spec, coordinate_contract=coordinates)
-        .execute()
+        .execute(prove=True)
     )
     assert triangle.surface_quad_field_event is None
     default_result_path = tmp_path / "default-surface-result.phx"
@@ -938,7 +938,7 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
         result = (
             NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad"))
             .plan(source, specification, coordinate_contract=coordinates)
-            .execute()
+            .execute(prove=True)
         )
         requests.append(specification)
         results.append(result)
@@ -1122,7 +1122,7 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
     ) as mismatch:
         NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
             source, wrong_request, coordinate_contract=coordinates
-        ).execute()
+        ).execute(prove=True)
     assert mismatch.value.category == "source_identity"
     assert isinstance(scaffold.connectivity, PolygonalConnectivity)
     interior_edge = int(
@@ -1145,7 +1145,7 @@ def test_public_native_quad_fields_change_topology_on_same_source(tmp_path: Path
     ) as feature_mismatch:
         NativeMeshingProvider(NativeMeshingOptions("planar_dual_quad")).plan(
             source, wrong_feature_request, coordinate_contract=coordinates
-        ).execute()
+        ).execute(prove=True)
     assert feature_mismatch.value.category == "field_feature_integrity"
     assert interior_edge in feature_mismatch.value.source_edge_rows
     forged_field = eqx.tree_at(

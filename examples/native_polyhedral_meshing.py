@@ -170,7 +170,7 @@ def main() -> None:
     )
     if plan.route != "plc_restricted_power":
         raise RuntimeError(f"Unexpected route {plan.route}")
-    result = plan.execute()
+    result = plan.execute(prove=True)
     if (
         not result.audit.passed
         or result.certification is None

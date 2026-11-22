@@ -357,7 +357,7 @@ def mesh_periodic_trigonometric_region(
             )
         )
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     mesh = lifted.mesh
     output = np.asarray(mesh.coordinates, dtype=np.float64)

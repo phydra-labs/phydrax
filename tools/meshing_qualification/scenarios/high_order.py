@@ -167,7 +167,7 @@ def native_high_order_curving() -> dict[str, object]:
     plan = NativeMeshingProvider().plan(
         model, specification, coordinate_contract=contract
     )
-    straight_result = plan.execute()
+    straight_result = plan.execute(prove=True)
     straight_accepted = accepted_result_record(straight_result)
     projection = phx.geometry.prepare_brep_projection(model)
     association_policy = phx.meshing.AssociationPropagationPolicy(

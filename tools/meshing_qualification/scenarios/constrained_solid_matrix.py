@@ -1405,7 +1405,7 @@ def native_constrained_solids(
             provider = NativeMeshingProvider(options)
             plan = provider.plan(source, specification, coordinate_contract=_CONTRACT)
             record["planned_route"] = plan.route
-            result = plan.execute()
+            result = plan.execute(prove=True)
             record["provider_execution"] = {
                 "route": plan.route,
                 "result_id": result.result_id,

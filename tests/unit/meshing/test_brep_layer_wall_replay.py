@@ -95,7 +95,7 @@ def brep_layer_core(request: pytest.FixtureRequest) -> LayerCase:
     surface_plan = phx.meshing.NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions("parametric_surface")
     ).plan(domain, surface_spec, coordinate_contract=coordinates)
-    boundary = surface_plan.execute()
+    boundary = surface_plan.execute(prove=True)
     assert boundary.surface_source is not None
     bottom = next(
         row
@@ -194,7 +194,7 @@ def brep_layer_core(request: pytest.FixtureRequest) -> LayerCase:
     result = (
         phx.meshing.NativeMeshingProvider(phx.meshing.NativeMeshingOptions("layer_core"))
         .plan(source, specification, coordinate_contract=coordinates)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None and result.certification.passed
     transfer = NativeLayerCoreAssociationTransfer(source, specification)
@@ -1022,7 +1022,7 @@ def _small_real_box_selected_wall_case() -> tuple[
     surface_plan = phx.meshing.NativeMeshingProvider(
         phx.meshing.NativeMeshingOptions("parametric_surface")
     ).plan(domain, surface_spec, coordinate_contract=coordinates)
-    boundary = surface_plan.execute()
+    boundary = surface_plan.execute(prove=True)
     bottom = next(
         row
         for row, face in enumerate(domain.source_indices[2])
@@ -1102,7 +1102,7 @@ def _small_real_box_selected_wall_case() -> tuple[
     result = (
         phx.meshing.NativeMeshingProvider(phx.meshing.NativeMeshingOptions("layer_core"))
         .plan(source, specification, coordinate_contract=coordinates)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None and result.certification.passed
     return source, specification, result

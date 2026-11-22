@@ -290,7 +290,7 @@ def _volume_case(
             _volume_spec(profile, size, level_tolerance, witness),
             coordinate_contract=_CONTRACT,
         )
-        result = plan.execute()
+        result = plan.execute(prove=True)
         volume = float(
             np.sum(np.asarray(result.quality.evaluation.measures, dtype=np.float64))
         )

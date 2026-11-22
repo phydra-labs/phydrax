@@ -478,7 +478,7 @@ def test_oblique_image_cold_source_and_accepted_evidence_replay(tmp_path: Path) 
     result = (
         NativeMeshingProvider(options)
         .plan(source, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     expected = _image_result_evidence(result)
     assert expected["source_id"] == source.source_id
@@ -522,7 +522,7 @@ stored_result = composition.value("image/accepted-result")
 expected = json.loads(open(sys.argv[2], encoding="utf-8").read())
 assert _image_result_evidence(stored_result) == expected
 result = NativeMeshingProvider(options).plan(source, specification,
-    coordinate_contract=source.coordinate_contract).execute()
+    coordinate_contract=source.coordinate_contract).execute(prove=True)
 assert stored_result.certification.inputs.source_id == source.source_id
 assert _image_result_evidence(result) == expected
 """

@@ -307,7 +307,7 @@ def _produce(archive: Path) -> dict[str, object]:
     plan = NativeMeshingProvider(NativeMeshingOptions("parametric_surface")).plan(
         domain, specification, coordinate_contract=contract
     )
-    native_result = plan.execute()
+    native_result = plan.execute(prove=True)
     accepted = accepted_result_record(native_result)
     surface_source = native_result.surface_source
     certification = native_result.certification

@@ -944,7 +944,7 @@ def test_native_sweep_provider_preserves_domain_and_profile_field_ancestry() -> 
             specification,
             coordinate_contract=SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     assert result.mesh.blocks[0].cell_kind == "prism"
@@ -1138,7 +1138,7 @@ def test_native_graded_whole_slab_sweep_keeps_the_physical_layer_schedule() -> N
             specification,
             coordinate_contract=SpatialCoordinateContract.si(),
         )
-        .execute()
+        .execute(prove=True)
     )
 
     assert {block.cell_kind for block in result.mesh.blocks} == {"prism"}
@@ -1209,7 +1209,7 @@ def test_split_face_associations_reject_forged_scope_side_and_coverage(
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     assert result.certification is not None
     inputs = result.certification.inputs
@@ -1433,7 +1433,7 @@ def test_structured_material_interface_patch_control_publishes_and_refuses_parti
     result = (
         NativeMeshingProvider(case.options)
         .plan(case.source, case.specification, coordinate_contract=_CONTRACT)
-        .execute()
+        .execute(prove=True)
     )
     patches = {patch.name: patch for patch in result.patches}
     interface = patches["material-interface"]

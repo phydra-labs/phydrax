@@ -162,7 +162,7 @@ def _fan_orientations(
 
 
 def test_route_proves_the_cube_with_an_exact_wall() -> None:
-    result = _plan().execute()
+    result = _plan().execute(prove=True)
 
     certification = result.certification
     assert certification is not None and certification.passed
@@ -205,7 +205,7 @@ def test_route_proof_is_identical_for_every_native_parallelism(
     reports = []
     for threads in ("1", "2", "3", "4", "8", "8"):
         monkeypatch.setenv("PHX_MESHCORE_THREADS", threads)
-        result = _plan().execute()
+        result = _plan().execute(prove=True)
         certification = result.certification
         assert certification is not None and certification.passed
         reports.append(
@@ -243,7 +243,7 @@ def test_kernel_layers_lie_at_their_thicknesses_from_every_adjacent_wall() -> No
 
 
 def test_route_publishes_layers_and_proves_them() -> None:
-    result = _plan(_LAYERS).execute()
+    result = _plan(_LAYERS).execute(prove=True)
 
     certification = result.certification
     assert certification is not None and certification.passed

@@ -44,7 +44,9 @@ def _box() -> phx.geometry.brep.BRepModel:
 
 
 def _native(model: phx.geometry.brep.BRepModel, size: float, /) -> CellMeshingResult:
-    result = _cad_volume_plan(model, size, 1, radius_edge=8.0, dihedral=0.0).execute()
+    result = _cad_volume_plan(model, size, 1, radius_edge=8.0, dihedral=0.0).execute(
+        prove=True
+    )
     assert isinstance(result, CellMeshingResult)
     assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
     return result

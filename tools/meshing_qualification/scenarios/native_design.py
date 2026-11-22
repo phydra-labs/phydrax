@@ -198,7 +198,7 @@ def _sphere_source(
         coordinate_contract=coordinate_contract,
         fixed_plan=fixed_plan,
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     vertices = np.asarray(result.mesh.coordinates, dtype=np.float64)
     triangles = np.concatenate(

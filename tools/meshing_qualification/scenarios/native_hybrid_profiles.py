@@ -3822,7 +3822,7 @@ def _run_wall_profile(
         generation_plan = phx.meshing.NativeMeshingProvider(options).plan(
             source, specification, coordinate_contract=SpatialCoordinateContract.si()
         )
-        result = generation_plan.execute()
+        result = generation_plan.execute(prove=True)
         certificate = result.certification
         if (
             certificate is None
@@ -4253,7 +4253,7 @@ def _complete_wall_attempt(
                     specification,
                     coordinate_contract=SpatialCoordinateContract.si(),
                 )
-                generated = plan.execute()
+                generated = plan.execute(prove=True)
             except Exception as error:
                 raise _ProfileFailure(
                     "native-layer-core-consumer",
@@ -4814,7 +4814,7 @@ def _run_exact_sweep(name: str, /) -> dict[str, object]:
     result = (
         phx.meshing.NativeMeshingProvider(NativeMeshingOptions("sweep"))
         .plan(source, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     if (
         result.certification is None
@@ -4936,7 +4936,7 @@ def _unit_box_source() -> tuple[
         surface_specification,
         coordinate_contract=SpatialCoordinateContract.si(),
     )
-    surface_result = surface_plan.execute()
+    surface_result = surface_plan.execute(prove=True)
     surface_mesh = surface_result.mesh
     triangle_blocks = tuple(
         block for block in surface_mesh.blocks if block.cell_kind == "triangle"
@@ -5245,7 +5245,7 @@ def _run_unit_box() -> dict[str, object]:
         plan = provider.plan(
             source, specification, coordinate_contract=SpatialCoordinateContract.si()
         )
-        generated = plan.execute()
+        generated = plan.execute(prove=True)
     except Exception as error:
         raise _ProfileFailure(
             "unit-box-native-layer-core",
@@ -5889,7 +5889,7 @@ def _run_profile(profile_id: str, /) -> dict[str, object]:
         generation_plan = phx.meshing.NativeMeshingProvider(options).plan(
             source, specification, coordinate_contract=SpatialCoordinateContract.si()
         )
-        generated = generation_plan.execute()
+        generated = generation_plan.execute(prove=True)
         if generated.certification is None or not generated.certification.passed:
             raise _ProfileFailure(
                 "archive-initial-certification",

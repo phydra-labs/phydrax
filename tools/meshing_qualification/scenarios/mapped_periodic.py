@@ -151,7 +151,7 @@ def native_mapped() -> dict[str, object]:
     plan = NativeMeshingProvider(NativeMeshingOptions("mapped_balanced_grid_hex")).plan(
         source, specification, coordinate_contract=contract
     )
-    result = plan.execute()
+    result = plan.execute(prove=True)
     accepted = accepted_result_record(result)
     if any(block.cell_kind != "hexahedron" for block in result.mesh.blocks):
         raise RuntimeError("Mapped route violated the required hexahedron family.")

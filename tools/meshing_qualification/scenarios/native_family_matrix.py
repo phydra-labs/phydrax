@@ -3436,7 +3436,7 @@ def _run_profile(
         run_record["plan_route"] = plan.route
         phase = "native-execute"
         report_phase()
-        result = plan.execute()
+        result = plan.execute(prove=True)
         run_record["native_result"] = {
             "result_id": result.result_id,
             "topology_id": result.mesh.topology_id,

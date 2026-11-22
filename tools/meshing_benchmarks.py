@@ -1401,7 +1401,9 @@ def benchmark_native_gmsh_comparison(resolution: int, repeats: int) -> dict[str,
         )
         timings["gmsh_plan_preparation"].append(elapsed)
         source_revision = partition.model.source_revision
-        native_result, elapsed = _timed(native_plan.execute)
+        native_result, elapsed = _timed(
+            lambda native_plan=native_plan: native_plan.execute(prove=True)
+        )
         timings["native_execution"].append(elapsed)
         gmsh_result, elapsed = _timed(gmsh_plan.execute)
         timings["gmsh_execution"].append(elapsed)
@@ -1567,13 +1569,13 @@ def benchmark_native_cad_meshing(resolution: int, repeats: int) -> dict[str, obj
     fixed_plan, preparation_seconds = _timed(
         lambda: provider.plan(fixed_source, fixed_specification)
     )
-    fixed_result, first_execution_seconds = _timed(fixed_plan.execute)
+    fixed_result, first_execution_seconds = _timed(lambda: fixed_plan.execute(prove=True))
     fixed_record = _native_volume_result_record(
         fixed_source, fixed_plan, fixed_result, 1.0
     )
     warm_execution_seconds = []
     for _ in range(repeats):
-        warmed, elapsed = _timed(fixed_plan.execute)
+        warmed, elapsed = _timed(lambda: fixed_plan.execute(prove=True))
         _native_volume_result_record(fixed_source, fixed_plan, warmed, 1.0)
         warm_execution_seconds.append(elapsed)
 
@@ -1595,7 +1597,7 @@ def benchmark_native_cad_meshing(resolution: int, repeats: int) -> dict[str, obj
             )
         )
         changing_preparation_seconds.append(elapsed)
-        result, elapsed = _timed(plan.execute)
+        result, elapsed = _timed(lambda plan=plan: plan.execute(prove=True))
         changing_execution_seconds.append(elapsed)
         changing_record = _native_volume_result_record(
             source, plan, result, target_volume
@@ -2493,7 +2495,7 @@ def benchmark_native_tspline_cad_analysis(
     plan, provider_preparation_seconds = _timed(
         lambda: provider.plan(domain, specification, coordinate_contract=contract)
     )
-    native_result, native_execution_seconds = _timed(plan.execute)
+    native_result, native_execution_seconds = _timed(lambda: plan.execute(prove=True))
     surface_source = native_result.surface_source
     certification = native_result.certification
     if surface_source is None or certification is None or certification.fidelity is None:

@@ -752,7 +752,7 @@ def test_exact_planar_surface_proves_zero_without_inventing_a_control() -> None:
     result = (
         NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(model, specification, coordinate_contract=contract)
-        .execute()
+        .execute(prove=True)
     )
     assert specification.maximum_deviation is None
     assert not any(name == "maximum_deviation" for name, _ in result.compliance.requested)
@@ -1133,7 +1133,7 @@ def test_public_parametric_surface_protected_feature(
     result = (
         NativeMeshingProvider(NativeMeshingOptions("parametric_surface"))
         .plan(domain, specification, coordinate_contract=SpatialCoordinateContract.si())
-        .execute()
+        .execute(prove=True)
     )
     key = f"feature:{feature.feature_id}:maximum_deviation"
     assert dict(result.compliance.requested)[key] == 0.003

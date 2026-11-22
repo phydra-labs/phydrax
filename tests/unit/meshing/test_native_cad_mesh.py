@@ -1666,7 +1666,7 @@ def test_proved_cad_solid_is_the_certified_native_candidate(name: str) -> None:
 
     factory, size = _CERTIFIED_FIXTURES[name]
     plan = _cad_volume_plan(factory(), size, 1, radius_edge=8.0, dihedral=0.0)
-    result = plan.execute()
+    result = plan.execute(prove=True)
     assert isinstance(result, CellMeshingResult)
     assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
     certification = result.certification
@@ -1702,9 +1702,13 @@ def test_source_shell_is_proved_once_per_domain(
 
     monkeypatch.setattr(native_shell, "prove_source_shell", counted)
     domain = MeshingDomain.from_brep(_sphere_model())
-    first = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    first = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute(
+        prove=True
+    )
     # Another mesh of the same domain reuses the model part of the proof.
-    second = _cad_volume_plan(domain, 0.2, 1, radius_edge=8.0, dihedral=0.0).execute()
+    second = _cad_volume_plan(domain, 0.2, 1, radius_edge=8.0, dihedral=0.0).execute(
+        prove=True
+    )
     assert calls == [domain]
     shells = []
     for result in (first, second):
@@ -1787,7 +1791,7 @@ def test_proved_quadratic_cad_solid_is_refused() -> None:
 
     plan = _cad_volume_plan(_sphere_model(), 0.3, 2)
     with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
-        plan.execute()
+        plan.execute(prove=True)
     with pytest.raises(MeshingFailure, match="geometry order 2 CAD solid"):
         plan.execute(prove=False).prove()
 
@@ -1816,7 +1820,7 @@ def test_flipped_boundary_triangle_is_refused_by_the_chart_partition(
     monkeypatch.setattr(route, "construct_cad_solid", flipped)
     plan = _cad_volume_plan(_sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0)
     with pytest.raises(MeshingFailure) as failure:
-        plan.execute(prove=False).prove() if prove_later else plan.execute()
+        plan.execute(prove=False).prove() if prove_later else plan.execute(prove=True)
     assert "cad_chart_partition: violated" in str(failure.value)
     assert "ORIENTATION" in str(failure.value)
 
@@ -1833,7 +1837,7 @@ def test_native_cad_certificate_survives_the_archive(tmp_path: Path) -> None:
 
     result = _cad_volume_plan(
         _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
-    ).execute()
+    ).execute(prove=True)
     path = tmp_path / "native-cad-result.phx"
     write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
     content_id = model_archive_content_id(path, limits=MODEL_ARCHIVE_LIMITS)
@@ -1887,7 +1891,7 @@ def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
 
     result = _cad_volume_plan(
         _sphere_model(), 0.3, 1, radius_edge=8.0, dihedral=0.0
-    ).execute()
+    ).execute(prove=True)
     path = tmp_path / "native-cad-domain.phx"
     write_model_artifact(path, result, limits=MODEL_ARCHIVE_LIMITS)
     restored = read_model_artifact(
@@ -1901,7 +1905,9 @@ def test_restored_domain_proves_a_cad_solid_in_process(tmp_path: Path) -> None:
     assert restored.certification.report_id == result.certification.report_id
     domain = restored.certification.inputs.domain
     assert isinstance(domain, MeshingDomain)
-    again = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute()
+    again = _cad_volume_plan(domain, 0.3, 1, radius_edge=8.0, dihedral=0.0).execute(
+        prove=True
+    )
     assert again.certification is not None and again.certification.passed
 
 
@@ -2119,7 +2125,7 @@ def test_cad_solid_organization_is_native_and_matches_existing_route(
             == expected
         )
         return
-    result = plan.execute()
+    result = plan.execute(prove=True)
     assert isinstance(result, CellMeshingResult)
     assert result.mesh.blocks[0].name == "native-cad-tetrahedra"
     assert result.certification is not None and result.certification.passed
