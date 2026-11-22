@@ -852,15 +852,19 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             assert isinstance(inputs.domain, MeshingDomain)
             assert inputs.fidelity_tolerance is not None
             assert inputs.native_cad_records is not None
+            if inputs.cell_regions is None:
+                raise ValueError("Native CAD proof requires its cell regions.")
             native_cad = NativeCadCertificate(
                 inputs.mesh,
                 inputs.geometry,
                 inputs.domain,
                 inputs.native_cad_surface,
                 inputs.native_cad_records,
+                inputs.cell_regions,
                 inputs.fidelity_tolerance,
                 inputs.protected_features,
                 inputs.maximum_normal_deviation,
+                embedding=embedding,
             )
             findings.extend(native_cad.findings)
         elif inputs.source is not None:
@@ -1054,6 +1058,16 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     def passed(self) -> bool:
         return self.status == "certified"
 
+    def _require_native_cad_binding(self, inputs: MeshCertificationInputs, /) -> None:
+        witness, records = inputs.native_cad_surface, inputs.native_cad_records
+        if self.native_cad is None:
+            if witness is not None or records is not None:
+                raise ValueError("Mesh acceptance lost its native CAD certificate.")
+            return
+        if witness is None or records is None:
+            raise ValueError("Native CAD certificate lost its witness or records.")
+        self.native_cad.require_binding(witness, records, inputs.geometry_id)
+
     def require_passed(self) -> None:
         if (
             self.status != certificate_status(self.findings)
@@ -1062,6 +1076,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mesh acceptance status and identity must match its retained evidence."
             )
+        self._require_native_cad_binding(self.inputs)
         if not self.passed:
             raise MeshingFailure(
                 MeshingFailureCategory.AUDIT_FAILED,
@@ -1168,18 +1183,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
             or len(inputs.scoped_fidelity) != len(self.scoped_fidelity)
         ):
             raise ValueError("Stored source fidelity differs from its rebuilt premises.")
-        if (
-            self.native_cad is not None
-            and inputs.native_cad_surface is not None
-            and inputs.native_cad_records is not None
-            and (
-                self.native_cad.witness.witness_id != inputs.native_cad_surface.witness_id
-                or self.native_cad.records_id != inputs.native_cad_records.records_id
-            )
-        ):
-            raise ValueError(
-                "Stored native CAD certificate binds another witness or records."
-            )
+        self._require_native_cad_binding(inputs)
         if (
             self.fidelity is not None
             and inputs.source is not None

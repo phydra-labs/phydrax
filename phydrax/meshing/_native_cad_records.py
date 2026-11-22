@@ -1,10 +1,10 @@
-"""Source occurrence and association records of a native CAD solid.
+"""Source occurrence and association records of a native CAD volume.
 
 The native chart, the actual B-Rep occurrences and the tetrahedral mesh
 determine the B-Rep tables. Curve roots are issued by the original native
 chart. An adapted mesh retains that one origin, not a chain of association
-tables, so an archive can replay exact curve ancestry from independent
-operands instead of certifying the tables it is asked to restore.
+tables, so an archive can replay exact curve ancestry and regional ownership
+from independent operands instead of certifying the tables it restores.
 """
 
 from __future__ import annotations
@@ -139,11 +139,11 @@ def _sorted_rows(entities: np.ndarray, /) -> dict[tuple[int, ...], int]:
 
 
 class NativeCadRecords(StrictModule, NonTrainableState):
-    """Complete native source association authority for one CAD solid mesh.
+    """Complete native source association authority for a CAD volume mesh.
 
     The roots name original curve segments by source curve, oriented endpoint
     parameters and endpoint global IDs. Adapted records retain the checked
-    origin mesh/chart needed to replay this historical claim on archive read.
+    origin mesh/chart and, for regional CAD, its material labels for replay.
     ``association_keys`` bind the full B-Rep and curve tables, including
     residuals (not part of ``GeometryAssociation.association_id``).
     ``sliver_vertices`` are the pole slivers' ``{P, Q}`` vertex global ids.
@@ -153,9 +153,11 @@ class NativeCadRecords(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     witness_id: str = eqx.field(static=True)
+    regions_id: str | None = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     origin_mesh: CellMesh | None
     origin_chart: NativeCadSurfaceWitness | None
+    origin_regions: np.ndarray | None
     curve_splits: tuple[_CurveSplit, ...] = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     root_curves: np.ndarray
@@ -176,10 +178,19 @@ class NativeCadRecords(StrictModule, NonTrainableState):
         regions: np.ndarray,
         origin_mesh: CellMesh | None,
         origin_chart: NativeCadSurfaceWitness | None,
+        origin_regions: np.ndarray | None,
         curve_splits: tuple[_CurveSplit, ...],
         associations_out: list[tuple[GeometryAssociation, ...]],
         /,
     ) -> None:
+        regions = _require_regions(mesh, domain, regions)
+        regions_id = _regional_labels_id(domain, regions)
+        if (origin_regions is not None) != (
+            origin_mesh is not None and regions_id is not None
+        ):
+            raise ValueError(
+                "Native CAD association origin lacks its exact material labels."
+            )
         roots, curve, slivers, tables = _derive_native_cad_tables(
             mesh,
             domain,
@@ -195,16 +206,23 @@ class NativeCadRecords(StrictModule, NonTrainableState):
         self.source_id = domain.source_id
         self.source_revision = domain.source_revision
         self.witness_id = witness.witness_id
+        self.regions_id = regions_id
         self.tolerance = tolerance
         self.origin_mesh = origin_mesh
         self.origin_chart = origin_chart
+        self.origin_regions = origin_regions
         self.curve_splits = curve_splits
         self.root_curves, self.root_parameters, self.root_vertices = roots
         self.root_id = _root_id(domain.source_id, domain.source_revision, *roots)
         self.curve = curve
         self.sliver_vertices = slivers
         self.association_keys = tuple(_association_key(item) for item in tables)
-        self.records_id = canonical_fingerprint(
+        self.records_id = self._identity()
+        associations_out.append(tables)
+
+    def _identity(self) -> str:
+        origin_chart, origin_regions = self.origin_chart, self.origin_regions
+        return canonical_fingerprint(
             {
                 "kind": "native-cad-records",
                 "mesh": self.mesh_id,
@@ -214,14 +232,25 @@ class NativeCadRecords(StrictModule, NonTrainableState):
                 "origin": None if origin_chart is None else origin_chart.witness_id,
                 "curve_splits": tuple(
                     (vertex, first, second, weight.numerator, weight.denominator)
-                    for vertex, first, second, weight in curve_splits
+                    for vertex, first, second, weight in self.curve_splits
                 ),
                 "roots": self.root_id,
                 "associations": self.association_keys,
-                "slivers": array_tree_fingerprint(slivers),
+                "slivers": array_tree_fingerprint(self.sliver_vertices),
+                **(
+                    {
+                        "regions": self.regions_id,
+                        "origin_regions": (
+                            None
+                            if origin_regions is None
+                            else array_tree_fingerprint(origin_regions)
+                        ),
+                    }
+                    if self.regions_id is not None
+                    else {}
+                ),
             }
         )
-        associations_out.append(tables)
 
     def require_mesh(self, mesh: CellMesh, /) -> None:
         """Require these records to bind ``mesh`` and partition every root."""
@@ -329,7 +358,14 @@ class NativeCadRecords(StrictModule, NonTrainableState):
         tolerance: float,
         /,
     ) -> None:
-        _require_solid_region(mesh, domain, regions)
+        regions = _require_regions(mesh, domain, regions)
+        domain.require_current()
+        if self.regions_id != _regional_labels_id(domain, regions) or (
+            self.regions_id is not None and self.records_id != self._identity()
+        ):
+            raise ValueError(
+                "Native CAD association records bind other material labels or identity."
+            )
         witness.require_binding(mesh)
         self.require_mesh(mesh)
         if (self.source_id, self.source_revision) != (
@@ -359,24 +395,37 @@ class NativeCadRecords(StrictModule, NonTrainableState):
         witness.require_binding(mesh)
         origin = stored.origin_mesh
         origin_chart = stored.origin_chart
+        origin_regions = stored.origin_regions
         if origin is not None and origin_chart is not None:
             # The original tetrahedra are used by the same independent
             # embedding/tiling proof as a root result. No parent result or
             # previously authored association is needed to replay the root.
             origin = CellMesh.from_stored_fields(origin)
             origin_chart.require_binding(origin)
+            if len(domain.regions) == 1 and origin_regions is None:
+                labels = np.zeros(origin.entity_set(3).count, dtype=np.int64)
+            elif len(domain.regions) > 1 and origin_regions is not None:
+                labels = _require_regions(origin, domain, origin_regions)
+                origin_regions = _immutable_regions(labels)
+            else:
+                raise ValueError(
+                    "Native CAD association archive lacks its origin labels."
+                )
             findings, _, _ = _native_findings(
                 origin,
                 CellGeometrySpec.affine(origin),
                 domain,
                 origin_chart,
+                labels,
                 tolerance,
                 False,
                 False,
             )
             if findings:
+                finding = findings[0]
                 raise ValueError(
-                    "Native CAD association archive has no verified original chart."
+                    "Native CAD association archive has no verified original chart: "
+                    f"{finding.check} ({finding.status}): {finding.detail}"
                 )
         restored, _ = _issue_records(
             mesh,
@@ -386,6 +435,7 @@ class NativeCadRecords(StrictModule, NonTrainableState):
             tolerance,
             origin,
             origin_chart,
+            origin_regions,
             stored.curve_splits,
         )
         if (
@@ -398,6 +448,7 @@ class NativeCadRecords(StrictModule, NonTrainableState):
                 restored.witness_id,
                 restored.tolerance,
             )
+            or stored.regions_id != restored.regions_id
             or (stored.source_id, stored.source_revision)
             != (domain.source_id, domain.source_revision)
             or not np.array_equal(stored.root_curves, restored.root_curves)
@@ -450,16 +501,35 @@ class NativeCadRecords(StrictModule, NonTrainableState):
             raise ValueError(
                 "Native CAD association transfer has no matching accepted records."
             )
-        require_transfer_lineage(source.mesh, lineage, target, dimensions=(0, 1))
-        target_chart = (
-            chart
-            if target.mesh_id == source.mesh.mesh_id
-            else retarget_native_cad_surface(chart, source.mesh, target, stencil)
+        regional = self.regions_id is not None
+        require_transfer_lineage(
+            source.mesh, lineage, target, dimensions=(0, 1, 3) if regional else (0, 1)
         )
+        material: tuple[np.ndarray, np.ndarray] | None = None
+        if regional:
+            from ._adaptation import _transition_regions
+            from .providers._native_cad_volume import cad_facet_regions
+
+            regions = _require_regions(target, domain, regions)
+            expected = _transition_regions(inputs, target, lineage)
+            if expected is None or not np.array_equal(regions, expected):
+                raise ValueError(
+                    "Native CAD target material labels disagree with cell ancestry."
+                )
+            if target.mesh_id != source.mesh.mesh_id:
+                material = (regions, cad_facet_regions(domain))
+        target_chart = chart
+        if target.mesh_id != source.mesh.mesh_id:
+            target_chart = retarget_native_cad_surface(
+                chart, source.mesh, target, stencil, regional=material
+            )
         origin_mesh = self.origin_mesh
         origin_chart = self.origin_chart
+        origin_regions = self.origin_regions
         if target.mesh_id != source.mesh.mesh_id and origin_mesh is None:
             origin_mesh, origin_chart = source.mesh, chart
+            if regional:
+                origin_regions = _immutable_regions(inputs.cell_regions)
         curve_splits = (
             self.curve_splits
             if target.topology_id == source.mesh.topology_id
@@ -478,6 +548,7 @@ class NativeCadRecords(StrictModule, NonTrainableState):
             self.tolerance,
             origin_mesh,
             origin_chart,
+            origin_regions,
             curve_splits,
         )
         if self.root_id != records.root_id:
@@ -547,17 +618,38 @@ def _curve_lineage_rows(
     )
 
 
-def _require_solid_region(
+def _require_regions(
     mesh: CellMesh, domain: MeshingDomain, regions: np.ndarray, /
-) -> None:
+) -> np.ndarray:
+    """Canonical integer labels covering every cell and every BRep occurrence."""
+    values = np.asarray(regions)
+    count = len(domain.regions)
     if (
-        len(domain.regions) != 1
-        or regions.shape != (mesh.entity_set(3).count,)
-        or np.any(regions != 0)
+        not isinstance(domain.brep_authority, BRepModel)
+        or count == 0
+        or values.shape != (mesh.entity_set(3).count,)
+        or values.dtype.kind not in "iu"
+        or np.any(values < 0)
+        or np.any(values >= count)
     ):
-        raise ValueError(
-            "Native CAD associations require the sole solid to own every cell."
-        )
+        raise ValueError("Native CAD material labels must bind every cell to a solid.")
+    labels = np.asarray(values, dtype=np.int64)
+    if np.any(np.bincount(labels, minlength=count) == 0):
+        raise ValueError("Native CAD material labels must cover every solid occurrence.")
+    return labels
+
+
+def _regional_labels_id(domain: MeshingDomain, regions: np.ndarray, /) -> str | None:
+    if len(domain.regions) == 1:
+        return None
+    return canonical_fingerprint(
+        {"domain": domain.domain_id, "labels": array_tree_fingerprint(regions)}
+    )
+
+
+def _immutable_regions(regions: np.ndarray, /) -> np.ndarray:
+    # Bytes backing cannot be made writable by a later borrower of the records.
+    return np.frombuffer(np.asarray(regions, dtype=np.int64).tobytes(), dtype=np.int64)
 
 
 class _CurveSegment(NamedTuple):
@@ -940,21 +1032,27 @@ def _derive_native_cad_tables(
     np.ndarray,
     tuple[GeometryAssociation, ...],
 ]:
-    _require_solid_region(mesh, domain, regions)
+    if len(domain.regions) == 1:
+        domain.require_current()
+        witness.require_binding(mesh)
     if (
         witness.mesh_id != mesh.mesh_id
         or (origin_mesh is None) != (origin_chart is None)
         or (origin_mesh is None and curve_splits)
     ):
         raise ValueError("Native CAD association chart or origin binds another mesh.")
-    faces = _chart_face_rows(mesh, witness, domain)
+    faces = (
+        _chart_face_rows(mesh, witness, domain)
+        if len(domain.regions) == 1
+        else _native_cad_regional_surface(mesh, domain, witness)
+    )
     current = _chart_curve_segments(mesh, domain, witness)
     root_mesh = mesh if origin_mesh is None else origin_mesh
-    original = (
-        current
-        if origin_chart is None
-        else _chart_curve_segments(root_mesh, domain, origin_chart)
-    )
+    if origin_chart is None:
+        original = current
+    else:
+        origin_chart.require_binding(root_mesh)
+        original = _chart_curve_segments(root_mesh, domain, origin_chart)
     roots = _root_banks(root_mesh, original)
     curve = _curve_association(
         mesh, domain, tolerance, root_mesh, original, current, roots, curve_splits
@@ -969,7 +1067,7 @@ def _derive_native_cad_tables(
     if any(len(pair) != 2 for pair in slivers):
         raise ValueError("A native CAD pole sliver does not pair two vertices.")
     brep = _native_cad_associations(
-        mesh, witness, domain, tolerance, current, curve, roots[0], faces
+        mesh, witness, domain, tolerance, current, curve, roots[0], faces, regions
     )
     sliver_vertices = _readonly(
         np.asarray(sorted(slivers), dtype=np.int64).reshape((-1, 2)), np.int64
@@ -985,6 +1083,7 @@ def _issue_records(
     tolerance: float,
     origin_mesh: CellMesh | None,
     origin_chart: NativeCadSurfaceWitness | None,
+    origin_regions: np.ndarray | None,
     curve_splits: tuple[_CurveSplit, ...],
     /,
 ) -> tuple[NativeCadRecords, tuple[GeometryAssociation, ...]]:
@@ -997,6 +1096,7 @@ def _issue_records(
         regions,
         origin_mesh,
         origin_chart,
+        origin_regions,
         curve_splits,
         tables,
     )
@@ -1012,7 +1112,7 @@ def native_cad_records(
     /,
 ) -> tuple[NativeCadRecords, tuple[GeometryAssociation, ...]]:
     """Issue native association authority from original construction operands."""
-    return _issue_records(mesh, domain, regions, witness, tolerance, None, None, ())
+    return _issue_records(mesh, domain, regions, witness, tolerance, None, None, None, ())
 
 
 def _chart_face_rows(
@@ -1248,15 +1348,15 @@ def _vertex_sources(
     curve: GeometryAssociation | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
-    classes = np.zeros((points.shape[0], 2), dtype=np.int64)
+    count = mesh.coordinates.shape[0]
+    classes = np.zeros((count, 2), dtype=np.int64)
     classes[:, 0] = 3
-    parameters = np.full((points.shape[0], 2), np.nan, dtype=np.float64)
-    triangles = np.asarray(witness.chart_triangles, dtype=np.int64)
-    patches = np.asarray(witness.chart_patches, dtype=np.int64)
-    classes[triangles.ravel(), 0] = 2
-    classes[triangles.ravel(), 1] = np.repeat(patches, 3)
-    parameters[triangles.ravel()] = np.asarray(witness.chart_uv).reshape((-1, 2))
+    parameters = np.full((count, 2), np.nan, dtype=np.float64)
+    vertices = np.asarray(witness.chart_triangles, dtype=np.int64).ravel()
+    patches = np.repeat(np.asarray(witness.chart_patches, dtype=np.int64), 3)
+    classes[vertices, 0] = 2
+    classes[vertices, 1] = patches
+    parameters[vertices] = np.asarray(witness.chart_uv).reshape((-1, 2))
     _bind_chart_corners(mesh, witness, domain, segments, classes, parameters)
     if curve is not None:
         id_to_row = {
@@ -1285,7 +1385,46 @@ def _vertex_sources(
                     )
                 classes[vertex] = (1, segment.curve)
                 parameters[vertex] = (float(parameter), np.nan)
+    if np.any((classes[vertices, 0] == 2) & (classes[vertices, 1] != patches)):
+        raise ValueError("A native CAD vertex has ambiguous uncovered chart trims.")
     return classes, parameters
+
+
+def _incident_region_bounds(
+    mesh: CellMesh,
+    dimension: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Push incident material extrema from upper cells to their lower closure."""
+    relation = mesh.topology.incidences[dimension].relation
+    source = np.asarray(relation.source_indices)
+    target = np.asarray(relation.target_indices)
+    valid = np.asarray(relation.valid)
+    if not np.all(valid):
+        source, target = source[valid], target[valid]
+    minimum = np.full(relation.source_size, np.iinfo(np.int64).max, dtype=np.int64)
+    maximum = np.full(relation.source_size, -1, dtype=np.int64)
+    np.minimum.at(minimum, source, lower[target])
+    np.maximum.at(maximum, source, upper[target])
+    return minimum, maximum
+
+
+def _exterior_facets(mesh: CellMesh, /) -> np.ndarray:
+    return np.asarray(mesh.entity_set(2).subset("boundary").mask, dtype=np.bool_)
+
+
+def _bind_interior_regions(
+    classes: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+) -> None:
+    interior = classes[:, 0] == 3
+    if np.any(interior & ((lower != upper) | (upper < 0))):
+        raise ValueError("A nonchart native CAD entity lacks a unique incident material.")
+    classes[interior, 1] = upper[interior]
 
 
 def _native_cad_associations(
@@ -1296,20 +1435,30 @@ def _native_cad_associations(
     segments: tuple[_CurveSegment, ...],
     curve: GeometryAssociation | None,
     root_curves: np.ndarray,
-    boundary: tuple[np.ndarray, np.ndarray],
+    boundary: tuple[np.ndarray, np.ndarray] | _RegionalSurfaceRows,
+    regions: np.ndarray,
     /,
 ) -> tuple[GeometryAssociation, ...]:
     """B-Rep rows tied to the actual chart, source occurrences and material side."""
     from .providers._native_plc_geometry import simplex_volume_entities
 
     edges, faces = simplex_volume_entities(mesh)
-    triangles, patches = boundary
+    if isinstance(boundary, _RegionalSurfaceRows):
+        regional = boundary
+        triangles, patches = regional.triangles, regional.patches
+    else:
+        regional = None
+        triangles, patches = boundary
     occurrences = _Occurrences(domain)
-    region_key = domain.stratum_entity_ids(3)[0]
-    patch_sides = {
-        patch: (None, region_key) if orientation > 0 else (region_key, None)
-        for patch, orientation in domain.regions[0].boundary
-    }
+    region_keys = domain.stratum_entity_ids(3)
+    patch_sides = (
+        {
+            patch: (None, region_keys[0]) if sign > 0 else (region_keys[0], None)
+            for patch, sign in domain.regions[0].boundary
+        }
+        if regional is None
+        else {}
+    )
     vertex_class, vertex_parameters = _vertex_sources(
         mesh, witness, domain, segments, curve
     )
@@ -1323,7 +1472,8 @@ def _native_cad_associations(
             row = edge_rows[
                 (min(triangle[a], triangle[b]), max(triangle[a], triangle[b]))
             ]
-            edge_class[row] = (2, patch)
+            dimension, entity = edge_class[row]
+            edge_class[row] = (2, patch if dimension == 3 or entity == patch else -1)
     if curve is not None:
         edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
         edge_by_id = {int(value): row for row, value in enumerate(edge_ids.tolist())}
@@ -1336,25 +1486,52 @@ def _native_cad_associations(
             row = edge_by_id[target]
             edge_class[row] = (1, int(root_curves[parent]))
             edge_orientations[row] = orientation
+    if np.any(edge_class[:, 1] < 0):
+        raise ValueError("A native CAD edge has ambiguous uncovered chart trims.")
 
     face_rows = _sorted_rows(faces)
     face_class = np.zeros((faces.shape[0], 2), dtype=np.int64)
     face_class[:, 0] = 3
     face_orientations = np.zeros((faces.shape[0],), dtype=np.int8)
     face_sides: list[tuple[str | None, str | None]] = [(None, None)] * faces.shape[0]
-    for triangle, patch in zip(triangles.tolist(), patches.tolist(), strict=True):
+
+    def region_key(region: int, /) -> str | None:
+        return None if region < 0 else region_keys[region]
+
+    for chart_row, (triangle, patch) in enumerate(
+        zip(triangles.tolist(), patches.tolist(), strict=True)
+    ):
         row = face_rows[tuple(sorted(triangle))]
         face_class[row] = (2, patch)
-        # The canonical face order is an even permutation of the outward
-        # triangle exactly when it is a rotation of it.
+        # Compare the canonical face order to the source-oriented triangle.
         canonical = [int(value) for value in faces[row]]
         rotations = {tuple(triangle[k:] + triangle[:k]) for k in range(3)}
         face_orientations[row] = 1 if tuple(canonical) in rotations else -1
-        if patch not in patch_sides:
-            raise ValueError("Native CAD association patch does not bound the solid.")
-        face_sides[row] = patch_sides[patch]
+        if regional is None:
+            if patch not in patch_sides:
+                raise ValueError("Native CAD association patch does not bound the solid.")
+            face_sides[row] = patch_sides[patch]
+        else:
+            # Labels do not author either side; the exact volume proof
+            # compares this source declaration to the oriented cell incidence.
+            negative, positive = regional.regions[chart_row]
+            face_sides[row] = (region_key(int(positive)), region_key(int(negative)))
     cell_class = np.zeros((mesh.entity_set(3).count, 2), dtype=np.int64)
     cell_class[:, 0] = 3
+    if regional is not None:
+        face_min, face_max = _incident_region_bounds(mesh, 2, regions, regions)
+        if not np.array_equal(
+            face_class[:, 0] == 2, _exterior_facets(mesh) | (face_min != face_max)
+        ):
+            raise ValueError(
+                "Native CAD chart omits or adds an exterior or material-interface facet."
+            )
+        edge_min, edge_max = _incident_region_bounds(mesh, 1, face_min, face_max)
+        vertex_min, vertex_max = _incident_region_bounds(mesh, 0, edge_min, edge_max)
+        _bind_interior_regions(face_class, face_min, face_max)
+        _bind_interior_regions(edge_class, edge_min, edge_max)
+        _bind_interior_regions(vertex_class, vertex_min, vertex_max)
+        cell_class[:, 1] = regions
 
     def association(
         dimension: int,
@@ -1418,6 +1595,11 @@ def _stencil_weights(
     }
     rows: dict[int, dict[int, Fraction]] = {}
     if stencil is not None:
+        if (stencil.source_entity_set_id, stencil.target_entity_set_id) != (
+            source.entity_set(0).entity_set_id,
+            target.entity_set(0).entity_set_id,
+        ):
+            raise ValueError("Native CAD chart transfer stencil binds other vertices.")
         for target_id, sources, valid, weights in zip(
             np.asarray(stencil.target_global_ids, dtype=np.int64).tolist(),
             np.asarray(stencil.source_global_ids, dtype=np.int64).tolist(),
@@ -1488,27 +1670,31 @@ def retarget_native_cad_surface(
     target: CellMesh,
     stencil: VertexInterpolationStencil | None,
     /,
+    *,
+    regional: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> NativeCadSurfaceWitness:
     """The chart realization of ``witness`` on an adapted ``target``.
 
-    The native chart realizes each boundary triangle as the affine image of
-    its chart triangle (V3 bounds exactly that correspondence). Adaptation
-    inserts a boundary vertex as an exact rational combination of its source
-    triangle's corners (bisection: the physical midpoint of a boundary edge,
-    weights 1/2, 1/2), so each target boundary triangle is the affine image
-    of the chart sub-triangle with the same corner weights: on a face edge
-    the chart midpoint of the row's edge, on a curve edge additionally the
-    chord's parameter midpoint (chords split linearly with their ranges).
-    No point is projected: every target boundary vertex must lie at its
+    The native chart realizes each exterior or material-interface triangle
+    as the affine image of its chart triangle (V3 bounds that correspondence).
+    A target chart vertex is an exact rational combination of its source
+    triangle's corners (e.g. a midpoint with weights 1/2, 1/2). The chart
+    uses those same corner weights; curve edges also split their exact chord
+    intervals. No point is projected. Each target chart vertex must lie at its
     stencil combination, and the native verifiers re-prove the target
     realization from scratch. Refused, with the reason: ancestry that is not
     rational or not within one source chart row, a vertex off its stencil
     combination, and a split pole segment (a pole sliver's P-Q edge; its
     midpoint would need a collapsed chart edge off the pole, which the chart
     model does not admit).
+
+    For multiple solids, ``regional`` is the target cell labels and the
+    source patch-side table. The chart and chord subdivisions are emitted from
+    one ordered exact piece bank: that shared order determines witness identity.
     """
-    if witness.mesh_id != source.mesh_id:
-        raise ValueError("Native CAD surface witness binds another source mesh.")
+    from .providers._native_plc_geometry import simplex_volume_entities
+
+    witness.require_binding(source)
     weights = _stencil_weights(source, target, stencil)
     source_points = np.asarray(source.coordinates, dtype=np.float64)
     target_points = np.asarray(target.coordinates, dtype=np.float64)
@@ -1542,22 +1728,17 @@ def retarget_native_cad_surface(
         if mesh_row >= 0
     }
 
-    target_cells = np.concatenate(
-        [np.asarray(block.vertices, dtype=np.int64) for block in target.blocks]
-    )
-    faces, counts = np.unique(
-        np.sort(
-            np.concatenate(
-                [
-                    target_cells[:, list(face)]
-                    for face in ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
-                ]
-            ),
-            axis=1,
-        ),
-        axis=0,
-        return_counts=True,
-    )
+    _, faces = simplex_volume_entities(target)
+    exterior = _exterior_facets(target)
+    facets = exterior
+    if regional is not None:
+        regions, patch_regions = regional
+        lower, upper = _incident_region_bounds(target, 2, regions, regions)
+        facets = exterior | (lower != upper)
+    face_rows = np.flatnonzero(facets)
+    keys = np.sort(faces[face_rows], axis=1)
+    # Preserve the historical lexicographic physical/chart row order.
+    order = np.lexsort(keys[:, ::-1].T)
     # Target chart pieces: (source row, target vertex rows, corner weights).
     pieces: list[tuple[int, list[int], list[tuple[Fraction, Fraction, Fraction]]]] = []
 
@@ -1568,7 +1749,7 @@ def retarget_native_cad_surface(
             values[corners.index(source_row)] = weight
         return values[0], values[1], values[2]
 
-    for key in faces[counts == 1].tolist():
+    for face_row, key in zip(face_rows[order], keys[order].tolist(), strict=True):
         support = frozenset(row for vertex in key for row in weights[vertex])
         row = rows_by_corners.get(support)
         if row is None:
@@ -1577,10 +1758,28 @@ def retarget_native_cad_surface(
                 f"vertices descend from source vertices {sorted(support)}, which "
                 "bound no single source chart triangle."
             )
+        if regional is not None:
+            sides = patch_regions[chart_patches[row]]
+            high = int(max(sides))
+            low = int(min(sides))
+            if (
+                bool(exterior[face_row]) != (low < 0)
+                or upper[face_row] != high
+                or lower[face_row] != (high if low < 0 else low)
+            ):
+                raise ValueError(
+                    "Native CAD target facet disagrees with its source chart's "
+                    "material-side declarations."
+                )
         vertices = [int(value) for value in key]
         # Map exactly: the target point must be its stencil combination of
         # the source corners (up to the rounding of that combination).
         for vertex in vertices:
+            coefficients = weights[vertex].values()
+            if sum(coefficients) != 1 or any(weight < 0 for weight in coefficients):
+                raise ValueError(
+                    "A native CAD target vertex lies outside its source chart."
+                )
             expected = sum(
                 float(weight) * source_points[source_row]
                 for source_row, weight in weights[vertex].items()

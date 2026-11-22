@@ -15,8 +15,9 @@ Patch and region controls and region/hole seeds are honored on the native
 candidate: boundary triangles group by their native source face and zones by
 tetrahedron region through the PLC route's organization substrate
 (:func:`~._native_volume.source_organization`), and seeds are classified by an
-exact point-in-shell test against the certified surface. Multi-solid domains,
-protected features and layer controls keep the existing route
+exact point-in-shell test against the candidate surface. Multiple solids
+require the exact planar regional source proof. Protected features, layer
+controls, and unsupported sources keep the existing route
 (:func:`cad_solid_support_issues`).
 
 The candidate's compliance reports no achieved source deviation: the bound is
@@ -49,7 +50,8 @@ from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_cad_certificate import NativeCadSurfaceWitness
-from .._native_cad_records import native_cad_records
+from .._native_cad_records import _native_cad_regional_surface, native_cad_records
+from .._native_cad_shell import source_shell
 from .._native_construction import (
     NativeCertificationRequest,
     NativeMeshConstruction,
@@ -94,17 +96,19 @@ def cad_solid_support_issues(
     specification = prepared.specification
     if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
-    # The native surface verifiers refuse the non-manifold curves of a shared
-    # interface face (V2 EDGE / VERTEX_LINK findings): a multi-solid domain
-    # keeps the existing route, which certifies its interfaces.
-    if len(prepared.domain.regions) > 1:
-        issues.append("multi-solid domains need certified interface faces")
     # The native call has one deviation on every face and curve: protected
     # features (their own deviation bounds and feature evidence) are honored
     # by the existing route.
     if specification.protected_features:
         issues.append("protected features need their own deviation and evidence")
     issues.extend(cad_bundle_support_issues(prepared.domain))
+    if len(prepared.domain.regions) > 1 and not issues:
+        if specification.target.geometry_order != 1:
+            issues.append("regional native CAD proof requires affine tetrahedra")
+        else:
+            refusal = source_shell(prepared.domain).refusal
+            if refusal is not None:
+                issues.append(f"regional native CAD source proof refused: {refusal}")
     return tuple(issues)
 
 
@@ -900,6 +904,8 @@ def execute_cad_solid(
     witness = NativeCadSurfaceWitness(
         mesh, solid.surface, len(cad_geometry_bundle(domain).model.loop_surfaces)
     )
+    if len(domain.regions) > 1:
+        _native_cad_regional_surface(mesh, domain, witness, native_surface=solid.surface)
     records, associations = native_cad_records(
         mesh, domain, regions, witness, float(deviation)
     )

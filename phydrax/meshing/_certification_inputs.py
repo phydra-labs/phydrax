@@ -664,6 +664,24 @@ class MeshCertificationInputs(StrictModule, NonTrainableState):
             raise ValueError(
                 "MeshCertificationInputs no longer match the retained scientific content."
             )
+        if self.native_cad_surface is not None or self.native_cad_records is not None:
+            from ..geometry._meshing_domain import MeshingDomain
+
+            if (
+                not isinstance(domain, MeshingDomain)
+                or self.native_cad_surface is None
+                or self.native_cad_records is None
+                or self.cell_regions is None
+                or self.fidelity_tolerance is None
+            ):
+                raise ValueError("Native CAD certification lost its material operands.")
+            self.native_cad_records.require_premises(
+                mesh,
+                domain,
+                self.cell_regions,
+                self.native_cad_surface,
+                self.fidelity_tolerance,
+            )
         tokens: list[ValidatedSourceFidelityWitness] = []
         if self.fidelity_witness is not None:
             if source is None:

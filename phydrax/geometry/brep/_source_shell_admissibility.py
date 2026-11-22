@@ -1634,19 +1634,30 @@ def _single_shell_topology(model: BRepModel, domain: object, /) -> bool:
         return False
     if set(model.geometry.shell_faces[shell]) != set(range(len(model.patches))):
         return False
-    return _source_shell_topology(model, domain, shell)
+    return _source_boundary_topology(
+        model,
+        domain,
+        geometry.shell_faces[shell],
+        geometry.shell_orientations[shell],
+        connected=True,
+    )
 
 
-def _source_shell_topology(
-    model: BRepModel, domain: MeshingDomain, shell: int, /
+def _source_boundary_topology(
+    model: BRepModel,
+    domain: MeshingDomain,
+    faces: tuple[int, ...],
+    signs: tuple[int, ...],
+    /,
+    *,
+    connected: bool,
 ) -> bool:
+    """Prove closed oriented edge and vertex links on an explicit face bank."""
     from .._domain_boundary import _exact_line_junction_box
     from .._meshing_domain import _same_brep_trim_endpoint
     from ._correspondence import _exact_brep_pole_collapse
 
     geometry = model.geometry
-    faces = geometry.shell_faces[shell]
-    signs = geometry.shell_orientations[shell]
     if not faces or len(set(faces)) != len(faces):
         return False
     orientation = np.asarray(model.orientation, dtype=np.int8)
@@ -1762,6 +1773,8 @@ def _source_shell_topology(
                 pending.extend(graph[node])
         if reached != set(graph):
             return False
+    if not connected:
+        return True
     reached_faces: set[int] = set()
     pending_faces = [faces[0]]
     while pending_faces:
@@ -2261,7 +2274,13 @@ def _source_region_shells(
     for shells in model.geometry.solid_shells:
         vertices: set[int] = set()
         for shell in shells:
-            if shell not in checked and not _source_shell_topology(model, domain, shell):
+            if shell not in checked and not _source_boundary_topology(
+                model,
+                domain,
+                model.geometry.shell_faces[shell],
+                model.geometry.shell_orientations[shell],
+                connected=True,
+            ):
                 return False
             checked.add(shell)
             corners = {
@@ -2393,6 +2412,27 @@ def certify_source_regions(domain: MeshingDomain, /) -> SourceRegionAdmissibilit
     )
     return SourceRegionAdmissibility(
         domain.domain_id, model.source_revision, sides, certificate_id
+    )
+
+
+def _source_region_exterior_is_manifold(
+    domain: MeshingDomain, material: SourceRegionAdmissibility, /
+) -> bool:
+    """Check the union's exterior link topology after deleting shared faces."""
+    model = domain.brep_authority
+    if not isinstance(model, BRepModel) or (
+        material.domain_id,
+        material.source_revision,
+    ) != (domain.domain_id, model.source_revision):
+        return False
+    faces: list[int] = []
+    signs: list[int] = []
+    for face, (negative, positive) in enumerate(material.face_sides):
+        if negative < 0 or positive < 0:
+            faces.append(face)
+            signs.append(1 if negative >= 0 else -1)
+    return _source_boundary_topology(
+        model, domain, tuple(faces), tuple(signs), connected=False
     )
 
 
