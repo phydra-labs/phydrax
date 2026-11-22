@@ -29,6 +29,7 @@ from ._patches import (
     _exact_dot3,
     _prepare_revolution_line_profile,
     _require_exact_numeric_shadow,
+    _RevolutionLineProfile,
     _validate_surface_source_shadows,
     AbstractCurve,
     AbstractSurfacePatch,
@@ -54,7 +55,13 @@ type ExactChartBox = tuple[
     tuple[ChartScalar, ChartScalar], tuple[ChartScalar, ChartScalar]
 ]
 type _Family = Literal[
-    "plane", "cylinder", "revolution-cylinder", "revolution-plane", "sphere", "ring-torus"
+    "plane",
+    "cylinder",
+    "revolution-cylinder",
+    "revolution-frustum",
+    "revolution-plane",
+    "sphere",
+    "ring-torus",
 ]
 
 _TAU = PeriodOffset(Fraction(0), Fraction(1))
@@ -124,7 +131,31 @@ def _frame(
     return _exact_dot3(_exact_cross3(first, second), axis) != 0
 
 
-def _family(surface: AbstractSurfacePatch, /) -> _Family | None:
+def _regular_frustum(
+    line: _RevolutionLineProfile, bounds: tuple[ChartScalar, ChartScalar], /
+) -> bool:
+    low, high = bounds
+    if not isinstance(low, Fraction) or not isinstance(high, Fraction):
+        return False
+    # The profile is meridional, so any varying radial component vanishes
+    # exactly where the radial norm does. Its affine endpoint values must
+    # have the same strict sign to exclude the axis on the closed interval.
+    for origin, direction in zip(line.radial_origin, line.radial_direction, strict=True):
+        if direction != 0:
+            first, last = origin + low * direction, origin + high * direction
+            return (_positive(first) and _positive(last)) or (
+                _positive(-first) and _positive(-last)
+            )
+    return False
+
+
+def _family(
+    surface: AbstractSurfacePatch,
+    /,
+    *,
+    profile_bounds: tuple[ChartScalar, ChartScalar] | None = None,
+) -> _Family | None:
+    """Classify a carrier; a frustum candidate also needs bounded regularity."""
     # Imported lazily because meshing-domain construction itself imports B-Rep.
     from .._meshing_domain import _PlacedSurfacePatch
 
@@ -227,19 +258,18 @@ def _family(surface: AbstractSurfacePatch, /) -> _Family | None:
             return "sphere"
     elif type(patch) is RevolutionSurface and type(patch.curve) is LineCurve:
         line = _prepare_revolution_line_profile(patch, patch.curve)
-        if (
-            line is not None
-            and line.axial_direction != 0
-            and all(value == 0 for value in line.radial_direction)
-            and any(value != 0 for value in line.radial_origin)
-        ):
-            return "revolution-cylinder"
-        if (
-            line is not None
-            and line.axial_direction == 0
-            and any(value != 0 for value in line.radial_direction)
-        ):
-            return "revolution-plane"
+        if line is not None:
+            radial_changes = any(value != 0 for value in line.radial_direction)
+            if line.axial_direction == 0:
+                if radial_changes:
+                    return "revolution-plane"
+            elif not radial_changes:
+                if any(value != 0 for value in line.radial_origin):
+                    return "revolution-cylinder"
+            # Nonzero axial rate identifies the profile parameter. Away from
+            # the axis, only the exact angular deck can identify points.
+            elif profile_bounds is None or _regular_frustum(line, profile_bounds):
+                return "revolution-frustum"
     return None
 
 
@@ -347,7 +377,7 @@ def certify_source_embedding(
         return None
     try:
         _validate_surface_source_shadows(surface)
-        family = _family(surface)
+        family = _family(surface, profile_bounds=(bounds[0][1], bounds[1][1]))
         if family is None:
             return None
         widths = tuple(_difference(bounds[1][i], bounds[0][i]) for i in range(2))
@@ -574,7 +604,7 @@ def _sphere_trim_latitudes(
 
 
 def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof | None:
-    """Prove a plane, cylindrical, polar-plane, sphere, or ring-torus CAD sheet.
+    """Prove a plane, cylinder, frustum, polar plane, sphere, or ring-torus sheet.
 
     A full-turn quotient requires opposite coedge uses of one source edge on
     the exact constant lines 0 and τ. For an overhanging curved use, exact seam
@@ -650,6 +680,7 @@ def certify_brep_trim_sheet(domain: object, patch: int, /) -> BRepTrimSheetProof
             "plane",
             "cylinder",
             "revolution-cylinder",
+            "revolution-frustum",
             "ring-torus",
             "sphere",
         ):
