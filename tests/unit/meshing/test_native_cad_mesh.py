@@ -1645,16 +1645,16 @@ _CERTIFIED_FIXTURES = {
         ),
         0.3,
     ),
-}
-
-# Their native trim sheets are unproved, as on the Python route.
-_UNPROVED_SHELL_FIXTURES = {
     "cone": (
         lambda: phx.geometry.brep.brep_cone(
             0.5, 0.25, 1.0, coordinate_contract=phx.SpatialCoordinateContract.si()
         ),
         0.3,
     ),
+}
+
+# Its native trim sheet is unproved, as on the Python route.
+_UNPROVED_SHELL_FIXTURES = {
     "torus": (
         lambda: phx.geometry.brep.brep_torus(
             1.0, 0.25, coordinate_contract=phx.SpatialCoordinateContract.si()

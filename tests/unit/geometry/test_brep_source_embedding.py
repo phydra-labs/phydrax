@@ -123,10 +123,134 @@ def test_revolution_cylinder_and_polar_plane_embedding() -> None:
         is not None
     )
     assert certify_source_embedding(RevolutionSurface(LineCurve(O, Z), O, Z), BOX) is None
-    assert (
-        certify_source_embedding(RevolutionSurface(LineCurve(X, (1, 0, 1)), O, Z), BOX)
-        is None
+
+
+def test_revolution_frustum_embedding_excludes_the_exact_axis_root() -> None:
+    # r(v) = 1 - v/4, z(v) = v. In particular, nonzero endpoint
+    # norms do not prove that an interval straddling v = 4 is regular.
+    surface = RevolutionSurface(LineCurve(X, (-0.25, 0, 1)), O, Z)
+    full = ((F(0), F(0)), (T, F(1)))
+    proof = certify_source_embedding(surface, full, deck_axes=(0,))
+    assert proof is not None and proof.family == "revolution-frustum"
+    assert proof.replay(surface, full, deck_axes=(0,))
+    assert certify_source_embedding(surface, full) is None
+    for low, high in ((F(0), F(4)), (F(3), F(5)), (F(4), F(5))):
+        bounds = ((F(0), low), (T, high))
+        assert certify_source_embedding(surface, bounds, deck_axes=(0,)) is None
+        assert (
+            certify_source_embedding(surface, bounds, deck_axes=(0,), pole_roots=(F(4),))
+            is None
+        )
+
+    # Exact strict positivity on either side needs neither a fitted margin
+    # nor a positive *signed* radius. Both bounds round to the apex on one side.
+    step = F(1, 2**80)
+    for low, high in ((4 - 2 * step, 4 - step), (4 + step, 4 + 2 * step)):
+        assert (
+            certify_source_embedding(surface, ((F(0), low), (T, high)), deck_axes=(0,))
+            is not None
+        )
+
+
+def test_revolution_frustum_embedding_requires_exact_meridian_frame() -> None:
+    nonmeridional = RevolutionSurface(LineCurve(X, (0, 1, 1)), O, Z)
+    # This stored axis is numerically unit length, but its exact norm is not 1.
+    nonunit = RevolutionSurface(LineCurve(X, (-0.25, 0, 1)), O, (0.6, 0, 0.8))
+    assert certify_source_embedding(nonmeridional, BOX) is None
+    assert certify_source_embedding(nonunit, BOX) is None
+
+
+def test_brep_frustum_sheet_and_widened_reference_exclude_the_apex() -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry._meshing_domain import MeshingDomain, SourcePreparation
+    from phydrax.geometry.brep._constructors import brep_cone
+    from phydrax.geometry.brep._curve_approximation_topology import TrimReferenceSegment
+    from phydrax.geometry.brep._source_embedding import certify_reference_trim_sheet
+
+    contract = SpatialCoordinateContract.si()
+    domain = MeshingDomain.from_brep(
+        brep_cone(0.5, 0.25, 1.0, coordinate_contract=contract)
     )
+    proof = certify_brep_trim_sheet(domain, 1)
+    assert proof is not None and proof.replay(domain, 1)
+    assert proof.embedding.family == "revolution-frustum"
+    assert proof.embedding.deck_axes == (0,) and proof.embedding.pole_roots == ()
+    assert proof.embedding.bounds == ((F(0), F(0)), (T, F(1)))
+    apex_domain = MeshingDomain.from_brep(
+        brep_cone(0.5, 0.0, 1.0, coordinate_contract=contract)
+    )
+    assert certify_brep_trim_sheet(apex_domain, 1) is None
+
+    preparation = SourcePreparation(domain)
+    seam = domain.patches[1].loops[0][-1].pcurve
+    reference = TrimReferenceSegment(
+        seam, F(1), F(0), (F(0), F(1)), (F(0), F(0)), None, None, None, None
+    )
+    # A widened v bound below the extrapolated apex at v = 2 remains regular.
+    wider = reference._replace(start=(F(0), F(3, 2)))
+    accepted = certify_reference_trim_sheet(domain, 1, proof, ((wider,),), preparation)
+    assert accepted is not None
+    assert accepted[1].bounds == ((F(0), F(0)), (T, F(3, 2)))
+    # Test both the widened chord and the rooted source-parameter enclosure.
+    for crossing in (
+        reference._replace(start=(F(0), F(2))),
+        reference._replace(start_parameter_box=(1.0, 2.0)),
+    ):
+        assert (
+            certify_reference_trim_sheet(domain, 1, proof, ((crossing,),), preparation)
+            is None
+        )
+
+
+def test_brep_frustum_sheet_requires_one_shared_seam_edge() -> None:
+    from phydrax._physical import SpatialCoordinateContract
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.geometry.brep._constructors import assemble_brep_model, brep_cone
+    from phydrax.geometry.brep._model import BRepGeometry
+
+    contract = SpatialCoordinateContract.si()
+    cone = brep_cone(0.5, 0.25, 1.0, coordinate_contract=contract)
+    source = cone.geometry
+    _, high, _, low = source.face_loops[1][0]
+    edge = source.coedge_edges[high]
+    assert source.coedge_edges[low] == edge
+    # Unsew the high side without changing its p-curve, endpoints, sense,
+    # or lifted curve. Geometric coincidence alone is not deck authority.
+    edges = list(source.coedge_edges)
+    edges[high] = len(source.edge_curves)
+    ranges = np.asarray(source.edge_ranges)
+    geometry = BRepGeometry(
+        vertex_points=source.vertex_points,
+        vertex_exact_points=source.vertex_exact_points,
+        vertex_roots=source.vertex_roots,
+        edge_endpoint_roots=(
+            *source.edge_endpoint_roots,
+            source.edge_endpoint_roots[edge],
+        ),
+        coedge_endpoint_roots=source.coedge_endpoint_roots,
+        curves=source.curves,
+        edge_curves=(*source.edge_curves, source.edge_curves[edge]),
+        edge_ranges=np.concatenate((ranges, ranges[edge : edge + 1])),
+        edge_vertices=(*source.edge_vertices, source.edge_vertices[edge]),
+        pcurves=source.pcurves,
+        coedge_edges=tuple(edges),
+        coedge_senses=source.coedge_senses,
+        face_loops=source.face_loops,
+        shell_faces=source.shell_faces,
+        shell_orientations=source.shell_orientations,
+        solid_shells=(),
+    )
+    unsewn = assemble_brep_model(
+        geometry,
+        cone.patches,
+        cone.parameter_bounds,
+        cone.orientation,
+        cone.physical_tags,
+        coordinate_contract=contract,
+        source_id="frustum-with-unsewn-seam",
+    )
+    domain = MeshingDomain.from_brep(unsewn)
+    assert certify_brep_trim_sheet(domain, 1) is None
 
 
 def test_sphere_requires_explicit_actual_pole_quotients() -> None:
