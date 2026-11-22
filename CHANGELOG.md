@@ -2361,6 +2361,9 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- Native cell-map certification builds on MSVC x64 using the shared
+  wide-integer arithmetic. Decimal certificate encoding and digests are
+  unchanged.
 - CAD fidelity verification uses regular pole charts for eligible sphere
   regions and planar disk centers. Pole bounds include the trim-lens charge
   on region-boundary chords, including chords whose endpoints have equal
