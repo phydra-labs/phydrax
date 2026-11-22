@@ -2501,10 +2501,11 @@ void stencil_relocations_verify_the_candidate() {
     PHX_CHECK(same_state(local, batch) && incidence_current(local, incidence));
   };
 
-  // Move (1, 1, 0) on the left half of z = 0, whose corners include rows 0, 8, 2, 10.
+  // Move (1, 1, 0) on the left half of z = 0; row 9 is its corner at (2, 4, 0).
   const MovePlan move = plan_at(6, {1.25, 1.0, 0.0});
   const std::array<std::int32_t, 3> rows{0, 8, 2};
   const std::array<double, 3> weights{0.125, 0.625, 0.25};
+  constexpr std::int32_t far_corner = 9;
   refuses(move, {});
   refuses(move, {rows, std::span(weights).first<2>()});
   refuses(move, {rows, std::array{std::numeric_limits<double>::infinity(), 0.625, 0.25}});
@@ -2513,7 +2514,8 @@ void stencil_relocations_verify_the_candidate() {
   // These weights certify the old coordinates, not the candidate.
   refuses(move, {rows, std::array{0.25, 0.5, 0.25}});
   // The sum is exactly one; the reconstructed x and y round to the candidate but differ exactly.
-  refuses(move, {std::array{0, 8, 2, 10}, std::array{0.125 - 0x1p-56, 0.625, 0.25, 0x1p-56}});
+  refuses(move, {std::array{0, 8, 2, far_corner},
+                 std::array{0.125 - 0x1p-56, 0.625, 0.25, 0x1p-56}});
   // Even rows of zero weight must exist and be distinct.
   const auto zero_weight = std::array{0.125, 0.625, 0.25, 0.0};
   refuses(move, {std::array{0, 8, 2, 0}, zero_weight});
@@ -2539,7 +2541,7 @@ void stencil_relocations_verify_the_candidate() {
   refuses(witnessed, {edge_rows, edge_weights}, TetEditStatus::kRejectedProtected);
 
   // Affine weights may be signed; a zero-weight row outside the group is not support.
-  const std::array<std::int32_t, 5> exact_rows{10, 8, 0, 2, 1};
+  const std::array<std::int32_t, 5> exact_rows{far_corner, 8, 0, 2, 1};
   const std::array<double, 5> exact_weights{-0.25, 0.875, -0.125, 0.5, -0.0};
   const SourceStencil stencil{exact_rows, exact_weights};
   PHX_CHECK(incidence.relocate(local, std::span(&move.vertex, 1), move.star, &stencil) ==
