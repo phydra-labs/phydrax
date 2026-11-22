@@ -3457,6 +3457,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise RuntimeError("Run with OMP_NUM_THREADS=1: rows are single-thread rows.")
+    # Like the reference executables, load the library and bind its symbols
+    # before timing a construction call. Do not warm up construction itself.
+    meshcore = _meshcore.meshcore_identity()
     ceilings = json.loads(_CEILINGS.read_text(encoding="utf-8"))
     records: list[dict[str, Any]] = []
     failed = False
@@ -3498,7 +3501,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "environment": capture_environment().to_dict(),
-                    "meshcore": _meshcore.meshcore_identity(),
+                    "meshcore": meshcore,
                     "ceilings_provenance": ceilings["provenance"],
                     "rows": records,
                 },
