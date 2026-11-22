@@ -299,11 +299,15 @@ class Triangulation3D {
     return status;
   }
 
+  // Emit the point IDs that order the symbolic perturbation, preserving
+  // tetrahedron slot order and corner order.
   void collect_cells(std::vector<int32_t>& cells) const {
     cells.clear();
     cells.reserve(static_cast<std::size_t>(complex_.finite_count) * 4);
     for (const Tetrahedron& tet : complex_.tets) {
-      if (tet.v[0] != kDeadVertex && !is_ghost(tet)) cells.insert(cells.end(), tet.v, tet.v + 4);
+      if (tet.v[0] == kDeadVertex || is_ghost(tet)) continue;
+      cells.insert(cells.end(),
+                   {identity(tet.v[0]), identity(tet.v[1]), identity(tet.v[2]), identity(tet.v[3])});
     }
   }
 
@@ -1162,7 +1166,7 @@ class Triangulation3D {
                        identity(p)) > 0;
   }
   // The index ordering the symbolic perturbation of vertex v.
-  int64_t identity(int32_t v) const noexcept {
+  int32_t identity(int32_t v) const noexcept {
     return identities_ == nullptr ? v : identities_[static_cast<std::size_t>(v)];
   }
   bool conflict(int32_t t, int32_t p, bool& topology_valid) {

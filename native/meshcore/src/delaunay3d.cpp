@@ -61,9 +61,8 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
       deduplicated_insertion_order(points, point_count, 3, active_weights, vertex_map);
 
   // Vertex k of the triangulation is input point order[k], stored in
-  // insertion order so that walks and cavities touch nearby memory; its
-  // input index orders the symbolic perturbation, so the triangulation is
-  // that of the input points.
+  // insertion order so that walks and cavities touch nearby memory. Its
+  // input index orders the symbolic perturbation and labels the output cells.
   const std::size_t count = order.size();
   std::vector<double> local_points(3 * count);
   std::vector<double> local_weights(weighted ? count : 0);
@@ -87,7 +86,6 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
     }
     triangulation.collect_cells(result->cells);
   }
-  for (int32_t& vertex : result->cells) vertex = order[static_cast<std::size_t>(vertex)];
   std::vector<char> input_alive(static_cast<std::size_t>(point_count), 0);
   for (std::size_t k = 0; k < count; ++k) {
     input_alive[static_cast<std::size_t>(order[k])] = alive[k];
