@@ -1056,22 +1056,30 @@ class ConstrainedMesher {
       if (cavity_certificates && static_cast<std::size_t>(o) < marks_.size()) {
         marks_[static_cast<std::size_t>(o)] = 0;
       }
-      // release(t), release(o) then allocate() twice would return o, t.
-      tri_.recycle(t);
-      tri_.recycle(o);
+      // Both slots stay live and finite. The u-x and w-m twins already
+      // point to their final slots; only m-u and x-w change owner.
       const int32_t first = o;
       const int32_t second = t;
-      tri_.set_triangle(first, m, u, x, c_ux, kFree, c_mu);
-      tri_.set_triangle(second, m, x, w, c_xw, c_wm, kFree);
-      tri_.region[static_cast<std::size_t>(first)] = region;
-      tri_.region[static_cast<std::size_t>(second)] = region;
-      // first = (m, u, x): u -> x, x -> m, m -> u; second = (m, x, w):
-      // x -> w, w -> m, m -> x.
-      link_across(first, 0, u, x, n_ux);
-      link_across(first, 2, m, u, n_mu);
-      link_across(second, 0, x, w, n_xw);
-      link_across(second, 1, w, m, n_wm);
-      link_inner(first, 1, second, 2);
+      const auto first_slot = static_cast<std::size_t>(first);
+      const auto second_slot = static_cast<std::size_t>(second);
+      tri_.triangles[first_slot] = {{m, u, x}, {n_ux, second, n_mu}};
+      tri_.triangles[second_slot] = {{m, x, w}, {n_xw, n_wm, first}};
+      int32_t* constraints = tri_.constraints.data();
+      constraints[3 * first_slot] = c_ux;
+      constraints[3 * first_slot + 1] = kFree;
+      constraints[3 * first_slot + 2] = c_mu;
+      constraints[3 * second_slot] = c_xw;
+      constraints[3 * second_slot + 1] = c_wm;
+      constraints[3 * second_slot + 2] = kFree;
+      tri_.region[first_slot] = region;
+      // Representatives match successive writes of first and second.
+      auto* reps = tri_.vertex_triangle.data();
+      reps[u] = first;
+      reps[m] = second;
+      reps[x] = second;
+      reps[w] = second;
+      redirect_twin(first, m, u, n_mu);
+      redirect_twin(second, x, w, n_xw);
       flip_stack_.push_back(first);
       flip_stack_.push_back(second);
     }
