@@ -1411,26 +1411,24 @@ def _coplanar_face_groups(
             first, second = int(face[corner]), int(face[(corner + 1) % 3])
             uses[_edge_key((first, second))].append((row, (first, second)))
 
-    def exact(vertex: int) -> list[Fraction]:
-        return [Fraction(float(value)) for value in points[vertex]]
-
+    candidates: list[tuple[int, int]] = []
+    tests: list[list[int]] = []
     for key, incident in uses.items():
         if len(incident) != 2 or key in segments:
             continue
         (first_row, first_use), (second_row, second_use) = incident
         if first_use != second_use[::-1] or sides[first_row] != sides[second_row]:
             continue
-        origin, first, second = (exact(vertex) for vertex in rows[first_row])
-        apex = exact(next(v for v in rows[second_row] if v not in key))
-        u = [first[axis] - origin[axis] for axis in range(3)]
-        v = [second[axis] - origin[axis] for axis in range(3)]
-        w = [apex[axis] - origin[axis] for axis in range(3)]
-        volume = (
-            u[0] * (v[1] * w[2] - v[2] * w[1])
-            - u[1] * (v[0] * w[2] - v[2] * w[0])
-            + u[2] * (v[0] * w[1] - v[1] * w[0])
-        )
-        if volume == 0:
+        apex = next(vertex for vertex in rows[second_row] if vertex not in key)
+        tests.append([*rows[first_row], apex])
+        candidates.append((first_row, second_row))
+    signs = _tetra_orientation(
+        points, np.asarray(tests, dtype=np.int64).reshape((-1, 4)), PredicateMode.EXACT
+    )
+    if np.any(signs == 2):
+        raise ValueError("Exact source facet coplanarity is unresolved.")
+    for (first_row, second_row), sign in zip(candidates, signs, strict=True):
+        if sign == 0:
             parent[find(first_row)] = find(second_row)
     return np.asarray([find(row) for row in range(faces.shape[0])], dtype=np.int64)
 
@@ -1910,18 +1908,16 @@ def _prepare_native_state(
             implicit_rows.append(row)
         if not implicit_rows:
             raise ValueError("Implicit tetra source requires actual exterior facets.")
-    group_first_rows = {
-        int(group): int(np.flatnonzero(row_groups == group)[0])
-        for group in np.unique(row_groups).tolist()
-    }
-    source_face_ids = np.asarray(
-        sorted(source_face_row_ids[row] for row in group_first_rows.values()),
-        dtype=np.int64,
+    _, representative_rows, face_groups = np.unique(
+        row_groups, return_index=True, return_inverse=True
     )
-    face_groups = np.searchsorted(
-        source_face_ids,
-        [source_face_row_ids[group_first_rows[int(group)]] for group in row_groups],
-    ).astype(np.int32)
+    # Native group order follows the first face's global identity.
+    group_order = np.argsort(representative_rows)
+    representative_rows = representative_rows[group_order]
+    source_face_ids = source_face_row_ids[representative_rows]
+    ranks = np.empty(group_order.shape, dtype=np.int32)
+    ranks[group_order] = np.arange(group_order.size, dtype=np.int32)
+    face_groups = ranks[face_groups]
     implicit_groups = frozenset(int(face_groups[row]) for row in implicit_rows)
     source_face_group_rows = {
         int(identifier): row for row, identifier in enumerate(source_face_ids.tolist())
@@ -1946,12 +1942,13 @@ def _prepare_native_state(
     # triangle (origin a, axes b - a and c - a) when those axes are binary64,
     # so the native admits a carrier rounding a point of the plane
     # (declared-plane rounding-box admission).
-    row_planes = _declared_face_planes(points, source_faces)
-    face_planes = np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64)
     if periodic_state is None:
-        for row in range(source_faces.shape[0]):
-            if int(face_groups[row]) not in implicit_groups:
-                face_planes[row] = row_planes[group_first_rows[int(row_groups[row])]]
+        representatives = _declared_face_planes(points, source_faces[representative_rows])
+        face_planes = representatives[face_groups]
+        if implicit_groups:
+            face_planes[implicit_rows] = np.nan
+    else:
+        face_planes = np.full((source_faces.shape[0], 3, 3), np.nan, dtype=np.float64)
     declared_source_faces = frozenset(
         frozenset(constrained_faces[row][1])
         for row in np.flatnonzero(~np.isnan(face_planes[:, 0, 0])).tolist()
