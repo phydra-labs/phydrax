@@ -66,10 +66,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   inputs (canonicalized).
 - Acceptance: 3D Delaunay at 1e6 points at most 1.8x CGAL (ledger: CGAL 3.26 s, ours 9.08 s); 2D at
   most 2x CGAL.
-- Status (Nov 20, quiet macOS acceptance, references re-measured back to back): ACCEPTED. 2D 0.87-0.92x
-  CGAL, 3D 0.88-0.93x, regular 0.95-0.99x CGAL Regular_3, periodic 0.43-0.63x CGAL Periodic_3 (direct
-  covering-space engine; declared margin change), 1e3-1e6. Output canonicalization stayed mandatory for
-  every caller (linear-time instead of an option).
+- Earlier same-distribution measurements used different point and weight bytes on the two sides.
+  Those timing ratios are provisional. Compare CGAL and Phydrax on the same ordered binary64
+  points and weights, retain their SHA-256 digests, and require matching cell counts before
+  comparing wall times. Output canonicalization stays mandatory for every caller.
 
 ### S0-C Flat tetrahedral state
 - `native/meshcore/src/tet_mesh.hpp`, `tet_mesh_state.cpp`, `tet_mesh_capi.cpp`: cells, neighbors,
@@ -79,11 +79,11 @@ tetrahedra, then implicit volumes, then the CAD solid.
 - Acceptance: creation of 1.16 M tets under 0.3 s (ledger: 4.5 s).
 
 ### S0-D In-repository benchmark
-- `benchmarks/native_meshing_ledger.py` with its JSON record: the ledger rows (point-set Delaunay,
-  closed surface to tets, refinement, improvement, implicit volume, CAD solid, curving, remesh,
-  adaptation) on fixed generated inputs, phase-separated timing, our kernels through the C ABI, reference
-  tools when installed (optional; skipped at the provider boundary), independent quality and distance
-  measurement. Ceilings per row = the ledger's best reference.
+- `benchmarks/native_meshing.py` times fixed inputs and reports size, quality, and stage costs;
+  `native_meshing_ceilings.json` records reference ceilings and provenance. For CGAL point-set
+  comparisons, `--triangulation-inputs` reads the ledger's raw `p2_N.bin`, `p3_N.bin`, and `w3_N.bin`
+  and reports hashes of the consumed arrays. An interleaved reference comparison uses those same
+  files, rather than reproducible but different random seeds.
 - Acceptance: reproduces the ledger's numbers for our kernels within 10%.
 
 ## S3 Closed surface to tetrahedra (first row after the foundations)
@@ -202,6 +202,10 @@ tetrahedra, then implicit volumes, then the CAD solid.
   quadric evaluators only with benchmark evidence; P2 through the target's geometry order. Targets:
   Gmsh HXT per size (0.0215 / 0.0653 / 0.303 / 2.00 s); curving at or below Netgen's 0.0125 / 0.075 s
   with certified validity.
+  Quadric benchmarks use the per-face interpolation budget κmax·h²/4 from the constant cylinder
+  curvature and a construction margin of θ = 0.8. Compare at the same requested h and report
+  element counts, both directed sampled distances, and minimum boundary angle. Construction times
+  do not include the separate proof; sampling alone does not certify fidelity.
 - S4 surface remesh and metric adaptation (above MMGS and MMG3D, inside tolerance).
 - S5 STEP import and remaining exchange formats. S7 threads and devices at scale.
 - S6 layers, hex-dominant, overset, Voronoi (MAC, planned Nov 20; ledger `cad.md` F8/F9 and
