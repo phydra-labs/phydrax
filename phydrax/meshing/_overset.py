@@ -20,7 +20,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, core
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._execution_runtime import ExecutionGroup
@@ -752,7 +752,7 @@ def _place_overset_fields(arrays: tuple[np.ndarray, ...], /) -> tuple[Array, ...
     # compiling a staging primitive for each host array shape and dtype.
     # The concrete mesh can still be active under a scoped abstract override.
     # Observe it outside tracing without changing the staging trace itself.
-    with jax.core.eval_context():
+    with core.eval_context():
         concrete_mesh = jax.sharding.get_mesh()
     if not concrete_mesh.empty or not jax.sharding.get_abstract_mesh().empty:
         return tuple(jnp.asarray(value) for value in arrays)
@@ -3864,7 +3864,11 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             self.partition_binding_id = binding
             self.partition_digest = _partition_digest(self.bound_partition)
         self.orphan_count = sum(
-            np.count_nonzero(np.asarray(item.status) != int(CouplingSearchStatus.FOUND))
+            int(
+                np.count_nonzero(
+                    np.asarray(item.status) != int(CouplingSearchStatus.FOUND)
+                )
+            )
             for item in receptors
         )
         local_conflicts = sum(
