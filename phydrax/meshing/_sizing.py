@@ -255,6 +255,58 @@ def triangle_circumradius_measures(
     return SizeMeasures(squared, relative, exact)
 
 
+def stored_size_allowance(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
+    """The rounding allowance tau of each stored triangle (cad_stored_size.hpp).
+
+    A triangle within eps of the stored one (every vertex moved by at most
+    eps) with R <= b has stored R^2 <= b^2 (1 + tau). eps = sqrt(3) 4u M, M
+    the largest stored coordinate magnitude of the triangle: per coordinate,
+    the affine chart evaluation o + u e1 + v e2 (gamma_3 of terms at most M)
+    and the rounding of the constructed chart point (u M). Sides change by
+    at most 2 eps and |e0 x e1| by at most d = 2 eps (l0 + l1) + 4 eps^2, so
+    R^2 changes by a factor at most exp(y), y = 4 eps sum 1/l_k + 4 d / |x|
+    (d / |x| <= 1/2), and exp(y) <= 1 + 2y for y <= 1: tau = 2y (1 + 16u),
+    16u covering its own rounding; 0 (no allowance) when y > 1 or the float
+    triangle is degenerate.
+    """
+    stored = np.asarray(points, dtype=np.float64)
+    corners = stored[np.asarray(triangles, dtype=np.int64)]
+    magnitude = np.max(np.abs(corners), axis=(1, 2))
+    eps = np.sqrt(3.0) * 4.0 * _UNIT_ROUNDOFF * magnitude
+    edges = corners[:, (2, 0, 1)] - corners[:, (1, 2, 0)]
+    lengths = np.sqrt(np.sum(edges * edges, axis=2))
+    norm = np.linalg.norm(np.cross(edges[:, 0], edges[:, 1]), axis=1)
+    d = 2.0 * eps * (lengths[:, 0] + lengths[:, 1]) + 4.0 * eps * eps
+    proper = (norm > 0.0) & np.all(lengths > 0.0, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        y = 4.0 * eps * np.sum(1.0 / lengths, axis=1) + 4.0 * d / norm
+    proved = proper & (d <= 0.5 * norm) & (y <= 1.0)
+    return np.where(proved, 2.0 * y * (1.0 + 16.0 * _UNIT_ROUNDOFF), 0.0)
+
+
+def stored_circumradius_measures(
+    points: np.ndarray, triangles: np.ndarray, /
+) -> SizeMeasures:
+    """Squared circumradii net of the rounding allowance: R^2 / (1 + tau).
+
+    Comparing these with b^2 decides R^2 <= b^2 (1 + tau)
+    (:func:`stored_size_allowance`) exactly; the division adds at most 2u
+    to the float bound.
+    """
+    plain = triangle_circumradius_measures(points, triangles)
+    tau = stored_size_allowance(points, triangles)
+    squared = np.asarray(plain.squared, dtype=np.float64) / (1.0 + tau)
+    relative = np.asarray(plain.relative_error, dtype=np.float64) + 2.0 * _UNIT_ROUNDOFF
+
+    def exact(row: int, /) -> Fraction | None:
+        value = plain.exact(row)
+        if value is None:
+            return None
+        return value / (1 + Fraction(float(tau[row])))
+
+    return SizeMeasures(squared, relative, exact)
+
+
 @dataclass(frozen=True, slots=True)
 class SizeComplianceDeclaration:
     """The size quantity one route judges and the kernel guarantee behind it.
@@ -406,9 +458,12 @@ CAD_CHART_SURFACE_SIZE = SizeComplianceDeclaration(
     "triangle circumradius R",
     _AT_MOST,
     Fraction(1, 2),
-    "chart kernel: metric circumradius <= sqrt(1/2) under I/h^2 "
-    "(native/meshcore/src/cad_refine2d.hpp:83, cad_geometry.hpp:199-209), "
-    "so R <= h/sqrt(2)",
+    "CAD face stage: every emitted triangle's stored R^2 <= (h^2 / 2)(1 + tau/2), "
+    "tau the rounding allowance (stored_size_allowance), decided exactly on the "
+    "stored coordinates, h the face's request size; refinement splits and the "
+    "guarded moves keep it and a remaining failure refuses the face "
+    "(native/meshcore/src/cad_stored_size.hpp, cad_refine2d.hpp stored_size, "
+    "cad_faces.cpp), so R <= h/sqrt(2) up to tau (stored_circumradius_measures)",
 )
 S3_BOUNDARY_EDGE_SIZE = SizeComplianceDeclaration(
     "providers/_native_volume.py:_volume_compliance",

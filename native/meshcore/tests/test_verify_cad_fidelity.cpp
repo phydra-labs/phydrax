@@ -1,11 +1,14 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cinttypes>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <limits>
+#include <map>
 #include <vector>
 
 #include "cad_geometry.hpp"
@@ -443,15 +446,15 @@ ArcFixture arc_fixture() {
   return f;
 }
 
-// F4 (demo_d): the neighbour row A C D contains (-0.3, 0.15), inside the
+// F4 (demo_d): the neighbor row A C D contains (-0.3, 0.15), inside the
 // arc's circle, so 2.125 - |(-0.3, 0.15) - (0, -1.875)| = 0.0779 from the
-// trimmed face; only the owner row has the chord (neighbour 2.4e-15
+// trimmed face; only the owner row has the chord (neighbor 2.4e-15
 // before). Fault caught: a lens charged to its owner row only.
-void lens_charged_to_neighbours() {
+void lens_charged_to_neighbors() {
   const ArcFixture f = arc_fixture();
   const Verdict verdict = verify(f.model, f.mesh, 0.5, 8);
   const double truth = 2.125 - std::hypot(-0.3, 0.15 + 1.875);
-  std::printf("F4 lens: status %d neighbour %.6e (status %d) owner %.6e true %.6e\n",
+  std::printf("F4 lens: status %d neighbor %.6e (status %d) owner %.6e true %.6e\n",
               verdict.status, verdict.upper[1], verdict.item_status[1], verdict.upper[0], truth);
   PHX_CHECK(verdict.findings.empty());
   PHX_CHECK(verdict.item_status[1] != PHX_MC_OK || verdict.upper[1] >= truth);
@@ -819,7 +822,7 @@ void carrier_inside_domain_leaf() {
       PHX_CHECK(result.status != PHX_MC_OK || result.upper >= truth);
       if (factor >= 2.0) PHX_CHECK(result.status == PHX_MC_OK && result.subdivisions <= 16);
       // S is quadratic in t with a constant Hessian here: the remainder about
-      // the box centre (half_extent) is sharp (2x truth with box extents).
+      // the box center (half_extent) is sharp (2x truth with box extents).
       if (kind > 0) PHX_CHECK(result.status == PHX_MC_OK && result.upper <= 1.0625 * truth);
     }
   }
@@ -1004,6 +1007,1272 @@ void lens_index_overflow() {
   std::printf("B lens index (index_overflow): charge %.2f\n", charge);
   PHX_CHECK(charge == 0.5);
 }
+
+// Pole chart (verify_cad_pole_chart.hpp) on a sphere of radius 2 about
+// (0.5, -0.25, 1): fan rows (one pole corner) and band rows (none) at both
+// poles, against an independent reference: S(x, y) = o + r (sin rho / rho
+// (x, y) + sigma cos rho a) sampled densely over the pole-chart triangle
+// (the same-parameter deviation), and the exact distance | |p - o| - r | of
+// densely sampled mesh points. Fault caught: a jet sign, a series
+// coefficient or a missing Taylor term (the bound would fall below the
+// sampled deviation or the jets miss S); a displaced pole or band vertex
+// must refuse at the tolerance; a non-sphere face is refused.
+void pole_chart_rows() {
+  const double r = 2.0, center[3] = {0.5, -0.25, 1.0}, top = M_PI / 2;
+  Model m;
+  const int32_t sphere =
+      m.add_template("sphere", {center[0], center[1], center[2], 1, 0, 0, 0, 1, 0, 0, 0, 1, r});
+  m.surface(sphere);
+  m.surface(m.add_template("plane", {0, 0, 0, 1, 0, 0, 0, 1, 0}));
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const auto reference = [&](double x, double y, int sigma) {
+    const double rho = std::hypot(x, y), g = rho == 0.0 ? 1.0 : std::sin(rho) / rho;
+    return std::array<double, 3>{center[0] + r * g * x, center[1] + r * g * y,
+                                 center[2] + sigma * r * std::cos(rho)};
+  };
+  // Jets enclose the source map at the matching chart point.
+  for (int sigma : {1, -1})
+    for (int k = 0; k < 16; ++k) {
+      const double uv[2] = {0.4 * k, sigma * (top - 0.05 * (k + 1))};
+      double image[4], xyz[3], lo[12], hi[12];
+      PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, uv, image) == PHX_MC_OK);
+      const double box_lower[2] = {image[0], image[2]}, box_upper[2] = {image[1], image[3]};
+      PHX_CHECK(fidelity_pole_jets(geometry, 0, workspace, sigma, box_lower, box_upper, lo, hi) ==
+                PHX_MC_OK);
+      PHX_CHECK(geometry.jets(sphere, uv, 0, xyz, point_workspace));
+      for (int axis = 0; axis < 3; ++axis)
+        PHX_CHECK(lo[axis] - 1e-14 <= xyz[axis] && xyz[axis] <= hi[axis] + 1e-14);
+      // Second differences of the reference lie in the Hessian enclosure of
+      // a box holding the stencil (up to the O(step^2) stencil error).
+      const double x = 0.5 * (image[0] + image[1]), y = 0.5 * (image[2] + image[3]), e = 1e-3;
+      const double wide_lower[2] = {x - e, y - e}, wide_upper[2] = {x + e, y + e};
+      PHX_CHECK(fidelity_pole_jets(geometry, 0, workspace, sigma, wide_lower, wide_upper, lo,
+                                   hi) == PHX_MC_OK);
+      for (int axis = 0; axis < 3; ++axis) {
+        const auto at = [&](double dx, double dy) {
+          return reference(x + dx, y + dy, sigma)[static_cast<std::size_t>(axis)];
+        };
+        const double sxx = (at(e, 0) - 2 * at(0, 0) + at(-e, 0)) / (e * e);
+        const double syy = (at(0, e) - 2 * at(0, 0) + at(0, -e)) / (e * e);
+        const double sxy = (at(e, e) - at(e, -e) - at(-e, e) + at(-e, -e)) / (4 * e * e);
+        PHX_CHECK(lo[3 + axis] - 1e-5 <= sxx && sxx <= hi[3 + axis] + 1e-5);
+        PHX_CHECK(lo[6 + axis] - 1e-5 <= sxy && sxy <= hi[6 + axis] + 1e-5);
+        PHX_CHECK(lo[9 + axis] - 1e-5 <= syy && syy <= hi[9 + axis] + 1e-5);
+      }
+    }
+  struct Row { const char* name; std::array<double, 6> uv; int mask; };
+  // Unit-sphere colatitudes 0.2 (ring 1) and 0.4 (ring 2), ring 1 every pi/4.
+  const double r1 = top - 0.2, r2 = top - 0.4;
+  const Row rows[] = {{"fan", {0.3, top, 0.0, r1, M_PI / 4, r1}, 1},
+                      {"band", {0.0, r1, M_PI / 8, r2, M_PI / 4, r1}, 0},
+                      {"band outer", {M_PI / 4, r1, M_PI / 8, r2, 3 * M_PI / 8, r2}, 0}};
+  const double tolerance = 0.01 * r * r;
+  for (int sigma : {1, -1})
+    for (const Row& row : rows) {
+      double uv[6], points[9], xy[6];
+      for (int j = 0; j < 3; ++j) {
+        uv[2 * j] = row.uv[static_cast<std::size_t>(2 * j)];
+        uv[2 * j + 1] = sigma * row.uv[static_cast<std::size_t>(2 * j + 1)];
+        PHX_CHECK(geometry.jets(sphere, uv + 2 * j, 0, points + 3 * j, point_workspace));
+        double image[4];
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, uv + 2 * j, image) ==
+                  PHX_MC_OK);
+        const bool at_pole = (row.mask >> j) & 1;
+        xy[2 * j] = at_pole ? 0.0 : image[0] + 0.5 * (image[1] - image[0]);
+        xy[2 * j + 1] = at_pole ? 0.0 : image[2] + 0.5 * (image[3] - image[2]);
+      }
+      double sampled = 0.0, distance = 0.0;
+      const int n = 96;
+      for (int a = 0; a <= n; ++a)
+        for (int b = 0; a + b <= n; ++b) {
+          const double w[3] = {static_cast<double>(a) / n, static_cast<double>(b) / n,
+                               static_cast<double>(n - a - b) / n};
+          const double x = w[0] * xy[0] + w[1] * xy[2] + w[2] * xy[4];
+          const double y = w[0] * xy[1] + w[1] * xy[3] + w[2] * xy[5];
+          const auto s = reference(x, y, sigma);
+          double deviation = 0.0, radius = 0.0;
+          for (int axis = 0; axis < 3; ++axis) {
+            const double p = w[0] * points[axis] + w[1] * points[3 + axis] + w[2] * points[6 + axis];
+            deviation += (s[static_cast<std::size_t>(axis)] - p) * (s[static_cast<std::size_t>(axis)] - p);
+            radius += (p - center[axis]) * (p - center[axis]);
+          }
+          sampled = std::max(sampled, std::sqrt(deviation));
+          distance = std::max(distance, std::fabs(std::sqrt(radius) - r));
+        }
+      const auto pole = fidelity_pole_triangle(geometry, 0, points, uv, sigma, row.mask,
+                                               tolerance, 12, workspace);
+      const auto chart = fidelity_triangle(geometry, 0, points, uv, tolerance, 12, workspace);
+      std::printf("P pole chart (%s, sigma %d): status %d reason %d splits %d upper %.6e sampled "
+                  "%.6e distance %.6e uv-chart status %d upper %.6e\n",
+                  row.name, sigma, pole.status, pole.reason, pole.subdivisions, pole.upper,
+                  sampled, distance, chart.status, chart.upper);
+      PHX_CHECK(pole.status == PHX_MC_OK && pole.upper <= tolerance && pole.upper >= sampled &&
+                pole.upper >= distance && sampled >= distance);
+      // A displaced vertex (pole for the fan row, ring otherwise) by 0.05 r
+      // along the normal refuses at the tolerance.
+      const int moved = row.mask != 0 ? 0 : 1;
+      double shifted[9];
+      std::copy(points, points + 9, shifted);
+      for (int axis = 0; axis < 3; ++axis)
+        shifted[3 * moved + axis] += 0.05 * (points[3 * moved + axis] - center[axis]);
+      const auto refused = fidelity_pole_triangle(geometry, 0, shifted, uv, sigma, row.mask,
+                                                  tolerance, 12, workspace);
+      PHX_CHECK(refused.status == PHX_MC_UNRESOLVED);
+    }
+  // Families without a certified pole chart are refused.
+  const double flat_uv[6] = {0, 0, 1, 0, 0, 1}, flat[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const auto plane = fidelity_pole_triangle(geometry, 1, flat, flat_uv, 1, 0, 1.0, 8, workspace);
+  PHX_CHECK(plane.status == PHX_MC_UNRESOLVED && plane.reason == PHX_MC_FIDELITY_INTERVAL_REFUSAL);
+  // A corner past the pole latitude has no colatitude.
+  const double past[6] = {0, std::nextafter(top, 4.0), 0, 1, 1, 1};
+  double past_points[9] = {0, 0, 3, 2.5, -0.25, 1, 0.5, 1.75, 1};
+  const auto beyond = fidelity_pole_triangle(geometry, 0, past_points, past, 1, 0, 1.0, 8,
+                                             workspace);
+  PHX_CHECK(beyond.status == PHX_MC_UNRESOLVED);
+}
+
+// Seam lens (MAC bc1b665 (i)) of a pole-region boundary edge on the unit
+// sphere: the lens between the uv-straight edge's pole-chart image and the
+// pole-chart-straight edge, sampled densely in (t, s), against the cap: cap
+// >= sup |S(H(t, s)) - L(t)| and >= the exact distance of every sampled lens
+// point to the mesh segment. Fault caught: a seam charged from the pole side
+// only (the pole row's straight-edge deviation B, the "same curve" a broken
+// association would assume) misses lens points (B < their distance).
+void seam_lens_charge() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(sphere);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  struct Edge { double ua, ra, ub, rb; };
+  for (const Edge edge : {Edge{0.0, 0.5, 1.2, 0.5}, Edge{0.0, 0.3, 1.5, 0.6}, Edge{0.25, 0.6, 1.15, 0.3}})
+    for (int sigma : {1, -1}) {
+      const double uv_a[2] = {edge.ua, sigma * (M_PI / 2 - edge.ra)};
+      const double uv_b[2] = {edge.ub, sigma * (M_PI / 2 - edge.rb)};
+      double image[4], c_a[2], c_b[2], x_a[3], x_b[3];
+      for (int end = 0; end < 2; ++end) {
+        const double* point = end == 0 ? uv_a : uv_b;
+        double* c = end == 0 ? c_a : c_b;
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, sigma, point, image) == PHX_MC_OK);
+        c[0] = image[0] + 0.5 * (image[1] - image[0]);
+        c[1] = image[2] + 0.5 * (image[3] - image[2]);
+        PHX_CHECK(geometry.jets(sphere, point, 0, end == 0 ? x_a : x_b, point_workspace));
+      }
+      double out[3];
+      PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, sigma, uv_a, uv_b, c_a, c_b, x_a, x_b,
+                                   out) == PHX_MC_OK);
+      double lens = 0.0, distance = 0.0;
+      const int n = 200;
+      double d[3], dd = 0.0;
+      for (int axis = 0; axis < 3; ++axis) d[axis] = x_b[axis] - x_a[axis], dd += d[axis] * d[axis];
+      for (int i = 0; i <= n; ++i) {
+        const double t = static_cast<double>(i) / n;
+        const double u = edge.ua + t * (edge.ub - edge.ua), rho = edge.ra + t * (edge.rb - edge.ra);
+        const double px = rho * std::cos(u), py = rho * std::sin(u);
+        const double fx = c_a[0] + t * (c_b[0] - c_a[0]), fy = c_a[1] + t * (c_b[1] - c_a[1]);
+        for (int k = 0; k <= n; ++k) {
+          const double s = static_cast<double>(k) / n;
+          const double x = (1 - s) * px + s * fx, y = (1 - s) * py + s * fy;
+          const double q = std::hypot(x, y), g = q == 0.0 ? 1.0 : std::sin(q) / q;
+          const double p[3] = {g * x, g * y, sigma * std::cos(q)};
+          double along = 0.0, to_line = 0.0, to_segment = 0.0;
+          for (int axis = 0; axis < 3; ++axis) along += (p[axis] - x_a[axis]) * d[axis];
+          along = std::clamp(along / dd, 0.0, 1.0);
+          for (int axis = 0; axis < 3; ++axis) {
+            const double l = x_a[axis] + t * d[axis], e = x_a[axis] + along * d[axis];
+            to_line += (p[axis] - l) * (p[axis] - l);
+            to_segment += (p[axis] - e) * (p[axis] - e);
+          }
+          lens = std::max(lens, std::sqrt(to_line));
+          distance = std::max(distance, std::sqrt(to_segment));
+        }
+      }
+      std::printf("P seam lens (%.2f %.2f -> %.2f %.2f, sigma %d): cap %.6e uv edge %.6e pole edge "
+                  "%.6e sampled %.6e distance %.6e\n",
+                  edge.ua, edge.ra, edge.ub, edge.rb, sigma, out[0], out[1], out[2], lens, distance);
+      PHX_CHECK(out[0] >= lens && out[0] >= distance && out[1] <= out[0] && out[2] < distance);
+    }
+}
+
+// A pole-chart row at colatitudes 1.9, 1.9, 1.5 (u 0.6, 1.0, 0.8) on the unit
+// sphere: its square box reaches q = x^2 + y^2 > 4 (beyond the series
+// domain) while the triangle stays in the disk q < 3.62. With the disk bound
+// it certifies, its bound covering the dense pole-chart deviation and the
+// exact distance; with the box bound alone (cabb5b0d4) it refused.
+void pole_row_disk_bound() {
+  Model m;
+  const int32_t sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(sphere);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  m.bind_bounds(workspace);
+  EvaluationWorkspace point_workspace;
+  const double top = 0x1.921fb54442d18p+0;
+  const double uv[6] = {0.6, top - 1.9, 1.0, top - 1.9, 0.8, top - 1.5};
+  double points[9], xy[6];
+  for (int j = 0; j < 3; ++j) {
+    PHX_CHECK(geometry.jets(sphere, uv + 2 * j, 0, points + 3 * j, point_workspace));
+    double image[4];
+    PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, 1, uv + 2 * j, image) == PHX_MC_OK);
+    xy[2 * j] = image[0] + 0.5 * (image[1] - image[0]);
+    xy[2 * j + 1] = image[2] + 0.5 * (image[3] - image[2]);
+  }
+  const double box_x = std::max({xy[0], xy[2], xy[4]}), box_y = std::max({xy[1], xy[3], xy[5]});
+  PHX_CHECK(box_x * box_x + box_y * box_y > 4.0);
+  double sampled = 0.0, distance = 0.0;
+  const int n = 80;
+  for (int a = 0; a <= n; ++a)
+    for (int b = 0; a + b <= n; ++b) {
+      const double w[3] = {static_cast<double>(a) / n, static_cast<double>(b) / n,
+                           static_cast<double>(n - a - b) / n};
+      const double x = w[0] * xy[0] + w[1] * xy[2] + w[2] * xy[4];
+      const double y = w[0] * xy[1] + w[1] * xy[3] + w[2] * xy[5];
+      const double q = std::hypot(x, y), g = std::sin(q) / q;
+      const double s[3] = {g * x, g * y, std::cos(q)};
+      double deviation = 0.0, radius = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double p = w[0] * points[k] + w[1] * points[3 + k] + w[2] * points[6 + k];
+        deviation += (s[k] - p) * (s[k] - p);
+        radius += p * p;
+      }
+      sampled = std::max(sampled, std::sqrt(deviation));
+      distance = std::max(distance, std::fabs(std::sqrt(radius) - 1.0));
+    }
+  const auto result = fidelity_pole_triangle(geometry, 0, points, uv, 1, 0, 1e3, 10, workspace);
+  std::printf("P disk bound row: status %d upper %.6e sampled %.6e distance %.6e\n", result.status,
+              result.upper, sampled, distance);
+  PHX_CHECK(result.status == PHX_MC_OK && result.upper >= sampled && result.upper >= distance);
+}
+
+// A chart grid of the unit sphere's upper hemisphere over u in [0, span],
+// v in [0, pi/2] (pole line collapsed, slivers there), with chords on the
+// equator, the two meridians and the pole line.
+struct SphereGrid {
+  Model model;
+  Mesh mesh;
+  int32_t sphere = -1;
+};
+
+// `middle` (two rows only): the latitude of the middle ring. `high` < pi/2:
+// the top side is a trim chord at that latitude (no north pole).
+SphereGrid sphere_grid(double span, int columns, int rows, double low = 0.0,
+                       double middle = std::numeric_limits<double>::quiet_NaN(),
+                       double high = 0x1.921fb54442d18p+0) {
+  SphereGrid g;
+  Model& m = g.model;
+  const double top = 0x1.921fb54442d18p+0;
+  g.sphere = m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+  m.surface(g.sphere);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  // low == -top: the bottom side is the south pole line (a second pole use).
+  const bool south = low == -top, north = high == top;
+  m.corner(0, 0, 1);
+  m.corner(0, 0, -1);
+  for (int k = 0; k < 4; ++k) m.curve(space, 0, 0);
+  const double ends[4][2] = {{0, low}, {span, low}, {span, high}, {0, high}};
+  for (int k = 0; k < 4; ++k) {
+    const double* p = ends[k];
+    const double* q = ends[(k + 1) % 4];
+    const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
+    const bool pole_side = (k == 2 && north) || (k == 0 && south);
+    m.use(pole_side ? 1 : 0, k == 2 ? (north ? 0 : 3) : k == 0 && south ? 1 : (k < 2 ? k : 2),
+          0.0, 1.0, pcurve);
+  }
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  const bool full = span >= 2.0 * 0x1.921fb54442d18p+1;
+  const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
+  const auto v = [&](int j) {
+    if (rows == 2 && j == 1 && !std::isnan(middle)) return middle;
+    return j == rows ? high : j == 0 ? low : low + (high - low) * j / rows;
+  };
+  const auto id = [&](int i, int j) -> int64_t {
+    if (north && j == rows) return 0;
+    if (south && j == 0) return 1;
+    if (full && i == columns) i = 0;
+    return 1 + static_cast<int64_t>(j) * (columns + 1) + i;
+  };
+  Mesh& mesh = g.mesh;
+  mesh.points.assign(3 * static_cast<std::size_t>(1 + (rows + 1) * (columns + 1)), 0.0);
+  for (int j = 0; j <= rows; ++j)
+    for (int i = 0; i <= columns; ++i) {
+      const double point[2] = {u(i), v(j)};
+      double xyz[3];
+      PHX_CHECK(geometry.jets(g.sphere, point, 0, xyz, point_workspace));
+      std::copy(xyz, xyz + 3, mesh.points.begin() + 3 * id(i, j));
+    }
+  // Boundary side of a grid edge: 0 equator, 1 meridian at span, 2 pole, 3 meridian at 0.
+  const auto side = [&](int i0, int j0, int i1, int j1) {
+    if (j0 == 0 && j1 == 0) return 0;
+    if (i0 == columns && i1 == columns) return 1;
+    if (j0 == rows && j1 == rows) return 2;
+    if (i0 == 0 && i1 == 0) return 3;
+    return -1;
+  };
+  const auto parameter = [&](int s, int i, int j) {
+    return s == 0 ? static_cast<double>(i) / columns
+         : s == 1 ? static_cast<double>(j) / rows
+         : s == 2 ? static_cast<double>(columns - i) / columns
+                  : static_cast<double>(rows - j) / rows;
+  };
+  for (int j = 0; j < rows; ++j)
+    for (int i = 0; i < columns; ++i) {
+      const int cell[4][2] = {{i, j}, {i + 1, j}, {i + 1, j + 1}, {i, j + 1}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        int64_t ids[3];
+        for (int k = 0; k < 3; ++k) {
+          const int* c = cell[local[static_cast<std::size_t>(k)]];
+          ids[k] = id(c[0], c[1]);
+          mesh.triangles.push_back(ids[k]);
+          mesh.uv.insert(mesh.uv.end(), {u(c[0]), v(c[1])});
+        }
+        for (int k = 0; k < 3; ++k) {
+          const int* a = cell[local[static_cast<std::size_t>(k)]];
+          const int* b = cell[local[static_cast<std::size_t>((k + 1) % 3)]];
+          const int s = side(a[0], a[1], b[0], b[1]);
+          if (s < 0) {
+            mesh.edge_chord.push_back(-1);
+            continue;
+          }
+          mesh.edge_chord.push_back(static_cast<int64_t>(mesh.chord_use.size()));
+          mesh.chord_use.push_back(s);
+          mesh.chord_loop.push_back(0);
+          mesh.chord_uv.insert(mesh.chord_uv.end(), {u(a[0]), v(a[1]), u(b[0]), v(b[1])});
+          mesh.chord_range.insert(mesh.chord_range.end(),
+                                  {parameter(s, a[0], a[1]), parameter(s, b[0], b[1])});
+        }
+        mesh.face_rows.push_back(0);
+        const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+        mesh.chart_to_mesh.push_back(
+            sliver ? -1 : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+        if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids, ids + 3);
+      }
+    }
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  return g;
+}
+
+// MAC 69172b0 P2: a sphere face spanning less than a full turn of u (octant,
+// half turn, 6.2 rad) keeps the uv chart and certifies as before. Fault
+// caught: an angular charge r rho (2 pi - span) refusing every region row.
+// P3: on a full hemisphere, every boundary edge of the pole region carries
+// the seam lens cap, and both adjacent rows' bounds are at least it. Fault
+// caught: either charge call dropped (or overwritten by a later region).
+void full_turn_charges(int columns, int rows_count, double tolerance, double low = 0.0);
+void two_pole_regions();
+
+void pole_region_turns_and_charges() {
+  for (const double span : {0x1.921fb54442d18p+0, 0x1.921fb54442d18p+1, 6.2}) {
+    SphereGrid g = sphere_grid(span, 8, 8);
+    const Verdict verdict = verify(g.model, g.mesh, 0.1, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P partial turn %.4f: status %d max %.6e\n", span, verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  }
+  full_turn_charges(8, 8, 0.1);
+  // Coarse in u: the uv edge sag A exceeds the pole row's own bound, so the
+  // row charge decides (mutation check: dropping it fails here).
+  full_turn_charges(3, 8, 1.0);
+  full_turn_charges(4, 3, 1.0);
+  // Interface ring at latitude 0.25 (rho 1.32, pole-chart sag factor 1.52 vs
+  // the uv chart's 1.03): the neighbor charge decides.
+  full_turn_charges(4, 3, 1.0, -0.409);
+  // MAC 69172b0's witness: the octant, 4 x 4 grid, tol 7.711e-2 certified
+  // with max 7.468e-2 before the angular charge refused 24 of its 32 rows.
+  {
+    SphereGrid octant = sphere_grid(0x1.921fb54442d18p+0, 4, 4);
+    const Verdict verdict = verify(octant.model, octant.mesh, 7.711e-2, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P octant witness: status %d max %.6e\n", verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && worst <= 7.711e-2);
+  }
+  two_pole_regions();
+}
+
+// Every boundary edge of the pole region of a full-turn hemisphere grid:
+// both adjacent rows' bounds are at least the edge's seam lens cap.
+void full_turn_charges(int columns, int rows_count, double tolerance, double low) {
+  SphereGrid g = sphere_grid(2.0 * 0x1.921fb54442d18p+1, columns, rows_count, low);
+  const Verdict verdict = verify(g.model, g.mesh, tolerance, 8);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  g.model.bind_bounds(workspace);
+  const Mesh& mesh = g.mesh;
+  const auto rows = mesh.face_rows.size();
+  const double top = 0x1.921fb54442d18p+0, cap_latitude = 0x1.3f004dc9db074p-1;
+  std::vector<int> region(rows, 0);
+  for (std::size_t r = 0; r < rows; ++r)
+    for (int k = 0; k < 3; ++k) {
+      const double lat = mesh.uv[6 * r + 2 * static_cast<std::size_t>(k) + 1];
+      region[r] |= lat == top || lat >= cap_latitude;
+    }
+  const auto same = [&](std::size_t r, int a, std::size_t s, int b) {
+    return mesh.uv[6 * r + 2 * static_cast<std::size_t>(a)] == mesh.uv[6 * s + 2 * static_cast<std::size_t>(b)] &&
+           mesh.uv[6 * r + 2 * static_cast<std::size_t>(a) + 1] ==
+               mesh.uv[6 * s + 2 * static_cast<std::size_t>(b) + 1];
+  };
+  int interface_edges = 0;
+  double row_ratio = std::numeric_limits<double>::infinity(), neighbor_ratio = row_ratio;
+  double largest_cap = 0.0;
+  std::size_t cap_row = 0, cap_neighbor = 0;
+  for (std::size_t r = 0; r < rows; ++r) {
+    if (!region[r]) continue;
+    for (int k = 0; k < 3; ++k) {
+      const int a = k, b = (k + 1) % 3;
+      std::size_t neighbor = rows;
+      bool inside = false;
+      for (std::size_t s = 0; s < rows; ++s) {
+        if (s == r) continue;
+        for (int l = 0; l < 3; ++l)
+          if (same(r, a, s, (l + 1) % 3) && same(r, b, s, l)) {
+            if (region[s]) inside = true;
+            else neighbor = s;
+          }
+      }
+      if (inside || neighbor == rows) continue;
+      double uv_a[2], uv_b[2], c[2][2], out[3];
+      for (int axis = 0; axis < 2; ++axis) {
+        uv_a[axis] = mesh.uv[6 * r + 2 * static_cast<std::size_t>(a) + static_cast<std::size_t>(axis)];
+        uv_b[axis] = mesh.uv[6 * r + 2 * static_cast<std::size_t>(b) + static_cast<std::size_t>(axis)];
+      }
+      for (int end = 0; end < 2; ++end) {
+        double image[4];
+        PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, 1, end == 0 ? uv_a : uv_b, image) ==
+                  PHX_MC_OK);
+        c[end][0] = image[0] + 0.5 * (image[1] - image[0]);
+        c[end][1] = image[2] + 0.5 * (image[3] - image[2]);
+      }
+      const double* x_a = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(a)];
+      const double* x_b = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(b)];
+      PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, 1, uv_a, uv_b, c[0], c[1], x_a, x_b, out) ==
+                PHX_MC_OK);
+      PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[neighbor] >= out[0]);
+      row_ratio = std::min(row_ratio, verdict.upper[r] / out[0]);
+      neighbor_ratio = std::min(neighbor_ratio, verdict.upper[neighbor] / out[0]);
+      ++interface_edges;
+      if (out[0] > largest_cap) largest_cap = out[0], cap_row = r, cap_neighbor = neighbor;
+    }
+  }
+  std::printf("P full turn %dx%d: status %d interface edges %d min upper/cap row %.6f "
+              "neighbor %.6f\n",
+              columns, rows_count, verdict.status, interface_edges, row_ratio, neighbor_ratio);
+  PHX_CHECK(interface_edges > 0);
+  // Just below the largest cap both adjacent rows must refuse: the cap is
+  // charged to each, whatever their own bounds (the uv neighbor's own bound
+  // can be well below a cap set by the pole-chart edge).
+  const Verdict tight = verify(g.model, g.mesh, 0.999 * largest_cap, 12);
+  std::printf("P full turn %dx%d at 0.999 cap: row status %d neighbor status %d\n", columns,
+              rows_count, tight.item_status[cap_row], tight.item_status[cap_neighbor]);
+  PHX_CHECK(tight.item_status[cap_row] != PHX_MC_OK &&
+            tight.item_status[cap_neighbor] != PHX_MC_OK);
+}
+
+// Both poles of one full sphere face, two latitude bands meeting at latitude
+// -0.2: the north and the south region meet along that ring, so each
+// region's seam charge falls on the other region's rows; the north caps
+// (pole-chart edge at colatitude 1.77) exceed the south ones (1.37). Every
+// row's bound is at least every adjacent cap of both regions, and just below
+// the largest cap both rows of its edge refuse. Fault caught (MAC 69172b0
+// P3): the south region, bounded after the north one charged its rows,
+// overwrites the larger north charge.
+void two_pole_regions() {
+  const double top = 0x1.921fb54442d18p+0, cap_latitude = 0x1.3f004dc9db074p-1;
+  SphereGrid g = sphere_grid(2.0 * 0x1.921fb54442d18p+1, 16, 2, -top, -0.35);
+  const Verdict verdict = verify(g.model, g.mesh, 1.0, 8);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  IntervalEvaluationWorkspace workspace;
+  g.model.bind_bounds(workspace);
+  const Mesh& mesh = g.mesh;
+  const auto rows = mesh.face_rows.size();
+  const auto at = [&](std::size_t r, int k, int axis) {
+    return mesh.uv[6 * r + 2 * static_cast<std::size_t>(k) + static_cast<std::size_t>(axis)];
+  };
+  std::vector<int> region(rows, 0);
+  for (std::size_t r = 0; r < rows; ++r)
+    for (int k = 0; k < 3; ++k) {
+      const double lat = at(r, k, 1);
+      if (lat == top || lat >= cap_latitude) region[r] = 1;
+      if (lat == -top || lat <= -cap_latitude) region[r] = -1;
+    }
+  double largest = 0.0;
+  std::size_t worst_row = 0, worst_other = 0;
+  int shared = 0;
+  double margin = std::numeric_limits<double>::infinity();
+  for (std::size_t r = 0; r < rows; ++r) {
+    if (region[r] == 0) continue;
+    for (int k = 0; k < 3; ++k) {
+      const int a = k, b = (k + 1) % 3;
+      for (std::size_t s = 0; s < rows; ++s) {
+        if (s == r || region[s] == region[r]) continue;
+        bool joined = false;
+        for (int l = 0; l < 3; ++l)
+          joined |= at(r, a, 0) == at(s, (l + 1) % 3, 0) && at(r, a, 1) == at(s, (l + 1) % 3, 1) &&
+                    at(r, b, 0) == at(s, l, 0) && at(r, b, 1) == at(s, l, 1);
+        if (!joined) continue;
+        double uv_a[2] = {at(r, a, 0), at(r, a, 1)}, uv_b[2] = {at(r, b, 0), at(r, b, 1)};
+        double c[2][2], out[3];
+        for (int end = 0; end < 2; ++end) {
+          const double* point = end == 0 ? uv_a : uv_b;
+          if (point[1] == region[r] * top) {
+            c[end][0] = c[end][1] = 0.0;
+            continue;
+          }
+          double image[4];
+          PHX_CHECK(fidelity_pole_image(geometry, 0, workspace, region[r], point, image) ==
+                    PHX_MC_OK);
+          c[end][0] = image[0] + 0.5 * (image[1] - image[0]);
+          c[end][1] = image[2] + 0.5 * (image[3] - image[2]);
+        }
+        const double* x_a = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(a)];
+        const double* x_b = mesh.points.data() + 3 * mesh.triangles[3 * r + static_cast<std::size_t>(b)];
+        PHX_CHECK(fidelity_seam_lens(geometry, 0, workspace, region[r], uv_a, uv_b, c[0], c[1], x_a,
+                                     x_b, out) == PHX_MC_OK);
+        PHX_CHECK(verdict.upper[r] >= out[0] && verdict.upper[s] >= out[0]);
+        if (region[s] != 0) ++shared;
+        if (region[s] != 0 && out[0] > largest) largest = out[0], worst_row = r, worst_other = s;
+        if (region[s] != 0) margin = std::min(margin, verdict.upper[s] / out[0]);
+      }
+    }
+  }
+  std::printf("P two pole regions: status %d edges between regions %d largest cap %.6e min "
+              "other-region upper/cap %.4f\n",
+              verdict.status, shared, largest, margin);
+  PHX_CHECK(shared > 0);
+  const Verdict tight = verify(g.model, g.mesh, 0.999 * largest, 12);
+  std::printf("P two pole regions at 0.999 cap: statuses %d %d\n", tight.item_status[worst_row],
+              tight.item_status[worst_other]);
+  PHX_CHECK(tight.item_status[worst_row] != PHX_MC_OK &&
+            tight.item_status[worst_other] != PHX_MC_OK);
+}
+
+// Trimmed pole regions (item B). (a) A cap above latitude 1.05 (60 deg): the
+// pole is kept and the trim chord at 1.05 (an outer ring) lies in the
+// region's strip; the region takes it (seam lens on the ring chords). (b) A
+// band between latitudes 0.3 and 1.35 (77 deg): the pole is trimmed away, so
+// the face keeps the uv chart. Both certify at 0.05; lifting the pole (a)
+// or a top-trim vertex (b) by 10% refuses its rows. Fault caught: a trimmed
+// cap left in uv (its fan bounds 4.15e-2 there, 1.72e-2 in the pole chart),
+// or a trimmed region accepting a displaced vertex.
+void trimmed_pole_regions() {
+  const double span = 2.0 * 0x1.921fb54442d18p+1;
+  struct Case { const char* name; double low, high; int64_t moved; };
+  for (const Case c : {Case{"cap above 60", 1.05, 0x1.921fb54442d18p+0, 0},
+                       Case{"band below 77", 0.3, 1.35, 1 + 4 * 13 + 5}}) {
+    SphereGrid g = sphere_grid(span, 12, 4, c.low, std::numeric_limits<double>::quiet_NaN(),
+                               c.high);
+    const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+    double worst = 0.0;
+    for (double x : verdict.upper) worst = std::max(worst, x);
+    std::printf("P trimmed %s: status %d max %.6e\n", c.name, verdict.status, worst);
+    PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty());
+    if (c.moved == 0) PHX_CHECK(worst < 0.03);  // 4.15e-2 with the cap left in uv
+    Mesh lifted = g.mesh;
+    for (int axis = 0; axis < 3; ++axis)
+      lifted.points[3 * static_cast<std::size_t>(c.moved) + static_cast<std::size_t>(axis)] *= 1.1;
+    const Verdict moved = verify(g.model, lifted, 0.05, 8);
+    for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r)
+      for (int k = 0; k < 3; ++k)
+        if (g.mesh.triangles[3 * r + static_cast<std::size_t>(k)] == c.moved)
+          PHX_CHECK(moved.item_status[r] != PHX_MC_OK);
+  }
+}
+
+// A planar disk charted by the revolution of the radial line (0,0,0) + v
+// (1,0,0) about z, v in [0, 1], u in [0, 2 pi]: the chart is singular at the
+// center v = 0 (a pole chord there). The center's fan rows take the
+// disk-center chart (x, y) = v (cos u, sin u), where S is affine: their own
+// deviation is rounding only, and they carry the seam lens of their ring
+// edges. Certifies at 0.05 with every fan row's bound below 1e-2 (4.5e-2 in
+// the uv chart); the center vertex lifted by 0.1 refuses every fan row. Fault
+// caught: a disk center left in the uv chart, or a center frame accepting a
+// displaced vertex.
+void disk_center_rows() {
+  Model m;
+  const int32_t radial = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  const int32_t disk = m.add(PHX_MC_CAD_NODE_REVOLUTION, {radial}, {0, 0, 0, 0, 0, 1});
+  m.surface(disk);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 0);
+  for (int k = 0; k < 3; ++k) m.curve(space, 0, 0);
+  const double span = 2.0 * 0x1.921fb54442d18p+1;
+  const int columns = 16, rows = 3;
+  // Loop: center (pole, v = 0), meridian at span, rim v = 1, meridian at 0.
+  const double ends[4][2] = {{0, 0}, {span, 0}, {span, 1}, {0, 1}};
+  for (int k = 0; k < 4; ++k) {
+    const double* p = ends[k];
+    const double* q = ends[(k + 1) % 4];
+    const int32_t pcurve = m.add_template("line2", {p[0], p[1], q[0] - p[0], q[1] - p[1]});
+    m.use(k == 0 ? 1 : 0, k == 0 ? 0 : k - 1, 0.0, 1.0, pcurve);
+  }
+  m.close_loop(0);
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace point_workspace;
+  const auto u = [&](int i) { return i == columns ? span : span * i / columns; };
+  const auto v = [&](int j) { return static_cast<double>(j) / rows; };
+  const auto id = [&](int i, int j) -> int64_t {
+    if (j == 0) return 0;
+    if (i == columns) i = 0;
+    return 1 + static_cast<int64_t>(j - 1) * columns + i;
+  };
+  Mesh mesh;
+  mesh.points.assign(3 * static_cast<std::size_t>(1 + rows * columns), 0.0);
+  for (int j = 0; j <= rows; ++j)
+    for (int i = 0; i <= columns; ++i) {
+      const double point[2] = {u(i), v(j)};
+      double xyz[3];
+      PHX_CHECK(geometry.jets(disk, point, 0, xyz, point_workspace));
+      std::copy(xyz, xyz + 3, mesh.points.begin() + 3 * id(i, j));
+    }
+  // Boundary side: 0 center, 1 meridian at span, 2 rim, 3 meridian at 0.
+  const auto side = [&](int i0, int j0, int i1, int j1) {
+    if (j0 == 0 && j1 == 0) return 0;
+    if (i0 == columns && i1 == columns) return 1;
+    if (j0 == rows && j1 == rows) return 2;
+    if (i0 == 0 && i1 == 0) return 3;
+    return -1;
+  };
+  const auto parameter = [&](int s, int i, int j) {
+    return s == 0 ? static_cast<double>(i) / columns
+         : s == 1 ? static_cast<double>(j) / rows
+         : s == 2 ? static_cast<double>(columns - i) / columns
+                  : static_cast<double>(rows - j) / rows;
+  };
+  for (int j = 0; j < rows; ++j)
+    for (int i = 0; i < columns; ++i) {
+      const int cell[4][2] = {{i, j}, {i + 1, j}, {i + 1, j + 1}, {i, j + 1}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        int64_t ids[3];
+        for (int k = 0; k < 3; ++k) {
+          const int* c = cell[local[static_cast<std::size_t>(k)]];
+          ids[k] = id(c[0], c[1]);
+          mesh.triangles.push_back(ids[k]);
+          mesh.uv.insert(mesh.uv.end(), {u(c[0]), v(c[1])});
+        }
+        for (int k = 0; k < 3; ++k) {
+          const int* a = cell[local[static_cast<std::size_t>(k)]];
+          const int* b = cell[local[static_cast<std::size_t>((k + 1) % 3)]];
+          const int s = side(a[0], a[1], b[0], b[1]);
+          if (s < 0) {
+            mesh.edge_chord.push_back(-1);
+            continue;
+          }
+          mesh.edge_chord.push_back(static_cast<int64_t>(mesh.chord_use.size()));
+          mesh.chord_use.push_back(s);
+          mesh.chord_loop.push_back(0);
+          mesh.chord_uv.insert(mesh.chord_uv.end(), {u(a[0]), v(a[1]), u(b[0]), v(b[1])});
+          mesh.chord_range.insert(mesh.chord_range.end(),
+                                  {parameter(s, a[0], a[1]), parameter(s, b[0], b[1])});
+        }
+        mesh.face_rows.push_back(0);
+        const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+        mesh.chart_to_mesh.push_back(
+            sliver ? -1 : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+        if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids, ids + 3);
+      }
+    }
+  mesh.use_patch.assign(4, 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = 1;
+  const Verdict verdict = verify(m, mesh, 0.05, 8);
+  double fan_worst = 0.0, worst = 0.0;
+  std::vector<std::size_t> fan;
+  for (std::size_t r = 0; r < verdict.upper.size(); ++r) {
+    worst = std::max(worst, verdict.upper[r]);
+    for (int k = 0; k < 3; ++k)
+      if (mesh.triangles[3 * r + static_cast<std::size_t>(k)] == 0) {
+        fan.push_back(r);
+        fan_worst = std::max(fan_worst, verdict.upper[r]);
+        break;
+      }
+  }
+  std::printf("P disk center: status %d fan rows %zu fan max %.6e max %.6e\n", verdict.status,
+              fan.size(), fan_worst, worst);
+  PHX_CHECK(verdict.status == PHX_MC_OK && verdict.findings.empty() && !fan.empty());
+  // In the uv chart (d502b7f0b) the fan rows bound 4.53e-2; in the
+  // disk-center chart only the ring-edge seam caps remain (6.44e-3).
+  PHX_CHECK(fan_worst < 1e-2);
+  Mesh lifted = mesh;
+  lifted.points[2] = 0.1;
+  const Verdict moved = verify(m, lifted, 0.05, 8);
+  for (const std::size_t r : fan) PHX_CHECK(moved.item_status[r] != PHX_MC_OK);
+}
+
+// A chart triangle: corner parameters and physical vertex ids.
+struct ChartTriangle {
+  std::array<double, 6> uv;
+  std::array<int64_t, 3> ids;
+};
+
+// Vertex ids of a full-turn chart: u = span folds onto u = 0, and every
+// corner at the pole parameter is the one pole vertex.
+struct VertexIds {
+  double span, pole_v;
+  std::map<std::pair<uint64_t, uint64_t>, int64_t> ids;
+  int64_t operator()(double u, double v) {
+    if (v == pole_v || u == span) u = 0.0;
+    const auto key = std::make_pair(std::bit_cast<uint64_t>(u), std::bit_cast<uint64_t>(v));
+    const auto it = ids.find(key);
+    if (it != ids.end()) return it->second;
+    const auto id = static_cast<int64_t>(ids.size());
+    ids.emplace(key, id);
+    return id;
+  }
+};
+
+constexpr double kTurn = 2.0 * 0x1.921fb54442d18p+1;
+constexpr double kNorth = 0x1.921fb54442d18p+0;
+
+// Grid rows between ascending levels (counter-clockwise in uv).
+void ring_rows(std::vector<ChartTriangle>& out, VertexIds& id, int columns,
+               const std::vector<double>& levels) {
+  const auto u = [&](int i) { return i == columns ? id.span : id.span * i / columns; };
+  for (std::size_t j = 0; j + 1 < levels.size(); ++j)
+    for (int i = 0; i < columns; ++i) {
+      const double c[4][2] = {{u(i), levels[j]}, {u(i + 1), levels[j]},
+                              {u(i + 1), levels[j + 1]}, {u(i), levels[j + 1]}};
+      for (const auto& local : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{0, 2, 3}}) {
+        ChartTriangle t{};
+        for (std::size_t k = 0; k < 3; ++k) {
+          const double* p = c[local[k]];
+          t.uv[2 * k] = p[0], t.uv[2 * k + 1] = p[1];
+          t.ids[k] = id(p[0], p[1]);
+        }
+        out.push_back(t);
+      }
+    }
+}
+
+struct Revolved {
+  Model model;
+  Mesh mesh;
+  int32_t surface = -1;
+};
+
+int32_t disk_surface(Model& m, double x0, double dz) {
+  const int32_t radial = m.add_template("line3", {x0, 0, 0, 1, 0, dz});
+  return m.add(PHX_MC_CAD_NODE_REVOLUTION, {radial}, {0, 0, 0, 0, 0, 1});
+}
+
+int32_t unit_sphere(Model& m) {
+  return m.add_template("sphere", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1});
+}
+
+// One face over the given chart rows; its loops are the chains of boundary
+// uv edges (edges used once), one use per edge: a pole use on edges at
+// pole_v, else a line2 p-curve, or, for edges at constant v == bump_v, the
+// parabola2 p-curve v(s) = bump_v + dir delta (1 - 4 s^2), s in [-1/2, 1/2],
+// dir pointing away from the pole (its ends lie on the chord up to
+// rounding). Mesh points are S at each vertex's first chart corner.
+Revolved revolved(const std::function<int32_t(Model&)>& make_surface, double pole_v,
+                  const std::vector<ChartTriangle>& rows,
+                  double bump_v = std::numeric_limits<double>::quiet_NaN(), double delta = 0.0) {
+  Revolved g;
+  Model& m = g.model;
+  g.surface = make_surface(m);
+  m.surface(g.surface);
+  const int32_t space = m.add_template("line3", {0, 0, 0, 1, 0, 0});
+  m.corner(0, 0, 0);
+  using Point = std::array<uint64_t, 2>;
+  const auto at = [&](std::size_t r, int k) { return rows[r].uv.data() + 2 * k; };
+  const auto key = [](const double* p) {
+    return Point{std::bit_cast<uint64_t>(p[0]), std::bit_cast<uint64_t>(p[1])};
+  };
+  std::map<std::pair<Point, Point>, int> count;
+  for (std::size_t r = 0; r < rows.size(); ++r)
+    for (int k = 0; k < 3; ++k) {
+      Point a = key(at(r, k)), b = key(at(r, (k + 1) % 3));
+      if (b < a) std::swap(a, b);
+      ++count[{a, b}];
+    }
+  std::map<Point, std::pair<std::size_t, int>> next;
+  for (std::size_t r = 0; r < rows.size(); ++r)
+    for (int k = 0; k < 3; ++k) {
+      Point a = key(at(r, k)), b = key(at(r, (k + 1) % 3));
+      const Point start = a;
+      if (b < a) std::swap(a, b);
+      if (count[{a, b}] == 1) next[start] = {r, k};
+    }
+  Mesh& mesh = g.mesh;
+  mesh.edge_chord.assign(3 * rows.size(), -1);
+  int64_t loops = 0;
+  while (!next.empty()) {
+    auto it = next.begin();
+    while (it != next.end()) {
+      const auto [r, k] = it->second;
+      next.erase(it);
+      const double* a = at(r, k);
+      const double* b = at(r, (k + 1) % 3);
+      const auto use = static_cast<int64_t>(m.use_kinds.size());
+      const auto chord = static_cast<int64_t>(mesh.chord_use.size());
+      double first = 0.0, last = 1.0;
+      if (a[1] == pole_v && b[1] == pole_v) {
+        m.use(1, 0, first, last, m.add_template("line2", {a[0], a[1], b[0] - a[0], 0.0}));
+      } else {
+        const auto curve = static_cast<int32_t>(m.curves.size());
+        m.curve(space, 0, 0);
+        int32_t pcurve;
+        if (delta != 0.0 && a[1] == bump_v && b[1] == bump_v && a[0] != b[0]) {
+          const double dir = a[1] > pole_v ? 1.0 : -1.0, sign = delta > 0.0 ? 1.0 : -1.0;
+          pcurve = m.add_template("parabola2", {0.5 * (a[0] + b[0]), a[1] + dir * delta, 0.0,
+                                                -dir * sign, b[0] - a[0], 0.0,
+                                                1.0 / (16.0 * std::fabs(delta))});
+          first = -0.5, last = 0.5;
+        } else {
+          pcurve = m.add_template("line2", {a[0], a[1], b[0] - a[0], b[1] - a[1]});
+        }
+        m.use(0, curve, first, last, pcurve);
+      }
+      mesh.edge_chord[3 * r + static_cast<std::size_t>(k)] = chord;
+      mesh.chord_use.push_back(use);
+      mesh.chord_loop.push_back(loops);
+      mesh.chord_uv.insert(mesh.chord_uv.end(), {a[0], a[1], b[0], b[1]});
+      mesh.chord_range.insert(mesh.chord_range.end(), {first, last});
+      it = next.find(key(b));
+    }
+    m.close_loop(0);
+    ++loops;
+  }
+  const phx_mc_cad_model view = m.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  int64_t vertex_count = 0;
+  for (const ChartTriangle& t : rows)
+    for (const int64_t id : t.ids) vertex_count = std::max(vertex_count, id + 1);
+  mesh.points.assign(3 * static_cast<std::size_t>(vertex_count), 0.0);
+  std::vector<bool> seen(static_cast<std::size_t>(vertex_count), false);
+  for (const ChartTriangle& t : rows) {
+    for (int k = 0; k < 3; ++k) {
+      const auto id = static_cast<std::size_t>(t.ids[static_cast<std::size_t>(k)]);
+      if (!seen[id]) {
+        PHX_CHECK(geometry.jets(g.surface, t.uv.data() + 2 * k, 0, mesh.points.data() + 3 * id,
+                                workspace));
+        seen[id] = true;
+      }
+      mesh.triangles.push_back(t.ids[static_cast<std::size_t>(k)]);
+    }
+    mesh.uv.insert(mesh.uv.end(), t.uv.begin(), t.uv.end());
+    mesh.face_rows.push_back(0);
+    const auto& ids = t.ids;
+    const bool sliver = ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0];
+    mesh.chart_to_mesh.push_back(sliver ? -1
+                                        : static_cast<int64_t>(mesh.mesh_triangles.size() / 3));
+    if (!sliver) mesh.mesh_triangles.insert(mesh.mesh_triangles.end(), ids.begin(), ids.end());
+  }
+  mesh.use_patch.assign(m.use_kinds.size(), 0);
+  mesh.use_range = m.use_ranges;
+  mesh.loop_count = loops;
+  return g;
+}
+
+double point_triangle_distance(const double* p, const double* a, const double* b,
+                               const double* c) {
+  // Ericson, Real-Time Collision Detection 5.1.5 (closest point on a triangle).
+  double ab[3], ac[3], ap[3], q[3];
+  for (int i = 0; i < 3; ++i) ab[i] = b[i] - a[i], ac[i] = c[i] - a[i], ap[i] = p[i] - a[i];
+  const auto dot = [](const double* x, const double* y) {
+    return x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  };
+  const auto distance = [&](double s, double t) {
+    for (int i = 0; i < 3; ++i) q[i] = a[i] + s * ab[i] + t * ac[i] - p[i];
+    return std::sqrt(dot(q, q));
+  };
+  const double d1 = dot(ab, ap), d2 = dot(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return distance(0, 0);
+  double bp[3], cp[3];
+  for (int i = 0; i < 3; ++i) bp[i] = p[i] - b[i], cp[i] = p[i] - c[i];
+  const double d3 = dot(ab, bp), d4 = dot(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return distance(1, 0);
+  const double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) return distance(d1 / (d1 - d3), 0);
+  const double d5 = dot(ab, cp), d6 = dot(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return distance(0, 1);
+  const double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) return distance(0, d2 / (d2 - d6));
+  const double va = d3 * d6 - d5 * d4;
+  if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+    const double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    return distance(1 - w, w);
+  }
+  const double denominator = 1.0 / (va + vb + vc);
+  return distance(vb * denominator, vc * denominator);
+}
+
+double mesh_distance(const Mesh& mesh, const double* p) {
+  double best = std::numeric_limits<double>::infinity();
+  const auto vertex = [&](std::size_t t, int k) {
+    return mesh.points.data() + 3 * mesh.mesh_triangles[3 * t + static_cast<std::size_t>(k)];
+  };
+  for (std::size_t t = 0; t < mesh.mesh_triangles.size() / 3; ++t)
+    best = std::min(best, point_triangle_distance(p, vertex(t, 0), vertex(t, 1), vertex(t, 2)));
+  return best;
+}
+
+// Rows with an edge at constant v == bump_v: each must bound the distance
+// from the mesh of the face points S(p(s)) on its own (bumped) trim arc.
+struct RingCheck {
+  int rows = 0, certified = 0, below = 0;
+  double min_ratio = std::numeric_limits<double>::infinity(), worst = 0.0;
+};
+
+RingCheck check_bumped_ring(const Revolved& g, double pole_v, double bump_v, double delta,
+                            double tolerance) {
+  const Verdict verdict = verify(g.model, g.mesh, tolerance, 8);
+  const phx_mc_cad_model view = g.model.view();
+  CadGeometry geometry;
+  PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+  EvaluationWorkspace workspace;
+  RingCheck result;
+  const double dir = bump_v > pole_v ? 1.0 : -1.0;
+  for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r) {
+    double truth = 0.0;
+    bool ring = false;
+    for (int k = 0; k < 3; ++k) {
+      const double* a = g.mesh.uv.data() + 6 * r + 2 * k;
+      const double* b = g.mesh.uv.data() + 6 * r + 2 * ((k + 1) % 3);
+      if (!(a[1] == bump_v && b[1] == bump_v && a[0] != b[0])) continue;
+      ring = true;
+      for (int i = 0; i <= 64; ++i) {
+        const double s = -0.5 + i / 64.0;
+        const double point[2] = {a[0] + (s + 0.5) * (b[0] - a[0]),
+                                 bump_v + dir * delta * (1.0 - 4.0 * s * s)};
+        double xyz[3];
+        PHX_CHECK(geometry.jets(g.surface, point, 0, xyz, workspace));
+        truth = std::max(truth, mesh_distance(g.mesh, xyz));
+      }
+    }
+    if (!ring) continue;
+    ++result.rows;
+    if (verdict.item_status[r] != PHX_MC_OK) continue;
+    ++result.certified;
+    result.worst = std::max(result.worst, verdict.upper[r]);
+    if (truth > 0.0) result.min_ratio = std::min(result.min_ratio, verdict.upper[r] / truth);
+    if (verdict.upper[r] < truth) ++result.below;
+  }
+  return result;
+}
+
+// MAC 0ca3a9a finding 1: a pole region's ring chord with bitwise-equal end
+// v whose p-curve is not a latitude circle. The face points on the arc
+// beyond the chord are seam cap + lens cap from the mesh; the region used
+// max(seam cap, own + lens) before. Witnesses (MAC): a disk with 16 fan rows
+// and parabola2 rim arcs bulging 0.01 (tol 0.05: certified 1.930878e-2,
+// true 2.921472e-2), a unit-sphere cap at colatitude 0.05 bulging 5e-4
+// (9.652698e-4 vs 1.459921e-3); then 200 seeded bumped rings (disk or
+// sphere, 6-32 columns, bumps either way), 0 certified rows below their arc's
+// distance. Fault caught: the edge's trim lens not added to its seam cap.
+void bumped_ring_chords() {
+  {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, 16, {0.0, 1.0});
+    const Revolved g =
+        revolved([](Model& m) { return disk_surface(m, 0.0, 0.0); }, 0.0, rows, 1.0, 0.01);
+    const RingCheck c = check_bumped_ring(g, 0.0, 1.0, 0.01, 0.05);
+    std::printf("P bumped disk rim: rows %d certified %d below %d worst %.6e min ratio %.4f\n",
+                c.rows, c.certified, c.below, c.worst, c.min_ratio);
+    PHX_CHECK(c.rows == 16 && c.below == 0);
+  }
+  {
+    const double ring = kNorth - 0.05;
+    VertexIds id{kTurn, kNorth, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, 16, {ring, kNorth});
+    const Revolved g = revolved(unit_sphere, kNorth, rows, ring, 5e-4);
+    const RingCheck c = check_bumped_ring(g, kNorth, ring, 5e-4, 0.05);
+    std::printf("P bumped sphere ring: rows %d certified %d below %d worst %.6e min ratio %.4f\n",
+                c.rows, c.certified, c.below, c.worst, c.min_ratio);
+    PHX_CHECK(c.rows == 16 && c.below == 0);
+  }
+  uint64_t state = 20261121;
+  const auto uniform = [&state]() {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<double>(state >> 11) * 0x1p-53;
+  };
+  RingCheck total;
+  for (int trial = 0; trial < 200; ++trial) {
+    const bool sphere = trial % 2 == 1;
+    const int columns = 6 + static_cast<int>(27.0 * uniform());
+    const double angle = kTurn / columns;
+    double radius, pole_v, ring;
+    if (sphere) {
+      const double colatitude = 0.02 + 0.58 * uniform();
+      pole_v = kNorth, ring = kNorth - colatitude, radius = std::sin(colatitude);
+    } else {
+      pole_v = 0.0, ring = 0.2 + 1.8 * uniform(), radius = ring;
+    }
+    const double delta = (2.0 * uniform() - 1.0) * 0.1 * std::fabs(ring - pole_v) * angle;
+    const double sagitta = radius * (1.0 - std::cos(0.5 * angle));
+    const double tolerance = (0.25 + 2.0 * uniform()) * (sagitta + std::fabs(delta));
+    VertexIds id{kTurn, pole_v, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, columns, sphere ? std::vector<double>{ring, pole_v}
+                                        : std::vector<double>{pole_v, ring});
+    const Revolved g =
+        sphere ? revolved(unit_sphere, pole_v, rows, ring, delta)
+               : revolved([](Model& m) { return disk_surface(m, 0.0, 0.0); }, pole_v, rows, ring,
+                          delta);
+    const RingCheck c = check_bumped_ring(g, pole_v, ring, delta, tolerance);
+    total.rows += c.rows, total.certified += c.certified, total.below += c.below;
+    total.min_ratio = std::min(total.min_ratio, c.min_ratio);
+  }
+  std::printf("P bumped ring fuzz: rows %d certified %d below %d min ratio %.4f\n", total.rows,
+              total.certified, total.below, total.min_ratio);
+  PHX_CHECK(total.below == 0 && total.certified > 0);
+}
+
+// The largest bound over fan rows (rows with a corner on the pole vertex);
+// +inf when any fan row is refused.
+double fan_bound(const Revolved& g, const Verdict& verdict, int64_t pole) {
+  double worst = 0.0;
+  for (std::size_t r = 0; r < g.mesh.face_rows.size(); ++r)
+    for (int k = 0; k < 3; ++k)
+      if (g.mesh.triangles[3 * r + static_cast<std::size_t>(k)] == pole) {
+        if (verdict.item_status[r] != PHX_MC_OK) return std::numeric_limits<double>::infinity();
+        worst = std::max(worst, verdict.upper[r]);
+        break;
+      }
+  return worst;
+}
+
+// MAC 0ca3a9a finding 3: one test per region/frame check, each failing with
+// that check removed (deliberate-fault runs in the commit message). The disk
+// of disk_center_rows (16 columns, rings 1/3, 2/3, rim 1; tol 0.05) has fan
+// rows bounded 6.44e-3 in the disk-center chart and >= 4.5e-2 in the uv
+// chart, so "fan bound > 1e-2" says "uv chart".
+void pole_region_checks() {
+  const auto disk_rows = [](int columns, const std::vector<double>& levels) {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> rows;
+    ring_rows(rows, id, columns, levels);
+    return rows;
+  };
+  const auto flat = [](Model& m) { return disk_surface(m, 0.0, 0.0); };
+  const std::vector<ChartTriangle> rows = disk_rows(16, {0.0, 1.0 / 3, 2.0 / 3, 1.0});
+  const Revolved disk = revolved(flat, 0.0, rows);
+  const Verdict base = verify(disk.model, disk.mesh, 0.05, 8);
+  const double base_fan = fan_bound(disk, base, 0);
+  std::printf("P checks disk: status %d fan %.6e\n", base.status, base_fan);
+  PHX_CHECK(base.status == PHX_MC_OK && base_fan < 1e-2);
+  // Lower bound (catches a dropped row charge): each fan row with a ring
+  // edge bounds the distance from the mesh of its arc midpoint S(u_mid,
+  // 1/3), the ring's sagitta.
+  {
+    const phx_mc_cad_model view = disk.model.view();
+    CadGeometry geometry;
+    PHX_CHECK(geometry.bind(view) == PHX_MC_OK);
+    EvaluationWorkspace workspace;
+    int checked = 0;
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+      const auto& ids = rows[r].ids;
+      if (ids[0] != 0 && ids[1] != 0 && ids[2] != 0) continue;
+      for (int k = 0; k < 3; ++k) {
+        const double* a = rows[r].uv.data() + 2 * k;
+        const double* b = rows[r].uv.data() + 2 * ((k + 1) % 3);
+        if (!(a[1] == 1.0 / 3 && b[1] == 1.0 / 3)) continue;
+        const double point[2] = {0.5 * (a[0] + b[0]), 1.0 / 3};
+        double xyz[3];
+        PHX_CHECK(geometry.jets(disk.surface, point, 0, xyz, workspace));
+        const double truth = mesh_distance(disk.mesh, xyz);
+        PHX_CHECK(base.item_status[r] == PHX_MC_OK && base.upper[r] >= truth);
+        ++checked;
+      }
+    }
+    std::printf("P checks disk fan sagitta rows %d\n", checked);
+    PHX_CHECK(checked == 16);
+  }
+  // Perpendicularity (d_k = 0) and axis crossing (p(pole_v) = O exactly):
+  // a cone of slope 2^-40 and a line 2^-40 off the axis, with the disk's
+  // chart and mesh bitwise, keep the uv chart.
+  struct Profile {
+    const char* name;
+    double x0, dz;
+  };
+  for (const Profile p : {Profile{"cone", 0.0, 0x1p-40}, Profile{"off axis", 0x1p-40, 0.0}}) {
+    Revolved other = revolved([p](Model& m) { return disk_surface(m, p.x0, p.dz); }, 0.0, rows);
+    other.mesh.points = disk.mesh.points;
+    const Verdict verdict = verify(other.model, other.mesh, 0.05, 8);
+    const double fan = fan_bound(other, verdict, 0);
+    std::printf("P checks %s: status %d fan %.6e\n", p.name, verdict.status, fan);
+    PHX_CHECK(fan > 1e-2);
+  }
+  // A ring one ulp off constant v (the rim at 1 bounds the fan rows; one rim
+  // vertex at 1 - ulp, inside): the fan keeps the uv chart.
+  {
+    const std::vector<ChartTriangle> exact = disk_rows(16, {0.0, 1.0});
+    std::vector<ChartTriangle> off = exact;
+    const double u5 = kTurn * 5 / 16;
+    for (ChartTriangle& t : off)
+      for (int k = 0; k < 3; ++k)
+        if (t.uv[2 * k] == u5 && t.uv[2 * k + 1] == 1.0) t.uv[2 * k + 1] = std::nextafter(1.0, 0.0);
+    for (const bool shifted : {false, true}) {
+      const Revolved g = revolved(flat, 0.0, shifted ? off : exact);
+      const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+      const double fan = fan_bound(g, verdict, 0);
+      std::printf("P checks rim %s: status %d fan %.6e\n", shifted ? "one ulp off" : "exact",
+                  verdict.status, fan);
+      PHX_CHECK(shifted ? fan > 3e-2 : fan < 3e-2);
+    }
+  }
+  // Region edge: per pair of columns (64 columns) the fan rows reach the rim
+  // at the pair's ends only; the rim chords between are edges of rows off
+  // the center (via a vertex at v = 1/2), so they lie in the strip without
+  // being region edges: the fan keeps the uv chart (fan bound 2.70e-2;
+  // 1.24e-2 in the disk-center chart).
+  {
+    VertexIds id{kTurn, 0.0, {}};
+    std::vector<ChartTriangle> sectors;
+    const auto add = [&](std::array<double, 6> uv) {
+      ChartTriangle t{uv, {}};
+      for (std::size_t k = 0; k < 3; ++k) t.ids[k] = id(uv[2 * k], uv[2 * k + 1]);
+      sectors.push_back(t);
+    };
+    constexpr int kColumns = 64;
+    const auto u = [](int i) { return i == kColumns ? kTurn : kTurn * i / kColumns; };
+    for (int s = 0; s < kColumns / 2; ++s) {
+      const double a = u(2 * s), mid = u(2 * s + 1), b = u(2 * s + 2);
+      add({a, 0.0, b, 0.0, mid, 0.5});
+      add({b, 0.0, b, 1.0, mid, 0.5});
+      add({b, 1.0, mid, 1.0, mid, 0.5});
+      add({mid, 1.0, a, 1.0, mid, 0.5});
+      add({a, 1.0, a, 0.0, mid, 0.5});
+    }
+    const Revolved g = revolved(flat, 0.0, sectors);
+    const Verdict verdict = verify(g.model, g.mesh, 0.05, 8);
+    const double fan = fan_bound(g, verdict, 0);
+    std::printf("P checks region edge: status %d fan %.6e\n", verdict.status, fan);
+    PHX_CHECK(fan > 2e-2);
+  }
+  // A region row with a corner past a ring: a sphere face of two loops, the
+  // band 0.3-0.7 (its rows reach the cap latitude, so they join the north
+  // pole's region) and the cap above 0.8. The ring at 0.8 has band corners
+  // below it: the face keeps the uv chart, and the band rows' outputs equal
+  // those of the band alone (no pole) bitwise.
+  {
+    VertexIds id{kTurn, kNorth, {}};
+    std::vector<ChartTriangle> band;
+    ring_rows(band, id, 12, {0.3, 0.5, 0.7});
+    std::vector<ChartTriangle> both = band;
+    ring_rows(both, id, 12, {0.8, 1.2, kNorth});
+    const Revolved alone = revolved(unit_sphere, kNorth, band);
+    const Revolved two = revolved(unit_sphere, kNorth, both);
+    const Verdict a = verify(alone.model, alone.mesh, 0.05, 8);
+    const Verdict b = verify(two.model, two.mesh, 0.05, 8);
+    bool same = true;
+    for (std::size_t r = 0; r < band.size(); ++r)
+      same = same && a.item_status[r] == b.item_status[r] &&
+             std::bit_cast<uint64_t>(a.upper[r]) == std::bit_cast<uint64_t>(b.upper[r]);
+    std::printf("P checks corner past ring: status %d / %d band rows same %d\n", a.status,
+                b.status, same ? 1 : 0);
+    PHX_CHECK(same);
+  }
+}
+
+// MAC 35a31ae P3: the strip's trim-lens charge (pole_region_bounds' `fixed`).
+// A unit-sphere cap above latitude 1.0, 16 columns, rings at 1.2 and 1.4
+// (every row is in the north pole's region), each rim arc bumped inward
+// (toward the pole) by 0.35 to latitude 1.35: the arc crosses the middle
+// ring's rows, which have no rim edge, so mesh points of theirs beyond the
+// arc are off the face and only the strip lens charge covers them. Every
+// certified row's bound must be at least the distance from its mesh points
+// (barycentric grid of 16) to the face: off the face, to the boundary arcs
+// sampled at 4097 points each (sampled minimum less half the largest sample
+// spacing); on it, | |p| - 1 |. Fault caught: the lens part of the strip
+// charge dropped.
+void strip_lens_inward_bump() {
+  constexpr int kColumns = 16, kGrid = 16, kSamples = 4097;
+  const double rim = 1.0, delta = -0.35;
+  VertexIds id{kTurn, kNorth, {}};
+  std::vector<ChartTriangle> rows;
+  ring_rows(rows, id, kColumns, {rim, 1.2, 1.4, kNorth});
+  const Revolved g = revolved(unit_sphere, kNorth, rows, rim, delta);
+  const Verdict verdict = verify(g.model, g.mesh, 0.5, 8);
+  const auto u = [](int i) { return i == kColumns ? kTurn : kTurn * i / kColumns; };
+  // The rim (dir = -1, away from the north pole): v(s) = rim - delta (1 -
+  // 4 s^2), u = u_mid + s du, s in [-1/2, 1/2].
+  const auto arc = [&](double s) { return rim - delta * (1.0 - 4.0 * s * s); };
+  const auto sphere_point = [](double angle, double latitude) {
+    return std::array<double, 3>{std::cos(latitude) * std::cos(angle),
+                                 std::cos(latitude) * std::sin(angle), std::sin(latitude)};
+  };
+  std::vector<std::array<double, 3>> boundary;
+  for (int c = 0; c < kColumns; ++c)
+    for (int i = 0; i < kSamples; ++i) {
+      const double s = -0.5 + static_cast<double>(i) / (kSamples - 1);
+      boundary.push_back(sphere_point(0.5 * (u(c) + u(c + 1)) + s * (u(c + 1) - u(c)), arc(s)));
+    }
+  const auto distance = [](const double* p, const double* q) {
+    return std::sqrt((p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) +
+                     (p[2] - q[2]) * (p[2] - q[2]));
+  };
+  double spacing = 0.0;
+  for (std::size_t i = 1; i < boundary.size(); ++i)
+    spacing = std::max(spacing, distance(boundary[i].data(), boundary[i - 1].data()));
+  int certified = 0, outside = 0, below = 0;
+  double min_ratio = std::numeric_limits<double>::infinity();
+  for (std::size_t r = 0; r < rows.size(); ++r) {
+    if (g.mesh.chart_to_mesh[r] < 0 || verdict.item_status[r] != PHX_MC_OK) continue;
+    ++certified;
+    double truth = 0.0;
+    bool off = false;
+    for (int a = 0; a <= kGrid; ++a)
+      for (int b = 0; a + b <= kGrid; ++b) {
+        const double w[3] = {static_cast<double>(a) / kGrid, static_cast<double>(b) / kGrid,
+                             static_cast<double>(kGrid - a - b) / kGrid};
+        double p[3] = {0.0, 0.0, 0.0};
+        for (std::size_t k = 0; k < 3; ++k)
+          for (std::size_t axis = 0; axis < 3; ++axis)
+            p[axis] += w[k] * g.mesh.points[3 * static_cast<std::size_t>(rows[r].ids[k]) + axis];
+        double angle = std::atan2(p[1], p[0]);
+        if (angle < 0.0) angle += kTurn;
+        const double latitude = std::atan2(p[2], std::hypot(p[0], p[1]));
+        const int c = std::min(kColumns - 1, static_cast<int>(angle / (kTurn / kColumns)));
+        const double s = (angle - 0.5 * (u(c) + u(c + 1))) / (u(c + 1) - u(c));
+        if (latitude >= arc(s)) {
+          truth = std::max(truth, std::fabs(std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]) - 1.0));
+          continue;
+        }
+        off = true;
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto& q : boundary) nearest = std::min(nearest, distance(p, q.data()));
+        truth = std::max(truth, nearest - 0.5 * spacing);
+      }
+    if (!off) continue;
+    ++outside;
+    min_ratio = std::min(min_ratio, verdict.upper[r] / truth);
+    if (verdict.upper[r] < truth) ++below;
+  }
+  std::printf("P strip lens inward bump: status %d certified %d off-face rows %d below %d min ratio "
+              "%.4f\n",
+              verdict.status, certified, outside, below, min_ratio);
+  PHX_CHECK(outside > 0 && below == 0);
+}
 }  // namespace
 
 int main() {
@@ -1011,7 +2280,7 @@ int main() {
   intersection_seam_leaf();
   intersection_seam_lens();
   clamped_domain_end();
-  lens_charged_to_neighbours();
+  lens_charged_to_neighbors();
   use_and_loop_preconditions();
   sliver_edge_in_mesh();
   lens_requires_lipschitz_surface();
@@ -1024,6 +2293,15 @@ int main() {
   hole_orientation_demo();
   surface_without_loop_demo();
   lens_index_overflow();
+  pole_chart_rows();
+  seam_lens_charge();
+  pole_region_turns_and_charges();
+  pole_row_disk_bound();
+  disk_center_rows();
+  trimmed_pole_regions();
+  bumped_ring_chords();
+  pole_region_checks();
+  strip_lens_inward_bump();
   const int32_t kinds[] = {PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_AFFINE,
                            PHX_MC_CAD_NODE_TEMPLATE, PHX_MC_CAD_NODE_REPARAMETERIZED,
                            PHX_MC_CAD_NODE_REPARAMETERIZED, PHX_MC_CAD_NODE_ISOPARAMETRIC,

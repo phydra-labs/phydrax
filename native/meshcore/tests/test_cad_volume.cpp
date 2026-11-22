@@ -18,6 +18,7 @@
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "cad_quadric_model.inc"
+#include "cad_sphere_equator_rings.inc"
 
 namespace {
 
@@ -155,7 +156,8 @@ struct Solid {
   phx_mc_cad_volume_stats stats{};
 };
 
-Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
+Solid solid(const phx_mc_cad_model& model, double size, int32_t order,
+            double minimum_dihedral = 15.5) {
   Solid s;
   const std::vector<double> sizes(static_cast<std::size_t>(model.surface_count), size);
   const std::vector<double> tolerances(static_cast<std::size_t>(model.surface_count), 0.4);
@@ -163,7 +165,7 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
                                              std::numeric_limits<double>::infinity());
   const phx_mc_cad_surface_controls controls{sizes.data(), tolerances.data(),
                                              curve_tolerances.data(), 0.5, 1.3, 1e-8};
-  const phx_mc_cad_volume_controls volume{2.0, 15.5, 0.0, order};
+  const phx_mc_cad_volume_controls volume{2.0, minimum_dihedral, 0.0, order};
   phx_mc_cad_surface_result* handle = nullptr;
   s.status = phx_mc_cad_mesh_solid(&model, &controls, &volume, &handle);
   PHX_CHECK(handle != nullptr);
@@ -210,7 +212,8 @@ Solid solid(const phx_mc_cad_model& model, double size, int32_t order) {
   const phx_mc_cad_volume_arrays out{
       m[0], m[1], m[2], m[3], m[4], m[5], s.points.data(), s.tetrahedra.data(), s.regions.data(),
       s.boundary.data(), s.edges.data(), s.nodes.data(), s.kinds.data(), s.entities.data(),
-      s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats};
+      s.cell_edges.data(), s.decisions.data(), s.records.data(), s.splits.data(), &s.stats,
+      0, nullptr};  // curve_rim_wedges skipped (optional)
   PHX_CHECK(phx_mc_cad_volume_export(handle, &out) == PHX_MC_OK);
   phx_mc_cad_volume_arrays small = out;
   small.point_capacity = m[0] - 1;
@@ -293,6 +296,11 @@ void solid_case(const char* name, const phx_mc_cad_model& model, double size, On
             first.stats.face_ns > 0 && first.stats.curve_ns > 0);
   std::printf("%s: unmet %" PRId64 ", refine +%" PRId64 ", improve +%" PRId64 "\n", name,
               first.stats.unmet_cells, first.stats.refine_inserted, first.stats.improve_inserted);
+  // One set: forced and unforced cells partition unmet_cells, and the
+  // status is UNRESOLVED exactly when some unmet cell is unforced.
+  PHX_CHECK(first.stats.unmet_forced_cells + first.stats.unmet_unforced_cells ==
+            first.stats.unmet_cells);
+  PHX_CHECK((first.status == PHX_MC_UNRESOLVED) == (first.stats.unmet_unforced_cells > 0));
   // Determinism: the same arrays bit for bit.
   const Solid second = solid(model, size, 2);
   PHX_CHECK(second.status == first.status);
@@ -383,7 +391,7 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
   for (const auto& t : surface.triangles) faces.insert(faces.end(), t.begin(), t.end());
   for (const auto& b : volume.boundary_faces) boundary.insert(boundary.end(), b.begin(), b.end());
   check_volume(name, flat_points, flat_surface, cells, faces, boundary);
-  // The new vertex's P2 neighbours stay on the source.
+  // The new vertex's P2 neighbors stay on the source.
   for (std::size_t e = 0; e < volume.quadratic.edges.size(); ++e)
     if (volume.quadratic.edge_kinds[e] != PHX_MC_CAD_EDGE_INTERIOR)
       PHX_CHECK(on_surface(volume.quadratic.nodes[e].data()));
@@ -408,6 +416,52 @@ void forced_split(const char* name, const phx_mc_cad_model& model, double size, 
   PHX_CHECK(evidence == 0);
 }
 
+// A surface with zero-area triangles (the sphere's former coincident equator
+// rings) is refused before recovery, naming the first such triangle and its
+// relative area, instead of minutes of improvement against it.
+void flat_surface_triangle() {
+  const Bank sphere = sphere_bank();
+  const phx_mc_cad_model model = sphere.model();
+  phx::mc::cad::CadGeometry geometry;
+  PHX_CHECK(geometry.bind(model) == PHX_MC_OK);
+  const std::vector<double> sizes{0.3}, tolerances{0.05};
+  const std::vector<double> curve_tolerances(static_cast<std::size_t>(model.curve_count), 0.05);
+  phx::mc::cad::CurveDiscretization curves;
+  const phx::mc::cad::CurveControls controls{sizes.data(), tolerances.data(),
+                                             curve_tolerances.data(), 0.8, 1.3, 1e-8};
+  PHX_CHECK(phx::mc::cad::discretize_curves(geometry, controls, curves) == PHX_MC_OK);
+  phx::mc::CadSurfaceMesh surface;
+  surface.points = kEquatorRingPoints;
+  surface.triangles = kEquatorRingTriangles;
+  surface.triangle_patches.assign(surface.triangles.size(), 0);
+  phx::mc::CadVolumeMesh volume;
+  const int32_t status = phx::mc::cad_mesh_volume(
+      geometry, curves, surface, sizes.data(),
+      phx::mc::CadVolumeControls{2.0, 15.5, 0x1p-35, 1}, volume);
+  PHX_CHECK(status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(volume.tetrahedra.empty() && volume.points.empty());
+  const auto& stats = volume.stats;
+  PHX_CHECK(stats.recovery_attempts == 0 && stats.refine_inserted == 0 &&
+            stats.improve_inserted == 0);
+  PHX_CHECK(stats.recovery_status == PHX_MC_UNRESOLVED);
+  PHX_CHECK(stats.recovery_reason == PHX_MC_PLC_INVALID_FACET);
+  PHX_CHECK(stats.failure_kind == PHX_MC_PLC_ENTITY_FACET && stats.failure_entity == 8);
+  PHX_CHECK(stats.failure_measure >= 0.0 && stats.failure_measure < 1e-12);
+  PHX_CHECK(stats.volume_ns < 100000000);
+}
+
+// A dihedral target of 40 deg the interior cannot meet at h 0.2293: unmet
+// cells exist, and forced plus unforced is exactly unmet_cells (fails when
+// the split is taken from a different evaluation than the count, e.g. one
+// adding size records: 259 split cells for 256 unmet measured on a cone).
+void strict_schedule() {
+  const Solid strict = solid(quadric_model(), 0.2293, 1, 40.0);
+  PHX_CHECK(strict.stats.unmet_cells > 0);
+  PHX_CHECK(strict.stats.unmet_forced_cells + strict.stats.unmet_unforced_cells ==
+            strict.stats.unmet_cells);
+  PHX_CHECK(strict.stats.unmet_unforced_cells > 0 && strict.status == PHX_MC_UNRESOLVED);
+}
+
 // Invalid controls are refused before any work.
 void refusals() {
   const phx_mc_cad_model model = quadric_model();
@@ -427,6 +481,70 @@ void refusals() {
   PHX_CHECK(phx_mc_cad_volume_export(nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
 }
 
+// The proximity field over two parallel unit squares 0.25 apart (face 0 at
+// z = 0 facing -z, face 1 at z = 0.25 facing +z; face 2 unscoped): a point's
+// size is its gap to the other square less that square's deviation bound,
+// over elements_per_gap, clamped; a face no control scopes is unbounded.
+void proximity_field() {
+  using phx::mc::cad::ProximityControl;
+  using phx::mc::cad::ProximityField;
+  const std::vector<std::array<double, 3>> points{
+      {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+      {0, 0, 0.25}, {1, 0, 0.25}, {1, 1, 0.25}, {0, 1, 0.25}};
+  const std::vector<std::array<int32_t, 3>> facing{{0, 2, 1}, {0, 3, 2}, {4, 5, 6}, {4, 6, 7}};
+  const std::vector<int32_t> faces{0, 0, 1, 1};
+  const std::vector<double> deviations{0.0, 0.0, 0.05, 0.05};
+  const double bottom[3] = {0.5, 0.5, 0.0}, top[3] = {0.5, 0.5, 0.25};
+  ProximityControl control;
+  control.source_faces = {0};
+  control.target_faces = {1};
+  ProximityField field;
+  PHX_CHECK(field.build({control}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(0, bottom) - 0.20) < 1e-15);
+  PHX_CHECK(std::abs(field.size(1, top) - 0.25) < 1e-15);
+  PHX_CHECK(std::isinf(field.size(2, top)));
+  ProximityControl halved = control;
+  halved.elements_per_gap = 2;
+  ProximityControl clamped = control;
+  clamped.maximum_size = 0.1;
+  PHX_CHECK(field.build({halved}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(1, top) - 0.125) < 1e-15);
+  PHX_CHECK(field.build({halved, clamped}, points, facing, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(1, top) == 0.1);
+  // The top square turned to face -z no longer faces the bottom one: no gap.
+  const std::vector<std::array<int32_t, 3>> turned{{0, 2, 1}, {0, 3, 2}, {4, 6, 5}, {4, 7, 6}};
+  PHX_CHECK(field.build({control}, points, turned, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::isinf(field.size(0, bottom)));
+  control.opposite_normals_only = false;
+  PHX_CHECK(field.build({control}, points, turned, faces, deviations, 3) == PHX_MC_OK);
+  PHX_CHECK(std::abs(field.size(0, bottom) - 0.20) < 1e-15);
+  // A gap bound reaching zero gives zero without minimum_size.
+  const std::vector<double> loose{0.0, 0.0, 0.3, 0.3};
+  PHX_CHECK(field.build({control}, points, turned, faces, loose, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(0, bottom) == 0.0);
+  control.minimum_size = 0.01;
+  PHX_CHECK(field.build({control}, points, turned, faces, loose, 3) == PHX_MC_OK);
+  PHX_CHECK(field.size(0, bottom) == 0.01);
+  // Overlapping scopes, an out-of-range face and an empty scope are refused.
+  ProximityControl overlapping = control;
+  overlapping.target_faces = {0, 1};
+  PHX_CHECK(field.build({overlapping}, points, facing, faces, deviations, 3) ==
+            PHX_MC_INVALID_INPUT);
+  ProximityControl outside = control;
+  outside.target_faces = {3};
+  PHX_CHECK(field.build({outside}, points, facing, faces, deviations, 3) == PHX_MC_INVALID_INPUT);
+  ProximityControl empty = control;
+  empty.target_faces = {2};
+  PHX_CHECK(field.build({empty}, points, facing, faces, deviations, 3) == PHX_MC_INVALID_INPUT);
+  // The deviation bound: zero on a plane, the cap sag 1 - sqrt(1 - R^2) on a
+  // unit sphere, the tolerance beyond it.
+  PHX_CHECK(phx::mc::cad::proxy_deviation(0.3, 0.0, 1.0) == 0.0);
+  PHX_CHECK(std::abs(phx::mc::cad::proxy_deviation(0.3, 1.0, 1.0) -
+                     (1.0 - std::sqrt(1.0 - 0.09))) < 1e-15);
+  PHX_CHECK(phx::mc::cad::proxy_deviation(0.3, 1.0, 0.01) == 0.01);
+  PHX_CHECK(phx::mc::cad::proxy_deviation(2.0, 1.0, 0.5) == 0.5);
+}
+
 }  // namespace
 
 int main() {
@@ -438,6 +556,9 @@ int main() {
   forced_split("sphere curve split", sphere_model, 0.3, true, on_sphere);
   forced_split("quadric face split", quadric, 0.2293, false, on_quadric);
   forced_split("quadric curve split", quadric, 0.2293, true, on_quadric);
+  flat_surface_triangle();
+  strict_schedule();
   refusals();
+  proximity_field();
   return phx::mc::test::finish("test_cad_volume");
 }

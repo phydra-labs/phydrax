@@ -913,7 +913,7 @@ bool quad_inside(Quad value, double lower, double upper) {
 
 // Anchored sin/cos: binary128 sin/cos at interior points of every interval
 // lie inside the enclosure, over dense points of [-8 pi, 8 pi] including
-// anchors k/64 and their neighbours, 0 and multiples of pi/2, for point,
+// anchors k/64 and their neighbors, 0 and multiples of pi/2, for point,
 // tiny, anchor-scale and fallback-wide intervals; the width stays within
 // 4x the elementary kernel's plus 8 ulp. Fault caught (run by hand): a
 // dropped Taylor term or a wrong anchor rotation.

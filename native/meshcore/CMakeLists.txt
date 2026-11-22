@@ -125,6 +125,7 @@ set(PHX_MC_SOURCES
   src/cad_geometry.cpp
   src/cad_refine2d.cpp
   src/cad_curves.cpp
+  src/cad_proximity.cpp
   src/cad_curves_capi.cpp
   src/verify_chart_partition.cpp
   src/verify_surface_embedding.cpp
@@ -197,11 +198,13 @@ set(PHX_MC_HEADERS
   src/chart_surface.hpp
   src/cad_refine2d.hpp
   src/cad_curves.hpp
+  src/cad_proximity.hpp
   src/cad_curve_discretization.hpp
   src/refine_queue.hpp
   src/verify_chart_partition.hpp
   src/verify_surface_embedding.hpp
   src/verify_cad_fidelity.hpp
+  src/verify_cad_pole_chart.hpp
   src/cad_faces.hpp
   src/cad_mesh.hpp
   src/cad_curving.hpp

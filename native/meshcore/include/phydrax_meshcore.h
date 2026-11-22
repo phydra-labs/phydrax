@@ -3691,6 +3691,10 @@ typedef struct phx_mc_cad_face_failure {
   int32_t triangle, bad_size, bad_angle, refusal_kind, curve, curve_segment;
   double candidate_uv[2], triangle_uv[6], segment_parameters[2];
 } phx_mc_cad_face_failure;
+/* A REFINEMENT record with triangle -1, bad_size 1 and refusal NONE is an
+ * emitted triangle (after the face stage's flips and moves) whose stored
+ * circumradius fails the stored size test (cad_stored_size.hpp); its
+ * triangle_uv are the emitted triangle's charts. */
 
 typedef struct phx_mc_cad_surface_result phx_mc_cad_surface_result;
 typedef struct phx_mc_cad_surface_arrays {
@@ -3780,6 +3784,27 @@ typedef struct phx_mc_fidelity_finding {
  * the p-curve lens and interval endpoint mismatch enclose that difference.
  * The exact-source coefficient bounds have model->node_reals layout.
  * Certification is conditional on a separately verified chart partition.
+ * Sphere poles (a sphere template, its placement, or a circle revolved about
+ * an axis through its center, certified from the exact coefficients): rows
+ * touching the pole vertex or with a corner in the cap |v| >= 0.6230491932779061
+ * (pi/2 - rho*, rho* = sin 2 rho*: where the pole chart's edge sag stops
+ * being worse than the uv chart's; see verify_cad_fidelity.cpp) are associated in
+ * the regular pole chart (x, y) = rho (cos u, sin u), rho = pi/2 - |v|, with
+ * the triangle's linear map taken there; each edge where that region meets a
+ * uv row (or a seam or pole chord) carries a seam lens bound charged to both
+ * adjacent rows. Faces whose pole cap is not free of other trim chords, or
+ * whose u range spans less than a full turn (u_max - u_min < 2 pi rounded
+ * down), keep the uv chart; the remaining rounding excess of a full turn is
+ * charged to the region's rows.
+ * Disk centers (a line perpendicular to an axis revolved about it, meeting it
+ * at the degenerate chord's v, certified exactly): rows touching the center
+ * vertex take the Cartesian chart (x, y) = |v - v_center| (cos u, sin u),
+ * where the disk is affine, under the same region, seam and turn rules.
+ * A pole region may also reach outer trim rings (chords whose endpoints share
+ * v, with every region corner on the pole's side, checked exactly): those
+ * chords carry seam lenses like the uv interface, plus their own trim-lens
+ * cap (the p-curve need not stay on the chord). Faces whose pole is
+ * trimmed away keep the uv chart.
  *
  * Outputs per triangle are upper distance bounds, status, reason and subdivision
  * counts. Unresolved bounds are +infinity. Curved trim lenses are bounded from
@@ -3840,7 +3865,7 @@ PHX_MC_API int32_t phx_mc_verify_cad_fidelity(
  * phx_mc_quadratic_tetrahedron_validity. Every cell is decided by that
  * function at relative_floor; a cell that is not VALID is repaired in cell
  * order: one Jacobi pass of harmonic extension moves the interior nodes of the
- * failing cells and their edge neighbours, then every curved node of a cell
+ * failing cells and their edge neighbors, then every curved node of a cell
  * still not VALID returns to its chord midpoint, each curved boundary edge
  * so straightened recorded as one (edge, cell) row, until no cell with a
  * curved node fails. cell_decisions are the final decisions. Counts are
@@ -3901,12 +3926,39 @@ PHX_MC_API int32_t phx_mc_cad_quadratic_nodes(const phx_mc_cad_quadratic_request
  * midpoint) and is retried once; each split is reported, and the surface
  * export of the same handle shows the split surface. Returns the handle on
  * OK and UNRESOLVED (unmet quality targets, unresolved P2 cells, or a
- * recovery still refused: zero cells, stats name the refusal). */
+ * recovery still refused: zero cells, stats name the refusal). A surface
+ * triangle whose relative area 2 A / l_max^2 has a square below the
+ * determinant floor 2^-22 (zero-length edges included) is refused before
+ * recovery: UNRESOLVED, zero cells, recovery_status UNRESOLVED,
+ * recovery_reason INVALID_FACET, failure_kind FACET, failure_entity the
+ * first such triangle row and failure_measure its relative area. */
+/* Proximity size control (ProximitySizeControl) of the CAD solid: two
+ * disjoint face-row sets. At a point of a scoped face the size is the local
+ * gap (its distance to the other set's faces) over elements_per_gap,
+ * clamped to [minimum_size, maximum_size] (0: no bound); the gap is a lower
+ * bound from a first surface pass at the request (the proxy distance less
+ * the nearest proxy face's tolerance), and with opposite_normals_only it is
+ * infinite where the nearest proxy triangle of the other set does not face
+ * the point. Curves, faces and the volume's surface size targets take it
+ * where it is below the face size. A zero size (a gap bound reaching zero
+ * without minimum_size) is PHX_MC_INVALID_INPUT. */
+typedef struct phx_mc_cad_proximity_control {
+  int64_t source_count;
+  const int32_t* source_faces;
+  int64_t target_count;
+  const int32_t* target_faces;
+  int32_t elements_per_gap;
+  int32_t opposite_normals_only;
+  double minimum_size;
+  double maximum_size;
+} phx_mc_cad_proximity_control;
 typedef struct phx_mc_cad_volume_controls {
   double radius_edge_bound;        /* 2 */
   double min_dihedral_degrees;     /* 15.5 */
   double min_relative_determinant; /* 0; also the P2 relative floor */
   int32_t geometry_order;          /* 1 or 2 */
+  int64_t proximity_count;         /* 0: no proximity controls */
+  const phx_mc_cad_proximity_control* proximity_controls;
 } phx_mc_cad_volume_controls;
 typedef struct phx_mc_cad_volume_stats {
   /* Stage times, nanoseconds: curves, faces, assembly, volume, P2. */
@@ -3918,6 +3970,15 @@ typedef struct phx_mc_cad_volume_stats {
   int32_t recovery_status, recovery_reason, failure_kind;
   int64_t failure_entity;
   phx_mc_cad_quadratic_stats quadratic;
+  /* The refused triangle's relative area with recovery_reason INVALID_FACET
+   * before recovery (above), else 0. */
+  double failure_measure;
+  /* Unmet cells (of unmet_cells) forced by the input: every record of the
+   * cell is a dihedral record and every edge below min_dihedral_degrees is a
+   * surface curve edge whose true wedge between its two faces is below it. */
+  int64_t unmet_forced_cells;
+  /* Unmet cells not forced; the status is UNRESOLVED iff this is nonzero. */
+  int64_t unmet_unforced_cells;
 } phx_mc_cad_volume_stats;
 typedef struct phx_mc_cad_boundary_split {
   int32_t reason, entity_kind; /* the refusal that asked for it (forced: reason 0) */
@@ -3941,6 +4002,13 @@ typedef struct phx_mc_cad_volume_arrays {
   int64_t* records;             /* (R, 2) */
   phx_mc_cad_boundary_split* splits;
   phx_mc_cad_volume_stats* stats;
+  /* Per model curve (curve_capacity >= the model's curve count; left
+   * untouched when the volume stage stopped before quality): the smallest
+   * true wedge in degrees between the curve's two faces, written when some
+   * unmet cell is not forced, else NaN. A wedge below min_dihedral_degrees
+   * makes that target unattainable near the curve for any mesh. */
+  int64_t curve_capacity;
+  double* curve_rim_wedges;
 } phx_mc_cad_volume_arrays;
 PHX_MC_API int32_t phx_mc_cad_mesh_solid(const phx_mc_cad_model* model,
                                          const phx_mc_cad_surface_controls* controls,

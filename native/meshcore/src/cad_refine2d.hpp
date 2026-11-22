@@ -35,6 +35,28 @@ struct CadRefine2DInput {
   // nonzero on success and write three finite coordinates.
   int32_t (*surface_position)(void* context, const double point[2], double xyz[3]) = nullptr;
   void* surface_context = nullptr;
+  // With surface_position, a positive stored_size h also makes a triangle
+  // oversized when its stored (surface_position) triangle fails
+  // stored_size_exceeds (cad_stored_size.hpp) against h at half the rounding
+  // allowance, unless a constrained side's stored length is at least
+  // sqrt(2) h; refinement splits it and the angle pass keeps stars passing
+  // it, but the census does not report it (a caller checks its emitted
+  // triangles).
+  double stored_size = 0.0;
+  // Optional: nonzero where a triangle with three fixed vertices is the
+  // caller's (its centroid given); without it every such triangle is.
+  int32_t (*fixed_region)(void* context, const double point[2]) = nullptr;
+  void* fixed_region_context = nullptr;
+  // Optional: for a triangle (its three chart points given in order), k + 1
+  // when the caller asks its edge from point k to point k + 1 (mod 3) split,
+  // 0 otherwise. Asked once refinement is otherwise drained: such a triangle
+  // is then oversized like a stored size failure (refinement splits it, the
+  // angle pass keeps stars passing it, the census does not report it), and
+  // refinement inserts that edge's midpoint first, under the usual checks,
+  // when the edge is unconstrained.
+  int32_t (*edge_split)(void* context, const double a[2], const double b[2],
+                        const double c[2]) = nullptr;
+  void* edge_split_context = nullptr;
 };
 
 struct CadRefine2DStats {
@@ -53,6 +75,7 @@ struct CadRefine2DStats {
   int64_t relocations_tried = 0;
   int64_t relocations_accepted = 0;
   int64_t relocations_failed = 0;
+  int64_t flips = 0;
 };
 
 enum class CadRefine2DRefusal : uint8_t {
@@ -80,9 +103,13 @@ struct CadRefine2DResult {
 // spacing (face stage, design B.2); boundary constraints are never split.
 // With graded metrics and boundary lengths <= 1, no refusal was observed on the
 // measured fixtures, but this is not a general no-refusal guarantee.
-// A triangle is oversized when its metric circumradius exceeds sqrt(1/2) of
+// A triangle is split when its metric circumradius exceeds sqrt(1/2) of
 // the larger of one unit and the metric length (at its centroid) of each of
-// its fixed segments, since no insertion can shorten a segment.
+// its fixed segments, since no insertion can shorten a segment. It is
+// oversized (unresolved) only when the same test also holds with side
+// lengths integrated along the sides (two Gauss points each; nodes interior
+// to the side, so the metric must be valid there): a triangle the kernel
+// could not split is accepted when those lengths clear it.
 // On completed or point-cap exits, statistics count each unresolved triangle
 // and each size or angle criterion it misses; refusal counts identify the rule.
 // Refinement preserves exact orientation and constraints and terminates at the cap.
@@ -93,8 +120,14 @@ struct CadRefine2DResult {
 // Encroachment and proximity refusals record that relocation was attempted
 // and failed (encroachment: ray, offcenter, circumcenter; proximity: the
 // circumcenter, then the midpoint of the longest unconstrained edge); each
-// outcome is also counted in the relocation statistics.
-// Triangles with three fixed input vertices are neither refined nor scanned;
+// outcome is also counted in the relocation statistics. A failed relocation
+// first tries flipping one of the triangle's unconstrained edges, kept only
+// when the larger metric circumradius of the pair drops (counted in flips;
+// no refusal is recorded then).
+// Triangles with three fixed input vertices are neither refined nor scanned
+// while the queue drains. With fixed_region, those still left whose centroid
+// it declines are then refined like any other and judged by the census; the
+// rest (and, without it, all of them) stay the caller's;
 // fixed_triangles_skipped counts them in the final mesh. The optional admission
 // callback rejects candidate points before their metric is evaluated.
 // The caller must ensure all other evaluated triangle centroids are in the
