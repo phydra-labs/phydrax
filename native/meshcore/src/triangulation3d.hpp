@@ -294,7 +294,8 @@ class Triangulation3D {
       if (k != third && k != fourth) rest.push_back(order[k]);
     }
     building_ = true;
-    const int32_t status = insert_batches(rest, alive, parallelism);
+    const auto seed_end = static_cast<std::size_t>(std::max({a, b, c, d})) + 1;
+    const int32_t status = insert_batches(rest, alive, seed_end, parallelism);
     building_ = false;
     return status;
   }
@@ -898,7 +899,7 @@ class Triangulation3D {
   // degenerate inputs rests on the perturbation ordered by identity(v), the
   // caller's fixed input index, which insertion order never changes.
   int32_t insert_batches(std::span<const int32_t> points, std::span<char> alive,
-                         int32_t parallelism) {
+                         std::size_t active_vertices, int32_t parallelism) {
     // In a small triangulation every cavity reaches far: the first
     // kSequentialPoints points are inserted one at a time. Regions hold
     // about kRegionPoints points of a window.
@@ -909,6 +910,7 @@ class Triangulation3D {
     for (; next < points.size() && next < kSequentialPoints; ++next) {
       if (const int32_t status = insert(points[next], alive); status != PHX_MC_OK) return status;
       vertex_cell_[static_cast<std::size_t>(points[next])] = hint_;
+      active_vertices = std::max(active_vertices, static_cast<std::size_t>(points[next]) + 1);
     }
     if (next == points.size()) return PHX_MC_OK;
     const std::size_t vertices = points_.size() / 3;
@@ -923,6 +925,7 @@ class Triangulation3D {
         upper[axis] = std::max(upper[axis], points_[3 * vertex + static_cast<std::size_t>(axis)]);
       }
     }
+    const double extent[3] = {upper[0] - lower[0], upper[1] - lower[1], upper[2] - lower[2]};
     const auto workers = static_cast<std::size_t>(parallelism);
     workers_.resize(workers);
     vertex_region_.assign(vertices, 0);
@@ -935,6 +938,10 @@ class Triangulation3D {
       pending.assign(points.begin() + static_cast<std::ptrdiff_t>(next),
                      points.begin() + static_cast<std::ptrdiff_t>(next + count));
       next += count;
+      // Future vertices have no live cell and cannot occur in a cavity
+      // until their window is admitted. Seed and window IDs need not be consecutive.
+      const int32_t last_vertex = *std::max_element(pending.begin(), pending.end());
+      active_vertices = std::max(active_vertices, static_cast<std::size_t>(last_vertex) + 1);
       // At most 40 regions per axis (region numbers fit 16 bits).
       const auto grid = static_cast<int64_t>(std::clamp(
           std::round(std::cbrt(static_cast<double>(count) / kRegionPoints)), 2.0, 40.0));
@@ -950,35 +957,27 @@ class Triangulation3D {
         // Grid coordinates of every vertex; regions are numbered by them.
         const double shift = kShifts[pass];
         const int64_t side = grid + (shift > 0.0 ? 1 : 0);
-        const auto coordinate = [&](std::size_t vertex, int axis) {
-          const double extent = upper[axis] - lower[axis];
-          const double unit = extent > 0.0
-              ? (points_[3 * vertex + static_cast<std::size_t>(axis)] - lower[axis]) / extent
-              : 0.0;
-          return std::clamp<int64_t>(static_cast<int64_t>(std::floor(
-                                         unit * static_cast<double>(grid) + shift)),
-                                     0, side - 1);
+        // The shifted coordinate is nonnegative and bounded by grid + 3/4.
+        // Truncating after exact scaling by eight supplies both floor(c)
+        // and the low three bits of floor(8c).
+        const auto bin = [&](const double* point, int axis) {
+          const double unit = extent[axis] > 0.0
+              ? (point[axis] - lower[axis]) / extent[axis] : 0.0;
+          return static_cast<int64_t>(8.0 * (unit * static_cast<double>(grid) + shift));
         };
-        // Each vertex's cell of a grid eight times finer, by its position
-        // within its region (the region walks start at a cell committed in
-        // the same fine cell).
-        const auto fine = [&](std::size_t vertex, int axis) {
-          const double extent = upper[axis] - lower[axis];
-          const double unit = extent > 0.0
-              ? (points_[3 * vertex + static_cast<std::size_t>(axis)] - lower[axis]) / extent
-              : 0.0;
-          return static_cast<int64_t>(
-                     std::floor(8.0 * (unit * static_cast<double>(grid) + shift))) & 7;
+        const auto coarse = [side](int64_t fine) {
+          return std::min(fine >> 3, side - 1);
         };
         const int32_t mapped = parallel_for(
-            vertices, ParallelRequest{65536, static_cast<uint32_t>(workers)},
+            active_vertices, ParallelRequest{65536, static_cast<uint32_t>(workers)},
             [&](std::size_t first, std::size_t last, ChunkContext&) -> int32_t {
               for (std::size_t vertex = first; vertex < last; ++vertex) {
+                const double* point = points_.data() + 3 * vertex;
+                const int64_t x = bin(point, 0), y = bin(point, 1), z = bin(point, 2);
                 vertex_region_[vertex] = static_cast<std::uint16_t>(
-                    (coordinate(vertex, 2) * side + coordinate(vertex, 1)) * side +
-                    coordinate(vertex, 0));
+                    (coarse(z) * side + coarse(y)) * side + coarse(x));
                 vertex_fine_[vertex] = static_cast<std::uint16_t>(
-                    (fine(vertex, 2) * 8 + fine(vertex, 1)) * 8 + fine(vertex, 0));
+                    ((z & 7) * 8 + (y & 7)) * 8 + (x & 7));
               }
               return PHX_MC_OK;
             });
@@ -988,7 +987,7 @@ class Triangulation3D {
         // region edits it before this region's phase).
         std::vector<int32_t> region_start(static_cast<std::size_t>(side * side * side), -1);
         std::size_t unstarted = region_start.size();
-        for (std::size_t vertex = 0; vertex < vertices && unstarted > 0; ++vertex) {
+        for (std::size_t vertex = 0; vertex < active_vertices && unstarted > 0; ++vertex) {
           const std::size_t region = vertex_region_[vertex];
           const int32_t cell = vertex_cell_[vertex];
           if (region_start[region] >= 0 || !complex_.live(cell) ||
@@ -1080,7 +1079,11 @@ class Triangulation3D {
           for (RegionWork& work : regions) {
             if (work.status != PHX_MC_OK) return work.status;
             complex_.finite_count += work.finite_change;
-            for (int32_t slot = work.fresh; slot < work.fresh_end; ++slot) work.free.push_back(slot);
+            // Released and borrowed slots precede this region's unused fresh
+            // suffix. Append that suffix directly in descending slot order.
+            for (int32_t slot = work.fresh_end; slot > work.fresh;) {
+              complex_.free_slots.push_back(--slot);
+            }
             std::sort(work.free.begin(), work.free.end(), std::greater<>());
             complex_.free_slots.insert(complex_.free_slots.end(), work.free.begin(),
                                        work.free.end());
