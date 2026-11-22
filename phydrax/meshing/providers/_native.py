@@ -1539,7 +1539,11 @@ class NativeMeshingPlan(StrictModule, NonTrainableState):
         construction: object
         if isinstance(self.prepared, _PreparedDirectBRepCadVolume):
             # CAD solids are constructed by the one native call at every proof
-            # level; acceptance certifies them with the native verifiers.
+            # level (with their patch/region controls and seeds); acceptance
+            # certifies them with the native verifiers. Multi-solid domains,
+            # protected features, layer controls and source kinds without
+            # native geometry keep the existing construction
+            # (cad_solid_support_issues).
             from ._native_cad_mesh import cad_solid_support_issues, execute_cad_solid
 
             construction = (

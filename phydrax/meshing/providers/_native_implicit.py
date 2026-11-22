@@ -3846,7 +3846,7 @@ def _implicit_volume_organization(
     cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
     face_set = mesh.entity_set(2)
     face_ids = np.asarray(face_set.entity_ids, dtype=np.int64)
-    boundary_face_ids = _boundary_face_entities(mesh, construction)
+    boundary_face_ids = _boundary_face_entities(mesh, construction.boundary_faces)
     boundary_face_mask = np.isin(face_ids, boundary_face_ids)
     edge_set = mesh.entity_set(1)
     edge_ids = np.asarray(edge_set.entity_ids, dtype=np.int64)
@@ -4144,7 +4144,7 @@ class _PreparedImplicitVolumeRoute(StrictModule, NonTrainableState):
             construction.boundary_faces,
             construction.face_source_facets,
             construction.input_vertices,
-            _boundary_face_entities(mesh, construction),
+            _boundary_face_entities(mesh, construction.boundary_faces),
             self.carrier_triangles,
             self.face_scaffold_rows,
         )

@@ -1355,11 +1355,13 @@ def _exact_line_polygon(
 ) -> tuple[dict[int, _Vector], dict[int, tuple[int, int]]] | None:
     """Exact vertices and edges of a face bounded by straight source edges only.
 
-    Every edge must be an exact line whose interval endpoints are its exact
+    Every edge must be an exact line (a ``LineCurve`` with rational origin and
+    direction, or an ``ExactLineCurve`` from ``first_exact`` to ``last_exact``
+    over its unit parameter domain) whose interval endpoints are its exact
     vertices, so the face (a bounded plane region whose boundary is these
     segments) lies in the convex hull of the returned vertices.
     """
-    from ._patches import LineCurve
+    from ._patches import ExactLineCurve, LineCurve
 
     geometry = model.geometry
     vertices: dict[int, _Vector] = {}
@@ -1371,14 +1373,23 @@ def _exact_line_polygon(
             if curve_index < 0:
                 return None
             curve = geometry.curves[curve_index]
-            if (
-                type(curve) is not LineCurve
-                or curve.ambient_dimension != 3
-                or not _rational_components(curve.origin_exact)
-                or not _rational_components(curve.direction_exact)
+            if type(curve) is ExactLineCurve and curve.ambient_dimension == 3:
+                origin = curve.first_exact
+                direction = tuple(
+                    stop - start
+                    for start, stop in zip(
+                        curve.first_exact, curve.last_exact, strict=True
+                    )
+                )
+            elif (
+                type(curve) is LineCurve
+                and curve.ambient_dimension == 3
+                and _rational_components(curve.origin_exact)
+                and _rational_components(curve.direction_exact)
             ):
+                origin, direction = curve.origin_exact, curve.direction_exact
+            else:
                 return None
-            origin, direction = curve.origin_exact, curve.direction_exact
             ends = tuple(
                 Fraction.from_float(float(value)) for value in geometry.edge_ranges[edge]
             )

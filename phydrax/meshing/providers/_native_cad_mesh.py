@@ -11,6 +11,14 @@ refines and improves it, so the exported final arrays become a
 :class:`CellMesh` directly (as the PLC route's ``_make_construction`` does)
 rather than through ``TetMesh3D.from_recovery``.
 
+Patch and region controls and region/hole seeds are honored on the native
+candidate: boundary triangles group by their native source face and zones by
+tetrahedron region through the PLC route's organization substrate
+(:func:`~._native_volume.source_organization`), and seeds are classified by an
+exact point-in-shell test against the certified surface. Multi-solid domains,
+protected features and layer controls keep the existing route
+(:func:`cad_solid_support_issues`).
+
 The candidate's compliance reports no achieved source deviation: the bound is
 V3's, in the certificate.
 """
@@ -29,6 +37,7 @@ from ..._meshcore import (
     CadModel,
     CadProximityControl,
     CadSolidResult,
+    exact_orient3d,
     MeshcoreStatus,
 )
 from ...discretization._cell_geometry import CellGeometrySpec
@@ -36,6 +45,7 @@ from ...discretization._cell_mesh import CellMesh
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._topology import sorted_unique_rows
 from ...discretization.fem._reference import lagrange_element
+from .._association import GeometryAssociation
 from .._certification_schedule import MeshCertificationSchedule
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._native_cad_certificate import NativeCadSurfaceWitness
@@ -57,6 +67,14 @@ from .._sizing import (
 )
 from .._volume_generation import _shape_targets_gated
 from ._native_cad_bundle import cad_bundle_support_issues, cad_geometry_bundle
+from ._native_cad_volume import (
+    _domain_scope_rows,
+    _region_row,
+    cad_facet_regions,
+    cad_patch_control_rows,
+    cad_region_seeds,
+)
+from ._native_volume import source_organization, SourceOrganizationLayout
 
 
 if TYPE_CHECKING:
@@ -76,21 +94,16 @@ def cad_solid_support_issues(
     specification = prepared.specification
     if specification.layer_controls:
         issues.append("layer controls take the layer/core route")
-    # The native candidate carries B-Rep associations and curve records, but
-    # no patch or region organization (mesh patches, zones, region evidence).
-    if specification.patch_controls or specification.region_controls:
-        issues.append("patch and region controls need source organization records")
-    # The native call has no seeded region classification, and one deviation
-    # on every face and curve: seeds and protected features (their own
-    # deviation bounds and feature evidence) are honored by the existing route.
-    if specification.region_seeds or specification.hole_seeds:
-        issues.append("region and hole seeds need seeded region classification")
+    # The native surface verifiers refuse the non-manifold curves of a shared
+    # interface face (V2 EDGE / VERTEX_LINK findings): a multi-solid domain
+    # keeps the existing route, which certifies its interfaces.
+    if len(prepared.domain.regions) > 1:
+        issues.append("multi-solid domains need certified interface faces")
+    # The native call has one deviation on every face and curve: protected
+    # features (their own deviation bounds and feature evidence) are honored
+    # by the existing route.
     if specification.protected_features:
         issues.append("protected features need their own deviation and evidence")
-    if prepared.boundary_request.selected_patches != tuple(
-        range(len(prepared.domain.patches))
-    ):
-        issues.append("the boundary request does not size every source face")
     issues.extend(cad_bundle_support_issues(prepared.domain))
     return tuple(issues)
 
@@ -600,6 +613,166 @@ def construct_cad_solid(prepared: _PreparedDirectBRepCadVolume, /) -> CadSolidRe
         ) from error
 
 
+def _seed_regions(solid: CadSolidResult, seeds: np.ndarray, /) -> np.ndarray:
+    """Source region row holding each seed point, -1 outside the solid.
+
+    The tetrahedra fill exactly the shell of the certified surface
+    triangles, so exact orientation predicates against their closed cells
+    classify each seed; a seed on a surface triangle has no unambiguous
+    side and is refused (as the PLC recovery refuses a seed on a constrained
+    face).
+    """
+    volume = solid.volume
+    coordinates = np.asarray(volume.points, dtype=np.float64)
+    cells = np.asarray(volume.tetrahedra, dtype=np.int64)
+    regions = np.asarray(volume.tetrahedron_regions, dtype=np.int64)
+    surface = {
+        tuple(sorted(triangle))
+        for triangle in np.asarray(solid.surface.triangles, dtype=np.int64).tolist()
+    }
+    faces = ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2))
+    corners = [coordinates[cells[:, list(face)]] for face in faces]
+    # Sign of each cell's opposite corner: a seed is in a closed cell when no
+    # face sign disagrees with it.
+    expected = [
+        exact_orient3d(
+            corner[:, 0], corner[:, 1], corner[:, 2], coordinates[cells[:, slot]]
+        ).astype(np.int64)
+        for slot, corner in enumerate(corners)
+    ]
+    result = np.full((seeds.shape[0],), -1, dtype=np.int64)
+    for row, seed in enumerate(seeds):
+        point = np.broadcast_to(seed, (cells.shape[0], 3))
+        signs = np.stack(
+            [
+                exact_orient3d(corner[:, 0], corner[:, 1], corner[:, 2], point).astype(
+                    np.int64
+                )
+                * sign
+                for corner, sign in zip(corners, expected, strict=True)
+            ],
+            axis=1,
+        )
+        holders = np.flatnonzero(np.all(signs >= 0, axis=1))
+        if holders.size == 0:
+            continue
+        on_surface = any(
+            tuple(sorted(cells[cell, list(faces[slot])].tolist())) in surface
+            for cell in holders.tolist()
+            for slot in np.flatnonzero(signs[cell] == 0).tolist()
+        )
+        if on_surface or np.unique(regions[holders]).size != 1:
+            raise MeshingFailure(
+                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+                f"Native CAD seed {seed.tolist()!r} lies on the certified surface.",
+                # The PLC recovery refuses a seed on a constrained face.
+                provider_code="plc_source_invalid_seed",
+                stage="volume_meshing",
+            )
+        result[row] = int(regions[holders[0]])
+    return result
+
+
+def _check_seeds(
+    prepared: _PreparedDirectBRepCadVolume, solid: CadSolidResult, /
+) -> None:
+    """Region seeds must lie in their region and hole seeds outside the solid.
+
+    A single-region seed classification is the source's own: a hole seed in
+    a source region would leak through its bounding faces, and a region seed
+    elsewhere contradicts them, both refused as the PLC recovery refuses
+    them (REGION_LEAK, INCONSISTENT_REGIONS). Outside the solid every seed
+    is in the void, as on the existing route: a hole seed there is a no-op
+    and a region seed leaks, wherever it lies relative to the hull.
+    """
+    domain = prepared.domain
+    specification = prepared.specification
+    for seed in specification.hole_seeds:
+        _domain_scope_rows(domain, seed.scope, 3)
+    points = [
+        np.asarray(seed.point, dtype=np.float64)
+        for seed in (*specification.region_seeds, *specification.hole_seeds)
+    ]
+    if not points:
+        return
+    if any(point.shape != (3,) for point in points):
+        raise ValueError("CAD volume seeds must be three-dimensional points.")
+    found = _seed_regions(solid, np.stack(points))
+    expected = [
+        _region_row(domain, seed.region_name) for seed in specification.region_seeds
+    ] + [-1] * len(specification.hole_seeds)
+    for point, region, wanted in zip(points, found.tolist(), expected, strict=True):
+        if region == wanted:
+            continue
+        located = "outside the solid" if region < 0 else f"in region {region}"
+        raise MeshingFailure(
+            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            f"Native CAD {'hole' if wanted < 0 else 'region'} seed "
+            f"{point.tolist()!r} lies {located}"
+            + ("" if wanted < 0 else f", not in its source region {wanted}")
+            + ".",
+            # The PLC recovery's codes: a void label meeting a region leaks,
+            # two regions are inconsistent.
+            provider_code=(
+                "plc_source_region_leak"
+                if region < 0 or wanted < 0
+                else "plc_source_inconsistent_regions"
+            ),
+            stage="volume_meshing",
+        )
+
+
+def _organization(
+    prepared: _PreparedDirectBRepCadVolume,
+    mesh: CellMesh,
+    solid: CadSolidResult,
+    associations: tuple[GeometryAssociation, ...],
+    /,
+) -> NativeMeshOrganization:
+    """Source-face patches, region zones and region evidence (PLC substrate).
+
+    Boundary triangles group by their native source face; zones are the
+    tetrahedron regions. Controls and seeds are the existing route's
+    (``_native_cad_volume``), mapped to the same source rows.
+    """
+    domain = prepared.domain
+    specification = prepared.specification
+    _check_seeds(prepared, solid)
+    facet_regions = cad_facet_regions(domain)
+    surface = solid.surface
+    patches, zones, labels, evidence = source_organization(
+        domain,
+        SourceOrganizationLayout(
+            mesh,
+            tuple(domain.entity_id(3, row) for row in range(len(domain.regions))),
+            tuple(tuple(path) for path in domain.region_source_occurrences),
+            np.asarray(solid.volume.tetrahedron_regions, dtype=np.int64),
+            tuple(domain.entity_id(2, row) for row in range(len(domain.patches))),
+            tuple(tuple(path) for path in domain.source_occurrences[2]),
+            facet_regions,
+            np.asarray(surface.triangles, dtype=np.int64),
+            np.asarray(surface.triangle_patches, dtype=np.int64),
+            np.asarray(surface.curve_edges, dtype=np.int64).reshape((-1, 2)),
+        ),
+        tuple(
+            zip(
+                (control.name for control in specification.patch_controls),
+                cad_patch_control_rows(domain, specification, facet_regions),
+                strict=True,
+            )
+        ),
+        specification.region_controls,
+        cad_region_seeds(domain, specification),
+    )
+    return NativeMeshOrganization(
+        patches=patches,
+        zones=zones,
+        labels=labels,
+        associations=associations,
+        region_boundary_evidence=evidence,
+    )
+
+
 def execute_cad_solid(
     prepared: _PreparedDirectBRepCadVolume, /
 ) -> NativeMeshConstruction:
@@ -610,6 +783,13 @@ def execute_cad_solid(
     deviation = specification.maximum_deviation
     boundary = prepared.boundary_request
     assert schedule is not None and deviation is not None
+    if not all(control.meshing_enabled for control in specification.region_controls):
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "Native CAD volume meshing meshes every source region: region "
+            "controls must keep meshing enabled.",
+            stage="volume_meshing",
+        )
     order = specification.target.geometry_order
     sizes = np.asarray(boundary.size_values, dtype=np.float64)
     solid = construct_cad_solid(prepared)
@@ -740,10 +920,13 @@ def execute_cad_solid(
         compliance,
         certification,
         geometry=geometry,
-        organization=NativeMeshOrganization(
-            associations=native_cad_associations(
+        organization=_organization(
+            prepared,
+            mesh,
+            solid,
+            native_cad_associations(
                 mesh, solid.surface, domain, regions, float(deviation), records
-            )
+            ),
         ),
     )
 
