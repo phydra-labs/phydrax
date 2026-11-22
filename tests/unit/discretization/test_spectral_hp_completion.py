@@ -12,17 +12,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-import phydrax.discretization._cell_geometry as cell_geometry_module
 from phydrax.discretization import (
     CellBlock,
     CellGeometrySpec,
     CellMesh,
     CellValidityStatus,
     certify_cell_geometry_validity,
-)
-from phydrax.discretization._cell_geometry import (
-    coordinate_execution_basis,
-    coordinate_source_basis,
 )
 from phydrax.discretization.fem import (
     AnisotropicHPattern,
@@ -47,18 +42,25 @@ from phydrax.exterior._form_type import FormType, FormValueSpec
 
 
 @pytest.mark.parametrize("x64", (False, True))
-def test_linear_prism_execution_shadow_matches_exact_nodal_basis(x64: bool) -> None:
+def test_linear_prism_certifies_the_exact_unit_map(x64: bool) -> None:
     with jax.enable_x64(x64):
-        element = HybridReferenceFamily("prism", 1).finite_element()
-        assert coordinate_execution_basis(element) == coordinate_source_basis(element)
+        family = HybridReferenceFamily("prism", 1)
+        spec = CellGeometrySpec(
+            {"layer": family.finite_element()},
+            {"layer": np.arange(6, dtype=np.int32)[None, :]},
+            family.nodes,
+        )
+        certificate = certify_cell_geometry_validity(spec)
+    assert certificate.all_certified
+    np.testing.assert_array_equal(certificate.determinant_lower, (1.0,))
+    np.testing.assert_array_equal(certificate.determinant_upper, (1.0,))
+    assert float(certificate.maximum_element_coefficient_rounding_error) == 0.0
 
 
 @pytest.mark.parametrize("changed_operand", ("axial", "triangle"))
 def test_linear_prism_validity_refuses_changed_tabulation_operands(
-    monkeypatch: pytest.MonkeyPatch, changed_operand: Literal["axial", "triangle"]
+    changed_operand: Literal["axial", "triangle"],
 ) -> None:
-    monkeypatch.setattr(cell_geometry_module, "_SOURCE_BASES", {})
-    monkeypatch.setattr(cell_geometry_module, "_EXECUTION_BASES", {})
     family = HybridReferenceFamily("prism", 1)
     triangle = family.triangle_family
     assert triangle is not None
@@ -87,25 +89,15 @@ def test_linear_prism_validity_refuses_changed_tabulation_operands(
     def geometry(element: FiniteElementSpec) -> CellGeometrySpec:
         return CellGeometrySpec({"layer": element}, {"layer": routes}, mesh.coordinates)
 
-    # Refuse the changed operands with empty caches and after solving for the
-    # canonical element with the same static identity.
-    for element in (forged, original, forged):
-        if element is forged:
-            for basis in (coordinate_source_basis, coordinate_execution_basis):
-                with pytest.raises(ValueError, match="canonical nodes and coefficients"):
-                    basis(element)
-        certificate = certify_cell_geometry_validity(geometry(element), mesh=mesh)
-        if element is original:
-            assert certificate.all_certified
-        else:
-            assert not certificate.all_certified
-            assert certificate.unsupported_block_names == ("layer",)
-            np.testing.assert_array_equal(
-                certificate.execution_status, (CellValidityStatus.UNRESOLVED,)
-            )
-            np.testing.assert_array_equal(
-                certificate.source_status, (CellValidityStatus.UNRESOLVED,)
-            )
+    assert certify_cell_geometry_validity(geometry(original), mesh=mesh).all_certified
+    certificate = certify_cell_geometry_validity(geometry(forged), mesh=mesh)
+    assert certificate.unsupported_block_names == ("layer",)
+    np.testing.assert_array_equal(
+        certificate.execution_status, (CellValidityStatus.UNRESOLVED,)
+    )
+    np.testing.assert_array_equal(
+        certificate.source_status, (CellValidityStatus.UNRESOLVED,)
+    )
 
 
 @pytest.mark.parametrize("kind", ("prism", "pyramid"))
