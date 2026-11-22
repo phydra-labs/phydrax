@@ -7,6 +7,10 @@ reference time measured on the development machine for the same input
 kernel's minimum time is at most its ceiling times the row's allowed ratio.
 Ratios above one are interim acceptance targets of the plan
 `docs/plans/native-meshing-kernels.md`; the final target of every row is 1.
+
+The 3D metric rows report native out-of-band and unrepresentable edge counts
+separately from the common cell ``unmet`` count and the independent quality
+checks. Their certification and transfer time is excluded from construction.
 """
 
 from __future__ import annotations
@@ -1489,6 +1493,8 @@ class _F6Run(NamedTuple):
     outcome: _RouteOutcome
     construction_seconds: float
     finalization_seconds: float
+    out_of_band_edges: int
+    unrepresentable_edges: int
 
 
 def _f6_stage_seconds(result: object, /) -> float:
@@ -1586,7 +1592,14 @@ def _f6_rows(sizes: tuple[int, ...], /) -> tuple[_Row, ...]:
                 outcome, finalization_seconds = measure_synchronized(
                     partial(_finish_tetra_metric_route, *construction)
                 )
-                return _F6Run(outcome, construction_seconds, finalization_seconds)
+                evidence = construction[2].evidence
+                return _F6Run(
+                    outcome,
+                    construction_seconds,
+                    finalization_seconds,
+                    evidence.out_of_range_edges,
+                    evidence.unrepresentable_edges,
+                )
 
             rows.append(
                 _Row(
@@ -3535,8 +3548,12 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
     missed, quality = row.quality(result)
     if isinstance(result, _meshcore.ConstrainedDelaunay2D):
         quality = {**quality, "minimum_angle_degrees": _planar_minimum_angle(result)}
-    status = (
-        {"adaptation_status": result.outcome.status.value}
+    adaptation = (
+        {
+            "adaptation_status": result.outcome.status.value,
+            "out_of_band_edges": result.out_of_band_edges,
+            "unrepresentable_edges": result.unrepresentable_edges,
+        }
         if isinstance(result, _F6Run)
         else {}
     )
@@ -3547,7 +3564,7 @@ def _measure(row: _Row, repeats: int, /) -> dict[str, Any]:
         "quality": quality,
         "seconds": samples,
         "minimum_seconds": min(samples),
-        **status,
+        **adaptation,
     }
 
 
