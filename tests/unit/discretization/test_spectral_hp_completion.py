@@ -12,6 +12,10 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization._cell_geometry import (
+    coordinate_execution_basis,
+    coordinate_source_basis,
+)
 from phydrax.discretization.fem import (
     AnisotropicHPattern,
     compact_hp_forest,
@@ -31,6 +35,11 @@ from phydrax.discretization.fem import (
 )
 from phydrax.exterior._algebra import map_reference_values
 from phydrax.exterior._form_type import FormType, FormValueSpec
+
+
+def test_linear_prism_execution_shadow_matches_exact_nodal_basis() -> None:
+    element = HybridReferenceFamily("prism", 1).finite_element()
+    assert coordinate_execution_basis(element) == coordinate_source_basis(element)
 
 
 @pytest.mark.parametrize("kind", ("prism", "pyramid"))

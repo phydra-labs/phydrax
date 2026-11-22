@@ -3003,21 +3003,32 @@ def _finite_element_execution_basis(
                 for dof in range(element.local_dof_count)
             )
             return linear_combinations(modal, rows)
-        from .._polynomial._orthogonal import legendre_rule_data
-        from .fem._high_order import (
-            _default_barycentric_weights,
-            SimplexNodalFamily,
-        )
-
         triangle_degree, axial_degree = hybrid_owner.orders
-        triangle = SimplexNodalFamily("triangle", triangle_degree).finite_element()
-        horizontal = coordinate_execution_basis(triangle)
-        rule = legendre_rule_data(axial_degree + 1, "lobatto")
-        z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
-        z_weights = _default_barycentric_weights(z_nodes)
-        vertical = _execution_lagrange_axis(z_nodes, z_weights)
         variables = axes(3)
-        vertical = tuple(compose_expression(value, (variables[2],)) for value in vertical)
+        if (triangle_degree, axial_degree) == (1, 1):
+            from .fem._reference import lagrange_element
+
+            # The degree-one simplex collocation matrix is the identity in the
+            # P1 triangle's vertex order. The two Lobatto nodes shift exactly to
+            # (0, 1); their binary64 barycentric weights (-1, 1) give (1-z, z).
+            horizontal = coordinate_source_basis(lagrange_element("triangle", 1))
+            vertical = (add(constant(1, 3), scale(variables[2], -1)), variables[2])
+        else:
+            from .._polynomial._orthogonal import legendre_rule_data
+            from .fem._high_order import (
+                _default_barycentric_weights,
+                SimplexNodalFamily,
+            )
+
+            triangle = SimplexNodalFamily("triangle", triangle_degree).finite_element()
+            horizontal = coordinate_execution_basis(triangle)
+            rule = legendre_rule_data(axial_degree + 1, "lobatto")
+            z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
+            z_weights = _default_barycentric_weights(z_nodes)
+            vertical = tuple(
+                compose_expression(value, (variables[2],))
+                for value in _execution_lagrange_axis(z_nodes, z_weights)
+            )
         product_basis = tuple(
             multiply(
                 compose_expression(value, variables[:2]),

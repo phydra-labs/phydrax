@@ -5005,8 +5005,10 @@ def _assemble(
         policy=policy.validity,
         parent=resolution.validity + pyramid_validity,
     )
-    invalid = np.asarray(certificate.status) != int(CellValidityStatus.CERTIFIED_VALID)
-    if np.any(invalid):
+    if not certificate.all_certified:
+        invalid = np.asarray(certificate.status) != int(
+            CellValidityStatus.CERTIFIED_VALID
+        )
         offsets = np.cumsum([0, *(cells[name].shape[0] for name in _VOLUME_KINDS)])
         offending = np.concatenate(
             [
