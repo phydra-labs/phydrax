@@ -776,6 +776,19 @@
   same size; face flips judge Delaunay in the face metric where the curvature
   term binds; smoothing keeps the kernel's metric circumradius bound. Face
   and solid meshes change.
+- Native CAD meshing budgets deviation separately for curve chords and adjacent
+  face triangles. Face sizing grades from that tighter boundary budget back to
+  the interior target. Stored chart circumradii are checked against the size
+  limit with a derived coordinate-rounding allowance; an oversized face is
+  reported as unresolved. If insertion is blocked, an edge flip may resolve
+  it by reducing the pair's worst metric circumradius.
+- Native CAD solids honor face-scoped `ProximitySizeControl` in the curve,
+  face, and volume-boundary size targets. Compliance reports the estimated
+  gaps as report-only. Without the control, the requested size is preserved.
+  Solid construction also reports thin input regions and distinguishes
+  dihedral misses forced by input rim wedges from unforced misses. Unforced
+  misses make the result unresolved. These changes can alter curve, surface,
+  and volume meshes and their identities.
 - Native CAD surface meshing: every CAD face is meshed in its parameter chart
   by a frontal metric refinement kernel with a guarded worst-angle pass and
   assembled into one surface with shared curve discretizations, pole fans and
@@ -2343,6 +2356,12 @@
   Archives store the bank, and restore refuses a changed one.
 
 ### Fixed
+- CAD fidelity verification uses regular pole charts for eligible sphere
+  regions and planar disk centers. Pole bounds include the trim-lens charge
+  on region-boundary chords, including chords whose endpoints have equal
+  latitude but whose curve does not. The mesher grades pole and polar-trim
+  rings by the chart bound and splits over-tolerance region-boundary edges;
+  affected meshes and fidelity certificate identities can change.
 - AT_MOST size compliance rows (CAD chart circumradius, S3 boundary edge)
   are decided exactly at ties. A unit box meshed at h = 0.5 meets
   R = h/sqrt(2) exactly, yet its float circumradius rounded above the float
