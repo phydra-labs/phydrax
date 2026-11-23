@@ -115,13 +115,11 @@ def cad_solid_support_issues(
     return tuple(issues)
 
 
-def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometrySpec:
+def _quadratic_geometry(cell_kind: str, solid: CadSolidResult, /) -> CellGeometrySpec:
     """P2 map of the native edge nodes: vertex DOFs name points, edge DOFs nodes."""
     volume = solid.volume
-    element = lagrange_element(mesh.blocks[0].cell_kind, 2)
-    vertices = np.asarray(
-        reference_cell_topology(mesh.blocks[0].cell_kind).vertices, dtype=np.float64
-    )
+    element = lagrange_element(cell_kind, 2)
+    vertices = np.asarray(reference_cell_topology(cell_kind).vertices, dtype=np.float64)
     nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     point_count = volume.points.shape[0]
     cells = np.asarray(volume.tetrahedra, dtype=np.int64)
@@ -144,7 +142,7 @@ def _quadratic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometr
     return CellGeometrySpec({_BLOCK: element}, {_BLOCK: route}, coordinates)
 
 
-def _cubic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometrySpec:
+def _cubic_geometry(cell_kind: str, solid: CadSolidResult, /) -> CellGeometrySpec:
     volume = solid.volume
     extra = volume.cubic_cell_nodes
     count = volume.points.shape[0]
@@ -161,7 +159,7 @@ def _cubic_geometry(mesh: CellMesh, solid: CadSolidResult, /) -> CellGeometrySpe
     route[:, :4] = volume.tetrahedra
     route[:, 4:] = count + extra
     return CellGeometrySpec(
-        {_BLOCK: cubic_tetrahedron_geometry_element(mesh.blocks[0].cell_kind)},
+        {_BLOCK: cubic_tetrahedron_geometry_element(cell_kind)},
         {_BLOCK: route},
         np.concatenate((volume.points, volume.cubic_nodes)),
     )
@@ -926,9 +924,9 @@ def execute_cad_solid(
         case 1:
             geometry = CellGeometrySpec.affine(mesh)
         case 2:
-            geometry = _quadratic_geometry(mesh, solid)
+            geometry = _quadratic_geometry(mesh.blocks[0].cell_kind, solid)
         case 3:
-            geometry = _cubic_geometry(mesh, solid)
+            geometry = _cubic_geometry(mesh.blocks[0].cell_kind, solid)
         case _:
             raise ValueError(f"Unsupported native CAD geometry order {order!r}.")
     # Unmet cells split per cell: forced by the input (a rim wedge below the

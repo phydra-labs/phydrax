@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from functools import partial
 from hashlib import sha256
+from itertools import product
 from pathlib import Path
 from typing import Any, NamedTuple, TYPE_CHECKING
 
@@ -358,7 +359,8 @@ def _rows(
             frozenset({"metric-3d-iso", "metric-3d-aniso", "metric-3d-coarsen"}),
             lambda: _f6_rows(sizes),
         ),
-        (frozenset({"cad-quadric", "cad-quadric-p2"}), _cad_rows),
+        (frozenset({"cad-quadric", "cad-quadric-p2", "cad-quadric-p3"}), _cad_rows),
+        (frozenset({"cad-sphere-p2", "cad-sphere-p3"}), _cad_sphere_rows),
         (frozenset({"improve-sphere"}), lambda: _improve_rows(improve_inputs)),
         (
             frozenset({"overset-hex", "overset-tet"}),
@@ -625,17 +627,38 @@ def _volume_unmet(result: object, /) -> int:
 
 
 # Gmsh 4.15.2 HXT (2D=6, 3D=10) tetrahedra of the quadric at the same h, and
-# Netgen's optimized linear mesh under Curve(2), on the LIN machine (reference
-# report); the count band is reported, not enforced.
+# Netgen's optimized linear mesh under Curve(p), on the LIN machine.
+# Counts are reported, not enforced.
 _GMSH_QUADRIC_TETS = {0.2293: 1_054, 0.1061: 8_493, 0.04925: 75_913, 0.02286: 717_939}
 _NETGEN_QUADRIC_TETS = {0.1061: 6_095, 0.04925: 67_533}
 
 
+class _CadCurveTarget(NamedTuple):
+    scaled_jacobian: float
+    determinant_ratio: float
+    face_residual: float
+
+
+# F5 ledger, same h and independent degree-six sampling on both providers.
+# Use the stricter recorded value from Netgen Curve(p) and Gmsh setOrder
+# without optimization; keep their original construction clock.
+_CAD_CURVE_TARGETS = {
+    ("quadric", 2, 10610): _CadCurveTarget(0.277, 0.814, 4.14e-5),
+    ("quadric", 2, 4925): _CadCurveTarget(0.212, 0.891, 4.55e-6),
+    ("quadric", 3, 10610): _CadCurveTarget(0.275, 0.813, 6.45e-6),
+    ("quadric", 3, 4925): _CadCurveTarget(0.211, 0.893, 8.02e-7),
+    ("sphere", 2, 27572): _CadCurveTarget(0.241, 0.782, 1.17e-4),
+    ("sphere", 2, 12798): _CadCurveTarget(0.210, 0.830, 5.55e-6),
+    ("sphere", 2, 5940): _CadCurveTarget(0.203, 0.919, 3.01e-7),
+    ("sphere", 3, 27572): _CadCurveTarget(0.243, 0.772, 6.59e-5),
+    ("sphere", 3, 12798): _CadCurveTarget(0.209, 0.829, 5.49e-6),
+    ("sphere", 3, 5940): _CadCurveTarget(0.203, 0.922, 3.05e-7),
+}
+_NETGEN_SPHERE_TETS = {27572: 532, 12798: 6712, 5940: 90497}
+
+
 def _cad_rows() -> tuple[_Row, ...]:
-    # The repository's quadric fixture (z cylinder r 1, x cylinder r 0.6) as
-    # one native call: curves, faces, fixed-boundary volume (and P2 for the
-    # -p2 rows, timed by its stage clock against Netgen's Curve(2)). The row
-    # size is h in units of 1e-5.
+    # The row size is h in units of 1e-5.
     import phydrax as phx
     from phydrax.geometry._meshing_domain import MeshingDomain
     from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
@@ -713,22 +736,64 @@ def _cad_rows() -> tuple[_Row, ...]:
             )
         )
     for size, tets in _NETGEN_QUADRIC_TETS.items():
-        rows.append(
-            _Row(
-                "cad-quadric-p2",
-                round(size * 1e5),
-                lambda size=size: run(size, 2),
-                _cad_cells,
-                _cad_unmet,
-                quality=lambda result, size=size, tets=tets: _cad_quality(
-                    result, size, tets
-                ),
-                stage_seconds=lambda result: (
-                    float(_cad_stats(result)["quadratic_ns"]) * 1e-9
-                ),
-            )
+        rows.extend(
+            _cad_curved_row("quadric", order, round(size * 1e5), tets, run)
+            for order in (2, 3)
         )
     return tuple(rows)
+
+
+def _cad_sphere_rows() -> tuple[_Row, ...]:
+    import phydrax as phx
+    from phydrax.geometry._meshing_domain import MeshingDomain
+    from phydrax.meshing.providers._native_cad_bundle import cad_geometry_bundle
+
+    solid = phx.geometry.brep.brep_sphere(
+        1.0,
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
+        source_id="qualification:native-cad-sphere",
+    )
+    model = cad_geometry_bundle(MeshingDomain.from_brep(solid)).model
+
+    def run(size: float, order: int) -> _meshcore.CadSolidResult:
+        return _meshcore.cad_mesh_solid(
+            model,
+            np.full(model.surface_nodes.size, size, dtype=np.float64),
+            np.full(model.surface_nodes.size, size * size / 4.0, dtype=np.float64),
+            np.full(model.curve_nodes.size, np.inf, dtype=np.float64),
+            tolerance_fraction=0.8,
+            geometry_order=order,
+        )
+
+    return tuple(
+        _cad_curved_row("sphere", order, size, tets, run)
+        for order in (2, 3)
+        for size, tets in _NETGEN_SPHERE_TETS.items()
+    )
+
+
+def _cad_curved_row(
+    shape: str,
+    order: int,
+    size_key: int,
+    reference_tets: int,
+    run: Callable[[float, int], _meshcore.CadSolidResult],
+    /,
+) -> _Row:
+    size = size_key / 1e5
+    stage = "quadratic_ns" if order == 2 else "cubic_ns"
+    target = _CAD_CURVE_TARGETS[shape, order, size_key]
+    return _Row(
+        f"cad-{shape}-p{order}",
+        size_key,
+        lambda: run(size, order),
+        _cad_cells,
+        _cad_unmet,
+        quality=lambda result: _cad_curved_quality(
+            result, shape, order, size, reference_tets, target
+        ),
+        stage_seconds=lambda result: float(_cad_stats(result)[stage]) * 1e-9,
+    )
 
 
 def _cad_stats(result: object, /) -> Any:
@@ -744,11 +809,15 @@ def _cad_cells(result: object, /) -> int:
 
 
 def _cad_unmet(result: object, /) -> int:
-    stats = _cad_stats(result)
-    quadratic = stats["quadratic"]
-    return int(
-        stats["unmet_cells"] + quadratic["final_invalid"] + quadratic["final_unresolved"]
-    )
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    stats = result.volume.stats[0]
+    unmet = int(stats["unmet_cells"])
+    if result.volume.nodes.size:
+        quadratic = stats["quadratic"]
+        unmet += int(quadratic["final_invalid"] + quadratic["final_unresolved"])
+    # Cubic validity is checked on the actual exported map, outside the clock.
+    return unmet
 
 
 def _dihedral_degrees(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
@@ -873,7 +942,7 @@ def _cad_quality(
         "boundary_splits": float(stats["boundary_splits"]),
         **{
             f"{stage}_seconds": float(stats[f"{stage}_ns"]) * 1e-9
-            for stage in ("curve", "face", "assembly", "volume", "quadratic")
+            for stage in ("curve", "face", "assembly", "volume", "quadratic", "cubic")
         },
     }
     missed = (
@@ -881,6 +950,157 @@ def _cad_quality(
         + int(np.sum(radius_edge > 2.0))
         + int(statement["tets_above_h"] + statement["boundary_triangles_above_bound"])
     )
+    return missed, measured
+
+
+def _curved_tet_samples(
+    order: int, reference_nodes: np.ndarray, /
+) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    """Independent nodal interpolant evaluated on the original F5 lattice."""
+    exponents = np.asarray(
+        [
+            powers
+            for powers in product(range(order + 1), repeat=3)
+            if sum(powers) <= order
+        ],
+        dtype=np.int32,
+    )
+
+    def monomials(points: np.ndarray, powers: np.ndarray) -> np.ndarray:
+        return np.prod(points[:, None, :] ** powers[None, :, :], axis=-1)
+
+    def evaluate(monomial_rows: np.ndarray) -> np.ndarray:
+        return np.linalg.solve(vandermonde_transpose, monomial_rows.T).T
+
+    lattice = np.asarray(
+        [point for point in product(range(7), repeat=3) if sum(point) <= 6],
+        dtype=np.float64,
+    )
+    vandermonde_transpose = monomials(reference_nodes, exponents).T
+    gradient = np.stack(
+        [
+            evaluate(
+                monomials(lattice / 6, np.maximum(exponents - axis, 0))
+                * (exponents @ axis)
+            )
+            for axis in np.eye(3, dtype=np.int32)
+        ],
+        axis=-1,
+    )
+    face_lattice = lattice[lattice[:, 2] == 0, :2] / 6
+    barycentric = np.column_stack((face_lattice, 1.0 - face_lattice.sum(axis=1)))
+    faces = []
+    for opposite in range(4):
+        weights = np.insert(barycentric, opposite, 0.0, axis=1)
+        faces.append(evaluate(monomials(weights[:, 1:], exponents)))
+    return gradient, tuple(faces)
+
+
+def _sample_curved_cad(
+    volume: _meshcore.CadVolumeResult,
+    shape: str,
+    order: int,
+    reference_nodes: np.ndarray,
+    nodes: np.ndarray,
+    route: np.ndarray,
+    /,
+) -> tuple[int, float, float, float]:
+    gradients, basis = _curved_tet_samples(order, reference_nodes)
+    chunk = 4096
+    nonpositive = 0
+    min_scaled, min_ratio, max_residual = np.inf, np.inf, 0.0
+    for first in range(0, route.shape[0], chunk):
+        jacobian = np.einsum(
+            "env,snd->esvd", nodes[route[first : first + chunk]], gradients
+        )
+        determinant = np.linalg.det(jacobian)
+        finite_positive = np.isfinite(determinant) & (determinant > 0.0)
+        nonpositive += np.count_nonzero(~np.all(finite_positive, axis=1))
+        if not np.all(finite_positive):
+            min_scaled, min_ratio = 0.0, 0.0
+            continue
+        scaled = (
+            math.sqrt(2.0)
+            * determinant
+            / np.prod(np.linalg.norm(jacobian, axis=2), axis=2)
+        )
+        min_scaled = min(min_scaled, float(np.min(scaled)))
+        min_ratio = min(min_ratio, float(np.min(determinant.min(1) / determinant.max(1))))
+    for opposite, values in enumerate(basis):
+        cells = volume.boundary_faces[volume.boundary_faces[:, 1] == opposite, 0]
+        for first in range(0, cells.size, chunk):
+            points = np.einsum(
+                "env,sn->esv", nodes[route[cells[first : first + chunk]]], values
+            )
+            x, y, z = points.transpose(2, 0, 1)
+            if shape == "sphere":
+                residual = np.linalg.norm(points, axis=-1) - 1.0
+            else:
+                # Same max-of-cylinder residual as the external F5 oracle;
+                # this is not the certified bidirectional CAD distance.
+                residual = np.maximum.reduce(
+                    (
+                        np.hypot(x, y) - 1.0,
+                        np.abs(z) - 1.2,
+                        np.hypot(y, z) - 0.6,
+                        np.abs(x) - 1.5,
+                    )
+                )
+            max_residual = max(max_residual, float(np.max(np.abs(residual))))
+    return int(nonpositive), float(min_scaled), float(min_ratio), max_residual
+
+
+def _cad_curved_quality(
+    result: object,
+    shape: str,
+    order: int,
+    size: float,
+    reference_tets: int,
+    target: _CadCurveTarget,
+    /,
+) -> tuple[int, dict[str, float]]:
+    from phydrax.discretization._cell_geometry_validity import (
+        certify_cell_geometry_validity,
+    )
+    from phydrax.discretization.fem._reference import FiniteElementSpec
+    from phydrax.meshing.providers._native_cad_mesh import (
+        _cubic_geometry,
+        _quadratic_geometry,
+    )
+
+    if not isinstance(result, _meshcore.CadSolidResult):
+        raise TypeError("The CAD row returns a CadSolidResult.")
+    volume = result.volume
+    extra = volume.nodes if order == 2 else volume.cubic_nodes
+    if not extra.size or not volume.tetrahedra.size or not volume.boundary_faces.size:
+        return 1, {"missing_curved_map": 1.0}
+    missed, measured = _cad_quality(result, size, reference_tets)
+    assemble = _quadratic_geometry if order == 2 else _cubic_geometry
+    geometry = assemble("simplex:3", result)
+    (element,) = geometry.elements
+    if not isinstance(element, FiniteElementSpec):
+        raise TypeError("Curved CAD quality requires a nodal finite element.")
+    (cell_dofs,) = geometry.geometry_dofs
+    nodes = np.asarray(geometry.coordinates)
+    route = np.asarray(cell_dofs)
+    validity = certify_cell_geometry_validity(geometry)
+    nonpositive, scaled, ratio, residual = _sample_curved_cad(
+        volume, shape, order, np.asarray(element.reference_nodes), nodes, route
+    )
+    measured.update(
+        curved_invalid=float(validity.invalid_count),
+        curved_unresolved=float(validity.unresolved_count),
+        sampled_nonpositive_jacobian=float(nonpositive),
+        sampled_minimum_scaled_jacobian=scaled,
+        sampled_minimum_determinant_ratio=ratio,
+        sampled_maximum_face_residual=residual,
+        reference_minimum_scaled_jacobian=target.scaled_jacobian,
+        reference_minimum_determinant_ratio=target.determinant_ratio,
+        reference_maximum_face_residual=target.face_residual,
+    )
+    missed += validity.invalid_count + validity.unresolved_count + nonpositive
+    missed += int(scaled < target.scaled_jacobian) + int(ratio < target.determinant_ratio)
+    missed += int(residual > target.face_residual)
     return missed, measured
 
 

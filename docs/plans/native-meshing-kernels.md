@@ -407,6 +407,22 @@ Measure covered area, positive orientation, and maximum area as well as the
 minimum angle. The star's input tips force angles smaller than 30 degrees;
 report the actual minimum and the number of triangles below the requested target.
 
+### Curved CAD qualification
+
+The `cad-quadric-p2`, `cad-quadric-p3`, `cad-sphere-p2`, and `cad-sphere-p3`
+rows use the original F5 sizes. They time native curving only, against
+Netgen's archived `Curve(p)` times. The quality check runs outside the clock:
+it certifies determinant positivity on the exported map and measures scaled
+Jacobian, determinant ratio, and analytic boundary residual on the same
+sampling lattice as the Netgen/Gmsh comparison. The sampled surface residual
+does not replace the separate bidirectional CAD fidelity or embedding proof.
+
+The first complete macOS run beat all ten curving clocks and certified every
+cell's determinant, but no row matched all reference quality fields. The
+quadric rows met the boundary residual thresholds and missed the minimum
+scaled Jacobian; the sphere rows also missed the boundary residual threshold.
+Keep F5 open until the combined gates pass.
+
 ### Matched fixed-wall volume qualification
 
 The original torus25 case uses the same archived 122,926 fixed boundary

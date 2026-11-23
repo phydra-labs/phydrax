@@ -123,6 +123,20 @@
       "10610": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0125, "allowed_ratio": 1.0},
       "4925": {"tool": "netgen 6.2.2608 Curve(2) on the optimized linear mesh", "seconds": 0.0751, "allowed_ratio": 1.0}
     },
+    "cad-quadric-p3": {
+      "10610": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.0341, "allowed_ratio": 1.0},
+      "4925": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.171, "allowed_ratio": 1.0}
+    },
+    "cad-sphere-p2": {
+      "27572": {"tool": "netgen 6.2.2608 Curve(2), F5 native CAD ledger", "seconds": 0.0015, "allowed_ratio": 1.0},
+      "12798": {"tool": "netgen 6.2.2608 Curve(2), F5 native CAD ledger", "seconds": 0.009, "allowed_ratio": 1.0},
+      "5940": {"tool": "netgen 6.2.2608 Curve(2), F5 native CAD ledger", "seconds": 0.0887, "allowed_ratio": 1.0}
+    },
+    "cad-sphere-p3": {
+      "27572": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.00726, "allowed_ratio": 1.0},
+      "12798": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.0345, "allowed_ratio": 1.0},
+      "5940": {"tool": "netgen 6.2.2608 Curve(3), F5 native CAD ledger", "seconds": 0.199, "allowed_ratio": 1.0}
+    },
     "query-closest": {
       "100000": {"tool": "libigl", "elements_per_second": 95630, "allowed_ratio": 1.0},
       "1000000": {"tool": "libigl", "elements_per_second": 92096, "allowed_ratio": 1.0}
